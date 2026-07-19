@@ -57,6 +57,7 @@ enum CapturePage {
           <span id="pageLabel">— / —</span>
           <button id="prev">‹</button>
           <button id="next">›</button>
+          <button id="lock" title="锁定缩放">🔓</button>
           <button id="full">⛶</button>
         </div>
         <script>
@@ -227,7 +228,7 @@ enum CapturePage {
             var p0 = pw();
             var fx = p0 > 0 ? (cx - contentLeft()) / p0 : 0.5;
             var fy = totalH > 0 ? (cy - BAR + scrollY) / totalH : 0;
-            zoom = clamp(nz, MINZ, MAXZ);
+            zoom = zoomLocked ? zoom : clamp(nz, MINZ, MAXZ);   // 锁定时保持缩放，双指仅平移
             recompute();
             scrollY = clamp(fy * totalH - (cy - BAR), 0, maxScrollY);
             scrollX = pw() > vw ? clamp(fx * pw() - cx, 0, maxScrollX) : 0;
@@ -275,6 +276,7 @@ enum CapturePage {
           // ---- 指针：笔=画/平移，手指=平移/双指缩放 ----
           var activeId = null, penMode = "", penX = 0, penY = 0, batch = [], drawPage = 0;
           var touches = {}, touchOrder = [], panId = null, lastPanX = 0, lastPanY = 0, pinch = null;
+          var zoomLocked = false;
 
           function beginPinch() {
             var a = touches[touchOrder[0]], b = touches[touchOrder[1]];
@@ -478,6 +480,7 @@ enum CapturePage {
           }
           el("prev").onclick = function () { turn("prev"); };
           el("next").onclick = function () { turn("next"); };
+          el("lock").onclick = function () { zoomLocked = !zoomLocked; el("lock").textContent = zoomLocked ? "🔒" : "🔓"; };
           el("docs").addEventListener("change", function () { send({ type: "selectDoc", id: el("docs").value }); });
           window.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
