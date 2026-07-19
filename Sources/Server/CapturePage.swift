@@ -435,9 +435,8 @@ enum CapturePage {
             if (!document.fullscreenElement) {
               var root = document.documentElement;
               var req = root.requestFullscreen || root.webkitRequestFullscreen;
-              if (req) Promise.resolve(req.call(root)).then(function () {
-                if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(function () {});
-              }).catch(function () {});
+              // 不锁定方向：竖屏/横屏均可，布局随 resize 自适应
+              if (req) Promise.resolve(req.call(root)).catch(function () {});
             } else {
               (document.exitFullscreen || document.webkitExitFullscreen).call(document);
             }
