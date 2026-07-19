@@ -13,6 +13,7 @@
 "Open this URL in Firefox on your tablet:" = "Open this URL in Firefox on your tablet:";
 "Connected tablets: %d" = "Connected tablets: %d";
 "Latency: %d ms" = "Latency: %d ms";
+"Inbound: %d msg/s" = "Inbound: %d msg/s";
 "Last message:" = "Last message:";
 "Simulated Tablet" = "Simulated Tablet";
 "Open a PDF and activate its window." = "Open a PDF and activate its window.";

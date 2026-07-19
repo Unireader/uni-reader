@@ -13,6 +13,7 @@
 "Open this URL in Firefox on your tablet:" = "在平板的 Firefox 中打开此地址：";
 "Connected tablets: %d" = "已连接平板：%d";
 "Latency: %d ms" = "延迟：%d ms";
+"Inbound: %d msg/s" = "入站：%d 条/秒";
 "Last message:" = "最近消息：";
 "Simulated Tablet" = "模拟平板";
 "Open a PDF and activate its window." = "在主窗口打开 PDF 并激活其窗口。";

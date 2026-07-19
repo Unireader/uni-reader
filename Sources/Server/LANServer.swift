@@ -11,6 +11,8 @@ final class LANServer: ObservableObject {
     @Published private(set) var clientCount = 0
     @Published private(set) var lastInbound = ""
     @Published private(set) var latencyMS: Int?
+    /// 入站消息速率（条/秒，不含 ping/latency 心跳），用于延迟 stats。
+    @Published private(set) var inboundRate = 0
     /// 平板请求翻页时置为目标页码，供 AppModel 观察并同步页码。
     @Published var requestedPageIndex: Int?
     /// 平板请求切换文档时置为目标会话 id（空串 = 跟随 Mac 激活窗口）。
@@ -31,6 +33,8 @@ final class LANServer: ObservableObject {
     private var httpListener: NWListener?
     private var wsListener: NWListener?
     private var clients: [NWConnection] = []
+    private var inboundCount = 0            // 主线程累加
+    private var statsTimer: Timer?
 
     // 页面状态（queue 上读写）
     private var pagePNG = Data()
@@ -53,6 +57,7 @@ final class LANServer: ObservableObject {
             try startHTTP()
             try startWS()
             setRunning(true)
+            startStats()
         } catch {
             NSLog("LANServer 启动失败: \(error)")
             stop()
@@ -60,6 +65,7 @@ final class LANServer: ObservableObject {
     }
 
     func stop() {
+        stopStats()
         httpListener?.cancel(); httpListener = nil
         wsListener?.cancel(); wsListener = nil
         queue.async {
@@ -229,6 +235,10 @@ final class LANServer: ObservableObject {
             }
         }
 
+        if type != "ping" && type != "latency" {
+            DispatchQueue.main.async { self.inboundCount += 1 }   // stats：不计心跳
+        }
+
         switch type {
         case "ping":
             rawSend(["type": "pong", "t": obj["t"] ?? 0], to: conn)
@@ -304,5 +314,25 @@ final class LANServer: ObservableObject {
 
     private func setRunning(_ v: Bool) {
         DispatchQueue.main.async { self.isRunning = v }
+    }
+
+    // MARK: - 入站速率 stats（主线程 1s 采样）
+
+    private func startStats() {
+        DispatchQueue.main.async { [weak self] in
+            self?.statsTimer?.invalidate()
+            self?.statsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                self.inboundRate = self.inboundCount
+                self.inboundCount = 0
+            }
+        }
+    }
+
+    private func stopStats() {
+        DispatchQueue.main.async { [weak self] in
+            self?.statsTimer?.invalidate(); self?.statsTimer = nil
+            self?.inboundRate = 0; self?.inboundCount = 0
+        }
     }
 }

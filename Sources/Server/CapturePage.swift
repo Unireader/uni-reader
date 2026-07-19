@@ -41,6 +41,11 @@ enum CapturePage {
           #topbar button { padding:8px 14px; font-size:16px; border:1px solid #30363d; border-radius:8px;
             background:#21262d; color:#e6edf3; }
           #topbar button:active { background:#30363d; }
+          #lat { cursor:pointer; }
+          #stats { position:fixed; right:8px; top:52px; z-index:11; display:none;
+            background:rgba(22,27,34,.94); border:1px solid #30363d; border-radius:8px; padding:10px 12px;
+            font:12px/1.55 ui-monospace,Menlo,monospace; color:#e6edf3; white-space:pre; min-width:180px; }
+          #stats.on { display:block; }
         </style>
         </head>
         <body>
@@ -61,6 +66,7 @@ enum CapturePage {
           <button id="lock" title="锁定缩放">🔓</button>
           <button id="full">⛶</button>
         </div>
+        <div id="stats"></div>
         <script>
         (function () {
           var PORT = \(wsPort), TOKEN = "\(token)";
@@ -437,7 +443,7 @@ enum CapturePage {
             send({ type: kind, phase: "move", pts: batch });
             batch = [];
           }
-          function tick() { if (activeId !== null && batch.length) flushBatch(penMode === "erase" ? "erase" : "ink"); requestAnimationFrame(tick); }
+          function tick() { frames++; if (activeId !== null && batch.length) flushBatch(penMode === "erase" ? "erase" : "ink"); requestAnimationFrame(tick); }
           requestAnimationFrame(tick);
 
           // ---- 悬停 ----
@@ -477,9 +483,26 @@ enum CapturePage {
             }
           });
 
+          // ---- 延迟 stats（点击顶栏延迟数字展开）----
+          var rtts = [], upCount = 0, downCount = 0, frames = 0, statsOn = false;
+          setInterval(function () {
+            var n = rtts.length, sum = 0, mn = 1e9, mx = 0, jit = 0;
+            for (var i = 0; i < n; i++) { var r = rtts[i]; sum += r; if (r < mn) mn = r; if (r > mx) mx = r; if (i > 0) jit += Math.abs(r - rtts[i - 1]); }
+            var avg = n ? sum / n : 0; jit = n > 1 ? jit / (n - 1) : 0; if (!n) { mn = 0; mx = 0; }
+            el("lat").textContent = n ? (Math.round(avg) + "±" + Math.round(jit) + " ms") : "— ms";
+            if (statsOn) el("stats").textContent =
+              "RTT  avg " + Math.round(avg) + " ms\n" +
+              "     min " + Math.round(mn) + "  max " + Math.round(mx) + "\n" +
+              "     jitter " + Math.round(jit) + " ms  (n=" + n + ")\n" +
+              "↑ 上行  " + upCount + " msg/s\n" +
+              "↓ 下行  " + downCount + " msg/s\n" +
+              "画面 fps " + frames;
+            upCount = 0; downCount = 0; frames = 0;
+          }, 1000);
+
           // ---- WebSocket ----
           var ws, pingTimer = null;
-          function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+          function send(o) { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(o)); upCount++; } }
           function connect() {
             ws = new WebSocket("ws://" + location.hostname + ":" + PORT + "/");
             ws.onopen = function () { ws.send(JSON.stringify({ type: "auth", token: TOKEN })); };
@@ -492,12 +515,13 @@ enum CapturePage {
           }
           function startPing() {
             if (pingTimer) return;
-            pingTimer = setInterval(function () { send({ type: "ping", t: Date.now() }); }, 2000);
+            pingTimer = setInterval(function () { send({ type: "ping", t: Date.now() }); }, 1000);
             send({ type: "ping", t: Date.now() });
           }
           function onMsg(o) {
+            downCount++;
             if (o.type === "authOK") { el("dot").className = "on"; startPing(); }
-            else if (o.type === "pong") { var rtt = Date.now() - (o.t || 0); el("lat").textContent = rtt + " ms"; send({ type: "latency", ms: rtt }); }
+            else if (o.type === "pong") { var rtt = Date.now() - (o.t || 0); rtts.push(rtt); if (rtts.length > 40) rtts.shift(); send({ type: "latency", ms: rtt }); }
             else if (o.type === "layout") { setLayout(o); }
             else if (o.type === "viewport") { applyViewport(o); }
             else if (o.type === "docs") { setDocs(o); }
@@ -529,6 +553,7 @@ enum CapturePage {
           el("lock").onclick = function () { zoomLocked = !zoomLocked; el("lock").textContent = zoomLocked ? "🔒" : "🔓"; };
           el("eye").onclick = function () { showPage = !showPage; el("eye").textContent = showPage ? "👁" : "🚫"; if (showPage) ensureImages(); drawAll(); };
           el("docs").addEventListener("change", function () { send({ type: "selectDoc", id: el("docs").value }); });
+          el("lat").addEventListener("click", function () { statsOn = !statsOn; el("stats").className = statsOn ? "on" : ""; });
           window.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
           updateHud(); relayout(); connect();

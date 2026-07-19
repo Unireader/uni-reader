@@ -47,6 +47,12 @@ struct ServerPanel: View {
                     }
                 }
                 .font(.footnote)
+                HStack {
+                    Text(String(format: L("Inbound: %d msg/s"), server.inboundRate))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .font(.footnote)
                 if !server.lastInbound.isEmpty {
                     Text(L("Last message:")).font(.caption).foregroundStyle(.secondary)
                     Text(server.lastInbound)
