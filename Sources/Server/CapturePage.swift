@@ -223,17 +223,6 @@ enum CapturePage {
             scrollY = clamp(scrollY + dy, 0, maxScrollY);
             ensureImages(); drawAll(); updatePageLabel(); emitScroll();
           }
-          // 以视口点 (cx,cy) 为锚点缩放到 nz。
-          function zoomTo(nz, cx, cy) {
-            var p0 = pw();
-            var fx = p0 > 0 ? (cx - contentLeft()) / p0 : 0.5;
-            var fy = totalH > 0 ? (cy - BAR + scrollY) / totalH : 0;
-            zoom = zoomLocked ? zoom : clamp(nz, MINZ, MAXZ);   // 锁定时保持缩放，双指仅平移
-            recompute();
-            scrollY = clamp(fy * totalH - (cy - BAR), 0, maxScrollY);
-            scrollX = pw() > vw ? clamp(fx * pw() - cx, 0, maxScrollX) : 0;
-            ensureImages(); drawAll(); updateHud(); emitScroll();
-          }
           var reportPending = false;
           function emitScroll() {
             if (reportPending) return; reportPending = true;
@@ -282,8 +271,14 @@ enum CapturePage {
 
           function beginPinch() {
             var a = touches[touchOrder[0]], b = touches[touchOrder[1]];
-            pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z0: zoom };
-            panId = null;
+            var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, p = pw();
+            pinch = {
+              d0: Math.max(40, Math.hypot(a.x - b.x, a.y - b.y)),   // 初始间距下限，避免起手两指过近灵敏度爆炸
+              z0: zoom,
+              fx: p > 0 ? (mx - contentLeft()) / p : 0.5,            // 捏合中点抓住的内容比例（固定锚点）
+              fy: totalH > 0 ? (my - BAR + scrollY) / totalH : 0
+            };
+            panId = null; panStarted = false;
           }
 
           ink.addEventListener("pointerdown", function (e) {
@@ -328,8 +323,14 @@ enum CapturePage {
               touches[e.pointerId] = { x: e.clientX, y: e.clientY };
               if (pinch && touchOrder.length >= 2) {
                 var a = touches[touchOrder[0]], b = touches[touchOrder[1]];
-                var d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-                zoomTo(pinch.z0 * d / pinch.d, (a.x + b.x) / 2, (a.y + b.y) / 2);
+                var d = Math.hypot(a.x - b.x, a.y - b.y);
+                var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+                if (!zoomLocked) zoom = clamp(pinch.z0 * d / pinch.d0, MINZ, MAXZ);
+                recompute();
+                // 固定锚点比例始终跟随当前中点 → 缩放与双指整体移动都跟手、不漂移
+                scrollY = clamp(pinch.fy * totalH - (my - BAR), 0, maxScrollY);
+                scrollX = pw() > vw ? clamp(pinch.fx * pw() - mx, 0, maxScrollX) : 0;
+                ensureImages(); drawAll(); updateHud(); emitScroll();
               } else if (e.pointerId === panId) {
                 if (!panStarted) {
                   if (Math.hypot(e.clientX - panDownX, e.clientY - panDownY) < DEAD) { e.preventDefault(); return; }
