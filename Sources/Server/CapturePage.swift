@@ -1,9 +1,13 @@
 import Foundation
 
-/// 平板采集端网页 v4（横屏铺满 + 滚动 + 全屏）：
-/// - 页面按**宽度铺满**（fit-width）；页面比屏高时**手指拖动竖向滚动**（笔画画、手指滚），墨迹随滚动重绘。
-/// - 笔身侧键：PageUp 切模式（笔记/擦除/翻页），PageDown 切笔。右上角**全屏**按钮。
-/// - 归一化页面坐标回传 Mac；顶栏文档下拉、WS 延迟。
+/// 平板采集端网页 v6（方案 B：连续多页 + 双向锚点同步 + 双指缩放）：
+/// - 收 `layout`（每页原始宽高）→ 本地组 **连续页面列**；`zoom` 控制页宽（fit-width 为 zoom=1），
+///   放大可横向拖动、缩小页面居中；页图按需 `/page.png?i=N&v=` 取并缓存。
+/// - 手指：**单指拖动平移**（含横向），**双指捏合缩放**（以捏合中点为锚点）。
+/// - 笔：笔记=落墨，擦除=抹除，**翻页模式=笔拖动平移画面**（不再左右滑切页）。
+/// - 纵向滚动 → 上报 `scroll`（页+页内比例）→ Mac 跟随；收 `viewport` → 程序化滚到同位置。
+///   横向平移/缩放是平板本地查看，不上报（Mac 只同步纵向文档位置）。
+/// - 手写用**跨页归一化页面坐标**（页内 0~1 + page）；PageUp 切模式、PageDown 切笔；右上角全屏。
 enum CapturePage {
     static func html(token: String, wsPort: UInt16) -> String {
         """
@@ -30,8 +34,9 @@ enum CapturePage {
           #swatch { width:16px; height:16px; border-radius:50%; border:2px solid #58a6ff; background:#185ad2; flex:none; }
           #mode { font-weight:600; white-space:nowrap; }
           #lat { color:#8b949e; font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
-          #docs { max-width:28vw; padding:6px 8px; border:1px solid #30363d; border-radius:8px;
+          #docs { max-width:24vw; padding:6px 8px; border:1px solid #30363d; border-radius:8px;
             background:#21262d; color:#e6edf3; font-size:14px; }
+          #zoomLabel { color:#8b949e; font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
           #pageLabel { margin-left:auto; font-variant-numeric:tabular-nums; white-space:nowrap; }
           #topbar button { padding:8px 14px; font-size:16px; border:1px solid #30363d; border-radius:8px;
             background:#21262d; color:#e6edf3; }
@@ -48,6 +53,7 @@ enum CapturePage {
           <span id="mode">笔记</span>
           <span id="lat">— ms</span>
           <select id="docs"></select>
+          <span id="zoomLabel">100%</span>
           <span id="pageLabel">— / —</span>
           <button id="prev">‹</button>
           <button id="next">›</button>
@@ -56,7 +62,7 @@ enum CapturePage {
         <script>
         (function () {
           var PORT = \(wsPort), TOKEN = "\(token)";
-          var BAR = 46;
+          var BAR = 46, GAP = 8, MINZ = 0.5, MAXZ = 5;
           var PENS = [
             { name: "蓝", color: "rgba(24,90,210,0.95)", w: 8 },
             { name: "红", color: "rgba(220,40,40,0.95)", w: 9 },
@@ -69,10 +75,17 @@ enum CapturePage {
           var bg = el("bg"), ink = el("ink"), hover = el("hover");
           var bctx = bg.getContext("2d"), ictx = ink.getContext("2d"), hctx = hover.getContext("2d");
           var DPR = 1;
-          var pageW = 1, pageH = 1.4142, pageIndex = 0, pageCount = 0;
-          var dispW = 1, dispH = 1, scrollY = 0, maxScroll = 0;   // fit-width 布局
-          var pageImg = new Image();
-          pageImg.onload = function () { layout(); };
+          function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+          // ---- 文档布局（连续页面列 + 缩放）----
+          var docV = "", pageCount = 0, pagesWH = [];   // pagesWH: [[w,h],...] 原始点尺寸
+          var vw = 1, availH = 1, dispH = [], offY = [], totalH = 0;
+          var zoom = 1, scrollX = 0, scrollY = 0, maxScrollX = 0, maxScrollY = 0;
+          var imgs = {};        // i -> Image（按需加载 + 缓存）
+          var vpSeq = 0;        // 已应用的 Mac viewport 序号
+
+          function pw() { return vw * zoom; }                                   // 页(内容)宽
+          function contentLeft() { var p = pw(); return p <= vw ? (vw - p) / 2 : -scrollX; }  // 内容左缘视口 x
 
           function curMode() { return MODES[modeIdx].key; }
           function curPen() { return PENS[penIdx]; }
@@ -85,47 +98,86 @@ enum CapturePage {
             cx.setTransform(DPR, 0, 0, DPR, 0, 0);
             cx.lineCap = "round"; cx.lineJoin = "round";
           }
-          function layout() {
+
+          // 只重算几何（不动 canvas 尺寸），供缩放时保持锚点用。
+          function recompute() {
+            vw = window.innerWidth;
+            availH = window.innerHeight - BAR;
+            var p = pw(), y = 0; dispH = []; offY = [];
+            for (var i = 0; i < pageCount; i++) {
+              var w = (pagesWH[i] && pagesWH[i][0]) || 1, h = (pagesWH[i] && pagesWH[i][1]) || 1.4142;
+              var dh = w > 0 ? p * h / w : p;
+              offY[i] = y; dispH[i] = dh; y += dh + GAP;
+            }
+            totalH = Math.max(0, y - GAP);
+            maxScrollY = Math.max(0, totalH - availH);
+            maxScrollX = Math.max(0, p - vw);
+          }
+          function relayout() {
             DPR = Math.max(1, window.devicePixelRatio || 1);
             sizeCanvas(bg, bctx); sizeCanvas(ink, ictx); sizeCanvas(hover, hctx);
-            dispW = window.innerWidth;                 // 宽度铺满
-            dispH = dispW * pageH / pageW;
-            var availH = window.innerHeight - BAR;
-            maxScroll = Math.max(0, dispH - availH);
-            scrollY = Math.min(Math.max(0, scrollY), maxScroll);
-            drawAll();
+            recompute();
+            scrollX = clamp(scrollX, 0, maxScrollX); scrollY = clamp(scrollY, 0, maxScrollY);
+            ensureImages(); drawAll(); updateHud();
           }
-          window.addEventListener("resize", layout);
+          window.addEventListener("resize", relayout);
 
-          // ---- 坐标映射 ----
-          function toView(nx, ny) { return { x: nx * dispW, y: BAR + ny * dispH - scrollY }; }
-          function toNorm(x, y) {
-            return [Math.min(1, Math.max(0, x / dispW)),
-                    Math.min(1, Math.max(0, (y - BAR + scrollY) / dispH))];
+          // ---- 按需取图（可见 + 上下各一屏预取）----
+          function ensureImages() {
+            if (!pageCount) return;
+            var top = scrollY - availH, bot = scrollY + availH * 2;
+            for (var i = 0; i < pageCount; i++) {
+              if (offY[i] + dispH[i] >= top && offY[i] <= bot) loadImg(i);
+            }
           }
-          function inPage(x, y) {
-            var ny = (y - BAR + scrollY) / dispH;
-            return y >= BAR && x >= 0 && x <= dispW && ny >= 0 && ny <= 1;
+          function loadImg(i) {
+            if (imgs[i]) return;
+            var im = new Image();
+            im.onload = function () { drawBg(); };
+            im.src = "/page.png?i=" + i + "&v=" + encodeURIComponent(docV);
+            imgs[i] = im;
           }
 
-          // ---- 墨迹存储 + 重绘 ----
-          var strokes = [], cur = null;
+          // ---- 坐标映射（跨页 + 缩放）----
+          function locate(x, vy) {
+            var cl = contentLeft(), p = pw();
+            var docY = vy - BAR + scrollY;
+            for (var i = 0; i < pageCount; i++) {
+              if (docY >= offY[i] && docY <= offY[i] + dispH[i]) {
+                return { page: i, nx: clamp((x - cl) / p, 0, 1), ny: clamp((docY - offY[i]) / dispH[i], 0, 1) };
+              }
+            }
+            return null;
+          }
+          function pageToView(page, nx, ny) {
+            if (page < 0 || page >= pageCount) return { x: 0, y: -1e6 };
+            var docY = offY[page] + ny * dispH[page];
+            return { x: contentLeft() + nx * pw(), y: BAR + docY - scrollY };
+          }
+          function inContent(x, y) { return y >= BAR && locate(x, y) !== null; }
+
+          // ---- 绘制 ----
           function drawAll() { drawBg(); drawInk(); }
           function drawBg() {
             bctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-            if (pageImg.complete && pageImg.naturalWidth) {
-              bctx.fillStyle = "#fff"; bctx.fillRect(0, BAR - scrollY, dispW, dispH);
-              bctx.drawImage(pageImg, 0, BAR - scrollY, dispW, dispH);
+            var cl = contentLeft(), p = pw();
+            for (var i = 0; i < pageCount; i++) {
+              var vy = BAR + offY[i] - scrollY;
+              if (vy + dispH[i] < BAR || vy > window.innerHeight) continue;
+              bctx.fillStyle = "#fff"; bctx.fillRect(cl, vy, p, dispH[i]);
+              var im = imgs[i];
+              if (im && im.complete && im.naturalWidth) bctx.drawImage(im, cl, vy, p, dispH[i]);
+              else { bctx.fillStyle = "#e9edf2"; bctx.fillRect(cl, vy, p, dispH[i]); loadImg(i); }
             }
           }
           function drawStroke(s) {
             var pts = s.pts; if (!pts.length) return;
-            var p0 = toView(pts[0][0], pts[0][1]);
+            var p0 = pageToView(s.page, pts[0][0], pts[0][1]);
             ictx.fillStyle = s.pen.color;
             ictx.beginPath(); ictx.arc(p0.x, p0.y, (0.6 + pts[0][2] * s.pen.w) / 2, 0, Math.PI * 2); ictx.fill();
             var lastMid = p0, lastPt = p0;
             for (var i = 1; i < pts.length; i++) {
-              var pv = toView(pts[i][0], pts[i][1]), pr = pts[i][2];
+              var pv = pageToView(s.page, pts[i][0], pts[i][1]), pr = pts[i][2];
               var mx = (lastPt.x + pv.x) / 2, my = (lastPt.y + pv.y) / 2;
               ictx.strokeStyle = s.pen.color; ictx.lineWidth = 0.6 + pr * s.pen.w;
               ictx.beginPath(); ictx.moveTo(lastMid.x, lastMid.y); ictx.quadraticCurveTo(lastPt.x, lastPt.y, mx, my); ictx.stroke();
@@ -138,7 +190,8 @@ enum CapturePage {
             if (cur) drawStroke(cur);
           }
 
-          // 实时增量落墨（视口坐标；一笔期间不滚动，故与存储一致）
+          // 实时增量落墨（视口坐标；一笔期间不缩放/不被程序滚动，故与存储一致）
+          var strokes = [], cur = null;
           var lastPt = null, lastMid = null;
           function liveBegin(x, y, p, pen) {
             lastPt = { x: x, y: y }; lastMid = { x: x, y: y };
@@ -156,78 +209,175 @@ enum CapturePage {
             for (var i = strokes.length - 1; i >= 0; i--) {
               var pts = strokes[i].pts;
               for (var j = 0; j < pts.length; j++) {
-                var pv = toView(pts[j][0], pts[j][1]);
+                var pv = pageToView(strokes[i].page, pts[j][0], pts[j][1]);
                 if ((pv.x - x) * (pv.x - x) + (pv.y - y) * (pv.y - y) <= r * r) { strokes.splice(i, 1); changed = true; break; }
               }
             }
             if (changed) drawInk();
           }
 
-          // ---- 指针：笔=画/翻页，手指=滚动 ----
-          var activeId = null, touchId = null, lastTouchY = 0, penSeen = false, batch = [], pageDragX = 0;
+          // ---- 平移 / 缩放 / 纵向锚点 ----
+          function panBy(dx, dy) {
+            scrollX = clamp(scrollX + dx, 0, maxScrollX);
+            scrollY = clamp(scrollY + dy, 0, maxScrollY);
+            ensureImages(); drawAll(); updatePageLabel(); emitScroll();
+          }
+          // 以视口点 (cx,cy) 为锚点缩放到 nz。
+          function zoomTo(nz, cx, cy) {
+            var p0 = pw();
+            var fx = p0 > 0 ? (cx - contentLeft()) / p0 : 0.5;
+            var fy = totalH > 0 ? (cy - BAR + scrollY) / totalH : 0;
+            zoom = clamp(nz, MINZ, MAXZ);
+            recompute();
+            scrollY = clamp(fy * totalH - (cy - BAR), 0, maxScrollY);
+            scrollX = pw() > vw ? clamp(fx * pw() - cx, 0, maxScrollX) : 0;
+            ensureImages(); drawAll(); updateHud(); emitScroll();
+          }
+          var reportPending = false;
+          function emitScroll() {
+            if (reportPending) return; reportPending = true;
+            requestAnimationFrame(function () {
+              reportPending = false;
+              var docY = scrollY;
+              for (var i = 0; i < pageCount; i++) {
+                if (docY <= offY[i] + dispH[i] + GAP) {
+                  send({ type: "scroll", page: i, frac: clamp((docY - offY[i]) / Math.max(1, dispH[i]), 0, 1) });
+                  return;
+                }
+              }
+            });
+          }
+          function topVisiblePage() {
+            for (var i = 0; i < pageCount; i++) if (scrollY <= offY[i] + dispH[i] + GAP) return i;
+            return Math.max(0, pageCount - 1);
+          }
+          function updatePageLabel() {
+            el("pageLabel").textContent = pageCount ? (topVisiblePage() + 1) + " / " + pageCount : "— / —";
+          }
+          function updateHud() {
+            var m = MODES[modeIdx];
+            el("mode").textContent = m.label + (m.key === "note" ? " · " + curPen().name : "");
+            el("swatch").style.background = m.key === "note" ? curPen().color : "transparent";
+            el("swatch").style.borderColor = m.key === "note" ? curPen().color : "#484f58";
+            el("zoomLabel").textContent = Math.round(zoom * 100) + "%";
+            updatePageLabel();
+          }
+          // 收到 Mac 视口 → 程序化滚到该(页,纵向比例)，不回发。
+          function applyViewport(o) {
+            if (activeId !== null) return;              // 正在写，忽略
+            if ((o.seq || 0) <= vpSeq) return; vpSeq = o.seq || 0;
+            var p = o.page || 0, f = o.frac || 0;
+            if (p >= pageCount) return;
+            scrollY = clamp(offY[p] + f * dispH[p], 0, maxScrollY);
+            ensureImages(); drawAll(); updatePageLabel();
+          }
+
+          // ---- 指针：笔=画/平移，手指=平移/双指缩放 ----
+          var activeId = null, penMode = "", penX = 0, penY = 0, batch = [], drawPage = 0;
+          var touches = {}, touchOrder = [], panId = null, lastPanX = 0, lastPanY = 0, pinch = null;
+
+          function beginPinch() {
+            var a = touches[touchOrder[0]], b = touches[touchOrder[1]];
+            pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z0: zoom };
+            panId = null;
+          }
 
           ink.addEventListener("pointerdown", function (e) {
             if (e.pointerType === "touch") {
               if (activeId !== null) { e.preventDefault(); return; }   // 笔在写 → 忽略手掌
-              touchId = e.pointerId; lastTouchY = e.clientY; e.preventDefault(); return;
+              touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+              if (touchOrder.indexOf(e.pointerId) < 0) touchOrder.push(e.pointerId);
+              if (touchOrder.length >= 2) beginPinch();
+              else { panId = e.pointerId; lastPanX = e.clientX; lastPanY = e.clientY; }
+              e.preventDefault(); return;
             }
-            penSeen = true;
+            // 笔
             var m = curMode();
-            if (m === "page") {
-              activeId = e.pointerId; try { ink.setPointerCapture(e.pointerId); } catch (x) {}
-              pageDragX = e.clientX; clearHover(); e.preventDefault(); return;
+            if (m === "page") {   // 翻页模式：笔拖动平移画面
+              activeId = e.pointerId; penMode = "page";
+              try { ink.setPointerCapture(e.pointerId); } catch (x) {}
+              penX = e.clientX; penY = e.clientY; clearHover(); e.preventDefault(); return;
             }
-            if (!inPage(e.clientX, e.clientY)) return;
-            activeId = e.pointerId; try { ink.setPointerCapture(e.pointerId); } catch (x) {}
+            var loc = locate(e.clientX, e.clientY);
+            if (!loc) return;
+            activeId = e.pointerId; penMode = m;
+            try { ink.setPointerCapture(e.pointerId); } catch (x) {}
             clearHover();
-            var n = toNorm(e.clientX, e.clientY);
             if (m === "note") {
-              cur = { pen: { color: curPen().color, w: curPen().w }, pts: [[n[0], n[1], e.pressure]] };
+              drawPage = loc.page;
+              cur = { page: loc.page, pen: { color: curPen().color, w: curPen().w }, pts: [[loc.nx, loc.ny, e.pressure]] };
               liveBegin(e.clientX, e.clientY, e.pressure, cur.pen);
-              send({ type: "ink", phase: "begin", page: pageIndex, pen: cur.pen, pts: [[n[0], n[1], e.pressure]] });
+              send({ type: "ink", phase: "begin", page: loc.page, pen: cur.pen, pts: [[loc.nx, loc.ny, e.pressure]] });
             } else if (m === "erase") {
-              eraseHit(e.clientX, e.clientY); batch.push([n[0], n[1]]);
+              eraseHit(e.clientX, e.clientY); batch.push([loc.nx, loc.ny]);
             }
             e.preventDefault();
           }, { passive: false });
 
           ink.addEventListener("pointermove", function (e) {
-            if (e.pointerId === touchId) {
-              scrollY = Math.min(Math.max(0, scrollY + (lastTouchY - e.clientY)), maxScroll);
-              lastTouchY = e.clientY; drawAll(); e.preventDefault(); return;
+            if (e.pointerType === "touch") {
+              if (!(e.pointerId in touches)) return;
+              touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+              if (pinch && touchOrder.length >= 2) {
+                var a = touches[touchOrder[0]], b = touches[touchOrder[1]];
+                var d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+                zoomTo(pinch.z0 * d / pinch.d, (a.x + b.x) / 2, (a.y + b.y) / 2);
+              } else if (e.pointerId === panId) {
+                panBy(lastPanX - e.clientX, lastPanY - e.clientY);
+                lastPanX = e.clientX; lastPanY = e.clientY;
+              }
+              e.preventDefault(); return;
             }
+            // 笔
             if (e.pointerId !== activeId) {
-              if (e.pointerType !== "touch" && e.buttons === 0 && curMode() !== "page" && inPage(e.clientX, e.clientY))
+              if (e.buttons === 0 && curMode() !== "page" && inContent(e.clientX, e.clientY))
                 drawHover(e.clientX, e.clientY);
               return;
             }
-            var m = curMode();
-            if (m === "page") { e.preventDefault(); return; }
+            if (penMode === "page") {   // 笔拖动平移
+              panBy(penX - e.clientX, penY - e.clientY);
+              penX = e.clientX; penY = e.clientY; e.preventDefault(); return;
+            }
             var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
             if (!evs.length) evs = [e];
             for (var i = 0; i < evs.length; i++) {
-              var ev = evs[i], n = toNorm(ev.clientX, ev.clientY);
-              if (m === "note") { liveTo(ev.clientX, ev.clientY, ev.pressure, cur.pen); cur.pts.push([n[0], n[1], ev.pressure]); batch.push([n[0], n[1], ev.pressure]); }
-              else if (m === "erase") { eraseHit(ev.clientX, ev.clientY); batch.push([n[0], n[1]]); }
+              var ev = evs[i], loc = locate(ev.clientX, ev.clientY);
+              if (penMode === "note") {
+                liveTo(ev.clientX, ev.clientY, ev.pressure, cur.pen);
+                var nx = loc ? loc.nx : clamp((ev.clientX - contentLeft()) / pw(), 0, 1);
+                var ny = loc && loc.page === drawPage ? loc.ny
+                       : clamp((ev.clientY - BAR + scrollY - offY[drawPage]) / Math.max(1, dispH[drawPage]), 0, 1);
+                cur.pts.push([nx, ny, ev.pressure]); batch.push([nx, ny, ev.pressure]);
+              } else if (penMode === "erase") {
+                eraseHit(ev.clientX, ev.clientY);
+                if (loc) batch.push([loc.nx, loc.ny]);
+              }
             }
             e.preventDefault();
           }, { passive: false });
 
-          function endPointer(e) {
-            if (e.pointerId === touchId) { touchId = null; return; }
-            if (e.pointerId !== activeId) return;
-            var m = curMode();
-            if (m === "page") {
-              var dx = e.clientX - pageDragX;
-              if (Math.abs(dx) > 60) turn(dx < 0 ? "next" : "prev");
-              activeId = null; return;
+          function endTouch(id) {
+            if (!(id in touches)) return;
+            delete touches[id];
+            var k = touchOrder.indexOf(id); if (k >= 0) touchOrder.splice(k, 1);
+            pinch = null;
+            if (touchOrder.length === 1) {   // 回到单指平移
+              panId = touchOrder[0]; var t = touches[panId]; lastPanX = t.x; lastPanY = t.y;
+            } else if (touchOrder.length === 0) {
+              panId = null;
+            } else if (touchOrder.length >= 2) {
+              beginPinch();
             }
-            if (m === "note") { if (cur) { strokes.push(cur); cur = null; } flushBatch("ink"); send({ type: "ink", phase: "end" }); }
-            else if (m === "erase") { flushBatch("erase"); send({ type: "erase", phase: "end" }); }
-            activeId = null; lastPt = null; lastMid = null;
           }
-          ink.addEventListener("pointerup", endPointer);
-          ink.addEventListener("pointercancel", endPointer);
+          function endPen(e) {
+            if (e.pointerId !== activeId) return;
+            if (penMode === "note") { if (cur) { strokes.push(cur); cur = null; } flushBatch("ink"); send({ type: "ink", phase: "end" }); }
+            else if (penMode === "erase") { flushBatch("erase"); send({ type: "erase", phase: "end" }); }
+            activeId = null; penMode = ""; lastPt = null; lastMid = null;
+          }
+          function onUp(e) { if (e.pointerType === "touch") endTouch(e.pointerId); else endPen(e); }
+          ink.addEventListener("pointerup", onUp);
+          ink.addEventListener("pointercancel", onUp);
           ink.addEventListener("pointerleave", function (e) { if (e.pointerType !== "touch") clearHover(); });
 
           function flushBatch(kind) {
@@ -235,7 +385,7 @@ enum CapturePage {
             send({ type: kind, phase: "move", pts: batch });
             batch = [];
           }
-          function tick() { if (activeId !== null && batch.length) flushBatch(curMode() === "erase" ? "erase" : "ink"); requestAnimationFrame(tick); }
+          function tick() { if (activeId !== null && batch.length) flushBatch(penMode === "erase" ? "erase" : "ink"); requestAnimationFrame(tick); }
           requestAnimationFrame(tick);
 
           // ---- 悬停 ----
@@ -247,13 +397,7 @@ enum CapturePage {
           }
           function clearHover() { hctx.clearRect(0, 0, window.innerWidth, window.innerHeight); }
 
-          function updateHud() {
-            var m = MODES[modeIdx];
-            el("mode").textContent = m.label + (m.key === "note" ? " · " + curPen().name : "");
-            el("swatch").style.background = m.key === "note" ? curPen().color : "transparent";
-            el("swatch").style.borderColor = m.key === "note" ? curPen().color : "#484f58";
-          }
-          function cycleMode() { modeIdx = (modeIdx + 1) % MODES.length; activeId = null; clearHover(); updateHud(); send({ type: "mode", mode: curMode() }); }
+          function cycleMode() { modeIdx = (modeIdx + 1) % MODES.length; activeId = null; penMode = ""; clearHover(); updateHud(); send({ type: "mode", mode: curMode() }); }
           function cyclePen() { penIdx = (penIdx + 1) % PENS.length; modeIdx = 0; updateHud(); }
           window.addEventListener("keydown", function (e) {
             if (e.repeat) return;
@@ -295,16 +439,17 @@ enum CapturePage {
           function onMsg(o) {
             if (o.type === "authOK") { el("dot").className = "on"; startPing(); }
             else if (o.type === "pong") { var rtt = Date.now() - (o.t || 0); el("lat").textContent = rtt + " ms"; send({ type: "latency", ms: rtt }); }
-            else if (o.type === "page") { setPage(o); }
+            else if (o.type === "layout") { setLayout(o); }
+            else if (o.type === "viewport") { applyViewport(o); }
             else if (o.type === "docs") { setDocs(o); }
+            // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
           }
-          function setPage(o) {
-            pageIndex = o.index || 0; pageCount = o.count || 0;
-            pageW = o.w || 1; pageH = o.h || 1.4142;
-            el("pageLabel").textContent = pageCount ? (pageIndex + 1) + " / " + pageCount : "— / —";
-            strokes = []; cur = null; scrollY = 0;
-            if (o.count) pageImg.src = "/page.png?token=" + TOKEN + "&v=" + (o.v || 0);
-            layout();
+          function setLayout(o) {
+            var v = (o.v || o.docId || "");
+            var changed = v !== docV;
+            docV = v; pageCount = o.count || 0; pagesWH = o.pages || [];
+            if (changed) { strokes = []; cur = null; imgs = {}; scrollX = 0; scrollY = 0; zoom = 1; vpSeq = 0; }
+            relayout();
           }
           function setDocs(o) {
             var sel = el("docs"); sel.innerHTML = "";
@@ -314,13 +459,18 @@ enum CapturePage {
             });
             sel.value = o.following ? "" : (o.selected || "");
           }
-          function turn(dir) { send({ type: "pageTurn", dir: dir }); }
+          // 翻页按钮：滚到相邻页顶部（并上报，Mac 跟随）。
+          function turn(dir) {
+            var i = clamp(topVisiblePage() + (dir === "prev" ? -1 : 1), 0, Math.max(0, pageCount - 1));
+            scrollY = clamp(offY[i], 0, maxScrollY);
+            ensureImages(); drawAll(); updatePageLabel(); emitScroll();
+          }
           el("prev").onclick = function () { turn("prev"); };
           el("next").onclick = function () { turn("next"); };
           el("docs").addEventListener("change", function () { send({ type: "selectDoc", id: el("docs").value }); });
           window.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
-          updateHud(); layout(); connect();
+          updateHud(); relayout(); connect();
         })();
         </script>
         </body>

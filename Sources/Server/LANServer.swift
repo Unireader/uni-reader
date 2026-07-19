@@ -22,6 +22,10 @@ final class LANServer: ObservableObject {
 
     /// 收到平板已鉴权消息（如手写笔画）的回调，在主线程调用。
     var onMessage: (([String: Any]) -> Void)?
+    /// 按页号渲染 PNG（方案 B：平板按需取任意页图）。在服务 queue 上调用，须自带缓存/线程安全。
+    var pageProvider: ((Int) -> Data?)?
+    /// 平板上报滚动锚点（页 + 页内归一化比例），在主线程调用。
+    var onScroll: ((Int, Double) -> Void)?
 
     private let queue = DispatchQueue(label: "com.xvan.UniReader.lan")
     private var httpListener: NWListener?
@@ -108,8 +112,8 @@ final class LANServer: ObservableObject {
                   let request = String(data: data, encoding: .utf8) else {
                 conn.cancel(); return
             }
-            let path = LANServer.requestPath(request)
-            let (status, contentType, body) = self.route(path)
+            let target = LANServer.requestTarget(request)
+            let (status, contentType, body) = self.route(target)
             var head = "HTTP/1.1 \(status)\r\n"
             head += "Content-Type: \(contentType)\r\n"
             head += "Content-Length: \(body.count)\r\n"
@@ -120,13 +124,21 @@ final class LANServer: ObservableObject {
         }
     }
 
-    /// 在 queue 上调用（读 pagePNG）。
-    private func route(_ path: String) -> (String, String, Data) {
+    /// 在 queue 上调用（读 pagePNG / 调 pageProvider）。`target` 含 query。
+    private func route(_ target: String) -> (String, String, Data) {
+        let (path, query) = LANServer.splitQuery(target)
         switch path {
         case "/", "/index.html":
             let html = CapturePage.html(token: token, wsPort: wsPort)
             return ("200 OK", "text/html; charset=utf-8", Data(html.utf8))
         case "/page.png":
+            // 方案 B：`?i=N` 按页号取图；无 i 时回退当前页（兼容旧采集页）。
+            if let iStr = query["i"], let idx = Int(iStr) {
+                if let png = pageProvider?(idx), !png.isEmpty {
+                    return ("200 OK", "image/png", png)
+                }
+                return ("404 Not Found", "text/plain; charset=utf-8", Data("no page".utf8))
+            }
             if pagePNG.isEmpty {
                 return ("404 Not Found", "text/plain; charset=utf-8", Data("no page".utf8))
             }
@@ -138,13 +150,24 @@ final class LANServer: ObservableObject {
         }
     }
 
-    private static func requestPath(_ request: String) -> String {
+    /// 取请求行的目标（含 query），例如 `/page.png?i=3&v=abc`。
+    private static func requestTarget(_ request: String) -> String {
         guard let line = request.split(separator: "\r\n").first else { return "/" }
         let parts = line.split(separator: " ")
         guard parts.count >= 2 else { return "/" }
-        var p = String(parts[1])
-        if let q = p.firstIndex(of: "?") { p = String(p[..<q]) }
-        return p
+        return String(parts[1])
+    }
+
+    /// 拆分 path 与 query 键值。
+    private static func splitQuery(_ target: String) -> (String, [String: String]) {
+        guard let q = target.firstIndex(of: "?") else { return (target, [:]) }
+        let path = String(target[..<q])
+        var dict: [String: String] = [:]
+        for pair in target[target.index(after: q)...].split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            if kv.count == 2 { dict[String(kv[0])] = String(kv[1]) }
+        }
+        return (path, dict)
     }
 
     // MARK: - WebSocket
@@ -224,6 +247,12 @@ final class LANServer: ObservableObject {
             let n = (dir == "prev") ? currentPageIndex - 1 : currentPageIndex + 1
             let clamped = max(0, min(n, max(0, pageCount - 1)))
             DispatchQueue.main.async { self.requestedPageIndex = clamped }
+        case "scroll":
+            // 方案 B：平板本地滚动 → 上报锚点（页 + 页内归一化比例）。
+            let page = (obj["page"] as? NSNumber)?.intValue ?? currentPageIndex
+            let frac = (obj["frac"] as? NSNumber)?.doubleValue ?? 0
+            DispatchQueue.main.async { self.onScroll?(page, frac) }
+            return true
         default:
             break
         }

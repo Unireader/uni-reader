@@ -70,6 +70,7 @@ struct ContentView: View {
         }
         .onChange(of: selectedDocument) { _, doc in loadSelected(doc) }
         .onChange(of: session.currentPageIndex) { _, _ in app.sessionChanged(session) }
+        .onChange(of: session.scrollAnchor) { _, _ in app.macScrolled(session) }
         .onAppear { app.register(session) }
         .onDisappear { app.unregister(session) }
         .onReceive(NotificationCenter.default.publisher(for: .openPDFRequested)) { _ in

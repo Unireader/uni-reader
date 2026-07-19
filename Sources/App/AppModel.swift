@@ -45,6 +45,47 @@ final class AppModel: ObservableObject {
 
         // 平板手写/擦除消息 → 应用到平板当前会话。
         server.onMessage = { [weak self] obj in self?.handleInk(obj) }
+
+        // 方案 B：平板按需取任意页图（带缓存，服务 queue 上调用）。
+        server.pageProvider = { [weak self] idx in self?.renderPage(idx) }
+
+        // 方案 B：平板本地滚动 → 落为平板当前会话的锚点（origin=pad），驱动 Mac PDFView 跟随。
+        server.onScroll = { [weak self] page, frac in
+            guard let self, let s = self.padSession else { return }
+            s.emitAnchor(page: page, frac: frac, origin: "pad")
+        }
+    }
+
+    // MARK: - 方案 B：按页渲染缓存
+
+    private let renderLock = NSLock()
+    private var padRenderPDF: PDFDocument?
+    private var padRenderKey = ""              // = 文档 contentHash，作缓存/版本键
+    private let pageCache = NSCache<NSString, NSData>()
+
+    /// 更新按页渲染的文档源；文档变（key 变）时清空页图缓存。主线程调用。
+    private func setPadRender(pdf: PDFDocument, key: String) {
+        renderLock.lock(); defer { renderLock.unlock() }
+        if padRenderKey != key {
+            pageCache.removeAllObjects()
+            padRenderKey = key
+        }
+        padRenderPDF = pdf
+    }
+
+    /// 渲染平板当前会话的第 idx 页（缓存命中直接返回）。服务 queue 上调用。
+    func renderPage(_ idx: Int) -> Data? {
+        renderLock.lock()
+        let pdf = padRenderPDF
+        let key = padRenderKey
+        let ck = "\(key)#\(idx)" as NSString
+        if let cached = pageCache.object(forKey: ck) { renderLock.unlock(); return cached as Data }
+        renderLock.unlock()
+
+        guard let pdf, idx >= 0, idx < pdf.pageCount, let page = pdf.page(at: idx),
+              let png = PageRenderer.png(page: page, maxWidth: 1600) else { return nil }
+        renderLock.lock(); pageCache.setObject(png as NSData, forKey: ck); renderLock.unlock()
+        return png
     }
 
     // MARK: - 手写路由
@@ -176,6 +217,7 @@ final class AppModel: ObservableObject {
     func push() {
         guard server.isRunning, let s = padSession, let pdf = s.pdf,
               let page = pdf.page(at: s.currentPageIndex) else { return }
+        setPadRender(pdf: pdf, key: s.contentHash)   // 方案 B：更新按页渲染源
         let b = page.bounds(for: .mediaBox)
         let png = PageRenderer.png(page: page, maxWidth: 1600) ?? Data()
         server.setPage(index: s.currentPageIndex,
@@ -183,5 +225,33 @@ final class AppModel: ObservableObject {
                        width: Double(b.width),
                        height: Double(b.height),
                        png: png)
+        pushLayout()
+    }
+
+    // MARK: - 方案 B：布局与视口
+
+    /// 推平板当前会话的文档布局（每页原始宽高），平板据此本地组 fit-width 连续列。
+    func pushLayout() {
+        guard server.isRunning, let s = padSession, let pdf = s.pdf else { return }
+        var pages: [[Double]] = []
+        pages.reserveCapacity(pdf.pageCount)
+        for i in 0..<pdf.pageCount {
+            let b = pdf.page(at: i)?.bounds(for: .mediaBox) ?? .zero
+            pages.append([Double(b.width), Double(b.height)])
+        }
+        server.broadcast([
+            "type": "layout",
+            "docId": s.contentHash,
+            "v": s.contentHash,
+            "count": pdf.pageCount,
+            "pages": pages
+        ])
+    }
+
+    /// Mac 用户滚动 → 广播视口锚点给平板（origin=mac 才发，避免与平板回传成环）。
+    func macScrolled(_ s: DocSession) {
+        guard server.isRunning, s.id == padSession?.id,
+              let a = s.scrollAnchor, a.origin == "mac" else { return }
+        server.broadcast(["type": "viewport", "page": a.page, "frac": a.frac, "seq": a.seq])
     }
 }
