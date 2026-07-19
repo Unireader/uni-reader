@@ -57,6 +57,7 @@ enum CapturePage {
           <span id="pageLabel">— / —</span>
           <button id="prev">‹</button>
           <button id="next">›</button>
+          <button id="eye" title="显示/隐藏页面">👁</button>
           <button id="lock" title="锁定缩放">🔓</button>
           <button id="full">⛶</button>
         </div>
@@ -125,7 +126,7 @@ enum CapturePage {
 
           // ---- 按需取图（可见 + 上下各一屏预取）----
           function ensureImages() {
-            if (!pageCount) return;
+            if (!pageCount || !showPage) return;
             var top = scrollY - availH, bot = scrollY + availH * 2;
             for (var i = 0; i < pageCount; i++) {
               if (offY[i] + dispH[i] >= top && offY[i] <= bot) loadImg(i);
@@ -166,6 +167,7 @@ enum CapturePage {
               var vy = BAR + offY[i] - scrollY;
               if (vy + dispH[i] < BAR || vy > window.innerHeight) continue;
               bctx.fillStyle = "#fff"; bctx.fillRect(cl, vy, p, dispH[i]);
+              if (!showPage) continue;   // 手写板模式：仅白底，不取图
               var im = imgs[i];
               if (im && im.complete && im.naturalWidth) bctx.drawImage(im, cl, vy, p, dispH[i]);
               else { bctx.fillStyle = "#e9edf2"; bctx.fillRect(cl, vy, p, dispH[i]); loadImg(i); }
@@ -286,6 +288,7 @@ enum CapturePage {
           var activeId = null, penMode = "", penX = 0, penY = 0, batch = [], drawPage = 0;
           var touches = {}, touchOrder = [], panId = null, lastPanX = 0, lastPanY = 0, pinch = null;
           var zoomLocked = false;
+          var showPage = true;                                    // false = 纯手写板（不取图、只白底）
           var panDownX = 0, panDownY = 0, panStarted = false;   // 单指平移死区
           var PALM = 60, DEAD = 8;                                // 手掌接触阈值(px)、平移死区(px)
           var vx = 0, vy = 0, lastMoveT = 0, momentumRAF = null;  // 惯性滚动（速度单位: scroll px/ms）
@@ -524,6 +527,7 @@ enum CapturePage {
           el("prev").onclick = function () { turn("prev"); };
           el("next").onclick = function () { turn("next"); };
           el("lock").onclick = function () { zoomLocked = !zoomLocked; el("lock").textContent = zoomLocked ? "🔒" : "🔓"; };
+          el("eye").onclick = function () { showPage = !showPage; el("eye").textContent = showPage ? "👁" : "🚫"; if (showPage) ensureImages(); drawAll(); };
           el("docs").addEventListener("change", function () { send({ type: "selectDoc", id: el("docs").value }); });
           window.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
