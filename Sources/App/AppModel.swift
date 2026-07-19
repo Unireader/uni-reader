@@ -108,6 +108,15 @@ final class AppModel: ObservableObject {
             }
         case "erase":
             if obj["phase"] as? String == "move" { inkErase(points(obj["pts"])) }
+        case "hover":
+            if (obj["phase"] as? String) == "end" {
+                s.hover = nil
+            } else {
+                let page = (obj["page"] as? NSNumber)?.intValue ?? s.currentPageIndex
+                let nx = (obj["nx"] as? NSNumber)?.doubleValue ?? 0
+                let ny = (obj["ny"] as? NSNumber)?.doubleValue ?? 0
+                s.hover = HoverPoint(page: page, nx: nx, ny: ny)
+            }
         default:
             break
         }

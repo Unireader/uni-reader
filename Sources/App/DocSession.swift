@@ -9,6 +9,13 @@ struct ScrollAnchor: Equatable {
     var origin: String   // "sim" | "mac" | "pad"
 }
 
+/// 平板笔悬停位置（页 + 页内归一化坐标，左上原点）。Mac 在 PDF 上叠加笔尖圆环；离开近场为 nil。
+struct HoverPoint: Equatable {
+    var page: Int
+    var nx: Double
+    var ny: Double
+}
+
 /// 一个打开中的 PDF 窗口的运行时状态。每个 reader 窗口一个。
 final class DocSession: ObservableObject, Identifiable {
     let id = UUID()
@@ -20,6 +27,9 @@ final class DocSession: ObservableObject, Identifiable {
     // 实时手写：已完成笔画 + 正在书写的一笔。
     @Published var strokes: [InkStroke] = []
     @Published var liveStroke: InkStroke?
+
+    // 平板笔悬停位置（nil = 无悬停 / 已落笔）。
+    @Published var hover: HoverPoint?
 
     // 滚动锚点（跨视口同步）。
     @Published var scrollAnchor: ScrollAnchor?

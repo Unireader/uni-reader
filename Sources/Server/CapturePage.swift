@@ -296,13 +296,13 @@ enum CapturePage {
             if (m === "page") {   // 翻页模式：笔拖动平移画面
               activeId = e.pointerId; penMode = "page";
               try { ink.setPointerCapture(e.pointerId); } catch (x) {}
-              penX = e.clientX; penY = e.clientY; clearHover(); e.preventDefault(); return;
+              penX = e.clientX; penY = e.clientY; endHover(); e.preventDefault(); return;
             }
             var loc = locate(e.clientX, e.clientY);
             if (!loc) return;
             activeId = e.pointerId; penMode = m;
             try { ink.setPointerCapture(e.pointerId); } catch (x) {}
-            clearHover();
+            endHover();
             if (m === "note") {
               drawPage = loc.page;
               cur = { page: loc.page, pen: { color: curPen().color, w: curPen().w }, pts: [[loc.nx, loc.ny, e.pressure]] };
@@ -330,8 +330,11 @@ enum CapturePage {
             }
             // 笔
             if (e.pointerId !== activeId) {
-              if (e.buttons === 0 && curMode() !== "page" && inContent(e.clientX, e.clientY))
+              if (e.buttons === 0 && curMode() !== "page" && inContent(e.clientX, e.clientY)) {
                 drawHover(e.clientX, e.clientY);
+                var hl = locate(e.clientX, e.clientY);
+                if (hl) reportHover(hl.page, hl.nx, hl.ny);
+              } else if (e.buttons === 0) endHover();
               return;
             }
             if (penMode === "page") {   // 笔拖动平移
@@ -378,7 +381,7 @@ enum CapturePage {
           function onUp(e) { if (e.pointerType === "touch") endTouch(e.pointerId); else endPen(e); }
           ink.addEventListener("pointerup", onUp);
           ink.addEventListener("pointercancel", onUp);
-          ink.addEventListener("pointerleave", function (e) { if (e.pointerType !== "touch") clearHover(); });
+          ink.addEventListener("pointerleave", function (e) { if (e.pointerType !== "touch") endHover(); });
 
           function flushBatch(kind) {
             if (!batch.length) return;
@@ -396,8 +399,16 @@ enum CapturePage {
             hctx.strokeStyle = curMode() === "erase" ? "#f0883e" : "#58a6ff"; hctx.lineWidth = 2; hctx.stroke();
           }
           function clearHover() { hctx.clearRect(0, 0, window.innerWidth, window.innerHeight); }
+          // 悬停上报 Mac（rAF 节流）；endHover 清本地圆环并通知 Mac 隐藏。
+          var hoverPending = false, hoverMsg = null, hoverOn = false;
+          function reportHover(page, nx, ny) {
+            hoverOn = true; hoverMsg = { type: "hover", page: page, nx: nx, ny: ny };
+            if (hoverPending) return; hoverPending = true;
+            requestAnimationFrame(function () { hoverPending = false; if (hoverMsg) { send(hoverMsg); hoverMsg = null; } });
+          }
+          function endHover() { if (!hoverOn) return; hoverOn = false; clearHover(); send({ type: "hover", phase: "end" }); }
 
-          function cycleMode() { modeIdx = (modeIdx + 1) % MODES.length; activeId = null; penMode = ""; clearHover(); updateHud(); send({ type: "mode", mode: curMode() }); }
+          function cycleMode() { modeIdx = (modeIdx + 1) % MODES.length; activeId = null; penMode = ""; endHover(); updateHud(); send({ type: "mode", mode: curMode() }); }
           function cyclePen() { penIdx = (penIdx + 1) % PENS.length; modeIdx = 0; updateHud(); }
           window.addEventListener("keydown", function (e) {
             if (e.repeat) return;

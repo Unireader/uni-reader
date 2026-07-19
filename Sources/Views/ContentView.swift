@@ -84,6 +84,7 @@ struct ContentView: View {
             PDFKitView(
                 session: session,
                 scrollAnchor: session.scrollAnchor,
+                hover: session.hover,
                 inkTick: session.strokes.count &+ (session.liveStroke?.points.count ?? 0)
             )
             .overlay(alignment: .top) { if isHashing { indexingBadge } }

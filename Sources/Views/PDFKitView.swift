@@ -12,6 +12,7 @@ import AppKit
 struct PDFKitView: NSViewRepresentable {
     let session: DocSession
     let scrollAnchor: ScrollAnchor?   // 存储属性：锚点变化才让 SwiftUI 认为视图值变了，从而调用 updateNSView
+    let hover: HoverPoint?            // 平板笔悬停位置
     let inkTick: Int                  // 笔迹变化触发重绘
 
     func makeCoordinator() -> Coordinator { Coordinator(session: session) }
@@ -35,6 +36,7 @@ struct PDFKitView: NSViewRepresentable {
 
         container.overlay.strokes = session.strokes
         container.overlay.liveStroke = session.liveStroke
+        container.overlay.hover = hover
         container.overlay.needsDisplay = true
 
         if let a = scrollAnchor, a.origin != "mac", a.seq > coord.lastAppliedAnchorSeq {

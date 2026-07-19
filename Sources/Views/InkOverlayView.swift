@@ -8,6 +8,7 @@ final class InkOverlayView: NSView {
     weak var pdfView: PDFView?
     var strokes: [InkStroke] = []
     var liveStroke: InkStroke?
+    var hover: HoverPoint?
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override var isOpaque: Bool { false }
@@ -42,6 +43,20 @@ final class InkOverlayView: NSView {
         let scale = pdfView.scaleFactor
         for st in strokes { drawStroke(st, doc: doc, pdfView: pdfView, ctx: ctx, scale: scale) }
         if let live = liveStroke { drawStroke(live, doc: doc, pdfView: pdfView, ctx: ctx, scale: scale) }
+        drawHover(doc: doc, pdfView: pdfView, ctx: ctx)
+    }
+
+    /// 平板笔悬停指示：在页面归一化坐标处画笔尖圆环（随缩放/滚动对齐）。
+    private func drawHover(doc: PDFDocument, pdfView: PDFView, ctx: CGContext) {
+        guard let h = hover, let page = doc.page(at: h.page) else { return }
+        let b = page.bounds(for: .mediaBox)
+        let px = b.minX + CGFloat(h.nx) * b.width
+        let py = b.minY + CGFloat(1 - h.ny) * b.height
+        let v = pdfView.convert(CGPoint(x: px, y: py), from: page)
+        let r: CGFloat = 9
+        ctx.setStrokeColor(NSColor.systemBlue.withAlphaComponent(0.9).cgColor)
+        ctx.setLineWidth(2)
+        ctx.strokeEllipse(in: CGRect(x: v.x - r, y: v.y - r, width: r * 2, height: r * 2))
     }
 
     private func drawStroke(_ st: InkStroke, doc: PDFDocument, pdfView: PDFView,
