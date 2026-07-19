@@ -322,7 +322,8 @@ enum CapturePage {
             if (m === "page") {   // 翻页模式：笔拖动平移画面
               activeId = e.pointerId; penMode = "page";
               try { ink.setPointerCapture(e.pointerId); } catch (x) {}
-              penX = e.clientX; penY = e.clientY; endHover(); e.preventDefault(); return;
+              penX = e.clientX; penY = e.clientY; vx = 0; vy = 0; lastMoveT = performance.now();
+              endHover(); e.preventDefault(); return;
             }
             var loc = locate(e.clientX, e.clientY);
             if (!loc) return;
@@ -376,8 +377,11 @@ enum CapturePage {
               } else if (e.buttons === 0) endHover();
               return;
             }
-            if (penMode === "page") {   // 笔拖动平移
-              panBy(penX - e.clientX, penY - e.clientY);
+            if (penMode === "page") {   // 笔拖动平移（记录速度供松手惯性）
+              var dxp = penX - e.clientX, dyp = penY - e.clientY;
+              var nowp = performance.now(), dtp = nowp - lastMoveT; lastMoveT = nowp;
+              if (dtp > 0 && dtp < 100) { vx = 0.7 * vx + 0.3 * (dxp / dtp); vy = 0.7 * vy + 0.3 * (dyp / dtp); }
+              panBy(dxp, dyp);
               penX = e.clientX; penY = e.clientY; e.preventDefault(); return;
             }
             var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -417,6 +421,7 @@ enum CapturePage {
             if (e.pointerId !== activeId) return;
             if (penMode === "note") { if (cur) { strokes.push(cur); cur = null; } flushBatch("ink"); send({ type: "ink", phase: "end" }); }
             else if (penMode === "erase") { flushBatch("erase"); send({ type: "erase", phase: "end" }); }
+            else if (penMode === "page") { startMomentum(); }   // 笔翻页拖动松手 → 惯性
             activeId = null; penMode = ""; lastPt = null; lastMid = null;
           }
           function onUp(e) { if (e.pointerType === "touch") endTouch(e.pointerId); else endPen(e); }
