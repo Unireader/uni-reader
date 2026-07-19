@@ -49,6 +49,7 @@
           <span id="pageLabel">— / —</span>
           <button id="prev">‹</button>
           <button id="next">›</button>
+          <button id="night" title="夜间模式">🌙</button>
           <button id="eye" title="显示/隐藏页面">👁</button>
           <button id="lock" title="锁定缩放">🔓</button>
           <button id="full">⛶</button>
@@ -539,6 +540,12 @@
           el("next").onclick = function () { turn("next"); };
           el("lock").onclick = function () { zoomLocked = !zoomLocked; el("lock").textContent = zoomLocked ? "🔒" : "🔓"; };
           el("eye").onclick = function () { showPage = !showPage; el("eye").textContent = showPage ? "👁" : "🚫"; if (showPage) ensureImages(); drawAll(); };
+          // 夜间模式：仅反转背景页图 canvas（invert 反亮度、hue-rotate 复原彩色）；墨迹/圆环不反。
+          el("night").onclick = function () {
+            var on = !bg.style.filter;
+            bg.style.filter = on ? "invert(1) hue-rotate(180deg)" : "";
+            el("night").textContent = on ? "☀️" : "🌙";
+          };
           el("docs").addEventListener("change", function () { send({ type: "selectDoc", id: el("docs").value }); });
           el("lat").addEventListener("click", function () { statsOn = !statsOn; el("stats").className = statsOn ? "on" : ""; });
           window.addEventListener("contextmenu", function (e) { e.preventDefault(); });

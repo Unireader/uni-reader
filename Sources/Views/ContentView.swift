@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var showServer = false
     @State private var isKeyWindow = false
     @State private var showNotes = false
+    @AppStorage("nightMode") private var nightMode = false
 
     var body: some View {
         NavigationSplitView {
@@ -36,6 +37,13 @@ struct ContentView: View {
                             openPDF()
                         } label: {
                             Label(L("Open PDF…"), systemImage: "plus")
+                        }
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            nightMode.toggle()
+                        } label: {
+                            Label(L("Night Mode"), systemImage: nightMode ? "sun.max.fill" : "moon.fill")
                         }
                     }
                     ToolbarItem(placement: .automatic) {
@@ -85,6 +93,7 @@ struct ContentView: View {
                 session: session,
                 scrollAnchor: session.scrollAnchor,
                 hover: session.hover,
+                nightMode: nightMode,
                 inkTick: session.strokes.count &+ (session.liveStroke?.points.count ?? 0)
             )
             .overlay(alignment: .top) { if isHashing { indexingBadge } }

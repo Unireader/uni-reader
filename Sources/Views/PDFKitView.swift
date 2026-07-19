@@ -2,6 +2,7 @@ import SwiftUI
 import PDFKit
 import AppKit
 import QuartzCore
+import CoreImage
 
 /// 原生 PDFKit 阅读视图（复刻 Preview.app）：连续滚动 + 页阴影 + 自动铺适宽度，
 /// 缩放/选择/翻页全用系统内置行为，**不自绘任何动态布局**。
@@ -14,6 +15,7 @@ struct PDFKitView: NSViewRepresentable {
     let session: DocSession
     let scrollAnchor: ScrollAnchor?   // 存储属性：锚点变化才让 SwiftUI 认为视图值变了，从而调用 updateNSView
     let hover: HoverPoint?            // 平板笔悬停位置
+    let nightMode: Bool               // 夜间模式：PDF 反转滤镜
     let inkTick: Int                  // 笔迹变化触发重绘
 
     func makeCoordinator() -> Coordinator { Coordinator(session: session) }
@@ -40,6 +42,7 @@ struct PDFKitView: NSViewRepresentable {
         container.overlay.liveStroke = session.liveStroke
         container.overlay.hover = hover
         container.overlay.needsDisplay = true
+        applyNight(pdfView)
 
         if let a = scrollAnchor, a.origin != "mac", a.seq > coord.lastAppliedAnchorSeq {
             coord.lastAppliedAnchorSeq = a.seq
@@ -55,6 +58,17 @@ struct PDFKitView: NSViewRepresentable {
         pdfView.pageShadowsEnabled = true
         pdfView.autoScales = true
         pdfView.backgroundColor = .clear
+    }
+
+    /// 夜间模式：给 PDFView 图层挂 Core Image 反转滤镜（反亮度 + 复原色相）；上层墨迹覆盖层不受影响。
+    private func applyNight(_ v: PDFView) {
+        v.wantsLayer = true
+        v.layerUsesCoreImageFilters = true
+        guard nightMode else { v.layer?.filters = nil; return }
+        var filters: [CIFilter] = []
+        if let inv = CIFilter(name: "CIColorInvert") { filters.append(inv) }
+        if let hue = CIFilter(name: "CIHueAdjust") { hue.setValue(Double.pi, forKey: "inputAngle"); filters.append(hue) }
+        v.layer?.filters = filters
     }
 
     // MARK: - Coordinator
