@@ -330,7 +330,7 @@ enum CapturePage {
                 // 固定锚点比例始终跟随当前中点 → 缩放与双指整体移动都跟手、不漂移
                 scrollY = clamp(pinch.fy * totalH - (my - BAR), 0, maxScrollY);
                 scrollX = pw() > vw ? clamp(pinch.fx * pw() - mx, 0, maxScrollX) : 0;
-                ensureImages(); drawAll(); updateHud(); emitScroll();
+                ensureImages(); drawAll(); updateHud();   // 缩放/双指为本地查看，不上报，避免回环
               } else if (e.pointerId === panId) {
                 if (!panStarted) {
                   if (Math.hypot(e.clientX - panDownX, e.clientY - panDownY) < DEAD) { e.preventDefault(); return; }

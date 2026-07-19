@@ -33,7 +33,7 @@ final class AppModel: ObservableObject {
         // 新平板连接 → 补发文档列表与当前页。
         server.$clientCount
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.broadcastDocs(); self?.push() }
+            .sink { [weak self] _ in self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true) }
             .store(in: &cancellables)
 
         // 平板切换文档。
@@ -239,9 +239,13 @@ final class AppModel: ObservableObject {
 
     // MARK: - 方案 B：布局与视口
 
-    /// 推平板当前会话的文档布局（每页原始宽高），平板据此本地组 fit-width 连续列。
-    func pushLayout() {
+    private var pushedLayoutKey = ""
+    /// 推平板当前会话的文档布局（每页原始宽高）。仅文档变化时推；`force` 用于新平板连接时补发。
+    /// 避免每次滚动/翻页重广播 layout，减少平板端无谓 relayout 与回环噪声。
+    func pushLayout(force: Bool = false) {
         guard server.isRunning, let s = padSession, let pdf = s.pdf else { return }
+        if !force && s.contentHash == pushedLayoutKey { return }
+        pushedLayoutKey = s.contentHash
         var pages: [[Double]] = []
         pages.reserveCapacity(pdf.pageCount)
         for i in 0..<pdf.pageCount {
