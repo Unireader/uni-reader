@@ -491,11 +491,11 @@ enum CapturePage {
             var avg = n ? sum / n : 0; jit = n > 1 ? jit / (n - 1) : 0; if (!n) { mn = 0; mx = 0; }
             el("lat").textContent = n ? (Math.round(avg) + "±" + Math.round(jit) + " ms") : "— ms";
             if (statsOn) el("stats").textContent =
-              "RTT  avg " + Math.round(avg) + " ms\n" +
-              "     min " + Math.round(mn) + "  max " + Math.round(mx) + "\n" +
-              "     jitter " + Math.round(jit) + " ms  (n=" + n + ")\n" +
-              "↑ 上行  " + upCount + " msg/s\n" +
-              "↓ 下行  " + downCount + " msg/s\n" +
+              "RTT  avg " + Math.round(avg) + " ms\\n" +
+              "     min " + Math.round(mn) + "  max " + Math.round(mx) + "\\n" +
+              "     jitter " + Math.round(jit) + " ms  (n=" + n + ")\\n" +
+              "↑ 上行  " + upCount + " msg/s\\n" +
+              "↓ 下行  " + downCount + " msg/s\\n" +
               "画面 fps " + frames;
             upCount = 0; downCount = 0; frames = 0;
           }, 1000);
