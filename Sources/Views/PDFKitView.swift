@@ -1,6 +1,7 @@
 import SwiftUI
 import PDFKit
 import AppKit
+import QuartzCore
 
 /// 原生 PDFKit 阅读视图（复刻 Preview.app）：连续滚动 + 页阴影 + 自动铺适宽度，
 /// 缩放/选择/翻页全用系统内置行为，**不自绘任何动态布局**。
@@ -32,6 +33,7 @@ struct PDFKitView: NSViewRepresentable {
         if pdfView.document !== session.pdf {
             pdfView.document = session.pdf
             coord.lastAppliedAnchorSeq = 0
+            coord.resetSmoother()
         }
 
         container.overlay.strokes = session.strokes
@@ -62,6 +64,11 @@ struct PDFKitView: NSViewRepresentable {
         weak var pdfView: PDFView?
         var lastAppliedAnchorSeq = 0
         private var suppressEmit = false
+        // 延迟补偿：按屏幕刷新率平滑跟随平板滚动锚点，过滤 WiFi 抖动。
+        private var displayLink: CADisplayLink?
+        private var smCurrent = 0.0, smTarget = 0.0, smVel = 0.0   // 全局进度 = page + frac
+        private var lastAnchorAt: CFTimeInterval = 0
+        private var lastStepAt: CFTimeInterval = 0
 
         init(session: DocSession) { self.session = session }
 
@@ -101,16 +108,77 @@ struct PDFKitView: NSViewRepresentable {
             return (doc.index(for: page), min(max(0, frac), 1))
         }
 
-        /// 应用来自 sim/平板的锚点：滚到该(页, 比例)。程序化滚动，短暂抑制回发防回环。
+        /// 应用来自 sim/平板的锚点：设为平滑目标 + 估速，由 displayLink 每帧逼近（延迟补偿）。
         func applyIncomingAnchor(_ a: ScrollAnchor) {
-            guard let pdfView, let doc = pdfView.document, let page = doc.page(at: a.page) else { return }
-            let b = page.bounds(for: .mediaBox)
-            let y = b.maxY - CGFloat(a.frac) * b.height
-            suppressEmit = true
-            pdfView.go(to: PDFDestination(page: page, at: CGPoint(x: b.minX, y: y)))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.suppressEmit = false
+            guard let pdfView, let doc = pdfView.document, doc.pageCount > 0 else { return }
+            let now = CACurrentMediaTime()
+            let newTarget = Double(a.page) + a.frac
+            let dt = now - lastAnchorAt
+            if lastAnchorAt > 0, dt > 0, dt < 0.2 {
+                let instVel = (newTarget - smTarget) / dt        // 进度/秒
+                smVel = smVel * 0.4 + instVel * 0.6              // 平滑估速
             }
+            smTarget = newTarget
+            lastAnchorAt = now
+            suppressEmit = true
+            if displayLink == nil {
+                smCurrent = newTarget                            // 首帧对齐，避免大跳
+                startDisplayLink()
+            }
+        }
+
+        /// 文档切换/断开时复位平滑器。
+        func resetSmoother() {
+            stopDisplayLink()
+            smCurrent = 0; smTarget = 0; smVel = 0; lastAnchorAt = 0
+        }
+
+        private func startDisplayLink() {
+            guard displayLink == nil, let pdfView else { return }
+            lastStepAt = CACurrentMediaTime()
+            let dl = pdfView.displayLink(target: self, selector: #selector(stepFrame))
+            dl.add(to: .main, forMode: .common)
+            displayLink = dl
+        }
+
+        private func stopDisplayLink() {
+            displayLink?.invalidate(); displayLink = nil
+        }
+
+        /// 每屏幕帧：外推 + 向目标收敛。即便这帧没有新锚点也平滑移动，补偿 WiFi 抖动/停顿。
+        @objc private func stepFrame() {
+            guard let pdfView, let doc = pdfView.document, doc.pageCount > 0 else { stopDisplayLink(); return }
+            let now = CACurrentMediaTime()
+            var frameDt = now - lastStepAt; lastStepAt = now
+            if frameDt <= 0 || frameDt > 0.1 { frameDt = 1.0 / 120.0 }
+
+            let stale = now - lastAnchorAt
+            if stale > 0.12 { smVel *= 0.85 }                    // 久无锚点 → 衰减外推，避免跑飞
+            let predicted = smCurrent + smVel * frameDt
+            let catchup = min(1.0, 18.0 * frameDt)               // 向目标收敛（时间常数 ~55ms）
+            smCurrent = predicted + (smTarget - predicted) * catchup
+
+            let maxPos = Double(doc.pageCount - 1) + 0.9999
+            if smCurrent < 0 { smCurrent = 0; smVel = 0 }
+            if smCurrent > maxPos { smCurrent = maxPos; smVel = 0 }
+
+            applyPos(smCurrent, doc: doc, pdfView: pdfView)
+
+            // 收敛且停顿 → 精确对齐并停 displayLink，随后解除抑制。
+            if abs(smTarget - smCurrent) < 0.0005, abs(smVel) < 0.01, stale > 0.2 {
+                applyPos(smTarget, doc: doc, pdfView: pdfView)
+                stopDisplayLink()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.suppressEmit = false }
+            }
+        }
+
+        private func applyPos(_ pos: Double, doc: PDFDocument, pdfView: PDFView) {
+            let idx = max(0, min(doc.pageCount - 1, Int(pos)))
+            guard let page = doc.page(at: idx) else { return }
+            let frac = pos - Double(idx)
+            let b = page.bounds(for: .mediaBox)
+            let y = b.maxY - CGFloat(frac) * b.height
+            pdfView.go(to: PDFDestination(page: page, at: CGPoint(x: b.minX, y: y)))
         }
 
         private static func firstScrollView(in view: NSView) -> NSScrollView? {
@@ -121,7 +189,7 @@ struct PDFKitView: NSViewRepresentable {
             return nil
         }
 
-        deinit { NotificationCenter.default.removeObserver(self) }
+        deinit { NotificationCenter.default.removeObserver(self); displayLink?.invalidate() }
     }
 }
 
