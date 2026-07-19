@@ -1,0 +1,30 @@
+name: UniReader
+options:
+  bundleIdPrefix: com.xvan
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "26.0"
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  UniReader:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_NAME: UniReader
+        PRODUCT_BUNDLE_IDENTIFIER: com.xvan.UniReader
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: UniReader
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.productivity"
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "UniReader 通过局域网接收平板的手写笔画与翻页操作。"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026"
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+        CODE_SIGN_STYLE: Automatic

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>UniReader 触控笔自检</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; overflow:hidden; overscroll-behavior:none; background:#0d1117; color:#e6edf3;
+    font-family:-apple-system,"PingFang SC",system-ui,sans-serif; }
+  #canvas { position:fixed; inset:0; touch-action:none; display:block; }
+  #panel {
+    position:fixed; top:0; left:0; right:0; padding:10px 12px 12px;
+    background:rgba(22,27,34,.92); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+    border-bottom:1px solid #30363d; font-size:13px; line-height:1.4;
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:5px 16px;
+  }
+  #panel.hidden { display:none; }
+  .k { color:#8b949e; margin-right:4px; }
+  .v { color:#e6edf3; font-variant-numeric:tabular-nums; font-weight:600; }
+  .big { grid-column:1/-1; font-size:15px; padding:8px; border-radius:8px; text-align:center; font-weight:700; }
+  .ok { background:#132e14; color:#3fb950; }
+  .warn { background:#3a2c00; color:#e3b341; }
+  .bad { background:#3d1414; color:#f85149; }
+  .pending { background:#21262d; color:#8b949e; }
+  #bar {
+    position:fixed; bottom:0; left:0; right:0; padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+    display:flex; gap:10px; justify-content:center;
+    background:rgba(22,27,34,.92); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+    border-top:1px solid #30363d;
+  }
+  button {
+    flex:1; max-width:180px; padding:13px; font-size:15px; font-weight:600;
+    border:1px solid #30363d; border-radius:10px; background:#21262d; color:#e6edf3;
+  }
+  button:active { background:#30363d; }
+  #hint { position:fixed; top:52%; left:0; right:0; text-align:center; color:#484f58; font-size:17px; pointer-events:none; }
+  /* 悬停指示画在独立 overlay canvas 上，与笔迹同坐标系，避免 position:fixed 在移动端的偏移 */
+  #hoverCanvas { position:fixed; inset:0; pointer-events:none; z-index:5; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<canvas id="hoverCanvas"></canvas>
+<div id="hint">用触控笔在此区域书写 ✍️（悬空移动测 hover，建议用 Firefox）</div>
+<div id="panel">
+  <div class="big pending" id="verdict">压感自检：等待落笔…</div>
+  <div><span class="k">输入类型</span><span class="v" id="ptype">—</span></div>
+  <div><span class="k">当前压感</span><span class="v" id="pnow">—</span></div>
+  <div><span class="k">压感范围</span><span class="v" id="prange">—</span></div>
+  <div><span class="k">压感档数</span><span class="v" id="pdistinct">—</span></div>
+  <div><span class="k">合批点/次</span><span class="v" id="coal">—</span></div>
+  <div><span class="k">采样率</span><span class="v" id="rate">—</span></div>
+  <div><span class="k">倾斜 X/Y</span><span class="v" id="tilt">—</span></div>
+  <div><span class="k">悬停 hover</span><span class="v" id="hover">否</span></div>
+  <div><span class="k">屏幕刷新</span><span class="v" id="fps">测量中…</span></div>
+  <div><span class="k">忽略触摸(防误触)</span><span class="v" id="palm">0</span></div>
+  <div><span class="k">最大触点</span><span class="v" id="maxtouch">—</span></div>
+  <div><span class="k">API 支持</span><span class="v" id="apis">—</span></div>
+  <div style="grid-column:1/-1; border-top:1px solid #30363d; padding-top:6px; margin-top:2px;"><span class="k">笔键实时</span><span class="v" id="btnNow">buttons=0 [无]</span></div>
+  <div style="grid-column:1/-1"><span class="k">已检测到笔键</span><span class="v" id="btnSeen">—（分别按住两个笔键，笔尖触屏或悬停）</span></div>
+  <div style="grid-column:1/-1"><span class="k">事件嗅探</span><span class="v" id="sniff" style="font-weight:400; color:#8b949e;">按笔键 / 键盘 / 滚轮，任何事件都会显示在这里…</span></div>
+</div>
+<div id="bar">
+  <button id="fsBtn">全屏</button>
+  <button id="clearBtn">清除并重测</button>
+  <button id="panelBtn">隐藏面板</button>
+</div>
+<script>
+(function () {
+  "use strict";
+  var el = function (id) { return document.getElementById(id); };
+  var canvas = el("canvas");
+  var ctx = canvas.getContext("2d");
+  var hoverCanvas = el("hoverCanvas");
+  var hctx = hoverCanvas.getContext("2d");
+  var DPR = 1;
+
+  function resize() {
+    DPR = Math.max(1, window.devicePixelRatio || 1);
+    var w = window.innerWidth, h = window.innerHeight;
+    canvas.width = Math.round(w * DPR);
+    canvas.height = Math.round(h * DPR);
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    hoverCanvas.width = Math.round(w * DPR);
+    hoverCanvas.height = Math.round(h * DPR);
+    hoverCanvas.style.width = w + "px";
+    hoverCanvas.style.height = h + "px";
+    hctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  resize();
+  window.addEventListener("resize", resize);
+
+  // 悬停圆环：与笔迹同坐标系，保证跟笔尖对齐
+  function drawHover(x, y) {
+    hctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+    hctx.beginPath();
+    hctx.arc(x, y, 12, 0, Math.PI * 2);
+    hctx.strokeStyle = "#58a6ff";
+    hctx.lineWidth = 2;
+    hctx.stroke();
+    hctx.beginPath();
+    hctx.arc(x, y, 2, 0, Math.PI * 2);
+    hctx.fillStyle = "#58a6ff";
+    hctx.fill();
+  }
+  function clearHover() {
+    hctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+  }
+
+  // ---- 状态 ----
+  var penSeen = false;        // 是否出现过 pen 输入
+  var activeId = null;        // 当前落笔 pointerId
+  var lastPt = null, lastMid = null;  // 平滑用：上一原始点 / 上一中点
+  var palmIgnored = 0;        // 被忽略的 touch 事件数（防误触统计）
+  var pMin = 1, pMax = 0;     // 压感范围
+  var buckets = {};           // 压感去重（0.01 粒度）
+  var bucketCount = 0;
+  var penSamples = 0;         // pen 采样点数
+  var maxCoal = 0;            // 合批峰值
+  var moveCount = 0;          // 每秒采样计数
+
+  function colorForPressure(p) {
+    var hue = 210 - p * 210;  // 蓝(低压) → 红(高压)
+    return "hsl(" + hue + ",80%,60%)";
+  }
+
+  // 二次贝塞尔中点平滑：以上一原始点为控制点，两点中点为端点，抹掉折角
+  function beginStroke(x, y, p) {
+    lastPt = { x: x, y: y };
+    lastMid = { x: x, y: y };
+    ctx.beginPath();
+    ctx.fillStyle = colorForPressure(p);
+    ctx.arc(x, y, (0.6 + p * 11) / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  function strokeTo(x, y, p) {
+    if (!lastPt) { beginStroke(x, y, p); return; }
+    var mx = (lastPt.x + x) / 2, my = (lastPt.y + y) / 2;
+    ctx.strokeStyle = colorForPressure(p);
+    ctx.lineWidth = 0.6 + p * 11;
+    ctx.beginPath();
+    ctx.moveTo(lastMid.x, lastMid.y);
+    ctx.quadraticCurveTo(lastPt.x, lastPt.y, mx, my);
+    ctx.stroke();
+    lastMid = { x: mx, y: my };
+    lastPt = { x: x, y: y };
+  }
+
+  function recordPressure(p) {
+    if (p < pMin) pMin = p;
+    if (p > pMax) pMax = p;
+    var key = Math.round(p * 100) / 100;
+    if (!buckets[key]) { buckets[key] = 1; bucketCount++; }
+    penSamples++;
+    el("pnow").textContent = p.toFixed(3);
+    el("prange").textContent = pMin.toFixed(3) + " ~ " + pMax.toFixed(3);
+    el("pdistinct").textContent = bucketCount;
+    judge();
+  }
+
+  function judge() {
+    var v = el("verdict");
+    if (!penSeen) {
+      v.className = "big warn";
+      v.textContent = "△ 尚未检测到 pen 类型（当前可能是手指）";
+      return;
+    }
+    if (penSamples < 40) {
+      v.className = "big pending";
+      v.textContent = "压感自检：书写中…（" + penSamples + "/40）";
+      return;
+    }
+    var spread = pMax - pMin;
+    if (bucketCount <= 2 || spread < 0.05) {
+      v.className = "big bad";
+      v.textContent = "✗ 疑似无真实压感（值恒定：" + Object.keys(buckets).join(", ") + "）";
+    } else if (bucketCount >= 8 && spread > 0.15) {
+      v.className = "big ok";
+      v.textContent = "✓ 压感真实可用（" + bucketCount + " 档，跨度 " + spread.toFixed(2) + "）";
+    } else {
+      v.className = "big warn";
+      v.textContent = "△ 压感偏弱（" + bucketCount + " 档，跨度 " + spread.toFixed(2) + "），用力再写几笔";
+    }
+  }
+
+  function countPalm() { palmIgnored++; el("palm").textContent = palmIgnored; }
+
+  canvas.addEventListener("pointerdown", function (e) {
+    // 已进入 pen 模式后，touch 一律忽略（防误触）
+    if (e.pointerType === "touch" && penSeen) { countPalm(); e.preventDefault(); return; }
+    if (e.pointerType === "pen") penSeen = true;
+    el("hint").style.display = "none";
+    clearHover();   // 落笔 → 收起悬停指示
+    el("ptype").textContent = e.pointerType;
+    activeId = e.pointerId;
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    beginStroke(e.clientX, e.clientY, e.pressure);
+    recordPressure(e.pressure);
+    moveCount++;
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener("pointermove", function (e) {
+    if (e.pointerId !== activeId) {
+      // 悬停（未落笔）：pen 或 mouse 且无按键 → 浏览器拿到了 hover
+      // （很多设备把笔悬停合成为 pointerType="mouse"，所以不能只认 pen）
+      if (e.pointerType === "touch") {
+        if (penSeen) countPalm();
+      } else if (e.buttons === 0) {
+        el("hover").textContent = "是 [" + e.pointerType + "] (" + Math.round(e.clientX) + ", " + Math.round(e.clientY) + ")";
+        drawHover(e.clientX, e.clientY);
+      }
+      return;
+    }
+    el("ptype").textContent = e.pointerType;
+    var events = (e.getCoalescedEvents ? e.getCoalescedEvents() : null);
+    if (!events || !events.length) events = [e];
+    if (events.length > maxCoal) maxCoal = events.length;
+    el("coal").textContent = events.length + " (峰值 " + maxCoal + ")";
+    for (var i = 0; i < events.length; i++) {
+      var ev = events[i];
+      var x = ev.clientX, y = ev.clientY, p = ev.pressure;
+      strokeTo(x, y, p);
+      recordPressure(p);
+      moveCount++;
+    }
+    el("tilt").textContent = (e.tiltX || 0) + "° / " + (e.tiltY || 0) + "°";
+    e.preventDefault();
+  }, { passive: false });
+
+  function endStroke(e) {
+    if (e.pointerId === activeId) { activeId = null; lastPt = null; lastMid = null; }
+  }
+  canvas.addEventListener("pointerup", endStroke);
+  canvas.addEventListener("pointercancel", endStroke);
+  function hoverLeave(e) {
+    if (e && e.pointerType === "touch") return;
+    el("hover").textContent = "否";
+    clearHover();
+  }
+  canvas.addEventListener("pointerleave", hoverLeave);
+  canvas.addEventListener("pointerout", hoverLeave);
+  canvas.addEventListener("mouseleave", hoverLeave);
+  // 兜底：若 pointer 通道不给 hover，部分设备会用 mouse 事件传悬停
+  canvas.addEventListener("mousemove", function (e) {
+    if (activeId !== null) return;
+    el("hover").textContent = "是 [mouse-evt] (" + Math.round(e.clientX) + ", " + Math.round(e.clientY) + ")";
+    drawHover(e.clientX, e.clientY);
+  });
+  window.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+  // 采样率（点/秒）
+  setInterval(function () {
+    el("rate").textContent = moveCount + " pts/s";
+    moveCount = 0;
+  }, 1000);
+
+  // 屏幕刷新率（rAF 估算）
+  var frames = 0, fpsStart = null;
+  function loop(t) {
+    if (fpsStart === null) fpsStart = t;
+    frames++;
+    if (t - fpsStart >= 1000) {
+      el("fps").textContent = Math.round(frames * 1000 / (t - fpsStart)) + " Hz";
+      frames = 0; fpsStart = t;
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // 环境信息
+  el("maxtouch").textContent = (navigator.maxTouchPoints != null ? navigator.maxTouchPoints : "?");
+  var hasPE = !!window.PointerEvent;
+  var hasCoal = hasPE && typeof PointerEvent.prototype.getCoalescedEvents === "function";
+  el("apis").textContent = (hasPE ? "PE✓" : "PE✗") + " " + (hasCoal ? "coalesced✓" : "coalesced✗");
+
+  // 按钮
+  el("clearBtn").addEventListener("click", function () {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    pMin = 1; pMax = 0; buckets = {}; bucketCount = 0; penSamples = 0; maxCoal = 0;
+    el("verdict").className = "big pending";
+    el("verdict").textContent = "压感自检：等待落笔…";
+    el("hint").style.display = "";
+  });
+  el("panelBtn").addEventListener("click", function () {
+    var p = el("panel");
+    p.classList.toggle("hidden");
+    el("panelBtn").textContent = p.classList.contains("hidden") ? "显示面板" : "隐藏面板";
+  });
+
+  // ---- 笔身按键检测 ----
+  // Pointer Events 按键位：1=尖端接触  2=侧键(barrel)  4=中键  32=橡皮/顶键
+  var seenBtn = {};
+  function decodeButtons(b) {
+    var parts = [];
+    if (b & 1) parts.push("尖端");
+    if (b & 2) parts.push("侧键(2)");
+    if (b & 4) parts.push("中键(4)");
+    if (b & 32) parts.push("橡皮/顶键(32)");
+    return parts.length ? parts.join(" + ") : "无";
+  }
+  function updateButtons(e) {
+    if (e.pointerType && e.pointerType !== "pen" && e.pointerType !== "mouse") return;
+    el("btnNow").textContent = "buttons=" + e.buttons + " [" + decodeButtons(e.buttons) + "]"
+      + (e.button >= 0 ? "  button=" + e.button : "");
+    var bits = [[2, "侧键(2)"], [4, "中键(4)"], [32, "橡皮/顶键(32)"]];
+    for (var i = 0; i < bits.length; i++) {
+      if (e.buttons & bits[i][0]) seenBtn[bits[i][0]] = bits[i][1];
+    }
+    var keys = Object.keys(seenBtn);
+    if (keys.length) {
+      el("btnSeen").textContent = keys.map(function (k) { return seenBtn[k]; }).join(", ");
+    }
+  }
+  ["pointerdown", "pointermove", "pointerup", "pointerrawupdate"].forEach(function (t) {
+    window.addEventListener(t, updateButtons, true);
+  });
+  window.addEventListener("auxclick", function (e) { e.preventDefault(); });
+
+  // ---- 通用事件嗅探：抓任何非 pointer 通道的输入（BLE 键常伪装成键盘/滚轮）----
+  var sniffLog = [];
+  function sniff(msg) {
+    sniffLog.unshift(msg);
+    if (sniffLog.length > 6) sniffLog.pop();
+    el("sniff").textContent = sniffLog.join("  |  ");
+  }
+  window.addEventListener("keydown", function (e) {
+    sniff("keydown key=" + (e.key || "?") + " code=" + e.code + " kc=" + e.keyCode);
+  }, true);
+  window.addEventListener("keyup", function (e) { sniff("keyup key=" + (e.key || "?")); }, true);
+  window.addEventListener("wheel", function (e) { sniff("wheel dy=" + Math.round(e.deltaY)); }, true);
+  window.addEventListener("contextmenu", function (e) { sniff("contextmenu (右键/侧键?)"); }, true);
+  window.addEventListener("auxclick", function (e) { sniff("auxclick button=" + e.button); }, true);
+  document.addEventListener("visibilitychange", function () {
+    sniff("visibility=" + document.visibilityState + " (可能被系统快捷切走)");
+  });
+
+  // ---- 全屏 ----
+  function updateFsLabel() {
+    el("fsBtn").textContent = document.fullscreenElement ? "退出全屏" : "全屏";
+  }
+  el("fsBtn").addEventListener("click", function () {
+    if (!document.fullscreenElement) {
+      var root = document.documentElement;
+      var req = root.requestFullscreen || root.webkitRequestFullscreen;
+      if (req) {
+        Promise.resolve(req.call(root)).then(function () {
+          if (screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock("landscape").catch(function () {});
+          }
+        }).catch(function () {});
+      }
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    }
+  });
+  document.addEventListener("fullscreenchange", updateFsLabel);
+  document.addEventListener("webkitfullscreenchange", updateFsLabel);
+})();
+</script>
+</body>
+</html>

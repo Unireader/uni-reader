@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Xcode / build
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# xcodegen 生成物（源为 project.yml）
+UniReader.xcodeproj/
+
+# SwiftPM
+.build/
