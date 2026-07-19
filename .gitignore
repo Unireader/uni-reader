@@ -12,3 +12,6 @@ UniReader.xcodeproj/
 
 # SwiftPM
 .build/
+
+# Playwright 调试产物
+.playwright-mcp/

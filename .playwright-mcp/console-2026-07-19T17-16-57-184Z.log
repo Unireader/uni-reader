@@ -1,7 +1,0 @@
-[  132994ms] [ERROR] WebSocket connection to 'ws://localhost:8771/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:8770/?token=dc0ea15bf8f1253d7f4a5c6055cef88b:493
-[  134497ms] [ERROR] WebSocket connection to 'ws://localhost:8771/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:8770/?token=dc0ea15bf8f1253d7f4a5c6055cef88b:493
-[  136002ms] [ERROR] WebSocket connection to 'ws://localhost:8771/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:8770/?token=dc0ea15bf8f1253d7f4a5c6055cef88b:493
-[  137506ms] [ERROR] WebSocket connection to 'ws://localhost:8771/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:8770/?token=dc0ea15bf8f1253d7f4a5c6055cef88b:493
-[  139009ms] [ERROR] WebSocket connection to 'ws://localhost:8771/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:8770/?token=dc0ea15bf8f1253d7f4a5c6055cef88b:493
-[  140511ms] [ERROR] WebSocket connection to 'ws://localhost:8771/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:8770/?token=dc0ea15bf8f1253d7f4a5c6055cef88b:493
-[  142013ms] [ERROR] WebSocket connection to 'ws://localhost:8771/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:8770/?token=dc0ea15bf8f1253d7f4a5c6055cef88b:493
