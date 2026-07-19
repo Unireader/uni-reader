@@ -223,6 +223,25 @@ enum CapturePage {
             scrollY = clamp(scrollY + dy, 0, maxScrollY);
             ensureImages(); drawAll(); updatePageLabel(); emitScroll();
           }
+          function cancelMomentum() { if (momentumRAF) { cancelAnimationFrame(momentumRAF); momentumRAF = null; } }
+          // 松手惯性：按松手速度继续滚，指数衰减；碰边界该轴停；期间持续上报让 Mac 平滑跟随。
+          function startMomentum() {
+            cancelMomentum();
+            if (Math.hypot(vx, vy) < 0.05) return;   // 太慢不惯性
+            var last = performance.now();
+            function step() {
+              var now = performance.now(), dt = Math.min(50, now - last); last = now;
+              scrollX = clamp(scrollX + vx * dt, 0, maxScrollX);
+              scrollY = clamp(scrollY + vy * dt, 0, maxScrollY);
+              var decay = Math.pow(0.94, dt / 16);
+              vx *= decay; vy *= decay;
+              if (scrollX <= 0 || scrollX >= maxScrollX) vx = 0;
+              if (scrollY <= 0 || scrollY >= maxScrollY) vy = 0;
+              ensureImages(); drawAll(); updatePageLabel(); emitScroll();
+              momentumRAF = Math.hypot(vx, vy) > 0.02 ? requestAnimationFrame(step) : null;
+            }
+            momentumRAF = requestAnimationFrame(step);
+          }
           var reportPending = false;
           function emitScroll() {
             if (reportPending) return; reportPending = true;
@@ -255,6 +274,7 @@ enum CapturePage {
           // 收到 Mac 视口 → 程序化滚到该(页,纵向比例)，不回发。
           function applyViewport(o) {
             if (activeId !== null) return;              // 正在写，忽略
+            cancelMomentum();                           // Mac 下发视口 → 停止本地惯性，避免抢位
             if ((o.seq || 0) <= vpSeq) return; vpSeq = o.seq || 0;
             var p = o.page || 0, f = o.frac || 0;
             if (p >= pageCount) return;
@@ -268,6 +288,7 @@ enum CapturePage {
           var zoomLocked = false;
           var panDownX = 0, panDownY = 0, panStarted = false;   // 单指平移死区
           var PALM = 60, DEAD = 8;                                // 手掌接触阈值(px)、平移死区(px)
+          var vx = 0, vy = 0, lastMoveT = 0, momentumRAF = null;  // 惯性滚动（速度单位: scroll px/ms）
 
           function beginPinch() {
             var a = touches[touchOrder[0]], b = touches[touchOrder[1]];
@@ -282,6 +303,7 @@ enum CapturePage {
           }
 
           ink.addEventListener("pointerdown", function (e) {
+            cancelMomentum();
             if (e.pointerType === "touch") {
               if (activeId !== null) { e.preventDefault(); return; }   // 笔在写 → 忽略手掌
               if (e.width > PALM || e.height > PALM) { e.preventDefault(); return; }   // 大面积接触（手掌）忽略
@@ -291,6 +313,7 @@ enum CapturePage {
               else {
                 panId = e.pointerId; lastPanX = e.clientX; lastPanY = e.clientY;
                 panDownX = e.clientX; panDownY = e.clientY; panStarted = false;
+                vx = 0; vy = 0; lastMoveT = performance.now();
               }
               e.preventDefault(); return;
             }
@@ -334,9 +357,12 @@ enum CapturePage {
               } else if (e.pointerId === panId) {
                 if (!panStarted) {
                   if (Math.hypot(e.clientX - panDownX, e.clientY - panDownY) < DEAD) { e.preventDefault(); return; }
-                  panStarted = true; lastPanX = e.clientX; lastPanY = e.clientY;   // 越过死区才开始，避免"手放上去"微动触发
+                  panStarted = true; lastPanX = e.clientX; lastPanY = e.clientY; lastMoveT = performance.now();   // 越过死区才开始
                 }
-                panBy(lastPanX - e.clientX, lastPanY - e.clientY);
+                var dx = lastPanX - e.clientX, dy = lastPanY - e.clientY;
+                var now = performance.now(), dt = now - lastMoveT; lastMoveT = now;
+                if (dt > 0 && dt < 100) { vx = 0.7 * vx + 0.3 * (dx / dt); vy = 0.7 * vy + 0.3 * (dy / dt); }
+                panBy(dx, dy);
                 lastPanX = e.clientX; lastPanY = e.clientY;
               }
               e.preventDefault(); return;
@@ -381,7 +407,8 @@ enum CapturePage {
               panId = touchOrder[0]; var t = touches[panId];
               lastPanX = t.x; lastPanY = t.y; panDownX = t.x; panDownY = t.y; panStarted = false;
             } else if (touchOrder.length === 0) {
-              panId = null;
+              if (panStarted) startMomentum();   // 松手甩动 → 惯性
+              panId = null; panStarted = false;
             } else if (touchOrder.length >= 2) {
               beginPinch();
             }
