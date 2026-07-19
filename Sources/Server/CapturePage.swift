@@ -277,6 +277,8 @@ enum CapturePage {
           var activeId = null, penMode = "", penX = 0, penY = 0, batch = [], drawPage = 0;
           var touches = {}, touchOrder = [], panId = null, lastPanX = 0, lastPanY = 0, pinch = null;
           var zoomLocked = false;
+          var panDownX = 0, panDownY = 0, panStarted = false;   // 单指平移死区
+          var PALM = 60, DEAD = 8;                                // 手掌接触阈值(px)、平移死区(px)
 
           function beginPinch() {
             var a = touches[touchOrder[0]], b = touches[touchOrder[1]];
@@ -287,10 +289,14 @@ enum CapturePage {
           ink.addEventListener("pointerdown", function (e) {
             if (e.pointerType === "touch") {
               if (activeId !== null) { e.preventDefault(); return; }   // 笔在写 → 忽略手掌
+              if (e.width > PALM || e.height > PALM) { e.preventDefault(); return; }   // 大面积接触（手掌）忽略
               touches[e.pointerId] = { x: e.clientX, y: e.clientY };
               if (touchOrder.indexOf(e.pointerId) < 0) touchOrder.push(e.pointerId);
               if (touchOrder.length >= 2) beginPinch();
-              else { panId = e.pointerId; lastPanX = e.clientX; lastPanY = e.clientY; }
+              else {
+                panId = e.pointerId; lastPanX = e.clientX; lastPanY = e.clientY;
+                panDownX = e.clientX; panDownY = e.clientY; panStarted = false;
+              }
               e.preventDefault(); return;
             }
             // 笔
@@ -325,6 +331,10 @@ enum CapturePage {
                 var d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
                 zoomTo(pinch.z0 * d / pinch.d, (a.x + b.x) / 2, (a.y + b.y) / 2);
               } else if (e.pointerId === panId) {
+                if (!panStarted) {
+                  if (Math.hypot(e.clientX - panDownX, e.clientY - panDownY) < DEAD) { e.preventDefault(); return; }
+                  panStarted = true; lastPanX = e.clientX; lastPanY = e.clientY;   // 越过死区才开始，避免"手放上去"微动触发
+                }
                 panBy(lastPanX - e.clientX, lastPanY - e.clientY);
                 lastPanX = e.clientX; lastPanY = e.clientY;
               }
@@ -366,8 +376,9 @@ enum CapturePage {
             delete touches[id];
             var k = touchOrder.indexOf(id); if (k >= 0) touchOrder.splice(k, 1);
             pinch = null;
-            if (touchOrder.length === 1) {   // 回到单指平移
-              panId = touchOrder[0]; var t = touches[panId]; lastPanX = t.x; lastPanY = t.y;
+            if (touchOrder.length === 1) {   // 回到单指平移（重新死区判定，避免松指跳动）
+              panId = touchOrder[0]; var t = touches[panId];
+              lastPanX = t.x; lastPanY = t.y; panDownX = t.x; panDownY = t.y; panStarted = false;
             } else if (touchOrder.length === 0) {
               panId = null;
             } else if (touchOrder.length >= 2) {
