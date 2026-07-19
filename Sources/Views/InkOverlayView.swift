@@ -65,11 +65,17 @@ final class InkOverlayView: NSView {
             ctx.fillEllipse(in: CGRect(x: vps[0].x - r, y: vps[0].y - r, width: r * 2, height: r * 2))
             return
         }
+        // 二次贝塞尔中点平滑（与采集页一致）：每段用 [上一中点 → 当前中点]、控制点取当前采样点。
+        var lastMid = vps[0]
+        var lastPt = vps[0]
         for i in 1..<vps.count {
+            let mid = CGPoint(x: (lastPt.x + vps[i].x) / 2, y: (lastPt.y + vps[i].y) / 2)
             ctx.setLineWidth(lineWidth(st.points[i].z))
             ctx.beginPath()
-            ctx.move(to: vps[i - 1]); ctx.addLine(to: vps[i])
+            ctx.move(to: lastMid)
+            ctx.addQuadCurve(to: mid, control: lastPt)
             ctx.strokePath()
+            lastMid = mid; lastPt = vps[i]
         }
     }
 

@@ -108,9 +108,13 @@ final class SimPadNSView: NSView {
             ctx.fillEllipse(in: CGRect(x: vps[0].x - rad, y: vps[0].y - rad, width: rad * 2, height: rad * 2))
             return
         }
+        var lastMid = vps[0]
+        var lastPt = vps[0]
         for i in 1..<vps.count {
+            let mid = CGPoint(x: (lastPt.x + vps[i].x) / 2, y: (lastPt.y + vps[i].y) / 2)
             ctx.setLineWidth(CGFloat(0.6 + st.points[i].z * st.width))
-            ctx.beginPath(); ctx.move(to: vps[i - 1]); ctx.addLine(to: vps[i]); ctx.strokePath()
+            ctx.beginPath(); ctx.move(to: lastMid); ctx.addQuadCurve(to: mid, control: lastPt); ctx.strokePath()
+            lastMid = mid; lastPt = vps[i]
         }
     }
 
