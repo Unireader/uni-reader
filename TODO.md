@@ -6,7 +6,7 @@
 
 - 工程 xcodegen 管理：改文件后 `xcodegen generate`（新增文件时必做）→ `xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO`。非沙盒，**macOS 26+（Tahoe，不做低版本兼容）**。
 - **已完成**：hash 去重入库、PDFKit 阅读、多窗口 + App 级共享 WS（`AppModel`/`DocSession`）、二维码配对、采集页（压感/防误触/合批/侧键 PageUp 切模式·PageDown 切笔/全屏/WS 延迟/文档下拉）、**S3 实时渲染**（平板 `ink`/`erase` → Mac `InkOverlayView`）、**方案 B**：桌面 `PadRenderer`（fit-width 连续布局）+ **模拟平板窗口**（滚轮连续滚动 + 鼠标当笔，走共用落墨 API）、锚点同步 **sim↔Mac 双向已通**。
-- **注意**：真平板采集页目前仍是 fit-width 单页 + 页内滚动（S2a）；连续滚动的方案 B 只在**模拟窗口**跑通，**尚未接真平板**。
+- **注意（2026-07-20 更新）**：真平板已接入方案 B（连续多页 + 双向锚点 + 按需取图 `/page.png?i=N` + 双指缩放 + 惯性 + hover 传 Mac + 夜间模式 + 手写板模式 + 锁缩放 + 防误触）；采集页 HTML 已独立为 `Sources/Resources/capture.html`（不再内嵌 Swift 字符串，避免转义坑）；Mac 端加了滚动**延迟补偿**（`PDFKitView` 用 CADisplayLink 按刷新率平滑跟随，过滤 WiFi 抖动）；PDF 显示已用原生 `PDFKitView` 重建（复刻 Preview）。参数（缩放 catchup、惯性衰减、防误触阈值等）待真机手感微调。
 
 ## ⏭️ 接下来（建议顺序）
 
@@ -40,7 +40,7 @@
 - **笔记持久化**：把 overlay 笔迹落库到 SwiftData `Note`（hash + page + 归一化锚点 + 笔画序列化），重开自动恢复。
 - **三种笔记形态**：文字注解、会话笔记（预留 AI）、手写笔记的编辑 UI 与渲染。
 - **文件重定位**：所有路径失效时提示重新关联；hash 变化时提示重关联、保留旧笔记。
-- **分组**：分组增删、文件拖拽归组。
+- **工作区文件夹持久化**（替代分组，见 REQUIREMENTS §8，**动手前需与用户确认方案**）：一个可移动文件夹 = 一个工作区 = 一套 PDF；只存路径不存 PDF 本体；一个文档可配多文件/多 hash（加 TOC 致 hash 变仍视为同一文档）；配置 + 笔记存该文件夹，供两台电脑 / 未来独立 app 复用。原「分组」取消。
 - **配对/安全**：二维码 UI 打磨；token 准入已做，考虑连接管理（踢除、显示已连设备）。
 - **笔工具**：切笔工具的笔列表可配置（颜色/粗细/荧光笔/橡皮）。
 - **性能**：大文件 hash 缓存 `(path,size,mtime)→hash`；页图渲染移出主线程 / 懒渲染窗口。
