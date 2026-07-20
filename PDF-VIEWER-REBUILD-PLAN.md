@@ -131,6 +131,10 @@ ContentView.readerColumn
 - **校验环兜底**：commit 后几何回调若 `O_a ≠ O_t`，重发 `scrollTo(point:)`（≤5 次），超限记日志。
 - settle（0.15s 稳定）后按新 zoom 精确重渲（原位替换）。
 - ⌘+/⌘−：未遮视口中心为锚 ×1.25 / ÷1.25，走同一 commit 路径；⌘0 = 回 fit（基准重定标）。菜单命令 + 双语。
+- **⌘+滚轮**（2026-07-20 加）：光标为锚（`onContinuousHover(.local)` 追踪容器坐标），与 pinch/⌘± 共用
+  `zoomCommit(factor:anchorP:)`。滚轮事件 SwiftUI 无 API → `NSEvent.addLocalMonitorForEvents`（纯事件管道，
+  非视图，不违反红线）；仅「⌘按住 + 光标在本阅读区 + 非动量惯性 + 无进行中 pinch」时消费事件，其余放行。
+  方向按系统缩放约定（自然滚动两指上滑/滚轮上 = 放大），手感旋钮 `0.008`；有级滚轮 delta ×10。
 
 ## 6. 窗口缩放 / 侧栏开合（锚定不跳位）
 

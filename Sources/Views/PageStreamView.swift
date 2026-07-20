@@ -1,6 +1,7 @@
 import SwiftUI
 import PDFKit
 import QuartzCore
+import AppKit   // 仅 NSEvent 滚轮监视器（事件管道）；阅读区无 AppKit 视图（红线）
 
 /// 自研 PDF 阅读区 v2：纯 SwiftUI 页图流（设计与硬指标映射见 `PDF-VIEWER-REBUILD-PLAN.md`）。
 /// 关键机制（均由 spike 实测钉死）：
@@ -80,6 +81,8 @@ private final class Scratch {
     var lastUnobW: CGFloat = 0
     var didInitialGeo = false
     var didFirstKick = false
+    var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点；域外为 nil）
+    var wheelMonitor: Any?             // ⌘+滚轮的 NSEvent 本地监视器（事件管道，非视图）
     let clientID = UUID().uuidString   // 渲染引擎多窗口 wanted 隔离键
 }
 
@@ -138,14 +141,24 @@ private struct ReaderSurface: View {
         } action: { _, new in
             geometryChanged(new)
         }
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            switch phase {
+            case .active(let p): scratch.cursorP = p
+            case .ended: scratch.cursorP = nil
+            }
+        }
         .overlay(alignment: .topLeading) { followTicker }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: unobSize.width) { _, _ in viewportWidthChanged() }
         .onChange(of: nightMode) { _, _ in scheduleSettleRender() }
         .onChange(of: interpEnabled) { _, v in follower.interpEnabled = v }
-        .onAppear { setup() }
+        .onAppear {
+            setup()
+            installWheelMonitor()
+        }
         .onDisappear {
             follower.reset()
+            removeWheelMonitor()
             PageRenderEngine.shared.setWanted([], client: scratch.clientID)
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomIn)) { _ in
@@ -481,16 +494,50 @@ private struct ReaderSurface: View {
         scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
     }
 
-    /// ⌘+/⌘−：未遮视口中心为锚。
-    private func commandZoom(factor: CGFloat) {
+    /// 以容器坐标 anchorP 为屏幕不动点做单次缩放 commit（⌘±/⌘wheel 共用）。
+    private func zoomCommit(factor: CGFloat, anchorP P: CGPoint) {
         guard layout != nil, scratch.didInitialGeo else { return }
+        follower.reset()
         let g = scratch.geo
-        let P = CGPoint(x: g.insetLeading + (g.containerW - g.insetLeading - g.insetTrailing) / 2,
-                        y: g.insetTop + (g.containerH - g.insetTop - g.insetBottom) / 2)
         let c = CGPoint(x: g.offsetX + P.x, y: g.offsetY + P.y)
         var p = PinchInfo(startZoom: zoom, viewportP: P, cCur: c)
         commitZoom(to: clampZoom(zoom * factor), pinch: &p)
         scheduleSettleRender()
+    }
+
+    /// ⌘+/⌘−：未遮视口中心为锚。
+    private func commandZoom(factor: CGFloat) {
+        let g = scratch.geo
+        let P = CGPoint(x: g.insetLeading + (g.containerW - g.insetLeading - g.insetTrailing) / 2,
+                        y: g.insetTop + (g.containerH - g.insetTop - g.insetBottom) / 2)
+        zoomCommit(factor: factor, anchorP: P)
+    }
+
+    // MARK: ⌘+滚轮缩放（光标为锚；系统缩放同向：自然滚动下两指上滑/滚轮向上 = 放大）
+    // SwiftUI 无滚轮 API → NSEvent 本地监视器（纯事件管道，无 AppKit 视图）。
+    // 只在「⌘按住 + 光标在本阅读区内 + 非动量惯性 + 无进行中 pinch」时消费事件，其余原样放行。
+
+    private func installWheelMonitor() {
+        guard scratch.wheelMonitor == nil else { return }
+        scratch.wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard event.modifierFlags.contains(.command),
+                  event.momentumPhase == [],
+                  let p = scratch.cursorP,
+                  layout != nil, scratch.didInitialGeo, scratch.pinch == nil else { return event }
+            var delta = event.scrollingDeltaY
+            if !event.hasPreciseScrollingDeltas { delta *= 10 }   // 有级滚轮（行单位）放大到像素量级
+            guard delta != 0 else { return nil }
+            let factor = min(max(exp(-delta * 0.008), 0.5), 2)    // 手感旋钮：0.008；负号=系统缩放方向约定
+            zoomCommit(factor: factor, anchorP: p)
+            return nil   // 消费：⌘滚轮不再触发滚动
+        }
+    }
+
+    private func removeWheelMonitor() {
+        if let m = scratch.wheelMonitor {
+            NSEvent.removeMonitor(m)
+            scratch.wheelMonitor = nil
+        }
     }
 
     /// ⌘0：回 fit-width（基准重定标到当前未遮宽），未遮视口中心为锚。
