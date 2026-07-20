@@ -1,59 +1,69 @@
 import SwiftUI
-import SwiftData
 import PDFKit
 import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var context
     @Environment(\.openWindow) private var openWindow
     @EnvironmentObject private var app: AppModel
-    @Query(sort: \Document.lastOpenedAt, order: .reverse) private var documents: [Document]
-    @Query(sort: \LibraryGroup.order) private var groups: [LibraryGroup]
+    @EnvironmentObject private var workspace: WorkspaceManager
 
     @StateObject private var session = DocSession()
-    @State private var selectedDocument: Document?
+    @State private var selectedDocID: String?
+    @State private var missingDoc: LibDocument?      // 选中但所有路径失效 → 显示重定位提示
+    @State private var lastProgressSave = Date.distantPast
+    @State private var toc: [TOCEntry] = []          // 当前 PDF 目录
+    @State private var showTOCPopover = false        // 一次性目录弹窗（选完即关，快速跳转）
+    @State private var inspectorTab: InspectorTab = .info   // Inspector 当前分段（信息/目录/笔记）
     @State private var isHashing = false
     @State private var showServer = false
     @State private var isKeyWindow = false
     @State private var showNotes = false
     @AppStorage("nightMode") private var nightMode = false
+    @AppStorage("scrollInterp") private var scrollInterp = true   // 平板滚动跟随：true=时间戳插值 / false=纯低通（A/B 用）
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(documents: documents, groups: groups, selection: $selectedDocument)
+            SidebarView(selection: $selectedDocID, onChooseWorkspace: chooseWorkspace,
+                        onDropFiles: { ingest(urls: $0) }, onOpenPDF: openPDF)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 260)
         } detail: {
             // PDF 显示实现已按要求全部移除，待重建。
             // 文档加载（session.pdf）保留：模拟平板窗口 / 真平板仍可正常渲染。
             readerColumn
+                .dropDestination(for: URL.self) { urls, _ in ingest(urls: urls); return true }
                 .background(WindowAccessor { key in
                     isKeyWindow = key
                     if key { app.setActive(session) }
                 })
                 .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
+                    // 中间一组：目录 / 夜间 / 跟随 A/B / 模拟平板 / 平板服务
+                    ToolbarItemGroup(placement: .automatic) {
                         Button {
-                            openPDF()
+                            showTOCPopover.toggle()
                         } label: {
-                            Label(L("Open PDF…"), systemImage: "plus")
+                            Label(L("Contents"), systemImage: "list.bullet.indent")
                         }
-                    }
-                    ToolbarItem(placement: .automatic) {
+                        .disabled(session.pdf == nil)
+                        .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
+
                         Button {
                             nightMode.toggle()
                         } label: {
                             Label(L("Night Mode"), systemImage: nightMode ? "sun.max.fill" : "moon.fill")
                         }
-                    }
-                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            scrollInterp.toggle()
+                        } label: {
+                            Label(scrollInterp ? L("Follow: Interpolation") : L("Follow: Low-pass"),
+                                  systemImage: scrollInterp ? "waveform" : "line.diagonal")
+                        }
+                        .help(L("Tablet scroll-follow algorithm (A/B test)"))
                         Button {
                             openWindow(id: "simPad")
                         } label: {
                             Label(L("Simulated Tablet"), systemImage: "ipad")
                         }
-                    }
-                    ToolbarItem(placement: .automatic) {
                         Button {
                             showServer.toggle()
                         } label: {
@@ -63,24 +73,35 @@ struct ContentView: View {
                             ServerPanel(server: app.server)
                         }
                     }
-                    ToolbarItem(placement: .automatic) {
+                    // 单独一组：切换 Inspector
+                    ToolbarItem(placement: .primaryAction) {
                         Button {
                             showNotes.toggle()
                         } label: {
-                            Label(L("Notes"), systemImage: "sidebar.trailing")
+                            Label(L("Inspector"), systemImage: "sidebar.right")
                         }
                     }
                 }
         }
         .inspector(isPresented: $showNotes) {
-            notesPlaceholder
-                .inspectorColumnWidth(min: 220, ideal: 280, max: 360)
+            InspectorView(session: session, documentId: selectedDocID,
+                          toc: toc, tab: $inspectorTab, onSelectTOC: jumpToTOC)
+                .inspectorColumnWidth(min: 240, ideal: 300, max: 400)
         }
-        .onChange(of: selectedDocument) { _, doc in loadSelected(doc) }
-        .onChange(of: session.currentPageIndex) { _, _ in app.sessionChanged(session) }
-        .onChange(of: session.scrollAnchor) { _, _ in app.macScrolled(session) }
+        .onChange(of: selectedDocID) { old, id in
+            saveProgress(docId: old)            // 切走前先存旧文档进度
+            loadSelected(id)
+        }
+        .onChange(of: session.currentPageIndex) { _, _ in
+            app.sessionChanged(session)
+            saveProgress(docId: selectedDocID)   // 翻页即存，避免只靠节流/关窗丢进度
+        }
+        .onChange(of: session.scrollAnchor) { _, a in
+            app.macScrolled(session)
+            saveProgressThrottled(a)
+        }
         .onAppear { app.register(session) }
-        .onDisappear { app.unregister(session) }
+        .onDisappear { saveProgress(docId: selectedDocID); app.unregister(session) }
         .onReceive(NotificationCenter.default.publisher(for: .openPDFRequested)) { _ in
             if isKeyWindow { openPDF() }
         }
@@ -91,12 +112,22 @@ struct ContentView: View {
         if session.pdf != nil {
             PDFKitView(
                 session: session,
+                docKey: session.pdf.map { "\(ObjectIdentifier($0))" } ?? "",
                 scrollAnchor: session.scrollAnchor,
                 hover: session.hover,
                 nightMode: nightMode,
+                interpEnabled: scrollInterp,
                 inkTick: session.strokes.count &+ (session.liveStroke?.points.count ?? 0)
             )
             .overlay(alignment: .top) { if isHashing { indexingBadge } }
+        } else if let doc = missingDoc {
+            ContentUnavailableView {
+                Label(L("File Not Found"), systemImage: "questionmark.folder")
+            } description: {
+                Text(String(format: L("All known paths for “%@” are unavailable. Re-link the file to continue."), doc.title))
+            } actions: {
+                Button(L("Re-link File…")) { relocate(doc) }
+            }
         } else {
             ContentUnavailableView(
                 L("No Document"),
@@ -107,13 +138,25 @@ struct ContentView: View {
         }
     }
 
-    private var notesPlaceholder: some View {
-        // 预留：笔记/批注面板（M3 里程碑落地）。
-        ContentUnavailableView(
-            L("Notes"),
-            systemImage: "note.text",
-            description: Text(L("Notes will appear here."))
-        )
+    // 一次性目录弹窗：无分割线，点条目跳转并关闭。持久目录见 Inspector 的「目录」页。
+    private var tocPopover: some View {
+        VStack(spacing: 0) {
+            Text(L("Contents"))
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+            TOCListView(entries: toc) { e in
+                jumpToTOC(e)
+                showTOCPopover = false
+            }
+            .frame(width: 320, height: 420)
+        }
+    }
+
+    /// 跳转到目录项（页 + 页内比例）。origin=toc → PDFKitView 跟随，同时推给平板。
+    private func jumpToTOC(_ e: TOCEntry) {
+        session.currentPageIndex = e.pageIndex
+        session.emitAnchor(page: e.pageIndex, frac: e.frac, origin: "toc")
     }
 
     private var indexingBadge: some View {
@@ -128,70 +171,111 @@ struct ContentView: View {
     private func openPDF() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.pdf]
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        ingest(url: url)
+        guard panel.runModal() == .OK else { return }
+        ingest(urls: panel.urls)
     }
 
-    private func ingest(url: URL) {
+    /// 导入一批 PDF（打开面板 / 拖拽都走这里）：逐个算 hash 入库，选中最后一个。
+    func ingest(urls: [URL]) {
+        let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
+        guard !pdfs.isEmpty else { return }
+        isHashing = true
+        Task {
+            var lastId: String?
+            for url in pdfs {
+                let hash = await Task.detached(priority: .userInitiated) {
+                    (try? FileHasher.sha256(of: url)) ?? ""
+                }.value
+                let pageCount = PDFDocument(url: url)?.pageCount ?? 0
+                if let doc = workspace.ingest(path: url.path, hash: hash,
+                                              title: url.deletingPathExtension().lastPathComponent,
+                                              pageCount: pageCount) {
+                    lastId = doc.id
+                }
+            }
+            isHashing = false
+            if let lastId { selectedDocID = lastId }   // 触发 loadSelected
+        }
+    }
+
+    /// 选择/新建工作区文件夹（已有或空文件夹皆可；数据与笔记都存这里）。
+    private func chooseWorkspace() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = L("Choose")
+        panel.message = L("Choose a folder as your workspace (data & notes live here).")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        selectedDocID = nil
+        session.pdf = nil
+        do { try workspace.open(folder: url) } catch { workspace.lastError = "\(error)" }
+    }
+
+    // MARK: - 选中加载
+
+    private func loadSelected(_ id: String?) {
+        guard let id, let doc = workspace.document(id: id) else { session.pdf = nil; missingDoc = nil; toc = []; return }
+        guard let target = workspace.openTarget(documentId: id),
+              let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
+            session.pdf = nil
+            missingDoc = doc                       // 所有路径失效 → 显示重定位提示
+            toc = []
+            return
+        }
+        missingDoc = nil
+        session.pdf = pdf
+        toc = TOCEntry.build(from: pdf)
+        session.title = doc.title
+        session.contentHash = target.hash
+        // 恢复阅读进度：定页 + 精确滚到页内比例（restore 锚点，PDFKitView 会跟随）。
+        let p = workspace.progress(documentId: id)
+        let page = min(max(0, p.page), max(0, pdf.pageCount - 1))
+        session.currentPageIndex = page
+        lastProgressSave = .now                    // 避免恢复动作立刻又写一遍
+        if page > 0 || p.frac > 0 {
+            session.emitAnchor(page: page, frac: p.frac, origin: "restore")
+        }
+        app.setActive(session)
+        app.sessionChanged(session)
+    }
+
+    // MARK: - 阅读进度
+
+    private func saveProgressThrottled(_ a: ScrollAnchor?) {
+        guard let a, let id = selectedDocID else { return }
+        let now = Date.now
+        guard now.timeIntervalSince(lastProgressSave) > 0.7 else { return }
+        lastProgressSave = now
+        workspace.saveProgress(documentId: id, page: a.page, frac: a.frac)
+    }
+
+    private func saveProgress(docId: String?) {
+        guard let docId, let a = session.scrollAnchor else { return }
+        workspace.saveProgress(documentId: docId, page: a.page, frac: a.frac)
+    }
+
+    // MARK: - 重定位
+
+    private func relocate(_ doc: LibDocument) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = String(format: L("Choose the file for “%@”."), doc.title)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
         isHashing = true
         Task {
             let hash = await Task.detached(priority: .userInitiated) {
                 (try? FileHasher.sha256(of: url)) ?? ""
             }.value
             let pageCount = PDFDocument(url: url)?.pageCount ?? 0
-            register(hash: hash,
-                     path: url.path,
-                     title: url.deletingPathExtension().lastPathComponent,
-                     pageCount: pageCount)
+            workspace.relocate(documentId: doc.id, path: url.path, hash: hash, pageCount: pageCount)
             isHashing = false
+            loadSelected(doc.id)
         }
-    }
-
-    /// 按 hash 去重入库：已存在则追加新路径，否则新建。
-    private func register(hash: String, path: String, title: String, pageCount: Int) {
-        guard !hash.isEmpty else { return }
-        let descriptor = FetchDescriptor<Document>(
-            predicate: #Predicate { $0.contentHash == hash }
-        )
-        let doc: Document
-        if let existing = (try? context.fetch(descriptor))?.first {
-            doc = existing
-            doc.lastOpenedAt = .now
-            if !doc.locations.contains(where: { $0.path == path }) {
-                let loc = DocumentLocation(path: path)
-                loc.document = doc
-                context.insert(loc)
-            }
-        } else {
-            doc = Document(contentHash: hash, title: title, pageCount: pageCount)
-            context.insert(doc)
-            let loc = DocumentLocation(path: path)
-            loc.document = doc
-            context.insert(loc)
-        }
-        try? context.save()
-        selectedDocument = doc
-    }
-
-    // MARK: - 选中加载
-
-    private func loadSelected(_ doc: Document?) {
-        guard let doc else { session.pdf = nil; return }
-        for loc in doc.locations where FileManager.default.fileExists(atPath: loc.path) {
-            if let pdf = PDFDocument(url: URL(fileURLWithPath: loc.path)) {
-                session.pdf = pdf
-                session.currentPageIndex = 0
-                session.title = doc.title
-                session.contentHash = doc.contentHash
-                doc.lastOpenedAt = .now
-                try? context.save()
-                app.setActive(session)
-                app.sessionChanged(session)
-                return
-            }
-        }
-        session.pdf = nil   // 所有路径失效 → 后续里程碑：提示重定位
     }
 }

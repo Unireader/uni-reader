@@ -26,8 +26,8 @@ final class LANServer: ObservableObject {
     var onMessage: (([String: Any]) -> Void)?
     /// 按页号渲染 PNG（方案 B：平板按需取任意页图）。在服务 queue 上调用，须自带缓存/线程安全。
     var pageProvider: ((Int) -> Data?)?
-    /// 平板上报滚动锚点（页 + 页内归一化比例），在主线程调用。
-    var onScroll: ((Int, Double) -> Void)?
+    /// 平板上报滚动锚点（页 + 页内归一化比例 + 发送端单调时钟 ms），在主线程调用。
+    var onScroll: ((Int, Double, Double) -> Void)?
 
     private let queue = DispatchQueue(label: "com.xvan.UniReader.lan")
     private var httpListener: NWListener?
@@ -261,7 +261,8 @@ final class LANServer: ObservableObject {
             // 方案 B：平板本地滚动 → 上报锚点（页 + 页内归一化比例）。
             let page = (obj["page"] as? NSNumber)?.intValue ?? currentPageIndex
             let frac = (obj["frac"] as? NSNumber)?.doubleValue ?? 0
-            DispatchQueue.main.async { self.onScroll?(page, frac) }
+            let t = (obj["t"] as? NSNumber)?.doubleValue ?? 0
+            DispatchQueue.main.async { self.onScroll?(page, frac, t) }
             return true
         default:
             break

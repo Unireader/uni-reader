@@ -50,9 +50,9 @@ final class AppModel: ObservableObject {
         server.pageProvider = { [weak self] idx in self?.renderPage(idx) }
 
         // 方案 B：平板本地滚动 → 落为平板当前会话的锚点（origin=pad），驱动 Mac PDFView 跟随。
-        server.onScroll = { [weak self] page, frac in
+        server.onScroll = { [weak self] page, frac, t in
             guard let self, let s = self.padSession else { return }
-            s.emitAnchor(page: page, frac: frac, origin: "pad")
+            s.emitAnchor(page: page, frac: frac, origin: "pad", senderT: t)
         }
     }
 

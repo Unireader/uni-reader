@@ -168,13 +168,24 @@
 
 **要点**：滚动/缩放**不逐帧传图**，只传几十字节锚点；页图进视口才取一次并缓存 → 带宽友好。粗估：连续浏览 10 页 ≈ 首次 5~15MB 页图，之后缓存命中 0 传输；锚点/心跳可忽略。
 
-## 8. 待对齐：工作区文件夹持久化（用户 2026-07-20 提出，未实现）
+## 8. 工作区文件夹持久化（2026-07-20 定方案，首版已实现）
 
 > 目标：一个**可移动文件夹 = 一个工作区**，替代「分组」。放移动硬盘上即可两台电脑/未来独立 app 复用同一套数据。
 
-- **文件夹 = 工作区 = 一套相关 PDF**（原「分组」取消，工作区天然就是分组）。
+- **文件夹 = 工作区 = 一套相关 PDF**（原「分组」/`LibraryGroup` 已取消，工作区天然就是分组；§1.1 的「自定义分组」以此替代）。
 - **不直接存 PDF 本体**，只记录每个文档的「多个可能路径」（移动/复制后自动探测有效路径）。
-- **一个文档可配多个文件 / 多个 hash**：例如给 PDF 加了 TOC → hash 变，但页面内容完全一致 → 视为同一文档的多个版本，笔记通用。
-- 配置 + 笔记数据都存这个文件夹（当前是 SwiftData 默认容器 → 需改为工作区文件夹下的存储）。
-- 后期独立版 app 直接复用该文件夹数据。
-- **待定**：存储格式（SwiftData 自定义容器路径 / JSON+SQLite / 纯文件）、工作区切换 UI、多 hash 关联的数据模型。**动手前需与用户确认。**
+- **一个文档可配多个文件 / 多个 hash**：给 PDF 加了 TOC → hash 变但页面内容一致 → 视为同一文档的多个版本（variant），笔记通用。
+
+**已定决策（2026-07-20）：**
+| 项 | 选择 | 理由 |
+|---|---|---|
+| 存储格式 | **自有 schema 的单个 SQLite**（`<工作区>/UniReader/library.sqlite`，无第三方依赖，用系统 libsqlite3） | **确定要做 Windows/Android 版**，数据须跨平台可读 → 排除 SwiftData/Core Data 不透明 schema；SQLite 全平台原生可读、ACID 保一致性、单文件易移动。已用 `sqlite3` CLI 验证可直读 |
+| 多 hash 模型 | **document → variant(hash) → location(path)** 三层；notes 挂 document（按 page + 归一化锚点，版本无关） | 加 TOC = 新 variant，笔记全版本共用；打开时跨 variant 探测有效路径 |
+| 多 hash 关联 | **手动**「关联为同一文档」（`LibraryStore.linkVariant` 已就绪，UI 待补）——hash 变了无法自动判定同一文档 | — |
+| 工作区切换 | 侧栏文件夹菜单：选择/新建工作区（选目录面板）+ 最近工作区；最近列表存**本机** UserDefaults，不进文件夹 | — |
+
+**Schema v2（跨平台契约，见 `Sources/Store/`）：**
+`meta(key,value)` · `document(id,title,page_count,added_at,last_opened_at,sort_order,read_page,read_frac)` · `variant(id,document_id→,content_hash UNIQUE,page_count,added_at)` · `location(id,variant_id→,path,is_valid,last_validated_at,in_workspace)` · `note(id,document_id→,kind,page,anchor_x/y/w/h,payload BLOB=JSON,created_at,updated_at)`。时间戳 ISO-8601 文本、id UUID、笔记 payload JSON。**无 macOS security-scoped bookmark**（不跨平台）。`in_workspace=1` 时 `location.path` 为**工作区相对路径**（随文件夹移动仍有效）。迁移：`meta.schema_version` + `ADD COLUMN IF missing`（v1→v2 已验证）。
+
+**已实现**：`SQLite.swift`（libsqlite3 薄封装）+ `LibraryStore.swift`（建表/迁移/`findOrCreate` 去重/`mergeDocument`+`linkVariant`/`addVariant`/`add·removeLocation`/`updateProgress`/notes CRUD）+ `WorkspaceManager`（当前工作区、最近列表、导入、打开探测路径优先工作区副本、进度存取、复制/移出工作区、重定位、合并）；SwiftData 整套移除。UI：侧栏工作区切换 + **重命名**、文档右键 **复制到工作区/从工作区删除**、**关联为同一文档**（合并，带确认）、路径失效 **重新关联文件** 提示；**阅读进度**自动记录并重开恢复（切文档/关窗/滚动节流各存一次）。运行时验证：建库/schema/meta/WAL、v1→v2 迁移、32/32 DAO 测试（`spike/store-test.swift`）。
+**待补**：① 旧 SwiftData 数据不迁移（全新开始，需重新导入）；② 手写笔迹真正写入 `note` 表＝手写持久化另做（payload 用 JSON 存 InkStroke）；③ 合并的「拆分」逆操作暂无。

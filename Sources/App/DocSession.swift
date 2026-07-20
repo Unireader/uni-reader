@@ -7,6 +7,7 @@ struct ScrollAnchor: Equatable {
     var frac: Double
     var seq: Int
     var origin: String   // "sim" | "mac" | "pad"
+    var senderT: Double = 0   // 发送端单调时钟(ms)，>0 启用时间戳插值；0=本地(sim/mac)走低通
 }
 
 /// 平板笔悬停位置（页 + 页内归一化坐标，左上原点）。Mac 在 PDF 上叠加笔尖圆环；离开近场为 nil。
@@ -34,8 +35,8 @@ final class DocSession: ObservableObject, Identifiable {
     // 滚动锚点（跨视口同步）。
     @Published var scrollAnchor: ScrollAnchor?
     private var anchorSeq = 0
-    func emitAnchor(page: Int, frac: Double, origin: String) {
+    func emitAnchor(page: Int, frac: Double, origin: String, senderT: Double = 0) {
         anchorSeq += 1
-        scrollAnchor = ScrollAnchor(page: page, frac: min(max(0, frac), 1), seq: anchorSeq, origin: origin)
+        scrollAnchor = ScrollAnchor(page: page, frac: min(max(0, frac), 1), seq: anchorSeq, origin: origin, senderT: senderT)
     }
 }

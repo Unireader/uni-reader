@@ -246,7 +246,7 @@
               var docY = scrollY;
               for (var i = 0; i < pageCount; i++) {
                 if (docY <= offY[i] + dispH[i] + GAP) {
-                  send({ type: "scroll", page: i, frac: clamp((docY - offY[i]) / Math.max(1, dispH[i]), 0, 1) });
+                  send({ type: "scroll", page: i, frac: clamp((docY - offY[i]) / Math.max(1, dispH[i]), 0, 1), t: performance.now() });
                   return;
                 }
               }
@@ -425,6 +425,17 @@
           ink.addEventListener("pointerup", onUp);
           ink.addEventListener("pointercancel", onUp);
           ink.addEventListener("pointerleave", function (e) { if (e.pointerType !== "touch") endHover(); });
+
+          // 鼠标滚轮 / 触控板滚动（桌面浏览器测试用）：等同单指平移，复用同一条
+          // panBy→emitScroll 链路，方便无平板时在另一台电脑上测滚动同步/跟随。
+          ink.addEventListener("wheel", function (e) {
+            cancelMomentum();
+            var unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? availH : 1);  // 行/页 → 像素
+            var dx = e.deltaX * unit, dy = e.deltaY * unit;
+            if (e.shiftKey && !dx) { dx = dy; dy = 0; }   // Shift+滚轮 → 横向（放大后用）
+            panBy(dx, dy);
+            e.preventDefault();
+          }, { passive: false });
 
           function flushBatch(kind) {
             if (!batch.length) return;
