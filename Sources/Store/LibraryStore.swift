@@ -84,6 +84,17 @@ final class LibraryStore {
     }
     func setWorkspaceName(_ name: String) throws { try setMeta("workspace_name", name) }
 
+    /// 工作区当前打开的文档集合（多窗口会话，存 meta·JSON，随文件夹移动而保留）。
+    func openDocuments() -> [String] {
+        guard let s = meta("open_documents"), let data = s.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [String] else { return [] }
+        return arr
+    }
+    func setOpenDocuments(_ ids: [String]) throws {
+        let data = (try? JSONSerialization.data(withJSONObject: ids)) ?? Data("[]".utf8)
+        try setMeta("open_documents", String(data: data, encoding: .utf8) ?? "[]")
+    }
+
     // MARK: - Document
 
     func allDocuments() throws -> [LibDocument] {

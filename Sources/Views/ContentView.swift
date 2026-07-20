@@ -4,6 +4,8 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    var launchDocId: String? = nil   // 该窗口启动时要打开的文档（nil = 主/⌘N 窗口）
+
     @Environment(\.openWindow) private var openWindow
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var workspace: WorkspaceManager
@@ -25,7 +27,8 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView(selection: $selectedDocID, onChooseWorkspace: chooseWorkspace,
-                        onDropFiles: { ingest(urls: $0) }, onOpenPDF: openPDF)
+                        onDropFiles: { ingest(urls: $0) }, onOpenPDF: openPDF,
+                        onOpenInNewWindow: { openWindow(id: "docWindow", value: $0) })
                 .navigationSplitViewColumnWidth(min: 200, ideal: 260)
         } detail: {
             // PDF 显示实现已按要求全部移除，待重建。
@@ -91,6 +94,7 @@ struct ContentView: View {
         .onChange(of: selectedDocID) { old, id in
             saveProgress(docId: old)            // 切走前先存旧文档进度
             loadSelected(id)
+            workspace.setWindowDoc(session.id, id)   // 更新工作区打开文档集
         }
         .onChange(of: session.currentPageIndex) { _, _ in
             app.sessionChanged(session)
@@ -100,8 +104,28 @@ struct ContentView: View {
             app.macScrolled(session)
             saveProgressThrottled(a)
         }
-        .onAppear { app.register(session) }
-        .onDisappear { saveProgress(docId: selectedDocID); app.unregister(session) }
+        .onAppear {
+            app.register(session)
+            if let id = launchDocId {
+                selectedDocID = id                      // 「在新窗口打开」指定文档
+            } else if !app.didRestoreInitial {
+                app.didRestoreInitial = true
+                restoreSession()                        // 首个窗口：恢复整组打开文档为多窗口
+            }
+        }
+        .onChange(of: workspace.folder) { _, _ in
+            // 切工作区：主动窗口切到新工作区一个打开文档；其他窗口丢弃失效选中（不额外开窗）。
+            if isKeyWindow {
+                selectedDocID = workspace.restoreDocIds.first { workspace.document(id: $0) != nil }
+            } else if let id = selectedDocID, workspace.document(id: id) == nil {
+                selectedDocID = nil
+            }
+        }
+        .onDisappear {
+            saveProgress(docId: selectedDocID)
+            workspace.closeWindow(session.id)
+            app.unregister(session)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openPDFRequested)) { _ in
             if isKeyWindow { openPDF() }
         }
@@ -210,9 +234,17 @@ struct ContentView: View {
         panel.prompt = L("Choose")
         panel.message = L("Choose a folder as your workspace (data & notes live here).")
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        selectedDocID = nil
-        session.pdf = nil
         do { try workspace.open(folder: url) } catch { workspace.lastError = "\(error)" }
+        // 选中交给 .onChange(workspace.folder) → restoreLastDoc（恢复新工作区上次文档）
+    }
+
+    /// 启动时恢复工作区上次打开的整组文档：本窗口开第一个，其余各开一个新窗口。
+    private func restoreSession() {
+        let docs = workspace.restoreDocIds.filter { workspace.document(id: $0) != nil }
+        selectedDocID = docs.first
+        for other in docs.dropFirst() {
+            openWindow(id: "docWindow", value: other)
+        }
     }
 
     // MARK: - 选中加载

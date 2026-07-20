@@ -45,6 +45,7 @@
 "Re-link File…" = "Re-link File…";
 "Choose the file for “%@”." = "Choose the file for “%@”.";
 "Show in Finder" = "Show in Finder";
+"Open in New Window" = "Open in New Window";
 "Select a document to see its info and notes." = "Select a document to see its info and notes.";
 "Document" = "Document";
 "Title" = "Title";

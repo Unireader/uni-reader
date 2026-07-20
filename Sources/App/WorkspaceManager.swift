@@ -12,6 +12,8 @@ final class WorkspaceManager: ObservableObject {
     @Published private(set) var documents: [LibDocument] = []
     @Published private(set) var recents: [URL] = []
     @Published var lastError: String?
+    private(set) var restoreDocIds: [String] = []   // 工作区打开时读到的待恢复文档集（多窗口会话）
+    private var windowDocs: [UUID: String] = [:]     // 各窗口当前文档（活集，持久化到 meta）
 
     private(set) var store: LibraryStore?
 
@@ -44,10 +46,28 @@ final class WorkspaceManager: ObservableObject {
         self.store = store
         self.folder = folder
         self.name = store.workspaceName
+        restoreDocIds = store.openDocuments()   // 读取上次打开的文档集，供多窗口恢复
+        windowDocs = [:]
         rememberRecent(folder)
         UserDefaults.standard.set(folder.path, forKey: lastKey)
         refresh()
         lastError = nil
+    }
+
+    /// 某窗口的当前文档变化（nil = 清空）。更新活集并持久化到工作区 meta。
+    func setWindowDoc(_ sessionId: UUID, _ docId: String?) {
+        if let docId { windowDocs[sessionId] = docId } else { windowDocs.removeValue(forKey: sessionId) }
+        persistOpenSet()
+    }
+    /// 窗口关闭 → 从活集移除。**app 退出时不收缩**（保留打开集供下次恢复）。
+    func closeWindow(_ sessionId: UUID) {
+        if AppDelegate.isTerminating { return }
+        if windowDocs.removeValue(forKey: sessionId) != nil { persistOpenSet() }
+    }
+    private func persistOpenSet() {
+        var seen = Set<String>(), ordered: [String] = []
+        for v in windowDocs.values where seen.insert(v).inserted { ordered.append(v) }
+        try? store?.setOpenDocuments(ordered)
     }
 
     func rename(_ newName: String) {

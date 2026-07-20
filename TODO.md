@@ -43,7 +43,8 @@
 - **已实现（schema v2）**：`Sources/Store/`（`SQLite.swift` + `LibraryModels.swift` + `LibraryStore.swift`：建表/迁移/多 hash `findOrCreate`/`mergeDocument`/`addVariant`/`add·removeLocation`/`updateProgress`/notes CRUD）；`WorkspaceManager`（工作区 + 最近 + 导入 + 探测路径优先工作区副本 + 进度 + 复制/移出工作区 + 重定位 + 合并）；SwiftData 整套移除；默认工作区自动建。
 - **UI 已加**：侧栏工作区切换 + **重命名**；文档右键 **复制到工作区 / 从工作区删除**、**关联为同一文档**（合并带确认）；路径失效 **重新关联文件** 提示；**阅读进度**自动记录 + 重开恢复。
 - **运行时验证**：建库/schema/meta/WAL、`sqlite3` 直读、**v1→v2 迁移**、**32/32 DAO 测试**（`spike/store-test.swift`）。
-- **待补**：① 旧 SwiftData 数据不迁移（需重新导入）；② 手写笔迹真正落 `note` 表（表已就绪，payload=JSON 序列化 InkStroke）；③ 合并的「拆分」逆操作暂无。
+- **多窗口 + 会话恢复（2026-07-20）**：方案 2（多个完整工作区窗口，⌘N）+ 侧栏右键「在新窗口打开」（`WindowGroup(id:"docWindow", for:String)` + `openWindow(value:)`）。打开文档集实时存 `meta.open_documents`（JSON，随文件夹走）；启动首窗恢复整组（其余各开一窗，`AppModel.didRestoreInitial` 防重复）。**关键坑**：`onDisappear` 在 Cmd-Q 也触发 → 会把打开集清空；用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating`，退出时 `closeWindow` 不收缩集合。`AppModel`/`WorkspaceManager` App 级单例，全窗口共享 WS/LANServer，平板跟随激活窗口。
+- **待补**：① 旧 SwiftData 数据不迁移（需重新导入）；② 手写笔迹真正落 `note` 表（表已就绪，payload=JSON 序列化 InkStroke）；③ 合并的「拆分」逆操作暂无；④ meta 里 `last_document_id` 是旧单文档设计的残留键（已弃用不读，无害）。
 
 ## 📋 Backlog（M3 及之后）
 

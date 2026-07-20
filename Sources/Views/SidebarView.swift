@@ -8,6 +8,7 @@ struct SidebarView: View {
     var onChooseWorkspace: () -> Void
     var onDropFiles: ([URL]) -> Void
     var onOpenPDF: () -> Void
+    var onOpenInNewWindow: (String) -> Void
 
     @State private var renameShown = false
     @State private var nameField = ""
@@ -80,12 +81,15 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func menu(for doc: LibDocument) -> some View {
+        Button { onOpenInNewWindow(doc.id) } label: {
+            Label(L("Open in New Window"), systemImage: "macwindow.badge.plus")
+        }
         if workspace.currentFilePath(documentId: doc.id) != nil {
             Button { workspace.revealInFinder(documentId: doc.id) } label: {
                 Label(L("Show in Finder"), systemImage: "folder")
             }
-            Divider()
         }
+        Divider()
         if workspace.isInWorkspace(doc.id) {
             Button { workspace.removeFromWorkspace(documentId: doc.id) } label: {
                 Label(L("Remove from Workspace"), systemImage: "folder.badge.minus")

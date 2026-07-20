@@ -9,6 +9,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var sessions: [DocSession] = []
     @Published var activeSessionID: UUID?
     @Published var padSelectedSessionID: UUID?
+    /// 仅让「首个窗口」恢复工作区上次文档；后续 ⌘N 窗口开空白，不重复蹦同一本书。
+    var didRestoreInitial = false
 
     private var cancellables = Set<AnyCancellable>()
 
