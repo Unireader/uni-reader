@@ -9,7 +9,7 @@
 | 平板端形态 | **显示当前页图片 + 本地即时落墨** | 笔画用归一化页面坐标 (0~1)，与 Mac 缩放/视口解耦，坐标映射从"最高风险"降级 |
 | 分发方式 | **直接分发 + 公证（非沙盒）** | 文件用普通路径 / bookmark，无需 security-scoped resource |
 | 最低系统 | **macOS 26 Tahoe**（2026-07-19 从 15 上调，不做兼容） | Liquid Glass 全量 API 直接用（`backgroundExtensionEffect` 等），无 #available 分支 |
-| 主窗口布局 | **框架 = 原生 NavigationSplitView（玻璃侧栏）+ 右侧 `.inspector`；PDF 显示实现已整体移除（2026-07-19，用户指示），待重建** | 重建时的目标行为：① 侧栏叠加在 PDF 上（玻璃虚化真实内容）；② fit 时开侧栏页面挤到右侧可见区；③ 手动放大后允许被侧栏覆盖。**严禁自定义仿侧栏 / 浮层 hack（用户红线）**；重建方案需先与用户确认再动手 |
+| 主窗口布局 | **框架 = 原生 NavigationSplitView（玻璃侧栏）+ 右侧 `.inspector`；PDF 阅读区 = 自研页图流 `PageStreamView` v2（2026-07-20 重写：纯 SwiftUI，Preview 级五硬指标——主线程零渲染/预缓存/pinch 锚定零跳位/resize 零跳/任何情况零闪烁；见 `PDF-VIEWER-REBUILD-PLAN.md`）** | 目标行为：① 侧栏叠加在 PDF 上（玻璃虚化真实内容）；② fit 时开侧栏页面挤到右侧可见区；③ 手动放大后允许被侧栏覆盖。**红线：严禁仿侧栏/浮层 hack；阅读区纯 SwiftUI，严禁 AppKit 视图（含包 NSScrollView）** |
 
 ## 1. 功能需求
 
@@ -112,7 +112,7 @@
 | 模块 | 选型 | 理由 |
 |---|---|---|
 | UI | SwiftUI | 原生、开发快 |
-| PDF 渲染 | PDFKit (`PDFView`) | 自带渲染/缩放/文本选择，无需自绘 |
+| PDF 渲染 | **自研页图流 `PageStreamView`**（SwiftUI `ScrollView` + 按页 `PDFPage.draw(.mediaBox)` 出图；仍用 PDFKit 的 `PDFDocument`/`PDFPage` 做解析与栅格化，只弃 `PDFView`） | `PDFView` 与 macOS 26 Liquid Glass safe-area/浮动侧栏不兼容（`PDFClipView` 私有居中缺陷，页面恒偏左，无公开 API 可修）。自绘换来原生玻璃观感 + 跨平台页图流统一；代价：文本选择/搜索用「文本层」补（见 `TEXT-SEARCH-OCR-PLAN.md`） |
 | 本地存储 | SwiftData | Document / Group / Note 三张表，hash 唯一键 |
 | 手写笔画 | 自定义笔画模型（点 + 压感 + 时间偏移，Codable）+ 自绘 overlay | 需压感变宽 → 自绘渲染；若放弃压感可退回 PDFKit ink 注解（缩放/坐标全自动） |
 | 局域网服务 | Network framework (`NWListener` + `NWProtocolWebSocket`) | WS 握手/分帧系统内置；另写极简 HTTP 响应分发网页与页面图，不引入 Vapor |
@@ -155,6 +155,8 @@
   - ✅ **S3 实时渲染**：平板 `ink`/`erase` → Mac `InkOverlayView` 叠加渲染（压感变宽 + 笔色 + 擦除），随缩放/滚动重绘对齐。
   - ✅ **S3.5 笔迹持久化**（2026-07-20）：落工作区 SQLite `note` 表（kind=2，一笔=一行，`note.id==stroke.id`，page/归一化 anchor 走列，payload=JSON `{color,width,points[[x,y,pressure]]}`；**弃 SwiftData**）。`ContentView` `.onChange(session.strokes)` 增量对账 upsert/delete，重开 `loadInk` 恢复。测试 `spike/ink-store-test.swift` 21/21。
   - ⬜ **S5 长按切笔手势**：重压 + 静止 >2s；Mac 笔尖处进度环（>300ms 起）+ 切笔工具；那一笔**预测性立即清除**
+- ✅ **阅读区页图流 v2**（2026-07-20 重写完成，编译通过 + 4 组 spike 全绿，待用户真机手感验证）：v1 因缩放跳位/闪烁被删；v2 纯 SwiftUI 重写（`PageStreamView`+`PageLayout`+`PageBitmap`+`PageRenderEngine`+tick 版 `ScrollFollower`），pinch 双相锚定缩放、⌘±/⌘0、resize 冻结+原子 refit、自研虚拟化、高倍贴片、后台渲染+预缓存。设计与 spike 实测结论见 `PDF-VIEWER-REBUILD-PLAN.md`。
+- 🅿️ **文字搜索 / 文字选择 / 扫描版 OCR 预留架构**（2026-07-20 已落座位）：统一「页面文本层」`PageTextLayer`（native | ocr 同模型）+ `ocr_page` 缓存表(schema v3，`spike/ocr-store-test.swift` 15/15) + `OCRProvider` 可插拔（系统 Vision / 用户配 API）协议骨架。实现按 `TEXT-SEARCH-OCR-PLAN.md` 的 T1(原生文本+选择)→T2(搜索)→T3(OCR)。
 - ⬜ **M3 三种笔记**：文字注解 / 会话笔记 / 手写笔记的编辑与渲染、重定位提示
 
 ## 7. 客户端页面显示与数据流（方案 B 现状，2026-07-20 对齐）
@@ -185,8 +187,8 @@
 | 多 hash 关联 | **手动**「关联为同一文档」（`LibraryStore.linkVariant` 已就绪，UI 待补）——hash 变了无法自动判定同一文档 | — |
 | 工作区切换 | 侧栏文件夹菜单：选择/新建工作区（选目录面板）+ 最近工作区；最近列表存**本机** UserDefaults，不进文件夹 | — |
 
-**Schema v2（跨平台契约，见 `Sources/Store/`）：**
-`meta(key,value)` · `document(id,title,page_count,added_at,last_opened_at,sort_order,read_page,read_frac)` · `variant(id,document_id→,content_hash UNIQUE,page_count,added_at)` · `location(id,variant_id→,path,is_valid,last_validated_at,in_workspace)` · `note(id,document_id→,kind,page,anchor_x/y/w/h,payload BLOB=JSON,created_at,updated_at)`。时间戳 ISO-8601 文本、id UUID、笔记 payload JSON。**无 macOS security-scoped bookmark**（不跨平台）。`in_workspace=1` 时 `location.path` 为**工作区相对路径**（随文件夹移动仍有效）。迁移：`meta.schema_version` + `ADD COLUMN IF missing`（v1→v2 已验证）。
+**Schema v3（跨平台契约，见 `Sources/Store/`）：**
+`meta(key,value)` · `document(id,title,page_count,added_at,last_opened_at,sort_order,read_page,read_frac)` · `variant(id,document_id→,content_hash UNIQUE,page_count,added_at)` · `location(id,variant_id→,path,is_valid,last_validated_at,in_workspace)` · `note(id,document_id→,kind,page,anchor_x/y/w/h,payload BLOB=JSON,created_at,updated_at)` · **`ocr_page(content_hash,page,provider, payload BLOB=JSON,lang,created_at)` PK(content_hash,page,provider)**（v3 新增，扫描页 OCR 结果缓存；payload=`{w,h,runs:[{text,x,y,w,h}]}` 归一化 0~1）。时间戳 ISO-8601 文本、id UUID、payload JSON。**无 macOS security-scoped bookmark**（不跨平台）。`in_workspace=1` 时 `location.path` 为**工作区相对路径**。迁移：`meta.schema_version` + `ADD COLUMN IF missing` / `CREATE TABLE IF NOT EXISTS`（v1→v2、v2→v3 均已验证：`spike/store-test.swift` 32/32、`spike/ocr-store-test.swift` 15/15）。
 
 **已实现**：`SQLite.swift`（libsqlite3 薄封装）+ `LibraryStore.swift`（建表/迁移/`findOrCreate` 去重/`mergeDocument`+`linkVariant`/`addVariant`/`add·removeLocation`/`updateProgress`/notes CRUD）+ `WorkspaceManager`（当前工作区、最近列表、导入、打开探测路径优先工作区副本、进度存取、复制/移出工作区、重定位、合并）；SwiftData 整套移除。UI：侧栏工作区切换 + **重命名**、文档右键 **复制到工作区/从工作区删除**、**关联为同一文档**（合并，带确认）、路径失效 **重新关联文件** 提示；**阅读进度**自动记录并重开恢复（切文档/关窗/滚动节流各存一次）。运行时验证：建库/schema/meta/WAL、v1→v2 迁移、32/32 DAO 测试（`spike/store-test.swift`）。
 **待补**：① 旧 SwiftData 数据不迁移（全新开始，需重新导入）；② ✅ 手写笔迹已写入 `note` 表（kind=2，payload=JSON `InkStroke`；2026-07-20，见 §6 S3.5）；③ 合并的「拆分」逆操作暂无。

@@ -49,6 +49,17 @@ struct LibNote: Identifiable, Equatable {
     var updatedAt: Date
 }
 
+/// 一页的 OCR 缓存（`ocr_page` 表，v3）。按内容 hash（= variant 物理内容）+ 页 + 引擎缓存，
+/// 随文件移动/换机复用。`payload` = JSON `OCRPagePayload`（归一化 0~1 文本框，见 `OCR.swift`）。
+struct OCRPage: Equatable {
+    var contentHash: String     // SHA-256（对应 variant.content_hash）
+    var page: Int
+    var provider: String        // OCR 引擎标识（"vision" / "paddle-http" / …）
+    var payload: Data           // JSON
+    var lang: String?
+    var createdAt: Date
+}
+
 /// ISO-8601（带小数秒）读写，供 SQLite TEXT 时间列使用；跨平台标准。
 enum ISO {
     private static let fmt: ISO8601DateFormatter = {

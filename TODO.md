@@ -5,13 +5,16 @@
 ## 🧭 当前状态速览（交接用）
 
 - 工程 xcodegen 管理：改文件后 `xcodegen generate`（新增文件时必做）→ `xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO`。非沙盒，**macOS 26+（Tahoe，不做低版本兼容）**。
-- **已完成**：hash 去重入库、PDFKit 阅读、多窗口 + App 级共享 WS（`AppModel`/`DocSession`）、二维码配对、采集页（压感/防误触/合批/侧键 PageUp 切模式·PageDown 切笔/全屏/WS 延迟/文档下拉）、**S3 实时渲染**（平板 `ink`/`erase` → Mac `InkOverlayView`）、**方案 B**：桌面 `PadRenderer`（fit-width 连续布局）+ **模拟平板窗口**（滚轮连续滚动 + 鼠标当笔，走共用落墨 API）、锚点同步 **sim↔Mac 双向已通**。
-- **注意（2026-07-20 更新）**：真平板已接入方案 B（连续多页 + 双向锚点 + 按需取图 `/page.png?i=N` + 双指缩放 + 惯性 + hover 传 Mac + 夜间模式 + 手写板模式 + 锁缩放 + 防误触）；采集页 HTML 已独立为 `Sources/Resources/capture.html`（不再内嵌 Swift 字符串，避免转义坑）；Mac 端滚动**平滑跟随**（`PDFKitView` 用 CADisplayLink 按刷新率临界阻尼低通逼近最新锚点，过滤 WiFi 突发抖动，**只跟随不预测**）；PDF 显示已用原生 `PDFKitView` 重建（复刻 Preview）。参数（缩放 catchup、惯性衰减、防误触阈值等）待真机手感微调。
+- **已完成**：hash 去重入库、多窗口 + App 级共享 WS（`AppModel`/`DocSession`）、二维码配对、采集页（压感/防误触/合批/侧键 PageUp 切模式·PageDown 切笔/全屏/WS 延迟/文档下拉）、**S3 实时渲染**（平板 `ink`/`erase` → Mac 墨迹叠加）、**方案 B**：桌面 `PadRenderer`（fit-width 连续布局）+ **模拟平板窗口**（滚轮连续滚动 + 鼠标当笔，走共用落墨 API）、锚点同步 **sim↔Mac 双向已通**、**Mac 阅读区自研页图流 v2（`PageStreamView`，纯 SwiftUI，Preview 级指标，2026-07-20 重写完成待真机验证，见 `PDF-VIEWER-REBUILD-PLAN.md`）**、**文字搜索/选择/OCR 预留架构已落地**（`PageText.swift`+`OCR.swift`+`ocr_page` 表 v3，见 `TEXT-SEARCH-OCR-PLAN.md`）。
+- **⚠️ 阅读区 v1 已被用户删除（缩放跳位/闪烁不达标）**；v2 于 2026-07-20 按五条硬指标（主线程零渲染/预缓存/pinch 锚定/resize 不跳/任何情况零闪烁）重新设计并实现：设计+机制映射+spike 实测结论全在 `PDF-VIEWER-REBUILD-PLAN.md`。**红线：阅读区纯 SwiftUI，严禁 AppKit 视图（含 NSViewRepresentable 包 NSScrollView）**（用户 2026-07-20 明确否决 AppKit 路线）。
+- **注意（2026-07-20 更新）**：真平板已接入方案 B（连续多页 + 双向锚点 + 按需取图 `/page.png?i=N` + 双指缩放 + 惯性 + hover 传 Mac + 夜间模式 + 手写板模式 + 锁缩放 + 防误触）；采集页 HTML 已独立为 `Sources/Resources/capture.html`（不再内嵌 Swift 字符串，避免转义坑）；Mac 端滚动**平滑跟随**（跟随器用 CADisplayLink 按刷新率临界阻尼低通逼近最新锚点，过滤 WiFi 突发抖动，**只跟随不预测**；已从旧 `PDFKitView.Coordinator` 移植进独立的 `ScrollFollower`）；**PDF 显示已换成自研页图流 `PageStreamView`（SwiftUI `ScrollView` + 按页渲染图，`PDFKitView`/`InkOverlayView` 已删）**。参数（缩放 catchup、惯性衰减、防误触阈值等）待真机手感微调。
   - **2026-07-20 修复：滚动跟随的"闪回/撤回"**。原「延迟补偿」用锚点到达时刻估速再外推（dead-reckoning），但 WiFi 成批投递 → `Δtarget/Δarrival` 得到荒谬瞬时速度 → 停手/换向时过冲后回弹＝用户看到的闪回+撤回。改为**去掉速度外推**，纯临界阻尼低通（`smCurrent += (smTarget-smCurrent)*catchup`），输出恒为凸组合、目标单调则绝不过冲。合成锚点流实测（`swift spike/scroll-follow-sim.swift`）：外推版过冲 3 页撞顶、方向反转 13 次、单帧跳 1.35 页；修复版过冲 0、反转 0、单帧 0.076 页。
   - **2026-07-20 加入（保留待真机 A/B）：时间戳插值跟随**。采集页 `scroll` 带发送端 `performance.now()`（`t`，ms）；`ScrollAnchor.senderT` 贯通；`PDFKitView.Coordinator` 双模式共用一个 displayLink——**平板路径**（`senderT>0`）估掉平板↔Mac 时钟差（最小延迟滤波），把样本按发送端戳落到本地时间轴，渲染落后 `interpDelay`（默认 **0.08s**，唯一旋钮）做线性插值，越过末样本则保持（**不外推**）；**本地 sim/mac**（无戳）退回纯低通。桌面浏览器滚轮测试(另一台电脑)走的就是平板路径 → 能测到插值。⚠️ **模拟结论：LAN 条件下插值并未胜过纯低通**（`swift spike/scroll-follow-interp-sim.swift`：恶劣 WiFi 下 低通 单帧 0.103/滞后 0.275 vs 插值 0.160/0.295，均零过冲零反转）——要吸收 80ms 成批就得延后 ≥80ms > 低通 ~45ms 时间常数。插值的理论优势（滞后与速度无关、精确跟速）需**持续高速 fling** 或**真实成批很小**才显现，故留待真机手感定夺。嫌重可整套回退到纯低通。
 
 ## ⏭️ 接下来（建议顺序）
 
+0. ✅ **Mac 阅读区页图流 v2（2026-07-20 重写完成，编译通过 + spike 全绿，待用户真机手感验证）**：纯 SwiftUI（`PageStreamView` + `PageLayout` + `PageBitmap` + `PageRenderEngine` + tick 版 `ScrollFollower`）。关键机制均 spike 实测钉死：同 runloop「改布局+scrollTo」屏幕原子（pinch commit 不闪）、`page.draw` 自带旋转、自研虚拟化（内容尺寸精确，滚动条不漂）、resize 冻结+稳定后单次原子 refit。**用户自测**：pinch 锚定/⌘±/⌘0、窗口缩放与侧栏开合（fit 贴合=行为②，放大态被侧栏盖=行为③）、SimPad↔Mac 锚点、墨迹/hover/夜间/进度、玻璃观感。详见 `PDF-VIEWER-REBUILD-PLAN.md` 顶部「✅ 状态」块。
+0b. **📖 文字搜索 / 文字选择 / 扫描版 OCR（架构已预留，见 `TEXT-SEARCH-OCR-PLAN.md`）**：统一「页面文本层」`PageTextLayer`（native | ocr 同一模型）；`ocr_page` 缓存表(v3) + `OCRProvider` 可插拔（系统 Vision / 用户配 API）+ provider 协议骨架均已落。按 T1(原生文本+选择)→T2(搜索)→T3(OCR) 实现，接手无需再定架构。OCR 结果进工作区库、provider 配置进 UserDefaults。
 1. **真平板接入方案 B**：`PadRenderer` 条带流转给真平板 + 平板回传滚动/落墨（缓冲本地滚动 + progressive 多清晰度）。
 2. **S5 长按切笔手势**：重压+静止 >300ms 在 Mac 笔尖处显进度环，>2s 呼出切笔工具（Mac 笔尖处），那一笔预测性清除。
 3. ✅ **笔迹持久化（2026-07-20 完成）**：落 `note` 表（kind=2，一笔=一行；`note.id==stroke.id`、page/anchor 走列、payload=JSON `{color:{r,g,b,a},width,points:[[x,y,pressure]]}`），重开恢复。**弃 SwiftData，走工作区 SQLite `note` 表**（跨平台）。详见下方「✅ 手写笔迹持久化」。
@@ -20,7 +23,15 @@
 
 （暂无）
 
+### 已修（2026-07-20，阅读区 v2）
+
+- **放大出水平滚动条后跳到最左 + 闪烁；滚动条松手才出现**。根因两个：
+  ① `ScrollPosition` 单轴 `scrollTo(x:)`/`scrollTo(y:)` 是「后写覆盖前写 + 未指定轴重置为 0」（`spike/scroll-x-probe.swift` T1/T4 实测）→ commit 里 x 请求丢失；**修法：全代码库禁用单轴 scrollTo，一律 `scrollTo(point:)`**（两轴同写 + 同 transaction 改尺寸超旧范围也原子生效，T3b）。
+  ② pinch 放大原为「视觉变换、松手才真 commit」→ 布局不变，滚动条松手才出现；**修法：pinch 双向统一逐帧真 commit**（同 runloop 原子已被 atomic-commit-probe 证明）。
+
 ## ✅ 已结论的布局问题（2026-07-19）
+
+> **2026-07-20 现状**：阅读区已按 `PDF-VIEWER-REBUILD-PLAN.md` 重建为自研页图流 `PageStreamView`（SwiftUI `ScrollView` + 页图）。本节是**重建前的排查历史**（PDFView 时代的坑），红线（严禁非原生味 hack / 严禁再套 PDFView + ignoresSafeArea 等）**仍然有效**，勿重走。
 
 - **[布局] PDF 显示实现已整体移除（2026-07-19，用户指示"全部删除不要再实现"）**：`PDFKitView.swift` 已删；`ContentView` 保留原生框架（玻璃侧栏 NavigationSplitView + `.inspector` 笔记占位 + 工具栏）与文档加载（`session.pdf`，模拟平板/真平板渲染不受影响），阅读区暂为占位。**重建 PDF 显示前必须先与用户确认方案，不要自行动手。**
   - 重建目标行为（用户三次确认）：① 侧栏叠加在 PDF 上（玻璃虚化真实内容）；② fit 时开侧栏页面挤到右侧可见区居中；③ 手动放大后允许被侧栏覆盖。

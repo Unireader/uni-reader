@@ -141,16 +141,12 @@ struct ContentView: View {
     @ViewBuilder
     private var readerColumn: some View {
         if session.pdf != nil {
-            PDFKitView(
-                session: session,
-                docKey: session.pdf.map { "\(ObjectIdentifier($0))" } ?? "",
-                scrollAnchor: session.scrollAnchor,
-                hover: session.hover,
-                nightMode: nightMode,
-                interpEnabled: scrollInterp,
-                inkTick: session.strokes.count &+ (session.liveStroke?.points.count ?? 0)
-            )
-            .overlay(alignment: .top) { if isHashing { indexingBadge } }
+            PageStreamView(session: session,
+                           docKey: session.contentHash,
+                           nightMode: nightMode,
+                           interpEnabled: scrollInterp,
+                           isActiveWindow: isKeyWindow)
+                .overlay(alignment: .top) { if isHashing { indexingBadge } }
         } else if let doc = missingDoc {
             ContentUnavailableView {
                 Label(L("File Not Found"), systemImage: "questionmark.folder")
@@ -184,7 +180,7 @@ struct ContentView: View {
         }
     }
 
-    /// 跳转到目录项（页 + 页内比例）。origin=toc → PDFKitView 跟随，同时推给平板。
+    /// 跳转到目录项（页 + 页内比例）。origin=toc → 阅读区(PageStreamView)跟随，同时推给平板。
     private func jumpToTOC(_ e: TOCEntry) {
         session.currentPageIndex = e.pageIndex
         session.emitAnchor(page: e.pageIndex, frac: e.frac, origin: "toc")
@@ -274,7 +270,7 @@ struct ContentView: View {
         session.title = doc.title
         session.contentHash = target.hash
         loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
-        // 恢复阅读进度：定页 + 精确滚到页内比例（restore 锚点，PDFKitView 会跟随）。
+        // 恢复阅读进度：定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。
         let p = workspace.progress(documentId: id)
         let page = min(max(0, p.page), max(0, pdf.pageCount - 1))
         session.currentPageIndex = page

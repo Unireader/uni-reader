@@ -45,6 +45,23 @@ struct UniReaderApp: App {
                 }
                 .keyboardShortcut("o", modifiers: .command)
             }
+            // 阅读区缩放（由 key 窗口的 PageStreamView 响应）。
+            CommandGroup(after: .sidebar) {
+                Divider()
+                Button(L("Zoom In")) {
+                    NotificationCenter.default.post(name: .readerZoomIn, object: nil)
+                }
+                .keyboardShortcut("=", modifiers: .command)
+                Button(L("Zoom Out")) {
+                    NotificationCenter.default.post(name: .readerZoomOut, object: nil)
+                }
+                .keyboardShortcut("-", modifiers: .command)
+                Button(L("Zoom to Fit Width")) {
+                    NotificationCenter.default.post(name: .readerZoomFit, object: nil)
+                }
+                .keyboardShortcut("0", modifiers: .command)
+                Divider()
+            }
         }
     }
 }

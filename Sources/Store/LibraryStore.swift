@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 2
+    static let schemaVersion = 3
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -50,8 +50,16 @@ final class LibraryStore {
           payload BLOB NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_note_document_page ON note(document_id, page);
+        -- v3：扫描页 OCR 结果缓存（跨平台契约）。按内容 hash（= variant 物理内容）+ 页 + 引擎 缓存，
+        -- 随文件移动/换机复用；payload = JSON {w,h,runs:[{text,x,y,w,h}]}（归一化 0~1，左上原点）。
+        CREATE TABLE IF NOT EXISTS ocr_page (
+          content_hash TEXT NOT NULL, page INTEGER NOT NULL, provider TEXT NOT NULL,
+          payload BLOB NOT NULL, lang TEXT, created_at TEXT NOT NULL,
+          PRIMARY KEY (content_hash, page, provider)
+        );
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
+        // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
         try addColumnIfMissing("document", "read_page", "INTEGER NOT NULL DEFAULT 0")
         try addColumnIfMissing("document", "read_frac", "REAL NOT NULL DEFAULT 0")
         try addColumnIfMissing("location", "in_workspace", "INTEGER NOT NULL DEFAULT 0")
@@ -265,6 +273,27 @@ final class LibraryStore {
     }
     func deleteNote(id: String) throws { try db.run("DELETE FROM note WHERE id=?", [.text(id)]) }
 
+    // MARK: - OCR 缓存（ocr_page，v3）
+
+    /// 取某内容(hash) 某页某引擎的 OCR 缓存（miss → nil，上层再真跑 OCR 并回填）。
+    func ocrPage(contentHash: String, page: Int, provider: String) throws -> OCRPage? {
+        try db.query("SELECT * FROM ocr_page WHERE content_hash=? AND page=? AND provider=?",
+                     [.text(contentHash), .int(Int64(page)), .text(provider)]).first.map(Self.ocr)
+    }
+    /// 回填/更新一页的 OCR 结果。
+    func upsertOCRPage(_ p: OCRPage) throws {
+        try db.run("""
+        INSERT INTO ocr_page(content_hash,page,provider,payload,lang,created_at) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(content_hash,page,provider) DO UPDATE SET
+          payload=excluded.payload, lang=excluded.lang, created_at=excluded.created_at
+        """, [.text(p.contentHash), .int(Int64(p.page)), .text(p.provider),
+              .blob(p.payload), p.lang.map { .text($0) } ?? .null, .text(ISO.string(p.createdAt))])
+    }
+    /// 清除某内容(hash)的全部 OCR 缓存（hash 变化/重关联时用）。
+    func deleteOCRPages(contentHash: String) throws {
+        try db.run("DELETE FROM ocr_page WHERE content_hash=?", [.text(contentHash)])
+    }
+
     // MARK: - 行 → 模型
 
     private static func doc(_ r: [String: Any]) -> LibDocument {
@@ -297,5 +326,13 @@ final class LibraryStore {
                 payload: r["payload"] as? Data ?? Data(),
                 createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                 updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
+    private static func ocr(_ r: [String: Any]) -> OCRPage {
+        OCRPage(contentHash: r["content_hash"] as? String ?? "",
+                page: Int(r["page"] as? Int64 ?? 0),
+                provider: r["provider"] as? String ?? "",
+                payload: r["payload"] as? Data ?? Data(),
+                lang: r["lang"] as? String,
+                createdAt: ISO.date(r["created_at"] as? String) ?? .now)
     }
 }
