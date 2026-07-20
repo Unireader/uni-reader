@@ -25,6 +25,11 @@ final class DocSession: ObservableObject, Identifiable {
     @Published var pdf: PDFDocument?
     @Published var currentPageIndex = 0
 
+    /// 当前会话对应的逻辑文档 id（笔迹持久化用；nil = 未加载文档）。
+    var documentId: String?
+    /// 已落库的笔画 id 集合，用于增量对账（新增 upsert / 擦除 delete），非 @Published。
+    var persistedStrokeIDs: Set<UUID> = []
+
     // 实时手写：已完成笔画 + 正在书写的一笔。
     @Published var strokes: [InkStroke] = []
     @Published var liveStroke: InkStroke?

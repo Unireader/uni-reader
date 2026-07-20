@@ -11,6 +11,7 @@ struct InspectorView: View {
     var toc: [TOCEntry]
     @Binding var tab: InspectorTab
     var onSelectTOC: (TOCEntry) -> Void
+    var onJumpTo: (Int, Double) -> Void   // 跳到 (页, 页内比例)：Inspector 笔迹项点击用
 
     @State private var variants: [LibVariant] = []
     @State private var locations: [LibLocation] = []
@@ -109,24 +110,42 @@ struct InspectorView: View {
         let hashByVar = Dictionary(variants.map { ($0.id, $0.contentHash) }, uniquingKeysWith: { a, _ in a })
         return block("\(L("Files")) · \(locations.count)") {
             ForEach(locations) { l in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(URL(fileURLWithPath: l.path).lastPathComponent).font(.callout).lineLimit(1)
-                        if l.inWorkspace { badge(L("In Workspace"), .green) }
-                        if !l.isValid { badge(L("Missing"), .orange) }
-                        Spacer()
-                        Text(String((hashByVar[l.variantId] ?? "").prefix(8)))
-                            .font(.system(.caption2, design: .monospaced)).foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(URL(fileURLWithPath: l.path).lastPathComponent).font(.callout).lineLimit(1)
+                            if l.inWorkspace { badge(L("In Workspace"), .green) }
+                            if !l.isValid { badge(L("Missing"), .orange) }
+                            Spacer()
+                            Text(String((hashByVar[l.variantId] ?? "").prefix(8)))
+                                .font(.system(.caption2, design: .monospaced)).foregroundStyle(.secondary)
+                        }
+                        Text(workspace.resolvedPath(l))
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
                     }
-                    Text(workspace.resolvedPath(l))
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle)
+                    // × 删除该文件条目（至少保留一项 → 仅在多于一项时可删）。
+                    if locations.count > 1 {
+                        Button { deleteLocation(l) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.body).foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(l.inWorkspace ? L("Delete this workspace copy") : L("Remove this file entry"))
+                    }
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
             }
         }
+    }
+
+    /// 删除一个文件条目（工作区内副本连文件一并删）。UI 已保证至少留一项。
+    private func deleteLocation(_ l: LibLocation) {
+        guard locations.count > 1 else { return }
+        workspace.deleteLocation(l)
+        reload()
     }
 
     private var inkBlock: some View {
@@ -138,16 +157,44 @@ struct InspectorView: View {
                 ForEach(byPage.keys.sorted(), id: \.self) { page in
                     let strokes = byPage[page] ?? []
                     HStack(spacing: 6) {
-                        Label(String(format: L("Page %d"), page + 1), systemImage: "pencil.tip").font(.callout)
-                        Spacer()
-                        ForEach(Array(strokes.prefix(6).enumerated()), id: \.offset) { _, s in
-                            Circle().fill(Color(nsColor: s.color.nsColor)).frame(width: 10, height: 10)
+                        Button {
+                            onJumpTo(page, inkTopFrac(strokes))   // 点击 → 跳到该页笔迹处
+                        } label: {
+                            HStack(spacing: 6) {
+                                Label(String(format: L("Page %d"), page + 1), systemImage: "pencil.tip").font(.callout)
+                                Spacer()
+                                ForEach(Array(strokes.prefix(6).enumerated()), id: \.offset) { _, s in
+                                    Circle().fill(Color(nsColor: s.color.nsColor)).frame(width: 10, height: 10)
+                                }
+                                Text("\(strokes.count)").foregroundStyle(.secondary).font(.caption)
+                            }
+                            .contentShape(Rectangle())
                         }
-                        Text("\(strokes.count)").foregroundStyle(.secondary).font(.caption)
+                        .buttonStyle(.plain)
+
+                        Button {
+                            deleteInk(page: page)                 // × → 删该页全部笔迹（内存移除→onChange 落库删行）
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.body).foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("Delete ink on this page"))
                     }
                 }
             }
         }
+    }
+
+    /// 该页笔迹最靠上的归一化 y（0 顶 1 底），略上移一点作跳转目标。
+    private func inkTopFrac(_ strokes: [InkStroke]) -> Double {
+        let ys = strokes.flatMap { $0.points.map(\.y) }
+        return max(0, (ys.min() ?? 0) - 0.05)
+    }
+
+    /// 删除某页全部手写笔迹：从内存移除 → ContentView 的 onChange 增量对账把对应 note 删库。
+    private func deleteInk(page: Int) {
+        session.strokes.removeAll { $0.page == page }
     }
 
     private var textBlock: some View {

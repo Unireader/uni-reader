@@ -14,7 +14,7 @@
 
 1. **真平板接入方案 B**：`PadRenderer` 条带流转给真平板 + 平板回传滚动/落墨（缓冲本地滚动 + progressive 多清晰度）。
 2. **S5 长按切笔手势**：重压+静止 >300ms 在 Mac 笔尖处显进度环，>2s 呼出切笔工具（Mac 笔尖处），那一笔预测性清除。
-3. **笔迹持久化**：落库 SwiftData `Note`（hash+page+归一化锚点+笔画序列化），重开恢复。
+3. ✅ **笔迹持久化（2026-07-20 完成）**：落 `note` 表（kind=2，一笔=一行；`note.id==stroke.id`、page/anchor 走列、payload=JSON `{color:{r,g,b,a},width,points:[[x,y,pressure]]}`），重开恢复。**弃 SwiftData，走工作区 SQLite `note` 表**（跨平台）。详见下方「✅ 手写笔迹持久化」。
 
 ## 🐞 已知 Bug（待修）
 
@@ -44,11 +44,25 @@
 - **UI 已加**：侧栏工作区切换 + **重命名**；文档右键 **复制到工作区 / 从工作区删除**、**关联为同一文档**（合并带确认）；路径失效 **重新关联文件** 提示；**阅读进度**自动记录 + 重开恢复。
 - **运行时验证**：建库/schema/meta/WAL、`sqlite3` 直读、**v1→v2 迁移**、**32/32 DAO 测试**（`spike/store-test.swift`）。
 - **多窗口 + 会话恢复（2026-07-20）**：方案 2（多个完整工作区窗口，⌘N）+ 侧栏右键「在新窗口打开」（`WindowGroup(id:"docWindow", for:String)` + `openWindow(value:)`）。打开文档集实时存 `meta.open_documents`（JSON，随文件夹走）；启动首窗恢复整组（其余各开一窗，`AppModel.didRestoreInitial` 防重复）。**关键坑**：`onDisappear` 在 Cmd-Q 也触发 → 会把打开集清空；用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating`，退出时 `closeWindow` 不收缩集合。`AppModel`/`WorkspaceManager` App 级单例，全窗口共享 WS/LANServer，平板跟随激活窗口。
-- **待补**：① 旧 SwiftData 数据不迁移（需重新导入）；② 手写笔迹真正落 `note` 表（表已就绪，payload=JSON 序列化 InkStroke）；③ 合并的「拆分」逆操作暂无；④ meta 里 `last_document_id` 是旧单文档设计的残留键（已弃用不读，无害）。
+- **待补**：① 旧 SwiftData 数据不迁移（需重新导入）；② ✅ 手写笔迹已落 `note` 表（见下方专节）；③ 合并的「拆分」逆操作暂无；④ meta 里 `last_document_id` 是旧单文档设计的残留键（已弃用不读，无害）。
+
+## ✅ 手写笔迹持久化（2026-07-20 完成）
+
+- **模型**：一条笔画 = `note` 表一行，`kind=2`。`note.id = stroke.id.uuidString`（擦除 → `deleteNote(id:)` 一一映射）；`page` / `anchor`（点集**归一化**包围盒 0~1）走列；`payload` = 干净跨平台 JSON `{color:{r,g,b,a}, width, points:[[x,y,pressure]]}`（显式数组，非 SIMD 编码；Windows/Android 易读）。笔记挂**逻辑文档**（全 variant 共用），与阅读进度同源。
+- **映射**：`Sources/App/InkModel.swift`——`InkColor: Codable`、`InkStroke.id` 改可赋值 `var`、`InkStroke.toNote(documentId:)` / `init?(note:)` / `normalizedBounds` / 私有 `InkStrokePayload`。
+- **对账落库**（`ContentView`）：`.onChange(of: session.strokes)` → `persistInk()`——当前有而未落库 → upsert；曾落库而现已无（擦除）→ delete；用 `session.persistedStrokeIDs` 增量对账（liveStroke 变化**不**触发，仅完成/擦除才写）。
+- **加载**：`loadSelected` → `loadInk(documentId:)` 恢复到 `session.strokes` 并置对账集（避免加载即被判「新增」重复写）；切文档/路径失效 → `clearInk()`（顺带修了旧 bug：换文档未清空内存笔迹）。`DocSession` 加 `documentId` + `persistedStrokeIDs`（非 @Published）。
+- **落地即渲染**：`session.strokes.count` 变 → `inkTick` 变 → `PDFKitView` 刷 `InkOverlayView`；Inspector「笔记」页画笔区读同一 `session.strokes`，自动显示恢复的笔迹。
+- **验证**：`spike/ink-store-test.swift`（21/21）——round-trip、note 列语义、payload JSON 形态、擦除删除、空笔画跳过、非 ink/损坏 payload 容错、多笔增量对账。App 整体 `xcodebuild` 通过。
+- **待调**：擦除仅删内存对应笔画后异步删行（已覆盖）；大量笔画时 `notes(documentId:)` 全量读+client 端 filter kind==2，量大再加 `kind` 查询或分页。
+- **UX 补充（2026-07-20）**：
+  - **修 bug**：墨迹滚到顶部会从半透明工具栏透出、浮在标题栏上 → `InkOverlayView.draw` 用 `window.contentLayoutRect`（排除标题栏/工具栏）裁剪绘制。
+  - Inspector 画笔区：每页一行**可点击跳转**（`onJumpTo(page, frac)`，frac 取该页最靠上笔迹）+ 尾部 **× 删本页手写**（移除内存笔画 → onChange 对账删 note）。
+  - Inspector 文件区：每条 location 尾部 **× 删除**（`WorkspaceManager.deleteLocation`，工作区副本连文件删；**仅多于一项时可删**，至少保留一项）。
 
 ## 📋 Backlog（M3 及之后）
 
-- **笔记持久化**：把 overlay 笔迹落库到 `note` 表（kind=2，payload=JSON 序列化 InkStroke；document + page + 归一化锚点），重开自动恢复。（表已就绪，见工作区 §8）
+- ✅ **手写笔迹持久化**（2026-07-20 完成，见上「✅ 手写笔迹持久化」专节）。文字注解 / 会话笔记的落库与编辑 UI 仍待做（`note` kind=0/1）。
 - **三种笔记形态**：文字注解、会话笔记（预留 AI）、手写笔记的编辑 UI 与渲染。
 - **文件重定位**：所有路径失效时提示重新关联；hash 变化时提示重关联、保留旧笔记。
 - **配对/安全**：二维码 UI 打磨；token 准入已做，考虑连接管理（踢除、显示已连设备）。

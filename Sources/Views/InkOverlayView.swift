@@ -38,6 +38,12 @@ final class InkOverlayView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let pdfView = pdfView, let doc = pdfView.document,
               let ctx = NSGraphicsContext.current?.cgContext else { return }
+        // 只在「工具栏/标题栏下方」的内容区作画：否则滚到顶部的墨迹会从半透明工具栏透出，浮在标题栏上。
+        // contentLayoutRect 已排除标题栏+工具栏；转到本视图坐标裁剪即可（无窗口时不裁，正常全绘）。
+        if let win = window {
+            let layout = convert(win.contentLayoutRect, from: win.contentView)
+            ctx.clip(to: bounds.intersection(layout))
+        }
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
         let scale = pdfView.scaleFactor

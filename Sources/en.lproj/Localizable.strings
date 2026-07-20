@@ -56,8 +56,11 @@
 "Files" = "Files";
 "In Workspace" = "In Workspace";
 "Missing" = "Missing";
+"Delete this workspace copy" = "Delete this workspace copy";
+"Remove this file entry" = "Remove this file entry";
 "Ink" = "Ink";
 "No ink yet." = "No ink yet.";
+"Delete ink on this page" = "Delete ink on this page";
 "Page %d" = "Page %d";
 "Text Notes" = "Text Notes";
 "No text notes yet." = "No text notes yet.";

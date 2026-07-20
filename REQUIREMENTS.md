@@ -152,7 +152,8 @@
     - 🚧 S2b-3：**锚点同步**（文档位置=页+页内比例为唯一真相，连续镜像）
       - ✅ 双向：模拟窗口 ↔ Mac 主窗口连续同步滚动（origin 标记 + 0.3s 抑制窗防回环）
       - ⬜ 真平板接入同一锚点通道
-  - ✅ **S3 实时渲染**：平板 `ink`/`erase` → Mac `InkOverlayView` 叠加渲染（压感变宽 + 笔色 + 擦除），随缩放/滚动重绘对齐。笔迹持久化（落库 SwiftData）另见 backlog
+  - ✅ **S3 实时渲染**：平板 `ink`/`erase` → Mac `InkOverlayView` 叠加渲染（压感变宽 + 笔色 + 擦除），随缩放/滚动重绘对齐。
+  - ✅ **S3.5 笔迹持久化**（2026-07-20）：落工作区 SQLite `note` 表（kind=2，一笔=一行，`note.id==stroke.id`，page/归一化 anchor 走列，payload=JSON `{color,width,points[[x,y,pressure]]}`；**弃 SwiftData**）。`ContentView` `.onChange(session.strokes)` 增量对账 upsert/delete，重开 `loadInk` 恢复。测试 `spike/ink-store-test.swift` 21/21。
   - ⬜ **S5 长按切笔手势**：重压 + 静止 >2s；Mac 笔尖处进度环（>300ms 起）+ 切笔工具；那一笔**预测性立即清除**
 - ⬜ **M3 三种笔记**：文字注解 / 会话笔记 / 手写笔记的编辑与渲染、重定位提示
 
@@ -188,4 +189,4 @@
 `meta(key,value)` · `document(id,title,page_count,added_at,last_opened_at,sort_order,read_page,read_frac)` · `variant(id,document_id→,content_hash UNIQUE,page_count,added_at)` · `location(id,variant_id→,path,is_valid,last_validated_at,in_workspace)` · `note(id,document_id→,kind,page,anchor_x/y/w/h,payload BLOB=JSON,created_at,updated_at)`。时间戳 ISO-8601 文本、id UUID、笔记 payload JSON。**无 macOS security-scoped bookmark**（不跨平台）。`in_workspace=1` 时 `location.path` 为**工作区相对路径**（随文件夹移动仍有效）。迁移：`meta.schema_version` + `ADD COLUMN IF missing`（v1→v2 已验证）。
 
 **已实现**：`SQLite.swift`（libsqlite3 薄封装）+ `LibraryStore.swift`（建表/迁移/`findOrCreate` 去重/`mergeDocument`+`linkVariant`/`addVariant`/`add·removeLocation`/`updateProgress`/notes CRUD）+ `WorkspaceManager`（当前工作区、最近列表、导入、打开探测路径优先工作区副本、进度存取、复制/移出工作区、重定位、合并）；SwiftData 整套移除。UI：侧栏工作区切换 + **重命名**、文档右键 **复制到工作区/从工作区删除**、**关联为同一文档**（合并，带确认）、路径失效 **重新关联文件** 提示；**阅读进度**自动记录并重开恢复（切文档/关窗/滚动节流各存一次）。运行时验证：建库/schema/meta/WAL、v1→v2 迁移、32/32 DAO 测试（`spike/store-test.swift`）。
-**待补**：① 旧 SwiftData 数据不迁移（全新开始，需重新导入）；② 手写笔迹真正写入 `note` 表＝手写持久化另做（payload 用 JSON 存 InkStroke）；③ 合并的「拆分」逆操作暂无。
+**待补**：① 旧 SwiftData 数据不迁移（全新开始，需重新导入）；② ✅ 手写笔迹已写入 `note` 表（kind=2，payload=JSON `InkStroke`；2026-07-20，见 §6 S3.5）；③ 合并的「拆分」逆操作暂无。

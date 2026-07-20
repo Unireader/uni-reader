@@ -88,7 +88,11 @@ struct ContentView: View {
         }
         .inspector(isPresented: $showNotes) {
             InspectorView(session: session, documentId: selectedDocID,
-                          toc: toc, tab: $inspectorTab, onSelectTOC: jumpToTOC)
+                          toc: toc, tab: $inspectorTab, onSelectTOC: jumpToTOC,
+                          onJumpTo: { page, frac in
+                              session.currentPageIndex = page
+                              session.emitAnchor(page: page, frac: frac, origin: "toc")
+                          })
                 .inspectorColumnWidth(min: 240, ideal: 300, max: 400)
         }
         .onChange(of: selectedDocID) { old, id in
@@ -103,6 +107,9 @@ struct ContentView: View {
         .onChange(of: session.scrollAnchor) { _, a in
             app.macScrolled(session)
             saveProgressThrottled(a)
+        }
+        .onChange(of: session.strokes) { _, _ in
+            persistInk()   // 笔画完成/擦除时增量落库（liveStroke 变化不触发）
         }
         .onAppear {
             app.register(session)
@@ -250,12 +257,15 @@ struct ContentView: View {
     // MARK: - 选中加载
 
     private func loadSelected(_ id: String?) {
-        guard let id, let doc = workspace.document(id: id) else { session.pdf = nil; missingDoc = nil; toc = []; return }
+        guard let id, let doc = workspace.document(id: id) else {
+            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); return
+        }
         guard let target = workspace.openTarget(documentId: id),
               let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
             session.pdf = nil
             missingDoc = doc                       // 所有路径失效 → 显示重定位提示
             toc = []
+            clearInk()
             return
         }
         missingDoc = nil
@@ -263,6 +273,7 @@ struct ContentView: View {
         toc = TOCEntry.build(from: pdf)
         session.title = doc.title
         session.contentHash = target.hash
+        loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
         // 恢复阅读进度：定页 + 精确滚到页内比例（restore 锚点，PDFKitView 会跟随）。
         let p = workspace.progress(documentId: id)
         let page = min(max(0, p.page), max(0, pdf.pageCount - 1))
@@ -288,6 +299,38 @@ struct ContentView: View {
     private func saveProgress(docId: String?) {
         guard let docId, let a = session.scrollAnchor else { return }
         workspace.saveProgress(documentId: docId, page: a.page, frac: a.frac)
+    }
+
+    // MARK: - 手写笔迹持久化（note kind=2）
+
+    /// 加载文档时清空内存笔迹与对账集（无文档 / 路径失效时用）。
+    private func clearInk() {
+        session.documentId = nil
+        session.strokes = []
+        session.liveStroke = nil
+        session.persistedStrokeIDs = []
+    }
+
+    /// 恢复该文档已落库的手写笔迹到内存，并记录对账集（避免加载即被判为“新增”而重复落库）。
+    private func loadInk(documentId id: String) {
+        session.documentId = id
+        session.liveStroke = nil
+        let loaded = workspace.inkStrokes(documentId: id)
+        session.persistedStrokeIDs = Set(loaded.map(\.id))
+        session.strokes = loaded
+    }
+
+    /// 内存笔画 ↔ 库对账：当前有而未落库的 → upsert；曾落库而现已无的（擦除）→ delete。
+    private func persistInk() {
+        guard let id = session.documentId else { return }
+        let currentIDs = Set(session.strokes.map(\.id))
+        for st in session.strokes where !session.persistedStrokeIDs.contains(st.id) {
+            workspace.saveInkStroke(documentId: id, st)
+        }
+        for gone in session.persistedStrokeIDs.subtracting(currentIDs) {
+            workspace.deleteInkStroke(id: gone)
+        }
+        session.persistedStrokeIDs = currentIDs
     }
 
     // MARK: - 重定位

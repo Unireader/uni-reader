@@ -56,8 +56,11 @@
 "Files" = "文件";
 "In Workspace" = "工作区内";
 "Missing" = "已失效";
+"Delete this workspace copy" = "删除此工作区副本";
+"Remove this file entry" = "移除此文件条目";
 "Ink" = "画笔";
 "No ink yet." = "暂无手写。";
+"Delete ink on this page" = "删除本页手写";
 "Page %d" = "第 %d 页";
 "Text Notes" = "文字注解";
 "No text notes yet." = "暂无文字注解。";

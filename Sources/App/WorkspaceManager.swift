@@ -153,6 +153,17 @@ final class WorkspaceManager: ObservableObject {
         } catch { lastError = "\(error)" }
     }
 
+    /// 删除单个 location 记录（Inspector「文件」列表的 × 用）。若是工作区内副本，一并删物理文件。
+    /// **调用方须保证该文档至少保留一个 location**（不在此强制，便于 UI 决定）。
+    func deleteLocation(_ loc: LibLocation) {
+        guard let store else { return }
+        if loc.inWorkspace, let folder {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(loc.path))
+        }
+        try? store.removeLocation(id: loc.id)
+        refresh()
+    }
+
     /// 从工作区移出：删掉工作区内副本文件与对应 location（保留外部路径）。
     func removeFromWorkspace(documentId: String) {
         guard let store, let folder else { return }
@@ -205,6 +216,25 @@ final class WorkspaceManager: ObservableObject {
     func variants(documentId: String) -> [LibVariant] { (try? store?.variants(documentId: documentId)) ?? [] }
     func locations(documentId: String) -> [LibLocation] { (try? store?.locations(documentId: documentId)) ?? [] }
     func notes(documentId: String) -> [LibNote] { (try? store?.notes(documentId: documentId)) ?? [] }
+
+    // MARK: - 手写笔迹持久化（note kind=2；挂逻辑文档，全版本共用）
+
+    /// 读取某文档已落库的全部手写笔画（按页/时间序），用于重开恢复。
+    func inkStrokes(documentId: String) -> [InkStroke] {
+        ((try? store?.notes(documentId: documentId)) ?? [])
+            .compactMap { $0.kind == InkStroke.noteKind ? InkStroke(note: $0) : nil }
+    }
+
+    /// 落库/更新一条手写笔画（笔画完成时调用）。空笔画自动跳过。
+    func saveInkStroke(documentId: String, _ stroke: InkStroke) {
+        guard let store, let note = stroke.toNote(documentId: documentId) else { return }
+        try? store.upsertNote(note)
+    }
+
+    /// 删除一条手写笔画（擦除时调用；note.id == stroke.id）。
+    func deleteInkStroke(id: UUID) {
+        try? store?.deleteNote(id: id.uuidString)
+    }
 
     // MARK: - 最近工作区
 
