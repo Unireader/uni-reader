@@ -154,14 +154,13 @@
 
 - ✅ **手写笔迹持久化**（2026-07-20）+ ✅ **文字注解 kind=0**（2026-07-21：选区右键加批注 / 点注解锚页面坐标 / 页面荧光高亮+图钉查看编辑 / Inspector 列表跳转删 / 落库对账）+ ✅ **文字高亮 kind=3**（2026-07-21：选区右键调色板一键上色 / 页面铺色 / Inspector 列表）。
 - **三种笔记形态**：✅ 文字注解、✅ 手写笔记、✅ 高亮均已落地；**会话笔记（kind=1，预留 AI）** 用户 2026-07-21 明确暂不做（消息流 UI + 锚定 + AI 接口整套未起）。
-- **文件重定位**：所有路径失效时提示重新关联；hash 变化时提示重关联、保留旧笔记。
-- **配对/安全**：二维码 UI 打磨；token 准入已做，考虑连接管理（踢除、显示已连设备）。
-- **笔工具**：切笔工具的笔列表可配置（颜色/粗细/荧光笔/橡皮）。
-- **性能**：大文件 hash 缓存 `(path,size,mtime)→hash`；✅ 页图缓存已换自研 LRU（硬上限不机会性驱逐）+ 设置页可配上限（128M~2G，默认 512M，2026-07-21）；懒渲染窗口已在（`PageRenderEngine` setWanted）。
+- **文件重定位**：所有路径失效时提示重新关联（`missingDoc` + Re-link 已在）；hash 命中加路径 / 未命中作同文档新版本、笔记挂文档不丢（`relocate` 已较健壮）。**待补**：路径存在但内容变（同路径换内容）时的 hash 校验提示。
+- ✅ **配对/安全 连接管理**（2026-07-21）：`LANServer.clientList`（地址+id）+ `kick(id)`，`ServerPanel` 列出已连平板逐个「断开」。二维码 UI 打磨仍可做。
+- **笔工具**：✅ 笔预设可配置（2026-07-21：`PenPreset`/`PenPresets`，设置页编辑名字/颜色含透明度/粗细，注入采集页 `__PENS__` + SimPad 用第一支；荧光笔=半透明宽笔、橡皮独立擦除模式）。切笔工具 UI 打磨仍可做。
+- **性能**：✅ 大文件 hash 缓存 `(path,size,mtime)→hash`（2026-07-21，`FileHasher.sha256Cached`）；✅ 页图缓存换自研 LRU（硬上限不机会性驱逐）+ 设置页可配上限（128M~2G，默认 512M）；懒渲染窗口已在（`PageRenderEngine` setWanted）。
 - **打包**：非沙盒 + 公证发布流程。
-- ✅ **保存 PDF 上次打开的缩放**（2026-07-21 完成）：schema v3→v4 加 `read_zoom`（相对 fit 倍率），`DocSession.readZoom/restoreZoom`，`PageStreamView` 首帧定基准后套用，`ContentView` 进度保存带 zoom。**待补**：横向滚动位置未持久化（放大态重开回左边）。
+- ✅ **保存/恢复 PDF 上次缩放 + 横向滚动**（2026-07-21）：schema v3→v5 加 `read_zoom`（相对 fit 倍率）+ `read_hfrac`（offsetX/pageW）；`DocSession.readZoom/restoreZoom/readHFrac/restoreHFrac`，`PageStreamView` 首帧套用，`ContentView` 进度保存带 zoom+hfrac。
 
 ### OCR 文字选择优化（2026-07-21）
-- ✅ **选择改「列走廊 + 纵向带」几何约束**（`PageStreamView.ocrCorridorSelection`）：修思维导图/多列下 naive 线性切片跨块乱选；单行横拖 fallback 线性（保页码）；跨页仍线性。**三个可调旋钮**：同列 xOverlapFrac 0.2 / 走廊重叠 30% / 单行 1.8 行高。
-- ✅ **OCR 识别块调试可视化**（OCR 面板「显示识别块」）：每块独立色+行号 / 可选分组同色+分组号（`OCRFlow.columnGroups` 并查集列/块聚类，间隙 1.2 行高 + 重叠 35%）。
-- **待办**：把选择也做成**分组感知**（用 `OCRFlow` 的分组约束选择），让「可选分组视图看到的同色块」= 实际能连选范围（所见即所选）。
+- ✅ **选择「分组感知」**（`PageStreamView.ocrGroupSelection` + `DocSession.ocrGroups` 缓存）：只选锚点所在分组内、纵向落带内的行 → 与「可选分组」视图**同色块严格一致（所见即所选）**；单行横拖 fallback 线性（保页码）；跨页仍线性。
+- ✅ **OCR 识别块调试可视化**（OCR 面板「显示识别块 · 每块独立/可选分组」）：`OCRFlow.columnGroups` 并查集列/块聚类。**可调旋钮**：分组间隙 1.2 行高 / 重叠 35%（同时驱动视图与选择）；单行 1.8 行高。
