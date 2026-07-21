@@ -123,3 +123,7 @@
 "Rendering" = "Rendering";
 "Page render cache limit" = "Page render cache limit";
 "A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM." = "A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM.";
+"Pens" = "Pens";
+"Pen" = "Pen";
+"Add Pen" = "Add Pen";
+"Pen presets the tablet cycles through (side button / PageDown). A translucent, wide pen acts as a highlighter; the eraser is its own mode." = "Pen presets the tablet cycles through (side button / PageDown). A translucent, wide pen acts as a highlighter; the eraser is its own mode.";

@@ -67,8 +67,8 @@ final class SimPadNSView: NSView {
     private var topDocY: CGFloat = 0
     private var drawingPage: Int?
     var lastAppliedAnchorSeq = 0
-    private let penColor = InkColor.defaultInk
-    private let penWidth: Double = 8
+    /// SimPad 用配置里的第一支笔（真平板走采集页 PageDown 循环全部预设）。
+    private let pen: PenPreset = PenPresets.load().first ?? PenPreset(name: "", color: .defaultInk, width: 8)
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -149,7 +149,7 @@ final class SimPadNSView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         guard let r = renderer, let loc = r.locate(x: p.x, yFromTop: p.y, topDocY: topDocY) else { return }
         drawingPage = loc.page
-        app?.inkBegin(page: loc.page, color: penColor, width: penWidth,
+        app?.inkBegin(page: loc.page, color: pen.color, width: pen.width,
                       points: [SIMD3(loc.nx, loc.ny, 0.5)])
         needsDisplay = true
     }

@@ -14,5 +14,6 @@ enum CapturePage {
         return template
             .replacingOccurrences(of: "__WS_PORT__", with: String(wsPort))
             .replacingOccurrences(of: "__TOKEN__", with: token)
+            .replacingOccurrences(of: "__PENS__", with: PenPresets.captureJSON())   // 可配置笔预设
     }
 }

@@ -59,11 +59,7 @@
         (function () {
           var PORT = __WS_PORT__, TOKEN = "__TOKEN__";
           var BAR = 46, GAP = 8, MINZ = 0.5, MAXZ = 5;
-          var PENS = [
-            { name: "蓝", color: "rgba(24,90,210,0.95)", w: 8 },
-            { name: "红", color: "rgba(220,40,40,0.95)", w: 9 },
-            { name: "黑", color: "rgba(20,20,20,0.95)", w: 14 }
-          ];
+          var PENS = __PENS__;   // 由 Mac 端按设置注入（名字/颜色/粗细可配置）
           var MODES = [{ key: "note", label: "笔记" }, { key: "erase", label: "擦除" }, { key: "page", label: "翻页" }];
           var modeIdx = 0, penIdx = 0;
 
