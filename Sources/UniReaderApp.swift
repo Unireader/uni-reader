@@ -1,12 +1,17 @@
 import SwiftUI
 import AppKit
 
-/// 用于区分「用户关某个窗口」与「整个 app 退出」：退出时不收缩工作区打开文档集，留给下次恢复。
+/// 单实例守卫（新实例接管 / last-wins）：本次启动时若已有同一 App 在跑，
+/// 优雅终止旧实例并接管——释放局域网服务端口（8770/8771），杜绝多份状态与端口冲突。
+/// 选 last-wins 而非 first-wins：Xcode 每次 Run = 新进程，需保证看到的永远是最新构建，
+/// 且旧进程即便未被及时回收也会被这里清掉。正式发布如需「第二次打开只激活已有窗口」再切 first-wins。
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static var isTerminating = false
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        AppDelegate.isTerminating = true
-        return .terminateNow
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard let bundleId = Bundle.main.bundleIdentifier else { return }
+        let me = NSRunningApplication.current
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+            .filter { $0.processIdentifier != me.processIdentifier && !$0.isTerminated }
+        for other in others { other.terminate() }   // 优雅退出：旧实例走正常关窗流程（存进度）并释放端口
     }
 }
 
@@ -36,6 +41,12 @@ struct UniReaderApp: App {
                 .environmentObject(app)
                 .environmentObject(workspace)
                 .frame(minWidth: 360, minHeight: 480)
+        }
+
+        // 标准设置窗口（⌘,）：夜间模式自动化 / 平板滚动跟随算法 / 平板服务自启。
+        Settings {
+            SettingsView()
+                .environmentObject(app)
         }
         .commands {
             // 保留默认「新建窗口」(⌘N)，另加「打开 PDF」(⌘O)。

@@ -198,6 +198,9 @@ private struct ReaderSurface: View {
             case .ended: scratch.cursorP = nil
             }
         }
+        // 缩放手势挂在 ScrollView 容器（而非内容层）→ 整个阅读区都能捏合：页间空隙、末页下方空白、
+        // zoom<1 时页两侧留白皆可，不再限于 PDF 页面上。startLocation 为容器/视口坐标（与上方 .local 同空间）。
+        .simultaneousGesture(magnify)
         .overlay(alignment: .topLeading) { followTicker }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: nightMode) { _, _ in scheduleSettleRender() }
@@ -205,7 +208,10 @@ private struct ReaderSurface: View {
             // fullWidth 到位前首帧已早退；到位后补跑首帧定基准+首次实化（消除启动窄→宽闪烁）。窗口真实缩放走 refit。
             if scratch.didInitialGeo { scheduleRefit() } else { geometryChanged(scratch.geo) }
         }
-        .onChange(of: unobSize.width) { _, _ in scheduleRefit() }        // 侧栏开合(unobW 变但 fullWidth 不变 → refit 内早退，零变化)
+        .onChange(of: unobSize.width) { _, _ in
+            if scratch.didInitialGeo { scheduleRefit() }   // 侧栏开合(unobW 变但 fullWidth 不变 → refit 内早退，零变化)
+            else { geometryChanged(scratch.geo) }          // 首帧兜底：unobSize 就绪即尝试定基准（切文档防空白）
+        }
         .onReceive(NotificationCenter.default.publisher(
             for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
             // 鼠标插拔切换 overlay/legacy 滚动条 → fit 可用宽变了
@@ -217,6 +223,9 @@ private struct ReaderSurface: View {
         .onAppear {
             setup()
             installWheelMonitor()
+            // 切文档重建后补跑一次首帧几何求值：onScrollGeometryChange 可能不重发，靠 onAppear(layout 就绪)
+            // + fullWidth/unobSize 的 onChange 三路兜底，任一到位即定基准（防新文档首屏空白、须拖窗口才出）。
+            if !scratch.didInitialGeo { geometryChanged(scratch.geo) }
         }
         .onDisappear {
             follower.reset()
@@ -252,7 +261,6 @@ private struct ReaderSurface: View {
                 }
             }
             .frame(width: contentW, height: contentH, alignment: .topLeading)
-            .simultaneousGesture(magnify)
             .transaction { $0.animation = nil }   // 零闪烁纪律 4：阅读区无隐式动画
         } else {
             Color.clear.frame(width: 10, height: 10)
@@ -290,7 +298,16 @@ private struct ReaderSurface: View {
 
     // MARK: 滚动几何（锚点上报 / 实化窗口 / commit 校验）
 
-    private func geometryChanged(_ n: GeoSnap) {
+    private func geometryChanged(_ raw: GeoSnap) {
+        var n = raw
+        // 首帧兜底：切文档时 ScrollView 被 `.id(docKey)` 整体重建，onScrollGeometryChange 未必重发首帧
+        // 几何（容器尺寸与旧文档相同 → SwiftUI 认为"没变化"不回调）→ 新文档首屏空白，须拖窗口才恢复。
+        // scroll 几何缺席（containerW≤0）时，用外层 GeometryReader 的 unobSize（布局同步可得、与内容无关）
+        // 兜底填容器尺寸，仅供实化窗口/偏移使用，**绝不参与宽度/fit 决策**（那些只依赖 fullWidth，见 fitAvail 注释）。
+        if n.containerW <= 0, unobSize.width > 0 {
+            n.containerW = unobSize.width
+            n.containerH = unobSize.height
+        }
         scratch.geo = n
         guard let layout else { return }
         // ⚠️ 此处严禁读取 n.containerW/contentW 做宽度决策（会与内容互抬成环，见 fitAvail 注释）。
@@ -301,6 +318,8 @@ private struct ReaderSurface: View {
             scratch.didInitialGeo = true
             fitBasis = fitAvail                   // 首帧定 fit 基准（全窗宽 − legacy 滚动条占位）
             scratch.lastRefitFullW = fullWidth
+            NSLog("[RD] bootstrap didInitialGeo=1 via %@ containerW=%.1f fullW=%.1f unobW=%.1f",
+                  raw.containerW > 0 ? "scrollGeo" : "unobSize", n.containerW, fullWidth, unobSize.width)
         }
         let dbgNow = CACurrentMediaTime()
         if dbgNow - scratch.lastDbgAt > 0.25 {
@@ -528,10 +547,11 @@ private struct ReaderSurface: View {
         if scratch.pinch == nil {
             follower.reset()                                   // 用户接管
             let g = scratch.geo
-            let c = v.startLocation                            // 内容坐标（手势挂在 content 上）
-            scratch.pinch = PinchInfo(startZoom: zoom,
-                                      viewportP: CGPoint(x: c.x - g.offsetX, y: c.y - g.offsetY),
-                                      cCur: c)
+            // 手势现挂在 ScrollView 容器 → startLocation 为容器/视口坐标 P（屏幕不动点，与 ⌘wheel/anchorP 同约定）；
+            // 内容锚点 c = 偏移 + P。（旧实现挂 content 层取内容坐标，捏合页外空白无手势 → 不缩放。）
+            let P = v.startLocation
+            let c = CGPoint(x: g.offsetX + P.x, y: g.offsetY + P.y)
+            scratch.pinch = PinchInfo(startZoom: zoom, viewportP: P, cCur: c)
             scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
         }
         guard var p = scratch.pinch else { return }

@@ -23,6 +23,9 @@ struct ContentView: View {
     @State private var showNotes = false
     @AppStorage("nightMode") private var nightMode = false
     @AppStorage("scrollInterp") private var scrollInterp = true   // 平板滚动跟随：true=时间戳插值 / false=纯低通（A/B 用）
+    @AppStorage("autoNightMode") private var autoNightMode = false     // 夜间模式跟随系统深色外观
+    @AppStorage("autoStartServer") private var autoStartServer = false // 启动即开平板服务
+    @Environment(\.colorScheme) private var systemScheme
 
     var body: some View {
         NavigationSplitView {
@@ -113,6 +116,8 @@ struct ContentView: View {
         }
         .onAppear {
             app.register(session)
+            if autoStartServer, !app.server.isRunning { app.server.start() }   // 平板服务开机自启
+            if autoNightMode { nightMode = (systemScheme == .dark) }           // 夜间模式跟随系统
             if let id = launchDocId {
                 selectedDocID = id                      // 「在新窗口打开」指定文档
             } else if !app.didRestoreInitial {
@@ -120,6 +125,8 @@ struct ContentView: View {
                 restoreSession()                        // 首个窗口：恢复整组打开文档为多窗口
             }
         }
+        .onChange(of: systemScheme) { _, s in if autoNightMode { nightMode = (s == .dark) } }
+        .onChange(of: autoNightMode) { _, on in if on { nightMode = (systemScheme == .dark) } }
         .onChange(of: workspace.folder) { _, _ in
             // 切工作区：主动窗口切到新工作区一个打开文档；其他窗口丢弃失效选中（不额外开窗）。
             if isKeyWindow {
@@ -245,7 +252,9 @@ struct ContentView: View {
     private func restoreSession() {
         let docs = workspace.restoreDocIds.filter { workspace.document(id: $0) != nil }
         selectedDocID = docs.first
-        for other in docs.dropFirst() {
+        // 只自动重开有限几个最近文档为独立窗口，避免「最近打开」较长时一次弹出过多窗口；
+        // 其余仍在侧栏，一键可开。
+        for other in docs.dropFirst().prefix(4) {
             openWindow(id: "docWindow", value: other)
         }
     }

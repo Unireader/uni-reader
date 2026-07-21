@@ -28,3 +28,6 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         SWIFT_EMIT_LOC_STRINGS: YES
         CODE_SIGN_STYLE: Automatic
+        # 固定签名身份 = zqsd 团队（含 Developer ID，后续公证直接复用）。
+        # 稳定签名让 TCC 授权按「Team+BundleID」记账而非 cdhash → 重编译不再反复弹「下载」目录授权。
+        DEVELOPMENT_TEAM: T8F5T6HKG8

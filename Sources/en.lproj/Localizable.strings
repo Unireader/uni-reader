@@ -73,3 +73,13 @@
 "Zoom In" = "Zoom In";
 "Zoom Out" = "Zoom Out";
 "Zoom to Fit Width" = "Zoom to Fit Width";
+"Appearance" = "Appearance";
+"Auto Night Mode (follow system Dark Mode)" = "Auto Night Mode (follow system Dark Mode)";
+"When on, Night Mode follows the system appearance automatically." = "When on, Night Mode follows the system appearance automatically.";
+"Tablet Scroll Follow" = "Tablet Scroll Follow";
+"Delay handling" = "Delay handling";
+"Interpolation" = "Interpolation";
+"Low-pass" = "Low-pass";
+"Interpolation tracks fast flings tighter; Low-pass is simpler and smoother on LAN." = "Interpolation tracks fast flings tighter; Low-pass is simpler and smoother on LAN.";
+"Tablet Service" = "Tablet Service";
+"Start tablet service on launch" = "Start tablet service on launch";

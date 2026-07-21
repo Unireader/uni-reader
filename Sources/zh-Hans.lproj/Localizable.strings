@@ -73,3 +73,13 @@
 "Zoom In" = "放大";
 "Zoom Out" = "缩小";
 "Zoom to Fit Width" = "适合宽度";
+"Appearance" = "外观";
+"Auto Night Mode (follow system Dark Mode)" = "自动夜间模式（跟随系统深色）";
+"When on, Night Mode follows the system appearance automatically." = "开启后，夜间模式自动跟随系统外观切换。";
+"Tablet Scroll Follow" = "平板滚动跟随";
+"Delay handling" = "延迟处理方式";
+"Interpolation" = "插值";
+"Low-pass" = "低通";
+"Interpolation tracks fast flings tighter; Low-pass is simpler and smoother on LAN." = "插值对快速滑动跟得更紧；低通更简单、局域网下更平滑。";
+"Tablet Service" = "平板服务";
+"Start tablet service on launch" = "启动时自动开启平板服务";
