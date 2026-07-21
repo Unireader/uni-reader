@@ -337,7 +337,7 @@ private struct ReaderSurface: View {
                                  highlights: session.highlights.filter { $0.page == i },
                                  notes: session.textNotes.filter { $0.page == i },
                                  ocrBlocks: session.showOCRBlocks ? (session.ocrRuns[i] ?? []) : [],
-                                 ocrGroupColors: session.ocrBlockGrouped,
+                                 ocrGroups: session.showOCRBlocks && session.ocrBlockGrouped ? session.ocrGroups(page: i) : [],
                                  onOpenNote: { editorTarget = .edit($0) })
                         .offset(x: pageX, y: layout.offsets[i] * dispScale)
                 }
@@ -587,40 +587,38 @@ private struct ReaderSurface: View {
     }
 
     /// OCR 行级选区：锚点/焦点各命中一「行」（run）。
-    /// **同页**走「列走廊 + 纵向带」几何约束（见 `ocrCorridorSelection`）——解决思维导图/多列排版下
-    /// naive 线性切片会把空间上很远、或另一列的行也吞进来；**跨页**（罕见）仍走原阅读顺序线性切片。
+    /// **同页**走「分组感知」约束（见 `ocrGroupSelection`）——只在锚点所在列/块分组内连选，
+    /// 与「可选分组」调试视图完全一致（所见即所选）；**跨页**（罕见）仍走原阅读顺序线性切片。
     private func setOCRSelection(anchor a: (page: Int, nx: CGFloat, ny: CGFloat),
                                  focus f: (page: Int, nx: CGFloat, ny: CGFloat)) {
         guard let ai = ocrLineHit(page: a.page, nx: a.nx, ny: a.ny),
               let fi = ocrLineHit(page: f.page, nx: f.nx, ny: f.ny) else { return }
         selection = a.page == f.page
-            ? ocrCorridorSelection(page: a.page, ai: ai, fi: fi)
+            ? ocrGroupSelection(page: a.page, ai: ai, fi: fi)
             : ocrLinearSelection(a: (a.page, ai), f: (f.page, fi))
     }
 
-    /// 同页 OCR 选区（best-effort，尽力贴合绝大多数正常排版）：
-    ///  · **纵向带** = 锚点行∪焦点行的竖直范围，只考虑 midY 落在带内的行（不跨到带外别的东西）。
-    ///  · **列走廊** = 若锚点行与焦点行水平重叠够（同列）→ 走廊取二者 x 并集；否则（异列/相距远）
-    ///    只认锚点行的 x 区间——于是「左列拖到右列」「思维导图黄块拖到远处蓝节点」都只落在锚点那一列/块内。
-    ///  · 一行被选中 = 它与走廊的水平重叠 ≥ 自身宽度的 30%（大部分身子在走廊里）。
-    /// 正常单列连续文本：锚焦同列 → 走廊≈整列宽 → 带内所有行全选（与旧行为一致）。
-    private func ocrCorridorSelection(page: Int, ai: Int, fi: Int) -> TextSelection? {
+    /// 同页 OCR 选区（分组感知，所见即所选）：
+    ///  · **纵向带** = 锚点行∪焦点行的竖直范围；
+    ///  · 只选**锚点所在分组**（`DocSession.ocrGroups` = `OCRFlow.columnGroups`）内、midY 落在带内的行。
+    /// 于是「左列拖右列」「思维导图黄块拖远处蓝节点」都只落在锚点那一列/块——与调试视图同色块严格一致。
+    ///  · **单行横拖**（带高 ≤1.8 行高）例外：走阅读顺序线性切片，含右对齐页码等同行元素（分组会把页码单列成组，
+    ///    横拖时不该被分组挡掉）。
+    /// 正常单列连续文本：整列是一个分组 → 带内所有行全选（与旧行为一致）。
+    private func ocrGroupSelection(page: Int, ai: Int, fi: Int) -> TextSelection? {
         guard let runs = ocrRuns(page: page), runs.indices.contains(ai), runs.indices.contains(fi) else { return nil }
         let a = runs[ai].rect, f = runs[fi].rect
         let bandMin = min(a.minY, f.minY), bandMax = max(a.maxY, f.maxY)
-        // 近似同一视觉行（横向拖）→ 阅读顺序线性切片，含右对齐页码等同行元素；列约束只对跨多行生效。
         if bandMax - bandMin <= 1.8 * max(a.height, f.height) {
             return ocrLinearSelection(a: (page, ai), f: (page, fi))
         }
-        let sameCol = xOverlapFrac(a, f) >= 0.2
-        let corMinX = sameCol ? min(a.minX, f.minX) : a.minX
-        let corMaxX = sameCol ? max(a.maxX, f.maxX) : a.maxX
+        let groups = session.ocrGroups(page: page)
+        let ga = groups.indices.contains(ai) ? groups[ai] : -1
         var picked: [Int] = []
         for (i, r) in runs.enumerated() {
-            let rr = r.rect
-            guard rr.midY >= bandMin, rr.midY <= bandMax else { continue }
-            let ov = max(0, min(rr.maxX, corMaxX) - max(rr.minX, corMinX))
-            if rr.width > 0, ov / rr.width >= 0.3 { picked.append(i) }
+            guard groups.indices.contains(i), groups[i] == ga else { continue }
+            let midY = r.rect.midY
+            if midY >= bandMin, midY <= bandMax { picked.append(i) }
         }
         if picked.isEmpty { picked = [ai] }
         picked.sort {
@@ -649,12 +647,6 @@ private struct ReaderSurface: View {
         }
         let text = parts.joined(separator: "\n")
         return text.isEmpty ? nil : TextSelection(rects: rects, text: text)
-    }
-
-    /// 两矩形水平重叠量占「较窄者宽度」的比例（判两行是否同列）。
-    private func xOverlapFrac(_ a: CGRect, _ b: CGRect) -> CGFloat {
-        let ov = max(0, min(a.maxX, b.maxX) - max(a.minX, b.minX))
-        return ov / max(0.0001, min(a.width, b.width))
     }
 
     /// OCR 行命中：先比行(y)、同高度内再比列(x)——落在行框内 dx=0，最近行优先。
@@ -1106,7 +1098,7 @@ private struct PageCellView: View {
     var highlights: [Highlight] = []       // 本页文字高亮（kind=3）：按各自颜色铺色，最底层
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
     var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
-    var ocrGroupColors = false             // 调试上色：true=按可选分组同色(列/块聚类) / false=每块独立色
+    var ocrGroups: [Int] = []              // 调试上色：非空=按分组同色(与 ocrBlocks 同序的分组 id) / 空=每块独立色
     var onOpenNote: (TextNote) -> Void = { _ in }
 
     var body: some View {
@@ -1132,18 +1124,17 @@ private struct PageCellView: View {
             //  · 可选分组：色相按列/块分组 id（同一可选块同色，量化切分是否合理）。
             if !ocrBlocks.isEmpty {
                 Canvas { ctx, sz in
-                    let groups: [Int] = ocrGroupColors ? OCRFlow.columnGroups(ocrBlocks) : []
+                    let grouped = !ocrGroups.isEmpty
                     for (i, run) in ocrBlocks.enumerated() {
                         let px = CGRect(x: run.x * sz.width, y: run.y * sz.height,
                                         width: run.w * sz.width, height: run.h * sz.height)
-                        let key = ocrGroupColors ? (groups.indices.contains(i) ? groups[i] : i) : i
+                        let key = grouped ? (ocrGroups.indices.contains(i) ? ocrGroups[i] : i) : i
                         let hue = (Double(key) * 0.61803398875).truncatingRemainder(dividingBy: 1)
                         let c = Color(hue: hue, saturation: 0.8, brightness: 0.95)
                         let path = Path(roundedRect: px, cornerRadius: 2)
                         ctx.fill(path, with: .color(c.opacity(0.28)))
                         ctx.stroke(path, with: .color(c), lineWidth: 1)
-                        let label = ocrGroupColors ? "\(key)" : "\(i)"
-                        ctx.draw(Text(label).font(.system(size: 9, weight: .bold)).foregroundColor(c),
+                        ctx.draw(Text("\(key)").font(.system(size: 9, weight: .bold)).foregroundColor(c),
                                  at: CGPoint(x: px.minX + 2, y: px.minY + 1), anchor: .topLeading)
                     }
                 }

@@ -156,7 +156,18 @@ final class DocSession: ObservableObject, Identifiable {
     // 缓存键 = (内容 hash, 页, provider)，随内容走、换机复用；网络任务并发上限 3。
 
     @Published var ocrEnabled = false                     // 本文档启用 OCR 文本层
-    @Published var ocrRuns: [Int: [TextRun]] = [:]        // 页 → 已识别的行级文本框（阅读顺序）
+    @Published var ocrRuns: [Int: [TextRun]] = [:] {      // 页 → 已识别的行级文本框（阅读顺序）
+        didSet { ocrGroupCache = [:] }                    // 行变了 → 分组缓存作废（懒重算）
+    }
+    private var ocrGroupCache: [Int: [Int]] = [:]         // 页 → 分组 id（列/块聚类，与 runs 同序）
+    /// 某页 OCR 行的列/块分组（`OCRFlow.columnGroups`），带缓存——拖选/渲染多次访问不重复跑并查集。
+    func ocrGroups(page: Int) -> [Int] {
+        if let c = ocrGroupCache[page] { return c }
+        guard let runs = ocrRuns[page] else { return [] }
+        let g = OCRFlow.columnGroups(runs)
+        ocrGroupCache[page] = g
+        return g
+    }
     @Published var showOCRBlocks = false                  // 调试/demo：把 OCR 识别块按块上色画出来（量化排版/选择）
     @Published var ocrBlockGrouped = false                // 调试上色模式：false=每块独立色 / true=可选分组同色（列/块聚类）
     @Published var ocrActivePages: Set<Int> = []          // 正在网络识别的页
