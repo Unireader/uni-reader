@@ -26,7 +26,8 @@
 ### 已修（2026-07-20，阅读区 v2）
 
 - **切换侧栏触发内容放大/缩小**：原 fit 模式侧栏开合会整页 refit。改为**侧栏/Inspector 开合零视觉变化**（只重定标 fitBasis/zoom，页面允许被玻璃盖住、可横向拖出）；仅窗口宽度真变（含 legacy 滚动条出现/消失）才触发 fit 锚定 refit。行为②按用户新要求更新（见 REQUIREMENTS §0）。
-- **鼠标接入（legacy 占空间滚动条）时关侧栏后水平滚动条常驻**：fit 宽/内容宽原取自外层 GeometryReader 未遮宽，不含 legacy 竖滚动条占位 → 恒差 ~16pt。改为一律取 `ScrollGeometry.containerSize − 左右 insets`（首帧即定基准），并且 **fit 状态只声明垂直滚动轴**（`pageW ≤ availW` 时不声明 `.horizontal`），任何滚动条样式下 fit 都不可能出横条。注意：legacy 行为与鼠标在场相关，无头探针复现不了（`spike/legacy-scroller-probe.swift` 结论），此修法为运行时不变量、双模式自洽。
+- **鼠标接入（legacy 占空间滚动条）时关侧栏后水平滚动条常驻**：fit 宽原不含 legacy 竖滚动条占位 → 恒差 ~16pt。修法：fit 基准 = 未遮宽 − `NSScroller.scrollerWidth`（overlay=0，鼠标插拔经 `preferredScrollerStyleDidChange` 刷新）+ **fit 状态只声明垂直滚动轴**（`pageW ≤ 未遮宽` 时不声明 `.horizontal`）。
+- **回归「一直在放大」（2026-07-21，上一条的首版修复引入，真机日志实锤后重写）**：曾把 `ScrollGeometry.containerSize` 当宽度真相源——实测它在 ignoresSafeArea + 动态轴下**跟随 contentW+17pt**（非独立视口测量，contentInsets 恒 0），内容宽由它推导 = 闭环互抬每帧 +17 无限放大。**铁律：阅读区宽度输入必须全部与内容无关（GeometryReader + NSScroller 系统度量）；ScrollGeometry 只用于 offset/可见区**。窗口缩放 vs 侧栏开合用双 GeometryReader（全宽 vs 未遮宽）判别；开合已验证 pageW 全程不变（零视觉变化）。
 
 - **放大出水平滚动条后跳到最左 + 闪烁；滚动条松手才出现**。根因两个：
   ① `ScrollPosition` 单轴 `scrollTo(x:)`/`scrollTo(y:)` 是「后写覆盖前写 + 未指定轴重置为 0」（`spike/scroll-x-probe.swift` T1/T4 实测）→ commit 里 x 请求丢失；**修法：全代码库禁用单轴 scrollTo，一律 `scrollTo(point:)`**（两轴同写 + 同 transaction 改尺寸超旧范围也原子生效，T3b）。

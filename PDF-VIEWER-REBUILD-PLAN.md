@@ -141,13 +141,18 @@ ContentView.readerColumn
 > **2026-07-20 定稿（修 bug 后，两条用户反馈驱动）**：
 > ① 侧栏开合曾触发内容缩放 → 用户判为 bug；② 鼠标接入时（legacy 占空间滚动条）关侧栏后水平滚动条常驻。
 
-- **宽度真相源**：fit 基准与内容宽一律取滚动视图自己上报的 `containerSize − 左右 insets`（=`availW`），
-  **绝不用外层 GeometryReader 的未遮宽**——legacy 滚动条占的 ~16pt 只体现在 containerSize 里，
-  两个来源差 1pt 就会水平常驻滚动条。首帧 geometry 即定 fitBasis（无 bootstrap 偏差）。
+- **宽度真相源（2026-07-21 修正，血泪教训）**：**严禁用 `ScrollGeometry.containerSize` 当宽度来源**——
+  真机日志实锤：在 ignoresSafeArea + 动态轴组合下它**跟随 `contentW + 滚动条槽(~17pt)`**（不是独立视口测量，
+  `contentInsets` 恒 0），内容宽再由它推导 = 闭环互抬，每帧 +17pt 无限放大（首版修复即栽在这里，用户报「一直在放大」）。
+  正确做法：宽度输入必须全部**与内容无关**——fit 基准 = GeometryReader 未遮宽 − legacy 滚动条占位
+  （`NSScroller.scrollerWidth(for:.regular, scrollerStyle:.legacy)`，overlay 模式为 0；鼠标插拔经
+  `preferredScrollerStyleDidChange` 通知刷新）。ScrollGeometry 只用于 offset/可见区，不做宽度决策。
 - **水平轴按需声明**：`pageW ≤ availW` 时 `ScrollView` 只声明 `.vertical` → fit 状态物理上不可能出现水平滚动条
   （对任何滚动条样式免疫）。
-- **侧栏/Inspector 开合（容器宽不变、只 insets 变）→ 零视觉变化**：只重定标基准（fitBasis=新可用宽、
-  zoom=尺寸不变换算值），页面不缩放不跳位；开侧栏时页面被玻璃盖住（真内容延伸），可横向拖出。
+- **窗口缩放 vs 侧栏开合的判别**：双 GeometryReader——未遮宽（fit 基准）+ 全宽（`.ignoresSafeArea` 的
+  background GeometryReader）。全宽变 = 窗口缩放；全宽不变、仅未遮宽变 = 侧栏/Inspector 开合。
+- **侧栏/Inspector 开合 → 零视觉变化**：只重定标基准（fitBasis=新可用宽、zoom=尺寸不变换算值），
+  页面不缩放不跳位；开侧栏时页面被玻璃盖住（真内容延伸），可横向拖出。已真机日志验证：开合时 pageW 全程不变。
   （取代早期「fit 时开侧栏页面挤到右侧居中」的行为②——用户 2026-07-20 明确不要开合触发缩放。）
 - **窗口宽真变（含 legacy 滚动条出现/消失改变容器宽）**：变化期间布局冻结（纵向绝对稳定），
   稳定 0.2s 后一次原子锚定 refit（fit 模式贴合新宽；手动缩放态只重定标=Preview 绝对尺寸语义）。
