@@ -12,6 +12,7 @@
 "Server stopped" = "服务已停止";
 "Open this URL in Firefox on your tablet:" = "在平板的 Firefox 中打开此地址：";
 "Connected tablets: %d" = "已连接平板：%d";
+"Disconnect" = "断开";
 "Latency: %d ms" = "延迟：%d ms";
 "Inbound: %d msg/s" = "入站：%d 条/秒";
 "Last message:" = "最近消息：";

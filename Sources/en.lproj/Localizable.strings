@@ -12,6 +12,7 @@
 "Server stopped" = "Server stopped";
 "Open this URL in Firefox on your tablet:" = "Open this URL in Firefox on your tablet:";
 "Connected tablets: %d" = "Connected tablets: %d";
+"Disconnect" = "Disconnect";
 "Latency: %d ms" = "Latency: %d ms";
 "Inbound: %d msg/s" = "Inbound: %d msg/s";
 "Last message:" = "Last message:";

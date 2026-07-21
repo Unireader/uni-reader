@@ -47,6 +47,25 @@ struct ServerPanel: View {
                     }
                 }
                 .font(.footnote)
+                // 已连设备列表 + 逐个「断开」（踢除）。
+                if !server.clientList.isEmpty {
+                    VStack(spacing: 4) {
+                        ForEach(server.clientList) { c in
+                            HStack(spacing: 6) {
+                                Image(systemName: "ipad").foregroundStyle(.secondary)
+                                Text(c.address)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                Button(L("Disconnect")) { server.kick(c.id) }
+                                    .buttonStyle(.borderless)
+                                    .font(.caption)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                }
                 HStack {
                     Text(String(format: L("Inbound: %d msg/s"), server.inboundRate))
                         .foregroundStyle(.secondary)

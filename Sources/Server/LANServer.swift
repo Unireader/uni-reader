@@ -1,6 +1,12 @@
 import Foundation
 import Network
 
+/// 一个已连接的平板客户端（供面板显示/踢除）。`id` 稳定于连接生命周期。
+struct ClientInfo: Identifiable, Equatable {
+    let id: UUID
+    let address: String
+}
+
 /// 局域网手写服务：
 /// - HTTP 监听（httpPort）分发采集页与当前页 PNG。
 /// - WebSocket 监听（wsPort，走系统 `NWProtocolWebSocket` 自动分帧）传实时消息。
@@ -9,6 +15,8 @@ import Network
 final class LANServer: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var clientCount = 0
+    /// 已连接的平板列表（地址 + 稳定 id），供面板显示与「踢除」。
+    @Published private(set) var clientList: [ClientInfo] = []
     @Published private(set) var lastInbound = ""
     @Published private(set) var latencyMS: Int?
     /// 入站消息速率（条/秒，不含 ping/latency 心跳），用于延迟 stats。
@@ -33,6 +41,7 @@ final class LANServer: ObservableObject {
     private var httpListener: NWListener?
     private var wsListener: NWListener?
     private var clients: [NWConnection] = []
+    private var infoByConn: [ObjectIdentifier: ClientInfo] = [:]   // conn → 客户端信息（列表/踢除用）
     private var inboundCount = 0            // 主线程累加
     private var statsTimer: Timer?
 
@@ -71,10 +80,12 @@ final class LANServer: ObservableObject {
         queue.async {
             let toClose = self.clients
             self.clients = []
+            self.infoByConn = [:]
             for c in toClose { c.cancel() }
         }
         DispatchQueue.main.async {
             self.clientCount = 0
+            self.clientList = []
             self.isRunning = false
         }
     }
@@ -297,20 +308,38 @@ final class LANServer: ObservableObject {
     private func addClient(_ conn: NWConnection) {
         if !clients.contains(where: { $0 === conn }) {
             clients.append(conn)
-            publishCount()
+            infoByConn[ObjectIdentifier(conn)] = ClientInfo(id: UUID(), address: endpointString(conn))
+            publishClients()
         }
     }
 
     private func dropClient(_ conn: NWConnection) {
         let before = clients.count
         clients.removeAll { $0 === conn }
+        infoByConn[ObjectIdentifier(conn)] = nil
         conn.cancel()
-        if clients.count != before { publishCount() }
+        if clients.count != before { publishClients() }
     }
 
-    private func publishCount() {
+    /// 踢除指定客户端（面板「断开」按钮）：取消其连接 → 状态回调走 dropClient。
+    func kick(_ id: UUID) {
+        queue.async {
+            guard let conn = self.clients.first(where: { self.infoByConn[ObjectIdentifier($0)]?.id == id })
+            else { return }
+            self.dropClient(conn)
+        }
+    }
+
+    private func publishClients() {
         let n = clients.count
-        DispatchQueue.main.async { self.clientCount = n }
+        let list = clients.compactMap { infoByConn[ObjectIdentifier($0)] }
+        DispatchQueue.main.async { self.clientCount = n; self.clientList = list }
+    }
+
+    /// 连接远端地址串（IP），供列表显示。
+    private func endpointString(_ conn: NWConnection) -> String {
+        if case let .hostPort(host, _) = conn.endpoint { return "\(host)" }
+        return "\(conn.endpoint)"
     }
 
     private func setRunning(_ v: Bool) {
