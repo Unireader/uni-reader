@@ -23,6 +23,10 @@ struct PageStreamView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let _ = NSLog("[RD] outerGeo size=%.1fx%.1f safeArea L%.1f R%.1f T%.1f B%.1f fullW=%.1f",
+                          geo.size.width, geo.size.height,
+                          geo.safeAreaInsets.leading, geo.safeAreaInsets.trailing,
+                          geo.safeAreaInsets.top, geo.safeAreaInsets.bottom, fullWidth)
             ReaderSurface(session: session,
                           docKey: docKey.isEmpty ? "untitled" : docKey,
                           nightMode: nightMode,
@@ -92,6 +96,8 @@ private final class Scratch {
     var pinch: PinchInfo?
     var pendingRestore: ScrollAnchor?
     var lastRefitFullW: CGFloat = 0        // 上次 refit 时的全宽（区分窗口缩放 vs 侧栏/Inspector 开合）
+    var appearAt: CFTimeInterval = 0       // 视图出现时刻：启动稳定窗内宽度变化一律真 fit（防瞬态宽被锁死）
+    var lastDbgAt: CFTimeInterval = 0      // 临时诊断日志节流
     var didInitialGeo = false
     var didFirstKick = false
     var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点；域外为 nil）
@@ -136,28 +142,45 @@ private struct ReaderSurface: View {
     /// ⚠️ 教训（2026-07-21 实测，日志复现）：**严禁用 `ScrollGeometry.containerSize` 当宽度真相源**——
     /// 在 ignoresSafeArea + 动态轴组合下它跟随 `contentW + 滚动条槽`（非独立视口测量，contentInsets 恒 0），
     /// 内容宽再由它推导 = 闭环互抬，每帧 +17pt 无限放大。宽度输入必须全部与内容无关（GeometryReader + 系统度量）。
+    /// ⚠️ 启动抖动坑（2026-07-21 实测）：`NSScroller.preferredScrollerStyle` 在进程刚启动会**瞬时误报 overlay(→0)**，
+    /// ~300ms 后系统探测到鼠标才切 legacy 并发通知。若首帧按 0 定基准，内容=全容器宽，legacy 竖条落位后瞬间溢出
+    /// 17pt = 横条闪一下。故一律按 legacy 占位(worst-case)起步：legacy 用户零抖动、内容==视口；overlay 用户仅右侧
+    /// 多留 17pt 悬浮条位（无横条无抖动，合理保留）。运行时真改样式仍由 preferredScrollerStyleDidChangeNotification 校正。
     @State private var scrollerAllowance: CGFloat =
-        NSScroller.preferredScrollerStyle == .legacy
-            ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
 
     // MARK: 布局换算
 
-    /// fit 页宽基准：未遮宽 − legacy 滚动条占位（两者都与内容无关 → 不可能反馈成环）。
-    private var fitAvail: CGFloat { max(1, unobSize.width - scrollerAllowance) }
+    /// 布局基准宽（Option A / Preview 式，用户 2026-07-21 选定）：全窗宽（含侧栏/Inspector 玻璃下延伸区）。
+    /// 页面按整窗 fit、开合侧栏纹丝不动——布局只依赖 `fullWidth`，侧栏是 safe-area inset（不改 fullWidth），
+    /// 故侧栏开合对 fit 基准零影响 = 天然零位移零缩放（半透明玻璃盖住页面左侧，能透过看到）。
+    /// 启动瞬时 fullWidth 未到（=0）时回退未遮宽兜底。
+    private var layoutW: CGFloat { fullWidth > 0 ? fullWidth : unobSize.width }
+    /// fit 页宽基准：全窗宽 − legacy 滚动条占位（= 真实 clip 视口宽）。两输入都与内容无关 → 无反馈环。
+    private var fitAvail: CGFloat { max(1, layoutW - scrollerAllowance) }
     private var basis: CGFloat { fitBasis > 0 ? fitBasis : fitAvail }
     private var pageW: CGFloat { basis * zoom }
     private var dispScale: CGFloat { pageW / PageLayout.refWidth }
-    private var contentW: CGFloat { max(unobSize.width, pageW) }
-    /// 水平轴按需声明：页宽不超过未遮宽时不声明 `.horizontal` → fit 状态物理上不存在水平滚动条。
-    private var axes: Axis.Set { pageW > unobSize.width + 0.5 ? [.vertical, .horizontal] : [.vertical] }
+    /// ⚠️ 三条实测钉死的语义（2026-07-21，NSScrollView 层级 dump 实锤，见 PROBE 日志）：
+    /// ① **严禁动态切换 ScrollView 轴集合**——轴只在创建时生效，之后变更不应用（水平轴会被永久固化）。
+    /// ② **legacy 竖滚动条是「占位」的**：ScrollView 因 ignoresSafeArea 铺满整窗（容器=全窗宽），但真实可视
+    ///    视口 `clip.bounds = 容器 − 占位竖滚动条(17pt)`。dump 实测：容器 697 → 视口 680，竖条贴 x=680 吃 17pt。
+    ///    → 内容宽下限取 `fitAvail`（= 真实视口）：fit 时 contentW==fitAvail==视口 → 水平区间 0；放大时 contentW==pageW>视口。
+    /// ③ **SwiftUI ScrollView 会把「窄于容器的内容」在整窗宽里居中，居中内边距=(全窗宽−内容宽)/2 两侧对称、
+    ///    会被算进可滚区间**（= 竖滚动条宽 17）→ 常驻横条。故 body 上加 `.defaultScrollAnchor(.topLeading)` 关掉自动居中；
+    ///    页面改由 `pageX` 在 contentW 内居中（页面居中在真实视口/整窗，非在自动居中的整窗）。
+    private var contentW: CGFloat { max(fitAvail, pageW) }
     private var contentH: CGFloat { (layout?.totalHeight ?? 1) * dispScale }
     private var pageX: CGFloat { (contentW - pageW) / 2 }
     private var paper: Color { nightMode ? Color(white: 0.10) : .white }
 
     var body: some View {
-        ScrollView(axes) {
+        ScrollView([.vertical, .horizontal]) {
             contentBody
         }
+        // ⚠️ 关键：内容窄于容器(全窗宽)时，ScrollView 默认「水平居中」，居中内边距=(全窗宽−内容宽)/2 会被算进可滚区间
+        //    → 把内容撑回全窗宽 > 真实视口(全窗宽−占位竖滚动条) → 常驻横条。靠首端对齐关掉居中；页面仍由 pageX 在内容内居中。
+        .defaultScrollAnchor(.topLeading)
         .contentMargins(.top, indicatorTopInset, for: .scrollIndicators)   // 滚动条不进工具栏区
         .scrollPosition($pos)
         .onScrollGeometryChange(for: GeoSnap.self) { g in
@@ -178,7 +201,11 @@ private struct ReaderSurface: View {
         .overlay(alignment: .topLeading) { followTicker }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: nightMode) { _, _ in scheduleSettleRender() }
-        .onChange(of: unobSize.width) { _, _ in scheduleRefit() }        // 窗口缩放/侧栏开合（refit 内区分）
+        .onChange(of: fullWidth) { _, _ in
+            // fullWidth 到位前首帧已早退；到位后补跑首帧定基准+首次实化（消除启动窄→宽闪烁）。窗口真实缩放走 refit。
+            if scratch.didInitialGeo { scheduleRefit() } else { geometryChanged(scratch.geo) }
+        }
+        .onChange(of: unobSize.width) { _, _ in scheduleRefit() }        // 侧栏开合(unobW 变但 fullWidth 不变 → refit 内早退，零变化)
         .onReceive(NotificationCenter.default.publisher(
             for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
             // 鼠标插拔切换 overlay/legacy 滚动条 → fit 可用宽变了
@@ -210,7 +237,7 @@ private struct ReaderSurface: View {
     // MARK: 内容（自研虚拟化：精确总尺寸 + 只实化窗口内页）
 
     @ViewBuilder private var contentBody: some View {
-        if let layout {
+        if let layout, scratch.didInitialGeo {   // 未定基准前只占位空白（防启动窄宽渲染 → 闪烁）
             ZStack(alignment: .topLeading) {
                 ForEach(Array(realized), id: \.self) { i in
                     PageCellView(size: CGSize(width: pageW, height: layout.heights[i] * dispScale),
@@ -252,7 +279,8 @@ private struct ReaderSurface: View {
         layout = lay
         follower.pageCount = lay.pageCount
         follower.interpEnabled = interpEnabled
-        // fitBasis 由首帧 geometryChanged 用滚动视图实测可用宽设定（此处不预设，避免与真实值差 1pt）
+        scratch.appearAt = CACurrentMediaTime()
+        // fitBasis 由首帧 geometryChanged 设定（此处不预设，避免与真实值有偏差）
         // 视图创建前就已发出的 restore/toc 锚点（loadSelected 先 emit 后建视图）
         if let a = session.scrollAnchor, a.origin != "mac" {
             scratch.pendingRestore = a
@@ -266,10 +294,21 @@ private struct ReaderSurface: View {
         scratch.geo = n
         guard let layout else { return }
         // ⚠️ 此处严禁读取 n.containerW/contentW 做宽度决策（会与内容互抬成环，见 fitAvail 注释）。
-        if !scratch.didInitialGeo, n.containerW > 0 {
+        // 首帧定基准必须等 `fullWidth > 0`（后台 GeometryReader 慢半拍）——否则 layoutW 回退未遮宽=窄，
+        // 会把窄页渲染出来、40ms 后再跳到整窗宽 = 启动闪烁。未就绪则整体早退（didInitialGeo 前不实化/不渲染）。
+        if !scratch.didInitialGeo {
+            guard n.containerW > 0, fullWidth > 0 else { return }
             scratch.didInitialGeo = true
-            fitBasis = fitAvail                   // 首帧定 fit 基准（未遮宽 − legacy 滚动条占位）
+            fitBasis = fitAvail                   // 首帧定 fit 基准（全窗宽 − legacy 滚动条占位）
             scratch.lastRefitFullW = fullWidth
+        }
+        let dbgNow = CACurrentMediaTime()
+        if dbgNow - scratch.lastDbgAt > 0.25 {
+            scratch.lastDbgAt = dbgNow
+            NSLog("[RD] state pageW=%.1f fitBasis=%.1f zoom=%.3f unobW=%.1f fullW=%.1f allow=%.1f content=%.1fx%.0f container=%.1fx%.1f off=(%.1f,%.1f) hbar=%d",
+                  pageW, fitBasis, zoom, unobSize.width, fullWidth, scrollerAllowance,
+                  n.contentW, n.contentH, n.containerW, n.containerH, n.offsetX, n.offsetY,
+                  pageW > fitAvail + 0.5 ? 1 : 0)   // 真实横条判据：内容宽(=max(fitAvail,pageW)) 超真实视口 fitAvail
         }
         verifyPendingTarget(n)
         scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)
@@ -468,10 +507,11 @@ private struct ReaderSurface: View {
     private func clampOffset(_ o: CGPoint, pageWidth pw: CGFloat) -> CGPoint {
         guard let layout else { return o }
         let g = scratch.geo
-        let cw = max(fitAvail, pw)
+        let cw = max(fitAvail, pw)                      // 与 contentW 同源
         let ch = layout.totalHeight * pw / PageLayout.refWidth
-        let minX = -g.insetLeading
-        let maxX = max(minX, cw - g.containerW + g.insetTrailing)
+        // 水平有效视口 = fitAvail（= 未遮宽 − 占位竖滚动条 = 真实 clip 视口；ScrollGeometry 的 insets/containerW 不可用作视口）
+        let minX: CGFloat = 0
+        let maxX = max(0, cw - fitAvail)
         let minY = -g.insetTop
         let maxY = max(minY, ch - g.containerH + g.insetBottom)
         return CGPoint(x: min(max(o.x, minX), maxX), y: min(max(o.y, minY), maxY))
@@ -600,10 +640,10 @@ private struct ReaderSurface: View {
 
     // MARK: 窗口/侧栏宽度变化（硬指标 3/4：resize 不闪、不跳）
     // 变化期间布局冻结（页尺寸不变 → 纵向绝对稳定）；稳定 0.2s 后一次性处理：
-    //   · 侧栏/Inspector 开合（容器宽没变，只有 insets 变）→ **只重定标基准，零视觉变化**
-    //     （页面不缩放不跳位，允许被侧栏玻璃盖住，可横向拖出——用户 2026-07-20 明确要求）
-    //   · 窗口宽真变（含 legacy 滚动条出现/消失改变容器宽）→ fit 模式做单次原子锚定 refit；
-    //     手动缩放态同样只重定标（Preview 的绝对尺寸语义）
+    //   · 侧栏/Inspector 开合（Option A / Preview 式）→ fullWidth 不变 → fitAvail 不变 → **guard 早退，纯 no-op**
+    //     （页面纹丝不动，半透明玻璃盖住左侧——用户 2026-07-21 选定）。unobW 已不参与布局，仅 debug 日志留存。
+    //   · 窗口宽真变（fullWidth 变，含 legacy 滚动条出现/消失）→ fit 模式做单次原子锚定 refit；
+    //     手动缩放态只重定标基准保持页宽（Preview 的绝对尺寸语义）
 
     private func scheduleRefit() {
         guard scratch.didInitialGeo else { return }
@@ -616,12 +656,18 @@ private struct ReaderSurface: View {
     private func refitToViewport() {
         guard layout != nil, scratch.didInitialGeo else { return }
         let g = scratch.geo
-        let newW = fitAvail                              // 未遮宽 − 滚动条占位（与内容无关，无环）
+        let newW = fitAvail                              // 全窗宽 − 滚动条占位（与内容无关，无环；侧栏开合不改它 → 下方 guard 早退）
         let windowWidthChanged = abs(fullWidth - scratch.lastRefitFullW) > 0.5
+        NSLog("[RD] refit newW=%.1f fullW=%.1f(last %.1f) winChanged=%d userZoomed=%d zoom=%.3f fitBasis=%.1f pageW=%.1f unobW=%.1f",
+              newW, fullWidth, scratch.lastRefitFullW, windowWidthChanged ? 1 : 0, userZoomed ? 1 : 0,
+              zoom, fitBasis, pageW, unobSize.width)
         scratch.lastRefitFullW = fullWidth
         guard abs(newW - fitBasis) > 0.5 || windowWidthChanged else { return }   // 无实质变化
-        if userZoomed || !windowWidthChanged {
-            // 尺寸保持：显示页宽不变，仅重定标 fit 基准 → 零视觉变化（侧栏开合走这里）
+        // 启动稳定窗（窗口恢复/分栏落位的瞬态宽度会连环变化）：未缩放前一律真 fit，
+        // 否则首帧捕获的瞬态宽会被「零视觉变化」重定标逻辑永久锁死（页宽偏窄、跑到左边）。
+        let startupSettling = !userZoomed && CACurrentMediaTime() - scratch.appearAt < 1.5
+        if userZoomed || (!windowWidthChanged && !startupSettling) {
+            // 尺寸保持：显示页宽不变，仅重定标 fit 基准 → 零视觉变化（窗口缩放且手动缩放态走这里）
             let eff = pageW
             var t = Transaction(); t.animation = nil
             withTransaction(t) {
