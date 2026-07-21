@@ -25,7 +25,8 @@ struct PageStreamView: View {
                           nightMode: nightMode,
                           interpEnabled: interpEnabled,
                           isActiveWindow: isActiveWindow,
-                          unobSize: geo.size)
+                          unobSize: geo.size,
+                          indicatorTopInset: geo.safeAreaInsets.top)
                 .ignoresSafeArea()
         }
         .id(docKey)   // 换文档 = 全新阅读状态
@@ -93,6 +94,7 @@ private struct ReaderSurface: View {
     let interpEnabled: Bool
     let isActiveWindow: Bool
     let unobSize: CGSize          // 未遮视口尺寸（fit 基准；GeometryReader 提供）
+    let indicatorTopInset: CGFloat // 滚动条顶端下压量（避让玻璃工具栏；内容仍垫底）
 
     @Environment(\.displayScale) private var displayScale
 
@@ -131,6 +133,7 @@ private struct ReaderSurface: View {
         ScrollView([.vertical, .horizontal]) {
             contentBody
         }
+        .contentMargins(.top, indicatorTopInset, for: .scrollIndicators)   // 滚动条不进工具栏区
         .scrollPosition($pos)
         .onScrollGeometryChange(for: GeoSnap.self) { g in
             GeoSnap(offsetX: g.contentOffset.x, offsetY: g.contentOffset.y,
