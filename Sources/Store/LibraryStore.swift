@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 4
+    static let schemaVersion = 5
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -28,7 +28,7 @@ final class LibraryStore {
           id TEXT PRIMARY KEY, title TEXT NOT NULL, page_count INTEGER NOT NULL,
           added_at TEXT NOT NULL, last_opened_at TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
           read_page INTEGER NOT NULL DEFAULT 0, read_frac REAL NOT NULL DEFAULT 0,
-          read_zoom REAL NOT NULL DEFAULT 1
+          read_zoom REAL NOT NULL DEFAULT 1, read_hfrac REAL NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS variant (
           id TEXT PRIMARY KEY,
@@ -66,6 +66,8 @@ final class LibraryStore {
         try addColumnIfMissing("location", "in_workspace", "INTEGER NOT NULL DEFAULT 0")
         // v3 → v4：记住上次缩放（相对 fit-width 的倍率，1=贴合宽度）。
         try addColumnIfMissing("document", "read_zoom", "REAL NOT NULL DEFAULT 1")
+        // v4 → v5：记住上次横向滚动比例（offsetX / pageW，缩放态才非 0）。
+        try addColumnIfMissing("document", "read_hfrac", "REAL NOT NULL DEFAULT 0")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -117,10 +119,11 @@ final class LibraryStore {
     func updateLastOpened(documentId: String, at date: Date = .now) throws {
         try db.run("UPDATE document SET last_opened_at=? WHERE id=?", [.text(ISO.string(date)), .text(documentId)])
     }
-    /// 记录阅读进度（视口顶部所在页 + 页内比例 + 缩放倍率，相对 fit-width）。
-    func updateProgress(documentId: String, page: Int, frac: Double, zoom: Double) throws {
-        try db.run("UPDATE document SET read_page=?, read_frac=?, read_zoom=? WHERE id=?",
-                   [.int(Int64(page)), .double(min(max(0, frac), 1)), .double(zoom), .text(documentId)])
+    /// 记录阅读进度（视口顶部所在页 + 页内比例 + 缩放倍率 + 横向滚动比例）。
+    func updateProgress(documentId: String, page: Int, frac: Double, zoom: Double, hfrac: Double) throws {
+        try db.run("UPDATE document SET read_page=?, read_frac=?, read_zoom=?, read_hfrac=? WHERE id=?",
+                   [.int(Int64(page)), .double(min(max(0, frac), 1)), .double(zoom),
+                    .double(min(max(0, hfrac), 1)), .text(documentId)])
     }
     func rename(documentId: String, title: String) throws {
         try db.run("UPDATE document SET title=? WHERE id=?", [.text(title), .text(documentId)])
@@ -313,7 +316,8 @@ final class LibraryStore {
                     sortOrder: Int(r["sort_order"] as? Int64 ?? 0),
                     readPage: Int(r["read_page"] as? Int64 ?? 0),
                     readFrac: r["read_frac"] as? Double ?? 0,
-                    readZoom: r["read_zoom"] as? Double ?? 1)
+                    readZoom: r["read_zoom"] as? Double ?? 1,
+                    readHFrac: r["read_hfrac"] as? Double ?? 0)
     }
     private static func variant(_ r: [String: Any]) -> LibVariant {
         LibVariant(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String ?? "",

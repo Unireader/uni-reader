@@ -151,14 +151,14 @@ final class WorkspaceManager: ObservableObject {
 
     // MARK: - 阅读进度
 
-    /// 保存进度（不 refresh，避免列表抖动；下次打开从 store 读最新）。含缩放倍率（相对 fit）。
-    func saveProgress(documentId: String, page: Int, frac: Double, zoom: Double) {
-        try? store?.updateProgress(documentId: documentId, page: page, frac: frac, zoom: zoom)
+    /// 保存进度（不 refresh，避免列表抖动；下次打开从 store 读最新）。含缩放倍率 + 横向比例。
+    func saveProgress(documentId: String, page: Int, frac: Double, zoom: Double, hfrac: Double) {
+        try? store?.updateProgress(documentId: documentId, page: page, frac: frac, zoom: zoom, hfrac: hfrac)
     }
-    /// 读取最新进度（直接查库，绕过可能过时的 documents 缓存）。含缩放倍率。
-    func progress(documentId: String) -> (page: Int, frac: Double, zoom: Double) {
-        if let d = try? store?.document(id: documentId) { return (d.readPage, d.readFrac, d.readZoom) }
-        return (0, 0, 1)
+    /// 读取最新进度（直接查库，绕过可能过时的 documents 缓存）。含缩放倍率 + 横向比例。
+    func progress(documentId: String) -> (page: Int, frac: Double, zoom: Double, hfrac: Double) {
+        if let d = try? store?.document(id: documentId) { return (d.readPage, d.readFrac, d.readZoom, d.readHFrac) }
+        return (0, 0, 1, 0)
     }
 
     // MARK: - 复制进/移出工作区

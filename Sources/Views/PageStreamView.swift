@@ -137,6 +137,7 @@ private final class Scratch {
     var pinch: PinchInfo?
     var pendingRestore: ScrollAnchor?
     var pendingZoom: CGFloat = 1           // 待恢复的缩放倍率（首帧定基准后套用）
+    var pendingHFrac: CGFloat?             // 待恢复的横向滚动比例（首帧定位后一次性套用，nil=无）
     var lastRefitFullW: CGFloat = 0        // 上次 refit 时的全宽（区分窗口缩放 vs 侧栏/Inspector 开合）
     var appearAt: CFTimeInterval = 0       // 视图出现时刻：启动稳定窗内宽度变化一律真 fit（防瞬态宽被锁死）
     var lastDbgAt: CFTimeInterval = 0      // 临时诊断日志节流
@@ -371,6 +372,7 @@ private struct ReaderSurface: View {
         follower.interpEnabled = interpEnabled
         scratch.appearAt = CACurrentMediaTime()
         scratch.pendingZoom = session.restoreZoom   // 上次缩放：首帧定 fitBasis 后套用（见 geometryChanged）
+        scratch.pendingHFrac = session.restoreHFrac > 0.0001 ? session.restoreHFrac : nil   // 横向恢复
         // fitBasis 由首帧 geometryChanged 设定（此处不预设，避免与真实值有偏差）
         // 视图创建前就已发出的 restore/toc 锚点（loadSelected 先 emit 后建视图）
         if let a = session.scrollAnchor, a.origin != "mac" {
@@ -424,6 +426,16 @@ private struct ReaderSurface: View {
             follower.pageCount = layout.pageCount
             follower.apply(a)
         }
+        // 横向恢复（一次性）：缩放态才有横向可滚。定位到上次的页宽比例，跟随器只驱动 y、保持 x。
+        if let hf = scratch.pendingHFrac {
+            scratch.pendingHFrac = nil
+            if pageW > fitAvail + 0.5 {
+                let target = clampOffset(CGPoint(x: hf * pageW, y: n.offsetY), pageWidth: pageW)
+                pos.scrollTo(point: target)
+            }
+        }
+        // 上报当前横向比例（非 @Published，不触发重渲；存进度时读）。
+        session.readHFrac = pageW > 0 ? Double(n.offsetX / pageW) : 0
         maybeEmit(n, layout: layout)
         scheduleSettleRender()
     }

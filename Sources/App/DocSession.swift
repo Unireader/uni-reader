@@ -42,6 +42,11 @@ final class DocSession: ObservableObject, Identifiable {
     @Published var readZoom: CGFloat = 1
     /// 待恢复的缩放倍率（loadSelected 从库读入，PageStreamView 首帧定基准后一次性套用）。非 @Published。
     var restoreZoom: CGFloat = 1
+    /// 阅读区当前横向滚动比例（offsetX / pageW）。PageStreamView 每帧写、存进度时读。
+    /// **非 @Published**——每帧刷新，若发布会导致每帧重渲。
+    var readHFrac: Double = 0
+    /// 待恢复的横向滚动比例（loadSelected 读入，PageStreamView 首帧定位后一次性套用）。
+    var restoreHFrac: CGFloat = 0
     /// 已落库的笔画 id 集合，用于增量对账（新增 upsert / 擦除 delete），非 @Published。
     var persistedStrokeIDs: Set<UUID> = []
 

@@ -383,6 +383,7 @@ struct ContentView: View {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
         session.store = workspace.store   // OCR 缓存读写用（仅主线程）
         session.restoreZoom = 1; session.readZoom = 1   // 默认 fit-width；成功路径按库覆盖
+        session.restoreHFrac = 0; session.readHFrac = 0
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; toc = []; clearInk(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
         }
@@ -409,6 +410,8 @@ struct ContentView: View {
         let p = workspace.progress(documentId: id)
         session.restoreZoom = CGFloat(p.zoom)      // 首帧定基准后由 PageStreamView 套用
         session.readZoom = CGFloat(p.zoom)
+        session.restoreHFrac = CGFloat(p.hfrac)    // 横向滚动比例（缩放态才非 0）
+        session.readHFrac = p.hfrac
         let page = min(max(0, p.page), max(0, pdf.pageCount - 1))
         session.currentPageIndex = page
         lastProgressSave = .now                    // 避免恢复动作立刻又写一遍
@@ -427,13 +430,14 @@ struct ContentView: View {
         guard now.timeIntervalSince(lastProgressSave) > 0.7 else { return }
         lastProgressSave = now
         workspace.saveProgress(documentId: id, page: a?.page ?? session.currentPageIndex,
-                               frac: a?.frac ?? 0, zoom: Double(session.readZoom))
+                               frac: a?.frac ?? 0, zoom: Double(session.readZoom), hfrac: session.readHFrac)
     }
 
     private func saveProgress(docId: String?) {
         guard let docId else { return }
         workspace.saveProgress(documentId: docId, page: session.scrollAnchor?.page ?? session.currentPageIndex,
-                               frac: session.scrollAnchor?.frac ?? 0, zoom: Double(session.readZoom))
+                               frac: session.scrollAnchor?.frac ?? 0, zoom: Double(session.readZoom),
+                               hfrac: session.readHFrac)
     }
 
     // MARK: - 手写笔迹持久化（note kind=2）
