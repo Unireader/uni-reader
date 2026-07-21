@@ -618,10 +618,12 @@ private struct ReaderSurface: View {
     // MARK: 文字注解（kind=0）——右键选区添加批注
 
     @ViewBuilder private var readerContextMenu: some View {
-        Button(L("Add Note")) { beginAddNote() }
-            .disabled(selection?.text.isEmpty ?? true)
-        Button(L("Copy")) { copySelectionToPasteboard() }
-            .disabled(selection?.text.isEmpty ?? true)
+        if selection?.text.isEmpty == false {
+            Button(L("Add Note")) { beginAddNote() }          // 注解选中文字（锚到选区）
+            Button(L("Copy")) { copySelectionToPasteboard() }
+        } else {
+            Button(L("Add Note Here")) { beginAddNoteAtCursor() }   // 点注解（锚到右键处页面坐标）
+        }
     }
 
     /// 由当前选区起一条批注草稿：锚到选区起始页，取该页逐行框归一化 + 包围盒；原文完整保留（可能跨页）。
@@ -631,6 +633,14 @@ private struct ReaderSurface: View {
         let bbox = rects.reduce(CGRect.null) { $0.union($1) }
         editorTarget = .new(PendingNote(page: page, anchor: bbox.isNull ? .zero : bbox,
                                         rects: rects, quote: sel.text))
+    }
+
+    /// 点注解草稿：不选文字，锚到右键处的页面归一化坐标（零尺寸 anchor、无行框、无引文）。
+    /// 位置取 `.onContinuousHover` 维护的光标位（与双击选词同源），换算为 (页, nx, ny)。
+    private func beginAddNoteAtCursor() {
+        guard let p = scratch.cursorP, let n = containerPointToPageNorm(p) else { return }
+        let anchor = CGRect(x: n.nx, y: n.ny, width: 0, height: 0)
+        editorTarget = .new(PendingNote(page: n.page, anchor: anchor, rects: [], quote: ""))
     }
 
     /// 编辑器保存分派：新建 → 追加；编辑 → 就地改文本。
@@ -643,7 +653,11 @@ private struct ReaderSurface: View {
     }
 
     /// 新建批注：落成 `TextNote` 追加到 `session.textNotes`（ContentView 的 onChange 增量落库）。
+    /// 点注解（无引文）必须有文字，否则是个空图钉——直接丢弃不落库。选区注解允许空文字（=纯高亮标记）。
     private func commitNote(draft: PendingNote, text: String) {
+        if draft.quote.isEmpty, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            clearSelection(); return
+        }
         session.textNotes.append(TextNote(page: draft.page, anchor: draft.anchor, quote: draft.quote,
                                           text: text, rects: draft.rects))
         clearSelection()
@@ -1093,11 +1107,12 @@ private struct PageCellView: View {
     private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)
     private static let noteMarker = Color(red: 1, green: 0.80, blue: 0.15)
 
-    /// 图钉落位：注解末端右侧（不遮文字起点），钳制在页内。
+    /// 图钉落位：选区注解落在末端右侧（不遮文字起点）；点注解（无行框）落在锚点处。钳制在页内。
     private func markerPos(_ n: TextNote, size: CGSize) -> CGPoint {
-        let x = min(max(n.anchor.maxX * size.width + 9, 12), size.width - 12)
-        let y = min(max(n.anchor.minY * size.height + 7, 10), size.height - 10)
-        return CGPoint(x: x, y: y)
+        let x = n.rects.isEmpty ? n.anchor.minX * size.width : n.anchor.maxX * size.width + 9
+        let y = n.rects.isEmpty ? n.anchor.minY * size.height : n.anchor.minY * size.height + 7
+        return CGPoint(x: min(max(x, 12), size.width - 12),
+                       y: min(max(y, 10), size.height - 10))
     }
 
     /// 归一化矩形（0~1，左上原点）→ 页内像素矩形并填充（文字选择/搜索命中高亮共用）。
