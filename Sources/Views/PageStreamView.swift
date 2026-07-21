@@ -88,6 +88,31 @@ private struct PendingNote: Identifiable {
     var quote: String        // 选中原文
 }
 
+/// 批注编辑器目标：新建（选区草稿）或编辑（已存在注解）。统一走一个 `.sheet(item:)`，避免多 sheet 竞态。
+private enum NoteEditorTarget: Identifiable {
+    case new(PendingNote)
+    case edit(TextNote)
+
+    var id: UUID {
+        switch self {
+        case .new(let p): return p.id
+        case .edit(let n): return n.id
+        }
+    }
+    var quote: String {
+        switch self {
+        case .new(let p): return p.quote
+        case .edit(let n): return n.quote
+        }
+    }
+    var initialText: String {
+        switch self {
+        case .new: return ""
+        case .edit(let n): return n.text
+        }
+    }
+}
+
 /// 捏合手势状态。锚点数学：屏幕不动点 P（相对容器原点）+ 内容锚点 c；
 /// 逐帧 commit：c' = c×r，目标偏移 = c' − P（同 runloop 提交 = 屏幕原子，scroll-x-probe T3b）。
 /// 放大/缩小都走真 commit：滚动条在内容超过容器的瞬间即出现（Preview 同款），无松手悬崖。
@@ -157,8 +182,8 @@ private struct ReaderSurface: View {
     // 的「视觉阅读顺序」连续选区——不再自研词框排序（旧实现对多栏/思维导图版面会东一块西一块）。
     // 存归一化逐页行框 + 选中串；拖选期间实时重算，随缩放/滚动免重算（归一化随页尺寸自适应）。
     @State private var selection: TextSelection?
-    /// 「添加批注」草稿（非 nil 即呈现编辑器 sheet）。
-    @State private var pendingNote: PendingNote?
+    /// 批注编辑器目标（非 nil 即呈现 sheet）：新建（选区草稿）或编辑（点页面图钉）。
+    @State private var editorTarget: NoteEditorTarget?
 
     private let zoomMin: CGFloat = 0.25
     private let zoomMax: CGFloat = 6
@@ -236,11 +261,11 @@ private struct ReaderSurface: View {
         // 右键选区 → 「添加批注 / 复制」（原生上下文菜单，非浮层 hack）。菜单项常驻、无选区时禁用，
         // 避免按选区有无条件包裹 ScrollView 改变其身份而重置滚动位置。
         .contextMenu { readerContextMenu }
-        // 批注编辑器（原生 .sheet）。保存 → 落成 TextNote 入 session（ContentView.onChange 落库）。
-        .sheet(item: $pendingNote) { draft in
-            NoteEditorSheet(quote: draft.quote, initialText: "",
-                            onSave: { commitNote(draft: draft, text: $0) },
-                            onCancel: { pendingNote = nil })
+        // 批注编辑器（原生 .sheet）：新建或编辑同一入口。保存 → 改 session.textNotes（ContentView.onChange 落库）。
+        .sheet(item: $editorTarget) { target in
+            NoteEditorSheet(quote: target.quote, initialText: target.initialText,
+                            onSave: { saveEditor(target, text: $0) },
+                            onCancel: { editorTarget = nil })
         }
         .overlay(alignment: .topLeading) { followTicker }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
@@ -306,7 +331,9 @@ private struct ReaderSurface: View {
                                  inkScale: zoom,
                                  selectionRects: selection?.rects[i] ?? [],
                                  matchRects: session.searchMatches.filter { $0.page == i }.flatMap(\.rects),
-                                 activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [])
+                                 activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [],
+                                 notes: session.textNotes.filter { $0.page == i },
+                                 onOpenNote: { editorTarget = .edit($0) })
                         .offset(x: pageX, y: layout.offsets[i] * dispScale)
                 }
             }
@@ -602,17 +629,33 @@ private struct ReaderSurface: View {
         guard let sel = selection, !sel.text.isEmpty, let page = sel.rects.keys.min() else { return }
         let rects = sel.rects[page] ?? []
         let bbox = rects.reduce(CGRect.null) { $0.union($1) }
-        pendingNote = PendingNote(page: page, anchor: bbox.isNull ? .zero : bbox,
-                                  rects: rects, quote: sel.text)
+        editorTarget = .new(PendingNote(page: page, anchor: bbox.isNull ? .zero : bbox,
+                                        rects: rects, quote: sel.text))
     }
 
-    /// 保存批注：落成 `TextNote` 追加到 `session.textNotes`（ContentView 的 onChange 增量落库）。
+    /// 编辑器保存分派：新建 → 追加；编辑 → 就地改文本。
+    private func saveEditor(_ target: NoteEditorTarget, text: String) {
+        switch target {
+        case .new(let draft): commitNote(draft: draft, text: text)
+        case .edit(let note): updateNote(note, text: text)
+        }
+        editorTarget = nil
+    }
+
+    /// 新建批注：落成 `TextNote` 追加到 `session.textNotes`（ContentView 的 onChange 增量落库）。
     private func commitNote(draft: PendingNote, text: String) {
-        let note = TextNote(page: draft.page, anchor: draft.anchor, quote: draft.quote,
-                            text: text, rects: draft.rects)
-        session.textNotes.append(note)
-        pendingNote = nil
+        session.textNotes.append(TextNote(page: draft.page, anchor: draft.anchor, quote: draft.quote,
+                                          text: text, rects: draft.rects))
         clearSelection()
+    }
+
+    /// 编辑批注：就地改文本 + bump updatedAt → 数组变更触发 onChange，对账识别为“变更”并 upsert。
+    private func updateNote(_ note: TextNote, text: String) {
+        guard let idx = session.textNotes.firstIndex(where: { $0.id == note.id }) else { return }
+        var n = session.textNotes[idx]
+        n.text = text
+        n.updatedAt = .now
+        session.textNotes[idx] = n
     }
 
     /// 上下文菜单「复制」：与 ⌘C 监视器同直写剪贴板（纯 ScrollView 容器 `.onCopyCommand` 不可靠）。
@@ -972,6 +1015,8 @@ private struct PageCellView: View {
     var selectionRects: [CGRect] = []      // 文字选择高亮（T1），归一化 0~1 左上原点
     var matchRects: [CGRect] = []          // 搜索命中高亮，归一化 0~1 左上原点（T2，全部命中，淡黄）
     var activeMatchRects: [CGRect] = []    // 当前命中（同上坐标，橙色强调）
+    var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
+    var onOpenNote: (TextNote) -> Void = { _ in }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -990,6 +1035,15 @@ private struct PageCellView: View {
                            height: tile.normRect.height * size.height)
                     .offset(x: tile.normRect.minX * size.width,
                             y: tile.normRect.minY * size.height)
+            }
+            // 文字注解荧光高亮（持久层，居搜索/选择高亮之下）：被注解的文字铺一层暖黄。
+            if !notes.isEmpty {
+                Canvas { ctx, sz in
+                    for n in notes {
+                        for r in n.rects { fillNorm(r, in: &ctx, size: sz, color: Self.noteHighlight) }
+                    }
+                }
+                .allowsHitTesting(false)
             }
             if !matchRects.isEmpty || !activeMatchRects.isEmpty {
                 Canvas { ctx, sz in
@@ -1018,8 +1072,32 @@ private struct PageCellView: View {
                     .position(x: hover.nx * size.width, y: hover.ny * size.height)
                     .allowsHitTesting(false)
             }
+            // 批注图钉（顶层，可点）：点开编辑器查看/编辑。悬停显示批注/原文预览。
+            ForEach(notes) { n in
+                Button { onOpenNote(n) } label: {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.black.opacity(0.75))
+                        .padding(3)
+                        .background(Self.noteMarker, in: Circle())
+                        .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                .help(n.text.isEmpty ? n.quote : n.text)
+                .position(markerPos(n, size: size))
+            }
         }
         .frame(width: size.width, height: size.height)
+    }
+
+    private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)
+    private static let noteMarker = Color(red: 1, green: 0.80, blue: 0.15)
+
+    /// 图钉落位：注解末端右侧（不遮文字起点），钳制在页内。
+    private func markerPos(_ n: TextNote, size: CGSize) -> CGPoint {
+        let x = min(max(n.anchor.maxX * size.width + 9, 12), size.width - 12)
+        let y = min(max(n.anchor.minY * size.height + 7, 10), size.height - 10)
+        return CGPoint(x: x, y: y)
     }
 
     /// 归一化矩形（0~1，左上原点）→ 页内像素矩形并填充（文字选择/搜索命中高亮共用）。
