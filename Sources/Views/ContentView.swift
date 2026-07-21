@@ -145,6 +145,8 @@ struct ContentView: View {
         }
         .onAppear {
             app.register(session)
+            // 页图缓存上限：启动套用存储值（设置页改动即时生效，这里覆盖引擎默认 400MB）。
+            PageRenderEngine.shared.setCacheLimitMB(UserDefaults.standard.object(forKey: "renderCacheMB") as? Int ?? 512)
             if autoStartServer, !app.server.isRunning { app.server.start() }   // 平板服务开机自启
             if autoNightMode { nightMode = (systemScheme == .dark) }           // 夜间模式跟随系统
             if let id = launchDocId {

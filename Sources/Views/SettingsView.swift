@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage("autoStartServer") private var autoStartServer = false
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // "off" | "paddle"
     @AppStorage("ocrPaddleKey") private var ocrPaddleKey = ""
+    @AppStorage("renderCacheMB") private var renderCacheMB = 512     // 页图缓存上限（MB）
 
     var body: some View {
         Form {
@@ -39,6 +40,21 @@ struct SettingsView: View {
                     }
             } header: {
                 Text(L("Tablet Service"))
+            }
+
+            Section {
+                Picker(L("Page render cache limit"), selection: $renderCacheMB) {
+                    Text("128 MB").tag(128)
+                    Text("256 MB").tag(256)
+                    Text("512 MB").tag(512)
+                    Text("1 GB").tag(1024)
+                    Text("2 GB").tag(2048)
+                }
+                .onChange(of: renderCacheMB) { _, mb in PageRenderEngine.shared.setCacheLimitMB(mb) }
+            } header: {
+                Text(L("Rendering"))
+            } footer: {
+                Text(L("A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM."))
             }
 
             Section {

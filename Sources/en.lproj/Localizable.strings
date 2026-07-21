@@ -120,3 +120,6 @@
 "Colors each recognized text block to inspect layout/selection accuracy." = "Colors each recognized text block to inspect layout/selection accuracy.";
 "Per block" = "Per block";
 "Selectable groups" = "Selectable groups";
+"Rendering" = "Rendering";
+"Page render cache limit" = "Page render cache limit";
+"A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM." = "A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM.";

@@ -18,21 +18,21 @@ final class PageRenderEngine {
         var night: Bool
     }
 
-    private final class Box {
-        let image: CGImage
-        init(_ i: CGImage) { image = i }
-    }
-
-    private let cache = NSCache<NSString, Box>()
+    /// 自研 LRU 图缓存（按解码字节计费，硬上限）。相比 `NSCache`：**不做机会性驱逐**——
+    /// 只在超过上限时按最久未用淘汰，保证「滚动回看 / 换文档回看」命中之前渲染、不被系统莫名清空重渲。
+    private let cache = RenderImageCache(limitBytes: 400 << 20)   // 默认 ~400MB；由设置页覆盖
     private let queue = DispatchQueue(label: "com.xvan.unireader.pagerender", qos: .userInitiated)
     private let lock = NSLock()
     private var inFlight = Set<String>()
     private var wantedByClient: [String: Set<String>] = [:]   // 多窗口各自声明，互不覆盖
     private var ci: CIContext?        // 仅渲染队列使用，懒建
 
-    private init() {
-        cache.totalCostLimit = 400 << 20   // ~400MB（按解码字节计费，LRU）
-    }
+    private init() {}
+
+    /// 设置缓存上限（MB）。设置页写入、启动时套用。下限 32MB 防误设过小反而频繁重渲。
+    func setCacheLimitMB(_ mb: Int) { cache.totalCostLimit = max(32, mb) << 20 }
+    /// 当前缓存已用（MB），供设置页/调试显示。
+    var cacheUsageMB: Int { cache.currentCost >> 20 }
 
     static func baseKey(doc: String, page: Int, pixelWidth: Int, night: Bool) -> String {
         "\(doc)#\(page)#w\(pixelWidth)#n\(night ? 1 : 0)"
@@ -44,7 +44,7 @@ final class PageRenderEngine {
                scale, night ? 1 : 0)
     }
 
-    func cached(_ key: String) -> CGImage? { cache.object(forKey: key as NSString)?.image }
+    func cached(_ key: String) -> CGImage? { cache.object(forKey: key) }
 
     /// 声明某窗口当前需要的键集合（该窗口旧集合作废；出队时任何窗口都不要的请求直接丢弃）。
     /// 窗口关闭/换文档时传空集合清理。
@@ -88,9 +88,88 @@ final class PageRenderEngine {
                 if ci == nil { ci = CIContext() }
                 if let inv = PageBitmap.invert(out, ci: ci!) { out = inv }
             }
-            cache.setObject(Box(out), forKey: r.key as NSString, cost: out.bytesPerRow * out.height)
+            cache.setObject(out, forKey: r.key, cost: out.bytesPerRow * out.height)
             let final = out
             DispatchQueue.main.async { completion(r.key, final) }
+        }
+    }
+}
+
+/// 线程安全 LRU 图缓存（双向链表 + 字典，O(1) 命中/淘汰）。按解码字节计费，超上限按最久未用淘汰。
+/// 与 NSCache 的差别：**只按容量淘汰，不随系统内存压力机会性清空** → 回看命中率稳定。
+private final class RenderImageCache {
+    private final class Node {
+        let key: String
+        var image: CGImage
+        var cost: Int
+        var prev: Node?
+        var next: Node?
+        init(_ key: String, _ image: CGImage, _ cost: Int) { self.key = key; self.image = image; self.cost = cost }
+    }
+
+    private var map: [String: Node] = [:]
+    private var head: Node?          // 最近使用
+    private var tail: Node?          // 最久未用
+    private var totalCost = 0
+    private var limit: Int
+    private let lock = NSLock()
+
+    init(limitBytes: Int) { limit = max(1, limitBytes) }
+
+    var totalCostLimit: Int {
+        get { lock.lock(); defer { lock.unlock() }; return limit }
+        set { lock.lock(); limit = max(1, newValue); trim(); lock.unlock() }
+    }
+    var currentCost: Int { lock.lock(); defer { lock.unlock() }; return totalCost }
+
+    func object(forKey key: String) -> CGImage? {
+        lock.lock(); defer { lock.unlock() }
+        guard let n = map[key] else { return nil }
+        moveToHead(n)
+        return n.image
+    }
+
+    func setObject(_ image: CGImage, forKey key: String, cost: Int) {
+        lock.lock(); defer { lock.unlock() }
+        let c = max(0, cost)
+        if let n = map[key] {
+            totalCost += c - n.cost
+            n.image = image
+            n.cost = c
+            moveToHead(n)
+        } else {
+            let n = Node(key, image, c)
+            map[key] = n
+            addToHead(n)
+            totalCost += c
+        }
+        trim()
+    }
+
+    // 以下链表操作均在锁内调用。
+    private func addToHead(_ n: Node) {
+        n.prev = nil; n.next = head
+        head?.prev = n
+        head = n
+        if tail == nil { tail = n }
+    }
+    private func removeNode(_ n: Node) {
+        n.prev?.next = n.next
+        n.next?.prev = n.prev
+        if head === n { head = n.next }
+        if tail === n { tail = n.prev }
+        n.prev = nil; n.next = nil
+    }
+    private func moveToHead(_ n: Node) {
+        guard head !== n else { return }
+        removeNode(n)
+        addToHead(n)
+    }
+    private func trim() {
+        while totalCost > limit, let t = tail {
+            removeNode(t)
+            map[t.key] = nil
+            totalCost -= t.cost
         }
     }
 }

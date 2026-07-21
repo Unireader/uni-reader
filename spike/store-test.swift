@@ -64,10 +64,11 @@ let got = try store.notes(documentId: d1.id).first!
 check(got.anchor == CGRect(x: 1, y: 2, width: 3, height: 4) && got.payload == Data("{\"pts\":[[0.1,0.2,0.5]]}".utf8),
       "note anchor/payload 往返一致")
 
-// 7b) 阅读进度往返
-try store.updateProgress(documentId: d1.id, page: 5, frac: 0.375)
+// 7b) 阅读进度往返（含缩放倍率，schema v4）
+try store.updateProgress(documentId: d1.id, page: 5, frac: 0.375, zoom: 1.75)
 let dp = try store.document(id: d1.id)!
 check(dp.readPage == 5 && abs(dp.readFrac - 0.375) < 1e-9, "阅读进度写入/读回")
+check(abs(dp.readZoom - 1.75) < 1e-9, "缩放倍率写入/读回")
 
 // 7c) 工作区内 location（相对路径）增删
 let wsLoc = try store.addLocation(variantId: v1.id, path: "PDFs/copy.pdf", inWorkspace: true)

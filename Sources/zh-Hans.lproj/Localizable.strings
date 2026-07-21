@@ -120,3 +120,6 @@
 "Colors each recognized text block to inspect layout/selection accuracy." = "给每个识别块上色，量化排版与选择落点是否准。";
 "Per block" = "每块独立";
 "Selectable groups" = "可选分组";
+"Rendering" = "渲染";
+"Page render cache limit" = "页图缓存上限";
+"A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM." = "缓存越大，回看或切换文档时越少重新渲染，代价是占用更多内存。";
