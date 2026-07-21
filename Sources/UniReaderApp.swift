@@ -6,12 +6,22 @@ import AppKit
 /// 选 last-wins 而非 first-wins：Xcode 每次 Run = 新进程，需保证看到的永远是最新构建，
 /// 且旧进程即便未被及时回收也会被这里清掉。正式发布如需「第二次打开只激活已有窗口」再切 first-wins。
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// 是否正在退出（cmd+q / 被单实例守卫接管）。用于区分「退出关窗」vs「cmd+w 单独关窗」：
+    /// 退出时**不修改**工作区「打开集」（下次启动原样恢复所有窗口）；cmd+w 才逐个移除。
+    /// `applicationShouldTerminate` 在各窗口 `onDisappear` **之前**触发，故此标志对关窗回调可见。
+    static var isTerminating = false
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         guard let bundleId = Bundle.main.bundleIdentifier else { return }
         let me = NSRunningApplication.current
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
             .filter { $0.processIdentifier != me.processIdentifier && !$0.isTerminated }
         for other in others { other.terminate() }   // 优雅退出：旧实例走正常关窗流程（存进度）并释放端口
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Self.isTerminating = true
+        return .terminateNow
     }
 }
 

@@ -12,10 +12,9 @@ final class WorkspaceManager: ObservableObject {
     @Published private(set) var documents: [LibDocument] = []
     @Published private(set) var recents: [URL] = []
     @Published var lastError: String?
-    private(set) var restoreDocIds: [String] = []   // = openMRU 的快照，供多窗口恢复
-    private var windowDocs: [UUID: String] = [:]     // 各窗口当前文档（仅活动跟踪，不再决定持久化）
-    private var openMRU: [String] = []               // 「最近打开」文档（前=最近）；cmd+w 不移除，供下次启动恢复
-    private let openMRUCap = 10                       // 最近列表容量上限（去重）
+    private(set) var restoreDocIds: [String] = []   // 启动时「上次打开集」快照，供多窗口恢复（restoreSession 读一次进本地）
+    private var windowDocs: [UUID: String] = [:]     // 各窗口当前文档（sessionId → docId）——「打开集」的真相源
+    private var openDocs: [String] = []              // 当前打开的文档集（= 所有窗口当前文档，去重保序）；持久化供下次恢复
 
     private(set) var store: LibraryStore?
 
@@ -48,8 +47,8 @@ final class WorkspaceManager: ObservableObject {
         self.store = store
         self.folder = folder
         self.name = store.workspaceName
-        openMRU = store.openDocuments()          // 恢复「最近打开」（MRU，前=最近）
-        restoreDocIds = openMRU
+        openDocs = store.openDocuments()         // 上次「打开集」（当前所有窗口的文档）
+        restoreDocIds = openDocs                 // 启动快照：restoreSession 只读它一次进本地，之后随窗口重同步无碍
         windowDocs = [:]
         rememberRecent(folder)
         UserDefaults.standard.set(folder.path, forKey: lastKey)
@@ -57,34 +56,50 @@ final class WorkspaceManager: ObservableObject {
         lastError = nil
     }
 
-    /// 某窗口的当前文档变化（nil = 清空选择）。打开/切换 → 进「最近打开」并置顶；清空选择不移除。
+    /// 某窗口当前文档变化（nil = 该窗口清空选择）。把「打开集」重同步为「所有窗口当前文档」并持久化。
+    /// 在一个窗口里切换文档 → 旧文档若不再被任何窗口显示，会随之退出「打开集」（不累积 → 不再「启动开一堆」）。
     func setWindowDoc(_ sessionId: UUID, _ docId: String?) {
-        if let docId {
-            windowDocs[sessionId] = docId
-            promoteRecent(docId)
-        } else {
-            windowDocs.removeValue(forKey: sessionId)   // 仅解绑窗口，不动最近列表
+        if let docId { windowDocs[sessionId] = docId } else { windowDocs.removeValue(forKey: sessionId) }
+        syncOpenDocs(front: docId)
+    }
+
+    /// 窗口关闭。三种情形：
+    ///  · **cmd+q 退出中**（`AppDelegate.isTerminating`）→ 不动「打开集」，下次启动原样恢复所有窗口；
+    ///  · **关的是最后一个窗口** → 不动「打开集」，保留（下次仍恢复这最后一本）；
+    ///  · 否则（**cmd+w 关掉多窗口之一**）→ 该文档若已无其它窗口在显示，就从「打开集」移除（逐个关 = 逐个移除）。
+    func closeWindow(_ sessionId: UUID) {
+        let closed = windowDocs[sessionId]
+        windowDocs.removeValue(forKey: sessionId)
+        if AppDelegate.isTerminating { return }
+        if windowDocs.isEmpty { return }
+        if let closed, !windowDocs.values.contains(closed) {
+            openDocs.removeAll { $0 == closed }
+            persistOpenDocs()
         }
     }
-    /// 窗口关闭（cmd+w）→ 仅解绑该窗口。**不从「最近打开」移除**：关掉的 PDF 下次启动仍自动恢复。
-    /// 真正从最近列表剔除只发生在删除/合并文档时（`delete`/`mergeDocuments`）。
-    func closeWindow(_ sessionId: UUID) {
-        windowDocs.removeValue(forKey: sessionId)
+
+    /// 「打开集」= 所有窗口当前文档（去重、保序；`front` 置最前）。持久化供下次启动恢复。
+    /// 启动恢复时也靠它把历史遗留的膨胀列表自动收敛到「真正开出来的窗口」（未恢复成窗口的旧条目在此被剔除）。
+    private func syncOpenDocs(front: String?) {
+        let live = Set(windowDocs.values)
+        openDocs.removeAll { !live.contains($0) }                                       // 去掉已不在任何窗口显示的
+        for d in windowDocs.values where !openDocs.contains(d) { openDocs.append(d) }   // 补新开的
+        if let front, let i = openDocs.firstIndex(of: front) {                          // 刚打开/切到的置最前
+            openDocs.remove(at: i); openDocs.insert(front, at: 0)
+        }
+        persistOpenDocs()
     }
-    /// 把文档挪到「最近打开」最前并持久化（容量上限 openMRUCap，去重）。
-    private func promoteRecent(_ docId: String) {
-        openMRU.removeAll { $0 == docId }
-        openMRU.insert(docId, at: 0)
-        if openMRU.count > openMRUCap { openMRU = Array(openMRU.prefix(openMRUCap)) }
-        restoreDocIds = openMRU
-        try? store?.setOpenDocuments(openMRU)
+
+    /// 从「打开集」剔除（删除/合并文档时——该文档已不该被恢复）。
+    private func forgetOpen(_ docId: String) {
+        guard openDocs.contains(docId) else { return }
+        openDocs.removeAll { $0 == docId }
+        persistOpenDocs()
     }
-    /// 从「最近打开」剔除（删除/合并文档时）。
-    private func forgetRecent(_ docId: String) {
-        guard openMRU.contains(docId) else { return }
-        openMRU.removeAll { $0 == docId }
-        restoreDocIds = openMRU
-        try? store?.setOpenDocuments(openMRU)
+
+    private func persistOpenDocs() {
+        restoreDocIds = openDocs
+        try? store?.setOpenDocuments(openDocs)
     }
 
     func rename(_ newName: String) {
@@ -105,7 +120,7 @@ final class WorkspaceManager: ObservableObject {
         return res?.document
     }
 
-    func delete(documentId: String) { try? store?.deleteDocument(id: documentId); forgetRecent(documentId); refresh() }
+    func delete(documentId: String) { try? store?.deleteDocument(id: documentId); forgetOpen(documentId); refresh() }
     func rename(documentId: String, title: String) { try? store?.rename(documentId: documentId, title: title); refresh() }
     func document(id: String) -> LibDocument? { documents.first { $0.id == id } }
 
@@ -207,7 +222,7 @@ final class WorkspaceManager: ObservableObject {
     /// 「关联为同一文档」：把 source 并入 target（多 hash 合并）。
     func mergeDocuments(sourceId: String, intoTargetId targetId: String) {
         _ = try? store?.mergeDocument(sourceId: sourceId, intoTargetId: targetId)
-        forgetRecent(sourceId)   // 源文档并入 target 后离开列表
+        forgetOpen(sourceId)   // 源文档并入 target 后离开「打开集」
         refresh()
     }
 
