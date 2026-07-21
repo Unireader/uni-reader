@@ -116,3 +116,5 @@
 "Recognizing… %d/%d pages, %d queued" = "识别中… %d/%d 页，%d 页排队";
 "Not recognized yet." = "尚未识别。";
 "%d of %d pages recognized" = "已识别 %d / %d 页";
+"Show recognition blocks (debug)" = "显示识别块（调试）";
+"Colors each recognized text block to inspect layout/selection accuracy." = "给每个识别块上色，量化排版与选择落点是否准。";

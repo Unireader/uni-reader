@@ -269,6 +269,10 @@ struct ContentView: View {
                 if session.ocrRunning { ProgressView().controlSize(.small) }
                 Button(L("Recognize all pages")) { session.ocrAllPages() }
                     .disabled(session.pdf == nil)
+                Divider()
+                Toggle(L("Show recognition blocks (debug)"), isOn: $session.showOCRBlocks)
+                Text(L("Colors each recognized text block to inspect layout/selection accuracy."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let err = session.ocrLastError {
                     Text(err).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }

@@ -152,6 +152,7 @@ final class DocSession: ObservableObject, Identifiable {
 
     @Published var ocrEnabled = false                     // 本文档启用 OCR 文本层
     @Published var ocrRuns: [Int: [TextRun]] = [:]        // 页 → 已识别的行级文本框（阅读顺序）
+    @Published var showOCRBlocks = false                  // 调试/demo：把 OCR 识别块按块上色画出来（量化排版/选择）
     @Published var ocrActivePages: Set<Int> = []          // 正在网络识别的页
     @Published var ocrLastError: String?
     @Published private var ocrQueue: [Int] = []           // 待识别队列（@Published 让面板进度实时刷新）

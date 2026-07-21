@@ -116,3 +116,5 @@
 "Recognizing… %d/%d pages, %d queued" = "Recognizing… %d/%d pages, %d queued";
 "Not recognized yet." = "Not recognized yet.";
 "%d of %d pages recognized" = "%d of %d pages recognized";
+"Show recognition blocks (debug)" = "Show recognition blocks (debug)";
+"Colors each recognized text block to inspect layout/selection accuracy." = "Colors each recognized text block to inspect layout/selection accuracy.";

@@ -334,6 +334,7 @@ private struct ReaderSurface: View {
                                  activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [],
                                  highlights: session.highlights.filter { $0.page == i },
                                  notes: session.textNotes.filter { $0.page == i },
+                                 ocrBlocks: session.showOCRBlocks ? (session.ocrRuns[i] ?? []) : [],
                                  onOpenNote: { editorTarget = .edit($0) })
                         .offset(x: pageX, y: layout.offsets[i] * dispScale)
                 }
@@ -1048,6 +1049,7 @@ private struct PageCellView: View {
     var activeMatchRects: [CGRect] = []    // 当前命中（同上坐标，橙色强调）
     var highlights: [Highlight] = []       // 本页文字高亮（kind=3）：按各自颜色铺色，最底层
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
+    var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
     var onOpenNote: (TextNote) -> Void = { _ in }
 
     var body: some View {
@@ -1067,6 +1069,23 @@ private struct PageCellView: View {
                            height: tile.normRect.height * size.height)
                     .offset(x: tile.normRect.minX * size.width,
                             y: tile.normRect.minY * size.height)
+            }
+            // 调试/demo：OCR 识别块可视化——逐块按黄金角旋转色相上色 + 序号，量化排版/选择落点。
+            if !ocrBlocks.isEmpty {
+                Canvas { ctx, sz in
+                    for (i, run) in ocrBlocks.enumerated() {
+                        let px = CGRect(x: run.x * sz.width, y: run.y * sz.height,
+                                        width: run.w * sz.width, height: run.h * sz.height)
+                        let hue = (Double(i) * 0.61803398875).truncatingRemainder(dividingBy: 1)
+                        let c = Color(hue: hue, saturation: 0.8, brightness: 0.95)
+                        let path = Path(roundedRect: px, cornerRadius: 2)
+                        ctx.fill(path, with: .color(c.opacity(0.28)))
+                        ctx.stroke(path, with: .color(c), lineWidth: 1)
+                        ctx.draw(Text("\(i)").font(.system(size: 9, weight: .bold)).foregroundColor(c),
+                                 at: CGPoint(x: px.minX + 2, y: px.minY + 1), anchor: .topLeading)
+                    }
+                }
+                .allowsHitTesting(false)
             }
             // 文字高亮（kind=3，最底层）：每条按自己的颜色铺在选中文字上。
             if !highlights.isEmpty {
