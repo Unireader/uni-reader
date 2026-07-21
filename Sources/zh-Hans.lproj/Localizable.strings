@@ -64,6 +64,11 @@
 "Page %d" = "第 %d 页";
 "Text Notes" = "文字注解";
 "No text notes yet." = "暂无文字注解。";
+"Add Note" = "添加批注";
+"Note" = "批注";
+"Save" = "保存";
+"Copy" = "复制";
+"Delete this note" = "删除此批注";
 "Highlights" = "高亮";
 "Highlights aren’t supported yet." = "高亮尚未支持。";
 "Contents" = "目录";

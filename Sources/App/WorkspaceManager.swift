@@ -269,6 +269,26 @@ final class WorkspaceManager: ObservableObject {
         try? store?.deleteNote(id: id.uuidString)
     }
 
+    // MARK: - 文字注解持久化（note kind=0；挂逻辑文档，全版本共用）
+
+    /// 读取某文档已落库的全部文字注解（按页 / 页内位置序），用于重开恢复。
+    func textNotes(documentId: String) -> [TextNote] {
+        ((try? store?.notes(documentId: documentId)) ?? [])
+            .compactMap { $0.kind == TextNote.noteKind ? TextNote(note: $0) : nil }
+            .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
+    }
+
+    /// 落库/更新一条文字注解（新建或编辑时调用）。
+    func saveTextNote(documentId: String, _ note: TextNote) {
+        guard let store, let n = note.toNote(documentId: documentId) else { return }
+        try? store.upsertNote(n)
+    }
+
+    /// 删除一条文字注解（note.id == TextNote.id）。
+    func deleteTextNote(id: UUID) {
+        try? store?.deleteNote(id: id.uuidString)
+    }
+
     // MARK: - 最近工作区
 
     private func loadRecents() {

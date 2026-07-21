@@ -134,6 +134,9 @@ struct ContentView: View {
         .onChange(of: session.strokes) { _, _ in
             persistInk()   // 笔画完成/擦除时增量落库（liveStroke 变化不触发）
         }
+        .onChange(of: session.textNotes) { _, _ in
+            persistTextNotes()   // 文字注解新建/编辑/删除时增量落库
+        }
         .onAppear {
             app.register(session)
             if autoStartServer, !app.server.isRunning { app.server.start() }   // 平板服务开机自启
@@ -360,7 +363,7 @@ struct ContentView: View {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
         session.store = workspace.store   // OCR 缓存读写用（仅主线程）
         guard let id, let doc = workspace.document(id: id) else {
-            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); session.reloadOCRState(); return
+            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); clearTextNotes(); session.reloadOCRState(); return
         }
         guard let target = workspace.openTarget(documentId: id),
               let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
@@ -368,6 +371,7 @@ struct ContentView: View {
             missingDoc = doc                       // 所有路径失效 → 显示重定位提示
             toc = []
             clearInk()
+            clearTextNotes()
             return
         }
         missingDoc = nil
@@ -377,6 +381,7 @@ struct ContentView: View {
         session.contentHash = target.hash
         session.reloadOCRState()                   // 换文档重置 OCR；该内容已有缓存则自动启用
         loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
+        loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
         // 恢复阅读进度：定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。
         let p = workspace.progress(documentId: id)
         let page = min(max(0, p.page), max(0, pdf.pageCount - 1))
@@ -434,6 +439,38 @@ struct ContentView: View {
             workspace.deleteInkStroke(id: gone)
         }
         session.persistedStrokeIDs = currentIDs
+    }
+
+    // MARK: - 文字注解持久化（note kind=0）
+
+    /// 加载文档时清空内存文字注解与对账集（无文档 / 路径失效时用）。
+    private func clearTextNotes() {
+        session.persistedTextNotes = [:]
+        session.textNotes = []
+    }
+
+    /// 恢复该文档已落库的文字注解到内存，并记录对账集（避免加载即被判为“新增”而重复落库）。
+    /// ⚠️ 对账集必须**先于** `textNotes` 赋值（与 `loadInk` 同序）：`textNotes=` 会触发 `.onChange`→
+    /// `persistTextNotes`，若此时快照仍是旧文档，会拿旧快照对账新列表 → 误删旧文档的注解行。
+    private func loadTextNotes(documentId id: String) {
+        let loaded = workspace.textNotes(documentId: id)
+        session.persistedTextNotes = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+        session.textNotes = loaded
+    }
+
+    /// 内存注解 ↔ 库对账：新增或内容变更的 → upsert；曾落库而现已无的（删除）→ delete。
+    /// 用值快照比较，故编辑（改文本 / bump updatedAt）也会被识别为“变更”并 upsert。
+    private func persistTextNotes() {
+        guard let id = session.documentId else { return }
+        let current = session.textNotes
+        let currentIDs = Set(current.map(\.id))
+        for n in current where session.persistedTextNotes[n.id] != n {
+            workspace.saveTextNote(documentId: id, n)
+        }
+        for goneID in session.persistedTextNotes.keys where !currentIDs.contains(goneID) {
+            workspace.deleteTextNote(id: goneID)
+        }
+        session.persistedTextNotes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     // MARK: - 重定位

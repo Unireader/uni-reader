@@ -15,7 +15,6 @@ struct InspectorView: View {
 
     @State private var variants: [LibVariant] = []
     @State private var locations: [LibLocation] = []
-    @State private var textNotes: [LibNote] = []
 
     private let tabs: [(tab: InspectorTab, icon: String)] = [
         (.info, "info.circle"),
@@ -198,15 +197,51 @@ struct InspectorView: View {
     }
 
     private var textBlock: some View {
-        block("\(L("Text Notes")) · \(textNotes.count)") {
-            if textNotes.isEmpty {
+        block("\(L("Text Notes")) · \(session.textNotes.count)") {
+            if session.textNotes.isEmpty {
                 Text(L("No text notes yet.")).foregroundStyle(.secondary).font(.callout)
             } else {
-                ForEach(textNotes) { n in
-                    Label(String(format: L("Page %d"), n.page + 1), systemImage: "text.quote").font(.callout)
+                ForEach(session.textNotes) { n in
+                    HStack(alignment: .top, spacing: 6) {
+                        Button {
+                            onJumpTo(n.page, max(0, n.anchor.minY - 0.03))   // 跳到该批注所在页/位置
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Label(String(format: L("Page %d"), n.page + 1), systemImage: "text.quote")
+                                    .font(.callout)
+                                if !n.text.isEmpty {
+                                    Text(n.text).font(.callout).lineLimit(2)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                if !n.quote.isEmpty {
+                                    Text(n.quote).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            deleteTextNote(n)   // × → 从内存移除 → ContentView onChange 对账删 note 行
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.body).foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("Delete this note"))
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
                 }
             }
         }
+    }
+
+    /// 删除一条文字注解：从内存移除 → ContentView 的 onChange 增量对账把对应 note 删库。
+    private func deleteTextNote(_ n: TextNote) {
+        session.textNotes.removeAll { $0.id == n.id }
     }
 
     private var highlightBlock: some View {
@@ -223,9 +258,8 @@ struct InspectorView: View {
     }
 
     private func reload() {
-        guard let id = documentId else { variants = []; locations = []; textNotes = []; return }
+        guard let id = documentId else { variants = []; locations = []; return }
         variants = workspace.variants(documentId: id)
         locations = workspace.locations(documentId: id)
-        textNotes = workspace.notes(documentId: id).filter { $0.kind == 0 }
     }
 }

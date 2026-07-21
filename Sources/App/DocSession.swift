@@ -44,6 +44,12 @@ final class DocSession: ObservableObject, Identifiable {
     @Published var strokes: [InkStroke] = []
     @Published var liveStroke: InkStroke?
 
+    // 文字注解（note kind=0）。运行时驻留于此，阅读区(渲染标记)与 Inspector(列表) 共读；
+    // 由 ContentView `.onChange` 增量对账落库（新增/编辑 upsert、删除 delete），与手写笔迹同套路。
+    @Published var textNotes: [TextNote] = []
+    /// 已落库的文字注解快照（id → 值），用于增量对账（检测新增/内容变更/删除），非 @Published。
+    var persistedTextNotes: [UUID: TextNote] = [:]
+
     // 平板笔悬停位置（nil = 无悬停 / 已落笔）。
     @Published var hover: HoverPoint?
 

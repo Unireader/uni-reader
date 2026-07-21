@@ -79,6 +79,15 @@ private struct TextSelection: Equatable {
     var text: String
 }
 
+/// 「添加批注」草稿：右键选区触发，捕获选区起始页 + 归一化锚点/行框 + 原文，待编辑器填批注后落成 `TextNote`。
+private struct PendingNote: Identifiable {
+    let id = UUID()
+    var page: Int
+    var anchor: CGRect       // 归一化包围盒 0~1（页局部）
+    var rects: [CGRect]      // 选区逐行归一化框（页局部）
+    var quote: String        // 选中原文
+}
+
 /// 捏合手势状态。锚点数学：屏幕不动点 P（相对容器原点）+ 内容锚点 c；
 /// 逐帧 commit：c' = c×r，目标偏移 = c' − P（同 runloop 提交 = 屏幕原子，scroll-x-probe T3b）。
 /// 放大/缩小都走真 commit：滚动条在内容超过容器的瞬间即出现（Preview 同款），无松手悬崖。
@@ -148,6 +157,8 @@ private struct ReaderSurface: View {
     // 的「视觉阅读顺序」连续选区——不再自研词框排序（旧实现对多栏/思维导图版面会东一块西一块）。
     // 存归一化逐页行框 + 选中串；拖选期间实时重算，随缩放/滚动免重算（归一化随页尺寸自适应）。
     @State private var selection: TextSelection?
+    /// 「添加批注」草稿（非 nil 即呈现编辑器 sheet）。
+    @State private var pendingNote: PendingNote?
 
     private let zoomMin: CGFloat = 0.25
     private let zoomMax: CGFloat = 6
@@ -222,6 +233,15 @@ private struct ReaderSurface: View {
         // 双击定位取光标最近位置（`.onContinuousHover` 维护），避免 SpatialTapGesture 与拖选/缩放争手势。
         .onTapGesture(count: 2) { if let p = scratch.cursorP { selectWord(atContainer: p) } }
         .onTapGesture(count: 1) { clearSelection() }
+        // 右键选区 → 「添加批注 / 复制」（原生上下文菜单，非浮层 hack）。菜单项常驻、无选区时禁用，
+        // 避免按选区有无条件包裹 ScrollView 改变其身份而重置滚动位置。
+        .contextMenu { readerContextMenu }
+        // 批注编辑器（原生 .sheet）。保存 → 落成 TextNote 入 session（ContentView.onChange 落库）。
+        .sheet(item: $pendingNote) { draft in
+            NoteEditorSheet(quote: draft.quote, initialText: "",
+                            onSave: { commitNote(draft: draft, text: $0) },
+                            onCancel: { pendingNote = nil })
+        }
         .overlay(alignment: .topLeading) { followTicker }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: nightMode) { _, _ in scheduleSettleRender() }
@@ -567,6 +587,41 @@ private struct ReaderSurface: View {
     }
 
     private func clearSelection() { if selection != nil { selection = nil } }
+
+    // MARK: 文字注解（kind=0）——右键选区添加批注
+
+    @ViewBuilder private var readerContextMenu: some View {
+        Button(L("Add Note")) { beginAddNote() }
+            .disabled(selection?.text.isEmpty ?? true)
+        Button(L("Copy")) { copySelectionToPasteboard() }
+            .disabled(selection?.text.isEmpty ?? true)
+    }
+
+    /// 由当前选区起一条批注草稿：锚到选区起始页，取该页逐行框归一化 + 包围盒；原文完整保留（可能跨页）。
+    private func beginAddNote() {
+        guard let sel = selection, !sel.text.isEmpty, let page = sel.rects.keys.min() else { return }
+        let rects = sel.rects[page] ?? []
+        let bbox = rects.reduce(CGRect.null) { $0.union($1) }
+        pendingNote = PendingNote(page: page, anchor: bbox.isNull ? .zero : bbox,
+                                  rects: rects, quote: sel.text)
+    }
+
+    /// 保存批注：落成 `TextNote` 追加到 `session.textNotes`（ContentView 的 onChange 增量落库）。
+    private func commitNote(draft: PendingNote, text: String) {
+        let note = TextNote(page: draft.page, anchor: draft.anchor, quote: draft.quote,
+                            text: text, rects: draft.rects)
+        session.textNotes.append(note)
+        pendingNote = nil
+        clearSelection()
+    }
+
+    /// 上下文菜单「复制」：与 ⌘C 监视器同直写剪贴板（纯 ScrollView 容器 `.onCopyCommand` 不可靠）。
+    private func copySelectionToPasteboard() {
+        guard let text = selection?.text, !text.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
 
     /// 双击：OCR 页选整行、原生页选整词。
     private func selectWord(atContainer P: CGPoint) {
