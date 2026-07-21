@@ -70,6 +70,13 @@
 "Save" = "保存";
 "Copy" = "复制";
 "Delete this note" = "删除此批注";
+"Highlight" = "高亮";
+"No highlights yet." = "暂无高亮。";
+"Delete this highlight" = "删除此高亮";
+"Yellow" = "黄色";
+"Green" = "绿色";
+"Blue" = "蓝色";
+"Pink" = "粉色";
 "Highlights" = "高亮";
 "Highlights aren’t supported yet." = "高亮尚未支持。";
 "Contents" = "目录";

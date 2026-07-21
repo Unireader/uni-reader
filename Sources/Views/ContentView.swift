@@ -137,6 +137,9 @@ struct ContentView: View {
         .onChange(of: session.textNotes) { _, _ in
             persistTextNotes()   // 文字注解新建/编辑/删除时增量落库
         }
+        .onChange(of: session.highlights) { _, _ in
+            persistHighlights()  // 高亮新建/改色/删除时增量落库
+        }
         .onAppear {
             app.register(session)
             if autoStartServer, !app.server.isRunning { app.server.start() }   // 平板服务开机自启
@@ -363,7 +366,7 @@ struct ContentView: View {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
         session.store = workspace.store   // OCR 缓存读写用（仅主线程）
         guard let id, let doc = workspace.document(id: id) else {
-            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); clearTextNotes(); session.reloadOCRState(); return
+            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
         }
         guard let target = workspace.openTarget(documentId: id),
               let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
@@ -372,6 +375,7 @@ struct ContentView: View {
             toc = []
             clearInk()
             clearTextNotes()
+            clearHighlights()
             return
         }
         missingDoc = nil
@@ -382,6 +386,7 @@ struct ContentView: View {
         session.reloadOCRState()                   // 换文档重置 OCR；该内容已有缓存则自动启用
         loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
         loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
+        loadHighlights(documentId: id)             // 恢复该文档已落库的高亮
         // 恢复阅读进度：定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。
         let p = workspace.progress(documentId: id)
         let page = min(max(0, p.page), max(0, pdf.pageCount - 1))
@@ -471,6 +476,34 @@ struct ContentView: View {
             workspace.deleteTextNote(id: goneID)
         }
         session.persistedTextNotes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    // MARK: - 文字高亮持久化（note kind=3）
+
+    /// 清空内存高亮与对账集（对账集先于列表赋值，同 loadTextNotes 防切档误删）。
+    private func clearHighlights() {
+        session.persistedHighlights = [:]
+        session.highlights = []
+    }
+
+    private func loadHighlights(documentId id: String) {
+        let loaded = workspace.highlights(documentId: id)
+        session.persistedHighlights = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+        session.highlights = loaded
+    }
+
+    /// 内存高亮 ↔ 库对账：新增/改色 upsert；已无的 delete。用值快照比较，改色也识别为“变更”。
+    private func persistHighlights() {
+        guard let id = session.documentId else { return }
+        let current = session.highlights
+        let currentIDs = Set(current.map(\.id))
+        for h in current where session.persistedHighlights[h.id] != h {
+            workspace.saveHighlight(documentId: id, h)
+        }
+        for goneID in session.persistedHighlights.keys where !currentIDs.contains(goneID) {
+            workspace.deleteHighlight(id: goneID)
+        }
+        session.persistedHighlights = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     // MARK: - 重定位

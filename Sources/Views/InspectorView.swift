@@ -245,9 +245,54 @@ struct InspectorView: View {
     }
 
     private var highlightBlock: some View {
-        block(L("Highlights")) {
-            Text(L("Highlights aren’t supported yet.")).foregroundStyle(.secondary).font(.callout)
+        block("\(L("Highlights")) · \(session.highlights.count)") {
+            if session.highlights.isEmpty {
+                Text(L("No highlights yet.")).foregroundStyle(.secondary).font(.callout)
+            } else {
+                ForEach(session.highlights) { h in
+                    HStack(alignment: .top, spacing: 6) {
+                        Button {
+                            onJumpTo(h.page, max(0, h.anchor.minY - 0.03))
+                        } label: {
+                            HStack(alignment: .top, spacing: 8) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color(nsColor: h.color.nsColor))
+                                    .frame(width: 12, height: 12)
+                                    .padding(.top, 2)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Label(String(format: L("Page %d"), h.page + 1), systemImage: "highlighter")
+                                        .font(.callout)
+                                    if !h.quote.isEmpty {
+                                        Text(h.quote).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            deleteHighlight(h)   // × → 从内存移除 → ContentView onChange 对账删 note 行
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.body).foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("Delete this highlight"))
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
+                }
+            }
         }
+    }
+
+    /// 删除一条高亮：从内存移除 → ContentView 的 onChange 增量对账把对应 note 删库。
+    private func deleteHighlight(_ h: Highlight) {
+        session.highlights.removeAll { $0.id == h.id }
     }
 
     private func badge(_ text: String, _ color: Color) -> some View {

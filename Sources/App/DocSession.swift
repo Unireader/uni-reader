@@ -50,6 +50,11 @@ final class DocSession: ObservableObject, Identifiable {
     /// 已落库的文字注解快照（id → 值），用于增量对账（检测新增/内容变更/删除），非 @Published。
     var persistedTextNotes: [UUID: TextNote] = [:]
 
+    // 文字高亮（note kind=3）。同上套路：阅读区铺色 + Inspector 列表，ContentView `.onChange` 增量对账。
+    @Published var highlights: [Highlight] = []
+    /// 已落库的高亮快照（id → 值），增量对账用，非 @Published。
+    var persistedHighlights: [UUID: Highlight] = [:]
+
     // 平板笔悬停位置（nil = 无悬停 / 已落笔）。
     @Published var hover: HoverPoint?
 

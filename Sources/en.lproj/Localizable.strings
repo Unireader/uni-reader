@@ -70,6 +70,13 @@
 "Save" = "Save";
 "Copy" = "Copy";
 "Delete this note" = "Delete this note";
+"Highlight" = "Highlight";
+"No highlights yet." = "No highlights yet.";
+"Delete this highlight" = "Delete this highlight";
+"Yellow" = "Yellow";
+"Green" = "Green";
+"Blue" = "Blue";
+"Pink" = "Pink";
 "Highlights" = "Highlights";
 "Highlights aren’t supported yet." = "Highlights aren’t supported yet.";
 "Contents" = "Contents";

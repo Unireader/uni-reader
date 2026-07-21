@@ -289,6 +289,26 @@ final class WorkspaceManager: ObservableObject {
         try? store?.deleteNote(id: id.uuidString)
     }
 
+    // MARK: - 文字高亮持久化（note kind=3；挂逻辑文档，全版本共用）
+
+    /// 读取某文档已落库的全部高亮（按页 / 页内位置序），用于重开恢复。
+    func highlights(documentId: String) -> [Highlight] {
+        ((try? store?.notes(documentId: documentId)) ?? [])
+            .compactMap { $0.kind == Highlight.noteKind ? Highlight(note: $0) : nil }
+            .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
+    }
+
+    /// 落库/更新一条高亮（新建或改色时调用）。
+    func saveHighlight(documentId: String, _ h: Highlight) {
+        guard let store, let n = h.toNote(documentId: documentId) else { return }
+        try? store.upsertNote(n)
+    }
+
+    /// 删除一条高亮（note.id == Highlight.id）。
+    func deleteHighlight(id: UUID) {
+        try? store?.deleteNote(id: id.uuidString)
+    }
+
     // MARK: - 最近工作区
 
     private func loadRecents() {

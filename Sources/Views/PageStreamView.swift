@@ -332,6 +332,7 @@ private struct ReaderSurface: View {
                                  selectionRects: selection?.rects[i] ?? [],
                                  matchRects: session.searchMatches.filter { $0.page == i }.flatMap(\.rects),
                                  activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [],
+                                 highlights: session.highlights.filter { $0.page == i },
                                  notes: session.textNotes.filter { $0.page == i },
                                  onOpenNote: { editorTarget = .edit($0) })
                         .offset(x: pageX, y: layout.offsets[i] * dispScale)
@@ -620,10 +621,26 @@ private struct ReaderSurface: View {
     @ViewBuilder private var readerContextMenu: some View {
         if selection?.text.isEmpty == false {
             Button(L("Add Note")) { beginAddNote() }          // 注解选中文字（锚到选区）
+            Menu(L("Highlight")) {                             // 一键高亮（选调色板颜色）
+                ForEach(Array(Highlight.palette.enumerated()), id: \.offset) { _, item in
+                    Button(L(item.name)) { addHighlight(color: item.color) }
+                }
+            }
             Button(L("Copy")) { copySelectionToPasteboard() }
         } else {
             Button(L("Add Note Here")) { beginAddNoteAtCursor() }   // 点注解（锚到右键处页面坐标）
         }
+    }
+
+    /// 高亮当前选区：逐页各落一条高亮（每页自己的行框），跨页选区各页都铺色。无正文、无图钉、无编辑器。
+    private func addHighlight(color: InkColor) {
+        guard let sel = selection, !sel.text.isEmpty else { return }
+        for (page, rects) in sel.rects where !rects.isEmpty {
+            let bbox = rects.reduce(CGRect.null) { $0.union($1) }
+            session.highlights.append(Highlight(page: page, anchor: bbox.isNull ? .zero : bbox,
+                                                quote: sel.text, rects: rects, color: color))
+        }
+        clearSelection()
     }
 
     /// 由当前选区起一条批注草稿：锚到选区起始页，取该页逐行框归一化 + 包围盒；原文完整保留（可能跨页）。
@@ -1029,6 +1046,7 @@ private struct PageCellView: View {
     var selectionRects: [CGRect] = []      // 文字选择高亮（T1），归一化 0~1 左上原点
     var matchRects: [CGRect] = []          // 搜索命中高亮，归一化 0~1 左上原点（T2，全部命中，淡黄）
     var activeMatchRects: [CGRect] = []    // 当前命中（同上坐标，橙色强调）
+    var highlights: [Highlight] = []       // 本页文字高亮（kind=3）：按各自颜色铺色，最底层
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
     var onOpenNote: (TextNote) -> Void = { _ in }
 
@@ -1049,6 +1067,16 @@ private struct PageCellView: View {
                            height: tile.normRect.height * size.height)
                     .offset(x: tile.normRect.minX * size.width,
                             y: tile.normRect.minY * size.height)
+            }
+            // 文字高亮（kind=3，最底层）：每条按自己的颜色铺在选中文字上。
+            if !highlights.isEmpty {
+                Canvas { ctx, sz in
+                    for h in highlights {
+                        let col = Color(nsColor: h.color.nsColor).opacity(Highlight.fillOpacity)
+                        for r in h.rects { fillNorm(r, in: &ctx, size: sz, color: col) }
+                    }
+                }
+                .allowsHitTesting(false)
             }
             // 文字注解荧光高亮（持久层，居搜索/选择高亮之下）：被注解的文字铺一层暖黄。
             if !notes.isEmpty {
