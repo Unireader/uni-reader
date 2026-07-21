@@ -79,7 +79,8 @@ private final class Scratch {
     var resizeWork: DispatchWorkItem?
     var pinch: PinchInfo?
     var pendingRestore: ScrollAnchor?
-    var lastUnobW: CGFloat = 0
+    var lastRefitContainerW: CGFloat = 0   // 上次 refit 时的容器宽（区分窗口宽变化 vs 纯侧栏 insets 变化）
+    var lastRefitAvailW: CGFloat = 0       // 上次 refit 采用的可用宽（去抖判定）
     var didInitialGeo = false
     var didFirstKick = false
     var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点；域外为 nil）
@@ -119,18 +120,26 @@ private struct ReaderSurface: View {
     private let zoomMax: CGFloat = 6
     private let basePixelCap = 2800               // 整页基图像素宽上限；超出由贴片补清晰
 
+    /// 滚动视图自己上报的「未遮可用宽」= containerW − 左右 insets（geometryChanged 更新）。
+    /// legacy（占空间）滚动条吃掉的宽度会体现在 containerW 里——fit/内容宽一律以此为准，
+    /// 绝不用外层 GeometryReader 的宽（两者差 1pt 就会造成水平滚动条常驻）。
+    @State private var availW: CGFloat = 0
+
     // MARK: 布局换算
 
-    private var basis: CGFloat { fitBasis > 0 ? fitBasis : max(1, unobSize.width) }
+    private var fitAvail: CGFloat { availW > 0 ? availW : max(1, unobSize.width) }
+    private var basis: CGFloat { fitBasis > 0 ? fitBasis : fitAvail }
     private var pageW: CGFloat { basis * zoom }
     private var dispScale: CGFloat { pageW / PageLayout.refWidth }
-    private var contentW: CGFloat { max(unobSize.width, pageW) }
+    private var contentW: CGFloat { max(fitAvail, pageW) }
+    /// 水平轴按需声明：fit（页宽 ≤ 可用宽）时物理上不存在水平滚动条。
+    private var axes: Axis.Set { pageW > fitAvail + 0.5 ? [.vertical, .horizontal] : [.vertical] }
     private var contentH: CGFloat { (layout?.totalHeight ?? 1) * dispScale }
     private var pageX: CGFloat { (contentW - pageW) / 2 }
     private var paper: Color { nightMode ? Color(white: 0.10) : .white }
 
     var body: some View {
-        ScrollView([.vertical, .horizontal]) {
+        ScrollView(axes) {
             contentBody
         }
         .contentMargins(.top, indicatorTopInset, for: .scrollIndicators)   // 滚动条不进工具栏区
@@ -152,7 +161,6 @@ private struct ReaderSurface: View {
         }
         .overlay(alignment: .topLeading) { followTicker }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
-        .onChange(of: unobSize.width) { _, _ in viewportWidthChanged() }
         .onChange(of: nightMode) { _, _ in scheduleSettleRender() }
         .onChange(of: interpEnabled) { _, v in follower.interpEnabled = v }
         .onAppear {
@@ -220,8 +228,7 @@ private struct ReaderSurface: View {
         layout = lay
         follower.pageCount = lay.pageCount
         follower.interpEnabled = interpEnabled
-        if fitBasis == 0 { fitBasis = max(1, unobSize.width) }
-        scratch.lastUnobW = unobSize.width
+        // fitBasis 由首帧 geometryChanged 用滚动视图实测可用宽设定（此处不预设，避免与真实值差 1pt）
         // 视图创建前就已发出的 restore/toc 锚点（loadSelected 先 emit 后建视图）
         if let a = session.scrollAnchor, a.origin != "mac" {
             scratch.pendingRestore = a
@@ -234,10 +241,15 @@ private struct ReaderSurface: View {
     private func geometryChanged(_ n: GeoSnap) {
         scratch.geo = n
         guard let layout else { return }
+        let avail = max(1, n.containerW - n.insetLeading - n.insetTrailing)
+        if abs(avail - availW) > 0.5 { availW = avail }
         if !scratch.didInitialGeo, n.containerW > 0 {
             scratch.didInitialGeo = true
-            if fitBasis == 0 { fitBasis = max(1, unobSize.width) }
-            scratch.lastUnobW = unobSize.width
+            fitBasis = avail                      // 首帧即以滚动视图实测可用宽为 fit 基准
+            scratch.lastRefitContainerW = n.containerW
+            scratch.lastRefitAvailW = avail
+        } else if abs(avail - scratch.lastRefitAvailW) > 0.5 {
+            scheduleRefit()                        // 可用宽变化（窗口/侧栏/滚动条样式）→ 去抖后处理
         }
         verifyPendingTarget(n)
         scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)
@@ -436,7 +448,7 @@ private struct ReaderSurface: View {
     private func clampOffset(_ o: CGPoint, pageWidth pw: CGFloat) -> CGPoint {
         guard let layout else { return o }
         let g = scratch.geo
-        let cw = max(unobSize.width, pw)
+        let cw = max(fitAvail, pw)
         let ch = layout.totalHeight * pw / PageLayout.refWidth
         let minX = -g.insetLeading
         let maxX = max(minX, cw - g.containerW + g.insetTrailing)
@@ -543,11 +555,11 @@ private struct ReaderSurface: View {
         }
     }
 
-    /// ⌘0：回 fit-width（基准重定标到当前未遮宽），未遮视口中心为锚。
+    /// ⌘0：回 fit-width（基准重定标到当前实测可用宽），未遮视口中心为锚。
     private func commandZoomFit() {
         guard layout != nil, scratch.didInitialGeo else { return }
         let g = scratch.geo
-        let newBasis = max(1, unobSize.width)
+        let newBasis = fitAvail
         let r = newBasis / pageW
         let P = CGPoint(x: g.insetLeading + (g.containerW - g.insetLeading - g.insetTrailing) / 2,
                         y: g.insetTop + (g.containerH - g.insetTop - g.insetBottom) / 2)
@@ -567,12 +579,14 @@ private struct ReaderSurface: View {
     }
 
     // MARK: 窗口/侧栏宽度变化（硬指标 3/4：resize 不闪、不跳）
-    // 拖动期间布局冻结（页尺寸不变 → 纵向绝对稳定；水平居中随容器平滑跟随）；
-    // 稳定 0.2s 后单次原子锚定 refit（fit 模式贴合新宽；手动缩放态只重定标基准，零视觉变化）。
+    // 变化期间布局冻结（页尺寸不变 → 纵向绝对稳定）；稳定 0.2s 后一次性处理：
+    //   · 侧栏/Inspector 开合（容器宽没变，只有 insets 变）→ **只重定标基准，零视觉变化**
+    //     （页面不缩放不跳位，允许被侧栏玻璃盖住，可横向拖出——用户 2026-07-20 明确要求）
+    //   · 窗口宽真变（含 legacy 滚动条出现/消失改变容器宽）→ fit 模式做单次原子锚定 refit；
+    //     手动缩放态同样只重定标（Preview 的绝对尺寸语义）
 
-    private func viewportWidthChanged() {
-        guard scratch.didInitialGeo, unobSize.width > 0,
-              abs(unobSize.width - scratch.lastUnobW) > 0.5 else { return }
+    private func scheduleRefit() {
+        guard scratch.didInitialGeo else { return }
         scratch.resizeWork?.cancel()
         let work = DispatchWorkItem { refitToViewport() }
         scratch.resizeWork = work
@@ -581,10 +595,13 @@ private struct ReaderSurface: View {
 
     private func refitToViewport() {
         guard layout != nil, scratch.didInitialGeo else { return }
-        let newW = max(1, unobSize.width)
-        scratch.lastUnobW = newW
-        if userZoomed {
-            // 绝对尺寸保持（Preview 同款）：显示页宽不变，仅重定标 fit 基准 → 零视觉变化
+        let g = scratch.geo
+        let newW = max(1, g.containerW - g.insetLeading - g.insetTrailing)
+        let windowWidthChanged = abs(g.containerW - scratch.lastRefitContainerW) > 0.5
+        scratch.lastRefitContainerW = g.containerW
+        scratch.lastRefitAvailW = newW
+        if userZoomed || !windowWidthChanged {
+            // 尺寸保持：显示页宽不变，仅重定标 fit 基准 → 零视觉变化（侧栏开合走这里）
             let eff = pageW
             var t = Transaction(); t.animation = nil
             withTransaction(t) {
@@ -592,8 +609,7 @@ private struct ReaderSurface: View {
                 zoom = min(max(eff / newW, zoomMin), zoomMax)
             }
         } else {
-            // fit 模式：单次原子锚定 refit（顶部文档点钉住）
-            let g = scratch.geo
+            // fit 模式 + 窗口宽变化：单次原子锚定 refit（顶部文档点钉住）
             let r = newW / pageW
             let topDispY = g.offsetY + g.insetTop
             let target = clampOffset(CGPoint(x: -g.insetLeading, y: topDispY * r - g.insetTop),

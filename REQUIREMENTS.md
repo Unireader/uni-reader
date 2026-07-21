@@ -9,7 +9,7 @@
 | 平板端形态 | **显示当前页图片 + 本地即时落墨** | 笔画用归一化页面坐标 (0~1)，与 Mac 缩放/视口解耦，坐标映射从"最高风险"降级 |
 | 分发方式 | **直接分发 + 公证（非沙盒）** | 文件用普通路径 / bookmark，无需 security-scoped resource |
 | 最低系统 | **macOS 26 Tahoe**（2026-07-19 从 15 上调，不做兼容） | Liquid Glass 全量 API 直接用（`backgroundExtensionEffect` 等），无 #available 分支 |
-| 主窗口布局 | **框架 = 原生 NavigationSplitView（玻璃侧栏）+ 右侧 `.inspector`；PDF 阅读区 = 自研页图流 `PageStreamView` v2（2026-07-20 重写：纯 SwiftUI，Preview 级五硬指标——主线程零渲染/预缓存/pinch 锚定零跳位/resize 零跳/任何情况零闪烁；见 `PDF-VIEWER-REBUILD-PLAN.md`）** | 目标行为：① 侧栏叠加在 PDF 上（玻璃虚化真实内容）；② fit 时开侧栏页面挤到右侧可见区；③ 手动放大后允许被侧栏覆盖。**红线：严禁仿侧栏/浮层 hack；阅读区纯 SwiftUI，严禁 AppKit 视图（含包 NSScrollView）** |
+| 主窗口布局 | **框架 = 原生 NavigationSplitView（玻璃侧栏）+ 右侧 `.inspector`；PDF 阅读区 = 自研页图流 `PageStreamView` v2（2026-07-20 重写：纯 SwiftUI，Preview 级五硬指标——主线程零渲染/预缓存/pinch 锚定零跳位/resize 零跳/任何情况零闪烁；见 `PDF-VIEWER-REBUILD-PLAN.md`）** | 目标行为：① 侧栏叠加在 PDF 上（玻璃虚化真实内容）；② **侧栏/Inspector 开合不改变页面尺寸/位置**（2026-07-20 用户更新，取代旧「挤到右侧居中」）——页面被玻璃盖住、可横向拖出；③ 手动放大后允许被侧栏覆盖。fit 宽以滚动视图实测可用宽为准（兼容鼠标 legacy 占空间滚动条）。**红线：严禁仿侧栏/浮层 hack；阅读区纯 SwiftUI，严禁 AppKit 视图（含包 NSScrollView）** |
 
 ## 1. 功能需求
 

@@ -138,12 +138,19 @@ ContentView.readerColumn
 
 ## 6. 窗口缩放 / 侧栏开合（锚定不跳位）
 
-- 触发：`containerSize`/未遮宽变化（GeometryReader + onScrollGeometryChange）。
-- 每帧：`unobW' → 布局整体比例 s = W'/W`，目标 offset `O_t = O×s`（保 (page,frac) 顶部锚 + 水平比例），
-  与布局更新**同 transaction** `scrollTo`；不足一帧的落差由 §5 的补偿保持吸收。
-- 效果：fit 模式页宽实时贴合窗口/未遮区（侧栏开 → 页挤到右侧可见区居中=既定行为②）；
-  手动放大态页面允许被侧栏玻璃覆盖（行为③，横向可滚）。
-- 若真机仍有肉眼可见抖动 → 内置开关退到「resize 期间冻结布局、松手一次性锚定重排」（一次原子跳，无抖动）。
+> **2026-07-20 定稿（修 bug 后，两条用户反馈驱动）**：
+> ① 侧栏开合曾触发内容缩放 → 用户判为 bug；② 鼠标接入时（legacy 占空间滚动条）关侧栏后水平滚动条常驻。
+
+- **宽度真相源**：fit 基准与内容宽一律取滚动视图自己上报的 `containerSize − 左右 insets`（=`availW`），
+  **绝不用外层 GeometryReader 的未遮宽**——legacy 滚动条占的 ~16pt 只体现在 containerSize 里，
+  两个来源差 1pt 就会水平常驻滚动条。首帧 geometry 即定 fitBasis（无 bootstrap 偏差）。
+- **水平轴按需声明**：`pageW ≤ availW` 时 `ScrollView` 只声明 `.vertical` → fit 状态物理上不可能出现水平滚动条
+  （对任何滚动条样式免疫）。
+- **侧栏/Inspector 开合（容器宽不变、只 insets 变）→ 零视觉变化**：只重定标基准（fitBasis=新可用宽、
+  zoom=尺寸不变换算值），页面不缩放不跳位；开侧栏时页面被玻璃盖住（真内容延伸），可横向拖出。
+  （取代早期「fit 时开侧栏页面挤到右侧居中」的行为②——用户 2026-07-20 明确不要开合触发缩放。）
+- **窗口宽真变（含 legacy 滚动条出现/消失改变容器宽）**：变化期间布局冻结（纵向绝对稳定），
+  稳定 0.2s 后一次原子锚定 refit（fit 模式贴合新宽；手动缩放态只重定标=Preview 绝对尺寸语义）。
 
 ## 7. 锚点同步 / 跟随 / 墨迹 / hover / 进度
 
