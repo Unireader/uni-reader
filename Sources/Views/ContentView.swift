@@ -338,7 +338,7 @@ struct ContentView: View {
             var lastId: String?
             for url in pdfs {
                 let hash = await Task.detached(priority: .userInitiated) {
-                    (try? FileHasher.sha256(of: url)) ?? ""
+                    (try? FileHasher.sha256Cached(of: url)) ?? ""
                 }.value
                 let pageCount = PDFDocument(url: url)?.pageCount ?? 0
                 if let doc = workspace.ingest(path: url.path, hash: hash,
@@ -544,7 +544,7 @@ struct ContentView: View {
         isHashing = true
         Task {
             let hash = await Task.detached(priority: .userInitiated) {
-                (try? FileHasher.sha256(of: url)) ?? ""
+                (try? FileHasher.sha256Cached(of: url)) ?? ""
             }.value
             let pageCount = PDFDocument(url: url)?.pageCount ?? 0
             workspace.relocate(documentId: doc.id, path: url.path, hash: hash, pageCount: pageCount)
