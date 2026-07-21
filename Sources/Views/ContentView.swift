@@ -131,6 +131,9 @@ struct ContentView: View {
             app.macScrolled(session)
             saveProgressThrottled(a)
         }
+        .onChange(of: session.readZoom) { _, _ in
+            saveProgressThrottled(session.scrollAnchor)   // 缩放变化也存（含 restore 后手动缩放）
+        }
         .onChange(of: session.strokes) { _, _ in
             persistInk()   // 笔画完成/擦除时增量落库（liveStroke 变化不触发）
         }
@@ -377,6 +380,7 @@ struct ContentView: View {
     private func loadSelected(_ id: String?) {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
         session.store = workspace.store   // OCR 缓存读写用（仅主线程）
+        session.restoreZoom = 1; session.readZoom = 1   // 默认 fit-width；成功路径按库覆盖
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; toc = []; clearInk(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
         }
@@ -399,8 +403,10 @@ struct ContentView: View {
         loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
         loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
         loadHighlights(documentId: id)             // 恢复该文档已落库的高亮
-        // 恢复阅读进度：定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。
+        // 恢复阅读进度：缩放倍率 + 定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。
         let p = workspace.progress(documentId: id)
+        session.restoreZoom = CGFloat(p.zoom)      // 首帧定基准后由 PageStreamView 套用
+        session.readZoom = CGFloat(p.zoom)
         let page = min(max(0, p.page), max(0, pdf.pageCount - 1))
         session.currentPageIndex = page
         lastProgressSave = .now                    // 避免恢复动作立刻又写一遍
@@ -414,16 +420,18 @@ struct ContentView: View {
     // MARK: - 阅读进度
 
     private func saveProgressThrottled(_ a: ScrollAnchor?) {
-        guard let a, let id = selectedDocID else { return }
+        guard let id = selectedDocID else { return }
         let now = Date.now
         guard now.timeIntervalSince(lastProgressSave) > 0.7 else { return }
         lastProgressSave = now
-        workspace.saveProgress(documentId: id, page: a.page, frac: a.frac)
+        workspace.saveProgress(documentId: id, page: a?.page ?? session.currentPageIndex,
+                               frac: a?.frac ?? 0, zoom: Double(session.readZoom))
     }
 
     private func saveProgress(docId: String?) {
-        guard let docId, let a = session.scrollAnchor else { return }
-        workspace.saveProgress(documentId: docId, page: a.page, frac: a.frac)
+        guard let docId else { return }
+        workspace.saveProgress(documentId: docId, page: session.scrollAnchor?.page ?? session.currentPageIndex,
+                               frac: session.scrollAnchor?.frac ?? 0, zoom: Double(session.readZoom))
     }
 
     // MARK: - 手写笔迹持久化（note kind=2）

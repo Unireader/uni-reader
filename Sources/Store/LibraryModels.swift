@@ -14,6 +14,7 @@ struct LibDocument: Identifiable, Equatable {
     var sortOrder: Int
     var readPage: Int = 0       // 阅读进度：视口顶部所在页
     var readFrac: Double = 0    // 阅读进度：页内归一化比例（0 顶 1 底）
+    var readZoom: Double = 1    // 上次缩放倍率（相对 fit-width，1=贴合宽度）
 }
 
 /// 一个内容版本＝一个 content hash（加 TOC 等致 hash 变即新增一个 variant）。

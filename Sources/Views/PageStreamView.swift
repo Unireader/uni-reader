@@ -136,6 +136,7 @@ private final class Scratch {
     var resizeWork: DispatchWorkItem?
     var pinch: PinchInfo?
     var pendingRestore: ScrollAnchor?
+    var pendingZoom: CGFloat = 1           // 待恢复的缩放倍率（首帧定基准后套用）
     var lastRefitFullW: CGFloat = 0        // 上次 refit 时的全宽（区分窗口缩放 vs 侧栏/Inspector 开合）
     var appearAt: CFTimeInterval = 0       // 视图出现时刻：启动稳定窗内宽度变化一律真 fit（防瞬态宽被锁死）
     var lastDbgAt: CFTimeInterval = 0      // 临时诊断日志节流
@@ -285,6 +286,7 @@ private struct ReaderSurface: View {
                 ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
             scheduleRefit()
         }
+        .onChange(of: zoom) { _, z in session.readZoom = z }   // 回报当前缩放，供进度持久化
         .onChange(of: interpEnabled) { _, v in follower.interpEnabled = v }
         .onChange(of: isActiveWindow) { _, v in scratch.isActiveWindow = v }
         .onChange(of: session.ocrEnabled) { _, on in if on { session.enqueueOCR(Array(realized)) } }
@@ -368,6 +370,7 @@ private struct ReaderSurface: View {
         follower.pageCount = lay.pageCount
         follower.interpEnabled = interpEnabled
         scratch.appearAt = CACurrentMediaTime()
+        scratch.pendingZoom = session.restoreZoom   // 上次缩放：首帧定 fitBasis 后套用（见 geometryChanged）
         // fitBasis 由首帧 geometryChanged 设定（此处不预设，避免与真实值有偏差）
         // 视图创建前就已发出的 restore/toc 锚点（loadSelected 先 emit 后建视图）
         if let a = session.scrollAnchor, a.origin != "mac" {
@@ -397,6 +400,10 @@ private struct ReaderSurface: View {
             guard n.containerW > 0, fullWidth > 0 else { return }
             scratch.didInitialGeo = true
             fitBasis = fitAvail                   // 首帧定 fit 基准（全窗宽 − legacy 滚动条占位）
+            // 恢复上次缩放（相对 fit 的倍率）：此刻定标 zoom 即首帧就以正确页宽渲染；
+            // 随后 pendingRestore 的 page/frac 锚点用带缩放的 dispScale 换算 → 位置仍准。
+            let rz = clampZoom(scratch.pendingZoom)
+            if abs(rz - 1) > 0.001 { zoom = rz; userZoomed = true }
             scratch.lastRefitFullW = fullWidth
             NSLog("[RD] bootstrap didInitialGeo=1 via %@ containerW=%.1f fullW=%.1f unobW=%.1f",
                   raw.containerW > 0 ? "scrollGeo" : "unobSize", n.containerW, fullWidth, unobSize.width)

@@ -37,6 +37,11 @@ final class DocSession: ObservableObject, Identifiable {
 
     /// 当前会话对应的逻辑文档 id（笔迹持久化用；nil = 未加载文档）。
     var documentId: String?
+
+    /// 阅读区当前缩放倍率（相对 fit-width，1=贴合宽度）。PageStreamView 写、ContentView 读来存进度。
+    @Published var readZoom: CGFloat = 1
+    /// 待恢复的缩放倍率（loadSelected 从库读入，PageStreamView 首帧定基准后一次性套用）。非 @Published。
+    var restoreZoom: CGFloat = 1
     /// 已落库的笔画 id 集合，用于增量对账（新增 upsert / 擦除 delete），非 @Published。
     var persistedStrokeIDs: Set<UUID> = []
 
