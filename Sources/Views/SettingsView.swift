@@ -8,6 +8,8 @@ struct SettingsView: View {
     @AppStorage("autoNightMode") private var autoNightMode = false
     @AppStorage("scrollInterp") private var scrollInterp = true      // true=时间戳插值 / false=纯低通
     @AppStorage("autoStartServer") private var autoStartServer = false
+    @AppStorage("ocrEngine") private var ocrEngine = "off"          // "off" | "paddle"
+    @AppStorage("ocrPaddleKey") private var ocrPaddleKey = ""
 
     var body: some View {
         Form {
@@ -38,8 +40,23 @@ struct SettingsView: View {
             } header: {
                 Text(L("Tablet Service"))
             }
+
+            Section {
+                Picker(L("OCR Engine"), selection: $ocrEngine) {
+                    Text(L("Off")).tag("off")
+                    Text(L("Paddle OCR (API)")).tag("paddle")
+                }
+                if ocrEngine == "paddle" {
+                    SecureField(L("Paddle API Key"), text: $ocrPaddleKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+            } header: {
+                Text(L("Text Recognition (OCR)"))
+            } footer: {
+                Text(L("For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored locally on this Mac only."))
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 360)
+        .frame(width: 480, height: 460)
     }
 }

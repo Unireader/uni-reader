@@ -88,3 +88,18 @@
 "No matches" = "无匹配";
 "Searching…" = "搜索中…";
 "%d of %d" = "第 %d 项，共 %d 项";
+
+/* OCR (T3, Paddle) */
+"Text Recognition (OCR)" = "文字识别 (OCR)";
+"OCR Engine" = "OCR 引擎";
+"Off" = "关闭";
+"Paddle OCR (API)" = "Paddle OCR（API）";
+"Paddle API Key" = "Paddle API Key";
+"For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored locally on this Mac only." = "扫描版或文字不准的 PDF，用 API OCR 获得准确、可选可搜的文字。密钥只存本机。";
+"Enable API OCR in Settings (⌘,) and paste your key first." = "请先在设置（⌘,）里选 API OCR 并填入 key。";
+"Open Settings…" = "打开设置…";
+"Use OCR text for this document" = "本文档使用 OCR 文字";
+"Recognize all pages" = "识别全部页";
+"Recognizing… %d/%d pages, %d queued" = "识别中… %d/%d 页，%d 页排队";
+"Not recognized yet." = "尚未识别。";
+"%d of %d pages recognized" = "已识别 %d / %d 页";

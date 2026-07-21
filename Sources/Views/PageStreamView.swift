@@ -108,7 +108,7 @@ private final class Scratch {
     var didInitialGeo = false
     var didFirstKick = false
     var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点 / 双击选词定位；域外为 nil）
-    var selDragAnchor: (page: Int, pt: CGPoint)?   // 进行中拖选的页空间锚点（页号 + 该页 PDF 页坐标）
+    var selDragAnchor: (page: Int, nx: CGFloat, ny: CGFloat)?   // 进行中拖选的锚点（页号 + 页内归一化坐标）
     var wheelMonitor: Any?             // ⌘+滚轮的 NSEvent 本地监视器（事件管道，非视图）
     var copyMonitor: Any?              // ⌘C 的 NSEvent 本地监视器（.onCopyCommand 依赖响应链/焦点，在纯
                                         // ScrollView 容器上不可靠触发；改走事件管道直写 NSPasteboard）
@@ -242,6 +242,7 @@ private struct ReaderSurface: View {
         }
         .onChange(of: interpEnabled) { _, v in follower.interpEnabled = v }
         .onChange(of: isActiveWindow) { _, v in scratch.isActiveWindow = v }
+        .onChange(of: session.ocrEnabled) { _, on in if on { session.enqueueOCR(Array(realized)) } }
         .onAppear {
             scratch.isActiveWindow = isActiveWindow
             setup()
@@ -398,6 +399,7 @@ private struct ReaderSurface: View {
             for k in evict { images.removeValue(forKey: k) }
             for k in tiles.keys where !(range ~= k) { tiles.removeValue(forKey: k) }
             kickBaseRenders()
+            if session.ocrEnabled { session.enqueueOCR(Array(range)) }   // 「看到哪页处理哪页」：可见窗口入队 OCR
         }
         // 顶端页 → currentPageIndex（非程序化滚动期间；平板/进度依赖它）
         if !follower.isSuppressing, CACurrentMediaTime() >= scratch.suppressEmitUntil {
@@ -486,28 +488,38 @@ private struct ReaderSurface: View {
         }
     }
 
-    // MARK: 文字选择（T1：拖选 = PDFKit 原生选择引擎；双击选词；单击取消；⌘C 复制）
+    // MARK: 文字选择（T1：原生页走 PDFKit 选择引擎；OCR 页走行级文本层；双击选词/行；单击取消；⌘C 复制）
 
-    /// 容器/视口坐标 P（与 pinch/hover 同 `.local` 空间）→ (页, 该页 PDF 页空间点)。
-    /// 越界点按页边缘 clamp（拖到页外 = 选到页边）；产出的页空间点直接喂 PDFKit `selection(from:at:to:at:)`。
-    private func containerPointToPageSpace(_ P: CGPoint) -> (page: Int, pt: CGPoint)? {
-        guard let layout, let pdf = session.pdf else { return nil }
+    /// 容器/视口坐标 P（与 pinch/hover 同 `.local` 空间）→ (页, 页内归一化坐标 0~1 左上原点)。
+    /// 越界按页边缘 clamp（拖到页外 = 选到页边）。原生选择再由 `pageSpacePoint` 转 PDF 页空间点，OCR 选择直接用归一化点命中行框。
+    private func containerPointToPageNorm(_ P: CGPoint) -> (page: Int, nx: CGFloat, ny: CGFloat)? {
+        guard let layout else { return nil }
         let g = scratch.geo
         let ds = max(0.0001, dispScale)
         let cx = g.offsetX + P.x, cy = g.offsetY + P.y            // 内容坐标
         let page = layout.locate(docY: cy / ds).page
-        guard let pdfPage = pdf.page(at: page) else { return nil }
         let pageTopDisp = layout.offsets[page] * ds
         let pageHDisp = layout.heights[page] * ds
         guard pageW > 0, pageHDisp > 0 else { return nil }
         let nx = min(max((cx - pageX) / pageW, 0), 1)
         let ny = min(max((cy - pageTopDisp) / pageHDisp, 0), 1)
-        let mb = pdfPage.bounds(for: .mediaBox)
-        return (page, PageGeometry.pageSpacePoint(normX: nx, normY: ny, mediaBox: mb, rotation: pdfPage.rotation))
+        return (page, nx, ny)
     }
 
-    /// 由 PDFKit 原生选区（可跨页）落成 `selection`：空/无字则清空。选区的可视顺序、跨行跨页、CJK
-    /// 都交给 PDFKit（与 PDFView 同引擎），本层只做坐标进出 + 归一化行框。
+    /// 归一化点 → 该页 PDF 页空间点（喂 `selection(from:at:to:at:)`）。
+    private func pageSpacePoint(_ n: (page: Int, nx: CGFloat, ny: CGFloat)) -> CGPoint? {
+        guard let pdf = session.pdf, let pdfPage = pdf.page(at: n.page) else { return nil }
+        let mb = pdfPage.bounds(for: .mediaBox)
+        return PageGeometry.pageSpacePoint(normX: n.nx, normY: n.ny, mediaBox: mb, rotation: pdfPage.rotation)
+    }
+
+    /// 该页可用的 OCR 行文本层（非空才返回）；有它就覆盖不准的原生文本。
+    private func ocrRuns(page: Int) -> [TextRun]? {
+        let r = session.ocrRuns[page]
+        return (r?.isEmpty == false) ? r : nil
+    }
+
+    /// 由 PDFKit 原生选区（可跨页）落成 `selection`：空/无字则清空。可视顺序/跨行跨页/CJK 都交给 PDFKit。
     private func setSelection(_ sel: PDFSelection?) {
         guard let pdf = session.pdf, let sel, sel.string?.isEmpty == false else {
             if selection != nil { selection = nil }
@@ -517,28 +529,71 @@ private struct ReaderSurface: View {
                                   text: sel.string ?? "")
     }
 
-    private func clearSelection() { if selection != nil { selection = nil } }
-
-    /// 双击选词：光标处取整词选区（PDFKit `selectionForWord`）。
-    private func selectWord(atContainer P: CGPoint) {
-        guard let pdf = session.pdf, let hit = containerPointToPageSpace(P),
-              let page = pdf.page(at: hit.page) else { return }
-        setSelection(page.selectionForWord(at: hit.pt))
+    /// OCR 行级选区：锚点/焦点各命中一「行」（run），选中两端之间按阅读顺序（页号→行序）的连续行，高亮行框 + 拼文本。
+    private func setOCRSelection(anchor a: (page: Int, nx: CGFloat, ny: CGFloat),
+                                 focus f: (page: Int, nx: CGFloat, ny: CGFloat)) {
+        guard let ai = ocrLineHit(page: a.page, nx: a.nx, ny: a.ny),
+              let fi = ocrLineHit(page: f.page, nx: f.nx, ny: f.ny) else { return }
+        let aFirst = a.page < f.page || (a.page == f.page && ai <= fi)
+        let (sp, si) = aFirst ? (a.page, ai) : (f.page, fi)
+        let (ep, ei) = aFirst ? (f.page, fi) : (a.page, ai)
+        var rects: [Int: [CGRect]] = [:]
+        var parts: [String] = []
+        for p in sp...ep {
+            guard let runs = ocrRuns(page: p) else { continue }
+            let lo = p == sp ? si : 0
+            let hi = p == ep ? ei : runs.count - 1
+            guard lo <= hi, lo >= 0, hi < runs.count else { continue }
+            let slice = Array(runs[lo...hi])
+            rects[p] = slice.map(\.rect)
+            parts.append(slice.map(\.text).joined(separator: "\n"))
+        }
+        let text = parts.joined(separator: "\n")
+        selection = text.isEmpty ? nil : TextSelection(rects: rects, text: text)
     }
 
-    /// 拖选：起点定锚（一次），移动实时向 PDFKit 要「锚点→当前」的连续选区。与 magnify 同容器；捏合进行中不选。
+    /// OCR 行命中：先比行(y)、同高度内再比列(x)——落在行框内 dx=0，最近行优先。
+    private func ocrLineHit(page: Int, nx: CGFloat, ny: CGFloat) -> Int? {
+        guard let runs = ocrRuns(page: page) else { return nil }
+        var best: Int?
+        var bestD = CGFloat.greatestFiniteMagnitude
+        for (i, r) in runs.enumerated() {
+            let dy = abs((r.y + r.h / 2) - ny)
+            let dx = (nx >= r.x && nx <= r.x + r.w) ? 0 : min(abs(nx - r.x), abs(nx - (r.x + r.w)))
+            let d = dy * 1000 + dx
+            if d < bestD { bestD = d; best = i }
+        }
+        return best
+    }
+
+    private func clearSelection() { if selection != nil { selection = nil } }
+
+    /// 双击：OCR 页选整行、原生页选整词。
+    private func selectWord(atContainer P: CGPoint) {
+        guard let n = containerPointToPageNorm(P) else { return }
+        if ocrRuns(page: n.page) != nil {
+            setOCRSelection(anchor: n, focus: n)
+        } else if let pdf = session.pdf, let page = pdf.page(at: n.page), let pt = pageSpacePoint(n) {
+            setSelection(page.selectionForWord(at: pt))
+        }
+    }
+
+    /// 拖选：起点定锚（一次），移动实时扩选。锚点所在页有 OCR 层 → 走 OCR 行选择；否则 PDFKit 原生选择。
     /// minimumDistance 2 → 纯单击不触发拖选（交给 `.onTapGesture` 取消），2px 内抖动不误选。
     private var dragSelectGesture: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .local)
             .onChanged { v in
                 guard scratch.pinch == nil else { return }
                 if scratch.selDragAnchor == nil {
-                    scratch.selDragAnchor = containerPointToPageSpace(v.startLocation)
+                    scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
                 }
-                guard let a = scratch.selDragAnchor, let f = containerPointToPageSpace(v.location),
-                      let pdf = session.pdf, let pa = pdf.page(at: a.page), let pf = pdf.page(at: f.page)
-                else { return }
-                setSelection(pdf.selection(from: pa, at: a.pt, to: pf, at: f.pt))
+                guard let a = scratch.selDragAnchor, let f = containerPointToPageNorm(v.location) else { return }
+                if ocrRuns(page: a.page) != nil {
+                    setOCRSelection(anchor: a, focus: f)
+                } else if let pdf = session.pdf, let pa = pdf.page(at: a.page), let pf = pdf.page(at: f.page),
+                          let ptA = pageSpacePoint(a), let ptF = pageSpacePoint(f) {
+                    setSelection(pdf.selection(from: pa, at: ptA, to: pf, at: ptF))
+                }
             }
             .onEnded { _ in scratch.selDragAnchor = nil }
     }

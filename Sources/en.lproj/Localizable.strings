@@ -88,3 +88,18 @@
 "No matches" = "No matches";
 "Searching…" = "Searching…";
 "%d of %d" = "%d of %d";
+
+/* OCR (T3, Paddle) */
+"Text Recognition (OCR)" = "Text Recognition (OCR)";
+"OCR Engine" = "OCR Engine";
+"Off" = "Off";
+"Paddle OCR (API)" = "Paddle OCR (API)";
+"Paddle API Key" = "Paddle API Key";
+"For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored locally on this Mac only." = "For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored locally on this Mac only.";
+"Enable API OCR in Settings (⌘,) and paste your key first." = "Enable API OCR in Settings (⌘,) and paste your key first.";
+"Open Settings…" = "Open Settings…";
+"Use OCR text for this document" = "Use OCR text for this document";
+"Recognize all pages" = "Recognize all pages";
+"Recognizing… %d/%d pages, %d queued" = "Recognizing… %d/%d pages, %d queued";
+"Not recognized yet." = "Not recognized yet.";
+"%d of %d pages recognized" = "%d of %d pages recognized";

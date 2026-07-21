@@ -22,7 +22,9 @@ struct ContentView: View {
     @State private var isKeyWindow = false
     @State private var showNotes = false
     @State private var showFind = false
+    @State private var showOCR = false
     @FocusState private var findFieldFocused: Bool
+    @AppStorage("ocrEngine") private var ocrEngine = "off"          // OCR 引擎（"off" | "paddle"），设置页写入
     @AppStorage("nightMode") private var nightMode = false
     @AppStorage("scrollInterp") private var scrollInterp = true   // 平板滚动跟随：true=时间戳插值 / false=纯低通（A/B 用）
     @AppStorage("autoNightMode") private var autoNightMode = false     // 夜间模式跟随系统深色外观
@@ -62,6 +64,14 @@ struct ContentView: View {
                         }
                         .disabled(session.pdf == nil)
                         .popover(isPresented: $showFind, arrowEdge: .bottom) { findPopover }
+
+                        Button {
+                            showOCR.toggle()
+                        } label: {
+                            Label(L("Text Recognition (OCR)"), systemImage: "text.viewfinder")
+                        }
+                        .disabled(session.pdf == nil)
+                        .popover(isPresented: $showOCR, arrowEdge: .bottom) { ocrPopover }
 
                         Button {
                             nightMode.toggle()
@@ -236,6 +246,42 @@ struct ContentView: View {
         return String(format: L("%d of %d"), (session.currentMatchIndex ?? 0) + 1, session.searchMatches.count)
     }
 
+    /// OCR 面板：开关「用 OCR 文本」+ 进度 + 手动「识别全部页」。未配置 key 时引导去设置。
+    private var ocrPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L("Text Recognition (OCR)")).font(.headline)
+            if ocrEngine != "paddle" {
+                Text(L("Enable API OCR in Settings (⌘,) and paste your key first."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button(L("Open Settings…")) {
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                }
+            } else {
+                Toggle(L("Use OCR text for this document"),
+                       isOn: Binding(get: { session.ocrEnabled }, set: { session.setOCREnabled($0) }))
+                Text(ocrStatusText).font(.caption).foregroundStyle(.secondary)
+                if session.ocrRunning { ProgressView().controlSize(.small) }
+                Button(L("Recognize all pages")) { session.ocrAllPages() }
+                    .disabled(session.pdf == nil)
+                if let err = session.ocrLastError {
+                    Text(err).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 280, alignment: .leading)
+    }
+
+    private var ocrStatusText: String {
+        let done = session.ocrDoneCount, total = session.ocrTotalPages
+        if session.ocrRunning {
+            return String(format: L("Recognizing… %d/%d pages, %d queued"),
+                          done, total, session.ocrPendingCount)
+        }
+        if done == 0 { return L("Not recognized yet.") }
+        return String(format: L("%d of %d pages recognized"), done, total)
+    }
+
     /// 跳转到目录项（页 + 页内比例）。origin=toc → 阅读区(PageStreamView)跟随，同时推给平板。
     private func jumpToTOC(_ e: TOCEntry) {
         session.currentPageIndex = e.pageIndex
@@ -312,8 +358,9 @@ struct ContentView: View {
 
     private func loadSelected(_ id: String?) {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
+        session.store = workspace.store   // OCR 缓存读写用（仅主线程）
         guard let id, let doc = workspace.document(id: id) else {
-            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); return
+            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); session.reloadOCRState(); return
         }
         guard let target = workspace.openTarget(documentId: id),
               let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
@@ -328,6 +375,7 @@ struct ContentView: View {
         toc = TOCEntry.build(from: pdf)
         session.title = doc.title
         session.contentHash = target.hash
+        session.reloadOCRState()                   // 换文档重置 OCR；该内容已有缓存则自动启用
         loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
         // 恢复阅读进度：定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。
         let p = workspace.progress(documentId: id)

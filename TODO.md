@@ -5,7 +5,7 @@
 ## 🧭 当前状态速览（交接用）
 
 - 工程 xcodegen 管理：改文件后 `xcodegen generate`（新增文件时必做）→ `xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO`。非沙盒，**macOS 26+（Tahoe，不做低版本兼容）**。
-- **已完成**：hash 去重入库、多窗口 + App 级共享 WS（`AppModel`/`DocSession`）、二维码配对、采集页（压感/防误触/合批/侧键 PageUp 切模式·PageDown 切笔/全屏/WS 延迟/文档下拉）、**S3 实时渲染**（平板 `ink`/`erase` → Mac 墨迹叠加）、**方案 B**：桌面 `PadRenderer`（fit-width 连续布局）+ **模拟平板窗口**（滚轮连续滚动 + 鼠标当笔，走共用落墨 API）、锚点同步 **sim↔Mac 双向已通**、**Mac 阅读区自研页图流 v2（`PageStreamView`，纯 SwiftUI，Preview 级指标，2026-07-20 重写完成待真机验证，见 `PDF-VIEWER-REBUILD-PLAN.md`）**、**文字选择/全文搜索已完成**（T1+T2，2026-07-21，选择走 PDFKit 原生选择引擎 `PageGeometry.swift`+`TextSearch.swift`），**扫描版 OCR 仍是预留骨架**（`OCR.swift`+`ocr_page` 表 v3，见 `TEXT-SEARCH-OCR-PLAN.md`）。
+- **已完成**：hash 去重入库、多窗口 + App 级共享 WS（`AppModel`/`DocSession`）、二维码配对、采集页（压感/防误触/合批/侧键 PageUp 切模式·PageDown 切笔/全屏/WS 延迟/文档下拉）、**S3 实时渲染**（平板 `ink`/`erase` → Mac 墨迹叠加）、**方案 B**：桌面 `PadRenderer`（fit-width 连续布局）+ **模拟平板窗口**（滚轮连续滚动 + 鼠标当笔，走共用落墨 API）、锚点同步 **sim↔Mac 双向已通**、**Mac 阅读区自研页图流 v2（`PageStreamView`，纯 SwiftUI，Preview 级指标，2026-07-20 重写完成待真机验证，见 `PDF-VIEWER-REBUILD-PLAN.md`）**、**文字选择/全文搜索已完成**（T1+T2，2026-07-21，选择走 PDFKit 原生选择引擎 `PageGeometry.swift`+`TextSearch.swift`），**OCR 已接 Paddle PP-OCRv6 API**（T3，2026-07-21，`PaddleOCR.swift`；逐页按需 + 手动全量，结果覆盖不准的原生文本做选择/复制/搜索；系统 Vision provider 仍是空骨架），见 `TEXT-SEARCH-OCR-PLAN.md`。
 - **⚠️ 阅读区 v1 已被用户删除（缩放跳位/闪烁不达标）**；v2 于 2026-07-20 按五条硬指标（主线程零渲染/预缓存/pinch 锚定/resize 不跳/任何情况零闪烁）重新设计并实现：设计+机制映射+spike 实测结论全在 `PDF-VIEWER-REBUILD-PLAN.md`。**红线：阅读区纯 SwiftUI，严禁 AppKit 视图（含 NSViewRepresentable 包 NSScrollView）**（用户 2026-07-20 明确否决 AppKit 路线）。
 - **注意（2026-07-20 更新）**：真平板已接入方案 B（连续多页 + 双向锚点 + 按需取图 `/page.png?i=N` + 双指缩放 + 惯性 + hover 传 Mac + 夜间模式 + 手写板模式 + 锁缩放 + 防误触）；采集页 HTML 已独立为 `Sources/Resources/capture.html`（不再内嵌 Swift 字符串，避免转义坑）；Mac 端滚动**平滑跟随**（跟随器用 CADisplayLink 按刷新率临界阻尼低通逼近最新锚点，过滤 WiFi 突发抖动，**只跟随不预测**；已从旧 `PDFKitView.Coordinator` 移植进独立的 `ScrollFollower`）；**PDF 显示已换成自研页图流 `PageStreamView`（SwiftUI `ScrollView` + 按页渲染图，`PDFKitView`/`InkOverlayView` 已删）**。参数（缩放 catchup、惯性衰减、防误触阈值等）待真机手感微调。
   - **2026-07-20 修复：滚动跟随的"闪回/撤回"**。原「延迟补偿」用锚点到达时刻估速再外推（dead-reckoning），但 WiFi 成批投递 → `Δtarget/Δarrival` 得到荒谬瞬时速度 → 停手/换向时过冲后回弹＝用户看到的闪回+撤回。改为**去掉速度外推**，纯临界阻尼低通（`smCurrent += (smTarget-smCurrent)*catchup`），输出恒为凸组合、目标单调则绝不过冲。合成锚点流实测（`swift spike/scroll-follow-sim.swift`）：外推版过冲 3 页撞顶、方向反转 13 次、单帧跳 1.35 页；修复版过冲 0、反转 0、单帧 0.076 页。
@@ -14,7 +14,7 @@
 ## ⏭️ 接下来（建议顺序）
 
 0. ✅ **Mac 阅读区页图流 v2（2026-07-20 重写完成，编译通过 + spike 全绿，待用户真机手感验证）**：纯 SwiftUI（`PageStreamView` + `PageLayout` + `PageBitmap` + `PageRenderEngine` + tick 版 `ScrollFollower`）。关键机制均 spike 实测钉死：同 runloop「改布局+scrollTo」屏幕原子（pinch commit 不闪）、`page.draw` 自带旋转、自研虚拟化（内容尺寸精确，滚动条不漂）、resize 冻结+稳定后单次原子 refit。**用户自测**：pinch 锚定/⌘±/⌘0、窗口缩放与侧栏开合（fit 贴合=行为②，放大态被侧栏盖=行为③）、SimPad↔Mac 锚点、墨迹/hover/夜间/进度、玻璃观感。详见 `PDF-VIEWER-REBUILD-PLAN.md` 顶部「✅ 状态」块。
-0b. **📖 文字搜索 / 文字选择（T1+T2，2026-07-21 完成，编译通过）/ 扫描版 OCR（T3 待做，见 `TEXT-SEARCH-OCR-PLAN.md`）**：统一「页面文本层」`PageTextLayer`（native | ocr 同一模型）；`ocr_page` 缓存表(v3) + `OCRProvider` 可插拔（系统 Vision / 用户配 API）+ provider 协议骨架均已落，T3 待实现。**用户自测**：拖选文字（跨行/跨页）→ ⌘C 复制到别处核对；⌘F 或工具栏放大镜图标呼出查找栏，边打字边高亮跳首个命中，↑↓ 或回车切上/下一个，关闭查找栏清空高亮；切文档后查找栏应清空（不带旧文档命中）。详见下方「✅ T1/T2 已完成」。
+0b. **📖 文字搜索 / 文字选择（T1+T2）/ OCR（T3，Paddle PP-OCRv6）——均 2026-07-21 完成，编译通过**：详见下方「✅ T1/T2」「✅ T3 OCR」。**用户自测**：① 拖选文字（跨行/跨页）→ ⌘C 复制核对；⌘F 查找边打字边高亮跳转、↑↓/回车切换、关栏清高亮；换文档查找栏清空。② OCR：设置(⌘,)选 Paddle 填 key → 工具栏 `text.viewfinder` 开「用 OCR 文字」→ 滚动看哪页处理哪页 / 「识别全部页」→ 在不准的 PDF 上拖选复制核对是否变准。
 1. **真平板接入方案 B**：`PadRenderer` 条带流转给真平板 + 平板回传滚动/落墨（缓冲本地滚动 + progressive 多清晰度）。
 2. **S5 长按切笔手势**：重压+静止 >300ms 在 Mac 笔尖处显进度环，>2s 呼出切笔工具（Mac 笔尖处），那一笔预测性清除。
 3. ✅ **笔迹持久化（2026-07-20 完成）**：落 `note` 表（kind=2，一笔=一行；`note.id==stroke.id`、page/anchor 走列、payload=JSON `{color:{r,g,b,a},width,points:[[x,y,pressure]]}`），重开恢复。**弃 SwiftData，走工作区 SQLite `note` 表**（跨平台）。详见下方「✅ 手写笔迹持久化」。
@@ -104,7 +104,37 @@
   - `PDFDocument.findString` 同步扫描，超大文档（几千页）搜索可能有感知延迟；已放到 `Task.detached`
     不卡 UI，真机验证够不够快，不够再换 PDFKit 渐进式 `beginFindString` 委托 API。
   - 拖到页边缘暂不自动滚动（PDFView 有）；跨页拖选需先滚到目标页再继续拖。非阻塞项。
-  - T3 扫描版 OCR（`VisionOCRProvider`/`HTTPOCRProvider` 骨架仍是空实现）尚未开始。
+  - 系统 Vision OCR（`VisionOCRProvider`）仍是空骨架（离线备选，未接）；`HTTPOCRProvider` 通用骨架未用（Paddle 走独立 `PaddleOCR.swift`）。
+
+## ✅ T3 OCR（Paddle PP-OCRv6，2026-07-21 完成，编译通过）
+
+- **动机**：用户实测——**原生 PDF 内嵌文本层本身不准**（错字漏字，坏 CMap/劣质旧 OCR），PDFKit 抽出来就是错的。
+  接 Paddle 云 OCR 拿准确文本，覆盖原生文本做选择/复制/搜索。
+- **模型 = PP-OCRv6**（用户选）：纯 OCR，返回逐行 `rec_texts` + 行框 `rec_boxes`（输入图像素坐标、左上原点）。
+  行级框天然贴合可选/可搜文本层；VL-1.6 只给块级框（段落级）不适合选择，故不用。
+- **客户端 `Sources/App/PaddleOCR.swift`**：异步 job——`POST /api/v2/ocr/jobs`(multipart 上传单页 PNG，`model`+`optionalPayload`
+  两个 form 字段) → 轮询 `GET .../{jobId}` 到 `done`(2.5s 间隔，~5min 超时) → 下预签名 JSONL → 解析
+  `result.ocrResults[].prunedResult.rec_texts`/`rec_boxes` → 按图宽高归一化成 `TextRun`(0~1 左上原点)、按 y→x 排阅读顺序。
+  Auth `Authorization: bearer <key>`。**页图由 `PageBitmap.render` 出**（显示朝向、top-origin，与阅读区同款）→
+  OCR 框和显示页天然同坐标系，**无需 rotation 变换**（比原生选择还省事）。
+- **触发（用户要「手动 + 逐页按需」两种都要）**：
+  - 逐页按需——`session.ocrEnabled` 时，阅读区 `updateRealized` 把**可见窗口**入队（「看到哪页处理哪页」）。
+  - 手动全量——OCR 面板「识别全部页」`ocrAllPages()` 全量入队。
+  - 编排在 `DocSession`：`ocrRuns[page]` / `ocrQueue`(@Published) / `ocrActivePages` / 并发上限 3 / `pumpOCR`。
+    每页先查 `ocr_page` 缓存(命中秒回、不占网络槽)，miss 且已配 key 才排队跑网络；跑完回填缓存 + 刷 `ocrRuns`。
+- **缓存**：`ocr_page(content_hash,page,provider="paddle-ppocrv6")`，payload=JSON `OCRPagePayload{w,h,runs}`。
+  打开文档 `reloadOCRState()` 查 `ocrPageCount>0` → **自动启用**（换机/重开秒复用，无 key 也能用缓存做选择）。
+  换文档旧任务回调靠 `contentHash==hash` 守卫整个丢弃（不动新文档计数器）。
+- **选择/搜索集成（`PageStreamView`/`DocSession`）**：某页有 OCR 层就覆盖原生——
+  拖选/双击在 OCR 页走**行级**选择（`setOCRSelection`/`ocrLineHit`，锚点→焦点按页号+行序切连续行，高亮行框+拼文本，
+  ⌘C 得准确 OCR 文本）；原生页仍走 PDFKit 选择引擎。搜索 `ocrEnabled` 时搜 OCR 文本(`searchOCR`，行级命中)否则 findString。
+- **设置/UI**：设置页(⌘,) OCR 段——引擎 Picker(关闭/Paddle) + `SecureField` key（存 UserDefaults：`ocrEngine`/`ocrPaddleKey`，
+  含密钥不进工作区）。阅读区工具栏 `text.viewfinder` 图标 → OCR 面板：开关「用 OCR 文字」+ 进度(已识别 X/N、排队数) +
+  「识别全部页」+ 错误提示；未配置 key 时引导去设置。
+- **已知待办**：① 整文档识别是逐页 N 个 job（非整文件 1 job）——匹配「逐页按需」，大书 job 数多但增量可缓存/可续；
+  需要再加「整文件一次上传」快路。② 拖选跨「OCR 页↔原生页」混合边界只做尽力(焦点页无 OCR 时冻结)；③ 搜索只覆盖
+  已识别页（按需模型下未识别页搜不到，先跑 OCR 再搜）；④ 网络任务无取消（换文档靠 hash 守卫忽略，浪费但无害）；
+  ⑤ Vision 离线 OCR 未接。
 
 ## ✅ 手写笔迹持久化（2026-07-20 完成）
 

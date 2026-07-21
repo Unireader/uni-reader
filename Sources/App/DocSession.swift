@@ -81,14 +81,32 @@ final class DocSession: ObservableObject, Identifiable {
             return
         }
         isSearching = true
-        let matches = await Task.detached(priority: .userInitiated) {
-            TextSearch.find(query: q, in: pdf)
-        }.value
+        // OCR 已启用（文本更准）→ 搜已识别页的 OCR 文本（行级）；否则走 PDFKit 原生 findString。
+        let matches: [TextMatch]
+        if ocrEnabled, !ocrRuns.isEmpty {
+            matches = searchOCR(q)
+        } else {
+            matches = await Task.detached(priority: .userInitiated) {
+                TextSearch.find(query: q, in: pdf)
+            }.value
+        }
         // 过期结果丢弃：搜索期间用户又改了词，只认最新一次。
         guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
         searchMatches = matches
         isSearching = false
         if matches.isEmpty { currentMatchIndex = nil } else { jumpToMatch(0) }
+    }
+
+    /// OCR 文本搜索：逐行匹配（大小写不敏感），命中行整框高亮。只覆盖已识别页。
+    private func searchOCR(_ q: String) -> [TextMatch] {
+        let ql = q.lowercased()
+        var out: [TextMatch] = []
+        for (page, runs) in ocrRuns {
+            for r in runs where r.text.lowercased().contains(ql) {
+                out.append(TextMatch(page: page, rects: [r.rect], frac: r.y))
+            }
+        }
+        return out.sorted { $0.page != $1.page ? $0.page < $1.page : $0.frac < $1.frac }
     }
 
     func clearSearch() {
@@ -115,5 +133,122 @@ final class DocSession: ObservableObject, Identifiable {
         let m = searchMatches[index]
         currentPageIndex = m.page
         emitAnchor(page: m.page, frac: m.frac, origin: "search")
+    }
+
+    // MARK: OCR（T3，Paddle PP-OCRv6）——逐页按需 + 手动全量；结果=准确文本层，选择/复制/搜索改用它。
+    // 数据流：可见页 → 查 ocr_page 缓存(命中即用) → miss 则渲页图上传 Paddle → 回填缓存 → ocrRuns 刷新。
+    // 缓存键 = (内容 hash, 页, provider)，随内容走、换机复用；网络任务并发上限 3。
+
+    @Published var ocrEnabled = false                     // 本文档启用 OCR 文本层
+    @Published var ocrRuns: [Int: [TextRun]] = [:]        // 页 → 已识别的行级文本框（阅读顺序）
+    @Published var ocrActivePages: Set<Int> = []          // 正在网络识别的页
+    @Published var ocrLastError: String?
+    @Published private var ocrQueue: [Int] = []           // 待识别队列（@Published 让面板进度实时刷新）
+    private var ocrInFlight = 0
+    private let ocrMaxConcurrent = 3
+    /// 供 OCR 缓存读写（App 级 `WorkspaceManager.store`，由 `ContentView.loadSelected` 注入）。仅主线程访问。
+    var store: LibraryStore?
+    /// OCR 页图渲染用串行队列（PDFPage 跨线程只读，与 `PageRenderEngine` 同先例）。
+    private static let ocrRenderQueue = DispatchQueue(label: "com.xvan.unireader.ocr-render", qos: .userInitiated)
+
+    var ocrDoneCount: Int { ocrRuns.count }
+    var ocrTotalPages: Int { pdf?.pageCount ?? 0 }
+    var ocrPendingCount: Int { ocrQueue.count + ocrActivePages.count }
+    var ocrRunning: Bool { ocrPendingCount > 0 }
+
+    /// 换文档时重置 OCR 状态；若该内容已有缓存则自动启用（缓存直接复用，无需重跑）。
+    func reloadOCRState() {
+        ocrQueue = []; ocrInFlight = 0; ocrActivePages = []; ocrRuns = [:]; ocrLastError = nil
+        ocrEnabled = false
+        guard let store, !contentHash.isEmpty else { return }
+        if let c = try? store.ocrPageCount(contentHash: contentHash, provider: PaddleOCR.providerID), c > 0 {
+            ocrEnabled = true
+        }
+    }
+
+    /// 用户在 OCR 面板里开关。开 → 立刻处理当前页（reader 的可见窗口会补齐其余）。
+    func setOCREnabled(_ on: Bool) {
+        ocrEnabled = on
+        if on { enqueueOCR([currentPageIndex]) }
+    }
+
+    /// 手动「识别全部页」：全量入队（缓存命中的秒回，其余排队跑）。
+    func ocrAllPages() {
+        ocrEnabled = true
+        enqueueOCR(Array(0..<ocrTotalPages))
+    }
+
+    /// 入队若干页：已识别/在跑/在队的跳过；缓存命中直接应用（不占网络槽）；缺失且已配置 key 才排队跑网络。
+    func enqueueOCR(_ pages: [Int]) {
+        guard ocrEnabled else { return }
+        let configured = PaddleOCR.configFromDefaults() != nil
+        for p in pages where p >= 0 && p < ocrTotalPages
+            && ocrRuns[p] == nil && !ocrActivePages.contains(p) && !ocrQueue.contains(p) {
+            if let cached = loadCachedOCR(p) { ocrRuns[p] = cached; continue }
+            if configured { ocrQueue.append(p) }
+        }
+        pumpOCR()
+    }
+
+    private func pumpOCR() {
+        while ocrInFlight < ocrMaxConcurrent, !ocrQueue.isEmpty {
+            startNetworkOCR(ocrQueue.removeFirst())
+        }
+    }
+
+    private func startNetworkOCR(_ page: Int) {
+        guard let pdf, let config = PaddleOCR.configFromDefaults() else { return }
+        let hash = contentHash
+        ocrActivePages.insert(page)
+        ocrInFlight += 1
+        Task { [weak self] in
+            let img = await Self.renderPageForOCR(pdf: pdf, page: page)
+            var runs: [TextRun]?
+            var err: String?
+            if let img {
+                do { runs = try await PaddleOCR.recognize(image: img, config: config) }
+                catch { err = error.localizedDescription }
+            }
+            let imgW = img.map { Double($0.width) } ?? 0
+            let imgH = img.map { Double($0.height) } ?? 0
+            await MainActor.run {
+                guard let self else { return }
+                // 换文档后旧任务回来：内容 hash 变了就整个丢弃——此时新文档的计数器已被 reloadOCRState 归零，
+                // 绝不能再动它（否则 ocrInFlight 被减成负、并发失控）。
+                guard self.contentHash == hash else { return }
+                self.ocrInFlight -= 1
+                self.ocrActivePages.remove(page)
+                if let runs {
+                    self.ocrRuns[page] = runs
+                    self.saveCachedOCR(page: page, runs: runs, imgW: imgW, imgH: imgH)
+                } else if let err {
+                    self.ocrLastError = err
+                }
+                self.pumpOCR()
+            }
+        }
+    }
+
+    private static func renderPageForOCR(pdf: PDFDocument, page: Int, pixelWidth: Int = 2400) async -> CGImage? {
+        await withCheckedContinuation { cont in
+            ocrRenderQueue.async {
+                cont.resume(returning: pdf.page(at: page).flatMap { PageBitmap.render(page: $0, pixelWidth: pixelWidth) })
+            }
+        }
+    }
+
+    private func loadCachedOCR(_ page: Int) -> [TextRun]? {
+        guard let store,
+              let row = try? store.ocrPage(contentHash: contentHash, page: page, provider: PaddleOCR.providerID),
+              let payload = try? JSONDecoder().decode(OCRPagePayload.self, from: row.payload) else { return nil }
+        return payload.runs
+    }
+
+    private func saveCachedOCR(page: Int, runs: [TextRun], imgW: Double, imgH: Double) {
+        guard let store,
+              let data = try? JSONEncoder().encode(OCRPagePayload(w: imgW, h: imgH, runs: runs)) else { return }
+        try? store.upsertOCRPage(OCRPage(contentHash: contentHash, page: page,
+                                         provider: PaddleOCR.providerID, payload: data,
+                                         lang: nil, createdAt: Date()))
     }
 }

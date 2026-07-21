@@ -293,6 +293,12 @@ final class LibraryStore {
     func deleteOCRPages(contentHash: String) throws {
         try db.run("DELETE FROM ocr_page WHERE content_hash=?", [.text(contentHash)])
     }
+    /// 某内容(hash) 某引擎已缓存的 OCR 页数（>0 → 打开文档时自动启用 OCR 文本层，缓存直接复用）。
+    func ocrPageCount(contentHash: String, provider: String) throws -> Int {
+        let rows = try db.query("SELECT COUNT(*) AS c FROM ocr_page WHERE content_hash=? AND provider=?",
+                                [.text(contentHash), .text(provider)])
+        return Int((rows.first?["c"] as? Int64) ?? 0)
+    }
 
     // MARK: - 行 → 模型
 
