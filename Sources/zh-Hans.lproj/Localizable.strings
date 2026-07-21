@@ -118,3 +118,5 @@
 "%d of %d pages recognized" = "已识别 %d / %d 页";
 "Show recognition blocks (debug)" = "显示识别块（调试）";
 "Colors each recognized text block to inspect layout/selection accuracy." = "给每个识别块上色，量化排版与选择落点是否准。";
+"Per block" = "每块独立";
+"Selectable groups" = "可选分组";

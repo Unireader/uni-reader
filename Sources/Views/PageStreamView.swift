@@ -335,6 +335,7 @@ private struct ReaderSurface: View {
                                  highlights: session.highlights.filter { $0.page == i },
                                  notes: session.textNotes.filter { $0.page == i },
                                  ocrBlocks: session.showOCRBlocks ? (session.ocrRuns[i] ?? []) : [],
+                                 ocrGroupColors: session.ocrBlockGrouped,
                                  onOpenNote: { editorTarget = .edit($0) })
                         .offset(x: pageX, y: layout.offsets[i] * dispScale)
                 }
@@ -1098,6 +1099,7 @@ private struct PageCellView: View {
     var highlights: [Highlight] = []       // 本页文字高亮（kind=3）：按各自颜色铺色，最底层
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
     var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
+    var ocrGroupColors = false             // 调试上色：true=按可选分组同色(列/块聚类) / false=每块独立色
     var onOpenNote: (TextNote) -> Void = { _ in }
 
     var body: some View {
@@ -1118,18 +1120,23 @@ private struct PageCellView: View {
                     .offset(x: tile.normRect.minX * size.width,
                             y: tile.normRect.minY * size.height)
             }
-            // 调试/demo：OCR 识别块可视化——逐块按黄金角旋转色相上色 + 序号，量化排版/选择落点。
+            // 调试/demo：OCR 识别块可视化——按黄金角旋转色相上色 + 序号。
+            //  · 每块独立：色相按行序（看清每一行框）；
+            //  · 可选分组：色相按列/块分组 id（同一可选块同色，量化切分是否合理）。
             if !ocrBlocks.isEmpty {
                 Canvas { ctx, sz in
+                    let groups: [Int] = ocrGroupColors ? OCRFlow.columnGroups(ocrBlocks) : []
                     for (i, run) in ocrBlocks.enumerated() {
                         let px = CGRect(x: run.x * sz.width, y: run.y * sz.height,
                                         width: run.w * sz.width, height: run.h * sz.height)
-                        let hue = (Double(i) * 0.61803398875).truncatingRemainder(dividingBy: 1)
+                        let key = ocrGroupColors ? (groups.indices.contains(i) ? groups[i] : i) : i
+                        let hue = (Double(key) * 0.61803398875).truncatingRemainder(dividingBy: 1)
                         let c = Color(hue: hue, saturation: 0.8, brightness: 0.95)
                         let path = Path(roundedRect: px, cornerRadius: 2)
                         ctx.fill(path, with: .color(c.opacity(0.28)))
                         ctx.stroke(path, with: .color(c), lineWidth: 1)
-                        ctx.draw(Text("\(i)").font(.system(size: 9, weight: .bold)).foregroundColor(c),
+                        let label = ocrGroupColors ? "\(key)" : "\(i)"
+                        ctx.draw(Text(label).font(.system(size: 9, weight: .bold)).foregroundColor(c),
                                  at: CGPoint(x: px.minX + 2, y: px.minY + 1), anchor: .topLeading)
                     }
                 }

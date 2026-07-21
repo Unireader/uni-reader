@@ -273,6 +273,14 @@ struct ContentView: View {
                 Toggle(L("Show recognition blocks (debug)"), isOn: $session.showOCRBlocks)
                 Text(L("Colors each recognized text block to inspect layout/selection accuracy."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if session.showOCRBlocks {
+                    Picker("", selection: $session.ocrBlockGrouped) {
+                        Text(L("Per block")).tag(false)
+                        Text(L("Selectable groups")).tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
                 if let err = session.ocrLastError {
                     Text(err).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }
