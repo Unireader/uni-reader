@@ -72,6 +72,13 @@ private struct PageTile: Equatable {
     var image: CGImage
 }
 
+/// 一次文字选择的结果（T1）：逐页归一化行框（画高亮）+ 选中纯文本（⌘C 复制）。
+/// 归一化 0~1 左上原点 → 随页尺寸自适应，缩放/滚动免重算；由 PDFKit 原生选择引擎产出（视觉阅读顺序）。
+private struct TextSelection: Equatable {
+    var rects: [Int: [CGRect]]   // page → 该页归一化行框
+    var text: String
+}
+
 /// 捏合手势状态。锚点数学：屏幕不动点 P（相对容器原点）+ 内容锚点 c；
 /// 逐帧 commit：c' = c×r，目标偏移 = c' − P（同 runloop 提交 = 屏幕原子，scroll-x-probe T3b）。
 /// 放大/缩小都走真 commit：滚动条在内容超过容器的瞬间即出现（Preview 同款），无松手悬崖。
@@ -100,8 +107,12 @@ private final class Scratch {
     var lastDbgAt: CFTimeInterval = 0      // 临时诊断日志节流
     var didInitialGeo = false
     var didFirstKick = false
-    var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点；域外为 nil）
+    var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点 / 双击选词定位；域外为 nil）
+    var selDragAnchor: (page: Int, pt: CGPoint)?   // 进行中拖选的页空间锚点（页号 + 该页 PDF 页坐标）
     var wheelMonitor: Any?             // ⌘+滚轮的 NSEvent 本地监视器（事件管道，非视图）
+    var copyMonitor: Any?              // ⌘C 的 NSEvent 本地监视器（.onCopyCommand 依赖响应链/焦点，在纯
+                                        // ScrollView 容器上不可靠触发；改走事件管道直写 NSPasteboard）
+    var isActiveWindow = false         // 供 copyMonitor 闭包读取的实时值（struct let 会在 onAppear 后过期，需经 scratch 转发）
     let clientID = UUID().uuidString   // 渲染引擎多窗口 wanted 隔离键
 }
 
@@ -133,6 +144,10 @@ private struct ReaderSurface: View {
     @State private var lastAppliedSeq = 0
     // 非渲染暂存
     @State private var scratch = Scratch()
+    // 文字选择（T1）：直接复用 PDFKit 原生选择引擎（`selection(from:at:to:at:)`），拿到与 PDFView 同款
+    // 的「视觉阅读顺序」连续选区——不再自研词框排序（旧实现对多栏/思维导图版面会东一块西一块）。
+    // 存归一化逐页行框 + 选中串；拖选期间实时重算，随缩放/滚动免重算（归一化随页尺寸自适应）。
+    @State private var selection: TextSelection?
 
     private let zoomMin: CGFloat = 0.25
     private let zoomMax: CGFloat = 6
@@ -201,6 +216,12 @@ private struct ReaderSurface: View {
         // 缩放手势挂在 ScrollView 容器（而非内容层）→ 整个阅读区都能捏合：页间空隙、末页下方空白、
         // zoom<1 时页两侧留白皆可，不再限于 PDF 页面上。startLocation 为容器/视口坐标（与上方 .local 同空间）。
         .simultaneousGesture(magnify)
+        // 文字选择拖选（T1）：与 magnify 同容器/同坐标系，鼠标拖拽与双指捏合互不干扰。
+        .simultaneousGesture(dragSelectGesture)
+        // 双击选词 / 单击取消选择。用 `.onTapGesture` 的单双击分级（单击等一拍确认非双击，同 macOS 原生手感）；
+        // 双击定位取光标最近位置（`.onContinuousHover` 维护），避免 SpatialTapGesture 与拖选/缩放争手势。
+        .onTapGesture(count: 2) { if let p = scratch.cursorP { selectWord(atContainer: p) } }
+        .onTapGesture(count: 1) { clearSelection() }
         .overlay(alignment: .topLeading) { followTicker }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: nightMode) { _, _ in scheduleSettleRender() }
@@ -220,9 +241,12 @@ private struct ReaderSurface: View {
             scheduleRefit()
         }
         .onChange(of: interpEnabled) { _, v in follower.interpEnabled = v }
+        .onChange(of: isActiveWindow) { _, v in scratch.isActiveWindow = v }
         .onAppear {
+            scratch.isActiveWindow = isActiveWindow
             setup()
             installWheelMonitor()
+            installCopyMonitor()
             // 切文档重建后补跑一次首帧几何求值：onScrollGeometryChange 可能不重发，靠 onAppear(layout 就绪)
             // + fullWidth/unobSize 的 onChange 三路兜底，任一到位即定基准（防新文档首屏空白、须拖窗口才出）。
             if !scratch.didInitialGeo { geometryChanged(scratch.geo) }
@@ -230,6 +254,7 @@ private struct ReaderSurface: View {
         .onDisappear {
             follower.reset()
             removeWheelMonitor()
+            removeCopyMonitor()
             PageRenderEngine.shared.setWanted([], client: scratch.clientID)
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomIn)) { _ in
@@ -247,6 +272,7 @@ private struct ReaderSurface: View {
 
     @ViewBuilder private var contentBody: some View {
         if let layout, scratch.didInitialGeo {   // 未定基准前只占位空白（防启动窄宽渲染 → 闪烁）
+            let activeMatch = session.currentMatchIndex.flatMap { session.searchMatches.indices.contains($0) ? session.searchMatches[$0] : nil }
             ZStack(alignment: .topLeading) {
                 ForEach(Array(realized), id: \.self) { i in
                     PageCellView(size: CGSize(width: pageW, height: layout.heights[i] * dispScale),
@@ -256,7 +282,10 @@ private struct ReaderSurface: View {
                                  strokes: session.strokes.filter { $0.page == i },
                                  live: session.liveStroke?.page == i ? session.liveStroke : nil,
                                  hover: session.hover?.page == i ? session.hover : nil,
-                                 inkScale: zoom)
+                                 inkScale: zoom,
+                                 selectionRects: selection?.rects[i] ?? [],
+                                 matchRects: session.searchMatches.filter { $0.page == i }.flatMap(\.rects),
+                                 activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [])
                         .offset(x: pageX, y: layout.offsets[i] * dispScale)
                 }
             }
@@ -457,6 +486,63 @@ private struct ReaderSurface: View {
         }
     }
 
+    // MARK: 文字选择（T1：拖选 = PDFKit 原生选择引擎；双击选词；单击取消；⌘C 复制）
+
+    /// 容器/视口坐标 P（与 pinch/hover 同 `.local` 空间）→ (页, 该页 PDF 页空间点)。
+    /// 越界点按页边缘 clamp（拖到页外 = 选到页边）；产出的页空间点直接喂 PDFKit `selection(from:at:to:at:)`。
+    private func containerPointToPageSpace(_ P: CGPoint) -> (page: Int, pt: CGPoint)? {
+        guard let layout, let pdf = session.pdf else { return nil }
+        let g = scratch.geo
+        let ds = max(0.0001, dispScale)
+        let cx = g.offsetX + P.x, cy = g.offsetY + P.y            // 内容坐标
+        let page = layout.locate(docY: cy / ds).page
+        guard let pdfPage = pdf.page(at: page) else { return nil }
+        let pageTopDisp = layout.offsets[page] * ds
+        let pageHDisp = layout.heights[page] * ds
+        guard pageW > 0, pageHDisp > 0 else { return nil }
+        let nx = min(max((cx - pageX) / pageW, 0), 1)
+        let ny = min(max((cy - pageTopDisp) / pageHDisp, 0), 1)
+        let mb = pdfPage.bounds(for: .mediaBox)
+        return (page, PageGeometry.pageSpacePoint(normX: nx, normY: ny, mediaBox: mb, rotation: pdfPage.rotation))
+    }
+
+    /// 由 PDFKit 原生选区（可跨页）落成 `selection`：空/无字则清空。选区的可视顺序、跨行跨页、CJK
+    /// 都交给 PDFKit（与 PDFView 同引擎），本层只做坐标进出 + 归一化行框。
+    private func setSelection(_ sel: PDFSelection?) {
+        guard let pdf = session.pdf, let sel, sel.string?.isEmpty == false else {
+            if selection != nil { selection = nil }
+            return
+        }
+        selection = TextSelection(rects: PageGeometry.normalizedLineRects(of: sel, in: pdf),
+                                  text: sel.string ?? "")
+    }
+
+    private func clearSelection() { if selection != nil { selection = nil } }
+
+    /// 双击选词：光标处取整词选区（PDFKit `selectionForWord`）。
+    private func selectWord(atContainer P: CGPoint) {
+        guard let pdf = session.pdf, let hit = containerPointToPageSpace(P),
+              let page = pdf.page(at: hit.page) else { return }
+        setSelection(page.selectionForWord(at: hit.pt))
+    }
+
+    /// 拖选：起点定锚（一次），移动实时向 PDFKit 要「锚点→当前」的连续选区。与 magnify 同容器；捏合进行中不选。
+    /// minimumDistance 2 → 纯单击不触发拖选（交给 `.onTapGesture` 取消），2px 内抖动不误选。
+    private var dragSelectGesture: some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .local)
+            .onChanged { v in
+                guard scratch.pinch == nil else { return }
+                if scratch.selDragAnchor == nil {
+                    scratch.selDragAnchor = containerPointToPageSpace(v.startLocation)
+                }
+                guard let a = scratch.selDragAnchor, let f = containerPointToPageSpace(v.location),
+                      let pdf = session.pdf, let pa = pdf.page(at: a.page), let pf = pdf.page(at: f.page)
+                else { return }
+                setSelection(pdf.selection(from: pa, at: a.pt, to: pf, at: f.pt))
+            }
+            .onEnded { _ in scratch.selDragAnchor = nil }
+    }
+
     // MARK: 高倍清晰贴片（基图上限之外由视口贴片补清晰；只在 settle 后刷新，替换式更新）
 
     private func tileKeyFor(page: Int, normRect: CGRect) -> String {
@@ -635,6 +721,31 @@ private struct ReaderSurface: View {
         }
     }
 
+    /// ⌘C 直写剪贴板（不用 `.onCopyCommand`：它靠 NSResponder 焦点链触发，纯 `ScrollView` 容器
+    /// 拿不到焦点、菜单/快捷键完全不响应）。只在本窗口是 key window 且确有文字选区时消费事件并拦下；
+    /// 其余情况（普通输入框、无选区、非当前窗口）原样放行，不影响系统默认 Cmd+C。
+    private func installCopyMonitor() {
+        guard scratch.copyMonitor == nil else { return }
+        scratch.copyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard scratch.isActiveWindow,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  event.charactersIgnoringModifiers?.lowercased() == "c",
+                  let text = selection?.text, !text.isEmpty,
+                  !(NSApp.keyWindow?.firstResponder is NSText) else { return event }
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+            return nil
+        }
+    }
+
+    private func removeCopyMonitor() {
+        if let m = scratch.copyMonitor {
+            NSEvent.removeMonitor(m)
+            scratch.copyMonitor = nil
+        }
+    }
+
     /// ⌘0：回 fit-width（基准重定标到当前实测可用宽），未遮视口中心为锚。
     private func commandZoomFit() {
         guard layout != nil, scratch.didInitialGeo else { return }
@@ -748,6 +859,9 @@ private struct PageCellView: View {
     let live: InkStroke?
     let hover: HoverPoint?
     let inkScale: CGFloat   // = zoom：墨迹线宽随页缩放（fit 时与采集端观感一致）
+    var selectionRects: [CGRect] = []      // 文字选择高亮（T1），归一化 0~1 左上原点
+    var matchRects: [CGRect] = []          // 搜索命中高亮，归一化 0~1 左上原点（T2，全部命中，淡黄）
+    var activeMatchRects: [CGRect] = []    // 当前命中（同上坐标，橙色强调）
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -767,6 +881,19 @@ private struct PageCellView: View {
                     .offset(x: tile.normRect.minX * size.width,
                             y: tile.normRect.minY * size.height)
             }
+            if !matchRects.isEmpty || !activeMatchRects.isEmpty {
+                Canvas { ctx, sz in
+                    for r in matchRects { fillNorm(r, in: &ctx, size: sz, color: .yellow.opacity(0.35)) }
+                    for r in activeMatchRects { fillNorm(r, in: &ctx, size: sz, color: .orange.opacity(0.55)) }
+                }
+                .allowsHitTesting(false)
+            }
+            if !selectionRects.isEmpty {
+                Canvas { ctx, sz in
+                    for r in selectionRects { fillNorm(r, in: &ctx, size: sz, color: .accentColor.opacity(0.35)) }
+                }
+                .allowsHitTesting(false)
+            }
             if !strokes.isEmpty || live != nil {
                 Canvas { ctx, sz in
                     for st in strokes { drawStroke(st, in: &ctx, size: sz) }
@@ -783,6 +910,13 @@ private struct PageCellView: View {
             }
         }
         .frame(width: size.width, height: size.height)
+    }
+
+    /// 归一化矩形（0~1，左上原点）→ 页内像素矩形并填充（文字选择/搜索命中高亮共用）。
+    private func fillNorm(_ r: CGRect, in ctx: inout GraphicsContext, size: CGSize, color: Color) {
+        let px = CGRect(x: r.minX * size.width, y: r.minY * size.height,
+                        width: r.width * size.width, height: r.height * size.height)
+        ctx.fill(Path(roundedRect: px.insetBy(dx: -1, dy: -0.5), cornerRadius: 2), with: .color(color))
     }
 
     /// 二次贝塞尔中点平滑 + 压感变宽（与 SimPad.drawStroke 同数学；墨迹不随夜间反色）。

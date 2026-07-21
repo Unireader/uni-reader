@@ -21,6 +21,8 @@ struct ContentView: View {
     @State private var showServer = false
     @State private var isKeyWindow = false
     @State private var showNotes = false
+    @State private var showFind = false
+    @FocusState private var findFieldFocused: Bool
     @AppStorage("nightMode") private var nightMode = false
     @AppStorage("scrollInterp") private var scrollInterp = true   // 平板滚动跟随：true=时间戳插值 / false=纯低通（A/B 用）
     @AppStorage("autoNightMode") private var autoNightMode = false     // 夜间模式跟随系统深色外观
@@ -43,7 +45,7 @@ struct ContentView: View {
                     if key { app.setActive(session) }
                 })
                 .toolbar {
-                    // 中间一组：目录 / 夜间 / 跟随 A/B / 模拟平板 / 平板服务
+                    // 中间一组：目录 / 查找 / 夜间 / 跟随 A/B / 模拟平板 / 平板服务
                     ToolbarItemGroup(placement: .automatic) {
                         Button {
                             showTOCPopover.toggle()
@@ -52,6 +54,14 @@ struct ContentView: View {
                         }
                         .disabled(session.pdf == nil)
                         .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
+
+                        Button {
+                            showFind.toggle()
+                        } label: {
+                            Label(L("Find…"), systemImage: "magnifyingglass")
+                        }
+                        .disabled(session.pdf == nil)
+                        .popover(isPresented: $showFind, arrowEdge: .bottom) { findPopover }
 
                         Button {
                             nightMode.toggle()
@@ -143,6 +153,12 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openPDFRequested)) { _ in
             if isKeyWindow { openPDF() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .readerFind)) { _ in
+            if isKeyWindow { showFind = true }
+        }
+        .onChange(of: showFind) { _, on in
+            if !on { session.clearSearch() }   // 关闭查找栏 = 清空高亮，下次重新打字
+        }
     }
 
     @ViewBuilder
@@ -185,6 +201,39 @@ struct ContentView: View {
             }
             .frame(width: 320, height: 420)
         }
+    }
+
+    /// ⌘F 查找栏：搜索框（防抖实时高亮+跳首个命中，类 Safari）+ 上/下一个 + 命中计数。
+    private var findPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                TextField(L("Find in Document"), text: $session.searchQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($findFieldFocused)
+                    .onSubmit { session.nextMatch() }
+                    .frame(width: 200)
+                Button { session.prevMatch() } label: { Image(systemName: "chevron.up") }
+                    .disabled(session.searchMatches.isEmpty)
+                Button { session.nextMatch() } label: { Image(systemName: "chevron.down") }
+                    .disabled(session.searchMatches.isEmpty)
+            }
+            if !findStatusText.isEmpty {
+                Text(findStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(width: 260)
+        .onAppear { findFieldFocused = true }
+        .onChange(of: session.searchQuery) { _, _ in session.scheduleSearch() }
+    }
+
+    private var findStatusText: String {
+        if session.isSearching { return L("Searching…") }
+        guard !session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
+        guard !session.searchMatches.isEmpty else { return L("No matches") }
+        return String(format: L("%d of %d"), (session.currentMatchIndex ?? 0) + 1, session.searchMatches.count)
     }
 
     /// 跳转到目录项（页 + 页内比例）。origin=toc → 阅读区(PageStreamView)跟随，同时推给平板。
@@ -262,6 +311,7 @@ struct ContentView: View {
     // MARK: - 选中加载
 
     private func loadSelected(_ id: String?) {
+        session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; toc = []; clearInk(); return
         }

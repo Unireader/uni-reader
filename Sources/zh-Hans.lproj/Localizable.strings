@@ -83,3 +83,8 @@
 "Interpolation tracks fast flings tighter; Low-pass is simpler and smoother on LAN." = "插值对快速滑动跟得更紧；低通更简单、局域网下更平滑。";
 "Tablet Service" = "平板服务";
 "Start tablet service on launch" = "启动时自动开启平板服务";
+"Find…" = "查找…";
+"Find in Document" = "在文档中查找";
+"No matches" = "无匹配";
+"Searching…" = "搜索中…";
+"%d of %d" = "第 %d 项，共 %d 项";

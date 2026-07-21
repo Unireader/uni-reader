@@ -83,3 +83,8 @@
 "Interpolation tracks fast flings tighter; Low-pass is simpler and smoother on LAN." = "Interpolation tracks fast flings tighter; Low-pass is simpler and smoother on LAN.";
 "Tablet Service" = "Tablet Service";
 "Start tablet service on launch" = "Start tablet service on launch";
+"Find…" = "Find…";
+"Find in Document" = "Find in Document";
+"No matches" = "No matches";
+"Searching…" = "Searching…";
+"%d of %d" = "%d of %d";

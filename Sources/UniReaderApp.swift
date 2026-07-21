@@ -73,10 +73,20 @@ struct UniReaderApp: App {
                 .keyboardShortcut("0", modifiers: .command)
                 Divider()
             }
+            // ⌘F 查找（由 key 窗口的 ContentView 响应，弹查找栏；同一套 notification 路由已被
+            // 缩放命令验证可靠，见上）。
+            CommandGroup(after: .textEditing) {
+                Divider()
+                Button(L("Find…")) {
+                    NotificationCenter.default.post(name: .readerFind, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
         }
     }
 }
 
 extension Notification.Name {
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
+    static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
 }
