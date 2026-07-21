@@ -578,14 +578,56 @@ private struct ReaderSurface: View {
                                   text: sel.string ?? "")
     }
 
-    /// OCR 行级选区：锚点/焦点各命中一「行」（run），选中两端之间按阅读顺序（页号→行序）的连续行，高亮行框 + 拼文本。
+    /// OCR 行级选区：锚点/焦点各命中一「行」（run）。
+    /// **同页**走「列走廊 + 纵向带」几何约束（见 `ocrCorridorSelection`）——解决思维导图/多列排版下
+    /// naive 线性切片会把空间上很远、或另一列的行也吞进来；**跨页**（罕见）仍走原阅读顺序线性切片。
     private func setOCRSelection(anchor a: (page: Int, nx: CGFloat, ny: CGFloat),
                                  focus f: (page: Int, nx: CGFloat, ny: CGFloat)) {
         guard let ai = ocrLineHit(page: a.page, nx: a.nx, ny: a.ny),
               let fi = ocrLineHit(page: f.page, nx: f.nx, ny: f.ny) else { return }
-        let aFirst = a.page < f.page || (a.page == f.page && ai <= fi)
-        let (sp, si) = aFirst ? (a.page, ai) : (f.page, fi)
-        let (ep, ei) = aFirst ? (f.page, fi) : (a.page, ai)
+        selection = a.page == f.page
+            ? ocrCorridorSelection(page: a.page, ai: ai, fi: fi)
+            : ocrLinearSelection(a: (a.page, ai), f: (f.page, fi))
+    }
+
+    /// 同页 OCR 选区（best-effort，尽力贴合绝大多数正常排版）：
+    ///  · **纵向带** = 锚点行∪焦点行的竖直范围，只考虑 midY 落在带内的行（不跨到带外别的东西）。
+    ///  · **列走廊** = 若锚点行与焦点行水平重叠够（同列）→ 走廊取二者 x 并集；否则（异列/相距远）
+    ///    只认锚点行的 x 区间——于是「左列拖到右列」「思维导图黄块拖到远处蓝节点」都只落在锚点那一列/块内。
+    ///  · 一行被选中 = 它与走廊的水平重叠 ≥ 自身宽度的 30%（大部分身子在走廊里）。
+    /// 正常单列连续文本：锚焦同列 → 走廊≈整列宽 → 带内所有行全选（与旧行为一致）。
+    private func ocrCorridorSelection(page: Int, ai: Int, fi: Int) -> TextSelection? {
+        guard let runs = ocrRuns(page: page), runs.indices.contains(ai), runs.indices.contains(fi) else { return nil }
+        let a = runs[ai].rect, f = runs[fi].rect
+        let bandMin = min(a.minY, f.minY), bandMax = max(a.maxY, f.maxY)
+        // 近似同一视觉行（横向拖）→ 阅读顺序线性切片，含右对齐页码等同行元素；列约束只对跨多行生效。
+        if bandMax - bandMin <= 1.8 * max(a.height, f.height) {
+            return ocrLinearSelection(a: (page, ai), f: (page, fi))
+        }
+        let sameCol = xOverlapFrac(a, f) >= 0.2
+        let corMinX = sameCol ? min(a.minX, f.minX) : a.minX
+        let corMaxX = sameCol ? max(a.maxX, f.maxX) : a.maxX
+        var picked: [Int] = []
+        for (i, r) in runs.enumerated() {
+            let rr = r.rect
+            guard rr.midY >= bandMin, rr.midY <= bandMax else { continue }
+            let ov = max(0, min(rr.maxX, corMaxX) - max(rr.minX, corMinX))
+            if rr.width > 0, ov / rr.width >= 0.3 { picked.append(i) }
+        }
+        if picked.isEmpty { picked = [ai] }
+        picked.sort {
+            let r0 = runs[$0].rect, r1 = runs[$1].rect
+            return r0.midY != r1.midY ? r0.midY < r1.midY : r0.minX < r1.minX
+        }
+        let text = picked.map { runs[$0].text }.joined(separator: "\n")
+        return text.isEmpty ? nil : TextSelection(rects: [page: picked.map { runs[$0].rect }], text: text)
+    }
+
+    /// 跨页 OCR 选区：按阅读顺序（页号→行序）线性切片（保留旧逻辑，跨页场景罕见）。
+    private func ocrLinearSelection(a: (page: Int, idx: Int), f: (page: Int, idx: Int)) -> TextSelection? {
+        let aFirst = a.page < f.page || (a.page == f.page && a.idx <= f.idx)
+        let (sp, si) = aFirst ? a : f
+        let (ep, ei) = aFirst ? f : a
         var rects: [Int: [CGRect]] = [:]
         var parts: [String] = []
         for p in sp...ep {
@@ -598,7 +640,13 @@ private struct ReaderSurface: View {
             parts.append(slice.map(\.text).joined(separator: "\n"))
         }
         let text = parts.joined(separator: "\n")
-        selection = text.isEmpty ? nil : TextSelection(rects: rects, text: text)
+        return text.isEmpty ? nil : TextSelection(rects: rects, text: text)
+    }
+
+    /// 两矩形水平重叠量占「较窄者宽度」的比例（判两行是否同列）。
+    private func xOverlapFrac(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        let ov = max(0, min(a.maxX, b.maxX) - max(a.minX, b.minX))
+        return ov / max(0.0001, min(a.width, b.width))
     }
 
     /// OCR 行命中：先比行(y)、同高度内再比列(x)——落在行框内 dx=0，最近行优先。
