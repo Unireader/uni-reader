@@ -16,12 +16,18 @@
 0. ✅ **Mac 阅读区页图流 v2（2026-07-20 重写完成，编译通过 + spike 全绿，待用户真机手感验证）**：纯 SwiftUI（`PageStreamView` + `PageLayout` + `PageBitmap` + `PageRenderEngine` + tick 版 `ScrollFollower`）。关键机制均 spike 实测钉死：同 runloop「改布局+scrollTo」屏幕原子（pinch commit 不闪）、`page.draw` 自带旋转、自研虚拟化（内容尺寸精确，滚动条不漂）、resize 冻结+稳定后单次原子 refit。**用户自测**：pinch 锚定/⌘±/⌘0、窗口缩放与侧栏开合（fit 贴合=行为②，放大态被侧栏盖=行为③）、SimPad↔Mac 锚点、墨迹/hover/夜间/进度、玻璃观感。详见 `PDF-VIEWER-REBUILD-PLAN.md` 顶部「✅ 状态」块。
 0b. **📖 文字搜索 / 文字选择（T1+T2）/ OCR（T3，Paddle PP-OCRv6）——均 2026-07-21 完成，编译通过**：详见下方「✅ T1/T2」「✅ T3 OCR」。**用户自测**：① 拖选文字（跨行/跨页）→ ⌘C 复制核对；⌘F 查找边打字边高亮跳转、↑↓/回车切换、关栏清高亮；换文档查找栏清空。② OCR：设置(⌘,)选 Paddle 填 key → 工具栏 `text.viewfinder` 开「用 OCR 文字」→ 滚动看哪页处理哪页 / 「识别全部页」→ 在不准的 PDF 上拖选复制核对是否变准。
 1. **真平板接入方案 B**：`PadRenderer` 条带流转给真平板 + 平板回传滚动/落墨（缓冲本地滚动 + progressive 多清晰度）。
-2. **S5 长按切笔手势**：重压+静止 >300ms 在 Mac 笔尖处显进度环，>2s 呼出切笔工具（Mac 笔尖处），那一笔预测性清除。
+2. ✅ **笔工具重做：画布悬浮可拖拽面板 + 收藏笔插槽 + 真实笔触渲染（2026-07-22 完成，编译通过）**：取代了同一天
+   早些时候做的「S5 长按切笔 + 工具栏徽章」。笔的颜色/粗细/类型改在 Mac 阅读区一个可拖拽的悬浮面板里实时调，
+   不再是系统设置里的固定配置；四种笔头类型（圆珠笔/钢笔/马克笔/铅笔）真的有不同渲染效果。详见下方「✅ 笔工具
+   重做」。**环形面板布局**（用户反馈，不着急）留到下一轮。
 3. ✅ **笔迹持久化（2026-07-20 完成）**：落 `note` 表（kind=2，一笔=一行；`note.id==stroke.id`、page/anchor 走列、payload=JSON `{color:{r,g,b,a},width,points:[[x,y,pressure]]}`），重开恢复。**弃 SwiftData，走工作区 SQLite `note` 表**（跨平台）。详见下方「✅ 手写笔迹持久化」。
+4. **macOS 端鼠标/触控板直接手写笔迹**：目前落墨只走「平板 ink/erase → Mac 叠加渲染」单向链路，Mac 本机阅读区还不能直接用鼠标/触控板画。需要在 `PageStreamView` 加一条本机落墨手势，复用现有 `InkModel`/`note` 持久化，不另起一套。
+5. **橡皮擦支持部分擦除**：现状按 `note.id` 整笔删除（`InkModel`/`deleteNote`），需要改成按笔迹路径局部擦除（擦到哪段就切掉哪段，而不是整笔清除）。
 
 ## 🐞 已知 Bug（待修）
 
-（暂无）
+- **夜间模式切换仍有问题**（2026-07-22 用户反馈，2026-07-22 当天早些时候的「切换夜间模式慢」修复未彻底解决）：
+  具体现象用户尚未展开描述，先记录，后续统一排查处理（不要假设就是同一个根因，需要重新问清楚复现步骤）。
 
 ### 已修（2026-07-22）
 
@@ -65,7 +71,7 @@
   - ✅ 锚点同步 **sim→Mac**（连续镜像：Mac 视口顶部对齐锚点）。
   - ✅ 锚点同步 **Mac→sim**（已修）。根因：`SimPadRepresentable` 的存储属性（`app`/`session` 引用 + `tick`）在锚点变化时全都不变，SwiftUI 视图值比较判定"没变"直接跳过 `updateNSView`，sim 侧永远收不到锚点；笔迹能同步正是因为 `tick` 变了。修法：把 `scrollAnchor` 作为存储属性传入 representable。顺带加固：`PDFKitView.updateNSView` 里刷新 `coordinator.parent = self`。
   - ⬜ 把 `PadRenderer` 条带流转给真平板：缓冲本地滚动、progressive 多清晰度、平板回传滚动/落墨坐标。
-- **S5 长按切笔手势**：笔重压 + 静止 >300ms 在 **Mac 笔尖处**显示圆形进度环，>2s 呼出**切笔工具**（Mac 笔尖处）；那一笔预测性立即清除（不等 300ms）。
+- ✅ **S5 长按切笔手势**（2026-07-22 完成，见下方「✅ 长按切笔 + 笔状态统一到 macOS」）。
 
 ## ✅ 工作区文件夹持久化（2026-07-20 首版完成，见 REQUIREMENTS §8）
 
@@ -157,8 +163,68 @@
   - Inspector 画笔区：每页一行**可点击跳转**（`onJumpTo(page, frac)`，frac 取该页最靠上笔迹）+ 尾部 **× 删本页手写**（移除内存笔画 → onChange 对账删 note）。
   - Inspector 文件区：每条 location 尾部 **× 删除**（`WorkspaceManager.deleteLocation`，工作区副本连文件删；**仅多于一项时可删**，至少保留一项）。
 
+## ✅ 笔工具重做：画布悬浮可拖拽面板 + 收藏笔插槽 + 真实笔触渲染（2026-07-22 完成，编译通过）
+
+> **取代了上一版「长按切笔 + 工具栏徽章」**（原 S5 长按呼出面板 + `ContentView.penStatusBadge` 已整体拆掉，
+> 详见下方「已移除的上一版实现」）。用户实测反馈：笔的颜色/类型/粗细不该是「系统设置里固定配置好」的东西，
+> 应该像 GoodNotes/Notability/Apple Notes Markup 那样——画布上一个可拖拽的浮动工具条，装几个「收藏笔」插槽，
+> 再点一下已选中插槽才弹出调整面板（颜色/粗细/笔头类型），改完立刻生效，**调整入口永远在画布现场**；且笔
+  相关的一切不放操作栏，整体挪进 PDF 阅读区域。四个关键决策：只做 Mac 阅读区（pad 不变，继续吃 Mac 下发的
+  笔定义本地画）/ 保留多支收藏笔插槽（GoodNotes 式）/「笔类型」是真正不同的笔触渲染（不是换个名字的颜色
+  预设）/ 与上一版整体替换（不并存）。
+- **笔触类型 `PenBrushType`**（`Sources/App/PenPreset.swift`）：`ballpoint`/`fountain`/`marker`/`pencil` 四种，
+  各自笔宽公式不同（`strokeWidth(pressure:base:)`）——圆珠笔 `0.6+p·w`（原公式不变）、钢笔 `0.3+p^1.6·w·1.15`
+  （压感响应更夸张）、马克笔恒定 `w`（不吃压感）、铅笔 `0.5+p·w·0.85` 且不透明度 ×0.85 + 逐点沿路径垂线方向
+  加确定性抖动（`pseudoJitter`，种子取归一化坐标而非真随机——`Canvas`/`GraphicsContext` 每次重绘都重跑这段
+  代码，真随机会导致铅笔笔迹每次重绘/滚动都在抖）。**Mac**（`PageStreamView.drawStroke`）和**pad**
+  （`capture.html` 的 `strokeWidthFor`/`scaledColor`）各自实现同一套公式（两个语言没法共享代码，靠公式对齐）；
+  pad 的实时手感反馈阶段（`liveBegin`/`liveTo`）不做铅笔抖动（增量画的时候还不知道下一个点，没法算稳定的
+  垂线方向，等落成完整笔画走 `drawStroke` 回放才有纹理）——**已知简化，先能用后续再打磨**，马克笔叠笔接缝
+  变深的问题同理留到下一轮。
+- **迁移坑**：`PenPreset`/`InkStrokePayload`（落库 payload）都是 `Codable`，旧数据 JSON 里没有 `type` 键——
+  Swift 合成的 `Decodable` 对缺失 key **不会**自动填默认值，直接 decode 会整条失败。两处都手写了
+  `init(from decoder:)`，`decodeIfPresent(forKey:.type) ?? .ballpoint` 兜底，旧笔预设/旧笔迹都能正常加载。
+- **`AppModel.pens` 成为收藏笔唯一状态源**：`@Published var pens: [PenPreset]` 的 `didSet` 自动
+  `PenPresets.save()` 落盘 + `broadcastPens()` 广播给 pad（`{"type":"pens","list":[...],"active":N}`，连接/
+  服务启动时也补发一次，同 `layout`/`docs` 的「变了就广播」套路）；`addPen`/`removePen` 两个方法处理下标平移
+  （删除当前选中项时回退第 0 支、删除项在选中项之前时选中下标要跟着 −1，`removePen` 里有个顺序坑：`pens`
+  的 `didSet` 会带着**还没修正的旧下标**先广播一次，修正完 `padPenIndex` 后必须再手动 `broadcastPens()`
+  纠正一次，不然 pad 短暂收到跟 Mac 不一致的 active 下标）。
+- **悬浮可拖拽面板**（新文件 `Sources/Views/PenToolbar.swift`，`PenToolbarView`）：挂在 `ReaderSurface` 的
+  `ScrollView` 本身（`.overlay { GeometryReader { ... } }`，视口坐标系不随内容滚动，跟已有的 `followTicker`
+  同一个机制）。`.regularMaterial` 胶囊：拖拽手柄 + N 个笔插槽圆形色块（选中的套 `.accentColor` 描边）+
+  `+`（新增笔，立即选中+弹出编辑器）+ 橡皮/翻页两个模式按钮。点未选中插槽切笔；再点一次已选中插槽弹出
+  `.popover` 编辑器（`ColorPicker`+粗细 `Slider`+类型 `Picker(.segmented)`，任何一项改动直接写
+  `app.pens[i]`，无「保存」按钮）；插槽右键菜单删除（至少保留 1 支）。拖拽用
+  `DragGesture(minimumDistance:6)`（阈值参考代码库里 `dragSelectGesture`/pad 端平移死区的先例，避免跟插槽
+  点击手势打架），位置存 `@AppStorage`（`penToolbarFracX`/`Y`，视口宽高的 0~1 比例而非绝对像素，窗口缩放后
+  仍在合理位置）。
+- **修 bug（首版上线即反馈"什么也看不到"）**：首版按 `hover` 圆环的老规矩把显示条件挂在
+  `app.padSession?.id == session.id`（只在当前正被 pad 镜像的那个窗口显示）——但 `pens`/`padPenIndex` 是
+  **设备级全局状态**，不像 hover 那样是某次 pad 事件路由到的具体会话，挂错了作用域：没连 pad / `padSession`
+  解析恰好不等于当前窗口时，面板直接不出现，跟长按机制一起被拆掉后就变成真的"什么都没有"。改用
+  `isActiveWindow`（当前 key window，`ReaderSurface` 已有的既有参数，跟 ⌘±/⌘0 缩放快捷键同一套判定）——只跟
+  "你在操作哪个窗口"有关，不依赖任何 pad 连接/路由状态，更简单也更对。顺带把 `applyPenSelection`/`addPen`
+  两个方法上完全没用到的 `session: DocSession` 参数删掉（S5 版本遗留，新版本压根不需要）。
+- **设置页（⌘,）不再是笔的编辑入口**：`SettingsView.swift` 的「Pens」整个 `Section` 删掉。
+- **已移除的上一版实现**：`ContentView.penStatusBadge`；`AppModel` 的 `holdTask`/`startHoldWatch`/
+  `endHoldWatch`/`handlePenMenuTap` 长按状态机 + `"tap"` inbound case；`DocSession.PenHoldState`/`penHold`；
+  `PageCellView` 里进度环/横排色块面板那段渲染；`capture.html` 的 `holdSuppressed`/`menuSuppressed`/
+  `penHoldAbort`/`penMenuOpen`/`penMenuClose`/`"tap"` 收发。**保留**：`padMode`/`padPenIndex`、
+  `applyPenSelection`（新面板继续用，现在还顺带把模式拉回笔记模式）、pad 端 `cyclePen()`/`cycleMode()`
+  （PageUp/PageDown 侧键仍然工作，只是现在操作的是 Mac 推下来的动态列表）。
+- **用户自测**：Mac 阅读区应出现可拖拽胶囊面板（工具栏笔相关的东西彻底消失）；拖到任意位置松手生效，缩放
+  窗口/重开 App 后面板仍在合理位置；点插槽切笔 → pad 落墨颜色/粗细跟着变；再点一次当前插槽 → 弹出编辑器，
+  改颜色/拖粗细/切类型立刻在 pad 和 Mac 两边生效，不需要任何保存操作；四种类型轮流试应有明显视觉差别（马克
+  笔恒定宽度、钢笔压感对比明显、铅笔偏淡边缘不光滑、圆珠笔是原来的样子）；⌘, 设置页「Pens」分区已消失；
+  断开重连 pad / 重开 App → 收藏笔列表和当前选中的笔应保持上次退出时的状态；pad 侧键 PageDown 仍能在收藏笔
+  间循环，且循环到的笔跟 Mac 面板里实际存在的插槽一致。
+- **待优化（2026-07-22 用户反馈，不着急，跟马克笔叠笔接缝一起留到下一轮）**：面板视觉形态要改成**环形
+  （左侧展开）**，不是现在的横排一条；改环形要连布局和命中判定一起换成极坐标（角度+半径）。
+
 ## 📋 Backlog（M3 及之后）
 
+- **🚀 大分支：Android Pad 版本**（2026-07-22 提出）：不再是「Mac 端投屏给 pad 采集页 HTML」的方案 B 模式，而是直接做一个 Android 原生/独立 App，能在平板上打开工作区项目（读同一份跨平台 SQLite `library.sqlite` + 文档 + 笔迹）。呼应此前存储选型就是为跨平台（Windows/Android）预留的决定。范围大，需要单独立项拆解，不塞进当前 M3 迭代。
 - ✅ **手写笔迹持久化**（2026-07-20）+ ✅ **文字注解 kind=0**（2026-07-21：选区右键加批注 / 点注解锚页面坐标 / 页面荧光高亮+图钉查看编辑 / Inspector 列表跳转删 / 落库对账）+ ✅ **文字高亮 kind=3**（2026-07-21：选区右键调色板一键上色 / 页面铺色 / Inspector 列表）。
 - **三种笔记形态**：✅ 文字注解、✅ 手写笔记、✅ 高亮均已落地；**会话笔记（kind=1，预留 AI）** 用户 2026-07-21 明确暂不做（消息流 UI + 锚定 + AI 接口整套未起）。
 - **文件重定位**：所有路径失效时提示重新关联（`missingDoc` + Re-link 已在）；hash 命中加路径 / 未命中作同文档新版本、笔记挂文档不丢（`relocate` 已较健壮）。**待补**：路径存在但内容变（同路径换内容）时的 hash 校验提示。

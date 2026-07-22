@@ -23,6 +23,8 @@
 "Follow: Interpolation" = "Follow: Interpolation";
 "Follow: Low-pass" = "Follow: Low-pass";
 "Tablet scroll-follow algorithm (A/B test)" = "Tablet scroll-follow algorithm (A/B test)";
+"Eraser" = "Eraser";
+"Page Turn" = "Page Turn";
 "Notes will appear here." = "Notes will appear here.";
 "Sidebar" = "Sidebar";
 "Delete" = "Delete";
@@ -125,7 +127,13 @@
 "Rendering" = "Rendering";
 "Page render cache limit" = "Page render cache limit";
 "A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM." = "A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM.";
-"Pens" = "Pens";
 "Pen" = "Pen";
 "Add Pen" = "Add Pen";
-"Pen presets the tablet cycles through (side button / PageDown). A translucent, wide pen acts as a highlighter; the eraser is its own mode." = "Pen presets the tablet cycles through (side button / PageDown). A translucent, wide pen acts as a highlighter; the eraser is its own mode.";
+"Width" = "Width";
+"Pen Type" = "Pen Type";
+"Ballpoint" = "Ballpoint";
+"Fountain Pen" = "Fountain Pen";
+"Marker" = "Marker";
+"Pencil" = "Pencil";
+"Collapse" = "Collapse";
+"Expand Pen Toolbar" = "Expand Pen Toolbar";

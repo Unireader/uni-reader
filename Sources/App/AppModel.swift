@@ -12,7 +12,29 @@ final class AppModel: ObservableObject {
     /// 仅让「首个窗口」恢复工作区上次文档；后续 ⌘N 窗口开空白，不重复蹦同一本书。
     var didRestoreInitial = false
 
+    /// 平板当前工具状态镜像（设备级，跟文档无关）：驱动 Mac 阅读区悬浮笔工具条。
+    /// "note" | "erase" | "page"，与 capture.html 的 MODES.key 同值。
+    @Published var padMode: String = "note"
+    /// 当前笔在 `pens` 里的下标。
+    @Published var padPenIndex: Int = 0
+    /// 收藏笔列表（唯一状态源）：画布悬浮工具条实时增删改，自动落盘 + 广播给 pad。不再走系统设置页配置。
+    @Published var pens: [PenPreset] = PenPresets.load() {
+        didSet {
+            PenPresets.save(pens)
+            broadcastPens()
+        }
+    }
+
     private var cancellables = Set<AnyCancellable>()
+
+    // 环形选笔盘 · 长按检测（全部在 Mac 端）。平板只发笔事件；这里判「落笔停住 1s」呼出、笔移选中、抬笔提交。
+    private var longPressWork: DispatchWorkItem?
+    private var inkStart: (page: Int, nx: Double, ny: Double)?
+    private var inkMovedFar = false
+    private var inRadial = false
+    private let longPressSeconds = 1.0
+    private let moveCancelThresh = 0.02   // 归一化位移超此值 → 判为在画，不呼出
+    private let radialDeadzone = 0.045     // 归一化半径内 → 中心取消区
 
     init() {
         // 平板翻页 → 应用到平板当前会话，并重推页图。
@@ -26,16 +48,20 @@ final class AppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // 服务启动后立即推一次当前页与文档列表。
+        // 服务启动后立即推一次当前页、文档列表、收藏笔列表。
         server.$isRunning
             .receive(on: RunLoop.main)
-            .sink { [weak self] running in if running { self?.push(); self?.broadcastDocs() } }
+            .sink { [weak self] running in
+                if running { self?.push(); self?.broadcastDocs(); self?.broadcastPens() }
+            }
             .store(in: &cancellables)
 
-        // 新平板连接 → 补发文档列表与当前页。
+        // 新平板连接 → 补发文档列表、当前页、收藏笔列表。
         server.$clientCount
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true) }
+            .sink { [weak self] _ in
+                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastStrokes()
+            }
             .store(in: &cancellables)
 
         // 平板切换文档。
@@ -102,11 +128,16 @@ final class AppModel: ObservableObject {
                 let pen = obj["pen"] as? [String: Any]
                 let color = InkColor.parse(pen?["color"] as? String)
                 let w = (pen?["w"] as? NSNumber)?.doubleValue ?? 8
-                inkBegin(page: page, color: color, width: w, points: points(obj["pts"]))
+                let type = PenBrushType(rawValue: pen?["t"] as? String ?? "") ?? .ballpoint
+                let pts = points(obj["pts"])
+                inkBegin(page: page, color: color, width: w, type: type, points: pts)
+                beginLongPressWatch(page: page, first: pts.first)
             } else if phase == "move" {
-                inkAppend(points(obj["pts"]))
+                let pts = points(obj["pts"])
+                if inRadial { updateRadial(pts.last) }
+                else { inkAppend(pts); checkLongPressMovement(pts.last) }
             } else if phase == "end" {
-                inkEnd()
+                endInkOrRadial()
             }
         case "erase":
             if obj["phase"] as? String == "move" { inkErase(points(obj["pts"])) }
@@ -119,15 +150,144 @@ final class AppModel: ObservableObject {
                 let ny = (obj["ny"] as? NSNumber)?.doubleValue ?? 0
                 s.hover = HoverPoint(page: page, nx: nx, ny: ny)
             }
+        case "mode":
+            if let m = obj["mode"] as? String { padMode = m }
+        case "pen":
+            if let i = (obj["index"] as? NSNumber)?.intValue { padPenIndex = i }
         default:
             break
         }
     }
 
+    // MARK: - 环形选笔盘 · 长按检测（Mac 端）
+
+    /// 落笔即起 1s 定时：期间没大幅移动就呼出环形盘。同时挂进度环（笔尖处）。
+    private func beginLongPressWatch(page: Int, first: SIMD3<Double>?) {
+        cancelRadial()
+        guard let f = first else { return }
+        inkStart = (page, f.x, f.y); inkMovedFar = false; inRadial = false
+        padSession?.pressRing = PressRing(page: page, nx: f.x, ny: f.y, start: Date())
+        let work = DispatchWorkItem { [weak self] in self?.fireLongPress() }
+        longPressWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + longPressSeconds, execute: work)
+    }
+
+    /// 画的时候（位移超阈值）取消长按候选 + 撤掉进度环。
+    private func checkLongPressMovement(_ last: SIMD3<Double>?) {
+        guard !inkMovedFar, let s0 = inkStart, let p = last else { return }
+        let dx = p.x - s0.nx, dy = p.y - s0.ny
+        if dx * dx + dy * dy > moveCancelThresh * moveCancelThresh {
+            inkMovedFar = true
+            longPressWork?.cancel(); longPressWork = nil
+            padSession?.pressRing = nil
+        }
+    }
+
+    /// 长按达成：丢弃正在成形的这一笔，呼出环形盘（中心在落笔处），并回发 inkCancel 让平板撤掉本地这半笔。
+    private func fireLongPress() {
+        guard !inkMovedFar, !inRadial, let s0 = inkStart, let s = padSession else { return }
+        s.liveStroke = nil
+        s.pressRing = nil
+        inRadial = true
+        s.radial = RadialState(page: s0.page, cx: s0.nx, cy: s0.ny, highlight: -1)
+        server.broadcast(["type": "inkCancel"])
+    }
+
+    /// 环形盘打开时，笔移 → 按角度算指向第几支笔（页比例换算成屏幕角度，含长宽比校正）。
+    private func updateRadial(_ last: SIMD3<Double>?) {
+        guard var r = padSession?.radial, let p = last, !pens.isEmpty else { return }
+        let dx = p.x - r.cx, dy = p.y - r.cy
+        if (dx * dx + dy * dy) < radialDeadzone * radialDeadzone {
+            r.highlight = -1
+        } else {
+            let aspect = currentPageAspect(page: r.page)   // pageH/pageW
+            var ang = atan2(dy * aspect, dx) + .pi / 2      // 从正上方起、顺时针
+            if ang < 0 { ang += 2 * .pi }
+            let n = pens.count
+            r.highlight = Int((ang / (2 * .pi) * Double(n)).rounded()) % n
+        }
+        if r != padSession?.radial { padSession?.radial = r }
+    }
+
+    /// 抬笔：环形盘打开则提交选中（中心区=不选），否则正常收笔。
+    private func endInkOrRadial() {
+        longPressWork?.cancel(); longPressWork = nil
+        padSession?.pressRing = nil
+        if inRadial {
+            if let r = padSession?.radial, r.highlight >= 0, pens.indices.contains(r.highlight) {
+                applyPenSelection(index: r.highlight)
+            }
+            padSession?.radial = nil
+        } else {
+            inkEnd()
+        }
+        inRadial = false; inkStart = nil
+    }
+
+    private func cancelRadial() {
+        longPressWork?.cancel(); longPressWork = nil
+        if inRadial { padSession?.radial = nil }
+        padSession?.pressRing = nil
+        inRadial = false; inkStart = nil; inkMovedFar = false
+    }
+
+    private func currentPageAspect(page: Int) -> Double {
+        guard let pdf = padSession?.pdf, page >= 0, page < pdf.pageCount, let pg = pdf.page(at: page) else { return 1 }
+        let b = pg.bounds(for: .mediaBox)
+        return b.width > 0 ? Double(b.height / b.width) : 1
+    }
+
+    /// 应用一次选笔（画布悬浮工具条点插槽 / 平板 PageDown 上报，殊途同归）。选笔即回到笔记模式
+    /// （跟 pad 自己 PageDown 切笔时顺带把 modeIdx 归零是同一个道理——选了支笔就是要用它画）。
+    /// `pens`/`padPenIndex` 是设备级全局状态，不挂在某个文档会话上，故不需要传 `DocSession`。
+    func applyPenSelection(index: Int) {
+        padPenIndex = index
+        server.broadcast(["type": "pen", "index": index])
+        setPadMode("note")
+    }
+
+    /// 切换当前工具模式（笔记/擦除/翻页）并广播给 pad。画布悬浮工具条的橡皮/翻页按钮走这个。
+    func setPadMode(_ mode: String) {
+        guard padMode != mode else { return }
+        padMode = mode
+        server.broadcast(["type": "mode", "mode": mode])
+    }
+
+    /// 收藏笔列表变化（新增/删除/改颜色/改粗细/改类型）→ 整体推给 pad（同 layout/docs 的「变了就广播」套路）。
+    func broadcastPens() {
+        guard server.isRunning else { return }
+        server.broadcast([
+            "type": "pens",
+            "list": pens.map { ["color": $0.color.cssRGBA, "w": $0.width, "t": $0.type.rawValue] },
+            "active": padPenIndex
+        ])
+    }
+
+    /// 新增一支收藏笔（默认样式），立即选中。返回新笔下标，供调用方直接弹出编辑面板。
+    @discardableResult
+    func addPen() -> Int {
+        pens.append(PenPreset(name: L("Pen"), color: InkColor(r: 90, g: 90, b: 90, a: 0.95), width: 8))
+        let idx = pens.count - 1
+        applyPenSelection(index: idx)
+        return idx
+    }
+
+    /// 删除一支收藏笔（至少保留 1 支，调用方需先自行判断 `pens.count > 1`）。
+    /// 删掉的是当前选中的那支时回退到第 0 支；删掉的在选中项之前则下标平移，避免选中项错位。
+    /// **顺序注意**：`pens` 的 `didSet` 会立即广播一次（带着还没修正的旧 `padPenIndex`），
+    /// 修正完下标后必须再广播一次纠正——不然 pad 短暂收到一个跟 Mac 实际不一致的 active 下标。
+    func removePen(id: UUID) {
+        guard pens.count > 1, let idx = pens.firstIndex(where: { $0.id == id }) else { return }
+        pens.remove(at: idx)   // didSet 立即广播一次（此时 padPenIndex 还没修正）
+        if padPenIndex == idx { padPenIndex = 0 }
+        else if padPenIndex > idx { padPenIndex -= 1 }
+        broadcastPens()   // 用修正后的 padPenIndex 再广播一次，纠正上面那次的 active 下标
+    }
+
     // 供 WS 与模拟窗口共用的落墨 API。
-    func inkBegin(page: Int, color: InkColor, width: Double, points: [SIMD3<Double>]) {
+    func inkBegin(page: Int, color: InkColor, width: Double, type: PenBrushType = .ballpoint, points: [SIMD3<Double>]) {
         guard let s = padSession else { return }
-        s.liveStroke = InkStroke(page: page, color: color, width: width, points: points)
+        s.liveStroke = InkStroke(page: page, color: color, width: width, type: type, points: points)
     }
     func inkAppend(_ pts: [SIMD3<Double>]) {
         guard let s = padSession, var st = s.liveStroke else { return }
@@ -136,10 +296,24 @@ final class AppModel: ObservableObject {
     func inkEnd() {
         guard let s = padSession, let st = s.liveStroke else { return }
         s.strokes.append(st); s.liveStroke = nil
+        broadcastStrokes()
     }
     func inkErase(_ pts: [SIMD3<Double>]) {
         guard let s = padSession else { return }
         eraseNear(s, pts)
+        broadcastStrokes()
+    }
+
+    /// 把平板当前会话的**全部笔迹**推给平板（平板据此显示 + 刷新/重连后恢复）。
+    /// 平板本地不落库、只即时回显正在写的这一笔；已成形/已存的笔迹以 Mac 为唯一真源，靠这里回传。
+    func broadcastStrokes() {
+        guard server.isRunning, let s = padSession else { return }
+        let list: [[String: Any]] = s.strokes.map { st in
+            ["page": st.page,
+             "pen": ["color": st.color.cssRGBA, "w": st.width, "t": st.type.rawValue],
+             "pts": st.points.map { [$0.x, $0.y, $0.z] }]
+        }
+        server.broadcast(["type": "strokes", "list": list])
     }
 
     private func points(_ any: Any?) -> [SIMD3<Double>] {

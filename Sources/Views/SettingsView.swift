@@ -11,7 +11,6 @@ struct SettingsView: View {
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // "off" | "paddle"
     @AppStorage("ocrPaddleKey") private var ocrPaddleKey = ""
     @AppStorage("renderCacheMB") private var renderCacheMB = 512     // 页图缓存上限（MB）
-    @State private var pens: [PenPreset] = PenPresets.load()         // 笔预设（本机 UserDefaults）
 
     var body: some View {
         Form {
@@ -57,35 +56,6 @@ struct SettingsView: View {
             } footer: {
                 Text(L("A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM."))
             }
-
-            Section {
-                ForEach($pens) { $pen in
-                    HStack(spacing: 8) {
-                        TextField(L("Pen"), text: $pen.name).frame(width: 56)
-                        ColorPicker("", selection: Binding(
-                            get: { pen.color.swiftUIColor },
-                            set: { pen.color = InkColor(color: $0) }), supportsOpacity: true)
-                            .labelsHidden()
-                        Slider(value: $pen.width, in: 2...40)
-                        Text("\(Int(pen.width))").monospacedDigit().frame(width: 24, alignment: .trailing)
-                        Button(role: .destructive) {
-                            pens.removeAll { $0.id == pen.id }
-                        } label: { Image(systemName: "trash") }
-                            .buttonStyle(.borderless)
-                            .disabled(pens.count <= 1)
-                    }
-                }
-                Button {
-                    pens.append(PenPreset(name: L("Pen"), color: InkColor(r: 90, g: 90, b: 90, a: 0.95), width: 8))
-                } label: {
-                    Label(L("Add Pen"), systemImage: "plus")
-                }
-            } header: {
-                Text(L("Pens"))
-            } footer: {
-                Text(L("Pen presets the tablet cycles through (side button / PageDown). A translucent, wide pen acts as a highlighter; the eraser is its own mode."))
-            }
-            .onChange(of: pens) { _, v in PenPresets.save(v) }
 
             Section {
                 Picker(L("OCR Engine"), selection: $ocrEngine) {

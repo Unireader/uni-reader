@@ -23,6 +23,8 @@
 "Follow: Interpolation" = "跟随：插值";
 "Follow: Low-pass" = "跟随：低通";
 "Tablet scroll-follow algorithm (A/B test)" = "平板滚动跟随算法（A/B 对比）";
+"Eraser" = "橡皮";
+"Page Turn" = "翻页";
 "Notes will appear here." = "笔记功能即将上线，会显示在这里。";
 "Sidebar" = "侧边栏";
 "Delete" = "删除";
@@ -125,7 +127,13 @@
 "Rendering" = "渲染";
 "Page render cache limit" = "页图缓存上限";
 "A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM." = "缓存越大，回看或切换文档时越少重新渲染，代价是占用更多内存。";
-"Pens" = "笔";
 "Pen" = "笔";
 "Add Pen" = "添加笔";
-"Pen presets the tablet cycles through (side button / PageDown). A translucent, wide pen acts as a highlighter; the eraser is its own mode." = "平板用侧键（PageDown）循环切换的笔预设。半透明的宽笔就是荧光笔；橡皮是独立的擦除模式。";
+"Width" = "粗细";
+"Pen Type" = "笔头类型";
+"Ballpoint" = "圆珠笔";
+"Fountain Pen" = "钢笔";
+"Marker" = "马克笔";
+"Pencil" = "铅笔";
+"Collapse" = "收起";
+"Expand Pen Toolbar" = "展开笔工具条";

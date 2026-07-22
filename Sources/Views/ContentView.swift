@@ -426,6 +426,7 @@ struct ContentView: View {
         }
         app.setActive(session)
         app.sessionChanged(session)
+        app.broadcastStrokes()   // 新文档的已存笔迹回传平板（平板本地不落库，靠 Mac 回显）
     }
 
     // MARK: - 阅读进度

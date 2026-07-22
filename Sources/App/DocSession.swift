@@ -11,11 +11,29 @@ struct ScrollAnchor: Equatable {
     var senderT: Double = 0   // 发送端单调时钟(ms)，>0 启用时间戳插值；0=本地(sim/mac)走低通
 }
 
-/// 平板笔悬停位置（页 + 页内归一化坐标，左上原点）。Mac 在 PDF 上叠加笔尖圆环；离开近场为 nil。
+/// 平板笔悬停位置（**页内**归一化坐标，左上原点）。笔只在 PDF 页上操作 → 光标锚定页内容（随页滚动/缩放），
+/// Mac 在页上叠加蓝色笔尖圆环（纯位置指示，不操作任何控件）；离场为 nil。
 struct HoverPoint: Equatable {
     var page: Int
     var nx: Double
     var ny: Double
+}
+
+/// 环形选笔盘（长按呼出，全部在 Mac 端处理并显示）：`cx`/`cy` 为呼出中心的页内归一化坐标（笔尖处），
+/// `highlight` = 当前指向第几支笔（-1 = 中心取消区，不选）。平板只管发笔事件，检测/显示/选中都在 Mac。
+struct RadialState: Equatable {
+    var page: Int
+    var cx: Double
+    var cy: Double
+    var highlight: Int
+}
+
+/// 长按进度环：落笔中心（页内归一化）+ 起始时刻。Mac 据 `start` 到当前的用时画填充进度。
+struct PressRing: Equatable {
+    var page: Int
+    var nx: Double
+    var ny: Double
+    var start: Date
 }
 
 /// 一处全文搜索命中（T2）。可能跨行换行（`rects` 多个，均归一化 0~1 左上原点，页局部）；
@@ -67,6 +85,12 @@ final class DocSession: ObservableObject, Identifiable {
 
     // 平板笔悬停位置（nil = 无悬停 / 已落笔）。
     @Published var hover: HoverPoint?
+
+    // 环形选笔盘（nil = 未呼出）。长按触发，全程 Mac 端处理。
+    @Published var radial: RadialState?
+
+    // 长按进度环（nil = 无）：落笔起计，Mac 在笔尖处 300ms 起显示、1s 填满，随后展开成 radial。
+    @Published var pressRing: PressRing?
 
     // 滚动锚点（跨视口同步）。
     @Published var scrollAnchor: ScrollAnchor?

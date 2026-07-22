@@ -67,8 +67,12 @@ final class SimPadNSView: NSView {
     private var topDocY: CGFloat = 0
     private var drawingPage: Int?
     var lastAppliedAnchorSeq = 0
-    /// SimPad 用配置里的第一支笔（真平板走采集页 PageDown 循环全部预设）。
-    private let pen: PenPreset = PenPresets.load().first ?? PenPreset(name: "", color: .defaultInk, width: 8)
+    /// SimPad 用工具条当前选中的那支笔（改笔型/颜色即时生效，方便在没有真平板时试各种笔）。
+    private var pen: PenPreset {
+        let pens = app?.pens ?? []
+        let idx = app?.padPenIndex ?? 0
+        return pens.indices.contains(idx) ? pens[idx] : (pens.first ?? PenPreset(name: "", color: .defaultInk, width: 8))
+    }
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -99,22 +103,64 @@ final class SimPadNSView: NSView {
         if let live = s.liveStroke { drawStroke(live, r: r, ctx: ctx) }
     }
 
+    /// 四种笔型差异化渲染（与 Mac 阅读区 `PageStreamView.drawStroke` 同参数/同算法，见 `PenBrushType`/`InkRender`）。
     private func drawStroke(_ st: InkStroke, r: PadRenderer, ctx: CGContext) {
         guard !st.points.isEmpty else { return }
         let vps = st.points.map { r.point(page: st.page, nx: $0.x, ny: $0.y, topDocY: topDocY) }
-        st.color.nsColor.setStroke(); st.color.nsColor.setFill()
+        let type = st.type, w = st.width
+        let cr = st.color.r / 255, cg = st.color.g / 255, cb = st.color.b / 255
+        func stroke(_ a: Double) { ctx.setStrokeColor(red: cr, green: cg, blue: cb, alpha: a) }
+        func fill(_ a: Double) { ctx.setFillColor(red: cr, green: cg, blue: cb, alpha: a) }
+        ctx.setLineJoin(.round); ctx.setLineCap(.round)
+
         if vps.count == 1 {
-            let rad = CGFloat(0.6 + st.points[0].z * st.width) / 2
+            let a = type == .pencil ? st.color.a * 0.6 : st.color.a
+            fill(a)
+            let rad = CGFloat(type.strokeWidth(pressure: st.points[0].z, base: w)) / 2
             ctx.fillEllipse(in: CGRect(x: vps[0].x - rad, y: vps[0].y - rad, width: rad * 2, height: rad * 2))
             return
         }
-        var lastMid = vps[0]
-        var lastPt = vps[0]
-        for i in 1..<vps.count {
-            let mid = CGPoint(x: (lastPt.x + vps[i].x) / 2, y: (lastPt.y + vps[i].y) / 2)
-            ctx.setLineWidth(CGFloat(0.6 + st.points[i].z * st.width))
-            ctx.beginPath(); ctx.move(to: lastMid); ctx.addQuadCurve(to: mid, control: lastPt); ctx.strokePath()
-            lastMid = mid; lastPt = vps[i]
+
+        switch type {
+        case .marker:
+            ctx.saveGState()
+            ctx.setBlendMode(.multiply); ctx.setLineCap(.square); ctx.setLineWidth(CGFloat(w)); stroke(st.color.a)
+            ctx.beginPath(); ctx.move(to: vps[0]); var lastPt = vps[0]
+            for i in 1..<vps.count {
+                let mid = CGPoint(x: (lastPt.x + vps[i].x) / 2, y: (lastPt.y + vps[i].y) / 2)
+                ctx.addQuadCurve(to: mid, control: lastPt); lastPt = vps[i]
+            }
+            ctx.strokePath(); ctx.restoreGState()
+
+        case .pencil:
+            for pass in PenBrushType.pencilPasses {
+                stroke(st.color.a * pass.alpha)
+                var prev: CGPoint?
+                for i in 0..<vps.count {
+                    let lw = type.strokeWidth(pressure: st.points[i].z, base: w)
+                    let (nx, ny) = InkRender.perp(vps, i)
+                    let rnd = InkRender.jitter(st.points[i].x, st.points[i].y + pass.phase)
+                    let wob = (sin(Double(i) * 0.7 + pass.phase) * pass.amp + rnd * pass.amp * 0.7) * lw
+                    let cur = CGPoint(x: vps[i].x + nx * CGFloat(wob), y: vps[i].y + ny * CGFloat(wob))
+                    if let p0 = prev {
+                        ctx.setLineWidth(CGFloat(max(0.7, lw * pass.wScale)))
+                        ctx.beginPath(); ctx.move(to: p0); ctx.addLine(to: cur); ctx.strokePath()
+                    }
+                    prev = cur
+                }
+            }
+
+        default:   // ballpoint / fountain
+            stroke(st.color.a)
+            let n = vps.count
+            var lastMid = vps[0], lastPt = vps[0]
+            for i in 1..<vps.count {
+                let mid = CGPoint(x: (lastPt.x + vps[i].x) / 2, y: (lastPt.y + vps[i].y) / 2)
+                ctx.setLineWidth(CGFloat(type.strokeWidth(pressure: st.points[i].z, base: w)
+                                         * type.fountainTaper(index: i, count: n)))
+                ctx.beginPath(); ctx.move(to: lastMid); ctx.addQuadCurve(to: mid, control: lastPt); ctx.strokePath()
+                lastMid = mid; lastPt = vps[i]
+            }
         }
     }
 
@@ -149,7 +195,7 @@ final class SimPadNSView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         guard let r = renderer, let loc = r.locate(x: p.x, yFromTop: p.y, topDocY: topDocY) else { return }
         drawingPage = loc.page
-        app?.inkBegin(page: loc.page, color: pen.color, width: pen.width,
+        app?.inkBegin(page: loc.page, color: pen.color, width: pen.width, type: pen.type,
                       points: [SIMD3(loc.nx, loc.ny, 0.5)])
         needsDisplay = true
     }

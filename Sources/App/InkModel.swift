@@ -29,6 +29,7 @@ struct InkStroke: Identifiable, Equatable {
     var page: Int
     var color: InkColor
     var width: Double
+    var type: PenBrushType = .ballpoint
     var points: [SIMD3<Double>]   // x, y, pressure
 }
 
@@ -39,7 +40,23 @@ struct InkStroke: Identifiable, Equatable {
 private struct InkStrokePayload: Codable {
     var color: InkColor
     var width: Double
+    var type: PenBrushType = .ballpoint
     var points: [[Double]]
+
+    enum CodingKeys: String, CodingKey { case color, width, type, points }
+
+    init(color: InkColor, width: Double, type: PenBrushType, points: [[Double]]) {
+        self.color = color; self.width = width; self.type = type; self.points = points
+    }
+
+    /// 旧笔迹（升级前落库的）payload 里没有 `type` 键，同 `PenPreset` 一样手动兜底成 `.ballpoint`。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        color = try c.decode(InkColor.self, forKey: .color)
+        width = try c.decode(Double.self, forKey: .width)
+        type = try c.decodeIfPresent(PenBrushType.self, forKey: .type) ?? .ballpoint
+        points = try c.decode([[Double]].self, forKey: .points)
+    }
 }
 
 extension InkStroke {
@@ -60,7 +77,7 @@ extension InkStroke {
     /// 序列化为一条 ink 笔记（挂逻辑文档，全版本共用）。空笔画返回 nil（不落库）。
     func toNote(documentId: String, now: Date = .now) -> LibNote? {
         guard !points.isEmpty else { return nil }
-        let payload = InkStrokePayload(color: color, width: width,
+        let payload = InkStrokePayload(color: color, width: width, type: type,
                                        points: points.map { [$0.x, $0.y, $0.z] })
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
@@ -80,6 +97,6 @@ extension InkStroke {
             let z: Double = p.count > 2 ? p[2] : 0.5
             return SIMD3<Double>(x, y, z)
         }
-        self.init(id: uuid, page: note.page, color: payload.color, width: payload.width, points: pts)
+        self.init(id: uuid, page: note.page, color: payload.color, width: payload.width, type: payload.type, points: pts)
     }
 }

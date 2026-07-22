@@ -153,6 +153,7 @@ private final class Scratch {
 }
 
 private struct ReaderSurface: View {
+    @EnvironmentObject private var app: AppModel
     @ObservedObject var session: DocSession
     let docKey: String
     let nightMode: Bool
@@ -275,6 +276,8 @@ private struct ReaderSurface: View {
                             onCancel: { editorTarget = nil })
         }
         .overlay(alignment: .topLeading) { followTicker }
+        // 笔工具悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
+        .overlay { GeometryReader { proxy in PenToolbarView(viewportSize: proxy.size, isActiveWindow: isActiveWindow) } }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: nightMode) { _, _ in scheduleNightRender() }
         .onChange(of: fullWidth) { _, _ in
@@ -329,23 +332,7 @@ private struct ReaderSurface: View {
             let activeMatch = session.currentMatchIndex.flatMap { session.searchMatches.indices.contains($0) ? session.searchMatches[$0] : nil }
             ZStack(alignment: .topLeading) {
                 ForEach(Array(realized), id: \.self) { i in
-                    PageCellView(size: CGSize(width: pageW, height: layout.heights[i] * dispScale),
-                                 image: images[i],
-                                 tile: tiles[i],
-                                 paper: paper,
-                                 strokes: session.strokes.filter { $0.page == i },
-                                 live: session.liveStroke?.page == i ? session.liveStroke : nil,
-                                 hover: session.hover?.page == i ? session.hover : nil,
-                                 inkScale: zoom,
-                                 selectionRects: selection?.rects[i] ?? [],
-                                 matchRects: session.searchMatches.filter { $0.page == i }.flatMap(\.rects),
-                                 activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [],
-                                 highlights: session.highlights.filter { $0.page == i },
-                                 notes: session.textNotes.filter { $0.page == i },
-                                 ocrBlocks: session.showOCRBlocks ? (session.ocrRuns[i] ?? []) : [],
-                                 ocrGroups: session.showOCRBlocks && session.ocrBlockGrouped ? session.ocrGroups(page: i) : [],
-                                 onOpenNote: { editorTarget = .edit($0) })
-                        .offset(x: pageX, y: layout.offsets[i] * dispScale)
+                    pageCell(i, layout: layout, activeMatch: activeMatch)
                 }
             }
             .frame(width: contentW, height: contentH, alignment: .topLeading)
@@ -353,6 +340,30 @@ private struct ReaderSurface: View {
         } else {
             Color.clear.frame(width: 10, height: 10)
         }
+    }
+
+    /// 单页元胞构造。抽成独立函数（而非内联进 ForEach）——参数众多，内联会让 SwiftUI 类型检查器超时。
+    @ViewBuilder private func pageCell(_ i: Int, layout: PageLayout, activeMatch: TextMatch?) -> some View {
+        PageCellView(size: CGSize(width: pageW, height: layout.heights[i] * dispScale),
+                     image: images[i],
+                     tile: tiles[i],
+                     paper: paper,
+                     strokes: session.strokes.filter { $0.page == i },
+                     live: session.liveStroke?.page == i ? session.liveStroke : nil,
+                     hover: session.hover?.page == i ? session.hover : nil,
+                     inkScale: zoom,
+                     selectionRects: selection?.rects[i] ?? [],
+                     matchRects: session.searchMatches.filter { $0.page == i }.flatMap(\.rects),
+                     activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [],
+                     highlights: session.highlights.filter { $0.page == i },
+                     notes: session.textNotes.filter { $0.page == i },
+                     ocrBlocks: session.showOCRBlocks ? (session.ocrRuns[i] ?? []) : [],
+                     ocrGroups: session.showOCRBlocks && session.ocrBlockGrouped ? session.ocrGroups(page: i) : [],
+                     radial: session.radial?.page == i ? session.radial : nil,
+                     pens: app.pens,
+                     pressRing: session.pressRing?.page == i ? session.pressRing : nil,
+                     onOpenNote: { editorTarget = .edit($0) })
+            .offset(x: pageX, y: layout.offsets[i] * dispScale)
     }
 
     /// 跟随器帧驱动（仅激活期间挂载；TimelineView(.animation) 与刷新率同步）。
@@ -1164,6 +1175,9 @@ private struct PageCellView: View {
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
     var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
     var ocrGroups: [Int] = []              // 调试上色：非空=按分组同色(与 ocrBlocks 同序的分组 id) / 空=每块独立色
+    var radial: RadialState? = nil         // 环形选笔盘（非空且属本页时在笔尖处画环）
+    var pens: [PenPreset] = []             // 环形盘要显示的收藏笔列表
+    var pressRing: PressRing? = nil        // 长按进度环（非空且属本页时在笔尖处画填充进度）
     var onOpenNote: (TextNote) -> Void = { _ in }
 
     var body: some View {
@@ -1244,14 +1258,7 @@ private struct PageCellView: View {
                 }
                 .allowsHitTesting(false)
             }
-            if let hover {
-                Circle()
-                    .stroke(Color.accentColor, lineWidth: 2)
-                    .frame(width: 14, height: 14)
-                    .position(x: hover.nx * size.width, y: hover.ny * size.height)
-                    .allowsHitTesting(false)
-            }
-            // 批注图钉（顶层，可点）：点开编辑器查看/编辑。悬停显示批注/原文预览。
+            // 批注图钉（可点）：点开编辑器查看/编辑。悬停显示批注/原文预览。
             ForEach(notes) { n in
                 Button { onOpenNote(n) } label: {
                     Image(systemName: "note.text")
@@ -1264,6 +1271,34 @@ private struct PageCellView: View {
                 .buttonStyle(.plain)
                 .help(n.text.isEmpty ? n.quote : n.text)
                 .position(markerPos(n, size: size))
+            }
+            // 平板笔尖光标（页锚定，纯位置指示）：压在墨迹/图钉之上、随页滚动。仅显示、不挡点击。
+            if let hover {
+                Circle()
+                    .stroke(Color.accentColor, lineWidth: 2)
+                    .frame(width: 14, height: 14)
+                    .position(x: hover.nx * size.width, y: hover.ny * size.height)
+                    .allowsHitTesting(false)
+            }
+            // 长按进度环（笔尖处）：300ms 起显示、1s 填满，随后 fireLongPress 展开成 radial。
+            if let pressRing {
+                TimelineView(.animation) { tl in
+                    let p = min(1, max(0, (tl.date.timeIntervalSince(pressRing.start) - 0.3) / 0.7))
+                    ZStack {
+                        Circle().stroke(.white.opacity(0.25), lineWidth: 3)                    // 轨道
+                        Circle().trim(from: 0, to: p)                                          // 填充进度
+                            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 30, height: 30)
+                    .opacity(p > 0.001 ? 1 : 0)
+                    .position(x: pressRing.nx * size.width, y: pressRing.ny * size.height)
+                }
+                .allowsHitTesting(false)
+            }
+            // 环形选笔盘（长按呼出，最顶层、页锚定于笔尖处）。
+            if let radial {
+                RadialMenuView(radial: radial, pens: pens, size: size)
             }
         }
         .frame(width: size.width, height: size.height)
@@ -1287,30 +1322,122 @@ private struct PageCellView: View {
         ctx.fill(Path(roundedRect: px.insetBy(dx: -1, dy: -0.5), cornerRadius: 2), with: .color(color))
     }
 
-    /// 二次贝塞尔中点平滑 + 压感变宽（与 SimPad.drawStroke 同数学；墨迹不随夜间反色）。
+    /// 四种笔型差异化渲染（与 `SimPadNSView.drawStroke` 同参数/同算法，见 `PenBrushType`/`InkRender`；墨迹不随夜间反色）：
+    ///  · ballpoint 干净压感线；· fountain 压感 + 起收锥度；· marker 恒宽·平头·multiply 叠加；· pencil 多道微波动叠加。
     private func drawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize) {
         guard !st.points.isEmpty else { return }
-        let color = Color(red: st.color.r / 255, green: st.color.g / 255, blue: st.color.b / 255,
-                          opacity: st.color.a)
         let pts = st.points.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) }
+        let type = st.type, w = st.width
+        func color(_ a: Double) -> Color {
+            Color(red: st.color.r / 255, green: st.color.g / 255, blue: st.color.b / 255, opacity: a)
+        }
+
         if pts.count == 1 {
-            let r = (0.6 + st.points[0].z * st.width) * inkScale / 2
+            let a = type == .pencil ? st.color.a * 0.6 : st.color.a
+            let r = CGFloat(type.strokeWidth(pressure: st.points[0].z, base: w)) * inkScale / 2
             ctx.fill(Path(ellipseIn: CGRect(x: pts[0].x - r, y: pts[0].y - r, width: r * 2, height: r * 2)),
-                     with: .color(color))
+                     with: .color(color(a)))
             return
         }
-        var lastMid = pts[0]
-        var lastPt = pts[0]
-        for i in 1..<pts.count {
-            let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
-            var p = Path()
-            p.move(to: lastMid)
-            p.addQuadCurve(to: mid, control: lastPt)
-            ctx.stroke(p, with: .color(color),
-                       style: StrokeStyle(lineWidth: (0.6 + st.points[i].z * st.width) * inkScale,
-                                          lineCap: .round, lineJoin: .round))
-            lastMid = mid
-            lastPt = pts[i]
+
+        switch type {
+        case .marker:
+            // 恒宽 → 整条一次成 path，一次 multiply + 平头（逐段方头叠加会在接缝处出竖条）
+            var path = Path(); path.move(to: pts[0]); var lastPt = pts[0]
+            for i in 1..<pts.count {
+                let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
+                path.addQuadCurve(to: mid, control: lastPt); lastPt = pts[i]
+            }
+            var m = ctx; m.blendMode = .multiply
+            m.stroke(path, with: .color(color(st.color.a)),
+                     style: StrokeStyle(lineWidth: CGFloat(w) * inkScale, lineCap: .square, lineJoin: .round))
+
+        case .pencil:
+            for pass in PenBrushType.pencilPasses {
+                let col = color(st.color.a * pass.alpha)
+                var prev: CGPoint?
+                for i in 0..<pts.count {
+                    let lw = type.strokeWidth(pressure: st.points[i].z, base: w)
+                    let (nx, ny) = InkRender.perp(pts, i)
+                    let rnd = InkRender.jitter(st.points[i].x, st.points[i].y + pass.phase)
+                    let wob = (sin(Double(i) * 0.7 + pass.phase) * pass.amp + rnd * pass.amp * 0.7) * lw * Double(inkScale)
+                    let cur = CGPoint(x: pts[i].x + nx * CGFloat(wob), y: pts[i].y + ny * CGFloat(wob))
+                    if let p0 = prev {
+                        var seg = Path(); seg.move(to: p0); seg.addLine(to: cur)
+                        ctx.stroke(seg, with: .color(col),
+                                   style: StrokeStyle(lineWidth: CGFloat(max(0.7, lw * pass.wScale)) * inkScale,
+                                                      lineCap: .round, lineJoin: .round))
+                    }
+                    prev = cur
+                }
+            }
+
+        default:   // ballpoint / fountain
+            let n = pts.count
+            var lastMid = pts[0], lastPt = pts[0]
+            for i in 1..<pts.count {
+                let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
+                let lw = CGFloat(type.strokeWidth(pressure: st.points[i].z, base: w)
+                                 * type.fountainTaper(index: i, count: n)) * inkScale
+                var p = Path(); p.move(to: lastMid); p.addQuadCurve(to: mid, control: lastPt)
+                ctx.stroke(p, with: .color(color(st.color.a)),
+                           style: StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round))
+                lastMid = mid; lastPt = pts[i]
+            }
         }
+    }
+}
+
+// MARK: - 环形选笔盘
+
+/// 长按呼出的环形选笔盘（页锚定于笔尖处，纯显示——高亮由 Mac 端按笔位算好塞进 `radial.highlight`）。
+/// 各支笔沿环均布：0 号在正上方，顺时针排；高亮那支放大 + 强调描边。中心是取消区。
+private struct RadialMenuView: View {
+    let radial: RadialState
+    let pens: [PenPreset]
+    let size: CGSize
+
+    private let ringR: CGFloat = 92
+    private let pad: CGFloat = 34
+
+    var body: some View {
+        let side = (ringR + pad) * 2
+        let c = side / 2
+        let n = max(1, pens.count)
+        ZStack {
+            Circle().fill(.black.opacity(0.30))
+                .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 1))
+            Circle().fill(.white.opacity(radial.highlight < 0 ? 0.14 : 0.05))
+                .frame(width: 66, height: 66)   // 中心取消区（未指向任何笔时高亮）
+            ForEach(pens.indices, id: \.self) { i in
+                let ang = -Double.pi / 2 + Double(i) * 2 * .pi / Double(n)
+                penTip(pens[i], highlighted: i == radial.highlight)
+                    .position(x: c + CGFloat(cos(ang)) * ringR, y: c + CGFloat(sin(ang)) * ringR)
+            }
+        }
+        .frame(width: side, height: side)
+        .position(x: radial.cx * size.width, y: radial.cy * size.height)
+        .allowsHitTesting(false)
+        .transaction { $0.animation = nil }
+    }
+
+    @ViewBuilder private func penTip(_ pen: PenPreset, highlighted: Bool) -> some View {
+        let d: CGFloat = highlighted ? 46 : 34
+        ZStack {
+            Circle().fill(.white)
+            Circle().fill(pen.color.swiftUIColor)
+            Image(systemName: pen.type.systemImage)
+                .font(.system(size: highlighted ? 17 : 13, weight: .bold))
+                .foregroundStyle(contrastText(pen.color))
+        }
+        .frame(width: d, height: d)
+        .overlay(Circle().stroke(highlighted ? Color.accentColor : .white.opacity(0.55),
+                                 lineWidth: highlighted ? 3 : 1))
+        .shadow(color: .black.opacity(highlighted ? 0.35 : 0), radius: 4, y: 1)
+    }
+
+    private func contrastText(_ c: InkColor) -> Color {
+        let lum = (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) / 255
+        return lum > 0.62 ? .black : .white
     }
 }
