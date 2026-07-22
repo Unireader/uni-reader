@@ -158,6 +158,12 @@ struct ContentView: View {
         }
         .onChange(of: systemScheme) { _, s in if autoNightMode { nightMode = (s == .dark) } }
         .onChange(of: autoNightMode) { _, on in if on { nightMode = (systemScheme == .dark) } }
+        .onChange(of: workspace.documents) { _, docs in
+            // 选中文档被删除/合并掉后从列表消失（如「删除」）→ 清选中，阅读区回到空态。
+            if let id = selectedDocID, !docs.contains(where: { $0.id == id }) {
+                selectedDocID = nil
+            }
+        }
         .onChange(of: workspace.folder) { _, _ in
             // 切工作区：主动窗口切到新工作区一个打开文档；其他窗口丢弃失效选中（不额外开窗）。
             if isKeyWindow {
