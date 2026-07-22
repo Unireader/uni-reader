@@ -185,6 +185,6 @@ ContentView.readerColumn
 
 ## 10. 明确不做 / 后续
 
-- 文本选择/搜索/OCR：座位已留（`PageText.swift`/`TEXT-SEARCH-OCR-PLAN.md`），T1 起另做。
+- 文本选择/搜索/OCR：已完成，另见 `TODO.md` §T1/T2、§T3。
 - 链接点击、双击 smart-zoom：后续。
 - v1 的 §9 遗留问题（scrollTo 每帧跟手性、inset 原点标定）由本设计的仪表日志在真机一次性定标。

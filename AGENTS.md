@@ -17,7 +17,6 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `TODO.md` — 交接状态速览 + 已知坑，**第一优先**
 - `REQUIREMENTS.md` — 需求与 §8 工作区持久化方案
 - `PDF-VIEWER-REBUILD-PLAN.md` — 阅读区 v2（`PageStreamView`）的五条硬指标与零闪烁纪律
-- `TEXT-SEARCH-OCR-PLAN.md` — 文本层/OCR 预留骨架（勿重写，`附：关键契约` 已定别改）
 
 ## 红线（用户明确否决过，勿重走）
 

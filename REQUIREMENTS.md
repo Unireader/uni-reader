@@ -112,7 +112,7 @@
 | 模块 | 选型 | 理由 |
 |---|---|---|
 | UI | SwiftUI | 原生、开发快 |
-| PDF 渲染 | **自研页图流 `PageStreamView`**（SwiftUI `ScrollView` + 按页 `PDFPage.draw(.mediaBox)` 出图；仍用 PDFKit 的 `PDFDocument`/`PDFPage` 做解析与栅格化，只弃 `PDFView`） | `PDFView` 与 macOS 26 Liquid Glass safe-area/浮动侧栏不兼容（`PDFClipView` 私有居中缺陷，页面恒偏左，无公开 API 可修）。自绘换来原生玻璃观感 + 跨平台页图流统一；代价：文本选择/搜索用「文本层」补（见 `TEXT-SEARCH-OCR-PLAN.md`） |
+| PDF 渲染 | **自研页图流 `PageStreamView`**（SwiftUI `ScrollView` + 按页 `PDFPage.draw(.mediaBox)` 出图；仍用 PDFKit 的 `PDFDocument`/`PDFPage` 做解析与栅格化，只弃 `PDFView`） | `PDFView` 与 macOS 26 Liquid Glass safe-area/浮动侧栏不兼容（`PDFClipView` 私有居中缺陷，页面恒偏左，无公开 API 可修）。自绘换来原生玻璃观感 + 跨平台页图流统一；代价：文本选择/搜索另补（已完成，见 `TODO.md` §T1/T2） |
 | 本地存储 | SwiftData | Document / Group / Note 三张表，hash 唯一键 |
 | 手写笔画 | 自定义笔画模型（点 + 压感 + 时间偏移，Codable）+ 自绘 overlay | 需压感变宽 → 自绘渲染；若放弃压感可退回 PDFKit ink 注解（缩放/坐标全自动） |
 | 局域网服务 | Network framework (`NWListener` + `NWProtocolWebSocket`) | WS 握手/分帧系统内置；另写极简 HTTP 响应分发网页与页面图，不引入 Vapor |
@@ -156,7 +156,7 @@
   - ✅ **S3.5 笔迹持久化**（2026-07-20）：落工作区 SQLite `note` 表（kind=2，一笔=一行，`note.id==stroke.id`，page/归一化 anchor 走列，payload=JSON `{color,width,points[[x,y,pressure]]}`；**弃 SwiftData**）。`ContentView` `.onChange(session.strokes)` 增量对账 upsert/delete，重开 `loadInk` 恢复。测试 `spike/ink-store-test.swift` 21/21。
   - ⬜ **S5 长按切笔手势**：重压 + 静止 >2s；Mac 笔尖处进度环（>300ms 起）+ 切笔工具；那一笔**预测性立即清除**
 - ✅ **阅读区页图流 v2**（2026-07-20 重写完成，编译通过 + 4 组 spike 全绿，待用户真机手感验证）：v1 因缩放跳位/闪烁被删；v2 纯 SwiftUI 重写（`PageStreamView`+`PageLayout`+`PageBitmap`+`PageRenderEngine`+tick 版 `ScrollFollower`），pinch 双相锚定缩放、⌘±/⌘0、resize 冻结+原子 refit、自研虚拟化、高倍贴片、后台渲染+预缓存。设计与 spike 实测结论见 `PDF-VIEWER-REBUILD-PLAN.md`。
-- 🅿️ **文字搜索 / 文字选择 / 扫描版 OCR 预留架构**（2026-07-20 已落座位）：统一「页面文本层」`PageTextLayer`（native | ocr 同模型）+ `ocr_page` 缓存表(schema v3，`spike/ocr-store-test.swift` 15/15) + `OCRProvider` 可插拔（系统 Vision / 用户配 API）协议骨架。实现按 `TEXT-SEARCH-OCR-PLAN.md` 的 T1(原生文本+选择)→T2(搜索)→T3(OCR)。
+- ✅ **文字搜索 / 文字选择 / 扫描版 OCR**（2026-07-21 完成）：选择走 PDFKit 原生选择引擎（`PageGeometry.swift`），搜索复用 `PDFDocument.findString`（`TextSearch.swift`），OCR 接 Paddle PP-OCRv6（`PaddleOCR.swift`，`ocr_page` 缓存表 schema v3）。详见 `TODO.md` §T1/T2、§T3。
 - ⬜ **M3 三种笔记**：文字注解 / 会话笔记 / 手写笔记的编辑与渲染、重定位提示
 
 ## 7. 客户端页面显示与数据流（方案 B 现状，2026-07-20 对齐）
