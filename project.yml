@@ -1,6 +1,6 @@
 name: UniReader
 options:
-  bundleIdPrefix: com.xvan
+  bundleIdPrefix: tech.xvanturing
   createIntermediateGroups: true
   deploymentTarget:
     macOS: "26.0"
@@ -19,7 +19,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: UniReader
-        PRODUCT_BUNDLE_IDENTIFIER: com.xvan.UniReader
+        PRODUCT_BUNDLE_IDENTIFIER: tech.xvanturing.UniReader
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: UniReader
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.productivity"
