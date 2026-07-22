@@ -226,11 +226,16 @@ private struct ReaderSurface: View {
     private var contentH: CGFloat { (layout?.totalHeight ?? 1) * dispScale }
     private var pageX: CGFloat { (contentW - pageW) / 2 }
     private var paper: Color { nightMode ? Color(white: 0.10) : .white }
+    /// 页与页之间/未实化区域的底色（比 paper 略深，同亮色下"纸张浮在浅灰底"的观感）。
+    /// 夜间模式下若仍用系统默认底色（不随 nightMode 变——那是系统外观，与阅读区内切换是两回事），
+    /// 未出图区域会露出一块亮色，本该全黑的场景变成"黑纸配白底"。
+    private var voidColor: Color { nightMode ? Color(white: 0.06) : Color(nsColor: .windowBackgroundColor) }
 
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
             contentBody
         }
+        .background(voidColor)   // 页间空隙 / 未实化区域的底色，随夜间模式切换（否则露出系统默认亮底）
         // ⚠️ 关键：内容窄于容器(全窗宽)时，ScrollView 默认「水平居中」，居中内边距=(全窗宽−内容宽)/2 会被算进可滚区间
         //    → 把内容撑回全窗宽 > 真实视口(全窗宽−占位竖滚动条) → 常驻横条。靠首端对齐关掉居中；页面仍由 pageX 在内容内居中。
         .defaultScrollAnchor(.topLeading)
@@ -271,7 +276,7 @@ private struct ReaderSurface: View {
         }
         .overlay(alignment: .topLeading) { followTicker }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
-        .onChange(of: nightMode) { _, _ in scheduleSettleRender() }
+        .onChange(of: nightMode) { _, _ in scheduleNightRender() }
         .onChange(of: fullWidth) { _, _ in
             // fullWidth 到位前首帧已早退；到位后补跑首帧定基准+首次实化（消除启动窄→宽闪烁）。窗口真实缩放走 refit。
             if scratch.didInitialGeo { scheduleRefit() } else { geometryChanged(scratch.geo) }
@@ -520,7 +525,7 @@ private struct ReaderSurface: View {
         PageRenderEngine.shared.setWanted(wanted, client: scratch.clientID)
     }
 
-    /// settle（滚动/缩放/夜间稳定 0.15s）后：按精确宽重渲可见窗口 + 刷新贴片。
+    /// settle（滚动/缩放稳定 0.15s）后：按精确宽重渲可见窗口 + 刷新贴片。
     private func scheduleSettleRender() {
         scratch.settleWork?.cancel()
         let work = DispatchWorkItem { settleRender() }
@@ -528,7 +533,22 @@ private struct ReaderSurface: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
-    private func settleRender() {
+    /// 夜间模式切换稳定 0.15s 后：重渲可见窗口 + **动态预热当前页周边 `nightWarmRadius` 页**（见 settleRender）。
+    private func scheduleNightRender() {
+        scratch.settleWork?.cancel()
+        let work = DispatchWorkItem { settleRender(nightRadius: Self.nightWarmRadius) }
+        scratch.settleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    private static let nightWarmRadius = 10
+
+    /// `nightRadius>0`（仅夜间模式切换触发）时，在可见窗口之外**额外预热当前页 ± nightRadius 页**，
+    /// 按「离当前页近→远」顺序入队（渲染引擎单串行队列按提交序处理，近的先出图）——只翻夜间模式那一刻
+    /// 起效的页永远是当前正看的页，不会被"从第 1 页往下"排在后面；继续往外翻也大概率已在缓存里、不再现渲。
+    /// 只声明进渲染引擎的全局 LRU 缓存，**不写本地 `images`**：那些页不在 `realized` 里、没有 `PageCellView`
+    /// 承载，写了也用不上，还会绕开 `updateRealized` 的驱逐逻辑白占内存（本地 dict 强引用会拖住缓存该淘汰的图）。
+    private func settleRender(nightRadius: Int = 0) {
         guard let layout, let pdf = session.pdf, scratch.didInitialGeo else { return }
         scratch.basePixelW = currentBaseWidth()
         let w = scratch.basePixelW
@@ -544,7 +564,40 @@ private struct ReaderSurface: View {
             }
         }
         wanted.formUnion(refreshTiles(layout: layout, pdf: pdf))
+        if nightRadius > 0 {
+            wanted.formUnion(warmNeighborKeys(pdf: pdf, pageCount: layout.pageCount, width: w, radius: nightRadius))
+        }
         PageRenderEngine.shared.setWanted(wanted, client: scratch.clientID)
+    }
+
+    /// 当前页 ± radius 页（去掉已在 `realized` 内、已由上面处理的）的缓存预热键，按近→远顺序请求。
+    private func warmNeighborKeys(pdf: PDFDocument, pageCount: Int, width: Int, radius: Int) -> Set<String> {
+        let center = session.currentPageIndex
+        guard pageCount > 0 else { return [] }
+        let bounds = max(0, center - radius)...min(pageCount - 1, center + radius)
+        var keys = Set<String>()
+        for i in Self.centerOutOrder(center: center, radius: radius, bounds: bounds) where !realized.contains(i) {
+            guard let page = pdf.page(at: i) else { continue }
+            let key = baseKey(i, width: width)
+            keys.insert(key)
+            guard PageRenderEngine.shared.cached(key) == nil else { continue }
+            PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
+                                                  tileRect: nil, tileScale: 1, night: nightMode)) { _, _ in }
+        }
+        return keys
+    }
+
+    /// `center` 本身 → 距离 1 的两侧 → 距离 2 …，越界一侧跳过。用于渲染优先级：越靠近当前页越先出图。
+    private static func centerOutOrder(center: Int, radius: Int, bounds: ClosedRange<Int>) -> [Int] {
+        var order = [Int]()
+        if bounds.contains(center) { order.append(center) }
+        guard radius > 0 else { return order }
+        for d in 1...radius {
+            let lo = center - d, hi = center + d
+            if bounds.contains(lo) { order.append(lo) }
+            if bounds.contains(hi) { order.append(hi) }
+        }
+        return order
     }
 
     private func requestBase(key: String, page: PDFPage, index: Int, width: Int) {

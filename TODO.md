@@ -23,6 +23,12 @@
 
 （暂无）
 
+### 已修（2026-07-22）
+
+- **切换夜间模式慢，且离当前页越远越慢**：原实现夜间切换只借用滚动/缩放 settle 的 `realized`（视口±约 1 屏）小范围重渲，本身不该慢；但也没有为「切完立刻往下翻」预热任何缓存，翻页时仍要逐页现渲染（串行队列，CI 反色本身有开销）。改为夜间切换专属的 `scheduleNightRender()` → `settleRender(nightRadius: 10)`：在原有 `realized` 之外，**额外按「离当前页（`session.currentPageIndex`）近→远」的顺序预热 ±10 页**（`warmNeighborKeys`/`centerOutOrder`）——渲染引擎单串行队列按提交序处理，当前页永远最先出图，不会排在文档靠前页之后；预热只灌进渲染引擎的全局 LRU 缓存，**不写本地 `images` 字典**（那些页没有 `PageCellView` 承载，写了也用不上，还会绕开 `updateRealized` 的驱逐、白占内存）。
+- **未出图区域底色不随夜间模式变**：单页占位色 `paper` 早已按 nightMode 取深浅，但页与页间隙、未实化区域露出的是 `ScrollView` 自身默认底色（系统外观，与阅读区内的「夜间模式」按钮是两回事）——夜间模式下这块区域仍是亮色。加 `voidColor`（深色 `Color(white:0.06)` / 浅色回退系统 `windowBackgroundColor`）并 `.background()` 到 `ScrollView` 上。
+- **用户自测**：翻到一本较长 PDF 靠后的页，切夜间模式按钮 → 应立即变暗（含空白区域），无长时间卡顿；随后连续下翻数十页应基本无逐页现渲染的卡顿感。
+
 ### 已修（2026-07-21，第二批：交互/工程/设置）
 
 - **切换文件后阅读区空白、须拖窗口才显示**（`PageStreamView`）：切文档 `.id(docKey)` 重建 `ScrollView`，`onScrollGeometryChange` 在容器尺寸与旧文档相同时不重发首帧几何 → `didInitialGeo` 卡 false → 首屏只画 10×10 空白。修法：`geometryChanged` 在 scroll 几何缺席（`containerW≤0`）时用外层 GeometryReader 的 `unobSize` 兜底填容器尺寸（**仅供实化窗口/偏移，绝不参与宽度/fit 决策**，不违反宽度反馈环红线）；`onAppear`(layout 就绪)/`fullWidth` onChange/`unobSize` onChange **三路兜底 bootstrap**，谁最后到位谁触发，不再单靠 onScrollGeometryChange。日志 `[RD] bootstrap ... via scrollGeo|unobSize`。
