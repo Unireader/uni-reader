@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 
 PROJECT_YML="project.yml"
 SCHEME="UniReader"
-NOTARY_PROFILE="${NOTARY_PROFILE:-UniReader-Notary}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-noticky-notary}"
 BUILD_DIR="build"
 ARCHIVE_PATH="$BUILD_DIR/UniReader.xcarchive"
 EXPORT_DIR="$BUILD_DIR/export"
