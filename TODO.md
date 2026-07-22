@@ -69,6 +69,7 @@
 - **运行时验证**：建库/schema/meta/WAL、`sqlite3` 直读、**v1→v2 迁移**、**32/32 DAO 测试**（`spike/store-test.swift`）。
 - **多窗口 + 会话恢复（2026-07-20）**：方案 2（多个完整工作区窗口，⌘N）+ 侧栏右键「在新窗口打开」（`WindowGroup(id:"docWindow", for:String)` + `openWindow(value:)`）。打开文档集实时存 `meta.open_documents`（JSON，随文件夹走）；启动首窗恢复整组（其余各开一窗，`AppModel.didRestoreInitial` 防重复）。**（2026-07-21 更新）** `open_documents` = **当前所有窗口的文档集**（`openDocs`/`syncOpenDocs`，见上「会话恢复=打开集语义」）：cmd+w 逐个移除、最后一个窗口/cmd+q 退出不移除（`AppDelegate.isTerminating` 区分）；`restoreSession` 恢复窗口上限 5（主窗口+4，安全上限）。`AppModel`/`WorkspaceManager` App 级单例，全窗口共享 WS/LANServer，平板跟随激活窗口；**单实例 last-wins**（新进程终止旧进程接管，见「已修 2026-07-21」）。
 - **待补**：① 旧 SwiftData 数据不迁移（需重新导入）；② ✅ 手写笔迹已落 `note` 表（见下方专节）；③ 合并的「拆分」逆操作暂无；④ meta 里 `last_document_id` 是旧单文档设计的残留键（已弃用不读，无害）。
+- **✅ 外部文件同盘相对路径（2026-07-22，schema v6）**：导入/重定位外部 PDF（未拷入工作区）时，若其路径与工作区文件夹**同属一块可移动/外置卷**（`URLResourceKey.volumeIsInternal==false`，如移动硬盘/外置 SSD；**不判 removable/ejectable**——同款外置 SSD 实测这两个 key 常是 false，只有 `volumeIsInternal` 可靠区分，`/Volumes/SSD` 本机验证过），改存**相对工作区文件夹的路径**（`location.is_relative=1`，可含 `..`，如 `../Papers/foo.pdf`）而非绝对路径；换电脑插上同一块盘（挂载点从 `/Volumes/X` 变 `/Volumes/X 1` 之类）依然能解析到文件。系统内置盘不做此处理（挂载点恒定，绝对路径已够用，且相对化反而会在「只挪工作区文件夹、不挪源文件」时失效）。Inspector「文件」列表新增 **同盘相对路径** 徽章区分。**用户自测**：工作区放外置盘上，从同一块盘的其它目录导入一个不拷贝进工作区的 PDF → Inspector 应显示「同盘相对路径」徽章；把盘换个挂载名重插（或换电脑插上）→ 该文档应仍能自动找到、无需重新关联。
 
 ## ✅ T1/T2 文字选择 / 全文搜索（2026-07-21 完成）
 

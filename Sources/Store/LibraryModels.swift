@@ -28,8 +28,9 @@ struct LibVariant: Identifiable, Equatable {
 }
 
 /// 一个物理路径（移动/复制产生多条）。非沙盒 + 跨平台 → 不存 macOS security-scoped bookmark。
-/// `inWorkspace=true` 时 `path` 为**工作区相对路径**（如 `PDFs/xxx.pdf`），随文件夹移动仍有效；
-/// 否则为绝对路径（外部文件）。
+/// `inWorkspace=true` 时 `path` 为**工作区相对路径**（如 `PDFs/xxx.pdf`），随文件夹移动仍有效。
+/// `isRelative=true` 时 `path` 也是**相对工作区文件夹**的路径（可含 `..`）——外部文件但与工作区
+/// 同属一块可移动卷（移动硬盘等）时使用，换机器/换挂载点仍可解析；否则为绝对路径。
 struct LibLocation: Identifiable, Equatable {
     var id: String              // UUID
     var variantId: String
@@ -37,6 +38,7 @@ struct LibLocation: Identifiable, Equatable {
     var isValid: Bool
     var lastValidatedAt: Date?
     var inWorkspace: Bool = false
+    var isRelative: Bool = false
 }
 
 /// 笔记（挂逻辑文档，全版本共用）。payload 为 JSON（跨平台可读）。

@@ -114,6 +114,7 @@ struct InspectorView: View {
                         HStack(spacing: 6) {
                             Text(URL(fileURLWithPath: l.path).lastPathComponent).font(.callout).lineLimit(1)
                             if l.inWorkspace { badge(L("In Workspace"), .green) }
+                            else if l.isRelative { badge(L("Same Drive"), .blue) }
                             if !l.isValid { badge(L("Missing"), .orange) }
                             Spacer()
                             Text(String((hashByVar[l.variantId] ?? "").prefix(8)))

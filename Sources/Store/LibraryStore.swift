@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 5
+    static let schemaVersion = 6
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -68,6 +68,8 @@ final class LibraryStore {
         try addColumnIfMissing("document", "read_zoom", "REAL NOT NULL DEFAULT 1")
         // v4 → v5：记住上次横向滚动比例（offsetX / pageW，缩放态才非 0）。
         try addColumnIfMissing("document", "read_hfrac", "REAL NOT NULL DEFAULT 0")
+        // v5 → v6：外部文件与工作区同盘（移动硬盘等）时，path 存工作区相对路径而非绝对路径。
+        try addColumnIfMissing("location", "is_relative", "INTEGER NOT NULL DEFAULT 0")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -142,13 +144,13 @@ final class LibraryStore {
     }
     /// 给已有文档添加一个新版本（重定位到内容不同但用户认定为同一文档的文件时用）。
     @discardableResult
-    func addVariant(documentId: String, hash: String, pageCount: Int, path: String, inWorkspace: Bool = false) throws -> LibVariant {
+    func addVariant(documentId: String, hash: String, pageCount: Int, path: String, inWorkspace: Bool = false, isRelative: Bool = false) throws -> LibVariant {
         let now = Date.now, varId = UUID().uuidString
         try db.transaction {
             try db.run("INSERT INTO variant(id,document_id,content_hash,page_count,added_at) VALUES(?,?,?,?,?)",
                        [.text(varId), .text(documentId), .text(hash), .int(Int64(pageCount)), .text(ISO.string(now))])
-            try db.run("INSERT INTO location(id,variant_id,path,is_valid,last_validated_at,in_workspace) VALUES(?,?,?,1,?,?)",
-                       [.text(UUID().uuidString), .text(varId), .text(path), .text(ISO.string(now)), .int(inWorkspace ? 1 : 0)])
+            try db.run("INSERT INTO location(id,variant_id,path,is_valid,last_validated_at,in_workspace,is_relative) VALUES(?,?,?,1,?,?,?)",
+                       [.text(UUID().uuidString), .text(varId), .text(path), .text(ISO.string(now)), .int(inWorkspace ? 1 : 0), .int(isRelative ? 1 : 0)])
         }
         return LibVariant(id: varId, documentId: documentId, contentHash: hash, pageCount: pageCount, addedAt: now)
     }
@@ -178,11 +180,11 @@ final class LibraryStore {
         """, [.text(documentId)]).map(Self.location)
     }
     @discardableResult
-    func addLocation(variantId: String, path: String, inWorkspace: Bool) throws -> LibLocation {
+    func addLocation(variantId: String, path: String, inWorkspace: Bool, isRelative: Bool = false) throws -> LibLocation {
         let id = UUID().uuidString, now = Date.now
-        try db.run("INSERT INTO location(id,variant_id,path,is_valid,last_validated_at,in_workspace) VALUES(?,?,?,1,?,?)",
-                   [.text(id), .text(variantId), .text(path), .text(ISO.string(now)), .int(inWorkspace ? 1 : 0)])
-        return LibLocation(id: id, variantId: variantId, path: path, isValid: true, lastValidatedAt: now, inWorkspace: inWorkspace)
+        try db.run("INSERT INTO location(id,variant_id,path,is_valid,last_validated_at,in_workspace,is_relative) VALUES(?,?,?,1,?,?,?)",
+                   [.text(id), .text(variantId), .text(path), .text(ISO.string(now)), .int(inWorkspace ? 1 : 0), .int(isRelative ? 1 : 0)])
+        return LibLocation(id: id, variantId: variantId, path: path, isValid: true, lastValidatedAt: now, inWorkspace: inWorkspace, isRelative: isRelative)
     }
     func removeLocation(id: String) throws { try db.run("DELETE FROM location WHERE id=?", [.text(id)]) }
 
@@ -192,9 +194,9 @@ final class LibraryStore {
     /// - hash 已知 → 复用其 document/variant，并确保 path 作为 location 存在。
     /// - hash 未知 → 新建 document + variant + location。
     @discardableResult
-    func findOrCreate(hash: String, title: String, pageCount: Int, path: String) throws -> (document: LibDocument, variant: LibVariant) {
+    func findOrCreate(hash: String, title: String, pageCount: Int, path: String, isRelative: Bool = false) throws -> (document: LibDocument, variant: LibVariant) {
         if let v = try variant(hash: hash) {
-            try ensureLocation(variantId: v.id, path: path)
+            try ensureLocation(variantId: v.id, path: path, isRelative: isRelative)
             try updateLastOpened(documentId: v.documentId)
             let doc = try document(id: v.documentId) ?? { throw SQLiteError.step("variant 指向的 document 缺失") }()
             return (doc, v)
@@ -206,8 +208,8 @@ final class LibraryStore {
                        [.text(docId), .text(title), .int(Int64(pageCount)), .text(ISO.string(now)), .text(ISO.string(now))])
             try db.run("INSERT INTO variant(id,document_id,content_hash,page_count,added_at) VALUES(?,?,?,?,?)",
                        [.text(varId), .text(docId), .text(hash), .int(Int64(pageCount)), .text(ISO.string(now))])
-            try db.run("INSERT INTO location(id,variant_id,path,is_valid,last_validated_at) VALUES(?,?,?,1,?)",
-                       [.text(UUID().uuidString), .text(varId), .text(path), .text(ISO.string(now))])
+            try db.run("INSERT INTO location(id,variant_id,path,is_valid,last_validated_at,is_relative) VALUES(?,?,?,1,?,?)",
+                       [.text(UUID().uuidString), .text(varId), .text(path), .text(ISO.string(now)), .int(isRelative ? 1 : 0)])
         }
         let doc = LibDocument(id: docId, title: title, pageCount: pageCount, addedAt: now, lastOpenedAt: now, sortOrder: 0)
         let v = LibVariant(id: varId, documentId: docId, contentHash: hash, pageCount: pageCount, addedAt: now)
@@ -215,15 +217,15 @@ final class LibraryStore {
     }
 
     /// 确保某 variant 下存在该路径的 location（去重）。
-    private func ensureLocation(variantId: String, path: String) throws {
+    private func ensureLocation(variantId: String, path: String, isRelative: Bool = false) throws {
         let exists = try db.query("SELECT id FROM location WHERE variant_id=? AND path=?",
                                   [.text(variantId), .text(path)]).first != nil
         if exists {
             try db.run("UPDATE location SET is_valid=1, last_validated_at=? WHERE variant_id=? AND path=?",
                        [.text(ISO.string(.now)), .text(variantId), .text(path)])
         } else {
-            try db.run("INSERT INTO location(id,variant_id,path,is_valid,last_validated_at) VALUES(?,?,?,1,?)",
-                       [.text(UUID().uuidString), .text(variantId), .text(path), .text(ISO.string(.now))])
+            try db.run("INSERT INTO location(id,variant_id,path,is_valid,last_validated_at,is_relative) VALUES(?,?,?,1,?,?)",
+                       [.text(UUID().uuidString), .text(variantId), .text(path), .text(ISO.string(.now)), .int(isRelative ? 1 : 0)])
         }
     }
 
@@ -330,7 +332,8 @@ final class LibraryStore {
                     path: r["path"] as? String ?? "",
                     isValid: (r["is_valid"] as? Int64 ?? 0) != 0,
                     lastValidatedAt: ISO.date(r["last_validated_at"] as? String),
-                    inWorkspace: (r["in_workspace"] as? Int64 ?? 0) != 0)
+                    inWorkspace: (r["in_workspace"] as? Int64 ?? 0) != 0,
+                    isRelative: (r["is_relative"] as? Int64 ?? 0) != 0)
     }
     private static func note(_ r: [String: Any]) -> LibNote {
         LibNote(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String ?? "",

@@ -56,6 +56,7 @@
 "Last Opened" = "最近打开";
 "Files" = "文件";
 "In Workspace" = "工作区内";
+"Same Drive" = "同盘相对路径";
 "Missing" = "已失效";
 "Delete this workspace copy" = "删除此工作区副本";
 "Remove this file entry" = "移除此文件条目";

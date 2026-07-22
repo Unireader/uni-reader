@@ -115,7 +115,8 @@ final class WorkspaceManager: ObservableObject {
     @discardableResult
     func ingest(path: String, hash: String, title: String, pageCount: Int) -> LibDocument? {
         guard let store, !hash.isEmpty else { return nil }
-        let res = try? store.findOrCreate(hash: hash, title: title, pageCount: pageCount, path: path)
+        let stored = externalStorage(for: path)
+        let res = try? store.findOrCreate(hash: hash, title: title, pageCount: pageCount, path: stored.path, isRelative: stored.isRelative)
         refresh()
         return res?.document
     }
@@ -124,10 +125,43 @@ final class WorkspaceManager: ObservableObject {
     func rename(documentId: String, title: String) { try? store?.rename(documentId: documentId, title: title); refresh() }
     func document(id: String) -> LibDocument? { documents.first { $0.id == id } }
 
-    /// location 的实际绝对路径：工作区内的存相对路径（随文件夹移动仍有效），外部的存绝对路径。
+    /// location 的实际绝对路径：工作区内副本 / 与工作区同盘的外部文件都存相对路径（随文件夹或整块
+    /// 移动硬盘一起移动仍有效）；其余外部文件存绝对路径。
     func resolvedPath(_ loc: LibLocation) -> String {
-        guard loc.inWorkspace, let folder else { return loc.path }
-        return folder.appendingPathComponent(loc.path).path
+        guard (loc.inWorkspace || loc.isRelative), let folder else { return loc.path }
+        return folder.appendingPathComponent(loc.path).standardizedFileURL.path
+    }
+
+    /// 外部（非拷入工作区）文件入库前的路径归一化：与工作区文件夹同属一块**可移动卷**（移动硬盘等）
+    /// 时改存相对路径——换电脑/换挂载点（如 `/Volumes/MyDrive` 变 `/Volumes/MyDrive 1`）仍能解析；
+    /// 系统内置盘挂载点稳定，绝对路径已够可靠，故不处理（避免「只挪工作区文件夹不挪源文件」时反而失效）。
+    private func externalStorage(for absolutePath: String) -> (path: String, isRelative: Bool) {
+        guard let folder else { return (absolutePath, false) }
+        let fileURL = URL(fileURLWithPath: absolutePath)
+        guard Self.sharedRemovableVolume(folder, fileURL),
+              let rel = Self.relativePath(from: folder, to: fileURL) else { return (absolutePath, false) }
+        return (rel, true)
+    }
+
+    /// 两个路径是否同属一块可移动/外置卷（非系统内置盘）。
+    private static func sharedRemovableVolume(_ a: URL, _ b: URL) -> Bool {
+        guard let ra = try? a.resourceValues(forKeys: [.volumeURLKey, .volumeIsInternalKey]),
+              let rb = try? b.resourceValues(forKeys: [.volumeURLKey]),
+              let volA = ra.allValues[.volumeURLKey] as? URL,
+              let volB = rb.allValues[.volumeURLKey] as? URL, volA == volB else { return false }
+        return (ra.allValues[.volumeIsInternalKey] as? Bool) == false
+    }
+
+    /// 从 base（工作区文件夹）指向 target（外部文件）的相对路径，可含 `..`。两者须为绝对路径。
+    private static func relativePath(from base: URL, to target: URL) -> String? {
+        let baseComps = base.standardizedFileURL.pathComponents
+        let targetComps = target.standardizedFileURL.pathComponents
+        guard baseComps.first == "/", targetComps.first == "/" else { return nil }
+        var shared = 0
+        let n = min(baseComps.count, targetComps.count)
+        while shared < n && baseComps[shared] == targetComps[shared] { shared += 1 }
+        let combined = Array(repeating: "..", count: baseComps.count - shared) + targetComps[shared...]
+        return combined.isEmpty ? nil : combined.joined(separator: "/")
     }
 
     /// 打开某逻辑文档：跨其所有版本探测第一个仍存在的物理文件（**优先工作区内副本**），
@@ -211,10 +245,11 @@ final class WorkspaceManager: ObservableObject {
     /// 重新关联失效文档到用户新选的文件（已算好 hash）。hash 命中已有版本 → 加路径；否则 → 作为该文档新版本。
     func relocate(documentId: String, path: String, hash: String, pageCount: Int) {
         guard let store, !hash.isEmpty else { return }
+        let stored = externalStorage(for: path)
         if let v = try? store.variant(hash: hash) {
-            _ = try? store.addLocation(variantId: v.id, path: path, inWorkspace: false)
+            _ = try? store.addLocation(variantId: v.id, path: stored.path, inWorkspace: false, isRelative: stored.isRelative)
         } else {
-            _ = try? store.addVariant(documentId: documentId, hash: hash, pageCount: pageCount, path: path)
+            _ = try? store.addVariant(documentId: documentId, hash: hash, pageCount: pageCount, path: stored.path, isRelative: stored.isRelative)
         }
         refresh()
     }
