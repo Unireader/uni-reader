@@ -56,11 +56,12 @@ final class AppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // 新平板连接 → 补发文档列表、当前页、收藏笔列表。
+        // 新平板连接 → 补发文档列表、当前页、收藏笔列表、当前阅读位置。
         server.$clientCount
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastStrokes()
+                self?.pushCurrentViewport()   // 必须在 pushLayout 之后：平板端收到 layout 会重置滚动/seq
             }
             .store(in: &cancellables)
 
@@ -381,6 +382,7 @@ final class AppModel: ObservableObject {
         padSelectedSessionID = idString.isEmpty ? nil : UUID(uuidString: idString)
         push()
         broadcastDocs()
+        pushCurrentViewport()   // 平板切文档后落到该文档在 Mac 端的当前进度
     }
 
     /// 广播打开中的文档列表给平板。
@@ -437,10 +439,21 @@ final class AppModel: ObservableObject {
         ])
     }
 
-    /// Mac 用户滚动 → 广播视口锚点给平板（origin=mac 才发，避免与平板回传成环）。
+    /// Mac 侧导航 → 广播视口锚点给平板。origin=pad 不回发（避免与平板回传成环）；
+    /// 其余来源（mac 滚动 / toc 跳转 / search 命中 / restore 进度恢复 / sim）都是 Mac 侧位置变化，统一下发。
     func macScrolled(_ s: DocSession) {
         guard server.isRunning, s.id == padSession?.id,
-              let a = s.scrollAnchor, a.origin == "mac" else { return }
+              let a = s.scrollAnchor, a.origin != "pad" else { return }
         server.broadcast(["type": "viewport", "page": a.page, "frac": a.frac, "seq": a.seq])
+    }
+
+    /// 把平板当前会话的阅读位置补发给平板（force 绕过平板端 seq 去重，seq 可能早已应用过）。
+    /// 用于新平板连接、平板切换文档后，让平板立即落到 Mac 当前进度，而不是停在第 1 页。
+    func pushCurrentViewport() {
+        guard server.isRunning, let s = padSession else { return }
+        let page = s.scrollAnchor?.page ?? s.currentPageIndex
+        let frac = s.scrollAnchor?.frac ?? 0
+        guard page > 0 || frac > 0 else { return }   // 本来就在第 1 页顶部，无需下发
+        server.broadcast(["type": "viewport", "page": page, "frac": frac, "force": true])
     }
 }

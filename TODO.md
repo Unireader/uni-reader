@@ -29,6 +29,12 @@
 - **夜间模式切换仍有问题**（2026-07-22 用户反馈，2026-07-22 当天早些时候的「切换夜间模式慢」修复未彻底解决）：
   具体现象用户尚未展开描述，先记录，后续统一排查处理（不要假设就是同一个根因，需要重新问清楚复现步骤）。
 
+### 已修（2026-07-23）
+
+- **pad 打开后停在第 1 页、不跳 Mac 当前进度；TOC/搜索跳转 pad 也不同步**：`macScrolled` 原来只放行 `origin=="mac"` 的锚点，restore/search/toc 等 Mac 侧导航一律被过滤；且新平板连接时只补发 layout/docs/pens/strokes，从不发当前视口。修法：① `macScrolled` 改为 `origin != "pad"` 统一下发（回环风险只有 pad 来源，`maybeEmit` 有 `follower.isSuppressing` 守卫不会回声）；② 新增 `AppModel.pushCurrentViewport()`（带 `force` 标志绕过 pad 端 seq 去重），在新平板连接（`clientCount` sink，必须在 `pushLayout` 之后）和 `selectPadDoc` 切档后补发当前位置；③ pad 端 `applyViewport` 支持 `force`（不更新 vpSeq，避免与后续真实锚点 seq 冲突）。
+- **pad 翻页按钮卡死（按一次后「下一页」永久失效、「上一页」连跳两页）**：根因是 `topVisiblePage`/`emitScroll` 的边界判断 `scrollY <= offY[i]+dispH[i]+GAP`——`turn()`/`applyViewport()` 都把 scrollY 精确落在某页顶部（=上页底+GAP），等号成立导致误算成上一页，`turn("next")` 目标=当前页原地不动。改严格 `<` 后验证：连续 next/prev 逐页正常、scroll 上报页码正确、seq 去重不受影响（Playwright + mock WS 实测）。
+- **pad 翻页按钮在 layout 未到时按下会把 scrollY 置 NaN 整页卡死**：`turn()` 加 `pageCount/offY` 空值守卫。
+
 ### 已修（2026-07-22）
 
 - **切换夜间模式慢，且离当前页越远越慢**：原实现夜间切换只借用滚动/缩放 settle 的 `realized`（视口±约 1 屏）小范围重渲，本身不该慢；但也没有为「切完立刻往下翻」预热任何缓存，翻页时仍要逐页现渲染（串行队列，CI 反色本身有开销）。改为夜间切换专属的 `scheduleNightRender()` → `settleRender(nightRadius: 10)`：在原有 `realized` 之外，**额外按「离当前页（`session.currentPageIndex`）近→远」的顺序预热 ±10 页**（`warmNeighborKeys`/`centerOutOrder`）——渲染引擎单串行队列按提交序处理，当前页永远最先出图，不会排在文档靠前页之后；预热只灌进渲染引擎的全局 LRU 缓存，**不写本地 `images` 字典**（那些页没有 `PageCellView` 承载，写了也用不上，还会绕开 `updateRealized` 的驱逐、白占内存）。

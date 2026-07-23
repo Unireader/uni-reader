@@ -260,7 +260,7 @@
               reportPending = false;
               var docY = scrollY;
               for (var i = 0; i < pageCount; i++) {
-                if (docY <= offY[i] + dispH[i] + GAP) {
+                if (docY < offY[i] + dispH[i] + GAP) {   // 严格 <，与 topVisiblePage 同一边界
                   send({ type: "scroll", page: i, frac: clamp((docY - offY[i]) / Math.max(1, dispH[i]), 0, 1), t: performance.now() });
                   return;
                 }
@@ -268,7 +268,9 @@
             });
           }
           function topVisiblePage() {
-            for (var i = 0; i < pageCount; i++) if (scrollY <= offY[i] + dispH[i] + GAP) return i;
+            // 严格 <：翻到某页正顶部时（offY[i] == 上页底+GAP）必须算本页，
+            // 否则「下一页」按了原地不动、「上一页」连跳两页。
+            for (var i = 0; i < pageCount; i++) if (scrollY < offY[i] + dispH[i] + GAP) return i;
             return Math.max(0, pageCount - 1);
           }
           function updatePageLabel() {
@@ -279,10 +281,13 @@
             updatePageLabel();
           }
           // 收到 Mac 视口 → 程序化滚到该(页,纵向比例)，不回发。
+          // force=1（新连接/切文档后的初始进度同步）绕过 seq 去重——该锚点的 seq 可能早就用过。
           function applyViewport(o) {
             if (activeId !== null) return;              // 正在写，忽略
             cancelMomentum();                           // Mac 下发视口 → 停止本地惯性，避免抢位
-            if ((o.seq || 0) <= vpSeq) return; vpSeq = o.seq || 0;
+            if (!o.force) {
+              if ((o.seq || 0) <= vpSeq) return; vpSeq = o.seq || 0;
+            }
             var p = o.page || 0, f = o.frac || 0;
             if (p >= pageCount) return;
             scrollY = clamp(offY[p] + f * dispH[p], 0, maxScrollY);
@@ -576,6 +581,7 @@
           }
           // 翻页按钮：滚到相邻页顶部（并上报，Mac 跟随）。
           function turn(dir) {
+            if (!pageCount || !offY.length) return;   // layout 未到时按了会把 scrollY 置成 NaN，整页卡死
             var i = clamp(topVisiblePage() + (dir === "prev" ? -1 : 1), 0, Math.max(0, pageCount - 1));
             scrollY = clamp(offY[i], 0, maxScrollY);
             ensureImages(); drawAll(); updatePageLabel(); emitScroll();
