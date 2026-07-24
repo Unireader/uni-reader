@@ -1275,8 +1275,8 @@ private struct PageCellView: View {
             // 平板笔尖光标（页锚定，纯位置指示）：压在墨迹/图钉之上、随页滚动。仅显示、不挡点击。
             if let hover {
                 Circle()
-                    .stroke(Color.accentColor, lineWidth: 1.5)
-                    .frame(width: 7, height: 7)
+                    .stroke(Color.accentColor, lineWidth: 2)
+                    .frame(width: 10, height: 10)
                     .position(x: hover.nx * size.width, y: hover.ny * size.height)
                     .allowsHitTesting(false)
             }
