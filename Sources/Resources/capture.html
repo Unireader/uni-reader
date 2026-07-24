@@ -531,21 +531,36 @@
           }, 1000);
 
           // ---- WebSocket ----
-          var ws, pingTimer = null;
+          var ws, pingTimer = null, lastPong = 0, retryTimer = null, retryDelay = 1500;
           function send(o) { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(o)); upCount++; } }
           function connect() {
+            if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;   // 已有活连接/正在连，不重复建
+            if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
             ws = new WebSocket("ws://" + location.hostname + ":" + PORT + "/");
             ws.onopen = function () { ws.send(JSON.stringify({ type: "auth", token: TOKEN })); };
             ws.onmessage = function (e) { try { onMsg(JSON.parse(e.data)); } catch (x) {} };
+            ws.onerror = function () { try { ws.close(); } catch (x) {} };   // 出错统一走 onclose → 重连
             ws.onclose = function () {
+              if (this !== ws) return;   // 旧实例的迟到事件，别清掉新连接的状态
               el("dot").className = "";
               if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
-              setTimeout(connect, 1500);
+              scheduleRetry();
             };
+          }
+          // 自动重连：1.5s 起步、翻倍退避封顶 10s；authOK 后重置。重连后 Mac 会补发全量状态（文档/页面/笔迹）。
+          function scheduleRetry() {
+            if (retryTimer) return;
+            retryTimer = setTimeout(function () { retryTimer = null; connect(); }, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 10000);
           }
           function startPing() {
             if (pingTimer) return;
-            pingTimer = setInterval(function () { send({ type: "ping", t: Date.now() }); }, 1000);
+            lastPong = Date.now(); retryDelay = 1500;
+            pingTimer = setInterval(function () {
+              // 看门狗：半开连接（锁屏/切网/Mac 睡眠后 onclose 迟迟不触发）5s 无 pong 即杀掉重连
+              if (Date.now() - lastPong > 5000) { try { ws.close(); } catch (x) {} scheduleRetry(); return; }
+              send({ type: "ping", t: Date.now() });
+            }, 1000);
             send({ type: "ping", t: Date.now() });
           }
           function onMsg(o) {
@@ -554,7 +569,7 @@
               el("dot").className = "on"; startPing();
               send({ type: "mode", mode: curMode() }); send({ type: "pen", index: penIdx });   // 连接即同步当前工具状态给 Mac
             }
-            else if (o.type === "pong") { var rtt = Date.now() - (o.t || 0); rtts.push(rtt); if (rtts.length > 40) rtts.shift(); send({ type: "latency", ms: rtt }); }
+            else if (o.type === "pong") { lastPong = Date.now(); var rtt = Date.now() - (o.t || 0); rtts.push(rtt); if (rtts.length > 40) rtts.shift(); send({ type: "latency", ms: rtt }); }
             else if (o.type === "layout") { setLayout(o); }
             else if (o.type === "viewport") { applyViewport(o); }
             else if (o.type === "docs") { setDocs(o); }
@@ -609,6 +624,13 @@
           el("docs").addEventListener("change", function () { send({ type: "selectDoc", id: el("docs").value }); });
           el("lat").addEventListener("click", function () { statsOn = !statsOn; el("stats").className = statsOn ? "on" : ""; });
           window.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+          // 回前台/网络恢复：立即检查连接，断了马上重连（不等退避计时器）；假活（5s 无 pong）杀掉重连。
+          document.addEventListener("visibilitychange", function () {
+            if (document.hidden) return;
+            if (!ws || ws.readyState > 1) connect();
+            else if (ws.readyState === 1 && Date.now() - lastPong > 5000) { try { ws.close(); } catch (x) {} scheduleRetry(); }
+          });
+          window.addEventListener("online", function () { connect(); });
 
           updateHud(); relayout(); connect();
         })();
