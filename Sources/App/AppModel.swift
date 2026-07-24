@@ -145,6 +145,18 @@ final class AppModel: ObservableObject {
                 let page = (obj["page"] as? NSNumber)?.intValue ?? s.currentPageIndex
                 inkErase(points(obj["pts"]), page: page)
             }
+        case "probe":
+            // 擦除/翻页模式下的平行探针流：不落墨，只驱动长按检测/环形盘（pad 本地擦除/平移照跑）。
+            let phase = obj["phase"] as? String ?? ""
+            if phase == "begin" {
+                let page = (obj["page"] as? NSNumber)?.intValue ?? s.currentPageIndex
+                beginLongPressWatch(page: page, first: points(obj["pts"]).first)
+            } else if phase == "move" {
+                let pts = points(obj["pts"])
+                if inRadial { updateRadial(pts.last) } else { checkLongPressMovement(pts.last) }
+            } else if phase == "end" {
+                endInkOrRadial()
+            }
         case "hover":
             if (obj["phase"] as? String) == "end" {
                 s.hover = nil
@@ -197,7 +209,8 @@ final class AppModel: ObservableObject {
         server.broadcast(["type": "inkCancel"])
     }
 
-    /// 环形盘打开时，笔移 → 按角度算指向第几支笔（页比例换算成屏幕角度，含长宽比校正）。
+    /// 环形盘打开时，笔移 → 按角度算指向第几项（页比例换算成屏幕角度，含长宽比校正）。
+    /// 环上项 = 各支笔（0..<pens.count）+ 橡皮擦（pens.count）+ 小手翻页（pens.count+1）。
     private func updateRadial(_ last: SIMD3<Double>?) {
         guard var r = padSession?.radial, let p = last, !pens.isEmpty else { return }
         let dx = p.x - r.cx, dy = p.y - r.cy
@@ -207,7 +220,7 @@ final class AppModel: ObservableObject {
             let aspect = currentPageAspect(page: r.page)   // pageH/pageW
             var ang = atan2(dy * aspect, dx) + .pi / 2      // 从正上方起、顺时针
             if ang < 0 { ang += 2 * .pi }
-            let n = pens.count
+            let n = pens.count + 2   // + 橡皮擦 + 小手
             r.highlight = Int((ang / (2 * .pi) * Double(n)).rounded()) % n
         }
         if r != padSession?.radial { padSession?.radial = r }
@@ -218,8 +231,14 @@ final class AppModel: ObservableObject {
         longPressWork?.cancel(); longPressWork = nil
         padSession?.pressRing = nil
         if inRadial {
-            if let r = padSession?.radial, r.highlight >= 0, pens.indices.contains(r.highlight) {
-                applyPenSelection(index: r.highlight)
+            if let r = padSession?.radial, r.highlight >= 0 {
+                if r.highlight < pens.count {
+                    applyPenSelection(index: r.highlight)   // 选笔 → 顺带回笔记模式
+                } else if r.highlight == pens.count {
+                    setPadMode("erase")
+                } else if r.highlight == pens.count + 1 {
+                    setPadMode("page")
+                }
             }
             padSession?.radial = nil
         } else {

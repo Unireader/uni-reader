@@ -1391,7 +1391,8 @@ private struct PageCellView: View {
 // MARK: - 环形选笔盘
 
 /// 长按呼出的环形选笔盘（页锚定于笔尖处，纯显示——高亮由 Mac 端按笔位算好塞进 `radial.highlight`）。
-/// 各支笔沿环均布：0 号在正上方，顺时针排；高亮那支放大 + 强调描边。中心是取消区。
+/// 环上项 = 各支笔（0..<pens.count）+ 橡皮擦（pens.count）+ 小手翻页（pens.count+1）：
+/// 0 号在正上方，顺时针排；高亮那项放大 + 强调描边。中心是取消区。
 private struct RadialMenuView: View {
     let radial: RadialState
     let pens: [PenPreset]
@@ -1403,16 +1404,20 @@ private struct RadialMenuView: View {
     var body: some View {
         let side = (ringR + pad) * 2
         let c = side / 2
-        let n = max(1, pens.count)
+        let n = max(1, pens.count + 2)
         ZStack {
             Circle().fill(.black.opacity(0.30))
                 .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 1))
             Circle().fill(.white.opacity(radial.highlight < 0 ? 0.14 : 0.05))
-                .frame(width: 66, height: 66)   // 中心取消区（未指向任何笔时高亮）
-            ForEach(pens.indices, id: \.self) { i in
+                .frame(width: 66, height: 66)   // 中心取消区（未指向任何项时高亮）
+            ForEach(0..<n, id: \.self) { i in
                 let ang = -Double.pi / 2 + Double(i) * 2 * .pi / Double(n)
-                penTip(pens[i], highlighted: i == radial.highlight)
-                    .position(x: c + CGFloat(cos(ang)) * ringR, y: c + CGFloat(sin(ang)) * ringR)
+                Group {
+                    if i < pens.count { penTip(pens[i], highlighted: i == radial.highlight) }
+                    else if i == pens.count { toolTip("eraser.fill", tint: .orange, highlighted: i == radial.highlight) }
+                    else { toolTip("hand.palm.fill", tint: .teal, highlighted: i == radial.highlight) }
+                }
+                .position(x: c + CGFloat(cos(ang)) * ringR, y: c + CGFloat(sin(ang)) * ringR)
             }
         }
         .frame(width: side, height: side)
@@ -1429,6 +1434,21 @@ private struct RadialMenuView: View {
             Image(systemName: pen.type.systemImage)
                 .font(.system(size: highlighted ? 17 : 13, weight: .bold))
                 .foregroundStyle(contrastText(pen.color))
+        }
+        .frame(width: d, height: d)
+        .overlay(Circle().stroke(highlighted ? Color.accentColor : .white.opacity(0.55),
+                                 lineWidth: highlighted ? 3 : 1))
+        .shadow(color: .black.opacity(highlighted ? 0.35 : 0), radius: 4, y: 1)
+    }
+
+    /// 工具项（橡皮擦/小手）：白底 + 固定色图标，与彩色笔头区分。
+    @ViewBuilder private func toolTip(_ systemName: String, tint: Color, highlighted: Bool) -> some View {
+        let d: CGFloat = highlighted ? 46 : 34
+        ZStack {
+            Circle().fill(.white)
+            Image(systemName: systemName)
+                .font(.system(size: highlighted ? 18 : 14, weight: .bold))
+                .foregroundStyle(tint)
         }
         .frame(width: d, height: d)
         .overlay(Circle().stroke(highlighted ? Color.accentColor : .white.opacity(0.55),
