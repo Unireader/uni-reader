@@ -296,6 +296,8 @@ final class AppModel: ObservableObject {
     func inkAppend(_ pts: [SIMD3<Double>]) {
         guard let s = padSession, var st = s.liveStroke else { return }
         st.points.append(contentsOf: pts); s.liveStroke = st
+        // 书写中笔尖圆环跟随（落笔后 hover 消息停发，不更新会残留死圆圈在落笔点）
+        if let last = pts.last { s.hover = HoverPoint(page: st.page, nx: last.x, ny: last.y) }
     }
     func inkEnd() {
         guard let s = padSession, let st = s.liveStroke else { return }
@@ -305,6 +307,8 @@ final class AppModel: ObservableObject {
     func inkErase(_ pts: [SIMD3<Double>], page: Int) {
         guard let s = padSession else { return }
         eraseNear(s, pts, page: page)
+        // 擦除中笔尖圆环同样跟随
+        if let last = pts.last { s.hover = HoverPoint(page: page, nx: last.x, ny: last.y) }
         broadcastStrokes()
     }
 
