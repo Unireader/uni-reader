@@ -350,7 +350,7 @@
               liveBegin(e.clientX, e.clientY, e.pressure, cur.pen);
               send({ type: "ink", phase: "begin", page: loc.page, pen: cur.pen, pts: [[loc.nx, loc.ny, e.pressure]] });
             } else if (m === "erase") {
-              eraseHit(e.clientX, e.clientY); batch.push([loc.nx, loc.ny]);
+              eraseHit(e.clientX, e.clientY); batch.push([loc.nx, loc.ny, loc.page]);
             }
             e.preventDefault();
           }, { passive: false });
@@ -410,7 +410,7 @@
                 batch.push([nx, ny, ev.pressure]);
               } else if (penMode === "erase") {
                 eraseHit(ev.clientX, ev.clientY);
-                if (loc) batch.push([loc.nx, loc.ny]);
+                if (loc) batch.push([loc.nx, loc.ny, loc.page]);
               }
             }
             e.preventDefault();
@@ -457,7 +457,17 @@
 
           function flushBatch(kind) {
             if (!batch.length) return;
-            send({ type: kind, phase: "move", pts: batch });
+            if (kind === "erase") {
+              // 擦除点带页号（第 3 元素）：按页分组发送，Mac 端据此只删对应页的笔迹
+              var byPage = {};
+              for (var i = 0; i < batch.length; i++) {
+                var b = batch[i];
+                (byPage[b[2]] = byPage[b[2]] || []).push([b[0], b[1]]);
+              }
+              for (var pg in byPage) send({ type: "erase", phase: "move", page: +pg, pts: byPage[pg] });
+            } else {
+              send({ type: kind, phase: "move", pts: batch });
+            }
             batch = [];
           }
           function tick() { frames++; if (activeId !== null && batch.length) flushBatch(penMode === "erase" ? "erase" : "ink"); requestAnimationFrame(tick); }

@@ -141,7 +141,10 @@ final class AppModel: ObservableObject {
                 endInkOrRadial()
             }
         case "erase":
-            if obj["phase"] as? String == "move" { inkErase(points(obj["pts"])) }
+            if obj["phase"] as? String == "move" {
+                let page = (obj["page"] as? NSNumber)?.intValue ?? s.currentPageIndex
+                inkErase(points(obj["pts"]), page: page)
+            }
         case "hover":
             if (obj["phase"] as? String) == "end" {
                 s.hover = nil
@@ -299,9 +302,9 @@ final class AppModel: ObservableObject {
         s.strokes.append(st); s.liveStroke = nil
         broadcastStrokes()
     }
-    func inkErase(_ pts: [SIMD3<Double>]) {
+    func inkErase(_ pts: [SIMD3<Double>], page: Int) {
         guard let s = padSession else { return }
-        eraseNear(s, pts)
+        eraseNear(s, pts, page: page)
         broadcastStrokes()
     }
 
@@ -326,10 +329,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func eraseNear(_ s: DocSession, _ es: [SIMD3<Double>]) {
+    private func eraseNear(_ s: DocSession, _ es: [SIMD3<Double>], page: Int) {
         guard !es.isEmpty else { return }
         let r2 = 0.02 * 0.02
-        let page = s.currentPageIndex
         s.strokes.removeAll { st in
             guard st.page == page else { return false }
             for sp in st.points {
