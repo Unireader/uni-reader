@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var selectedDocID: String?
     @State private var missingDoc: LibDocument?      // 选中但所有路径失效 → 显示重定位提示
     @State private var lastProgressSave = Date.distantPast
+    @State private var progressSaveTask: Task<Void, Never>?   // 节流窗内被丢变化的尾随补存
     @State private var toc: [TOCEntry] = []          // 当前 PDF 目录
     @State private var showTOCPopover = false        // 一次性目录弹窗（选完即关，快速跳转）
     @State private var inspectorTab: InspectorTab = .info   // Inspector 当前分段（信息/目录/笔记）
@@ -434,10 +435,24 @@ struct ContentView: View {
     private func saveProgressThrottled(_ a: ScrollAnchor?) {
         guard let id = selectedDocID else { return }
         let now = Date.now
-        guard now.timeIntervalSince(lastProgressSave) > 0.7 else { return }
-        lastProgressSave = now
-        workspace.saveProgress(documentId: id, page: a?.page ?? session.currentPageIndex,
-                               frac: a?.frac ?? 0, zoom: Double(session.readZoom), hfrac: session.readHFrac)
+        let elapsed = now.timeIntervalSince(lastProgressSave)
+        if elapsed > 0.7 {
+            lastProgressSave = now
+            progressSaveTask?.cancel()
+            progressSaveTask = nil
+            workspace.saveProgress(documentId: id, page: a?.page ?? session.currentPageIndex,
+                                   frac: a?.frac ?? 0, zoom: Double(session.readZoom), hfrac: session.readHFrac)
+            return
+        }
+        // 尾随补存：节流窗内被丢的变化（缩放/滚动尾帧）延迟落库一次。Xcode 重跑(⌘R)是被 lldb
+        // 直接杀进程，走不到 onDisappear 的兜底保存，没有尾随补存最后一次缩放就永久丢失。
+        progressSaveTask?.cancel()
+        progressSaveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64((0.7 - elapsed) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            lastProgressSave = .now
+            saveProgress(docId: selectedDocID)
+        }
     }
 
     private func saveProgress(docId: String?) {

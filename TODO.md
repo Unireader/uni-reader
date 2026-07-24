@@ -29,6 +29,15 @@
 - **夜间模式切换仍有问题**（2026-07-22 用户反馈，2026-07-22 当天早些时候的「切换夜间模式慢」修复未彻底解决）：
   具体现象用户尚未展开描述，先记录，后续统一排查处理（不要假设就是同一个根因，需要重新问清楚复现步骤）。
 
+### 已修（2026-07-25）
+
+- **Xcode 重跑（⌘R）后缩放丢失**：缩放/滚动变化只走 `saveProgressThrottled`（0.7s 节流，只存领先帧），
+  节流窗内被丢的尾帧没有补存；而 Xcode 重跑时旧进程是被 lldb 直接杀掉，走不到 `onDisappear` 的兜底
+  保存 → 缩完立刻重跑，最后一次缩放永久丢失（翻页不丢是因为翻页有独立立即保存，掩盖了这个问题）。
+  修法：`saveProgressThrottled` 加尾随补存——节流窗内的变化合批成一个 `Task` 延迟落库（读触发时最新
+  的 page/frac/zoom/hfrac），新变化到来则取消重排；领先帧仍立即存。注：工程曾因 `InkMetrics.swift`/
+  `InkWire.swift` 删除后未重跑 `xcodegen generate` 而编译失败，已重新生成。
+
 ### 已修（2026-07-23）
 
 - **pad 打开后停在第 1 页、不跳 Mac 当前进度；TOC/搜索跳转 pad 也不同步**：`macScrolled` 原来只放行 `origin=="mac"` 的锚点，restore/search/toc 等 Mac 侧导航一律被过滤；且新平板连接时只补发 layout/docs/pens/strokes，从不发当前视口。修法：① `macScrolled` 改为 `origin != "pad"` 统一下发（回环风险只有 pad 来源，`maybeEmit` 有 `follower.isSuppressing` 守卫不会回声）；② 新增 `AppModel.pushCurrentViewport()`（带 `force` 标志绕过 pad 端 seq 去重），在新平板连接（`clientCount` sink，必须在 `pushLayout` 之后）和 `selectPadDoc` 切档后补发当前位置；③ pad 端 `applyViewport` 支持 `force`（不更新 vpSeq，避免与后续真实锚点 seq 冲突）。
