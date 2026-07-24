@@ -35,6 +35,7 @@ final class AppModel: ObservableObject {
     private let longPressSeconds = 1.0
     private let moveCancelThresh = 0.02   // 归一化位移超此值 → 判为在画，不呼出
     private let radialDeadzone = 0.045     // 归一化半径内 → 中心取消区
+    private let radialRingBoundary = 94.0  // 内外环分界（view pt）：内环笔 70 / 外环工具 118 的中点
 
     init() {
         // 平板翻页 → 应用到平板当前会话，并重推页图。
@@ -209,8 +210,9 @@ final class AppModel: ObservableObject {
         server.broadcast(["type": "inkCancel"])
     }
 
-    /// 环形盘打开时，笔移 → 按角度算指向第几项（页比例换算成屏幕角度，含长宽比校正）。
-    /// 环上项 = 各支笔（0..<pens.count）+ 橡皮擦（pens.count）+ 小手翻页（pens.count+1）。
+    /// 环形盘打开时，笔移 → 角度定扇区、半径定层（页比例换算成屏幕角度/距离，含长宽比校正）。
+    /// 整圆两层（半径分层）：外环 = 小手（上半圆，扇区 0）/ 橡皮擦（下半圆，扇区 n-1）；
+    /// 内环 = 各支笔整圆均布（扇区 1..pens.count，0 号正上方起顺时针）。中心 = 取消区。
     private func updateRadial(_ last: SIMD3<Double>?) {
         guard var r = padSession?.radial, let p = last, !pens.isEmpty else { return }
         let dx = p.x - r.cx, dy = p.y - r.cy
@@ -218,26 +220,34 @@ final class AppModel: ObservableObject {
             r.highlight = -1
         } else {
             let aspect = currentPageAspect(page: r.page)   // pageH/pageW
-            var ang = atan2(dy * aspect, dx) + .pi / 2      // 从正上方起、顺时针
+            var ang = atan2(dy * aspect, dx) + .pi / 2      // 从正上方起、顺时针（π/2=右，π=下）
             if ang < 0 { ang += 2 * .pi }
-            let n = pens.count + 2   // + 橡皮擦 + 小手
-            r.highlight = Int((ang / (2 * .pi) * Double(n)).rounded()) % n
+            let n = pens.count + 2
+            // 归一化距离 → view pt：x 乘渲染页宽、y 乘页高(=宽×aspect)，与固定 pt 尺寸的菜单圆环可比
+            let w = padSession?.pageViewWidth ?? 0
+            let rPts = w * (dx * dx + (dy * aspect) * (dy * aspect)).squareRoot()
+            if rPts >= radialRingBoundary {
+                r.highlight = (ang < .pi / 2 || ang > 3 * .pi / 2) ? 0 : n - 1   // 外环：上半圆=小手，下半圆=橡皮擦
+            } else {
+                let k = Int((ang / (2 * .pi) * Double(pens.count)).rounded()) % pens.count
+                r.highlight = 1 + k   // 内环：笔（0 号正上方起顺时针）
+            }
         }
         if r != padSession?.radial { padSession?.radial = r }
     }
 
-    /// 抬笔：环形盘打开则提交选中（中心区=不选），否则正常收笔。
+    /// 抬笔：环形盘打开则提交选中（中心区/右半圆=不选），否则正常收笔。
     private func endInkOrRadial() {
         longPressWork?.cancel(); longPressWork = nil
         padSession?.pressRing = nil
         if inRadial {
             if let r = padSession?.radial, r.highlight >= 0 {
-                if r.highlight < pens.count {
-                    applyPenSelection(index: r.highlight)   // 选笔 → 顺带回笔记模式
-                } else if r.highlight == pens.count {
-                    setPadMode("erase")
+                if r.highlight == 0 {
+                    setPadMode("page")          // 扇区 0：小手翻页
                 } else if r.highlight == pens.count + 1 {
-                    setPadMode("page")
+                    setPadMode("erase")         // 末尾扇区：橡皮擦
+                } else if r.highlight <= pens.count {
+                    applyPenSelection(index: r.highlight - 1)   // 中间扇区：选笔 → 顺带回笔记模式
                 }
             }
             padSession?.radial = nil

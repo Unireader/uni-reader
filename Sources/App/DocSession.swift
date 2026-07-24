@@ -89,6 +89,10 @@ final class DocSession: ObservableObject, Identifiable {
     // 环形选笔盘（nil = 未呼出）。长按触发，全程 Mac 端处理。
     @Published var radial: RadialState?
 
+    /// 阅读区当前渲染页宽（view pt，随缩放变）。PageStreamView 布局时写入；
+    /// 环形盘内外层判定用它把页内归一化距离换算成 pt（菜单圆环是固定 pt 尺寸）。非 @Published：只作命令式读取，不驱动 UI。
+    var pageViewWidth: CGFloat = 0
+
     // 长按进度环（nil = 无）：落笔起计，Mac 在笔尖处 300ms 起显示、1s 填满，随后展开成 radial。
     @Published var pressRing: PressRing?
 

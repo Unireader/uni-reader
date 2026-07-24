@@ -279,6 +279,7 @@ private struct ReaderSurface: View {
         // 笔工具悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
         .overlay { GeometryReader { proxy in PenToolbarView(viewportSize: proxy.size, isActiveWindow: isActiveWindow) } }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
+        .onChange(of: pageW) { _, w in session.pageViewWidth = w }   // 环形盘内外层判定用（归一化距离 → pt）
         .onChange(of: nightMode) { _, _ in scheduleNightRender() }
         .onChange(of: fullWidth) { _, _ in
             // fullWidth 到位前首帧已早退；到位后补跑首帧定基准+首次实化（消除启动窄→宽闪烁）。窗口真实缩放走 refit。
@@ -387,6 +388,7 @@ private struct ReaderSurface: View {
         follower.pageCount = lay.pageCount
         follower.interpEnabled = interpEnabled
         scratch.appearAt = CACurrentMediaTime()
+        session.pageViewWidth = pageW   // 初值；随后由 .onChange(of: pageW) 跟随缩放/改宽
         scratch.pendingZoom = session.restoreZoom   // 上次缩放：首帧定 fitBasis 后套用（见 geometryChanged）
         scratch.pendingHFrac = session.restoreHFrac > 0.0001 ? session.restoreHFrac : nil   // 横向恢复
         // fitBasis 由首帧 geometryChanged 设定（此处不预设，避免与真实值有偏差）
@@ -1391,33 +1393,38 @@ private struct PageCellView: View {
 // MARK: - 环形选笔盘
 
 /// 长按呼出的环形选笔盘（页锚定于笔尖处，纯显示——高亮由 Mac 端按笔位算好塞进 `radial.highlight`）。
-/// 环上项 = 各支笔（0..<pens.count）+ 橡皮擦（pens.count）+ 小手翻页（pens.count+1）：
-/// 0 号在正上方，顺时针排；高亮那项放大 + 强调描边。中心是取消区。
+/// 整圆两层（半径分层）：外环 = 小手（正上，扇区 0）/ 橡皮擦（正下，扇区 n-1）；
+/// 内环 = 各支笔整圆均布（扇区 1..pens.count，0 号正上方起顺时针）。中心圆 = 取消区。
 private struct RadialMenuView: View {
     let radial: RadialState
     let pens: [PenPreset]
     let size: CGSize
 
-    private let ringR: CGFloat = 92
+    private let penR: CGFloat = 70     // 内环：笔
+    private let toolR: CGFloat = 118   // 外环：小手/橡皮擦（与内环间距 ≥ 高亮图标直径，避免重叠）
     private let pad: CGFloat = 34
 
     var body: some View {
-        let side = (ringR + pad) * 2
+        let side = (toolR + pad) * 2
         let c = side / 2
-        let n = max(1, pens.count + 2)
+        let n = max(2, pens.count + 2)
         ZStack {
-            Circle().fill(.black.opacity(0.30))
-                .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 1))
+            Circle().fill(.ultraThinMaterial)   // 毛玻璃底盘（系统最薄一档）
+                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1))
+                .frame(width: (toolR + pad - 10) * 2, height: (toolR + pad - 10) * 2)
             Circle().fill(.white.opacity(radial.highlight < 0 ? 0.14 : 0.05))
-                .frame(width: 66, height: 66)   // 中心取消区（未指向任何项时高亮）
+                .frame(width: 66, height: 66)   // 中心取消区（未指向任何扇区时高亮）
             ForEach(0..<n, id: \.self) { i in
-                let ang = -Double.pi / 2 + Double(i) * 2 * .pi / Double(n)
+                // 扇区中心角（从正上方起、顺时针）：小手正上、橡皮擦正下，笔整圆均布
+                let isTool = (i == 0 || i == n - 1)
+                let th = i == 0 ? 0.0 : (i == n - 1 ? Double.pi : 2 * Double.pi * Double(i - 1) / Double(max(1, pens.count)))
+                let R: CGFloat = isTool ? toolR : penR
                 Group {
-                    if i < pens.count { penTip(pens[i], highlighted: i == radial.highlight) }
-                    else if i == pens.count { toolTip("eraser.fill", tint: .orange, highlighted: i == radial.highlight) }
-                    else { toolTip("hand.palm.fill", tint: .teal, highlighted: i == radial.highlight) }
+                    if i == 0 { toolTip("hand.raised.fill", tint: .teal, highlighted: radial.highlight == 0) }
+                    else if i == n - 1 { toolTip("eraser.fill", tint: .orange, highlighted: radial.highlight == n - 1) }
+                    else { penTip(pens[i - 1], highlighted: radial.highlight == i) }
                 }
-                .position(x: c + CGFloat(cos(ang)) * ringR, y: c + CGFloat(sin(ang)) * ringR)
+                .position(x: c + R * CGFloat(sin(th)), y: c - R * CGFloat(cos(th)))
             }
         }
         .frame(width: side, height: side)
