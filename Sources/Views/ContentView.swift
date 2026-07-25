@@ -22,9 +22,8 @@ struct ContentView: View {
     @State private var showServer = false
     @State private var isKeyWindow = false
     @State private var showNotes = false
-    @State private var showFind = false
+    @State private var searchIsActive = false   // 标准 .searchable 搜索字段的展开态（⌘F 激活）
     @State private var showOCR = false
-    @FocusState private var findFieldFocused: Bool
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // OCR 引擎（"off" | "paddle"），设置页写入
     @AppStorage("nightMode") private var nightMode = false
     @AppStorage("scrollInterp") private var scrollInterp = true   // 平板滚动跟随：true=时间戳插值 / false=纯低通（A/B 用）
@@ -42,6 +41,13 @@ struct ContentView: View {
             // 文档加载（session.pdf）保留：真平板仍可正常渲染。
             readerColumn
                 .dropDestination(for: URL.self) { urls, _ in ingest(urls: urls); return true }
+                // 标准 macOS 搜索（参考 Preview/Safari）：工具栏搜索字段，取代旧的放大镜弹窗。
+                // 边打字边搜（DocSession 内 250ms 防抖）、回车跳下一个命中；⌘F 菜单激活搜索字段。
+                .searchable(text: $session.searchQuery, isPresented: $searchIsActive,
+                            placement: .toolbar, prompt: L("Find in Document"))
+                .onSubmit(of: .search) { session.nextMatch() }
+                .onChange(of: session.searchQuery) { _, _ in session.scheduleSearch() }
+                .overlay(alignment: .top) { findBanner }
                 .background(WindowAccessor { key in
                     isKeyWindow = key
                     if key { app.setActive(session) }
@@ -120,10 +126,10 @@ struct ContentView: View {
             if isKeyWindow { openPDF() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerFind)) { _ in
-            if isKeyWindow { showFind = true }
+            if isKeyWindow { searchIsActive = true }
         }
-        .onChange(of: showFind) { _, on in
-            if !on { session.clearSearch() }   // 关闭查找栏 = 清空高亮，下次重新打字
+        .onChange(of: searchIsActive) { _, on in
+            if !on { session.clearSearch() }   // 收起搜索字段 = 清空高亮，下次重新打字
         }
     }
 
@@ -154,14 +160,14 @@ struct ContentView: View {
         }
     }
 
-    /// 工具栏内容：缩放组（最左）+ 中间一组（目录 / 查找 / OCR / 夜间 / 跟随 A/B / 平板服务）+ Inspector。
+    /// 工具栏内容：缩放组（最左）+ 中间一组（目录 / OCR / 夜间 / 跟随 A/B / 平板服务）+ Inspector。
     /// 抽出独立 ToolbarContent——内联进 body 会让 SwiftUI 类型检查器超时。
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         // 缩放一组（最左，TOC 左侧；参考 Preview：缩小 | 1:1 实际大小 | 放大；经通知路由到本窗口阅读区，
         // 与 ⌘-/⌘= 菜单命令同一套 commit 路径）。ControlGroup 在 macOS 工具栏渲染成单一胶囊分段组。
         ToolbarItem(placement: .automatic) { zoomButtons }
-        // 中间一组：目录 / 查找 / OCR / 夜间 / 跟随 A/B / 平板服务
+        // 中间一组：目录 / OCR / 夜间 / 跟随 A/B / 平板服务（查找走标准 .searchable，见 readerColumn）
         ToolbarItemGroup(placement: .automatic) {
             Button {
                 showTOCPopover.toggle()
@@ -170,14 +176,6 @@ struct ContentView: View {
             }
             .disabled(session.pdf == nil)
             .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
-
-            Button {
-                showFind.toggle()
-            } label: {
-                Label(L("Find…"), systemImage: "magnifyingglass")
-            }
-            .disabled(session.pdf == nil)
-            .popover(isPresented: $showFind, arrowEdge: .bottom) { findPopover }
 
             Button {
                 showOCR.toggle()
@@ -262,30 +260,31 @@ struct ContentView: View {
         }
     }
 
-    /// ⌘F 查找栏：搜索框（防抖实时高亮+跳首个命中，类 Safari）+ 上/下一个 + 命中计数。
-    private var findPopover: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                TextField(L("Find in Document"), text: $session.searchQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($findFieldFocused)
-                    .onSubmit { session.nextMatch() }
-                    .frame(width: 200)
-                Button { session.prevMatch() } label: { Image(systemName: "chevron.up") }
-                    .disabled(session.searchMatches.isEmpty)
-                Button { session.nextMatch() } label: { Image(systemName: "chevron.down") }
-                    .disabled(session.searchMatches.isEmpty)
-            }
-            if !findStatusText.isEmpty {
+    /// 搜索状态条（Safari 式）：仅搜索激活且有输入时浮在阅读区顶部——命中计数 + 上/下一个。
+    /// 输入本身在工具栏标准搜索字段（.searchable），这里只补「导航」这一层。
+    @ViewBuilder
+    private var findBanner: some View {
+        if searchIsActive && !session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            HStack(spacing: 8) {
                 Text(findStatusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize()
+                Button { session.prevMatch() } label: {
+                    Image(systemName: "chevron.up").frame(width: 22, height: 22)
+                }
+                .disabled(session.searchMatches.isEmpty)
+                Button { session.nextMatch() } label: {
+                    Image(systemName: "chevron.down").frame(width: 22, height: 22)
+                }
+                .disabled(session.searchMatches.isEmpty)
             }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+            .shadow(radius: 6, y: 2)
+            .padding(.top, 8)
         }
-        .padding(12)
-        .frame(width: 260)
-        .onAppear { findFieldFocused = true }
-        .onChange(of: session.searchQuery) { _, _ in session.scheduleSearch() }
     }
 
     private var findStatusText: String {
