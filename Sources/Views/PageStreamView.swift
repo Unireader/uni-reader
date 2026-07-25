@@ -290,8 +290,8 @@ private struct ReaderSurface: View {
                             onCancel: { editorTarget = nil })
         }
         .overlay(alignment: .topLeading) { followTicker }
-        // 笔工具悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
-        .overlay { GeometryReader { proxy in PenToolbarView(viewportSize: proxy.size, isActiveWindow: isActiveWindow) } }
+        // 笔架悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
+        .overlay { GeometryReader { proxy in PenRackView(viewportSize: proxy.size, topInset: indicatorTopInset, isActiveWindow: isActiveWindow) } }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: pageW) { _, w in session.pageViewWidth = w }   // 环形盘内外层判定用（归一化距离 → pt）
         .onChange(of: nightMode) { _, _ in scheduleNightRender() }

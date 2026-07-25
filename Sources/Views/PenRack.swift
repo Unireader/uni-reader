@@ -1,38 +1,71 @@
 import SwiftUI
 
-/// 画布悬浮笔工具条：收藏笔插槽（可拖拽定位、点开即可实时改颜色/粗细/类型）+ 橡皮/翻页。
+/// 画布悬浮「笔架」：收藏笔插槽（可拖拽定位、点开即可实时改颜色/粗细/类型）+ 橡皮/翻页。
 /// 取代旧的工具栏笔状态徽章 + 长按呼出面板——笔的一切交互都挪进阅读区本身，调整入口永远在画布现场，
 /// 不在操作栏、也不在系统设置页。
 ///
 /// **作用域**：`app.pens`/`padPenIndex`/`padMode` 是设备级全局状态（不挂在某个 `DocSession` 上），
-/// 工具条只是个控制面板，跟哪个窗口在跟 pad 通信无关。故每个开着 PDF 的窗口都显示（含非激活窗口）——
+/// 笔架只是个控制面板，跟哪个窗口在跟 pad 通信无关。故每个开着 PDF 的窗口都显示（含非激活窗口）——
 /// 位置/收起态走全局 `@AppStorage`，多窗口保持一致。`isActiveWindow` 暂留作将来「仅激活窗口响应」用。
-struct PenToolbarView: View {
+///
+/// **位置限制**：整个胶囊（含拖拽手柄）始终完整落在阅读区内容内，上沿不进工具栏玻璃区
+/// （`topInset`）——拖拽过程实时夹取，初始/视口变化也校正一次：否则旧存储值可能把胶囊留在
+/// 可视区外或贴死边缘，手柄够不到就再也拖不回来。
+struct PenRackView: View {
     @EnvironmentObject private var app: AppModel
     let viewportSize: CGSize
+    let topInset: CGFloat          // 工具栏（玻璃）高度：笔架上沿不许进入该区域
     let isActiveWindow: Bool
 
     /// 位置存视口宽高的 0~1 比例（不存绝对像素）——跟这个代码库一贯「阅读区状态用比例不用绝对值」的
     /// 偏好一致，窗口缩放后面板位置仍然合理。默认落在左下角附近。
+    /// （key 沿用旧的 penToolbar* 名字，不动，保住用户已存的位置/收起态。）
     @AppStorage("penToolbarFracX") private var fracX: Double = 0.03
     @AppStorage("penToolbarFracY") private var fracY: Double = 0.92
     @AppStorage("penToolbarCollapsed") private var collapsed = false
     @GestureState private var dragOffset: CGSize = .zero
     @State private var editingIndex: Int?
+    /// 胶囊实测尺寸（夹取范围要用）；首帧未测量时用保守估计，避免闪一下越界位置。
+    @State private var barSize: CGSize = CGSize(width: 240, height: 44)
+
+    private let edgeMargin: CGFloat = 6
 
     var body: some View {
         if viewportSize.width > 0, viewportSize.height > 0 {
             bar
-                .position(x: fracX * viewportSize.width + dragOffset.width,
-                          y: fracY * viewportSize.height + dragOffset.height)
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { barSize = $0 }
+                .position(clampedCenter(drag: dragOffset))
                 .gesture(dragGesture)
                 .transaction { $0.animation = nil }
+                .onAppear { reclampStored() }
+                .onChange(of: viewportSize) { _, _ in reclampStored() }
         }
     }
 
-    /// 展开=完整工具条；收起=靠边小药丸（只留当前笔尖 + 展开箭头）。收起态持久（全局）。
+    /// 展开=完整笔架；收起=靠边小药丸（只留当前笔尖 + 展开箭头）。收起态持久（全局）。
     @ViewBuilder private var bar: some View {
         if collapsed { collapsedPill } else { content }
+    }
+
+    // MARK: 位置夹取
+
+    /// 夹取后的胶囊中心：`position` 锚的是视图中心，故按实测半宽半高留边；上边界额外加 `topInset`
+    /// （不进工具栏）。视口比胶囊还窄/矮的极端情况退化为固定在上/左合法点（minX/minY）。
+    private func clampedCenter(drag: CGSize) -> CGPoint {
+        let w = viewportSize.width, h = viewportSize.height
+        let halfW = barSize.width / 2, halfH = barSize.height / 2
+        let minX = halfW + edgeMargin, maxX = max(minX, w - halfW - edgeMargin)
+        let minY = topInset + halfH + edgeMargin, maxY = max(minY, h - halfH - edgeMargin)
+        let raw = CGPoint(x: fracX * w + drag.width, y: fracY * h + drag.height)
+        return CGPoint(x: min(max(raw.x, minX), maxX),
+                       y: min(max(raw.y, minY), maxY))
+    }
+
+    /// 初始/视口变化校正：存储位置若已越界（窗口变矮变窄、旧版本无限制留下的值）拉回可见区。
+    private func reclampStored() {
+        let p = clampedCenter(drag: .zero)
+        fracX = Double(p.x / viewportSize.width)
+        fracY = Double(p.y / viewportSize.height)
     }
 
     private var content: some View {
@@ -201,11 +234,10 @@ struct PenToolbarView: View {
         DragGesture(minimumDistance: 6)
             .updating($dragOffset) { value, state, _ in state = value.translation }
             .onEnded { value in
-                let w = max(viewportSize.width, 1), h = max(viewportSize.height, 1)
-                let newX = fracX * w + value.translation.width
-                let newY = fracY * h + value.translation.height
-                fracX = min(max(newX / w, 0.03), 0.97)
-                fracY = min(max(newY / h, 0.03), 0.97)
+                // 落点同样过夹取（与拖拽中的实时显示一致），再折算回 0~1 比例存盘
+                let p = clampedCenter(drag: value.translation)
+                fracX = Double(p.x / viewportSize.width)
+                fracY = Double(p.y / viewportSize.height)
             }
     }
 }
