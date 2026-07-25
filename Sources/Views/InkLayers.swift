@@ -1,0 +1,98 @@
+import SwiftUI
+
+// MARK: - 墨迹层（Equatable 拆层：静态笔迹 + 活体笔迹）
+
+/// 静态笔迹层。`session` 是 `@ObservedObject`，hover/pressRing/radial/liveStroke 等高频 @Published
+/// 更新会让整页 body 重算；墨迹 Canvas 不可比较 → 每帧整页笔迹重栅格化（笔多即卡）。
+/// 拆成 Equatable 层后：笔迹集合没变就跳过 body、复用已栅格化的内容，只在落笔/擦除/缩放时才重绘。
+struct InkStaticLayer: View, Equatable {
+    let strokes: [InkStroke]
+    let inkScale: CGFloat
+
+    static func == (l: Self, r: Self) -> Bool { l.strokes == r.strokes && l.inkScale == r.inkScale }
+
+    var body: some View {
+        Canvas { ctx, sz in
+            for st in strokes { inkDrawStroke(st, in: &ctx, size: sz, inkScale: inkScale) }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// 活体笔迹层（正在落墨的这一笔）：每帧只重画单笔，不再拖着整页静态笔迹重绘。
+struct InkLiveLayer: View, Equatable {
+    let live: InkStroke
+    let inkScale: CGFloat
+
+    var body: some View {
+        Canvas { ctx, sz in
+            inkDrawStroke(live, in: &ctx, size: sz, inkScale: inkScale)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// 四种笔型差异化渲染（与 capture.html 的 `drawStroke` 同参数/同算法，见 `PenBrushType`/`InkRender`；墨迹不随夜间反色）：
+///  · ballpoint 干净压感线；· fountain 压感 + 起收锥度；· marker 恒宽·平头·multiply 叠加；· pencil 多道微波动叠加。
+func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize, inkScale: CGFloat) {
+    guard !st.points.isEmpty else { return }
+    let pts = st.points.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) }
+    let type = st.type, w = st.width
+    func color(_ a: Double) -> Color {
+        Color(red: st.color.r / 255, green: st.color.g / 255, blue: st.color.b / 255, opacity: a)
+    }
+
+    if pts.count == 1 {
+        let a = type == .pencil ? st.color.a * 0.6 : st.color.a
+        let r = CGFloat(type.strokeWidth(pressure: st.points[0].z, base: w)) * inkScale / 2
+        ctx.fill(Path(ellipseIn: CGRect(x: pts[0].x - r, y: pts[0].y - r, width: r * 2, height: r * 2)),
+                 with: .color(color(a)))
+        return
+    }
+
+    switch type {
+    case .marker:
+        // 恒宽 → 整条一次成 path，一次 multiply + 平头（逐段方头叠加会在接缝处出竖条）
+        var path = Path(); path.move(to: pts[0]); var lastPt = pts[0]
+        for i in 1..<pts.count {
+            let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
+            path.addQuadCurve(to: mid, control: lastPt); lastPt = pts[i]
+        }
+        var m = ctx; m.blendMode = .multiply
+        m.stroke(path, with: .color(color(st.color.a)),
+                 style: StrokeStyle(lineWidth: CGFloat(w) * inkScale, lineCap: .square, lineJoin: .round))
+
+    case .pencil:
+        for pass in PenBrushType.pencilPasses {
+            let col = color(st.color.a * pass.alpha)
+            var prev: CGPoint?
+            for i in 0..<pts.count {
+                let lw = type.strokeWidth(pressure: st.points[i].z, base: w)
+                let (nx, ny) = InkRender.perp(pts, i)
+                let rnd = InkRender.jitter(st.points[i].x, st.points[i].y + pass.phase)
+                let wob = (sin(Double(i) * 0.7 + pass.phase) * pass.amp + rnd * pass.amp * 0.7) * lw * Double(inkScale)
+                let cur = CGPoint(x: pts[i].x + nx * CGFloat(wob), y: pts[i].y + ny * CGFloat(wob))
+                if let p0 = prev {
+                    var seg = Path(); seg.move(to: p0); seg.addLine(to: cur)
+                    ctx.stroke(seg, with: .color(col),
+                               style: StrokeStyle(lineWidth: CGFloat(max(0.7, lw * pass.wScale)) * inkScale,
+                                                  lineCap: .round, lineJoin: .round))
+                }
+                prev = cur
+            }
+        }
+
+    default:   // ballpoint / fountain
+        let n = pts.count
+        var lastMid = pts[0], lastPt = pts[0]
+        for i in 1..<pts.count {
+            let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
+            let lw = CGFloat(type.strokeWidth(pressure: st.points[i].z, base: w)
+                             * type.fountainTaper(index: i, count: n)) * inkScale
+            var p = Path(); p.move(to: lastMid); p.addQuadCurve(to: mid, control: lastPt)
+            ctx.stroke(p, with: .color(color(st.color.a)),
+                       style: StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round))
+            lastMid = mid; lastPt = pts[i]
+        }
+    }
+}
