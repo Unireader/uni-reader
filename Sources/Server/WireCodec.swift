@@ -20,12 +20,20 @@ enum WireCodec {
         static let selectDoc: UInt8 = 0x20, pageTurn: UInt8 = 0x21, mode: UInt8 = 0x22, pen: UInt8 = 0x23
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
+        static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
+        static let padGeom: UInt8 = 0x45
         static let nack: UInt8 = 0x50
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
     private static let modes = ["note", "erase", "page"]
+    /// 环形盘扇区类型：`0=pen 1=erase 2=page`。
+    private static let radialKinds = ["pen", "erase", "page"]
+    static func radialKindCode(_ k: String) -> UInt8 { UInt8(radialKinds.firstIndex(of: k) ?? 0) }
+    static func radialKindName(_ c: UInt8) -> String { Int(c) < radialKinds.count ? radialKinds[Int(c)] : "pen" }
+    /// `highlight` 线上用 u16 表示，`0xFFFF` = 无高亮（中心取消区），对象模型里是 -1。
+    static let radialNoHighlight = 0xFFFF
     private static let phaseBegin: UInt8 = 0, phaseMove: UInt8 = 1, phaseEnd: UInt8 = 2
 
     static func brushCode(_ t: String) -> UInt8 { UInt8(brushes.firstIndex(of: t) ?? 0) }
@@ -166,6 +174,24 @@ enum WireCodec {
                 w.pen(color: c, w: ww, t: t)
                 w.pts(pairsOf(s["pts"]), dim: 3)
             }
+        case "radial":
+            w.u8(Op.radial)
+            guard boolOf(o["open"]) else { w.u8(0); break }
+            w.u8(1)
+            w.u32(intOf(o["page"])); w.f32(num(o["cx"])); w.f32(num(o["cy"]))
+            let hl = intOf(o["highlight"])
+            w.u16(hl < 0 ? radialNoHighlight : hl)
+            let items = o["items"] as? [[String: Any]] ?? []
+            w.u16(items.count)
+            for it in items {
+                w.u8(radialKindCode(strOf(it["kind"])))
+                w.pen(color: strOf(it["color"]), w: num(it["w"]), t: strOf(it["t"]))
+            }
+        case "pressRing":
+            w.u8(Op.pressRing)
+            guard boolOf(o["on"]) else { w.u8(0); break }
+            w.u8(1); w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"]))
+        case "padGeom": w.u8(Op.padGeom); w.f32(num(o["pageW"]))
         case "scroll": w.u8(Op.scroll); w.u32(intOf(o["page"])); w.f32(num(o["frac"])); w.f64(num(o["t"]))
         case "hover":
             w.u8(Op.hover)
@@ -299,6 +325,26 @@ enum WireCodec {
                 list.append(["page": NSNumber(value: page), "pen": pen, "pts": pts])
             }
             out = ["type": "strokes", "list": list]
+        case Op.radial:
+            if r.u8() == 0 { out = ["type": "radial", "open": false]; break }
+            let page = r.u32(), cx = r.f32(), cy = r.f32()
+            let hlRaw = r.u16(), n = r.u16()
+            var items = [[String: Any]](); items.reserveCapacity(n)
+            for _ in 0..<n {
+                let kind = radialKindName(r.u8())
+                var p = r.pen(); p["kind"] = kind
+                items.append(p)
+            }
+            out = ["type": "radial", "open": true, "page": NSNumber(value: page),
+                   "cx": NSNumber(value: cx), "cy": NSNumber(value: cy),
+                   "highlight": NSNumber(value: hlRaw == radialNoHighlight ? -1 : hlRaw),
+                   "items": items]
+        case Op.pressRing:
+            if r.u8() == 0 { out = ["type": "pressRing", "on": false]; break }
+            let page = r.u32(), nx = r.f32(), ny = r.f32()
+            out = ["type": "pressRing", "on": true, "page": NSNumber(value: page),
+                   "nx": NSNumber(value: nx), "ny": NSNumber(value: ny)]
+        case Op.padGeom: out = ["type": "padGeom", "pageW": NSNumber(value: r.f32())]
         case Op.scroll:
             let page = r.u32(), frac = r.f32(), t = r.f64()
             out = ["type": "scroll", "page": NSNumber(value: page), "frac": NSNumber(value: frac), "t": NSNumber(value: t)]

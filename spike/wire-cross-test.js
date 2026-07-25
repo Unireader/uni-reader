@@ -48,6 +48,16 @@ const canonical = [
   { type: "probe", phase: "move", pts: [[0.25, 0.25]] },
   { type: "probe", phase: "end" },
   { type: "nack", seqs: [1, 2, 3000000000] },
+  // —— 新消息一律**追加在末尾**（安卓 WireCodecTest.kt 按行号索引这张表，往中间插会错位）——
+  { type: "radial", open: false },
+  { type: "radial", open: true, page: 4, cx: 0.5, cy: 0.25, highlight: 2,
+    items: [{ kind: "pen", color: "rgba(24,90,210,0.5)", w: 8, t: "ballpoint" },
+            { kind: "erase", color: "rgba(0,0,0,1)", w: 0, t: "ballpoint" },
+            { kind: "page", color: "rgba(0,0,0,1)", w: 0, t: "ballpoint" }] },
+  { type: "radial", open: true, page: 0, cx: 0.25, cy: 0.75, highlight: -1, items: [] },
+  { type: "padGeom", pageW: 1024 },
+  { type: "pressRing", on: false },
+  { type: "pressRing", on: true, page: 3, nx: 0.5, ny: 0.25 },
 ];
 
 let pass = 0, fail = 0;

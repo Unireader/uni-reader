@@ -19,13 +19,40 @@ struct HoverPoint: Equatable {
     var ny: Double
 }
 
-/// 环形选笔盘（长按呼出，全部在 Mac 端处理并显示）：`cx`/`cy` 为呼出中心的页内归一化坐标（笔尖处），
-/// `highlight` = 当前指向第几支笔（-1 = 中心取消区，不选）。平板只管发笔事件，检测/显示/选中都在 Mac。
+/// 环形选笔盘（长按呼出，判定全部在 Mac 端）：`cx`/`cy` 为呼出中心的页内归一化坐标（笔尖处），
+/// `highlight` = 当前指向第几个**扇区**（-1 = 中心取消区，不选）。扇区含义见 `RadialLayout.items`。
+/// 平板只管发笔事件；检测/选中在 Mac，Mac 再把盘状态镜像下发（`radial` 消息）让平板画同一个盘。
 struct RadialState: Equatable {
     var page: Int
     var cx: Double
     var cy: Double
     var highlight: Int
+}
+
+/// 环形盘的一个扇区。
+enum RadialItem: Equatable {
+    case pen(Int)   // `AppModel.pens` 下标
+    case erase
+    case page
+}
+
+/// 环形选笔盘的布局契约（Mac 判定 / Mac 绘制 / 平板绘制三处唯一真源）。
+///
+/// **单层整圆**：所有扇区等分 360°，第 0 项中心在正上方（12 点）、顺时针排列。选择只看**角度**、
+/// 不看半径——半径分层（旧版内环笔/外环工具）要求用户精确控制笔离中心的距离，而那个距离在页内归一化
+/// 坐标里随两端缩放漂移，是「选择很不友好」的根因。现在半径只用来判「有没有离开中心取消区」。
+enum RadialLayout {
+    /// 扇区顺序：N 支笔在前（0 号笔在正上方），橡皮擦、翻页收尾。
+    static func items(penCount: Int) -> [RadialItem] {
+        (0..<max(0, penCount)).map { RadialItem.pen($0) } + [.erase, .page]
+    }
+
+    // 盘的屏幕尺度。Mac 用 pt、平板用 CSS px，取同一组数值 → 两端看到的是同一个盘。
+    // capture.html 的 `RD` 常量必须与此一致。
+    static let hubRadius: CGFloat = 46      // 中心 hub = 取消区
+    static let innerRadius: CGFloat = 54    // 扇区内缘
+    static let outerRadius: CGFloat = 134   // 扇区外缘
+    static let gapDegrees: Double = 1.5     // 相邻扇区之间的分隔缝（单边）
 }
 
 /// 长按进度环：落笔中心（页内归一化）+ 起始时刻。Mac 据 `start` 到当前的用时画填充进度。
@@ -86,12 +113,8 @@ final class DocSession: ObservableObject, Identifiable {
     // 平板笔悬停位置（nil = 无悬停 / 已落笔）。
     @Published var hover: HoverPoint?
 
-    // 环形选笔盘（nil = 未呼出）。长按触发，全程 Mac 端处理。
+    // 环形选笔盘（nil = 未呼出）。长按触发，判定全程 Mac 端处理。
     @Published var radial: RadialState?
-
-    /// 阅读区当前渲染页宽（view pt，随缩放变）。PageStreamView 布局时写入；
-    /// 环形盘内外层判定用它把页内归一化距离换算成 pt（菜单圆环是固定 pt 尺寸）。非 @Published：只作命令式读取，不驱动 UI。
-    var pageViewWidth: CGFloat = 0
 
     // 长按进度环（nil = 无）：落笔起计，Mac 在笔尖处 300ms 起显示、1s 填满，随后展开成 radial。
     @Published var pressRing: PressRing?

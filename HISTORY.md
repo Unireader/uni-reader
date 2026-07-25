@@ -5,6 +5,43 @@
 
 ## 已修 / 完成（2026-07-25）
 
+- **平板端半透明笔（荧光笔）画成一串圆斑（2026-07-25 用户反馈「和 macOS 端不统一」）**：根因——
+  `capture.html` 的 `drawStroke` 对**所有**笔型都逐段 `stroke()` + 圆线帽，相邻段的线帽互相重叠，
+  不透明笔看不出来，alpha<1 的笔在每个接缝处叠深一圈。实测（浏览器内定量采样，alpha=0.4/w=22）：
+  沿中心线 alpha 在 163~200 间周期波动（**18.5%**），且整条都比设定的 102 深——重复叠加所致。
+  修法两处，都是向 Mac 端 `inkDrawStroke` 对齐：
+  ① **marker 整条一次成 path** + 平头 + multiply（Mac 端 marker 分支早就是这么做的，注释也写明了原因），
+  修后中心线 alpha 恒为 102、零波动；
+  ② **拆出活体层**——原本正在写的那一笔是往 `#ink` 上**增量叠加**画的（`liveBegin`/`liveTo`），
+  半透明同样会累积，且抬笔前后观感不一致。改成新增 `#live` canvas（z-index 3，其余层顺延），
+  `cur` 每次落点**整条重画**、`drawStroke(ctx, s)` 收 context 参数供两层共用——与 Mac 的
+  `InkStaticLayer`/`InkLiveLayer` 同构。顺带两个好处：静态层不再因一笔在写而全量重绘；
+  活体笔画改走 `pageToView`（原来直接用视口坐标硬画），写字途中滚动/缩放不再错位。
+
+- **环形选笔盘改版：UX + Surface Dial 形制 + 平板同步显示（2026-07-25 用户反馈三点）**：
+  ① **选择手感**——根因是旧版「半径分层」（内环笔/外环工具）要求精确控制笔离中心的距离，而那个距离
+  由**页内归一化位移 × Mac 阅读区页宽**换算，随两端缩放漂移。改成 **`RadialLayout` 单层整圆**：所有扇区
+  等分 360°、只看**角度**选中（角度做长宽比校正后即真实方向，天生与缩放无关），半径只判「是否离开中心
+  取消区」；取消区半径与长按位移阈值改按**平板屏幕像素**判——新增 `padGeom`（C→S）让平板上报自己的
+  页宽 CSS px，`AppModel.padPageWidth` 消费（未上报则回退旧的归一化阈值，安卓端不受影响）。
+  顺带删掉已无读者的 `DocSession.pageViewWidth`。
+  ② **视觉**——`RadialMenuView` 重写成 Surface Dial 的 radial menu 形制：毛玻璃盘 + 甜甜圈楔形扇区
+  （选中整块亮起 + 白描边）+ 中心 hub 回显当前指向项名字（无高亮时显示「取消」）。
+  **通透度（2026-07-25 用户反馈「好厚看不到底」后重调）**：盘底压暗从 0.46 降到 `baseDim` 0.10，
+  扇区 `wedgeDim` 0.16、hub `hubDim` 0.22（`capture.html` 有对应的一组 + `#radialGlass` 的 CSS 底色）——
+  **对比度不靠盘底堆**，改由「每个图标自带彩色圆片」+ hub 文字阴影提供；橡皮/翻页原本是裸白符号
+  （盘一淡就会被白页吞掉），一并改成与笔同形制的彩色圆片（`disc`），视觉语言也随之统一。
+  ③ **平板也显示**——新增 `radial`（S→C）把盘状态镜像下发（判定仍全在 Mac，平板不做任何判定），
+  `capture.html` 新增 `#radial` canvas 用同一组半径/角度常量画同一个盘；断线/抬笔兜底收盘。
+  **长按进度环（盘的前置动画）同样补到平板**（2026-07-25 用户追加）：新增 `pressRing`（S→C，`on` +
+  页内归一化坐标），落笔发 on、判为在画/转成盘/抬笔发 off；**不带时间戳**——平板收到 on 用本机时钟起计，
+  两端各自硬编码同一组常量（300ms 起显示 / 1s 填满 / 直径 30 线宽 3 / 正上方顺时针），局域网 RTT 的
+  几毫秒偏差不可察觉。环与盘互斥，共用 `#radial` 这一层画。
+  盘底做**真毛玻璃**：canvas 画不了 `backdrop-filter`，故底盘是圆形 div `#radialGlass`（z-index 4，
+  `blur(16px) saturate(140%)` + 底色 `rgba(20,23,28,.16)`），扇区/图标/hub 由上面的 canvas（z-index 5）
+  叠着画；`@supports` 兜底——浏览器不支持毛玻璃时退回高不透明度深色，保住对比度。
+  三端契约同步：`PROTOCOL.md` + `WireCodec.swift` + `wire.js` + 两个 spike 一致性测试（新向量**追加在
+  canonical 表末尾**——安卓 `WireCodecTest.kt` 按行号索引该表，往中间插会静默错位）。
 - **笔迹多的页面卡顿（2026-07-25 用户反馈）**：根因——`PageStreamView` 持有 `@ObservedObject session`，
   hover 光标 / liveStroke / pressRing 等高频 `@Published` 更新（UDP 下笔尖移动可达百 Hz）会让所有实化页
   body 重算；墨迹 `Canvas` 不可比较 → 每帧把整页全部笔迹重新栅格化（逐点 `ctx.stroke`，笔多即上万次 draw call/帧）。

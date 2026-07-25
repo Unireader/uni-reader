@@ -11,7 +11,20 @@
           canvas { position:fixed; inset:0; }
           #bg { z-index:1; }
           #ink { z-index:2; touch-action:none; }
-          #hover { z-index:3; pointer-events:none; }
+          #live { z-index:3; pointer-events:none; }   /* 正在写的这一笔（对应 Mac 的 InkLiveLayer） */
+          #hover { z-index:4; pointer-events:none; }
+          /* 选笔盘底：真毛玻璃只能由 DOM 元素做（canvas 画不了 backdrop-filter），
+             故盘底是这个圆形 div，扇区/图标/hub 由上面的 #radial canvas 叠着画。 */
+          #radialGlass { position:fixed; z-index:5; pointer-events:none; display:none;
+            border-radius:50%; background:rgba(20,23,28,.62);
+            border:1px solid rgba(255,255,255,.22); box-shadow:0 4px 20px rgba(0,0,0,.30); }
+          @supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+            /* 支持毛玻璃时底色调得很淡，让页面内容透上来（对比度靠图标自带色片，不靠盘底堆）；
+               不支持则维持上面的高不透明度深色兜底 */
+            #radialGlass { background:rgba(20,23,28,.16);
+              -webkit-backdrop-filter:blur(16px) saturate(140%); backdrop-filter:blur(16px) saturate(140%); }
+          }
+          #radial { z-index:6; pointer-events:none; }
           #topbar { position:fixed; left:0; right:0; top:0; height:46px; z-index:10;
             display:flex; align-items:center; gap:10px; padding:0 10px;
             background:rgba(22,27,34,.9); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
@@ -42,7 +55,10 @@
         <body>
         <canvas id="bg"></canvas>
         <canvas id="ink"></canvas>
+        <canvas id="live"></canvas>
         <canvas id="hover"></canvas>
+        <div id="radialGlass"></div>
+        <canvas id="radial"></canvas>
         <div id="topbar">
           <span id="dot"></span>
           <span id="lat">— ms</span>
@@ -68,8 +84,10 @@
           var modeIdx = 0, penIdx = 0;
 
           var el = function (id) { return document.getElementById(id); };
-          var bg = el("bg"), ink = el("ink"), hover = el("hover");
+          var bg = el("bg"), ink = el("ink"), live = el("live"), hover = el("hover"), radialCv = el("radial");
+          var radialGlass = el("radialGlass");   // 选笔盘的毛玻璃底盘（DOM，非 canvas）
           var bctx = bg.getContext("2d"), ictx = ink.getContext("2d"), hctx = hover.getContext("2d");
+          var lctx = live.getContext("2d"), rctx = radialCv.getContext("2d");
           var DPR = 1;
           function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
@@ -128,10 +146,11 @@
           }
           function relayout() {
             DPR = Math.max(1, window.devicePixelRatio || 1);
-            sizeCanvas(bg, bctx); sizeCanvas(ink, ictx); sizeCanvas(hover, hctx);
+            sizeCanvas(bg, bctx); sizeCanvas(ink, ictx); sizeCanvas(live, lctx);
+            sizeCanvas(hover, hctx); sizeCanvas(radialCv, rctx);
             recompute();
             scrollX = clamp(scrollX, 0, maxScrollX); scrollY = clamp(scrollY, 0, maxScrollY);
-            ensureImages(); drawAll(); updateHud();
+            ensureImages(); drawAll(); drawRadial(); updateHud(); emitGeom();
           }
           window.addEventListener("resize", relayout);
 
@@ -170,7 +189,7 @@
           function inContent(x, y) { return y >= BAR && locate(x, y) !== null; }
 
           // ---- 绘制 ----
-          function drawAll() { drawBg(); drawInk(); }
+          function drawAll() { drawBg(); drawInk(); drawLive(); }
           function drawBg() {
             bctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
             var cl = contentLeft(), p = pw();
@@ -184,45 +203,61 @@
               else { bctx.fillStyle = "#e9edf2"; bctx.fillRect(cl, vy, p, dispH[i]); loadImg(i); }
             }
           }
-          function drawStroke(s) {
+          /// 画一整条笔画到指定 context（静态层与活体层共用，保证两者观感一致）。
+          /// **marker 必须整条一次成 path**（平头 + multiply），与 Mac 端 `inkDrawStroke` 的 marker 分支同理：
+          /// 逐段 stroke 会让相邻段的线帽互相重叠，不透明笔看不出来，半透明笔（荧光笔）就叠成一串圆斑。
+          function drawStroke(cx, s) {
             var pts = s.pts; if (!pts.length) return;
             var t = s.pen.t || "ballpoint", color = scaledColor(s.pen.color, opacityMultFor(t));
             var p0 = pageToView(s.page, pts[0][0], pts[0][1]);
-            ictx.fillStyle = color;
-            ictx.beginPath(); ictx.arc(p0.x, p0.y, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2); ictx.fill();
-            var lastMid = p0, lastPt = p0;
-            for (var i = 1; i < pts.length; i++) {
+            if (pts.length === 1) {   // 单点 = 一个圆点（同 Mac 端单点分支）
+              cx.fillStyle = color;
+              cx.beginPath(); cx.arc(p0.x, p0.y, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2); cx.fill();
+              return;
+            }
+            var lp = p0, i;
+            if (t === "marker") {
+              cx.save();
+              cx.globalCompositeOperation = "multiply";
+              cx.lineCap = "square"; cx.lineJoin = "round";   // 平头：圆头会在起收笔处鼓出来
+              cx.strokeStyle = color; cx.lineWidth = s.pen.w;
+              cx.beginPath(); cx.moveTo(p0.x, p0.y);
+              for (i = 1; i < pts.length; i++) {
+                var q = pageToView(s.page, pts[i][0], pts[i][1]);
+                cx.quadraticCurveTo(lp.x, lp.y, (lp.x + q.x) / 2, (lp.y + q.y) / 2);
+                lp = q;
+              }
+              cx.stroke();
+              cx.restore();
+              return;
+            }
+            // ballpoint / fountain / pencil：线宽随压感变，只能逐段画（与 Mac 端 default 分支同款）
+            cx.fillStyle = color;
+            cx.beginPath(); cx.arc(p0.x, p0.y, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2); cx.fill();
+            var lastMid = p0;
+            for (i = 1; i < pts.length; i++) {
               var pv = pageToView(s.page, pts[i][0], pts[i][1]), pr = pts[i][2];
-              var mx = (lastPt.x + pv.x) / 2, my = (lastPt.y + pv.y) / 2;
-              ictx.strokeStyle = color; ictx.lineWidth = strokeWidthFor(t, pr, s.pen.w);
-              ictx.beginPath(); ictx.moveTo(lastMid.x, lastMid.y); ictx.quadraticCurveTo(lastPt.x, lastPt.y, mx, my); ictx.stroke();
-              lastMid = { x: mx, y: my }; lastPt = pv;
+              var mx = (lp.x + pv.x) / 2, my = (lp.y + pv.y) / 2;
+              cx.strokeStyle = color; cx.lineWidth = strokeWidthFor(t, pr, s.pen.w);
+              cx.beginPath(); cx.moveTo(lastMid.x, lastMid.y); cx.quadraticCurveTo(lp.x, lp.y, mx, my); cx.stroke();
+              lastMid = { x: mx, y: my }; lp = pv;
             }
           }
+          /// 静态层：已成形的笔迹（Mac 回传的唯一真源）。
           function drawInk() {
             ictx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-            for (var i = 0; i < strokes.length; i++) drawStroke(strokes[i]);
-            if (cur) drawStroke(cur);
+            for (var i = 0; i < strokes.length; i++) drawStroke(ictx, strokes[i]);
+          }
+          /// 活体层：正在写的这一笔，**每次落点整条重画**（不往已有像素上增量叠加，否则半透明笔会累积出圆斑）。
+          /// 与 Mac 端 `InkLiveLayer` 同构；单独一层，故重画一笔不牵动整页笔迹。
+          function drawLive() {
+            lctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+            if (cur) drawStroke(lctx, cur);
           }
 
-          // 实时增量落墨（视口坐标；一笔期间不缩放/不被程序滚动，故与存储一致）。
-          // 铅笔的抖动纹理只在 drawStroke（完整点集回放）里做，实时反馈阶段只套用宽度/透明度公式——
-          // 增量画的时候还不知道下一个点，没法算稳定的垂线方向，先能用，后续再打磨（跟 Mac 端同一个已知简化）。
+          // 笔迹状态：`strokes` = Mac 回传的已成形笔迹（静态层），`cur` = 正在写的这一笔（活体层）。
+          // 铅笔的抖动纹理这边没做（跟 Mac 端的已知简化一致），其余笔型两端同算法同参数。
           var strokes = [], cur = null, radialActive = false;   // radialActive：Mac 已把这半笔转成环形选笔盘
-          var lastPt = null, lastMid = null;
-          function liveBegin(x, y, p, pen) {
-            lastPt = { x: x, y: y }; lastMid = { x: x, y: y };
-            var t = pen.t || "ballpoint";
-            ictx.beginPath(); ictx.fillStyle = scaledColor(pen.color, opacityMultFor(t));
-            ictx.arc(x, y, strokeWidthFor(t, p, pen.w) / 2, 0, Math.PI * 2); ictx.fill();
-          }
-          function liveTo(x, y, p, pen) {
-            var mx = (lastPt.x + x) / 2, my = (lastPt.y + y) / 2;
-            var t = pen.t || "ballpoint";
-            ictx.strokeStyle = scaledColor(pen.color, opacityMultFor(t)); ictx.lineWidth = strokeWidthFor(t, p, pen.w);
-            ictx.beginPath(); ictx.moveTo(lastMid.x, lastMid.y); ictx.quadraticCurveTo(lastPt.x, lastPt.y, mx, my); ictx.stroke();
-            lastMid = { x: mx, y: my }; lastPt = { x: x, y: y };
-          }
 
           function eraseHit(x, y) {
             var r = 18, changed = false;
@@ -374,7 +409,7 @@
               drawPage = loc.page; radialActive = false;
               // 本地即时回显笔迹（反馈）；长按检测/环形盘/选中在 Mac，触发时 Mac 回发 inkCancel 让本地撤掉这半笔。
               cur = { page: loc.page, pen: { color: curPen().color, w: curPen().w, t: curPen().t }, pts: [[loc.nx, loc.ny, e.pressure]] };
-              liveBegin(e.clientX, e.clientY, e.pressure, cur.pen);
+              drawLive();
               send({ type: "ink", phase: "begin", page: loc.page, pen: cur.pen, pts: [[loc.nx, loc.ny, e.pressure]] });
             } else if (m === "erase") {
               eraseHit(e.clientX, e.clientY); batch.push([loc.nx, loc.ny, loc.page]);
@@ -397,7 +432,8 @@
                 // 固定锚点比例始终跟随当前中点 → 缩放与双指整体移动都跟手、不漂移
                 scrollY = clamp(pinch.fy * totalH - (my - BAR), 0, maxScrollY);
                 scrollX = pw() > vw ? clamp(pinch.fx * pw() - mx, 0, maxScrollX) : 0;
-                ensureImages(); drawAll(); updateHud();   // 缩放/双指为本地查看，不上报，避免回环
+                ensureImages(); drawAll(); updateHud();   // 缩放/双指为本地查看，不上报位置，避免回环
+                emitGeom();   // 页宽变了要告诉 Mac（选笔盘的像素判定基准），与位置无关、不构成回环
               } else if (e.pointerId === panId) {
                 if (!panStarted) {
                   if (Math.hypot(e.clientX - panDownX, e.clientY - panDownY) < DEAD) { e.preventDefault(); return; }
@@ -436,6 +472,7 @@
             }
             var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
             if (!evs.length) evs = [e];
+            var grew = false;
             for (var i = 0; i < evs.length; i++) {
               var ev = evs[i], loc = locate(ev.clientX, ev.clientY);
               if (penMode === "note") {
@@ -443,7 +480,7 @@
                 var ny = loc && loc.page === drawPage ? loc.ny
                        : clamp((ev.clientY - BAR + scrollY - offY[drawPage]) / Math.max(1, dispH[drawPage]), 0, 1);
                 // 环形盘激活后本地不再画（笔移是在选笔），但位置照发让 Mac 驱动高亮
-                if (!radialActive && cur) { liveTo(ev.clientX, ev.clientY, ev.pressure, cur.pen); cur.pts.push([nx, ny, ev.pressure]); }
+                if (!radialActive && cur) { cur.pts.push([nx, ny, ev.pressure]); grew = true; }
                 batch.push([nx, ny, ev.pressure]);
               } else if (penMode === "erase") {
                 if (!radialActive) {   // 环形盘开着：停擦除，只发探针驱动选笔
@@ -458,6 +495,7 @@
                 }
               }
             }
+            if (grew) drawLive();   // 一次 pointermove 的所有合并点收完再重画一次，别逐点重画
             e.preventDefault();
           }, { passive: false });
 
@@ -479,7 +517,7 @@
           function endPen(e) {
             if (e.pointerId !== activeId) return;
             // 不本地落 strokes（Mac 才是真源，稍后回传）；正常这一笔的 cur 先留着（本地即时可见），等 Mac 回传 strokes 再清。
-            if (penMode === "note") { if (radialActive) cur = null; flushBatch("ink"); send({ type: "ink", phase: "end" }); }
+            if (penMode === "note") { if (radialActive) { cur = null; drawLive(); } flushBatch("ink"); send({ type: "ink", phase: "end" }); }
             else if (penMode === "erase") { if (radialActive) batch = []; else flushBatch("erase"); send({ type: "erase", phase: "end" }); }
             else if (penMode === "page") { if (!radialActive) startMomentum(); }   // 笔翻页拖动松手 → 惯性（环形盘选择不甩动）
             if (probing) {   // 收尾探针流，Mac 据此提交/取消环形盘
@@ -487,7 +525,10 @@
               send({ type: "probe", phase: "end" }); probing = false;
             }
             radialActive = false;
-            activeId = null; penMode = ""; lastPt = null; lastMid = null;
+            // 抬笔必然收盘/撤环：不等 Mac 的 off 消息，丢帧也不会残留一个盘/环挡视线
+            if (radialState) setRadial(null);
+            if (pressRing) setPressRing(null);
+            activeId = null; penMode = "";
           }
           function onUp(e) { if (e.pointerType === "touch") endTouch(e.pointerId); else endPen(e); }
           ink.addEventListener("pointerup", onUp);
@@ -547,6 +588,178 @@
           }
           function endHover() { if (!hoverOn) return; hoverOn = false; clearHover(); send({ type: "hover", phase: "end" }); }
 
+          // ---- 环形选笔盘（Surface Dial 形制）----
+          // 长按检测、扇区判定、选中提交**全在 Mac**；这里只画 Mac 下发的 `radial` 状态，不做任何判定。
+          // 半径/角度常量必须与 Mac 端 `RadialLayout` 逐个对齐——两端画的是同一个盘，
+          // 而 Mac 的「中心取消区」判定用的就是 RD.hub 这个像素半径（配合 padGeom 上报的页宽换算）。
+          // wedgeDim/hubDim = 未选中扇区 / 中心 hub 的压暗度（对应 Mac 端 RadialMenuView 的同名常量，
+          // 盘底那档在 #radialGlass 的 CSS 里）。越小越透——对比度靠图标自带色片，不靠盘底堆。
+          var RD = { hub: 46, inner: 54, outer: 134, gap: 1.5, wedgeDim: 0.16, hubDim: 0.22 };
+          var radialState = null;                              // Mac 下发的盘状态（null = 未开）
+          var TOOL_LABEL = { erase: "橡皮", page: "翻页" };
+
+          // 平板页宽上报：Mac 侧的取消区半径/长按位移阈值都是**平板屏幕上的**尺度，得知道平板页宽才能换算。
+          // 值变了才发（缩放/旋转/换文档），静止时零流量。
+          var lastGeomW = -1;
+          function emitGeom() {
+            var w = pw();
+            if (Math.abs(w - lastGeomW) < 0.5) return;
+            lastGeomW = w; send({ type: "padGeom", pageW: w });
+          }
+
+          function setRadial(o) { radialState = (o && o.open) ? o : null; drawRadial(); }
+
+          // 长按进度环（环形盘的前置动画）：规格与 Mac 端 `PageCellView` 的 pressRing 一致——
+          // 300ms 起显示、1s 填满、直径 30 线宽 3、从正上方顺时针。判定同样在 Mac，这里只画。
+          // 平板收到 on 用本机时钟起计（局域网 RTT 的几毫秒偏差不可察觉，故协议不带时间戳）。
+          var PR = { d: 30, lw: 3, delayMs: 300, fillMs: 700 };
+          var pressRing = null, pressRAF = null;
+          function setPressRing(o) {
+            if (o && o.on) {
+              pressRing = { page: o.page, nx: o.nx, ny: o.ny, t0: performance.now() };
+              if (!pressRAF) pressRAF = requestAnimationFrame(pressTick);
+              return;
+            }
+            pressRing = null;
+            if (pressRAF) { cancelAnimationFrame(pressRAF); pressRAF = null; }
+            drawRadial();
+          }
+          function pressTick() {
+            pressRAF = pressRing ? requestAnimationFrame(pressTick) : null;
+            drawRadial();
+          }
+          function drawPressRing() {
+            var pr = pressRing; if (!pr) return;
+            var p = clamp((performance.now() - pr.t0 - PR.delayMs) / PR.fillMs, 0, 1);
+            if (p <= 0.001) return;   // 300ms 前不显示：轻点/快速书写不该闪一下环
+            var v = pageToView(pr.page, pr.nx, pr.ny), r = PR.d / 2;
+            rctx.save();
+            rctx.lineWidth = PR.lw; rctx.lineCap = "round";
+            rctx.strokeStyle = "rgba(255,255,255,0.25)";   // 轨道
+            rctx.beginPath(); rctx.arc(v.x, v.y, r, 0, Math.PI * 2); rctx.stroke();
+            rctx.strokeStyle = "#58a6ff";                  // 进度（从正上方顺时针）
+            rctx.beginPath(); rctx.arc(v.x, v.y, r, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2); rctx.stroke();
+            rctx.restore();
+          }
+
+          function rgbaParts(css) {
+            var m = /rgba?\(([^)]+)\)/.exec(css || "");
+            if (!m) return [0, 0, 0, 1];
+            var p = m[1].split(",").map(function (s) { return parseFloat(s); });
+            return [p[0] || 0, p[1] || 0, p[2] || 0, p.length > 3 ? p[3] : 1];
+          }
+          function contrastOn(css) {
+            var c = rgbaParts(css);
+            return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255 > 0.62 ? "#000" : "#fff";
+          }
+          /// 选中扇区的填充色：笔用自身颜色但**丢掉透明度**（荧光笔 alpha 很低，照抄会看不见高亮）。
+          function tintOf(item) {
+            if (item.kind === "erase") return "rgba(245,140,51,0.92)";
+            if (item.kind === "page") return "rgba(64,184,179,0.92)";
+            var c = rgbaParts(item.color);
+            return "rgba(" + (c[0] | 0) + "," + (c[1] | 0) + "," + (c[2] | 0) + ",0.92)";
+          }
+          function roundRect(x, y, w, h, r) {
+            rctx.beginPath(); rctx.moveTo(x + r, y);
+            rctx.arcTo(x + w, y, x + w, y + h, r); rctx.arcTo(x + w, y + h, x, y + h, r);
+            rctx.arcTo(x, y + h, x, y, r); rctx.arcTo(x, y, x + w, y, r);
+            rctx.closePath();
+          }
+
+          function drawRadial() {
+            rctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+            var st = radialState, glass = radialGlass;
+            var items = (st && st.items) || [];
+            if (!st || !items.length) {
+              glass.style.display = "none";
+              drawPressRing();   // 盘没开时才画进度环（环展开成盘，两者互斥）
+              return;
+            }
+            var c = pageToView(st.page, st.cx, st.cy), cx = c.x, cy = c.y;
+            var n = items.length, step = 360 / n, gap = Math.min(RD.gap, step / 4);
+
+            // 盘底 = 毛玻璃 div（含细亮边 + 投影），跟着盘心走；扇区/图标/hub 才画在 canvas 上。
+            glass.style.left = (cx - RD.outer) + "px"; glass.style.top = (cy - RD.outer) + "px";
+            glass.style.width = glass.style.height = (RD.outer * 2) + "px";
+            glass.style.display = "block";
+
+            // 扇区：整圆均分，第 0 项中心在正上方（12 点）顺时针；选中整块亮起。
+            for (var i = 0; i < n; i++) {
+              var on = st.highlight === i;
+              var a0 = (i * step - step / 2 + gap - 90) * Math.PI / 180;
+              var a1 = (i * step + step / 2 - gap - 90) * Math.PI / 180;
+              rctx.beginPath();
+              rctx.arc(cx, cy, RD.outer, a0, a1, false);
+              rctx.arc(cx, cy, RD.inner, a1, a0, true);
+              rctx.closePath();
+              rctx.fillStyle = on ? tintOf(items[i]) : "rgba(0,0,0," + RD.wedgeDim + ")";
+              rctx.fill();
+              if (on) { rctx.strokeStyle = "rgba(255,255,255,0.65)"; rctx.lineWidth = 1.5; rctx.stroke(); }
+              var ang = (i * step - 90) * Math.PI / 180, ir = (RD.inner + RD.outer) / 2;
+              drawRadialIcon(cx + ir * Math.cos(ang), cy + ir * Math.sin(ang), items[i], on);
+            }
+            drawRadialHub(cx, cy, items[st.highlight]);
+          }
+
+          /// 中心 hub：既是取消区，也回显当前指向项（下发的 items 没有笔名，故显示笔型 + 粗细）。
+          function drawRadialHub(cx, cy, sel) {
+            rctx.beginPath(); rctx.arc(cx, cy, RD.hub, 0, Math.PI * 2);
+            rctx.fillStyle = "rgba(0,0,0," + (sel ? RD.hubDim : RD.hubDim + 0.06) + ")"; rctx.fill();
+            rctx.strokeStyle = sel ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.55)";
+            rctx.lineWidth = sel ? 1 : 2; rctx.stroke();
+            var title = sel ? (sel.kind === "pen" ? (BRUSH_LABELS[sel.t] || "圆珠笔") : (TOOL_LABEL[sel.kind] || "")) : "取消";
+            var sub = (sel && sel.kind === "pen") ? (Math.round(sel.w * 100) / 100) + "pt" : "";
+            rctx.save();
+            rctx.textAlign = "center"; rctx.textBaseline = "middle";
+            rctx.shadowColor = "rgba(0,0,0,0.55)"; rctx.shadowBlur = 3; rctx.shadowOffsetY = 1;   // hub 底很淡，文字靠阴影保可读
+            rctx.fillStyle = sel ? "#fff" : "rgba(255,255,255,0.85)";
+            rctx.font = "600 13px -apple-system,'PingFang SC',system-ui,sans-serif";
+            rctx.fillText(title, cx, sub ? cy - 7 : cy);
+            if (sub) {
+              rctx.fillStyle = "rgba(255,255,255,0.7)";
+              rctx.font = "500 10px -apple-system,'PingFang SC',system-ui,sans-serif";
+              rctx.fillText(sub, cx, cy + 8);
+            }
+            rctx.restore();
+          }
+
+          /// 扇区图标统一形制：一枚彩色圆片 + 符号（跟 Mac 端 `disc` 对齐）。
+          /// 盘底透着页面内容，裸符号会被白页吞掉，所以每个图标都自带底片。
+          function drawRadialIcon(x, y, item, on) {
+            var r = on ? 17 : 14;
+            var isPen = item.kind === "pen";
+            var fill = isPen ? item.color : tintOf(item);
+            rctx.save();
+            rctx.shadowColor = "rgba(0,0,0,0.3)"; rctx.shadowBlur = on ? 5 : 3; rctx.shadowOffsetY = 1;
+            rctx.beginPath(); rctx.arc(x, y, r, 0, Math.PI * 2);
+            rctx.fillStyle = fill; rctx.fill();
+            rctx.restore();
+            rctx.beginPath(); rctx.arc(x, y, r, 0, Math.PI * 2);
+            rctx.strokeStyle = "rgba(255,255,255," + (on ? 0.9 : 0.55) + ")";
+            rctx.lineWidth = on ? 2 : 1; rctx.stroke();
+
+            rctx.save(); rctx.translate(x, y);
+            rctx.fillStyle = isPen ? contrastOn(item.color) : "#fff";
+            if (isPen) {                      // 笔尖剪影（笔杆 + 右端尖角），斜 45°
+              rctx.rotate(-Math.PI / 4);
+              var s = r * 0.62, w = r * 0.26;
+              rctx.beginPath();
+              rctx.moveTo(-s, -w); rctx.lineTo(s * 0.25, -w); rctx.lineTo(s, 0);
+              rctx.lineTo(s * 0.25, w); rctx.lineTo(-s, w);
+              rctx.closePath(); rctx.fill();
+            } else if (item.kind === "erase") {
+              rctx.rotate(-Math.PI / 5); rctx.scale(r / 17, r / 17);
+              roundRect(-9, -5.5, 18, 11, 2.5); rctx.fill();
+              rctx.strokeStyle = "rgba(0,0,0,0.3)"; rctx.lineWidth = 1.2;
+              rctx.beginPath(); rctx.moveTo(-2, -5.5); rctx.lineTo(-2, 5.5); rctx.stroke();
+            } else {                          // page：举起的手（掌 + 四指），对应 Mac 的 hand.raised.fill
+              rctx.scale(r / 17, r / 17);
+              roundRect(-6.5, -1, 13, 9.5, 3); rctx.fill();
+              for (var f = 0; f < 4; f++) { roundRect(-6 + f * 3.2, -8.5, 2.4, 8.5, 1.2); rctx.fill(); }
+            }
+            rctx.restore();
+          }
+
           function cycleMode() { modeIdx = (modeIdx + 1) % MODES.length; activeId = null; penMode = ""; endHover(); updateHud(); send({ type: "mode", mode: curMode() }); }
           function cyclePen() {
             penIdx = (penIdx + 1) % PENS.length; modeIdx = 0; updateHud();
@@ -601,6 +814,7 @@
             ws.onclose = function () {
               if (this !== ws) return;   // 旧实例的迟到事件，别清掉新连接的状态
               el("dot").className = "";
+              radialActive = false; setRadial(null); setPressRing(null);   // 断线时盘/环正开着 → 收掉（Mac 不会补发瞬态状态）
               if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
               scheduleRetry();
             };
@@ -626,6 +840,7 @@
             if (o.type === "authOK") {
               el("dot").className = "on"; startPing();
               send({ type: "mode", mode: curMode() }); send({ type: "pen", index: penIdx });   // 连接即同步当前工具状态给 Mac
+              lastGeomW = -1; emitGeom();   // 重连后 Mac 那边的页宽是空的，无条件补一发
             }
             else if (o.type === "pong") { lastPong = Date.now(); var rtt = Date.now() - (o.t || 0); rtts.push(rtt); if (rtts.length > 40) rtts.shift(); send({ type: "latency", ms: rtt }); }
             else if (o.type === "layout") { setLayout(o); }
@@ -649,9 +864,13 @@
               }
             }
             // Mac 检测到长按 → 把当前这半笔转成环形选笔盘：本地撤掉半笔、后续笔移不再画（只发位置驱动选笔）。
-            else if (o.type === "inkCancel") { radialActive = true; cur = null; drawInk(); }
+            else if (o.type === "inkCancel") { radialActive = true; cur = null; drawLive(); }
+            // 环形选笔盘状态镜像（Mac 是唯一判定方）：照着画即可，open=false 收盘。
+            else if (o.type === "radial") { setRadial(o); }
+            // 长按进度环（盘的前置动画）：同样是 Mac 判定，on=false 撤环。
+            else if (o.type === "pressRing") { setPressRing(o); }
             // Mac 回传的全部笔迹（唯一真源）：平板据此显示 + 刷新/重连/切档后恢复。正在写的这一笔(cur)不清，避免闪断。
-            else if (o.type === "strokes") { strokes = o.list || []; if (activeId === null) cur = null; drawInk(); }
+            else if (o.type === "strokes") { strokes = o.list || []; if (activeId === null) { cur = null; drawLive(); } drawInk(); }
             // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
           }
           function setLayout(o) {

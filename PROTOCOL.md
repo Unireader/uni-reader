@@ -72,11 +72,14 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x34` | pens | S→C | 可靠 |
 | `0x35` | inkCancel | S→C | 可靠 |
 | `0x36` | strokes | S→C | 可靠 |
+| `0x37` | radial | S→C | 可靠 |
+| `0x38` | pressRing | S→C | 可靠 |
 | `0x40` | scroll | C→S | **RT** |
 | `0x41` | hover | C→S | **RT** |
 | `0x42` | ink | C→S | **RT** |
 | `0x43` | erase | C→S | **RT** |
 | `0x44` | probe | C→S | **RT** |
+| `0x45` | padGeom | C→S | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -97,6 +100,11 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `pageTurn` | `u8 dir` | `{type:"pageTurn", dir}`（"prev"/"next"）|
 | `mode` | `u8 mode` | `{type:"mode", mode}`（"note"/"erase"/"page"）|
 | `pen` | `u16 index` | `{type:"pen", index}` |
+| `padGeom` | `f32 pageW` | `{type:"padGeom", pageW}` |
+
+`padGeom`：平板上报**自己**当前的内容页宽（CSS px，= 页在平板屏幕上的显示宽度）。Mac 端环形选笔盘的
+「中心取消区半径」「长按位移阈值」都是**平板屏幕上的物理尺度**，必须用平板页宽把归一化位移换算成
+平板 px——用 Mac 阅读区页宽换算会让选择手感随任一端缩放而漂移。平板在布局/缩放变化时发（值变才发）。
 
 ### 4.2 Mac→平板 状态下发（可靠）
 
@@ -109,7 +117,18 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `pens` | `u16 active` · `u16 n` · `n × pen` |
 | `inkCancel` | 空 |
 | `strokes` | `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
+| `radial` | `u8 open` · open=1 时续 `u32 page` · `f32 cx` · `f32 cy` · `u16 highlight` · `u16 n` · `n ×( u8 kind, pen )` |
+| `pressRing` | `u8 on` · on=1 时续 `u32 page` · `f32 nx` · `f32 ny` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
+
+`radial`（环形选笔盘）：长按检测、扇区判定、选中提交**全部在 Mac**，这条只是把盘的状态镜像给平板去画
+（平板不做任何判定）。`open=0` 时 payload 到此为止（收盘）。`highlight` = 当前指向的扇区下标，
+`0xFFFF` = 无（指针在中心取消区）；解码后对象里是 `-1`。`kind` u8：`0=pen 1=erase 2=page`，
+`kind≠0` 的项 `pen` 字节为占位 0（保持定长）。扇区**整圆均分**，第 0 项中心在正上方（12 点）、顺时针排列。
+
+`pressRing`（长按进度环，环形盘的前置动画）：同样是 Mac 判定、平板照画。落笔即 `on=1`（Mac 起 1s 定时），
+判为在画（位移超阈值）/ 长按达成转成盘 / 抬笔，都发 `on=0`。**不下发时间戳**——平板收到 `on=1` 就用
+本机时钟起计，两端的 300ms 起显示 / 1s 填满是各自硬编码的同一组常量（局域网 RTT 造成的几毫秒偏差不可察觉）。
 
 对象形状（与旧 JSON 逐字段一致）：
 - `page` → `{type:"page", v, index, count, w, h}`（方案 B 下平板忽略，仍编码）
@@ -118,6 +137,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 - `docs` → `{type:"docs", list:[{id,title},…], selected, following}`
 - `pens` → `{type:"pens", list:[{color,w,t},…], active}`
 - `strokes` → `{type:"strokes", list:[{page, pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
+- `radial` → `{type:"radial", open:true, page, cx, cy, highlight, items:[{kind:"pen"|"erase"|"page", color, w, t},…]}`；收盘 → `{type:"radial", open:false}`
+- `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
 - `nack` → `{type:"nack", seqs:[…]}`
 
 ### 4.3 平板→Mac 实时流（RT，UDP 阶段可迁 UDP）
@@ -182,5 +203,5 @@ RT 流（scroll/hover/ink/erase/probe）在原生客户端上改走 UDP，消除
 
 ## 7. 一致性验证
 
-- `spike/wire-codec-test.swift`：Swift 端全消息 encode→decode round-trip。
+- `spike/wire-codec-test.swift`：Swift 端全消息 encode→decode round-trip。**新消息一律追加在 canonical 表末尾**——安卓 `WireCodecTest.kt` 硬编码了该表向量并按行号索引，往中间插会静默错位掉整套跨语言凭据。
 - `spike/wire-cross-test.js`：node 加载 `wire.js` 做 JS round-trip，并读 Swift 导出的 canonical 字节向量 `spike/wire-vectors-swift.txt`，逐字节比对，证明 **Swift 与 JS 编码结果字节级一致**（canonical 消息用 f32 精确值：0.5/0.25/整数，避免浮点表示差异）。

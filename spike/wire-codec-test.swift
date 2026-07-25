@@ -44,6 +44,18 @@ let canonical: [[String: Any]] = [
     ["type": "probe", "phase": "move", "pts": [[0.25, 0.25]]],
     ["type": "probe", "phase": "end"],
     ["type": "nack", "seqs": [1, 2, 3000000000]],
+    // —— 新消息一律**追加在末尾** ——
+    // 安卓端 `WireCodecTest.kt` 硬编码了这张表的向量并按**行号**索引（`VECTORS[line-1]`），
+    // 往中间插会静默错位掉整套跨语言凭据。
+    ["type": "radial", "open": false],
+    ["type": "radial", "open": true, "page": 4, "cx": 0.5, "cy": 0.25, "highlight": 2,
+     "items": [["kind": "pen", "color": "rgba(24,90,210,0.5)", "w": 8, "t": "ballpoint"],
+               ["kind": "erase", "color": "rgba(0,0,0,1.0)", "w": 0, "t": "ballpoint"],
+               ["kind": "page", "color": "rgba(0,0,0,1.0)", "w": 0, "t": "ballpoint"]]],
+    ["type": "radial", "open": true, "page": 0, "cx": 0.25, "cy": 0.75, "highlight": -1, "items": []],
+    ["type": "padGeom", "pageW": 1024],
+    ["type": "pressRing", "on": false],
+    ["type": "pressRing", "on": true, "page": 3, "nx": 0.5, "ny": 0.25],
 ]
 
 var pass = 0, fail = 0

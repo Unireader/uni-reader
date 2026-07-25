@@ -33,9 +33,12 @@ final class AppModel: ObservableObject {
     private var inkMovedFar = false
     private var inRadial = false
     private let longPressSeconds = 1.0
-    private let moveCancelThresh = 0.02   // 归一化位移超此值 → 判为在画，不呼出
-    private let radialDeadzone = 0.045     // 归一化半径内 → 中心取消区
-    private let radialRingBoundary = 94.0  // 内外环分界（view pt）：内环笔 70 / 外环工具 118 的中点
+    /// 平板上报的内容页宽（CSS px）。长按/选盘的距离阈值都是**平板屏幕上的**物理尺度，必须用它换算——
+    /// 用 Mac 阅读区页宽（`pageViewWidth`）换算的话，手感会随任意一端的缩放漂移。0 = 平板没上报（旧端）。
+    private var padPageWidth: Double = 0
+    private let moveCancelPx = 14.0        // 平板屏幕位移超此值 → 判为在画，不呼出
+    private let moveCancelNorm = 0.02      // 同上，`padPageWidth` 未知时的归一化回退
+    private let radialDeadzoneNorm = 0.045 // 中心取消区，`padPageWidth` 未知时的归一化回退
 
     init() {
         // 平板翻页 → 应用到平板当前会话，并重推页图。
@@ -121,6 +124,11 @@ final class AppModel: ObservableObject {
     // MARK: - 手写路由
 
     private func handleInk(_ obj: [String: Any]) {
+        // 平板几何上报（环形盘的像素判定要用）：与文档会话无关，放在 padSession 判空之前。
+        if obj["type"] as? String == "padGeom" {
+            padPageWidth = max(0, (obj["pageW"] as? NSNumber)?.doubleValue ?? 0)
+            return
+        }
         guard let s = padSession else { return }
         switch obj["type"] as? String {
         case "ink":
@@ -183,7 +191,7 @@ final class AppModel: ObservableObject {
         cancelRadial()
         guard let f = first else { return }
         inkStart = (page, f.x, f.y); inkMovedFar = false; inRadial = false
-        padSession?.pressRing = PressRing(page: page, nx: f.x, ny: f.y, start: Date())
+        setPressRing(PressRing(page: page, nx: f.x, ny: f.y, start: Date()))
         let work = DispatchWorkItem { [weak self] in self?.fireLongPress() }
         longPressWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + longPressSeconds, execute: work)
@@ -192,65 +200,80 @@ final class AppModel: ObservableObject {
     /// 画的时候（位移超阈值）取消长按候选 + 撤掉进度环。
     private func checkLongPressMovement(_ last: SIMD3<Double>?) {
         guard !inkMovedFar, let s0 = inkStart, let p = last else { return }
-        let dx = p.x - s0.nx, dy = p.y - s0.ny
-        if dx * dx + dy * dy > moveCancelThresh * moveCancelThresh {
+        let dx = p.x - s0.nx, dy = (p.y - s0.ny) * currentPageAspect(page: s0.page)
+        if exceedsPad((dx * dx + dy * dy).squareRoot(), px: moveCancelPx, norm: moveCancelNorm) {
             inkMovedFar = true
             longPressWork?.cancel(); longPressWork = nil
-            padSession?.pressRing = nil
+            setPressRing(nil)
         }
+    }
+
+    /// 设长按进度环并镜像给平板（值没变就不发，免得每次落笔来回空广播）。
+    /// 平板收到 `on=1` 用本机时钟起计，两端的起显示/填满时长是各自硬编码的同一组常量。
+    private func setPressRing(_ r: PressRing?) {
+        guard padSession?.pressRing != r else { return }
+        padSession?.pressRing = r
+        guard server.isRunning else { return }
+        if let r {
+            server.broadcast(["type": "pressRing", "on": true, "page": r.page, "nx": r.nx, "ny": r.ny])
+        } else {
+            server.broadcast(["type": "pressRing", "on": false])
+        }
+    }
+
+    /// 页内归一化距离（已做长宽比校正）是否超过给定的**平板屏幕**阈值。
+    /// 平板报了页宽就按平板 px 判（所见即所得，与平板上画出的盘同尺度）；没报则退回归一化阈值。
+    private func exceedsPad(_ normDist: Double, px: Double, norm: Double) -> Bool {
+        padPageWidth > 0 ? normDist * padPageWidth > px : normDist > norm
     }
 
     /// 长按达成：丢弃正在成形的这一笔，呼出环形盘（中心在落笔处），并回发 inkCancel 让平板撤掉本地这半笔。
     private func fireLongPress() {
         guard !inkMovedFar, !inRadial, let s0 = inkStart, let s = padSession else { return }
         s.liveStroke = nil
-        s.pressRing = nil
+        setPressRing(nil)   // 环展开成盘，两者互斥
         inRadial = true
         s.radial = RadialState(page: s0.page, cx: s0.nx, cy: s0.ny, highlight: -1)
         server.broadcast(["type": "inkCancel"])
+        broadcastRadial()
     }
 
-    /// 环形盘打开时，笔移 → 角度定扇区、半径定层（页比例换算成屏幕角度/距离，含长宽比校正）。
-    /// 整圆两层（半径分层）：外环 = 小手（上半圆，扇区 0）/ 橡皮擦（下半圆，扇区 n-1）；
-    /// 内环 = 各支笔整圆均布（扇区 1..pens.count，0 号正上方起顺时针）。中心 = 取消区。
+    /// 环形盘打开时，笔移 → **只看角度**定扇区（`RadialLayout`：整圆均分，0 号正上方起顺时针）；
+    /// 半径只用来判「有没有离开中心取消区」。角度天生与缩放无关（长宽比校正后即真实方向），
+    /// 取消区半径按平板屏幕像素判 —— 两者合起来让选择手感不再随任一端缩放漂移。
     private func updateRadial(_ last: SIMD3<Double>?) {
-        guard var r = padSession?.radial, let p = last, !pens.isEmpty else { return }
-        let dx = p.x - r.cx, dy = p.y - r.cy
-        if (dx * dx + dy * dy) < radialDeadzone * radialDeadzone {
+        guard var r = padSession?.radial, let p = last else { return }
+        let items = RadialLayout.items(penCount: pens.count)
+        guard !items.isEmpty else { return }
+        let dx = p.x - r.cx
+        let dy = (p.y - r.cy) * currentPageAspect(page: r.page)   // 归一化 y → 与 x 同尺度，方向才是真实方向
+        let dist = (dx * dx + dy * dy).squareRoot()
+        if !exceedsPad(dist, px: Double(RadialLayout.hubRadius), norm: radialDeadzoneNorm) {
             r.highlight = -1
         } else {
-            let aspect = currentPageAspect(page: r.page)   // pageH/pageW
-            var ang = atan2(dy * aspect, dx) + .pi / 2      // 从正上方起、顺时针（π/2=右，π=下）
+            var ang = atan2(dx, -dy)   // 正上方为 0、顺时针（页坐标 y 向下，故取 -dy）
             if ang < 0 { ang += 2 * .pi }
-            let n = pens.count + 2
-            // 归一化距离 → view pt：x 乘渲染页宽、y 乘页高(=宽×aspect)，与固定 pt 尺寸的菜单圆环可比
-            let w = padSession?.pageViewWidth ?? 0
-            let rPts = w * (dx * dx + (dy * aspect) * (dy * aspect)).squareRoot()
-            if rPts >= radialRingBoundary {
-                r.highlight = (ang < .pi / 2 || ang > 3 * .pi / 2) ? 0 : n - 1   // 外环：上半圆=小手，下半圆=橡皮擦
-            } else {
-                let k = Int((ang / (2 * .pi) * Double(pens.count)).rounded()) % pens.count
-                r.highlight = 1 + k   // 内环：笔（0 号正上方起顺时针）
-            }
+            let n = items.count
+            r.highlight = Int((ang / (2 * .pi) * Double(n)).rounded()) % n
         }
-        if r != padSession?.radial { padSession?.radial = r }
+        if r != padSession?.radial { padSession?.radial = r; broadcastRadial() }
     }
 
-    /// 抬笔：环形盘打开则提交选中（中心区/右半圆=不选），否则正常收笔。
+    /// 抬笔：环形盘打开则提交选中扇区（中心取消区 = 不选），否则正常收笔。
     private func endInkOrRadial() {
         longPressWork?.cancel(); longPressWork = nil
-        padSession?.pressRing = nil
+        setPressRing(nil)
         if inRadial {
-            if let r = padSession?.radial, r.highlight >= 0 {
-                if r.highlight == 0 {
-                    setPadMode("page")          // 扇区 0：小手翻页
-                } else if r.highlight == pens.count + 1 {
-                    setPadMode("erase")         // 末尾扇区：橡皮擦
-                } else if r.highlight <= pens.count {
-                    applyPenSelection(index: r.highlight - 1)   // 中间扇区：选笔 → 顺带回笔记模式
+            let items = RadialLayout.items(penCount: pens.count)
+            if let r = padSession?.radial, items.indices.contains(r.highlight) {
+                switch items[r.highlight] {
+                case .pen(let i): applyPenSelection(index: i)   // 选笔 → 顺带回笔记模式
+                case .erase: setPadMode("erase")
+                case .page: setPadMode("page")
                 }
             }
             padSession?.radial = nil
+            broadcastRadial()
         } else {
             inkEnd()
         }
@@ -259,9 +282,35 @@ final class AppModel: ObservableObject {
 
     private func cancelRadial() {
         longPressWork?.cancel(); longPressWork = nil
-        if inRadial { padSession?.radial = nil }
-        padSession?.pressRing = nil
+        if inRadial { padSession?.radial = nil; broadcastRadial() }
+        setPressRing(nil)
         inRadial = false; inkStart = nil; inkMovedFar = false
+    }
+
+    /// 把环形盘状态镜像给平板（平板照着画，不做任何判定）。盘一收就发 `open:false`。
+    /// 只在 `radial` 真的变了时调用——`updateRadial` 已用 Equatable 去重，跨扇区才发一帧。
+    private func broadcastRadial() {
+        guard server.isRunning else { return }
+        guard let r = padSession?.radial else {
+            server.broadcast(["type": "radial", "open": false])
+            return
+        }
+        // 工具扇区不吃 pen 字段，但线格式定长，填占位色即可（见 PROTOCOL.md §4.2 radial）。
+        func entry(_ kind: String, _ pen: PenPreset?) -> [String: Any] {
+            ["kind": kind,
+             "color": pen?.color.cssRGBA ?? "rgba(0,0,0,1)",
+             "w": pen?.width ?? 0,
+             "t": (pen?.type ?? .ballpoint).rawValue]
+        }
+        let items: [[String: Any]] = RadialLayout.items(penCount: pens.count).map { item in
+            switch item {
+            case .pen(let i): return entry("pen", pens.indices.contains(i) ? pens[i] : nil)
+            case .erase: return entry("erase", nil)
+            case .page: return entry("page", nil)
+            }
+        }
+        server.broadcast(["type": "radial", "open": true, "page": r.page, "cx": r.cx, "cy": r.cy,
+                          "highlight": r.highlight, "items": items])
     }
 
     private func currentPageAspect(page: Int) -> Double {

@@ -173,7 +173,6 @@ struct ReaderSurface: View {
         // 笔架悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
         .overlay { GeometryReader { proxy in PenRackView(viewportSize: proxy.size, topInset: indicatorTopInset, isActiveWindow: isActiveWindow) } }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
-        .onChange(of: pageW) { _, w in session.pageViewWidth = w }   // 环形盘内外层判定用（归一化距离 → pt）
         .onChange(of: nightMode) { _, _ in scheduleNightRender() }
         .onChange(of: fullWidth) { _, _ in
             // fullWidth 到位前首帧已早退；到位后补跑首帧定基准+首次实化（消除启动窄→宽闪烁）。窗口真实缩放走 refit。
@@ -288,7 +287,6 @@ struct ReaderSurface: View {
         follower.pageCount = lay.pageCount
         follower.interpEnabled = interpEnabled
         scratch.appearAt = CACurrentMediaTime()
-        session.pageViewWidth = pageW   // 初值；随后由 .onChange(of: pageW) 跟随缩放/改宽
         scratch.pendingZoom = session.restoreZoom   // 上次缩放：首帧定 fitBasis 后套用（见 geometryChanged）
         scratch.pendingHFrac = session.restoreHFrac > 0.0001 ? session.restoreHFrac : nil   // 横向恢复
         // fitBasis 由首帧 geometryChanged 设定（此处不预设，避免与真实值有偏差）

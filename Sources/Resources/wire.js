@@ -13,11 +13,14 @@
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
-    scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44,
+    radial: 0x37, pressRing: 0x38,
+    scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45,
     nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page"];
+  var RKIND = ["pen", "erase", "page"];      // 环形盘扇区类型
+  var NO_HL = 0xFFFF;                        // highlight 线上哨兵：无高亮（中心取消区）→ 对象里 -1
   var PH = { begin: 0, move: 1, end: 2 };
   var PHNAME = ["begin", "move", "end"];
 
@@ -25,6 +28,7 @@
 
   function brushCode(t) { var i = BRUSH.indexOf(t); return i < 0 ? 0 : i; }
   function modeCode(m) { var i = MODEK.indexOf(m); return i < 0 ? 0 : i; }
+  function rkindCode(k) { var i = RKIND.indexOf(k); return i < 0 ? 0 : i; }
 
   // "rgba(24,90,210,0.95)" / "rgb(...)" -> [r,g,b,a]（r/g/b 0~255 整数，a 0~1）
   function parseColor(css) {
@@ -136,6 +140,23 @@
         for (var s = 0; s < S.length; s++) { w.u32(S[s].page || 0); w.pen(S[s].pen); w.pts(S[s].pts, 3); }
         break;
       }
+      case "radial": {
+        w.u8(OP.radial);
+        if (!o.open) { w.u8(0); break; }
+        w.u8(1); w.u32(o.page || 0); w.f32(o.cx || 0); w.f32(o.cy || 0);
+        var hl = o.highlight == null ? -1 : o.highlight;
+        w.u16(hl < 0 ? NO_HL : hl);
+        var IT = o.items || []; w.u16(IT.length);
+        for (var t2 = 0; t2 < IT.length; t2++) { w.u8(rkindCode(IT[t2].kind)); w.pen(IT[t2]); }
+        break;
+      }
+      case "pressRing": {
+        w.u8(OP.pressRing);
+        if (!o.on) { w.u8(0); break; }
+        w.u8(1); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
+        break;
+      }
+      case "padGeom": w.u8(OP.padGeom); w.f32(o.pageW || 0); break;
       case "scroll": w.u8(OP.scroll); w.u32(o.page || 0); w.f32(o.frac || 0); w.f64(o.t || 0); break;
       case "hover":
         w.u8(OP.hover);
@@ -209,6 +230,22 @@
         for (var s = 0; s < sn; s++) slist[s] = { page: r.u32(), pen: r.pen(), pts: r.pts(3) };
         return { type: "strokes", list: slist };
       }
+      case OP.radial: {
+        if (r.u8() === 0) return { type: "radial", open: false };
+        var rp = r.u32(), rcx = r.f32(), rcy = r.f32(), rhl = r.u16(), rn = r.u16();
+        var items = new Array(rn);
+        for (var ri = 0; ri < rn; ri++) {
+          var kind = RKIND[r.u8()] || "pen", pn2 = r.pen();
+          pn2.kind = kind; items[ri] = pn2;
+        }
+        return { type: "radial", open: true, page: rp, cx: rcx, cy: rcy,
+                 highlight: rhl === NO_HL ? -1 : rhl, items: items };
+      }
+      case OP.pressRing: {
+        if (r.u8() === 0) return { type: "pressRing", on: false };
+        return { type: "pressRing", on: true, page: r.u32(), nx: r.f32(), ny: r.f32() };
+      }
+      case OP.padGeom: return { type: "padGeom", pageW: r.f32() };
       case OP.scroll: return { type: "scroll", page: r.u32(), frac: r.f32(), t: r.f64() };
       case OP.hover: {
         var hph = r.u8();
