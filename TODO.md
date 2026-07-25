@@ -16,9 +16,9 @@
 四项大改，分里程碑推进。用户已定：UDP=整条实时流走 UDP（原生客户端自管序号/丢弃/轻量重传，控制握手仍走可靠通道，浏览器用不了 UDP 永远走 WS）；安卓 = 工作区内 `android/` 子目录独立 git 仓库。
 
 - ✅ **① 通信协议改二进制**（2026-07-25 完成，编译过 + 跨语言测试全绿）：JSON→二进制线格式 v1。契约见 **`PROTOCOL.md`**（唯一真源）；三端字节级一致由 `Sources/Server/WireCodec.swift`（Swift，仅 Foundation）+ `Sources/Resources/wire.js`（浏览器/node 共用）保证。做法=**换序列化器不换对象模型**：`AppModel`/`handleInk`/各 `broadcast*` 的 `[String:Any]` 全不动，只在 `LANServer.rawSend`/`receiveWS`（WS opcode `.text`→`.binary`）与 capture.html 的 `send`/`onmessage`（`binaryType="arraybuffer"` + `Wire.encode/decode`）两个咽喉换掉。全 opcode 表 + 每消息字节布局见 `PROTOCOL.md §3/§4`。测试：`spike/wire-codec-test.swift`（Swift round-trip + 坏帧安全 34/34）+ `spike/wire-cross-test.js`（node JS round-trip + 与 Swift 导出向量 `spike/wire-vectors-swift.txt` 逐字节比对 58/58）。
-- ⬜ **② 加 UDP 传输**（下一阶段）：仅原生客户端（安卓）。在 `PROTOCOL.md §4` 帧本体外加一层 UDP 传输头（session id + 单调 seq，自管乱序/丢弃/轻量重传），把 §4.3 标 `RT` 的高频流（scroll/hover/ink/erase/probe）迁 UDP；控制握手/状态下发仍走 WS。Mac 端加 `NWListener`(udp)。浏览器不受影响（继续 WS-二进制）。
+- ✅ **② 加 UDP 传输**（2026-07-25 Mac 端完成，编译过 + 测试全绿；客户端侧并入 ④ 安卓模式2）：RT 流（scroll/hover/ink/erase/probe）走 UDP，控制握手/下发/NACK 仍走 WS。传输头 `[u8 ver][u8 ptype][u32 session][u32 seq]+帧本体` 见 **`PROTOCOL.md §6`**；两个独立 seq 空间——UNREL（scroll/hover）最新胜、REL（ink/erase/probe）重排+NACK 经 WS 轻量重传+`stallMs=200` 缺口超时兜底。Mac 端：`Sources/Server/UDPReorder.swift`（纯逻辑重排）+ `UDPTransport.swift`（NWListener udp:8772 + 传输头解析）+ `LANServer` session 登记（authOK 带 `session`/`udpPort`，新 opcode `nack 0x50`，WS 已开 `TCP_NODELAY`）。**注意**：`flushStale` 卡死判据是「缺口首次出现时刻 `gapSince`」而非上次交付时刻——否则两笔之间的静置空档会让新缺口被立即跳过、NACK 来不及跑（集成测试抓出来的真 bug）。评审定案：不做 UDP 连通性首帧回执/降级（先看效果）、HELLO 只发一发不保活、probe 保持 REL、ringCap=512 待真机验证。测试：`spike/udp-reorder-test.swift`（26/26）+ `spike/udp-client-test.js`（node dgram 端到端，自动编译 harness 起真 LANServer，6/6：乱序补齐/NACK 重传/flushStale 兜底/UNREL 最新胜/坏 session 丢弃）。
 - ⬜ **③ 安卓模式1 独立版**：`android/` 子目录独立仓库。原生直接读工作区 SQLite（当初弃 SwiftData 选跨平台 SQLite 就为此，schema 见 `REQUIREMENTS.md §8`）+ 本地渲染 PDF + 支持 Mac 端全部笔迹操作（环形选笔盘/擦除/长按检测）+ OCR 仅走 API 模式（Paddle 云 API，无桌面依赖）。**不碰网络协议**，是独立最大块。
-- ⬜ **④ 安卓模式2 输入板**：Kotlin 原生重写一遍 capture.html（等价浏览器采集页），说二进制协议 v1、可走 UDP。依赖 ①（已就绪）②。
+- ⬜ **④ 安卓模式2 输入板**：Kotlin 原生重写一遍 capture.html（等价浏览器采集页），说二进制协议 v1、走 UDP（发送端：双 seq 计数器 + REL 环形缓冲 ringCap=512 + 收 nack 重发 + 开 UDP 时一发 HELLO）。依赖 ①②（均已就绪）。
 
 ## ⏭️ 接下来（建议顺序）
 

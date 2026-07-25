@@ -13,7 +13,8 @@
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
-    scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44
+    scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44,
+    nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page"];
@@ -98,7 +99,7 @@
     var w = new Writer();
     switch (o.type) {
       case "auth": w.u8(OP.auth); w.str(o.token); break;
-      case "authOK": w.u8(OP.authOK); break;
+      case "authOK": w.u8(OP.authOK); w.u32(o.session || 0); w.u16(o.udpPort || 0); break;
       case "authFail": w.u8(OP.authFail); break;
       case "ping": w.u8(OP.ping); w.f64(o.t || 0); break;
       case "pong": w.u8(OP.pong); w.f64(o.t || 0); break;
@@ -155,6 +156,11 @@
         if (o.phase === "begin") { w.u32(o.page || 0); w.pts(o.pts, 2); }
         else if (o.phase === "move") { w.pts(o.pts, 2); }
         break;
+      case "nack": {
+        w.u8(OP.nack); var SQ = o.seqs || []; w.u16(SQ.length);
+        for (var q = 0; q < SQ.length; q++) w.u32(SQ[q]);
+        break;
+      }
       default: return null;
     }
     return w.bytes();
@@ -167,7 +173,11 @@
     var op = r.u8();
     switch (op) {
       case OP.auth: return { type: "auth", token: r.str() };
-      case OP.authOK: return { type: "authOK" };
+      case OP.authOK: {
+        // v1 起带 [u32 session][u16 udpPort]；兼容空 payload（→ 0）。
+        if (r.len - r.n >= 6) return { type: "authOK", session: r.u32(), udpPort: r.u16() };
+        return { type: "authOK", session: 0, udpPort: 0 };
+      }
       case OP.authFail: return { type: "authFail" };
       case OP.ping: return { type: "ping", t: r.f64() };
       case OP.pong: return { type: "pong", t: r.f64() };
@@ -221,6 +231,11 @@
         if (pph === PH.begin) return { type: "probe", phase: "begin", page: r.u32(), pts: r.pts(2) };
         if (pph === PH.move) return { type: "probe", phase: "move", pts: r.pts(2) };
         return { type: "probe", phase: "end" };
+      }
+      case OP.nack: {
+        var nn = r.u16(), seqs = new Array(nn);
+        for (var qi = 0; qi < nn; qi++) seqs[qi] = r.u32();
+        return { type: "nack", seqs: seqs };
       }
       default: return null;   // 未知 opcode：丢弃
     }

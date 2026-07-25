@@ -29,6 +29,8 @@ final class LANServer: ObservableObject {
     let token = Pairing.makeToken()
     let httpPort: UInt16 = 8770
     let wsPort: UInt16 = 8771
+    /// UDP 监听端口（仅原生客户端 RT 上行；浏览器永远 WS）。随 authOK 下发。
+    let udpPort: UInt16 = 8772
 
     /// 收到平板已鉴权消息（如手写笔画）的回调，在主线程调用。
     var onMessage: (([String: Any]) -> Void)?
@@ -44,6 +46,13 @@ final class LANServer: ObservableObject {
     private var infoByConn: [ObjectIdentifier: ClientInfo] = [:]   // conn → 客户端信息（列表/踢除用）
     private var inboundCount = 0            // 主线程累加
     private var statsTimer: Timer?
+
+    // UDP（queue 上读写；契约见 PROTOCOL.md §6）
+    private var udp: UDPTransport?
+    private var sessionByConn: [ObjectIdentifier: UInt32] = [:]  // WS conn → UDP 会话号
+    private var connBySession: [UInt32: NWConnection] = [:]      // UDP 会话号 → WS conn（NACK 回路）
+    private var pendingNacks: [UInt32: Set<UInt32>] = [:]        // session → 待 NACK 的 REL seq（节流汇总）
+    private var maintenanceTimer: DispatchSourceTimer?           // ~30ms：flushStale + NACK 冲刷
 
     // 页面状态（queue 上读写）
     private var pagePNG = Data()
@@ -65,6 +74,7 @@ final class LANServer: ObservableObject {
         do {
             try startHTTP()
             try startWS()
+            try startUDP()
             setRunning(true)
             startStats()
         } catch {
@@ -75,6 +85,11 @@ final class LANServer: ObservableObject {
 
     func stop() {
         stopStats()
+        maintenanceTimer?.cancel(); maintenanceTimer = nil
+        udp?.stop(); udp = nil
+        sessionByConn = [:]
+        connBySession = [:]
+        pendingNacks = [:]
         httpListener?.cancel(); httpListener = nil
         wsListener?.cancel(); wsListener = nil
         queue.async {
@@ -202,6 +217,8 @@ final class LANServer: ObservableObject {
     private func startWS() throws {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
+        // 关 Nagle：低频控制消息不被攒 ~40ms（RT 流走 UDP 后 WS 只剩可靠通道，零成本正确设置）。
+        (params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options)?.noDelay = true
         let ws = NWProtocolWebSocket.Options()
         ws.autoReplyPing = true
         params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
@@ -209,6 +226,40 @@ final class LANServer: ObservableObject {
         listener.newConnectionHandler = { [weak self] conn in self?.acceptWS(conn) }
         listener.start(queue: queue)
         wsListener = listener
+    }
+
+    // MARK: - UDP（仅原生客户端 RT 上行）
+
+    private func startUDP() throws {
+        let udp = UDPTransport(queue: queue)
+        // 已排序就绪的 UDP 帧本体：WireCodec.decode 后走与 WS 完全相同的路由（handleInk/onScroll 零改动）。
+        udp.onFrame = { [weak self] session, body in
+            guard let self, let conn = self.connBySession[session],
+                  let obj = WireCodec.decode(body) else { return }
+            let text = "[udp] " + (obj["type"] as? String ?? "?")
+            _ = self.handle(obj, text: text, conn: conn, authed: true)
+        }
+        // REL 缺口：汇总进 pendingNacks，由 maintenanceTimer 节流后经 WS 发 nack（NACK 绝不能丢，不走 UDP）。
+        udp.onGap = { [weak self] session, seqs in
+            self?.pendingNacks[session, default: []].formUnion(seqs)
+        }
+        try udp.start(port: udpPort)
+        self.udp = udp
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(30), repeating: .milliseconds(30), leeway: .milliseconds(10))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.udp?.flushStale()                       // REL 缺口超时兜底（stallMs 后跳过）
+            let pending = self.pendingNacks
+            self.pendingNacks = [:]
+            for (session, seqs) in pending {
+                guard let conn = self.connBySession[session] else { continue }
+                self.rawSend(["type": "nack", "seqs": seqs.sorted()], to: conn)
+            }
+        }
+        timer.resume()
+        maintenanceTimer = timer
     }
 
     private func acceptWS(_ conn: NWConnection) {
@@ -245,7 +296,13 @@ final class LANServer: ObservableObject {
         if !authed {
             if type == "auth", (obj["token"] as? String) == token {
                 addClient(conn)
-                send(["type": "authOK"], to: conn)
+                // 生成 UDP 会话号并登记（session↔WS 连接映射；UDP 数据报凭它鉴权/路由）。
+                var session = UInt32.random(in: 1...UInt32.max)
+                while connBySession[session] != nil { session = UInt32.random(in: 1...UInt32.max) }
+                sessionByConn[ObjectIdentifier(conn)] = session
+                connBySession[session] = conn
+                udp?.addSession(session)
+                send(["type": "authOK", "session": session, "udpPort": udpPort], to: conn)
                 rawSend(pageInfoDict(), to: conn)   // 立即告知当前页
                 return true
             } else {
@@ -326,6 +383,13 @@ final class LANServer: ObservableObject {
         let before = clients.count
         clients.removeAll { $0 === conn }
         infoByConn[ObjectIdentifier(conn)] = nil
+        // WS 断开 → 注销 UDP session（其后带该 session 的 UDP 一律丢弃）
+        if let session = sessionByConn[ObjectIdentifier(conn)] {
+            sessionByConn[ObjectIdentifier(conn)] = nil
+            connBySession[session] = nil
+            pendingNacks[session] = nil
+            udp?.removeSession(session)
+        }
         conn.cancel()
         if clients.count != before { publishClients() }
     }

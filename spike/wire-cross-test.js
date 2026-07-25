@@ -16,7 +16,8 @@ function hex(u8) { return Buffer.from(u8).toString("hex"); }
 // —— canonical 消息集（顺序/数值必须与 wire-codec-test.swift 完全一致）——
 const canonical = [
   { type: "auth", token: "abc123" },
-  { type: "authOK" },
+  { type: "authOK", session: 0, udpPort: 0 },
+  { type: "authOK", session: 305419896, udpPort: 8772 },   // 0x12345678
   { type: "authFail" },
   { type: "ping", t: 1700000000000 },
   { type: "pong", t: 1700000000000 },
@@ -46,6 +47,7 @@ const canonical = [
   { type: "probe", phase: "begin", page: 2, pts: [[0.5, 0.5]] },
   { type: "probe", phase: "move", pts: [[0.25, 0.25]] },
   { type: "probe", phase: "end" },
+  { type: "nack", seqs: [1, 2, 3000000000] },
 ];
 
 let pass = 0, fail = 0;

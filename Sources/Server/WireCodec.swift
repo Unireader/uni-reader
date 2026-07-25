@@ -21,6 +21,7 @@ enum WireCodec {
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
+        static let nack: UInt8 = 0x50
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -121,7 +122,10 @@ enum WireCodec {
         var w = BW()
         switch o["type"] as? String ?? "" {
         case "auth": w.u8(Op.auth); w.str(strOf(o["token"]))
-        case "authOK": w.u8(Op.authOK)
+        case "authOK":
+            w.u8(Op.authOK)
+            w.u32(intOf(o["session"]))          // UDP 会话号（无 UDP 的旧端编 0）
+            w.u16(intOf(o["udpPort"]))
         case "authFail": w.u8(Op.authFail)
         case "ping": w.u8(Op.ping); w.f64(num(o["t"]))
         case "pong": w.u8(Op.pong); w.f64(num(o["t"]))
@@ -181,6 +185,11 @@ enum WireCodec {
             w.u8(Op.probe); let ph = strOf(o["phase"]); w.u8(phaseCode(ph))
             if ph == "begin" { w.u32(intOf(o["page"])); w.pts(pairsOf(o["pts"]), dim: 2) }
             else if ph == "move" { w.pts(pairsOf(o["pts"]), dim: 2) }
+        case "nack":
+            w.u8(Op.nack)
+            let seqs = (o["seqs"] as? [Any] ?? []).map { intOf($0) }
+            w.u16(seqs.count)
+            for s in seqs { w.u32(s) }
         default: return nil
         }
         return w.d
@@ -191,6 +200,7 @@ enum WireCodec {
     private struct BR {
         let d: [UInt8]; var n = 0; var ok = true
         init(_ data: Data) { d = [UInt8](data) }
+        var remaining: Int { d.count - n }
         mutating func need(_ k: Int) -> Bool {
             if k < 0 || n + k > d.count { ok = false; return false }
             return true
@@ -239,7 +249,14 @@ enum WireCodec {
         var out: [String: Any]?
         switch op {
         case Op.auth: out = ["type": "auth", "token": r.str()]
-        case Op.authOK: out = ["type": "authOK"]
+        case Op.authOK:
+            // v1 起 authOK 带 [u32 session][u16 udpPort]；兼容空 payload（旧端/无 UDP → 0）。
+            if r.remaining >= 6 {
+                out = ["type": "authOK", "session": NSNumber(value: r.u32raw()),
+                       "udpPort": NSNumber(value: r.u16())]
+            } else {
+                out = ["type": "authOK", "session": NSNumber(value: 0), "udpPort": NSNumber(value: 0)]
+            }
         case Op.authFail: out = ["type": "authFail"]
         case Op.ping: out = ["type": "ping", "t": NSNumber(value: r.f64())]
         case Op.pong: out = ["type": "pong", "t": NSNumber(value: r.f64())]
@@ -314,6 +331,11 @@ enum WireCodec {
             } else if ph == phaseMove {
                 out = ["type": "probe", "phase": "move", "pts": r.pts(2)]
             } else { out = ["type": "probe", "phase": "end"] }
+        case Op.nack:
+            let n = r.u16()
+            var seqs = [NSNumber](); seqs.reserveCapacity(n)
+            if r.need(n * 4) { for _ in 0..<n { seqs.append(NSNumber(value: r.u32raw())) } }
+            out = ["type": "nack", "seqs": seqs]
         default: return nil   // 未知 opcode：丢弃
         }
         return r.ok ? out : nil

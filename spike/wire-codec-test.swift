@@ -11,7 +11,8 @@ func hex(_ d: Data) -> String { d.map { String(format: "%02x", $0) }.joined() }
 // —— canonical 消息集（顺序必须与 wire-cross-test.js 一致；数值取 f32 精确值）——
 let canonical: [[String: Any]] = [
     ["type": "auth", "token": "abc123"],
-    ["type": "authOK"],
+    ["type": "authOK", "session": 0, "udpPort": 0],
+    ["type": "authOK", "session": 305419896, "udpPort": 8772],   // 0x12345678
     ["type": "authFail"],
     ["type": "ping", "t": 1700000000000],
     ["type": "pong", "t": 1700000000000],
@@ -42,6 +43,7 @@ let canonical: [[String: Any]] = [
     ["type": "probe", "phase": "begin", "page": 2, "pts": [[0.5, 0.5]]],
     ["type": "probe", "phase": "move", "pts": [[0.25, 0.25]]],
     ["type": "probe", "phase": "end"],
+    ["type": "nack", "seqs": [1, 2, 3000000000]],
 ]
 
 var pass = 0, fail = 0

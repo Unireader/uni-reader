@@ -16,7 +16,7 @@
 ## 1. 传输与分帧
 
 - **WebSocket（可靠，全客户端）**：opcode 从 `.text` 改为 `.binary`；`ws.binaryType = "arraybuffer"`。一个 WS 二进制消息 = 一个协议帧（WS 自带消息边界，帧内**不需要**长度前缀）。
-- **UDP（后续阶段，仅原生客户端）**：一个 UDP 数据报 = 一个协议帧，但**帧外**再包一层传输头（session id + 单调 seq，用于自管乱序/丢弃/轻量重传）。浏览器用不了原生 UDP，永远走 WS。UDP 头格式在 v2 段落定义，本 v1 只定义**帧本体**（下方 §4），WS 与 UDP 复用同一套帧本体。
+- **UDP（仅原生客户端，RT 上行）**：一个 UDP 数据报 = `[传输头][帧本体]`，传输头带 session id + 单调 seq（自管乱序/丢弃/轻量重传），格式见 §6。浏览器用不了原生 UDP，永远走 WS。WS 与 UDP 复用同一套帧本体（§4）。
 
 握手（`auth`/`authOK`/`authFail`）与所有**控制类**消息永远走可靠通道；只有高频实时流（§4.3 标注 `RT`）在 UDP 阶段可改走 UDP。
 
@@ -77,6 +77,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x42` | ink | C→S | **RT** |
 | `0x43` | erase | C→S | **RT** |
 | `0x44` | probe | C→S | **RT** |
+| `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
 
@@ -87,7 +88,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | opcode | payload | 对象形状 |
 |---|---|---|
 | `auth` | `str token` | `{type:"auth", token}` |
-| `authOK` | 空 | `{type:"authOK"}` |
+| `authOK` | `u32 session` · `u16 udpPort` | `{type:"authOK", session, udpPort}`（UDP 会话号 + Mac UDP 端口；浏览器忽略。解码兼容空 payload → 0）|
 | `authFail` | 空 | `{type:"authFail"}` |
 | `ping` | `f64 t` | `{type:"ping", t}`（`t=Date.now()`）|
 | `pong` | `f64 t` | `{type:"pong", t}`（回显 ping 的 t）|
@@ -108,6 +109,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `pens` | `u16 active` · `u16 n` · `n × pen` |
 | `inkCancel` | 空 |
 | `strokes` | `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
+| `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
 
 对象形状（与旧 JSON 逐字段一致）：
 - `page` → `{type:"page", v, index, count, w, h}`（方案 B 下平板忽略，仍编码）
@@ -116,6 +118,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 - `docs` → `{type:"docs", list:[{id,title},…], selected, following}`
 - `pens` → `{type:"pens", list:[{color,w,t},…], active}`
 - `strokes` → `{type:"strokes", list:[{page, pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
+- `nack` → `{type:"nack", seqs:[…]}`
 
 ### 4.3 平板→Mac 实时流（RT，UDP 阶段可迁 UDP）
 
@@ -149,9 +152,35 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 - 本版为 **v1**，无版本前缀字节——线格式由 opcode 表隐式定义，收发端同版本。
 - 未知 opcode：解码端**丢弃该帧**（返回 null / 不回调），不崩。
 - 后续加消息：分配新 opcode，旧端遇到即丢弃，天然向前兼容。
-- UDP 传输头（session/seq/ack）在实装 UDP 时补 §6，不影响 §4 帧本体。
+- UDP 传输头见 §6，自带 `ver` 字节，与帧本体版本相互独立。
 
-## 6. 一致性验证
+## 6. UDP 传输头（仅原生客户端，RT 上行）
+
+RT 流（scroll/hover/ink/erase/probe）在原生客户端上改走 UDP，消除 TCP 丢包队头阻塞。
+控制握手与所有 Mac→端下发仍走 WS；NACK（重传请求）也走 WS。浏览器永远 WS，Mac 两条路都收。
+
+一个 UDP 数据报 = `[传输头][帧本体]`，帧本体就是 §4 的 `[u8 opcode][payload]`（原封不动）。全小端。
+
+```
+[u8  ver = 0x01]          传输头版本
+[u8  ptype]               包类型：1=DATA_UNREL  2=DATA_REL  3=HELLO  4=BYE
+[u32 session]             会话号（authOK 下发；鉴权/路由）
+── ptype ∈ {DATA_UNREL, DATA_REL} 时： ──
+[u32 seq]                 该类别内的单调序号（从 1）
+[帧本体 = u8 opcode + payload]   见 §4.3（scroll/hover/ink/erase/probe）
+── ptype ∈ {HELLO, BYE} 时：无更多字节 ──
+```
+
+- **两个独立 seq 空间**（客户端自管 `seqUnrel`/`seqRel`，各从 1 递增），避免不可靠包在可靠序列里造成假缺口。
+- **UNREL**（scroll/hover）：最新胜。Mac 记 `lastUnrel`，`seq > lastUnrel` 才应用，旧/重复丢弃。
+- **REL**（ink/erase/probe）：有序不丢。Mac 记 `relExpected` + 重排缓冲：乱序入缓冲并触发 NACK（经 WS 发 `nack{seqs}`，节流汇总）；客户端从环形缓冲重发对应数据报；缺口卡死超 `stallMs` 则放弃丢失帧跳到缓冲最小学号继续（接受一小段豁口，记日志），避免单帧永久丢失堵死整条流。
+- `HELLO`：客户端拿到 session 后**发一发**，让 Mac 校验 session 就绪（LAN 无 NAT，不做保活定时器）。
+- `BYE`：客户端主动告知不再用 UDP（可选，纯优化；Mac 重置该 session 的重排状态）。
+- 头部固定 10 字节（DATA）/ 6 字节（HELLO/BYE）。
+- 会话生命周期：WS auth 成功 → Mac 生成随机 u32 session 随 `authOK` 下发；带未知 session 的 UDP 数据报一律丢弃（防注入）；WS 断开 → 注销 session。
+- 默认参数：`udpPort=8772`、`stallMs=200ms`、NACK 节流 `~30ms`、客户端重传环形缓冲 `ringCap=512` 帧。
+
+## 7. 一致性验证
 
 - `spike/wire-codec-test.swift`：Swift 端全消息 encode→decode round-trip。
 - `spike/wire-cross-test.js`：node 加载 `wire.js` 做 JS round-trip，并读 Swift 导出的 canonical 字节向量 `spike/wire-vectors-swift.txt`，逐字节比对，证明 **Swift 与 JS 编码结果字节级一致**（canonical 消息用 f32 精确值：0.5/0.25/整数，避免浮点表示差异）。
