@@ -51,7 +51,9 @@
   - 手写坐标始终用归一化页面坐标，滚动 / 缩放不影响落墨
 - **悬停指示（Firefox 可用，已实测）**：小米平板 6 实测，**Chrome 不把笔 hover 转发给网页，Firefox 可以**。故采集页在 **Firefox** 下持续上报悬停坐标（归一化页面坐标 + 页码），Mac 在页面上叠加显示笔尖位置（接触即转为落墨，离开近场即隐藏）。悬停圆环须画在与笔迹同坐标系的 overlay canvas 上，避免移动端 `position:fixed` 偏移。
 
-**WebSocket 消息草案：**
+**线格式（2026-07-25 更新）**：WebSocket 帧已从 JSON 文本改为**二进制线格式 v1**（opcode `.binary`），契约见 **`PROTOCOL.md`**（唯一真源），三端实现 `WireCodec.swift` + `wire.js`。下表仍是**语义参考**（消息名/字段/方向不变，只是打包方式变二进制）；实际字节布局见 `PROTOCOL.md §4`。后续 UDP 阶段：`RT` 高频流（ink/erase/scroll/hover/probe）可迁 UDP，控制类仍走 WS。
+
+**WebSocket 消息草案（语义参考）：**
 
 | 方向 | 消息 | 内容 |
 |---|---|---|

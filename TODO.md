@@ -11,6 +11,15 @@
   - **2026-07-20 修复：滚动跟随的"闪回/撤回"**。原「延迟补偿」用锚点到达时刻估速再外推（dead-reckoning），但 WiFi 成批投递 → `Δtarget/Δarrival` 得到荒谬瞬时速度 → 停手/换向时过冲后回弹＝用户看到的闪回+撤回。改为**去掉速度外推**，纯临界阻尼低通（`smCurrent += (smTarget-smCurrent)*catchup`），输出恒为凸组合、目标单调则绝不过冲。合成锚点流实测（`swift spike/scroll-follow-sim.swift`）：外推版过冲 3 页撞顶、方向反转 13 次、单帧跳 1.35 页；修复版过冲 0、反转 0、单帧 0.076 页。
   - **2026-07-20 加入（保留待真机 A/B）：时间戳插值跟随**。采集页 `scroll` 带发送端 `performance.now()`（`t`，ms）；`ScrollAnchor.senderT` 贯通；`PDFKitView.Coordinator` 双模式共用一个 displayLink——**平板路径**（`senderT>0`）估掉平板↔Mac 时钟差（最小延迟滤波），把样本按发送端戳落到本地时间轴，渲染落后 `interpDelay`（默认 **0.08s**，唯一旋钮）做线性插值，越过末样本则保持（**不外推**）；**本地 sim/mac**（无戳）退回纯低通。桌面浏览器滚轮测试(另一台电脑)走的就是平板路径 → 能测到插值。⚠️ **模拟结论：LAN 条件下插值并未胜过纯低通**（`swift spike/scroll-follow-interp-sim.swift`：恶劣 WiFi 下 低通 单帧 0.103/滞后 0.275 vs 插值 0.160/0.295，均零过冲零反转）——要吸收 80ms 成批就得延后 ≥80ms > 低通 ~45ms 时间常数。插值的理论优势（滞后与速度无关、精确跟速）需**持续高速 fling** 或**真实成批很小**才显现，故留待真机手感定夺。嫌重可整套回退到纯低通。
 
+## 🔧 整体优化路线图（2026-07-25 起，用户需求「整体优化」）
+
+四项大改，分里程碑推进。用户已定：UDP=整条实时流走 UDP（原生客户端自管序号/丢弃/轻量重传，控制握手仍走可靠通道，浏览器用不了 UDP 永远走 WS）；安卓 = 工作区内 `android/` 子目录独立 git 仓库。
+
+- ✅ **① 通信协议改二进制**（2026-07-25 完成，编译过 + 跨语言测试全绿）：JSON→二进制线格式 v1。契约见 **`PROTOCOL.md`**（唯一真源）；三端字节级一致由 `Sources/Server/WireCodec.swift`（Swift，仅 Foundation）+ `Sources/Resources/wire.js`（浏览器/node 共用）保证。做法=**换序列化器不换对象模型**：`AppModel`/`handleInk`/各 `broadcast*` 的 `[String:Any]` 全不动，只在 `LANServer.rawSend`/`receiveWS`（WS opcode `.text`→`.binary`）与 capture.html 的 `send`/`onmessage`（`binaryType="arraybuffer"` + `Wire.encode/decode`）两个咽喉换掉。全 opcode 表 + 每消息字节布局见 `PROTOCOL.md §3/§4`。测试：`spike/wire-codec-test.swift`（Swift round-trip + 坏帧安全 34/34）+ `spike/wire-cross-test.js`（node JS round-trip + 与 Swift 导出向量 `spike/wire-vectors-swift.txt` 逐字节比对 58/58）。
+- ⬜ **② 加 UDP 传输**（下一阶段）：仅原生客户端（安卓）。在 `PROTOCOL.md §4` 帧本体外加一层 UDP 传输头（session id + 单调 seq，自管乱序/丢弃/轻量重传），把 §4.3 标 `RT` 的高频流（scroll/hover/ink/erase/probe）迁 UDP；控制握手/状态下发仍走 WS。Mac 端加 `NWListener`(udp)。浏览器不受影响（继续 WS-二进制）。
+- ⬜ **③ 安卓模式1 独立版**：`android/` 子目录独立仓库。原生直接读工作区 SQLite（当初弃 SwiftData 选跨平台 SQLite 就为此，schema 见 `REQUIREMENTS.md §8`）+ 本地渲染 PDF + 支持 Mac 端全部笔迹操作（环形选笔盘/擦除/长按检测）+ OCR 仅走 API 模式（Paddle 云 API，无桌面依赖）。**不碰网络协议**，是独立最大块。
+- ⬜ **④ 安卓模式2 输入板**：Kotlin 原生重写一遍 capture.html（等价浏览器采集页），说二进制协议 v1、可走 UDP。依赖 ①（已就绪）②。
+
 ## ⏭️ 接下来（建议顺序）
 
 0. ✅ **Mac 阅读区页图流 v2（2026-07-20 重写完成，编译通过 + spike 全绿，待用户真机手感验证）**：纯 SwiftUI（`PageStreamView` + `PageLayout` + `PageBitmap` + `PageRenderEngine` + tick 版 `ScrollFollower`）。关键机制均 spike 实测钉死：同 runloop「改布局+scrollTo」屏幕原子（pinch commit 不闪）、`page.draw` 自带旋转、自研虚拟化（内容尺寸精确，滚动条不漂）、resize 冻结+稳定后单次原子 refit。**用户自测**：pinch 锚定/⌘±/⌘0、窗口缩放与侧栏开合（fit 贴合=行为②，放大态被侧栏盖=行为③）、SimPad↔Mac 锚点、墨迹/hover/夜间/进度、玻璃观感。详见 `PDF-VIEWER-REBUILD-PLAN.md` 顶部「✅ 状态」块。

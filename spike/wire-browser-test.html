@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>wire.js 浏览器自测</title></head>
+<body style="font-family:monospace;white-space:pre">
+<div id="out">running...</div>
+<script src="/Sources/Resources/wire.js"></script>
+<script>
+(function () {
+  var log = [];
+  function line(s) { log.push(s); }
+  try {
+    line("typeof Wire = " + (typeof Wire));
+    if (typeof Wire === "undefined") { throw new Error("Wire 未定义——wire.js 没加载或没暴露 window.Wire"); }
+    line("typeof Wire.encode = " + typeof Wire.encode + ", decode = " + typeof Wire.decode);
+    line("typeof TextEncoder = " + typeof TextEncoder + ", DataView = " + typeof DataView);
+
+    // 模拟 Mac 连接时会下发的所有消息，逐条 encode→decode，检查浏览器 JS 引擎不抛异常且对象合理。
+    var macMsgs = [
+      { type: "authOK" },
+      { type: "page", v: 1, index: 0, count: 10, w: 612, h: 792 },
+      { type: "docs", list: [{ id: "a", title: "书A" }, { id: "b", title: "T2" }], selected: "a", following: false },
+      { type: "layout", docId: "H1", v: "H1", count: 2, pages: [[612, 792], [595, 842]] },
+      { type: "pens", list: [{ color: "rgba(24,90,210,0.95)", w: 8, t: "ballpoint" }], active: 0 },
+      { type: "strokes", list: [{ page: 0, pen: { color: "rgba(20,20,20,1)", w: 10, t: "pencil" }, pts: [[0.5, 0.25, 0.5], [0.6, 0.3, 0.8]] }] },
+      { type: "viewport", page: 1, frac: 0.5, seq: 3 },
+      { type: "viewport", page: 1, frac: 0.25, force: true },
+      { type: "pong", t: 1700000000000 },
+      { type: "mode", mode: "erase" },
+      { type: "pen", index: 2 },
+      { type: "inkCancel" }
+    ];
+    var ok = 0, bad = 0;
+    macMsgs.forEach(function (m) {
+      var bytes = Wire.encode(m);
+      if (!bytes) { line("✗ encode 返回 null: " + m.type); bad++; return; }
+      // 浏览器收到的是 ArrayBuffer（binaryType=arraybuffer）→ 模拟之
+      var ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      var o = Wire.decode(ab);
+      if (!o || o.type !== m.type) { line("✗ decode 失配: " + m.type + " → " + JSON.stringify(o)); bad++; return; }
+      ok++;
+    });
+    line("Mac→浏览器 消息 decode: " + ok + " ok, " + bad + " bad");
+
+    // 客户端上行也测一把
+    var upMsgs = [
+      { type: "auth", token: "d08d85575da7b5056d715c564b1b5e2e" },
+      { type: "ink", phase: "begin", page: 0, pen: { color: "rgba(24,90,210,0.95)", w: 8, t: "ballpoint" }, pts: [[0.5, 0.5, 0.7]] },
+      { type: "scroll", page: 1, frac: 0.3, t: 123.5 }
+    ];
+    var uok = 0;
+    upMsgs.forEach(function (m) {
+      var b = Wire.encode(m);
+      var o = Wire.decode(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+      if (o && o.type === m.type) uok++; else line("✗ 上行 decode 失配: " + m.type);
+    });
+    line("浏览器→Mac 消息: " + uok + "/" + upMsgs.length);
+
+    line((bad === 0 && uok === upMsgs.length) ? "RESULT: PASS" : "RESULT: FAIL");
+  } catch (e) {
+    line("EXCEPTION: " + e.message + "\n" + (e.stack || ""));
+    line("RESULT: FAIL");
+  }
+  document.getElementById("out").textContent = log.join("\n");
+  document.title = log[log.length - 1] || "?";
+})();
+</script>
+</body>
+</html>

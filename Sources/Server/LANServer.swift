@@ -148,6 +148,9 @@ final class LANServer: ObservableObject {
         case "/", "/index.html":
             let html = CapturePage.html(token: token, wsPort: wsPort)
             return ("200 OK", "text/html; charset=utf-8", Data(html.utf8))
+        case "/wire.js":
+            // 二进制线格式编解码器（采集页与 Mac 共用同一份，见 PROTOCOL.md）。无秘密，不校验 token。
+            return ("200 OK", "application/javascript; charset=utf-8", LANServer.wireJS())
         case "/page.png":
             // 方案 B：`?i=N` 按页号取图；无 i 时回退当前页（兼容旧采集页）。
             if let iStr = query["i"], let idx = Int(iStr) {
@@ -165,6 +168,13 @@ final class LANServer: ObservableObject {
         default:
             return ("404 Not Found", "text/plain; charset=utf-8", Data("not found".utf8))
         }
+    }
+
+    /// 采集页共用的二进制编解码器 JS（Resources/wire.js）。
+    private static func wireJS() -> Data {
+        if let url = Bundle.main.url(forResource: "wire", withExtension: "js"),
+           let data = try? Data(contentsOf: url) { return data }
+        return Data("/* wire.js 资源缺失 */".utf8)
     }
 
     /// 取请求行的目标（含 query），例如 `/page.png?i=3&v=abc`。
@@ -221,9 +231,8 @@ final class LANServer: ObservableObject {
                 self.dropClient(conn); return
             }
             var nowAuthed = authed
-            if let data = data, !data.isEmpty,
-               let text = String(data: data, encoding: .utf8),
-               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            if let data = data, !data.isEmpty, let obj = WireCodec.decode(data) {
+                let text = "[bin] " + (obj["type"] as? String ?? "?")
                 nowAuthed = self.handle(obj, text: text, conn: conn, authed: authed)
             }
             self.receiveWS(conn, authed: nowAuthed)
@@ -297,8 +306,8 @@ final class LANServer: ObservableObject {
     }
 
     private func rawSend(_ dict: [String: Any], to conn: NWConnection) {
-        guard let data = try? JSONSerialization.data(withJSONObject: dict) else { return }
-        let meta = NWProtocolWebSocket.Metadata(opcode: .text)
+        guard let data = WireCodec.encode(dict) else { return }
+        let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
         let ctx = NWConnection.ContentContext(identifier: "send", metadata: [meta])
         conn.send(content: data, contentContext: ctx, isComplete: true, completion: .contentProcessed { _ in })
     }

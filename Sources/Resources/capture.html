@@ -51,6 +51,7 @@
           <button id="full">⛶</button>
         </div>
         <div id="stats"></div>
+        <script>__WIRE_JS__</script>
         <script>
         (function () {
           var PORT = __WS_PORT__, TOKEN = "__TOKEN__";
@@ -566,13 +567,14 @@
 
           // ---- WebSocket ----
           var ws, pingTimer = null, lastPong = 0, retryTimer = null, retryDelay = 1500;
-          function send(o) { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(o)); upCount++; } }
+          function send(o) { if (ws && ws.readyState === 1) { var b = Wire.encode(o); if (b) { ws.send(b); upCount++; } } }
           function connect() {
             if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;   // 已有活连接/正在连，不重复建
             if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
             ws = new WebSocket("ws://" + location.hostname + ":" + PORT + "/");
-            ws.onopen = function () { ws.send(JSON.stringify({ type: "auth", token: TOKEN })); };
-            ws.onmessage = function (e) { try { onMsg(JSON.parse(e.data)); } catch (x) {} };
+            ws.binaryType = "arraybuffer";
+            ws.onopen = function () { ws.send(Wire.encode({ type: "auth", token: TOKEN })); };
+            ws.onmessage = function (e) { var o = Wire.decode(e.data); if (o) { try { onMsg(o); } catch (x) {} } };
             ws.onerror = function () { try { ws.close(); } catch (x) {} };   // 出错统一走 onclose → 重连
             ws.onclose = function () {
               if (this !== ws) return;   // 旧实例的迟到事件，别清掉新连接的状态
