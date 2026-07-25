@@ -14,13 +14,15 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 
 ## 文档地图（改代码前先读）
 
-- `TODO.md` — 交接状态速览 + 已知坑，**第一优先**
+- `TODO.md` — 交接状态速览 + 待办 + 已知坑，**第一优先**（只留进行中/待办）
+- `HISTORY.md` — 已完成事项归档；**TODO 里的条目做完即迁移到这里**
 - `REQUIREMENTS.md` — 需求与 §8 工作区持久化方案
 - `PDF-VIEWER-REBUILD-PLAN.md` — 阅读区 v2（`PageStreamView`）的五条硬指标与零闪烁纪律
 
 ## 红线（用户明确否决过，勿重走）
 
 - 阅读区**纯 SwiftUI**，严禁 AppKit 视图（含 NSViewRepresentable 包 NSScrollView / PDFView）。v1 因缩放跳位/闪烁已被用户删除。
+- UI 外观**严禁自绘仿系统样式**（用户 2026-07-25 明确否决）：分组/胶囊这类系统观感只能用系统标准 API（如 `ControlGroup`），系统渲染成什么样就什么样；做不到就保持系统默认，不要自己画。
 - 存储**弃用 SwiftData**，用工作区 SQLite（`Sources/Store/`，系统 libsqlite3、零第三方依赖，跨平台 payload 用显式 JSON 数组）。
 - 代码库**禁用单轴 `scrollTo(x:)`/`scrollTo(y:)`**（后写覆盖前写、未指定轴归零，spike 实测），一律 `scrollTo(point:)`。
 - 滚动跟随**只跟随不预测**：纯临界阻尼低通，禁速度外推（WiFi 成批投递导致过冲闪回，已修过一次）。
