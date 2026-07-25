@@ -292,7 +292,7 @@
             if (m === "note") {
               var p = curPen();
               html = p ? '<span class="sw" style="background:' + p.color + '"></span>'
-                         + (BRUSH_LABELS[p.t] || "圆珠笔") + " · " + p.w + "pt"
+                         + (BRUSH_LABELS[p.t] || "圆珠笔") + " · " + (Math.round(p.w * 100) / 100) + "pt"
                        : "笔记";
             } else if (m === "erase") { html = "橡皮擦"; }
             else { html = "翻页 · 拖动平移"; }

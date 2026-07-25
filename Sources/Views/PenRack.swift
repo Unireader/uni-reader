@@ -126,9 +126,11 @@ struct PenRackView: View {
             }
             HStack {
                 Text(L("Width"))
+                // 粗细收敛到两位小数：裸 Slider 会产出 8.379999… 超长小数，
+                // 既落盘又广播到 pad（网页端状态胶囊会直接显示这串数字）。
                 Slider(value: Binding(
                     get: { app.pens.indices.contains(i) ? app.pens[i].width : 8 },
-                    set: { if app.pens.indices.contains(i) { app.pens[i].width = $0 } }), in: 2...40)
+                    set: { if app.pens.indices.contains(i) { app.pens[i].width = ($0 * 100).rounded() / 100 } }), in: 2...40)
                 Text("\(Int(app.pens.indices.contains(i) ? app.pens[i].width : 8))")
                     .monospacedDigit().frame(width: 24, alignment: .trailing)
             }
