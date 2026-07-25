@@ -5,6 +5,12 @@
 
 ## 已修 / 完成（2026-07-25）
 
+- **笔迹多的页面卡顿（2026-07-25 用户反馈）**：根因——`PageStreamView` 持有 `@ObservedObject session`，
+  hover 光标 / liveStroke / pressRing 等高频 `@Published` 更新（UDP 下笔尖移动可达百 Hz）会让所有实化页
+  body 重算；墨迹 `Canvas` 不可比较 → 每帧把整页全部笔迹重新栅格化（逐点 `ctx.stroke`，笔多即上万次 draw call/帧）。
+  修法：`PageStreamView.swift` 墨迹拆成两个 **Equatable 层**——`InkStaticLayer`（已完成笔迹，
+  集合/线宽没变就跳过 body、复用已栅格化内容，只在落笔入库/擦除/缩放时重绘）+ `InkLiveLayer`
+  （正在落的单笔，每帧只重画这一笔）；`drawStroke` 改为文件级 `inkDrawStroke` 供两层共用，渲染算法不变。
 - **SimPad 移除 + 工具栏精简 + 搜索/缩放 UI 改版（2026-07-25 用户要求四项）**：
   ① **SimPad 模拟平板窗口整体移除**——`Sources/Views/SimPad.swift`、`Sources/App/PadRenderer.swift`
   删除，`Window(id:"simPad")` 场景与工具栏按钮移除（真平板/网页采集页已够测滚动与落墨链路）；
