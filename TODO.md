@@ -40,6 +40,16 @@
 
 ### 已修（2026-07-25）
 
+- **网页端笔迹不立即下发（切档/换窗口后笔迹消失，要写一笔才回来）**：根因——平板收到新 docId 的
+  `layout` 会清空本地笔迹（capture.html `setLayout`），但 Mac 端只在「新客户端连接」和「平板写/擦之后」
+  才 `broadcastStrokes()`；pad 下拉切档（`selectPadDoc`）、Mac 切激活窗口（`setActive`）、关窗
+  （`unregister`）这些路径只推 layout 不推笔迹。修法：所有换文档路径都汇到 `AppModel.push()`，在其中
+  `pushLayout` 之后按文档键（`documentId ?? contentHash`，`pushedStrokesKey` 去重，翻页不重推）调
+  `pushStrokesIfDocChanged` 补发该文档全部笔迹——顺序保证平板上「layout 清空在前、strokes 恢复在后」。
+- **feat：网页端显示笔的用途状态**：capture.html 左下角加浮动状态胶囊（`#penStat`，`pointer-events:none`
+  不挡落笔）——笔记模式显示当前笔（色块+笔头类型+粗细），擦除/翻页模式显示模式名。状态源统一走
+  `updateHud()`（本地侧键 `cycleMode`/`cyclePen`、Mac 下发的 `pens`/`pen`/`mode` 消息都汇到这里）。
+
 - **Xcode 重跑（⌘R）后缩放丢失**：缩放/滚动变化只走 `saveProgressThrottled`（0.7s 节流，只存领先帧），
   节流窗内被丢的尾帧没有补存；而 Xcode 重跑时旧进程是被 lldb 直接杀掉，走不到 `onDisappear` 的兜底
   保存 → 缩完立刻重跑，最后一次缩放永久丢失（翻页不丢是因为翻页有独立立即保存，掩盖了这个问题）。

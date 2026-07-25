@@ -31,6 +31,12 @@
             background:rgba(22,27,34,.94); border:1px solid #30363d; border-radius:8px; padding:10px 12px;
             font:12px/1.55 ui-monospace,Menlo,monospace; color:#e6edf3; white-space:pre; min-width:180px; }
           #stats.on { display:block; }
+          #penStat { position:fixed; left:10px; bottom:10px; z-index:10; pointer-events:none;
+            display:flex; align-items:center; gap:7px; padding:6px 12px;
+            background:rgba(22,27,34,.85); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+            border:1px solid #30363d; border-radius:999px; font-size:13px; color:#e6edf3; }
+          #penStat .sw { width:12px; height:12px; border-radius:50%; flex:none;
+            border:1px solid rgba(255,255,255,.45); }
         </style>
         </head>
         <body>
@@ -51,6 +57,7 @@
           <button id="full">⛶</button>
         </div>
         <div id="stats"></div>
+        <div id="penStat"></div>
         <script>__WIRE_JS__</script>
         <script>
         (function () {
@@ -277,9 +284,24 @@
           function updatePageLabel() {
             el("pageLabel").textContent = pageCount ? (topVisiblePage() + 1) + " / " + pageCount : "— / —";
           }
+          // 笔的用途状态胶囊：笔记模式显示当前笔（色块/类型/粗细），其余模式显示模式名。
+          // 状态可来自本地侧键、Mac 悬浮工具条或环形选笔盘下发，统一在这里回显。
+          var BRUSH_LABELS = { ballpoint: "圆珠笔", fountain: "钢笔", marker: "马克笔", pencil: "铅笔" };
+          function updatePenStat() {
+            var m = curMode(), html;
+            if (m === "note") {
+              var p = curPen();
+              html = p ? '<span class="sw" style="background:' + p.color + '"></span>'
+                         + (BRUSH_LABELS[p.t] || "圆珠笔") + " · " + p.w + "pt"
+                       : "笔记";
+            } else if (m === "erase") { html = "橡皮擦"; }
+            else { html = "翻页 · 拖动平移"; }
+            el("penStat").innerHTML = html;
+          }
           function updateHud() {
             el("zoomLabel").textContent = Math.round(zoom * 100) + "%";
             updatePageLabel();
+            updatePenStat();
           }
           // 收到 Mac 视口 → 程序化滚到该(页,纵向比例)，不回发。
           // force=1（新连接/切文档后的初始进度同步）绕过 seq 去重——该锚点的 seq 可能早就用过。
@@ -614,10 +636,11 @@
               PENS = (o.list || []).map(function (p) { return { color: p.color, w: p.w, t: p.t }; });
               if (!PENS.length) PENS = [{ color: "rgba(24,90,210,0.95)", w: 8, t: "ballpoint" }];
               penIdx = clamp(o.active || 0, 0, PENS.length - 1);
+              updateHud();
             }
             else if (o.type === "pen") {
               var i = o.index || 0;
-              if (i >= 0 && i < PENS.length) penIdx = i;
+              if (i >= 0 && i < PENS.length) { penIdx = i; updateHud(); }
             }
             // Mac 侧切模式（悬浮工具条/环形盘选笔后回 note）：同步本地模式
             else if (o.type === "mode") {

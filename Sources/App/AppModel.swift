@@ -448,6 +448,19 @@ final class AppModel: ObservableObject {
                        height: Double(b.height),
                        png: png)
         pushLayout()
+        pushStrokesIfDocChanged(s)
+    }
+
+    /// 平板端最近一次已同步笔迹的文档键（documentId 优先，退 contentHash）。
+    private var pushedStrokesKey = ""
+    /// 平板看到的文档变了（pad 下拉切档 / Mac 切激活窗口 / 重载文档）→ 立即补发该文档全部笔迹。
+    /// 平板收到新 docId 的 layout 会清空本地笔迹，不补发就得等下一次书写/擦除才恢复。
+    /// 必须在 pushLayout 之后调用：平板上 layout 清空在前、strokes 恢复在后。
+    private func pushStrokesIfDocChanged(_ s: DocSession) {
+        let key = s.documentId ?? s.contentHash
+        guard !key.isEmpty, key != pushedStrokesKey else { return }
+        pushedStrokesKey = key
+        broadcastStrokes()
     }
 
     // MARK: - 方案 B：布局与视口
