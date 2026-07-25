@@ -46,63 +46,7 @@ struct ContentView: View {
                     isKeyWindow = key
                     if key { app.setActive(session) }
                 })
-                .toolbar {
-                    // 中间一组：目录 / 查找 / 夜间 / 跟随 A/B / 模拟平板 / 平板服务
-                    ToolbarItemGroup(placement: .automatic) {
-                        Button {
-                            showTOCPopover.toggle()
-                        } label: {
-                            Label(L("Contents"), systemImage: "list.bullet.indent")
-                        }
-                        .disabled(session.pdf == nil)
-                        .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
-
-                        Button {
-                            showFind.toggle()
-                        } label: {
-                            Label(L("Find…"), systemImage: "magnifyingglass")
-                        }
-                        .disabled(session.pdf == nil)
-                        .popover(isPresented: $showFind, arrowEdge: .bottom) { findPopover }
-
-                        Button {
-                            showOCR.toggle()
-                        } label: {
-                            Label(L("Text Recognition (OCR)"), systemImage: "text.viewfinder")
-                        }
-                        .disabled(session.pdf == nil)
-                        .popover(isPresented: $showOCR, arrowEdge: .bottom) { ocrPopover }
-
-                        Button {
-                            nightMode.toggle()
-                        } label: {
-                            Label(L("Night Mode"), systemImage: nightMode ? "sun.max.fill" : "moon.fill")
-                        }
-                        Button {
-                            scrollInterp.toggle()
-                        } label: {
-                            Label(scrollInterp ? L("Follow: Interpolation") : L("Follow: Low-pass"),
-                                  systemImage: scrollInterp ? "waveform" : "line.diagonal")
-                        }
-                        .help(L("Tablet scroll-follow algorithm (A/B test)"))
-                        Button {
-                            showServer.toggle()
-                        } label: {
-                            Label(L("Tablet"), systemImage: "wifi")
-                        }
-                        .popover(isPresented: $showServer, arrowEdge: .bottom) {
-                            ServerPanel(server: app.server)
-                        }
-                    }
-                    // 单独一组：切换 Inspector
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showNotes.toggle()
-                        } label: {
-                            Label(L("Inspector"), systemImage: "sidebar.right")
-                        }
-                    }
-                }
+                .toolbar { toolbarContent }
         }
         .inspector(isPresented: $showNotes) {
             InspectorView(session: session, documentId: selectedDocID,
@@ -208,6 +152,99 @@ struct ContentView: View {
             )
             .overlay(alignment: .top) { if isHashing { indexingBadge } }
         }
+    }
+
+    /// 工具栏内容：缩放组（最左）+ 中间一组（目录 / 查找 / OCR / 夜间 / 跟随 A/B / 平板服务）+ Inspector。
+    /// 抽出独立 ToolbarContent——内联进 body 会让 SwiftUI 类型检查器超时。
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        // 缩放一组（最左，TOC 左侧；参考 Preview：缩小 | 1:1 实际大小 | 放大；经通知路由到本窗口阅读区，
+        // 与 ⌘-/⌘= 菜单命令同一套 commit 路径）。ControlGroup 在 macOS 工具栏渲染成单一胶囊分段组。
+        ToolbarItem(placement: .automatic) { zoomButtons }
+        // 中间一组：目录 / 查找 / OCR / 夜间 / 跟随 A/B / 平板服务
+        ToolbarItemGroup(placement: .automatic) {
+            Button {
+                showTOCPopover.toggle()
+            } label: {
+                Label(L("Contents"), systemImage: "list.bullet.indent")
+            }
+            .disabled(session.pdf == nil)
+            .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
+
+            Button {
+                showFind.toggle()
+            } label: {
+                Label(L("Find…"), systemImage: "magnifyingglass")
+            }
+            .disabled(session.pdf == nil)
+            .popover(isPresented: $showFind, arrowEdge: .bottom) { findPopover }
+
+            Button {
+                showOCR.toggle()
+            } label: {
+                Label(L("Text Recognition (OCR)"), systemImage: "text.viewfinder")
+            }
+            .disabled(session.pdf == nil)
+            .popover(isPresented: $showOCR, arrowEdge: .bottom) { ocrPopover }
+
+            Button {
+                nightMode.toggle()
+            } label: {
+                Label(L("Night Mode"), systemImage: nightMode ? "sun.max.fill" : "moon.fill")
+            }
+            Button {
+                scrollInterp.toggle()
+            } label: {
+                Label(scrollInterp ? L("Follow: Interpolation") : L("Follow: Low-pass"),
+                      systemImage: scrollInterp ? "waveform" : "line.diagonal")
+            }
+            .help(L("Tablet scroll-follow algorithm (A/B test)"))
+            Button {
+                showServer.toggle()
+            } label: {
+                Label(L("Tablet"), systemImage: "wifi")
+            }
+            .popover(isPresented: $showServer, arrowEdge: .bottom) {
+                ServerPanel(server: app.server)
+            }
+        }
+        // 单独一组：切换 Inspector
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                showNotes.toggle()
+            } label: {
+                Label(L("Inspector"), systemImage: "sidebar.right")
+            }
+        }
+    }
+
+    /// 工具栏缩放组：缩小 | 1:1 | 放大（无 PDF 时禁用）。用系统标准 `ControlGroup`（官方文档
+    /// 推荐的工具栏分组 API；具体渲染样式交给系统，不自绘）。
+    @ViewBuilder
+    private var zoomButtons: some View {
+        ControlGroup {
+            Button {
+                NotificationCenter.default.post(name: .readerZoomOut, object: nil)
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .help(L("Zoom Out"))
+            Button {
+                NotificationCenter.default.post(name: .readerZoomActual, object: nil)
+            } label: {
+                Text("1:1")
+            }
+            .help(L("Actual Size"))
+            Button {
+                NotificationCenter.default.post(name: .readerZoomIn, object: nil)
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .help(L("Zoom In"))
+        } label: {
+            Label(L("Zoom"), systemImage: "plus.magnifyingglass")   // 窗口过窄溢出收进 >> 时显示
+        }
+        .disabled(session.pdf == nil)
     }
 
     // 一次性目录弹窗：无分割线，点条目跳转并关闭。持久目录见 Inspector 的「目录」页。

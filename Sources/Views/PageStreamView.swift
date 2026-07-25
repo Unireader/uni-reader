@@ -53,6 +53,7 @@ extension Notification.Name {
     static let readerZoomIn = Notification.Name("com.xvan.UniReader.readerZoomIn")
     static let readerZoomOut = Notification.Name("com.xvan.UniReader.readerZoomOut")
     static let readerZoomFit = Notification.Name("com.xvan.UniReader.readerZoomFit")
+    static let readerZoomActual = Notification.Name("com.xvan.UniReader.readerZoomActual")
 }
 
 // MARK: - 内部实现
@@ -122,6 +123,17 @@ private struct PinchInfo {
     var cCur: CGPoint          // 当前布局下的锚点内容坐标（每次 commit 后更新）
 }
 
+/// 命令式缩放动画（工具栏按钮 / ⌘± / ⌘0 / 1:1）：锚点不动、逐帧插值 zoom，
+/// 每帧走与 pinch 相同的「布局+scrollTo 同 runloop 原子 commit」→ 平滑且零闪烁。
+private struct ZoomAnim {
+    var z0: CGFloat            // 起始缩放
+    var z1: CGFloat            // 目标缩放
+    var anchorP: CGPoint       // 屏幕不动点（容器坐标）
+    var c0: CGPoint            // 锚点内容坐标（z0 布局下）
+    var start: CFTimeInterval
+    var fitAfter: CGFloat?     // 非 nil（⌘0）：动画到位后 fitBasis 重定标为该值、zoom 归 1（pageW 不变，零跳变）
+}
+
 /// 每帧变化但不应触发 body 重算的暂存（引用类型，@State 持有其身份）。
 private final class Scratch {
     var geo = GeoSnap()
@@ -135,6 +147,7 @@ private final class Scratch {
     var settleWork: DispatchWorkItem?
     var resizeWork: DispatchWorkItem?
     var pinch: PinchInfo?
+    var zoomAnim: ZoomAnim?        // 进行中的命令式缩放动画（pinch/⌘wheel 介入即取消）
     var pendingRestore: ScrollAnchor?
     var pendingZoom: CGFloat = 1           // 待恢复的缩放倍率（首帧定基准后套用）
     var pendingHFrac: CGFloat?             // 待恢复的横向滚动比例（首帧定位后一次性套用，nil=无）
@@ -170,6 +183,7 @@ private struct ReaderSurface: View {
     @State private var zoom: CGFloat = 1          // 1 = fit-width（相对 fitBasis）
     @State private var fitBasis: CGFloat = 0      // fit 基准宽（pt）；resize settle 时重定标
     @State private var userZoomed = false
+    @State private var zoomAnimOn = false         // 缩放动画进行中（驱动 TimelineView 帧源）
     // 滚动
     @State private var pos = ScrollPosition()
     // 视图数据
@@ -324,6 +338,9 @@ private struct ReaderSurface: View {
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomFit)) { _ in
             if isActiveWindow { commandZoomFit() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .readerZoomActual)) { _ in
+            if isActiveWindow { commandZoomActual() }
+        }
     }
 
     // MARK: 内容（自研虚拟化：精确总尺寸 + 只实化窗口内页）
@@ -367,13 +384,16 @@ private struct ReaderSurface: View {
             .offset(x: pageX, y: layout.offsets[i] * dispScale)
     }
 
-    /// 跟随器帧驱动（仅激活期间挂载；TimelineView(.animation) 与刷新率同步）。
+    /// 帧驱动（跟随器 / 缩放动画任一激活即挂载；TimelineView(.animation) 与刷新率同步）。
     @ViewBuilder private var followTicker: some View {
-        if follower.isActive {
+        if follower.isActive || zoomAnimOn {
             TimelineView(.animation) { tl in
                 Color.clear
                     .frame(width: 1, height: 1)
-                    .onChange(of: tl.date) { _, _ in followStep() }
+                    .onChange(of: tl.date) { _, _ in
+                        if follower.isActive { followStep() }
+                        if zoomAnimOn { zoomAnimStep() }
+                    }
             }
             .allowsHitTesting(false)
         }
@@ -943,6 +963,7 @@ private struct ReaderSurface: View {
         guard layout != nil, scratch.didInitialGeo else { return }
         if scratch.pinch == nil {
             follower.reset()                                   // 用户接管
+            cancelZoomAnim()                                   // 捏合接管：停掉进行中的按钮/⌘ 缩放动画
             let g = scratch.geo
             // 手势现挂在 ScrollView 容器 → startLocation 为容器/视口坐标 P（屏幕不动点，与 ⌘wheel/anchorP 同约定）；
             // 内容锚点 c = 偏移 + P。（旧实现挂 content 层取内容坐标，捏合页外空白无手势 → 不缩放。）
@@ -986,10 +1007,11 @@ private struct ReaderSurface: View {
         scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
     }
 
-    /// 以容器坐标 anchorP 为屏幕不动点做单次缩放 commit（⌘±/⌘wheel 共用）。
+    /// 以容器坐标 anchorP 为屏幕不动点做单次缩放 commit（⌘wheel 即时缩放；按钮/⌘ 命令走 animateZoom）。
     private func zoomCommit(factor: CGFloat, anchorP P: CGPoint) {
         guard layout != nil, scratch.didInitialGeo else { return }
         follower.reset()
+        cancelZoomAnim()   // 连续输入接管：停掉进行中的命令式动画，避免两路同时写 zoom
         let g = scratch.geo
         let c = CGPoint(x: g.offsetX + P.x, y: g.offsetY + P.y)
         var p = PinchInfo(startZoom: zoom, viewportP: P, cCur: c)
@@ -997,12 +1019,85 @@ private struct ReaderSurface: View {
         scheduleSettleRender()
     }
 
-    /// ⌘+/⌘−：未遮视口中心为锚。
-    private func commandZoom(factor: CGFloat) {
+    /// 未遮视口中心（容器坐标；⌘±/⌘0/1:1/缩放胶囊共用的锚点）。
+    private var viewportCenter: CGPoint {
         let g = scratch.geo
-        let P = CGPoint(x: g.insetLeading + (g.containerW - g.insetLeading - g.insetTrailing) / 2,
-                        y: g.insetTop + (g.containerH - g.insetTop - g.insetBottom) / 2)
-        zoomCommit(factor: factor, anchorP: P)
+        return CGPoint(x: g.insetLeading + (g.containerW - g.insetLeading - g.insetTrailing) / 2,
+                       y: g.insetTop + (g.containerH - g.insetTop - g.insetBottom) / 2)
+    }
+
+    /// ⌘+/⌘− / 工具栏缩放按钮：动画缩放到目标倍率，未遮视口中心为锚。
+    private func commandZoom(factor: CGFloat) {
+        animateZoom(to: zoom * factor, anchorP: viewportCenter)
+    }
+
+    /// 1:1 实际大小（参考 Preview）：当前页 1 PDF pt = 1 屏幕 pt。未遮视口中心为锚。
+    private func commandZoomActual() {
+        guard layout != nil, scratch.didInitialGeo, let pdf = session.pdf, pdf.pageCount > 0 else { return }
+        let idx = min(max(0, session.currentPageIndex), pdf.pageCount - 1)
+        guard let page = pdf.page(at: idx) else { return }
+        let w = PageBitmap.displaySize(page).width
+        guard w > 0, basis > 0 else { return }
+        animateZoom(to: w / basis, anchorP: viewportCenter)
+    }
+
+    // MARK: 命令式缩放动画（逐帧插值；每帧 = pinch 同款原子 commit，平滑且零闪烁）
+
+    private let zoomAnimDuration: CFTimeInterval = 0.22
+
+    /// 启动一次缩放动画：锚点 P 不动，zoom 从当前值插值到 z1（smoothstep 缓动）。
+    /// `fitAfter` 仅 ⌘0 用：动画到位后把 fitBasis 重定标、zoom 归 1（此时 pageW 恰好相等，零跳变）。
+    private func animateZoom(to z1raw: CGFloat, anchorP P: CGPoint, fitAfter: CGFloat? = nil) {
+        guard layout != nil, scratch.didInitialGeo else { return }
+        follower.reset()
+        let z1 = clampZoom(z1raw)
+        guard abs(z1 - zoom) > 0.0001 else {
+            if let nb = fitAfter { fitBasis = nb; zoom = 1; userZoomed = false }   // 已在目标：仍刷新基准
+            return
+        }
+        let g = scratch.geo
+        scratch.zoomAnim = ZoomAnim(z0: zoom, z1: z1, anchorP: P,
+                                    c0: CGPoint(x: g.offsetX + P.x, y: g.offsetY + P.y),
+                                    start: CACurrentMediaTime(), fitAfter: fitAfter)
+        zoomAnimOn = true
+    }
+
+    /// 动画帧：插值 zoom，锚点内容坐标等比缩放后减回 P 得目标偏移，布局+scrollTo 同事务提交。
+    private func zoomAnimStep() {
+        guard let a = scratch.zoomAnim else { zoomAnimOn = false; return }
+        let raw = (CACurrentMediaTime() - a.start) / zoomAnimDuration
+        if raw >= 1 {
+            zoomAnimFrame(z: a.z1, a)
+            scratch.zoomAnim = nil
+            zoomAnimOn = false
+            if let nb = a.fitAfter { fitBasis = nb; zoom = 1; userZoomed = false }
+            scheduleSettleRender()
+            return
+        }
+        let t = raw * raw * (3 - 2 * raw)   // smoothstep 缓动（起止速度为 0）
+        zoomAnimFrame(z: a.z0 + (a.z1 - a.z0) * t, a)
+    }
+
+    private func zoomAnimFrame(z: CGFloat, _ a: ZoomAnim) {
+        let r = z / a.z0
+        let c1 = CGPoint(x: a.c0.x * r, y: a.c0.y * r)
+        let target = clampOffset(CGPoint(x: c1.x - a.anchorP.x, y: c1.y - a.anchorP.y),
+                                 pageWidth: basis * z)
+        var t = Transaction(); t.animation = nil
+        withTransaction(t) {
+            zoom = z
+            userZoomed = true
+            pos.scrollTo(point: target)
+        }
+        scratch.pendingTarget = target
+        scratch.pendingTries = 0
+        scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
+    }
+
+    /// 取消进行中的缩放动画（pinch / ⌘wheel 等连续输入接管时调用）。
+    private func cancelZoomAnim() {
+        scratch.zoomAnim = nil
+        zoomAnimOn = false
     }
 
     // MARK: ⌘+滚轮缩放（光标为锚；系统缩放同向：自然滚动下两指上滑/滚轮向上 = 放大）
@@ -1057,27 +1152,11 @@ private struct ReaderSurface: View {
         }
     }
 
-    /// ⌘0：回 fit-width（基准重定标到当前实测可用宽），未遮视口中心为锚。
+    /// ⌘0：动画回 fit-width；到位后基准重定标到当前实测可用宽（fitAfter，pageW 不变零跳变）。
     private func commandZoomFit() {
         guard layout != nil, scratch.didInitialGeo else { return }
-        let g = scratch.geo
         let newBasis = fitAvail
-        let r = newBasis / pageW
-        let P = CGPoint(x: g.insetLeading + (g.containerW - g.insetLeading - g.insetTrailing) / 2,
-                        y: g.insetTop + (g.containerH - g.insetTop - g.insetBottom) / 2)
-        let c = CGPoint(x: g.offsetX + P.x, y: g.offsetY + P.y)
-        let target = clampOffset(CGPoint(x: c.x * r - P.x, y: c.y * r - P.y), pageWidth: newBasis)
-        var t = Transaction(); t.animation = nil
-        withTransaction(t) {
-            fitBasis = newBasis
-            zoom = 1
-            userZoomed = false
-            pos.scrollTo(point: target)
-        }
-        scratch.pendingTarget = target
-        scratch.pendingTries = 0
-        scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
-        scheduleSettleRender()
+        animateZoom(to: newBasis / basis, anchorP: viewportCenter, fitAfter: newBasis)
     }
 
     // MARK: 窗口/侧栏宽度变化（硬指标 3/4：resize 不闪、不跳）
