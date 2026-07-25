@@ -46,13 +46,6 @@ struct UniReaderApp: App {
                 .environmentObject(workspace)
         }
 
-        Window(L("Simulated Tablet"), id: "simPad") {
-            SimPadView()
-                .environmentObject(app)
-                .environmentObject(workspace)
-                .frame(minWidth: 360, minHeight: 480)
-        }
-
         // 标准设置窗口（⌘,）：夜间模式自动化 / 平板滚动跟随算法 / 平板服务自启。
         Settings {
             SettingsView()

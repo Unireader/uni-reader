@@ -4,7 +4,7 @@ import QuartzCore
 /// 滚动平滑跟随器（纯 tick 驱动，无 AppKit 依赖；由 `TimelineView(.animation)` 逐帧调用 `step`）。
 /// 算法与 PDFKitView 时代完全一致（`spike/scroll-follow-sim.swift` / `scroll-follow-interp-sim.swift`
 /// 验证的就是这套数学），**只跟随、不外推**：
-///  · 本地(sim / 无发送端时间戳)：临界阻尼低通逼近最新锚点，输出恒为凸组合 → 零过冲、零反转。
+///  · 本地(mac / 无发送端时间戳)：临界阻尼低通逼近最新锚点，输出恒为凸组合 → 零过冲、零反转。
 ///  · 平板(pad，带发送端时间戳)：最小延迟滤波估时钟差，把样本落到本地时间轴，渲染落后
 ///    `interpDelay` 线性插值，越过末样本则保持——对 WiFi 成批/抖动免疫。
 final class ScrollFollower: ObservableObject {

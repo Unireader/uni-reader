@@ -57,7 +57,7 @@ enum PenBrushType: String, Codable, CaseIterable {
     ]
 }
 
-/// 笔触差异化的**共享数学**——Mac 阅读区（SwiftUI GraphicsContext）与 SimPad（CGContext）各写一份画法，
+/// 笔触差异化的**共享数学**——Mac 阅读区（SwiftUI GraphicsContext）与 capture.html（Canvas 2D）各写一份画法，
 /// 但线宽/锥度/铅笔多道/抖动/垂线这些参数与算法唯一出处在这里 + `PenBrushType`。
 /// capture.html 有一份等价 JS 版（真平板本地反馈），改这里要同步那边。
 enum InkRender {
@@ -104,7 +104,7 @@ struct PenPreset: Identifiable, Equatable, Codable {
     }
 }
 
-/// 笔预设的持久化（本机 UserDefaults · JSON）。设置页编辑、采集页/SimPad 消费。
+/// 笔预设的持久化（本机 UserDefaults · JSON）。设置页编辑、采集页消费。
 enum PenPresets {
     static let key = "penPresets"
 

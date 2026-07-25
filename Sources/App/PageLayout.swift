@@ -3,7 +3,7 @@ import PDFKit
 
 /// fit-width 连续布局（纯数学）。「文档单位」= 参考宽 `refWidth = 1000` 下的 pt，
 /// 与视口/缩放完全解耦；显示换算只需 `dispScale = 显示页宽 / refWidth`。
-/// 锚点契约与 `PadRenderer`/平板一致：(page, 页内比例 frac 0~1)，页间隙归属下一页。
+/// 锚点契约与平板一致：(page, 页内比例 frac 0~1)，页间隙归属下一页。
 struct PageLayout {
     static let refWidth: CGFloat = 1000
     static let gap: CGFloat = 8

@@ -30,5 +30,5 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 
 - `Sources/App/` — App 级单例：`AppModel`/`DocSession`（多窗口共享 WS/LANServer）、`WorkspaceManager`、`PageRenderEngine`/`PageLayout`/`PageBitmap`（v2 渲染管线）
 - `Sources/Server/` — LAN WS 服务、二维码配对、`capture.html`（采集页，独立文件勿内嵌 Swift 字符串）、UDP RT 上行（`UDPTransport` + 纯逻辑 `UDPReorder`，契约 `PROTOCOL.md §6`）
-- `Sources/Views/` — `ContentView`、`PageStreamView`、`ScrollFollower`、`SimPad`（模拟平板窗口）
+- `Sources/Views/` — `ContentView`、`PageStreamView`、`ScrollFollower`
 - 关键坑：`onDisappear` 在 Cmd-Q 也触发 → 退出收缩逻辑用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating` 守卫；NSViewRepresentable 存储属性不变会跳过 `updateNSView`，需把变化值显式传入。

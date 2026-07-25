@@ -1324,7 +1324,7 @@ private struct PageCellView: View {
         ctx.fill(Path(roundedRect: px.insetBy(dx: -1, dy: -0.5), cornerRadius: 2), with: .color(color))
     }
 
-    /// 四种笔型差异化渲染（与 `SimPadNSView.drawStroke` 同参数/同算法，见 `PenBrushType`/`InkRender`；墨迹不随夜间反色）：
+    /// 四种笔型差异化渲染（与 capture.html 的 `drawStroke` 同参数/同算法，见 `PenBrushType`/`InkRender`；墨迹不随夜间反色）：
     ///  · ballpoint 干净压感线；· fountain 压感 + 起收锥度；· marker 恒宽·平头·multiply 叠加；· pencil 多道微波动叠加。
     private func drawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize) {
         guard !st.points.isEmpty else { return }

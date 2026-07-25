@@ -39,8 +39,7 @@ struct ContentView: View {
                         onOpenInNewWindow: { openWindow(id: "docWindow", value: $0) })
                 .navigationSplitViewColumnWidth(min: 200, ideal: 260)
         } detail: {
-            // PDF 显示实现已按要求全部移除，待重建。
-            // 文档加载（session.pdf）保留：模拟平板窗口 / 真平板仍可正常渲染。
+            // 文档加载（session.pdf）保留：真平板仍可正常渲染。
             readerColumn
                 .dropDestination(for: URL.self) { urls, _ in ingest(urls: urls); return true }
                 .background(WindowAccessor { key in
@@ -86,11 +85,6 @@ struct ContentView: View {
                                   systemImage: scrollInterp ? "waveform" : "line.diagonal")
                         }
                         .help(L("Tablet scroll-follow algorithm (A/B test)"))
-                        Button {
-                            openWindow(id: "simPad")
-                        } label: {
-                            Label(L("Simulated Tablet"), systemImage: "ipad")
-                        }
                         Button {
                             showServer.toggle()
                         } label: {

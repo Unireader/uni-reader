@@ -7,7 +7,7 @@ struct ScrollAnchor: Equatable {
     var page: Int
     var frac: Double
     var seq: Int
-    var origin: String   // "sim" | "mac" | "pad" | "toc" | "search" | "restore"
+    var origin: String   // "mac" | "pad" | "toc" | "search" | "restore"
     var senderT: Double = 0   // 发送端单调时钟(ms)，>0 启用时间戳插值；0=本地(sim/mac)走低通
 }
 
