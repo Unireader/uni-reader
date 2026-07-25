@@ -23,10 +23,6 @@ struct PageStreamView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let _ = NSLog("[RD] outerGeo size=%.1fx%.1f safeArea L%.1f R%.1f T%.1f B%.1f fullW=%.1f",
-                          geo.size.width, geo.size.height,
-                          geo.safeAreaInsets.leading, geo.safeAreaInsets.trailing,
-                          geo.safeAreaInsets.top, geo.safeAreaInsets.bottom, fullWidth)
             ReaderSurface(session: session,
                           docKey: docKey.isEmpty ? "untitled" : docKey,
                           nightMode: nightMode,

@@ -30,16 +30,6 @@ extension ReaderSurface {
             let rz = clampZoom(scratch.pendingZoom)
             if abs(rz - 1) > 0.001 { zoom = rz; userZoomed = true }
             scratch.lastRefitFullW = fullWidth
-            NSLog("[RD] bootstrap didInitialGeo=1 via %@ containerW=%.1f fullW=%.1f unobW=%.1f",
-                  raw.containerW > 0 ? "scrollGeo" : "unobSize", n.containerW, fullWidth, unobSize.width)
-        }
-        let dbgNow = CACurrentMediaTime()
-        if dbgNow - scratch.lastDbgAt > 0.25 {
-            scratch.lastDbgAt = dbgNow
-            NSLog("[RD] state pageW=%.1f fitBasis=%.1f zoom=%.3f unobW=%.1f fullW=%.1f allow=%.1f content=%.1fx%.0f container=%.1fx%.1f off=(%.1f,%.1f) hbar=%d",
-                  pageW, fitBasis, zoom, unobSize.width, fullWidth, scrollerAllowance,
-                  n.contentW, n.contentH, n.containerW, n.containerH, n.offsetX, n.offsetY,
-                  pageW > fitAvail + 0.5 ? 1 : 0)   // 真实横条判据：内容宽(=max(fitAvail,pageW)) 超真实视口 fitAvail
         }
         verifyPendingTarget(n)
         scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)
@@ -72,8 +62,7 @@ extension ReaderSurface {
             scratch.pendingTries += 1
             pos.scrollTo(point: t)   // ⚠️ 单轴 scrollTo(x:)/(y:) 是后写覆盖+重置另一轴（scroll-x-probe T1/T4），全文件禁用
         } else {
-            scratch.pendingTarget = nil
-            NSLog("[Reader] commit 目标未达 Δ=(%.1f, %.1f)", n.offsetX - t.x, n.offsetY - t.y)
+            scratch.pendingTarget = nil   // 5 次未达放弃（同 runloop 原子提交已由 spike 证实，此处仅兜底）
         }
     }
 
@@ -116,7 +105,7 @@ extension ReaderSurface {
     // MARK: 窗口/侧栏宽度变化（硬指标 3/4：resize 不闪、不跳）
     // 变化期间布局冻结（页尺寸不变 → 纵向绝对稳定）；稳定 0.2s 后一次性处理：
     //   · 侧栏/Inspector 开合（Option A / Preview 式）→ fullWidth 不变 → fitAvail 不变 → **guard 早退，纯 no-op**
-    //     （页面纹丝不动，半透明玻璃盖住左侧——用户 2026-07-21 选定）。unobW 已不参与布局，仅 debug 日志留存。
+    //     （页面纹丝不动，半透明玻璃盖住左侧——用户 2026-07-21 选定）。unobW 不参与布局。
     //   · 窗口宽真变（fullWidth 变，含 legacy 滚动条出现/消失）→ fit 模式做单次原子锚定 refit；
     //     手动缩放态只重定标基准保持页宽（Preview 的绝对尺寸语义）
 
@@ -133,9 +122,6 @@ extension ReaderSurface {
         let g = scratch.geo
         let newW = fitAvail                              // 全窗宽 − 滚动条占位（与内容无关，无环；侧栏开合不改它 → 下方 guard 早退）
         let windowWidthChanged = abs(fullWidth - scratch.lastRefitFullW) > 0.5
-        NSLog("[RD] refit newW=%.1f fullW=%.1f(last %.1f) winChanged=%d userZoomed=%d zoom=%.3f fitBasis=%.1f pageW=%.1f unobW=%.1f",
-              newW, fullWidth, scratch.lastRefitFullW, windowWidthChanged ? 1 : 0, userZoomed ? 1 : 0,
-              zoom, fitBasis, pageW, unobSize.width)
         scratch.lastRefitFullW = fullWidth
         guard abs(newW - fitBasis) > 0.5 || windowWidthChanged else { return }   // 无实质变化
         // 启动稳定窗（窗口恢复/分栏落位的瞬态宽度会连环变化）：未缩放前一律真 fit，
