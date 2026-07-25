@@ -160,14 +160,14 @@ struct ContentView: View {
         }
     }
 
-    /// 工具栏内容：缩放组（最左）+ 中间一组（目录 / OCR / 夜间 / 跟随 A/B / 平板服务）+ Inspector。
+    /// 工具栏内容：缩放组（最左）+ 中间一组（目录 / OCR / 夜间 / 平板服务）+ Inspector。
     /// 抽出独立 ToolbarContent——内联进 body 会让 SwiftUI 类型检查器超时。
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         // 缩放一组（最左，TOC 左侧；参考 Preview：缩小 | 1:1 实际大小 | 放大；经通知路由到本窗口阅读区，
         // 与 ⌘-/⌘= 菜单命令同一套 commit 路径）。ControlGroup 在 macOS 工具栏渲染成单一胶囊分段组。
         ToolbarItem(placement: .automatic) { zoomButtons }
-        // 中间一组：目录 / OCR / 夜间 / 跟随 A/B / 平板服务（查找走标准 .searchable，见 readerColumn）
+        // 中间一组：目录 / OCR / 夜间 / 平板服务（查找走标准 .searchable，见 readerColumn）
         ToolbarItemGroup(placement: .automatic) {
             Button {
                 showTOCPopover.toggle()
@@ -190,13 +190,6 @@ struct ContentView: View {
             } label: {
                 Label(L("Night Mode"), systemImage: nightMode ? "sun.max.fill" : "moon.fill")
             }
-            Button {
-                scrollInterp.toggle()
-            } label: {
-                Label(scrollInterp ? L("Follow: Interpolation") : L("Follow: Low-pass"),
-                      systemImage: scrollInterp ? "waveform" : "line.diagonal")
-            }
-            .help(L("Tablet scroll-follow algorithm (A/B test)"))
             Button {
                 showServer.toggle()
             } label: {
