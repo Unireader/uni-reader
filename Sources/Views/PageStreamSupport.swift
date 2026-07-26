@@ -66,6 +66,12 @@ enum NoteEditorTarget: Identifiable {
         case .edit(let n): return n.text
         }
     }
+    var initialTypeId: UUID? {
+        switch self {
+        case .new: return nil
+        case .edit(let n): return n.typeId
+        }
+    }
 }
 
 /// 捏合手势状态。锚点数学：屏幕不动点 P（相对容器原点）+ 内容锚点 c；

@@ -168,33 +168,47 @@ extension ReaderSurface {
         editorTarget = .new(PendingNote(page: n.page, anchor: anchor, rects: [], quote: ""))
     }
 
-    /// 编辑器保存分派：新建 → 追加；编辑 → 就地改文本。
-    func saveEditor(_ target: NoteEditorTarget, text: String) {
+    /// 编辑器保存分派：新建 → 追加；编辑 → 就地改文本与类型。
+    func saveEditor(_ target: NoteEditorTarget, text: String, typeId: UUID?) {
         switch target {
-        case .new(let draft): commitNote(draft: draft, text: text)
-        case .edit(let note): updateNote(note, text: text)
+        case .new(let draft): commitNote(draft: draft, text: text, typeId: typeId)
+        case .edit(let note): updateNote(note, text: text, typeId: typeId)
         }
         editorTarget = nil
     }
 
     /// 新建批注：落成 `TextNote` 追加到 `session.textNotes`（ContentView 的 onChange 增量落库）。
     /// 点注解（无引文）必须有文字，否则是个空图钉——直接丢弃不落库。选区注解允许空文字（=纯高亮标记）。
-    func commitNote(draft: PendingNote, text: String) {
+    func commitNote(draft: PendingNote, text: String, typeId: UUID?) {
         if draft.quote.isEmpty, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             clearSelection(); return
         }
         session.textNotes.append(TextNote(page: draft.page, anchor: draft.anchor, quote: draft.quote,
-                                          text: text, rects: draft.rects))
+                                          text: text, rects: draft.rects, typeId: typeId))
         clearSelection()
     }
 
-    /// 编辑批注：就地改文本 + bump updatedAt → 数组变更触发 onChange，对账识别为“变更”并 upsert。
-    func updateNote(_ note: TextNote, text: String) {
+    /// 编辑批注：就地改文本 + 类型 + bump updatedAt → 数组变更触发 onChange，对账识别为“变更”并 upsert。
+    func updateNote(_ note: TextNote, text: String, typeId: UUID?) {
         guard let idx = session.textNotes.firstIndex(where: { $0.id == note.id }) else { return }
         var n = session.textNotes[idx]
         n.text = text
+        n.typeId = typeId
         n.updatedAt = .now
         session.textNotes[idx] = n
+    }
+
+    /// 类型增删改回写（编辑器管理面板 → onChangeTypes）：更新内存 + 整体落库（meta JSON）；
+    /// 被删类型的引用笔记回落通用（typeId=nil，走 textNotes 对账落库，无需逐条手动 upsert）。
+    func saveNoteTypes(_ types: [NoteType]) {
+        let removed = Set(session.noteTypes.map(\.id)).subtracting(types.map(\.id))
+        session.noteTypes = types
+        workspace.saveNoteTypes(types)
+        guard !removed.isEmpty else { return }
+        for i in session.textNotes.indices where session.textNotes[i].typeId.map({ removed.contains($0) }) ?? false {
+            session.textNotes[i].typeId = nil
+            session.textNotes[i].updatedAt = .now
+        }
     }
 
     /// 上下文菜单「复制」：与 ⌘C 监视器同直写剪贴板（纯 ScrollView 容器 `.onCopyCommand` 不可靠）。

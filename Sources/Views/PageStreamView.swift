@@ -47,6 +47,7 @@ struct PageStreamView: View {
 
 struct ReaderSurface: View {
     @EnvironmentObject var app: AppModel
+    @EnvironmentObject var workspace: WorkspaceManager
     @ObservedObject var session: DocSession
     let docKey: String
     let nightMode: Bool
@@ -166,7 +167,11 @@ struct ReaderSurface: View {
         // 批注编辑器（原生 .sheet）：新建或编辑同一入口。保存 → 改 session.textNotes（ContentView.onChange 落库）。
         .sheet(item: $editorTarget) { target in
             NoteEditorSheet(quote: target.quote, initialText: target.initialText,
-                            onSave: { saveEditor(target, text: $0) },
+                            initialTypeId: target.initialTypeId,
+                            noteTypes: session.noteTypes,
+                            usageCount: { id in session.textNotes.filter { $0.typeId == id }.count },
+                            onSave: { saveEditor(target, text: $0, typeId: $1) },
+                            onChangeTypes: { saveNoteTypes($0) },
                             onCancel: { editorTarget = nil })
         }
         .overlay(alignment: .topLeading) { followTicker }
