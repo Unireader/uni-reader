@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // 笔的用途状态胶囊：笔记模式显示当前笔（色块/类型/粗细），其余模式显示模式名。
   import { S } from "./lib/hud.svelte.js";
   import { BRUSH_LABELS } from "./lib/shared.js";

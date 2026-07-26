@@ -1,16 +1,17 @@
 // 渲染模块：画布尺寸/DPR、文档几何布局、坐标映射、页面/笔迹/悬停绘制、环形选笔盘 + 长按进度环。
 // 逐行移植自原 capture.html IIFE 的对应段落（原文件已被本工程取代）。
 // 注意：原版有一个定义了却从未调用的 drawHover()（本地悬停圆环），移植时按死代码丢弃——
-// 悬停光标由 Mac 端画，平板只上报位置（见 input.js reportHover）。
+// 悬停光标由 Mac 端画，平板只上报位置（见 input.ts reportHover）。
 import { G, BAR, GAP, RD, PR, BRUSH_LABELS, clamp, pw, contentLeft, strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
+import type { CaptureRefs, RadialItem, RadialState, Stroke, WireMsg } from "./shared.js";
 import { updateHud } from "./hud.svelte.js";
 
-export function initRender(refs) {
+export function initRender(refs: CaptureRefs): void {
   const { bg, ink, live, hover, radial: radialCv, radialGlass } = refs;
-  const bctx = bg.getContext("2d"), ictx = ink.getContext("2d"), hctx = hover.getContext("2d");
-  const lctx = live.getContext("2d"), rctx = radialCv.getContext("2d");
+  const bctx = bg.getContext("2d")!, ictx = ink.getContext("2d")!, hctx = hover.getContext("2d")!;
+  const lctx = live.getContext("2d")!, rctx = radialCv.getContext("2d")!;
 
-  function sizeCanvas(c, cx) {
+  function sizeCanvas(c: HTMLCanvasElement, cx: CanvasRenderingContext2D): void {
     c.width = Math.round(window.innerWidth * G.DPR);
     c.height = Math.round(window.innerHeight * G.DPR);
     c.style.width = window.innerWidth + "px";
@@ -20,7 +21,7 @@ export function initRender(refs) {
   }
 
   // 只重算几何（不动 canvas 尺寸），供缩放时保持锚点用。
-  function recompute() {
+  function recompute(): void {
     G.vw = window.innerWidth;
     G.availH = window.innerHeight - BAR;
     const p = pw();
@@ -35,7 +36,7 @@ export function initRender(refs) {
     G.maxScrollY = Math.max(0, G.totalH - G.availH);
     G.maxScrollX = Math.max(0, p - G.vw);
   }
-  function relayout() {
+  function relayout(): void {
     G.DPR = Math.max(1, window.devicePixelRatio || 1);
     sizeCanvas(bg, bctx); sizeCanvas(ink, ictx); sizeCanvas(live, lctx);
     sizeCanvas(hover, hctx); sizeCanvas(radialCv, rctx);
@@ -46,14 +47,14 @@ export function initRender(refs) {
   window.addEventListener("resize", relayout);
 
   // ---- 按需取图（可见 + 上下各一屏预取）----
-  function ensureImages() {
+  function ensureImages(): void {
     if (!G.pageCount || !G.showPage) return;
     const top = G.scrollY - G.availH, bot = G.scrollY + G.availH * 2;
     for (let i = 0; i < G.pageCount; i++) {
       if (G.offY[i] + G.dispH[i] >= top && G.offY[i] <= bot) loadImg(i);
     }
   }
-  function loadImg(i) {
+  function loadImg(i: number): void {
     if (G.imgs[i]) return;
     const im = new Image();
     im.onload = function () { drawBg(); };
@@ -62,7 +63,7 @@ export function initRender(refs) {
   }
 
   // ---- 坐标映射（跨页 + 缩放）----
-  function locate(x, vy) {
+  function locate(x: number, vy: number): { page: number; nx: number; ny: number } | null {
     const cl = contentLeft(), p = pw();
     const docY = vy - BAR + G.scrollY;
     for (let i = 0; i < G.pageCount; i++) {
@@ -72,16 +73,16 @@ export function initRender(refs) {
     }
     return null;
   }
-  function pageToView(page, nx, ny) {
+  function pageToView(page: number, nx: number, ny: number): { x: number; y: number } {
     if (page < 0 || page >= G.pageCount) return { x: 0, y: -1e6 };
     const docY = G.offY[page] + ny * G.dispH[page];
     return { x: contentLeft() + nx * pw(), y: BAR + docY - G.scrollY };
   }
-  function inContent(x, y) { return y >= BAR && locate(x, y) !== null; }
+  function inContent(x: number, y: number): boolean { return y >= BAR && locate(x, y) !== null; }
 
   // ---- 绘制 ----
-  function drawAll() { drawBg(); drawInk(); drawLive(); }
-  function drawBg() {
+  function drawAll(): void { drawBg(); drawInk(); drawLive(); }
+  function drawBg(): void {
     bctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     const cl = contentLeft(), p = pw();
     for (let i = 0; i < G.pageCount; i++) {
@@ -97,7 +98,7 @@ export function initRender(refs) {
   /// 画一整条笔画到指定 context（静态层与活体层共用，保证两者观感一致）。
   /// **marker 必须整条一次成 path**（平头 + multiply），与 Mac 端 `inkDrawStroke` 的 marker 分支同理：
   /// 逐段 stroke 会让相邻段的线帽互相重叠，不透明笔看不出来，半透明笔（荧光笔）就叠成一串圆斑。
-  function drawStroke(cx, s) {
+  function drawStroke(cx: CanvasRenderingContext2D, s: Stroke): void {
     const pts = s.pts; if (!pts.length) return;
     const t = s.pen.t || "ballpoint", color = scaledColor(s.pen.color, opacityMultFor(t));
     const p0 = pageToView(s.page, pts[0][0], pts[0][1]);
@@ -106,7 +107,7 @@ export function initRender(refs) {
       cx.beginPath(); cx.arc(p0.x, p0.y, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2); cx.fill();
       return;
     }
-    let lp = p0, i;
+    let lp = p0, i: number;
     if (t === "marker") {
       cx.save();
       cx.globalCompositeOperation = "multiply";
@@ -135,18 +136,18 @@ export function initRender(refs) {
     }
   }
   /// 静态层：已成形的笔迹（Mac 回传的唯一真源）。
-  function drawInk() {
+  function drawInk(): void {
     ictx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     for (let i = 0; i < G.strokes.length; i++) drawStroke(ictx, G.strokes[i]);
   }
   /// 活体层：正在写的这一笔，**每次落点整条重画**（不往已有像素上增量叠加，否则半透明笔会累积出圆斑）。
   /// 与 Mac 端 `InkLiveLayer` 同构；单独一层，故重画一笔不牵动整页笔迹。
-  function drawLive() {
+  function drawLive(): void {
     lctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     if (G.cur) drawStroke(lctx, G.cur);
   }
 
-  function eraseHit(x, y) {
+  function eraseHit(x: number, y: number): void {
     const r = 18;
     let changed = false;
     for (let i = G.strokes.length - 1; i >= 0; i--) {
@@ -159,19 +160,19 @@ export function initRender(refs) {
     if (changed) drawInk();
   }
 
-  // ---- 悬停（本地只清环；光标本体由 Mac 画，上报见 input.js）----
-  function clearHover() { hctx.clearRect(0, 0, window.innerWidth, window.innerHeight); }
+  // ---- 悬停（本地只清环；光标本体由 Mac 画，上报见 input.ts）----
+  function clearHover(): void { hctx.clearRect(0, 0, window.innerWidth, window.innerHeight); }
 
   // ---- 环形选笔盘（Surface Dial 形制）----
   // 长按检测、扇区判定、选中提交**全在 Mac**；这里只画 Mac 下发的 `radial` 状态，不做任何判定。
-  // 半径/角度常量必须与 Mac 端 `RadialLayout` 逐个对齐（shared.js 的 RD）。
-  const TOOL_LABEL = { erase: "橡皮", page: "翻页" };
+  // 半径/角度常量必须与 Mac 端 `RadialLayout` 逐个对齐（shared.ts 的 RD）。
+  const TOOL_LABEL: Record<string, string> = { erase: "橡皮", page: "翻页" };
 
-  function setRadial(o) { G.radialState = (o && o.open) ? o : null; drawRadial(); }
+  function setRadial(o: WireMsg | null): void { G.radialState = (o && o.open) ? o as unknown as RadialState : null; drawRadial(); }
 
   // 长按进度环（环形盘的前置动画）：规格与 Mac 端 `PageCellView` 的 pressRing 一致。
   // 判定同样在 Mac，这里只画。平板收到 on 用本机时钟起计（局域网 RTT 的几毫秒偏差不可察觉，故协议不带时间戳）。
-  function setPressRing(o) {
+  function setPressRing(o: WireMsg | null): void {
     if (o && o.on) {
       G.pressRing = { page: o.page, nx: o.nx, ny: o.ny, t0: performance.now() };
       if (!G.pressRAF) G.pressRAF = requestAnimationFrame(pressTick);
@@ -181,11 +182,11 @@ export function initRender(refs) {
     if (G.pressRAF) { cancelAnimationFrame(G.pressRAF); G.pressRAF = null; }
     drawRadial();
   }
-  function pressTick() {
+  function pressTick(): void {
     G.pressRAF = G.pressRing ? requestAnimationFrame(pressTick) : null;
     drawRadial();
   }
-  function drawPressRing() {
+  function drawPressRing(): void {
     const pr = G.pressRing; if (!pr) return;
     const p = clamp((performance.now() - pr.t0 - PR.delayMs) / PR.fillMs, 0, 1);
     if (p <= 0.001) return;   // 300ms 前不显示：轻点/快速书写不该闪一下环
@@ -199,31 +200,31 @@ export function initRender(refs) {
     rctx.restore();
   }
 
-  function rgbaParts(css) {
+  function rgbaParts(css: string): [number, number, number, number] {
     const m = /rgba?\(([^)]+)\)/.exec(css || "");
     if (!m) return [0, 0, 0, 1];
     const p = m[1].split(",").map((s) => parseFloat(s));
     return [p[0] || 0, p[1] || 0, p[2] || 0, p.length > 3 ? p[3] : 1];
   }
-  function contrastOn(css) {
+  function contrastOn(css: string): string {
     const c = rgbaParts(css);
     return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255 > 0.62 ? "#000" : "#fff";
   }
   /// 选中扇区的填充色：笔用自身颜色但**丢掉透明度**（荧光笔 alpha 很低，照抄会看不见高亮）。
-  function tintOf(item) {
+  function tintOf(item: RadialItem): string {
     if (item.kind === "erase") return "rgba(245,140,51,0.92)";
     if (item.kind === "page") return "rgba(64,184,179,0.92)";
-    const c = rgbaParts(item.color);
+    const c = rgbaParts(item.color || "");
     return "rgba(" + (c[0] | 0) + "," + (c[1] | 0) + "," + (c[2] | 0) + ",0.92)";
   }
-  function roundRect(x, y, w, h, r) {
+  function roundRect(x: number, y: number, w: number, h: number, r: number): void {
     rctx.beginPath(); rctx.moveTo(x + r, y);
     rctx.arcTo(x + w, y, x + w, y + h, r); rctx.arcTo(x + w, y + h, x, y + h, r);
     rctx.arcTo(x, y + h, x, y, r); rctx.arcTo(x, y, x + w, y, r);
     rctx.closePath();
   }
 
-  function drawRadial() {
+  function drawRadial(): void {
     rctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     const st = G.radialState, glass = radialGlass;
     const items = (st && st.items) || [];
@@ -259,13 +260,13 @@ export function initRender(refs) {
   }
 
   /// 中心 hub：既是取消区，也回显当前指向项（下发的 items 没有笔名，故显示笔型 + 粗细）。
-  function drawRadialHub(cx, cy, sel) {
+  function drawRadialHub(cx: number, cy: number, sel: RadialItem | undefined): void {
     rctx.beginPath(); rctx.arc(cx, cy, RD.hub, 0, Math.PI * 2);
     rctx.fillStyle = "rgba(0,0,0," + (sel ? RD.hubDim : RD.hubDim + 0.06) + ")"; rctx.fill();
     rctx.strokeStyle = sel ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.55)";
     rctx.lineWidth = sel ? 1 : 2; rctx.stroke();
-    const title = sel ? (sel.kind === "pen" ? (BRUSH_LABELS[sel.t] || "圆珠笔") : (TOOL_LABEL[sel.kind] || "")) : "取消";
-    const sub = (sel && sel.kind === "pen") ? (Math.round(sel.w * 100) / 100) + "pt" : "";
+    const title = sel ? (sel.kind === "pen" ? (BRUSH_LABELS[sel.t || ""] || "圆珠笔") : (TOOL_LABEL[sel.kind] || "")) : "取消";
+    const sub = (sel && sel.kind === "pen") ? (Math.round((sel.w || 0) * 100) / 100) + "pt" : "";
     rctx.save();
     rctx.textAlign = "center"; rctx.textBaseline = "middle";
     rctx.shadowColor = "rgba(0,0,0,0.55)"; rctx.shadowBlur = 3; rctx.shadowOffsetY = 1;   // hub 底很淡，文字靠阴影保可读
@@ -282,10 +283,10 @@ export function initRender(refs) {
 
   /// 扇区图标统一形制：一枚彩色圆片 + 符号（跟 Mac 端 `disc` 对齐）。
   /// 盘底透着页面内容，裸符号会被白页吞掉，所以每个图标都自带底片。
-  function drawRadialIcon(x, y, item, on) {
+  function drawRadialIcon(x: number, y: number, item: RadialItem, on: boolean): void {
     const r = on ? 17 : 14;
     const isPen = item.kind === "pen";
-    const fill = isPen ? item.color : tintOf(item);
+    const fill = isPen ? (item.color || "#000") : tintOf(item);
     rctx.save();
     rctx.shadowColor = "rgba(0,0,0,0.3)"; rctx.shadowBlur = on ? 5 : 3; rctx.shadowOffsetY = 1;
     rctx.beginPath(); rctx.arc(x, y, r, 0, Math.PI * 2);
@@ -296,7 +297,7 @@ export function initRender(refs) {
     rctx.lineWidth = on ? 2 : 1; rctx.stroke();
 
     rctx.save(); rctx.translate(x, y);
-    rctx.fillStyle = isPen ? contrastOn(item.color) : "#fff";
+    rctx.fillStyle = isPen ? contrastOn(item.color || "") : "#fff";
     if (isPen) {                      // 笔尖剪影（笔杆 + 右端尖角），斜 45°
       rctx.rotate(-Math.PI / 4);
       const s = r * 0.62, w = r * 0.26;

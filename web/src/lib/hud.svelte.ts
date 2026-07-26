@@ -1,16 +1,22 @@
 // HUD 响应式状态（Svelte 5 runes）+ 顶栏/状态胶囊/延迟统计的更新函数。
-// 高频命令式逻辑仍走 shared.js 的 G 袋；只有 HUD 绑定字段进 S（组件据此渲染）。
+// 高频命令式逻辑仍走 shared.ts 的 G 袋；只有 HUD 绑定字段进 S（组件据此渲染）。
 import { G, curMode, curPen } from "./shared.js";
+import type { Pen } from "./shared.js";
+
+export interface DocEntry {
+  id: string;
+  title: string;
+}
 
 export const S = $state({
   connected: false,        // WS 已认证（顶栏绿点）
   latText: "— ms",         // 顶栏延迟读数
-  docs: [],                // Mac 下发的文档列表 [{id,title}]
+  docs: [] as DocEntry[],  // Mac 下发的文档列表 [{id,title}]
   docValue: "",            // 文档下拉的当前值（"" = 跟随 Mac）
   zoomLabel: "100%",
   pageLabel: "— / —",
   modeKey: "note",         // 当前模式 key（penStat 显示分支）
-  pen: null,               // 当前笔 {color,w,t}（penStat 色块/标签）
+  pen: null as Pen | null, // 当前笔 {color,w,t}（penStat 色块/标签）
   statsOn: false,          // 延迟统计面板开关
   statsText: "",
   night: false,            // 夜间模式（按钮图标回显）
@@ -18,33 +24,33 @@ export const S = $state({
   zoomLocked: false,       // 锁定缩放（锁按钮回显）
 });
 
-export function updatePageLabel() {
+export function updatePageLabel(): void {
   S.pageLabel = G.pageCount ? (G.topVisiblePage() + 1) + " / " + G.pageCount : "— / —";
 }
 
 // 笔的用途状态胶囊：笔记模式显示当前笔（色块/类型/粗细），其余模式显示模式名。
 // 状态可来自本地侧键、Mac 悬浮工具条或环形选笔盘下发，统一在这里回显。
-export function updatePenStat() {
+export function updatePenStat(): void {
   S.modeKey = curMode();
   const p = curPen();
   S.pen = p ? { color: p.color, w: p.w, t: p.t } : null;
 }
 
-export function updateHud() {
+export function updateHud(): void {
   S.zoomLabel = Math.round(G.zoom * 100) + "%";
   updatePageLabel();
   updatePenStat();
 }
 
 // ---- 延迟统计（点击顶栏延迟数字展开面板）----
-const rtts = [];
+const rtts: number[] = [];
 
-export function recordRtt(rtt) {
+export function recordRtt(rtt: number): void {
   rtts.push(rtt);
   if (rtts.length > 40) rtts.shift();
 }
 
-export function startStats() {
+export function startStats(): void {
   setInterval(() => {
     const n = rtts.length;
     let sum = 0, mn = 1e9, mx = 0, jit = 0;

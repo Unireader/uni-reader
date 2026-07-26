@@ -1,21 +1,22 @@
 // WebSocket 模块：二进制线格式收发、自动重连（1.5s 起步翻倍封顶 10s）、心跳看门狗、
 // Mac 下行消息分发（布局/视口/文档/笔/模式/环形盘/笔迹）。逐行移植自原 capture.html IIFE。
 import { G, MODES, clamp, pw, curMode } from "./shared.js";
+import type { Pen, WireMsg } from "./shared.js";
 import { S, updateHud, updatePageLabel, recordRtt } from "./hud.svelte.js";
 import { Wire } from "./wire.js";
 
-export function initWs() {
-  function send(o) { if (G.ws && G.ws.readyState === 1) { const b = Wire.encode(o); if (b) { G.ws.send(b); G.upCount++; } } }
+export function initWs(): void {
+  function send(o: WireMsg): void { if (G.ws && G.ws.readyState === 1) { const b = Wire.encode(o); if (b) { G.ws.send(b); G.upCount++; } } }
 
-  function connect() {
+  function connect(): void {
     if (G.ws && (G.ws.readyState === 0 || G.ws.readyState === 1)) return;   // 已有活连接/正在连，不重复建
     if (G.retryTimer) { clearTimeout(G.retryTimer); G.retryTimer = null; }
     G.ws = new WebSocket("ws://" + location.hostname + ":" + G.PORT + "/");
     G.ws.binaryType = "arraybuffer";
-    G.ws.onopen = function () { G.ws.send(Wire.encode({ type: "auth", token: G.TOKEN })); };
-    G.ws.onmessage = function (e) { const o = Wire.decode(e.data); if (o) { try { onMsg(o); } catch (x) {} } };
-    G.ws.onerror = function () { try { G.ws.close(); } catch (x) {} };   // 出错统一走 onclose → 重连
-    G.ws.onclose = function () {
+    G.ws.onopen = function () { G.ws!.send(Wire.encode({ type: "auth", token: G.TOKEN })!); };
+    G.ws.onmessage = function (e: MessageEvent) { const o = Wire.decode(e.data) as WireMsg | null; if (o) { try { onMsg(o); } catch (x) {} } };
+    G.ws.onerror = function () { try { G.ws!.close(); } catch (x) {} };   // 出错统一走 onclose → 重连
+    G.ws.onclose = function (this: WebSocket) {
       if (this !== G.ws) return;   // 旧实例的迟到事件，别清掉新连接的状态
       S.connected = false;
       G.radialActive = false; G.setRadial(null); G.setPressRing(null);   // 断线时盘/环正开着 → 收掉（Mac 不会补发瞬态状态）
@@ -24,23 +25,23 @@ export function initWs() {
     };
   }
   // 自动重连：1.5s 起步、翻倍退避封顶 10s；authOK 后重置。重连后 Mac 会补发全量状态（文档/页面/笔迹）。
-  function scheduleRetry() {
+  function scheduleRetry(): void {
     if (G.retryTimer) return;
     G.retryTimer = setTimeout(function () { G.retryTimer = null; connect(); }, G.retryDelay);
     G.retryDelay = Math.min(G.retryDelay * 2, 10000);
   }
-  function startPing() {
+  function startPing(): void {
     if (G.pingTimer) return;
     G.lastPong = Date.now(); G.retryDelay = 1500;
     G.pingTimer = setInterval(function () {
       // 看门狗：半开连接（锁屏/切网/Mac 睡眠后 onclose 迟迟不触发）5s 无 pong 即杀掉重连
-      if (Date.now() - G.lastPong > 5000) { try { G.ws.close(); } catch (x) {} scheduleRetry(); return; }
+      if (Date.now() - G.lastPong > 5000) { try { G.ws!.close(); } catch (x) {} scheduleRetry(); return; }
       send({ type: "ping", t: Date.now() });
     }, 1000);
     send({ type: "ping", t: Date.now() });
   }
 
-  function onMsg(o) {
+  function onMsg(o: WireMsg): void {
     G.downCount++;
     if (o.type === "authOK") {
       S.connected = true; startPing();
@@ -53,7 +54,7 @@ export function initWs() {
     else if (o.type === "docs") { setDocs(o); }
     // 收藏笔列表整体同步（画布悬浮工具条实时增删改后，Mac 推下来）：替换本地 PENS + 当前下标。
     else if (o.type === "pens") {
-      G.PENS = (o.list || []).map(function (p) { return { color: p.color, w: p.w, t: p.t }; });
+      G.PENS = ((o.list || []) as Pen[]).map(function (p) { return { color: p.color, w: p.w, t: p.t }; });
       if (!G.PENS.length) G.PENS = [{ color: "rgba(24,90,210,0.95)", w: 8, t: "ballpoint" }];
       G.penIdx = clamp(o.active || 0, 0, G.PENS.length - 1);
       updateHud();
@@ -79,21 +80,21 @@ export function initWs() {
     // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
   }
 
-  function setLayout(o) {
+  function setLayout(o: WireMsg): void {
     const v = (o.v || o.docId || "");
     const changed = v !== G.docV;
     G.docV = v; G.pageCount = o.count || 0; G.pagesWH = o.pages || [];
     if (changed) { G.strokes = []; G.cur = null; G.imgs = {}; G.scrollX = 0; G.scrollY = 0; G.zoom = 1; G.vpSeq = 0; }
     G.relayout();
   }
-  function setDocs(o) {
+  function setDocs(o: WireMsg): void {
     S.docs = o.list || [];
     S.docValue = o.following ? "" : (o.selected || "");
   }
 
   // 收到 Mac 视口 → 程序化滚到该(页,纵向比例)，不回发。
   // force=1（新连接/切文档后的初始进度同步）绕过 seq 去重——该锚点的 seq 可能早就用过。
-  function applyViewport(o) {
+  function applyViewport(o: WireMsg): void {
     if (G.activeId !== null) return;              // 正在写，忽略
     G.cancelMomentum();                           // Mac 下发视口 → 停止本地惯性，避免抢位
     if (!o.force) {
@@ -107,7 +108,7 @@ export function initWs() {
 
   // 平板页宽上报：Mac 侧的取消区半径/长按位移阈值都是**平板屏幕上的**尺度，得知道平板页宽才能换算。
   // 值变了才发（缩放/旋转/换文档），静止时零流量。
-  function emitGeom() {
+  function emitGeom(): void {
     const w = pw();
     if (Math.abs(w - G.lastGeomW) < 0.5) return;
     G.lastGeomW = w; send({ type: "padGeom", pageW: w });

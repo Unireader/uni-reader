@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // 顶栏：连接绿点 / 延迟读数（点击展开统计）/ 文档下拉 / 缩放与页码标签 / 翻页·夜间·显隐·锁缩放·全屏按钮。
   import { S } from "./lib/hud.svelte.js";
   import { actions } from "./lib/actions.js";

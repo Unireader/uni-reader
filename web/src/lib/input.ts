@@ -1,24 +1,25 @@
 // 输入模块：笔/手指指针事件（画/擦/平移/双指缩放/防误触）、滚轮平移、松手惯性、
 // 批点 rAF 合批、悬停上报、键盘侧键。逐行移植自原 capture.html IIFE 的对应段落。
 import { G, BAR, GAP, MINZ, MAXZ, PALM, DEAD, clamp, pw, contentLeft, curMode, curPen } from "./shared.js";
+import type { CaptureRefs } from "./shared.js";
 import { updatePageLabel, updateHud } from "./hud.svelte.js";
 
-export function initInput(refs) {
+export function initInput(refs: CaptureRefs): void {
   const { ink } = refs;
 
   // ---- 平移 / 缩放 / 纵向锚点 ----
-  function panBy(dx, dy) {
+  function panBy(dx: number, dy: number): void {
     G.scrollX = clamp(G.scrollX + dx, 0, G.maxScrollX);
     G.scrollY = clamp(G.scrollY + dy, 0, G.maxScrollY);
     G.ensureImages(); G.drawAll(); updatePageLabel(); emitScroll();
   }
-  function cancelMomentum() { if (G.momentumRAF) { cancelAnimationFrame(G.momentumRAF); G.momentumRAF = null; } }
+  function cancelMomentum(): void { if (G.momentumRAF) { cancelAnimationFrame(G.momentumRAF); G.momentumRAF = null; } }
   // 松手惯性：按松手速度继续滚，指数衰减；碰边界该轴停；期间持续上报让 Mac 平滑跟随。
-  function startMomentum() {
+  function startMomentum(): void {
     cancelMomentum();
     if (Math.hypot(G.vx, G.vy) < 0.05) return;   // 太慢不惯性
     let last = performance.now();
-    function step() {
+    function step(): void {
       const now = performance.now(), dt = Math.min(50, now - last); last = now;
       G.scrollX = clamp(G.scrollX + G.vx * dt, 0, G.maxScrollX);
       G.scrollY = clamp(G.scrollY + G.vy * dt, 0, G.maxScrollY);
@@ -31,7 +32,7 @@ export function initInput(refs) {
     }
     G.momentumRAF = requestAnimationFrame(step);
   }
-  function emitScroll() {
+  function emitScroll(): void {
     if (G.reportPending) return; G.reportPending = true;
     requestAnimationFrame(function () {
       G.reportPending = false;
@@ -44,7 +45,7 @@ export function initInput(refs) {
       }
     });
   }
-  function topVisiblePage() {
+  function topVisiblePage(): number {
     // 严格 <：翻到某页正顶部时（offY[i] == 上页底+GAP）必须算本页，
     // 否则「下一页」按了原地不动、「上一页」连跳两页。
     for (let i = 0; i < G.pageCount; i++) if (G.scrollY < G.offY[i] + G.dispH[i] + GAP) return i;
@@ -52,7 +53,7 @@ export function initInput(refs) {
   }
 
   // ---- 指针：笔=画/平移，手指=平移/双指缩放 ----
-  function beginPinch() {
+  function beginPinch(): void {
     const a = G.touches[G.touchOrder[0]], b = G.touches[G.touchOrder[1]];
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, p = pw();
     G.pinch = {
@@ -64,7 +65,7 @@ export function initInput(refs) {
     G.panId = null; G.panStarted = false;
   }
 
-  ink.addEventListener("pointerdown", function (e) {
+  ink.addEventListener("pointerdown", function (e: PointerEvent) {
     cancelMomentum();
     if (e.pointerType === "touch") {
       if (G.activeId !== null) { e.preventDefault(); return; }   // 笔在写 → 忽略手掌
@@ -109,7 +110,7 @@ export function initInput(refs) {
     e.preventDefault();
   }, { passive: false });
 
-  ink.addEventListener("pointermove", function (e) {
+  ink.addEventListener("pointermove", function (e: PointerEvent) {
     if (e.pointerType === "touch") {
       if (!(e.pointerId in G.touches)) return;
       G.touches[e.pointerId] = { x: e.clientX, y: e.clientY };
@@ -189,7 +190,7 @@ export function initInput(refs) {
     e.preventDefault();
   }, { passive: false });
 
-  function endTouch(id) {
+  function endTouch(id: number): void {
     if (!(id in G.touches)) return;
     delete G.touches[id];
     const k = G.touchOrder.indexOf(id); if (k >= 0) G.touchOrder.splice(k, 1);
@@ -205,7 +206,7 @@ export function initInput(refs) {
       beginPinch();
     }
   }
-  function endPen(e) {
+  function endPen(e: PointerEvent): void {
     if (e.pointerId !== G.activeId) return;
     // 不本地落 strokes（Mac 才是真源，稍后回传）；正常这一笔的 cur 先留着（本地即时可见），等 Mac 回传 strokes 再清。
     if (G.penMode === "note") { if (G.radialActive) { G.cur = null; G.drawLive(); } flushBatch("ink"); G.send({ type: "ink", phase: "end" }); }
@@ -221,14 +222,14 @@ export function initInput(refs) {
     if (G.pressRing) G.setPressRing(null);
     G.activeId = null; G.penMode = "";
   }
-  function onUp(e) { if (e.pointerType === "touch") endTouch(e.pointerId); else endPen(e); }
+  function onUp(e: PointerEvent): void { if (e.pointerType === "touch") endTouch(e.pointerId); else endPen(e); }
   ink.addEventListener("pointerup", onUp);
   ink.addEventListener("pointercancel", onUp);
-  ink.addEventListener("pointerleave", function (e) { if (e.pointerType !== "touch") endHover(); });
+  ink.addEventListener("pointerleave", function (e: PointerEvent) { if (e.pointerType !== "touch") endHover(); });
 
   // 鼠标滚轮 / 触控板滚动（桌面浏览器测试用）：等同单指平移，复用同一条
   // panBy→emitScroll 链路，方便无平板时在另一台电脑上测滚动同步/跟随。
-  ink.addEventListener("wheel", function (e) {
+  ink.addEventListener("wheel", function (e: WheelEvent) {
     cancelMomentum();
     const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? G.availH : 1);  // 行/页 → 像素
     let dx = e.deltaX * unit, dy = e.deltaY * unit;
@@ -237,11 +238,11 @@ export function initInput(refs) {
     e.preventDefault();
   }, { passive: false });
 
-  function flushBatch(kind) {
+  function flushBatch(kind: "ink" | "erase"): void {
     if (!G.batch.length) return;
     if (kind === "erase") {
       // 擦除点带页号（第 3 元素）：按页分组发送，Mac 端据此只删对应页的笔迹
-      const byPage = {};
+      const byPage: Record<number, [number, number][]> = {};
       for (let i = 0; i < G.batch.length; i++) {
         const b = G.batch[i];
         (byPage[b[2]] = byPage[b[2]] || []).push([b[0], b[1]]);
@@ -252,7 +253,7 @@ export function initInput(refs) {
     }
     G.batch = [];
   }
-  function tick() {
+  function tick(): void {
     G.frames++;
     if (G.activeId !== null) {
       if (G.batch.length) flushBatch(G.penMode === "erase" ? "erase" : "ink");
@@ -263,21 +264,21 @@ export function initInput(refs) {
   requestAnimationFrame(tick);
 
   // ---- 悬停上报 Mac（rAF 节流，页内归一化坐标）；endHover 清本地圆环并通知 Mac 隐藏 ----
-  function reportHover(page, nx, ny) {
+  function reportHover(page: number, nx: number, ny: number): void {
     G.hoverOn = true; G.hoverMsg = { type: "hover", page: page, nx: nx, ny: ny };
     if (G.hoverPending) return; G.hoverPending = true;
     requestAnimationFrame(function () { G.hoverPending = false; if (G.hoverMsg) { G.send(G.hoverMsg); G.hoverMsg = null; } });
   }
-  function endHover() { if (!G.hoverOn) return; G.hoverOn = false; G.clearHover(); G.send({ type: "hover", phase: "end" }); }
+  function endHover(): void { if (!G.hoverOn) return; G.hoverOn = false; G.clearHover(); G.send({ type: "hover", phase: "end" }); }
 
   // ---- 键盘侧键（PageUp 切模式 / PageDown 切笔）----
-  window.addEventListener("keydown", function (e) {
+  window.addEventListener("keydown", function (e: KeyboardEvent) {
     if (e.repeat) return;
     if (e.key === "PageUp") { e.preventDefault(); G.cycleMode(); }
     else if (e.key === "PageDown") { e.preventDefault(); G.cyclePen(); }
   });
 
-  window.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  window.addEventListener("contextmenu", function (e: Event) { e.preventDefault(); });
 
   // 跨模块调用面
   Object.assign(G, {
