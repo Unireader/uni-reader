@@ -24,6 +24,7 @@ struct PageCellView: View {
     var pressRing: PressRing? = nil        // 长按进度环（非空且属本页时在笔尖处画填充进度）
     var hoverD: CGFloat = 10               // 平板笔尖光标直径（erase 模式+圆环开 = 橡皮直径 2×eraserRadius×页宽）
     var onOpenNote: (TextNote) -> Void = { _ in }
+    var noteDrag: (id: UUID, off: CGSize)? = nil   // 点注解拖拽 ghost（非空且 id 匹配时该图钉按 off 挪显示位）
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -106,20 +107,25 @@ struct PageCellView: View {
             }
             // 批注图钉（可点）：点开编辑器查看/编辑。悬停显示批注/原文预览。
             // 通用保持既有样式（note.text + 黄底）；自定义类型用类型图标 + 类型色底。
+            // 点注解拖拽由容器手势（ReaderSurface.notePinDragGesture）驱动：原位 Button 不动只变淡，
+            // 另画不响应命中的 ghost 跟手——若 Button 本体跟手，松手时光标仍在 Button 内会误触发开编辑器。
             ForEach(notes) { n in
                 let typed = n.typeId != nil
                 let t = NoteType.resolve(n.typeId, in: noteTypes)
+                let pos = markerPos(n, size: size)
+                let dragging = noteDrag?.id == n.id
                 Button { onOpenNote(n) } label: {
-                    Image(systemName: typed ? t.icon : "note.text")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.black.opacity(0.75))
-                        .padding(3)
-                        .background(typed ? t.uiColor : Self.noteMarker, in: Circle())
-                        .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
+                    notePin(typed: typed, t: t)
                 }
                 .buttonStyle(.plain)
                 .help(n.text.isEmpty ? n.quote : n.text)
-                .position(markerPos(n, size: size))
+                .opacity(dragging ? 0.3 : 1)
+                .position(pos)
+                if dragging, let off = noteDrag?.off {
+                    notePin(typed: typed, t: t)
+                        .allowsHitTesting(false)
+                        .position(x: pos.x + off.width, y: pos.y + off.height)
+                }
             }
             // 平板笔尖光标（页锚定，纯位置指示）：压在墨迹/图钉之上、随页滚动。仅显示、不挡点击。
             // erase 模式且尺寸圆环开时直径 = 橡皮直径（hoverD 由调用方按 eraserRadius × 页宽换算传入）。
@@ -163,6 +169,16 @@ struct PageCellView: View {
         let y = n.rects.isEmpty ? n.anchor.minY * size.height : n.anchor.minY * size.height + 7
         return CGPoint(x: min(max(x, 12), size.width - 12),
                        y: min(max(y, 10), size.height - 10))
+    }
+
+    /// 图钉外观（原位 Button 与拖拽 ghost 共用）。
+    private func notePin(typed: Bool, t: NoteType) -> some View {
+        Image(systemName: typed ? t.icon : "note.text")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.black.opacity(0.75))
+            .padding(3)
+            .background(typed ? t.uiColor : Self.noteMarker, in: Circle())
+            .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
     }
 
     /// 归一化矩形（0~1，左上原点）→ 页内像素矩形并填充（文字选择/搜索命中高亮共用）。

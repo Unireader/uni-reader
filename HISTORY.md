@@ -5,6 +5,20 @@
 
 ## 已修 / 完成（2026-07-26）
 
+- **点注解图钉页内拖拽调位置**：无选中文字的 text note（rects 空、零尺寸 anchor 的点注解）图钉在
+  textSelect 模式下可直接拖拽换位（选区注解不可拖，保持 Button 点开编辑器）。手势走 **ScrollView 容器
+  simultaneous 拖拽**（`ReaderSurface+Selection.notePinDragGesture`，与 lasso 同款已验证模式：
+  起点 `pointNotePinHit` 命中图钉定锚存 `scratch.noteDragID` → 拖动只动 ghost（`notePinDrag` @State
+  传到 `PageCellView` 挪图钉显示位，位移 clamp 到锚点不出本页）→ 松手 `commitNoteDrag` 一次性提交
+  （页内像素位移 → 归一化 dx/dy → `InkEdit.translated` 写回 `session.textNotes`，onChange 对账自动
+  落库 + 恰是 padSession 时广播镜像平板）。拖选手势靠同一起点命中测试反向让位（命中图钉则
+  selDragAnchor 保持 nil 整段不启动）。ink/lasso 模式不可拖（lasso 本就有框选移动）。
+  ⚠️ 教训一：初版把 DragGesture 挂在图钉子视图上（`.local` 坐标系随图钉移动吃掉 translation）→
+  不跟手 + 鬼影；阅读区拖拽一律挂容器、状态走 @State/scratch，别在会移动的视图上挂手势。
+  教训二：图钉 Button 本体不能跟手挪位（松手时光标仍在 Button 内会误触发开编辑器）——原位 Button
+  只变淡，另画 `allowsHitTesting(false)` 的 ghost 跟手。
+  验证：xcodebuild 过；手感/真机回归待做。
+
 - **橡皮增强：整笔/局部双模式 + 尺寸圆环（2026-07-26 用户反馈，承接下方四项批）**：
   `eraser`（0x46）payload 扩为 `f32 size · u8 mode · u8 ring`（本会话新增消息、无存量客户端，直接改格式；
   mode 0=整笔/1=局部、ring 控制尺寸圆环，两端同步）。Mac `eraseNear` 按模式分派（整笔=旧 removeAll 语义、

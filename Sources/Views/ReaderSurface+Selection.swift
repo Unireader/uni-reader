@@ -235,11 +235,13 @@ extension ReaderSurface {
     /// 拖选：起点定锚（一次），移动实时扩选。锚点所在页有 OCR 层 → 走 OCR 行选择；否则 PDFKit 原生选择。
     /// minimumDistance 2 → 纯单击不触发拖选（交给 `.onTapGesture` 取消），2px 内抖动不误选。
     /// `pointerTool == .ink` 时反向门控：拖选让位给本机落墨手势。
+    /// 起点命中点注解图钉时让位图钉拖拽（容器手势是 simultaneous，不让位会边拖图钉边扩选）。
     var dragSelectGesture: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .local)
             .onChanged { v in
                 guard app.pointerTool == .textSelect, scratch.pinch == nil else { return }
                 if scratch.selDragAnchor == nil {
+                    if pointNotePinHit(v.startLocation) != nil { return }   // selDragAnchor 保持 nil → 整段拖选不启动
                     scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
                 }
                 guard let a = scratch.selDragAnchor, let f = containerPointToPageNorm(v.location) else { return }
@@ -251,6 +253,69 @@ extension ReaderSurface {
                 }
             }
             .onEnded { _ in scratch.selDragAnchor = nil }
+    }
+
+    /// 点注解图钉命中测试（容器/视口坐标 P，与 dragSelect 同 `.local` 空间）→ 命中的 note。
+    /// 与 `PageCellView.markerPos` 同规则（点注解落锚点、页内 12/10 边距钳制），热区半径 14pt。
+    func pointNotePinHit(_ P: CGPoint) -> TextNote? {
+        guard let layout else { return nil }
+        let g = scratch.geo
+        let ds = max(0.0001, dispScale)
+        let cx = g.offsetX + P.x, cy = g.offsetY + P.y
+        let page = layout.locate(docY: cy / ds).page
+        let pageHDisp = layout.heights[page] * ds
+        guard pageW > 0, pageHDisp > 0 else { return nil }
+        let lx = cx - pageX, ly = cy - layout.offsets[page] * ds   // 页内显示坐标
+        for n in session.textNotes where n.page == page && n.rects.isEmpty {
+            let px = min(max(n.anchor.minX * pageW, 12), pageW - 12)
+            let py = min(max(n.anchor.minY * pageHDisp, 10), pageHDisp - 10)
+            if hypot(lx - px, ly - py) <= 14 { return n }
+        }
+        return nil
+    }
+
+    /// 点注解图钉拖拽手势（同挂 ScrollView 容器，与 lasso 同款模式）：起点命中图钉才激活
+    /// （`pointNotePinHit` 定锚一次存 `scratch.noteDragID`），拖动只动 ghost（`notePinDrag` 瞬态，
+    /// 位移 clamp 到锚点不出本页），松手 `commitNoteDrag` 一次性提交。仅 textSelect 模式；
+    /// 拖选手势靠同一起点命中测试反向让位。
+    var notePinDragGesture: some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .local)
+            .onChanged { v in
+                guard app.pointerTool == .textSelect, scratch.pinch == nil else { return }
+                if scratch.noteDragID == nil {
+                    guard let hit = pointNotePinHit(v.startLocation) else { return }
+                    scratch.noteDragID = hit.id
+                }
+                guard let id = scratch.noteDragID,
+                      let n = session.textNotes.first(where: { $0.id == id }),
+                      let layout, layout.heights.indices.contains(n.page), pageW > 0 else { return }
+                // 容器像素位移 == 页内像素位移（delta 与平移无关）；clamp 到锚点不出本页
+                let pageHDisp = layout.heights[n.page] * max(0.0001, dispScale)
+                let ax = n.anchor.minX * pageW, ay = n.anchor.minY * pageHDisp
+                notePinDrag = (id, CGSize(width: min(max(v.translation.width, -ax), pageW - ax),
+                                          height: min(max(v.translation.height, -ay), pageHDisp - ay)))
+            }
+            .onEnded { _ in
+                guard let id = scratch.noteDragID else { return }
+                scratch.noteDragID = nil
+                let off = notePinDrag?.off ?? .zero
+                notePinDrag = nil
+                guard let n = session.textNotes.first(where: { $0.id == id }) else { return }
+                commitNoteDrag(n, translation: off)
+            }
+    }
+
+    /// 点注解图钉拖拽提交（`notePinDragGesture` 松手）：页内像素位移 → 归一化平移，
+    /// 页内 clamp 由 `InkEdit.translated` 保证（图钉拖不出本页）。数组变更触发 onChange 增量落库。
+    func commitNoteDrag(_ note: TextNote, translation t: CGSize) {
+        guard let layout, layout.heights.indices.contains(note.page), pageW > 0 else { return }
+        let pageHDisp = layout.heights[note.page] * max(0.0001, dispScale)
+        let dx = Double(t.width / pageW), dy = Double(t.height / pageHDisp)
+        guard dx != 0 || dy != 0,
+              let i = session.textNotes.firstIndex(where: { $0.id == note.id }) else { return }
+        session.textNotes[i] = InkEdit.translated(session.textNotes[i], dx: dx, dy: dy)
+        // 镜像平板：仅当本窗口恰是 padSession（同 commitLassoMove 语义；否则 broadcast 的是 padSession 的旧数据）
+        if session.id == app.padSession?.id { app.broadcastNotes() }
     }
 
     // MARK: 本机落墨（pointerTool == .ink：Mac 鼠标/触控板直接画）

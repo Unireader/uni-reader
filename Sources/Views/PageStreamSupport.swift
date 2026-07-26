@@ -133,6 +133,7 @@ final class Scratch {
     var selDragAnchor: (page: Int, nx: CGFloat, ny: CGFloat)?   // 进行中拖选的锚点（页号 + 页内归一化坐标）
     var localInkStart: (page: Int, nx: Double, ny: Double)?     // 进行中本机落墨的起点（⇧ 尺子锚点；非 nil = 有一笔/一次擦除在画）
     var lassoDragMode: LassoDragMode?  // 进行中框选手势的形态（nil = 无框选/移动在飞）
+    var noteDragID: UUID?              // 进行中点注解图钉拖拽的 note id（起点命中定锚一次；非 nil = 有图钉在拖）
     var lassoEscMonitor: Any?          // Esc 清除框选选中集的 NSEvent 本地监视器（同 copyMonitor 的事件管道理由）
     var wheelMonitor: Any?             // ⌘+滚轮的 NSEvent 本地监视器（事件管道，非视图）
     var copyMonitor: Any?              // ⌘C 的 NSEvent 本地监视器（.onCopyCommand 依赖响应链/焦点，在纯

@@ -86,6 +86,8 @@ struct ReaderSurface: View {
     @State var lassoSelection: LassoSelection?      // 选中集（同页笔迹/注解 id + 归一化联合包围盒）
     @State var lassoRect: CGRect?                   // 进行中的框选虚线矩形（视口坐标）
     @State var lassoGhostOffset: CGSize = .zero     // 移动中的 ghost 预览偏移（显示点；数据在松手前不动）
+    /// 点注解图钉拖拽的 ghost 预览偏移（note id + 页内像素位移；数据在松手前不动，逻辑见 ReaderSurface+Selection）。
+    @State var notePinDrag: (id: UUID, off: CGSize)?
     /// 本机擦除的尺寸圆环位置（视口坐标；pointerTool==.ink 且 erase 模式时跟随光标，其余时刻 nil）。
     /// scratch.cursorP 在引用型 scratch 里、不触发刷新，圆环要实时跟手故单独走 @State。
     @State var eraseCursor: CGPoint?
@@ -172,6 +174,8 @@ struct ReaderSurface: View {
         .simultaneousGesture(localInkDragGesture)
         // 框选移动（pointerTool == .lasso 才生效，同上互斥门控）：虚线框选 + 拖选中区平移。
         .simultaneousGesture(lassoGesture)
+        // 点注解图钉拖拽（textSelect 模式、起点命中图钉才激活，与拖选互斥让位）：页内调整注解位置。
+        .simultaneousGesture(notePinDragGesture)
         // 双击选词 / 单击取消选择。用 `.onTapGesture` 的单双击分级（单击等一拍确认非双击，同 macOS 原生手感）；
         // 双击定位取光标最近位置（`.onContinuousHover` 维护），避免 SpatialTapGesture 与拖选/缩放争手势。
         .onTapGesture(count: 2) { if let p = scratch.cursorP { selectWord(atContainer: p) } }
@@ -299,7 +303,8 @@ struct ReaderSurface: View {
                      pens: app.pens,
                      pressRing: session.pressRing?.page == i ? session.pressRing : nil,
                      hoverD: app.padMode == "erase" && app.eraserRing ? app.eraserRadius * 2 * pageW : 10,
-                     onOpenNote: { editorTarget = .edit($0) })
+                     onOpenNote: { editorTarget = .edit($0) },
+                     noteDrag: notePinDrag)
             .offset(x: pageX, y: layout.offsets[i] * dispScale)
     }
 
