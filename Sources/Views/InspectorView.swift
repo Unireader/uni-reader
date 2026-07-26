@@ -197,19 +197,37 @@ struct InspectorView: View {
         session.strokes.removeAll { $0.page == page }
     }
 
+    /// 当前筛选下的笔记列表：.all 全部 / .only(nil) 通用 / .only(id) 指定类型。
+    private var filteredTextNotes: [TextNote] {
+        session.textNotes.filter { n in
+            switch session.noteTypeFilter {
+            case .all: return true
+            case .only(let id): return n.typeId == id
+            }
+        }
+    }
+
     private var textBlock: some View {
-        block("\(L("Text Notes")) · \(session.textNotes.count)") {
+        block("\(L("Text Notes")) · \(filteredTextNotes.count)") {
             if session.textNotes.isEmpty {
                 Text(L("No text notes yet.")).foregroundStyle(.secondary).font(.callout)
             } else {
-                ForEach(session.textNotes) { n in
+                noteTypeFilterMenu
+                ForEach(filteredTextNotes) { n in
+                    let t = NoteType.resolve(n.typeId, in: session.noteTypes)
                     HStack(alignment: .top, spacing: 6) {
                         Button {
                             onJumpTo(n.page, max(0, n.anchor.minY - 0.03))   // 跳到该批注所在页/位置
                         } label: {
                             VStack(alignment: .leading, spacing: 3) {
-                                Label(String(format: L("Page %d"), n.page + 1), systemImage: "text.quote")
-                                    .font(.callout)
+                                HStack(spacing: 6) {
+                                    Circle().fill(t.uiColor).frame(width: 8, height: 8)
+                                    Label(String(format: L("Page %d"), n.page + 1), systemImage: t.icon)
+                                        .font(.callout)
+                                    if t.id != NoteType.generalID {
+                                        Text(t.name).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
                                 if !n.text.isEmpty {
                                     Text(n.text).font(.callout).lineLimit(2)
                                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -237,6 +255,39 @@ struct InspectorView: View {
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
                 }
             }
+        }
+    }
+
+    /// 类型筛选菜单：全部 / 通用 / 各自定义类型。选中项显示在 label 上。
+    private var noteTypeFilterMenu: some View {
+        Menu {
+            Button { session.noteTypeFilter = .all } label: {
+                Label(L("All Types"), systemImage: "line.3.horizontal.decrease.circle")
+            }
+            Button { session.noteTypeFilter = .only(nil) } label: {
+                Label(L("General"), systemImage: NoteType.general.iconName)
+            }
+            ForEach(session.noteTypes) { t in
+                Button { session.noteTypeFilter = .only(t.id) } label: {
+                    Label(t.name, systemImage: t.icon)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                Text(filterLabel)
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        .fixedSize()
+    }
+
+    private var filterLabel: String {
+        switch session.noteTypeFilter {
+        case .all: return L("All Types")
+        case .only(let id):
+            guard let id else { return L("General") }
+            return session.noteTypes.first { $0.id == id }?.name ?? L("General")
         }
     }
 
