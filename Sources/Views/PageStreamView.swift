@@ -259,6 +259,7 @@ struct ReaderSurface: View {
                      activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [],
                      highlights: session.highlights.filter { $0.page == i },
                      notes: session.textNotes.filter { $0.page == i },
+                     noteTypes: session.noteTypes,
                      ocrBlocks: session.showOCRBlocks ? (session.ocrRuns[i] ?? []) : [],
                      ocrGroups: session.showOCRBlocks && session.ocrBlockGrouped ? session.ocrGroups(page: i) : [],
                      radial: session.radial?.page == i ? session.radial : nil,

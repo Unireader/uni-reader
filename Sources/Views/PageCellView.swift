@@ -16,6 +16,7 @@ struct PageCellView: View {
     var activeMatchRects: [CGRect] = []    // 当前命中（同上坐标，橙色强调）
     var highlights: [Highlight] = []       // 本页文字高亮（kind=3）：按各自颜色铺色，最底层
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
+    var noteTypes: [NoteType] = []         // 工作区笔记类型：图钉/高亮配色（通用保持既有黄色样式）
     var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
     var ocrGroups: [Int] = []              // 调试上色：非空=按分组同色(与 ocrBlocks 同序的分组 id) / 空=每块独立色
     var radial: RadialState? = nil         // 环形选笔盘（非空且属本页时在笔尖处画环）
@@ -72,11 +73,13 @@ struct PageCellView: View {
                 }
                 .allowsHitTesting(false)
             }
-            // 文字注解荧光高亮（持久层，居搜索/选择高亮之下）：被注解的文字铺一层暖黄。
+            // 文字注解荧光高亮（持久层，居搜索/选择高亮之下）：通用铺暖黄，自定义类型铺类型色。
             if !notes.isEmpty {
                 Canvas { ctx, sz in
                     for n in notes {
-                        for r in n.rects { fillNorm(r, in: &ctx, size: sz, color: Self.noteHighlight) }
+                        let col = n.typeId == nil ? Self.noteHighlight
+                            : NoteType.resolve(n.typeId, in: noteTypes).uiColor.opacity(0.32)
+                        for r in n.rects { fillNorm(r, in: &ctx, size: sz, color: col) }
                     }
                 }
                 .allowsHitTesting(false)
@@ -101,13 +104,16 @@ struct PageCellView: View {
                 InkLiveLayer(live: live, inkScale: inkScale)
             }
             // 批注图钉（可点）：点开编辑器查看/编辑。悬停显示批注/原文预览。
+            // 通用保持既有样式（note.text + 黄底）；自定义类型用类型图标 + 类型色底。
             ForEach(notes) { n in
+                let typed = n.typeId != nil
+                let t = NoteType.resolve(n.typeId, in: noteTypes)
                 Button { onOpenNote(n) } label: {
-                    Image(systemName: "note.text")
+                    Image(systemName: typed ? t.icon : "note.text")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.black.opacity(0.75))
                         .padding(3)
-                        .background(Self.noteMarker, in: Circle())
+                        .background(typed ? t.uiColor : Self.noteMarker, in: Circle())
                         .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
