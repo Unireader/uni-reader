@@ -43,5 +43,19 @@ check(store.meta("note_types") != nil, "meta 键存在")
 let broken = "{oops".data(using: .utf8)!
 check((try? JSONDecoder().decode([NoteType].self, from: broken)) == nil, "损坏 JSON → 解码 nil（上层回落空数组）")
 
+// 5) TextNote payload：旧数据无 type_id → nil（通用）；新数据回环保留
+let docId = "doc-1"
+var note = TextNote(page: 2, anchor: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.05),
+                    quote: "原文", text: "批注", rects: [CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.05)])
+let oldPayload = Data("{\"quote\":\"原文\",\"text\":\"批注\",\"rects\":[[0.1,0.2,0.3,0.05]]}".utf8)
+let oldRow = LibNote(id: note.id.uuidString, documentId: docId, kind: TextNote.noteKind,
+                     page: 2, anchor: note.anchor, payload: oldPayload,
+                     createdAt: note.createdAt, updatedAt: note.updatedAt)
+check(TextNote(note: oldRow)?.typeId == nil, "旧 payload（无 type_id）→ typeId nil")
+note.typeId = t.id
+let row = note.toNote(documentId: docId)!
+check(String(data: row.payload, encoding: .utf8)!.contains("\"type_id\""), "payload 含 type_id 键")
+check(TextNote(note: row)?.typeId == t.id, "typeId 编解码回环")
+
 print("\n通过 \(pass)，失败 \(fail)")
 if fail > 0 { exit(1) }

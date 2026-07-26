@@ -15,6 +15,7 @@ struct TextNote: Identifiable, Equatable {
     var text: String            // 用户批注
     var rects: [CGRect]         // 选区逐行归一化框（页局部）——渲染精确高亮用
     var color: InkColor?        // 预留：高亮色（高亮形态复用）
+    var typeId: UUID? = nil     // 笔记类型（工作区 NoteType.id）；nil/未知 = 通用
     var createdAt: Date = .now
     var updatedAt: Date = .now
 }
@@ -28,6 +29,12 @@ private struct TextNotePayload: Codable {
     var text: String
     var rects: [[Double]]
     var color: InkColor?
+    var typeId: String?     // JSON 键 type_id；旧 payload 无此键 → nil（通用），零迁移
+
+    enum CodingKeys: String, CodingKey {
+        case quote, text, rects, color
+        case typeId = "type_id"
+    }
 }
 
 extension TextNote {
@@ -38,7 +45,7 @@ extension TextNote {
     func toNote(documentId: String) -> LibNote? {
         let payload = TextNotePayload(quote: quote, text: text,
                                       rects: rects.map { [$0.minX, $0.minY, $0.width, $0.height] },
-                                      color: color)
+                                      color: color, typeId: typeId?.uuidString)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
                        page: page, anchor: anchor, payload: data,
@@ -59,6 +66,7 @@ extension TextNote {
             return CGRect(x: x, y: y, width: w, height: h)
         }
         self.init(id: uuid, page: note.page, anchor: note.anchor, quote: p.quote, text: p.text,
-                  rects: rects, color: p.color, createdAt: note.createdAt, updatedAt: note.updatedAt)
+                  rects: rects, color: p.color, typeId: p.typeId.flatMap { UUID(uuidString: $0) },
+                  createdAt: note.createdAt, updatedAt: note.updatedAt)
     }
 }
