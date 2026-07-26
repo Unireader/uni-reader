@@ -15,12 +15,13 @@ extension ReaderSurface {
     }
 
     /// 实化窗口变化时：为缺图页出图（缓存命中同步取 → 无 pop-in）。
+    /// 入队按「当前页 → 由近及远」：渲染引擎是单串行队列、按提交序出图，可视页必须先排上。
     func kickBaseRenders() {
         guard let pdf = session.pdf else { return }
         if scratch.basePixelW == 0 { scratch.basePixelW = currentBaseWidth() }
         let w = scratch.basePixelW
         var wanted = Set<String>()
-        for i in realized {
+        for i in Self.centerOutOrder(center: session.currentPageIndex, radius: realized.count, bounds: realized) {
             let key = baseKey(i, width: w)
             wanted.insert(key)
             if images[i] == nil, let hit = PageRenderEngine.shared.cached(key) {
@@ -62,7 +63,11 @@ extension ReaderSurface {
         scratch.basePixelW = currentBaseWidth()
         let w = scratch.basePixelW
         var wanted = Set<String>()
-        for i in realized {
+        // 贴片先行：放大超过基图上限后，清晰全靠视口贴片——必须排在基图重渲之前，
+        // 否则要等整个实化窗口的基图渲完才轮到眼前这页的清晰贴片（用户感知的「放大后糊很久」）。
+        wanted.formUnion(refreshTiles(layout: layout, pdf: pdf))
+        // 基图按「当前页 → 由近及远」入队：单串行队列按提交序出图，可视页插队先清晰。
+        for i in Self.centerOutOrder(center: session.currentPageIndex, radius: realized.count, bounds: realized) {
             guard let page = pdf.page(at: i) else { continue }
             let key = baseKey(i, width: w)
             wanted.insert(key)
@@ -72,7 +77,6 @@ extension ReaderSurface {
                 requestBase(key: key, page: page, index: i, width: w)
             }
         }
-        wanted.formUnion(refreshTiles(layout: layout, pdf: pdf))
         if nightRadius > 0 {
             wanted.formUnion(warmNeighborKeys(pdf: pdf, pageCount: layout.pageCount, width: w, radius: nightRadius))
         }
@@ -136,7 +140,9 @@ extension ReaderSurface {
         let g = scratch.geo
         let ds = max(0.0001, dispScale)
         let visTop = g.offsetY / ds, visBottom = (g.offsetY + g.containerH) / ds
-        for i in layout.pageRange(fromDocY: visTop, toDocY: visBottom) {
+        let visPages = layout.pageRange(fromDocY: visTop, toDocY: visBottom)
+        // 同样按「当前页 → 由近及远」入队：跨页视口时当前页贴片最先出图。
+        for i in Self.centerOutOrder(center: session.currentPageIndex, radius: visPages.count, bounds: visPages) {
             guard let page = pdf.page(at: i) else { continue }
             let pageH = layout.heights[i] * ds
             // 视口 ∩ 页（页内显示 pt，左上原点），四周外扩 15%
