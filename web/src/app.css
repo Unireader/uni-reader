@@ -33,6 +33,11 @@ canvas { position:fixed; inset:0; }
 #topbar button { padding:8px 14px; font-size:16px; border:1px solid #30363d; border-radius:8px;
   background:#21262d; color:#e6edf3; }
 #topbar button:active { background:#30363d; }
+#topbar button svg { width:18px; height:18px; vertical-align:-4px; }
+#showBar { position:fixed; right:10px; top:10px; z-index:10; padding:6px; border:1px solid #30363d;
+  border-radius:8px; background:rgba(33,38,45,.85); color:#e6edf3;
+  -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
+#showBar svg { width:18px; height:18px; display:block; }
 #lat { cursor:pointer; }
 #stats { position:fixed; right:8px; top:52px; z-index:11; display:none;
   background:rgba(22,27,34,.94); border:1px solid #30363d; border-radius:8px; padding:10px 12px;
