@@ -205,6 +205,9 @@ extension ReaderSurface {
         session.noteTypes = types
         workspace.saveNoteTypes(types)
         guard !removed.isEmpty else { return }
+        if case .only(let id?) = session.noteTypeFilter, removed.contains(id) {
+            session.noteTypeFilter = .all
+        }
         for i in session.textNotes.indices where session.textNotes[i].typeId.map({ removed.contains($0) }) ?? false {
             session.textNotes[i].typeId = nil
             session.textNotes[i].updatedAt = .now

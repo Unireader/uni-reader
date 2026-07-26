@@ -74,7 +74,11 @@ struct NoteEditorSheet: View {
         .onAppear { editorFocused = true }
         .sheet(isPresented: $managing) {
             NoteTypeManagerView(noteTypes: noteTypes, usageCount: usageCount,
-                                onChange: onChangeTypes, onClose: { managing = false })
+                                onChange: { types in
+                                    onChangeTypes(types)
+                                    if let id = typeId, !types.contains(where: { $0.id == id }) { typeId = nil }
+                                },
+                                onClose: { managing = false })
         }
     }
 

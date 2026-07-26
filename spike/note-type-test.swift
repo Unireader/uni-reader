@@ -57,5 +57,11 @@ let row = note.toNote(documentId: docId)!
 check(String(data: row.payload, encoding: .utf8)!.contains("\"type_id\""), "payload 含 type_id 键")
 check(TextNote(note: row)?.typeId == t.id, "typeId 编解码回环")
 
+let badRow = LibNote(id: note.id.uuidString, documentId: docId, kind: TextNote.noteKind,
+                     page: 2, anchor: note.anchor,
+                     payload: Data("{\"quote\":\"原文\",\"text\":\"批注\",\"rects\":[[0.1,0.2,0.3,0.05]],\"type_id\":\"not-a-uuid\"}".utf8),
+                     createdAt: note.createdAt, updatedAt: note.updatedAt)
+check(TextNote(note: badRow)?.typeId == nil, "损坏 type_id 字符串 → typeId nil（落通用）")
+
 print("\n通过 \(pass)，失败 \(fail)")
 if fail > 0 { exit(1) }
