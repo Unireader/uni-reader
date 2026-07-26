@@ -15,3 +15,9 @@ UniReader.xcodeproj/
 
 # Playwright 调试产物
 .playwright-mcp/
+
+# 采集页前端工程（web/）的依赖与构建产物
+web/node_modules/
+web/dist/
+# capture.html 是 web/ 的构建产物（scripts/build-web.sh 生成，package.sh 打包前自动重建）
+Sources/Resources/capture.html

@@ -1,0 +1,46 @@
+/* 采集页全局样式（逐行移植自原 capture.html 的 <style> 块）。 */
+* { box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+html,body { margin:0; height:100%; overflow:hidden; overscroll-behavior:none; background:#0d1117; color:#e6edf3;
+  font-family:-apple-system,"PingFang SC",system-ui,sans-serif; }
+canvas { position:fixed; inset:0; }
+#bg { z-index:1; }
+#ink { z-index:2; touch-action:none; }
+#live { z-index:3; pointer-events:none; }   /* 正在写的这一笔（对应 Mac 的 InkLiveLayer） */
+#hover { z-index:4; pointer-events:none; }
+/* 选笔盘底：真毛玻璃只能由 DOM 元素做（canvas 画不了 backdrop-filter），
+   故盘底是这个圆形 div，扇区/图标/hub 由上面的 #radial canvas 叠着画。 */
+#radialGlass { position:fixed; z-index:5; pointer-events:none; display:none;
+  border-radius:50%; background:rgba(20,23,28,.62);
+  border:1px solid rgba(255,255,255,.22); box-shadow:0 4px 20px rgba(0,0,0,.30); }
+@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+  /* 支持毛玻璃时底色调得很淡，让页面内容透上来（对比度靠图标自带色片，不靠盘底堆）；
+     不支持则维持上面的高不透明度深色兜底 */
+  #radialGlass { background:rgba(20,23,28,.16);
+    -webkit-backdrop-filter:blur(16px) saturate(140%); backdrop-filter:blur(16px) saturate(140%); }
+}
+#radial { z-index:6; pointer-events:none; }
+#topbar { position:fixed; left:0; right:0; top:0; height:46px; z-index:10;
+  display:flex; align-items:center; gap:10px; padding:0 10px;
+  background:rgba(22,27,34,.9); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  border-bottom:1px solid #30363d; }
+#dot { width:10px; height:10px; border-radius:50%; background:#f85149; flex:none; }
+#dot.on { background:#3fb950; }
+#lat { color:#8b949e; font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
+#docs { max-width:24vw; padding:6px 8px; border:1px solid #30363d; border-radius:8px;
+  background:#21262d; color:#e6edf3; font-size:14px; }
+#zoomLabel { color:#8b949e; font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
+#pageLabel { margin-left:auto; font-variant-numeric:tabular-nums; white-space:nowrap; }
+#topbar button { padding:8px 14px; font-size:16px; border:1px solid #30363d; border-radius:8px;
+  background:#21262d; color:#e6edf3; }
+#topbar button:active { background:#30363d; }
+#lat { cursor:pointer; }
+#stats { position:fixed; right:8px; top:52px; z-index:11; display:none;
+  background:rgba(22,27,34,.94); border:1px solid #30363d; border-radius:8px; padding:10px 12px;
+  font:12px/1.55 ui-monospace,Menlo,monospace; color:#e6edf3; white-space:pre; min-width:180px; }
+#stats.on { display:block; }
+#penStat { position:fixed; left:10px; bottom:10px; z-index:10; pointer-events:none;
+  display:flex; align-items:center; gap:7px; padding:6px 12px;
+  background:rgba(22,27,34,.85); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  border:1px solid #30363d; border-radius:999px; font-size:13px; color:#e6edf3; }
+#penStat .sw { width:12px; height:12px; border-radius:50%; flex:none;
+  border:1px solid rgba(255,255,255,.45); }

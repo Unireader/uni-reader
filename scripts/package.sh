@@ -27,6 +27,9 @@ if [[ -n "${VERSION:-}" ]]; then
   sed -i '' -E "s/MARKETING_VERSION: \"[^\"]*\"/MARKETING_VERSION: \"$VERSION\"/" "$PROJECT_YML"
 fi
 
+echo "-> 构建采集页前端（web/ → Sources/Resources/capture.html）"
+bash scripts/build-web.sh
+
 echo "-> xcodegen generate"
 xcodegen generate
 

@@ -3,6 +3,21 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 已修 / 完成（2026-07-26）
+
+- **采集页提取为 Svelte 前端工程（`web/`）**：原 923 行单文件 `capture.html`（CSS+DOM+IIFE）拆成
+  Vite + Svelte 5 工程——`App/TopBar/StatsPanel/PenStat.svelte` 四个组件（顶栏/统计面板/笔状态胶囊
+  改 runes 响应式，读 `lib/hud.svelte.js` 的 `S`），命令式逻辑按职责拆 `lib/`：`shared.js`
+  （常量/公式/`G` 全局状态袋）、`render.js`（画布/几何/笔迹/环形盘）、`input.js`（指针/触摸/惯性/合批）、
+  `ws.js`（连接/重连/消息分发）、`capture.js`（装配 + actions）。行为逐行移植（环形盘常量、惯性、
+  合批时序等与 Mac 对齐处全保留）；原版 `drawHover()` 是定义了从未调用的死代码，按死代码丢弃
+  （悬停光标本就 Mac 端画）。协议编解码器由 `lib/wire.js` 直接 import `Sources/Resources/wire.js`
+  （**单一真源不动**，构建期内联，原 `__WIRE_JS__` 占位符与 Swift 侧注入代码随之删除）。
+  构建：`vite-plugin-singlefile` 出单文件 HTML，`scripts/build-web.sh` 装依赖 + 构建 + 占位符
+  （`__WS_PORT__`/`__TOKEN__`/`__PENS__，放 `web/index.html` 内联脚本里不过 bundler）自检后覆盖
+  `Sources/Resources/capture.html`（产物勿手改）。验证：全部 JS `node --check` 过；
+  `wire-codec-test.swift` 42/42、`wire-cross-test.js` 74/74 全绿；xcodebuild 编译过。
+
 ## 已修 / 完成（2026-07-25）
 
 - **平板端半透明笔（荧光笔）画成一串圆斑（2026-07-25 用户反馈「和 macOS 端不统一」）**：根因——

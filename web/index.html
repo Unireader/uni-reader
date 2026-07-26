@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>UniReader 采集端</title>
+<script>
+  // Mac 端注入的运行时配置。三个占位符在构建产物里**原样保留**（不经过 bundler/minify），
+  // 由 CapturePage.swift 运行时替换；vite dev 时由 vite.config.js 的 devPlaceholders 换成开发值。
+  window.__CAPTURE_CONFIG__ = { port: __WS_PORT__, token: "__TOKEN__", pens: __PENS__ };
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
