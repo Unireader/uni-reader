@@ -5,8 +5,13 @@ cd "$(dirname "$0")/.."
 # 打包 UniReader：xcodegen → archive → Developer ID 导出 → 公证 → staple → zip
 #
 # 用法：
-#   ./scripts/package.sh                 # 用 project.yml 里当前的版本号打包
-#   VERSION=0.2.0 ./scripts/package.sh   # 打包前把 MARKETING_VERSION 改成 0.2.0 再打包
+#   ./scripts/package.sh                  # 用 project.yml 里当前的版本号打包
+#   ./scripts/package.sh 0.2.0            # 打包前把 MARKETING_VERSION 改成 0.2.0 再打包
+#   ./scripts/package.sh --version 0.2.0  # 同上
+#   VERSION=0.2.0 ./scripts/package.sh    # 同上（环境变量方式）
+#   ./scripts/package.sh 0.2.0 --build 3  # 同时把 CURRENT_PROJECT_VERSION 改成 3
+#
+# 优先级：命令行参数 > VERSION/BUILD 环境变量 > project.yml 当前值。
 #
 # 前置条件（只需做一次）：
 #   xcrun notarytool store-credentials "UniReader-Notary" \
@@ -22,9 +27,49 @@ ARCHIVE_PATH="$BUILD_DIR/UniReader.xcarchive"
 EXPORT_DIR="$BUILD_DIR/export"
 EXPORT_OPTIONS="scripts/exportOptions.plist"
 
-if [[ -n "${VERSION:-}" ]]; then
+VERSION="${VERSION:-}"
+BUILD="${BUILD:-}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      VERSION="${2:?--version 需要一个版本号，如 0.2.0}"
+      shift 2
+      ;;
+    --build)
+      BUILD="${2:?--build 需要一个构建号，如 3}"
+      shift 2
+      ;;
+    -*)
+      echo "未知选项: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$VERSION" ]]; then
+        echo "多余的参数: $1（版本号已设为 $VERSION）" >&2
+        exit 2
+      fi
+      VERSION="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$VERSION" ]]; then
+  if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+    echo "版本号格式不对: $VERSION（应为 x.y 或 x.y.z）" >&2
+    exit 2
+  fi
   echo "-> 设置 MARKETING_VERSION = $VERSION"
   sed -i '' -E "s/MARKETING_VERSION: \"[^\"]*\"/MARKETING_VERSION: \"$VERSION\"/" "$PROJECT_YML"
+fi
+
+if [[ -n "$BUILD" ]]; then
+  if ! [[ "$BUILD" =~ ^[0-9]+$ ]]; then
+    echo "构建号格式不对: $BUILD（应为整数）" >&2
+    exit 2
+  fi
+  echo "-> 设置 CURRENT_PROJECT_VERSION = $BUILD"
+  sed -i '' -E "s/CURRENT_PROJECT_VERSION: \"[^\"]*\"/CURRENT_PROJECT_VERSION: \"$BUILD\"/" "$PROJECT_YML"
 fi
 
 echo "-> 构建采集页前端（web/ → Sources/Resources/capture.html）"
