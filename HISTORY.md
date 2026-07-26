@@ -5,6 +5,17 @@
 
 ## 已修 / 完成（2026-07-26）
 
+- **文字笔记类型（批注自定义类型）**：批注不再只有「通用」一种——可自建类型（名字 + 色板颜色 + SF Symbol 图标），
+  批注挂类型后页面图钉与选区高亮用该类型的颜色/图标，Inspector 笔记列表显示色点+图标并可按类型筛选。
+  关键机制：① 类型表存**工作区 meta**（`note_types`，JSON 数组，snake_case 键，工作区级隔离、随文件夹走），
+  `Sources/App/NoteTypeModel.swift`（`NoteType` + 色板/图标候选 + `resolve` 解析）；② 批注 payload 加
+  **可选 `type_id`**（`TextNote.typeId`），旧数据无此键 → nil，**零迁移**；③ **通用兜底**——nil/未知 typeId
+  一律解析到固定的「通用」类型（`note.text` 黄色原样式），删除类型时其笔记回落通用（确认框提示 N 条回落）；
+  ④ 类型管理入口就在**批注编辑器内**（类型菜单「管理类型…」→ `NoteTypeManagerView` 新建/改名/换色/换图标/
+  删除），改动即时反映到已有笔记的图钉与侧边栏；⑤ 本地化 en/zh-Hans 双语言补齐。
+  验证：`spike/note-type-test.swift` 16/16、`spike/store-test.swift` 34/34 全绿；xcodebuild BUILD SUCCEEDED。
+  （GUI 手测清单未执行——无图形会话，留给用户按 brief 七项过一遍。）
+
 - **采集页提取为 Svelte 前端工程（`web/`）**：原 923 行单文件 `capture.html`（CSS+DOM+IIFE）拆成
   Vite + Svelte 5 工程——`App/TopBar/StatsPanel/PenStat.svelte` 四个组件（顶栏/统计面板/笔状态胶囊
   改 runes 响应式，读 `lib/hud.svelte.js` 的 `S`），命令式逻辑按职责拆 `lib/`：`shared.js`

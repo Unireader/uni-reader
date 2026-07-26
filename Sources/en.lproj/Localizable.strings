@@ -134,3 +134,16 @@
 "Pencil" = "Pencil";
 "Collapse" = "Collapse";
 "Expand Pen Toolbar" = "Expand Pen Toolbar";
+
+/* Note Types */
+"General" = "General";
+"Manage Types" = "Manage Types";
+"Manage Types…" = "Manage Types…";
+"New Type" = "New Type";
+"Edit Type" = "Edit Type";
+"Type Name" = "Type Name";
+"No custom types yet." = "No custom types yet.";
+"Delete type “%@”?" = "Delete type “%@”?";
+"%d note(s) will revert to General." = "%d note(s) will revert to General.";
+"All Types" = "All Types";
+"Done" = "Done";

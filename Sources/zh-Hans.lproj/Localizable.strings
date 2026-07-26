@@ -134,3 +134,16 @@
 "Pencil" = "铅笔";
 "Collapse" = "收起";
 "Expand Pen Toolbar" = "展开笔工具条";
+
+/* Note Types */
+"General" = "通用";
+"Manage Types" = "管理类型";
+"Manage Types…" = "管理类型…";
+"New Type" = "新建类型";
+"Edit Type" = "编辑类型";
+"Type Name" = "类型名称";
+"No custom types yet." = "还没有自定义类型。";
+"Delete type “%@”?" = "删除类型“%@”？";
+"%d note(s) will revert to General." = "%d 条笔记将改为通用。";
+"All Types" = "全部类型";
+"Done" = "完成";
