@@ -11,9 +11,9 @@
   var OP = {
     auth: 0x01, authOK: 0x02, authFail: 0x03,
     ping: 0x10, pong: 0x11, latency: 0x12,
-    selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23,
+    selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
-    radial: 0x37, pressRing: 0x38,
+    radial: 0x37, pressRing: 0x38, notes: 0x39,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45,
     nack: 0x50
   };
@@ -112,6 +112,17 @@
       case "pageTurn": w.u8(OP.pageTurn); w.u8(o.dir === "prev" ? 0 : 1); break;
       case "mode": w.u8(OP.mode); w.u8(modeCode(o.mode)); break;
       case "pen": w.u8(OP.pen); w.u16(o.index || 0); break;
+      case "textNote":
+        w.u8(OP.textNote); w.str(o.id || ""); w.u8(o.op === "delete" ? 1 : 0);
+        w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0); w.str(o.text || ""); break;
+      case "notes": {
+        w.u8(OP.notes); var NL = o.list || []; w.u16(NL.length);
+        for (var ni = 0; ni < NL.length; ni++) {
+          w.str(NL[ni].id || ""); w.u32(NL[ni].page || 0);
+          w.f32(NL[ni].nx || 0); w.f32(NL[ni].ny || 0); w.str(NL[ni].text || "");
+        }
+        break;
+      }
       case "page":
         w.u8(OP.page); w.u32(o.v || 0); w.u32(o.index || 0); w.u32(o.count || 0); w.f32(o.w || 0); w.f32(o.h || 0); break;
       case "layout": {
@@ -207,6 +218,13 @@
       case OP.pageTurn: return { type: "pageTurn", dir: r.u8() === 0 ? "prev" : "next" };
       case OP.mode: return { type: "mode", mode: MODEK[r.u8()] || "note" };
       case OP.pen: return { type: "pen", index: r.u16() };
+      case OP.textNote: return { type: "textNote", id: r.str(), op: r.u8() === 1 ? "delete" : "upsert",
+                                 page: r.u32(), nx: r.f32(), ny: r.f32(), text: r.str() };
+      case OP.notes: {
+        var nn2 = r.u16(), nlist = new Array(nn2);
+        for (var nj = 0; nj < nn2; nj++) nlist[nj] = { id: r.str(), page: r.u32(), nx: r.f32(), ny: r.f32(), text: r.str() };
+        return { type: "notes", list: nlist };
+      }
       case OP.page: return { type: "page", v: r.u32(), index: r.u32(), count: r.u32(), w: r.f32(), h: r.f32() };
       case OP.layout: {
         var docId = r.str(), v = r.str(), count = r.u32(), pages = new Array(count);

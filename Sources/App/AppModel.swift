@@ -64,7 +64,7 @@ final class AppModel: ObservableObject {
         server.$clientCount
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastStrokes()
+                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastStrokes(); self?.broadcastNotes()
                 self?.pushCurrentViewport()   // 必须在 pushLayout 之后：平板端收到 layout 会重置滚动/seq
             }
             .store(in: &cancellables)
@@ -179,8 +179,37 @@ final class AppModel: ObservableObject {
             if let m = obj["mode"] as? String { padMode = m }
         case "pen":
             if let i = (obj["index"] as? NSNumber)?.intValue { padPenIndex = i }
+        case "textNote":
+            applyTextNote(obj, to: s)
         default:
             break
+        }
+    }
+
+    // MARK: - 平板自由文字笔记（kind=0 点注解）
+
+    /// 平板放置/编辑/删除一条自由文字笔记：upsert 按 id 更新或新建（零尺寸 anchor=落点、无 quote/rects
+    /// 的点注解）；delete 或空文本 upsert 按 id 删除（对齐 Mac 端丢弃空点注解的语义）。
+    /// 落进 `padSession.textNotes` 后由 ContentView 的对账机制自动落库 + 回传 notes 镜像，无需显式调用。
+    private func applyTextNote(_ obj: [String: Any], to s: DocSession) {
+        guard let idStr = obj["id"] as? String, let uuid = UUID(uuidString: idStr) else { return }
+        let text = obj["text"] as? String ?? ""
+        let isDelete = (obj["op"] as? String) == "delete" || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if isDelete {
+            s.textNotes.removeAll { $0.id == uuid }
+            return
+        }
+        let maxPage = max(0, (s.pdf?.pageCount ?? 1) - 1)
+        let page = min(max(0, (obj["page"] as? NSNumber)?.intValue ?? 0), maxPage)
+        let nx = (obj["nx"] as? NSNumber)?.doubleValue ?? 0
+        let ny = (obj["ny"] as? NSNumber)?.doubleValue ?? 0
+        if let i = s.textNotes.firstIndex(where: { $0.id == uuid }) {
+            s.textNotes[i].text = text
+            s.textNotes[i].updatedAt = .now
+        } else {
+            s.textNotes.append(TextNote(id: uuid, page: page,
+                                        anchor: CGRect(x: nx, y: ny, width: 0, height: 0),
+                                        quote: "", text: text, rects: []))
         }
     }
 
@@ -402,6 +431,17 @@ final class AppModel: ObservableObject {
         server.broadcast(["type": "strokes", "list": list])
     }
 
+    /// 把平板当前会话的**全部文字笔记**推给平板（平板画圆形标记；Mac 为唯一真源，类比 strokes 镜像）。
+    /// 对选区锚定的注解用 anchor 原点作标记位置。
+    func broadcastNotes() {
+        guard server.isRunning, let s = padSession else { return }
+        let list: [[String: Any]] = s.textNotes.map { n in
+            ["id": n.id.uuidString, "page": n.page,
+             "nx": n.anchor.minX, "ny": n.anchor.minY, "text": n.text]
+        }
+        server.broadcast(["type": "notes", "list": list])
+    }
+
     private func points(_ any: Any?) -> [SIMD3<Double>] {
         guard let raw = any as? [[NSNumber]] else { return [] }
         return raw.map { p in
@@ -502,7 +542,7 @@ final class AppModel: ObservableObject {
 
     /// 平板端最近一次已同步笔迹的文档键（documentId 优先，退 contentHash）。
     private var pushedStrokesKey = ""
-    /// 平板看到的文档变了（pad 下拉切档 / Mac 切激活窗口 / 重载文档）→ 立即补发该文档全部笔迹。
+    /// 平板看到的文档变了（pad 下拉切档 / Mac 切激活窗口 / 重载文档）→ 立即补发该文档全部笔迹与文字笔记。
     /// 平板收到新 docId 的 layout 会清空本地笔迹，不补发就得等下一次书写/擦除才恢复。
     /// 必须在 pushLayout 之后调用：平板上 layout 清空在前、strokes 恢复在后。
     private func pushStrokesIfDocChanged(_ s: DocSession) {
@@ -510,6 +550,7 @@ final class AppModel: ObservableObject {
         guard !key.isEmpty, key != pushedStrokesKey else { return }
         pushedStrokesKey = key
         broadcastStrokes()
+        broadcastNotes()
     }
 
     // MARK: - 方案 B：布局与视口

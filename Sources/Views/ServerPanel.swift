@@ -1,8 +1,10 @@
 import SwiftUI
+import AppKit   // NSPasteboard（复制采集页地址）
 
 /// 平板手写服务控制面板：启停、二维码配对、连接数、最近消息。
 struct ServerPanel: View {
     @ObservedObject var server: LANServer
+    @State private var copied = false   // 「复制地址」点击后的短暂 ✓ 反馈
 
     var body: some View {
         VStack(spacing: 14) {
@@ -34,10 +36,25 @@ struct ServerPanel: View {
                 }
                 Text(L("Open this URL in Firefox on your tablet:"))
                     .font(.caption).foregroundStyle(.secondary)
-                Text(server.pageURL)
-                    .font(.system(.footnote, design: .monospaced))
-                    .textSelection(.enabled)
-                    .multilineTextAlignment(.center)
+                // 地址行：允许完整换行（fixedSize 防截断）+ 一键复制（点击后短暂 ✓ 反馈）。
+                HStack(alignment: .top, spacing: 6) {
+                    Text(server.pageURL)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(server.pageURL, forType: .string)
+                        copied = true
+                        Task { try? await Task.sleep(for: .seconds(1.2)); copied = false }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .foregroundStyle(copied ? .green : .secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(L("Copy URL"))
+                }
                 Divider()
                 HStack {
                     Text(String(format: L("Connected tablets: %d"), server.clientCount))

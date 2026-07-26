@@ -20,6 +20,15 @@ export interface Stroke {
   pts: [number, number, number][];
 }
 
+/// 一条自由文字笔记（Mac 下发的 notes 全量镜像元素；page/nx/ny 页内归一化坐标与笔迹同系）。
+export interface TextNote {
+  id: string;
+  page: number;
+  nx: number;
+  ny: number;
+  text: string;
+}
+
 /// 线上消息：字段随 type 变（契约 PROTOCOL.md / Sources/Resources/wire.js），这里保持宽松。
 export interface WireMsg {
   type: string;
@@ -92,6 +101,8 @@ export interface GState {
   imgs: Record<number, HTMLImageElement>; vpSeq: number;
   // 笔迹：strokes = Mac 回传的已成形笔迹（静态层，唯一真源），cur = 正在写的这一笔（活体层）
   strokes: Stroke[]; cur: Stroke | null; radialActive: boolean; drawPage: number;
+  // 文字笔记：notes = Mac 下发的全量镜像（本地只乐观更新，回传即整体替换）；noteMode = 文字笔记模式开关
+  notes: TextNote[]; noteMode: boolean;
   // 指针/批点（batch 元素：note=[nx,ny,pressure]，erase=[nx,ny,page]）
   activeId: number | null; penMode: string; penX: number; penY: number; batch: number[][];
   pbatch: [number, number][]; probePage: number; probing: boolean;
@@ -133,6 +144,7 @@ export interface GState {
   eraseHit(x: number, y: number): void;
   ensureImages(): void;
   clearHover(): void;
+  drawNotes(): void;
   setRadial(o: WireMsg | null): void;
   setPressRing(o: WireMsg | null): void;
   // input.ts

@@ -77,6 +77,9 @@ export function initWs(): void {
     else if (o.type === "pressRing") { G.setPressRing(o); }
     // Mac 回传的全部笔迹（唯一真源）：平板据此显示 + 刷新/重连/切档后恢复。正在写的这一笔(cur)不清，避免闪断。
     else if (o.type === "strokes") { G.strokes = o.list || []; if (G.activeId === null) { G.cur = null; G.drawLive(); } G.drawInk(); }
+    // 文字笔记全量镜像（Mac 是唯一真源）：收到即整体替换本地列表并重画标记。
+    // layout 切文档后 Mac 会重发 notes，故 setLayout 不像 strokes 那样清空 notes（等重发即可，避免闪空）。
+    else if (o.type === "notes") { G.notes = o.list || []; G.drawNotes(); }
     // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
   }
 

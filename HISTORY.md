@@ -5,6 +5,31 @@
 
 ## 已修 / 完成（2026-07-26）
 
+- **feat 批：⌘F 复核 / ServerPanel 地址复制 / 同路径 hash 校验 / 快捷键体系 / 平板文字笔记**：
+  ① **⌘F 查找**：GUI 实测已可用（字段展开聚焦、输入即搜、461 命中）——2026-07-25 改 `.searchable` 时
+  链路（菜单 ⌘F → `.readerFind` → key 窗口 `searchIsActive=true`）已接通，TODO「必须补」条目过时，仅归档；
+  ② **ServerPanel 采集页地址**：加一键复制按钮（`NSPasteboard`，点击 ✓ 反馈 1.2s）+ 长地址改
+  `fixedSize` 完整换行（不再截断）；③ **同路径内容变化 hash 校验**：打开文档后后台重算
+  `FileHasher.sha256Cached`（缓存键含 mtime，内容变必重算），与入库版本不符 → 弹窗二选一：
+  「关联为新版本」走 `WorkspaceManager.rekeyLocation`（摘除同路径旧 location **记录**不删物理文件、
+  按实际 hash 挂版本、保留 inWorkspace/相对路径标志——不修正旧记录会每次打开重复提示）；
+  「仍打开」仅本次按实际内容打开（下次仍提示）。两路 `session.contentHash` 都用真实 hash（OCR 缓存键一致）；
+  ④ **快捷键体系**（`UniReaderApp` commands，与笔架/环形盘同一套 apply 路径）：⌥1–4 选笔槽
+  （`applyPenSelection`，选中即回书写模式）、⌥E 橡皮 / ⌥V 翻页 / ⌥B 书写（`setPadMode`）、
+  ⌥⌘N 夜间（`.toggleNightMode` 通知 → key 窗口翻 `nightMode` @AppStorage）；
+  ⑤ **平板自由文字笔记**：协议加 `textNote`（0x24，C→S，`{id,op:upsert/delete,page,nx,ny,text}`，
+  **空文本 upsert 视为删除**，可靠通道）与 `notes`（0x39，S→C 全量镜像，类比 strokes 真源）；
+  Mac `AppModel.applyTextNote` 落 `padSession.textNotes`（点注解：零尺寸 anchor、无 quote/rects，
+  ContentView 对账自动落库）+ `broadcastNotes`（换文档 `pushStrokesIfDocChanged`/新平板连接补发，
+  textNotes onChange 随动）；web 端 TopBar 加「文字笔记」**独立本地开关**（不动 mode 协议枚举），
+  noteMode 下笔点页面开圆形选择器风格编辑器（`TextNoteEditor.svelte`，保存/删除/取消，乐观更新
+  `G.notes`，该分支不发 probe/ink 防误触环形盘），hover 层画圆形标记（蓝底白边 + 首字符，深浅页面通用；
+  `clearHover` 改重画标记防悬停收尾抹掉标记）。
+  验证：`wire-codec-test.swift` 45/45 + `wire-cross-test.js` 80/80；`build-web.sh` + `tsc --noEmit` 过；
+  xcodebuild BUILD SUCCEEDED。⌘F 经 GUI 自动化实测；其余 GUI 手测留给用户。
+  附带修复：`ContentView` body 修饰符链超类型检查器时限 → 拆 `mainSplit` + `eventRoutes` 两段
+  （与 `toolbarContent` 同款处理）。
+
 - **夜间模式切换慢 + 黑切白切不回（2026-07-26 用户两轮反馈，最终重设计）**：第一版快路
   （`flippedNightKey` 异色键缓存反转）实测仍 3s+ 且出现切不回，深挖出三个叠加根因：
   ① **wanted 竞态丢请求**——`settleRender`/`kickBaseRenders` 先 `request` 后 `setWanted`，

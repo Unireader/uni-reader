@@ -58,6 +58,10 @@ const canonical = [
   { type: "padGeom", pageW: 1024 },
   { type: "pressRing", on: false },
   { type: "pressRing", on: true, page: 3, nx: 0.5, ny: 0.25 },
+  { type: "textNote", id: "n1", op: "upsert", page: 2, nx: 0.5, ny: 0.25, text: "批注" },
+  { type: "textNote", id: "n1", op: "delete", page: 2, nx: 0.5, ny: 0.25, text: "" },
+  { type: "notes", list: [{ id: "n1", page: 0, nx: 0.5, ny: 0.5, text: "hello" },
+                          { id: "n2", page: 3, nx: 0.25, ny: 0.75, text: "笔记" }] },
 ];
 
 let pass = 0, fail = 0;

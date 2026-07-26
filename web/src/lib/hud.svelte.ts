@@ -8,6 +8,15 @@ export interface DocEntry {
   title: string;
 }
 
+/// 文字笔记编辑器的打开状态（低频 UI，放 runes；面板定位用打开瞬间的视口坐标）。
+export interface NoteEditorState {
+  id: string;                          // 笔记 id（新建时打开即生成）
+  page: number; nx: number; ny: number; // 页内归一化锚点（与笔迹同系）
+  x: number; y: number;                // 打开时的视口坐标（面板定位用）
+  text: string;                        // 初始文本
+  isNew: boolean;                      // true = 新建（编辑器不显示删除按钮）
+}
+
 export const S = $state({
   connected: false,        // WS 已认证（顶栏绿点）
   latText: "— ms",         // 顶栏延迟读数
@@ -20,6 +29,8 @@ export const S = $state({
   statsOn: false,          // 延迟统计面板开关
   statsText: "",
   night: false,            // 夜间模式（按钮图标回显）
+  noteMode: false,         // 文字笔记模式（顶栏按钮激活态回显）
+  noteEditor: null as NoteEditorState | null,   // 文字笔记编辑器（非 null = 打开中）
   showPage: true,          // 页面图显示（眼睛按钮回显）
   zoomLocked: false,       // 锁定缩放（锁按钮回显）
 });

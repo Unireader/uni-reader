@@ -7,6 +7,7 @@ export interface Actions {
   selectDoc(id: string): void;
   toggleStats(): void;
   toggleNight(): void;
+  toggleTextNote(): void;
   toggleEye(): void;
   toggleLock(): void;
   toggleFull(): void;

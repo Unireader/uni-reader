@@ -18,9 +18,10 @@ enum WireCodec {
         static let auth: UInt8 = 0x01, authOK: UInt8 = 0x02, authFail: UInt8 = 0x03
         static let ping: UInt8 = 0x10, pong: UInt8 = 0x11, latency: UInt8 = 0x12
         static let selectDoc: UInt8 = 0x20, pageTurn: UInt8 = 0x21, mode: UInt8 = 0x22, pen: UInt8 = 0x23
+        static let textNote: UInt8 = 0x24
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
-        static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38
+        static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
         static let nack: UInt8 = 0x50
@@ -142,6 +143,18 @@ enum WireCodec {
         case "pageTurn": w.u8(Op.pageTurn); w.u8(strOf(o["dir"]) == "prev" ? 0 : 1)
         case "mode": w.u8(Op.mode); w.u8(modeCode(strOf(o["mode"])))
         case "pen": w.u8(Op.pen); w.u16(intOf(o["index"]))
+        case "textNote":
+            w.u8(Op.textNote); w.str(strOf(o["id"]))
+            w.u8(strOf(o["op"]) == "delete" ? 1 : 0)
+            w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"])); w.str(strOf(o["text"]))
+        case "notes":
+            w.u8(Op.notes)
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for n in list {
+                w.str(strOf(n["id"])); w.u32(intOf(n["page"]))
+                w.f32(num(n["nx"])); w.f32(num(n["ny"])); w.str(strOf(n["text"]))
+            }
         case "page":
             w.u8(Op.page); w.u32(intOf(o["v"])); w.u32(intOf(o["index"]))
             w.u32(intOf(o["count"])); w.f32(num(o["w"])); w.f32(num(o["h"]))
@@ -291,6 +304,21 @@ enum WireCodec {
         case Op.pageTurn: out = ["type": "pageTurn", "dir": r.u8() == 0 ? "prev" : "next"]
         case Op.mode: out = ["type": "mode", "mode": modeName(r.u8())]
         case Op.pen: out = ["type": "pen", "index": NSNumber(value: r.u16())]
+        case Op.textNote:
+            let id = r.str(), opRaw = r.u8()
+            let page = r.u32(), nx = r.f32(), ny = r.f32(), text = r.str()
+            out = ["type": "textNote", "id": id, "op": opRaw == 1 ? "delete" : "upsert",
+                   "page": NSNumber(value: page), "nx": NSNumber(value: nx),
+                   "ny": NSNumber(value: ny), "text": text]
+        case Op.notes:
+            let n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n {
+                list.append(["id": r.str(), "page": NSNumber(value: r.u32()),
+                             "nx": NSNumber(value: r.f32()), "ny": NSNumber(value: r.f32()),
+                             "text": r.str()])
+            }
+            out = ["type": "notes", "list": list]
         case Op.page:
             let v = r.u32(), idx = r.u32(), cnt = r.u32(), pw = r.f32(), ph = r.f32()
             out = ["type": "page", "v": NSNumber(value: v), "index": NSNumber(value: idx),

@@ -1,8 +1,8 @@
 // 输入模块：笔/手指指针事件（画/擦/平移/双指缩放/防误触）、滚轮平移、松手惯性、
 // 批点 rAF 合批、悬停上报、键盘侧键。逐行移植自原 capture.html IIFE 的对应段落。
 import { G, BAR, GAP, MINZ, MAXZ, PALM, DEAD, clamp, pw, contentLeft, curMode, curPen } from "./shared.js";
-import type { CaptureRefs } from "./shared.js";
-import { updatePageLabel, updateHud } from "./hud.svelte.js";
+import type { CaptureRefs, TextNote } from "./shared.js";
+import { S, updatePageLabel, updateHud } from "./hud.svelte.js";
 
 export function initInput(refs: CaptureRefs): void {
   const { ink } = refs;
@@ -81,6 +81,23 @@ export function initInput(refs: CaptureRefs): void {
       e.preventDefault(); return;
     }
     // 笔
+    // 文字笔记模式最优先：点空白开新笔记编辑器、点已有标记开编辑/删除。
+    // 该分支绝不发 probe/ink/hover（probe 会让 Mac 呼出环形选笔盘），直接 return。
+    if (G.noteMode) {
+      const loc = G.locate(e.clientX, e.clientY);
+      if (loc) {
+        // 命中检测：同页、归一化距离小于阈值（页宽归一化，不管页面纵横比）
+        let hit: TextNote | null = null;
+        for (let i = 0; i < G.notes.length; i++) {
+          const n = G.notes[i];
+          if (n.page === loc.page && Math.hypot(n.nx - loc.nx, n.ny - loc.ny) < 0.03) { hit = n; break; }
+        }
+        S.noteEditor = hit
+          ? { id: hit.id, page: hit.page, nx: hit.nx, ny: hit.ny, x: e.clientX, y: e.clientY, text: hit.text, isNew: false }
+          : { id: crypto.randomUUID(), page: loc.page, nx: loc.nx, ny: loc.ny, x: e.clientX, y: e.clientY, text: "", isNew: true };
+      }
+      e.preventDefault(); return;
+    }
     const m = curMode();
     if (m === "page") {   // 翻页模式：笔拖动平移画面（同时起探针流，供 Mac 检测长按呼出选笔盘）
       G.activeId = e.pointerId; G.penMode = "page";

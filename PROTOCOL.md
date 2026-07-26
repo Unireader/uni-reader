@@ -65,6 +65,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x21` | pageTurn | C→S | 可靠 |
 | `0x22` | mode | 双向 | 可靠 |
 | `0x23` | pen | 双向 | 可靠 |
+| `0x24` | textNote | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -74,6 +75,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x36` | strokes | S→C | 可靠 |
 | `0x37` | radial | S→C | 可靠 |
 | `0x38` | pressRing | S→C | 可靠 |
+| `0x39` | notes | S→C | 可靠 |
 | `0x40` | scroll | C→S | **RT** |
 | `0x41` | hover | C→S | **RT** |
 | `0x42` | ink | C→S | **RT** |
@@ -100,7 +102,13 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `pageTurn` | `u8 dir` | `{type:"pageTurn", dir}`（"prev"/"next"）|
 | `mode` | `u8 mode` | `{type:"mode", mode}`（"note"/"erase"/"page"）|
 | `pen` | `u16 index` | `{type:"pen", index}` |
+| `textNote` | `str id` · `u8 op` · `u32 page` · `f32 nx` · `f32 ny` · `str text` | `{type:"textNote", id, op, page, nx, ny, text}` |
 | `padGeom` | `f32 pageW` | `{type:"padGeom", pageW}` |
+
+`textNote`（平板自由文字笔记，C→S）：`op` u8 `0=upsert 1=delete`。`id` 由平板生成（UUID 串），
+Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anchor=落点、无 quote/rects）；
+**空文本 upsert 视为 delete**（对齐 Mac 端丢弃空点注解的语义）。坐标为页内归一化（与 ink 同系）。
+文本内容丢不得，永远走可靠通道。
 
 `padGeom`：平板上报**自己**当前的内容页宽（CSS px，= 页在平板屏幕上的显示宽度）。Mac 端环形选笔盘的
 「中心取消区半径」「长按位移阈值」都是**平板屏幕上的物理尺度**，必须用平板页宽把归一化位移换算成
@@ -119,6 +127,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `strokes` | `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
 | `radial` | `u8 open` · open=1 时续 `u32 page` · `f32 cx` · `f32 cy` · `u16 highlight` · `u16 n` · `n ×( u8 kind, pen )` |
 | `pressRing` | `u8 on` · on=1 时续 `u32 page` · `f32 nx` · `f32 ny` |
+| `notes` | `u16 n` · `n ×( str id, u32 page, f32 nx, f32 ny, str text )` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
 
 `radial`（环形选笔盘）：长按检测、扇区判定、选中提交**全部在 Mac**，这条只是把盘的状态镜像给平板去画
@@ -139,6 +148,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 - `strokes` → `{type:"strokes", list:[{page, pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
 - `radial` → `{type:"radial", open:true, page, cx, cy, highlight, items:[{kind:"pen"|"erase"|"page", color, w, t},…]}`；收盘 → `{type:"radial", open:false}`
 - `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
+- `notes` → `{type:"notes", list:[{id, page, nx, ny, text},…]}`（文字笔记**全量镜像**，类比 strokes：
+  Mac 是唯一真源，平板不落库；对选区锚定的注解用 anchor 原点作 nx/ny。文档切换/增删后重发）
 - `nack` → `{type:"nack", seqs:[…]}`
 
 ### 4.3 平板→Mac 实时流（RT，UDP 阶段可迁 UDP）

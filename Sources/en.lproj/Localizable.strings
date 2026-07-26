@@ -11,6 +11,13 @@
 "Server running" = "Server running";
 "Server stopped" = "Server stopped";
 "Open this URL in Firefox on your tablet:" = "Open this URL in Firefox on your tablet:";
+"Copy URL" = "Copy URL";
+"File Changed" = "File Changed";
+"Link as New Version" = "Link as New Version";
+"Open Anyway" = "Open Anyway";
+"Write" = "Write";
+"Pen Slot %d" = "Pen Slot %d";
+"The file “%@” was replaced on disk and no longer matches the version in your library. Link it as a new version of this document? (Notes are kept either way.)" = "The file “%@” was replaced on disk and no longer matches the version in your library. Link it as a new version of this document? (Notes are kept either way.)";
 "Connected tablets: %d" = "Connected tablets: %d";
 "Disconnect" = "Disconnect";
 "Latency: %d ms" = "Latency: %d ms";

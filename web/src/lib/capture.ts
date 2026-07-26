@@ -28,6 +28,8 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     imgs: {}, vpSeq: 0,
     // 笔迹：strokes = Mac 回传的已成形笔迹（静态层，唯一真源），cur = 正在写的这一笔（活体层）
     strokes: [], cur: null, radialActive: false, drawPage: 0,
+    // 文字笔记：Mac 下发全量镜像；noteMode = 文字笔记模式开关
+    notes: [], noteMode: false,
     // 指针/批点
     activeId: null, penMode: "", penX: 0, penY: 0, batch: [],
     pbatch: [], probePage: 0, probing: false,           // 探针流（擦除/翻页模式专用）：平行上报笔位置给 Mac 做长按检测/环形盘
@@ -80,6 +82,12 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
       S.night = on;
     },
     toggleEye() { G.showPage = !G.showPage; S.showPage = G.showPage; if (G.showPage) G.ensureImages(); G.drawAll(); },
+    // 文字笔记模式：独立本地开关，只影响后续 pen pointerdown 分派（点页面开编辑器，不写字）。
+    toggleTextNote() {
+      G.noteMode = !G.noteMode; S.noteMode = G.noteMode;
+      if (!G.noteMode) S.noteEditor = null;   // 关掉模式时顺手收起开着的编辑器
+      updateHud();
+    },
     toggleLock() { G.zoomLocked = !G.zoomLocked; S.zoomLocked = G.zoomLocked; },
     toggleFull() {
       if (!document.fullscreenElement) {

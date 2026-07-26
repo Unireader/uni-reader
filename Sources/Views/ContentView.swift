@@ -23,6 +23,13 @@ struct ContentView: View {
     @State private var isKeyWindow = false
     @State private var showNotes = false
     @State private var searchIsActive = false   // 标准 .searchable 搜索字段的展开态（⌘F 激活）
+    @State private var hashMismatch: HashMismatch?   // 同路径内容被替换（hash 与入库版本不符）待确认
+
+    /// 「同路径换内容」待确认：文件存在但 hash 与入库版本不符（用户原地覆盖了 PDF）。
+    private struct HashMismatch: Identifiable {
+        let docId: String; let path: String; let newHash: String
+        var id: String { docId }
+    }
     @State private var showOCR = false
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // OCR 引擎（"off" | "paddle"），设置页写入
     @AppStorage("nightMode") private var nightMode = false
@@ -32,6 +39,12 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemScheme
 
     var body: some View {
+        eventRoutes(mainSplit)
+    }
+
+    /// 主分栏视图（侧栏 + 阅读区 + 工具栏/inspector + 状态联动）。窗口事件路由挂 `eventRoutes`——
+    /// 全部修饰符挂一个表达式上会让类型检查器超时（已踩过，见 toolbarContent 的同款注释）。
+    private var mainSplit: some View {
         NavigationSplitView {
             SidebarView(selection: $selectedDocID, onChooseWorkspace: chooseWorkspace,
                         onDropFiles: { ingest(urls: $0) }, onOpenPDF: openPDF,
@@ -84,6 +97,7 @@ struct ContentView: View {
         }
         .onChange(of: session.textNotes) { _, _ in
             persistTextNotes()   // 文字注解新建/编辑/删除时增量落库
+            app.broadcastNotes() // 同步镜像给平板（圆形标记；非 padSession 时为空操作/重发同值）
         }
         .onChange(of: session.highlights) { _, _ in
             persistHighlights()  // 高亮新建/改色/删除时增量落库
@@ -117,6 +131,11 @@ struct ContentView: View {
                 selectedDocID = nil
             }
         }
+    }
+
+    /// 窗口级事件路由：关窗保存 / 菜单通知（⌘O 打开、⌘F 查找、⌥⌘N 夜间）/ 搜索收起清空 / 文件变化提示。
+    private func eventRoutes<V: View>(_ base: V) -> some View {
+        base
         .onDisappear {
             saveProgress(docId: selectedDocID)
             workspace.closeWindow(session.id)
@@ -128,9 +147,16 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .readerFind)) { _ in
             if isKeyWindow { searchIsActive = true }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleNightMode)) { _ in
+            if isKeyWindow { nightMode.toggle() }   // ⌥⌘N：与工具栏月亮按钮同一 @AppStorage 状态
+        }
         .onChange(of: searchIsActive) { _, on in
             if !on { session.clearSearch() }   // 收起搜索字段 = 清空高亮，下次重新打字
         }
+        // 同路径内容被替换（原地覆盖了 PDF）→ 提示关联为新版本；不改库则本次按实际内容打开。
+        // （actions/message 抽成独立方法——内联会让类型检查器超时。）
+        .alert(L("File Changed"), isPresented: hashAlertPresented, presenting: hashMismatch,
+               actions: hashAlertActions, message: hashAlertMessage)
     }
 
     @ViewBuilder
@@ -455,6 +481,48 @@ struct ContentView: View {
         app.setActive(session)
         app.sessionChanged(session)
         app.broadcastStrokes()   // 新文档的已存笔迹回传平板（平板本地不落库，靠 Mac 回显）
+        verifyContentHash(documentId: id, openedPath: target.path, storedHash: target.hash)
+    }
+
+    /// 同路径内容校验：文件仍在但可能已被原地替换。后台重算 hash（FileHasher 缓存键含 mtime，
+    /// 内容变必重算），与入库版本不符 → 弹窗请用户选「关联为新版本 / 仍打开」。
+    private func verifyContentHash(documentId: String, openedPath: String, storedHash: String) {
+        guard !storedHash.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            guard let actual = try? FileHasher.sha256Cached(of: URL(fileURLWithPath: openedPath)),
+                  !actual.isEmpty, actual != storedHash else { return }
+            await MainActor.run {
+                // 用户可能已切走文档：仍停留在该文档才提示
+                guard self.selectedDocID == documentId else { return }
+                self.hashMismatch = HashMismatch(docId: documentId, path: openedPath, newHash: actual)
+            }
+        }
+    }
+
+    // MARK: - 「文件已变化」alert（从 body 抽出，防类型检查器超时）
+
+    private var hashAlertPresented: Binding<Bool> {
+        Binding(get: { hashMismatch != nil }, set: { if !$0 { hashMismatch = nil } })
+    }
+
+    @ViewBuilder
+    private func hashAlertActions(_ m: HashMismatch) -> some View {
+        Button(L("Link as New Version")) {
+            workspace.rekeyLocation(documentId: m.docId, absolutePath: m.path,
+                                    newHash: m.newHash, pageCount: session.pdf?.pageCount ?? 0)
+            session.contentHash = m.newHash   // OCR 缓存键跟实际内容走
+            session.reloadOCRState()
+        }
+        Button(L("Open Anyway"), role: .cancel) {
+            // 不改库：本次按实际内容打开，下次打开仍会提示
+            session.contentHash = m.newHash
+            session.reloadOCRState()
+        }
+    }
+
+    private func hashAlertMessage(_ m: HashMismatch) -> Text {
+        Text(String(format: L("The file “%@” was replaced on disk and no longer matches the version in your library. Link it as a new version of this document? (Notes are kept either way.)"),
+                    (m.path as NSString).lastPathComponent))
     }
 
     // MARK: - 阅读进度

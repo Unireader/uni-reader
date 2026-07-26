@@ -85,6 +85,30 @@ struct UniReaderApp: App {
                 }
                 .keyboardShortcut("f", modifiers: .command)
             }
+            // 笔架/模式快捷键（设备级全局状态，直接调 AppModel——与画布笔架、平板环形盘
+            // 同一套 apply 路径，广播到平板的分支天然生效）。
+            CommandGroup(after: .sidebar) {
+                Divider()
+                Button(String(format: L("Pen Slot %d"), 1)) { if app.pens.count > 0 { app.applyPenSelection(index: 0) } }
+                    .keyboardShortcut("1", modifiers: .option)
+                Button(String(format: L("Pen Slot %d"), 2)) { if app.pens.count > 1 { app.applyPenSelection(index: 1) } }
+                    .keyboardShortcut("2", modifiers: .option)
+                Button(String(format: L("Pen Slot %d"), 3)) { if app.pens.count > 2 { app.applyPenSelection(index: 2) } }
+                    .keyboardShortcut("3", modifiers: .option)
+                Button(String(format: L("Pen Slot %d"), 4)) { if app.pens.count > 3 { app.applyPenSelection(index: 3) } }
+                    .keyboardShortcut("4", modifiers: .option)
+                Button(L("Eraser")) { app.setPadMode("erase") }
+                    .keyboardShortcut("e", modifiers: .option)
+                Button(L("Page Turn")) { app.setPadMode("page") }
+                    .keyboardShortcut("v", modifiers: .option)
+                Button(L("Write")) { app.setPadMode("note") }
+                    .keyboardShortcut("b", modifiers: .option)
+                Divider()
+                Button(L("Night Mode")) {
+                    NotificationCenter.default.post(name: .toggleNightMode, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+            }
         }
     }
 }
@@ -92,4 +116,5 @@ struct UniReaderApp: App {
 extension Notification.Name {
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
+    static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
 }

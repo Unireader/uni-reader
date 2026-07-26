@@ -261,6 +261,25 @@ final class WorkspaceManager: ObservableObject {
         refresh()
     }
 
+    /// 同路径内容变化（原地覆盖了 PDF）后的关联修正：把指向 absolutePath 的 location 记录从旧版本
+    /// 摘除（**只删记录、不删物理文件**），再把该路径挂到实际内容 hash 对应的版本（已有版本加路径，
+    /// 否则新建版本）。保留原 location 的 inWorkspace/相对路径标志——不修正的话，旧记录仍指旧 hash，
+    /// 每次打开都会重复触发「内容已变化」提示。
+    func rekeyLocation(documentId: String, absolutePath: String, newHash: String, pageCount: Int) {
+        guard let store, !newHash.isEmpty else { return }
+        let matches = ((try? store.locations(documentId: documentId)) ?? []).filter { resolvedPath($0) == absolutePath }
+        guard let first = matches.first else { return }
+        for l in matches { try? store.removeLocation(id: l.id) }
+        if let v = try? store.variant(hash: newHash) {
+            _ = try? store.addLocation(variantId: v.id, path: first.path,
+                                       inWorkspace: first.inWorkspace, isRelative: first.isRelative)
+        } else {
+            _ = try? store.addVariant(documentId: documentId, hash: newHash, pageCount: pageCount,
+                                      path: first.path, inWorkspace: first.inWorkspace, isRelative: first.isRelative)
+        }
+        refresh()
+    }
+
     // MARK: - 访达 / inspector 数据
 
     /// 当前可用文件的绝对路径（**只探测、不更新 lastOpened**，供 reveal / inspector 用）。

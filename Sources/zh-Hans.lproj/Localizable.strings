@@ -11,6 +11,13 @@
 "Server running" = "服务运行中";
 "Server stopped" = "服务已停止";
 "Open this URL in Firefox on your tablet:" = "在平板的 Firefox 中打开此地址：";
+"Copy URL" = "复制地址";
+"File Changed" = "文件已变化";
+"Link as New Version" = "关联为新版本";
+"Open Anyway" = "仍打开";
+"Write" = "书写";
+"Pen Slot %d" = "笔槽 %d";
+"The file “%@” was replaced on disk and no longer matches the version in your library. Link it as a new version of this document? (Notes are kept either way.)" = "文件“%@”的内容已在磁盘上被替换，与库中记录的版本不符。要把它关联为本文档的新版本吗？（笔记按文档保留，两种选择都不受影响）";
 "Connected tablets: %d" = "已连接平板：%d";
 "Disconnect" = "断开";
 "Latency: %d ms" = "延迟：%d ms";

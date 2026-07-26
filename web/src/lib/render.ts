@@ -81,7 +81,7 @@ export function initRender(refs: CaptureRefs): void {
   function inContent(x: number, y: number): boolean { return y >= BAR && locate(x, y) !== null; }
 
   // ---- 绘制 ----
-  function drawAll(): void { drawBg(); drawInk(); drawLive(); }
+  function drawAll(): void { drawBg(); drawInk(); drawLive(); drawNotes(); }
   function drawBg(): void {
     bctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     const cl = contentLeft(), p = pw();
@@ -160,8 +160,35 @@ export function initRender(refs: CaptureRefs): void {
     if (changed) drawInk();
   }
 
-  // ---- 悬停（本地只清环；光标本体由 Mac 画，上报见 input.ts）----
-  function clearHover(): void { hctx.clearRect(0, 0, window.innerWidth, window.innerHeight); }
+  // ---- 悬停 + 文字笔记标记（共用 hover canvas 层）----
+  // 本地悬停圆环已在移植时按死代码丢弃（光标本体由 Mac 画），hover 层现在实际承载的是笔记标记；
+  // clearHover 仍由悬停收尾链路调用，故改为重画笔记标记而不是整层清空（否则悬停结束会抹掉标记）。
+  function clearHover(): void { drawNotes(); }
+
+  /// 文字笔记标记：圆形底片 + 首字符（形制呼应环形盘图标），位置 pageToView 映射，半径随页宽夹取。
+  /// 配色日间/夜间通用（夜间只反转 bg canvas，蓝底白边在深浅页面上都可读，与环形盘图标同理）。
+  function drawNotes(): void {
+    hctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    const r = clamp(pw() * 0.02, 12, 22);
+    hctx.save();
+    hctx.textAlign = "center"; hctx.textBaseline = "middle";
+    hctx.font = "600 " + Math.round(r * 0.9) + "px -apple-system,'PingFang SC',system-ui,sans-serif";
+    for (let i = 0; i < G.notes.length; i++) {
+      const n = G.notes[i];
+      const v = pageToView(n.page, n.nx, n.ny);
+      if (v.y < BAR - r || v.y > window.innerHeight + r || v.x < -r || v.x > window.innerWidth + r) continue;
+      hctx.save();
+      hctx.shadowColor = "rgba(0,0,0,0.3)"; hctx.shadowBlur = 3; hctx.shadowOffsetY = 1;
+      hctx.beginPath(); hctx.arc(v.x, v.y, r, 0, Math.PI * 2);
+      hctx.fillStyle = "rgba(31,111,235,0.92)"; hctx.fill();
+      hctx.restore();
+      hctx.beginPath(); hctx.arc(v.x, v.y, r, 0, Math.PI * 2);
+      hctx.strokeStyle = "rgba(255,255,255,0.85)"; hctx.lineWidth = 1.5; hctx.stroke();
+      hctx.fillStyle = "#fff";
+      hctx.fillText((n.text || "T").charAt(0), v.x, v.y);
+    }
+    hctx.restore();
+  }
 
   // ---- 环形选笔盘（Surface Dial 形制）----
   // 长按检测、扇区判定、选中提交**全在 Mac**；这里只画 Mac 下发的 `radial` 状态，不做任何判定。
@@ -322,6 +349,6 @@ export function initRender(refs: CaptureRefs): void {
   Object.assign(G, {
     relayout, recompute, locate, pageToView, inContent,
     drawAll, drawBg, drawInk, drawLive, eraseHit, ensureImages,
-    clearHover, setRadial, setPressRing,
+    clearHover, drawNotes, setRadial, setPressRing,
   });
 }

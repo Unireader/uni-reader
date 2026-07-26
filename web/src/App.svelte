@@ -5,6 +5,7 @@
   import TopBar from "./TopBar.svelte";
   import StatsPanel from "./StatsPanel.svelte";
   import PenStat from "./PenStat.svelte";
+  import TextNoteEditor from "./TextNoteEditor.svelte";
   import { startCapture } from "./lib/capture.js";
   import { PORT, TOKEN, PENS } from "./lib/config.js";
 
@@ -29,3 +30,4 @@
 <TopBar />
 <StatsPanel />
 <PenStat />
+<TextNoteEditor />
