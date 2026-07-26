@@ -2,6 +2,7 @@ import SwiftUI
 import PDFKit
 import QuartzCore
 import AppKit
+import CoreImage   // CIContext（夜间原地反转）
 
 extension ReaderSurface {
     // MARK: 渲染调度（硬指标 1/2：后台出图 + 预缓存；纪律 1/2：白纸占位、只替换）
@@ -10,8 +11,11 @@ extension ReaderSurface {
         min(basePixelCap, max(200, Int((pageW * displayScale).rounded())))
     }
 
+    /// ⚠️ 夜间标志一律读 `scratch.nightLive`（Scratch 是引用类型）：逃逸闭包（渲染完成回调、
+    /// 夜间 flip 写回）捕获的 self 是值拷贝，其 `nightMode` 在请求发出后可能已切换——用拷贝值算
+    /// 「当前期望键」会让守卫失效，陈旧完成穿透写回旧模式图（夜间「切不回来」的根因之一）。
     func baseKey(_ page: Int, width: Int) -> String {
-        PageRenderEngine.baseKey(doc: docKey, page: page, pixelWidth: width, night: nightMode)
+        PageRenderEngine.baseKey(doc: docKey, page: page, pixelWidth: width, night: scratch.nightLive)
     }
 
     /// 实化窗口变化时：为缺图页出图（缓存命中同步取 → 无 pop-in）。
@@ -43,12 +47,60 @@ extension ReaderSurface {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
-    /// 夜间模式切换稳定 0.15s 后：重渲可见窗口 + **动态预热当前页周边 `nightWarmRadius` 页**（见 settleRender）。
+    /// 夜间切换（2026-07-26 重设计）：**原地反转当前正在显示的图**，不再靠「键翻转 → 缓存 miss →
+    /// 整窗重渲/反转」。切换只依赖本地 `images`/`tiles`（必然就是屏幕当前内容），与全局缓存是否
+    /// 驱逐无关 → 双向都即时（并发像素反转，毫秒级）；反色自逆（CIColorInvert+CIHueAdjust 两次还原），
+    /// 切回就是再翻一次。反转结果同时喂回引擎缓存（新夜间键），收尾 settleRender 直接命中不重复劳动。
+    /// 快速连切：一次只跑一个 flip，飞行中再切记 `nightFlipTo`，落地连锁再翻 → 收敛到最终模式。
+    /// 写回按对象同一性逐页守卫：期间被渲染完成回调换掉的页不覆盖（渲染回调本身有键守卫挡陈旧图）。
     func scheduleNightRender() {
-        scratch.settleWork?.cancel()
-        let work = DispatchWorkItem { settleRender(nightRadius: Self.nightWarmRadius) }
-        scratch.settleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        guard scratch.imagesNight != scratch.nightLive else {
+            settleRender(nightRadius: Self.nightWarmRadius)   // 已一致：只补 wanted/贴片/预热
+            return
+        }
+        guard !scratch.nightFlipping else {
+            scratch.nightFlipTo = scratch.nightLive   // 有 flip 在飞：记目标，落地连锁
+            return
+        }
+        scratch.nightFlipping = true
+        scratch.imagesNight = scratch.nightLive       // 乐观置位：本 flip 完成后即此模式
+        let snapImg = images, snapTiles = tiles
+        let w = currentBaseWidth()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ci = CIContext()   // CIContext 线程安全（filter 在 invert 内逐次新建），并发共享
+            let lock = NSLock()
+            var outImg = [Int: CGImage](), outTiles = [Int: PageTile]()
+            let imgEntries = Array(snapImg), tileEntries = Array(snapTiles)
+            DispatchQueue.concurrentPerform(iterations: imgEntries.count + tileEntries.count) { k in
+                if k < imgEntries.count {
+                    let (i, img) = imgEntries[k]
+                    if let inv = PageBitmap.invert(img, ci: ci) { lock.lock(); outImg[i] = inv; lock.unlock() }
+                } else {
+                    let (i, t) = tileEntries[k - imgEntries.count]
+                    if let inv = PageBitmap.invert(t.image, ci: ci) {
+                        lock.lock(); outTiles[i] = PageTile(normRect: t.normRect, image: inv); lock.unlock()
+                    }
+                }
+            }
+            DispatchQueue.main.async {
+                for (i, inv) in outImg where images[i] === snapImg[i] {
+                    images[i] = inv
+                    PageRenderEngine.shared.seed(inv, forKey: baseKey(i, width: w))
+                }
+                for (i, t) in outTiles where tiles[i]?.image === snapTiles[i]?.image {
+                    tiles[i] = t
+                    PageRenderEngine.shared.seed(t.image, forKey: tileKeyFor(page: i, normRect: t.normRect))
+                }
+                scratch.nightFlipping = false
+                let pending = scratch.nightFlipTo
+                scratch.nightFlipTo = nil
+                if pending != nil {
+                    scheduleNightRender()   // 飞行中又切过：连锁再翻（快照已是 flip 后的图）
+                } else {
+                    settleRender(nightRadius: Self.nightWarmRadius)
+                }
+            }
+        }
     }
 
     static let nightWarmRadius = 10
@@ -95,7 +147,7 @@ extension ReaderSurface {
             keys.insert(key)
             guard PageRenderEngine.shared.cached(key) == nil else { continue }
             PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
-                                                  tileRect: nil, tileScale: 1, night: nightMode)) { _, _ in }
+                                                  tileRect: nil, tileScale: 1, night: scratch.nightLive)) { _, _ in }
         }
         return keys
     }
@@ -115,9 +167,10 @@ extension ReaderSurface {
 
     func requestBase(key: String, page: PDFPage, index: Int, width: Int) {
         PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
-                                              tileRect: nil, tileScale: 1, night: nightMode)) { doneKey, img in
-            // 只替换（纪律 2）：仍无图 → 直接用；有图 → 仅当仍是当前期望键才替换
-            if images[index] == nil || doneKey == baseKey(index, width: scratch.basePixelW) {
+                                              tileRect: nil, tileScale: 1, night: scratch.nightLive)) { doneKey, img in
+            // 只接受「仍是当前期望键」的完成（键含夜间标志与宽度）：夜间切换/缩放后到达的陈旧完成
+            // 一律丢弃，防止旧模式/旧宽度图被写回（页图缺图由 kick/settle 按新键补请求，不靠陈旧完成兜底）。
+            if doneKey == baseKey(index, width: scratch.basePixelW) {
                 images[index] = img
             }
         }
@@ -127,7 +180,7 @@ extension ReaderSurface {
 
     func tileKeyFor(page: Int, normRect: CGRect) -> String {
         PageRenderEngine.tileKey(doc: docKey, page: page, normRect: normRect,
-                                 scale: displayScale, night: nightMode)
+                                 scale: displayScale, night: scratch.nightLive)
     }
 
     func refreshTiles(layout: PageLayout, pdf: PDFDocument) -> Set<String> {
@@ -174,7 +227,7 @@ extension ReaderSurface {
             let scale = (pageW * displayScale) / max(1, natural.width)
             let idx = i
             PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: nil,
-                                                  tileRect: sub, tileScale: scale, night: nightMode)) { doneKey, img in
+                                                  tileRect: sub, tileScale: scale, night: scratch.nightLive)) { doneKey, img in
                 if doneKey == tileKeyFor(page: idx, normRect: norm) {
                     tiles[idx] = PageTile(normRect: norm, image: img)
                 }

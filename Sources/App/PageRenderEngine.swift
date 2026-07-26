@@ -66,12 +66,19 @@ final class PageRenderEngine {
         return wantedByClient.values.contains { $0.contains(key) }
     }
 
+    /// 外部已算好的图直接写入缓存（夜间切换「原地反转」的结果喂回：收尾 settle 直接命中，
+    /// 不会对同一批图二次反转/重渲）。
+    func seed(_ image: CGImage, forKey key: String) {
+        cache.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
+    }
+
     /// 入队渲染。缓存命中/重复在途都不会重复渲染。
     func request(_ r: Request, completion: @escaping (String, CGImage) -> Void) {
         if let hit = cached(r.key) {
             completion(r.key, hit)
             return
         }
+        let enqueuedAt = CFAbsoluteTimeGetCurrent()
         lock.lock()
         if inFlight.contains(r.key) { lock.unlock(); return }
         inFlight.insert(r.key)
@@ -79,7 +86,11 @@ final class PageRenderEngine {
 
         queue.async { [self] in
             defer { lock.lock(); inFlight.remove(r.key); lock.unlock() }
-            guard isWanted(r.key) else { return }
+            // 出队丢弃只针对「滞留」请求：调用方惯例是先 request 后 setWanted（settleRender/
+            // kickBaseRenders 都如此），主线程入队窗口内 wanted 还是旧集合——此刻严格检查会把
+            // 新请求误判丢弃，完成回调永不触发、该页永久停在旧图（夜间切换「切不回来」的根因）。
+            // 故入队 1s 内一律放行；滞留超 1s 且任何窗口都不再要的（快滚/连缩残留）才丢弃。
+            guard CFAbsoluteTimeGetCurrent() - enqueuedAt < 1 || isWanted(r.key) else { return }
             if let hit = cached(r.key) {
                 DispatchQueue.main.async { completion(r.key, hit) }
                 return

@@ -122,4 +122,9 @@ final class Scratch {
                                         // ScrollView 容器上不可靠触发；改走事件管道直写 NSPasteboard）
     var isActiveWindow = false         // 供 copyMonitor 闭包读取的实时值（struct let 会在 onAppear 后过期，需经 scratch 转发）
     let clientID = UUID().uuidString   // 渲染引擎多窗口 wanted 隔离键
+    // 夜间切换「原地反转」（见 ReaderSurface+Render.scheduleNightRender）
+    var nightLive = false              // 实时夜间模式（onChange 同步；逃逸闭包捕获的 struct self 里 nightMode 会过期，键计算一律读这里）
+    var imagesNight = false            // 当前 images/tiles 对应的夜间模式（setup 时对齐 nightMode）
+    var nightFlipping = false          // 一次原地反转在飞（串行化快速连切）
+    var nightFlipTo: Bool?             // flip 飞行中用户又切换的目标模式（落地后连锁再翻，收敛到最终态）
 }
