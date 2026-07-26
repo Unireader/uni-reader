@@ -304,6 +304,23 @@ final class WorkspaceManager: ObservableObject {
         try? store?.deleteNote(id: id.uuidString)
     }
 
+    // MARK: - 笔记类型持久化（工作区级，meta key=note_types，JSON 数组；通用不落库）
+
+    /// 读取工作区自定义笔记类型（损坏/缺失 → 空数组；「通用」内置兜底不在其中）。
+    func noteTypes() -> [NoteType] {
+        guard let s = store?.meta("note_types"), let data = s.data(using: .utf8),
+              let arr = try? JSONDecoder().decode([NoteType].self, from: data) else { return [] }
+        return arr.filter { $0.id != NoteType.generalID }
+    }
+
+    /// 整体重写工作区自定义笔记类型（管理面板增删改后调用；自动剔除误混入的通用）。
+    func saveNoteTypes(_ types: [NoteType]) {
+        let filtered = types.filter { $0.id != NoteType.generalID }
+        guard let data = try? JSONEncoder().encode(filtered),
+              let s = String(data: data, encoding: .utf8) else { return }
+        try? store?.setMeta("note_types", s)
+    }
+
     // MARK: - 文字注解持久化（note kind=0；挂逻辑文档，全版本共用）
 
     /// 读取某文档已落库的全部文字注解（按页 / 页内位置序），用于重开恢复。
