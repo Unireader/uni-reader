@@ -82,6 +82,13 @@ struct ReaderSurface: View {
     @State var selection: TextSelection?
     /// 批注编辑器目标（非 nil 即呈现 sheet）：新建（选区草稿）或编辑（点页面图钉）。
     @State var editorTarget: NoteEditorTarget?
+    // 框选移动（pointerTool == .lasso，仅页内；全部瞬态，不持久化——逻辑见 ReaderSurface+Lasso）
+    @State var lassoSelection: LassoSelection?      // 选中集（同页笔迹/注解 id + 归一化联合包围盒）
+    @State var lassoRect: CGRect?                   // 进行中的框选虚线矩形（视口坐标）
+    @State var lassoGhostOffset: CGSize = .zero     // 移动中的 ghost 预览偏移（显示点；数据在松手前不动）
+    /// 本机擦除的尺寸圆环位置（视口坐标；pointerTool==.ink 且 erase 模式时跟随光标，其余时刻 nil）。
+    /// scratch.cursorP 在引用型 scratch 里、不触发刷新，圆环要实时跟手故单独走 @State。
+    @State var eraseCursor: CGPoint?
 
     let zoomMin: CGFloat = 0.25
     let zoomMax: CGFloat = 6
@@ -148,8 +155,12 @@ struct ReaderSurface: View {
         }
         .onContinuousHover(coordinateSpace: .local) { phase in
             switch phase {
-            case .active(let p): scratch.cursorP = p
-            case .ended: scratch.cursorP = nil
+            case .active(let p):
+                scratch.cursorP = p
+                if app.pointerTool == .ink && app.padMode == "erase" { eraseCursor = p }
+            case .ended:
+                scratch.cursorP = nil
+                eraseCursor = nil
             }
         }
         // 缩放手势挂在 ScrollView 容器（而非内容层）→ 整个阅读区都能捏合：页间空隙、末页下方空白、
@@ -157,10 +168,14 @@ struct ReaderSurface: View {
         .simultaneousGesture(magnify)
         // 文字选择拖选（T1）：与 magnify 同容器/同坐标系，鼠标拖拽与双指捏合互不干扰。
         .simultaneousGesture(dragSelectGesture)
+        // 本机落墨（pointerTool == .ink 才生效，与拖选互斥门控）：Mac 鼠标/触控板直接画。
+        .simultaneousGesture(localInkDragGesture)
+        // 框选移动（pointerTool == .lasso 才生效，同上互斥门控）：虚线框选 + 拖选中区平移。
+        .simultaneousGesture(lassoGesture)
         // 双击选词 / 单击取消选择。用 `.onTapGesture` 的单双击分级（单击等一拍确认非双击，同 macOS 原生手感）；
         // 双击定位取光标最近位置（`.onContinuousHover` 维护），避免 SpatialTapGesture 与拖选/缩放争手势。
         .onTapGesture(count: 2) { if let p = scratch.cursorP { selectWord(atContainer: p) } }
-        .onTapGesture(count: 1) { clearSelection() }
+        .onTapGesture(count: 1) { clearSelection(); clearLassoSelection() }
         // 右键选区 → 「添加批注 / 复制」（原生上下文菜单，非浮层 hack）。菜单项常驻、无选区时禁用，
         // 避免按选区有无条件包裹 ScrollView 改变其身份而重置滚动位置。
         .contextMenu { readerContextMenu }
@@ -175,9 +190,21 @@ struct ReaderSurface: View {
                             onCancel: { editorTarget = nil })
         }
         .overlay(alignment: .topLeading) { followTicker }
+        // 框选进行中的虚线矩形（视口坐标，与 DragGesture .local 同空间；不随内容滚动——框选拖动中不滚动）。
+        .overlay { lassoDragOverlay }
+        // 本机擦除的尺寸圆环（同挂 ScrollView 视口坐标系）：pointerTool==.ink 且 erase 模式跟光标，
+        // 直径 = 2×eraserRadius×页宽；eraserRing 关则不画。
+        .overlay { localEraserOverlay }
         // 笔架悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
         .overlay { GeometryReader { proxy in PenRackView(viewportSize: proxy.size, topInset: indicatorTopInset, isActiveWindow: isActiveWindow) } }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
+        .onChange(of: app.pointerTool) { _, t in
+            if t != .lasso { clearLassoSelection() }   // 切走框选工具即放弃选中（手势已门控，残留高亮框会误导）
+            if t != .ink { eraseCursor = nil }         // 切走本机笔即撤擦除圆环
+        }
+        .onChange(of: app.padMode) { _, m in
+            if m != "erase" { eraseCursor = nil }      // 离开擦除模式同上
+        }
         .onChange(of: nightMode) { _, new in
             scratch.nightLive = new   // 先同步引用侧实时值（键计算全走它），再触发原地反转
             scheduleNightRender()
@@ -206,6 +233,7 @@ struct ReaderSurface: View {
             setup()
             installWheelMonitor()
             installCopyMonitor()
+            installLassoEscMonitor()
             // 切文档重建后补跑一次首帧几何求值：onScrollGeometryChange 可能不重发，靠 onAppear(layout 就绪)
             // + fullWidth/unobSize 的 onChange 三路兜底，任一到位即定基准（防新文档首屏空白、须拖窗口才出）。
             if !scratch.didInitialGeo { geometryChanged(scratch.geo) }
@@ -214,6 +242,7 @@ struct ReaderSurface: View {
             follower.reset()
             removeWheelMonitor()
             removeCopyMonitor()
+            removeLassoEscMonitor()
             PageRenderEngine.shared.setWanted([], client: scratch.clientID)
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomIn)) { _ in
@@ -239,6 +268,7 @@ struct ReaderSurface: View {
                 ForEach(Array(realized), id: \.self) { i in
                     pageCell(i, layout: layout, activeMatch: activeMatch)
                 }
+                lassoHighlight   // 框选选中项高亮框 + 移动 ghost（内容坐标，置于页元胞之上）
             }
             .frame(width: contentW, height: contentH, alignment: .topLeading)
             .transaction { $0.animation = nil }   // 零闪烁纪律 4：阅读区无隐式动画
@@ -268,6 +298,7 @@ struct ReaderSurface: View {
                      radial: session.radial?.page == i ? session.radial : nil,
                      pens: app.pens,
                      pressRing: session.pressRing?.page == i ? session.pressRing : nil,
+                     hoverD: app.padMode == "erase" && app.eraserRing ? app.eraserRadius * 2 * pageW : 10,
                      onOpenNote: { editorTarget = .edit($0) })
             .offset(x: pageX, y: layout.offsets[i] * dispScale)
     }
@@ -284,6 +315,18 @@ struct ReaderSurface: View {
                     }
             }
             .allowsHitTesting(false)
+        }
+    }
+
+    /// 本机擦除的尺寸圆环（pointerTool == .ink 且 erase 模式）：跟随光标（`eraseCursor`，
+    /// `.onContinuousHover` 维护的视口坐标），直径 = 2×eraserRadius×当前页宽；`eraserRing` 关则不画。
+    @ViewBuilder var localEraserOverlay: some View {
+        if app.eraserRing, let p = eraseCursor {
+            Circle()
+                .stroke(Color.accentColor, lineWidth: 1.5)
+                .frame(width: app.eraserRadius * 2 * pageW, height: app.eraserRadius * 2 * pageW)
+                .position(p)
+                .allowsHitTesting(false)
         }
     }
 

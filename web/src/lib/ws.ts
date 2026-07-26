@@ -63,11 +63,17 @@ export function initWs(): void {
       const i = o.index || 0;
       if (i >= 0 && i < G.PENS.length) { G.penIdx = i; updateHud(); }
     }
-    // Mac 侧切模式（悬浮工具条/环形盘选笔后回 note）：同步本地模式
+    // Mac 侧切模式（悬浮工具条/环形盘选笔后回 note）：同步本地模式（顺带撤掉橡皮圆环，避免残留）
     else if (o.type === "mode") {
       for (let mi = 0; mi < MODES.length; mi++) {
-        if (MODES[mi].key === o.mode && mi !== G.modeIdx) { G.modeIdx = mi; updateHud(); break; }
+        if (MODES[mi].key === o.mode && mi !== G.modeIdx) { G.modeIdx = mi; G.eraserRingAt = null; G.drawNotes(); updateHud(); break; }
       }
+    }
+    // Mac 侧调橡皮设置（或新连接补发）：更新本地命中半径/模式/圆环开关（PenStat 弹层打开时读它们做初值）
+    else if (o.type === "eraser") {
+      const v = +o.size; if (v > 0) G.eraserSize = v;
+      G.eraserMode = o.mode === 0 ? 0 : 1;
+      G.eraserRing = o.ring !== 0;
     }
     // Mac 检测到长按 → 把当前这半笔转成环形选笔盘：本地撤掉半笔、后续笔移不再画（只发位置驱动选笔）。
     else if (o.type === "inkCancel") { G.radialActive = true; G.cur = null; G.drawLive(); }

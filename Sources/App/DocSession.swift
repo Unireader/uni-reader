@@ -92,8 +92,9 @@ final class DocSession: ObservableObject, Identifiable {
     var readHFrac: Double = 0
     /// 待恢复的横向滚动比例（loadSelected 读入，PageStreamView 首帧定位后一次性套用）。
     var restoreHFrac: CGFloat = 0
-    /// 已落库的笔画 id 集合，用于增量对账（新增 upsert / 擦除 delete），非 @Published。
-    var persistedStrokeIDs: Set<UUID> = []
+    /// 已落库的笔画快照（id → 值），用于增量对账（新增/内容变更 upsert、擦除 delete），非 @Published。
+    /// 值快照而非纯 id 集合：框选移动后 id 不变、点集变，纯 id 对账会漏写（仿 `persistedTextNotes`）。
+    var persistedStrokes: [UUID: InkStroke] = [:]
 
     // 实时手写：已完成笔画 + 正在书写的一笔。
     @Published var strokes: [InkStroke] = []

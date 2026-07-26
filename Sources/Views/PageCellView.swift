@@ -22,6 +22,7 @@ struct PageCellView: View {
     var radial: RadialState? = nil         // 环形选笔盘（非空且属本页时在笔尖处画环）
     var pens: [PenPreset] = []             // 环形盘要显示的收藏笔列表
     var pressRing: PressRing? = nil        // 长按进度环（非空且属本页时在笔尖处画填充进度）
+    var hoverD: CGFloat = 10               // 平板笔尖光标直径（erase 模式+圆环开 = 橡皮直径 2×eraserRadius×页宽）
     var onOpenNote: (TextNote) -> Void = { _ in }
 
     var body: some View {
@@ -121,10 +122,11 @@ struct PageCellView: View {
                 .position(markerPos(n, size: size))
             }
             // 平板笔尖光标（页锚定，纯位置指示）：压在墨迹/图钉之上、随页滚动。仅显示、不挡点击。
+            // erase 模式且尺寸圆环开时直径 = 橡皮直径（hoverD 由调用方按 eraserRadius × 页宽换算传入）。
             if let hover {
                 Circle()
                     .stroke(Color.accentColor, lineWidth: 2)
-                    .frame(width: 10, height: 10)
+                    .frame(width: hoverD, height: hoverD)
                     .position(x: hover.nx * size.width, y: hover.ny * size.height)
                     .allowsHitTesting(false)
             }

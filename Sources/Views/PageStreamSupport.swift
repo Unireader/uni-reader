@@ -74,6 +74,20 @@ enum NoteEditorTarget: Identifiable {
     }
 }
 
+/// 框选移动（pointerTool == .lasso，仅页内）的选中集：同页笔迹 id + 文字注解 id + 联合包围盒
+/// （页内归一化 0~1，画高亮框/ghost 与命中「拖选中区」用）。**瞬态**（ReaderSurface @State，随窗口），不持久化。
+struct LassoSelection: Equatable {
+    var page: Int
+    var strokeIDs: Set<UUID>
+    var noteIDs: Set<UUID>
+    var bounds: CGRect
+}
+
+/// 进行中的框选手势形态：拖空白 = 重新框选（虚线框）；拖选中高亮框内 = 移动选中项（ghost 预览）。
+enum LassoDragMode {
+    case select, move
+}
+
 /// 捏合手势状态。锚点数学：屏幕不动点 P（相对容器原点）+ 内容锚点 c；
 /// 逐帧 commit：c' = c×r，目标偏移 = c' − P（同 runloop 提交 = 屏幕原子，scroll-x-probe T3b）。
 /// 放大/缩小都走真 commit：滚动条在内容超过容器的瞬间即出现（Preview 同款），无松手悬崖。
@@ -117,6 +131,9 @@ final class Scratch {
     var didFirstKick = false
     var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点 / 双击选词定位；域外为 nil）
     var selDragAnchor: (page: Int, nx: CGFloat, ny: CGFloat)?   // 进行中拖选的锚点（页号 + 页内归一化坐标）
+    var localInkStart: (page: Int, nx: Double, ny: Double)?     // 进行中本机落墨的起点（⇧ 尺子锚点；非 nil = 有一笔/一次擦除在画）
+    var lassoDragMode: LassoDragMode?  // 进行中框选手势的形态（nil = 无框选/移动在飞）
+    var lassoEscMonitor: Any?          // Esc 清除框选选中集的 NSEvent 本地监视器（同 copyMonitor 的事件管道理由）
     var wheelMonitor: Any?             // ⌘+滚轮的 NSEvent 本地监视器（事件管道，非视图）
     var copyMonitor: Any?              // ⌘C 的 NSEvent 本地监视器（.onCopyCommand 依赖响应链/焦点，在纯
                                         // ScrollView 容器上不可靠触发；改走事件管道直写 NSPasteboard）

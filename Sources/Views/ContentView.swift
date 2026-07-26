@@ -93,7 +93,7 @@ struct ContentView: View {
             saveProgressThrottled(session.scrollAnchor)   // 缩放变化也存（含 restore 后手动缩放）
         }
         .onChange(of: session.strokes) { _, _ in
-            persistInk()   // 笔画完成/擦除时增量落库（liveStroke 变化不触发）
+            persistInk()   // 笔画完成/擦除/框选移动时增量落库（liveStroke 变化不触发）
         }
         .onChange(of: session.textNotes) { _, _ in
             persistTextNotes()   // 文字注解新建/编辑/删除时增量落库
@@ -564,7 +564,7 @@ struct ContentView: View {
         session.documentId = nil
         session.strokes = []
         session.liveStroke = nil
-        session.persistedStrokeIDs = []
+        session.persistedStrokes = [:]
     }
 
     /// 恢复该文档已落库的手写笔迹到内存，并记录对账集（避免加载即被判为“新增”而重复落库）。
@@ -572,21 +572,24 @@ struct ContentView: View {
         session.documentId = id
         session.liveStroke = nil
         let loaded = workspace.inkStrokes(documentId: id)
-        session.persistedStrokeIDs = Set(loaded.map(\.id))
+        session.persistedStrokes = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
         session.strokes = loaded
     }
 
-    /// 内存笔画 ↔ 库对账：当前有而未落库的 → upsert；曾落库而现已无的（擦除）→ delete。
+    /// 内存笔画 ↔ 库对账：新增或内容变更的 → upsert；曾落库而现已无的（擦除）→ delete。
+    /// 用值快照比较（仿 `persistTextNotes`）：同 id 内容变更（框选移动）也识别为“变更”并 upsert——
+    /// 旧版只对账 id 集合，移动笔迹后 id 不变、内容变，会被漏写。
     private func persistInk() {
         guard let id = session.documentId else { return }
-        let currentIDs = Set(session.strokes.map(\.id))
-        for st in session.strokes where !session.persistedStrokeIDs.contains(st.id) {
+        let current = session.strokes
+        let currentIDs = Set(current.map(\.id))
+        for st in current where session.persistedStrokes[st.id] != st {
             workspace.saveInkStroke(documentId: id, st)
         }
-        for gone in session.persistedStrokeIDs.subtracting(currentIDs) {
-            workspace.deleteInkStroke(id: gone)
+        for goneID in session.persistedStrokes.keys where !currentIDs.contains(goneID) {
+            workspace.deleteInkStroke(id: goneID)
         }
-        session.persistedStrokeIDs = currentIDs
+        session.persistedStrokes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     // MARK: - 文字注解持久化（note kind=0）

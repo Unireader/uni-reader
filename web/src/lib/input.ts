@@ -1,6 +1,6 @@
 // 输入模块：笔/手指指针事件（画/擦/平移/双指缩放/防误触）、滚轮平移、松手惯性、
 // 批点 rAF 合批、悬停上报、键盘侧键。逐行移植自原 capture.html IIFE 的对应段落。
-import { G, BAR, GAP, MINZ, MAXZ, PALM, DEAD, clamp, pw, contentLeft, curMode, curPen } from "./shared.js";
+import { G, BAR, GAP, MINZ, MAXZ, PALM, DEAD, clamp, pw, contentLeft, curMode, curPen, rulerSnap } from "./shared.js";
 import type { CaptureRefs, TextNote } from "./shared.js";
 import { S, updatePageLabel, updateHud } from "./hud.svelte.js";
 
@@ -121,6 +121,7 @@ export function initInput(refs: CaptureRefs): void {
       G.send({ type: "ink", phase: "begin", page: loc.page, pen: G.cur.pen, pts: [[loc.nx, loc.ny, e.pressure]] });
     } else if (m === "erase") {
       G.eraseHit(e.clientX, e.clientY); G.batch.push([loc.nx, loc.ny, loc.page]);
+      if (G.eraserRing) { G.eraserRingAt = { x: e.clientX, y: e.clientY }; G.drawNotes(); }
       G.probing = true; G.probePage = loc.page;
       G.send({ type: "probe", phase: "begin", page: loc.page, pts: [[loc.nx, loc.ny]] });
     }
@@ -159,7 +160,11 @@ export function initInput(refs: CaptureRefs): void {
     if (e.pointerId !== G.activeId) {
       if (e.buttons === 0 && curMode() !== "page" && G.inContent(e.clientX, e.clientY)) {
         const hl = G.locate(e.clientX, e.clientY);   // 纯输入板：不画本地环，只上报位置给 Mac 显示光标
-        if (hl) reportHover(hl.page, hl.nx, hl.ny);
+        if (hl) {
+          reportHover(hl.page, hl.nx, hl.ny);
+          // 擦除模式：悬停时也显示橡皮尺寸圆环（圆环本体画在 hover 层，见 render.ts drawNotes）
+          if (curMode() === "erase" && G.eraserRing) { G.eraserRingAt = { x: e.clientX, y: e.clientY }; G.drawNotes(); }
+        }
       } else if (e.buttons === 0) endHover();
       return;
     }
@@ -180,19 +185,30 @@ export function initInput(refs: CaptureRefs): void {
     }
     let evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     if (!evs.length) evs = [e];
-    let grew = false;
+    let grew = false, ringUpd = false;
     for (let i = 0; i < evs.length; i++) {
       const ev = evs[i], loc = G.locate(ev.clientX, ev.clientY);
       if (G.penMode === "note") {
         const nx = loc ? loc.nx : clamp((ev.clientX - contentLeft()) / pw(), 0, 1);
         const ny = loc && loc.page === G.drawPage ? loc.ny
                : clamp((ev.clientY - BAR + G.scrollY - G.offY[G.drawPage]) / Math.max(1, G.dispH[G.drawPage]), 0, 1);
-        // 环形盘激活后本地不再画（笔移是在选笔），但位置照发让 Mac 驱动高亮
-        if (!G.radialActive && G.cur) { G.cur.pts.push([nx, ny, ev.pressure]); grew = true; }
-        G.batch.push([nx, ny, ev.pressure]);
+        if (G.rulerOn && !G.radialActive && G.cur && G.cur.pts.length) {
+          // 尺子模式：以首点为锚 45° 吸附，本地笔迹替换为 [首点, 吸附终点]（压感取当前点），
+          // 上行点同样发吸附终点——吸附在上行点生成处做，Mac 收到的就是普通直线点列。
+          const a = G.cur.pts[0];
+          const sn = rulerSnap(a[0], a[1], nx, ny);
+          G.cur.pts = [a, [sn[0], sn[1], ev.pressure]];
+          G.batch.push([sn[0], sn[1], ev.pressure]);
+          grew = true;
+        } else {
+          // 环形盘激活后本地不再画（笔移是在选笔），但位置照发让 Mac 驱动高亮
+          if (!G.radialActive && G.cur) { G.cur.pts.push([nx, ny, ev.pressure]); grew = true; }
+          G.batch.push([nx, ny, ev.pressure]);
+        }
       } else if (G.penMode === "erase") {
         if (!G.radialActive) {   // 环形盘开着：停擦除，只发探针驱动选笔
           G.eraseHit(ev.clientX, ev.clientY);
+          if (G.eraserRing) { G.eraserRingAt = { x: ev.clientX, y: ev.clientY }; ringUpd = true; }
           if (loc) G.batch.push([loc.nx, loc.ny, loc.page]);
         }
         if (G.probing) {
@@ -204,6 +220,7 @@ export function initInput(refs: CaptureRefs): void {
       }
     }
     if (grew) G.drawLive();   // 一次 pointermove 的所有合并点收完再重画一次，别逐点重画
+    if (ringUpd) G.drawNotes();   // 橡皮圆环同理：合并点收完重画一次 hover 层
     e.preventDefault();
   }, { passive: false });
 
@@ -286,7 +303,10 @@ export function initInput(refs: CaptureRefs): void {
     if (G.hoverPending) return; G.hoverPending = true;
     requestAnimationFrame(function () { G.hoverPending = false; if (G.hoverMsg) { G.send(G.hoverMsg); G.hoverMsg = null; } });
   }
-  function endHover(): void { if (!G.hoverOn) return; G.hoverOn = false; G.clearHover(); G.send({ type: "hover", phase: "end" }); }
+  function endHover(): void {
+    if (!G.hoverOn && !G.eraserRingAt) return;
+    G.hoverOn = false; G.eraserRingAt = null; G.clearHover(); G.send({ type: "hover", phase: "end" });
+  }
 
   // ---- 键盘侧键（PageUp 切模式 / PageDown 切笔）----
   window.addEventListener("keydown", function (e: KeyboardEvent) {

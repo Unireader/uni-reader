@@ -62,6 +62,10 @@ const canonical = [
   { type: "textNote", id: "n1", op: "delete", page: 2, nx: 0.5, ny: 0.25, text: "" },
   { type: "notes", list: [{ id: "n1", page: 0, nx: 0.5, ny: 0.5, text: "hello" },
                           { id: "n2", page: 3, nx: 0.25, ny: 0.75, text: "笔记" }] },
+  { type: "penset", list: [{ color: "rgba(24,90,210,0.5)", w: 8, t: "ballpoint" },
+                            { color: "rgba(255,214,40,0.25)", w: 22, t: "marker" }], active: 1 },
+  { type: "eraser", size: 0.02, mode: 1, ring: 1 },
+  { type: "eraser", size: 0.5, mode: 0, ring: 0 },
 ];
 
 let pass = 0, fail = 0;

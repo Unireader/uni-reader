@@ -30,6 +30,7 @@ export const S = $state({
   statsText: "",
   night: false,            // 夜间模式（按钮图标回显）
   noteMode: false,         // 文字笔记模式（顶栏按钮激活态回显）
+  rulerOn: false,          // 尺子模式（顶栏按钮激活态回显）
   noteEditor: null as NoteEditorState | null,   // 文字笔记编辑器（非 null = 打开中）
   showPage: true,          // 页面图显示（眼睛按钮回显）
   zoomLocked: false,       // 锁定缩放（锁按钮回显）

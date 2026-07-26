@@ -2,6 +2,20 @@ import Foundation
 import PDFKit
 import Combine
 
+/// 本机指针工具：Mac 鼠标/触控板在阅读区干什么——默认文字选择；`.ink` = 本机直接落墨/擦除
+/// （共用笔架当前选中笔与橡皮）；`.lasso` = 框选移动（仅页内：虚线框选中同页笔迹+文字注解，整体平移）。
+enum PointerTool: String {
+    case textSelect
+    case ink
+    case lasso
+}
+
+/// 橡皮擦除模式：整笔（任一点命中即删整条）/ 局部（剔除命中点、剩余连续段各成新笔画）。
+enum EraserMode: String, CaseIterable {
+    case stroke, partial
+    var label: String { self == .stroke ? L("Whole Stroke") : L("Partial") }
+}
+
 /// App 级单例：持有唯一的 `LANServer`，管理所有打开中的 `DocSession`。
 /// 平板显示的会话 = 平板手动选中的（padSelectedSessionID），否则跟随最后激活窗口（activeSessionID）。
 final class AppModel: ObservableObject {
@@ -17,6 +31,9 @@ final class AppModel: ObservableObject {
     @Published var padMode: String = "note"
     /// 当前笔在 `pens` 里的下标。
     @Published var padPenIndex: Int = 0
+    /// 本机指针工具（见 `PointerTool`）。设备级全局、与 `padMode` 同生命周期：笔架是每个窗口都显示的
+    /// 设备级控制面板，各窗口手势只读这个全局开关，多窗口不会互相打架。
+    @Published var pointerTool: PointerTool = .textSelect
     /// 收藏笔列表（唯一状态源）：画布悬浮工具条实时增删改，自动落盘 + 广播给 pad。不再走系统设置页配置。
     @Published var pens: [PenPreset] = PenPresets.load() {
         didSet {
@@ -24,6 +41,33 @@ final class AppModel: ObservableObject {
             broadcastPens()
         }
     }
+    /// 橡皮半径（页宽归一化，默认 0.02；直径 = 2×半径）：本机持久化，改动即广播 `eraser` 给 pad 双向对齐。
+    @Published var eraserRadius: Double = AppModel.loadEraserRadius() {
+        didSet {
+            UserDefaults.standard.set(eraserRadius, forKey: AppModel.eraserRadiusKey)
+            broadcastEraser()
+        }
+    }
+    private static let eraserRadiusKey = "eraserRadius"
+    private static func loadEraserRadius() -> Double {
+        let v = UserDefaults.standard.double(forKey: eraserRadiusKey)
+        return v > 0 ? v : 0.02
+    }
+    /// 橡皮模式（整笔/局部，默认局部）与尺寸圆环开关（默认开）：与 eraserRadius 同款持久化 + didSet 广播。
+    @Published var eraserMode: EraserMode = EraserMode(rawValue: UserDefaults.standard.string(forKey: "eraserMode") ?? "") ?? .partial {
+        didSet {
+            UserDefaults.standard.set(eraserMode.rawValue, forKey: "eraserMode")
+            broadcastEraser()
+        }
+    }
+    @Published var eraserRing: Bool = UserDefaults.standard.object(forKey: "eraserRing") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(eraserRing, forKey: "eraserRing")
+            broadcastEraser()
+        }
+    }
+    /// 应用平板上行 `eraser` 时置真：抑制 didSet 的回播（值来自 pad，回声无意义还会三连发）。
+    private var applyingRemoteEraser = false
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -56,7 +100,7 @@ final class AppModel: ObservableObject {
         server.$isRunning
             .receive(on: RunLoop.main)
             .sink { [weak self] running in
-                if running { self?.push(); self?.broadcastDocs(); self?.broadcastPens() }
+                if running { self?.push(); self?.broadcastDocs(); self?.broadcastPens(); self?.broadcastEraser() }
             }
             .store(in: &cancellables)
 
@@ -64,7 +108,7 @@ final class AppModel: ObservableObject {
         server.$clientCount
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastStrokes(); self?.broadcastNotes()
+                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastStrokes(); self?.broadcastNotes()
                 self?.pushCurrentViewport()   // 必须在 pushLayout 之后：平板端收到 layout 会重置滚动/seq
             }
             .store(in: &cancellables)
@@ -127,6 +171,17 @@ final class AppModel: ObservableObject {
         // 平板几何上报（环形盘的像素判定要用）：与文档会话无关，放在 padSession 判空之前。
         if obj["type"] as? String == "padGeom" {
             padPageWidth = max(0, (obj["pageW"] as? NSNumber)?.doubleValue ?? 0)
+            return
+        }
+        // 平板改笔宽/橡皮尺寸：设备级状态（不挂文档会话），同样放判空之前。
+        if obj["type"] as? String == "penset" { applyPenSet(obj); return }
+        if obj["type"] as? String == "eraser" {
+            applyingRemoteEraser = true
+            defer { applyingRemoteEraser = false }
+            let v = (obj["size"] as? NSNumber)?.doubleValue ?? 0
+            if v > 0 { eraserRadius = v }
+            eraserMode = ((obj["mode"] as? NSNumber)?.intValue ?? 1) == 0 ? .stroke : .partial
+            eraserRing = ((obj["ring"] as? NSNumber)?.intValue ?? 1) != 0
             return
         }
         guard let s = padSession else { return }
@@ -374,6 +429,30 @@ final class AppModel: ObservableObject {
         ])
     }
 
+    /// 平板调笔宽后上行全量笔列表（`penset`，payload 布局同 `pens`）：线上不带 id/name，
+    /// **按下标对齐**写回 color/width/type；数目不符 = 两端列表版本错位，整包丢弃。
+    /// 整体一次赋值，只触发一次 `pens` didSet（落盘 + broadcastPens 回声全端对齐）。
+    private func applyPenSet(_ obj: [String: Any]) {
+        guard let list = obj["list"] as? [[String: Any]], list.count == pens.count else { return }
+        var np = pens
+        for (i, p) in list.enumerated() {
+            np[i].color = InkColor.parse(p["color"] as? String)
+            if let w = (p["w"] as? NSNumber)?.doubleValue, w > 0 { np[i].width = w }
+            if let t = PenBrushType(rawValue: p["t"] as? String ?? "") { np[i].type = t }
+        }
+        pens = np
+        if let a = (obj["active"] as? NSNumber)?.intValue, pens.indices.contains(a) { padPenIndex = a }
+    }
+
+    /// 橡皮设置变更 → 推给 pad（服务启动/新客户端接入时也补发一次，双向同步的 Mac→pad 方向）。
+    /// 平板上行应用期间（`applyingRemoteEraser`）抑制回播（值来自 pad，回声无意义还会三连发）。
+    func broadcastEraser() {
+        guard !applyingRemoteEraser, server.isRunning else { return }
+        server.broadcast(["type": "eraser", "size": eraserRadius,
+                          "mode": eraserMode == .partial ? 1 : 0,
+                          "ring": eraserRing ? 1 : 0])
+    }
+
     /// 新增一支收藏笔（默认样式），立即选中。返回新笔下标，供调用方直接弹出编辑面板。
     @discardableResult
     func addPen() -> Int {
@@ -395,28 +474,30 @@ final class AppModel: ObservableObject {
         broadcastPens()   // 用修正后的 padPenIndex 再广播一次，纠正上面那次的 active 下标
     }
 
-    // 供 WS 与模拟窗口共用的落墨 API。
-    func inkBegin(page: Int, color: InkColor, width: Double, type: PenBrushType = .ballpoint, points: [SIMD3<Double>]) {
-        guard let s = padSession else { return }
+    // 供 WS、模拟窗口与本机落墨共用的落墨 API。`in session` 缺省 = 平板当前会话（handleInk 既有调用点
+    // 不传，行为不变）；本机落墨传当前窗口自己的 session——写进 session.strokes 后 ContentView 对账
+    // 自动落库，若恰是 padSession 则广播自动镜像到平板，零额外工作。
+    func inkBegin(in session: DocSession? = nil, page: Int, color: InkColor, width: Double, type: PenBrushType = .ballpoint, points: [SIMD3<Double>]) {
+        guard let s = session ?? padSession else { return }
         s.liveStroke = InkStroke(page: page, color: color, width: width, type: type, points: points)
     }
-    func inkAppend(_ pts: [SIMD3<Double>]) {
-        guard let s = padSession, var st = s.liveStroke else { return }
+    func inkAppend(_ pts: [SIMD3<Double>], in session: DocSession? = nil) {
+        guard let s = session ?? padSession, var st = s.liveStroke else { return }
         st.points.append(contentsOf: pts); s.liveStroke = st
         // 书写中笔尖圆环跟随（落笔后 hover 消息停发，不更新会残留死圆圈在落笔点）
         if let last = pts.last { s.hover = HoverPoint(page: st.page, nx: last.x, ny: last.y) }
     }
-    func inkEnd() {
-        guard let s = padSession, let st = s.liveStroke else { return }
+    func inkEnd(in session: DocSession? = nil) {
+        guard let s = session ?? padSession, let st = s.liveStroke else { return }
         s.strokes.append(st); s.liveStroke = nil
-        broadcastStrokes()
+        if s.id == padSession?.id { broadcastStrokes() }   // 非平板会话只落库，不做无谓广播
     }
-    func inkErase(_ pts: [SIMD3<Double>], page: Int) {
-        guard let s = padSession else { return }
+    func inkErase(_ pts: [SIMD3<Double>], page: Int, in session: DocSession? = nil) {
+        guard let s = session ?? padSession else { return }
         eraseNear(s, pts, page: page)
         // 擦除中笔尖圆环同样跟随
         if let last = pts.last { s.hover = HoverPoint(page: page, nx: last.x, ny: last.y) }
-        broadcastStrokes()
+        if s.id == padSession?.id { broadcastStrokes() }
     }
 
     /// 把平板当前会话的**全部笔迹**推给平板（平板据此显示 + 刷新/重连后恢复）。
@@ -451,19 +532,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 擦除分派（半径都是 `eraserRadius`，页内归一化）：
+    /// - 整笔（`.stroke`）：任一点命中即删整条（旧 eraseNear 的 removeAll 语义）；
+    /// - 局部（`.partial`）：逐笔用 `InkEdit.splitStroke` 切段替换——剔除命中点，连续未命中段各成新笔画
+    ///   （空 = 整笔消除）；新 id 被 persistInk 对账识别为「旧删新增」，持久化零改动。
     private func eraseNear(_ s: DocSession, _ es: [SIMD3<Double>], page: Int) {
         guard !es.isEmpty else { return }
-        let r2 = 0.02 * 0.02
-        s.strokes.removeAll { st in
-            guard st.page == page else { return false }
-            for sp in st.points {
-                for e in es {
-                    let dx = sp.x - e.x, dy = sp.y - e.y
-                    if dx * dx + dy * dy <= r2 { return true }
+        let r2 = eraserRadius * eraserRadius
+        if eraserMode == .stroke {
+            s.strokes.removeAll { st in
+                guard st.page == page else { return false }
+                for sp in st.points {
+                    for e in es {
+                        let dx = sp.x - e.x, dy = sp.y - e.y
+                        if dx * dx + dy * dy <= r2 { return true }
+                    }
                 }
+                return false
             }
-            return false
+            return
         }
+        // 擦除点无压感，z 槽位按 `InkEdit.splitStroke` 约定改装页号（跨页不串）。
+        let eps = es.map { SIMD3($0.x, $0.y, Double(page)) }
+        var out: [InkStroke] = []
+        out.reserveCapacity(s.strokes.count)
+        for st in s.strokes {
+            if st.page == page { out.append(contentsOf: InkEdit.splitStroke(st, erasePts: eps, r: eraserRadius)) }
+            else { out.append(st) }
+        }
+        s.strokes = out
     }
 
     /// 当前应显示到平板的会话。

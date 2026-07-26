@@ -103,6 +103,15 @@ export interface GState {
   strokes: Stroke[]; cur: Stroke | null; radialActive: boolean; drawPage: number;
   // 文字笔记：notes = Mac 下发的全量镜像（本地只乐观更新，回传即整体替换）；noteMode = 文字笔记模式开关
   notes: TextNote[]; noteMode: boolean;
+  // 尺子模式：独立本地开关，note 模式下笔迹吸附 45° 倍数直线（吸附在上行点生成处做，协议零改动）
+  rulerOn: boolean;
+  // 橡皮：归一化半径（页宽比，默认 0.02）；eraserMode 0=整笔 1=局部（默认局部）；
+  // eraserRing = 尺寸圆环开关（默认开）；eraserRingAt = 圆环位置（视口 CSS px，null=不画）。
+  // 三者随 eraser 消息双向同步，PenStat 弹层改动后防抖上行。
+  eraserSize: number;
+  eraserMode: number;
+  eraserRing: boolean;
+  eraserRingAt: { x: number; y: number } | null;
   // 指针/批点（batch 元素：note=[nx,ny,pressure]，erase=[nx,ny,page]）
   activeId: number | null; penMode: string; penX: number; penY: number; batch: number[][];
   pbatch: [number, number][]; probePage: number; probing: boolean;
@@ -178,6 +187,19 @@ export const G = {} as GState;
 
 export function clamp(v: number, lo: number, hi: number): number { return Math.min(hi, Math.max(lo, v)); }
 
+/// 尺子吸附（Sources/App/InkEdit.swift 的 rulerSnap 的 JS 版，两边算法保持一致）：
+/// (ax,ay)→(x,y) 的角度距最近的 45° 倍数 ≤ thresholdDeg 时贴合到该倍数（保长度），否则原样返回。
+export function rulerSnap(ax: number, ay: number, x: number, y: number, thresholdDeg = 7): [number, number] {
+  const dx = x - ax, dy = y - ay;
+  const len = Math.hypot(dx, dy);
+  if (!len) return [x, y];
+  const step = Math.PI / 4;   // 45°
+  const ang = Math.atan2(dy, dx);
+  const snapped = Math.round(ang / step) * step;
+  if (Math.abs(ang - snapped) > thresholdDeg * Math.PI / 180) return [x, y];
+  return [ax + len * Math.cos(snapped), ay + len * Math.sin(snapped)];
+}
+
 export function curMode(): string { return MODES[G.modeIdx].key; }
 export function curPen(): Pen { return G.PENS[G.penIdx]; }
 
@@ -186,7 +208,7 @@ export function contentLeft(): number { const p = pw(); return p <= G.vw ? (G.vw
 
 // ---- 笔触类型：跟 Mac 端 PenBrushType.strokeWidth/opacityMultiplier 同一套公式 ----
 export function strokeWidthFor(t: string, p: number, w: number): number {
-  if (t === "fountain") return 0.3 + Math.pow(p, 1.6) * w * 1.15;
+  if (t === "fountain") return 0.3 + Math.pow(p, 1.6) * w * 1.3;
   if (t === "marker") return w;
   if (t === "pencil") return 0.5 + p * w * 0.85;
   return 0.6 + p * w;   // ballpoint / 未知类型兜底

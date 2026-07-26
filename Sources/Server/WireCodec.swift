@@ -19,11 +19,13 @@ enum WireCodec {
         static let ping: UInt8 = 0x10, pong: UInt8 = 0x11, latency: UInt8 = 0x12
         static let selectDoc: UInt8 = 0x20, pageTurn: UInt8 = 0x21, mode: UInt8 = 0x22, pen: UInt8 = 0x23
         static let textNote: UInt8 = 0x24
+        static let penset: UInt8 = 0x25
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
+        static let eraser: UInt8 = 0x46
         static let nack: UInt8 = 0x50
     }
 
@@ -143,6 +145,16 @@ enum WireCodec {
         case "pageTurn": w.u8(Op.pageTurn); w.u8(strOf(o["dir"]) == "prev" ? 0 : 1)
         case "mode": w.u8(Op.mode); w.u8(modeCode(strOf(o["mode"])))
         case "pen": w.u8(Op.pen); w.u16(intOf(o["index"]))
+        case "penset":
+            // 平板改笔宽后上行（C→S）：payload 布局与 `pens` 完全相同。
+            w.u8(Op.penset); w.u16(intOf(o["active"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for p in list { w.pen(color: strOf(p["color"]), w: num(p["w"]), t: strOf(p["t"])) }
+        case "eraser":
+            w.u8(Op.eraser); w.f32(num(o["size"]))
+            w.u8(UInt8(clamping: o["mode"] == nil ? 1 : intOf(o["mode"])))   // 0=整笔 1=局部（默认局部）
+            w.u8(o["ring"] == nil ? 1 : (boolOf(o["ring"]) ? 1 : 0))          // 尺寸圆环（默认开）
         case "textNote":
             w.u8(Op.textNote); w.str(strOf(o["id"]))
             w.u8(strOf(o["op"]) == "delete" ? 1 : 0)
@@ -304,6 +316,14 @@ enum WireCodec {
         case Op.pageTurn: out = ["type": "pageTurn", "dir": r.u8() == 0 ? "prev" : "next"]
         case Op.mode: out = ["type": "mode", "mode": modeName(r.u8())]
         case Op.pen: out = ["type": "pen", "index": NSNumber(value: r.u16())]
+        case Op.penset:
+            let active = r.u16(), n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n { list.append(r.pen()) }
+            out = ["type": "penset", "list": list, "active": NSNumber(value: active)]
+        case Op.eraser:
+            out = ["type": "eraser", "size": NSNumber(value: r.f32()),
+                   "mode": NSNumber(value: r.u8()), "ring": NSNumber(value: r.u8())]
         case Op.textNote:
             let id = r.str(), opRaw = r.u8()
             let page = r.u32(), nx = r.f32(), ny = r.f32(), text = r.str()

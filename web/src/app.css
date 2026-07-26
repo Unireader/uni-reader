@@ -44,12 +44,33 @@ canvas { position:fixed; inset:0; }
   background:rgba(22,27,34,.94); border:1px solid #30363d; border-radius:8px; padding:10px 12px;
   font:12px/1.55 ui-monospace,Menlo,monospace; color:#e6edf3; white-space:pre; min-width:180px; }
 #stats.on { display:block; }
-#penStat { position:fixed; left:10px; bottom:10px; z-index:10; pointer-events:none;
+#penStat { position:fixed; left:10px; bottom:10px; z-index:10; cursor:pointer;
   display:flex; align-items:center; gap:7px; padding:6px 12px;
   background:rgba(22,27,34,.85); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
   border:1px solid #30363d; border-radius:999px; font-size:13px; color:#e6edf3; }
 #penStat .sw { width:12px; height:12px; border-radius:50%; flex:none;
   border:1px solid rgba(255,255,255,.45); }
+/* 笔宽/橡皮调整弹层（penStat 点击弹出）：面板形制同 noteEditor，遮罩点外关闭 */
+#penPanelMask { position:fixed; inset:0; z-index:19; margin:0; padding:0; border:0; cursor:default;
+  background:transparent; }
+#penPanel { position:fixed; left:10px; bottom:52px; z-index:20; width:270px; padding:12px 14px;
+  border-radius:16px; display:flex; flex-direction:column; gap:8px; font-size:13px; color:#e6edf3;
+  background:rgba(20,23,28,.85); border:1px solid rgba(255,255,255,.22);
+  box-shadow:0 8px 30px rgba(0,0,0,.40);
+  -webkit-backdrop-filter:blur(16px) saturate(140%); backdrop-filter:blur(16px) saturate(140%); }
+#penPanel .ptitle { color:#8b949e; font-size:12px; margin-top:2px; }
+#penPanel .prow { display:flex; align-items:center; gap:8px; }
+#penPanel .prow .sw { width:12px; height:12px; border-radius:50%; flex:none;
+  border:1px solid rgba(255,255,255,.45); }
+#penPanel .pname { flex:none; width:44px; }
+#penPanel input[type=range] { flex:1; min-width:0; accent-color:#1f6feb; }
+#penPanel .pval { flex:none; width:36px; text-align:right; font-variant-numeric:tabular-nums; }
+/* 橡皮：整笔/局部分段 + 圆环开关（.on 配色同顶栏独立开关激活态） */
+#penPanel .seg { display:flex; flex:none; border:1px solid #30363d; border-radius:8px; overflow:hidden; }
+#penPanel .seg button { padding:5px 14px; font-size:13px; border:0; background:#21262d; color:#e6edf3; }
+#penPanel .seg button.on { background:#1f6feb; color:#fff; }
+#penPanel .ringchk { margin-left:auto; display:flex; align-items:center; gap:5px; cursor:pointer; }
+#penPanel .ringchk input { accent-color:#1f6feb; }
 /* 文字笔记编辑器：圆形选择器风格弹出面板（形制呼应选笔盘毛玻璃底盘），z-index 压过顶栏 */
 #noteEditorMask { position:fixed; inset:0; z-index:19; margin:0; padding:0; border:0; cursor:default;
   background:rgba(0,0,0,.18); }

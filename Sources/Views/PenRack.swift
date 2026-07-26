@@ -25,6 +25,7 @@ struct PenRackView: View {
     @AppStorage("penToolbarCollapsed") private var collapsed = false
     @GestureState private var dragOffset: CGSize = .zero
     @State private var editingIndex: Int?
+    @State private var eraserEditorOpen = false
     /// 胶囊实测尺寸（夹取范围要用）；首帧未测量时用保守估计，避免闪一下越界位置。
     @State private var barSize: CGSize = CGSize(width: 240, height: 44)
 
@@ -77,8 +78,10 @@ struct PenRackView: View {
             ForEach(app.pens.indices, id: \.self) { i in penSlot(i) }
             addButton
             Divider().frame(height: 20)
-            modeButton(mode: "erase", icon: "eraser", label: L("Eraser"))
+            eraserButton
             modeButton(mode: "page", icon: "hand.draw", label: L("Page Turn"))
+            localInkButton
+            lassoButton
             Divider().frame(height: 20)
             collapseButton
         }
@@ -232,6 +235,83 @@ struct PenRackView: View {
         }
         .buttonStyle(.plain)
         .help(label)
+    }
+
+    /// 本机笔：切换 Mac 鼠标/触控板在阅读区是「文字选择」还是「临时落墨/擦除」（共用笔架当前选中笔
+    /// 与橡皮；⇧ 拖动 = 尺子直线）。样式仿 modeButton，只是切换的是 `pointerTool` 而非 pad 模式。
+    private var localInkButton: some View {
+        let active = app.pointerTool == .ink
+        return Button { app.pointerTool = active ? .textSelect : .ink } label: {
+            Image(systemName: "cursorarrow.motionlines")
+                .imageScale(.medium)
+                .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("Local Pen"))
+    }
+
+    /// 框选移动：切换 Mac 鼠标/触控板为「框选」模式——拖空白画虚线框选中同页笔迹+文字注解，
+    /// 再拖选中高亮框整体平移（仅页内；点空白/Esc 取消选中）。样式仿 localInkButton。
+    private var lassoButton: some View {
+        let active = app.pointerTool == .lasso
+        return Button { app.pointerTool = active ? .textSelect : .lasso } label: {
+            Image(systemName: "lasso")
+                .imageScale(.medium)
+                .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("Lasso Select"))
+    }
+
+    /// 橡皮：点一下进擦除模式；**已在擦除模式时再点**弹尺寸 slider（同 penEditor 的实时写回模式——
+    /// 改动直接写 `app.eraserRadius`，didSet 自动落盘 + 广播给 pad，没有「保存」按钮）。
+    private var eraserButton: some View {
+        let active = app.padMode == "erase"
+        return Button {
+            if active { eraserEditorOpen = true } else { app.setPadMode("erase") }
+        } label: {
+            Image(systemName: "eraser")
+                .imageScale(.medium)
+                .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("Eraser"))
+        .popover(isPresented: $eraserEditorOpen, arrowEdge: .bottom) { eraserEditor }
+    }
+
+    /// 橡皮设置：整笔/局部模式（系统 segmented，与 penEditor 的笔头类型同款）+ 尺寸 slider
+    /// （归一化半径 0.005...0.06，读数 = 直径占页宽 %）+ 尺寸圆环开关。全部实时写 app 状态，
+    /// didSet 自动落盘 + 广播 eraser 给 pad——没有「保存」按钮。
+    private var eraserEditor: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L("Eraser")).font(.headline)
+            Picker(L("Eraser Mode"), selection: Binding(
+                get: { app.eraserMode },
+                set: { app.eraserMode = $0 })) {
+                ForEach(EraserMode.allCases, id: \.self) { m in Text(m.label).tag(m) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            HStack {
+                Text(L("Width"))
+                Slider(value: Binding(
+                    get: { app.eraserRadius },
+                    set: { app.eraserRadius = ($0 * 1000).rounded() / 1000 }), in: 0.005...0.06)
+                Text("\(Int((app.eraserRadius * 200).rounded()))%")
+                    .monospacedDigit().frame(width: 36, alignment: .trailing)
+            }
+            Toggle(L("Size Ring"), isOn: Binding(
+                get: { app.eraserRing },
+                set: { app.eraserRing = $0 }))
+        }
+        .padding(14)
+        .frame(width: 260)
     }
 
     // MARK: 拖拽定位

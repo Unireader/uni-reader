@@ -11,6 +11,7 @@
     "chevron-up": '<path d="m18 15-6-6-6 6"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     type: '<path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
+    ruler: '<path d="M21.3 8.7 15.3 2.7a1 1 0 0 0-1.4 0l-11.2 11.2a1 1 0 0 0 0 1.4l6 6a1 1 0 0 0 1.4 0L21.3 10.1a1 1 0 0 0 0-1.4Z"/><path d="m7.5 10.5 2 2"/><path d="m10.5 7.5 2 2"/><path d="m13.5 4.5 2 2"/>',
   } as const;
   let { name }: { name: keyof typeof ICONS } = $props();
 </script>

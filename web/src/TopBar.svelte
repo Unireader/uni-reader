@@ -25,6 +25,7 @@
   <button id="next" onclick={() => actions.turn("next")}>›</button>
   <button id="night" title="夜间模式" onclick={() => actions.toggleNight()}><Icon name={S.night ? "sun" : "moon"} /></button>
   <button id="textNote" class:on={S.noteMode} title="文字笔记" onclick={() => actions.toggleTextNote()}><Icon name="type" /></button>
+  <button id="ruler" class:on={S.rulerOn} title="尺子（45° 吸附直线）" onclick={() => actions.toggleRuler()}><Icon name="ruler" /></button>
   <button id="eye" title="显示/隐藏页面" onclick={() => actions.toggleEye()}><Icon name={S.showPage ? "eye" : "eye-off"} /></button>
   <button id="lock" title="锁定缩放" onclick={() => actions.toggleLock()}><Icon name={S.zoomLocked ? "lock" : "lock-open"} /></button>
   <button id="full" title="全屏" onclick={() => actions.toggleFull()}><Icon name="maximize" /></button>

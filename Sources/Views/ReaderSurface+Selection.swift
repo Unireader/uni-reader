@@ -234,10 +234,11 @@ extension ReaderSurface {
 
     /// 拖选：起点定锚（一次），移动实时扩选。锚点所在页有 OCR 层 → 走 OCR 行选择；否则 PDFKit 原生选择。
     /// minimumDistance 2 → 纯单击不触发拖选（交给 `.onTapGesture` 取消），2px 内抖动不误选。
+    /// `pointerTool == .ink` 时反向门控：拖选让位给本机落墨手势。
     var dragSelectGesture: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .local)
             .onChanged { v in
-                guard scratch.pinch == nil else { return }
+                guard app.pointerTool == .textSelect, scratch.pinch == nil else { return }
                 if scratch.selDragAnchor == nil {
                     scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
                 }
@@ -250,6 +251,61 @@ extension ReaderSurface {
                 }
             }
             .onEnded { _ in scratch.selDragAnchor = nil }
+    }
+
+    // MARK: 本机落墨（pointerTool == .ink：Mac 鼠标/触控板直接画）
+
+    /// 本机落墨/擦除拖拽：仅 `pointerTool == .ink` 生效（与 dragSelectGesture 互斥门控）。
+    /// 容器 .local 坐标 → `containerPointToPageNorm` 得页内归一化点，压感恒 0.5（对齐 PROTOCOL.md erase 缺省惯例）。
+    /// 当前笔 = 笔架选中笔（`app.pens[app.padPenIndex]`，用户已定共用）；`app.padMode == "erase"` 走局部擦除
+    /// （`eraserRadius`），否则落墨。⇧ 尺子：拖动中按住 Shift → 整笔替换为「起点 → 45° 吸附终点」两点直线
+    /// （`InkEdit.rulerSnap`；修饰键读 `NSEvent.modifierFlags`，纯事件读取不引 AppKit 视图）。
+    /// 全部写进**本窗口自己的 session**：ContentView 对账自动落库；恰是 padSession 时广播自动镜像到平板。
+    var localInkDragGesture: some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .local)
+            .onChanged { v in
+                guard app.pointerTool == .ink, scratch.pinch == nil else { return }
+                let isErase = app.padMode == "erase"
+                // 起笔（本手势首个回调）：定锚 + inkBegin / 首点擦除
+                if scratch.localInkStart == nil {
+                    guard let n0 = containerPointToPageNorm(v.startLocation) else { return }
+                    let p0 = SIMD3(Double(n0.nx), Double(n0.ny), 0.5)
+                    if isErase {
+                        app.inkErase([p0], page: n0.page, in: session)
+                    } else {
+                        guard let pen = app.pens.indices.contains(app.padPenIndex)
+                                ? app.pens[app.padPenIndex] : app.pens.first else { return }
+                        app.inkBegin(in: session, page: n0.page, color: pen.color,
+                                     width: pen.width, type: pen.type, points: [p0])
+                    }
+                    scratch.localInkStart = (n0.page, Double(n0.nx), Double(n0.ny))
+                    return
+                }
+                guard let start = scratch.localInkStart,
+                      let n = containerPointToPageNorm(v.location) else { return }
+                let pt = SIMD3(Double(n.nx), Double(n.ny), 0.5)
+                if isErase {
+                    app.inkErase([pt], page: n.page, in: session)   // 擦除可跨页（按点所在页逐批）
+                    return
+                }
+                guard n.page == start.page else { return }   // 落墨不跨页：拖出页边即停笔
+                if NSEvent.modifierFlags.contains(.shift) {
+                    // ⇧ 尺子：整笔替换为两点直线（松开 Shift 后继续追加 = 从直线端点接着画）
+                    let snapped = InkEdit.rulerSnap(start: SIMD2(start.nx, start.ny),
+                                                    current: SIMD2(pt.x, pt.y))
+                    if var st = session.liveStroke {
+                        st.points = [SIMD3(start.nx, start.ny, 0.5), SIMD3(snapped.x, snapped.y, 0.5)]
+                        session.liveStroke = st
+                    }
+                } else {
+                    app.inkAppend([pt], in: session)
+                }
+            }
+            .onEnded { _ in
+                guard scratch.localInkStart != nil else { return }
+                if app.padMode != "erase" { app.inkEnd(in: session) }   // 擦除每批已即时生效，无需收尾
+                scratch.localInkStart = nil
+            }
     }
 
 }

@@ -26,6 +26,10 @@
 "Notes" = "Notes";
 "Night Mode" = "Night Mode";
 "Eraser" = "Eraser";
+"Eraser Mode" = "Eraser Mode";
+"Whole Stroke" = "Whole Stroke";
+"Partial" = "Partial";
+"Size Ring" = "Size Ring";
 "Page Turn" = "Page Turn";
 "Notes will appear here." = "Notes will appear here.";
 "Sidebar" = "Sidebar";
@@ -154,3 +158,5 @@
 "%d note(s) will revert to General." = "%d note(s) will revert to General.";
 "All Types" = "All Types";
 "Done" = "Done";
+"Local Pen" = "Local Pen";
+"Lasso Select" = "Lasso Select";

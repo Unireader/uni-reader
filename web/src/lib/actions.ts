@@ -8,6 +8,7 @@ export interface Actions {
   toggleStats(): void;
   toggleNight(): void;
   toggleTextNote(): void;
+  toggleRuler(): void;
   toggleEye(): void;
   toggleLock(): void;
   toggleFull(): void;

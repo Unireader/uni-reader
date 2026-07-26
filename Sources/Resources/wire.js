@@ -11,10 +11,10 @@
   var OP = {
     auth: 0x01, authOK: 0x02, authFail: 0x03,
     ping: 0x10, pong: 0x11, latency: 0x12,
-    selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24,
+    selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
     radial: 0x37, pressRing: 0x38, notes: 0x39,
-    scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45,
+    scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
     nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
@@ -112,6 +112,18 @@
       case "pageTurn": w.u8(OP.pageTurn); w.u8(o.dir === "prev" ? 0 : 1); break;
       case "mode": w.u8(OP.mode); w.u8(modeCode(o.mode)); break;
       case "pen": w.u8(OP.pen); w.u16(o.index || 0); break;
+      case "penset": {
+        // 平板改笔宽后上行（C→S）：payload 布局与 `pens` 完全相同。
+        w.u8(OP.penset); w.u16(o.active || 0);
+        var PS = o.list || []; w.u16(PS.length);
+        for (var pk = 0; pk < PS.length; pk++) w.pen(PS[pk]);
+        break;
+      }
+      case "eraser":
+        w.u8(OP.eraser); w.f32(o.size || 0);
+        w.u8(o.mode == null ? 1 : o.mode);              // 0=整笔 1=局部（默认局部）
+        w.u8(o.ring == null ? 1 : (o.ring ? 1 : 0));    // 尺寸圆环（默认开）
+        break;
       case "textNote":
         w.u8(OP.textNote); w.str(o.id || ""); w.u8(o.op === "delete" ? 1 : 0);
         w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0); w.str(o.text || ""); break;
@@ -218,6 +230,12 @@
       case OP.pageTurn: return { type: "pageTurn", dir: r.u8() === 0 ? "prev" : "next" };
       case OP.mode: return { type: "mode", mode: MODEK[r.u8()] || "note" };
       case OP.pen: return { type: "pen", index: r.u16() };
+      case OP.penset: {
+        var psa = r.u16(), psn = r.u16(), pslist = new Array(psn);
+        for (var psi = 0; psi < psn; psi++) pslist[psi] = r.pen();
+        return { type: "penset", list: pslist, active: psa };
+      }
+      case OP.eraser: return { type: "eraser", size: r.f32(), mode: r.u8(), ring: r.u8() };
       case OP.textNote: return { type: "textNote", id: r.str(), op: r.u8() === 1 ? "delete" : "upsert",
                                  page: r.u32(), nx: r.f32(), ny: r.f32(), text: r.str() };
       case OP.notes: {

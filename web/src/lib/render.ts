@@ -2,7 +2,7 @@
 // 逐行移植自原 capture.html IIFE 的对应段落（原文件已被本工程取代）。
 // 注意：原版有一个定义了却从未调用的 drawHover()（本地悬停圆环），移植时按死代码丢弃——
 // 悬停光标由 Mac 端画，平板只上报位置（见 input.ts reportHover）。
-import { G, BAR, GAP, RD, PR, BRUSH_LABELS, clamp, pw, contentLeft, strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
+import { G, BAR, GAP, RD, PR, BRUSH_LABELS, clamp, pw, contentLeft, curMode, strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
 import type { CaptureRefs, RadialItem, RadialState, Stroke, WireMsg } from "./shared.js";
 import { updateHud } from "./hud.svelte.js";
 
@@ -147,22 +147,51 @@ export function initRender(refs: CaptureRefs): void {
     if (G.cur) drawStroke(lctx, G.cur);
   }
 
+  /// 擦除分派（与 Mac 端 `eraseNear` 两模式一一对应，命中判定都在页内归一化坐标做、同页过滤、
+  /// loc 为空不擦——两端乐观/真源语义保持一致）：
+  /// - 整笔（G.eraserMode === 0）：任一点命中即删整条（对应 Mac 的 removeAll 分支）；
+  /// - 局部（=== 1）：与 Mac 端 `InkEdit.splitStroke` 是**同一算法两份实现**，改一边必须同步另一边。
+  /// 半径 G.eraserSize 是页宽比，x 向折算 = eraserSize × 当前页显示宽 CSS px。
   function eraseHit(x: number, y: number): void {
-    const r = 18;
-    let changed = false;
-    for (let i = G.strokes.length - 1; i >= 0; i--) {
-      const pts = G.strokes[i].pts;
-      for (let j = 0; j < pts.length; j++) {
-        const pv = pageToView(G.strokes[i].page, pts[j][0], pts[j][1]);
-        if ((pv.x - x) * (pv.x - x) + (pv.y - y) * (pv.y - y) <= r * r) { G.strokes.splice(i, 1); changed = true; break; }
+    const loc = locate(x, y);
+    if (!loc) return;
+    const r2 = G.eraserSize * G.eraserSize;
+    if (G.eraserMode === 0) {   // 整笔
+      let changed = false;
+      for (let i = G.strokes.length - 1; i >= 0; i--) {
+        const s = G.strokes[i];
+        if (s.page !== loc.page) continue;
+        for (let j = 0; j < s.pts.length; j++) {
+          const dx = s.pts[j][0] - loc.nx, dy = s.pts[j][1] - loc.ny;
+          if (dx * dx + dy * dy <= r2) { G.strokes.splice(i, 1); changed = true; break; }
+        }
       }
+      if (changed) drawInk();
+      return;
     }
-    if (changed) drawInk();
+    // 局部：剔除命中点，连续未命中段各成新笔迹（空 = 整笔消除）
+    let changed = false;
+    const out: Stroke[] = [];
+    for (let i = 0; i < G.strokes.length; i++) {
+      const s = G.strokes[i];
+      if (s.page !== loc.page) { out.push(s); continue; }
+      let anyHit = false;
+      let seg: [number, number, number][] = [];
+      const flush = function (): void { if (seg.length) { out.push({ page: s.page, pen: s.pen, pts: seg }); seg = []; } };
+      for (let j = 0; j < s.pts.length; j++) {
+        const pt = s.pts[j], dx = pt[0] - loc.nx, dy = pt[1] - loc.ny;
+        if (dx * dx + dy * dy <= r2) { anyHit = true; flush(); }
+        else seg.push(pt);
+      }
+      if (anyHit) { flush(); changed = true; }   // 命中过：原笔迹被切段结果替换（可能为空 = 整笔消除）
+      else out.push(s);                          // 零命中：原样保留（对应 Swift 的 anyHit ? out : [s]）
+    }
+    if (changed) { G.strokes = out; drawInk(); }
   }
 
-  // ---- 悬停 + 文字笔记标记（共用 hover canvas 层）----
-  // 本地悬停圆环已在移植时按死代码丢弃（光标本体由 Mac 画），hover 层现在实际承载的是笔记标记；
-  // clearHover 仍由悬停收尾链路调用，故改为重画笔记标记而不是整层清空（否则悬停结束会抹掉标记）。
+  // ---- 悬停 + 文字笔记标记 + 橡皮尺寸圆环（共用 hover canvas 层）----
+  // 本地悬停圆环已在移植时按死代码丢弃（光标本体由 Mac 画），hover 层现在承载笔记标记 + 橡皮尺寸圆环；
+  // clearHover 仍由悬停收尾链路调用，故改为重画整层而不是直接清空（否则悬停结束会抹掉标记）。
   function clearHover(): void { drawNotes(); }
 
   /// 文字笔记标记：圆形底片 + 首字符（形制呼应环形盘图标），位置 pageToView 映射，半径随页宽夹取。
@@ -188,6 +217,14 @@ export function initRender(refs: CaptureRefs): void {
       hctx.fillText((n.text || "T").charAt(0), v.x, v.y);
     }
     hctx.restore();
+    // 橡皮尺寸圆环（擦除模式 + 开关开 + 有笔尖位置）：直径 = 2×G.eraserSize×当前页显示宽。
+    // 双描边（外暗内亮）保证在白页/夜间反转页上都可读；位置由 input.ts 在 hover/擦除拖动时维护。
+    if (G.eraserRing && G.eraserRingAt && curMode() === "erase") {
+      const rr = G.eraserSize * pw();
+      hctx.beginPath(); hctx.arc(G.eraserRingAt.x, G.eraserRingAt.y, rr, 0, Math.PI * 2);
+      hctx.strokeStyle = "rgba(0,0,0,0.5)"; hctx.lineWidth = 3; hctx.stroke();
+      hctx.strokeStyle = "rgba(255,255,255,0.9)"; hctx.lineWidth = 1.5; hctx.stroke();
+    }
   }
 
   // ---- 环形选笔盘（Surface Dial 形制）----

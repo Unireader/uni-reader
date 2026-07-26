@@ -5,6 +5,43 @@
 
 ## 已修 / 完成（2026-07-26）
 
+- **橡皮增强：整笔/局部双模式 + 尺寸圆环（2026-07-26 用户反馈，承接下方四项批）**：
+  `eraser`（0x46）payload 扩为 `f32 size · u8 mode · u8 ring`（本会话新增消息、无存量客户端，直接改格式；
+  mode 0=整笔/1=局部、ring 控制尺寸圆环，两端同步）。Mac `eraseNear` 按模式分派（整笔=旧 removeAll 语义、
+  局部=splitStroke）；网页 `eraseHit` 同款分派。尺寸圆环三处：网页擦除模式笔尖（hover/落笔/拖动，
+  直径=2×eraserSize×页显示宽，双描边深浅页可读）、Mac 本机橡皮跟光标（`localEraserOverlay`，纯 SwiftUI）、
+  平板上行 hover 在 Mac 的光标 erase 模式改按橡皮直径画（ring 关时回退 10pt 位置环）。设置入口：
+  Mac 笔架橡皮 popover（segmented + Toggle）、网页 PenStat 弹层（分段按钮 + checkbox，随 eraser 消息防抖上行）。
+  验证：wire-codec-test 48/48 + wire-cross-test 86/86；ink-edit-test 33/33；build-web + tsc + xcodebuild 过。
+
+- **feat 批：笔&笔架&笔迹四项（尺子模式 / 橡皮局部擦除+尺寸同步 / Mac 本机落墨 / 框选移动）**：
+  ① **尺子模式画笔**：采集页 TopBar 加尺子开关（`G.rulerOn`，纯本地），note 模式 pointermove 以首点
+  为锚做 45° 倍数吸附（阈值 7°，`shared.ts rulerSnap` / Mac 侧 `InkEdit.rulerSnap` 同算法两份实现），
+  `G.cur.pts` 替换为两点直线后照常上行——**协议零改动**（吸附在上行点生成处做，Mac 收到即普通直线点列）；
+  ② **橡皮局部擦除 + 尺寸可调 + 网页端调笔宽**：擦除从整笔删改为 `InkEdit.splitStroke` 点级切段
+  （剔除命中点、连续段各成新笔画**新 UUID**——对账自动「旧 id 删 + 新 id 增」，持久化零改动；零命中原样
+  返回）；网页端 `eraseHit` 换等价 JS 切段（同步纪律注释在 `InkEdit.swift` 头部），并补同页过滤（旧版
+  跨页/页缝都擦，与 Mac 对不上）。协议新 opcode 追加 canonical 表末尾：`penset`（0x25，C→S，整包笔列表，
+  Mac `applyPenSet` 写回 `app.pens` 全端对齐）与 `eraser`（0x46，双向，f32 归一化半径默认 0.02；
+  `app.eraserRadius` UserDefaults 持久化 + didSet 广播）。UI：Mac 笔架橡皮按钮在 erase 模式下再点弹
+  尺寸 slider；网页端 `PenStat` 重写为可点弹层（每支笔宽 slider 2...40 + 橡皮直径 1...12%，300ms 防抖
+  上行）。顺手修 fountain 公式漂移（`shared.ts` 1.15→1.3 对齐 `PenPreset.swift`）；
+  ③ **Mac 本机鼠标/触控板落墨（临时笔迹模式）**：`AppModel.pointerTool`（.textSelect/.ink/.lasso，
+  设备级全局、与 padMode 同生命周期），笔架加「本机笔」toggle；`localInkDragGesture`
+  （`ReaderSurface+Selection`）仅 .ink 生效、dragSelect 反向门控，`containerPointToPageNorm` 换算 +
+  压感 0.5 + 共用当前选中笔；`padMode==erase` 走 inkErase；落墨 API 加 session 参数（默认 padSession，
+  本机传窗口自己的 session——对账落库 + 镜像平板零额外工作）；⇧ 拖动 = 尺子直线
+  （`InkEdit.rulerSnap` + `NSEvent.modifierFlags`）；落墨不跨页；
+  ④ **笔记框选移动（仅页内）**：pointerTool 加 .lasso + 笔架按钮；新扩展 `ReaderSurface+Lasso.swift`
+  （框选虚线矩形/命中/移动/Esc 监视器）。命中 = 同页 strokes 任一点入框 + textNotes anchor 相交；
+  移动拖动只动 ghost offset（选中高亮框即 ghost，存 ReaderSurface @State），松手一次性
+  `InkEdit.translated` 平移（strokes 点集 / 注解 anchor+rects，clamp 页内）+ 条件广播；
+  **`persistInk` 从 id 集合对账升级为值快照对账**（`persistedStrokes: [UUID: InkStroke]`，
+  同 id 内容变更 → upsert，仿 persistTextNotes）。
+  验证：`wire-codec-test.swift` 48/48 + `wire-cross-test.js` 86/86；`ink-edit-test.swift` 33/33（新建，
+  覆盖 split/rulerSnap/translated）；`build-web.sh` + `tsc --noEmit` 过；xcodebuild BUILD SUCCEEDED。
+  真机手测（尺子吸附手感 / 局部擦除两端一致 / 本机落墨 / 框选拖动）留给用户。
+
 - **feat 批：⌘F 复核 / ServerPanel 地址复制 / 同路径 hash 校验 / 快捷键体系 / 平板文字笔记**：
   ① **⌘F 查找**：GUI 实测已可用（字段展开聚焦、输入即搜、461 命中）——2026-07-25 改 `.searchable` 时
   链路（菜单 ⌘F → `.readerFind` → key 窗口 `searchIsActive=true`）已接通，TODO「必须补」条目过时，仅归档；

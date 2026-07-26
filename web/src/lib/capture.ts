@@ -30,6 +30,10 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     strokes: [], cur: null, radialActive: false, drawPage: 0,
     // 文字笔记：Mac 下发全量镜像；noteMode = 文字笔记模式开关
     notes: [], noteMode: false,
+    // 尺子模式：独立本地开关（note 模式下 45° 吸附直线）
+    rulerOn: false,
+    // 橡皮：归一化半径（页宽比）/ 模式（1=局部）/ 尺寸圆环开关与位置（Mac 的 eraser 消息下发后更新）
+    eraserSize: 0.02, eraserMode: 1, eraserRing: true, eraserRingAt: null,
     // 指针/批点
     activeId: null, penMode: "", penX: 0, penY: 0, batch: [],
     pbatch: [], probePage: 0, probing: false,           // 探针流（擦除/翻页模式专用）：平行上报笔位置给 Mac 做长按检测/环形盘
@@ -64,7 +68,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     G.scrollY = clamp(G.offY[i], 0, G.maxScrollY);
     G.ensureImages(); G.drawAll(); updatePageLabel(); G.emitScroll();
   }
-  function cycleMode(): void { G.modeIdx = (G.modeIdx + 1) % MODES.length; G.activeId = null; G.penMode = ""; G.endHover(); updateHud(); G.send({ type: "mode", mode: curMode() }); }
+  function cycleMode(): void { G.modeIdx = (G.modeIdx + 1) % MODES.length; G.activeId = null; G.penMode = ""; G.eraserRingAt = null; G.drawNotes(); G.endHover(); updateHud(); G.send({ type: "mode", mode: curMode() }); }
   function cyclePen(): void {
     G.penIdx = (G.penIdx + 1) % G.PENS.length; G.modeIdx = 0; updateHud();
     G.send({ type: "pen", index: G.penIdx }); G.send({ type: "mode", mode: curMode() });
@@ -88,6 +92,8 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
       if (!G.noteMode) S.noteEditor = null;   // 关掉模式时顺手收起开着的编辑器
       updateHud();
     },
+    // 尺子模式：独立本地开关，只影响 note 模式 pointermove 的采点（45° 吸附直线）。
+    toggleRuler() { G.rulerOn = !G.rulerOn; S.rulerOn = G.rulerOn; },
     toggleLock() { G.zoomLocked = !G.zoomLocked; S.zoomLocked = G.zoomLocked; },
     toggleFull() {
       if (!document.fullscreenElement) {

@@ -66,6 +66,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x22` | mode | 双向 | 可靠 |
 | `0x23` | pen | 双向 | 可靠 |
 | `0x24` | textNote | C→S | 可靠 |
+| `0x25` | penset | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -82,6 +83,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x43` | erase | C→S | **RT** |
 | `0x44` | probe | C→S | **RT** |
 | `0x45` | padGeom | C→S | 可靠 |
+| `0x46` | eraser | 双向 | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -102,6 +104,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `pageTurn` | `u8 dir` | `{type:"pageTurn", dir}`（"prev"/"next"）|
 | `mode` | `u8 mode` | `{type:"mode", mode}`（"note"/"erase"/"page"）|
 | `pen` | `u16 index` | `{type:"pen", index}` |
+| `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|
+| `eraser` | `f32 size` · `u8 mode` · `u8 ring` | `{type:"eraser", size, mode, ring}` |
 | `textNote` | `str id` · `u8 op` · `u32 page` · `f32 nx` · `f32 ny` · `str text` | `{type:"textNote", id, op, page, nx, ny, text}` |
 | `padGeom` | `f32 pageW` | `{type:"padGeom", pageW}` |
 
@@ -113,6 +117,15 @@ Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anc
 `padGeom`：平板上报**自己**当前的内容页宽（CSS px，= 页在平板屏幕上的显示宽度）。Mac 端环形选笔盘的
 「中心取消区半径」「长按位移阈值」都是**平板屏幕上的物理尺度**，必须用平板页宽把归一化位移换算成
 平板 px——用 Mac 阅读区页宽换算会让选择手感随任一端缩放而漂移。平板在布局/缩放变化时发（值变才发）。
+
+`penset`（平板改笔宽后上行，C→S）：payload 布局与 `pens` 完全相同（`active` = 平板当前笔下标）。
+线上不带 id/name，Mac **按下标对齐**写回 `app.pens` 的 color/width/type；数目不符说明两端列表版本错位，
+整包丢弃。写回触发 `pens` 的 didSet 自动落盘并 `broadcastPens` 全端对齐（平板会收到自己改动经 Mac 确认后的回声）。
+
+`eraser`（橡皮设置，双向）：`size` = **归一化半径**（页宽比，默认 0.02；直径 = 2×size，与 `eraseNear`/
+`InkEdit.splitStroke` 的命中半径同义）；`mode` u8 `0=整笔 1=局部`（默认 1：整笔=任一点命中即删整条，
+局部=剔除命中点、剩余连续段各成新笔画）；`ring` u8 `0=关 1=开`（默认 1：笔尖/光标处的橡皮尺寸圆环）。
+C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补发）时下发同步。
 
 ### 4.2 Mac→平板 状态下发（可靠）
 
@@ -151,6 +164,7 @@ Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anc
 - `notes` → `{type:"notes", list:[{id, page, nx, ny, text},…]}`（文字笔记**全量镜像**，类比 strokes：
   Mac 是唯一真源，平板不落库；对选区锚定的注解用 anchor 原点作 nx/ny。文档切换/增删后重发）
 - `nack` → `{type:"nack", seqs:[…]}`
+- `eraser` → `{type:"eraser", size, mode, ring}`（双向消息，布局见 §4.1；S→C 方向用于 Mac 侧变更/新客户端补发）
 
 ### 4.3 平板→Mac 实时流（RT，UDP 阶段可迁 UDP）
 
