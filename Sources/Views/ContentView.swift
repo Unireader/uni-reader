@@ -434,6 +434,8 @@ struct ContentView: View {
         session.contentHash = target.hash
         session.reloadOCRState()                   // 换文档重置 OCR；该内容已有缓存则自动启用
         loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
+        session.noteTypes = workspace.noteTypes()   // 工作区笔记类型（通用内置兜底，不在列）
+        session.noteTypeFilter = .all               // 筛选仅内存，开文档复位
         loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
         loadHighlights(documentId: id)             // 恢复该文档已落库的高亮
         // 恢复阅读进度：缩放倍率 + 定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。

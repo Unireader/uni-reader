@@ -105,6 +105,12 @@ final class DocSession: ObservableObject, Identifiable {
     /// 已落库的文字注解快照（id → 值），用于增量对账（检测新增/内容变更/删除），非 @Published。
     var persistedTextNotes: [UUID: TextNote] = [:]
 
+    // 笔记类型（工作区级，meta JSON 持久化）。阅读区（图钉/编辑器）与 Inspector（标识/筛选）共读；
+    // 由 ReaderSurface.saveNoteTypes 增删改并整体落库；「通用」为内置兜底，不在此数组。
+    @Published var noteTypes: [NoteType] = []
+    /// Inspector 笔记列表筛选：.all 全部 / .only(nil) 通用 / .only(id) 指定类型。仅内存，重启复位。
+    @Published var noteTypeFilter: NoteTypeFilter = .all
+
     // 文字高亮（note kind=3）。同上套路：阅读区铺色 + Inspector 列表，ContentView `.onChange` 增量对账。
     @Published var highlights: [Highlight] = []
     /// 已落库的高亮快照（id → 值），增量对账用，非 @Published。
