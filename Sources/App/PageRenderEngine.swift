@@ -44,6 +44,13 @@ final class PageRenderEngine {
                scale, night ? 1 : 0)
     }
 
+    /// 异色同参键（`#n0`↔`#n1` 尾缀互换；base/tile 键都以它结尾）。
+    /// 夜间反色是纯像素操作且自逆（CIColorInvert+CIHueAdjust 做两次即还原），
+    /// 异色图在缓存时可直接反转得到本图，免去 PDF 重渲——夜间切换提速的关键快路。
+    static func flippedNightKey(_ key: String) -> String {
+        key.dropLast() + (key.hasSuffix("0") ? "1" : "0")
+    }
+
     func cached(_ key: String) -> CGImage? { cache.object(forKey: key) }
 
     /// 声明某窗口当前需要的键集合（该窗口旧集合作废；出队时任何窗口都不要的请求直接丢弃）。
@@ -77,17 +84,25 @@ final class PageRenderEngine {
                 DispatchQueue.main.async { completion(r.key, hit) }
                 return
             }
-            var img: CGImage?
-            if let rect = r.tileRect {
-                img = PageBitmap.renderTile(page: r.page, subRect: rect, scale: r.tileScale)
-            } else if let pw = r.pixelWidth {
-                img = PageBitmap.render(page: r.page, pixelWidth: pw)
-            }
-            guard var out = img else { return }
-            if r.night {
+            var out: CGImage?
+            // 夜间快路：异色同参图已在缓存 → 直接反转（纯像素、自逆），跳过 PDF 重渲——
+            // 夜间切换从「整窗 + 预热页全部重渲 PDF」变「整窗反转缓存图」，毫秒级。
+            if let src = cached(Self.flippedNightKey(r.key)) {
                 if ci == nil { ci = CIContext() }
-                if let inv = PageBitmap.invert(out, ci: ci!) { out = inv }
+                out = PageBitmap.invert(src, ci: ci!)
             }
+            if out == nil {
+                if let rect = r.tileRect {
+                    out = PageBitmap.renderTile(page: r.page, subRect: rect, scale: r.tileScale)
+                } else if let pw = r.pixelWidth {
+                    out = PageBitmap.render(page: r.page, pixelWidth: pw)
+                }
+                if r.night, let raw = out {
+                    if ci == nil { ci = CIContext() }
+                    if let inv = PageBitmap.invert(raw, ci: ci!) { out = inv }
+                }
+            }
+            guard let out else { return }
             cache.setObject(out, forKey: r.key, cost: out.bytesPerRow * out.height)
             let final = out
             DispatchQueue.main.async { completion(r.key, final) }
