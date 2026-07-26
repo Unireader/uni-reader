@@ -183,7 +183,8 @@ struct PenRackView: View {
             Image(systemName: "chevron.left")
                 .imageScale(.medium)
                 .foregroundStyle(.primary.opacity(0.7))
-                .frame(width: 22, height: 26)
+                .frame(width: 26, height: 28)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(L("Collapse"))
@@ -213,6 +214,8 @@ struct PenRackView: View {
             Image(systemName: "plus.circle.fill")
                 .imageScale(.large)
                 .foregroundStyle(.primary)
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(L("Add Pen"))
@@ -224,7 +227,8 @@ struct PenRackView: View {
             Image(systemName: icon)
                 .imageScale(.medium)
                 .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
-                .frame(width: 26, height: 26)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(label)

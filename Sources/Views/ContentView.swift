@@ -263,11 +263,13 @@ struct ContentView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize()
                 Button { session.prevMatch() } label: {
-                    Image(systemName: "chevron.up").frame(width: 22, height: 22)
+                    Image(systemName: "chevron.up").frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .disabled(session.searchMatches.isEmpty)
                 Button { session.nextMatch() } label: {
-                    Image(systemName: "chevron.down").frame(width: 22, height: 22)
+                    Image(systemName: "chevron.down").frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .disabled(session.searchMatches.isEmpty)
             }
