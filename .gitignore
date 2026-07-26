@@ -21,3 +21,5 @@ web/node_modules/
 web/dist/
 # capture.html 是 web/ 的构建产物（scripts/build-web.sh 生成，package.sh 打包前自动重建）
 Sources/Resources/capture.html
+
+reference
