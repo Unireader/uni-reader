@@ -77,7 +77,8 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize,
                 let lw = type.strokeWidth(pressure: st.points[i].z, base: w)
                 let (nx, ny) = InkRender.perp(pts, i)
                 let rnd = InkRender.jitter(st.points[i].x, st.points[i].y + pass.phase)
-                let wob = (sin(Double(i) * 0.7 + pass.phase) * pass.amp + rnd * pass.amp * 0.7) * lw * Double(inkScale)
+                let wobW = min(lw, PenBrushType.pencilWobbleRefWidth)
+                let wob = (sin(Double(i) * 0.7 + pass.phase) * pass.amp + rnd * pass.amp * 0.7) * wobW * Double(inkScale)
                 let cur = CGPoint(x: pts[i].x + nx * CGFloat(wob), y: pts[i].y + ny * CGFloat(wob))
                 if let p0 = prev {
                     var seg = Path(); seg.move(to: p0); seg.addLine(to: cur)

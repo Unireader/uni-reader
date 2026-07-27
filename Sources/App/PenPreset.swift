@@ -57,6 +57,11 @@ enum PenBrushType: String, Codable, CaseIterable {
     static let pencilPasses: [(amp: Double, alpha: Double, wScale: Double, phase: Double)] = [
         (0.0, 0.34, 0.55, 0.0), (0.34, 0.16, 0.45, 2.3), (0.34, 0.16, 0.45, 4.6)
     ]
+
+    /// 波幅公式里线宽项的上限：波幅按 `amp * lw` 算，`lw` 不封顶的话调粗画笔（比如 22）时波幅跟着
+    /// 线性变大，摆动幅度超过纸纹颗粒感该有的范围，显成锯齿状尖刺而不是石墨纹理。用默认「黑」预设
+    /// （width 10，满压 lw≈9）验证过观感的粗细做参考上限——线宽超过它，波幅不再继续放大。
+    static let pencilWobbleRefWidth: Double = 9.0
 }
 
 /// 笔触差异化的**共享数学**——Mac 阅读区（SwiftUI GraphicsContext）与 capture.html（Canvas 2D）各写一份画法，
