@@ -69,16 +69,27 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize,
         // `strokedPath` 是 Core Graphics 自己的 stroke→fill 几何，圆头/圆角天然正确，不必自己算法向量、
         // 急转弯处也不会像手搓垂线偏移那样豁口/出刺——攒进同一条 Path，这一道结束时只 fill() 一次，
         // 共享端点的重叠只是同一次填充里的自重叠，不再重复合成。
+        //
+        // 波动相位按「累计弧长」推进，不按点序号：运笔几乎都是收笔前减速，同一采样率下减速处点更密，
+        // 若按点序号走，稠密处波形在屏幕上就被压缩成快速抖动的锯齿（越到笔画尾部越密集越尖），
+        // 参考图里五条粗细不同的笔画无一例外尾部全炸开就是这个根因。按弧长走，波动频率只取决于
+        // 画了多远的物理距离，与运笔快慢/采样疏密无关，笔画全程波形疏密一致。
         for pass in PenBrushType.pencilPasses {
             let col = color(st.color.a * pass.alpha)
             var combined = Path()
             var prev: CGPoint?
+            var dist: Double = 0
             for i in 0..<pts.count {
+                if i > 0 {
+                    let dx = Double(pts[i].x - pts[i - 1].x), dy = Double(pts[i].y - pts[i - 1].y)
+                    dist += (dx * dx + dy * dy).squareRoot()
+                }
                 let lw = type.strokeWidth(pressure: st.points[i].z, base: w)
                 let (nx, ny) = InkRender.perp(pts, i)
                 let rnd = InkRender.jitter(st.points[i].x, st.points[i].y + pass.phase)
                 let wobW = min(lw, PenBrushType.pencilWobbleRefWidth)
-                let wob = (sin(Double(i) * 0.7 + pass.phase) * pass.amp + rnd * pass.amp * 0.7) * wobW * Double(inkScale)
+                let wob = (sin(dist * PenBrushType.pencilWobbleFreq + pass.phase) * pass.amp
+                           + rnd * pass.amp * 0.7) * wobW * Double(inkScale)
                 let cur = CGPoint(x: pts[i].x + nx * CGFloat(wob), y: pts[i].y + ny * CGFloat(wob))
                 if let p0 = prev {
                     var seg = Path(); seg.move(to: p0); seg.addLine(to: cur)

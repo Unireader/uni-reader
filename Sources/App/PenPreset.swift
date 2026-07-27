@@ -62,6 +62,10 @@ enum PenBrushType: String, Codable, CaseIterable {
     /// 线性变大，摆动幅度超过纸纹颗粒感该有的范围，显成锯齿状尖刺而不是石墨纹理。用默认「黑」预设
     /// （width 10，满压 lw≈9）验证过观感的粗细做参考上限——线宽超过它，波幅不再继续放大。
     static let pencilWobbleRefWidth: Double = 9.0
+
+    /// 波动相位推进速率（弧度/像素，按笔画累计弧长走，不按采样点序号）：数值越大波形在屏幕上
+    /// 看起来越密。经验取值——目测调，觉得纹理太碎/太稀可以直接改这一个数。
+    static let pencilWobbleFreq: Double = 0.025
 }
 
 /// 笔触差异化的**共享数学**——Mac 阅读区（SwiftUI GraphicsContext）与 capture.html（Canvas 2D）各写一份画法，
