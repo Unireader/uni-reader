@@ -66,6 +66,9 @@ const canonical = [
                             { color: "rgba(255,214,40,0.25)", w: 22, t: "marker" }], active: 1 },
   { type: "eraser", size: 0.02, mode: 1, ring: 1 },
   { type: "eraser", size: 0.5, mode: 0, ring: 0 },
+  // ink begin 的尾部 flags：bit0=line（直线/尺子笔）。上面 #23 那条是 line 缺省(=0) 的同款。
+  { type: "ink", phase: "begin", page: 0, pen: { color: "rgba(24,90,210,0.5)", w: 8, t: "ballpoint" },
+    pts: [[0.5, 0.5, 0.5]], line: true },
 ];
 
 let pass = 0, fail = 0;

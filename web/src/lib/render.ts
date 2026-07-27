@@ -119,6 +119,7 @@ export function initRender(refs: CaptureRefs): void {
         cx.quadraticCurveTo(lp.x, lp.y, (lp.x + q.x) / 2, (lp.y + q.y) / 2);
         lp = q;
       }
+      cx.lineTo(lp.x, lp.y);   // 补末段（同下方 default 分支：中点平滑链止于倒数两点的中点，末点从没连上）
       cx.stroke();
       cx.restore();
       return;
@@ -134,6 +135,11 @@ export function initRender(refs: CaptureRefs): void {
       cx.beginPath(); cx.moveTo(lastMid.x, lastMid.y); cx.quadraticCurveTo(lp.x, lp.y, mx, my); cx.stroke();
       lastMid = { x: mx, y: my }; lp = pv;
     }
+    // 补末段：上面每步只画到「相邻两点的中点」，末点从来没被连上——长笔画差这半段看不出来，
+    // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。补一段 lastMid → 末点才落到笔尖。
+    const last = pts[pts.length - 1];
+    cx.strokeStyle = color; cx.lineWidth = strokeWidthFor(t, last[2], s.pen.w);
+    cx.beginPath(); cx.moveTo(lastMid.x, lastMid.y); cx.lineTo(lp.x, lp.y); cx.stroke();
   }
   /// 静态层：已成形的笔迹（Mac 回传的唯一真源）。
   function drawInk(): void {

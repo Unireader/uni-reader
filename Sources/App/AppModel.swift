@@ -77,6 +77,8 @@ final class AppModel: ObservableObject {
     private var inkMovedFar = false
     private var inRadial = false
     private let longPressSeconds = 1.0
+    /// 平板这一笔是不是直线（尺子）笔：ink begin 的 flags bit0 带来，决定后续 move 是替换终点还是追加点。
+    private var padInkLine = false
     /// 平板上报的内容页宽（CSS px）。长按/选盘的距离阈值都是**平板屏幕上的**物理尺度，必须用它换算——
     /// 用 Mac 阅读区页宽（`pageViewWidth`）换算的话，手感会随任意一端的缩放漂移。0 = 平板没上报（旧端）。
     private var padPageWidth: Double = 0
@@ -204,11 +206,15 @@ final class AppModel: ObservableObject {
                 let w = (pen?["w"] as? NSNumber)?.doubleValue ?? 8
                 let type = PenBrushType(rawValue: pen?["t"] as? String ?? "") ?? .ballpoint
                 let pts = points(obj["pts"])
+                // 直线（尺子）笔：整笔只有「起点 + 当前终点」两点，move 来的点是**替换终点**而不是追加
+                // （吸附在平板侧做完，Mac 收到的已是吸附后的终点）。见 PROTOCOL.md §4.3 ink begin flags。
+                padInkLine = (obj["line"] as? Bool) ?? false
                 inkBegin(page: page, color: color, width: w, type: type, points: pts)
                 beginLongPressWatch(page: page, first: pts.first)
             } else if phase == "move" {
                 let pts = points(obj["pts"])
                 if inRadial { updateRadial(pts.last) }
+                else if padInkLine { inkLineTo(pts.last); checkLongPressMovement(pts.last) }
                 else { inkAppend(pts); checkLongPressMovement(pts.last) }
             } else if phase == "end" {
                 endInkOrRadial()
@@ -495,6 +501,15 @@ final class AppModel: ObservableObject {
         st.points.append(contentsOf: pts); s.liveStroke = st
         // 书写中笔尖圆环跟随（落笔后 hover 消息停发，不更新会残留死圆圈在落笔点）
         if let last = pts.last { s.hover = HoverPoint(page: st.page, nx: last.x, ny: last.y) }
+    }
+    /// 直线（尺子）笔的落点：整笔恒为「起点 → 当前终点」两点，新点**替换**终点而不是追加
+    /// （平板已按 45° 吸附算好终点；一批里只有最后一个点是当前终点，中间的是过程点，丢弃）。
+    /// 与 `localInkDragGesture` 的 ⇧ 尺子分支同语义。
+    func inkLineTo(_ p: SIMD3<Double>?, in session: DocSession? = nil) {
+        guard let p, let s = session ?? padSession, var st = s.liveStroke,
+              let a = st.points.first else { return }
+        st.points = [a, p]; s.liveStroke = st
+        s.hover = HoverPoint(page: st.page, nx: p.x, ny: p.y)
     }
     func inkEnd(in session: DocSession? = nil) {
         guard let s = session ?? padSession, let st = s.liveStroke else { return }

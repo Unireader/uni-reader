@@ -116,9 +116,13 @@ export function initInput(refs: CaptureRefs): void {
       G.drawPage = loc.page; G.radialActive = false;
       // 本地即时回显笔迹（反馈）；长按检测/环形盘/选中在 Mac，触发时 Mac 回发 inkCancel 让本地撤掉这半笔。
       const pen = curPen();
+      // 尺子开关按**落笔那一刻**锁进这一笔（中途改开关不影响正在写的这笔），并随 begin 上报 Mac：
+      // Mac 据此把后续 move 当「替换终点」而不是追加点，两端才都是同一条两点直线。
+      G.lineStroke = G.rulerOn;
       G.cur = { page: loc.page, pen: { color: pen.color, w: pen.w, t: pen.t }, pts: [[loc.nx, loc.ny, e.pressure]] };
       G.drawLive();
-      G.send({ type: "ink", phase: "begin", page: loc.page, pen: G.cur.pen, pts: [[loc.nx, loc.ny, e.pressure]] });
+      G.send({ type: "ink", phase: "begin", page: loc.page, pen: G.cur.pen,
+               pts: [[loc.nx, loc.ny, e.pressure]], line: G.lineStroke });
     } else if (m === "erase") {
       G.eraseHit(e.clientX, e.clientY); G.batch.push([loc.nx, loc.ny, loc.page]);
       if (G.eraserRing) { G.eraserRingAt = { x: e.clientX, y: e.clientY }; G.drawNotes(); }
@@ -192,13 +196,15 @@ export function initInput(refs: CaptureRefs): void {
         const nx = loc ? loc.nx : clamp((ev.clientX - contentLeft()) / pw(), 0, 1);
         const ny = loc && loc.page === G.drawPage ? loc.ny
                : clamp((ev.clientY - BAR + G.scrollY - G.offY[G.drawPage]) / Math.max(1, G.dispH[G.drawPage]), 0, 1);
-        if (G.rulerOn && !G.radialActive && G.cur && G.cur.pts.length) {
-          // 尺子模式：以首点为锚 45° 吸附，本地笔迹替换为 [首点, 吸附终点]（压感取当前点），
-          // 上行点同样发吸附终点——吸附在上行点生成处做，Mac 收到的就是普通直线点列。
+        if (G.lineStroke && !G.radialActive && G.cur && G.cur.pts.length) {
+          // 尺子模式：以首点为锚做 45°（**视觉**角度，故传页纵横比）吸附，本地笔迹替换为
+          // [首点, 吸附终点]（压感取当前点）。上行也只发这个终点——批里**只留最新一个**，
+          // 否则 Mac 收到的是一串移动中的终点、追加成一条歪笔迹（begin 的 line 标记让 Mac 改为替换终点）。
           const a = G.cur.pts[0];
-          const sn = rulerSnap(a[0], a[1], nx, ny);
+          const asp = G.dispH[G.drawPage] / Math.max(1, pw());
+          const sn = rulerSnap(a[0], a[1], nx, ny, asp);
           G.cur.pts = [a, [sn[0], sn[1], ev.pressure]];
-          G.batch.push([sn[0], sn[1], ev.pressure]);
+          G.batch = [[sn[0], sn[1], ev.pressure]];
           grew = true;
         } else {
           // 环形盘激活后本地不再画（笔移是在选笔），但位置照发让 Mac 驱动高亮

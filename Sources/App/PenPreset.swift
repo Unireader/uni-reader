@@ -43,8 +43,10 @@ enum PenBrushType: String, Codable, CaseIterable {
     var opacityMultiplier: Double { 1 }
 
     /// 钢笔起收笔锥度（0~1 乘线宽）：`i/n` 为点在笔画中的归一化位置，两端渐细、中段为 1；非钢笔恒 1。
+    /// `n <= 2` 不锥（两点笔画 = 尺子直线或擦除切出的碎段，按 index 算的话整条都落在"两端"、
+    /// 会整体细成 0.18 倍，与平板端「不做锥度」的画法差一大截）。
     func fountainTaper(index i: Int, count n: Int) -> Double {
-        guard self == .fountain, n > 1 else { return 1 }
+        guard self == .fountain, n > 2 else { return 1 }
         let t = Double(i) / Double(n - 1), edge = 0.16
         let a = min(t, 1 - t) / edge
         return a >= 1 ? 1 : (a * a * (3 - 2 * a)) * 0.82 + 0.18

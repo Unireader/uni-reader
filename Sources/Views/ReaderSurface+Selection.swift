@@ -22,6 +22,13 @@ extension ReaderSurface {
         return (page, nx, ny)
     }
 
+    /// 该页的显示纵横比（页高 / 页宽）。页内归一化坐标 x/y 尺度不同，凡是要「按看上去的角度/距离」
+    /// 算的地方（⇧ 尺子吸附）都得先用它把 y 折算成与 x 同尺度。取不到布局时退回 1（正方形）。
+    func pageAspect(page: Int) -> Double {
+        guard let layout, layout.heights.indices.contains(page), pageW > 0 else { return 1 }
+        return Double(layout.heights[page] * max(0.0001, dispScale) / pageW)
+    }
+
     /// 归一化点 → 该页 PDF 页空间点（喂 `selection(from:at:to:at:)`）。
     func pageSpacePoint(_ n: (page: Int, nx: CGFloat, ny: CGFloat)) -> CGPoint? {
         guard let pdf = session.pdf, let pdfPage = pdf.page(at: n.page) else { return nil }
@@ -355,9 +362,11 @@ extension ReaderSurface {
                 }
                 guard n.page == start.page else { return }   // 落墨不跨页：拖出页边即停笔
                 if NSEvent.modifierFlags.contains(.shift) {
-                    // ⇧ 尺子：整笔替换为两点直线（松开 Shift 后继续追加 = 从直线端点接着画）
+                    // ⇧ 尺子：整笔替换为两点直线（松开 Shift 后继续追加 = 从直线端点接着画）。
+                    // aspect 传本页显示纵横比，吸附的才是**看上去**的 0/45/90°（见 InkEdit.rulerSnap）。
                     let snapped = InkEdit.rulerSnap(start: SIMD2(start.nx, start.ny),
-                                                    current: SIMD2(pt.x, pt.y))
+                                                    current: SIMD2(pt.x, pt.y),
+                                                    aspect: pageAspect(page: start.page))
                     if var st = session.liveStroke {
                         st.points = [SIMD3(start.nx, start.ny, 0.5), SIMD3(snapped.x, snapped.y, 0.5)]
                         session.liveStroke = st

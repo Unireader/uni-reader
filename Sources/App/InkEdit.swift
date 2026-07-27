@@ -10,8 +10,13 @@ enum InkEdit {
 
     /// 尺子吸附：start→current 的角度距最近的 45° 倍数 ≤ thresholdDeg 时贴合到该倍数
     /// （保持 start→current 的长度不变），否则原样返回 current。起点即终点时返回 current。
-    static func rulerSnap(start: SIMD2<Double>, current: SIMD2<Double>, thresholdDeg: Double = 7) -> SIMD2<Double> {
-        let d = current - start
+    /// `aspect` = 页高/页宽（显示比例）：坐标是页内归一化的，x/y 尺度不同，直接在归一化空间量角度的话
+    /// 「45°」在屏幕上是 atan(aspect)（A4 上约 54.7°）——先把 y 折算成与 x 同尺度再量角、贴合完再折回去，
+    /// 吸附的才是**看上去**的 0/45/90°，长度也是看上去的长度。aspect=1 即退化回纯归一化空间。
+    static func rulerSnap(start: SIMD2<Double>, current: SIMD2<Double>,
+                          aspect: Double = 1, thresholdDeg: Double = 7) -> SIMD2<Double> {
+        let a = aspect > 0 ? aspect : 1
+        let d = SIMD2(current.x - start.x, (current.y - start.y) * a)
         let len = (d.x * d.x + d.y * d.y).squareRoot()
         guard len > 0 else { return current }
         let step = Double.pi / 4   // 45°
@@ -19,7 +24,7 @@ enum InkEdit {
         let snapped = (ang / step).rounded() * step
         // ang ∈ [-π, π]，snapped 是最近的 45° 倍数，差值天然 ≤ 22.5°，无需折返处理
         guard abs(ang - snapped) <= thresholdDeg * .pi / 180 else { return current }
-        return SIMD2(start.x + len * cos(snapped), start.y + len * sin(snapped))
+        return SIMD2(start.x + len * cos(snapped), start.y + len * sin(snapped) / a)
     }
 
     /// 局部擦除切段：剔除距任一擦除点 ≤ r 的点，连续未命中段各成一条新笔画

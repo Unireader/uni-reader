@@ -58,6 +58,7 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize,
             let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
             path.addQuadCurve(to: mid, control: lastPt); lastPt = pts[i]
         }
+        path.addLine(to: lastPt)   // 补末段（同下方 default 分支：中点平滑链止于倒数两点的中点，末点从没连上）
         var m = ctx; m.blendMode = .multiply
         m.stroke(path, with: .color(color(st.color.a)),
                  style: StrokeStyle(lineWidth: CGFloat(w) * inkScale, lineCap: .square, lineJoin: .round))
@@ -94,5 +95,12 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize,
                        style: StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round))
             lastMid = mid; lastPt = pts[i]
         }
+        // 补末段：上面每步只画到「相邻两点的中点」，末点从来没被连上——长笔画差这半段看不出来，
+        // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。补一段 lastMid → 末点才落到笔尖。
+        let tailW = type.strokeWidth(pressure: st.points[n - 1].z, base: w)
+        let lw = CGFloat(tailW * type.fountainTaper(index: n - 1, count: n)) * inkScale
+        var tail = Path(); tail.move(to: lastMid); tail.addLine(to: lastPt)
+        ctx.stroke(tail, with: .color(color(st.color.a)),
+                   style: StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round))
     }
 }

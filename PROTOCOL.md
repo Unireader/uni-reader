@@ -175,7 +175,7 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 | `scroll` | — | `u32 page` · `f32 frac` · `f64 t` |
 | `hover` | move(1) | `u8 phase` · `u32 page` · `f32 nx` · `f32 ny` |
 | `hover` | end(2) | `u8 phase` |
-| `ink` | begin(0) | `u8 phase` · `u32 page` · `pen` · `u16 m` · `m × pt3` |
+| `ink` | begin(0) | `u8 phase` · `u32 page` · `pen` · `u16 m` · `m × pt3` · `u8 flags` |
 | `ink` | move(1) | `u8 phase` · `u16 m` · `m × pt3` |
 | `ink` | end(2) | `u8 phase` |
 | `erase` | move(1) | `u8 phase` · `u32 page` · `u16 m` · `m × pt2` |
@@ -187,11 +187,19 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 对象形状：
 - `scroll` → `{type:"scroll", page, frac, t}`
 - `hover` move → `{type:"hover", page, nx, ny}`；end → `{type:"hover", phase:"end"}`
-- `ink` begin → `{type:"ink", phase:"begin", page, pen:{color,w,t}, pts}`；move → `{…, phase:"move", pts}`；end → `{…, phase:"end"}`
+- `ink` begin → `{type:"ink", phase:"begin", page, pen:{color,w,t}, pts, line}`；move → `{…, phase:"move", pts}`；end → `{…, phase:"end"}`
 - `erase` move → `{type:"erase", phase:"move", page, pts}`；end → `{…, phase:"end"}`
 - `probe` 同 erase 结构（外加 begin）
 
 > 注：`erase`/`probe` 的 `pts` 元素只有 `[nx,ny]` 两个数；Mac 端 `points()` 对缺压感的点补默认 0.5，不影响擦除/探针（都不吃压感）。
+
+`ink begin` 的 `flags`（**尾部可选字节**：读完 `pts` 就够解出完整语义，老客户端不发 → 视为 0，故加它不算破坏兼容）：
+
+| bit | 名字 | 含义 |
+|---|---|---|
+| 0 | `line` | 这一笔是**直线（尺子）笔**：整笔恒为「起点 + 当前终点」两点 |
+
+`line=1` 时后续 `ink move` 的点是**替换终点**而不是追加：Mac 取该批的**最后一个点**（前面的是拖动过程中的中间终点，丢弃），把活体笔迹重置为 `[起点, 该点]`，抬笔提交的就是一条两点直线。45° 吸附本身在**客户端**算完再上行（客户端要即时回显，Mac 复算只会两端算出两条线），Mac 只负责认「两点」这个语义。`line=0` 或缺 flags = 老行为（move 追加点）。
 
 ## 5. 兼容与版本
 

@@ -44,6 +44,32 @@ check(ptNear(custom, origin.x + len45 * cos(.pi / 4), origin.y + len45 * sin(.pi
 // 起点即终点：不崩，原样返回
 check(ptNear(InkEdit.rulerSnap(start: origin, current: origin), origin.x, origin.y), "起点即终点 → 原样返回（不崩）")
 
+// ---- rulerSnap · aspect（页高/页宽）：吸附的是**看上去**的角度 ----
+// A4 竖版：aspect = √2。页内归一化的「视觉 45°」= (d, d/aspect)，此时应恰好吸附且原样不动。
+let asp = 2.0.squareRoot()
+let d45 = 0.3
+let vis45 = SIMD2(origin.x + d45, origin.y + d45 / asp)
+check(ptNear(InkEdit.rulerSnap(start: origin, current: vis45, aspect: asp), vis45.x, vis45.y, 1e-12),
+      "aspect=√2：视觉 45° 恰在线上 → 不动")
+// 视觉 42°（阈值内）→ 贴合视觉 45°，且**视觉长度**保持
+let visLen = 0.3
+func visPt(_ deg: Double, _ len: Double) -> SIMD2<Double> {
+    SIMD2(origin.x + len * cos(deg * .pi / 180), origin.y + len * sin(deg * .pi / 180) / asp)
+}
+let snapped42 = InkEdit.rulerSnap(start: origin, current: visPt(42, visLen), aspect: asp)
+check(ptNear(snapped42, visPt(45, visLen).x, visPt(45, visLen).y, 1e-12),
+      "aspect=√2：视觉 42° → 贴合视觉 45° 且视觉长度保持")
+// 视觉 30°（差 15°，阈值外）→ 原样返回（不吸附也不改长度）
+let out30 = visPt(30, visLen)
+check(ptNear(InkEdit.rulerSnap(start: origin, current: out30, aspect: asp), out30.x, out30.y),
+      "aspect=√2：视觉 30° → 原样返回")
+// 竖直：aspect 不影响 0°/90°（x 或 y 分量为 0），贴合后长度仍是原长
+let vert = InkEdit.rulerSnap(start: origin, current: SIMD2(origin.x + 0.01, origin.y + 0.25), aspect: asp)
+check(ptNear(vert, origin.x, origin.y + 0.25, 1e-3), "aspect=√2：近竖直 → 贴合竖直")
+// aspect ≤ 0（取不到布局的回退）等价 aspect=1
+check(ptNear(InkEdit.rulerSnap(start: origin, current: out20, aspect: 0), out20.x, out20.y),
+      "aspect=0 → 回退成 1（同无 aspect 行为）")
+
 // ---- splitStroke ----
 print("splitStroke（局部擦除切段，擦除点 z 分量 = 页号）")
 // 基准笔画：页 1，x = 0.1...0.9 共 9 点（y=0.5）

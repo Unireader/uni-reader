@@ -188,7 +188,8 @@
         break;
       case "ink":
         w.u8(OP.ink); w.u8(PH[o.phase]);
-        if (o.phase === "begin") { w.u32(o.page || 0); w.pen(o.pen); w.pts(o.pts, 3); }
+        // begin 末尾 flags（bit0=line 直线/尺子笔）：见 PROTOCOL.md §4.3。
+        if (o.phase === "begin") { w.u32(o.page || 0); w.pen(o.pen); w.pts(o.pts, 3); w.u8(o.line ? 1 : 0); }
         else if (o.phase === "move") { w.pts(o.pts, 3); }
         break;
       case "erase":
@@ -290,7 +291,12 @@
       }
       case OP.ink: {
         var iph = r.u8();
-        if (iph === PH.begin) return { type: "ink", phase: "begin", page: r.u32(), pen: r.pen(), pts: r.pts(3) };
+        if (iph === PH.begin) {
+          // flags 是 begin 末尾的**可选**字节（老客户端不发）：缺就是 line=0，读完 pts 即止。
+          var ib = { type: "ink", phase: "begin", page: r.u32(), pen: r.pen(), pts: r.pts(3) };
+          ib.line = ((r.len - r.n >= 1 ? r.u8() : 0) & 1) === 1;
+          return ib;
+        }
         if (iph === PH.move) return { type: "ink", phase: "move", pts: r.pts(3) };
         return { type: "ink", phase: "end" };
       }

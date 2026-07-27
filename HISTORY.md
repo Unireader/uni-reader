@@ -5,6 +5,31 @@
 
 ## 已修 / 完成（2026-07-27）
 
+- **尺子（直线）笔三个独立缺陷**（用户报：①平板显示是直线、Mac 显示成歪笔迹，抬笔落下的也是歪的；
+  ②线段终点跟不上笔尖、比实际短很多）：
+  ① **Mac 收到的是「一串移动中的终点」而不是一条直线**（`web/src/lib/input.ts` ↔
+  `Sources/App/AppModel.swift handleInk`）。平板尺子模式每个 pointermove 把吸附后的终点 **push 进
+  batch** 上行，本地却是整笔替换成 `[首点, 终点]`——协议上 `ink move` 的语义是**追加点**，于是 Mac
+  把拖动过程中的每个终点都串成一条歪线，抬笔提交/回传的自然也是歪的。改法：`ink begin` 尾部加一个
+  **可选 flags 字节**（bit0=`line`，见 `PROTOCOL.md §4.3`；安卓 `WireCodec.kt` 早已按这个形状编码，
+  Swift/JS 这次补齐），落笔那一刻把尺子开关锁进这一笔随 begin 上报；平板 batch 改为**只留最新终点**，
+  Mac 见 `line=1` 走新的 `inkLineTo`（整笔恒为 `[起点, 当前终点]`，取批里最后一个点，替换而非追加）。
+  吸附仍只在平板算一次（Mac 复算只会两端各画一条），Mac 只认「两点」这个语义。
+  ② **两点直线只画一半**（`web/src/lib/render.ts drawStroke` / `Sources/Views/InkLayers.swift
+  inkDrawStroke` / `android PadView.kt drawStroke` 三份同算法实现全中）：中点二次贝塞尔平滑每步只画到
+  「相邻两点的中点」，**末点从来没被连上**——长笔画差这半段看不出来，两点直线就是整整少画一半，
+  表现为「线尾追不上笔尖、比实际短很多」。三端各补一段 `lastMid → 末点`（笔宽取末点压感）。
+  ③ **吸附的 45° 不是看上去的 45°**（`InkEdit.rulerSnap` / `shared.ts rulerSnap` 同算法两份实现）：
+  角度是在**页内归一化**空间量的，而 x/y 尺度不同（A4 上 y 被压 √2），于是屏幕上的 45° 只有 35°、
+  永远不吸附，真吸上的是屏幕 54.7°。两份实现都加 `aspect`（页高/页宽）参数：先把 y 折算成与 x 同尺度
+  再量角、贴合完折回去，长度也按视觉长度保持；`aspect=1` 退化回旧行为。调用点：平板传
+  `dispH[page]/pw()`，Mac ⇧ 尺子传新的 `ReaderSurface.pageAspect(page:)`。
+  ④ 顺带：`PenBrushType.fountainTaper` 对 `n<=2` 不再锥度。锥度按**点下标**算，两点笔画（尺子直线 /
+  擦除切出的碎段）整条都落在「两端」→ Mac 把整条画成 0.18 倍细线，而平板端根本不做锥度，同一条线
+  两端粗细差 5 倍。
+  验证：`spike/ink-edit-test.swift` 38 项（新增 5 项 aspect 用例）、`spike/wire-codec-test.swift` 49 项
+  + 新增 `ink begin line=1` canonical 向量（第 44 条）、`spike/wire-cross-test.js` 88 项 Swift↔JS 字节级
+  比对全过；`tsc --noEmit` + `build-web.sh` + xcodebuild BUILD SUCCEEDED。真机手感待用户验。
 - **连续翻页卡顿（大 PDF 尤甚）根因 = 主线程为平板同步渲整页 PNG**（`Sources/App/AppModel.swift`
   `push()`、`Sources/Server/LANServer.swift`）：`push()` 由 `sessionChanged` 驱动，**每跨一页边界
   在主线程跑一次** `PageRenderer.png(maxWidth: 1600)` = PDFKit 渲染整页 → NSImage → TIFF（~13MB

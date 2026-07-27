@@ -30,8 +30,8 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     strokes: [], cur: null, radialActive: false, drawPage: 0,
     // 文字笔记：Mac 下发全量镜像；noteMode = 文字笔记模式开关
     notes: [], noteMode: false,
-    // 尺子模式：独立本地开关（note 模式下 45° 吸附直线）
-    rulerOn: false,
+    // 尺子模式：独立本地开关（note 模式下 45° 吸附直线）；lineStroke = 当前这一笔锁定的尺子状态
+    rulerOn: false, lineStroke: false,
     // 橡皮：归一化半径（页宽比）/ 模式（1=局部）/ 尺寸圆环开关与位置（Mac 的 eraser 消息下发后更新）
     eraserSize: 0.02, eraserMode: 1, eraserRing: true, eraserRingAt: null,
     // 指针/批点

@@ -228,6 +228,7 @@ enum WireCodec {
                 w.u32(intOf(o["page"]))
                 let (c, ww, t) = penDict(o["pen"]); w.pen(color: c, w: ww, t: t)
                 w.pts(pairsOf(o["pts"]), dim: 3)
+                w.u8(boolOf(o["line"]) ? 1 : 0)   // begin 末尾 flags（bit0=line 直线/尺子笔），见 PROTOCOL.md §4.3
             } else if ph == "move" { w.pts(pairsOf(o["pts"]), dim: 3) }
         case "erase":
             w.u8(Op.erase); let ph = strOf(o["phase"]); w.u8(phaseCode(ph))
@@ -407,7 +408,10 @@ enum WireCodec {
             let ph = r.u8()
             if ph == phaseBegin {
                 let page = r.u32(); let pen = r.pen(); let pts = r.pts(3)
-                out = ["type": "ink", "phase": "begin", "page": NSNumber(value: page), "pen": pen, "pts": pts]
+                // flags 是 begin 末尾的**可选**字节（老客户端不发）：缺就是 line=0，读完 pts 即止。
+                let flags = r.remaining >= 1 ? r.u8() : 0
+                out = ["type": "ink", "phase": "begin", "page": NSNumber(value: page), "pen": pen, "pts": pts,
+                       "line": (flags & 1) == 1]
             } else if ph == phaseMove {
                 out = ["type": "ink", "phase": "move", "pts": r.pts(3)]
             } else { out = ["type": "ink", "phase": "end"] }
