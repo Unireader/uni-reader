@@ -64,43 +64,51 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize,
                  style: StrokeStyle(lineWidth: CGFloat(w) * inkScale, lineCap: .square, lineJoin: .round))
 
     case .pencil:
+        // 逐点变线宽（压感）没法像 marker 一样整条一次 stroke；但逐段分别 stroke() 会让相邻段共享端点的
+        // 圆头各自半透明合成、越叠越黑（黑点瑕疵的根因）。改成拼一条可变宽度缎带、一次 fill() 画完整道。
         for pass in PenBrushType.pencilPasses {
             let col = color(st.color.a * pass.alpha)
-            var prev: CGPoint?
+            var center: [CGPoint] = []; var halfW: [CGFloat] = []
             for i in 0..<pts.count {
                 let lw = type.strokeWidth(pressure: st.points[i].z, base: w)
                 let (nx, ny) = InkRender.perp(pts, i)
                 let rnd = InkRender.jitter(st.points[i].x, st.points[i].y + pass.phase)
                 let wob = (sin(Double(i) * 0.7 + pass.phase) * pass.amp + rnd * pass.amp * 0.7) * lw * Double(inkScale)
-                let cur = CGPoint(x: pts[i].x + nx * CGFloat(wob), y: pts[i].y + ny * CGFloat(wob))
-                if let p0 = prev {
-                    var seg = Path(); seg.move(to: p0); seg.addLine(to: cur)
-                    ctx.stroke(seg, with: .color(col),
-                               style: StrokeStyle(lineWidth: CGFloat(max(0.7, lw * pass.wScale)) * inkScale,
-                                                  lineCap: .round, lineJoin: .round))
-                }
-                prev = cur
+                center.append(CGPoint(x: pts[i].x + nx * CGFloat(wob), y: pts[i].y + ny * CGFloat(wob)))
+                halfW.append(CGFloat(max(0.7, lw * pass.wScale)) * inkScale / 2)
             }
+            ctx.fill(InkRender.ribbon(center, halfWidths: halfW), with: .color(col))
         }
 
     default:   // ballpoint / fountain
+        // 曾经也是逐段（按中点平滑链）单独 stroke()：alpha=1 的默认预设看不出来，但 ColorPicker
+        // 支持调透明度（PenRack.swift），调低了一样会在每个中点出现跟铅笔同款的深色叠色点。
+        // 改法同铅笔：把平滑链采样成一条中心线 + 逐点半宽，拼成缎带一次 fill()。
         let n = pts.count
-        var lastMid = pts[0], lastPt = pts[0]
-        for i in 1..<pts.count {
-            let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
-            let lw = CGFloat(type.strokeWidth(pressure: st.points[i].z, base: w)
-                             * type.fountainTaper(index: i, count: n)) * inkScale
-            var p = Path(); p.move(to: lastMid); p.addQuadCurve(to: mid, control: lastPt)
-            ctx.stroke(p, with: .color(color(st.color.a)),
-                       style: StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round))
-            lastMid = mid; lastPt = pts[i]
+        func lwAt(_ i: Int) -> CGFloat {
+            CGFloat(type.strokeWidth(pressure: st.points[i].z, base: w)
+                    * type.fountainTaper(index: i, count: n)) * inkScale
         }
-        // 补末段：上面每步只画到「相邻两点的中点」，末点从来没被连上——长笔画差这半段看不出来，
-        // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。补一段 lastMid → 末点才落到笔尖。
-        let tailW = type.strokeWidth(pressure: st.points[n - 1].z, base: w)
-        let lw = CGFloat(tailW * type.fountainTaper(index: n - 1, count: n)) * inkScale
-        var tail = Path(); tail.move(to: lastMid); tail.addLine(to: lastPt)
-        ctx.stroke(tail, with: .color(color(st.color.a)),
-                   style: StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round))
+        let curveSteps = 5
+        var center: [CGPoint] = [pts[0]]
+        var halfW: [CGFloat] = [lwAt(0) / 2]
+        var lastMid = pts[0], lastPt = pts[0], lastW = lwAt(0)
+        for i in 1..<n {
+            let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
+            let w1 = lwAt(i)
+            for s in 1...curveSteps {
+                let t = CGFloat(s) / CGFloat(curveSteps), u = 1 - t
+                let a0 = u * u, a1 = 2 * u * t, a2 = t * t
+                let x = a0 * lastMid.x + a1 * lastPt.x + a2 * mid.x
+                let y = a0 * lastMid.y + a1 * lastPt.y + a2 * mid.y
+                center.append(CGPoint(x: x, y: y))
+                halfW.append((lastW * u + w1 * t) / 2)
+            }
+            lastMid = mid; lastPt = pts[i]; lastW = w1
+        }
+        // 补末段：中点平滑链止于倒数两点的中点，末点从没连上——长笔画差这半段看不出来，
+        // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。这里补一个点让缎带延到笔尖。
+        center.append(pts[n - 1]); halfW.append(lwAt(n - 1) / 2)
+        ctx.fill(InkRender.ribbon(center, halfWidths: halfW), with: .color(color(st.color.a)))
     }
 }
