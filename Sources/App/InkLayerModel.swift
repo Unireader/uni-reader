@@ -22,4 +22,13 @@ extension InkLayer {
         guard !palette.isEmpty else { return "gray" }
         return palette[existingCount % palette.count].key
     }
+
+    /// 生成「下一个」新图层（Mac 本机新建 / 平板 `layerAdd` 请求共用）：序号紧接现有最大 sortOrder，
+    /// 颜色轮换取色板，命名走 `L("Layer %d")`。默认可见。
+    static func next(after existing: [InkLayer]) -> InkLayer {
+        let n = existing.count
+        return InkLayer(name: String(format: L("Layer %d"), n + 1),
+                        colorKey: rotatingColorKey(existingCount: n),
+                        sortOrder: (existing.map(\.sortOrder).max() ?? -1) + 1, visible: true)
+    }
 }

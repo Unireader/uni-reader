@@ -1,7 +1,7 @@
 // WebSocket 模块：二进制线格式收发、自动重连（1.5s 起步翻倍封顶 10s）、心跳看门狗、
 // Mac 下行消息分发（布局/视口/文档/笔/模式/环形盘/笔迹）。逐行移植自原 capture.html IIFE。
 import { G, MODES, clamp, pw, curMode } from "./shared.js";
-import type { Pen, WireMsg } from "./shared.js";
+import type { Layer, Pen, WireMsg } from "./shared.js";
 import { S, updateHud, updatePageLabel, recordRtt } from "./hud.svelte.js";
 import { Wire } from "./wire.js";
 
@@ -62,6 +62,15 @@ export function initWs(): void {
     else if (o.type === "pen") {
       const i = o.index || 0;
       if (i >= 0 && i < G.PENS.length) { G.penIdx = i; updateHud(); }
+    }
+    // 多层笔迹图层表整体同步（Mac 执行 layerSelect/layerVisible/layerAdd 或本机 PenRack 编辑后推下来）：
+    // 替换本地 LAYERS + 当前作画图层下标，权威状态永远以这条广播为准。
+    else if (o.type === "layers") {
+      G.LAYERS = ((o.list || []) as Layer[]).map(function (l) {
+        return { r: l.r, g: l.g, b: l.b, visible: !!l.visible, name: l.name };
+      });
+      G.layerIdx = clamp(o.active || 0, 0, Math.max(0, G.LAYERS.length - 1));
+      updateHud();
     }
     // Mac 侧切模式（悬浮工具条/环形盘选笔后回 note）：同步本地模式（顺带撤掉橡皮圆环，避免残留）
     else if (o.type === "mode") {

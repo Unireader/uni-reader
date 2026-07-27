@@ -100,12 +100,10 @@ struct LayerManagerView: View {
         session.inkLayers = layers
     }
 
-    /// 新建图层：不设上限，追加后立即设为当前作画图层。
+    /// 新建图层：不设上限，追加后立即设为当前作画图层（平板 `layerAdd` 请求走 `AppModel` 里同一个
+    /// `InkLayer.next(after:)` 助手，命名/配色规则两处保持一致）。
     private func addLayer() {
-        let n = session.inkLayers.count
-        let layer = InkLayer(name: String(format: L("Layer %d"), n + 1),
-                             colorKey: InkLayer.rotatingColorKey(existingCount: n),
-                             sortOrder: (session.inkLayers.map(\.sortOrder).max() ?? -1) + 1, visible: true)
+        let layer = InkLayer.next(after: session.inkLayers)
         session.inkLayers.append(layer)
         session.activeLayerID = layer.id
     }

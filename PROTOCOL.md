@@ -67,6 +67,9 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x23` | pen | 双向 | 可靠 |
 | `0x24` | textNote | C→S | 可靠 |
 | `0x25` | penset | C→S | 可靠 |
+| `0x26` | layerSelect | C→S | 可靠 |
+| `0x27` | layerVisible | C→S | 可靠 |
+| `0x28` | layerAdd | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -109,6 +112,9 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `eraser` | `f32 size` · `u8 mode` · `u8 ring` | `{type:"eraser", size, mode, ring}` |
 | `textNote` | `str id` · `u8 op` · `u32 page` · `f32 nx` · `f32 ny` · `str text` | `{type:"textNote", id, op, page, nx, ny, text}` |
 | `padGeom` | `f32 pageW` | `{type:"padGeom", pageW}` |
+| `layerSelect` | `u16 index` | `{type:"layerSelect", index}` |
+| `layerVisible` | `u16 index` · `u8 visible` | `{type:"layerVisible", index, visible}` |
+| `layerAdd` | 空 | `{type:"layerAdd"}` |
 
 `textNote`（平板自由文字笔记，C→S）：`op` u8 `0=upsert 1=delete`。`id` 由平板生成（UUID 串），
 Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anchor=落点、无 quote/rects）；
@@ -127,6 +133,14 @@ Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anc
 `InkEdit.splitStroke` 的命中半径同义）；`mode` u8 `0=整笔 1=局部`（默认 1：整笔=任一点命中即删整条，
 局部=剔除命中点、剩余连续段各成新笔画）；`ring` u8 `0=关 1=开`（默认 1：笔尖/光标处的橡皮尺寸圆环）。
 C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补发）时下发同步。
+
+`layerSelect`/`layerVisible`/`layerAdd`（多层笔迹，平板发起，全部 C→S）：图层的增删改全部由 Mac 判定，
+平板只发「请求」，Mac 执行后照旧广播 `layers`（§4.2）把权威状态推下来——与 `pen`（切换）/`penset`
+（改值）之于 `pens` 是同一套「请求 + 权威回推」惯例，只是这里拆成三条各司其职的小消息而非复用
+`penset` 那种整表覆盖（图层要支持**新增**，`penset` 按下标对齐、数目不符即整包丢弃的设计天生做不到这点，
+见 `penset` 说明）。`layerSelect.index`/`layerVisible.index` 都是 `layers` 列表里的下标（不是图层 id，
+两端按下标对齐，同 `pen`/`penset`）；`layerAdd` 空 payload，新图层的名字/颜色/顺序由 Mac 决定
+（`InkLayer.next(after:)`），追加后立即设为当前作画图层。
 
 ### 4.2 Mac→平板 状态下发（可靠）
 
@@ -168,8 +182,8 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 - `layers` → `{type:"layers", active, list:[{r,g,b,visible,name},…]}`（多层笔迹的图层表，类比 `pens`：
   `list` 按图层 `sortOrder` 排、**按下标对齐**，`active` = 当前作画图层在 `list` 里的下标；
   颜色只是图层列表的色点标识（与笔画自身墨色无关），Mac 端由 `colorKey` 解析成 r/g/b 再打包。
-  `strokes` 广播前已按图层可见性过滤，故平板看到的笔迹天然只含当前可见图层；这条消息目前仅用于
-  协议完整性/后续平板端图层 UI 预留，`capture.html` 暂不消费其内容——未识别字段安全忽略，不影响现有行为）
+  `strokes` 广播前已按图层可见性过滤，故平板看到的笔迹天然只含当前可见图层；平板端 `LayerStat` 组件
+  据此渲染图层胶囊/面板，并通过 `layerSelect`/`layerVisible`/`layerAdd`（§4.1）发起切换/显示隐藏/新增请求）
 - `nack` → `{type:"nack", seqs:[…]}`
 - `eraser` → `{type:"eraser", size, mode, ring}`（双向消息，布局见 §4.1；S→C 方向用于 Mac 侧变更/新客户端补发）
 

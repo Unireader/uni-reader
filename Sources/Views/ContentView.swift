@@ -98,6 +98,10 @@ struct ContentView: View {
         .onChange(of: session.inkLayers) { _, _ in
             persistInkLayers()   // 新建/改名/改色/改可见性/重排序时增量落库
             app.broadcastLayers()
+            // 可见性变化（或删除图层连带删笔迹）会改变 broadcastStrokes 的过滤结果，但笔迹本身
+            // （session.strokes）没变、不会触发上面那个 onChange——必须在这里补发一次，否则平板
+            // 画布上已经画出来的笔迹在切可见性后不会跟着增减，只有等下一笔画/擦除才会捎带刷新。
+            app.broadcastStrokes()
         }
         .onChange(of: session.activeLayerID) { _, _ in
             app.broadcastLayers()   // 当前作画图层变化也同步给平板

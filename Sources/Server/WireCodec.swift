@@ -20,6 +20,7 @@ enum WireCodec {
         static let selectDoc: UInt8 = 0x20, pageTurn: UInt8 = 0x21, mode: UInt8 = 0x22, pen: UInt8 = 0x23
         static let textNote: UInt8 = 0x24
         static let penset: UInt8 = 0x25
+        static let layerSelect: UInt8 = 0x26, layerVisible: UInt8 = 0x27, layerAdd: UInt8 = 0x28
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
@@ -227,6 +228,9 @@ enum WireCodec {
             guard boolOf(o["on"]) else { w.u8(0); break }
             w.u8(1); w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"]))
         case "padGeom": w.u8(Op.padGeom); w.f32(num(o["pageW"]))
+        case "layerSelect": w.u8(Op.layerSelect); w.u16(intOf(o["index"]))
+        case "layerVisible": w.u8(Op.layerVisible); w.u16(intOf(o["index"])); w.u8(boolOf(o["visible"]) ? 1 : 0)
+        case "layerAdd": w.u8(Op.layerAdd)
         case "scroll": w.u8(Op.scroll); w.u32(intOf(o["page"])); w.f32(num(o["frac"])); w.f64(num(o["t"]))
         case "hover":
             w.u8(Op.hover)
@@ -413,6 +417,11 @@ enum WireCodec {
             out = ["type": "pressRing", "on": true, "page": NSNumber(value: page),
                    "nx": NSNumber(value: nx), "ny": NSNumber(value: ny)]
         case Op.padGeom: out = ["type": "padGeom", "pageW": NSNumber(value: r.f32())]
+        case Op.layerSelect: out = ["type": "layerSelect", "index": NSNumber(value: r.u16())]
+        case Op.layerVisible:
+            let lvIdx = r.u16(), lvVisible = r.u8() == 1
+            out = ["type": "layerVisible", "index": NSNumber(value: lvIdx), "visible": lvVisible]
+        case Op.layerAdd: out = ["type": "layerAdd"]
         case Op.scroll:
             let page = r.u32(), frac = r.f32(), t = r.f64()
             out = ["type": "scroll", "page": NSNumber(value: page), "frac": NSNumber(value: frac), "t": NSNumber(value: t)]

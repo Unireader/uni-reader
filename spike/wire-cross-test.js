@@ -72,6 +72,10 @@ const canonical = [
   // 多层笔迹（0x3A）：图层表按 sortOrder 排、按下标对齐，active = 当前作画图层下标。
   { type: "layers", active: 1, list: [{ r: 255, g: 149, b: 0, visible: true, name: "老师批注" },
                                        { r: 0, g: 122, b: 255, visible: false, name: "My Notes" }] },
+  // 平板发起的图层请求（0x26/0x27/0x28）：Mac 执行后照旧广播 layers 回权威状态。
+  { type: "layerSelect", index: 1 },
+  { type: "layerVisible", index: 0, visible: false },
+  { type: "layerAdd" },
 ];
 
 let pass = 0, fail = 0;

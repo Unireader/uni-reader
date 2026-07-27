@@ -20,6 +20,8 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     // 配置（Mac 端 CapturePage.swift 注入）
     PORT: config.port, TOKEN: config.token, PENS: config.pens,
     modeIdx: 0, penIdx: 0,
+    // 多层笔迹：空列表兜底（Mac 的 layers 广播到达前，LayerStat 胶囊显示占位文案）。
+    LAYERS: [], layerIdx: 0,
     // 画布/文档几何
     DPR: 1,
     docV: "", pageCount: 0, pagesWH: [],

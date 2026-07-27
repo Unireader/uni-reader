@@ -20,6 +20,13 @@ export interface Stroke {
   pts: [number, number, number][];
 }
 
+/// 一个笔迹图层（Mac 下发的 layers 全量镜像元素；颜色只是列表色点标识，与笔画自身墨色无关）。
+export interface Layer {
+  r: number; g: number; b: number;
+  visible: boolean;
+  name: string;
+}
+
 /// 一条自由文字笔记（Mac 下发的 notes 全量镜像元素；page/nx/ny 页内归一化坐标与笔迹同系）。
 export interface TextNote {
   id: string;
@@ -93,6 +100,9 @@ export interface GState {
   // 配置（Mac 端 CapturePage.swift 注入）
   PORT: number; TOKEN: string; PENS: Pen[];
   modeIdx: number; penIdx: number;
+  // 多层笔迹：LAYERS/layerIdx 由 Mac 的 layers 广播全量镜像（唯一真源，平板不新增/删除本地数据，
+  // 只发 layerSelect/layerVisible/layerAdd 请求，见 ws.ts）。
+  LAYERS: Layer[]; layerIdx: number;
   // 画布/文档几何
   DPR: number;
   docV: string; pageCount: number; pagesWH: [number, number][];
@@ -208,6 +218,7 @@ export function rulerSnap(ax: number, ay: number, x: number, y: number, aspect =
 
 export function curMode(): string { return MODES[G.modeIdx].key; }
 export function curPen(): Pen { return G.PENS[G.penIdx]; }
+export function curLayer(): Layer | undefined { return G.LAYERS[G.layerIdx]; }
 
 export function pw(): number { return G.vw * G.zoom; }                                    // 页(内容)宽
 export function contentLeft(): number { const p = pw(); return p <= G.vw ? (G.vw - p) / 2 : -G.scrollX; }   // 内容左缘视口 x

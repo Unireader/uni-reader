@@ -12,6 +12,7 @@
     auth: 0x01, authOK: 0x02, authFail: 0x03,
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
+    layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
@@ -190,6 +191,9 @@
         break;
       }
       case "padGeom": w.u8(OP.padGeom); w.f32(o.pageW || 0); break;
+      case "layerSelect": w.u8(OP.layerSelect); w.u16(o.index || 0); break;
+      case "layerVisible": w.u8(OP.layerVisible); w.u16(o.index || 0); w.u8(o.visible ? 1 : 0); break;
+      case "layerAdd": w.u8(OP.layerAdd); break;
       case "scroll": w.u8(OP.scroll); w.u32(o.page || 0); w.f32(o.frac || 0); w.f64(o.t || 0); break;
       case "hover":
         w.u8(OP.hover);
@@ -300,6 +304,9 @@
         return { type: "pressRing", on: true, page: r.u32(), nx: r.f32(), ny: r.f32() };
       }
       case OP.padGeom: return { type: "padGeom", pageW: r.f32() };
+      case OP.layerSelect: return { type: "layerSelect", index: r.u16() };
+      case OP.layerVisible: { var lvi = r.u16(), lvv = r.u8() === 1; return { type: "layerVisible", index: lvi, visible: lvv }; }
+      case OP.layerAdd: return { type: "layerAdd" };
       case OP.scroll: return { type: "scroll", page: r.u32(), frac: r.f32(), t: r.f64() };
       case OP.hover: {
         var hph = r.u8();

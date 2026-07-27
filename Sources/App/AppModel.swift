@@ -249,6 +249,20 @@ final class AppModel: ObservableObject {
             if let m = obj["mode"] as? String { padMode = m }
         case "pen":
             if let i = (obj["index"] as? NSNumber)?.intValue { padPenIndex = i }
+        // 多层笔迹：平板只发「请求」，图层的增删改全部由 Mac 判定；应用后 s.inkLayers/activeLayerID
+        // 的 @Published 变化被 ContentView 的 onChange 捕获→落库+broadcastLayers，权威状态自动回推。
+        case "layerSelect":
+            if let i = (obj["index"] as? NSNumber)?.intValue, s.inkLayers.indices.contains(i) {
+                s.activeLayerID = s.inkLayers[i].id
+            }
+        case "layerVisible":
+            if let i = (obj["index"] as? NSNumber)?.intValue, s.inkLayers.indices.contains(i) {
+                s.inkLayers[i].visible = (obj["visible"] as? Bool) ?? false
+            }
+        case "layerAdd":
+            let layer = InkLayer.next(after: s.inkLayers)
+            s.inkLayers.append(layer)
+            s.activeLayerID = layer.id
         case "textNote":
             applyTextNote(obj, to: s)
         default:

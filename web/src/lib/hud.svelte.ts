@@ -1,7 +1,7 @@
 // HUD 响应式状态（Svelte 5 runes）+ 顶栏/状态胶囊/延迟统计的更新函数。
 // 高频命令式逻辑仍走 shared.ts 的 G 袋；只有 HUD 绑定字段进 S（组件据此渲染）。
 import { G, curMode, curPen } from "./shared.js";
-import type { Pen } from "./shared.js";
+import type { Layer, Pen } from "./shared.js";
 
 export interface DocEntry {
   id: string;
@@ -26,6 +26,8 @@ export const S = $state({
   pageLabel: "— / —",
   modeKey: "note",         // 当前模式 key（penStat 显示分支）
   pen: null as Pen | null, // 当前笔 {color,w,t}（penStat 色块/标签）
+  layers: [] as Layer[],   // 图层表（layerStat 列表，Mac layers 广播镜像）
+  layerIdx: 0,             // 当前作画图层在 layers 里的下标
   statsOn: false,          // 延迟统计面板开关
   statsText: "",
   night: false,            // 夜间模式（按钮图标回显）
@@ -48,10 +50,18 @@ export function updatePenStat(): void {
   S.pen = p ? { color: p.color, w: p.w, t: p.t } : null;
 }
 
+// 图层胶囊/面板：G.LAYERS 是非响应式的命令式袋（Mac layers 广播落地处），这里镜像进 $state
+// 让 LayerStat.svelte 能响应式重渲染——同 updatePenStat 的 G→S 拷贝惯例。
+export function updateLayerStat(): void {
+  S.layers = G.LAYERS.slice();
+  S.layerIdx = G.layerIdx;
+}
+
 export function updateHud(): void {
   S.zoomLabel = Math.round(G.zoom * 100) + "%";
   updatePageLabel();
   updatePenStat();
+  updateLayerStat();
 }
 
 // ---- 延迟统计（点击顶栏延迟数字展开面板）----
