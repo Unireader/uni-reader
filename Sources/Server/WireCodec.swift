@@ -28,11 +28,12 @@ enum WireCodec {
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
         static let eraser: UInt8 = 0x46
+        static let lassoMove: UInt8 = 0x47
         static let nack: UInt8 = 0x50
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
-    private static let modes = ["note", "erase", "page"]
+    private static let modes = ["note", "erase", "page", "lasso"]
     /// 环形盘扇区类型：`0=pen 1=erase 2=page`。
     private static let radialKinds = ["pen", "erase", "page"]
     static func radialKindCode(_ k: String) -> UInt8 { UInt8(radialKinds.firstIndex(of: k) ?? 0) }
@@ -228,6 +229,10 @@ enum WireCodec {
             guard boolOf(o["on"]) else { w.u8(0); break }
             w.u8(1); w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"]))
         case "padGeom": w.u8(Op.padGeom); w.f32(num(o["pageW"]))
+        case "lassoMove":
+            w.u8(Op.lassoMove); w.u32(intOf(o["page"]))
+            w.f32(num(o["x0"])); w.f32(num(o["y0"])); w.f32(num(o["x1"])); w.f32(num(o["y1"]))
+            w.f32(num(o["dx"])); w.f32(num(o["dy"]))
         case "layerSelect": w.u8(Op.layerSelect); w.u16(intOf(o["index"]))
         case "layerVisible": w.u8(Op.layerVisible); w.u16(intOf(o["index"])); w.u8(boolOf(o["visible"]) ? 1 : 0)
         case "layerAdd": w.u8(Op.layerAdd)
@@ -417,6 +422,14 @@ enum WireCodec {
             out = ["type": "pressRing", "on": true, "page": NSNumber(value: page),
                    "nx": NSNumber(value: nx), "ny": NSNumber(value: ny)]
         case Op.padGeom: out = ["type": "padGeom", "pageW": NSNumber(value: r.f32())]
+        case Op.lassoMove:
+            let lmPage = r.u32()
+            let lmX0 = r.f32(), lmY0 = r.f32(), lmX1 = r.f32(), lmY1 = r.f32()
+            let lmDx = r.f32(), lmDy = r.f32()
+            out = ["type": "lassoMove", "page": NSNumber(value: lmPage),
+                   "x0": NSNumber(value: lmX0), "y0": NSNumber(value: lmY0),
+                   "x1": NSNumber(value: lmX1), "y1": NSNumber(value: lmY1),
+                   "dx": NSNumber(value: lmDx), "dy": NSNumber(value: lmDy)]
         case Op.layerSelect: out = ["type": "layerSelect", "index": NSNumber(value: r.u16())]
         case Op.layerVisible:
             let lvIdx = r.u16(), lvVisible = r.u8() == 1

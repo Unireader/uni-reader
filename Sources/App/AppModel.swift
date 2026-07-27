@@ -265,9 +265,47 @@ final class AppModel: ObservableObject {
             s.activeLayerID = layer.id
         case "textNote":
             applyTextNote(obj, to: s)
+        case "lassoMove":
+            applyLassoMove(obj, to: s)
         default:
             break
         }
+    }
+
+    // MARK: - 平板发起的框选移动（0x47 lassoMove）
+
+    /// 平板本地框选/拖动只是乐观预览（同 `eraseHit` 先例，命中算法客户端复刻一份）；真正的命中判定
+    /// 与数据变更在这里用真源重做一遍——与 Mac 本机 `ReaderSurface+Lasso.finishLassoSelect`/
+    /// `commitLassoMove` 同一套算法（任一点落框命中笔迹、锚点落框命中注解），只是这里没有 ghost
+    /// 阶段：框选矩形与位移一起送达，一次性判定 + 平移 + 持久化 + 镜像回所有客户端。
+    private func applyLassoMove(_ obj: [String: Any], to s: DocSession) {
+        let page = (obj["page"] as? NSNumber)?.intValue ?? s.currentPageIndex
+        let x0 = (obj["x0"] as? NSNumber)?.doubleValue ?? 0
+        let y0 = (obj["y0"] as? NSNumber)?.doubleValue ?? 0
+        let x1 = (obj["x1"] as? NSNumber)?.doubleValue ?? 0
+        let y1 = (obj["y1"] as? NSNumber)?.doubleValue ?? 0
+        let dx = (obj["dx"] as? NSNumber)?.doubleValue ?? 0
+        let dy = (obj["dy"] as? NSNumber)?.doubleValue ?? 0
+        guard dx != 0 || dy != 0 else { return }
+        let rect = CGRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
+        guard rect.width > 0, rect.height > 0 else { return }
+        let vis = s.visibleLayerIDs
+        var changed = false
+        for i in s.strokes.indices where s.strokes[i].page == page && vis.contains(s.strokes[i].layerId) {
+            if s.strokes[i].points.contains(where: { rect.contains(CGPoint(x: $0.x, y: $0.y)) }) {
+                s.strokes[i] = InkEdit.translated(s.strokes[i], dx: dx, dy: dy)
+                changed = true
+            }
+        }
+        for i in s.textNotes.indices where s.textNotes[i].page == page {
+            let n = s.textNotes[i]
+            if rect.intersects(n.anchor) || rect.contains(CGPoint(x: n.anchor.midX, y: n.anchor.midY)) {
+                s.textNotes[i] = InkEdit.translated(n, dx: dx, dy: dy)
+                changed = true
+            }
+        }
+        guard changed else { return }
+        if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
     }
 
     // MARK: - 平板自由文字笔记（kind=0 点注解）

@@ -3,7 +3,7 @@
 // 注意：原版有一个定义了却从未调用的 drawHover()（本地悬停圆环），移植时按死代码丢弃——
 // 悬停光标由 Mac 端画，平板只上报位置（见 input.ts reportHover）。
 import { G, BAR, GAP, RD, PR, BRUSH_LABELS, clamp, pw, contentLeft, curMode, strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
-import type { CaptureRefs, RadialItem, RadialState, Stroke, WireMsg } from "./shared.js";
+import type { CaptureRefs, LassoSelection, RadialItem, RadialState, Stroke, WireMsg } from "./shared.js";
 import { updateHud } from "./hud.svelte.js";
 
 export function initRender(refs: CaptureRefs): void {
@@ -80,6 +80,63 @@ export function initRender(refs: CaptureRefs): void {
   }
   function inContent(x: number, y: number): boolean { return y >= BAR && locate(x, y) !== null; }
 
+  /// 框选移动专用：与 `locate` 不同，**不要求**命中某一页——超出锚定页的上/下边缘时 clamp 到
+  /// 该页边缘（0/1），横向仍按当前内容宽折算。镜像 Mac 端 `finishLassoSelect` 对拖出页外终点的
+  /// 处理（"跨页拖拽的终点 clamp 到该页边缘"），故框选/移动手势允许指针滑出锚定页而不中断。
+  function pageLocClamped(x: number, y: number, page: number): { nx: number; ny: number } {
+    const cl = contentLeft(), p = pw();
+    const nx = clamp((x - cl) / p, 0, 1);
+    const docY = y - BAR + G.scrollY;
+    const ny = docY < G.offY[page] ? 0
+      : docY > G.offY[page] + G.dispH[page] ? 1
+      : clamp((docY - G.offY[page]) / Math.max(1, G.dispH[page]), 0, 1);
+    return { nx, ny };
+  }
+
+  /// 框选命中判定（本地复刻 Mac 端 `finishLassoSelect` 的算法：任一点落框=命中笔迹，
+  /// 锚点落框=命中注解）：只用于渲染高亮预览，真正的判定在 Mac（见 PROTOCOL.md `lassoMove`）。
+  function lassoHitTest(page: number, x0: number, y0: number, x1: number, y1: number): LassoSelection | null {
+    const rx0 = Math.min(x0, x1), rx1 = Math.max(x0, x1);
+    const ry0 = Math.min(y0, y1), ry1 = Math.max(y0, y1);
+    const strokeIdx: number[] = [], noteIdx: number[] = [];
+    let lox = 1, loy = 1, hix = 0, hiy = 0;
+    for (let i = 0; i < G.strokes.length; i++) {
+      const s = G.strokes[i];
+      if (s.page !== page) continue;
+      let hit = false;
+      for (let j = 0; j < s.pts.length; j++) {
+        const p = s.pts[j];
+        if (p[0] >= rx0 && p[0] <= rx1 && p[1] >= ry0 && p[1] <= ry1) { hit = true; break; }
+      }
+      if (!hit) continue;
+      strokeIdx.push(i);
+      for (let j = 0; j < s.pts.length; j++) {
+        const p = s.pts[j];
+        lox = Math.min(lox, p[0]); loy = Math.min(loy, p[1]);
+        hix = Math.max(hix, p[0]); hiy = Math.max(hiy, p[1]);
+      }
+    }
+    for (let i = 0; i < G.notes.length; i++) {
+      const n = G.notes[i];
+      if (n.page !== page) continue;
+      if (n.nx < rx0 || n.nx > rx1 || n.ny < ry0 || n.ny > ry1) continue;
+      noteIdx.push(i);
+      lox = Math.min(lox, n.nx); loy = Math.min(loy, n.ny);
+      hix = Math.max(hix, n.nx); hiy = Math.max(hiy, n.ny);
+    }
+    if (!strokeIdx.length && !noteIdx.length) return null;
+    return { page, box: [rx0, ry0, rx1, ry1], strokeIdx, noteIdx, bounds: [lox, loy, hix - lox, hiy - loy] };
+  }
+
+  /// 清掉框选移动的全部瞬态状态（切走工具/Esc/收到 Mac 权威回传时调用）。
+  function clearLasso(): void {
+    if (G.lassoPendingTimer) { clearTimeout(G.lassoPendingTimer); G.lassoPendingTimer = null; }
+    G.lassoSelection = null; G.lassoDragMode = null; G.lassoMoved = false;
+    G.lassoCurBox = null; G.lassoAnchor = null; G.lassoCommitted = false;
+    G.lassoTranslate = { dx: 0, dy: 0 };
+    drawInk(); drawNotes();
+  }
+
   // ---- 绘制 ----
   function drawAll(): void { drawBg(); drawInk(); drawLive(); drawNotes(); }
   function drawBg(): void {
@@ -142,9 +199,20 @@ export function initRender(refs: CaptureRefs): void {
     cx.beginPath(); cx.moveTo(lastMid.x, lastMid.y); cx.lineTo(lp.x, lp.y); cx.stroke();
   }
   /// 静态层：已成形的笔迹（Mac 回传的唯一真源）。
+  /// 框选移动已提交（`lassoCommitted`）、等 Mac 回传新 strokes 期间：被选中的笔迹按位移量乐观渲染，
+  /// 避免「松手瞬间弹回原位、新 strokes 到达才跳到新位置」的闪烁——数据本身不动，只是画的时候偏一下。
   function drawInk(): void {
     ictx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    for (let i = 0; i < G.strokes.length; i++) drawStroke(ictx, G.strokes[i]);
+    const sel = G.lassoCommitted ? G.lassoSelection : null;
+    for (let i = 0; i < G.strokes.length; i++) {
+      const s = G.strokes[i];
+      if (sel && sel.page === s.page && sel.strokeIdx.indexOf(i) >= 0) {
+        const { dx, dy } = G.lassoTranslate;
+        drawStroke(ictx, { page: s.page, pen: s.pen, pts: s.pts.map((p) => [clamp(p[0] + dx, 0, 1), clamp(p[1] + dy, 0, 1), p[2]]) });
+      } else {
+        drawStroke(ictx, s);
+      }
+    }
   }
   /// 活体层：正在写的这一笔，**每次落点整条重画**（不往已有像素上增量叠加，否则半透明笔会累积出圆斑）。
   /// 与 Mac 端 `InkLiveLayer` 同构；单独一层，故重画一笔不牵动整页笔迹。
@@ -208,9 +276,14 @@ export function initRender(refs: CaptureRefs): void {
     hctx.save();
     hctx.textAlign = "center"; hctx.textBaseline = "middle";
     hctx.font = "600 " + Math.round(r * 0.9) + "px -apple-system,'PingFang SC',system-ui,sans-serif";
+    const lassoNoteSel = G.lassoCommitted ? G.lassoSelection : null;
     for (let i = 0; i < G.notes.length; i++) {
       const n = G.notes[i];
-      const v = pageToView(n.page, n.nx, n.ny);
+      let nnx = n.nx, nny = n.ny;
+      if (lassoNoteSel && lassoNoteSel.page === n.page && lassoNoteSel.noteIdx.indexOf(i) >= 0) {
+        nnx += G.lassoTranslate.dx; nny += G.lassoTranslate.dy;
+      }
+      const v = pageToView(n.page, nnx, nny);
       if (v.y < BAR - r || v.y > window.innerHeight + r || v.x < -r || v.x > window.innerWidth + r) continue;
       hctx.save();
       hctx.shadowColor = "rgba(0,0,0,0.3)"; hctx.shadowBlur = 3; hctx.shadowOffsetY = 1;
@@ -231,6 +304,46 @@ export function initRender(refs: CaptureRefs): void {
       hctx.strokeStyle = "rgba(0,0,0,0.5)"; hctx.lineWidth = 3; hctx.stroke();
       hctx.strokeStyle = "rgba(255,255,255,0.9)"; hctx.lineWidth = 1.5; hctx.stroke();
     }
+    drawLasso();
+  }
+
+  /// 框选移动叠层（同 hover 层，画在最后不受笔记/橡皮圆环遮挡）：
+  /// · 进行中的框选虚线矩形（`lassoDragMode==="select"`）；
+  /// · 选中集高亮框（`lassoSelection`，拖动移动/提交待回传期间随 `lassoTranslate` 一起偏移）。
+  function drawLasso(): void {
+    if (G.lassoDragMode === "select" && G.lassoAnchor && G.lassoCurBox) {
+      const a = G.lassoAnchor, c = G.lassoCurBox;
+      const p0 = pageToView(a.page, Math.min(a.nx, c.nx), Math.min(a.ny, c.ny));
+      const p1 = pageToView(a.page, Math.max(a.nx, c.nx), Math.max(a.ny, c.ny));
+      hctx.save();
+      hctx.setLineDash([5, 4]); hctx.lineWidth = 1;
+      hctx.fillStyle = "rgba(31,111,235,0.06)"; hctx.strokeStyle = "rgba(31,111,235,0.9)";
+      hctx.fillRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+      hctx.strokeRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+      hctx.restore();
+    }
+    if (G.lassoSelection) {
+      const sel = G.lassoSelection;
+      const t = (G.lassoDragMode === "move" || G.lassoCommitted) ? G.lassoTranslate : { dx: 0, dy: 0 };
+      const p0 = pageToView(sel.page, sel.bounds[0] + t.dx, sel.bounds[1] + t.dy);
+      const p1 = pageToView(sel.page, sel.bounds[0] + sel.bounds[2] + t.dx, sel.bounds[1] + sel.bounds[3] + t.dy);
+      const pad = 6;
+      const x = Math.min(p0.x, p1.x) - pad, y = Math.min(p0.y, p1.y) - pad;
+      const w = Math.max(Math.abs(p1.x - p0.x) + pad * 2, 16), h = Math.max(Math.abs(p1.y - p0.y) + pad * 2, 16);
+      hctx.save();
+      hctx.setLineDash([6, 4]); hctx.lineWidth = 1.5;
+      hctx.fillStyle = "rgba(31,111,235,0.08)"; hctx.strokeStyle = "rgba(31,111,235,0.9)";
+      roundRectPath(hctx, x, y, w, h, 4); hctx.fill(); hctx.stroke();
+      hctx.restore();
+    }
+  }
+
+  /// 通用圆角矩形描边路径（`roundRect` 是 radial canvas 专用的模块内闭包版本，这里给 hover 层单独一份）。
+  function roundRectPath(cx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+    cx.beginPath(); cx.moveTo(x + r, y);
+    cx.arcTo(x + w, y, x + w, y + h, r); cx.arcTo(x + w, y + h, x, y + h, r);
+    cx.arcTo(x, y + h, x, y, r); cx.arcTo(x, y, x + w, y, r);
+    cx.closePath();
   }
 
   // ---- 环形选笔盘（Surface Dial 形制）----
@@ -393,5 +506,6 @@ export function initRender(refs: CaptureRefs): void {
     relayout, recompute, locate, pageToView, inContent,
     drawAll, drawBg, drawInk, drawLive, eraseHit, ensureImages,
     clearHover, drawNotes, setRadial, setPressRing,
+    pageLocClamped, lassoHitTest, clearLasso,
   });
 }

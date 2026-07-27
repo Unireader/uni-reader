@@ -37,7 +37,7 @@
 | `pen` | `u8 r`+`u8 g`+`u8 b`+`f32 a`+`f32 w`+`u8 brush` | 12 字节。r/g/b 0~255，a 0~1，w 线宽，brush 见下 |
 
 **brush（笔头类型）u8**：`0=ballpoint 1=fountain 2=marker 3=pencil`，越界回退 0。
-**mode（工具模式）u8**：`0=note 1=erase 2=page`。
+**mode（工具模式）u8**：`0=note 1=erase 2=page 3=lasso`（`lasso`=框选移动，2026-07-27 新增）。
 **phase（阶段）u8**：`0=begin 1=move 2=end`。
 **dir（翻页方向）u8**：`0=prev 1=next`。
 
@@ -88,6 +88,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x44` | probe | C→S | **RT** |
 | `0x45` | padGeom | C→S | 可靠 |
 | `0x46` | eraser | 双向 | 可靠 |
+| `0x47` | lassoMove | C→S | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -115,6 +116,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `layerSelect` | `u16 index` | `{type:"layerSelect", index}` |
 | `layerVisible` | `u16 index` · `u8 visible` | `{type:"layerVisible", index, visible}` |
 | `layerAdd` | 空 | `{type:"layerAdd"}` |
+| `lassoMove` | `u32 page` · `f32 x0` · `f32 y0` · `f32 x1` · `f32 y1` · `f32 dx` · `f32 dy` | `{type:"lassoMove", page, x0, y0, x1, y1, dx, dy}` |
 
 `textNote`（平板自由文字笔记，C→S）：`op` u8 `0=upsert 1=delete`。`id` 由平板生成（UUID 串），
 Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anchor=落点、无 quote/rects）；
@@ -141,6 +143,17 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 见 `penset` 说明）。`layerSelect.index`/`layerVisible.index` 都是 `layers` 列表里的下标（不是图层 id，
 两端按下标对齐，同 `pen`/`penset`）；`layerAdd` 空 payload，新图层的名字/颜色/顺序由 Mac 决定
 （`InkLayer.next(after:)`），追加后立即设为当前作画图层。
+
+`lassoMove`（框选移动提交，平板发起，C→S）：`mode=lasso` 下平板本地用与 Mac 端
+`ReaderSurface+Lasso.finishLassoSelect` 同一套算法（任一点/锚点落框即命中）对本地镜像的
+`strokes`/`notes` 做框选判定与拖动 ghost 预览，这一步**纯本地、不上行**（同 `eraseHit` 先例：
+命中算法客户端复刻一份，只为即时回显）；只有松手提交移动时才发这一条：`x0,y0,x1,y1` = 框选时
+的矩形（页内归一化，`min≤max`），`dx,dy` = 拖动位移（页内归一化，可为负）。Mac 收到后**不信任
+平板的本地判定结果**，而是用同一套命中算法在自己的真源 `session.strokes`/`textNotes` 上按
+`page`+`x0..y1` 重新框选、`InkEdit.translated` 平移命中项、持久化，再 `broadcastStrokes`/
+`broadcastNotes` 把结果镜像回所有客户端——与 `erase`（平板发点、Mac 用真源做 `eraseNear`）是
+同一套「客户端乐观预览 + 服务端复判执行」惯例，规避了 `strokes`/`notes` 线上不带稳定 id、
+平板无法直接引用具体某条笔迹/注解的问题。
 
 ### 4.2 Mac→平板 状态下发（可靠）
 

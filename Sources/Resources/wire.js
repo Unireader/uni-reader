@@ -16,10 +16,11 @@
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
+    lassoMove: 0x47,
     nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
-  var MODEK = ["note", "erase", "page"];
+  var MODEK = ["note", "erase", "page", "lasso"];
   var RKIND = ["pen", "erase", "page"];      // 环形盘扇区类型
   var NO_HL = 0xFFFF;                        // highlight 线上哨兵：无高亮（中心取消区）→ 对象里 -1
   var PH = { begin: 0, move: 1, end: 2 };
@@ -191,6 +192,11 @@
         break;
       }
       case "padGeom": w.u8(OP.padGeom); w.f32(o.pageW || 0); break;
+      case "lassoMove":
+        w.u8(OP.lassoMove); w.u32(o.page || 0);
+        w.f32(o.x0 || 0); w.f32(o.y0 || 0); w.f32(o.x1 || 0); w.f32(o.y1 || 0);
+        w.f32(o.dx || 0); w.f32(o.dy || 0);
+        break;
       case "layerSelect": w.u8(OP.layerSelect); w.u16(o.index || 0); break;
       case "layerVisible": w.u8(OP.layerVisible); w.u16(o.index || 0); w.u8(o.visible ? 1 : 0); break;
       case "layerAdd": w.u8(OP.layerAdd); break;
@@ -304,6 +310,10 @@
         return { type: "pressRing", on: true, page: r.u32(), nx: r.f32(), ny: r.f32() };
       }
       case OP.padGeom: return { type: "padGeom", pageW: r.f32() };
+      case OP.lassoMove: {
+        var lmPage = r.u32(), lmX0 = r.f32(), lmY0 = r.f32(), lmX1 = r.f32(), lmY1 = r.f32(), lmDx = r.f32(), lmDy = r.f32();
+        return { type: "lassoMove", page: lmPage, x0: lmX0, y0: lmY0, x1: lmX1, y1: lmY1, dx: lmDx, dy: lmDy };
+      }
       case OP.layerSelect: return { type: "layerSelect", index: r.u16() };
       case OP.layerVisible: { var lvi = r.u16(), lvv = r.u8() === 1; return { type: "layerVisible", index: lvi, visible: lvv }; }
       case OP.layerAdd: return { type: "layerAdd" };

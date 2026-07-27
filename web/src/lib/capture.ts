@@ -36,6 +36,10 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     rulerOn: false, lineStroke: false,
     // 橡皮：归一化半径（页宽比）/ 模式（1=局部）/ 尺寸圆环开关与位置（Mac 的 eraser 消息下发后更新）
     eraserSize: 0.02, eraserMode: 1, eraserRing: true, eraserRingAt: null,
+    // 框选移动（lasso 模式，全部瞬态，本地判定仅用于预览）
+    lassoSelection: null, lassoDragMode: null, lassoAnchor: null,
+    lassoDownX: 0, lassoDownY: 0, lassoMoved: false, lassoCurBox: null,
+    lassoTranslate: { dx: 0, dy: 0 }, lassoCommitted: false, lassoPendingTimer: null,
     // 指针/批点
     activeId: null, penMode: "", penX: 0, penY: 0, batch: [],
     pbatch: [], probePage: 0, probing: false,           // 探针流（擦除/翻页模式专用）：平行上报笔位置给 Mac 做长按检测/环形盘
@@ -70,10 +74,19 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     G.scrollY = clamp(G.offY[i], 0, G.maxScrollY);
     G.ensureImages(); G.drawAll(); updatePageLabel(); G.emitScroll();
   }
-  function cycleMode(): void { G.modeIdx = (G.modeIdx + 1) % MODES.length; G.activeId = null; G.penMode = ""; G.eraserRingAt = null; G.drawNotes(); G.endHover(); updateHud(); G.send({ type: "mode", mode: curMode() }); }
+  // 切走框选工具即放弃选中（同 Mac 端 `pointerTool != .lasso` 清 lassoSelection 同理，残留高亮框会误导）。
+  function cycleMode(): void {
+    const leavingLasso = curMode() === "lasso";
+    G.modeIdx = (G.modeIdx + 1) % MODES.length;
+    G.activeId = null; G.penMode = ""; G.eraserRingAt = null;
+    if (leavingLasso) G.clearLasso();
+    G.drawNotes(); G.endHover(); updateHud();
+    G.send({ type: "mode", mode: curMode() });
+  }
   function cyclePen(): void {
-    // 非笔模式（橡皮/翻页）按切笔键 = 恢复之前那支笔，不轮替下一支；笔模式下才轮替。
+    // 非笔模式（橡皮/翻页/框选）按切笔键 = 恢复之前那支笔，不轮替下一支；笔模式下才轮替。
     if (G.modeIdx === 0) { G.penIdx = (G.penIdx + 1) % G.PENS.length; }
+    if (curMode() === "lasso") G.clearLasso();
     G.modeIdx = 0; updateHud();
     G.send({ type: "pen", index: G.penIdx }); G.send({ type: "mode", mode: curMode() });
   }

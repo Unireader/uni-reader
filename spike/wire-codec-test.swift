@@ -74,6 +74,9 @@ let canonical: [[String: Any]] = [
     ["type": "layerSelect", "index": 1],
     ["type": "layerVisible", "index": 0, "visible": false],
     ["type": "layerAdd"],
+    // 平板发起的框选移动提交（0x47）：框选矩形（提交时用于 Mac 复判命中）+ 位移，均页内归一化。
+    ["type": "mode", "mode": "lasso"],
+    ["type": "lassoMove", "page": 2, "x0": 0.2, "y0": 0.3, "x1": 0.6, "y1": 0.5, "dx": 0.1, "dy": -0.05],
 ]
 
 var pass = 0, fail = 0

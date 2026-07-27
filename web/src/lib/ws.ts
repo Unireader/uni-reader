@@ -75,7 +75,10 @@ export function initWs(): void {
     // Mac 侧切模式（悬浮工具条/环形盘选笔后回 note）：同步本地模式（顺带撤掉橡皮圆环，避免残留）
     else if (o.type === "mode") {
       for (let mi = 0; mi < MODES.length; mi++) {
-        if (MODES[mi].key === o.mode && mi !== G.modeIdx) { G.modeIdx = mi; G.eraserRingAt = null; G.drawNotes(); updateHud(); break; }
+        if (MODES[mi].key === o.mode && mi !== G.modeIdx) {
+          if (curMode() === "lasso") G.clearLasso();   // 被 Mac 切走框选工具：同本地切模式，放弃选中
+          G.modeIdx = mi; G.eraserRingAt = null; G.drawNotes(); updateHud(); break;
+        }
       }
     }
     // Mac 侧调橡皮设置（或新连接补发）：更新本地命中半径/模式/圆环开关（PenStat 弹层打开时读它们做初值）
@@ -91,10 +94,18 @@ export function initWs(): void {
     // 长按进度环（盘的前置动画）：同样是 Mac 判定，on=false 撤环。
     else if (o.type === "pressRing") { G.setPressRing(o); }
     // Mac 回传的全部笔迹（唯一真源）：平板据此显示 + 刷新/重连/切档后恢复。正在写的这一笔(cur)不清，避免闪断。
-    else if (o.type === "strokes") { G.strokes = o.list || []; if (G.activeId === null) { G.cur = null; G.drawLive(); } G.drawInk(); }
+    // 框选移动已提交、正等这条回来：新数据本身就是移动后的真源，乐观预览（lassoTranslate 偏移渲染）到此为止。
+    else if (o.type === "strokes") {
+      G.strokes = o.list || [];
+      if (G.activeId === null) { G.cur = null; G.drawLive(); }
+      if (G.lassoCommitted) G.clearLasso(); else G.drawInk();
+    }
     // 文字笔记全量镜像（Mac 是唯一真源）：收到即整体替换本地列表并重画标记。
     // layout 切文档后 Mac 会重发 notes，故 setLayout 不像 strokes 那样清空 notes（等重发即可，避免闪空）。
-    else if (o.type === "notes") { G.notes = o.list || []; G.drawNotes(); }
+    else if (o.type === "notes") {
+      G.notes = o.list || [];
+      if (G.lassoCommitted) G.clearLasso(); else G.drawNotes();
+    }
     // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
   }
 

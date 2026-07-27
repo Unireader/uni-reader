@@ -68,6 +68,8 @@
     {/if}
   {:else if S.modeKey === "erase"}
     橡皮擦
+  {:else if S.modeKey === "lasso"}
+    框选移动
   {:else}
     翻页 · 拖动平移
   {/if}

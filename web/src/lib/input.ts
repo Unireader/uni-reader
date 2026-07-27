@@ -128,6 +128,12 @@ export function initInput(refs: CaptureRefs): void {
       if (G.eraserRing) { G.eraserRingAt = { x: e.clientX, y: e.clientY }; G.drawNotes(); }
       G.probing = true; G.probePage = loc.page;
       G.send({ type: "probe", phase: "begin", page: loc.page, pts: [[loc.nx, loc.ny]] });
+    } else if (m === "lasso") {
+      // 落笔点记下来即可：拖动模式（框选/移动）在 pointermove 越过死区那一刻才判定
+      // （镜像 Mac 端 `DragGesture(minimumDistance: 2)` 起点一次性判定，纯点击不触发任何手势）。
+      G.lassoAnchor = { page: loc.page, nx: loc.nx, ny: loc.ny };
+      G.lassoDownX = e.clientX; G.lassoDownY = e.clientY;
+      G.lassoMoved = false; G.lassoDragMode = null;
     }
     e.preventDefault();
   }, { passive: false });
@@ -187,6 +193,7 @@ export function initInput(refs: CaptureRefs): void {
       panBy(dxp, dyp);
       G.penX = e.clientX; G.penY = e.clientY; e.preventDefault(); return;
     }
+    if (G.penMode === "lasso") { handleLassoMove(e); e.preventDefault(); return; }
     let evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     if (!evs.length) evs = [e];
     let grew = false, ringUpd = false;
@@ -246,12 +253,68 @@ export function initInput(refs: CaptureRefs): void {
       beginPinch();
     }
   }
+  // ---- 框选移动（lasso 模式：拖空白=框选 / 拖选中高亮框内=移动，起点一次性判定拖动形态）----
+
+  /// 越过死区（2px，同 Mac `DragGesture(minimumDistance: 2)`）后判一次形态：落笔点落在当前
+  /// 选中高亮框内（含 8px 抓手余量）→ 移动；否则重新框选（并放弃旧选中，同 Mac 逻辑）。
+  function handleLassoMove(e: PointerEvent): void {
+    const a = G.lassoAnchor; if (!a) return;
+    if (!G.lassoMoved) {
+      if (Math.hypot(e.clientX - G.lassoDownX, e.clientY - G.lassoDownY) < 2) return;
+      G.lassoMoved = true;
+      let mode: "select" | "move" = "select";
+      if (G.lassoSelection && G.lassoSelection.page === a.page) {
+        const b = G.lassoSelection.bounds;
+        const p0 = G.pageToView(a.page, b[0], b[1]);
+        const p1 = G.pageToView(a.page, b[0] + b[2], b[1] + b[3]);
+        const m = 8;
+        if (G.lassoDownX >= Math.min(p0.x, p1.x) - m && G.lassoDownX <= Math.max(p0.x, p1.x) + m &&
+            G.lassoDownY >= Math.min(p0.y, p1.y) - m && G.lassoDownY <= Math.max(p0.y, p1.y) + m) mode = "move";
+      }
+      G.lassoDragMode = mode;
+      if (mode === "select") G.lassoSelection = null;
+    }
+    if (G.lassoDragMode === "select") {
+      G.lassoCurBox = G.pageLocClamped(e.clientX, e.clientY, a.page);
+    } else if (G.lassoDragMode === "move") {
+      const cur = G.pageLocClamped(e.clientX, e.clientY, a.page);
+      G.lassoTranslate = { dx: cur.nx - a.nx, dy: cur.ny - a.ny };
+    }
+    G.drawNotes();
+  }
+
+  /// 松手收尾：纯点击（未越过死区）→ 清除选中（同 Mac `.onTapGesture` 无条件清，与是否命中无关）；
+  /// select → 本地判定命中集（渲染高亮，不上行）；move → 提交位移给 Mac（Mac 用真源复判 + 持久化）。
+  function finishLasso(): void {
+    const a = G.lassoAnchor, mode = G.lassoDragMode;
+    if (!G.lassoMoved || !mode) {
+      if (G.lassoSelection) { G.lassoSelection = null; G.drawNotes(); }
+    } else if (mode === "select" && a && G.lassoCurBox) {
+      G.lassoSelection = G.lassoHitTest(a.page, a.nx, a.ny, G.lassoCurBox.nx, G.lassoCurBox.ny);
+      G.drawNotes();
+    } else if (mode === "move" && G.lassoSelection) {
+      const { dx, dy } = G.lassoTranslate;
+      if (dx !== 0 || dy !== 0) {
+        const sel = G.lassoSelection;
+        G.send({ type: "lassoMove", page: sel.page, x0: sel.box[0], y0: sel.box[1], x1: sel.box[2], y1: sel.box[3], dx: dx, dy: dy });
+        G.lassoCommitted = true;
+        if (G.lassoPendingTimer) clearTimeout(G.lassoPendingTimer);
+        // 兜底：Mac 判定为零命中/零变化时不会回传 strokes/notes，靠超时兜底清掉乐观预览，避免永久错位显示。
+        G.lassoPendingTimer = setTimeout(function () { G.lassoPendingTimer = null; if (G.lassoCommitted) G.clearLasso(); }, 1000);
+        G.drawInk(); G.drawNotes();
+      }
+    }
+    G.lassoDragMode = null; G.lassoMoved = false; G.lassoCurBox = null; G.lassoAnchor = null;
+    if (!G.lassoCommitted) G.lassoTranslate = { dx: 0, dy: 0 };
+  }
+
   function endPen(e: PointerEvent): void {
     if (e.pointerId !== G.activeId) return;
     // 不本地落 strokes（Mac 才是真源，稍后回传）；正常这一笔的 cur 先留着（本地即时可见），等 Mac 回传 strokes 再清。
     if (G.penMode === "note") { if (G.radialActive) { G.cur = null; G.drawLive(); } flushBatch("ink"); G.send({ type: "ink", phase: "end" }); }
     else if (G.penMode === "erase") { if (G.radialActive) G.batch = []; else flushBatch("erase"); G.send({ type: "erase", phase: "end" }); }
     else if (G.penMode === "page") { if (!G.radialActive) startMomentum(); }   // 笔翻页拖动松手 → 惯性（环形盘选择不甩动）
+    else if (G.penMode === "lasso") { finishLasso(); }
     if (G.probing) {   // 收尾探针流，Mac 据此提交/取消环形盘
       if (G.pbatch.length) { G.send({ type: "probe", phase: "move", pts: G.pbatch }); G.pbatch = []; }
       G.send({ type: "probe", phase: "end" }); G.probing = false;
@@ -319,6 +382,8 @@ export function initInput(refs: CaptureRefs): void {
     if (e.repeat) return;
     if (e.key === "PageUp") { e.preventDefault(); G.cycleMode(); }
     else if (e.key === "PageDown") { e.preventDefault(); G.cyclePen(); }
+    // 框选移动的 Esc 清选中（同 Mac 端 NSEvent 本地监视器同款行为）。
+    else if (e.key === "Escape" && G.lassoSelection) { G.clearLasso(); }
   });
 
   window.addEventListener("contextmenu", function (e: Event) { e.preventDefault(); });
