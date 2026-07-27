@@ -70,7 +70,9 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
   }
   function cycleMode(): void { G.modeIdx = (G.modeIdx + 1) % MODES.length; G.activeId = null; G.penMode = ""; G.eraserRingAt = null; G.drawNotes(); G.endHover(); updateHud(); G.send({ type: "mode", mode: curMode() }); }
   function cyclePen(): void {
-    G.penIdx = (G.penIdx + 1) % G.PENS.length; G.modeIdx = 0; updateHud();
+    // 非笔模式（橡皮/翻页）按切笔键 = 恢复之前那支笔，不轮替下一支；笔模式下才轮替。
+    if (G.modeIdx === 0) { G.penIdx = (G.penIdx + 1) % G.PENS.length; }
+    G.modeIdx = 0; updateHud();
     G.send({ type: "pen", index: G.penIdx }); G.send({ type: "mode", mode: curMode() });
   }
   Object.assign(actions, {
