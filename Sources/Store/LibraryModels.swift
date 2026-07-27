@@ -53,6 +53,17 @@ struct LibNote: Identifiable, Equatable {
     var updatedAt: Date
 }
 
+/// 一个笔迹图层（`ink_layer` 表，v7）。挂逻辑文档；`colorKey` 复用 `NoteType.palette`。
+struct LibInkLayer: Identifiable, Equatable {
+    var id: String              // UUID
+    var documentId: String
+    var name: String
+    var colorKey: String
+    var sortOrder: Int
+    var visible: Bool
+    var createdAt: Date
+}
+
 /// 一页的 OCR 缓存（`ocr_page` 表，v3）。按内容 hash（= variant 物理内容）+ 页 + 引擎缓存，
 /// 随文件移动/换机复用。`payload` = JSON `OCRPagePayload`（归一化 0~1 文本框，见 `OCR.swift`）。
 struct OCRPage: Equatable {

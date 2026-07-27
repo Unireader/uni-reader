@@ -160,3 +160,15 @@
 "Done" = "完成";
 "Local Pen" = "本机笔";
 "Lasso Select" = "框选移动";
+
+/* Ink Layers */
+"Layers" = "图层";
+"New Layer" = "新建图层";
+"Layer %d" = "图层 %d";
+"Rename Layer" = "重命名图层";
+"Layer Name" = "图层名称";
+"Rename" = "重命名";
+"Show Layer" = "显示图层";
+"Hide Layer" = "隐藏图层";
+"Delete layer “%@”?" = "删除图层“%@”？";
+"%d stroke(s) on this layer will be deleted too." = "该图层内的 %d 条笔迹也会一并删除。";

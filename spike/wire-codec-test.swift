@@ -67,6 +67,9 @@ let canonical: [[String: Any]] = [
     // ink begin 的尾部 flags：bit0=line（直线/尺子笔）。上面 #23 那条是 line 缺省(=0) 的同款。
     ["type": "ink", "phase": "begin", "page": 0, "pen": ["color": "rgba(24,90,210,0.5)", "w": 8, "t": "ballpoint"],
      "pts": [[0.5, 0.5, 0.5]], "line": true],
+    // 多层笔迹（0x3A）：图层表按 sortOrder 排、按下标对齐，active = 当前作画图层下标。
+    ["type": "layers", "active": 1, "list": [["r": 255, "g": 149, "b": 0, "visible": true, "name": "老师批注"],
+                                             ["r": 0, "g": 122, "b": 255, "visible": false, "name": "My Notes"]]],
 ]
 
 var pass = 0, fail = 0

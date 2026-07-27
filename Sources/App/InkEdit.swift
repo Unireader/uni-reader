@@ -47,7 +47,7 @@ enum InkEdit {
         var anyHit = false
         func flush() {
             guard !seg.isEmpty else { return }
-            out.append(InkStroke(page: s.page, color: s.color, width: s.width, type: s.type, points: seg))
+            out.append(InkStroke(page: s.page, color: s.color, width: s.width, type: s.type, points: seg, layerId: s.layerId))
             seg = []
         }
         for p in s.points {

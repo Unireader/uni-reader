@@ -77,6 +77,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x37` | radial | S→C | 可靠 |
 | `0x38` | pressRing | S→C | 可靠 |
 | `0x39` | notes | S→C | 可靠 |
+| `0x3A` | layers | S→C | 可靠 |
 | `0x40` | scroll | C→S | **RT** |
 | `0x41` | hover | C→S | **RT** |
 | `0x42` | ink | C→S | **RT** |
@@ -141,6 +142,7 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 | `radial` | `u8 open` · open=1 时续 `u32 page` · `f32 cx` · `f32 cy` · `u16 highlight` · `u16 n` · `n ×( u8 kind, pen )` |
 | `pressRing` | `u8 on` · on=1 时续 `u32 page` · `f32 nx` · `f32 ny` |
 | `notes` | `u16 n` · `n ×( str id, u32 page, f32 nx, f32 ny, str text )` |
+| `layers` | `u16 active` · `u16 n` · `n ×( u8 r, u8 g, u8 b, u8 visible, str name )` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
 
 `radial`（环形选笔盘）：长按检测、扇区判定、选中提交**全部在 Mac**，这条只是把盘的状态镜像给平板去画
@@ -163,6 +165,11 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 - `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
 - `notes` → `{type:"notes", list:[{id, page, nx, ny, text},…]}`（文字笔记**全量镜像**，类比 strokes：
   Mac 是唯一真源，平板不落库；对选区锚定的注解用 anchor 原点作 nx/ny。文档切换/增删后重发）
+- `layers` → `{type:"layers", active, list:[{r,g,b,visible,name},…]}`（多层笔迹的图层表，类比 `pens`：
+  `list` 按图层 `sortOrder` 排、**按下标对齐**，`active` = 当前作画图层在 `list` 里的下标；
+  颜色只是图层列表的色点标识（与笔画自身墨色无关），Mac 端由 `colorKey` 解析成 r/g/b 再打包。
+  `strokes` 广播前已按图层可见性过滤，故平板看到的笔迹天然只含当前可见图层；这条消息目前仅用于
+  协议完整性/后续平板端图层 UI 预留，`capture.html` 暂不消费其内容——未识别字段安全忽略，不影响现有行为）
 - `nack` → `{type:"nack", seqs:[…]}`
 - `eraser` → `{type:"eraser", size, mode, ring}`（双向消息，布局见 §4.1；S→C 方向用于 Mac 侧变更/新客户端补发）
 

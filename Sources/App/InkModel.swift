@@ -31,6 +31,8 @@ struct InkStroke: Identifiable, Equatable {
     var width: Double
     var type: PenBrushType = .ballpoint
     var points: [SIMD3<Double>]   // x, y, pressure
+    /// 所属图层（`InkLayer.id`）。旧数据/未指定 → `InkLayer.defaultID`。
+    var layerId: UUID = InkLayer.defaultID
 }
 
 // MARK: - 持久化（note 表，kind=2）
@@ -42,20 +44,23 @@ private struct InkStrokePayload: Codable {
     var width: Double
     var type: PenBrushType = .ballpoint
     var points: [[Double]]
+    var layerId: UUID = InkLayer.defaultID
 
-    enum CodingKeys: String, CodingKey { case color, width, type, points }
+    enum CodingKeys: String, CodingKey { case color, width, type, points, layerId }
 
-    init(color: InkColor, width: Double, type: PenBrushType, points: [[Double]]) {
+    init(color: InkColor, width: Double, type: PenBrushType, points: [[Double]], layerId: UUID) {
         self.color = color; self.width = width; self.type = type; self.points = points
+        self.layerId = layerId
     }
 
-    /// 旧笔迹（升级前落库的）payload 里没有 `type` 键，同 `PenPreset` 一样手动兜底成 `.ballpoint`。
+    /// 旧笔迹（升级前落库的）payload 里没有 `type`/`layerId` 键，同 `PenPreset` 一样手动兜底。
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         color = try c.decode(InkColor.self, forKey: .color)
         width = try c.decode(Double.self, forKey: .width)
         type = try c.decodeIfPresent(PenBrushType.self, forKey: .type) ?? .ballpoint
         points = try c.decode([[Double]].self, forKey: .points)
+        layerId = try c.decodeIfPresent(UUID.self, forKey: .layerId) ?? InkLayer.defaultID
     }
 }
 
@@ -78,7 +83,7 @@ extension InkStroke {
     func toNote(documentId: String, now: Date = .now) -> LibNote? {
         guard !points.isEmpty else { return nil }
         let payload = InkStrokePayload(color: color, width: width, type: type,
-                                       points: points.map { [$0.x, $0.y, $0.z] })
+                                       points: points.map { [$0.x, $0.y, $0.z] }, layerId: layerId)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
                        page: page, anchor: normalizedBounds, payload: data,
@@ -97,6 +102,7 @@ extension InkStroke {
             let z: Double = p.count > 2 ? p[2] : 0.5
             return SIMD3<Double>(x, y, z)
         }
-        self.init(id: uuid, page: note.page, color: payload.color, width: payload.width, type: payload.type, points: pts)
+        self.init(id: uuid, page: note.page, color: payload.color, width: payload.width, type: payload.type,
+                  points: pts, layerId: payload.layerId)
     }
 }

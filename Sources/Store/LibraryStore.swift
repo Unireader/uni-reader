@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 6
+    static let schemaVersion = 7
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -58,6 +58,16 @@ final class LibraryStore {
           payload BLOB NOT NULL, lang TEXT, created_at TEXT NOT NULL,
           PRIMARY KEY (content_hash, page, provider)
         );
+        -- v7：多层笔迹的图层注册表（挂逻辑文档，全版本共用，同 note）。笔画本身仍在 note(kind=2)，
+        -- 靠 payload 里的 layer_id 关联到这里的一行；这张表只存图层的名字/颜色/顺序/可见性。
+        CREATE TABLE IF NOT EXISTS ink_layer (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+          name TEXT NOT NULL, color_key TEXT NOT NULL DEFAULT '',
+          sort_order INTEGER NOT NULL DEFAULT 0, visible INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ink_layer_document ON ink_layer(document_id);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -238,6 +248,7 @@ final class LibraryStore {
         try db.transaction {
             try db.run("UPDATE variant SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("UPDATE note SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
+            try db.run("UPDATE ink_layer SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("DELETE FROM document WHERE id=?", [.text(sourceId)])
         }
         return true
@@ -280,6 +291,22 @@ final class LibraryStore {
               .blob(n.payload), .text(ISO.string(n.createdAt)), .text(ISO.string(n.updatedAt))])
     }
     func deleteNote(id: String) throws { try db.run("DELETE FROM note WHERE id=?", [.text(id)]) }
+
+    // MARK: - 笔迹图层（ink_layer，v7）
+
+    func inkLayers(documentId: String) throws -> [LibInkLayer] {
+        try db.query("SELECT * FROM ink_layer WHERE document_id=? ORDER BY sort_order ASC", [.text(documentId)]).map(Self.inkLayer)
+    }
+    func upsertInkLayer(_ l: LibInkLayer) throws {
+        try db.run("""
+        INSERT INTO ink_layer(id,document_id,name,color_key,sort_order,visible,created_at)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name, color_key=excluded.color_key,
+          sort_order=excluded.sort_order, visible=excluded.visible
+        """, [.text(l.id), .text(l.documentId), .text(l.name), .text(l.colorKey),
+              .int(Int64(l.sortOrder)), .int(l.visible ? 1 : 0), .text(ISO.string(l.createdAt))])
+    }
+    func deleteInkLayer(id: String) throws { try db.run("DELETE FROM ink_layer WHERE id=?", [.text(id)]) }
 
     // MARK: - OCR 缓存（ocr_page，v3）
 
@@ -343,6 +370,13 @@ final class LibraryStore {
                 payload: r["payload"] as? Data ?? Data(),
                 createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                 updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
+    private static func inkLayer(_ r: [String: Any]) -> LibInkLayer {
+        LibInkLayer(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String ?? "",
+                    name: r["name"] as? String ?? "", colorKey: r["color_key"] as? String ?? "",
+                    sortOrder: Int(r["sort_order"] as? Int64 ?? 0),
+                    visible: (r["visible"] as? Int64 ?? 1) != 0,
+                    createdAt: ISO.date(r["created_at"] as? String) ?? .now)
     }
     private static func ocr(_ r: [String: Any]) -> OCRPage {
         OCRPage(contentHash: r["content_hash"] as? String ?? "",

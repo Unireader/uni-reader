@@ -13,6 +13,7 @@ import SwiftUI
 /// 可视区外或贴死边缘，手柄够不到就再也拖不回来。
 struct PenRackView: View {
     @EnvironmentObject private var app: AppModel
+    @ObservedObject var session: DocSession   // 图层是"这个窗口当前文档"自己的状态，不是设备级全局
     let viewportSize: CGSize
     let topInset: CGFloat          // 工具栏（玻璃）高度：笔架上沿不许进入该区域
     let isActiveWindow: Bool
@@ -33,6 +34,7 @@ struct PenRackView: View {
     @GestureState private var dragOffset: CGSize = .zero
     @State private var editingIndex: Int?
     @State private var eraserEditorOpen = false
+    @State private var layersOpen = false
     /// 胶囊渲染中的实测尺寸，**只喂位置夹取**（不参与决定胶囊自身尺寸，故不构成环）。
     /// 动画期间它逐帧插值，贴边时位置连续跟随收缩，不会在结尾跳一下。
     @State private var barSize: CGSize = CGSize(width: 420, height: 44)
@@ -53,7 +55,8 @@ struct PenRackView: View {
 
     private let edgeMargin: CGFloat = 6
 
-    init(viewportSize: CGSize, topInset: CGFloat, isActiveWindow: Bool) {
+    init(session: DocSession, viewportSize: CGSize, topInset: CGFloat, isActiveWindow: Bool) {
+        self.session = session
         self.viewportSize = viewportSize
         self.topInset = topInset
         self.isActiveWindow = isActiveWindow
@@ -153,6 +156,7 @@ struct PenRackView: View {
             }
             cell(keep: false) { localInkButton }
             cell(keep: false) { lassoButton }
+            cell(keep: false) { layersButton }
         }
         // 内容永远按自然宽度布局：外面那层 frame 是取景窗，不许反过来把按钮挤扁。
         .fixedSize(horizontal: true, vertical: false)
@@ -395,6 +399,20 @@ struct PenRackView: View {
         }
         .buttonStyle(.plain)
         .help(L("Lasso Select"))
+    }
+
+    /// 图层：弹出图层管理面板（显示/隐藏、改名/改色、拖拽排序、新建/删除，见 `LayerManagerView`）。
+    private var layersButton: some View {
+        Button { layersOpen = true } label: {
+            Image(systemName: "square.3.layers.3d")
+                .imageScale(.medium)
+                .foregroundStyle(.primary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("Layers"))
+        .popover(isPresented: $layersOpen, arrowEdge: .bottom) { LayerManagerView(session: session) }
     }
 
     /// 橡皮：点一下进擦除模式；**已在擦除模式时再点**弹尺寸 slider（同 penEditor 的实时写回模式——

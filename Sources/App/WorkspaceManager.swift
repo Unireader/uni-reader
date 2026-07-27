@@ -323,6 +323,29 @@ final class WorkspaceManager: ObservableObject {
         try? store?.deleteNote(id: id.uuidString)
     }
 
+    // MARK: - 笔迹图层持久化（ink_layer 表，v7；挂逻辑文档，全版本共用）
+
+    /// 读取某文档已落库的全部图层（按 sortOrder），用于重开恢复。
+    func inkLayers(documentId: String) -> [InkLayer] {
+        ((try? store?.inkLayers(documentId: documentId)) ?? []).map {
+            InkLayer(id: UUID(uuidString: $0.id) ?? UUID(), name: $0.name, colorKey: $0.colorKey,
+                     sortOrder: $0.sortOrder, visible: $0.visible)
+        }
+    }
+
+    /// 落库/更新一个图层（新建/改名/改色/改可见性/重排序时调用）。
+    func saveInkLayer(documentId: String, _ layer: InkLayer) {
+        try? store?.upsertInkLayer(LibInkLayer(id: layer.id.uuidString, documentId: documentId,
+                                                name: layer.name, colorKey: layer.colorKey,
+                                                sortOrder: layer.sortOrder, visible: layer.visible,
+                                                createdAt: .now))
+    }
+
+    /// 删除一个图层（连同其笔迹一起清除时，调用方需先自行删掉引用它的 strokes）。
+    func deleteInkLayer(id: UUID) {
+        try? store?.deleteInkLayer(id: id.uuidString)
+    }
+
     // MARK: - 笔记类型持久化（工作区级，meta key=note_types，JSON 数组；通用不落库）
 
     /// 读取工作区自定义笔记类型（损坏/缺失 → 空数组；「通用」内置兜底不在其中）。

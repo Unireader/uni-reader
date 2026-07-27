@@ -200,7 +200,7 @@ struct ReaderSurface: View {
         // 直径 = 2×eraserRadius×页宽；eraserRing 关则不画。
         .overlay { localEraserOverlay }
         // 笔架悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
-        .overlay { GeometryReader { proxy in PenRackView(viewportSize: proxy.size, topInset: indicatorTopInset, isActiveWindow: isActiveWindow) } }
+        .overlay { GeometryReader { proxy in PenRackView(session: session, viewportSize: proxy.size, topInset: indicatorTopInset, isActiveWindow: isActiveWindow) } }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: app.pointerTool) { _, t in
             if t != .lasso { clearLassoSelection() }   // 切走框选工具即放弃选中（手势已门控，残留高亮框会误导）
@@ -287,7 +287,7 @@ struct ReaderSurface: View {
                      image: images[i],
                      tile: tiles[i],
                      paper: paper,
-                     strokes: session.strokes.filter { $0.page == i },
+                     strokes: session.visibleStrokes(page: i),
                      live: session.liveStroke?.page == i ? session.liveStroke : nil,
                      hover: session.hover?.page == i ? session.hover : nil,
                      inkScale: zoom,

@@ -1,5 +1,5 @@
 // InkEdit 纯函数测试：rulerSnap（45° 吸附）/ splitStroke（局部擦除切段）/ translated（clamp 平移）。运行：
-//   cp spike/ink-edit-test.swift /tmp/main.swift && swiftc Sources/Support/L.swift Sources/Store/LibraryModels.swift Sources/App/PenPreset.swift Sources/App/InkModel.swift Sources/App/TextNoteModel.swift Sources/App/InkEdit.swift /tmp/main.swift -o /tmp/iet && /tmp/iet
+//   cp spike/ink-edit-test.swift /tmp/main.swift && swiftc Sources/Support/L.swift Sources/Store/LibraryModels.swift Sources/App/PenPreset.swift Sources/App/InkModel.swift Sources/App/InkLayerModel.swift Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/InkEdit.swift /tmp/main.swift -o /tmp/iet && /tmp/iet
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift；PenPreset.swift 提供 PenBrushType）
 // 覆盖：split（全擦/擦中段分两段/擦端点截断/单点段/跨页不串/未命中原样）、
 //       rulerSnap（0°/45°/90° 阈值内外、长度保持）、translated（笔迹/文字注解/rect：clamp 0...1、压感与 id 不变）。
@@ -74,7 +74,8 @@ check(ptNear(InkEdit.rulerSnap(start: origin, current: out20, aspect: 0), out20.
 print("splitStroke（局部擦除切段，擦除点 z 分量 = 页号）")
 // 基准笔画：页 1，x = 0.1...0.9 共 9 点（y=0.5）
 let basePts: [SIMD3<Double>] = (1...9).map { SIMD3(Double($0) * 0.1, 0.5, 0.5) }
-let base = InkStroke(page: 1, color: color, width: 8.5, type: .fountain, points: basePts)
+let baseLayerID = UUID()   // 非默认图层 id：验证切段不会把笔画悄悄归还给默认图层
+let base = InkStroke(page: 1, color: color, width: 8.5, type: .fountain, points: basePts, layerId: baseLayerID)
 
 // 1) 全擦：一个半径盖满全笔画的擦除点 → 空
 let allGone = InkEdit.splitStroke(base, erasePts: [SIMD3(0.5, 0.5, 1)], r: 0.5)
@@ -87,7 +88,7 @@ check(mid[0].points.count == 4 && mid[1].points.count == 4, "两段各 4 点")
 check(near(mid[0].points.first!.x, 0.1) && near(mid[0].points.last!.x, 0.4)
       && near(mid[1].points.first!.x, 0.6) && near(mid[1].points.last!.x, 0.9), "两段端点正确（0.1-0.4 / 0.6-0.9）")
 check(mid[0].id != base.id && mid[1].id != base.id && mid[0].id != mid[1].id, "切段全部换新 UUID")
-check(mid.allSatisfy { $0.page == 1 && $0.color == color && $0.width == 8.5 && $0.type == .fountain }, "切段保留 page/color/width/type")
+check(mid.allSatisfy { $0.page == 1 && $0.color == color && $0.width == 8.5 && $0.type == .fountain && $0.layerId == baseLayerID }, "切段保留 page/color/width/type/layerId")
 
 // 3) 擦端点：命中 x=0.1 → 截断为一段（0.2-0.9，8 点）
 let head = InkEdit.splitStroke(base, erasePts: [SIMD3(0.1, 0.5, 1)], r: 0.06)

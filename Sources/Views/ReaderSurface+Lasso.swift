@@ -71,7 +71,8 @@ extension ReaderSurface {
         var strokeIDs = Set<UUID>()
         var noteIDs = Set<UUID>()
         var bbox = CGRect.null
-        for st in session.strokes where st.page == a.page {
+        let vis = session.visibleLayerIDs
+        for st in session.strokes where st.page == a.page && vis.contains(st.layerId) {
             if st.points.contains(where: { r.contains(CGPoint(x: $0.x, y: $0.y)) }) {
                 strokeIDs.insert(st.id)
                 bbox = bbox.union(strokeBounds(st))

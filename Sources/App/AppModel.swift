@@ -110,7 +110,7 @@ final class AppModel: ObservableObject {
         server.$clientCount
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastStrokes(); self?.broadcastNotes()
+                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastStrokes(); self?.broadcastNotes(); self?.broadcastLayers()
                 self?.pushCurrentViewport()   // 必须在 pushLayout 之后：平板端收到 layout 会重置滚动/seq
             }
             .store(in: &cancellables)
@@ -494,7 +494,8 @@ final class AppModel: ObservableObject {
     // 自动落库，若恰是 padSession 则广播自动镜像到平板，零额外工作。
     func inkBegin(in session: DocSession? = nil, page: Int, color: InkColor, width: Double, type: PenBrushType = .ballpoint, points: [SIMD3<Double>]) {
         guard let s = session ?? padSession else { return }
-        s.liveStroke = InkStroke(page: page, color: color, width: width, type: type, points: points)
+        s.liveStroke = InkStroke(page: page, color: color, width: width, type: type, points: points,
+                                 layerId: s.activeLayerID ?? InkLayer.defaultID)
     }
     func inkAppend(_ pts: [SIMD3<Double>], in session: DocSession? = nil) {
         guard let s = session ?? padSession, var st = s.liveStroke else { return }
@@ -528,12 +529,24 @@ final class AppModel: ObservableObject {
     /// 平板本地不落库、只即时回显正在写的这一笔；已成形/已存的笔迹以 Mac 为唯一真源，靠这里回传。
     func broadcastStrokes() {
         guard server.isRunning, let s = padSession else { return }
-        let list: [[String: Any]] = s.strokes.map { st in
+        let vis = s.visibleLayerIDs
+        let list: [[String: Any]] = s.strokes.filter { vis.contains($0.layerId) }.map { st in
             ["page": st.page,
              "pen": ["color": st.color.cssRGBA, "w": st.width, "t": st.type.rawValue],
              "pts": st.points.map { [$0.x, $0.y, $0.z] }]
         }
         server.broadcast(["type": "strokes", "list": list])
+    }
+
+    /// 把平板当前会话的图层表（名字/颜色/可见性）+ 当前作画图层推给平板（同 `broadcastPens` 套路）。
+    func broadcastLayers() {
+        guard server.isRunning, let s = padSession else { return }
+        let active = s.inkLayers.firstIndex(where: { $0.id == s.activeLayerID }) ?? 0
+        let list: [[String: Any]] = s.inkLayers.map { l in
+            let rgb = NoteType.paletteRGB(l.colorKey)
+            return ["r": rgb.r, "g": rgb.g, "b": rgb.b, "visible": l.visible, "name": l.name]
+        }
+        server.broadcast(["type": "layers", "active": active, "list": list])
     }
 
     /// 把平板当前会话的**全部文字笔记**推给平板（平板画圆形标记；Mac 为唯一真源，类比 strokes 镜像）。
@@ -563,9 +576,10 @@ final class AppModel: ObservableObject {
     private func eraseNear(_ s: DocSession, _ es: [SIMD3<Double>], page: Int) {
         guard !es.isEmpty else { return }
         let r2 = eraserRadius * eraserRadius
+        let vis = s.visibleLayerIDs   // 橡皮只影响可见图层：隐藏的图层不该被误擦
         if eraserMode == .stroke {
             s.strokes.removeAll { st in
-                guard st.page == page else { return false }
+                guard st.page == page, vis.contains(st.layerId) else { return false }
                 for sp in st.points {
                     for e in es {
                         let dx = sp.x - e.x, dy = sp.y - e.y
@@ -581,7 +595,7 @@ final class AppModel: ObservableObject {
         var out: [InkStroke] = []
         out.reserveCapacity(s.strokes.count)
         for st in s.strokes {
-            if st.page == page { out.append(contentsOf: InkEdit.splitStroke(st, erasePts: eps, r: eraserRadius)) }
+            if st.page == page, vis.contains(st.layerId) { out.append(contentsOf: InkEdit.splitStroke(st, erasePts: eps, r: eraserRadius)) }
             else { out.append(st) }
         }
         s.strokes = out
@@ -678,6 +692,7 @@ final class AppModel: ObservableObject {
         pushedStrokesKey = key
         broadcastStrokes()
         broadcastNotes()
+        broadcastLayers()
     }
 
     // MARK: - 方案 B：布局与视口

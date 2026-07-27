@@ -23,6 +23,7 @@ enum WireCodec {
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
+        static let layers: UInt8 = 0x3A
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
         static let eraser: UInt8 = 0x46
@@ -188,6 +189,15 @@ enum WireCodec {
             let list = o["list"] as? [[String: Any]] ?? []
             w.u16(list.count)
             for p in list { w.pen(color: strOf(p["color"]), w: num(p["w"]), t: strOf(p["t"])) }
+        case "layers":
+            w.u8(Op.layers); w.u16(intOf(o["active"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for l in list {
+                w.u8(UInt8(clamping: intOf(l["r"]))); w.u8(UInt8(clamping: intOf(l["g"]))); w.u8(UInt8(clamping: intOf(l["b"])))
+                w.u8(boolOf(l["visible"]) ? 1 : 0)
+                w.str(strOf(l["name"]))
+            }
         case "inkCancel": w.u8(Op.inkCancel)
         case "strokes":
             w.u8(Op.strokes)
@@ -365,6 +375,15 @@ enum WireCodec {
             var list = [[String: Any]](); list.reserveCapacity(n)
             for _ in 0..<n { list.append(r.pen()) }
             out = ["type": "pens", "list": list, "active": NSNumber(value: active)]
+        case Op.layers:
+            let active = r.u16(), n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n {
+                let cr = r.u8(), cg = r.u8(), cb = r.u8(), visible = r.u8() == 1
+                list.append(["r": NSNumber(value: cr), "g": NSNumber(value: cg), "b": NSNumber(value: cb),
+                             "visible": visible, "name": r.str()])
+            }
+            out = ["type": "layers", "list": list, "active": NSNumber(value: active)]
         case Op.inkCancel: out = ["type": "inkCancel"]
         case Op.strokes:
             let n = r.u32()

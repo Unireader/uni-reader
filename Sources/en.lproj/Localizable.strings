@@ -160,3 +160,15 @@
 "Done" = "Done";
 "Local Pen" = "Local Pen";
 "Lasso Select" = "Lasso Select";
+
+/* Ink Layers */
+"Layers" = "Layers";
+"New Layer" = "New Layer";
+"Layer %d" = "Layer %d";
+"Rename Layer" = "Rename Layer";
+"Layer Name" = "Layer Name";
+"Rename" = "Rename";
+"Show Layer" = "Show Layer";
+"Hide Layer" = "Hide Layer";
+"Delete layer “%@”?" = "Delete layer “%@”?";
+"%d stroke(s) on this layer will be deleted too." = "%d stroke(s) on this layer will be deleted too.";

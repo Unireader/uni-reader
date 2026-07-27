@@ -1,5 +1,5 @@
 // 手写笔迹持久化 round-trip 测试（note kind=2，payload=JSON 序列化 InkStroke）。运行：
-//   cp spike/ink-store-test.swift /tmp/main.swift && swiftc Sources/Store/*.swift Sources/App/InkModel.swift /tmp/main.swift -o /tmp/it && /tmp/it
+//   cp spike/ink-store-test.swift /tmp/main.swift && swiftc Sources/Store/*.swift Sources/App/InkModel.swift Sources/App/InkLayerModel.swift Sources/App/NoteTypeModel.swift Sources/App/PenPreset.swift Sources/Support/L.swift /tmp/main.swift -o /tmp/it && /tmp/it
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift）
 // 覆盖：InkStroke↔LibNote 映射、note 列语义(kind/page/anchor)、payload JSON 形态、擦除删除、
 //       空笔画跳过、非 ink/损坏 payload 容错、多笔画增量对账。
@@ -42,9 +42,9 @@ check(note.page == 3, "note.page 列 = 笔画页")
 check(abs(note.anchor.minX - 0.1) < 1e-9 && abs(note.anchor.minY - 0.2) < 1e-9
       && abs(note.anchor.width - 0.45) < 1e-9 && abs(note.anchor.height - 0.4) < 1e-9, "anchor = 点集归一化包围盒")
 
-// 3) payload 是干净跨平台 JSON：{color:{r,g,b,a}, width, points:[[x,y,p]]}
+// 3) payload 是干净跨平台 JSON：{color:{r,g,b,a}, width, type, points:[[x,y,p]], layerId}
 let json = try JSONSerialization.jsonObject(with: note.payload) as! [String: Any]
-check(Set(json.keys) == ["color", "width", "points"], "payload 顶层键 = color/width/points")
+check(Set(json.keys) == ["color", "width", "type", "points", "layerId"], "payload 顶层键 = color/width/type/points/layerId")
 let jc = json["color"] as! [String: Any]
 check(Set(jc.keys) == ["r", "g", "b", "a"], "color 键 = r/g/b/a")
 let jp = json["points"] as! [[Double]]

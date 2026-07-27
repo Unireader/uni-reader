@@ -100,6 +100,26 @@ final class DocSession: ObservableObject, Identifiable {
     @Published var strokes: [InkStroke] = []
     @Published var liveStroke: InkStroke?
 
+    // 笔迹图层（挂逻辑文档，全版本共用）：按 sortOrder 升序维护。
+    @Published var inkLayers: [InkLayer] = []
+    /// 已落库的图层快照（id → 值），用于增量对账，非 @Published。
+    var persistedInkLayers: [UUID: InkLayer] = [:]
+    /// 新笔画落在哪一层；不持久化，每次开文档默认第一层（`loadInkLayers` 设置）。
+    @Published var activeLayerID: UUID?
+
+    /// 当前可见的图层 id 集合（渲染/擦除/框选公用）。
+    var visibleLayerIDs: Set<UUID> { Set(inkLayers.filter(\.visible).map(\.id)) }
+
+    /// 某页当前可见的笔迹，按图层 `sortOrder` 排（同层内保持原相对顺序），供渲染直接消费。
+    func visibleStrokes(page: Int) -> [InkStroke] {
+        let order = Dictionary(uniqueKeysWithValues: inkLayers.enumerated().map { ($1.id, $0) })
+        let vis = visibleLayerIDs
+        return strokes.enumerated()
+            .filter { $0.element.page == page && vis.contains($0.element.layerId) }
+            .sorted { (order[$0.element.layerId] ?? 0, $0.offset) < (order[$1.element.layerId] ?? 0, $1.offset) }
+            .map(\.element)
+    }
+
     // 文字注解（note kind=0）。运行时驻留于此，阅读区(渲染标记)与 Inspector(列表) 共读；
     // 由 ContentView `.onChange` 增量对账落库（新增/编辑 upsert、删除 delete），与手写笔迹同套路。
     @Published var textNotes: [TextNote] = []

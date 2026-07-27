@@ -95,6 +95,13 @@ struct ContentView: View {
         .onChange(of: session.strokes) { _, _ in
             persistInk()   // 笔画完成/擦除/框选移动时增量落库（liveStroke 变化不触发）
         }
+        .onChange(of: session.inkLayers) { _, _ in
+            persistInkLayers()   // 新建/改名/改色/改可见性/重排序时增量落库
+            app.broadcastLayers()
+        }
+        .onChange(of: session.activeLayerID) { _, _ in
+            app.broadcastLayers()   // 当前作画图层变化也同步给平板
+        }
         .onChange(of: session.textNotes) { _, _ in
             persistTextNotes()   // 文字注解新建/编辑/删除时增量落库
             app.broadcastNotes() // 同步镜像给平板（圆形标记；非 padSession 时为空操作/重发同值）
@@ -443,7 +450,7 @@ struct ContentView: View {
         session.restoreZoom = 1; session.readZoom = 1   // 默认 fit-width；成功路径按库覆盖
         session.restoreHFrac = 0; session.readHFrac = 0
         guard let id, let doc = workspace.document(id: id) else {
-            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
+            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
         }
         guard let target = workspace.openTarget(documentId: id),
               let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
@@ -451,6 +458,7 @@ struct ContentView: View {
             missingDoc = doc                       // 所有路径失效 → 显示重定位提示
             toc = []
             clearInk()
+            clearInkLayers()
             clearTextNotes()
             clearHighlights()
             return
@@ -462,6 +470,7 @@ struct ContentView: View {
         session.contentHash = target.hash
         session.reloadOCRState()                   // 换文档重置 OCR；该内容已有缓存则自动启用
         loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
+        loadInkLayers(documentId: id)               // 恢复该文档的图层注册表（含自愈补建）
         session.noteTypes = workspace.noteTypes()   // 工作区笔记类型（通用内置兜底，不在列）
         session.noteTypeFilter = .all               // 筛选仅内存，开文档复位
         loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
@@ -590,6 +599,57 @@ struct ContentView: View {
             workspace.deleteInkStroke(id: goneID)
         }
         session.persistedStrokes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    // MARK: - 笔迹图层持久化（ink_layer 表，v7）
+
+    /// 加载文档时清空内存图层与对账集（无文档 / 路径失效时用）。
+    private func clearInkLayers() {
+        session.inkLayers = []
+        session.persistedInkLayers = [:]
+        session.activeLayerID = nil
+    }
+
+    /// 恢复该文档已落库的图层到内存（按 sortOrder）。**必须在 `loadInk` 之后调用**：
+    /// 自愈逻辑要看 `session.strokes` 里实际出现过哪些 `layerId`。老文档（升级前落库、
+    /// 尚无 `ink_layer` 行）或笔迹引用了缺失图层（如合并文档留下的孤儿层）时，
+    /// 为每个缺失 id 各补建一条图层并立即落库——否则那些笔迹在图层面板里无处可归、
+    /// 也无法被可见性开关命中，页面上会“凭空”多出/少掉一批笔迹。
+    private func loadInkLayers(documentId id: String) {
+        var loaded = workspace.inkLayers(documentId: id).sorted { $0.sortOrder < $1.sortOrder }
+        let knownIDs = Set(loaded.map(\.id))
+        var missing = Set(session.strokes.map(\.layerId)).subtracting(knownIDs)
+        if loaded.isEmpty { missing.insert(InkLayer.defaultID) }   // 全新/老文档兜底建第一层
+        if !missing.isEmpty {
+            var nextOrder = (loaded.map(\.sortOrder).max() ?? -1) + 1
+            for missingID in missing.sorted(by: { $0.uuidString < $1.uuidString }) {
+                let name = String(format: L("Layer %d"), nextOrder + 1)
+                let layer = InkLayer(id: missingID, name: name,
+                                     colorKey: InkLayer.rotatingColorKey(existingCount: loaded.count),
+                                     sortOrder: nextOrder, visible: true)
+                loaded.append(layer)
+                workspace.saveInkLayer(documentId: id, layer)
+                nextOrder += 1
+            }
+            loaded.sort { $0.sortOrder < $1.sortOrder }
+        }
+        session.persistedInkLayers = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+        session.inkLayers = loaded
+        session.activeLayerID = loaded.first?.id
+    }
+
+    /// 内存图层 ↔ 库对账：新增/改名/改色/改可见性/重排序 → upsert；已删除的 → delete。
+    private func persistInkLayers() {
+        guard let id = session.documentId else { return }
+        let current = session.inkLayers
+        let currentIDs = Set(current.map(\.id))
+        for l in current where session.persistedInkLayers[l.id] != l {
+            workspace.saveInkLayer(documentId: id, l)
+        }
+        for goneID in session.persistedInkLayers.keys where !currentIDs.contains(goneID) {
+            workspace.deleteInkLayer(id: goneID)
+        }
+        session.persistedInkLayers = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     // MARK: - 文字注解持久化（note kind=0）

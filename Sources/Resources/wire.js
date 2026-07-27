@@ -13,7 +13,7 @@
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
-    radial: 0x37, pressRing: 0x38, notes: 0x39,
+    radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
     nack: 0x50
   };
@@ -157,6 +157,16 @@
         for (var k = 0; k < P.length; k++) w.pen(P[k]);
         break;
       }
+      case "layers": {
+        w.u8(OP.layers); w.u16(o.active || 0);
+        var LY = o.list || []; w.u16(LY.length);
+        for (var ly = 0; ly < LY.length; ly++) {
+          var item = LY[ly];
+          w.u8(item.r || 0); w.u8(item.g || 0); w.u8(item.b || 0);
+          w.u8(item.visible ? 1 : 0); w.str(item.name || "");
+        }
+        break;
+      }
       case "inkCancel": w.u8(OP.inkCancel); break;
       case "strokes": {
         w.u8(OP.strokes); var S = o.list || []; w.u32(S.length);
@@ -260,6 +270,13 @@
         var active = r.u16(), pn = r.u16(), plist = new Array(pn);
         for (var k = 0; k < pn; k++) plist[k] = r.pen();
         return { type: "pens", list: plist, active: active };
+      }
+      case OP.layers: {
+        var lya = r.u16(), lyn = r.u16(), lylist = new Array(lyn);
+        for (var lyi = 0; lyi < lyn; lyi++) {
+          lylist[lyi] = { r: r.u8(), g: r.u8(), b: r.u8(), visible: r.u8() === 1, name: r.str() };
+        }
+        return { type: "layers", list: lylist, active: lya };
       }
       case OP.inkCancel: return { type: "inkCancel" };
       case OP.strokes: {
