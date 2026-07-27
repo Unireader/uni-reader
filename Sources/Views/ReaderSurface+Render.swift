@@ -25,7 +25,7 @@ extension ReaderSurface {
         if scratch.basePixelW == 0 { scratch.basePixelW = currentBaseWidth() }
         let w = scratch.basePixelW
         var wanted = Set<String>()
-        for i in Self.centerOutOrder(center: session.currentPageIndex, radius: realized.count, bounds: realized) {
+        for i in Self.centerOutOrder(center: session.currentPageIndex, bounds: realized) {
             let key = baseKey(i, width: w)
             wanted.insert(key)
             if images[i] == nil, let hit = PageRenderEngine.shared.cached(key) {
@@ -119,7 +119,7 @@ extension ReaderSurface {
         // 否则要等整个实化窗口的基图渲完才轮到眼前这页的清晰贴片（用户感知的「放大后糊很久」）。
         wanted.formUnion(refreshTiles(layout: layout, pdf: pdf))
         // 基图按「当前页 → 由近及远」入队：单串行队列按提交序出图，可视页插队先清晰。
-        for i in Self.centerOutOrder(center: session.currentPageIndex, radius: realized.count, bounds: realized) {
+        for i in Self.centerOutOrder(center: session.currentPageIndex, bounds: realized) {
             guard let page = pdf.page(at: i) else { continue }
             let key = baseKey(i, width: w)
             wanted.insert(key)
@@ -141,7 +141,7 @@ extension ReaderSurface {
         guard pageCount > 0 else { return [] }
         let bounds = max(0, center - radius)...min(pageCount - 1, center + radius)
         var keys = Set<String>()
-        for i in Self.centerOutOrder(center: center, radius: radius, bounds: bounds) where !realized.contains(i) {
+        for i in Self.centerOutOrder(center: center, bounds: bounds) where !realized.contains(i) {
             guard let page = pdf.page(at: i) else { continue }
             let key = baseKey(i, width: width)
             keys.insert(key)
@@ -152,15 +152,25 @@ extension ReaderSurface {
         return keys
     }
 
-    /// `center` 本身 → 距离 1 的两侧 → 距离 2 …，越界一侧跳过。用于渲染优先级：越靠近当前页越先出图。
-    static func centerOutOrder(center: Int, radius: Int, bounds: ClosedRange<Int>) -> [Int] {
-        var order = [Int]()
-        if bounds.contains(center) { order.append(center) }
-        guard radius > 0 else { return order }
-        for d in 1...radius {
-            let lo = center - d, hi = center + d
-            if bounds.contains(lo) { order.append(lo) }
-            if bounds.contains(hi) { order.append(hi) }
+    /// `bounds` 内的**全部**页，按「离 `center` 由近及远」排序（渲染优先级：越靠近当前页越先出图）。
+    ///
+    /// ⚠️ **`center` 必须先夹取进 `bounds`**（2026-07-27 实测定位的白屏根因）：旧实现从 `center`
+    /// 向两侧外扩固定 `radius` 步、只收落在 `bounds` 内的页，于是 `center` 离 `bounds` 超过 `radius`
+    /// 时**返回空数组**——调用方的渲染循环一次都不进，那批页永远发不出渲染请求。
+    /// 而 `center`（`session.currentPageIndex`）的更新在 `updateRealized` 里被 `follower.isSuppressing`
+    /// / `suppressEmitUntil` 门控（平板跟随、缩放/refit 期间停更），用户快滚一下 `realized` 就能跳出
+    /// 那点距离 → 屏幕整片白，且 settle 每 0.15s 重试一次也永远是空转（实测：17 秒里 5 次 settle，
+    /// missing 恒为同样 5 页，零 ENQUEUE）。夹取后无论 `center` 在哪，覆盖面都恒等于 `bounds`，
+    /// 只影响出图**顺序**、不影响出图**与否**。
+    static func centerOutOrder(center: Int, bounds: ClosedRange<Int>) -> [Int] {
+        let c = min(max(center, bounds.lowerBound), bounds.upperBound)
+        var order = [c]
+        order.reserveCapacity(bounds.count)
+        var d = 1
+        while order.count < bounds.count, d <= bounds.count {
+            if bounds.contains(c - d) { order.append(c - d) }
+            if bounds.contains(c + d) { order.append(c + d) }
+            d += 1
         }
         return order
     }
@@ -195,7 +205,7 @@ extension ReaderSurface {
         let visTop = g.offsetY / ds, visBottom = (g.offsetY + g.containerH) / ds
         let visPages = layout.pageRange(fromDocY: visTop, toDocY: visBottom)
         // 同样按「当前页 → 由近及远」入队：跨页视口时当前页贴片最先出图。
-        for i in Self.centerOutOrder(center: session.currentPageIndex, radius: visPages.count, bounds: visPages) {
+        for i in Self.centerOutOrder(center: session.currentPageIndex, bounds: visPages) {
             guard let page = pdf.page(at: i) else { continue }
             let pageH = layout.heights[i] * ds
             // 视口 ∩ 页（页内显示 pt，左上原点），四周外扩 15%

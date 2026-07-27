@@ -5,6 +5,44 @@
 
 ## 已修 / 完成（2026-07-27）
 
+- **连续翻页卡顿（大 PDF 尤甚）根因 = 主线程为平板同步渲整页 PNG**（`Sources/App/AppModel.swift`
+  `push()`、`Sources/Server/LANServer.swift`）：`push()` 由 `sessionChanged` 驱动，**每跨一页边界
+  在主线程跑一次** `PageRenderer.png(maxWidth: 1600)` = PDFKit 渲染整页 → NSImage → TIFF（~13MB
+  未压缩）→ 重解码 → PNG deflate，无缓存无去重；大扫描件单次上百毫秒，还与 `PageRenderEngine`
+  后台队列抢 PDFDocument 锁 → 滚动中每翻一页顿一下。用户二分实测钉死：**关掉平板服务即消失**
+  （`guard server.isRunning` 早退），关 Inspector / 关 OCR 均无效。
+  而那张图只写进 `LANServer.pagePNG`，仅供「无 `?i=` 的旧采集页」兜底——现役两端（web
+  `render.ts`、安卓 `PageFetcher.kt`）一律走 `/page.png?i=N` → `pageProvider` → `renderPage`
+  （服务 queue + NSCache）。即纯浪费的方案 A 遗留。
+  改法：`push()` 只发页元信息（`setPage` 去掉 `png` 参数、删 `pagePNG` 字段），兜底路由改为同样走
+  `pageProvider?(currentPageIndex)`（有缓存、不占主线程），平板行为不变。
+  验证：xcodebuild 过 + 用户确认卡顿消失。
+- **阅读区整片白屏（滚快一点必现，settle 反复重试也不恢复）根因 = `centerOutOrder` 会返回空数组**
+  （`Sources/Views/ReaderSurface+Render.swift`）。旧实现从 `center` 向两侧外扩固定 `radius` 步、
+  只收落在 `bounds` 内的页，于是 **`center` 离 `bounds` 超过 `radius` 时返回空数组** →
+  `kickBaseRenders` / `settleRender` / `refreshTiles` 的渲染循环**一次都不进** → 那批页永远发不出
+  渲染请求。而 `center`（`session.currentPageIndex`）的更新在 `updateRealized` 里被
+  `follower.isSuppressing` / `suppressEmitUntil` 门控（平板跟随、缩放/refit 期间停更），
+  用户快滚一下 `realized` 就能跳出那点距离，于是整屏白。
+  修：`center` 先夹取进 `bounds`，覆盖面恒等于 `bounds`，`center` 只影响出图**顺序**、不影响出图
+  **与否**；`radius` 参数随之取消（四个调用点本就都是「覆盖 bounds 全部」）。
+  ⚠️ **定位过程记账（三次归因错误，教训）**：先后错怪过「PDFDocument 跨队列竞争」和「44MB 页图
+  撑爆缓存导致 CGContext 分配失败」，都靠加打点实测排除——真实日志是 `ENQUEUE == START == 121`
+  （队列没卡死）、无 `RENDER-FAIL`/`CGCONTEXT-FAIL`（没失败）、内存仅 176MB（没爆），
+  而白屏期间 **17 秒 5 次 settle、missing 恒为同样 5 页、零 `ENQUEUE`**——请求压根没发出去，
+  这才把范围逼到"循环没执行"。**这类"静默不工作"的 bug 不要靠读代码猜，靠打点把请求生命周期
+  （ENQUEUE/START/DONE/DROP/SKIP）打全，空白处即答案。**
+  验证：xcodebuild 过 + 用户确认白屏消失；诊断代码（`RenderDiag` 及各处调用）定位后已全部移除。
+- 上条排查途中顺带修掉的两处真实隐患（**与白屏根因无关**，但都该改）：
+  ① `AppModel.setPadRender` 里 `padRenderPDF` 直接就是 `session.pdf` 本尊，而平板页图在 `LANServer`
+  服务 queue、Mac 阅读区在 `PageRenderEngine` 串行队列——`PDFDocument`/`PDFPage` 非线程安全，
+  两个后台队列共用一个文档对象是隐患。改为用 `pdf.documentURL` 另开独立实例（惰性解析，只多一份
+  xref 表内存），同 key 不重开；`DocSession` 的 OCR 渲染（`ocrRenderQueue`）同样处理（懒建
+  `ocrRenderPDF`，`reloadOCRState` 换文档置空）。`PageBitmap` 文档注释列出三条管线各持哪份实例。
+  ② `PageRenderer.png` 原是 AppKit 实现（`page.thumbnail` → `NSImage` → `tiffRepresentation` →
+  `NSBitmapImageRep`），挪下主线程后变成后台线程用 AppKit。改写为纯 CoreGraphics/ImageIO
+  （`PageBitmap.render` + `CGImageDestination`），顺带去掉 ~13MB 未压缩 TIFF 中转与一次全量重解码。
+
 - **笔架收起/展开弹簧动画 + 靠左收拢（`Sources/Views/PenRack.swift`）**：两态共用一个胶囊外壳
   （padding/背景/描边/阴影上移到外层 `bar`，分支内容只做过渡），`spring(duration: 0.32, bounce: 0.15)`
   整体缩放。三个坑：① 原 `.transaction { $0.animation = nil }` 一刀切禁动画 → 删掉，拖拽位移改在

@@ -240,8 +240,22 @@ final class DocSession: ObservableObject, Identifiable {
     private let ocrMaxConcurrent = 3
     /// 供 OCR 缓存读写（App 级 `WorkspaceManager.store`，由 `ContentView.loadSelected` 注入）。仅主线程访问。
     var store: LibraryStore?
-    /// OCR 页图渲染用串行队列（PDFPage 跨线程只读，与 `PageRenderEngine` 同先例）。
+    /// OCR 页图渲染用串行队列。
     private static let ocrRenderQueue = DispatchQueue(label: "com.xvan.unireader.ocr-render", qos: .userInitiated)
+    /// OCR 渲染专用的**独立 `PDFDocument` 实例**（懒建，换文档时由 `reloadOCRState` 置空）。
+    /// ⚠️ 理由同 `AppModel.setPadRender`（2026-07-27 实测）：`PDFDocument`/`PDFPage` 不是线程安全的，
+    /// 而 OCR 渲染跑在 `ocrRenderQueue`、Mac 阅读区渲染跑在 `PageRenderEngine` 的串行队列——
+    /// 共用 `self.pdf` 就是两个后台队列并发操作同一份 PDFKit 内部状态（平板那条管线因此白过屏）。
+    private var ocrRenderPDF: PDFDocument?
+
+    /// 取 OCR 渲染用的文档实例（懒建独立副本；拿不到 URL 时退回共用）。仅主线程调用。
+    private func ocrRenderDocument() -> PDFDocument? {
+        if let d = ocrRenderPDF { return d }
+        guard let pdf else { return nil }
+        let d = pdf.documentURL.flatMap { PDFDocument(url: $0) } ?? pdf
+        ocrRenderPDF = d
+        return d
+    }
 
     var ocrDoneCount: Int { ocrRuns.count }
     var ocrTotalPages: Int { pdf?.pageCount ?? 0 }
@@ -252,6 +266,7 @@ final class DocSession: ObservableObject, Identifiable {
     func reloadOCRState() {
         ocrQueue = []; ocrInFlight = 0; ocrActivePages = []; ocrRuns = [:]; ocrLastError = nil
         ocrEnabled = false
+        ocrRenderPDF = nil   // 换文档 → 丢弃旧的 OCR 渲染副本，下次用时按新 pdf 懒建
         guard let store, !contentHash.isEmpty else { return }
         if let c = try? store.ocrPageCount(contentHash: contentHash, provider: PaddleOCR.providerID), c > 0 {
             ocrEnabled = true
@@ -289,7 +304,7 @@ final class DocSession: ObservableObject, Identifiable {
     }
 
     private func startNetworkOCR(_ page: Int) {
-        guard let pdf, let config = PaddleOCR.configFromDefaults() else { return }
+        guard let pdf = ocrRenderDocument(), let config = PaddleOCR.configFromDefaults() else { return }
         let hash = contentHash
         ocrActivePages.insert(page)
         ocrInFlight += 1

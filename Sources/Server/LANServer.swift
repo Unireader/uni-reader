@@ -55,7 +55,6 @@ final class LANServer: ObservableObject {
     private var maintenanceTimer: DispatchSourceTimer?           // ~30ms：flushStale + NACK 冲刷
 
     // 页面状态（queue 上读写）
-    private var pagePNG = Data()
     private var currentPageIndex = 0
     private var pageCount = 0
     private var pageW: Double = 0
@@ -107,14 +106,14 @@ final class LANServer: ObservableObject {
 
     // MARK: - 页面推送（由 ContentView 在主线程调用）
 
-    /// 设置当前页图片并广播给所有平板。`png` 为该页渲染结果。
-    func setPage(index: Int, count: Int, width: Double, height: Double, png: Data) {
+    /// 设置当前页元信息并广播给所有平板（**只有标量，页图由平板按 `/page.png?i=N` 自取**——
+    /// 调用方不得在主线程为此渲染页图，理由见 `AppModel.push`）。
+    func setPage(index: Int, count: Int, width: Double, height: Double) {
         queue.async {
             self.currentPageIndex = index
             self.pageCount = count
             self.pageW = width
             self.pageH = height
-            self.pagePNG = png
             self.version += 1
             let info = self.pageInfoDict()
             for c in self.clients { self.rawSend(info, to: c) }
@@ -168,16 +167,13 @@ final class LANServer: ObservableObject {
             return ("200 OK", "application/javascript; charset=utf-8", LANServer.wireJS())
         case "/page.png":
             // 方案 B：`?i=N` 按页号取图；无 i 时回退当前页（兼容旧采集页）。
-            if let iStr = query["i"], let idx = Int(iStr) {
-                if let png = pageProvider?(idx), !png.isEmpty {
-                    return ("200 OK", "image/png", png)
-                }
-                return ("404 Not Found", "text/plain; charset=utf-8", Data("no page".utf8))
+            // 两条都走 `pageProvider`（服务 queue 上跑、自带 NSCache）——兜底那条曾用主线程预渲染好的
+            // `pagePNG`，代价是每次翻页阻塞主线程渲一张没人取的图（见 `AppModel.push` 注释），已删除。
+            let idx = query["i"].flatMap(Int.init) ?? currentPageIndex
+            if let png = pageProvider?(idx), !png.isEmpty {
+                return ("200 OK", "image/png", png)
             }
-            if pagePNG.isEmpty {
-                return ("404 Not Found", "text/plain; charset=utf-8", Data("no page".utf8))
-            }
-            return ("200 OK", "image/png", pagePNG)
+            return ("404 Not Found", "text/plain; charset=utf-8", Data("no page".utf8))
         case "/health":
             return ("200 OK", "text/plain; charset=utf-8", Data("ok".utf8))
         default:

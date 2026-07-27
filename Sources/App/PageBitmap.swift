@@ -2,9 +2,15 @@ import CoreGraphics
 import CoreImage
 import PDFKit
 
-/// PDF 页位图渲染原语。旋转语义由 `spike/render-rotation-test.swift`（9/9）钉死：
+/// PDF 页位图渲染原语（纯 CoreGraphics，不碰 AppKit → 任意线程可用）。
+/// 旋转语义由 `spike/render-rotation-test.swift`（9/9）钉死：
 /// `page.draw(with:to:)` 自带旋转；显示尺寸 = mediaBox 在 90/270° 时换边；子矩形贴片只需平移。
-/// 仅在 `PageRenderEngine` 的串行后台队列上调用。
+///
+/// ⚠️ 本原语线程安全，**但 `PDFPage`/`PDFDocument` 不是**：同一个 `PDFDocument` 实例只允许被
+/// 一条队列渲染。现有三条管线各自持有独立文档实例或独占队列——Mac 阅读区走
+/// `PageRenderEngine` 的串行队列（`session.pdf`）、平板页图走 `LANServer` 服务 queue
+/// （`AppModel.padRenderPDF`，另开的实例，见 `setPadRender`）、OCR 走 `DocSession.ocrRenderQueue`。
+/// 新增调用方前先确认它拿的是哪份文档实例，别再把 `session.pdf` 交给第四条队列。
 enum PageBitmap {
     /// 页的显示尺寸（pt，已含旋转换边）。
     static func displaySize(_ page: PDFPage) -> CGSize {

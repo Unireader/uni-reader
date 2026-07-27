@@ -141,13 +141,22 @@ final class AppModel: ObservableObject {
     private let pageCache = NSCache<NSString, NSData>()
 
     /// 更新按页渲染的文档源；文档变（key 变）时清空页图缓存。主线程调用。
+    ///
+    /// ⚠️ **必须为平板另开一个 `PDFDocument` 实例，严禁共用 `session.pdf`**（2026-07-27 实测定）：
+    /// PDFKit 的 `PDFDocument`/`PDFPage` 不是线程安全的，而两条渲染管线跑在不同队列上——
+    /// 平板页图在 `LANServer` 的服务 queue（`pageProvider` → `renderPage`），Mac 阅读区在
+    /// `PageRenderEngine` 的串行队列。共用同一个文档对象 = 两个后台队列并发操作同一份 PDFKit
+    /// 内部状态，实测表现为 **Mac 阅读区整片白屏、须手动翻页才恢复**（旧实现里平板那张图是在
+    /// 主线程渲的，撞不上；把它挪下主线程修翻页卡顿后，这条竞争才暴露出来）。
+    /// 各开各的实例即彻底解耦：`PDFDocument` 惰性解析，多开一份主要只是 xref 表的内存。
+    /// 取不到 URL（极少见）时退回共用——功能优先，这条路径本来就没有并发保证。
     private func setPadRender(pdf: PDFDocument, key: String) {
         renderLock.lock(); defer { renderLock.unlock() }
-        if padRenderKey != key {
-            pageCache.removeAllObjects()
-            padRenderKey = key
-        }
-        padRenderPDF = pdf
+        // 同文档已建好独立实例就不重开（`push()` 每次翻页都会调进来）。
+        guard padRenderKey != key || padRenderPDF == nil else { return }
+        pageCache.removeAllObjects()
+        padRenderKey = key
+        padRenderPDF = pdf.documentURL.flatMap { PDFDocument(url: $0) } ?? pdf
     }
 
     /// 渲染平板当前会话的第 idx 页（缓存命中直接返回）。服务 queue 上调用。
@@ -620,19 +629,25 @@ final class AppModel: ObservableObject {
         ])
     }
 
-    // MARK: - 推页图给平板
+    // MARK: - 推当前页元信息给平板
 
+    /// 推平板当前会话的页元信息（页号/总页数/页尺寸）。**只发标量，不在这里渲染页图**。
+    /// ⚠️ 性能红线（2026-07-27 实测定位）：本方法由 `sessionChanged` 驱动，即**每翻过一页边界就跑一次，
+    /// 且在主线程**。旧实现在这里同步跑 `PageRenderer.png(maxWidth: 1600)` = PDFKit 渲染整页 →
+    /// NSImage → TIFF（~13MB 未压缩）→ 重解码 → PNG deflate，大扫描件单次上百毫秒，还要和
+    /// `PageRenderEngine` 的后台队列抢 PDFDocument 锁 → 连续翻页每跨一页卡顿一下（关掉平板服务即消失）。
+    /// 而那张图只存进 `LANServer.pagePNG` 给「无 `?i=` 的旧采集页」兜底，现役两端（web `render.ts`、
+    /// 安卓 `PageFetcher.kt`）一律走 `/page.png?i=N` → `pageProvider` → `renderPage`（服务 queue + NSCache）。
+    /// 即：纯浪费。故整段删除，兜底路由改为同样走 `pageProvider`（见 `LANServer.route`）。
     func push() {
         guard server.isRunning, let s = padSession, let pdf = s.pdf,
               let page = pdf.page(at: s.currentPageIndex) else { return }
         setPadRender(pdf: pdf, key: s.contentHash)   // 方案 B：更新按页渲染源
         let b = page.bounds(for: .mediaBox)
-        let png = PageRenderer.png(page: page, maxWidth: 1600) ?? Data()
         server.setPage(index: s.currentPageIndex,
                        count: pdf.pageCount,
                        width: Double(b.width),
-                       height: Double(b.height),
-                       png: png)
+                       height: Double(b.height))
         pushLayout()
         pushStrokesIfDocChanged(s)
     }
