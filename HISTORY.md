@@ -17,6 +17,12 @@
 - **笔架从按钮上起拖不跟手（松手瞬移）修复**：`.gesture` → `.highPriorityGesture`——Button 会吃掉
   mouse-down，普通优先级拖拽手势全程拿不到事件流，松手才补 end → 瞬移。`minimumDistance: 6`
   不变，点按按钮不受影响。验证：xcodebuild 过 + 用户从笔插槽起拖确认跟手。
+- **大纲（TOC）当前页追踪**：归属当前页的条目（先序拍平后「最后一个 pageIndex ≤ 当前页」，
+  命中最深一层）自动展开整条祖先链 + 淡强调色高亮 + 滚动到位（只增展开，不动用户手动折叠的
+  分支）。Inspector 目录页与工具栏目录弹窗共用。⚠️ 系统 `List(children:)` 大纲不支持程序化
+  展开/定位，`TOCListView` 因此改自持展开态的手动树（ScrollView + LazyVStack + `expanded`
+  Set，reveal 走 `formUnion(ancestors)` + ScrollViewReader 定位），行外观维持原纯文字行 + 页码。
+  验证：xcodebuild 过 + 用户确认真机效果。
 
 ## 已修 / 完成（2026-07-26）
 

@@ -271,7 +271,7 @@ struct ContentView: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12).padding(.vertical, 10)
-            TOCListView(entries: toc) { e in
+            TOCListView(entries: toc, currentPage: session.currentPageIndex) { e in
                 jumpToTOC(e)
                 showTOCPopover = false
             }

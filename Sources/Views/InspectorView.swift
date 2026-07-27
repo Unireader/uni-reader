@@ -53,7 +53,7 @@ struct InspectorView: View {
     @ViewBuilder
     private var content: some View {
         if tab == .contents {
-            TOCListView(entries: toc, onSelect: onSelectTOC)
+            TOCListView(entries: toc, currentPage: session.currentPageIndex, onSelect: onSelectTOC)
         } else if let id = documentId, let doc = workspace.document(id: id) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
