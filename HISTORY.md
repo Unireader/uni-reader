@@ -3,6 +3,21 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 已修 / 完成（2026-07-27）
+
+- **笔架收起/展开弹簧动画 + 靠左收拢（`Sources/Views/PenRack.swift`）**：两态共用一个胶囊外壳
+  （padding/背景/描边/阴影上移到外层 `bar`，分支内容只做过渡），`spring(duration: 0.32, bounce: 0.15)`
+  整体缩放。三个坑：① 原 `.transaction { $0.animation = nil }` 一刀切禁动画 → 删掉，拖拽位移改在
+  手势 `updating` 闭包里 `transaction.animation = nil`（`.animation(nil, value:)` 有连坐，勿用）；
+  ② **`@AppStorage` 写入经 UserDefaults 通知异步回投，`withAnimation` 包不住它的更新**（实测就是
+  没动画的根因）→ 布局改读本地 `@State collapsedUI`，AppStorage 仅作持久化，`onChange` 镜像同步
+  多窗口；③ 位置存储从「中心锚」改「左上缘锚」（key 沿用，旧值一次性右移半宽、夹取自愈），
+  收起时左缘固定右侧收进 = 靠左对齐；`onGeometryChange` 的尺寸写入走同一条 spring，
+  动画期间夹取跟随不跳位。验证：xcodebuild 过 + 用户确认动画生效。
+- **笔架从按钮上起拖不跟手（松手瞬移）修复**：`.gesture` → `.highPriorityGesture`——Button 会吃掉
+  mouse-down，普通优先级拖拽手势全程拿不到事件流，松手才补 end → 瞬移。`minimumDistance: 6`
+  不变，点按按钮不受影响。验证：xcodebuild 过 + 用户从笔插槽起拖确认跟手。
+
 ## 已修 / 完成（2026-07-26）
 
 - **点注解图钉页内拖拽调位置**：无选中文字的 text note（rects 空、零尺寸 anchor 的点注解）图钉在

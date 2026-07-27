@@ -19,57 +19,103 @@ struct PenRackView: View {
 
     /// 位置存视口宽高的 0~1 比例（不存绝对像素）——跟这个代码库一贯「阅读区状态用比例不用绝对值」的
     /// 偏好一致，窗口缩放后面板位置仍然合理。默认落在左下角附近。
-    /// （key 沿用旧的 penToolbar* 名字，不动，保住用户已存的位置/收起态。）
+    /// **锚的是胶囊左上缘（不是中心）**：收起/展开时左缘固定、右侧收进/放出，即「靠左对齐」。
+    /// （key 沿用旧的 penToolbar* 名字，不动；旧值按中心锚解释，一次性右移半个胶囊宽，
+    /// 越界会被夹取拉回，用户拖一下即可。）
     @AppStorage("penToolbarFracX") private var fracX: Double = 0.03
     @AppStorage("penToolbarFracY") private var fracY: Double = 0.92
     @AppStorage("penToolbarCollapsed") private var collapsed = false
+    /// 布局实际读的收起态：`@AppStorage` 写入经 UserDefaults 通知异步回投，`withAnimation`
+    /// 包不住它触发的更新（实测就是没动画），故动画由这个本地 @State 驱动，上面的存储值
+    /// 只做持久化 + 多窗口同步（onChange 镜像回来）。
+    @State private var collapsedUI = false
     @GestureState private var dragOffset: CGSize = .zero
     @State private var editingIndex: Int?
     @State private var eraserEditorOpen = false
     /// 胶囊实测尺寸（夹取范围要用）；首帧未测量时用保守估计，避免闪一下越界位置。
     @State private var barSize: CGSize = CGSize(width: 240, height: 44)
+    /// 首次实测落位前不做尺寸动画——否则启动时胶囊会从估计值滑向实测值。
+    @State private var barMeasured = false
 
     private let edgeMargin: CGFloat = 6
 
     var body: some View {
         if viewportSize.width > 0, viewportSize.height > 0 {
             bar
-                .onGeometryChange(for: CGSize.self) { $0.size } action: { barSize = $0 }
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { new in
+                    // 收起/展开时尺寸变化也要走动画：夹取范围依赖 barSize，无动画会在结尾跳一下位置
+                    // （贴边默认位必然触发）。首次实测例外，避免启动时从估计值滑向真实值。
+                    if barMeasured {
+                        withAnimation(Self.collapseAnim) { barSize = new }
+                    } else {
+                        barSize = new
+                        barMeasured = true
+                    }
+                }
                 .position(clampedCenter(drag: dragOffset))
-                .gesture(dragGesture)
-                .transaction { $0.animation = nil }
-                .onAppear { reclampStored() }
+                // 高优先级：起点落在笔插槽等 Button 上时，普通 .gesture 会被 Button 吃掉按下事件
+                // （全程不跟手、松手瞬移）；minimumDistance=6 保证单击按钮不受影响。
+                .highPriorityGesture(dragGesture)
+                .onAppear { collapsedUI = collapsed; reclampStored() }
+                .onChange(of: collapsed) { _, v in
+                    // 另一窗口改的收起态：镜像进本地驱动值（同走弹簧动画）
+                    if v != collapsedUI { withAnimation(Self.collapseAnim) { collapsedUI = v } }
+                }
                 .onChange(of: viewportSize) { _, _ in reclampStored() }
         }
     }
 
+    /// 收起/展开共用的弹性曲线：胶囊缩放 + 贴边位置跟随同一条，保证同步。
+    private static let collapseAnim: Animation = .spring(duration: 0.32, bounce: 0.15)
+
+    private func setCollapsed(_ value: Bool) {
+        withAnimation(Self.collapseAnim) { collapsedUI = value }
+        collapsed = value   // 持久化（onChange 里 v == collapsedUI，不会二次触发动画）
+    }
+
     /// 展开=完整笔架；收起=靠边小药丸（只留当前笔尖 + 展开箭头）。收起态持久（全局）。
+    /// 两态共用一个外壳（padding/背景/描边/阴影挂在这里），切换时胶囊整体弹性缩放，
+    /// 而不是两个自带背景的视图生硬互换。
     @ViewBuilder private var bar: some View {
-        if collapsed { collapsedPill } else { content }
+        HStack(spacing: 10) {
+            if collapsedUI { collapsedContent } else { expandedContent }
+        }
+        .padding(.horizontal, collapsedUI ? 10 : 12)
+        .padding(.vertical, collapsedUI ? 6 : 8)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+        .shadow(radius: 6, y: 2)
     }
 
     // MARK: 位置夹取
 
-    /// 夹取后的胶囊中心：`position` 锚的是视图中心，故按实测半宽半高留边；上边界额外加 `topInset`
-    /// （不进工具栏）。视口比胶囊还窄/矮的极端情况退化为固定在上/左合法点（minX/minY）。
-    private func clampedCenter(drag: CGSize) -> CGPoint {
+    /// 夹取后的胶囊左上缘：存储锚的就是左上缘，按实测宽高留边；上边界额外加 `topInset`
+    /// （不进工具栏）。视口比胶囊还窄/矮的极端情况退化为固定在上/左合法点。
+    private func clampedOrigin(drag: CGSize) -> CGPoint {
         let w = viewportSize.width, h = viewportSize.height
-        let halfW = barSize.width / 2, halfH = barSize.height / 2
-        let minX = halfW + edgeMargin, maxX = max(minX, w - halfW - edgeMargin)
-        let minY = topInset + halfH + edgeMargin, maxY = max(minY, h - halfH - edgeMargin)
+        let maxX = max(edgeMargin, w - barSize.width - edgeMargin)
+        let minY = topInset + edgeMargin, maxY = max(minY, h - barSize.height - edgeMargin)
         let raw = CGPoint(x: fracX * w + drag.width, y: fracY * h + drag.height)
-        return CGPoint(x: min(max(raw.x, minX), maxX),
+        return CGPoint(x: min(max(raw.x, edgeMargin), maxX),
                        y: min(max(raw.y, minY), maxY))
+    }
+
+    /// `position` 锚的是视图中心：由左上缘换算。动画期间 barSize 也在动，左缘不动、
+    /// 中心随宽度收缩左移——视觉上就是胶囊靠左收拢/展开。
+    private func clampedCenter(drag: CGSize) -> CGPoint {
+        let o = clampedOrigin(drag: drag)
+        return CGPoint(x: o.x + barSize.width / 2, y: o.y + barSize.height / 2)
     }
 
     /// 初始/视口变化校正：存储位置若已越界（窗口变矮变窄、旧版本无限制留下的值）拉回可见区。
     private func reclampStored() {
-        let p = clampedCenter(drag: .zero)
+        let p = clampedOrigin(drag: .zero)
         fracX = Double(p.x / viewportSize.width)
         fracY = Double(p.y / viewportSize.height)
     }
 
-    private var content: some View {
+    /// 展开态内容：背景/描边/阴影在外层 `bar` 上，这里只摆按钮。
+    private var expandedContent: some View {
         HStack(spacing: 10) {
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.primary.opacity(0.55))
@@ -85,10 +131,7 @@ struct PenRackView: View {
             Divider().frame(height: 20)
             collapseButton
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
-        .shadow(radius: 6, y: 2)
+        .transition(.opacity)
     }
 
     // MARK: 笔插槽
@@ -182,7 +225,7 @@ struct PenRackView: View {
     }
 
     private var collapseButton: some View {
-        Button { collapsed = true } label: {
+        Button { setCollapsed(true) } label: {
             Image(systemName: "chevron.left")
                 .imageScale(.medium)
                 .foregroundStyle(.primary.opacity(0.7))
@@ -193,21 +236,19 @@ struct PenRackView: View {
         .help(L("Collapse"))
     }
 
-    /// 收起态：靠边小药丸，只显示当前笔的笔尖 + 展开箭头；整体可拖拽、点一下展开。
-    private var collapsedPill: some View {
+    /// 收起态内容：只显示当前笔的笔尖 + 展开箭头；整体可拖拽、点一下展开。
+    /// 背景/描边/阴影在外层 `bar` 上。
+    private var collapsedContent: some View {
         let pen = app.pens.indices.contains(app.padPenIndex) ? app.pens[app.padPenIndex] : app.pens.first
         return HStack(spacing: 6) {
             Image(systemName: "chevron.right")
                 .imageScale(.small).foregroundStyle(.primary.opacity(0.7))
             if let pen { penTip(pen, active: app.padMode == "note") }
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
-        .shadow(radius: 6, y: 2)
-        .contentShape(Capsule())
-        .onTapGesture { collapsed = false }
+        .contentShape(Rectangle())
+        .onTapGesture { setCollapsed(false) }
         .help(L("Expand Pen Toolbar"))
+        .transition(.opacity)
     }
 
     private var addButton: some View {
@@ -318,10 +359,15 @@ struct PenRackView: View {
 
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 6)
-            .updating($dragOffset) { value, state, _ in state = value.translation }
+            // 拖拽位移禁动画走 updating 的 transaction（精准到本手势），不要在视图上挂
+            // `.animation(nil, value:)`——它会误伤收起/展开的弹簧动画。
+            .updating($dragOffset) { value, state, transaction in
+                transaction.animation = nil
+                state = value.translation
+            }
             .onEnded { value in
                 // 落点同样过夹取（与拖拽中的实时显示一致），再折算回 0~1 比例存盘
-                let p = clampedCenter(drag: value.translation)
+                let p = clampedOrigin(drag: value.translation)
                 fracX = Double(p.x / viewportSize.width)
                 fracY = Double(p.y / viewportSize.height)
             }
