@@ -75,39 +75,6 @@ enum InkRender {
         let len = max(0.0001, (dx * dx + dy * dy).squareRoot())
         return (-dy / len, dx / len)
     }
-
-    /// 由中心线 + 逐点半宽拼出一条可变宽度「缎带」多边形，一次 fill 画完整条。
-    /// 铅笔要逐点变线宽（压感），没法像 marker 那样整条一次 stroke（StrokeStyle 只能给一个恒定线宽）；
-    /// 但逐段分别 stroke() 会让相邻段共享端点处的圆头各自半透明合成、越叠越黑（见 marker 分支同款教训）。
-    /// 缎带整条只 fill 一次 = 一次合成，杜绝这种跨段叠色。
-    static func ribbon(_ c: [CGPoint], halfWidths hw: [CGFloat]) -> Path {
-        var path = Path()
-        guard c.count > 1 else { return path }
-        var left: [CGPoint] = [], right: [CGPoint] = []
-        for i in 0..<c.count {
-            let (nx, ny) = perp(c, i)
-            left.append(CGPoint(x: c[i].x + nx * hw[i], y: c[i].y + ny * hw[i]))
-            right.append(CGPoint(x: c[i].x - nx * hw[i], y: c[i].y - ny * hw[i]))
-        }
-        func tangent(_ a: CGPoint, _ b: CGPoint) -> CGPoint {
-            let dx = b.x - a.x, dy = b.y - a.y
-            let len = max(0.0001, (dx * dx + dy * dy).squareRoot())
-            return CGPoint(x: dx / len, y: dy / len)
-        }
-        let n = c.count
-        let tEnd = tangent(c[n - 2], c[n - 1]), tStart = tangent(c[0], c[1])
-
-        path.move(to: left[0])
-        for p in left.dropFirst() { path.addLine(to: p) }
-        // 起收笔圆头用二次曲线鼓出去近似（控制点沿切线延伸半宽），不用 addArc 是为了不必判断扫掠方向。
-        let endCap = CGPoint(x: c[n - 1].x + tEnd.x * hw[n - 1], y: c[n - 1].y + tEnd.y * hw[n - 1])
-        path.addQuadCurve(to: right[n - 1], control: endCap)
-        for p in right.reversed().dropFirst() { path.addLine(to: p) }
-        let startCap = CGPoint(x: c[0].x - tStart.x * hw[0], y: c[0].y - tStart.y * hw[0])
-        path.addQuadCurve(to: left[0], control: startCap)
-        path.closeSubpath()
-        return path
-    }
 }
 
 /// 一支收藏笔：名字 + 颜色（含透明度）+ 粗细 + 笔头类型。
