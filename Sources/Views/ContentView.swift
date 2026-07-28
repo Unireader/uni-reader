@@ -113,6 +113,8 @@ struct ContentView: View {
                 app.didRestoreInitial = true
                 restoreSession()                        // 首个窗口：恢复整组打开文档为多窗口
             }
+            // 冷启动双击 .unrd：视图就绪晚于 openFile 回调，从 AppDelegate 缓冲里补消费。
+            if let path = AppDelegate.consumePendingWorkspace() { openWorkspace(path: path) }
         }
         .onChange(of: systemScheme) { _, s in if autoNightMode { nightMode = (s == .dark) } }
         .onChange(of: autoNightMode) { _, on in if on { nightMode = (systemScheme == .dark) } }
@@ -166,6 +168,13 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openPDFRequested)) { _ in
             if isKeyWindow { openPDF() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openWorkspaceRequested)) { note in
+            // Finder 双击 / 拖到 Dock 的 .unrd 包：key 窗口切换工作区（并清掉冷启动缓冲）。
+            if isKeyWindow, let path = note.object as? String {
+                AppDelegate.consumePendingWorkspace()
+                openWorkspace(path: path)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerFind)) { _ in
             if isKeyWindow { searchIsActive = true }
@@ -452,10 +461,12 @@ struct ContentView: View {
     }
 
     /// 选择/新建工作区文件夹（已有或空文件夹皆可；数据与笔记都存这里）。
+    /// `.unrd` 包在面板里按「文件」对待，故放行文件选择并把可选类型限定为 文件夹 + 工作区包。
     private func chooseWorkspace() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
-        panel.canChooseFiles = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.folder, UTType(exportedAs: "tech.xvanturing.unireader.workspace")]
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = L("Choose")
@@ -463,6 +474,11 @@ struct ContentView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do { try workspace.open(folder: url) } catch { workspace.lastError = "\(error)" }
         // 选中交给 .onChange(workspace.folder) → restoreLastDoc（恢复新工作区上次文档）
+    }
+
+    /// 打开 .unrd 工作区包（Finder 双击 / 拖到 Dock / 冷启动缓冲）。
+    private func openWorkspace(path: String) {
+        do { try workspace.open(folder: URL(fileURLWithPath: path)) } catch { workspace.lastError = "\(error)" }
     }
 
     /// 启动时恢复工作区上次打开的整组文档：本窗口开第一个，其余各开一个新窗口。

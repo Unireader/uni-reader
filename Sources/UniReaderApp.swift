@@ -11,6 +11,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `applicationShouldTerminate` 在各窗口 `onDisappear` **之前**触发，故此标志对关窗回调可见。
     static var isTerminating = false
 
+    /// 冷启动时被双击/拖入的 .unrd 路径（视图树尚未就绪、通知无人接收时兜底），首个窗口 onAppear 消费。
+    static var pendingWorkspacePath: String?
+
+    /// Finder 双击 / 拖到 Dock 图标的 .unrd 工作区包：转交 key 窗口 ContentView 切换工作区。
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        Self.pendingWorkspacePath = filename
+        NotificationCenter.default.post(name: .openWorkspaceRequested, object: filename)
+        return true
+    }
+
+    /// 取出并清空冷启动缓冲的工作区路径（只消费一次，避免多窗口重复切换）。
+    static func consumePendingWorkspace() -> String? {
+        defer { pendingWorkspacePath = nil }
+        return pendingWorkspacePath
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         guard let bundleId = Bundle.main.bundleIdentifier else { return }
         let me = NSRunningApplication.current
@@ -142,6 +158,7 @@ struct UniReaderApp: App {
 
 extension Notification.Name {
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
+    static let openWorkspaceRequested = Notification.Name("com.xvan.UniReader.openWorkspaceRequested")
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
 }

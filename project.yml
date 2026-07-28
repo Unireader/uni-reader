@@ -21,6 +21,8 @@ targets:
         PRODUCT_NAME: UniReader
         PRODUCT_BUNDLE_IDENTIFIER: tech.xvanturing.UniReader
         GENERATE_INFOPLIST_FILE: YES
+        # 部分 Info.plist（UTI/文档类型声明——.unrd 工作区包），GENERATE_INFOPLIST_FILE 会与其余 key 合并。
+        INFOPLIST_FILE: Sources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: UniReader
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.productivity"

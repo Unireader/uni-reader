@@ -37,6 +37,7 @@
 "Workspace" = "工作区";
 "Open Workspace…" = "打开工作区…";
 "Recent Workspaces" = "最近工作区";
+"Remove from Recents" = "从最近列表移除";
 "Choose" = "选择";
 "Choose a folder as your workspace (data & notes live here)." = "选择一个文件夹作为工作区（数据与笔记都存这里）。";
 "Rename Workspace…" = "重命名工作区…";

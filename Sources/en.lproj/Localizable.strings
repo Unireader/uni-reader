@@ -37,6 +37,7 @@
 "Workspace" = "Workspace";
 "Open Workspace…" = "Open Workspace…";
 "Recent Workspaces" = "Recent Workspaces";
+"Remove from Recents" = "Remove from Recents";
 "Choose" = "Choose";
 "Choose a folder as your workspace (data & notes live here)." = "Choose a folder as your workspace (data & notes live here).";
 "Rename Workspace…" = "Rename Workspace…";

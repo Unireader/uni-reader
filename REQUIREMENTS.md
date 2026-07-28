@@ -177,7 +177,7 @@
 
 > 目标：一个**可移动文件夹 = 一个工作区**，替代「分组」。放移动硬盘上即可两台电脑/未来独立 app 复用同一套数据。
 
-- **文件夹 = 工作区 = 一套相关 PDF**（原「分组」/`LibraryGroup` 已取消，工作区天然就是分组；§1.1 的「自定义分组」以此替代）。
+- **文件夹 = 工作区 = 一套相关 PDF**（原「分组」/`LibraryGroup` 已取消，工作区天然就是分组；§1.1 的「自定义分组」以此替代）。**2026-07-28 起工作区文件夹为 `.unrd` 包**（UTI `tech.xvanturing.unireader.workspace`，conforms to `public.package`，声明在 `Sources/Info.plist`）：Finder 显示为单文件、双击交给 UniReader 打开（`AppDelegate.application(_:openFile:)` → 通知路由到 key 窗口 `ContentView.openWorkspace`；冷启动经 `AppDelegate.pendingWorkspacePath` 缓冲）。**旧无扩展名工作区首次打开时原地改名迁移**为 `<工作区名>.unrd`（`WorkspaceManager.migrateToPackageIfNeeded`，只 rename 不动内容；工作区内改名也联动改包名，保持「包名 == 工作区名.unrd」）。包内布局不变（`UniReader/library.sqlite`、`PDFs/`），跨平台侧把 `.unrd` 当普通目录即可。
 - **不直接存 PDF 本体**，只记录每个文档的「多个可能路径」（移动/复制后自动探测有效路径）。
 - **一个文档可配多个文件 / 多个 hash**：给 PDF 加了 TOC → hash 变但页面内容一致 → 视为同一文档的多个版本（variant），笔记通用。
 

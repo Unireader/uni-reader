@@ -94,6 +94,16 @@ final class LibraryStore {
         }
     }
 
+    /// 只读偷看工作区名字（迁移命名用）：独立短连接打开库取 `workspace_name`，用完即关。
+    /// 库不存在/损坏/无此 meta → nil。须在主 store 打开**之前**调用（避免双连接）。
+    static func peekWorkspaceName(folder: URL) -> String? {
+        let file = folder.appendingPathComponent("UniReader/library.sqlite")
+        guard FileManager.default.fileExists(atPath: file.path),
+              let db = try? SQLiteDB(path: file.path) else { return nil }
+        return (try? db.query("SELECT value FROM meta WHERE key=?", [.text("workspace_name")]))?
+            .first?["value"] as? String
+    }
+
     // MARK: - meta
 
     func meta(_ key: String) -> String? {

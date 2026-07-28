@@ -3,8 +3,9 @@ import PDFKit
 import AppKit
 
 /// App 级单例：持有「当前工作区」及其 `LibraryStore`（跨平台 SQLite 单库）。
-/// 工作区 = 一个可移动文件夹；配置与笔记都存文件夹里的 `UniReader/library.sqlite`。
-/// 最近工作区列表存**本机** UserDefaults（不进文件夹）。主线程使用。
+/// 工作区 = 一个可移动的 `.unrd` 包（UTI 声明见 `Sources/Info.plist`）；配置与笔记都存包内 `UniReader/library.sqlite`。
+/// 旧无扩展名工作区首次打开时原地改名迁移为 `<工作区名>.unrd`（`migrateToPackageIfNeeded`）。
+/// 最近工作区列表存**本机** UserDefaults（不进包）。主线程使用。
 @MainActor
 final class WorkspaceManager: ObservableObject {
     @Published private(set) var folder: URL?
@@ -31,19 +32,83 @@ final class WorkspaceManager: ObservableObject {
         }
     }
 
-    /// 首次无工作区时的默认：应用支持目录下的 DefaultWorkspace。
+    /// 首次无工作区时的默认：应用支持目录下的 DefaultWorkspace.unrd（包）。
     static func defaultFolder() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("UniReader", isDirectory: true)
-            .appendingPathComponent("DefaultWorkspace", isDirectory: true)
+            .appendingPathComponent("DefaultWorkspace.\(packageExtension)", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base
     }
 
+    // MARK: - .unrd 包（工作区 = package，双击不展开、交给 App 打开）
+
+    /// 包扩展名（UTI 声明见 Sources/Info.plist：tech.xvanturing.unireader.workspace）。
+    static let packageExtension = "unrd"
+
+    /// 打开前把旧式（无 .unrd 扩展名）工作区**原地改名**为 `<工作区名>.unrd`，返回实际要打开的 URL。
+    /// 只动文件夹名、不动内容，旧数据零风险；工作区内的相对路径 location 不受影响。
+    /// 迁移对象：含 `UniReader/library.sqlite` 的旧工作区、或用户新选的空文件夹；
+    /// 其余非空文件夹（用户随手指的）不擅自改名，照常在其中建库（显示为普通文件夹）。
+    private func migrateToPackageIfNeeded(_ folder: URL) -> URL {
+        guard folder.pathExtension != Self.packageExtension else { return folder }
+        let fm = FileManager.default
+        let isWorkspace = fm.fileExists(atPath: folder.appendingPathComponent("UniReader/library.sqlite").path)
+        let isEmpty = ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? ["."]).isEmpty
+        guard isWorkspace || isEmpty else { return folder }
+        let name = Self.sanitizedPackageName(
+            LibraryStore.peekWorkspaceName(folder: folder) ?? folder.lastPathComponent,
+            fallback: folder.lastPathComponent)
+        guard let target = Self.availablePackageURL(beside: folder, name: name) else { return folder }
+        do {
+            try fm.moveItem(at: folder, to: target)
+            replaceRecent(old: folder, new: target)
+            if UserDefaults.standard.string(forKey: lastKey) == folder.path {
+                UserDefaults.standard.set(target.path, forKey: lastKey)
+            }
+            return target
+        } catch {
+            lastError = "\(error)"
+            return folder
+        }
+    }
+
+    /// 包名净化：路径分隔符（`/`、`:`）换 `-`，去首尾空白；空了用兜底。
+    static func sanitizedPackageName(_ name: String, fallback: String) -> String {
+        let s = name.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? fallback : s
+    }
+
+    /// 同级目录下不冲突的 `<name>.unrd` URL：冲突时依次回退「文件夹原名.unrd」、`<name>-2.unrd`…
+    private static func availablePackageURL(beside folder: URL, name: String) -> URL? {
+        let dir = folder.deletingLastPathComponent()
+        let primary = "\(name).\(packageExtension)"
+        let folderBased = "\(folder.lastPathComponent).\(packageExtension)"
+        for c in folderBased == primary ? [primary] : [primary, folderBased] {
+            let url = dir.appendingPathComponent(c)
+            if !FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        for i in 2...99 {
+            let url = dir.appendingPathComponent("\(name)-\(i).\(packageExtension)")
+            if !FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        return nil
+    }
+
+    /// 工作区默认显示名（建库后 workspace_name 为空时用）：包则去 .unrd 后缀。
+    static func defaultWorkspaceName(for folder: URL) -> String {
+        folder.pathExtension == packageExtension
+            ? folder.deletingPathExtension().lastPathComponent
+            : folder.lastPathComponent
+    }
+
     /// 打开（或在空文件夹里新建）一个工作区。
     func open(folder: URL) throws {
+        let folder = migrateToPackageIfNeeded(folder)
         let store = try LibraryStore(workspaceFolder: folder)
-        if store.workspaceName.isEmpty { try? store.setWorkspaceName(folder.lastPathComponent) }
+        if store.workspaceName.isEmpty { try? store.setWorkspaceName(Self.defaultWorkspaceName(for: folder)) }
         self.store = store
         self.folder = folder
         self.name = store.workspaceName
@@ -105,6 +170,22 @@ final class WorkspaceManager: ObservableObject {
     func rename(_ newName: String) {
         try? store?.setWorkspaceName(newName)
         name = store?.workspaceName ?? newName
+        syncPackageName()
+    }
+
+    /// 保持「文件夹名 == 工作区名.unrd」不变式：工作区改名后联动原地改包名。
+    /// SQLite 连接基于 fd，同目录 rename 不影响已打开的连接；改名失败不阻断（仅记 lastError）。
+    private func syncPackageName() {
+        guard let folder, folder.pathExtension == Self.packageExtension else { return }
+        let current = folder.deletingPathExtension().lastPathComponent
+        let target = Self.sanitizedPackageName(name, fallback: current)
+        guard target != current, let url = Self.availablePackageURL(beside: folder, name: target) else { return }
+        do {
+            try FileManager.default.moveItem(at: folder, to: url)
+            replaceRecent(old: folder, new: url)
+            UserDefaults.standard.set(url.path, forKey: lastKey)
+            self.folder = url
+        } catch { lastError = "\(error)" }
     }
 
     func refresh() { documents = (try? store?.allDocuments()) ?? [] }
@@ -413,6 +494,21 @@ final class WorkspaceManager: ObservableObject {
         var paths = recents.map(\.path).filter { $0 != url.path }
         paths.insert(url.path, at: 0)
         paths = Array(paths.prefix(10))
+        UserDefaults.standard.set(paths, forKey: recentsKey)
+        recents = paths.map { URL(fileURLWithPath: $0) }
+    }
+    /// 从最近列表移除一条记录（只删记录，不动工作区本身）。
+    func removeRecent(_ url: URL) {
+        let paths = recents.map(\.path).filter { $0 != url.path }
+        UserDefaults.standard.set(paths, forKey: recentsKey)
+        recents = paths.map { URL(fileURLWithPath: $0) }
+    }
+    /// 工作区原地改名后，把最近列表里的旧路径替换为新路径（去重保序）。
+    private func replaceRecent(old: URL, new: URL) {
+        var paths = recents.map(\.path)
+        if let i = paths.firstIndex(of: old.path) { paths[i] = new.path }
+        var seen = Set<String>()
+        paths = paths.filter { seen.insert($0).inserted }
         UserDefaults.standard.set(paths, forKey: recentsKey)
         recents = paths.map { URL(fileURLWithPath: $0) }
     }

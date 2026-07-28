@@ -43,7 +43,13 @@ struct SidebarView: View {
                         Divider()
                         Section(L("Recent Workspaces")) {
                             ForEach(workspace.recents, id: \.self) { url in
-                                Button(url.lastPathComponent) { try? workspace.open(folder: url) }
+                                Button(url.deletingPathExtension().lastPathComponent) { try? workspace.open(folder: url) }
+                            }
+                            Divider()
+                            Menu(L("Remove from Recents")) {
+                                ForEach(workspace.recents, id: \.self) { url in
+                                    Button(url.deletingPathExtension().lastPathComponent) { workspace.removeRecent(url) }
+                                }
                             }
                         }
                     }
