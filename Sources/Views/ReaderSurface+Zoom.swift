@@ -196,31 +196,6 @@ extension ReaderSurface {
         }
     }
 
-    /// ⌘C 直写剪贴板（不用 `.onCopyCommand`：它靠 NSResponder 焦点链触发，纯 `ScrollView` 容器
-    /// 拿不到焦点、菜单/快捷键完全不响应）。只在本窗口是 key window 且确有文字选区时消费事件并拦下；
-    /// 其余情况（普通输入框、无选区、非当前窗口）原样放行，不影响系统默认 Cmd+C。
-    func installCopyMonitor() {
-        guard scratch.copyMonitor == nil else { return }
-        scratch.copyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard scratch.isActiveWindow,
-                  event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-                  event.charactersIgnoringModifiers?.lowercased() == "c",
-                  let text = selection?.text, !text.isEmpty,
-                  !(NSApp.keyWindow?.firstResponder is NSText) else { return event }
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            pb.setString(text, forType: .string)
-            return nil
-        }
-    }
-
-    func removeCopyMonitor() {
-        if let m = scratch.copyMonitor {
-            NSEvent.removeMonitor(m)
-            scratch.copyMonitor = nil
-        }
-    }
-
     /// ⌘0：动画回 fit-width；到位后基准重定标到当前实测可用宽（fitAfter，pageW 不变零跳变）。
     func commandZoomFit() {
         guard layout != nil, scratch.didInitialGeo else { return }

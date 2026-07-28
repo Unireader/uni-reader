@@ -8,6 +8,8 @@ extension Notification.Name {
     static let readerZoomOut = Notification.Name("com.xvan.UniReader.readerZoomOut")
     static let readerZoomFit = Notification.Name("com.xvan.UniReader.readerZoomFit")
     static let readerZoomActual = Notification.Name("com.xvan.UniReader.readerZoomActual")
+    static let readerCopy = Notification.Name("com.xvan.UniReader.readerCopy")
+    static let readerSelectAll = Notification.Name("com.xvan.UniReader.readerSelectAll")
 }
 
 // MARK: - 内部实现
@@ -134,11 +136,9 @@ final class Scratch {
     var localInkStart: (page: Int, nx: Double, ny: Double)?     // 进行中本机落墨的起点（⇧ 尺子锚点；非 nil = 有一笔/一次擦除在画）
     var lassoDragMode: LassoDragMode?  // 进行中框选手势的形态（nil = 无框选/移动在飞）
     var noteDragID: UUID?              // 进行中点注解图钉拖拽的 note id（起点命中定锚一次；非 nil = 有图钉在拖）
-    var lassoEscMonitor: Any?          // Esc 清除框选选中集的 NSEvent 本地监视器（同 copyMonitor 的事件管道理由）
+    var lassoEscMonitor: Any?          // Esc 清除框选选中集的 NSEvent 本地监视器（事件管道，非视图）
     var wheelMonitor: Any?             // ⌘+滚轮的 NSEvent 本地监视器（事件管道，非视图）
-    var copyMonitor: Any?              // ⌘C 的 NSEvent 本地监视器（.onCopyCommand 依赖响应链/焦点，在纯
-                                        // ScrollView 容器上不可靠触发；改走事件管道直写 NSPasteboard）
-    var isActiveWindow = false         // 供 copyMonitor 闭包读取的实时值（struct let 会在 onAppear 后过期，需经 scratch 转发）
+    var isActiveWindow = false         // 供监视器闭包读取的实时值（struct let 会在 onAppear 后过期，需经 scratch 转发）
     let clientID = UUID().uuidString   // 渲染引擎多窗口 wanted 隔离键
     // 夜间切换「原地反转」（见 ReaderSurface+Render.scheduleNightRender）
     var nightLive = false              // 实时夜间模式（onChange 同步；逃逸闭包捕获的 struct self 里 nightMode 会过期，键计算一律读这里）

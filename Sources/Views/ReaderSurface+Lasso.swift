@@ -173,7 +173,7 @@ extension ReaderSurface {
         }
     }
 
-    // MARK: Esc 清除选中（NSEvent 本地监视器，同 copyMonitor：纯 ScrollView 容器拿不到焦点链）
+    // MARK: Esc 清除选中（NSEvent 本地监视器：纯 ScrollView 容器拿不到焦点链）
 
     /// 只在「本窗口激活 + 确有选中集 + 焦点不在文本编辑」时消费 Esc；其余原样放行（不影响系统 Esc 语义）。
     func installLassoEscMonitor() {

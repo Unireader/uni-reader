@@ -236,7 +236,6 @@ struct ReaderSurface: View {
             scratch.isActiveWindow = isActiveWindow
             setup()
             installWheelMonitor()
-            installCopyMonitor()
             installLassoEscMonitor()
             // 切文档重建后补跑一次首帧几何求值：onScrollGeometryChange 可能不重发，靠 onAppear(layout 就绪)
             // + fullWidth/unobSize 的 onChange 三路兜底，任一到位即定基准（防新文档首屏空白、须拖窗口才出）。
@@ -245,7 +244,6 @@ struct ReaderSurface: View {
         .onDisappear {
             follower.reset()
             removeWheelMonitor()
-            removeCopyMonitor()
             removeLassoEscMonitor()
             PageRenderEngine.shared.setWanted([], client: scratch.clientID)
         }
@@ -260,6 +258,13 @@ struct ReaderSurface: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomActual)) { _ in
             if isActiveWindow { commandZoomActual() }
+        }
+        // Edit 菜单 Copy / Select All（UniReaderApp 接管 .pasteboard 组后路由过来）。
+        .onReceive(NotificationCenter.default.publisher(for: .readerCopy)) { _ in
+            if isActiveWindow { copySelectionToPasteboard() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .readerSelectAll)) { _ in
+            if isActiveWindow { selectAllText() }
         }
     }
 

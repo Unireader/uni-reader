@@ -131,6 +131,19 @@ extension ReaderSurface {
 
     func clearSelection() { if selection != nil { selection = nil } }
 
+    /// 全选（Edit → Select All / ⌘A）：**当前页**全部文字。有 OCR 文本层选该页全部 OCR 行
+    /// （与拖选同规则——OCR 层覆盖不准的原生文本），否则 PDFKit 整页选区（mediaBox 范围）。
+    func selectAllText() {
+        guard let pdf = session.pdf, pdf.pageCount > 0 else { return }
+        let page = min(max(session.currentPageIndex, 0), pdf.pageCount - 1)
+        if let runs = ocrRuns(page: page) {
+            let text = runs.map(\.text).joined(separator: "\n")
+            selection = text.isEmpty ? nil : TextSelection(rects: [page: runs.map(\.rect)], text: text)
+        } else if let pdfPage = pdf.page(at: page) {
+            setSelection(pdfPage.selection(for: pdfPage.bounds(for: .mediaBox)))
+        }
+    }
+
     // MARK: 文字注解（kind=0）——右键选区添加批注
 
     @ViewBuilder var readerContextMenu: some View {
@@ -221,7 +234,7 @@ extension ReaderSurface {
         }
     }
 
-    /// 上下文菜单「复制」：与 ⌘C 监视器同直写剪贴板（纯 ScrollView 容器 `.onCopyCommand` 不可靠）。
+    /// 上下文菜单/Edit 菜单「复制」：直写剪贴板（纯 ScrollView 容器 `.onCopyCommand` 不可靠）。
     func copySelectionToPasteboard() {
         guard let text = selection?.text, !text.isEmpty else { return }
         let pb = NSPasteboard.general

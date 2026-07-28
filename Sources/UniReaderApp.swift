@@ -85,6 +85,33 @@ struct UniReaderApp: App {
                 }
                 .keyboardShortcut("f", modifiers: .command)
             }
+            // Edit 菜单剪切板组整体接管（replacing: .pasteboard）：阅读区是纯 SwiftUI 不在响应链上，
+            // 系统 Copy/Select All 永远灰色。重建 5 项——文本框焦点（查找/笔记编辑器）时转发响应链，
+            // 否则发通知路由到 key 窗口阅读区（PageStreamView 接收，与缩放命令同款）。
+            // 只读 PDF 不支持 Cut/Paste/Delete 改文档，它们只服务文本框。
+            CommandGroup(replacing: .pasteboard) {
+                Button(L("Cut")) { NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("x")
+                Button(L("Copy")) {
+                    if NSApp.keyWindow?.firstResponder is NSText {
+                        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                    } else {
+                        NotificationCenter.default.post(name: .readerCopy, object: nil)
+                    }
+                }
+                .keyboardShortcut("c")
+                Button(L("Paste")) { NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("v")
+                Button(L("Delete")) { NSApp.sendAction(#selector(NSText.delete(_:)), to: nil, from: nil) }
+                Button(L("Select All")) {
+                    if NSApp.keyWindow?.firstResponder is NSText {
+                        NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                    } else {
+                        NotificationCenter.default.post(name: .readerSelectAll, object: nil)
+                    }
+                }
+                .keyboardShortcut("a")
+            }
             // 笔架/模式快捷键（设备级全局状态，直接调 AppModel——与画布笔架、平板环形盘
             // 同一套 apply 路径，广播到平板的分支天然生效）。
             CommandGroup(after: .sidebar) {
