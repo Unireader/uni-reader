@@ -93,6 +93,8 @@
 "Pin to Inspector" = "固定到 Inspector";
 "Info" = "信息";
 "No table of contents" = "该 PDF 没有目录";
+"Thumbnails" = "缩略图";
+"No pages to show." = "没有可显示的页面";
 "Zoom In" = "放大";
 "Zoom Out" = "缩小";
 "Zoom to Fit Width" = "适合宽度";

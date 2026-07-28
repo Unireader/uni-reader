@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum InspectorTab: Hashable { case info, contents, notes }
+enum InspectorTab: Hashable { case info, thumbnails, contents, notes }
 
 /// 右侧 inspector（仿 Xcode）：顶部**图标分段**切「信息 / 目录 / 笔记」，默认就在这里，无固定/取消操作。
 /// **无横线分割**——信息/笔记页用 ScrollView + 区块（小标题 + 行），文件项用淡色圆角卡片区隔，目录页用无分隔列表。
@@ -18,6 +18,7 @@ struct InspectorView: View {
 
     private let tabs: [(tab: InspectorTab, icon: String)] = [
         (.info, "info.circle"),
+        (.thumbnails, "rectangle.grid.1x2"),
         (.contents, "list.bullet.indent"),
         (.notes, "note.text"),
     ]
@@ -54,6 +55,11 @@ struct InspectorView: View {
     private var content: some View {
         if tab == .contents {
             TOCListView(entries: toc, currentPage: session.currentPageIndex, onSelect: onSelectTOC)
+        } else if tab == .thumbnails {
+            ThumbnailListView(pdf: session.pdf, documentId: session.contentHash,
+                              currentPage: session.currentPageIndex) { page in
+                onJumpTo(page, 0)
+            }
         } else if let id = documentId, let doc = workspace.document(id: id) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
