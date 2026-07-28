@@ -36,6 +36,8 @@ struct ContentView: View {
     @AppStorage("scrollInterp") private var scrollInterp = true   // 平板滚动跟随：true=时间戳插值 / false=纯低通（A/B 用）
     @AppStorage("autoNightMode") private var autoNightMode = false     // 夜间模式跟随系统深色外观
     @AppStorage("autoStartServer") private var autoStartServer = false // 启动即开平板服务
+    @AppStorage("showTOCButton") private var showTOCButton = true    // 工具栏「目录」按钮（设置页可关）
+    @AppStorage("showOCRButton") private var showOCRButton = true    // 工具栏「文字识别」按钮（设置页可关）
     @Environment(\.colorScheme) private var systemScheme
 
     var body: some View {
@@ -208,23 +210,28 @@ struct ContentView: View {
         ToolbarItemGroup(placement: .automatic) { zoomButtons }
         // Tahoe 会把相邻 item 合并进同一玻璃胶囊——插 spacer 强制缩放组与下面那组分成两个胶囊。
         ToolbarSpacer()
-        // 中间一组：目录 / OCR / 夜间 / 平板服务（查找走标准 .searchable，见 readerColumn）
+        // 中间一组：目录 / OCR / 夜间 / 平板服务（查找走标准 .searchable，见 readerColumn；
+        // 目录/OCR 按钮可在设置里关掉）
         ToolbarItemGroup(placement: .automatic) {
-            Button {
-                showTOCPopover.toggle()
-            } label: {
-                Label(L("Contents"), systemImage: "list.bullet.indent")
+            if showTOCButton {
+                Button {
+                    showTOCPopover.toggle()
+                } label: {
+                    Label(L("Contents"), systemImage: "list.bullet.indent")
+                }
+                .disabled(session.pdf == nil)
+                .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
             }
-            .disabled(session.pdf == nil)
-            .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
 
-            Button {
-                showOCR.toggle()
-            } label: {
-                Label(L("Text Recognition (OCR)"), systemImage: "text.viewfinder")
+            if showOCRButton {
+                Button {
+                    showOCR.toggle()
+                } label: {
+                    Label(L("Text Recognition (OCR)"), systemImage: "text.viewfinder")
+                }
+                .disabled(session.pdf == nil)
+                .popover(isPresented: $showOCR, arrowEdge: .bottom) { ocrPopover }
             }
-            .disabled(session.pdf == nil)
-            .popover(isPresented: $showOCR, arrowEdge: .bottom) { ocrPopover }
 
             Button {
                 nightMode.toggle()

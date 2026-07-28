@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 标准设置页（⌘,）：持久化到 UserDefaults，全窗口共享。
-/// 三项：夜间模式自动化 / 平板滚动跟随算法（延迟处理方式）/ 平板服务开机自启。
+/// 标准设置页（⌘,）：多 Tab 分类（通用 / 平板 / 阅读），持久化到 UserDefaults，全窗口共享。
+/// Tab 用系统标准 `Tab`（macOS 26 设置页样式：顶部图标标签页），布局/观感交给系统。
 struct SettingsView: View {
     @EnvironmentObject private var app: AppModel
 
@@ -11,8 +11,20 @@ struct SettingsView: View {
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // "off" | "paddle"
     @AppStorage("ocrPaddleKey") private var ocrPaddleKey = ""
     @AppStorage("renderCacheMB") private var renderCacheMB = 512     // 页图缓存上限（MB）
+    @AppStorage("showTOCButton") private var showTOCButton = true    // 工具栏「目录」按钮
+    @AppStorage("showOCRButton") private var showOCRButton = true    // 工具栏「文字识别」按钮
 
     var body: some View {
+        TabView {
+            Tab(L("General"), systemImage: "gear") { generalTab }
+            Tab(L("Tablet"), systemImage: "ipad") { tabletTab }
+            Tab(L("Reading"), systemImage: "book") { readingTab }
+        }
+        .frame(width: 480, height: 420)
+    }
+
+    /// 通用：外观（夜间模式自动化）+ 工具栏按钮显隐。
+    private var generalTab: some View {
         Form {
             Section {
                 Toggle(L("Auto Night Mode (follow system Dark Mode)"), isOn: $autoNightMode)
@@ -22,6 +34,19 @@ struct SettingsView: View {
                 Text(L("When on, Night Mode follows the system appearance automatically."))
             }
 
+            Section {
+                Toggle(L("Show Contents Button"), isOn: $showTOCButton)
+                Toggle(L("Show Text Recognition (OCR) Button"), isOn: $showOCRButton)
+            } header: {
+                Text(L("Toolbar"))
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// 平板：滚动跟随算法 + 服务开机自启。
+    private var tabletTab: some View {
+        Form {
             Section {
                 Picker(L("Delay handling"), selection: $scrollInterp) {
                     Text(L("Interpolation")).tag(true)
@@ -41,7 +66,13 @@ struct SettingsView: View {
             } header: {
                 Text(L("Tablet Service"))
             }
+        }
+        .formStyle(.grouped)
+    }
 
+    /// 阅读：页图渲染缓存 + 文字识别（OCR）。
+    private var readingTab: some View {
+        Form {
             Section {
                 Picker(L("Page render cache limit"), selection: $renderCacheMB) {
                     Text("128 MB").tag(128)
@@ -73,6 +104,5 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 460)
     }
 }

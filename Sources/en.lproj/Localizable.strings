@@ -172,3 +172,7 @@
 "Hide Layer" = "Hide Layer";
 "Delete layer “%@”?" = "Delete layer “%@”?";
 "%d stroke(s) on this layer will be deleted too." = "%d stroke(s) on this layer will be deleted too.";
+"Toolbar" = "Toolbar";
+"Show Contents Button" = "Show Contents Button";
+"Show Text Recognition (OCR) Button" = "Show Text Recognition (OCR) Button";
+"Reading" = "Reading";
