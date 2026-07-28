@@ -201,9 +201,13 @@ struct ContentView: View {
     /// 抽出独立 ToolbarContent——内联进 body 会让 SwiftUI 类型检查器超时。
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        // 缩放一组（最左，TOC 左侧；参考 Preview：缩小 | 1:1 实际大小 | 放大；经通知路由到本窗口阅读区，
-        // 与 ⌘-/⌘= 菜单命令同一套 commit 路径）。ControlGroup 在 macOS 工具栏渲染成单一胶囊分段组。
-        ToolbarItem(placement: .automatic) { zoomButtons }
+        // 缩放一组（最左，参考 Preview：缩小 | 1:1 实际大小 | 放大；经通知路由到本窗口阅读区，
+        // 与 ⌘-/⌘= 菜单命令同一套 commit 路径）。Tahoe 胶囊合并规则（2026-07-28 实测）：
+        // 只有连续纯图标 Button 才被系统合并成单一胶囊——掺 Text label（如 "1:1"）整组散成
+        // 独立圆钮，故 1:1 用 "1.magnifyingglass" 图标；ControlGroup 在工具栏里同样被拆散，不可用。
+        ToolbarItemGroup(placement: .automatic) { zoomButtons }
+        // Tahoe 会把相邻 item 合并进同一玻璃胶囊——插 spacer 强制缩放组与下面那组分成两个胶囊。
+        ToolbarSpacer()
         // 中间一组：目录 / OCR / 夜间 / 平板服务（查找走标准 .searchable，见 readerColumn）
         ToolbarItemGroup(placement: .automatic) {
             Button {
@@ -246,11 +250,11 @@ struct ContentView: View {
         }
     }
 
-    /// 工具栏缩放组：缩小 | 1:1 | 放大（无 PDF 时禁用）。用系统标准 `ControlGroup`（官方文档
-    /// 推荐的工具栏分组 API；具体渲染样式交给系统，不自绘）。
+    /// 工具栏缩放组：缩小 | 1:1 | 放大（无 PDF 时禁用）。纯 Button 交给外层 ToolbarItemGroup
+    /// 渲染成单一胶囊分段组（Tahoe 下 ControlGroup 反而会被拆成独立圆钮，见 toolbarContent 注释）。
     @ViewBuilder
     private var zoomButtons: some View {
-        ControlGroup {
+        Group {
             Button {
                 NotificationCenter.default.post(name: .readerZoomOut, object: nil)
             } label: {
@@ -260,7 +264,7 @@ struct ContentView: View {
             Button {
                 NotificationCenter.default.post(name: .readerZoomActual, object: nil)
             } label: {
-                Text("1:1")
+                Image(systemName: "1.magnifyingglass")
             }
             .help(L("Actual Size"))
             Button {
@@ -269,8 +273,6 @@ struct ContentView: View {
                 Image(systemName: "plus.magnifyingglass")
             }
             .help(L("Zoom In"))
-        } label: {
-            Label(L("Zoom"), systemImage: "plus.magnifyingglass")   // 窗口过窄溢出收进 >> 时显示
         }
         .disabled(session.pdf == nil)
     }
