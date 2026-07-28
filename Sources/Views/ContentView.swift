@@ -30,6 +30,7 @@ struct ContentView: View {
         let docId: String; let path: String; let newHash: String
         var id: String { docId }
     }
+    @State private var workspaceActionError: String?   // 打开/新建工作区失败（如选中非真实工作区文件夹）待提示
     @State private var showOCR = false
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // OCR 引擎（"off" | "paddle"），设置页写入
     @AppStorage("nightMode") private var nightMode = false
@@ -49,6 +50,7 @@ struct ContentView: View {
     private var mainSplit: some View {
         NavigationSplitView {
             SidebarView(selection: $selectedDocID, onChooseWorkspace: chooseWorkspace,
+                        onCreateWorkspace: createNewWorkspace,
                         onDropFiles: { ingest(urls: $0) }, onOpenPDF: openPDF,
                         onOpenInNewWindow: { openWindow(id: "docWindow", value: $0) })
                 .navigationSplitViewColumnWidth(min: 200, ideal: 260)
@@ -193,6 +195,15 @@ struct ContentView: View {
         // （actions/message 抽成独立方法——内联会让类型检查器超时。）
         .alert(L("File Changed"), isPresented: hashAlertPresented, presenting: hashMismatch,
                actions: hashAlertActions, message: hashAlertMessage)
+        // 打开/新建工作区失败（选中的不是真实工作区包 / 创建失败等）——不静默开出空库。
+        .alert(L("Workspace Error"),
+               isPresented: Binding(get: { workspaceActionError != nil },
+                                    set: { if !$0 { workspaceActionError = nil } })
+        ) {
+            Button(L("OK")) {}
+        } message: {
+            Text(workspaceActionError ?? "")
+        }
     }
 
     @ViewBuilder
@@ -464,25 +475,38 @@ struct ContentView: View {
         }
     }
 
-    /// 选择/新建工作区文件夹（已有或空文件夹皆可；数据与笔记都存这里）。
-    /// `.unrd` 包在面板里按「文件」对待，故放行文件选择并把可选类型限定为 文件夹 + 工作区包。
+    /// 打开一个**已存在**的工作区包（`.unrd`）：只认真实工作区，不接受普通/空文件夹，也不允许
+    /// 现场新建（那是 `createNewWorkspace()` 的职责）——避免误选到无关文件夹时被静默建成空库。
     private func chooseWorkspace() {
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
+        panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowedContentTypes = [.folder, UTType(exportedAs: "tech.xvanturing.unireader.workspace")]
-        panel.canCreateDirectories = true
+        panel.canCreateDirectories = false
+        panel.treatsFilePackagesAsDirectories = false
+        panel.allowedContentTypes = [UTType(exportedAs: "tech.xvanturing.unireader.workspace")]
         panel.allowsMultipleSelection = false
-        panel.prompt = L("Choose")
-        panel.message = L("Choose a folder as your workspace (data & notes live here).")
+        panel.message = L("Choose an existing UniReader workspace (.unrd).")
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try workspace.open(folder: url) } catch { workspace.lastError = "\(error)" }
+        do { try workspace.openExisting(folder: url) } catch { workspaceActionError = error.localizedDescription }
         // 选中交给 .onChange(workspace.folder) → restoreLastDoc（恢复新工作区上次文档）
     }
 
-    /// 打开 .unrd 工作区包（Finder 双击 / 拖到 Dock / 冷启动缓冲）。
+    /// 新建工作区：选位置+起名，创建全新 `.unrd` 包并切换过去（与「打开」严格分离的专用入口）。
+    private func createNewWorkspace() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(exportedAs: "tech.xvanturing.unireader.workspace")]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = L("Untitled Workspace")
+        panel.prompt = L("Create")
+        panel.message = L("Choose a location and name for the new workspace.")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try workspace.createWorkspace(at: url) } catch { workspaceActionError = error.localizedDescription }
+    }
+
+    /// 打开 .unrd 工作区包（Finder 双击 / 拖到 Dock / 冷启动缓冲）：同样走严格校验——
+    /// 万一目标不是真实工作区（如损坏或被误建的同名空文件夹），提示而非静默开出一个空库。
     private func openWorkspace(path: String) {
-        do { try workspace.open(folder: URL(fileURLWithPath: path)) } catch { workspace.lastError = "\(error)" }
+        do { try workspace.openExisting(folder: URL(fileURLWithPath: path)) } catch { workspaceActionError = error.localizedDescription }
     }
 
     /// 启动时恢复工作区上次打开的整组文档：本窗口开第一个，其余各开一个新窗口。

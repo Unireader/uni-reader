@@ -6,6 +6,7 @@ struct SidebarView: View {
     @EnvironmentObject private var workspace: WorkspaceManager
     @Binding var selection: String?
     var onChooseWorkspace: () -> Void
+    var onCreateWorkspace: () -> Void
     var onDropFiles: ([URL]) -> Void
     var onOpenPDF: () -> Void
     var onOpenInNewWindow: (String) -> Void
@@ -34,7 +35,10 @@ struct SidebarView: View {
                 }
                 Menu {
                     Button(action: onChooseWorkspace) {
-                        Label(L("Open Workspace…"), systemImage: "folder.badge.plus")
+                        Label(L("Open Workspace…"), systemImage: "folder")
+                    }
+                    Button(action: onCreateWorkspace) {
+                        Label(L("New Workspace…"), systemImage: "folder.badge.plus")
                     }
                     Button { nameField = workspace.name; renameShown = true } label: {
                         Label(L("Rename Workspace…"), systemImage: "pencil")

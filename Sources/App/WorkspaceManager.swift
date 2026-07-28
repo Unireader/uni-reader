@@ -105,7 +105,45 @@ final class WorkspaceManager: ObservableObject {
             : folder.lastPathComponent
     }
 
-    /// 打开（或在空文件夹里新建）一个工作区。
+    /// 「打开工作区」严格校验失败原因（供 UI 提示；不静默建空库）。
+    enum OpenError: LocalizedError {
+        case notFound        // 路径不存在，或存在但不是文件夹
+        case notAWorkspace   // 是文件夹，但不含 UniReader/library.sqlite——不是真实工作区
+
+        var errorDescription: String? {
+            switch self {
+            case .notFound: return L("The selected item does not exist.")
+            case .notAWorkspace: return L("This folder is not a UniReader workspace (no UniReader/library.sqlite inside).")
+            }
+        }
+    }
+
+    /// 该文件夹（原始路径，改名迁移前）是否已是真实工作区：含 `UniReader/library.sqlite`。
+    private func hasLibrary(_ folder: URL) -> Bool {
+        FileManager.default.fileExists(atPath: folder.appendingPathComponent("UniReader/library.sqlite").path)
+    }
+
+    /// 严格模式打开：仅接受**已存在的真实工作区**（含 `UniReader/library.sqlite`；旧式无扩展名
+    /// 工作区同样算数，照常原地改名迁移）。供「打开工作区」面板 / 最近工作区 / Finder 双击 /
+    /// 冷启动共用——防止误选空文件夹或无关目录时被 `open(folder:)` 静默建成一个新的空库
+    /// （用户会以为「打开」了工作区，实际看到的是一个空白库）。新建工作区走 `createWorkspace(at:)`。
+    func openExisting(folder: URL) throws {
+        guard isDir(folder) else { throw OpenError.notFound }
+        guard hasLibrary(folder) else { throw OpenError.notAWorkspace }
+        try open(folder: folder)
+    }
+
+    /// 新建工作区：在 `url` 处创建全新 `.unrd` 包并切换过去。与「打开」严格分离的专用入口。
+    /// 若目标已存在（面板已弹过系统「替换」确认），先整体删除再新建，保证是一个全新的空库。
+    func createWorkspace(at url: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
+        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        try open(folder: url)
+    }
+
+    /// 打开（或在空文件夹里新建）一个工作区。内部/首次启动引导用；用户侧「打开」入口一律走
+    /// 上面的 `openExisting`，「新建」走 `createWorkspace`——避免向用户暴露这个宽松版本。
     func open(folder: URL) throws {
         let folder = migrateToPackageIfNeeded(folder)
         let store = try LibraryStore(workspaceFolder: folder)
@@ -504,14 +542,15 @@ final class WorkspaceManager: ObservableObject {
         UserDefaults.standard.set(paths, forKey: recentsKey)
         recents = paths.map { URL(fileURLWithPath: $0) }
     }
-    /// 打开「最近工作区」列表中的一项：文件夹已不存在（被删/移走）→ 提示 + 自动从列表移除；否则正常打开。
+    /// 打开「最近工作区」列表中的一项：文件夹已不存在（被删/移走）或已不再是真实工作区（如内部
+    /// library.sqlite 被误删）→ 提示 + 自动从列表移除；否则正常打开。
     func openRecent(_ url: URL) {
-        guard isDir(url) else {
+        do {
+            try openExisting(folder: url)
+        } catch {
             removeRecent(url)
             missingRecentName = Self.defaultWorkspaceName(for: url)
-            return
         }
-        try? open(folder: url)
     }
     /// 从最近列表移除一条记录（只删记录，不动工作区本身）。
     func removeRecent(_ url: URL) {
