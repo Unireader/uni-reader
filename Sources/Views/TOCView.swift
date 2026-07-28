@@ -20,7 +20,7 @@ struct TOCEntry: Identifiable {
                 var pageIndex = 0, frac = 0.0
                 if let dest = c.destination, let page = dest.page {
                     pageIndex = doc.index(for: page)
-                    let b = page.bounds(for: .mediaBox)
+                    let b = page.bounds(for: PageBitmap.effectiveBox(page))
                     let y = dest.point.y
                     if y.isFinite, b.height > 0 { frac = min(max(0, Double((b.maxY - y) / b.height)), 1) }
                 }

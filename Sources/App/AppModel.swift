@@ -466,7 +466,7 @@ final class AppModel: ObservableObject {
 
     private func currentPageAspect(page: Int) -> Double {
         guard let pdf = padSession?.pdf, page >= 0, page < pdf.pageCount, let pg = pdf.page(at: page) else { return 1 }
-        let b = pg.bounds(for: .mediaBox)
+        let b = pg.bounds(for: PageBitmap.effectiveBox(pg))
         return b.width > 0 ? Double(b.height / b.width) : 1
     }
 
@@ -724,7 +724,7 @@ final class AppModel: ObservableObject {
         guard server.isRunning, let s = padSession, let pdf = s.pdf,
               let page = pdf.page(at: s.currentPageIndex) else { return }
         setPadRender(pdf: pdf, key: s.contentHash)   // 方案 B：更新按页渲染源
-        let b = page.bounds(for: .mediaBox)
+        let b = page.bounds(for: PageBitmap.effectiveBox(page))
         server.setPage(index: s.currentPageIndex,
                        count: pdf.pageCount,
                        width: Double(b.width),
@@ -759,7 +759,7 @@ final class AppModel: ObservableObject {
         var pages: [[Double]] = []
         pages.reserveCapacity(pdf.pageCount)
         for i in 0..<pdf.pageCount {
-            let b = pdf.page(at: i)?.bounds(for: .mediaBox) ?? .zero
+            let b = pdf.page(at: i).map { $0.bounds(for: PageBitmap.effectiveBox($0)) } ?? .zero
             pages.append([Double(b.width), Double(b.height)])
         }
         server.broadcast([

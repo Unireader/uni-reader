@@ -6,15 +6,27 @@ import PDFKit
 /// 旋转语义由 `spike/render-rotation-test.swift`（9/9）钉死：
 /// `page.draw(with:to:)` 自带旋转；显示尺寸 = mediaBox 在 90/270° 时换边；子矩形贴片只需平移。
 ///
+/// ⚠️ `page.draw(with:box,to:)` 内部**已经**把 box 的原点对齐到当前 CTM 原点——调用方不需要、也不能再手动
+/// `translateBy(-b.minX,-b.minY)`。旧代码这么写过，因为绝大多数 PDF 的 MediaBox 原点是 (0,0)，这行平移
+/// 恰好等于平移 0，从未暴露；真正 CropBox 原点非零（例如跨页扫描图靠 CropBox 切一半）时会叠加成双重平移，
+/// 把整页内容顶到画布外（实测：CropBox.minX≈550 时输出纯白）。
+///
 /// ⚠️ 本原语线程安全，**但 `PDFPage`/`PDFDocument` 不是**：同一个 `PDFDocument` 实例只允许被
 /// 一条队列渲染。现有三条管线各自持有独立文档实例或独占队列——Mac 阅读区走
 /// `PageRenderEngine` 的串行队列（`session.pdf`）、平板页图走 `LANServer` 服务 queue
 /// （`AppModel.padRenderPDF`，另开的实例，见 `setPadRender`）、OCR 走 `DocSession.ocrRenderQueue`。
 /// 新增调用方前先确认它拿的是哪份文档实例，别再把 `session.pdf` 交给第四条队列。
 enum PageBitmap {
+    /// 该页实际显示用的 box：优先 CropBox，退化（未定义/零尺寸）时退回 MediaBox。
+    /// 渲染、选区坐标归一化、TOC 跳转、平板页面宽高必须用同一个 box，否则互相错位。
+    static func effectiveBox(_ page: PDFPage) -> PDFDisplayBox {
+        let crop = page.bounds(for: .cropBox)
+        return (crop.width > 0 && crop.height > 0) ? .cropBox : .mediaBox
+    }
+
     /// 页的显示尺寸（pt，已含旋转换边）。
     static func displaySize(_ page: PDFPage) -> CGSize {
-        let b = page.bounds(for: .mediaBox)
+        let b = page.bounds(for: effectiveBox(page))
         let rot = ((page.rotation % 360) + 360) % 360
         return rot % 180 == 0 ? b.size : CGSize(width: b.height, height: b.width)
     }
@@ -53,9 +65,7 @@ enum PageBitmap {
         ctx.interpolationQuality = .high
         ctx.scaleBy(x: scale, y: scale)
         ctx.translateBy(x: -subOrigin.x, y: -subOrigin.y)
-        let b = page.bounds(for: .mediaBox)
-        ctx.translateBy(x: -b.minX, y: -b.minY)
-        page.draw(with: .mediaBox, to: ctx)
+        page.draw(with: effectiveBox(page), to: ctx)
         return ctx.makeImage()
     }
 
