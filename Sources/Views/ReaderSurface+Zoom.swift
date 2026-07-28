@@ -8,6 +8,17 @@ extension ReaderSurface {
 
     func clampZoom(_ z: CGFloat) -> CGFloat { min(max(z, zoomMin), zoomMax) }
 
+    /// 锚点计算用的「当前」内容偏移：优先用刚提交、尚未被 `verifyPendingTarget` 确认的
+    /// `scratch.pendingTarget`，否则退回 `scratch.geo` 上次汇报值。
+    /// ⚠️ **不能一律信 `scratch.geo`**：`onScrollGeometryChange` 汇报是异步的，比 `scrollTo`
+    /// 慢半拍到几帧；两次缩放命令紧挨着触发时（连点工具栏按钮 / 命令刚落地又捏合），后一次会读到
+    /// 「新 zoom 配旧 offset」的错配快照，算出的锚点内容坐标是错的——目标偏移仍会被 `clampOffset`
+    /// 夹进合法范围，不会报错，却会稳稳当当地跳到文档里不相关的一段（未渲染区域先呈现空白纸，
+    /// 表现为「PDF 页面消失」；再缩一次因起点又变了，落点继续偏、越点越乱）。
+    var anchorOffset: CGPoint {
+        scratch.pendingTarget ?? CGPoint(x: scratch.geo.offsetX, y: scratch.geo.offsetY)
+    }
+
     /// 目标偏移夹取（用给定显示页宽下的内容尺寸）。
     func clampOffset(_ o: CGPoint, pageWidth pw: CGFloat) -> CGPoint {
         guard let layout else { return o }
@@ -33,11 +44,11 @@ extension ReaderSurface {
         if scratch.pinch == nil {
             follower.reset()                                   // 用户接管
             cancelZoomAnim()                                   // 捏合接管：停掉进行中的按钮/⌘ 缩放动画
-            let g = scratch.geo
+            let o = anchorOffset
             // 手势现挂在 ScrollView 容器 → startLocation 为容器/视口坐标 P（屏幕不动点，与 ⌘wheel/anchorP 同约定）；
             // 内容锚点 c = 偏移 + P。（旧实现挂 content 层取内容坐标，捏合页外空白无手势 → 不缩放。）
             let P = v.startLocation
-            let c = CGPoint(x: g.offsetX + P.x, y: g.offsetY + P.y)
+            let c = CGPoint(x: o.x + P.x, y: o.y + P.y)
             scratch.pinch = PinchInfo(startZoom: zoom, viewportP: P, cCur: c)
             scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
         }
@@ -81,8 +92,8 @@ extension ReaderSurface {
         guard layout != nil, scratch.didInitialGeo else { return }
         follower.reset()
         cancelZoomAnim()   // 连续输入接管：停掉进行中的命令式动画，避免两路同时写 zoom
-        let g = scratch.geo
-        let c = CGPoint(x: g.offsetX + P.x, y: g.offsetY + P.y)
+        let o = anchorOffset
+        let c = CGPoint(x: o.x + P.x, y: o.y + P.y)
         var p = PinchInfo(startZoom: zoom, viewportP: P, cCur: c)
         commitZoom(to: clampZoom(zoom * factor), pinch: &p)
         scheduleSettleRender()
@@ -124,9 +135,9 @@ extension ReaderSurface {
             if let nb = fitAfter { fitBasis = nb; zoom = 1; userZoomed = false }   // 已在目标：仍刷新基准
             return
         }
-        let g = scratch.geo
+        let o = anchorOffset
         scratch.zoomAnim = ZoomAnim(z0: zoom, z1: z1, anchorP: P,
-                                    c0: CGPoint(x: g.offsetX + P.x, y: g.offsetY + P.y),
+                                    c0: CGPoint(x: o.x + P.x, y: o.y + P.y),
                                     start: CACurrentMediaTime(), fitAfter: fitAfter)
         zoomAnimOn = true
     }
