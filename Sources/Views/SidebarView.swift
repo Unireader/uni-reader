@@ -43,7 +43,7 @@ struct SidebarView: View {
                         Divider()
                         Section(L("Recent Workspaces")) {
                             ForEach(workspace.recents, id: \.self) { url in
-                                Button(url.deletingPathExtension().lastPathComponent) { try? workspace.open(folder: url) }
+                                Button(url.deletingPathExtension().lastPathComponent) { workspace.openRecent(url) }
                             }
                             Divider()
                             Menu(L("Remove from Recents")) {
@@ -76,6 +76,15 @@ struct SidebarView: View {
         } message: { pair in
             Text(String(format: L("“%@” becomes another version of “%@”; their notes merge and it leaves the list."),
                         pair.source.title, pair.target.title))
+        }
+        .alert(L("Workspace Not Found"),
+               isPresented: Binding(get: { workspace.missingRecentName != nil },
+                                    set: { if !$0 { workspace.missingRecentName = nil } }),
+               presenting: workspace.missingRecentName
+        ) { _ in
+            Button(L("OK")) {}
+        } message: { name in
+            Text(String(format: L("“%@” could not be found. It has been removed from your recent workspaces."), name))
         }
     }
 

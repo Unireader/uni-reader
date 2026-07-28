@@ -13,6 +13,7 @@ final class WorkspaceManager: ObservableObject {
     @Published private(set) var documents: [LibDocument] = []
     @Published private(set) var recents: [URL] = []
     @Published var lastError: String?
+    @Published var missingRecentName: String?   // 非空 = 该「最近工作区」项已不存在，弹窗提示用（已顺带从列表移除）
     private(set) var restoreDocIds: [String] = []   // 启动时「上次打开集」快照，供多窗口恢复（restoreSession 读一次进本地）
     private var windowDocs: [UUID: String] = [:]     // 各窗口当前文档（sessionId → docId）——「打开集」的真相源
     private var openDocs: [String] = []              // 当前打开的文档集（= 所有窗口当前文档，去重保序）；持久化供下次恢复
@@ -496,6 +497,15 @@ final class WorkspaceManager: ObservableObject {
         paths = Array(paths.prefix(10))
         UserDefaults.standard.set(paths, forKey: recentsKey)
         recents = paths.map { URL(fileURLWithPath: $0) }
+    }
+    /// 打开「最近工作区」列表中的一项：文件夹已不存在（被删/移走）→ 提示 + 自动从列表移除；否则正常打开。
+    func openRecent(_ url: URL) {
+        guard isDir(url) else {
+            removeRecent(url)
+            missingRecentName = Self.defaultWorkspaceName(for: url)
+            return
+        }
+        try? open(folder: url)
     }
     /// 从最近列表移除一条记录（只删记录，不动工作区本身）。
     func removeRecent(_ url: URL) {

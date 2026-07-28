@@ -52,6 +52,8 @@
 "“%@” becomes another version of “%@”; their notes merge and it leaves the list." = "“%@” becomes another version of “%@”; their notes merge and it leaves the list.";
 "File Not Found" = "File Not Found";
 "All known paths for “%@” are unavailable. Re-link the file to continue." = "All known paths for “%@” are unavailable. Re-link the file to continue.";
+"Workspace Not Found" = "Workspace Not Found";
+"“%@” could not be found. It has been removed from your recent workspaces." = "“%@” could not be found. It has been removed from your recent workspaces.";
 "Re-link File…" = "Re-link File…";
 "Choose the file for “%@”." = "Choose the file for “%@”.";
 "Show in Finder" = "Show in Finder";

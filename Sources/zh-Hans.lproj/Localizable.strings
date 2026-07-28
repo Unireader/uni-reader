@@ -52,6 +52,8 @@
 "“%@” becomes another version of “%@”; their notes merge and it leaves the list." = "「%@」将作为「%@」的另一个版本；两者笔记合并，它从列表移除。";
 "File Not Found" = "找不到文件";
 "All known paths for “%@” are unavailable. Re-link the file to continue." = "「%@」记录的所有路径都失效了。重新关联文件以继续。";
+"Workspace Not Found" = "找不到工作区";
+"“%@” could not be found. It has been removed from your recent workspaces." = "「%@」已找不到，已从最近工作区列表移除。";
 "Re-link File…" = "重新关联文件…";
 "Choose the file for “%@”." = "为「%@」选择文件。";
 "Show in Finder" = "在访达中显示";
