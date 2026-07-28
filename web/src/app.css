@@ -21,8 +21,11 @@ canvas { position:fixed; inset:0; }
 #radial { z-index:6; pointer-events:none; }
 #topbar { position:fixed; left:0; right:0; top:0; height:46px; z-index:10;
   display:flex; align-items:center; gap:10px; padding:0 10px;
+  overflow-x:auto; scrollbar-width:none;
   background:rgba(22,27,34,.9); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
   border-bottom:1px solid #30363d; }
+#topbar::-webkit-scrollbar { display:none; }
+#topbar > * { flex-shrink:0; }
 #dot { width:10px; height:10px; border-radius:50%; background:#f85149; flex:none; }
 #dot.on { background:#3fb950; }
 #lat { color:#8b949e; font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
