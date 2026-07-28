@@ -57,6 +57,7 @@
 "Re-link File…" = "重新关联文件…";
 "Choose the file for “%@”." = "为「%@」选择文件。";
 "Show in Finder" = "在访达中显示";
+"Show Workspace in Finder" = "在访达中显示工作区";
 "Open in New Window" = "在新窗口打开";
 "Select a document to see its info and notes." = "选择一个文档以查看其信息与笔记。";
 "Document" = "文档";

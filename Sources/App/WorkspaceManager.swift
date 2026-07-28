@@ -382,6 +382,12 @@ final class WorkspaceManager: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
     }
 
+    /// 在访达中打开当前工作区所在目录（选中 .unrd 包本身）。
+    func revealWorkspaceInFinder() {
+        guard let folder else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
+    }
+
     func variants(documentId: String) -> [LibVariant] { (try? store?.variants(documentId: documentId)) ?? [] }
     func locations(documentId: String) -> [LibLocation] { (try? store?.locations(documentId: documentId)) ?? [] }
     func notes(documentId: String) -> [LibNote] { (try? store?.notes(documentId: documentId)) ?? [] }

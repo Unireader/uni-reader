@@ -104,6 +104,9 @@ struct SidebarView: View {
                 Label(L("Show in Finder"), systemImage: "folder")
             }
         }
+        Button { workspace.revealWorkspaceInFinder() } label: {
+            Label(L("Show Workspace in Finder"), systemImage: "folder.badge.gearshape")
+        }
         Divider()
         if workspace.isInWorkspace(doc.id) {
             Button { workspace.removeFromWorkspace(documentId: doc.id) } label: {
