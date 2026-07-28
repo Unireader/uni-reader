@@ -330,6 +330,11 @@ final class LANServer: ObservableObject {
             let n = (dir == "prev") ? currentPageIndex - 1 : currentPageIndex + 1
             let clamped = max(0, min(n, max(0, pageCount - 1)))
             DispatchQueue.main.async { self.requestedPageIndex = clamped }
+        case "gotoPage":
+            let target = (obj["page"] as? NSNumber)?.intValue ?? currentPageIndex
+            let clamped = max(0, min(target, max(0, pageCount - 1)))
+            DispatchQueue.main.async { self.requestedPageIndex = clamped }
+            return true
         case "scroll":
             // 方案 B：平板本地滚动 → 上报锚点（页 + 页内归一化比例）。
             let page = (obj["page"] as? NSNumber)?.intValue ?? currentPageIndex

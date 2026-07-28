@@ -32,7 +32,14 @@ canvas { position:fixed; inset:0; }
 #docs { max-width:24vw; padding:6px 8px; border:1px solid #30363d; border-radius:8px;
   background:#21262d; color:#e6edf3; font-size:14px; }
 #zoomLabel { color:#8b949e; font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
-#pageLabel { margin-left:auto; font-variant-numeric:tabular-nums; white-space:nowrap; }
+#pageLabel { margin-left:auto; font-variant-numeric:tabular-nums; white-space:nowrap; cursor:pointer; }
+#pageInput { margin-left:auto; width:72px; padding:4px 6px; font-size:14px; font-variant-numeric:tabular-nums;
+  text-align:center; border:1px solid #1f6feb; border-radius:8px; background:#21262d; color:#e6edf3;
+  outline:none; flex-shrink:0; }
+/* 隐藏 number input 的上下箭头（Firefox） */
+#pageInput { -moz-appearance:textfield; }
+/* 隐藏 number input 的上下箭头（Chrome/Safari） */
+#pageInput::-webkit-inner-spin-button, #pageInput::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
 #topbar button { padding:8px 14px; font-size:16px; border:1px solid #30363d; border-radius:8px;
   background:#21262d; color:#e6edf3; }
 #topbar button:active { background:#30363d; }

@@ -1,10 +1,28 @@
 <script lang="ts">
   // 顶栏：连接绿点 / 延迟读数（点击展开统计）/ 文档下拉 / 缩放与页码标签 / 翻页·夜间·显隐·锁缩放·全屏·收起按钮。
   // 收起后右上角浮一个小按钮，点它重新展开（纯本地 UI 状态，不与 Mac 同步）。
+  // 页码标签点击可输入数字直接跳页。
   import { S } from "./lib/hud.svelte.js";
   import { actions } from "./lib/actions.js";
   import Icon from "./Icon.svelte";
   let hidden = $state(false);
+  let editingPage = $state(false);
+  let inputEl: HTMLInputElement | undefined = $state(undefined);
+  let pageInput = $state("");
+
+  function startEdit() {
+    pageInput = "";
+    editingPage = true;
+  }
+  function commitPage() {
+    editingPage = false;
+    const n = parseInt(pageInput, 10);
+    if (!isNaN(n) && n >= 1) actions.gotoPage(n);
+  }
+  function onInputKey(e: KeyboardEvent) {
+    if (e.key === "Enter") commitPage();
+    if (e.key === "Escape") editingPage = false;
+  }
 </script>
 
 {#if hidden}
@@ -20,7 +38,20 @@
     {/each}
   </select>
   <span id="zoomLabel">{S.zoomLabel}</span>
-  <span id="pageLabel">{S.pageLabel}</span>
+  {#if editingPage}
+    <input
+      id="pageInput"
+      type="number"
+      min="1"
+      bind:value={pageInput}
+      bind:this={inputEl}
+      onkeydown={onInputKey}
+      onblur={commitPage}
+      placeholder="页号"
+    />
+  {:else}
+    <span id="pageLabel" role="button" tabindex="0" title="点击输入页码跳转" onclick={startEdit}>{S.pageLabel}</span>
+  {/if}
   <button id="prev" onclick={() => actions.turn("prev")}>‹</button>
   <button id="next" onclick={() => actions.turn("next")}>›</button>
   <button id="night" title="夜间模式" onclick={() => actions.toggleNight()}><Icon name={S.night ? "sun" : "moon"} /></button>

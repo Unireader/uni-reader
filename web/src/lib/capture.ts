@@ -74,6 +74,15 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     G.scrollY = clamp(G.offY[i], 0, G.maxScrollY);
     G.ensureImages(); G.drawAll(); updatePageLabel(); G.emitScroll();
   }
+  // 直接跳转到指定页码（1-based）——本地滚到该页顶部 + 上行给 Mac 跟随。
+  function gotoPage(page: number): void {
+    if (!G.pageCount || !G.offY.length || page < 1 || page > G.pageCount) return;
+    const i = clamp(page - 1, 0, G.pageCount - 1);
+    G.scrollY = clamp(G.offY[i], 0, G.maxScrollY);
+    G.ensureImages(); G.drawAll(); updatePageLabel();
+    G.send({ type: "gotoPage", page: i });
+    G.emitScroll();
+  }
   // 切走框选工具即放弃选中（同 Mac 端 `pointerTool != .lasso` 清 lassoSelection 同理，残留高亮框会误导）。
   function cycleMode(): void {
     const leavingLasso = curMode() === "lasso";
@@ -92,6 +101,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
   }
   Object.assign(actions, {
     turn,
+    gotoPage,
     cycleMode,
     cyclePen,
     selectDoc(id: string) { G.send({ type: "selectDoc", id: id }); },

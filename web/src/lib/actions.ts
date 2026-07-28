@@ -2,6 +2,7 @@
 // 组件只依赖这个空袋的形状，不依赖装配顺序（点击必然发生在 mount 之后）。
 export interface Actions {
   turn(dir: "prev" | "next"): void;
+  gotoPage(page: number): void;
   cycleMode(): void;
   cyclePen(): void;
   selectDoc(id: string): void;

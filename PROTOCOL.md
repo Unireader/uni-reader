@@ -70,6 +70,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x26` | layerSelect | C→S | 可靠 |
 | `0x27` | layerVisible | C→S | 可靠 |
 | `0x28` | layerAdd | C→S | 可靠 |
+| `0x29` | gotoPage | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -107,6 +108,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `latency` | `f32 ms` | `{type:"latency", ms}` |
 | `selectDoc` | `str id` | `{type:"selectDoc", id}`（UUID 串或 ""）|
 | `pageTurn` | `u8 dir` | `{type:"pageTurn", dir}`（"prev"/"next"）|
+| `gotoPage` | `u32 page` | `{type:"gotoPage", page}`（0-based 目标页号，平板输入的是 1-based，本地转 0 后上行）|
 | `mode` | `u8 mode` | `{type:"mode", mode}`（"note"/"erase"/"page"）|
 | `pen` | `u16 index` | `{type:"pen", index}` |
 | `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|

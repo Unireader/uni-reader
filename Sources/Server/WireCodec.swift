@@ -20,7 +20,7 @@ enum WireCodec {
         static let selectDoc: UInt8 = 0x20, pageTurn: UInt8 = 0x21, mode: UInt8 = 0x22, pen: UInt8 = 0x23
         static let textNote: UInt8 = 0x24
         static let penset: UInt8 = 0x25
-        static let layerSelect: UInt8 = 0x26, layerVisible: UInt8 = 0x27, layerAdd: UInt8 = 0x28
+        static let layerSelect: UInt8 = 0x26, layerVisible: UInt8 = 0x27, layerAdd: UInt8 = 0x28, gotoPage: UInt8 = 0x29
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
@@ -146,6 +146,7 @@ enum WireCodec {
         case "latency": w.u8(Op.latency); w.f32(num(o["ms"]))
         case "selectDoc": w.u8(Op.selectDoc); w.str(strOf(o["id"]))
         case "pageTurn": w.u8(Op.pageTurn); w.u8(strOf(o["dir"]) == "prev" ? 0 : 1)
+        case "gotoPage": w.u8(Op.gotoPage); w.u32(intOf(o["page"]))
         case "mode": w.u8(Op.mode); w.u8(modeCode(strOf(o["mode"])))
         case "pen": w.u8(Op.pen); w.u16(intOf(o["index"]))
         case "penset":
@@ -334,6 +335,7 @@ enum WireCodec {
         case Op.latency: out = ["type": "latency", "ms": NSNumber(value: r.f32())]
         case Op.selectDoc: out = ["type": "selectDoc", "id": r.str()]
         case Op.pageTurn: out = ["type": "pageTurn", "dir": r.u8() == 0 ? "prev" : "next"]
+        case Op.gotoPage: out = ["type": "gotoPage", "page": NSNumber(value: r.u32())]
         case Op.mode: out = ["type": "mode", "mode": modeName(r.u8())]
         case Op.pen: out = ["type": "pen", "index": NSNumber(value: r.u16())]
         case Op.penset:

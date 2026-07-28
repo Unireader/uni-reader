@@ -12,7 +12,7 @@
     auth: 0x01, authOK: 0x02, authFail: 0x03,
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
-    layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28,
+    layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28, gotoPage: 0x29,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
@@ -112,6 +112,7 @@
       case "latency": w.u8(OP.latency); w.f32(o.ms || 0); break;
       case "selectDoc": w.u8(OP.selectDoc); w.str(o.id || ""); break;
       case "pageTurn": w.u8(OP.pageTurn); w.u8(o.dir === "prev" ? 0 : 1); break;
+      case "gotoPage": w.u8(OP.gotoPage); w.u32(o.page || 0); break;
       case "mode": w.u8(OP.mode); w.u8(modeCode(o.mode)); break;
       case "pen": w.u8(OP.pen); w.u16(o.index || 0); break;
       case "penset": {
@@ -249,6 +250,7 @@
       case OP.latency: return { type: "latency", ms: r.f32() };
       case OP.selectDoc: return { type: "selectDoc", id: r.str() };
       case OP.pageTurn: return { type: "pageTurn", dir: r.u8() === 0 ? "prev" : "next" };
+      case OP.gotoPage: return { type: "gotoPage", page: r.u32() };
       case OP.mode: return { type: "mode", mode: MODEK[r.u8()] || "note" };
       case OP.pen: return { type: "pen", index: r.u16() };
       case OP.penset: {
