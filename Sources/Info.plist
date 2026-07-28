@@ -11,7 +11,7 @@
 			<string>UniReader Workspace</string>
 			<key>UTTypeConformsTo</key>
 			<array>
-				<string>public.package</string>
+				<string>com.apple.package</string>
 			</array>
 			<key>UTTypeTagSpecification</key>
 			<dict>

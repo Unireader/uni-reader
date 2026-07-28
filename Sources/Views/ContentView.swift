@@ -109,12 +109,16 @@ struct ContentView: View {
             if autoNightMode { nightMode = (systemScheme == .dark) }           // 夜间模式跟随系统
             if let id = launchDocId {
                 selectedDocID = id                      // 「在新窗口打开」指定文档
+            } else if let path = AppDelegate.consumePendingWorkspace() {
+                // 冷启动双击 .unrd：视图就绪晚于 openFile 回调，从 AppDelegate 缓冲里补消费。
+                // 优先于 restoreSession——否则会先把上一个工作区的整组文档开一遍窗口，
+                // 再切工作区，途中闪一批不相关的窗口。
+                app.didRestoreInitial = true
+                openWorkspace(path: path)
             } else if !app.didRestoreInitial {
                 app.didRestoreInitial = true
                 restoreSession()                        // 首个窗口：恢复整组打开文档为多窗口
             }
-            // 冷启动双击 .unrd：视图就绪晚于 openFile 回调，从 AppDelegate 缓冲里补消费。
-            if let path = AppDelegate.consumePendingWorkspace() { openWorkspace(path: path) }
         }
         .onChange(of: systemScheme) { _, s in if autoNightMode { nightMode = (s == .dark) } }
         .onChange(of: autoNightMode) { _, on in if on { nightMode = (systemScheme == .dark) } }
