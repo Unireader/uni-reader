@@ -53,21 +53,7 @@ struct ContentView: View {
                         onOpenInNewWindow: { openWindow(id: "docWindow", value: $0) })
                 .navigationSplitViewColumnWidth(min: 200, ideal: 260)
         } detail: {
-            // 文档加载（session.pdf）保留：真平板仍可正常渲染。
-            readerColumn
-                .dropDestination(for: URL.self) { urls, _ in ingest(urls: urls); return true }
-                // 标准 macOS 搜索（参考 Preview/Safari）：工具栏搜索字段，取代旧的放大镜弹窗。
-                // 边打字边搜（DocSession 内 250ms 防抖）、回车跳下一个命中；⌘F 菜单激活搜索字段。
-                .searchable(text: $session.searchQuery, isPresented: $searchIsActive,
-                            placement: .toolbar, prompt: L("Find in Document"))
-                .onSubmit(of: .search) { session.nextMatch() }
-                .onChange(of: session.searchQuery) { _, _ in session.scheduleSearch() }
-                .overlay(alignment: .top) { findBanner }
-                .background(WindowAccessor(title: windowTitle) { key in
-                    isKeyWindow = key
-                    if key { app.setActive(session) }
-                })
-                .toolbar { toolbarContent }
+            detailColumn
         }
         .inspector(isPresented: $showNotes) {
             InspectorView(session: session, documentId: selectedDocID,
@@ -144,6 +130,30 @@ struct ContentView: View {
                 selectedDocID = nil
             }
         }
+    }
+
+    /// 阅读区列（detail）。**标题栏文本一律走 SwiftUI 原生的 navigationTitle/navigationSubtitle，
+    /// 严禁再用 AppKit 直写 window.title/subtitle**：只要视图树里出现过 navigationTitle（侧栏就有一个），
+    /// SwiftUI 便接管整条标题栏，会把自己算出的值（detail 列没声明标题时 = app 名「UniReader」、
+    /// 没声明副标题时 = 空串）盖回去——2026-07-28 实测就是这么把副标题吃掉、并让主标题闪一下的。
+    private var detailColumn: some View {
+        // 文档加载（session.pdf）保留：真平板仍可正常渲染。
+        readerColumn
+            .dropDestination(for: URL.self) { urls, _ in ingest(urls: urls); return true }
+            // 标准 macOS 搜索（参考 Preview/Safari）：工具栏搜索字段，取代旧的放大镜弹窗。
+            // 边打字边搜（DocSession 内 250ms 防抖）、回车跳下一个命中；⌘F 菜单激活搜索字段。
+            .searchable(text: $session.searchQuery, isPresented: $searchIsActive,
+                        placement: .toolbar, prompt: L("Find in Document"))
+            .onSubmit(of: .search) { session.nextMatch() }
+            .onChange(of: session.searchQuery) { _, _ in session.scheduleSearch() }
+            .overlay(alignment: .top) { findBanner }
+            .navigationTitle(windowTitle)
+            .navigationSubtitle(windowSubtitle)
+            .background(WindowAccessor { key in
+                isKeyWindow = key
+                if key { app.setActive(session) }
+            })
+            .toolbar { toolbarContent }
     }
 
     /// 窗口级事件路由：关窗保存 / 菜单通知（⌘O 打开、⌘F 查找、⌥⌘N 夜间）/ 搜索收起清空 / 文件变化提示。
@@ -338,6 +348,12 @@ struct ContentView: View {
     /// 窗口标题：打开 PDF 显示文档名（过长由 macOS 标题栏自动「…」缩略）；无文档回退侧栏同款「书库」。
     private var windowTitle: String {
         session.title.isEmpty ? L("Library") : session.title
+    }
+
+    /// 窗口副标题：当前页/总页数（如 3/100），翻页随 session.currentPageIndex 联动；无文档置空。
+    private var windowSubtitle: String {
+        guard let pdf = session.pdf else { return "" }
+        return "\(session.currentPageIndex + 1)/\(pdf.pageCount)"
     }
 
     /// OCR 面板：开关「用 OCR 文本」+ 进度 + 手动「识别全部页」。未配置 key 时引导去设置。
