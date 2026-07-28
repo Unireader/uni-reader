@@ -61,7 +61,7 @@ struct ContentView: View {
                 .onSubmit(of: .search) { session.nextMatch() }
                 .onChange(of: session.searchQuery) { _, _ in session.scheduleSearch() }
                 .overlay(alignment: .top) { findBanner }
-                .background(WindowAccessor { key in
+                .background(WindowAccessor(title: windowTitle) { key in
                     isKeyWindow = key
                     if key { app.setActive(session) }
                 })
@@ -326,6 +326,11 @@ struct ContentView: View {
         return String(format: L("%d of %d"), (session.currentMatchIndex ?? 0) + 1, session.searchMatches.count)
     }
 
+    /// 窗口标题：打开 PDF 显示文档名（过长由 macOS 标题栏自动「…」缩略）；无文档回退侧栏同款「书库」。
+    private var windowTitle: String {
+        session.title.isEmpty ? L("Library") : session.title
+    }
+
     /// OCR 面板：开关「用 OCR 文本」+ 进度 + 手动「识别全部页」。未配置 key 时引导去设置。
     private var ocrPopover: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -454,11 +459,13 @@ struct ContentView: View {
         session.restoreZoom = 1; session.readZoom = 1   // 默认 fit-width；成功路径按库覆盖
         session.restoreHFrac = 0; session.readHFrac = 0
         guard let id, let doc = workspace.document(id: id) else {
-            session.pdf = nil; missingDoc = nil; toc = []; clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
+            session.pdf = nil; missingDoc = nil; toc = []; session.title = ""
+            clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
         }
         guard let target = workspace.openTarget(documentId: id),
               let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
             session.pdf = nil
+            session.title = ""
             missingDoc = doc                       // 所有路径失效 → 显示重定位提示
             toc = []
             clearInk()
