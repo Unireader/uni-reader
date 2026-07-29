@@ -168,6 +168,11 @@ struct ContentView: View {
     private func eventRoutes<V: View>(_ base: V) -> some View {
         base
         .onDisappear {
+            // 尾随补存必须在这里掐掉：它最长还能在关窗后 0.7s 写库，而那时本窗口已向 registry 放手，
+            // 同路径若立刻被重新打开就会出现「旧实例还在写、新实例已在读」的重叠（红线，见 WorkspaceRegistry）。
+            // 关窗本身紧接着就同步存一次，不会丢进度。
+            progressSaveTask?.cancel()
+            progressSaveTask = nil
             saveProgress(docId: selectedDocID)
             workspace.closeWindow(session.id)
             WorkspaceRegistry.shared.noteWindow(session.id, path: nil)
@@ -181,26 +186,8 @@ struct ContentView: View {
             guard isKeyWindow, let p = workspace.folder?.standardizedFileURL.path else { return }
             openWindow(value: WindowTarget(workspacePath: p, docId: nil))
         }
-        .onReceive(NotificationCenter.default.publisher(for: .openWorkspaceRequested)) { note in
-            // Finder 双击 / 拖到 Dock 的 .unrd 包（**app 已在运行**时）→ 开一个属于它的窗口
-            // （已有窗口则激活），当前窗口不受影响。
-            //
-            // ⚠️ 两处易错，都踩过：
-            // ① **冷启动这一下不归这里管**：那时窗口正在建，缓冲要留给新窗口的 RootView 去消费。
-            //    若这里也插手，就会既在本窗口 resolve 一次、又路由出一个新窗口 = 两个窗口开同一个
-            //    工作区。用 didFinishLaunching 区分冷/热启动。
-            // ② **不能用 isKeyWindow 当认领条件**（它由 WindowAccessor 异步回填，冷启动时全为假，
-            //    所有窗口一起跳过 = 请求静默丢弃，这正是双击一直没反应的老根因）。改用「谁 consume
-            //    到缓冲谁处理」：消费是一次性的且都在主线程，天然选出唯一认领者，也不会漏。
-            guard let path = note.object as? String else { return }
-            guard AppDelegate.didFinishLaunching else {
-                wsLog("收到 openWorkspaceRequested：冷启动中，留给新窗口 RootView 处理")
-                return
-            }
-            guard AppDelegate.consumePendingWorkspace() != nil else { return }   // 已被别的窗口认领
-            wsLog("收到 openWorkspaceRequested（热启动）：路由 \(path)")
-            routeToWorkspace(URL(fileURLWithPath: path), strict: true)
-        }
+        // 双击 .unrd / Dock 菜单的路由不在这里 —— 那是 app 级的事，挂在 `RootView`
+        // （错误态窗口没有 ContentView，挂这里会在「只剩错误窗」时把请求静默丢掉）。
         .onReceive(NotificationCenter.default.publisher(for: .readerFind)) { _ in
             if isKeyWindow { searchIsActive = true }
         }
@@ -519,7 +506,8 @@ struct ContentView: View {
         panel.message = L("Choose a location and name for the new workspace.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         // 先把包建出来（建好即是真实工作区），再按常规路径开一个窗口显示它。
-        do { _ = try WorkspaceManager.createWorkspace(at: url) } catch {
+        // 目标已经是工作区会在这里报错而非覆盖——不能因为面板弹过「替换」就删掉一整库笔记。
+        do { try WorkspaceManager.createWorkspace(at: url) } catch {
             workspaceActionError = error.localizedDescription
             return
         }
@@ -539,27 +527,14 @@ struct ContentView: View {
         routeToWorkspace(url, strict: false)   // 刚验过，不必再验一遍
     }
 
-    /// 打开某个工作区 = **开一个属于它的窗口**（已有窗口则激活那个），而不是把当前窗口换过去。
-    /// 这是 2026-07-29 定的行为：多工作区并存，双击/打开另一个工作区不影响正在看的窗口。
-    /// `strict` = 用户侧入口的严格校验（必须是含 library.sqlite 的真实工作区，不静默建空库）。
+    /// 侧栏入口（打开/新建/最近）走与双击 `.unrd` **同一条路由**（`WorkspaceRegistry.route`）：
+    /// 校验 → 已有窗口就激活 → 否则开新窗口。失败在本窗口提示，不静默建空库。
     private func routeToWorkspace(_ url: URL, strict: Bool) {
-        if strict {
-            do {
-                // 只查文件系统；真正的实例化在新窗口的 RootView 里（同路径会命中池里同一实例）。
-                try WorkspaceManager.validate(url)
-            } catch {
-                wsLog("routeToWorkspace 校验失败：\(error.localizedDescription)")
-                workspaceActionError = error.localizedDescription
-                return
-            }
+        do {
+            try WorkspaceRegistry.shared.route(to: url, strict: strict, openWindow: openWindow)
+        } catch {
+            workspaceActionError = error.localizedDescription
         }
-        if WorkspaceRegistry.shared.hasWindow(forWorkspace: url) {
-            wsLog("routeToWorkspace：该工作区已有窗口，激活它 \(url.path)")
-            WorkspaceRegistry.shared.activateWindow(forWorkspace: url)
-            return
-        }
-        wsLog("routeToWorkspace：开新窗口 \(url.path)")
-        openWindow(value: WindowTarget(workspacePath: url.standardizedFileURL.path, docId: nil))
     }
 
     /// 决定本窗口的初始文档。**工作区归属已由 `RootView` 定好**（本窗口的 `workspace` 就是它），
@@ -581,6 +556,7 @@ struct ContentView: View {
     /// 恢复本工作区上次打开的整组文档：本窗口开第一个，其余各开一个新窗口（同一工作区）。
     private func restoreSession() {
         let docs = workspace.restoreDocIds.filter { workspace.document(id: $0) != nil }
+        wsLog("restoreSession：打开集 \(workspace.restoreDocIds.count) 条，库里仍存在 \(docs.count) 条 → 本窗口开 \(docs.first ?? "（无）")")
         selectedDocID = docs.first
         guard let wsPath = workspace.folder?.standardizedFileURL.path else { return }
         // 只自动重开有限几个最近文档为独立窗口，避免「最近打开」较长时一次弹出过多窗口；

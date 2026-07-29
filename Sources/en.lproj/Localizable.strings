@@ -194,3 +194,4 @@
 
 "Cannot Open Workspace" = "Cannot Open Workspace";
 "New Window" = "New Window";
+"A workspace with this name already exists here. Open it instead, or choose another name." = "A workspace with this name already exists here. Open it instead, or choose another name.";

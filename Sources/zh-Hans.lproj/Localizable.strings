@@ -194,3 +194,4 @@
 
 "Cannot Open Workspace" = "无法打开工作区";
 "New Window" = "新建窗口";
+"A workspace with this name already exists here. Open it instead, or choose another name." = "此处已存在同名工作区。请改用「打开工作区…」打开它，或换一个名字。";

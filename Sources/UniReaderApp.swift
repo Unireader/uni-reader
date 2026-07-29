@@ -1,11 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// 工作区打开链路的诊断日志（`[WS-OPEN]` 前缀）。
-/// 这条链路横跨 LaunchServices → AppDelegate → 通知/冷启动缓冲 → ContentView，任一环静默断掉
-/// 都只表现为「双击 .unrd 没反应」，从表象反推排不出来（已为此改错两轮）。统一打点后，答案是
-/// **日志里该有却没有的那一行**。
-/// 打开工作区链路的诊断日志。**文件通道默认关闭**——只在日志文件已存在时才追加：
+/// 工作区打开链路的诊断日志（`[WS-OPEN]` 前缀）。**文件通道默认关闭**——只在日志文件已存在时才追加：
 /// ```
 /// touch ~/Library/Logs/UniReader-ws.log    # 开启
 /// rm    ~/Library/Logs/UniReader-ws.log    # 关闭
@@ -13,8 +9,9 @@ import AppKit
 /// 为什么要自建通道而不用系统日志：双击启动的 app 不挂在 Xcode 控制台下（`print` 看不到），
 /// 而 unified logging（`log show`/`log stream`）在这台机器上**抓不到本 app 的任何输出**
 /// （2026-07-29 实测：按进程过滤零条记录，连系统框架的日志都没有）。这条链路又横跨
-/// LaunchServices → AppDelegate → 通知 → ContentView，任一环静默断掉都只表现为「双击没反应」，
-/// 已为此改错三轮——留个随时可开、平时零开销的观察窗口。
+/// LaunchServices → AppDelegate → 通知/冷启动缓冲 → RootView → ContentView，任一环静默断掉都只
+/// 表现为「双击没反应」，已为此改错三轮——留个随时可开、平时零开销的观察窗口。答案往往是
+/// **日志里该有却没有的那一行**。
 let wsLogURL = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/UniReader-ws.log")
 
 func wsLog(_ msg: String) {
@@ -37,7 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `applicationShouldTerminate` 在各窗口 `onDisappear` **之前**触发，故此标志对关窗回调可见。
     static var isTerminating = false
 
-    /// 冷启动时被双击/拖入的 .unrd 路径（视图树尚未就绪、通知无人接收时兜底），首个窗口 onAppear 消费。
+    /// 冷启动时被双击/拖入的 .unrd 路径（视图树尚未就绪、通知无人接收时兜底）。
+    /// 由 `RootView.resolve` 消费——冷启动时**不能**在 onAppear 那一刻消费（那时事件还没投递到，
+    /// 见 `RootView` 里的时序说明），得等 `didFinishLaunching` 那一轮。
     static var pendingWorkspacePath: String?
 
     /// Finder 双击 / 拖到 Dock 图标的 .unrd 工作区包（**现代入口**）。
@@ -111,7 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 「重新打开」= 点 Dock 图标激活。有可见窗口时返回 false，没有时返回 true（让系统开一个）。
     /// ⚠️ 实测（2026-07-29）**这个回调根本没被调用**——SwiftUI 的 App 生命周期自己处理了重新打开，
     /// 不转发给 delegate。所以「app 激活时凭空多出一个空窗口」不是它造成的，别再往这儿查；
-    /// 真正的兜底在 `RootView.resolve` 里（见那里的自毁闸）。保留本方法纯属防御。
+    /// 真正的兜底是 `RootView` body 里的 `isStrayWindow`（必须在 body 求值时判定，不能等 onAppear，
+    /// 理由见那里）。保留本方法纯属防御。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         !flag
     }
@@ -166,7 +166,8 @@ struct UniReaderApp: App {
         // app，于是一次双击变两个窗口）。2026-07-29 逐一排除：不是 `applicationShouldHandleReopen`
         // （压根没被调用，SwiftUI 自己处理了重新打开）、不是 `NSDocumentController`
         // （`applicationShouldOpenUntitledFile` 也没被调用）、去掉 `defaultValue` 同样拦不住。
-        // 唯一可靠的处理是在 `RootView.resolve` 里认出这种窗口并关掉它（那里的自毁闸）。
+        // 唯一可靠的处理是在 `RootView` 的 body 里认出这种窗口并关掉它（`isStrayWindow`，
+        // 必须在 body 求值时判定——等到 onAppear 窗口已上屏，关掉就是用户看到的「闪一下」）。
         // 不给 `defaultValue` 只是顺带简化：这样 target 天然是 optional，"没人指定工作区"表达得更直白。
         WindowGroup(for: WindowTarget.self) { $target in
             RootView(target: target)

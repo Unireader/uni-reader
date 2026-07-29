@@ -207,7 +207,7 @@
 
 | 角色 | 职责 |
 |---|---|
-| `WorkspaceRegistry`（App 级单例） | 工作区实例池：**按路径分配 `WorkspaceManager`，同一路径全 app 只有一个实例**。另持有本机全局状态：最近工作区列表、上次工作区、窗口↔工作区登记、`claimRestore` 闸 |
+| `WorkspaceRegistry`（App 级单例） | 工作区实例池：**按路径分配 `WorkspaceManager`，同一路径全 app 只有一个实例**（池**弱持有**，强引用在窗口那边）。另持有本机全局状态：最近工作区列表、上次工作区、窗口↔工作区登记、`claimRestore` 闸 |
 | `WorkspaceManager`（窗口级，可被多窗口共享） | **一个实例 = 一个工作区**，持有它的 `LibraryStore`。实例建好即绑定，**没有「换 folder」这条路** |
 | `RootView`（每个窗口的根） | 决定本窗口归属哪个工作区，领到实例后 `.environmentObject` 注入子树 |
 | `ContentView` 及下游 | 照旧 `@EnvironmentObject var workspace`，**因窗口而异**。侧栏/Inspector/阅读区的既有用法一行未改 |
@@ -216,13 +216,50 @@
 `LibraryStore` 是单 SQLite 连接、非线程安全，且笔迹/注解/高亮的落库走「内存快照 ↔ 库」增量对账
 （`persistedStrokes`/`persistedTextNotes` 那套）。同一个库若开出两个 store，两份快照互不知情，
 后写的一方会把先写的成果整段判为「已删除」而清库 —— **直接丢笔记**。这是数据安全约束，不是性能优化。
-所以「同一工作区开多个窗口」（⌘N、在新窗口打开文档）走的是同一个实例 + 引用计数，归零才析构。
+所以「同一工作区开多个窗口」（⌘N、在新窗口打开文档）走的是同一个实例。
+
+**池按弱引用登记，条目不随窗口计数摘除**（2026-07-29 加固）：强引用在 `RootView` 的 `@State`，
+最后一个窗口关掉后实例由它自然析构、弱条目随之变空。早先是「计数归零就把条目摘掉」，但那一刻旧实例
+**还活着**（SwiftUI 关窗后 `@State` 释放是延后的，`ContentView` 的尾随进度补存最长还能再写 0.7s），
+这段空窗里同路径若被重新打开，就会给同一个库开出第二个 `LibraryStore` —— 正是红线禁止的状态。
+配套：`ContentView.onDisappear` 主动 `cancel()` 尾随补存任务（关窗本身紧接着同步存一次，不丢进度）。
+
+⚠️ 记一笔：唯一性登记挂在 `WorkspaceManager` 上，而真正必须唯一的是它的 `LibraryStore` —— `DocSession`
+（OCR 缓存读写）也**强持有**同一个 store。目前两者都是窗口级、同时析构，所以等价；将来若让 store escape
+到别处（后台任务、跨窗口缓存），唯一性就要改挂到 store 本身。
+
+### 🔴 「窗口关闭」只能听 AppKit 的 `willClose`，不能用 SwiftUI 的 `onDisappear`
+
+2026-07-29 实测（日志钉死）：`RootView` 的 `onDisappear` 在**窗口建立过程中就会空放一次**
+（那时 `workspace` 还没绑定），真正关窗时再放一次。任何「一次性」的关窗处理都会被第一下烧掉：
+
+```
+17:01:47 RootView.onDisappear：released=false workspace=nil        ← 窗口刚建，空放
+17:01:50 RootView.onDisappear：released=true  workspace=工作区测试2  ← 真关窗，被自己的幂等标志挡住
+17:01:52 acquire：复用实例 retain=2                                  ← 引用计数从没减过
+17:01:52 claimRestore = false → 留空窗口                             ← 记号没还回来
+```
+
+后果就是「关掉某工作区的全部窗口，再打开它 → 空窗口」。**为防重复释放加的幂等标志，反而制造了永久漏释放。**
+现在关窗信号统一走 `WindowLifecycle`（`NSWindow.willCloseNotification`，每个窗口只发一次、就在关闭那刻），
+`RootView` 不再有 `onDisappear`。两个配套约定：
+
+- 关闭回调**只捕获不会变的 `windowId`**；「这个窗口持有哪个工作区」记在 registry（`bindRootWindow`），
+  由 `closeRootWindow(id)` 去放手 —— 闭包在挂载时就定型，捕获 `workspace` 会拿到绑定前的旧值（nil）。
+- `RootView` 的分支不用 `Group` 包（Group 会把外层修饰符逐个下发给分支，生命周期钩子容易跟着分支切换空放），
+  改成 `@ViewBuilder` 计算属性。
 
 ### 窗口归属的决定顺序（`RootView.resolve`）
 
 1. `WindowTarget.workspacePath` —— 显式指定（双击开的新窗口、「在新窗口打开文档」、⌘N）；
 2. `AppDelegate.pendingWorkspacePath` —— 双击 `.unrd` 冷启动拉起 app 的那一下；
 3. 上次使用的工作区（普通启动）。
+
+**1、2 必须过 `WorkspaceManager.validate`，3 不校验。** 1、2 都是用户指着一个具体工作区说「打开它」，
+和热启动的 `routeToWorkspace` 是同一件事，就得同一种严格；否则同一个双击手势会因 app 当时开没开而
+两种结果 —— 热启动弹「这不是工作区」，冷启动却在那个包里**静默建一个空库**（`LibraryStore` 缺库即建），
+正是 §8「打开/新建严格分离」要根除的表现。校验失败时 `RootView` 显示错误态而不是开一个假工作区。
+3 是兜底，首次启动全靠它在默认位置建库，天然不能校验。
 
 **⚠️ 第 2 条必须等到 `applicationDidFinishLaunching` 之后才能判定**（实测日志钉死的时序）：
 
@@ -239,14 +276,30 @@ applicationDidFinishLaunching   ← AppKit 保证 open 事件在它之前投递�
 凡是 `if isKeyWindow { 处理 }` 的分发都会被所有窗口一起跳过 = 请求静默丢弃。
 热启动的双击路由改用「谁 `consumePendingWorkspace()` 抢到谁处理」——消费是一次性的且都在主线程，天然选出唯一认领者。
 
-### 「打开工作区」的统一路由（`ContentView.routeToWorkspace`）
+### 「打开工作区」的统一路由（`WorkspaceRegistry.route`）
 
 双击 `.unrd` / 侧栏「打开工作区…」/ 最近工作区 / Dock 菜单，**全部等价于**：
 校验（`WorkspaceManager.validate`，只查文件系统不建实例）→ 该工作区**已有窗口就激活它**，否则 `openWindow(value:)` 开新窗口。
 
+**这件事是 app 级的，不能挂在某个窗口的 `ContentView` 上**（2026-07-29 实测踩到，一度就挂在那儿）：
+屏幕上只剩一个「打不开工作区」的错误态窗口时，那个窗口**没有 `ContentView`**，于是全 app 没有任何
+订阅者，双击请求被**静默丢弃**（`pendingWorkspacePath` 还留着陈旧值，会污染下一个窗口）。
+现在决策逻辑只有 registry 这一份，热启动的通知订阅挂在 `RootView`（每个窗口都有，错误窗也有），
+`openWindow` 只能从视图环境取，由调用方带进来。零窗口时无人订阅也不会丢：那种情况下激活带来的
+空窗口不会被判为幻影（屏上没有其它窗口），它自己 `resolve` 时就把缓冲消费掉了。
+
+**「新建工作区…」不覆盖已有工作区**：`NSSavePanel` 那句系统「替换」确认在用户眼里是「替换一个文件」，
+真按它删下去却是连笔记一起删掉一整个库；多窗口之后那个目标还可能正被另一个窗口开着（连接活着、
+目录被抽走 = 僵尸窗口）。故目标已含 `UniReader/library.sqlite` 时报 `alreadyAWorkspace` 让用户改名或改走
+「打开」，只有同名的普通文件/文件夹才按面板确认过的语义覆盖。建包只建目录 + 建库，**不建 manager**
+（实例一律由 `acquire` 在新窗口里分配）。
+
 `restoreSession`（恢复上次打开的整组文档）**每个工作区只做一次**（`WorkspaceRegistry.claimRestore`）。
 不设这道闸会连锁开窗：`restoreSession` 自己会 `openWindow`，而每个新窗口的 `ContentView` 又会再恢复一遍。
 （原先靠 App 级 `didRestoreInitial` 挡着，改成多工作区后那个标志失效。）
+这道闸**挂在池的生命周期上**：某工作区的窗口数归零时把记号还回去。否则同一次运行里关掉它的全部窗口
+再打开，会得到一个空窗口 —— 而「打开集」在关最后一个窗口时是特意保留的（`WorkspaceManager.closeWindow`），
+两边的时间尺度必须一致。
 
 ⌘N 由本 app 接管（`CommandGroup(replacing: .newItem)` → `.newWindowRequested`）：
 系统默认那个开出来的窗口不带工作区，会跑去开「上次使用的工作区」而非当前这个。
@@ -267,8 +320,16 @@ applicationDidFinishLaunching   ← AppKit 保证 open 事件在它之前投递�
 
 **当前处理**（补丁，非根治）：`RootView` 识别并关掉它。两个关键实现细节，都是踩出来的：
 
-- **判定必须在 body 求值时**（`isStrayWindow` 计算属性），**不能放 `onAppear`** —— onAppear 是窗口**显示之后**才调用的，那时已上屏，再关就是用户看到的「闪一下」。判定条件：尚未绑定工作区 + `target.workspacePath == nil` + 启动已完成 + 该工作区已有窗口。用户开窗的两条路都显式带路径，不会误伤；冷启动第一个窗口那时 `didFinishLaunching` 还是假，也不会命中。
+- **判定必须在 body 求值时**（`isStrayWindow` 计算属性），**不能放 `onAppear`** —— onAppear 是窗口**显示之后**才调用的，那时已上屏，再关就是用户看到的「闪一下」。判定条件：尚未绑定工作区 + 不是错误态 + `target.workspacePath == nil` + 启动已完成 + **屏幕上已经有本 app 的其它窗口**（`WorkspaceRegistry.hasOtherRootWindow`）。用户开窗的两条路都显式带路径，不会误伤；冷启动第一个窗口那时 `didFinishLaunching` 还是假，也不会命中。
+- **最后一条判据必须是「有没有其它窗口」这个直接量**，早先写的是「它要落到的那个工作区已有窗口」——间接量，会漏：2026-07-29 实测双击一个坏包后屏幕上只剩错误窗，「上次工作区」确实没有窗口，于是幻影窗口没被认出来、**转正成了一个用户根本没要的「上次工作区」窗口**。两处要点：① 计数要**排除自己**（`onAppear` 登记在前、`didFinishLaunching` 那轮判定在后，不排除的话冷启动第一个窗口会数到自己而自杀）；② 登记由 `RootView` 做且**错误态窗口也算**（不能拿 `ContentView` 维护的 `windowPaths` 代替 —— 错误窗不在那张表里，正是这次漏判的原因）。改成直接量后，`isStrayWindow` 也不再和 `resolve` 各写一套「本窗口会落到哪个工作区」的预测。
 - **关窗要赶在窗口上屏之前**：`WindowCloser` 在 `viewWillMove(toWindow:)`（比 `viewDidMoveToWindow` 更早）就把 `alphaValue = 0` + `animationBehavior = .none` 设上 —— 窗口的出现动画由 CoreAnimation 驱动，只靠 `orderOut` 追不上，会被瞥见窗口底边冒出来一截。另外**不能给它 `.frame(width: 0, height: 0)`**：零尺寸时 SwiftUI 根本不创建那个 NSView，`viewDidMoveToWindow` 永不触发，窗口就留在屏幕上了。
+
+**还没试过的一条根治线索**：每个真窗口都带着非 nil 的 `WindowTarget`，而 `RootView` 从不把解析结果写回
+`$target` —— 从 SwiftUI 视角「没有任何窗口持有本 group 的默认值（nil）」，激活时补一个正好符合现象。
+两个可测的实验：① `RootView` 把解析出的路径写回 `$target`（窗口 value = 它的真实身份）；若假设成立空窗口消失，
+附带好处是 `openWindow(value:)` 原生就会「已有同 value 窗口则前置」，`windowPaths`/`activateWindow` 那套能瘦一圈。
+② `.defaultLaunchBehavior(.suppressed)`（macOS 15+，本项目 target 26.0 可用）彻底不让 SwiftUI 自作主张开窗，
+首个窗口由 app 层显式开 —— 顺带能消掉 `resolve` 里「挂起等 `didFinishLaunching`」那段时序体操。**都需实机验证。**
 
 ### Dock 右键「最近的工作区」
 
@@ -279,6 +340,20 @@ applicationDidFinishLaunching   ← AppKit 保证 open 事件在它之前投递�
   由 `NSDocumentController.noteNewRecentDocumentURL` 喂（`WorkspaceRegistry.rememberRecent`；
   registry 初始化时会把已有列表**倒序补喂一次**，否则老用户升级后未运行时的 Dock 右键是空的）。
   点击它走 `application(_:open:)`，即冷启动路径。顺带「文件 → 打开最近使用」也有了内容。
+
+### 已知边界（不是 bug，是还没做／没定）
+
+- **重启只恢复最后一个工作区**：持久化的只有 `lastWorkspacePath` + 每个工作区自己的「打开集」。
+  A、B 两个工作区开着 ⌘Q，下次启动只回来 B（及其文档窗口）。对齐 Xcode/VS Code 的手感需要再存一份
+  「上次开着的工作区集合」，`didFinishLaunching` 后逐个开窗 —— **待定**。
+- **同工作区开了多个窗口时，「已有窗口就激活它」激活的是任意一个**（`windowPaths.first(where:)` 走字典序）。
+  应改成「最近成为 key 的那个」（key 变化 `ContentView` 已在追）。
+- **打不开的工作区给的是一个死胡同窗口**：`RootView` 的错误态只有一句说明，没有「打开其它工作区…」
+  之类的出路，用户只能关掉窗口重来。（2026-07-29 用户定：暂不补。）
+- **零窗口时双击「非上次」的那个工作区，可能多出一个窗口**（推演，未实测）：app 在跑但窗口全关掉时
+  双击 C，激活先于 open 事件到达 —— 那一刻缓冲还是空的，被转正的幻影窗口会落到第 ③ 条「上次工作区」
+  开出 A，随后 open 事件才把 C 路由出来，于是屏上是 A + C。验法：关光全部窗口后
+  `open -a <app> <另一个工作区>`，看是否冒出两个窗口。
 
 ### 诊断通道
 

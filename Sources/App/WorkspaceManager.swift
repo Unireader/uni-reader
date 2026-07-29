@@ -32,13 +32,24 @@ final class WorkspaceManager: ObservableObject {
         try open(folder: folder)
     }
 
-    /// 新建工作区：在 `url` 处创建全新 `.unrd` 包。与「打开」严格分离的专用入口。
-    /// 若目标已存在（面板已弹过系统「替换」确认），先整体删除再新建，保证是一个全新的空库。
-    static func createWorkspace(at url: URL) throws -> WorkspaceManager {
+    /// 新建工作区：在 `url` 处创建全新 `.unrd` 包（建目录 + 建库，建完即是「真实工作区」）。
+    /// 与「打开」严格分离的专用入口。
+    ///
+    /// ⚠️ **目标若已经是一个真实工作区就拒绝**，哪怕保存面板已弹过系统「替换」确认：那句确认在用户
+    /// 眼里是「替换一个文件」，实际却会连同笔记整库删掉；多窗口之后它还可能正被另一个窗口开着
+    /// （SQLite 连接活着、目录被抽走 → 僵尸窗口）。已存在但不是工作区（同名普通文件/文件夹）才按
+    /// 面板确认过的语义覆盖。
+    ///
+    /// 这里**不建 manager**：实例一律由 `WorkspaceRegistry.acquire` 在新窗口里分配（同路径同实例）。
+    /// 临时 `LibraryStore` 只为把库建出来，出了作用域即关闭连接。
+    static func createWorkspace(at url: URL) throws {
         let fm = FileManager.default
-        if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
+        if fm.fileExists(atPath: url.path) {
+            guard !hasLibrary(url) else { throw OpenError.alreadyAWorkspace }
+            try fm.removeItem(at: url)
+        }
         try fm.createDirectory(at: url, withIntermediateDirectories: true)
-        return try WorkspaceManager(folder: url)
+        _ = try LibraryStore(workspaceFolder: url)
     }
 
     /// 首次无工作区时的默认：应用支持目录下的 DefaultWorkspace.unrd（包）。
@@ -112,20 +123,20 @@ final class WorkspaceManager: ObservableObject {
 
     /// 「打开工作区」严格校验失败原因（供 UI 提示；不静默建空库）。
     enum OpenError: LocalizedError {
-        case notFound        // 路径不存在，或存在但不是文件夹
-        case notAWorkspace   // 是文件夹，但不含 UniReader/library.sqlite——不是真实工作区
+        case notFound            // 路径不存在，或存在但不是文件夹
+        case notAWorkspace       // 是文件夹，但不含 UniReader/library.sqlite——不是真实工作区
+        case alreadyAWorkspace   // 「新建」的目标已经是一个真实工作区——不覆盖（会连笔记一起删）
 
         var errorDescription: String? {
             switch self {
             case .notFound: return L("The selected item does not exist.")
             case .notAWorkspace: return L("This folder is not a UniReader workspace (no UniReader/library.sqlite inside).")
+            case .alreadyAWorkspace: return L("A workspace with this name already exists here. Open it instead, or choose another name.")
             }
         }
     }
 
     /// 该文件夹（原始路径，改名迁移前）是否已是真实工作区：含 `UniReader/library.sqlite`。
-    private func hasLibrary(_ folder: URL) -> Bool { Self.hasLibrary(folder) }
-
     private static func hasLibrary(_ folder: URL) -> Bool {
         FileManager.default.fileExists(atPath: folder.appendingPathComponent("UniReader/library.sqlite").path)
     }
@@ -522,12 +533,5 @@ final class WorkspaceManager: ObservableObject {
     /// 删除一条高亮（note.id == Highlight.id）。
     func deleteHighlight(id: UUID) {
         try? store?.deleteNote(id: id.uuidString)
-    }
-
-    // MARK: - 最近工作区
-
-    private func isDir(_ url: URL) -> Bool {
-        var d: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &d) && d.boolValue
     }
 }

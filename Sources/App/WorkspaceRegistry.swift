@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import SwiftUI
 
 /// 工作区实例池：**同一个 `.unrd` 路径，全 app 只有一个 `WorkspaceManager`**（因而只有一个
 /// `LibraryStore` = 一个 SQLite 连接）。多工作区并存靠「多个 manager 各自绑一个窗口」，
@@ -18,9 +19,20 @@ final class WorkspaceRegistry: ObservableObject {
     static let shared = WorkspaceRegistry()
 
     /// 已实例化的工作区（标准化路径 → manager）。
-    private var byPath: [String: WorkspaceManager] = [:]
-    /// 每个 manager 当前被几个窗口持有；归零即从池中移除（连带释放 SQLite 连接）。
+    ///
+    /// ⚠️ **弱持有**：强引用在窗口那边（`RootView` 的 `@State`），池只登记「这条路径现在归谁」。
+    /// 早先是强引用 + 引用计数归零就摘掉条目，但那时旧实例**还活着**（SwiftUI 关窗后 `@State` 的
+    /// 释放是延后的，`ContentView` 的尾随进度补存也还能写库），这段空窗里同路径再 `acquire` 就会给
+    /// 同一个库开出第二个 `LibraryStore` —— 正是本类型开头那条红线禁止的状态。改成弱引用后，
+    /// 「同路径同实例」只取决于旧实例是否还活着，不再取决于引用计数的时序。
+    private var byPath: [String: Weak] = [:]
+    /// 当前有几个窗口在显示该工作区（不负责生命周期，见上）；归零时清掉「已恢复过」的记号（`claimRestore`）。
     private var retain: [String: Int] = [:]
+
+    private final class Weak {
+        weak var manager: WorkspaceManager?
+        init(_ m: WorkspaceManager) { manager = m }
+    }
     /// 各窗口正在显示的工作区（sessionId → 标准化路径），供「双击已打开的工作区 → 激活那个窗口」。
     private var windowPaths: [UUID: String] = [:]
 
@@ -45,36 +57,51 @@ final class WorkspaceRegistry: ObservableObject {
     // MARK: - 实例池
 
     /// 取（或建）某工作区的 manager 并 +1 引用。**同路径必返回同一实例**（红线，见类型注释）。
-    /// 「这个目标是不是真实工作区」的严格校验属于用户侧入口的事，在开窗口之前用
-    /// `WorkspaceManager.validate` 做掉；走到这里的路径要么是显式指定、要么是上次用过的，
-    /// 首次启动还要靠它在默认位置建库。
+    ///
+    /// 这里**不校验**目标是不是真实工作区，因为它同时承担「首次启动在默认位置建库」。
+    /// 「是不是真实工作区」由所有**用户手势**入口在此之前用 `WorkspaceManager.validate` 判掉：
+    /// 热启动走 `ContentView.routeToWorkspace`，冷启动双击与显式指定走 `RootView.resolve` 的 strict 分支。
+    /// 唯一不校验的来源是「上次/默认工作区」这条兜底。
     func acquire(folder: URL) throws -> WorkspaceManager {
         let k = Self.key(folder)
-        if let m = byPath[k] {
+        if let m = byPath[k]?.manager {
             retain[k, default: 0] += 1
+            wsLog("acquire：复用实例 \(folder.lastPathComponent) retain=\(retain[k] ?? 0)")
             return m
         }
         let m = try WorkspaceManager(folder: folder)
         // 迁移改名（旧式无扩展名工作区）后真实路径可能变了，按最终路径入池。
         let finalKey = m.folder.map(Self.key) ?? k
-        byPath[finalKey] = m
+        byPath[finalKey] = Weak(m)
         retain[finalKey, default: 0] += 1
         rememberRecent(m.folder ?? folder)
         UserDefaults.standard.set(finalKey, forKey: lastKey)
+        wsLog("acquire：新建实例 \(folder.lastPathComponent) retain=\(retain[finalKey] ?? 0)")
         return m
     }
 
-    /// 窗口放手：引用归零则移出池（manager 随之析构、关掉 SQLite 连接）。
+    /// 窗口放手：最后一个窗口关掉后，manager 会在窗口状态释放时自行析构（连带关掉 SQLite 连接），
+    /// 池里的弱条目随之变空。**这里不摘条目**——旧实例还活着的那段空窗里若同路径再 `acquire`，
+    /// 必须复用它而不是新建第二个 store（红线，见 `byPath` 注释）。
     func release(_ manager: WorkspaceManager) {
-        guard let k = byPath.first(where: { $0.value === manager })?.key else { return }
+        guard let k = byPath.first(where: { $0.value.manager === manager })?.key else {
+            wsLog("release：⚠️ 实例不在池中，什么都没做（\(manager.folder?.lastPathComponent ?? "nil")）")
+            return
+        }
         releaseKey(k)
     }
 
     private func releaseKey(_ k: String) {
         retain[k, default: 1] -= 1
+        wsLog("release：\((k as NSString).lastPathComponent) retain=\(retain[k] ?? 0)")
         guard retain[k, default: 0] <= 0 else { return }
         retain.removeValue(forKey: k)
-        byPath.removeValue(forKey: k)
+        wsLog("release：窗口数归零，归还「已恢复过」记号")
+        // 「本工作区已恢复过整组文档」的记号跟着窗口数归零一起还回去：否则同一次运行里关掉某工作区的
+        // 全部窗口再打开它，会得到一个空窗口 —— 而「打开集」在关最后一个窗口时是特意保留的
+        // （`WorkspaceManager.closeWindow`），两边的时间尺度必须一致。
+        restoredWorkspaces.remove(k)
+        byPath = byPath.filter { $0.value.manager != nil }   // 顺手清掉已析构的空条目
     }
 
     /// 把显示该工作区的窗口调到前台（「双击已打开的工作区」= 激活，不重复开窗）。
@@ -107,6 +134,33 @@ final class WorkspaceRegistry: ObservableObject {
         return WorkspaceManager.defaultFolder()
     }
 
+    // MARK: - 打开工作区的唯一路由
+
+    /// **打开某个工作区 = 开一个属于它的窗口**（已有窗口则激活它），而不是把某个窗口换过去。
+    /// 双击 `.unrd` / 侧栏「打开工作区…」/ 最近工作区 / 新建 / Dock 菜单，全部走这里。
+    /// `strict` = 严格校验（必须是含 `library.sqlite` 的真实工作区，不静默建空库）；校验失败抛错，
+    /// 由调用方决定怎么提示（各窗口自己的 alert）。
+    ///
+    /// ⚠️ **这件事是 app 级的，不能挂在某个窗口的 `ContentView` 上**（2026-07-29 实测踩到）：
+    /// 屏幕上只剩一个「打不开工作区」的错误态窗口时，那个窗口根本没有 `ContentView`，于是全 app
+    /// 没有任何订阅者，双击请求被**静默丢弃**、`pendingWorkspacePath` 还留着陈旧值。
+    /// `openWindow` 只能从视图环境里拿，所以由调用方带进来——但决策逻辑只有这一份。
+    func route(to url: URL, strict: Bool, openWindow: OpenWindowAction) throws {
+        if strict {
+            do { try WorkspaceManager.validate(url) } catch {
+                wsLog("route 校验失败：\(error.localizedDescription)")
+                throw error
+            }
+        }
+        if hasWindow(forWorkspace: url) {
+            wsLog("route：该工作区已有窗口，激活它 \(url.path)")
+            activateWindow(forWorkspace: url)
+            return
+        }
+        wsLog("route：开新窗口 \(url.path)")
+        openWindow(value: WindowTarget(workspacePath: url.standardizedFileURL.path, docId: nil))
+    }
+
     // MARK: - 窗口 ↔ 工作区
 
     func noteWindow(_ sessionId: UUID, path: String?) {
@@ -122,13 +176,45 @@ final class WorkspaceRegistry: ObservableObject {
         windowPaths.values.contains(Self.key(folder))
     }
 
+    /// 屏幕上是否已经有本 app 的窗口（`RootView` 一级，**含尚未绑定工作区的错误态窗口**）。
+    /// 供 `RootView.isStrayWindow` 判定「SwiftUI 激活时凭空塞的空窗口」：用户开窗的两条路都显式带
+    /// 工作区路径，所以「没指定工作区 + 已经有窗口」= 幻影；一个窗口都没有时才是「点 Dock 图标重开」，
+    /// 该放行去开上次的工作区。
+    ///
+    /// ⚠️ 不能拿 `windowPaths` 代替：那张表由 `ContentView` 登记，**错误态窗口不在其中**
+    /// （2026-07-29 实测：双击坏包后只剩一个错误窗，幻影窗口因此没被认出来，转正成了一个用户没要的
+    /// 「上次工作区」窗口）。
+    /// ⚠️ 必须**排除本窗口自己**：`onAppear` 登记在前、`didFinishLaunching` 那一轮的判定在后，
+    /// 不排除的话冷启动第一个窗口会数到自己、把自己判成幻影而自杀（普通启动直接白屏）。
+    func hasOtherRootWindow(than id: UUID) -> Bool { rootWindows.contains { $0 != id } }
+
+    /// `RootView` 级窗口登记（不管有没有成功绑定工作区，错误态窗口也要登记）。
+    func noteRootWindow(_ id: UUID) { rootWindows.insert(id) }
+
+    /// 该窗口领到工作区实例了 —— 记下来，好在窗口关闭时替它放手（关闭回调只带得动一个不变的 id）。
+    func bindRootWindow(_ id: UUID, _ manager: WorkspaceManager) { rootWindowWorkspace[id] = manager }
+
+    /// 窗口**真正关闭**（AppKit `willClose`，不是 SwiftUI 的 onDisappear——理由见 `WindowLifecycle`）：
+    /// 注销登记并替它向实例池放手。重复调用是安全的（第二次取不到条目就什么都不做）。
+    func closeRootWindow(_ id: UUID) {
+        let known = rootWindows.remove(id) != nil
+        let manager = rootWindowWorkspace.removeValue(forKey: id)
+        wsLog("closeRootWindow：登记过=\(known) 工作区=\(manager?.folder?.lastPathComponent ?? "无")")
+        if let manager { release(manager) }
+    }
+
+    private var rootWindows: Set<UUID> = []
+    private var rootWindowWorkspace: [UUID: WorkspaceManager] = [:]
+
     /// 认领「恢复上次打开的整组文档」这件事：每个工作区在本次运行内**只做一次**，首个认领者返回 true。
     /// ⚠️ 没有这道闸会连锁开窗：`restoreSession` 自己就会 `openWindow`，而每个新窗口的 ContentView
     /// 又会跑一次 restore。以前靠 App 级的 `didRestoreInitial` 挡着（全 app 只恢复一次），改成
     /// 多工作区后那个标志失效了 —— 得按工作区各挡各的。⌘N 开的第二个窗口也会被这里挡下
     /// （它要的是一个空窗口，不是再恢复一遍）。
     func claimRestore(_ folder: URL) -> Bool {
-        restoredWorkspaces.insert(Self.key(folder)).inserted
+        let ok = restoredWorkspaces.insert(Self.key(folder)).inserted
+        wsLog("claimRestore(\(folder.lastPathComponent)) = \(ok)")
+        return ok
     }
 
     private var restoredWorkspaces: Set<String> = []
@@ -169,9 +255,10 @@ final class WorkspaceRegistry: ObservableObject {
         recents = paths.map { URL(fileURLWithPath: $0) }
 
         let ok = Self.key(old), nk = Self.key(new)
-        if let m = byPath.removeValue(forKey: ok) {
-            byPath[nk] = m
+        if let box = byPath.removeValue(forKey: ok) {
+            byPath[nk] = box
             retain[nk] = retain.removeValue(forKey: ok) ?? 1
+            if restoredWorkspaces.remove(ok) != nil { restoredWorkspaces.insert(nk) }
             for (sid, p) in windowPaths where p == ok { windowPaths[sid] = nk }
         }
         if UserDefaults.standard.string(forKey: lastKey) == ok {
