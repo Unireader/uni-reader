@@ -245,6 +245,19 @@ Mac/网页上是浅黄透亮。ballpoint 那几条肉眼看一致。
 - 模式2 的真机观感（改的是共用文件，Mac 回传的笔迹也走这条路）；
 - 夜间模式下 marker 的表现（`nightFilter` 只反页面层，墨迹不反，混合模式换了要重看一眼）。
 
+### 9.5 已知问题：打开工作区的 I/O 在主线程（慢卷上会 ANR）
+
+2026-07-29 M3 实测：模拟器上点「最近打开」到书库列表出来要 **3 秒**，其中 `Workspace.check`
+（几个 `File.exists/isFile/length`）在 `/sdcard`（FUSE）冷缓存下就花了 **2.1 秒**，`LibraryStore.open`
+又一秒。全部跑在主线程上。
+
+真机内部存储会快得多，但**工作区放 U 盘/SD/同步盘是本方案的常规用法**（§1 的数据来源就是这么定的），
+那种卷上几秒起步，够触发 ANR。
+
+修法：`Workspace.check` + `LibraryStore.open` + `PdfSource` 构造（它要读全部页尺寸，47 页在模拟器上
+约 200ms，几百页文档更久）挪到后台线程，界面上给个「正在打开…」。三处调用点：
+`Launcher.openWorkspace`、`LibraryActivity.reload`、`ReaderActivity.open`。
+
 ## 10. 实施顺序
 
 - **M0 骨架**：加 Pdfium 依赖、包结构重排（`shared/` `pad/` `local/`）、启动页 + 权限引导。
