@@ -248,8 +248,28 @@ Mac 用 **CropBox 有效则 CropBox、否则 MediaBox**（`PageBitmap.effectiveB
   - `PRAGMA wal_checkpoint(TRUNCATE)`（§9.2）属数据层，M1 随 `Sqlite.kt` 一起落地。
 - **M1 数据层**：`Sqlite.kt` + `LibraryStore.kt`（schema v7 只读优先）+ `Workspace.kt`。
   **先写单测**：拿一个 Mac 造的真工作区，断言文档数/笔迹条数/payload 字段与 `sqlite3` CLI 一致。
+  **状态：已完成（2026-07-29）**。`local/store/` 四件套（Sqlite/LibraryModels/Payloads/LibraryStore）
+  + `Workspace.resolvePdf`。10 条**插桩**测试（数据层只能跑在设备上，`android.database.sqlite`
+  在 JVM 单测里是空壳）全绿，fixture 用 Mac 真造的工作区、写路径只动 cacheDir 副本。
+  实测对上了真 payload：键集恰好 `{color,width,type,points,layerId}`、`color` 的 r/g/b 是 0~255
+  而 a 是 0~1、anchor 正是点集包围盒；5 条真笔迹全部解码（ballpoint×3 marker×2 共 142 点）。
+  两处踩到的坑已写进代码注释：① Mac 的 `ISO8601DateFormatter` 开了 `.withFractionalSeconds`，
+  **不带毫秒的时间戳它解析不出来**会静默回落成「现在」，于是按 `created_at` 排的绘制顺序就乱了
+  → 安卓写库固定三位毫秒，不能用 `Instant.toString()`；② payload 一律在原始 JSONObject 上改，
+  本端不认识的键必须原样保留。
 - **M2 阅读**：`PdfSource` + 抽出 `PageCanvasView` + 文档列表 + 打开 + 进度恢复/保存。
   **验收含 §9.1 的 box 口径比对。**
+  **状态：已完成（2026-07-29）**。
+  - §9.1 **已验收**：47 页真文档（portrait 与 rotation 后变横向的页混排）两端 47/47 行逐字节相同
+    （`tools/dump-page-sizes.swift` vs 安卓 logcat 的 PAGESIZE 行）。做法是**不信 Pdfium 的
+    `getPageWidthPoint()`**，自己读 `getPageCropBox()/getPageMediaBox()/getPageRotation()`
+    复刻 Mac 的 `PageBitmap.displaySize`。
+  - `PageCanvasView` 的抽法：把整个 `PadView` **原地下移**成基类，只把 ~20 处发帧调用换成
+    `protected open fun` 钩子——钩子长在原先发帧的同一位置，模式2 行为按构造不变；
+    `PadView` 由 1389 行缩到 160 行。`PageImageSource` 同时落地（模式2 包住 PageFetcher）。
+  - 进度双向续接实测通过（复原第 1 页 22% → 滑到第 4 页 → 重开落回第 4 页，文件层面核对过）。
+  - 两个实测才暴露的 bug：只读连接上不能 checkpoint（FUSE 卷直接 IOERR）；进度复原必须等
+    首次真实布局之后（否则 offY 是 width=0 时算的，等于滚到页顶）。
 - **M3 手写**：`LocalInkBackend` 落库 + 读盘渲染 + 图层表 + 笔架/图层面板。
   验收：Mac 写的笔迹平板能显示，平板写的 Mac 能显示，形状/粗细/颜色一致。
 - **M4 编辑**：擦除两模式、尺子、框选移动（含 `InkEdit` 搬运）。
