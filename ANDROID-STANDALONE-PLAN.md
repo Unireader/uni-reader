@@ -224,6 +224,27 @@ Mac 用 **CropBox 有效则 CropBox、否则 MediaBox**（`PageBitmap.effectiveB
 - 笔迹落库频率：一笔一次 `INSERT`（同 Mac 的增量落库），别每帧写；擦除是"删若干 + 插若干"，
   放一个事务里。
 
+### 9.4 已知 BUG：笔迹渲染观感与 Mac/网页不一致（待统一处理）
+
+2026-07-29 M2 实测发现，**两种模式都受影响**（共用 `shared/InkRenderer.kt`），用户已确认「后面统一处理」。
+
+**现象**：同一条 marker（荧光笔，`rgba(255,214,40,0.4)`）在平板上偏暗发浊（近深橄榄），
+Mac/网页上是浅黄透亮。ballpoint 那几条肉眼看一致。
+
+**根因**：`InkRenderer` 用的是 `PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)`——那是在**预乘 alpha**
+上做 `Sc*Dc` 的老式合成；而网页 Canvas 的 `globalCompositeOperation='multiply'` 与 Mac 的 `.multiply`
+是 W3C 规定的**混合模式**（先按 blend 公式混色，再按 alpha 走 source-over 合成）。
+黄 40% 压白底：期望 `0.6*255 + 0.4*255 = (255,238,169)`，PorterDuff 实际给出 `0.4*黄 × 白 ≈ (102,86,16)`。
+
+**修法**：API 29+ 用 `paint.blendMode = BlendMode.MULTIPLY`（Skia 的规范混合模式，与 CSS/Core Graphics
+同义），API 26~28 保留 PorterDuff 兜底。注意所有 `paint.xfermode = null` 的地方要同步清 `blendMode`，
+否则后续笔画会继承上一条的混合模式。
+
+**改完要一起验的**（这次只肉眼比了 marker）：
+- pencil 的 `opacityMultFor = 0.85`、fountain 的 `0.3 + p^1.6 * w * 1.3` 压感曲线，三端并排对同一条笔迹；
+- 模式2 的真机观感（改的是共用文件，Mac 回传的笔迹也走这条路）；
+- 夜间模式下 marker 的表现（`nightFilter` 只反页面层，墨迹不反，混合模式换了要重看一眼）。
+
 ## 10. 实施顺序
 
 - **M0 骨架**：加 Pdfium 依赖、包结构重排（`shared/` `pad/` `local/`）、启动页 + 权限引导。
