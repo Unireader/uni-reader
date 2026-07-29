@@ -191,3 +191,6 @@
 "Cut" = "剪切";
 "Paste" = "粘贴";
 "Select All" = "全选";
+
+"Cannot Open Workspace" = "无法打开工作区";
+"New Window" = "新建窗口";

@@ -107,27 +107,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.isTerminating = true
         return .terminateNow
     }
+
+    /// 「重新打开」= 点 Dock 图标激活。有可见窗口时返回 false，没有时返回 true（让系统开一个）。
+    /// ⚠️ 实测（2026-07-29）**这个回调根本没被调用**——SwiftUI 的 App 生命周期自己处理了重新打开，
+    /// 不转发给 delegate。所以「app 激活时凭空多出一个空窗口」不是它造成的，别再往这儿查；
+    /// 真正的兜底在 `RootView.resolve` 里（见那里的自毁闸）。保留本方法纯属防御。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        !flag
+    }
+
+    /// Dock 图标右键菜单：最近打开的工作区。
+    /// ⚠️ 这个方法**只在 app 运行时**被调用；app 未运行时 Dock 右键显示的是系统维护的
+    /// 「最近使用的文稿」——那一份由 `NSDocumentController.noteNewRecentDocumentURL` 喂
+    /// （见 `WorkspaceRegistry.rememberRecent`），点击后走 `application(_:open:)`。两者互补，
+    /// 各管一半场景，所以两边都要接。
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let recents = WorkspaceRegistry.shared.recents
+        guard !recents.isEmpty else { return nil }
+        let menu = NSMenu()
+        menu.addItem(.sectionHeader(title: L("Recent Workspaces")))
+        for url in recents {
+            let item = NSMenuItem(title: WorkspaceManager.defaultWorkspaceName(for: url),
+                                  action: #selector(openWorkspaceFromDock(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = url.path
+            item.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// Dock 菜单点击 → 走与「双击 .unrd」完全相同的投递链路（已有窗口则激活，否则开新窗口）。
+    @objc private func openWorkspaceFromDock(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        wsLog("Dock 菜单：打开最近工作区 \(path)")
+        Self.deliverWorkspace(path)
+    }
+}
+
+/// 一个窗口要显示什么：哪个工作区（nil = 由 `RootView` 现场决定，见那里）+ 可选的初始文档。
+/// 作为 `WindowGroup` 的 value 传递，这样每个窗口都自带工作区归属，多工作区才能真正并存。
+struct WindowTarget: Codable, Hashable {
+    var workspacePath: String?
+    var docId: String?
 }
 
 @main
 struct UniReaderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var app = AppModel()
-    @StateObject private var workspace = WorkspaceManager()
 
     var body: some Scene {
-        // 主窗口组：⌘N 开新的完整工作区窗口（方案 2）。
-        WindowGroup {
-            ContentView(launchDocId: nil)
+        // 主窗口组：⌘N 开新窗口；带 value 时 = 在指定工作区（可选指定文档）开一个窗口。
+        // ⚠️ 工作区**不再**是 App 级单例——每个窗口经 RootView 从 WorkspaceRegistry 领一个实例
+        // （同路径共享，见 WorkspaceRegistry 注释）。以前共用一个 manager，双击另一个 .unrd
+        // 会把所有窗口一起换掉。
+        // ⚠️ **app 每次被激活，SwiftUI 都会凭空开一个 value 为 nil 的窗口**（双击 .unrd 必然激活
+        // app，于是一次双击变两个窗口）。2026-07-29 逐一排除：不是 `applicationShouldHandleReopen`
+        // （压根没被调用，SwiftUI 自己处理了重新打开）、不是 `NSDocumentController`
+        // （`applicationShouldOpenUntitledFile` 也没被调用）、去掉 `defaultValue` 同样拦不住。
+        // 唯一可靠的处理是在 `RootView.resolve` 里认出这种窗口并关掉它（那里的自毁闸）。
+        // 不给 `defaultValue` 只是顺带简化：这样 target 天然是 optional，"没人指定工作区"表达得更直白。
+        WindowGroup(for: WindowTarget.self) { $target in
+            RootView(target: target)
                 .environmentObject(app)
-                .environmentObject(workspace)
-        }
-
-        // 文档窗口组：openWindow(id:"docWindow", value: docId) 在新窗口打开指定 PDF。
-        WindowGroup(id: "docWindow", for: String.self) { $docId in
-            ContentView(launchDocId: docId)
-                .environmentObject(app)
-                .environmentObject(workspace)
         }
 
         // 标准设置窗口（⌘,）：夜间模式自动化 / 平板滚动跟随算法 / 平板服务自启。
@@ -136,8 +179,15 @@ struct UniReaderApp: App {
                 .environmentObject(app)
         }
         .commands {
-            // 保留默认「新建窗口」(⌘N)，另加「打开 PDF」(⌘O)。
-            CommandGroup(after: .newItem) {
+            // 接管整个「新建」组：系统默认的 ⌘N 开出来的窗口不带工作区（value 为 nil），
+            // 会去开「上次使用的工作区」而不是当前这个，也让下面 RootView 的自毁兜底没法区分
+            // 「用户主动 ⌘N」和「系统凭空塞的空窗口」。自己发通知给 key 窗口，由它带着**本窗口的**
+            // 工作区去开新窗口。
+            CommandGroup(replacing: .newItem) {
+                Button(L("New Window")) {
+                    NotificationCenter.default.post(name: .newWindowRequested, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: .command)
                 Button(L("Open PDF…")) {
                     NotificationCenter.default.post(name: .openPDFRequested, object: nil)
                 }
@@ -228,6 +278,7 @@ extension Notification.Name {
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
     static let openWorkspaceRequested = Notification.Name("com.xvan.UniReader.openWorkspaceRequested")
     static let appDidFinishLaunching = Notification.Name("com.xvan.UniReader.appDidFinishLaunching")
+    static let newWindowRequested = Notification.Name("com.xvan.UniReader.newWindowRequested")
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
 }

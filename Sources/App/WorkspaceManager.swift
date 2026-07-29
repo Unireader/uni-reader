@@ -2,35 +2,43 @@ import Foundation
 import PDFKit
 import AppKit
 
-/// App 级单例：持有「当前工作区」及其 `LibraryStore`（跨平台 SQLite 单库）。
+/// **一个实例 = 一个工作区**，持有它的 `LibraryStore`（跨平台 SQLite 单库）。
 /// 工作区 = 一个可移动的 `.unrd` 包（UTI 声明见 `Sources/Info.plist`）；配置与笔记都存包内 `UniReader/library.sqlite`。
 /// 旧无扩展名工作区首次打开时原地改名迁移为 `<工作区名>.unrd`（`migrateToPackageIfNeeded`）。
-/// 最近工作区列表存**本机** UserDefaults（不进包）。主线程使用。
+/// 主线程使用。
+///
+/// ⚠️ **实例一旦建好就绑定那个工作区，不再切换**（2026-07-29 改）：以前这是个 App 级单例、
+/// 靠换 `folder` 来切工作区，于是双击另一个 `.unrd` 会把**所有**窗口一起换掉。现在多工作区
+/// 并存靠「多个实例各绑一个窗口」，实例由 [`WorkspaceRegistry`] 按路径分配并保证同路径同实例
+/// （同一个库开两个连接会丢笔记，理由见那里的注释）。「最近工作区/上次工作区」是本机全局状态，
+/// 也搬去了 registry。
 @MainActor
 final class WorkspaceManager: ObservableObject {
     @Published private(set) var folder: URL?
     @Published private(set) var name: String = ""
     @Published private(set) var documents: [LibDocument] = []
-    @Published private(set) var recents: [URL] = []
     @Published var lastError: String?
-    @Published var missingRecentName: String?   // 非空 = 该「最近工作区」项已不存在，弹窗提示用（已顺带从列表移除）
-    private(set) var restoreDocIds: [String] = []   // 启动时「上次打开集」快照，供多窗口恢复（restoreSession 读一次进本地）
-    private var windowDocs: [UUID: String] = [:]     // 各窗口当前文档（sessionId → docId）——「打开集」的真相源
-    private var openDocs: [String] = []              // 当前打开的文档集（= 所有窗口当前文档，去重保序）；持久化供下次恢复
+    private(set) var restoreDocIds: [String] = []   // 「上次打开集」快照，供本工作区的多窗口恢复（restoreSession 读一次进本地）
+    private var windowDocs: [UUID: String] = [:]     // 本工作区各窗口当前文档（sessionId → docId）——「打开集」的真相源
+    private var openDocs: [String] = []              // 当前打开的文档集（= 本工作区所有窗口当前文档，去重保序）；持久化供下次恢复
 
     private(set) var store: LibraryStore?
 
-    private let recentsKey = "recentWorkspaces"
-    private let lastKey = "lastWorkspacePath"
+    /// 打开一个工作区；文件夹是空的就在里面建库（首次启动引导、`createWorkspace` 都依赖这点）。
+    /// ⚠️ 因此**不要拿用户随手选的路径直接调它**——那会把一个无关空文件夹静默变成新工作区，
+    /// 用户以为「打开」了旧工作区、看到的却是空白库。用户侧入口先过 `validate(_:)`。
+    /// 一律经 `WorkspaceRegistry.acquire` 创建，别自己 new（同路径必须同实例，见 registry 注释）。
+    init(folder: URL) throws {
+        try open(folder: folder)
+    }
 
-    init() {
-        loadRecents()
-        let last = UserDefaults.standard.string(forKey: lastKey).map { URL(fileURLWithPath: $0) }
-        do {
-            try open(folder: (last.flatMap { isDir($0) ? $0 : nil }) ?? Self.defaultFolder())
-        } catch {
-            lastError = "\(error)"
-        }
+    /// 新建工作区：在 `url` 处创建全新 `.unrd` 包。与「打开」严格分离的专用入口。
+    /// 若目标已存在（面板已弹过系统「替换」确认），先整体删除再新建，保证是一个全新的空库。
+    static func createWorkspace(at url: URL) throws -> WorkspaceManager {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
+        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        return try WorkspaceManager(folder: url)
     }
 
     /// 首次无工作区时的默认：应用支持目录下的 DefaultWorkspace.unrd（包）。
@@ -63,10 +71,7 @@ final class WorkspaceManager: ObservableObject {
         guard let target = Self.availablePackageURL(beside: folder, name: name) else { return folder }
         do {
             try fm.moveItem(at: folder, to: target)
-            replaceRecent(old: folder, new: target)
-            if UserDefaults.standard.string(forKey: lastKey) == folder.path {
-                UserDefaults.standard.set(target.path, forKey: lastKey)
-            }
+            WorkspaceRegistry.shared.replaceRecent(old: folder, new: target)
             return target
         } catch {
             lastError = "\(error)"
@@ -119,43 +124,34 @@ final class WorkspaceManager: ObservableObject {
     }
 
     /// 该文件夹（原始路径，改名迁移前）是否已是真实工作区：含 `UniReader/library.sqlite`。
-    private func hasLibrary(_ folder: URL) -> Bool {
+    private func hasLibrary(_ folder: URL) -> Bool { Self.hasLibrary(folder) }
+
+    private static func hasLibrary(_ folder: URL) -> Bool {
         FileManager.default.fileExists(atPath: folder.appendingPathComponent("UniReader/library.sqlite").path)
     }
 
-    /// 严格模式打开：仅接受**已存在的真实工作区**（含 `UniReader/library.sqlite`；旧式无扩展名
-    /// 工作区同样算数，照常原地改名迁移）。供「打开工作区」面板 / 最近工作区 / Finder 双击 /
-    /// 冷启动共用——防止误选空文件夹或无关目录时被 `open(folder:)` 静默建成一个新的空库
-    /// （用户会以为「打开」了工作区，实际看到的是一个空白库）。新建工作区走 `createWorkspace(at:)`。
-    func openExisting(folder: URL) throws {
-        guard isDir(folder) else { throw OpenError.notFound }
+    /// 严格校验一个「打开工作区」目标：必须是**已存在的真实工作区**。
+    /// 只查文件系统、**不建实例** —— 「打开」入口要在开窗口之前先验一遍，免得开出一个只会报错的空窗口；
+    /// 用 `acquire` 来验则会白建一次 `LibraryStore`，且遇上旧式工作区原地改名后路径对不上还会漏释放。
+    static func validate(_ folder: URL) throws {
+        var d: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &d), d.boolValue else {
+            throw OpenError.notFound
+        }
         guard hasLibrary(folder) else { throw OpenError.notAWorkspace }
-        try open(folder: folder)
     }
 
-    /// 新建工作区：在 `url` 处创建全新 `.unrd` 包并切换过去。与「打开」严格分离的专用入口。
-    /// 若目标已存在（面板已弹过系统「替换」确认），先整体删除再新建，保证是一个全新的空库。
-    func createWorkspace(at url: URL) throws {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
-        try fm.createDirectory(at: url, withIntermediateDirectories: true)
-        try open(folder: url)
-    }
-
-    /// 打开（或在空文件夹里新建）一个工作区。内部/首次启动引导用；用户侧「打开」入口一律走
-    /// 上面的 `openExisting`，「新建」走 `createWorkspace`——避免向用户暴露这个宽松版本。
-    func open(folder: URL) throws {
+    /// 真正打开（只在 `init` 里调用一次——实例与工作区一一绑定，见类型注释）。
+    private func open(folder: URL) throws {
         let folder = migrateToPackageIfNeeded(folder)
         let store = try LibraryStore(workspaceFolder: folder)
         if store.workspaceName.isEmpty { try? store.setWorkspaceName(Self.defaultWorkspaceName(for: folder)) }
         self.store = store
         self.folder = folder
         self.name = store.workspaceName
-        openDocs = store.openDocuments()         // 上次「打开集」（当前所有窗口的文档）
+        openDocs = store.openDocuments()         // 上次「打开集」（本工作区所有窗口的文档）
         restoreDocIds = openDocs                 // 启动快照：restoreSession 只读它一次进本地，之后随窗口重同步无碍
         windowDocs = [:]
-        rememberRecent(folder)
-        UserDefaults.standard.set(folder.path, forKey: lastKey)
         refresh()
         lastError = nil
     }
@@ -221,8 +217,7 @@ final class WorkspaceManager: ObservableObject {
         guard target != current, let url = Self.availablePackageURL(beside: folder, name: target) else { return }
         do {
             try FileManager.default.moveItem(at: folder, to: url)
-            replaceRecent(old: folder, new: url)
-            UserDefaults.standard.set(url.path, forKey: lastKey)
+            WorkspaceRegistry.shared.replaceRecent(old: folder, new: url)   // 连带更新池的键与「上次工作区」
             self.folder = url
         } catch { lastError = "\(error)" }
     }
@@ -531,42 +526,6 @@ final class WorkspaceManager: ObservableObject {
 
     // MARK: - 最近工作区
 
-    private func loadRecents() {
-        let arr = (UserDefaults.standard.array(forKey: recentsKey) as? [String]) ?? []
-        recents = arr.map { URL(fileURLWithPath: $0) }
-    }
-    private func rememberRecent(_ url: URL) {
-        var paths = recents.map(\.path).filter { $0 != url.path }
-        paths.insert(url.path, at: 0)
-        paths = Array(paths.prefix(10))
-        UserDefaults.standard.set(paths, forKey: recentsKey)
-        recents = paths.map { URL(fileURLWithPath: $0) }
-    }
-    /// 打开「最近工作区」列表中的一项：文件夹已不存在（被删/移走）或已不再是真实工作区（如内部
-    /// library.sqlite 被误删）→ 提示 + 自动从列表移除；否则正常打开。
-    func openRecent(_ url: URL) {
-        do {
-            try openExisting(folder: url)
-        } catch {
-            removeRecent(url)
-            missingRecentName = Self.defaultWorkspaceName(for: url)
-        }
-    }
-    /// 从最近列表移除一条记录（只删记录，不动工作区本身）。
-    func removeRecent(_ url: URL) {
-        let paths = recents.map(\.path).filter { $0 != url.path }
-        UserDefaults.standard.set(paths, forKey: recentsKey)
-        recents = paths.map { URL(fileURLWithPath: $0) }
-    }
-    /// 工作区原地改名后，把最近列表里的旧路径替换为新路径（去重保序）。
-    private func replaceRecent(old: URL, new: URL) {
-        var paths = recents.map(\.path)
-        if let i = paths.firstIndex(of: old.path) { paths[i] = new.path }
-        var seen = Set<String>()
-        paths = paths.filter { seen.insert($0).inserted }
-        UserDefaults.standard.set(paths, forKey: recentsKey)
-        recents = paths.map { URL(fileURLWithPath: $0) }
-    }
     private func isDir(_ url: URL) -> Bool {
         var d: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &d) && d.boolValue

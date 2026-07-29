@@ -4,9 +4,12 @@ import SwiftUI
 /// 目录（TOC）不放这里——固定模式放右侧 Inspector 的「目录」分段页，避免破坏侧栏原生外观。
 struct SidebarView: View {
     @EnvironmentObject private var workspace: WorkspaceManager
+    /// 「最近工作区」是本机全局状态（不属于任何一个工作区），故来自 registry 而非 workspace。
+    @ObservedObject private var registry = WorkspaceRegistry.shared
     @Binding var selection: String?
     var onChooseWorkspace: () -> Void
     var onCreateWorkspace: () -> Void
+    var onOpenRecent: (URL) -> Void
     var onDropFiles: ([URL]) -> Void
     var onOpenPDF: () -> Void
     var onOpenInNewWindow: (String) -> Void
@@ -43,16 +46,16 @@ struct SidebarView: View {
                     Button { nameField = workspace.name; renameShown = true } label: {
                         Label(L("Rename Workspace…"), systemImage: "pencil")
                     }
-                    if !workspace.recents.isEmpty {
+                    if !registry.recents.isEmpty {
                         Divider()
                         Section(L("Recent Workspaces")) {
-                            ForEach(workspace.recents, id: \.self) { url in
-                                Button(url.deletingPathExtension().lastPathComponent) { workspace.openRecent(url) }
+                            ForEach(registry.recents, id: \.self) { url in
+                                Button(url.deletingPathExtension().lastPathComponent) { onOpenRecent(url) }
                             }
                             Divider()
                             Menu(L("Remove from Recents")) {
-                                ForEach(workspace.recents, id: \.self) { url in
-                                    Button(url.deletingPathExtension().lastPathComponent) { workspace.removeRecent(url) }
+                                ForEach(registry.recents, id: \.self) { url in
+                                    Button(url.deletingPathExtension().lastPathComponent) { registry.removeRecent(url) }
                                 }
                             }
                         }
@@ -82,9 +85,9 @@ struct SidebarView: View {
                         pair.source.title, pair.target.title))
         }
         .alert(L("Workspace Not Found"),
-               isPresented: Binding(get: { workspace.missingRecentName != nil },
-                                    set: { if !$0 { workspace.missingRecentName = nil } }),
-               presenting: workspace.missingRecentName
+               isPresented: Binding(get: { registry.missingRecentName != nil },
+                                    set: { if !$0 { registry.missingRecentName = nil } }),
+               presenting: registry.missingRecentName
         ) { _ in
             Button(L("OK")) {}
         } message: { name in

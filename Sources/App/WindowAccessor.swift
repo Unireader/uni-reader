@@ -5,10 +5,13 @@ import AppKit
 /// 与把菜单命令路由到当前 key 窗口）。
 struct WindowAccessor: NSViewRepresentable {
     let onKeyChange: (Bool) -> Void
+    /// 窗口本体（供「双击已打开的工作区 → 激活那个窗口」登记到 WorkspaceRegistry）。
+    var onWindow: (NSWindow?) -> Void = { _ in }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async { [weak view] in
+            onWindow(view?.window)
             context.coordinator.observe(view?.window, onKeyChange: onKeyChange)
         }
         return view

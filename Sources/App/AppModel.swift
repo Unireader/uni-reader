@@ -23,8 +23,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var sessions: [DocSession] = []
     @Published var activeSessionID: UUID?
     @Published var padSelectedSessionID: UUID?
-    /// 仅让「首个窗口」恢复工作区上次文档；后续 ⌘N 窗口开空白，不重复蹦同一本书。
-    var didRestoreInitial = false
 
     /// 平板当前工具状态镜像（设备级，跟文档无关）：驱动 Mac 阅读区悬浮笔工具条。
     /// "note" | "erase" | "page"，与 capture.html 的 MODES.key 同值。

@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var showNotes = false
     @State private var searchIsActive = false   // 标准 .searchable 搜索字段的展开态（⌘F 激活）
     @State private var hashMismatch: HashMismatch?   // 同路径内容被替换（hash 与入库版本不符）待确认
+    @State private var didChooseInitialDoc = false   // 本窗口的初始文档已定（防重复恢复）
 
     /// 「同路径换内容」待确认：文件存在但 hash 与入库版本不符（用户原地覆盖了 PDF）。
     private struct HashMismatch: Identifiable {
@@ -51,8 +52,13 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(selection: $selectedDocID, onChooseWorkspace: chooseWorkspace,
                         onCreateWorkspace: createNewWorkspace,
+                        onOpenRecent: openRecentWorkspace,
                         onDropFiles: { ingest(urls: $0) }, onOpenPDF: openPDF,
-                        onOpenInNewWindow: { openWindow(id: "docWindow", value: $0) })
+                        onOpenInNewWindow: { docId in
+                            // 新窗口必须带上**本窗口的**工作区，否则它会去开「上次使用的工作区」。
+                            openWindow(value: WindowTarget(workspacePath: workspace.folder?.standardizedFileURL.path,
+                                                           docId: docId))
+                        })
                 .navigationSplitViewColumnWidth(min: 200, ideal: 260)
         } detail: {
             detailColumn
@@ -109,8 +115,9 @@ struct ContentView: View {
             PageRenderEngine.shared.setCacheLimitMB(UserDefaults.standard.object(forKey: "renderCacheMB") as? Int ?? 512)
             if autoStartServer, !app.server.isRunning { app.server.start() }   // 平板服务开机自启
             if autoNightMode { nightMode = (systemScheme == .dark) }           // 夜间模式跟随系统
+            WorkspaceRegistry.shared.noteWindow(session.id, path: workspace.folder?.path)
             if let id = launchDocId {
-                wsLog("ContentView.onAppear：launchDocId=\(id)，不参与工作区切换")
+                didChooseInitialDoc = true
                 selectedDocID = id                      // 「在新窗口打开」指定文档
             } else {
                 decideInitialContent(from: "onAppear")
@@ -124,13 +131,10 @@ struct ContentView: View {
                 selectedDocID = nil
             }
         }
-        .onChange(of: workspace.folder) { _, _ in
-            // 切工作区：主动窗口切到新工作区一个打开文档；其他窗口丢弃失效选中（不额外开窗）。
-            if isKeyWindow {
-                selectedDocID = workspace.restoreDocIds.first { workspace.document(id: $0) != nil }
-            } else if let id = selectedDocID, workspace.document(id: id) == nil {
-                selectedDocID = nil
-            }
+        .onChange(of: workspace.folder) { _, f in
+            // 工作区归属定死后 folder 只会因「工作区改名 → 联动改包名」而变；选中文档不受影响，
+            // 只需把窗口↔工作区的登记跟到新路径（供「双击已打开的工作区 → 激活那个窗口」）。
+            WorkspaceRegistry.shared.noteWindow(session.id, path: f?.path)
         }
     }
 
@@ -151,10 +155,12 @@ struct ContentView: View {
             .overlay(alignment: .top) { findBanner }
             .navigationTitle(windowTitle)
             .navigationSubtitle(windowSubtitle)
-            .background(WindowAccessor { key in
+            .background(WindowAccessor(onKeyChange: { key in
                 isKeyWindow = key
                 if key { app.setActive(session) }
-            })
+            }, onWindow: { win in
+                WorkspaceRegistry.shared.noteWindowObject(session.id, window: win)
+            }))
             .toolbar { toolbarContent }
     }
 
@@ -164,38 +170,36 @@ struct ContentView: View {
         .onDisappear {
             saveProgress(docId: selectedDocID)
             workspace.closeWindow(session.id)
+            WorkspaceRegistry.shared.noteWindow(session.id, path: nil)
             app.unregister(session)
         }
         .onReceive(NotificationCenter.default.publisher(for: .openPDFRequested)) { _ in
             if isKeyWindow { openPDF() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .appDidFinishLaunching)) { _ in
-            // 启动完成 = 冷启动的 open 事件窗口已关闭，此刻才能安全地决定首个窗口显示什么。
-            if launchDocId == nil { decideInitialContent(from: "didFinishLaunching") }
+        .onReceive(NotificationCenter.default.publisher(for: .newWindowRequested)) { _ in
+            // ⌘N：在**当前窗口的**工作区里开一个新窗口（不是「上次使用的工作区」）。
+            guard isKeyWindow, let p = workspace.folder?.standardizedFileURL.path else { return }
+            openWindow(value: WindowTarget(workspacePath: p, docId: nil))
         }
         .onReceive(NotificationCenter.default.publisher(for: .openWorkspaceRequested)) { note in
-            // Finder 双击 / 拖到 Dock 的 .unrd 包：key 窗口切换工作区（并清掉冷启动缓冲）。
-            // ⚠️ `isKeyWindow` 是这条链路上最容易静默吞掉请求的地方：它由 WindowAccessor 异步回填，
-            // 冷启动时通知往往早于窗口成为 key → 所有窗口都判假 → 通知无人处理。日志把它打出来。
+            // Finder 双击 / 拖到 Dock 的 .unrd 包（**app 已在运行**时）→ 开一个属于它的窗口
+            // （已有窗口则激活），当前窗口不受影响。
+            //
+            // ⚠️ 两处易错，都踩过：
+            // ① **冷启动这一下不归这里管**：那时窗口正在建，缓冲要留给新窗口的 RootView 去消费。
+            //    若这里也插手，就会既在本窗口 resolve 一次、又路由出一个新窗口 = 两个窗口开同一个
+            //    工作区。用 didFinishLaunching 区分冷/热启动。
+            // ② **不能用 isKeyWindow 当认领条件**（它由 WindowAccessor 异步回填，冷启动时全为假，
+            //    所有窗口一起跳过 = 请求静默丢弃，这正是双击一直没反应的老根因）。改用「谁 consume
+            //    到缓冲谁处理」：消费是一次性的且都在主线程，天然选出唯一认领者，也不会漏。
             guard let path = note.object as? String else { return }
-            wsLog("收到 openWorkspaceRequested：isKeyWindow=\(isKeyWindow) path=\(path)")
-            if isKeyWindow {
-                AppDelegate.consumePendingWorkspace()
-                openWorkspace(path: path)
+            guard AppDelegate.didFinishLaunching else {
+                wsLog("收到 openWorkspaceRequested：冷启动中，留给新窗口 RootView 处理")
                 return
             }
-            // 冷启动时这条通知常常早于窗口成为 key（`isKeyWindow` 由 WindowAccessor 异步回填），
-            // 于是**所有**窗口都判假 → 请求静默丢弃，表现就是「双击 .unrd 没反应，停在旧工作区」。
-            // 延一拍兜底：届时缓冲若还挂着（= 没有任何 key 窗口认领过），就由本窗口接手。
-            // 消费是一次性的且都在主线程，多窗口同时兜底也只有一个能拿到，不会切两次。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                guard AppDelegate.consumePendingWorkspace() != nil else {
-                    wsLog("兜底：已被其它窗口认领，跳过")
-                    return
-                }
-                wsLog("兜底接手（当时无 key 窗口）：\(path)")
-                openWorkspace(path: path)
-            }
+            guard AppDelegate.consumePendingWorkspace() != nil else { return }   // 已被别的窗口认领
+            wsLog("收到 openWorkspaceRequested（热启动）：路由 \(path)")
+            routeToWorkspace(URL(fileURLWithPath: path), strict: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerFind)) { _ in
             if isKeyWindow { searchIsActive = true }
@@ -502,8 +506,7 @@ struct ContentView: View {
         panel.allowsMultipleSelection = false
         panel.message = L("Choose an existing UniReader workspace (.unrd).")
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try workspace.openExisting(folder: url) } catch { workspaceActionError = error.localizedDescription }
-        // 选中交给 .onChange(workspace.folder) → restoreLastDoc（恢复新工作区上次文档）
+        routeToWorkspace(url, strict: true)
     }
 
     /// 新建工作区：选位置+起名，创建全新 `.unrd` 包并切换过去（与「打开」严格分离的专用入口）。
@@ -515,60 +518,75 @@ struct ContentView: View {
         panel.prompt = L("Create")
         panel.message = L("Choose a location and name for the new workspace.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try workspace.createWorkspace(at: url) } catch { workspaceActionError = error.localizedDescription }
-    }
-
-    /// 打开 .unrd 工作区包（Finder 双击 / 拖到 Dock / 冷启动缓冲）：同样走严格校验——
-    /// 万一目标不是真实工作区（如损坏或被误建的同名空文件夹），提示而非静默开出一个空库。
-    /// 决定首个窗口的初始内容：双击 .unrd 启动 → 直接开那个工作区；否则恢复上次的整组文档。
-    ///
-    /// ⚠️ **必须等到 `applicationDidFinishLaunching` 之后才能决定**（2026-07-29 实测日志钉死的时序）：
-    /// ```
-    /// ContentView.onAppear      ← SwiftUI 建窗口，最早
-    /// application(open:)        ← 双击带来的文档事件，之后才到
-    /// didFinishLaunching        ← AppKit 保证 open 事件在它之前投递完
-    /// ```
-    /// 在 `onAppear` 里就决定的话，双击 .unrd 时缓冲还是空的 → 先跑 `restoreSession` 把**上一个**
-    /// 工作区整组文档开一遍窗口，事件到达后再切过去，用户能明显看到这段来回切换。
-    /// 故 `onAppear` 只在缓冲已有内容时立即处理，否则挂起，等 `didFinishLaunching` 通知再决定。
-    private func decideInitialContent(from source: String) {
-        guard !app.didRestoreInitial else {
-            wsLog("decideInitialContent(\(source))：已决定过，跳过")
+        // 先把包建出来（建好即是真实工作区），再按常规路径开一个窗口显示它。
+        do { _ = try WorkspaceManager.createWorkspace(at: url) } catch {
+            workspaceActionError = error.localizedDescription
             return
         }
-        if let path = AppDelegate.consumePendingWorkspace() {
-            wsLog("decideInitialContent(\(source))：消费到冷启动缓冲 \(path)")
-            app.didRestoreInitial = true
-            openWorkspace(path: path)
-        } else if AppDelegate.didFinishLaunching {
-            wsLog("decideInitialContent(\(source))：缓冲为空且启动已完成 → restoreSession")
-            app.didRestoreInitial = true
-            restoreSession()                        // 首个窗口：恢复整组打开文档为多窗口
-        } else {
-            // 启动尚未完成：open 事件可能还在路上，先不动，等 didFinishLaunching 通知。
-            wsLog("decideInitialContent(\(source))：启动未完成，挂起等 didFinishLaunching")
-        }
+        routeToWorkspace(url, strict: true)
     }
 
-    private func openWorkspace(path: String) {
-        wsLog("openWorkspace 开始：\(path)")
+    /// 打开「最近工作区」列表中的一项：文件夹已不存在（被删/移走）或已不再是真实工作区
+    /// （如内部 library.sqlite 被误删）→ 提示 + 自动从列表移除；否则照常开窗口。
+    private func openRecentWorkspace(_ url: URL) {
         do {
-            try workspace.openExisting(folder: URL(fileURLWithPath: path))
-            wsLog("openWorkspace 成功，当前 folder=\(workspace.folder?.path ?? "nil")")
+            try WorkspaceManager.validate(url)
         } catch {
-            wsLog("openWorkspace 失败：\(error.localizedDescription)")
-            workspaceActionError = error.localizedDescription
+            WorkspaceRegistry.shared.removeRecent(url)
+            WorkspaceRegistry.shared.missingRecentName = WorkspaceManager.defaultWorkspaceName(for: url)
+            return
         }
+        routeToWorkspace(url, strict: false)   // 刚验过，不必再验一遍
     }
 
-    /// 启动时恢复工作区上次打开的整组文档：本窗口开第一个，其余各开一个新窗口。
+    /// 打开某个工作区 = **开一个属于它的窗口**（已有窗口则激活那个），而不是把当前窗口换过去。
+    /// 这是 2026-07-29 定的行为：多工作区并存，双击/打开另一个工作区不影响正在看的窗口。
+    /// `strict` = 用户侧入口的严格校验（必须是含 library.sqlite 的真实工作区，不静默建空库）。
+    private func routeToWorkspace(_ url: URL, strict: Bool) {
+        if strict {
+            do {
+                // 只查文件系统；真正的实例化在新窗口的 RootView 里（同路径会命中池里同一实例）。
+                try WorkspaceManager.validate(url)
+            } catch {
+                wsLog("routeToWorkspace 校验失败：\(error.localizedDescription)")
+                workspaceActionError = error.localizedDescription
+                return
+            }
+        }
+        if WorkspaceRegistry.shared.hasWindow(forWorkspace: url) {
+            wsLog("routeToWorkspace：该工作区已有窗口，激活它 \(url.path)")
+            WorkspaceRegistry.shared.activateWindow(forWorkspace: url)
+            return
+        }
+        wsLog("routeToWorkspace：开新窗口 \(url.path)")
+        openWindow(value: WindowTarget(workspacePath: url.standardizedFileURL.path, docId: nil))
+    }
+
+    /// 决定本窗口的初始文档。**工作区归属已由 `RootView` 定好**（本窗口的 `workspace` 就是它），
+    /// 这里只管在这个工作区里选文档：`launchDocId` 指定了就用它，否则恢复该工作区的「上次打开集」。
+    private func decideInitialContent(from source: String) {
+        guard !didChooseInitialDoc else { return }
+        didChooseInitialDoc = true
+        guard let folder = workspace.folder else { return }
+        // 「恢复整组文档」每个工作区只做一次（见 claimRestore）：⌘N 开的新窗口、以及被 restore
+        // 开出来的那些窗口，都该止步于此，否则会连锁开窗。
+        guard WorkspaceRegistry.shared.claimRestore(folder) else {
+            wsLog("decideInitialContent(\(source))：本工作区已恢复过，留空窗口")
+            return
+        }
+        wsLog("decideInitialContent(\(source))：工作区 \(folder.lastPathComponent) → restoreSession")
+        restoreSession()
+    }
+
+    /// 恢复本工作区上次打开的整组文档：本窗口开第一个，其余各开一个新窗口（同一工作区）。
     private func restoreSession() {
         let docs = workspace.restoreDocIds.filter { workspace.document(id: $0) != nil }
         selectedDocID = docs.first
+        guard let wsPath = workspace.folder?.standardizedFileURL.path else { return }
         // 只自动重开有限几个最近文档为独立窗口，避免「最近打开」较长时一次弹出过多窗口；
-        // 其余仍在侧栏，一键可开。
+        // 其余仍在侧栏，一键可开。窗口都带上本工作区路径 —— 否则新窗口会去开「上次工作区」。
         for other in docs.dropFirst().prefix(4) {
-            openWindow(id: "docWindow", value: other)
+            openWindow(value: WindowTarget(workspacePath: wsPath, docId: other))
         }
     }
 
