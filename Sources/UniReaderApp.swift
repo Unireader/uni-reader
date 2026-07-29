@@ -172,6 +172,11 @@ struct UniReaderApp: App {
             RootView(target: target)
                 .environmentObject(app)
         }
+        // 关掉系统的窗口状态恢复：本 app 自己就管着「上次开了哪些文档」（每个工作区的打开集 →
+        // restoreSession），系统再恢复一遍是重复的。
+        // ⚠️ 注意这**不是**多余空窗口的解药：实测那些窗口 `isRestorable=false`、identifier 形如
+        // `SwiftUI.PresentedWindowContent<…>-AppWindow-N`，是 SwiftUI 自己开的，与状态恢复无关。
+        .restorationBehavior(.disabled)
 
         // 标准设置窗口（⌘,）：夜间模式自动化 / 平板滚动跟随算法 / 平板服务自启。
         Settings {

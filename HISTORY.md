@@ -3,6 +3,46 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 已修 / 完成（2026-07-29）
+
+- **多工作区并存**（用户报「双击打开一个工作区，把旧窗口的工作区也替换掉了」）：工作区从 App 级单例
+  改成**窗口级**。方案与红线见 `REQUIREMENTS.md §8.1`（权威），要点：新增 `WorkspaceRegistry` 按路径分配
+  `WorkspaceManager`（**同路径必须同实例**——`LibraryStore` 是单 SQLite 连接且笔迹/注解走「内存快照 ↔ 库」
+  增量对账，同一个库开两个 store 会互相把对方的成果判为「已删除」而清库，直接丢笔记）；新增 `RootView`
+  决定每个窗口归属哪个工作区再注入子树，故 `ContentView` 及下游那 28 处 `workspace.` 用法一行未改；
+  所有「打开工作区」入口统一成「已有窗口则激活、否则开新窗口」；`restoreSession` 改为每工作区只做一次
+  （`claimRestore`，不设闸会连锁开窗）；⌘N 由 app 接管（系统默认那个开出来的窗口不带工作区，会跑去开
+  「上次使用的工作区」）。用户已验证：两个工作区窗口并存互不影响、重复双击只激活、笔迹未丢。
+- **双击 `.unrd` 冷启动打不开该工作区**（停在旧工作区；此前已改错三轮）。真根因是两层叠加，靠自建文件
+  日志一次跑出来（`log show`/`log stream` **抓不到本 app 任何输出**，按进程过滤零条，为此白费两轮）：
+  ① SwiftUI 的 `onAppear` 早于 AppKit 投递 open 事件，在那里判定初始内容时缓冲还是空的 → 先恢复了上一个
+  工作区；② 事件随后到达时**没有任何窗口是 key**（`isKeyWindow` 由 `WindowAccessor` 异步回填），
+  `if isKeyWindow` 让所有窗口一起跳过 = 请求静默丢弃。修法：初始内容决策锚到 `applicationDidFinishLaunching`
+  （AppKit 保证 open 事件在它之前投递完），热启动路由改用「谁 `consumePendingWorkspace()` 抢到谁处理」。
+  时序表见 `REQUIREMENTS.md §8.1`。
+- **Dock 图标右键「最近的工作区」**（新功能）：两套机制各管一半场景——app **运行时**走
+  `applicationDockMenu`（用 registry 那份列表，点击与双击 `.unrd` 同一路由）；app **未运行时**那个方法根本
+  不会被调用，Dock 显示的是系统「最近使用的文稿」，由 `NSDocumentController.noteNewRecentDocumentURL` 喂
+  （registry 初始化倒序补喂一次已有列表，否则老用户升级后未运行时的 Dock 右键是空的）。
+- **SwiftUI 凭空多开一个空窗口**（每次 app 被激活都来一个，双击 `.unrd` 必然激活 → 一次双击两个窗口）：
+  **未根治**，已识别并在上屏前关掉。四条怀疑全部被日志排除（`applicationShouldHandleReopen` 压根没被调用 /
+  `NSDocumentController` 没介入 / 去掉 `defaultValue` 无效 / `isRestorable=false` 不是状态恢复），排除表与
+  两个实现细节（判定必须在 body 求值时而非 `onAppear`，否则窗口已上屏 = 用户看到闪一下；`WindowCloser` 要在
+  `viewWillMove(toWindow:)` 就设 `alphaValue=0`+禁动画，且**不能给零尺寸 frame** 否则 NSView 根本不被创建）
+  见 `REQUIREMENTS.md §8.1`。用户已验证无闪烁。
+- **阅读区缩放掉帧**：根因不在渲染，在广播——`DocSession.readZoom` 是 `@Published` 且被逐帧回报，
+  每帧向所有订阅 `DocSession` 的视图（ContentView/Inspector/侧栏/缩略图/笔架）广播 `objectWillChange`
+  = 每帧重算整个窗口视图树。改为只在 `settleRender` 稳定后回报一次。其余每帧重复劳动：`PageBuckets`
+  把逐页全数组过滤压成整帧算一次（取笔迹原本每页重建图层序字典 + 全量排序）、缩放中 settle 不再每帧重排、
+  实化窗口不收缩、不入队注定作废宽度的渲染、`userZoomed` 不逐帧写同值。
+- **缩放白屏**：① `updateRealized` 收缩实化窗口时驱逐的正是刚还在屏幕上的页，缩放到一半它又回视口 → 白纸；
+  缩放期间改为只扩不缩、不驱逐。② `requestBase` 完成回调原本只认当前期望键，连续缩放时 settle 每 0.15s
+  换一次目标宽，前一轮**渲好且已进缓存**的图全被丢弃、该页一直空着；改为该页正空着且夜间标志相符就先顶上。
+  ③ 新增 `fallbackBase`：目标宽度未就绪时拿该页以前渲过的任意宽度图先顶，最后兜一层 Inspector 缩略图那份
+  160px 图。
+- Inspector 缩略图页图本身没裁圆角，方角图正好盖住圆角底 → 加 `clipShape`，圆角值抽成 `ThumbnailListView.corner`
+  供底/图/选中描边共用。
+
 ## 已修 / 完成（2026-07-27）
 
 - **尺子（直线）笔三个独立缺陷**（用户报：①平板显示是直线、Mac 显示成歪笔迹，抬笔落下的也是歪的；

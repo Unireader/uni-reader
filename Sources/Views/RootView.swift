@@ -14,11 +14,29 @@ struct RootView: View {
     @State private var failure: String?
     @State private var selfClose = false
 
+    /// 本窗口是不是「SwiftUI 在 app 激活时凭空塞出来的空窗口」。
+    ///
+    /// ⚠️ **必须在 body 求值时判定，不能等 `onAppear`**：onAppear 是窗口**显示之后**才调用的，
+    /// 那时窗口已经上屏，再 `orderOut` 就是用户看到的「闪一下又消失」（2026-07-29 实测确认）。
+    /// body 求值早于视图挂载和窗口 orderFront，此刻决定才来得及。
+    ///
+    /// 判定三条缺一不可：没绑定过工作区（绑定了就是正经窗口，否则窗口自己注册完会把自己判成多余的
+    /// 而自杀）、没指定工作区（用户开窗的两条路 ⌘N 和「打开工作区」都显式带路径）、
+    /// 且它要落到的那个工作区已经有窗口了。冷启动第一个窗口不会命中：那时 didFinishLaunching 还是假。
+    private var isStrayWindow: Bool {
+        guard workspace == nil, failure == nil,
+              target?.workspacePath == nil,
+              AppDelegate.didFinishLaunching else { return false }
+        return WorkspaceRegistry.shared.hasWindow(forWorkspace: WorkspaceRegistry.shared.lastOrDefaultFolder())
+    }
+
     var body: some View {
         Group {
-            if selfClose {
-                // 兜底：系统凭空塞进来的空窗口，拿到 NSWindow 立刻关掉（判定见 resolve）。
-                Color.clear.background(WindowAccessor(onKeyChange: { _ in }, onWindow: { $0?.close() }))
+            if selfClose || isStrayWindow {
+                // 赶在上屏之前撤下并关掉。**不能用 `.frame(width: 0, height: 0)`**——零尺寸时
+                // SwiftUI 根本不会创建那个 NSView，`viewDidMoveToWindow` 永不触发，窗口就留在屏幕上了
+                // （实测：判定了 4 次，只关掉 2 个）。挂在撑满的 Color.clear 背景上才保证被挂载。
+                Color.clear.background(WindowCloser())
             } else if let workspace {
                 ContentView(launchDocId: target?.docId)
                     .environmentObject(workspace)
@@ -34,8 +52,14 @@ struct RootView: View {
                 Color.clear
             }
         }
-        .onAppear { resolve(from: "onAppear") }
+        .onAppear {
+            // 已判定为多余窗口就锁定（body 里的 isStrayWindow 依赖 workspace==nil，一旦 resolve
+            // 绑定了工作区它就会翻假、把这个本该关掉的窗口又显示出来），并且**不要** resolve。
+            if isStrayWindow { selfClose = true; return }
+            resolve(from: "onAppear")
+        }
         .onReceive(NotificationCenter.default.publisher(for: .appDidFinishLaunching)) { _ in
+            if isStrayWindow { selfClose = true; return }
             resolve(from: "didFinishLaunching")
         }
         .onDisappear {
@@ -69,17 +93,6 @@ struct RootView: View {
             return
         }
         guard let folder else { return }
-
-        // 兜底闸：**没指定工作区、而它解析到的工作区已经有窗口了** = 一个没人要过的空窗口。
-        // 用户主动开窗的两条路都不会落到这里：⌘N 走 newWindowRequested、显式带 workspacePath；
-        // 「打开工作区」也总带路径。冷启动的第一个窗口虽然没有 target，但那时还没有任何窗口登记过，
-        // 也不会命中。留这道闸是因为「谁开的窗口」在 SwiftUI 侧不完全可控（见 WindowGroup 的注释）。
-        if target?.workspacePath == nil, AppDelegate.didFinishLaunching,
-           WorkspaceRegistry.shared.hasWindow(forWorkspace: folder) {
-            wsLog("RootView.resolve(\(source))：多余空窗口（\(folder.lastPathComponent) 已有窗口），关掉自己")
-            selfClose = true
-            return
-        }
 
         do {
             // 这里的来源要么是显式指定、要么是上次用过的，都不是「用户随手选的文件夹」，

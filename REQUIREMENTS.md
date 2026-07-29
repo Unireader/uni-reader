@@ -177,7 +177,7 @@
 
 > 目标：一个**可移动文件夹 = 一个工作区**，替代「分组」。放移动硬盘上即可两台电脑/未来独立 app 复用同一套数据。
 
-- **文件夹 = 工作区 = 一套相关 PDF**（原「分组」/`LibraryGroup` 已取消，工作区天然就是分组；§1.1 的「自定义分组」以此替代）。**2026-07-28 起工作区文件夹为 `.unrd` 包**（UTI `tech.xvanturing.unireader.workspace`，conforms to `com.apple.package`，声明在 `Sources/Info.plist`）：Finder 显示为单文件、双击交给 UniReader 打开（`AppDelegate.application(_:openFile:)` → 通知路由到 key 窗口 `ContentView.openWorkspace`；冷启动经 `AppDelegate.pendingWorkspacePath` 缓冲）。**旧无扩展名工作区首次打开时原地改名迁移**为 `<工作区名>.unrd`（`WorkspaceManager.migrateToPackageIfNeeded`，只 rename 不动内容；工作区内改名也联动改包名，保持「包名 == 工作区名.unrd」）。包内布局不变（`UniReader/library.sqlite`、`PDFs/`），跨平台侧把 `.unrd` 当普通目录即可。
+- **文件夹 = 工作区 = 一套相关 PDF**（原「分组」/`LibraryGroup` 已取消，工作区天然就是分组；§1.1 的「自定义分组」以此替代）。**2026-07-28 起工作区文件夹为 `.unrd` 包**（UTI `tech.xvanturing.unireader.workspace`，conforms to `com.apple.package`，声明在 `Sources/Info.plist`）：Finder 显示为单文件、双击交给 UniReader 打开（路由见 §8.1）。**旧无扩展名工作区首次打开时原地改名迁移**为 `<工作区名>.unrd`（`WorkspaceManager.migrateToPackageIfNeeded`，只 rename 不动内容；工作区内改名也联动改包名，保持「包名 == 工作区名.unrd」）。包内布局不变（`UniReader/library.sqlite`、`PDFs/`），跨平台侧把 `.unrd` 当普通目录即可。
 - **不直接存 PDF 本体**，只记录每个文档的「多个可能路径」（移动/复制后自动探测有效路径）。
 - **一个文档可配多个文件 / 多个 hash**：给 PDF 加了 TOC → hash 变但页面内容一致 → 视为同一文档的多个版本（variant），笔记通用。
 
@@ -187,10 +187,108 @@
 | 存储格式 | **自有 schema 的单个 SQLite**（`<工作区>/UniReader/library.sqlite`，无第三方依赖，用系统 libsqlite3） | **确定要做 Windows/Android 版**，数据须跨平台可读 → 排除 SwiftData/Core Data 不透明 schema；SQLite 全平台原生可读、ACID 保一致性、单文件易移动。已用 `sqlite3` CLI 验证可直读 |
 | 多 hash 模型 | **document → variant(hash) → location(path)** 三层；notes 挂 document（按 page + 归一化锚点，版本无关） | 加 TOC = 新 variant，笔记全版本共用；打开时跨 variant 探测有效路径 |
 | 多 hash 关联 | **手动**「关联为同一文档」（`LibraryStore.linkVariant` 已就绪，UI 待补）——hash 变了无法自动判定同一文档 | — |
-| 工作区切换 | 侧栏文件夹菜单：**「打开工作区…」与「新建工作区…」严格分离**（2026-07-28）——打开走 `WorkspaceManager.openExisting`，`NSOpenPanel` 只认已存在的 `.unrd` 包（`canChooseDirectories=false`、无 `canCreateDirectories`），选中的文件夹若不含 `UniReader/library.sqlite` 会报错而非静默建空库；新建走 `createWorkspace(at:)`，`NSSavePanel` 选位置+起名现场创建全新包。最近工作区同走 `openExisting` 校验；最近列表存**本机** UserDefaults，不进文件夹 | 此前「打开」面板混用选择/创建/选目录，误选到无关或空文件夹会被 `open(folder:)` 静默建成一个新空库（表现为「打开工作区却看到空的」） |
+| 工作区切换 | 侧栏文件夹菜单：**「打开工作区…」与「新建工作区…」严格分离**（2026-07-28）——打开时 `NSOpenPanel` 只认已存在的 `.unrd` 包（`canChooseDirectories=false`、无 `canCreateDirectories`），选中的文件夹若不含 `UniReader/library.sqlite` 会报错而非静默建空库（`WorkspaceManager.validate`）；新建走 `createWorkspace(at:)`，`NSSavePanel` 选位置+起名现场创建全新包。最近工作区同走 `validate` 校验；最近列表存**本机** UserDefaults，不进文件夹。**2026-07-29 起「切换」的语义 = 开一个属于该工作区的窗口**（见 §8.1），不再替换当前窗口 | 此前「打开」面板混用选择/创建/选目录，误选到无关或空文件夹会被静默建成一个新空库（表现为「打开工作区却看到空的」） |
+| 多工作区并存 | **一个 `WorkspaceManager` 实例 = 一个工作区**，窗口级；实例由 `WorkspaceRegistry` 按路径分配（2026-07-29，详见 §8.1） | 原先是 App 级单例、靠换 `folder` 切工作区 → 双击另一个 `.unrd` 会把**所有**窗口一起换掉 |
 
 **Schema v3（跨平台契约，见 `Sources/Store/`）：**
 `meta(key,value)` · `document(id,title,page_count,added_at,last_opened_at,sort_order,read_page,read_frac)` · `variant(id,document_id→,content_hash UNIQUE,page_count,added_at)` · `location(id,variant_id→,path,is_valid,last_validated_at,in_workspace,is_relative)` · `note(id,document_id→,kind,page,anchor_x/y/w/h,payload BLOB=JSON,created_at,updated_at)` · **`ocr_page(content_hash,page,provider, payload BLOB=JSON,lang,created_at)` PK(content_hash,page,provider)**（v3 新增，扫描页 OCR 结果缓存；payload=`{w,h,runs:[{text,x,y,w,h}]}` 归一化 0~1）。时间戳 ISO-8601 文本、id UUID、payload JSON。**无 macOS security-scoped bookmark**（不跨平台）。`in_workspace=1` 时 `location.path` 为**工作区相对路径**。`is_relative=1`（v6 新增）：外部文件（未拷入工作区）但与工作区文件夹同属一块**可移动/外置卷**（`volumeIsInternal==false`，如移动硬盘/外置 SSD）时，`path` 也存**相对工作区文件夹的路径**（可含 `..`）——换电脑/换挂载点（`/Volumes/X` 变 `/Volumes/X 1`）仍可解析；系统内置盘不做此处理（挂载点稳定，绝对路径已足够，且避免「只挪工作区不挪源文件」时反而失效）。迁移：`meta.schema_version` + `ADD COLUMN IF missing` / `CREATE TABLE IF NOT EXISTS`（v1→v2、v2→v3 均已验证：`spike/store-test.swift` 32/32、`spike/ocr-store-test.swift` 15/15）。
 
 **已实现**：`SQLite.swift`（libsqlite3 薄封装）+ `LibraryStore.swift`（建表/迁移/`findOrCreate` 去重/`mergeDocument`+`linkVariant`/`addVariant`/`add·removeLocation`/`updateProgress`/notes CRUD）+ `WorkspaceManager`（当前工作区、最近列表、导入、打开探测路径优先工作区副本、进度存取、复制/移出工作区、重定位、合并）；SwiftData 整套移除。UI：侧栏工作区切换 + **重命名**、文档右键 **复制到工作区/从工作区删除**、**关联为同一文档**（合并，带确认）、路径失效 **重新关联文件** 提示；**阅读进度**自动记录并重开恢复（切文档/关窗/滚动节流各存一次）。运行时验证：建库/schema/meta/WAL、v1→v2 迁移、32/32 DAO 测试（`spike/store-test.swift`）。
 **待补**：① 旧 SwiftData 数据不迁移（全新开始，需重新导入）；② ✅ 手写笔迹已写入 `note` 表（kind=2，payload=JSON `InkStroke`；2026-07-20，见 §6 S3.5）；③ 合并的「拆分」逆操作暂无。
+
+---
+
+## 8.1 窗口 ↔ 工作区（多工作区并存，2026-07-29 定方案并实现）
+
+> 用户定的行为：**双击另一个 `.unrd` = 新开一个窗口显示它，原有窗口纹丝不动**（Xcode/VS Code 打开另一个项目的手感）。
+> 此前是 App 级单例，切工作区会把所有窗口一起换掉。
+
+### 所有权模型
+
+| 角色 | 职责 |
+|---|---|
+| `WorkspaceRegistry`（App 级单例） | 工作区实例池：**按路径分配 `WorkspaceManager`，同一路径全 app 只有一个实例**。另持有本机全局状态：最近工作区列表、上次工作区、窗口↔工作区登记、`claimRestore` 闸 |
+| `WorkspaceManager`（窗口级，可被多窗口共享） | **一个实例 = 一个工作区**，持有它的 `LibraryStore`。实例建好即绑定，**没有「换 folder」这条路** |
+| `RootView`（每个窗口的根） | 决定本窗口归属哪个工作区，领到实例后 `.environmentObject` 注入子树 |
+| `ContentView` 及下游 | 照旧 `@EnvironmentObject var workspace`，**因窗口而异**。侧栏/Inspector/阅读区的既有用法一行未改 |
+
+**🔴 红线：同一工作区路径必须共享同一个 `WorkspaceManager` 实例。**
+`LibraryStore` 是单 SQLite 连接、非线程安全，且笔迹/注解/高亮的落库走「内存快照 ↔ 库」增量对账
+（`persistedStrokes`/`persistedTextNotes` 那套）。同一个库若开出两个 store，两份快照互不知情，
+后写的一方会把先写的成果整段判为「已删除」而清库 —— **直接丢笔记**。这是数据安全约束，不是性能优化。
+所以「同一工作区开多个窗口」（⌘N、在新窗口打开文档）走的是同一个实例 + 引用计数，归零才析构。
+
+### 窗口归属的决定顺序（`RootView.resolve`）
+
+1. `WindowTarget.workspacePath` —— 显式指定（双击开的新窗口、「在新窗口打开文档」、⌘N）；
+2. `AppDelegate.pendingWorkspacePath` —— 双击 `.unrd` 冷启动拉起 app 的那一下；
+3. 上次使用的工作区（普通启动）。
+
+**⚠️ 第 2 条必须等到 `applicationDidFinishLaunching` 之后才能判定**（实测日志钉死的时序）：
+
+```
+ContentView/RootView.onAppear   ← SwiftUI 建窗口，最早
+application(_:open:)            ← 双击带来的文档事件，之后才到
+applicationDidFinishLaunching   ← AppKit 保证 open 事件在它之前投递完
+```
+
+在 `onAppear` 里就判定的话，缓冲还是空的 → 落到第 3 条打开**上一个**工作区，事件到达后再切走，
+用户能看到明显的来回切换。故 `onAppear` 时若启动尚未完成就**挂起不决定**，等 `didFinishLaunching` 通知再来一次。
+
+另一个同源的坑：**`isKeyWindow` 在冷启动时全为假**（由 `WindowAccessor` 异步回填），
+凡是 `if isKeyWindow { 处理 }` 的分发都会被所有窗口一起跳过 = 请求静默丢弃。
+热启动的双击路由改用「谁 `consumePendingWorkspace()` 抢到谁处理」——消费是一次性的且都在主线程，天然选出唯一认领者。
+
+### 「打开工作区」的统一路由（`ContentView.routeToWorkspace`）
+
+双击 `.unrd` / 侧栏「打开工作区…」/ 最近工作区 / Dock 菜单，**全部等价于**：
+校验（`WorkspaceManager.validate`，只查文件系统不建实例）→ 该工作区**已有窗口就激活它**，否则 `openWindow(value:)` 开新窗口。
+
+`restoreSession`（恢复上次打开的整组文档）**每个工作区只做一次**（`WorkspaceRegistry.claimRestore`）。
+不设这道闸会连锁开窗：`restoreSession` 自己会 `openWindow`，而每个新窗口的 `ContentView` 又会再恢复一遍。
+（原先靠 App 级 `didRestoreInitial` 挡着，改成多工作区后那个标志失效。）
+
+⌘N 由本 app 接管（`CommandGroup(replacing: .newItem)` → `.newWindowRequested`）：
+系统默认那个开出来的窗口不带工作区，会跑去开「上次使用的工作区」而非当前这个。
+
+### 🐛 SwiftUI 会凭空多开一个空窗口（未根治，已识别并关闭）
+
+**现象**：app 每次被激活（双击 `.unrd` 必然激活），SwiftUI 都会额外开一个 `value == nil` 的 `WindowGroup` 窗口。
+一次双击 = 两个窗口。
+
+**已逐一排除**（都不是原因，别再往这些方向查）：
+
+| 怀疑 | 排除依据 |
+|---|---|
+| `applicationShouldHandleReopen` | 该回调**压根没被调用**（SwiftUI 自己处理了重新打开，不转发给 delegate） |
+| `NSDocumentController`（Dock 最近文稿引入） | `applicationShouldOpenUntitledFile` 同样没被调用 |
+| `WindowGroup` 的 `defaultValue` | 去掉后照样出现 |
+| 系统窗口状态恢复 | 那些窗口 `isRestorable=false`，identifier 形如 `SwiftUI.PresentedWindowContent<…>-AppWindow-N`；`.restorationBehavior(.disabled)` 加了也无效 |
+
+**当前处理**（补丁，非根治）：`RootView` 识别并关掉它。两个关键实现细节，都是踩出来的：
+
+- **判定必须在 body 求值时**（`isStrayWindow` 计算属性），**不能放 `onAppear`** —— onAppear 是窗口**显示之后**才调用的，那时已上屏，再关就是用户看到的「闪一下」。判定条件：尚未绑定工作区 + `target.workspacePath == nil` + 启动已完成 + 该工作区已有窗口。用户开窗的两条路都显式带路径，不会误伤；冷启动第一个窗口那时 `didFinishLaunching` 还是假，也不会命中。
+- **关窗要赶在窗口上屏之前**：`WindowCloser` 在 `viewWillMove(toWindow:)`（比 `viewDidMoveToWindow` 更早）就把 `alphaValue = 0` + `animationBehavior = .none` 设上 —— 窗口的出现动画由 CoreAnimation 驱动，只靠 `orderOut` 追不上，会被瞥见窗口底边冒出来一截。另外**不能给它 `.frame(width: 0, height: 0)`**：零尺寸时 SwiftUI 根本不创建那个 NSView，`viewDidMoveToWindow` 永不触发，窗口就留在屏幕上了。
+
+### Dock 右键「最近的工作区」
+
+两套机制**各管一半场景**，都要接：
+
+- **app 运行时** → `AppDelegate.applicationDockMenu`，用 registry 那份列表，点击走与双击 `.unrd` 相同的路由；
+- **app 未运行时** → 上面那个方法根本不会被调用，Dock 显示的是系统维护的「最近使用的文稿」，
+  由 `NSDocumentController.noteNewRecentDocumentURL` 喂（`WorkspaceRegistry.rememberRecent`；
+  registry 初始化时会把已有列表**倒序补喂一次**，否则老用户升级后未运行时的 Dock 右键是空的）。
+  点击它走 `application(_:open:)`，即冷启动路径。顺带「文件 → 打开最近使用」也有了内容。
+
+### 诊断通道
+
+这条链路横跨 LaunchServices → AppDelegate → 通知 → RootView → ContentView，任一环静默断掉都只表现为
+「双击没反应」，为此改错过三轮。`wsLog()` 打点常驻代码，**默认关闭**，只在日志文件已存在时才写：
+
+```
+touch ~/Library/Logs/UniReader-ws.log    # 开启
+rm    ~/Library/Logs/UniReader-ws.log    # 关闭
+```
+
+⚠️ 别指望 unified logging：实测 `log show`/`log stream` 抓不到本 app 的任何输出（按进程过滤零条，
+连系统框架日志都没有），双击启动的 app 也不挂在 Xcode 控制台下，`print` 同样看不到。
