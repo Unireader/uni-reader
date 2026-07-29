@@ -83,7 +83,13 @@ final class DocSession: ObservableObject, Identifiable {
     /// 当前会话对应的逻辑文档 id（笔迹持久化用；nil = 未加载文档）。
     var documentId: String?
 
-    /// 阅读区当前缩放倍率（相对 fit-width，1=贴合宽度）。PageStreamView 写、ContentView 读来存进度。
+    /// 阅读区当前缩放倍率（相对 fit-width，1=贴合宽度）。ContentView 读来存进度。
+    /// ⚠️ **只许在缩放稳定后（settleRender）写一次，严禁每帧回报**（2026-07-29 掉帧根因）：
+    /// 这是个 `@Published`，每写一次就向所有订阅 `DocSession` 的视图广播一遍 `objectWillChange`
+    /// ——ContentView、Inspector、侧栏、缩略图列表、笔架全在订阅。缩放动画逐帧写它，等于每帧把整个
+    /// 窗口的视图树重算一遍，阅读区自己那点渲染优化再怎么做都补不回来。相邻的 `readHFrac` 正是
+    /// 为同一个理由被刻意排除在 `@Published` 之外。
+    /// 仍保留 `@Published`：ContentView 靠它的 `onChange` 触发进度落库，稳定后一次的频率完全够用。
     @Published var readZoom: CGFloat = 1
     /// 待恢复的缩放倍率（loadSelected 从库读入，PageStreamView 首帧定基准后一次性套用）。非 @Published。
     var restoreZoom: CGFloat = 1
@@ -110,14 +116,22 @@ final class DocSession: ObservableObject, Identifiable {
     /// 当前可见的图层 id 集合（渲染/擦除/框选公用）。
     var visibleLayerIDs: Set<UUID> { Set(inkLayers.filter(\.visible).map(\.id)) }
 
-    /// 某页当前可见的笔迹，按图层 `sortOrder` 排（同层内保持原相对顺序），供渲染直接消费。
-    func visibleStrokes(page: Int) -> [InkStroke] {
+    /// `range` 内各页当前可见的笔迹，按图层 `sortOrder` 排（同层内保持原相对顺序），供渲染直接消费。
+    /// ⚠️ **按页取用请一律走这个批量版**：阅读区每帧要为每一实化页各取一次，逐页版等于每页都重建一次
+    /// 图层序字典 + 全量扫描 + 排序，复杂度 O(页数 × 笔迹数 × log)，缩放动画下直接吃光帧预算
+    /// （2026-07-29 按钮缩放掉帧的成因之一）。批量版把它压回一次 O(笔迹数)。
+    func visibleStrokesByPage(in range: ClosedRange<Int>) -> [Int: [InkStroke]] {
+        guard !strokes.isEmpty else { return [:] }
         let order = Dictionary(uniqueKeysWithValues: inkLayers.enumerated().map { ($1.id, $0) })
         let vis = visibleLayerIDs
-        return strokes.enumerated()
-            .filter { $0.element.page == page && vis.contains($0.element.layerId) }
-            .sorted { (order[$0.element.layerId] ?? 0, $0.offset) < (order[$1.element.layerId] ?? 0, $1.offset) }
-            .map(\.element)
+        var out: [Int: [(seq: Int, stroke: InkStroke)]] = [:]
+        for (seq, s) in strokes.enumerated() where range.contains(s.page) && vis.contains(s.layerId) {
+            out[s.page, default: []].append((seq, s))
+        }
+        return out.mapValues { items in
+            items.sorted { (order[$0.stroke.layerId] ?? 0, $0.seq) < (order[$1.stroke.layerId] ?? 0, $1.seq) }
+                 .map(\.stroke)
+        }
     }
 
     // 文字注解（note kind=0）。运行时驻留于此，阅读区(渲染标记)与 Inspector(列表) 共读；

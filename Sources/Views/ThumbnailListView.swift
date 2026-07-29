@@ -9,7 +9,11 @@ struct ThumbnailListView: View {
     let currentPage: Int
     let onSelect: (Int) -> Void
 
-    private static let pixelWidth = 160
+    /// 缩略图渲染像素宽。阅读区也会读它：目标宽度的页图还没渲出来时，拿这份小图当最后兜底
+    /// （同 doc/page 键空间，见 `ReaderSurface.fallbackBase`）。
+    static let pixelWidth = 160
+    /// 缩略图圆角（图、底、选中描边共用一个值，三者必须一致，否则方角图会盖住圆角底）。
+    static let corner: CGFloat = 5
 
     /// 图存在列表层而非单元格 `@State`：单元格随 LazyVStack 滚出即被销毁，若图存在单元格上，
     /// 渲染完成回调可能落到一个已经不存在的实例上而丢失；存这里则只认页号，谁来问都拿得到。
@@ -67,9 +71,12 @@ private struct ThumbnailCell: View {
                 thumbnail
                     .aspectRatio(aspect, contentMode: .fit)
                     .frame(maxWidth: .infinity)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: ThumbnailListView.corner))
+                    // 页图本身也要裁圆角：只给底和描边做圆角的话，方角的图会正好盖住那圈圆角，
+                    // 观感就是"选中框是圆的、图是方的"。
+                    .clipShape(RoundedRectangle(cornerRadius: ThumbnailListView.corner))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 5)
+                        RoundedRectangle(cornerRadius: ThumbnailListView.corner)
                             .strokeBorder(isCurrent ? Color.accentColor : Color.clear, lineWidth: 2)
                     )
                 Text("\(page + 1)")

@@ -71,14 +71,24 @@ extension ReaderSurface {
         let buffer = n.containerH / ds                    // 上下各约一屏预实化
         let top = n.offsetY / ds - buffer
         let bottom = (n.offsetY + n.containerH) / ds + buffer
-        let range = layout.pageRange(fromDocY: top, toDocY: bottom)
+        var range = layout.pageRange(fromDocY: top, toDocY: bottom)
+        // 缩放进行中（按钮/⌘± 动画、捏合、⌘滚轮）：实化窗口**只扩不缩**，且一页都不驱逐。两个理由：
+        //  ① 每帧收缩再扩张 → `realized` 反复变动，每变一次多一轮完整 body 重算（掉帧）；
+        //  ② 收缩驱逐的正是刚还在屏幕上的页，缩放过程中它又回到视口 → 无图 → 白纸（用户报的"白屏"）。
+        // 缩放收尾的 settleRender 会显式再跑一次本函数，那时 zooming 已假、窗口正常收回。
+        let zooming = isZooming
+        if zooming {
+            range = min(range.lowerBound, realized.lowerBound)...max(range.upperBound, realized.upperBound)
+        }
         if range != realized || !scratch.didFirstKick {
             scratch.didFirstKick = true
             realized = range
-            var evict = [Int]()
-            for k in images.keys where k < range.lowerBound - 2 || k > range.upperBound + 2 { evict.append(k) }
-            for k in evict { images.removeValue(forKey: k) }
-            for k in tiles.keys where !(range ~= k) { tiles.removeValue(forKey: k) }
+            if !zooming {
+                var evict = [Int]()
+                for k in images.keys where k < range.lowerBound - 2 || k > range.upperBound + 2 { evict.append(k) }
+                for k in evict { images.removeValue(forKey: k) }
+                for k in tiles.keys where !(range ~= k) { tiles.removeValue(forKey: k) }
+            }
             kickBaseRenders()
             if session.ocrEnabled { session.enqueueOCR(Array(range)) }   // 「看到哪页处理哪页」：可见窗口入队 OCR
         }

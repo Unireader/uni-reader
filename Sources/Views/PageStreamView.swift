@@ -228,7 +228,6 @@ struct ReaderSurface: View {
                 ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
             scheduleRefit()
         }
-        .onChange(of: zoom) { _, z in session.readZoom = z }   // 回报当前缩放，供进度持久化
         .onChange(of: interpEnabled) { _, v in follower.interpEnabled = v }
         .onChange(of: isActiveWindow) { _, v in scratch.isActiveWindow = v }
         .onChange(of: session.ocrEnabled) { _, on in if on { session.enqueueOCR(Array(realized)) } }
@@ -272,10 +271,11 @@ struct ReaderSurface: View {
 
     @ViewBuilder var contentBody: some View {
         if let layout, scratch.didInitialGeo {   // 未定基准前只占位空白（防启动窄宽渲染 → 闪烁）
-            let activeMatch = session.currentMatchIndex.flatMap { session.searchMatches.indices.contains($0) ? session.searchMatches[$0] : nil }
+            // 逐页数据整帧算一次（见 PageBuckets 注释）：旧写法每页各跑一遍全数组过滤，缩放每帧重算 body 时是掉帧大头。
+            let buckets = PageBuckets(session: session, range: realized)
             ZStack(alignment: .topLeading) {
                 ForEach(Array(realized), id: \.self) { i in
-                    pageCell(i, layout: layout, activeMatch: activeMatch)
+                    pageCell(i, layout: layout, buckets: buckets)
                 }
                 lassoHighlight   // 框选选中项高亮框 + 移动 ghost（内容坐标，置于页元胞之上）
             }
@@ -287,20 +287,20 @@ struct ReaderSurface: View {
     }
 
     /// 单页元胞构造。抽成独立函数（而非内联进 ForEach）——参数众多，内联会让 SwiftUI 类型检查器超时。
-    @ViewBuilder func pageCell(_ i: Int, layout: PageLayout, activeMatch: TextMatch?) -> some View {
+    @ViewBuilder func pageCell(_ i: Int, layout: PageLayout, buckets: PageBuckets) -> some View {
         PageCellView(size: CGSize(width: pageW, height: layout.heights[i] * dispScale),
                      image: images[i],
                      tile: tiles[i],
                      paper: paper,
-                     strokes: session.visibleStrokes(page: i),
+                     strokes: buckets.strokes[i] ?? [],
                      live: session.liveStroke?.page == i ? session.liveStroke : nil,
                      hover: session.hover?.page == i ? session.hover : nil,
                      inkScale: zoom,
                      selectionRects: selection?.rects[i] ?? [],
-                     matchRects: session.searchMatches.filter { $0.page == i }.flatMap(\.rects),
-                     activeMatchRects: activeMatch?.page == i ? activeMatch!.rects : [],
-                     highlights: session.highlights.filter { $0.page == i },
-                     notes: session.textNotes.filter { $0.page == i },
+                     matchRects: buckets.matchRects[i] ?? [],
+                     activeMatchRects: buckets.activeMatch?.page == i ? (buckets.activeMatch?.rects ?? []) : [],
+                     highlights: buckets.highlights[i] ?? [],
+                     notes: buckets.notes[i] ?? [],
                      noteTypes: session.noteTypes,
                      ocrBlocks: session.showOCRBlocks ? (session.ocrRuns[i] ?? []) : [],
                      ocrGroups: session.showOCRBlocks && session.ocrBlockGrouped ? session.ocrGroups(page: i) : [],

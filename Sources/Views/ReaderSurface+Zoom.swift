@@ -8,6 +8,11 @@ extension ReaderSurface {
 
     func clampZoom(_ z: CGFloat) -> CGFloat { min(max(z, zoomMin), zoomMax) }
 
+    /// 缩放正在进行（命令式动画 / 捏合任一在飞）。逐帧改 `zoom` 期间，凡是「反正马上要重来一遍」的
+    /// 周边工作都按这个开关让路：实化窗口不收缩不驱逐、settle 不重排、不入队注定作废宽度的渲染。
+    /// 每省一处就少一轮 body 重算或一次后台渲染抢占 —— 按钮缩放掉帧就是被这些每帧重复劳动堆出来的。
+    var isZooming: Bool { zoomAnimOn || scratch.pinch != nil }
+
     /// 锚点计算用的「当前」内容偏移：优先用刚提交、尚未被 `verifyPendingTarget` 确认的
     /// `scratch.pendingTarget`，否则退回 `scratch.geo` 上次汇报值。
     /// ⚠️ **不能一律信 `scratch.geo`**：`onScrollGeometryChange` 汇报是异步的，比 `scrollTo`
@@ -78,7 +83,7 @@ extension ReaderSurface {
         var t = Transaction(); t.animation = nil
         withTransaction(t) {
             zoom = z1
-            userZoomed = true
+            if !userZoomed { userZoomed = true }   // @State 写入不比较旧值，逐帧写 true = 逐帧多一次无谓失效
             pos.scrollTo(point: target)
         }
         p.cCur = c1
@@ -166,7 +171,7 @@ extension ReaderSurface {
         var t = Transaction(); t.animation = nil
         withTransaction(t) {
             zoom = z
-            userZoomed = true
+            if !userZoomed { userZoomed = true }   // 同 commitZoom：逐帧写同一个值也会逐帧触发失效
             pos.scrollTo(point: target)
         }
         scratch.pendingTarget = target

@@ -11,6 +11,30 @@ extension ReaderSurface {
         min(basePixelCap, max(200, Int((pageW * displayScale).rounded())))
     }
 
+    /// 采纳一个基图像素宽（记进 `recentBaseWidths`：最新在前、去重、最多 4 个），供缺图回退查找。
+    func adoptBaseWidth(_ w: Int) {
+        scratch.basePixelW = w
+        guard scratch.recentBaseWidths.first != w else { return }
+        var l = scratch.recentBaseWidths.filter { $0 != w }
+        l.insert(w, at: 0)
+        if l.count > 4 { l.removeLast(l.count - 4) }
+        scratch.recentBaseWidths = l
+    }
+
+    /// 目标宽度的图还没渲出来时的**兜底图**：拿这一页以前渲过的任意宽度的缓存图先顶上。
+    /// 它比目标宽度糊（或过清），但绝不是白纸——真图渲好后由完成回调原位替换，用户只见"由糊变清"。
+    /// 连续缩放时 settle 每 0.15s 就换一次目标宽，旧宽度的图必然大量 miss，没有这条回退就会一路白屏。
+    /// 最后再兜一层 Inspector 缩略图那份 160px 图（同 doc/page 键空间，仅亮色）——很糊，但仍胜过白纸。
+    func fallbackBase(page: Int) -> CGImage? {
+        for w in scratch.recentBaseWidths where w != scratch.basePixelW {
+            if let hit = PageRenderEngine.shared.cached(baseKey(page, width: w)) { return hit }
+        }
+        guard !scratch.nightLive else { return nil }
+        return PageRenderEngine.shared.cached(
+            PageRenderEngine.baseKey(doc: docKey, page: page,
+                                     pixelWidth: ThumbnailListView.pixelWidth, night: false))
+    }
+
     /// ⚠️ 夜间标志一律读 `scratch.nightLive`（Scratch 是引用类型）：逃逸闭包（渲染完成回调、
     /// 夜间 flip 写回）捕获的 self 是值拷贝，其 `nightMode` 在请求发出后可能已切换——用拷贝值算
     /// 「当前期望键」会让守卫失效，陈旧完成穿透写回旧模式图（夜间「切不回来」的根因之一）。
@@ -22,8 +46,9 @@ extension ReaderSurface {
     /// 入队按「当前页 → 由近及远」：渲染引擎是单串行队列、按提交序出图，可视页必须先排上。
     func kickBaseRenders() {
         guard let pdf = session.pdf else { return }
-        if scratch.basePixelW == 0 { scratch.basePixelW = currentBaseWidth() }
+        if scratch.basePixelW == 0 { adoptBaseWidth(currentBaseWidth()) }
         let w = scratch.basePixelW
+        let zooming = isZooming
         var wanted = Set<String>()
         for i in Self.centerOutOrder(center: session.currentPageIndex, bounds: realized) {
             let key = baseKey(i, width: w)
@@ -33,7 +58,10 @@ extension ReaderSurface {
                 continue
             }
             guard images[i] == nil, let page = pdf.page(at: i) else { continue }
-            requestBase(key: key, page: page, index: i, width: w)
+            images[i] = fallbackBase(page: i)   // 先顶一张旧宽度的图（可能为 nil = 这页从没渲过，只能白纸）
+            // 缩放进行中不入队：此刻的 `w` 是缩放前的宽度，缩放一停 settleRender 立刻换新宽重排，
+            // 这批请求注定作废，却会先把唯一的串行渲染队列占满、把真正要看的那一版挤到后面。
+            if !zooming { requestBase(key: key, page: page, index: i, width: w) }
         }
         for t in tiles { wanted.insert(tileKeyFor(page: t.key, normRect: t.value.normRect)) }
         PageRenderEngine.shared.setWanted(wanted, client: scratch.clientID)
@@ -41,6 +69,10 @@ extension ReaderSurface {
 
     /// settle（滚动/缩放稳定 0.15s）后：按精确宽重渲可见窗口 + 刷新贴片。
     func scheduleSettleRender() {
+        // 缩放进行中每帧都会走到这里（zoomAnimFrame 的 scrollTo → geometryChanged），而 0.15s 内
+        // 必然又被下一帧取消 —— 每帧白白 cancel + 新建 DispatchWorkItem + asyncAfter。直接让路：
+        // 缩放收尾处（pinchEnded / zoomAnimStep 到位分支）都会显式再排一次，不会漏。
+        guard !isZooming else { scratch.settleWork?.cancel(); return }
         scratch.settleWork?.cancel()
         let work = DispatchWorkItem { settleRender() }
         scratch.settleWork = work
@@ -112,7 +144,14 @@ extension ReaderSurface {
     /// 承载，写了也用不上，还会绕开 `updateRealized` 的驱逐逻辑白占内存（本地 dict 强引用会拖住缓存该淘汰的图）。
     func settleRender(nightRadius: Int = 0) {
         guard let layout, let pdf = session.pdf, scratch.didInitialGeo else { return }
-        scratch.basePixelW = currentBaseWidth()
+        // 先定新宽再收窗口：`updateRealized` 内部的 kickBaseRenders 才会按最终宽度入队（顺序反了
+        // 就会先照旧宽度发一批注定作废的请求）。缩放期间实化窗口被冻成"只扩不缩"（见 updateRealized），
+        // 这里是缩放收尾的第一站，补跑一次让它按最终缩放收回正常大小并驱逐真正出界的页。
+        adoptBaseWidth(currentBaseWidth())
+        updateRealized(scratch.geo, layout: layout)
+        // 缩放稳定了才回报倍率（供进度持久化）。这是缩放路径上**唯一**该写 `session.readZoom` 的地方
+        // ——它是 @Published，逐帧写会每帧广播给整窗视图树，见 DocSession.readZoom 的告警注释。
+        if session.readZoom != zoom { session.readZoom = zoom }
         let w = scratch.basePixelW
         var wanted = Set<String>()
         // 贴片先行：放大超过基图上限后，清晰全靠视口贴片——必须排在基图重渲之前，
@@ -126,6 +165,9 @@ extension ReaderSurface {
             if let hit = PageRenderEngine.shared.cached(key) {
                 if images[i] !== hit { images[i] = hit }
             } else {
+                // 已有图的页保持旧图（只是分辨率不对，糊一点）——纪律 2「只替换不清空」；
+                // 空着的页先拿旧宽度的兜底图顶上，别让用户对着白纸等这一轮渲染。
+                if images[i] == nil { images[i] = fallbackBase(page: i) }
                 requestBase(key: key, page: page, index: i, width: w)
             }
         }
@@ -176,13 +218,19 @@ extension ReaderSurface {
     }
 
     func requestBase(key: String, page: PDFPage, index: Int, width: Int) {
+        let night = scratch.nightLive
         PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
-                                              tileRect: nil, tileScale: 1, night: scratch.nightLive)) { doneKey, img in
-            // 只接受「仍是当前期望键」的完成（键含夜间标志与宽度）：夜间切换/缩放后到达的陈旧完成
-            // 一律丢弃，防止旧模式/旧宽度图被写回（页图缺图由 kick/settle 按新键补请求，不靠陈旧完成兜底）。
+                                              tileRect: nil, tileScale: 1, night: night)) { doneKey, img in
+            // 「仍是当前期望键」（键含夜间标志与宽度）= 正解，直接写入。
             if doneKey == baseKey(index, width: scratch.basePixelW) {
                 images[index] = img
+                return
             }
+            // 宽度已经变了（连续缩放时 settle 每 0.15s 就换一次目标宽，前一轮的完成必然全部落到这里）。
+            // 旧规矩是一律丢弃 —— 图明明渲好了、也已进缓存，却因为宽度对不上被扔掉，而这一页正空着，
+            // 用户就得对着白纸干等下一轮渲染（连续缩放白屏的主因）。改为：这页空着就先顶上，等正解替换。
+            // **夜间标志必须相符**，否则会把亮色图糊到夜间模式上（夜间"切不回来"那类 bug 的老路）。
+            if images[index] == nil, night == scratch.nightLive { images[index] = img }
         }
     }
 

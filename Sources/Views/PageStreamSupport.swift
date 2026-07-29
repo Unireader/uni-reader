@@ -90,6 +90,35 @@ enum LassoDragMode {
     case select, move
 }
 
+/// 一帧内共享的逐页数据分桶。
+/// `pageCell` 原本对每一实化页各跑一遍全数组 `filter`（笔迹/命中/高亮/注解），
+/// 取笔迹更是每页重建一次图层序字典 + 全量排序 → 整体 O(页数 × 条目数)。
+/// 缩放**每帧**都重算 body，这份开销随文档笔记量线性放大，是按钮缩放掉帧的主因之一。
+/// 改为整帧算一次（O(条目数)）、逐页 O(1) 取。
+struct PageBuckets {
+    var strokes: [Int: [InkStroke]] = [:]
+    var matchRects: [Int: [CGRect]] = [:]
+    var highlights: [Int: [Highlight]] = [:]
+    var notes: [Int: [TextNote]] = [:]
+    var activeMatch: TextMatch?
+
+    init(session: DocSession, range: ClosedRange<Int>) {
+        strokes = session.visibleStrokesByPage(in: range)
+        for m in session.searchMatches where range.contains(m.page) {
+            matchRects[m.page, default: []].append(contentsOf: m.rects)
+        }
+        for h in session.highlights where range.contains(h.page) {
+            highlights[h.page, default: []].append(h)
+        }
+        for n in session.textNotes where range.contains(n.page) {
+            notes[n.page, default: []].append(n)
+        }
+        activeMatch = session.currentMatchIndex.flatMap {
+            session.searchMatches.indices.contains($0) ? session.searchMatches[$0] : nil
+        }
+    }
+}
+
 /// 捏合手势状态。锚点数学：屏幕不动点 P（相对容器原点）+ 内容锚点 c；
 /// 逐帧 commit：c' = c×r，目标偏移 = c' − P（同 runloop 提交 = 屏幕原子，scroll-x-probe T3b）。
 /// 放大/缩小都走真 commit：滚动条在内容超过容器的瞬间即出现（Preview 同款），无松手悬崖。
@@ -115,6 +144,9 @@ final class Scratch {
     var geo = GeoSnap()
     var topDocY: CGFloat = 0
     var basePixelW = 0
+    /// 本窗口最近用过的基图像素宽（最新在前，最多 4 个）。目标宽度的图还没渲出来时，
+    /// 按这个顺序去缓存里找"这一页以前渲过的图"先顶上，避免白纸（见 `fallbackBase`）。
+    var recentBaseWidths: [Int] = []
     var lastEmitAt: CFTimeInterval = 0
     var lastEmitted: (page: Int, frac: Double)?
     var suppressEmitUntil: CFTimeInterval = 0
