@@ -436,8 +436,9 @@ struct ContentView: View {
 
     /// 跳转到目录项（页 + 页内比例）。origin=toc → 阅读区(PageStreamView)跟随，同时推给平板。
     private func jumpToTOC(_ e: TOCEntry) {
-        session.currentPageIndex = e.pageIndex
-        session.emitAnchor(page: e.pageIndex, frac: e.frac, origin: "toc")
+        guard let page = e.pageIndex else { return }   // 坏书签（无目标页）：不跳转，别把它当第 1 页
+        session.currentPageIndex = page
+        session.emitAnchor(page: page, frac: e.frac, origin: "toc")
     }
 
     private var indexingBadge: some View {

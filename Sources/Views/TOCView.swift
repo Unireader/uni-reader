@@ -2,10 +2,15 @@ import SwiftUI
 import PDFKit
 
 /// PDF 目录项（可嵌套）。pageIndex + frac 用于跳转（页 + 页内归一化比例）。
+///
+/// `pageIndex` 是 optional：**坏书签**（destination 解不出目标页）为 nil，不可当成第 0 页。
+/// 现实里的坏书签形态：outline 项写了个空 destination（`/Dest [null 0 0 0]` 之类），PDFKit 直接
+/// 给 `destination == nil`；也见过 dest 的 page 不属于本文档（`doc.index(for:)` 返回 NSNotFound）。
+/// 这类项一律 nil —— 不显示页码、不可跳转、不参与当前页追踪。
 struct TOCEntry: Identifiable {
     let id = UUID()
     let label: String
-    let pageIndex: Int
+    let pageIndex: Int?
     let frac: Double
     var children: [TOCEntry]
     var childrenOrNil: [TOCEntry]? { children.isEmpty ? nil : children }
@@ -17,12 +22,15 @@ struct TOCEntry: Identifiable {
             var out: [TOCEntry] = []
             for i in 0..<o.numberOfChildren {
                 guard let c = o.child(at: i) else { continue }
-                var pageIndex = 0, frac = 0.0
+                var pageIndex: Int? = nil, frac = 0.0
                 if let dest = c.destination, let page = dest.page {
-                    pageIndex = doc.index(for: page)
-                    let b = page.bounds(for: PageBitmap.effectiveBox(page))
-                    let y = dest.point.y
-                    if y.isFinite, b.height > 0 { frac = min(max(0, Double((b.maxY - y) / b.height)), 1) }
+                    let idx = doc.index(for: page)
+                    if idx >= 0, idx < doc.pageCount {          // NSNotFound（=Int.max）等越界一律作废
+                        pageIndex = idx
+                        let b = page.bounds(for: PageBitmap.effectiveBox(page))
+                        let y = dest.point.y
+                        if y.isFinite, b.height > 0 { frac = min(max(0, Double((b.maxY - y) / b.height)), 1) }
+                    }
                 }
                 out.append(TOCEntry(label: (c.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                                     pageIndex: pageIndex, frac: frac, children: walk(c)))
@@ -65,9 +73,19 @@ struct TOCListView: View {
         return out
     }
 
-    /// 归属当前页的条目：先序里最后一个起点不晚于当前页的（子项页码 ≥ 父项，故命中最深一层）。
+    /// 归属当前页的条目：起点不晚于当前页的项里页码最大的那个，并列取先序最后一个（＝最深一层）。
+    ///
+    /// 不能简单取「先序最后一个 pageIndex ≤ currentPage」——那要求先序页码单调不减，而真实 PDF 的书签
+    /// 常常不满足：见过整本书末尾挂着两个空 destination 的项，一旦把它们当第 0 页，就会在**任何**页都
+    /// 命中它们（0 ≤ 任何页，且它们排在先序最末），高亮永远钉在最后一项。取 argmax 对乱序书签同样免疫。
     private var currentId: UUID? {
-        flat.last { $0.entry.pageIndex <= currentPage }?.entry.id
+        var best: (page: Int, id: UUID)? = nil
+        for f in flat {
+            guard let p = f.entry.pageIndex, p <= currentPage else { continue }
+            if let b = best, p < b.page { continue }     // ≥ 才更新 → 同页并列时取先序靠后的（更深一层）
+            best = (p, f.entry.id)
+        }
+        return best?.id
     }
 
     /// 可见行：祖先链全部展开才显示。
@@ -125,7 +143,8 @@ struct TOCListView: View {
                 HStack(spacing: 8) {
                     Text(e.label.isEmpty ? "—" : e.label).lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 6)
-                    Text("\(e.pageIndex + 1)").font(.caption).monospacedDigit()
+                    // 坏书签（无目标页）留空而非显示「1」，配合 disabled 表达「跳不过去」
+                    Text(e.pageIndex.map { "\($0 + 1)" } ?? "").font(.caption).monospacedDigit()
                         .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
                 }
                 .padding(.horizontal, 6).padding(.vertical, 3)
@@ -135,6 +154,7 @@ struct TOCListView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(e.pageIndex == nil)
         }
         .padding(.leading, CGFloat(f.depth) * 14)
         .id(e.id)
