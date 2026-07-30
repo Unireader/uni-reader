@@ -239,10 +239,21 @@ final class WorkspaceRegistry: ObservableObject {
     }
 
     /// 从最近列表移除一条记录（只删记录，不动工作区本身）。
+    /// ⚠️ 系统那份「最近使用的文稿」**没有删单条的 API**（`NSDocumentController` 只给整体
+    /// `clearRecentDocuments`），所以这条移除只对运行时的 Dock 菜单与 App 内菜单生效；
+    /// app 未运行时 Dock 右键里那条还会在。要清干净得用 `clearRecents()`。
     func removeRecent(_ url: URL) {
         let paths = recents.map(\.path).filter { $0 != url.path }
         UserDefaults.standard.set(paths, forKey: recentsKey)
         recents = paths.map { URL(fileURLWithPath: $0) }
+    }
+
+    /// 清空最近列表（只删记录，不动任何工作区）。**两份数据源一起清**——自己这份 +
+    /// 系统的「最近使用的文稿」，否则 app 未运行时 Dock 右键里旧条目照旧列出来（见 `rememberRecent`）。
+    func clearRecents() {
+        UserDefaults.standard.set([String](), forKey: recentsKey)
+        recents = []
+        NSDocumentController.shared.clearRecentDocuments(nil)
     }
 
     /// 工作区原地改名后，把最近列表里的旧路径替换为新路径（去重保序），并跟进池的键。

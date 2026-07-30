@@ -152,6 +152,34 @@ struct WindowTarget: Codable, Hashable {
     var docId: String?
 }
 
+/// 「文件 → 最近打开」子菜单（列最近工作区 + 末尾清空，同 macOS `Open Recent` 与 Obsidian 的排法）。
+///
+/// 抽成独立 `View` 是必需的：`.commands { }` 的内容不在窗口的视图层级里，得由它**自己**持有
+/// `@ObservedObject` 才能在 `recents` 变化后重建菜单项；把 `registry.recents` 直接写进
+/// `commands` 闭包只会在启动那一刻求值一次，之后打开新工作区菜单也不更新。
+///
+/// 点击走 `AppDelegate.deliverWorkspace`——与 Dock 右键菜单、双击 `.unrd` 完全同一条投递链路
+/// （已有窗口则激活，否则开新窗口），菜单栏是 App 级的，不该经由某个窗口的回调。
+private struct OpenRecentMenu: View {
+    @ObservedObject private var registry = WorkspaceRegistry.shared
+
+    var body: some View {
+        Menu(L("Open Recent")) {
+            ForEach(registry.recents, id: \.self) { url in
+                Button {
+                    AppDelegate.deliverWorkspace(url.path)
+                } label: {
+                    Label(WorkspaceManager.defaultWorkspaceName(for: url), systemImage: "folder")
+                }
+            }
+            if !registry.recents.isEmpty { Divider() }
+            // 空列表时不隐藏而是灰掉：菜单能展开、用户看得见"确实空了"，与系统 Clear Menu 一致。
+            Button(L("Clear Recent")) { registry.clearRecents() }
+                .disabled(registry.recents.isEmpty)
+        }
+    }
+}
+
 @main
 struct UniReaderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -198,6 +226,8 @@ struct UniReaderApp: App {
                     NotificationCenter.default.post(name: .openPDFRequested, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: .command)
+                Divider()
+                OpenRecentMenu()
             }
             // 阅读区缩放（由 key 窗口的 PageStreamView 响应）。
             CommandGroup(after: .sidebar) {

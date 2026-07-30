@@ -48,15 +48,14 @@ struct SidebarView: View {
                     }
                     if !registry.recents.isEmpty {
                         Divider()
+                        // 侧栏只留「快速切过去」。移除/清空统一在「文件 → 最近打开 → 清空最近打开」
+                        // （见 `OpenRecentMenu`）：这里原先还挂着一个「从最近列表移除」的三级嵌套
+                        // 子菜单，既不是 macOS 的排法，也与菜单栏两处维护同一件事。
                         Section(L("Recent Workspaces")) {
                             ForEach(registry.recents, id: \.self) { url in
-                                Button(url.deletingPathExtension().lastPathComponent) { onOpenRecent(url) }
-                            }
-                            Divider()
-                            Menu(L("Remove from Recents")) {
-                                ForEach(registry.recents, id: \.self) { url in
-                                    Button(url.deletingPathExtension().lastPathComponent) { registry.removeRecent(url) }
-                                }
+                                // 名字口径与菜单栏/Dock 菜单统一（原先的 deletingPathExtension
+                                // 会把含点的文件夹名截断：「v1.2 notes」→「v1」）
+                                Button(WorkspaceManager.defaultWorkspaceName(for: url)) { onOpenRecent(url) }
                             }
                         }
                     }

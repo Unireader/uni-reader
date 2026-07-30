@@ -23,6 +23,27 @@
   `ANDROID-STANDALONE-PLAN.md §9.7`（Pdfium 对坏 dest 的 `pageIdx` 给什么必须实测，不许假定）。
   UI 观感（灰行、追踪滚动）仍待你手测。
 
+- **「最近打开」进主菜单栏**（用户提，参考 Obsidian 的 `File → Open Recent`）：数据层（
+  `WorkspaceRegistry.recents`）本来就有，缺的是菜单栏入口——此前只有 Dock 右键菜单和侧栏工具栏
+  的工作区下拉。现在 `文件 → 最近打开 ▸`（`Open PDF…` 之下，同 macOS 惯例位置）列出最近工作区
+  （folder 图标 + 名字），末尾 `清空最近打开`。
+  - 点击走 `AppDelegate.deliverWorkspace`——与 Dock 菜单、双击 `.unrd` 同一条投递链路
+    （已有窗口则激活，否则开新窗口）；菜单栏是 App 级的，不经由某个窗口的回调。
+  - 新增 `clearRecents()`：**两份数据源一起清**（自己那份 UserDefaults + 系统
+    `NSDocumentController.clearRecentDocuments`），否则 app 未运行时 Dock 右键里旧条目照旧列出来。
+    顺带在 `removeRecent` 上记了一句：系统那份**没有删单条的 API**，所以逐条移除天生清不干净——
+    这也是移除操作统一收敛到「清空」的原因。
+  - 菜单项必须抽成独立 `View`（`OpenRecentMenu`）自己持 `@ObservedObject`：`.commands { }` 的内容
+    不在窗口视图层级里，把 `registry.recents` 直接写进 commands 闭包只在启动那刻求值一次，之后
+    打开新工作区菜单不会更新。
+  - 侧栏那套顺势收敛：删掉「从最近列表移除」的**三级嵌套子菜单**（不是 macOS 的排法，且与菜单栏
+    两处维护同一件事），侧栏只留"快速切过去"。显示名两处统一到 `defaultWorkspaceName(for:)`
+    ——原先侧栏用 `deletingPathExtension().lastPathComponent`，含点的文件夹名会被截断
+    （「v1.2 notes」→「v1」）。
+  - 文案两语言齐（`Open Recent` / `Clear Recent`），删掉已无引用的 `Remove from Recents`。
+  **菜单实际观感与动态更新待你手测**（要点见下次交接：打开一个新工作区后菜单是否立刻多一条、
+  清空后是否变灰）。
+
 ## 已修 / 完成（2026-07-29）
 
 - **多工作区方案复审后的四处加固**（审 §8.1 + 实现，找出「模型没贯彻到底」的接缝；细节见 §8.1）：

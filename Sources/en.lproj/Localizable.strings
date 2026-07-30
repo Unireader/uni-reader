@@ -38,7 +38,8 @@
 "Open Workspace…" = "Open Workspace…";
 "New Workspace…" = "New Workspace…";
 "Recent Workspaces" = "Recent Workspaces";
-"Remove from Recents" = "Remove from Recents";
+"Open Recent" = "Open Recent";
+"Clear Recent" = "Clear Recent";
 "Choose an existing UniReader workspace (.unrd)." = "Choose an existing UniReader workspace (.unrd).";
 "Choose a location and name for the new workspace." = "Choose a location and name for the new workspace.";
 "Untitled Workspace" = "Untitled Workspace";
