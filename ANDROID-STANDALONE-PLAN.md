@@ -223,6 +223,10 @@ Mac 用 **CropBox 有效则 CropBox、否则 MediaBox**（`PageBitmap.effectiveB
 - Pdfium 是 native 库，**不同 ABI 的 so 会把 APK 撑大**；自用只保留 `arm64-v8a` 即可。
 - 笔迹落库频率：一笔一次 `INSERT`（同 Mac 的增量落库），别每帧写；擦除是"删若干 + 插若干"，
   放一个事务里。
+- **模式2 的顶栏在竖屏下按钮全被挤没**（2026-07-30 在模拟器上顺带发现，未修）：`topbar` 里
+  `Space(weight=1)` 把装按钮的 `HorizontalScrollView` 压成 0 宽，1080 竖屏下 ◀▶/模式/笔/夜间…
+  一个都点不到（胶囊和 PageUp 键还能用）。模式2 是横屏平板场景，所以不急；要修就照模式1 的做法
+  （scroll 给 `weight=1`、页码 wrap 固定在右）。
 
 ### 9.4 已知 BUG：笔迹渲染观感与 Mac/网页不一致（待统一处理）
 
@@ -328,7 +332,32 @@ Mac/网页上是浅黄透亮。ballpoint 那几条肉眼看一致。
     首次真实布局之后（否则 offY 是 width=0 时算的，等于滚到页顶）。
 - **M3 手写**：`LocalInkBackend` 落库 + 读盘渲染 + 图层表 + 笔架/图层面板。
   验收：Mac 写的笔迹平板能显示，平板写的 Mac 能显示，形状/粗细/颜色一致。
+  **状态：已完成（落笔/擦除/图层归属/回推 2026-07-29；笔架与图层面板 2026-07-30）**。
+  - 面板不是新写的：`pad/PadPanels.kt` → `shared/PadPanels.kt`，笔面板参数从 `PadView` 改成基类
+    `PageCanvasView`，图层面板的空表文案改由宿主给（两模式的「为什么空」不是一回事）；
+    胶囊工厂与 `setTextIfChanged` 进 `shared/Widgets.kt`。**文档下拉没跟着进 shared**——它是纯
+    线格式概念（模式1 的书库来自 SQLite），拆成 `pad/PadDocsPicker.kt`，`shared` 不许认识
+    `WireCodec`（依赖方向红线，grep 可复查）。
+  - 图层三个动作在模式2 里只是「请求」（等 Mac 回权威），模式1 **直接写 `ink_layer` 再整表重读**；
+    新建即切为作画图层（同 Mac `layerAdd`）；隐藏只改 `visible`，笔迹数据一条不动。
+    面板按**下标**交互（线格式就是按下标发的），所以给面板的列表与宿主换 id 用的列表必须同源
+    → `List<LibInkLayer>.toUiLayers()` 是唯一转换点（各查一次库看着等价，实则给了两条能分叉的路，
+    错位的表现是「点了图层 2 改到了图层 3」）。
 - **M4 编辑**：擦除两模式、尺子、框选移动（含 `InkEdit` 搬运）。
+  **状态：核心已完成（2026-07-30）**——擦除两模式随 M3 落地；尺子入口（顶栏「尺子✓」，
+  走基类 `toggleRuler`，吸附算法仍是 `PadConst.rulerSnap` 一份）；框选移动落库
+  （`LocalCanvasView.onLassoMoveCommit`，与 Mac `applyLassoMove` 逐条对齐）。
+  - `InkEdit.translated` 搬成 `shared/InkEdit.kt`。**逐点 clamp**（不是整条按包围盒推回来），
+    实测：把一条 h=0.1263 的笔迹上移 0.4692 出界后，`anchor_y=0`、`h` 收缩成 0.1061
+    = 0.1263−0.0202，与 Mac 的 `min(1,max(0,…))` 逐位对齐；整体推回的话 h 会保持不变。
+  - 命中口径「任一点落框内 + 只动锚定页 + dx/dy 全零不动 + 退化框（宽或高为 0）不动」照抄 Mac；
+    可见性过滤靠基类 `strokes`（已滤掉隐藏图层）＝ Mac 的 `vis.contains(layerId)`，
+    **实测同一个框在图层可见时命中 1 条、隐藏后命中 0 条**。
+  - 落库是 `updateStrokePoints`（id 不变、`created_at` 不变、只 bump `updated_at`），
+    整批一个事务；回推后基类自己清预览偏移，与模式2 「等 Mac 广播回来才归位」同构。
+  - **剩下的**：文字注解那一半（`rect.intersects(anchor)` 分支）要等 M5 把 kind=0 读进 `notes`。
+  - 顺带修：阅读顶栏按钮组改成可横滑 + 页码固定右侧。竖屏 1080 宽下第五个按钮就把页码
+    （也是跳页入口）挤出屏幕了，而按钮以后还会加。
 - **M5 注解**：文字注解 CRUD + 已有高亮渲染。
 - **M6 手势**：长按 → 进度环 → 环形选笔盘（本地判定）。
 - **M7 收尾**：最近工作区、异常态文案、日志、真机手感调参。
