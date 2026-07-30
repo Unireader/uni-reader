@@ -245,7 +245,7 @@ Mac/网页上是浅黄透亮。ballpoint 那几条肉眼看一致。
 - 模式2 的真机观感（改的是共用文件，Mac 回传的笔迹也走这条路）；
 - 夜间模式下 marker 的表现（`nightFilter` 只反页面层，墨迹不反，混合模式换了要重看一眼）。
 
-### 9.5 已知问题：打开工作区的 I/O 在主线程（慢卷上会 ANR）
+### 9.5 打开工作区的 I/O 在主线程（慢卷上会 ANR）——**2026-07-30 已修**
 
 2026-07-29 M3 实测：模拟器上点「最近打开」到书库列表出来要 **3 秒**，其中 `Workspace.check`
 （几个 `File.exists/isFile/length`）在 `/sdcard`（FUSE）冷缓存下就花了 **2.1 秒**，`LibraryStore.open`
@@ -254,9 +254,31 @@ Mac/网页上是浅黄透亮。ballpoint 那几条肉眼看一致。
 真机内部存储会快得多，但**工作区放 U 盘/SD/同步盘是本方案的常规用法**（§1 的数据来源就是这么定的），
 那种卷上几秒起步，够触发 ANR。
 
-修法：`Workspace.check` + `LibraryStore.open` + `PdfSource` 构造（它要读全部页尺寸，47 页在模拟器上
-约 200ms，几百页文档更久）挪到后台线程，界面上给个「正在打开…」。三处调用点：
-`Launcher.openWorkspace`、`LibraryActivity.reload`、`ReaderActivity.open`。
+**已修（2026-07-30）**：新增 `shared/Bg.kt`——`Activity.runInBackground(what, work, ok, fail, discard)`
+（单发 I/O + 主线程回调，不引协程；耗时一律打点，超 700ms 打 warn）与 `Bg.submit`（甩出去的收尾 I/O）。
+挪到后台的五处：
+
+| 位置 | 挪走的活儿 | 界面上的反馈 |
+| --- | --- | --- |
+| `Launcher.openWorkspace` | `Workspace.check` | 不可取消的「正在打开…」（兼作连点保护，否则会开出两个书库） |
+| `Launcher.browse` 的 `render` | `listFiles` + 逐条 `isDirectory` | 「正在读取目录…」；旧结果按 token 丢弃 |
+| `LibraryActivity.reload` | 开库 + `allDocuments` + 每篇的 `noteCount`/`firstOpenablePdf` | 首次「正在读取工作区…」，之后**保留旧列表**（清空会闪几秒白屏） |
+| `ReaderActivity.load` | 开库、找 PDF、`PdfSource` 构造（读全部页尺寸）、图层、笔迹 | 居中「正在打开…」；失败弹原因再退（原先静默 finish） |
+| `ReaderActivity.onDestroy` / `Opened.discard` | 关库（含 `wal_checkpoint(TRUNCATE)`）+ 关 Pdfium | 无（退出动画不再等它） |
+
+真机实测（模拟器 `/sdcard`，logcat 里 `UniReader/Bg` 逐项带耗时与 tid）：打开文档 **0.8~1.4s**、
+返回书库重读一次撞上并发 checkpoint 实测 **4.6s**（比原记录的 3 秒更糟，主线程上这就是确定的 ANR）、
+关库 **1.1s**——全部跑在 `unireader-io` 线程，主线程 `Choreographer: Skipped` 归零。
+
+**顺手修掉一个由此暴露的时序 BUG**（`PageCanvasView.onFirstGeometry`）：它原先只在 `onSizeChanged`
+里判「视口有尺寸 + 页表已到」，隐含假设页表先到。改成异步打开后顺序反了——布局时 `pageCount`
+还是 0、页表 1.4 秒后才来，钩子于是**永不触发**，表现是阅读进度静默不复原（每次打开都停在页顶），
+而日志照旧写着「复原到第 8 页」。现在 `setPages` 里也判一次，**谁后到都算**；对应地
+`ReaderActivity` 必须在 `setPages` **之前**挂钩子，挂晚一步就永远等不到第二次机会。
+
+**仍在主线程的写库（本次没动，量级小但慢卷上会掉帧）**：`LocalCanvasView.onInkEnd` 的一条 INSERT、
+`onEraseEnd` 的擦除事务、`ReaderActivity.saveProgress` 的一行 UPDATE。要挪就得给 `LibraryStore`
+配一条串行写队列（它非线程安全，主线程同时还在读），是独立一件事——真机上笔迹落库掉帧再做。
 
 ## 10. 实施顺序
 
