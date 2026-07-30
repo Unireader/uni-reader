@@ -18,7 +18,7 @@
 | 首版范围 | **阅读 + 手写** | 见 §3。目录/搜索/文字选择/OCR/书库管理留给下一版 |
 
 技术选型（本方案定，理由见 §4）：**PdfiumAndroid 渲染** · **裸 `SQLiteDatabase`（不用 Room）** ·
-**Compose 做外壳、自定义 View 做画布**。
+**全程经典 View（不引 Compose）+ `res/` 主题与自绘设计系统**。
 
 ## 2. 必读契约与参考实现
 
@@ -57,8 +57,9 @@
 |---|---|---|
 | PDF 渲染 | **PdfiumAndroid**（`io.legere:pdfiumandroid`，Apache/BSD 系） | 内置 `PdfRenderer` 只能出图，**没有文字层、没有书签**，下一版的搜索/选择/目录会全部卡死，届时换引擎等于重做。MuPDF 功能最全但 **AGPL**，自用也污染分发。Pdfium 出图 + `TextPage` 文字层 + 书签，一次到位 |
 | 本地存储 | **`android.database.sqlite.SQLiteDatabase` 裸用** | schema 是 Mac 那边写死的跨平台契约，Room 要反过来拥有 schema、还会塞自己的 `room_master_table`，属于往共享库里拉屎。照 Mac 的 `SQLite.swift + LibraryStore.swift` 写一份薄封装即可 |
-| UI 外壳 | **Compose** | 书库列表/启动页/设置这类常规 UI，Compose 写得快 |
-| 阅读+书写画布 | **自定义 `View`（沿用 `PadView` 血统），Compose 里用 `AndroidView` 托住** | 手写笔的 `MotionEvent`（toolType/pressure/历史点/hover）掌控最直接，这条结论模式2 已经验证过（`ANDROID-MODE2-PLAN.md §3`）。Compose 在高压感采样和 hover 上反而绕 |
+| UI 外壳 | **经典 View（原定 Compose，2026-07-30 改）** | 一路做下来一次都没真用上 Compose：M0 为了不把 compose 编译器插件拉进 AGP 9 的内置 Kotlin 先用经典 View 顶了启动页，M2 书库、M3 顶栏与面板也就顺着写下去了，最后**零 compose 依赖**却在文档里挂着 Compose，属于口径没跟上实现。现在正式定为经典 View：跑得好、离线可构建、也没有第二套 UI 要写。做「现代化」不靠框架，靠 `res/` 主题 + `shared/Ui.kt` 的构件（见下） |
+| 视觉层 | **`res/values{,-night}` 色板 + 框架 `Theme.Material` + `shared/Ui.kt` 自绘构件** | 四个 Activity 都继承 `android.app.Activity`，`Theme.AppCompat.*` 会直接崩；Material 3 组件库（`com.google.android.material`）是一条新依赖、本机 gradle 缓存里也没有，**离线构建会当场断**——UI 好看不值得拿构建可用性换。涟漪/弹层/勾选一律用系统的（`RippleDrawable`/`PopupMenu`），图标用框架的 `VectorDrawable`，零新依赖 |
+| 阅读+书写画布 | **自定义 `View`（沿用 `PadView` 血统）** | 手写笔的 `MotionEvent`（toolType/pressure/历史点/hover）掌控最直接，这条结论模式2 已经验证过（`ANDROID-MODE2-PLAN.md §3`）。Compose 在高压感采样和 hover 上反而绕 |
 | 权限 | `MANAGE_EXTERNAL_STORAGE`（API 30+）+ 旧版 `READ/WRITE_EXTERNAL_STORAGE` | 直开任意路径的工作区（含 U 盘/SD/同步目录）。小米等国产 ROM 需在设置里额外允许，启动页要有引导 |
 
 > ⚠️ **依赖我不装**：`io.legere:pdfiumandroid` 要加进 `android/app/build.gradle.kts` 后由你执行同步
@@ -90,7 +91,7 @@ android/app/src/main/java/com/xvan/unireader/
     PdfSource.kt           // Pdfium 渲染 + 位图 LRU（=PageImageSource）
     LocalInkBackend.kt     // 本地权威执行 + 落库（=InkBackend）
     RadialController.kt    // ✚ 长按检测/扇区判定（从 Mac 搬，模式2 里这段在 Mac）
-    LibraryScreen.kt  ReaderScreen.kt                  // Compose 外壳
+    LibraryActivity.kt  ReaderActivity.kt              // 经典 View 外壳（原定 Compose，见 §4）
 ```
 
 ### 5.1 核心设计：两种模式只差两个注入口
@@ -333,6 +334,47 @@ executor（`unireader-store`）**独占** `LibraryStore`。给出去的是所有
 由 9 变 11——进度也确实是经队列写进去的。21 条插桩测试（含新增的 2 条 `StoreQueueTest`：
 「只许一条线程碰库 + 执行顺序 = 提交顺序 + 关库排队尾」和 3 条擦除对齐）全绿。
 
+### 9.6 UI 是 demo 品相（2026-07-30 用户提，已重做）
+
+四个界面全是手搓经典 View、布局内联在 `onCreate` 里，**连 `res/` 目录都没有**——主题是框架默认的
+`@android:style/Theme.Material.Light.NoActionBar`，于是满屏灰色填充按钮 + 蓝色链接文字，
+是 2015 年的样子。顶栏九个纯文字按钮挤在一条横滑条里，两模式还各写了一份、文案要求"逐字一致"
+却靠人肉同步——已经飘了（模式2 是 `笔:圆珠笔`、模式1 是 `圆珠笔`）。
+
+用户 2026-07-30 定了两条：**跟随系统深浅色**、顶栏做成**全图标单行 + 溢出菜单**。落地：
+
+- **`res/`**（从无到有）：`values{,-night}/colors.xml` 语义色板（surface / surface_container /
+  on_surface / outline / accent / bar_* …）+ `values{,-night}/themes.xml` + **28 个手写
+  `VectorDrawable` 图标**。代码里取色一律 `Ui.col(ctx, R.color.xxx)`，深浅色由资源系统自己切，
+  没有一处 `if (isDark)`——判断了就一定会漏掉某处。
+- **`shared/Ui.kt`**：设计系统（图标按钮/填充按钮/卡片/整行/分隔线/标题体例 + 涟漪与圆角），
+  三条硬规矩写在类注释里：扁平（不许渐变高光投影）、原生（涟漪用 `RippleDrawable`、弹层用
+  `PopupMenu`）、颜色只走语义名。
+- **`shared/TopBar.kt`**：两模式共用的顶栏。各自只声明"我有哪几个键、按下去干什么"；
+  模式键的图标随当前模式变（✎⌫✋⬚），开关键（尺子/文字）按下去是 accent 底色而不是给文案加"✓"，
+  低频项（夜间/页图/锁缩放/图层/跳页/连接设置/收起顶栏）进 ⋯ 的系统 `PopupMenu`，
+  勾选态**每次弹出现算**。页码与缩放的格式化也收敛到这里（100% 时不显示缩放）。
+- **窄屏自动收纳**：竖屏 411dp 下六个 48dp 触摸目标 + 页码 + ⋯ 排不下，实测「文字笔记」被裁成
+  42px 宽。现在 `reflow()` 在宽度不够时把键收进 ⋯，**触摸目标不缩**（48dp 是无障碍下限，
+  为多塞一个键把它压小是拿手指准头换排版）。◀▶ 标了 `spillFirst`（滚动就能翻页，有替代路径），
+  且**整组一起收**——只收走一个会让人以为是 BUG。
+- **画布底色跟随主题**：`PageCanvasView` 页与页之间从前写死 `#0D1117`，浅色主题下就成了
+  「白顶栏 + 黑画布」两个 App 拼在一起。改取 `surface_dim` 并**缓存成字段**——`onDraw` 每帧都跑，
+  在里面查资源等于每帧做一次主题解析（同 `reader-perframe` 那类教训）。
+- **启动页/书库**：两种模式各一张卡（图标+标题+一句话+主操作），最近打开整行可点、
+  右侧只留一个删除图标；书库一条书带一条 3dp 读进度条。
+
+过程中踩到并已修的两个真 BUG：
+1. **胶囊被截断**（「翻页 · 拖动平移」显示成「翻页 · 拖动平」）：竖向容器里没给 `penStat` 显式
+   `LayoutParams`，默认 `MATCH_PARENT` 在 wrap 的父容器里被夹成"最宽那颗"的宽度。两模式都有。
+2. **收纳算对了却没生效**：`reflow()` 在 layout 回调里改可见性，触发的 `requestLayout` 会被
+   本轮布局吞掉（系统只打一行 `requestLayout() improperly called during layout`）——
+   日志说收了「上一页」，屏幕上它还在。改成 `post {}` 到下一帧。
+
+模拟器实测（`uiautomator dump` 的 bounds + `screencap` 原始 RGBA）：收纳后四个图标各 126px 全宽、
+无裁切；⋯ 菜单里「上一页/下一页」排在设置项之前；页间缝隙取到 `(242,244,247)` = 浅色 `surface_dim`、
+系统切深色后顶栏与胶囊整体转深。**好不好看仍要你自己看**（§11.2）。
+
 ## 10. 实施顺序
 
 > 下面各条的「已完成」= **代码完成 + 模拟器/日志/`sqlite3` 对账能证明的部分**。
@@ -355,7 +397,7 @@ executor（`unireader-store`）**独占** `LibraryStore`。给出去的是所有
   - `namespace`/`applicationId` 由 `com.xvan.unireader.pad` 改为 `com.xvan.unireader`
     → **旧 demo 是不同包名，需 `adb uninstall com.xvan.unireader.pad`**（host/token 偏好会重置）。
   - 与本方案的两处刻意偏差：① 启动页用**经典 View 而非 Compose**——不为两个按钮把 compose
-    编译器插件拉进 AGP 9 的内置 Kotlin 里，Compose 推到 M2 真正做书库列表时再引；
+    编译器插件拉进 AGP 9 的内置 Kotlin 里（后来一路都没引，2026-07-30 索性把 §4 的口径改成经典 View）；
     ② `abiFilters` 只留 `arm64-v8a`（§9.3），**x86_64 模拟器因此装不上**。
   - `PRAGMA wal_checkpoint(TRUNCATE)`（§9.2）属数据层，M1 随 `Sqlite.kt` 一起落地。
 - **M1 数据层**：`Sqlite.kt` + `LibraryStore.kt`（schema v7 只读优先）+ `Workspace.kt`。
@@ -511,6 +553,9 @@ executor（`unireader-store`）**独占** `LibraryStore`。给出去的是所有
 | 22 | **竖屏**拿平板进模式2 输入板（§9.3 已修） | ◀▶/模式/笔/夜间… 能横滑点到，页码固定在右；横屏下延迟指标整行不截断 | — |
 | 23 | 工作区放**慢卷**（U 盘/同步盘），连着快写快擦十几笔（§9.5 的队列） | 写的当下不掉帧；**回推晚一拍是否看得出来**——落笔后那一笔从「活体层」换成「库里读回来的」的一瞬有没有闪/挪位；连续擦除时笔迹有没有反复出现又消失 | `StoreQ` 的「等 Xms 跑 Yms（慢卷）」；`落笔`/`擦除落库` 在 `unireader-store`，`回推笔迹` 在主线程 |
 | 24 | 慢卷上写完一笔**立刻**按返回退出 | 那一笔不丢（关库排在队尾） | 退出时 `wal_checkpoint(TRUNCATE) → 0` 之前应先有 `落笔 …` |
+| 25 | **平板横屏**进阅读区看新顶栏（§9.6） | 六个图标一次排开、不该有键被收进 ⋯；图标认不认得出是哪个功能（尤其"笔尖"这颗墨滴 = 切笔）；开关态的 accent 底色够不够显眼 | 若被收了会有 `顶栏宽度不够（可用 …px），收进溢出菜单：…` |
+| 26 | 深浅色各看一遍全 App（§9.6） | 启动页/书库/阅读/输入板四个界面在两种模式下都协调；阅读时页面白底与顶栏的对比度；**夜间模式（反转页图）与系统深色是两件事**，两两组合四种都过一眼 | — |
+| 27 | 平板上手指按每个图标（§9.6） | 48dp 触摸目标够不够、误触多不多；⋯ 菜单在横屏下的位置顺不顺手 | — |
 
 ## 11.2 模拟器能证明什么、不能证明什么
 
