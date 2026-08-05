@@ -3,6 +3,21 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 已修 / 完成（2026-08-05）
+
+用户报三个 bug，均已定位并修，**待真机验证**（见 [[verify-backlog-not-verified]]）：
+
+- **macOS 切工作区导致 pad 丢进度**：根因是 `AppModel.setActive()`/`unregister()`（窗口切焦点/关窗
+  时平板跟随的会话跟着换）只调用了 `push()`，没有像 `selectPadDoc()` 那样补一次
+  `pushCurrentViewport()`。`push()→pushLayout()` 一旦文档 `contentHash` 变化就广播新 `layout`，
+  Android/网页两端收到后都会**无条件清零本地滚动位置**（`PageCanvasView.setPages(reset=true)`、
+  `web/src/lib/ws.ts setLayout`），指望后续的 `viewport` 消息把位置续上——而这条切换路径从未发过
+  `viewport`，平板于是停在文档顶部；此时若用户在平板上划一下，这个假位置还会经
+  `onScroll→saveProgressThrottled` 反写回数据库覆盖真实进度，造成永久丢失。
+  修复：`Sources/App/AppModel.swift` 的 `setActive()`（判定 `padSelectedSessionID == nil &&
+  activeSessionID != s.id` 时补推）与 `unregister()`（判定被关掉的窗口正是平板当时跟随的会话时
+  补推）都补上 `pushCurrentViewport()`。`xcodebuild` 编译通过。
+
 ## 已修 / 完成（2026-07-30）
 
 - **侧栏目录的当前项高亮永远钉在最后一项**（用户报，样本：`2027数据结构_高清带书签版.pdf`，

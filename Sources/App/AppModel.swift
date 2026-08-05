@@ -668,15 +668,24 @@ final class AppModel: ObservableObject {
     func unregister(_ s: DocSession) {
         sessions.removeAll { $0.id == s.id }
         if padSelectedSessionID == s.id { padSelectedSessionID = nil }
-        if activeSessionID == s.id { activeSessionID = sessions.last?.id }
+        let followedClosed = activeSessionID == s.id
+        if followedClosed { activeSessionID = sessions.last?.id }
         push()
+        // 平板正跟着被关掉的窗口 → push() 已把 layout 切到接班会话（清空平板本地滚动位置），
+        // 必须补一次 viewport 才能落到接班会话的当前进度，否则平板会卡在该文档顶部，
+        // 一旦用户在平板上滑动还会把这个假位置写回数据库覆盖真实进度（同 setActive 的时序坑）。
+        if followedClosed { pushCurrentViewport() }
         broadcastDocs()
     }
 
     /// 窗口成为 key window。
     func setActive(_ s: DocSession) {
+        let followedSwitched = padSelectedSessionID == nil && activeSessionID != s.id
         if activeSessionID != s.id { activeSessionID = s.id }
         if padSelectedSessionID == nil { push() }   // 平板在跟随模式 → 切到新激活窗口
+        // 切工作区/切窗口焦点会让平板跟随的文档换掉（push()→pushLayout() 广播新 docId，
+        // 两端收到都会把本地滚动位置清零），不补推 viewport 平板就停在第 1 页——同 selectPadDoc。
+        if followedSwitched { pushCurrentViewport() }
         broadcastDocs()
     }
 
