@@ -15,7 +15,8 @@ struct ContentView: View {
     @State private var missingDoc: LibDocument?      // 选中但所有路径失效 → 显示重定位提示
     @State private var lastProgressSave = Date.distantPast
     @State private var progressSaveTask: Task<Void, Never>?   // 节流窗内被丢变化的尾随补存
-    @State private var toc: [TOCEntry] = []          // 当前 PDF 目录
+    // 目录（`session.toc`）挂在会话上而不是本视图 @State：平板的 `toc` 广播由 App 级的 AppModel 发，
+    // 它只够得着 DocSession。两处显示同一份，不再各建各的。
     @State private var showTOCPopover = false        // 一次性目录弹窗（选完即关，快速跳转）
     @State private var inspectorTab: InspectorTab = .info   // Inspector 当前分段（信息/目录/笔记）
     @State private var isHashing = false
@@ -65,7 +66,7 @@ struct ContentView: View {
         }
         .inspector(isPresented: $showNotes) {
             InspectorView(session: session, documentId: selectedDocID,
-                          toc: toc, tab: $inspectorTab, onSelectTOC: jumpToTOC,
+                          toc: session.toc, tab: $inspectorTab, onSelectTOC: jumpToTOC,
                           onJumpTo: { page, frac in
                               session.currentPageIndex = page
                               session.emitAnchor(page: page, frac: frac, origin: "toc")
@@ -76,6 +77,10 @@ struct ContentView: View {
             saveProgress(docId: old)            // 切走前先存旧文档进度
             loadSelected(id)
             workspace.setWindowDoc(session.id, id)   // 更新工作区打开文档集
+            // 换文档 = 标题/书库 open 标记/目录都变；平板发起的 openDoc 也在这里收尾（锁到新窗口）。
+            // 挂在这里而不是 loadSelected 内部：那个函数有三条早退路径（无文档/路径失效/正常），
+            // 出口逐个补一遍迟早漏掉一条。
+            app.sessionDocumentChanged(session)
         }
         .onChange(of: session.currentPageIndex) { _, _ in
             app.sessionChanged(session)
@@ -110,6 +115,8 @@ struct ContentView: View {
             persistHighlights()  // 高亮新建/改色/删除时增量落库
         }
         .onAppear {
+            // 必须在 register 之前：AppModel 要靠会话捎带的工作区快照才知道该把哪个书库广播给平板。
+            syncWorkspaceSnapshot()
             app.register(session)
             // 页图缓存上限：启动套用存储值（设置页改动即时生效，这里覆盖引擎默认 400MB）。
             PageRenderEngine.shared.setCacheLimitMB(UserDefaults.standard.object(forKey: "renderCacheMB") as? Int ?? 512)
@@ -130,11 +137,25 @@ struct ContentView: View {
             if let id = selectedDocID, !docs.contains(where: { $0.id == id }) {
                 selectedDocID = nil
             }
+            syncWorkspaceSnapshot()
+            app.broadcastLibrary()   // 入库/删除/改名 → 平板的书库列表跟着变
+        }
+        .onChange(of: workspace.name) { _, _ in
+            syncWorkspaceSnapshot()
+            app.broadcastLibrary()   // 工作区改名 → 平板书库面板的标题
+        }
+        // 平板请求打开工作区里尚未打开的文档 → 由平板当前跟随的那个窗口开新窗口（其余窗口忽略，
+        // 否则每个窗口都会开一个）。
+        .onChange(of: app.padOpenDocRequest) { _, req in
+            guard let req, req.sessionID == session.id else { return }
+            app.padOpenDocRequest = nil
+            openWindow(value: WindowTarget(workspacePath: req.workspacePath, docId: req.docId))
         }
         .onChange(of: workspace.folder) { _, f in
             // 工作区归属定死后 folder 只会因「工作区改名 → 联动改包名」而变；选中文档不受影响，
             // 只需把窗口↔工作区的登记跟到新路径（供「双击已打开的工作区 → 激活那个窗口」）。
             WorkspaceRegistry.shared.noteWindow(session.id, path: f?.path)
+            syncWorkspaceSnapshot()
         }
     }
 
@@ -331,7 +352,7 @@ struct ContentView: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12).padding(.vertical, 10)
-            TOCListView(entries: toc, currentPage: session.currentPageIndex) { e in
+            TOCListView(entries: session.toc, currentPage: session.currentPageIndex) { e in
                 jumpToTOC(e)
                 showTOCPopover = false
             }
@@ -569,13 +590,21 @@ struct ContentView: View {
 
     // MARK: - 选中加载
 
+    /// 把本窗口工作区的名字/路径/书库拷进会话，供 `AppModel.broadcastLibrary`（App 级、够不着
+    /// 窗口级的 `@MainActor WorkspaceManager`）与 `openPadDoc` 判定「这个文档是不是同工作区里已开着的」。
+    private func syncWorkspaceSnapshot() {
+        session.workspaceName = workspace.name
+        session.workspaceFolder = workspace.folder
+        session.libraryDocs = workspace.documents
+    }
+
     private func loadSelected(_ id: String?) {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
         session.store = workspace.store   // OCR 缓存读写用（仅主线程）
         session.restoreZoom = 1; session.readZoom = 1   // 默认 fit-width；成功路径按库覆盖
         session.restoreHFrac = 0; session.readHFrac = 0
         guard let id, let doc = workspace.document(id: id) else {
-            session.pdf = nil; missingDoc = nil; toc = []; session.title = ""
+            session.pdf = nil; missingDoc = nil; session.toc = []; session.title = ""
             clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
         }
         guard let target = workspace.openTarget(documentId: id),
@@ -583,7 +612,7 @@ struct ContentView: View {
             session.pdf = nil
             session.title = ""
             missingDoc = doc                       // 所有路径失效 → 显示重定位提示
-            toc = []
+            session.toc = []
             clearInk()
             clearInkLayers()
             clearTextNotes()
@@ -592,7 +621,7 @@ struct ContentView: View {
         }
         missingDoc = nil
         session.pdf = pdf
-        toc = TOCEntry.build(from: pdf)
+        session.toc = TOCEntry.build(from: pdf)
         session.title = doc.title
         session.contentHash = target.hash
         session.reloadOCRState()                   // 换文档重置 OCR；该内容已有缓存则自动启用

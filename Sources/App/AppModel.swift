@@ -24,6 +24,22 @@ final class AppModel: ObservableObject {
     @Published var activeSessionID: UUID?
     @Published var padSelectedSessionID: UUID?
 
+    /// 平板要打开一个尚未打开的工作区文档 → 请某个窗口去开新窗口（`openWindow` 是 View 层的
+    /// environment action，App 级单例够不着）。`sessionID` = 该由哪个窗口执行，其余窗口忽略，
+    /// 否则每个窗口都会开一个。
+    struct PadOpenDocRequest: Equatable {
+        let id = UUID()
+        let sessionID: UUID
+        let workspacePath: String
+        let docId: String
+    }
+    @Published var padOpenDocRequest: PadOpenDocRequest?
+    /// 平板发起 `openDoc` 后等待就位的库文档 id：新窗口装好它就把平板锁过去（见 `sessionDocumentChanged`）。
+    private var pendingPadFollowDocId: String?
+    /// `library`/`toc` 广播去重签名（内容没变就不重发，同 `pushedLayoutKey`）。
+    private var pushedLibraryKey = ""
+    private var pushedTOCKey = ""
+
     /// 平板当前工具状态镜像（设备级，跟文档无关）：驱动 Mac 阅读区悬浮笔工具条。
     /// "note" | "erase" | "page"，与 capture.html 的 MODES.key 同值。
     @Published var padMode: String = "note"
@@ -100,7 +116,10 @@ final class AppModel: ObservableObject {
         server.$isRunning
             .receive(on: RunLoop.main)
             .sink { [weak self] running in
-                if running { self?.push(); self?.broadcastDocs(); self?.broadcastPens(); self?.broadcastEraser() }
+                if running {
+                    self?.push(); self?.broadcastDocs(); self?.broadcastPens(); self?.broadcastEraser()
+                    self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)
+                }
             }
             .store(in: &cancellables)
 
@@ -109,6 +128,7 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastStrokes(); self?.broadcastNotes(); self?.broadcastLayers()
+                self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)   // 新客户端要补书库 + 目录
                 self?.pushCurrentViewport()   // 必须在 pushLayout 之后：平板端收到 layout 会重置滚动/seq
             }
             .store(in: &cancellables)
@@ -118,6 +138,26 @@ final class AppModel: ObservableObject {
             .compactMap { $0 }
             .receive(on: RunLoop.main)
             .sink { [weak self] id in self?.selectPadDoc(id) }
+            .store(in: &cancellables)
+
+        // 平板点目录/输入页码 → 跳到（页, 页内比例）。走的是与 Mac 侧点目录同一条 origin="toc"
+        // 锚点路径：阅读区跟随滚动，`macScrolled` 再把结果 viewport 回推给所有客户端。
+        server.$requestedGoto
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] t in
+                guard let self, let s = self.padSession else { return }
+                if s.currentPageIndex != t.page { s.currentPageIndex = t.page }
+                s.emitAnchor(page: t.page, frac: t.frac, origin: "toc")
+                self.push()
+            }
+            .store(in: &cancellables)
+
+        // 平板请求打开工作区里的某个文档（库文档 id）。
+        server.$requestedOpenDocID
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] id in self?.openPadDoc(id) }
             .store(in: &cancellables)
 
         // 平板手写/擦除消息 → 应用到平板当前会话。
@@ -663,6 +703,7 @@ final class AppModel: ObservableObject {
         if !sessions.contains(where: { $0.id == s.id }) { sessions.append(s) }
         if activeSessionID == nil { activeSessionID = s.id }
         broadcastDocs()
+        broadcastLibrary()   // 新窗口 → 书库的 open 标记会变（文档要等 loadSelected 才就位）
     }
 
     func unregister(_ s: DocSession) {
@@ -676,6 +717,7 @@ final class AppModel: ObservableObject {
         // 一旦用户在平板上滑动还会把这个假位置写回数据库覆盖真实进度（同 setActive 的时序坑）。
         if followedClosed { pushCurrentViewport() }
         broadcastDocs()
+        broadcastLibrary(); broadcastTOC()   // 接班会话可能属于另一个工作区、装着另一本书
     }
 
     /// 窗口成为 key window。
@@ -687,6 +729,7 @@ final class AppModel: ObservableObject {
         // 两端收到都会把本地滚动位置清零），不补推 viewport 平板就停在第 1 页——同 selectPadDoc。
         if followedSwitched { pushCurrentViewport() }
         broadcastDocs()
+        if followedSwitched { broadcastLibrary(); broadcastTOC() }   // 跟随模式换窗口 = 可能换工作区/换书
     }
 
     /// 某会话页码变化（Mac 滚动或加载新文档）。
@@ -700,7 +743,71 @@ final class AppModel: ObservableObject {
         padSelectedSessionID = idString.isEmpty ? nil : UUID(uuidString: idString)
         push()
         broadcastDocs()
+        broadcastLibrary(); broadcastTOC()   // 换会话 = 可能换工作区、必然可能换书
         pushCurrentViewport()   // 平板切文档后落到该文档在 Mac 端的当前进度
+    }
+
+    /// 平板请求打开工作区里的某个文档（库文档 id）。
+    ///
+    /// 已在**同一工作区**的某个窗口里开着 → 等价于平板选中那个窗口（不重复开窗）；否则请求「平板当前
+    /// 跟随的那个窗口」去 `openWindow` 一个新窗口装它（用户 2026-08-05 定：新开窗口，不顶掉当前文档）。
+    /// 新窗口的会话 id 此刻还不存在，故先把 docId 记进 `pendingPadFollowDocId`，等它 `loadSelected`
+    /// 完成时（`sessionDocumentChanged`）再把平板锁过去。
+    func openPadDoc(_ docId: String) {
+        guard !docId.isEmpty, let cur = padSession else { return }
+        let folder = cur.workspaceFolder
+        if let hit = sessions.first(where: { $0.documentId == docId && $0.workspaceFolder == folder }) {
+            selectPadDoc(hit.id.uuidString)
+            return
+        }
+        guard let path = folder?.standardizedFileURL.path else { return }
+        pendingPadFollowDocId = docId
+        padOpenDocRequest = PadOpenDocRequest(sessionID: cur.id, workspacePath: path, docId: docId)
+    }
+
+    /// 某会话换了文档（`ContentView.loadSelected` 之后）：标题/书库 open 标记/目录全会变。
+    /// 平板发起的 `openDoc` 也在这里收尾——新窗口装的正是它要的文档，就把平板锁过去。
+    func sessionDocumentChanged(_ s: DocSession) {
+        if let want = pendingPadFollowDocId, s.documentId == want {
+            pendingPadFollowDocId = nil
+            selectPadDoc(s.id.uuidString)   // 内含 push/broadcastDocs/pushCurrentViewport
+        }
+        broadcastDocs()
+        broadcastLibrary()
+        broadcastTOC()
+    }
+
+    /// 广播「平板跟随的那个窗口所属工作区」的书库给平板（平板据此打开尚未打开的文档）。
+    /// 内容未变则不发（`force` 用于新客户端接入补发）——书库列表比 `docs` 大得多，且触发点很密
+    /// （每次换文档/开关窗口 open 标记都可能变）。
+    func broadcastLibrary(force: Bool = false) {
+        guard server.isRunning, let s = padSession, s.workspaceFolder != nil else { return }
+        let folder = s.workspaceFolder
+        let openIds = Set(sessions.compactMap { $0.workspaceFolder == folder ? $0.documentId : nil })
+        let list: [[String: Any]] = s.libraryDocs.map {
+            ["id": $0.id, "title": $0.title.isEmpty ? L("Untitled") : $0.title, "open": openIds.contains($0.id)]
+        }
+        let key = s.workspaceName + "|" + list.map { "\($0["id"] ?? "")\($0["title"] ?? "")\($0["open"] ?? "")" }.joined(separator: ",")
+        if !force && key == pushedLibraryKey { return }
+        pushedLibraryKey = key
+        server.broadcast(["type": "library", "ws": s.workspaceName, "list": list])
+    }
+
+    /// 广播平板当前会话的 PDF 目录（先序拍平 + depth）。坏书签 `page = -1`（见 PROTOCOL.md §4.2）。
+    func broadcastTOC(force: Bool = false) {
+        guard server.isRunning, let s = padSession else { return }
+        var list: [[String: Any]] = []
+        func walk(_ es: [TOCEntry], _ depth: Int) {
+            for e in es {
+                list.append(["depth": depth, "page": e.pageIndex ?? -1, "frac": e.frac, "label": e.label])
+                walk(e.children, depth + 1)
+            }
+        }
+        walk(s.toc, 0)
+        let key = s.contentHash + "#\(list.count)"
+        if !force && key == pushedTOCKey { return }
+        pushedTOCKey = key
+        server.broadcast(["type": "toc", "docId": s.contentHash, "list": list])
     }
 
     /// 广播打开中的文档列表给平板。

@@ -3,6 +3,7 @@
   // 顶栏/统计面板/笔状态胶囊是 Svelte 组件（响应式回显，归 lib/hud.svelte.ts 的 S）。
   import { onMount } from "svelte";
   import TopBar from "./TopBar.svelte";
+  import Drawer from "./Drawer.svelte";
   import StatsPanel from "./StatsPanel.svelte";
   import PenStat from "./PenStat.svelte";
   import LayerStat from "./LayerStat.svelte";
@@ -29,6 +30,7 @@
 <div id="radialGlass" bind:this={radialGlass}></div>
 <canvas id="radial" bind:this={radial}></canvas>
 <TopBar />
+<Drawer />
 <StatsPanel />
 <PenStat />
 <LayerStat />

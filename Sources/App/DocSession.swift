@@ -83,6 +83,19 @@ final class DocSession: ObservableObject, Identifiable {
     /// 当前会话对应的逻辑文档 id（笔迹持久化用；nil = 未加载文档）。
     var documentId: String?
 
+    /// 当前 PDF 的目录树（`loadSelected` 载入时构建）。侧栏 Inspector 与平板 `toc` 广播共用同一份。
+    /// `@Published` 安全：只在换文档时写一次，不是每帧量（对比 `readZoom` 的性能红线注释）。
+    @Published var toc: [TOCEntry] = []
+
+    // MARK: 所属工作区的快照（`ContentView.syncWorkspaceSnapshot` 注入，主线程写）
+    //
+    // `AppModel` 是 App 级单例、`WorkspaceManager` 是窗口级（多工作区并存），要把「平板跟随的这个
+    // 窗口所在工作区」的书库广播给平板，只能由会话捎带。**存快照而不是持 `WorkspaceManager` 引用**：
+    // 那个类是 `@MainActor`，而 `AppModel` 不是，直接引用会在每个 broadcast 里撞上 actor 隔离。
+    var workspaceName = ""
+    var workspaceFolder: URL?
+    var libraryDocs: [LibDocument] = []
+
     /// 阅读区当前缩放倍率（相对 fit-width，1=贴合宽度）。ContentView 读来存进度。
     /// ⚠️ **只许在缩放稳定后（settleRender）写一次，严禁每帧回报**（2026-07-29 掉帧根因）：
     /// 这是个 `@Published`，每写一次就向所有订阅 `DocSession` 的视图广播一遍 `objectWillChange`

@@ -3,6 +3,7 @@
 import { G, MODES, clamp, pw, curMode } from "./shared.js";
 import type { Layer, Pen, WireMsg } from "./shared.js";
 import { S, updateHud, updatePageLabel, recordRtt } from "./hud.svelte.js";
+import type { LibEntry, TocEntry } from "./hud.svelte.js";
 import { Wire } from "./wire.js";
 
 export function initWs(): void {
@@ -52,6 +53,11 @@ export function initWs(): void {
     else if (o.type === "layout") { setLayout(o); }
     else if (o.type === "viewport") { applyViewport(o); }
     else if (o.type === "docs") { setDocs(o); }
+    // 工作区书库（含 Mac 尚未打开的文档）：抽屉「书库」页据此列出，点未打开的发 openDoc。
+    else if (o.type === "library") { S.libraryWs = o.ws || ""; S.library = (o.list || []) as LibEntry[]; }
+    // PDF 目录：**带 docId（内容哈希）**，渲染前必须与当前 layout 的 docV 核对——切档瞬间
+    // 两条广播的先后没有保证，不核对就会把上一本的目录挂到新书上。
+    else if (o.type === "toc") { S.tocDocId = o.docId || ""; S.toc = (o.list || []) as TocEntry[]; }
     // 收藏笔列表整体同步（画布悬浮工具条实时增删改后，Mac 推下来）：替换本地 PENS + 当前下标。
     else if (o.type === "pens") {
       G.PENS = ((o.list || []) as Pen[]).map(function (p) { return { color: p.color, w: p.w, t: p.t }; });
@@ -112,7 +118,7 @@ export function initWs(): void {
   function setLayout(o: WireMsg): void {
     const v = (o.v || o.docId || "");
     const changed = v !== G.docV;
-    G.docV = v; G.pageCount = o.count || 0; G.pagesWH = o.pages || [];
+    G.docV = v; S.docV = v; G.pageCount = o.count || 0; G.pagesWH = o.pages || [];
     if (changed) { G.strokes = []; G.cur = null; G.imgs = {}; G.scrollX = 0; G.scrollY = 0; G.zoom = 1; G.vpSeq = 0; }
     G.relayout();
   }

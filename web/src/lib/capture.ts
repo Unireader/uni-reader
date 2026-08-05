@@ -84,6 +84,16 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     G.send({ type: "gotoPage", page: i });
     G.emitScroll();
   }
+  // 目录跳转（0-based 页 + 页内比例）：本地立刻滚过去 + 上行让 Mac 跟到同一处。
+  // 与 gotoPage 分开是因为落点精度不同——这条要落到章节标题那一行，不是页顶。
+  function gotoDest(page: number, frac: number): void {
+    if (!G.pageCount || !G.offY.length || page < 0 || page >= G.pageCount) return;
+    const i = clamp(page, 0, G.pageCount - 1);
+    G.scrollY = clamp(G.offY[i] + frac * G.dispH[i], 0, G.maxScrollY);
+    G.ensureImages(); G.drawAll(); updatePageLabel();
+    G.send({ type: "gotoPage", page: i, frac: frac });
+    G.emitScroll();
+  }
   // 切走框选工具即放弃选中（同 Mac 端 `pointerTool != .lasso` 清 lassoSelection 同理，残留高亮框会误导）。
   function cycleMode(): void {
     const leavingLasso = curMode() === "lasso";
@@ -103,9 +113,12 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
   Object.assign(actions, {
     turn,
     gotoPage,
+    gotoDest,
     cycleMode,
     cyclePen,
     selectDoc(id: string) { G.send({ type: "selectDoc", id: id }); },
+    openDoc(id: string) { G.send({ type: "openDoc", id: id }); },
+    toggleDrawer() { S.drawer = !S.drawer; },   // 开着就关（不管停在哪一页），关着就开回上次那页
     toggleStats() { S.statsOn = !S.statsOn; },
     // 夜间模式：仅反转背景页图 canvas（invert 反亮度、hue-rotate 复原彩色）；墨迹/圆环不反。
     toggleNight() {

@@ -12,9 +12,9 @@
     auth: 0x01, authOK: 0x02, authFail: 0x03,
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
-    layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28, gotoPage: 0x29,
+    layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28, gotoPage: 0x29, openDoc: 0x2A,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
-    radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A,
+    radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A, library: 0x3B, toc: 0x3C,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
     lassoMove: 0x47,
     nack: 0x50
@@ -90,6 +90,7 @@
   Reader.prototype.str = function () {
     var L = this.u16(); var b = new Uint8Array(this.dv.buffer, this.dv.byteOffset + this.n, L); this.n += L; return td.decode(b);
   };
+  Reader.prototype.left = function () { return this.len - this.n; };   // 尾部可选字段用（gotoPage.frac）
   Reader.prototype.pen = function () {
     var r = this.u8(), g = this.u8(), b = this.u8(), a = this.f32(), w = this.f32(), t = this.u8();
     return { color: "rgba(" + r + "," + g + "," + b + "," + a + ")", w: w, t: BRUSH[t] || "ballpoint" };
@@ -112,7 +113,9 @@
       case "latency": w.u8(OP.latency); w.f32(o.ms || 0); break;
       case "selectDoc": w.u8(OP.selectDoc); w.str(o.id || ""); break;
       case "pageTurn": w.u8(OP.pageTurn); w.u8(o.dir === "prev" ? 0 : 1); break;
-      case "gotoPage": w.u8(OP.gotoPage); w.u32(o.page || 0); break;
+      // frac 是尾部可选 f32（PROTOCOL.md §4.1）：0/缺省一律省略，「只跳页」的老形态字节不变。
+      case "gotoPage": w.u8(OP.gotoPage); w.u32(o.page || 0); if (o.frac) w.f32(o.frac); break;
+      case "openDoc": w.u8(OP.openDoc); w.str(o.id || ""); break;
       case "mode": w.u8(OP.mode); w.u8(modeCode(o.mode)); break;
       case "pen": w.u8(OP.pen); w.u16(o.index || 0); break;
       case "penset": {
@@ -167,6 +170,22 @@
           var item = LY[ly];
           w.u8(item.r || 0); w.u8(item.g || 0); w.u8(item.b || 0);
           w.u8(item.visible ? 1 : 0); w.str(item.name || "");
+        }
+        break;
+      }
+      case "library": {
+        w.u8(OP.library); w.str(o.ws || "");
+        var LB = o.list || []; w.u16(LB.length);
+        for (var lb = 0; lb < LB.length; lb++) { w.str(LB[lb].id); w.str(LB[lb].title); w.u8(LB[lb].open ? 1 : 0); }
+        break;
+      }
+      case "toc": {
+        w.u8(OP.toc); w.str(o.docId || "");
+        var TC = o.list || []; w.u16(TC.length);
+        for (var tc = 0; tc < TC.length; tc++) {
+          var te2 = TC[tc], tp = te2.page == null ? -1 : te2.page;   // 坏书签在对象模型里是 -1
+          w.u8(te2.depth || 0); w.u8(tp >= 0 ? 1 : 0);
+          w.u32(tp >= 0 ? tp : 0); w.f32(te2.frac || 0); w.str(te2.label || "");
         }
         break;
       }
@@ -252,7 +271,12 @@
       case OP.latency: return { type: "latency", ms: r.f32() };
       case OP.selectDoc: return { type: "selectDoc", id: r.str() };
       case OP.pageTurn: return { type: "pageTurn", dir: r.u8() === 0 ? "prev" : "next" };
-      case OP.gotoPage: return { type: "gotoPage", page: r.u32() };
+      case OP.gotoPage: {
+        // 尾部可选 f32 frac：4 字节 payload = 老形态（只跳页，frac 补 0）。
+        var gp = r.u32();
+        return { type: "gotoPage", page: gp, frac: r.left() >= 4 ? r.f32() : 0 };
+      }
+      case OP.openDoc: return { type: "openDoc", id: r.str() };
       case OP.mode: return { type: "mode", mode: MODEK[r.u8()] || "note" };
       case OP.pen: return { type: "pen", index: r.u16() };
       case OP.penset: {
@@ -291,6 +315,20 @@
           lylist[lyi] = { r: r.u8(), g: r.u8(), b: r.u8(), visible: r.u8() === 1, name: r.str() };
         }
         return { type: "layers", list: lylist, active: lya };
+      }
+      case OP.library: {
+        var lws = r.str(), lbn = r.u16(), lblist = new Array(lbn);
+        for (var lbi = 0; lbi < lbn; lbi++) lblist[lbi] = { id: r.str(), title: r.str(), open: r.u8() === 1 };
+        return { type: "library", ws: lws, list: lblist };
+      }
+      case OP.toc: {
+        var tdoc = r.str(), tn = r.u16(), tlist = new Array(tn);
+        for (var ti = 0; ti < tn; ti++) {
+          var tdep = r.u8(), thas = r.u8() === 1, tpg = r.u32(), tfr = r.f32(), tlb = r.str();
+          // 坏书签（hasPage=0）→ page = -1：客户端据此渲染成不可点的灰行。
+          tlist[ti] = { depth: tdep, page: thas ? tpg : -1, frac: tfr, label: tlb };
+        }
+        return { type: "toc", docId: tdoc, list: tlist };
       }
       case OP.inkCancel: return { type: "inkCancel" };
       case OP.strokes: {

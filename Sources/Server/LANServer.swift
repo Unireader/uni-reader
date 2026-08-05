@@ -25,6 +25,13 @@ final class LANServer: ObservableObject {
     @Published var requestedPageIndex: Int?
     /// 平板请求切换文档时置为目标会话 id（空串 = 跟随 Mac 激活窗口）。
     @Published var requestedDocID: String?
+    /// 平板请求打开工作区里某个文档时置为**库文档 id**（≠ requestedDocID 的窗口会话 id，见 PROTOCOL.md §4.1）。
+    @Published var requestedOpenDocID: String?
+    /// 平板请求跳转到（页, 页内比例）——目录跳转带 frac，与只跳页的 `requestedPageIndex` 分开走，
+    /// 因为后者只有页号、落点一律页顶。`@Published` 不做值去重，连点同一条目录项照样每次触发。
+    @Published var requestedGoto: GotoTarget?
+
+    struct GotoTarget { let page: Int; let frac: Double }
 
     let token = Pairing.makeToken()
     let httpPort: UInt16 = 8770
@@ -333,7 +340,13 @@ final class LANServer: ObservableObject {
         case "gotoPage":
             let target = (obj["page"] as? NSNumber)?.intValue ?? currentPageIndex
             let clamped = max(0, min(target, max(0, pageCount - 1)))
-            DispatchQueue.main.async { self.requestedPageIndex = clamped }
+            let frac = min(max(0, (obj["frac"] as? NSNumber)?.doubleValue ?? 0), 1)
+            DispatchQueue.main.async { self.requestedGoto = GotoTarget(page: clamped, frac: frac) }
+            return true
+        case "openDoc":
+            let id = obj["id"] as? String ?? ""
+            guard !id.isEmpty else { return true }
+            DispatchQueue.main.async { self.requestedOpenDocID = id }
             return true
         case "scroll":
             // 方案 B：平板本地滚动 → 上报锚点（页 + 页内归一化比例）。

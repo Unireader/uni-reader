@@ -31,6 +31,8 @@
 <div id="topbar">
   <span id="dot" class:on={S.connected}></span>
   <span id="lat" role="button" tabindex="0" onclick={() => actions.toggleStats()}>{S.latText}</span>
+  <button id="drawerBtn" class:on={S.drawer} title="目录 / 书库"
+    onclick={() => actions.toggleDrawer()}><Icon name="list" /></button>
   <select id="docs" value={S.docValue} onchange={(e) => actions.selectDoc(e.currentTarget.value)}>
     <option value="">⟳ 跟随 Mac</option>
     {#each S.docs as d (d.id)}

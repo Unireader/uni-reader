@@ -71,6 +71,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x27` | layerVisible | C→S | 可靠 |
 | `0x28` | layerAdd | C→S | 可靠 |
 | `0x29` | gotoPage | C→S | 可靠 |
+| `0x2A` | openDoc | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -82,6 +83,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x38` | pressRing | S→C | 可靠 |
 | `0x39` | notes | S→C | 可靠 |
 | `0x3A` | layers | S→C | 可靠 |
+| `0x3B` | library | S→C | 可靠 |
+| `0x3C` | toc | S→C | 可靠 |
 | `0x40` | scroll | C→S | **RT** |
 | `0x41` | hover | C→S | **RT** |
 | `0x42` | ink | C→S | **RT** |
@@ -108,7 +111,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `latency` | `f32 ms` | `{type:"latency", ms}` |
 | `selectDoc` | `str id` | `{type:"selectDoc", id}`（UUID 串或 ""）|
 | `pageTurn` | `u8 dir` | `{type:"pageTurn", dir}`（"prev"/"next"）|
-| `gotoPage` | `u32 page` | `{type:"gotoPage", page}`（0-based 目标页号，平板输入的是 1-based，本地转 0 后上行）|
+| `gotoPage` | `u32 page` · **可选** `f32 frac` | `{type:"gotoPage", page, frac}`（0-based 目标页号，平板输入的是 1-based，本地转 0 后上行）|
+| `openDoc` | `str docId` | `{type:"openDoc", id}`（**库** docId，见 `library`）|
 | `mode` | `u8 mode` | `{type:"mode", mode}`（"note"/"erase"/"page"）|
 | `pen` | `u16 index` | `{type:"pen", index}` |
 | `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|
@@ -157,6 +161,24 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 同一套「客户端乐观预览 + 服务端复判执行」惯例，规避了 `strokes`/`notes` 线上不带稳定 id、
 平板无法直接引用具体某条笔迹/注解的问题。
 
+`gotoPage` 的 `frac`（**尾部可选 f32**，同 `ink begin` 的 `flags` 先例）：目标页内的纵向归一化位置，
+语义与 `viewport.frac`/`scroll.frac` 完全一致（0=页顶）。**缺省或 0 时编码端一律省略这 4 字节**——
+于是「只跳页」的老形态字节不变，老客户端与新 Mac、新客户端与老 Mac 都能对上。收到带 frac 的
+`gotoPage`，Mac 走的是与自己点侧栏目录同一条 `origin:"toc"` 锚点路径（`emitAnchor`），跳完照例经
+`viewport` 回推给所有客户端。目录跳转必须带 frac：章节标题常在页中部起，只跳页会落在上一节末尾。
+
+`openDoc`（平板打开工作区里尚未打开的文档，C→S）：`docId` 是 `library`（§4.2）里的**库文档 id**。
+Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `selectDoc` 切到那个窗口；否则**新开一个 Mac 窗口**
+装它（用户 2026-08-05 拍板：不就地顶掉当前窗口的文档，也不做「只在平板上换、Mac 不动」的隐藏会话），
+并在新窗口的文档就位后把平板锁定跟随过去。工作区归属 = **平板当前跟随的那个会话所属的工作区**
+（Mac 是窗口级工作区、多工作区并存，见 `REQUIREMENTS.md §8.1`）。
+
+> ⚠️ **线上有三个互不相通的 id 空间，别混用**：
+> `docs`(0x33)/`selectDoc`(0x20) 的 id = **窗口会话 id**（`DocSession.id`，一个窗口一个）；
+> `library`(0x3B)/`openDoc`(0x2A) 的 id = **库文档 id**（`LibDocument.id`，SQLite 主键，跨窗口稳定）；
+> `layout`(0x31) 的 `docId`/`v` 与 `toc`(0x3C) 的 `docId` = **内容哈希**（`DocSession.contentHash`，
+> 同一文件的不同窗口相同）。平板判「这份目录是不是当前这本书的」只能用第三种。
+
 ### 4.2 Mac→平板 状态下发（可靠）
 
 | opcode | payload |
@@ -172,6 +194,8 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 | `pressRing` | `u8 on` · on=1 时续 `u32 page` · `f32 nx` · `f32 ny` |
 | `notes` | `u16 n` · `n ×( str id, u32 page, f32 nx, f32 ny, str text )` |
 | `layers` | `u16 active` · `u16 n` · `n ×( u8 r, u8 g, u8 b, u8 visible, str name )` |
+| `library` | `str wsName` · `u16 n` · `n ×( str id, str title, u8 open )` |
+| `toc` | `str docId` · `u16 n` · `n ×( u8 depth, u8 hasPage, u32 page, f32 frac, str label )` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
 
 `radial`（环形选笔盘）：长按检测、扇区判定、选中提交**全部在 Mac**，这条只是把盘的状态镜像给平板去画
@@ -214,6 +238,22 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
   颜色只是图层列表的色点标识（与笔画自身墨色无关），Mac 端由 `colorKey` 解析成 r/g/b 再打包。
   `strokes` 广播前已按图层可见性过滤，故平板看到的笔迹天然只含当前可见图层；平板端 `LayerStat` 组件
   据此渲染图层胶囊/面板，并通过 `layerSelect`/`layerVisible`/`layerAdd`（§4.1）发起切换/显示隐藏/新增请求）
+- `library` → `{type:"library", ws, list:[{id, title, open},…]}`（**工作区书库全量镜像**，平板据此
+  列出「Mac 还没打开的文档」并用 `openDoc`（§4.1）请求打开。`id` = 库文档 id（**不是** `docs` 的窗口
+  会话 id，见 §4.1 的三个 id 空间）；`open` u8 = 该文档当前是否已在本工作区某个窗口里打开（平板给个
+  标记，点它走 `selectDoc` 而不是 `openDoc` 更快，但发 `openDoc` 也对——Mac 会自己识别并切过去）；
+  `ws` = 工作区显示名，纯展示。
+  **发送时机**：客户端接入、平板跟随的会话变化（换窗口＝可能换工作区）、该工作区文档表增删改、
+  任一窗口换了文档（`open` 标记会变）。空工作区发 `n=0`，平板显示空态而不是一直转圈）
+- `toc` → `{type:"toc", docId, list:[{depth, page, frac, label},…]}`（**当前文档的 PDF 目录**，
+  由 `TOCEntry.build` 从 `outlineRoot` 递归构建后**先序拍平**：`depth` 从 0 起，客户端按它重建折叠树
+  （比嵌套编码省事，且天然定长前缀）。`docId` = 内容哈希，与 `layout` 的 `docId`/`v` 同一口径——
+  平板必须核对它与当前显示文档一致才应用，否则切档瞬间会把上一本的目录挂到新书上。
+  **坏书签**（destination 解不出目标页，现实里常见：空 dest、dest 指向别的文档）线上 `hasPage=0`、
+  `page`/`frac` 填 0，解码后对象里 **`page = -1`**；平板必须把它渲染成不可点的灰行，**不能当第 1 页**
+  （Mac 端 `TOCListView` 同款语义：不显示页码、disabled、不参与当前章节追踪）。
+  没有目录的 PDF 发 `n=0`（平板显示「无目录」空态）。**发送时机**：文档载入完成、客户端接入、
+  平板跟随的会话变化）
 - `nack` → `{type:"nack", seqs:[…]}`
 - `eraser` → `{type:"eraser", size, mode, ring}`（双向消息，布局见 §4.1；S→C 方向用于 Mac 侧变更/新客户端补发）
 

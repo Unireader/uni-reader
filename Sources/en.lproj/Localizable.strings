@@ -42,6 +42,7 @@
 "Clear Recent" = "Clear Recent";
 "Choose an existing UniReader workspace (.unrd)." = "Choose an existing UniReader workspace (.unrd).";
 "Choose a location and name for the new workspace." = "Choose a location and name for the new workspace.";
+"Untitled" = "Untitled";
 "Untitled Workspace" = "Untitled Workspace";
 "Create" = "Create";
 "Workspace Error" = "Workspace Error";

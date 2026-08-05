@@ -21,10 +21,11 @@ enum WireCodec {
         static let textNote: UInt8 = 0x24
         static let penset: UInt8 = 0x25
         static let layerSelect: UInt8 = 0x26, layerVisible: UInt8 = 0x27, layerAdd: UInt8 = 0x28, gotoPage: UInt8 = 0x29
+        static let openDoc: UInt8 = 0x2A
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
-        static let layers: UInt8 = 0x3A
+        static let layers: UInt8 = 0x3A, library: UInt8 = 0x3B, toc: UInt8 = 0x3C
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
         static let eraser: UInt8 = 0x46
@@ -146,7 +147,12 @@ enum WireCodec {
         case "latency": w.u8(Op.latency); w.f32(num(o["ms"]))
         case "selectDoc": w.u8(Op.selectDoc); w.str(strOf(o["id"]))
         case "pageTurn": w.u8(Op.pageTurn); w.u8(strOf(o["dir"]) == "prev" ? 0 : 1)
-        case "gotoPage": w.u8(Op.gotoPage); w.u32(intOf(o["page"]))
+        case "gotoPage":
+            // frac 是尾部可选 f32（PROTOCOL.md §4.1）：0/缺省一律省略，「只跳页」的老形态字节不变。
+            w.u8(Op.gotoPage); w.u32(intOf(o["page"]))
+            let frac = num(o["frac"])
+            if frac != 0 { w.f32(frac) }
+        case "openDoc": w.u8(Op.openDoc); w.str(strOf(o["id"]))
         case "mode": w.u8(Op.mode); w.u8(modeCode(strOf(o["mode"])))
         case "pen": w.u8(Op.pen); w.u16(intOf(o["index"]))
         case "penset":
@@ -200,6 +206,21 @@ enum WireCodec {
                 w.u8(UInt8(clamping: intOf(l["r"]))); w.u8(UInt8(clamping: intOf(l["g"]))); w.u8(UInt8(clamping: intOf(l["b"])))
                 w.u8(boolOf(l["visible"]) ? 1 : 0)
                 w.str(strOf(l["name"]))
+            }
+        case "library":
+            w.u8(Op.library); w.str(strOf(o["ws"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for d in list { w.str(strOf(d["id"])); w.str(strOf(d["title"])); w.u8(boolOf(d["open"]) ? 1 : 0) }
+        case "toc":
+            w.u8(Op.toc); w.str(strOf(o["docId"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for e in list {
+                w.u8(UInt8(clamping: intOf(e["depth"])))
+                let page = intOf(e["page"])                      // 坏书签在对象模型里是 -1
+                w.u8(page >= 0 ? 1 : 0)
+                w.u32(max(0, page)); w.f32(num(e["frac"])); w.str(strOf(e["label"]))
             }
         case "inkCancel": w.u8(Op.inkCancel)
         case "strokes":
@@ -336,7 +357,12 @@ enum WireCodec {
         case Op.latency: out = ["type": "latency", "ms": NSNumber(value: r.f32())]
         case Op.selectDoc: out = ["type": "selectDoc", "id": r.str()]
         case Op.pageTurn: out = ["type": "pageTurn", "dir": r.u8() == 0 ? "prev" : "next"]
-        case Op.gotoPage: out = ["type": "gotoPage", "page": NSNumber(value: r.u32())]
+        case Op.gotoPage:
+            // 尾部可选 f32 frac：4 字节 payload = 老形态（只跳页，frac 补 0）。
+            let page = r.u32()
+            let frac = r.remaining >= 4 ? r.f32() : 0
+            out = ["type": "gotoPage", "page": NSNumber(value: page), "frac": NSNumber(value: frac)]
+        case Op.openDoc: out = ["type": "openDoc", "id": r.str()]
         case Op.mode: out = ["type": "mode", "mode": modeName(r.u8())]
         case Op.pen: out = ["type": "pen", "index": NSNumber(value: r.u16())]
         case Op.penset:
@@ -396,6 +422,21 @@ enum WireCodec {
                              "visible": visible, "name": r.str()])
             }
             out = ["type": "layers", "list": list, "active": NSNumber(value: active)]
+        case Op.library:
+            let ws = r.str(), n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n { list.append(["id": r.str(), "title": r.str(), "open": r.u8() == 1]) }
+            out = ["type": "library", "ws": ws, "list": list]
+        case Op.toc:
+            let docId = r.str(), n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n {
+                let depth = r.u8(), hasPage = r.u8() == 1, page = r.u32(), frac = r.f32(), label = r.str()
+                // 坏书签（hasPage=0）在对象模型里是 page = -1：客户端据此渲染成不可点的灰行。
+                list.append(["depth": NSNumber(value: depth), "page": NSNumber(value: hasPage ? page : -1),
+                             "frac": NSNumber(value: frac), "label": label])
+            }
+            out = ["type": "toc", "docId": docId, "list": list]
         case Op.inkCancel: out = ["type": "inkCancel"]
         case Op.strokes:
             let ackRel = r.u32()

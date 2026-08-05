@@ -8,6 +8,22 @@ export interface DocEntry {
   title: string;
 }
 
+/// 工作区书库一项（Mac `library` 广播）。`id` 是**库文档 id**，与 DocEntry 的窗口会话 id 不是一个
+/// 空间（PROTOCOL.md §4.1）；`open` = 该文档已在 Mac 某个窗口里开着。
+export interface LibEntry {
+  id: string;
+  title: string;
+  open: boolean;
+}
+
+/// PDF 目录一项（Mac `toc` 广播，先序拍平）。`page` = -1 是坏书签（跳不过去，渲染成灰行）。
+export interface TocEntry {
+  depth: number;
+  page: number;
+  frac: number;
+  label: string;
+}
+
 /// 文字笔记编辑器的打开状态（低频 UI，放 runes；面板定位用打开瞬间的视口坐标）。
 export interface NoteEditorState {
   id: string;                          // 笔记 id（新建时打开即生成）
@@ -36,10 +52,20 @@ export const S = $state({
   noteEditor: null as NoteEditorState | null,   // 文字笔记编辑器（非 null = 打开中）
   showPage: true,          // 页面图显示（眼睛按钮回显）
   zoomLocked: false,       // 锁定缩放（锁按钮回显）
+  // ---- 侧拉抽屉（目录 / 书库）----
+  drawer: false,           // 抽屉开关
+  drawerTab: "toc" as "toc" | "lib",   // 停在哪一页（关掉再开回到这里）
+  toc: [] as TocEntry[],   // 当前文档目录（Mac toc 广播镜像）
+  tocDocId: "",            // 这份目录属于哪个文档（内容哈希）
+  docV: "",                // 当前显示文档的内容哈希（layout 广播带来）——与 tocDocId 一致才敢渲染目录
+  library: [] as LibEntry[],  // 工作区书库（Mac library 广播镜像）
+  libraryWs: "",           // 工作区显示名
+  curPage: 0,              // 当前页（0-based）：目录的「当前章节」追踪用
 });
 
 export function updatePageLabel(): void {
   S.pageLabel = G.pageCount ? (G.topVisiblePage() + 1) + " / " + G.pageCount : "— / —";
+  S.curPage = G.pageCount ? G.topVisiblePage() : 0;   // 目录抽屉据此高亮/展开当前章节
 }
 
 // 笔的用途状态胶囊：笔记模式显示当前笔（色块/类型/粗细），其余模式显示模式名。

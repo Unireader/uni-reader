@@ -42,6 +42,7 @@
 "Clear Recent" = "清空最近打开";
 "Choose an existing UniReader workspace (.unrd)." = "选择一个已存在的 UniReader 工作区包（.unrd）。";
 "Choose a location and name for the new workspace." = "为新工作区选择位置与名称。";
+"Untitled" = "未命名";
 "Untitled Workspace" = "未命名工作区";
 "Create" = "创建";
 "Workspace Error" = "工作区错误";

@@ -84,6 +84,17 @@ const canonical = [
   // 上面 #19 那条是 ackRel 缺省(=0) 的同款——浏览器不走 UDP，线上收到的恒是那个样子。
   { type: "strokes", ackRel: 305419896, list: [{ page: 1, pen: { color: "rgba(20,20,20,1)", w: 10, t: "pencil" },
                                                  pts: [[0.5, 0.25, 0.5], [0.75, 0.125, 1.0]] }] },
+  // 平板打开工作区里尚未打开的文档（0x2A）：库文档 id（不是 docs 的窗口会话 id）。
+  { type: "openDoc", id: "D1E2F3" },
+  // 工作区书库全量镜像（0x3B）：id=库文档 id，open=是否已在某窗口打开。
+  { type: "library", ws: "阅读", list: [{ id: "A1", title: "深入理解计算机系统", open: true },
+                                        { id: "B2", title: "SICP", open: false }] },
+  // PDF 目录（0x3C）：先序拍平 + depth；page=-1 是坏书签（线上 hasPage=0）。
+  { type: "toc", docId: "abc123", list: [{ depth: 0, page: 0, frac: 0.0, label: "第一章" },
+                                         { depth: 1, page: 4, frac: 0.25, label: "1.1 引言" },
+                                         { depth: 0, page: -1, frac: 0.0, label: "坏书签" }] },
+  // 目录跳转（0x29 带尾部可选 frac）：与上面那条「只跳页」的老形态各测一遍。
+  { type: "gotoPage", page: 7, frac: 0.5 },
 ];
 
 let pass = 0, fail = 0;
