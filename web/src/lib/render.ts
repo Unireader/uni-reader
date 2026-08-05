@@ -161,73 +161,111 @@ export function initRender(refs: CaptureRefs): void {
       else { bctx.fillStyle = "#e9edf2"; bctx.fillRect(cl, vy, p, G.dispH[i]); loadImg(i); }
     }
   }
-  /// 画一整条笔画到指定 context（静态层与活体层共用，保证两者观感一致）。
-  /// **marker 必须整条一次成 path**（平头 + multiply），与 Mac 端 `inkDrawStroke` 的 marker 分支同理：
-  /// 逐段 stroke 会让相邻段的线帽互相重叠，不透明笔看不出来，半透明笔（荧光笔）就叠成一串圆斑。
-  function drawStroke(cx: CanvasRenderingContext2D, s: Stroke): void {
-    const pts = s.pts; if (!pts.length) return;
-    const t = s.pen.t || "ballpoint", color = scaledColor(s.pen.color, opacityMultFor(t));
-    const p0 = pageToView(s.page, pts[0][0], pts[0][1]);
+  /// 一条笔迹已构建好的几何。路径建在**页局部坐标**（原点＝该页左上角，单位 CSS px，随缩放变），
+  /// 画的时候只 `translate` 到该页当前位置——于是滚动不改变任何几何，Path2D 原样复用。
+  interface InkSeg { w: number; path: Path2D; fill?: boolean }
+  interface InkGeom { pw: number; color: string; multiply: boolean; segs: InkSeg[] }
+
+  /// 内容 → 几何。用 WeakMap：Mac 每次回传 strokes 都是新解码的对象，旧条目自动被 GC 收走，
+  /// 不必自己管失效；滚动期间对象不变，所以命中率是 100%。
+  const geomCache = new WeakMap<Stroke, InkGeom>();
+
+  /// 构建几何（页局部坐标）。**不碰 canvas**，纯算——这样它既能进缓存，也能给活体层每帧现算。
+  function buildGeom(s: Stroke): InkGeom {
+    const pts = s.pts;
+    const t = s.pen.t || "ballpoint";
+    const color = scaledColor(s.pen.color, opacityMultFor(t));
+    const p = pw(), ph = G.dispH[s.page] || 0;
+    const px = (i: number): number => clamp(pts[i][0], 0, 1) * p;
+    const py = (i: number): number => clamp(pts[i][1], 0, 1) * ph;
+    const segs: InkSeg[] = [];
+
     if (pts.length === 1) {   // 单点 = 一个圆点（同 Mac 端单点分支）
-      cx.fillStyle = color;
-      cx.beginPath(); cx.arc(p0.x, p0.y, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2); cx.fill();
-      return;
+      const path = new Path2D();
+      path.arc(px(0), py(0), strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2);
+      segs.push({ w: 0, path, fill: true });
+      return { pw: p, color, multiply: false, segs };
     }
-    let lp = p0, i: number;
+
+    let lx = px(0), ly = py(0);
     if (t === "marker") {
-      cx.save();
-      cx.globalCompositeOperation = "multiply";
-      cx.lineCap = "square"; cx.lineJoin = "round";   // 平头：圆头会在起收笔处鼓出来
-      cx.strokeStyle = color; cx.lineWidth = s.pen.w;
-      cx.beginPath(); cx.moveTo(p0.x, p0.y);
-      for (i = 1; i < pts.length; i++) {
-        const q = pageToView(s.page, pts[i][0], pts[i][1]);
-        cx.quadraticCurveTo(lp.x, lp.y, (lp.x + q.x) / 2, (lp.y + q.y) / 2);
-        lp = q;
+      // marker 必须**整条一次成 path**（平头 + multiply）：逐段 stroke 会让相邻段的线帽互相重叠，
+      // 不透明笔看不出来，半透明的荧光笔就叠成一串圆斑。
+      const path = new Path2D();
+      path.moveTo(lx, ly);
+      for (let i = 1; i < pts.length; i++) {
+        const qx = px(i), qy = py(i);
+        path.quadraticCurveTo(lx, ly, (lx + qx) / 2, (ly + qy) / 2);
+        lx = qx; ly = qy;
       }
-      cx.lineTo(lp.x, lp.y);   // 补末段（同下方 default 分支：中点平滑链止于倒数两点的中点，末点从没连上）
-      cx.stroke();
-      cx.restore();
-      return;
+      path.lineTo(lx, ly);   // 补末段（同下方分支：中点平滑链止于倒数两点的中点）
+      segs.push({ w: s.pen.w, path });
+      return { pw: p, color, multiply: true, segs };
     }
+
     // ballpoint / fountain / pencil：线宽随压感变，没法像 marker 那样整条一次 stroke。
-    //
-    // 但**相邻的、宽度差不多的段可以攒起来一次画完**：它们本就首尾相接（都经过中点），攒进同一条
-    // 路径不改变形状。一条 50 点的笔迹原先是 50 次 `beginPath()+stroke()`，攒完通常只剩个位数——
-    // 平板浏览器里「有笔迹就很卡」的大头就在这（安卓 app 同源的毛病已按同样思路修过，见
-    // `ANDROID-STANDALONE-PLAN.md §9.9`）。
-    //
+    // 但**相邻的、宽度差不多的段可以攒进同一条 Path2D**：它们本就首尾相接（都经过中点），
+    // 攒起来不改变形状，一条 50 点的笔迹于是从 50 次 stroke 降到个位数。
     // 合并顺带修掉一个观感 bug：逐段各自半透明合成会让相邻段共享的圆头越叠越黑（Mac 端记的
     // 「黑点瑕疵」根因，那边已改成整条一次 fill），攒进同一条路径后不再重复合成。
-    //
-    // 断开条件用**迟滞**而不是绝对分桶：压感几乎每点都在抖，按固定档位分会断得比不合并还碎。
-    cx.fillStyle = color;
-    cx.beginPath(); cx.arc(p0.x, p0.y, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2); cx.fill();
-    cx.strokeStyle = color;
-    let lastMid = p0, curW = -1, pending = false;
-    const flush = (): void => { if (pending) { cx.stroke(); pending = false; } };
+    // 断开用**迟滞**而不是绝对分桶：压感几乎每点都在抖，按固定档位会断得比不合并还碎。
+    const dot = new Path2D();
+    dot.arc(lx, ly, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2);
+    segs.push({ w: 0, path: dot, fill: true });   // 起笔圆点
+
+    let lastMidX = lx, lastMidY = ly, curW = -1;
+    let cur: Path2D | null = null;
     const openAt = (w: number): void => {
-      flush();
-      cx.lineWidth = curW = w;
-      cx.beginPath(); cx.moveTo(lastMid.x, lastMid.y);
-      pending = true;
+      cur = new Path2D();
+      cur.moveTo(lastMidX, lastMidY);
+      curW = w;
+      segs.push({ w, path: cur });
     };
-    /// 宽度偏离当前这一段超过 0.35px（或 8%）才另起一段——比这更小的差别肉眼分不出来
-    const needsBreak = (w: number): boolean => !pending || Math.abs(w - curW) > Math.max(0.35, curW * 0.08);
-    for (i = 1; i < pts.length; i++) {
-      const pv = pageToView(s.page, pts[i][0], pts[i][1]), pr = pts[i][2];
-      const w = strokeWidthFor(t, pr, s.pen.w);
+    const needsBreak = (w: number): boolean => cur === null || Math.abs(w - curW) > Math.max(0.35, curW * 0.08);
+    for (let i = 1; i < pts.length; i++) {
+      const qx = px(i), qy = py(i);
+      const w = strokeWidthFor(t, pts[i][2], s.pen.w);
       if (needsBreak(w)) openAt(w);
-      const mx = (lp.x + pv.x) / 2, my = (lp.y + pv.y) / 2;
-      cx.quadraticCurveTo(lp.x, lp.y, mx, my);
-      lastMid = { x: mx, y: my }; lp = pv;
+      const mx = (lx + qx) / 2, my = (ly + qy) / 2;
+      cur!.quadraticCurveTo(lx, ly, mx, my);
+      lastMidX = mx; lastMidY = my; lx = qx; ly = qy;
     }
     // 补末段：上面每步只画到「相邻两点的中点」，末点从来没被连上——长笔画差这半段看不出来，
     // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。补一段 lastMid → 末点才落到笔尖。
     const lastW = strokeWidthFor(t, pts[pts.length - 1][2], s.pen.w);
     if (needsBreak(lastW)) openAt(lastW);
-    cx.lineTo(lp.x, lp.y);
-    flush();
+    cur!.lineTo(lx, ly);
+    return { pw: p, color, multiply: false, segs };
+  }
+
+  /// 把几何画到指定 context：只 translate 到该页当前位置，不重算任何坐标。
+  function paintGeom(cx: CanvasRenderingContext2D, s: Stroke, g: InkGeom): void {
+    const left = contentLeft();
+    const top = BAR + G.offY[s.page] - G.scrollY;
+    cx.save();
+    cx.translate(left, top);
+    if (g.multiply) { cx.globalCompositeOperation = "multiply"; cx.lineCap = "square"; }
+    cx.strokeStyle = g.color; cx.fillStyle = g.color;
+    for (let i = 0; i < g.segs.length; i++) {
+      const seg = g.segs[i];
+      if (seg.fill) { cx.fill(seg.path); } else { cx.lineWidth = seg.w; cx.stroke(seg.path); }
+    }
+    cx.restore();
+  }
+
+  /// 静态层用：走几何缓存（滚动时零重建、零临时对象）。缩放会改页尺寸，故 pw 变了要重建。
+  function drawStroke(cx: CanvasRenderingContext2D, s: Stroke): void {
+    if (!s.pts.length || s.page < 0 || s.page >= G.pageCount) return;
+    let g = geomCache.get(s);
+    if (!g || g.pw !== pw()) { g = buildGeom(s); geomCache.set(s, g); }
+    paintGeom(cx, s, g);
+  }
+
+  /// 活体层 / 框选预览用：几何每帧都在变，进缓存只会让 WeakMap 一直堆新条目，所以现算不存。
+  /// 走的是与静态层同一个 [buildGeom]，两者观感因此一致。
+  function drawStrokeLive(cx: CanvasRenderingContext2D, s: Stroke): void {
+    if (!s.pts.length || s.page < 0 || s.page >= G.pageCount) return;
+    paintGeom(cx, s, buildGeom(s));
   }
 
   /// 这一页有没有落在视口里。`G.strokes`/`G.notes` 都是**全文档**的，不裁页就是每帧把全书重画一遍。
@@ -246,8 +284,10 @@ export function initRender(refs: CaptureRefs): void {
       const s = G.strokes[i];
       if (!pageVisible(s.page)) continue;   // 全文档笔迹，裁到可见页（见 pageVisible）
       if (sel && sel.page === s.page && sel.strokeIdx.indexOf(i) >= 0) {
+        // 位移**逐点 clamp 到页内**（同 Mac `InkEdit.translated` / 安卓 `coerceIn`）——所以不能拿
+        // translate 顶替，几何是真的变了；走不进缓存的 live 版，反正框选拖动是低频且短暂的。
         const { dx, dy } = G.lassoTranslate;
-        drawStroke(ictx, { page: s.page, pen: s.pen, pts: s.pts.map((p) => [clamp(p[0] + dx, 0, 1), clamp(p[1] + dy, 0, 1), p[2]]) });
+        drawStrokeLive(ictx, { page: s.page, pen: s.pen, pts: s.pts.map((p) => [clamp(p[0] + dx, 0, 1), clamp(p[1] + dy, 0, 1), p[2]]) });
       } else {
         drawStroke(ictx, s);
       }
@@ -257,7 +297,7 @@ export function initRender(refs: CaptureRefs): void {
   /// 与 Mac 端 `InkLiveLayer` 同构；单独一层，故重画一笔不牵动整页笔迹。
   function drawLive(): void {
     lctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    if (G.cur) drawStroke(lctx, G.cur);
+    if (G.cur) drawStrokeLive(lctx, G.cur);
   }
 
   /// 擦除分派（与 Mac 端 `eraseNear` 两模式一一对应，命中判定都在页内归一化坐标做、同页过滤、
