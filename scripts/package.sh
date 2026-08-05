@@ -5,13 +5,14 @@ cd "$(dirname "$0")/.."
 # 打包 UniReader：xcodegen → archive → Developer ID 导出 → 公证 → staple → zip
 #
 # 用法：
-#   ./scripts/package.sh                  # 用 project.yml 里当前的版本号打包
-#   ./scripts/package.sh 0.2.0            # 打包前把 MARKETING_VERSION 改成 0.2.0 再打包
+#   ./scripts/package.sh                  # 自动递增：小版本号 +1，构建号 +1（如 0.1.11/1 → 0.1.12/2）
+#   ./scripts/package.sh 0.2.0            # 打包前把 MARKETING_VERSION 改成 0.2.0（构建号仍自动 +1）
 #   ./scripts/package.sh --version 0.2.0  # 同上
 #   VERSION=0.2.0 ./scripts/package.sh    # 同上（环境变量方式）
-#   ./scripts/package.sh 0.2.0 --build 3  # 同时把 CURRENT_PROJECT_VERSION 改成 3
+#   ./scripts/package.sh 0.2.0 --build 3  # 同时把 CURRENT_PROJECT_VERSION 改成 3（不自动递增）
+#   ./scripts/package.sh --no-bump        # 不改动版本号和构建号，用 project.yml 当前值打包
 #
-# 优先级：命令行参数 > VERSION/BUILD 环境变量 > project.yml 当前值。
+# 优先级：命令行参数 > VERSION/BUILD 环境变量 > 自动递增（--no-bump 时保持 project.yml 当前值）。
 #
 # 前置条件（只需做一次）：
 #   xcrun notarytool store-credentials "UniReader-Notary" \
@@ -29,6 +30,7 @@ EXPORT_OPTIONS="scripts/exportOptions.plist"
 
 VERSION="${VERSION:-}"
 BUILD="${BUILD:-}"
+NO_BUMP=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
@@ -38,6 +40,10 @@ while [[ $# -gt 0 ]]; do
     --build)
       BUILD="${2:?--build 需要一个构建号，如 3}"
       shift 2
+      ;;
+    --no-bump)
+      NO_BUMP=1
+      shift
       ;;
     -*)
       echo "未知选项: $1" >&2
@@ -53,6 +59,28 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+CURRENT_VERSION=$(grep -m1 'MARKETING_VERSION' "$PROJECT_YML" | sed -E 's/.*"([^"]*)".*/\1/')
+CURRENT_BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' "$PROJECT_YML" | sed -E 's/.*"([^"]*)".*/\1/')
+
+# 未显式指定时自动递增：小版本号 +1、构建号 +1（--no-bump 关闭）
+if [[ "$NO_BUMP" -eq 0 ]]; then
+  if [[ -z "$VERSION" ]]; then
+    if ! [[ "$CURRENT_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+      echo "project.yml 里的 MARKETING_VERSION 格式不对: $CURRENT_VERSION，无法自动递增" >&2
+      exit 2
+    fi
+    LAST="${CURRENT_VERSION##*.}"
+    VERSION="${CURRENT_VERSION%.*}.$((LAST + 1))"
+  fi
+  if [[ -z "$BUILD" ]]; then
+    if ! [[ "$CURRENT_BUILD" =~ ^[0-9]+$ ]]; then
+      echo "project.yml 里的 CURRENT_PROJECT_VERSION 格式不对: $CURRENT_BUILD，无法自动递增" >&2
+      exit 2
+    fi
+    BUILD=$((CURRENT_BUILD + 1))
+  fi
+fi
 
 if [[ -n "$VERSION" ]]; then
   if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
@@ -79,7 +107,8 @@ echo "-> xcodegen generate"
 xcodegen generate
 
 VERSION=$(grep -m1 'MARKETING_VERSION' "$PROJECT_YML" | sed -E 's/.*"([^"]*)".*/\1/')
-echo "-> 打包版本: $VERSION"
+BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' "$PROJECT_YML" | sed -E 's/.*"([^"]*)".*/\1/')
+echo "-> 打包版本: $VERSION (build $BUILD)"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
