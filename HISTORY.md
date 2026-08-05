@@ -17,6 +17,13 @@
   修复：`Sources/App/AppModel.swift` 的 `setActive()`（判定 `padSelectedSessionID == nil &&
   activeSessionID != s.id` 时补推）与 `unregister()`（判定被关掉的窗口正是平板当时跟随的会话时
   补推）都补上 `pushCurrentViewport()`。`xcodebuild` 编译通过。
+- **Android Pad app 相对路径误判失效**：`android/.../local/Workspace.kt` 的 `resolvePdf` 此前对
+  `location.is_relative=1` 直接返回 `null`（注释称"安卓与 Mac 挂载点不同，猜不出真实路径"）——这个
+  前提是错的：`is_relative` 存的本就是**相对工作区文件夹**的路径（可含 `..`），拼接基准是当前设备
+  上已经打开的工作区目录本身，和 `in_workspace` 走同一套 `File(workspaceDir, path)`，不存在挂载点
+  换算的问题（对照 Mac 端 `WorkspaceManager.resolvedPath`：两者一视同仁）。改成 `is_relative` 与
+  `in_workspace` 同一分支解析；`LibraryModels.kt`/`LibraryActivity.kt` 的文案与
+  `ANDROID-STANDALONE-PLAN.md §6` 一并更正。Gradle 编译 + 单测全绿。
 
 ## 已修 / 完成（2026-07-30）
 
