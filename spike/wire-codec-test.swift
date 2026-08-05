@@ -79,6 +79,10 @@ let canonical: [[String: Any]] = [
     ["type": "lassoMove", "page": 2, "x0": 0.2, "y0": 0.3, "x1": 0.6, "y1": 0.5, "dx": 0.1, "dy": -0.05],
     // 平板直接跳转到指定页码（0x29）：C→S，可靠通道，payload = u32 目标页号。
     ["type": "gotoPage", "page": 42],
+    // strokes 的 ackRel（0x36 首字段，PROTOCOL.md §4.2）：Mac 已连续处理到的该客户端 REL seq。
+    // 上面 #19 那条是 ackRel 缺省(=0) 的同款——那正是浏览器/没建 UDP 会话时线上的样子。
+    ["type": "strokes", "ackRel": 305419896, "list": [["page": 1, "pen": ["color": "rgba(20,20,20,1)", "w": 10, "t": "pencil"],
+                                                       "pts": [[0.5, 0.25, 0.5], [0.75, 0.125, 1.0]]]]],
 ]
 
 var pass = 0, fail = 0

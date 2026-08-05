@@ -80,6 +80,10 @@ const canonical = [
   { type: "mode", mode: "lasso" },
   { type: "lassoMove", page: 2, x0: 0.2, y0: 0.3, x1: 0.6, y1: 0.5, dx: 0.1, dy: -0.05 },
   { type: "gotoPage", page: 42 },
+  // strokes 的 ackRel（0x36 首字段，PROTOCOL.md §4.2）：Mac 已连续处理到的该客户端 REL seq。
+  // 上面 #19 那条是 ackRel 缺省(=0) 的同款——浏览器不走 UDP，线上收到的恒是那个样子。
+  { type: "strokes", ackRel: 305419896, list: [{ page: 1, pen: { color: "rgba(20,20,20,1)", w: 10, t: "pencil" },
+                                                 pts: [[0.5, 0.25, 0.5], [0.75, 0.125, 1.0]] }] },
 ];
 
 let pass = 0, fail = 0;

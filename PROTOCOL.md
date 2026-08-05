@@ -167,7 +167,7 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 | `docs` | `u8 following` · `str selected` · `u16 n` · `n ×(str id, str title)` |
 | `pens` | `u16 active` · `u16 n` · `n × pen` |
 | `inkCancel` | 空 |
-| `strokes` | `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
+| `strokes` | `u32 ackRel` · `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
 | `radial` | `u8 open` · open=1 时续 `u32 page` · `f32 cx` · `f32 cy` · `u16 highlight` · `u16 n` · `n ×( u8 kind, pen )` |
 | `pressRing` | `u8 on` · on=1 时续 `u32 page` · `f32 nx` · `f32 ny` |
 | `notes` | `u16 n` · `n ×( str id, u32 page, f32 nx, f32 ny, str text )` |
@@ -189,7 +189,22 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 - `viewport` → `{type:"viewport", page, frac, seq, force}`（`force` 布尔；`macScrolled` 走 seq、`pushCurrentViewport` 走 force=true）
 - `docs` → `{type:"docs", list:[{id,title},…], selected, following}`
 - `pens` → `{type:"pens", list:[{color,w,t},…], active}`
-- `strokes` → `{type:"strokes", list:[{page, pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
+- `strokes` → `{type:"strokes", ackRel, list:[{page, pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
+
+  **`ackRel` = 生成这份快照时，Mac 已连续处理到的该客户端 REL 序号**（§6 的 `seqRel`；
+  `= relExpected - 1`，`0` 表示不适用——没建 UDP 会话的客户端如浏览器，或还没收过任何 REL 包）。
+  它按**收件人**逐连接填（`LANServer.rawSend`），因为每个客户端的可靠流进度各不相同。
+
+  用途是让客户端分得清「这份快照含不含我刚发出去的输入」。`strokes` 是**全量镜像**，而 Mac 每收到
+  一批擦除点就广播一次（`AppModel.inkErase`），于是擦除途中会连着回来一串**中途快照**，每份都比
+  客户端本地的乐观状态旧。客户端照单全收的话，已擦掉的笔迹会被一份份恢复出来再擦掉
+  （用户实测：「删掉了又出现，过一会才真的被删除」）。判据只有一条：
+  **`ackRel >= 本端已发出的最后一个 seqRel` → 这份快照含我的全部输入，应用；否则是中途快照，丢弃。**
+
+  > 这条判据同时替掉了客户端侧「按发出批数记账」那类**单边对账**——它靠猜「一批擦除恰好回一次广播」
+  > 的隐含契约，还得配超时兜底，安卓端为此翻车两次（补丁史见 `ANDROID-STANDALONE-PLAN.md §9.9`）。
+  > `ackRel` 单调递增且由真源侧给出，不需要兜底：它最终必然追上。乐观笔迹同理——快照一旦满足判据，
+  > 就说明所有已发出的 `ink end` 都已进真源，本端的乐观副本可以整批撤掉，不必逐条配对。
 - `radial` → `{type:"radial", open:true, page, cx, cy, highlight, items:[{kind:"pen"|"erase"|"page", color, w, t},…]}`；收盘 → `{type:"radial", open:false}`
 - `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
 - `notes` → `{type:"notes", list:[{id, page, nx, ny, text},…]}`（文字笔记**全量镜像**，类比 strokes：

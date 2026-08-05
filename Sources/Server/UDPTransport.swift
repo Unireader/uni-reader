@@ -56,6 +56,16 @@ final class UDPTransport {
         sessions[session] = nil
     }
 
+    /// 该 session 的 REL 流**已连续处理到**的最大 seq（`relExpected - 1`）；未登记/一包没收过则 0。
+    ///
+    /// 随 `strokes` 广播回给客户端（`PROTOCOL.md §4.2` 的 `ackRel`），让它分得清收到的全量快照
+    /// 含不含自己刚发出去的输入——擦除途中 Mac 每收一批点就广播一次，那一串中途快照都比客户端
+    /// 本地的乐观状态旧，照单全收会把已擦掉的笔迹一份份恢复出来。
+    func ackRel(session: UInt32) -> UInt32 {
+        guard let r = sessions[session] else { return 0 }
+        return r.relExpected > 1 ? r.relExpected - 1 : 0
+    }
+
     /// 定时器驱动（LANServer ~30ms）：所有 session 的 REL 缺口超时兜底。
     /// 放弃丢失帧跳过的就绪 body 同样经 onFrame 上抛。
     func flushStale(now: Date = Date()) {

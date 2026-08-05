@@ -204,6 +204,7 @@ enum WireCodec {
         case "inkCancel": w.u8(Op.inkCancel)
         case "strokes":
             w.u8(Op.strokes)
+            w.u32(intOf(o["ackRel"]))   // 按收件人填，见 LANServer.rawSend / PROTOCOL.md §4.2
             let list = o["list"] as? [[String: Any]] ?? []
             w.u32(list.count)
             for s in list {
@@ -397,13 +398,14 @@ enum WireCodec {
             out = ["type": "layers", "list": list, "active": NSNumber(value: active)]
         case Op.inkCancel: out = ["type": "inkCancel"]
         case Op.strokes:
+            let ackRel = r.u32()
             let n = r.u32()
             var list = [[String: Any]](); list.reserveCapacity(max(0, n))
             for _ in 0..<max(0, n) {
                 let page = r.u32(); let pen = r.pen(); let pts = r.pts(3)
                 list.append(["page": NSNumber(value: page), "pen": pen, "pts": pts])
             }
-            out = ["type": "strokes", "list": list]
+            out = ["type": "strokes", "ackRel": NSNumber(value: ackRel), "list": list]
         case Op.radial:
             if r.u8() == 0 { out = ["type": "radial", "open": false]; break }
             let page = r.u32(), cx = r.f32(), cy = r.f32()

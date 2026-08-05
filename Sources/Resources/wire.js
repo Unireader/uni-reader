@@ -172,7 +172,9 @@
       }
       case "inkCancel": w.u8(OP.inkCancel); break;
       case "strokes": {
-        w.u8(OP.strokes); var S = o.list || []; w.u32(S.length);
+        // ackRel：Mac 已连续处理到的该客户端 REL seq，按收件人填（PROTOCOL.md §4.2）。
+        // 浏览器不走 UDP，收到的恒为 0，忽略即可——这个字段是给原生客户端分辨中途快照用的。
+        w.u8(OP.strokes); w.u32(o.ackRel || 0); var S = o.list || []; w.u32(S.length);
         for (var s = 0; s < S.length; s++) { w.u32(S[s].page || 0); w.pen(S[s].pen); w.pts(S[s].pts, 3); }
         break;
       }
@@ -292,9 +294,9 @@
       }
       case OP.inkCancel: return { type: "inkCancel" };
       case OP.strokes: {
-        var sn = r.u32(), slist = new Array(sn);
+        var sack = r.u32(), sn = r.u32(), slist = new Array(sn);
         for (var s = 0; s < sn; s++) slist[s] = { page: r.u32(), pen: r.pen(), pts: r.pts(3) };
-        return { type: "strokes", list: slist };
+        return { type: "strokes", ackRel: sack, list: slist };
       }
       case OP.radial: {
         if (r.u8() === 0) return { type: "radial", open: false };
