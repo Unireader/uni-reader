@@ -24,6 +24,12 @@
   换算的问题（对照 Mac 端 `WorkspaceManager.resolvedPath`：两者一视同仁）。改成 `is_relative` 与
   `in_workspace` 同一分支解析；`LibraryModels.kt`/`LibraryActivity.kt` 的文案与
   `ANDROID-STANDALONE-PLAN.md §6` 一并更正。Gradle 编译 + 单测全绿。
+- **Pad 左下角笔信息缺笔颜色**：网页端 `PenStat.svelte` 笔记模式下有 `<span class="sw"
+  style:background={S.pen.color}>` 色块，Android 两个模式（`PadActivity`/`ReaderActivity`，
+  两处胶囊文案「逐字一致」是既有约定）都只有文字、没有色块。新增 `shared/Widgets.kt` 的
+  `TextView.setPenSwatch(color)`（复用同一个 `GradientDrawable` 换色，不逐帧重建，同
+  `setTextIfChanged` 的性能纪律），两处 `refresh()`/`refreshHud()` 在笔记模式下按当前笔的
+  `argb(a,r,g,b)` 设置圆点，非笔记模式清空。Gradle 编译通过。
 
 ## 已修 / 完成（2026-07-30）
 
