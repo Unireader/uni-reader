@@ -167,6 +167,9 @@ export interface GState {
   lastPong: number; retryTimer: ReturnType<typeof setTimeout> | null; retryDelay: number;
   // 统计计数（hud 的 1s 统计区间消费并清零）
   upCount: number; downCount: number; frames: number;
+  /// 分层绘制耗时累计（每秒被 HUD 读走并清零）。「卡不卡」不能靠感觉——平板上滚动到底是
+  /// 页图 drawImage 贵还是笔迹层贵，只有分开计时才分得清。
+  drawN: number; drawBgMs: number; drawInkMs: number; drawRestMs: number;
 
   // ---- 跨模块函数（各 init 模块挂上，见上）----
   // ws.ts

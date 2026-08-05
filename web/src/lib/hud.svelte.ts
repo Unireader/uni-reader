@@ -87,6 +87,8 @@ export function startStats(): void {
     jit = n > 1 ? jit / (n - 1) : 0;
     if (!n) { mn = 0; mx = 0; }
     S.latText = n ? (Math.round(avg) + "±" + Math.round(jit) + " ms") : "— ms";
+    /// 每帧均值，一位小数；没画过帧就显示 —
+    const ms = (total: number): string => (G.drawN ? (total / G.drawN).toFixed(1) : "—") + "ms";
     if (S.statsOn) {
       S.statsText =
         "RTT  avg " + Math.round(avg) + " ms\n" +
@@ -94,8 +96,10 @@ export function startStats(): void {
         "     jitter " + Math.round(jit) + " ms  (n=" + n + ")\n" +
         "↑ 上行  " + G.upCount + " msg/s\n" +
         "↓ 下行  " + G.downCount + " msg/s\n" +
-        "画面 fps " + G.frames;
+        "画面 fps " + G.frames + "\n" +
+        "绘制/帧 " + ms(G.drawBgMs) + " 页图  " + ms(G.drawInkMs) + " 笔迹  " + ms(G.drawRestMs) + " 其余";
     }
     G.upCount = 0; G.downCount = 0; G.frames = 0;
+    G.drawN = 0; G.drawBgMs = 0; G.drawInkMs = 0; G.drawRestMs = 0;
   }, 1000);
 }

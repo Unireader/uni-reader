@@ -59,6 +59,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     ws: null, pingTimer: null, lastPong: 0, retryTimer: null, retryDelay: 1500,
     // 统计计数（hud 的 1s 统计区间消费并清零）
     upCount: 0, downCount: 0, frames: 0,
+    drawN: 0, drawBgMs: 0, drawInkMs: 0, drawRestMs: 0,
   });
 
   initRender(refs);

@@ -138,7 +138,16 @@ export function initRender(refs: CaptureRefs): void {
   }
 
   // ---- 绘制 ----
-  function drawAll(): void { drawBg(); drawInk(); drawLive(); drawNotes(); }
+  /// 滚动/缩放每帧都走这里：四个全屏 canvas 全部 clear + 重绘。分层计时见 G.drawBgMs 的注释。
+  function drawAll(): void {
+    const t0 = performance.now();
+    drawBg();
+    const t1 = performance.now();
+    drawInk();
+    const t2 = performance.now();
+    drawLive(); drawNotes();
+    G.drawN++; G.drawBgMs += t1 - t0; G.drawInkMs += t2 - t1; G.drawRestMs += performance.now() - t2;
+  }
   function drawBg(): void {
     bctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     const cl = contentLeft(), p = pw();
@@ -181,22 +190,51 @@ export function initRender(refs: CaptureRefs): void {
       cx.restore();
       return;
     }
-    // ballpoint / fountain / pencil：线宽随压感变，只能逐段画（与 Mac 端 default 分支同款）
+    // ballpoint / fountain / pencil：线宽随压感变，没法像 marker 那样整条一次 stroke。
+    //
+    // 但**相邻的、宽度差不多的段可以攒起来一次画完**：它们本就首尾相接（都经过中点），攒进同一条
+    // 路径不改变形状。一条 50 点的笔迹原先是 50 次 `beginPath()+stroke()`，攒完通常只剩个位数——
+    // 平板浏览器里「有笔迹就很卡」的大头就在这（安卓 app 同源的毛病已按同样思路修过，见
+    // `ANDROID-STANDALONE-PLAN.md §9.9`）。
+    //
+    // 合并顺带修掉一个观感 bug：逐段各自半透明合成会让相邻段共享的圆头越叠越黑（Mac 端记的
+    // 「黑点瑕疵」根因，那边已改成整条一次 fill），攒进同一条路径后不再重复合成。
+    //
+    // 断开条件用**迟滞**而不是绝对分桶：压感几乎每点都在抖，按固定档位分会断得比不合并还碎。
     cx.fillStyle = color;
     cx.beginPath(); cx.arc(p0.x, p0.y, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2); cx.fill();
-    let lastMid = p0;
+    cx.strokeStyle = color;
+    let lastMid = p0, curW = -1, pending = false;
+    const flush = (): void => { if (pending) { cx.stroke(); pending = false; } };
+    const openAt = (w: number): void => {
+      flush();
+      cx.lineWidth = curW = w;
+      cx.beginPath(); cx.moveTo(lastMid.x, lastMid.y);
+      pending = true;
+    };
+    /// 宽度偏离当前这一段超过 0.35px（或 8%）才另起一段——比这更小的差别肉眼分不出来
+    const needsBreak = (w: number): boolean => !pending || Math.abs(w - curW) > Math.max(0.35, curW * 0.08);
     for (i = 1; i < pts.length; i++) {
       const pv = pageToView(s.page, pts[i][0], pts[i][1]), pr = pts[i][2];
+      const w = strokeWidthFor(t, pr, s.pen.w);
+      if (needsBreak(w)) openAt(w);
       const mx = (lp.x + pv.x) / 2, my = (lp.y + pv.y) / 2;
-      cx.strokeStyle = color; cx.lineWidth = strokeWidthFor(t, pr, s.pen.w);
-      cx.beginPath(); cx.moveTo(lastMid.x, lastMid.y); cx.quadraticCurveTo(lp.x, lp.y, mx, my); cx.stroke();
+      cx.quadraticCurveTo(lp.x, lp.y, mx, my);
       lastMid = { x: mx, y: my }; lp = pv;
     }
     // 补末段：上面每步只画到「相邻两点的中点」，末点从来没被连上——长笔画差这半段看不出来，
     // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。补一段 lastMid → 末点才落到笔尖。
-    const last = pts[pts.length - 1];
-    cx.strokeStyle = color; cx.lineWidth = strokeWidthFor(t, last[2], s.pen.w);
-    cx.beginPath(); cx.moveTo(lastMid.x, lastMid.y); cx.lineTo(lp.x, lp.y); cx.stroke();
+    const lastW = strokeWidthFor(t, pts[pts.length - 1][2], s.pen.w);
+    if (needsBreak(lastW)) openAt(lastW);
+    cx.lineTo(lp.x, lp.y);
+    flush();
+  }
+
+  /// 这一页有没有落在视口里。`G.strokes`/`G.notes` 都是**全文档**的，不裁页就是每帧把全书重画一遍。
+  function pageVisible(page: number): boolean {
+    if (page < 0 || page >= G.pageCount) return false;
+    const y = BAR + G.offY[page] - G.scrollY;
+    return y + G.dispH[page] >= BAR && y <= window.innerHeight;
   }
   /// 静态层：已成形的笔迹（Mac 回传的唯一真源）。
   /// 框选移动已提交（`lassoCommitted`）、等 Mac 回传新 strokes 期间：被选中的笔迹按位移量乐观渲染，
@@ -206,6 +244,7 @@ export function initRender(refs: CaptureRefs): void {
     const sel = G.lassoCommitted ? G.lassoSelection : null;
     for (let i = 0; i < G.strokes.length; i++) {
       const s = G.strokes[i];
+      if (!pageVisible(s.page)) continue;   // 全文档笔迹，裁到可见页（见 pageVisible）
       if (sel && sel.page === s.page && sel.strokeIdx.indexOf(i) >= 0) {
         const { dx, dy } = G.lassoTranslate;
         drawStroke(ictx, { page: s.page, pen: s.pen, pts: s.pts.map((p) => [clamp(p[0] + dx, 0, 1), clamp(p[1] + dy, 0, 1), p[2]]) });
