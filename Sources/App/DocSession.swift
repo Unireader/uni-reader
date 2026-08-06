@@ -294,6 +294,9 @@ final class DocSession: ObservableObject, Identifiable {
     /// 而 OCR 渲染跑在 `ocrRenderQueue`、Mac 阅读区渲染跑在 `PageRenderEngine` 的串行队列——
     /// 共用 `self.pdf` 就是两个后台队列并发操作同一份 PDFKit 内部状态（平板那条管线因此白过屏）。
     private var ocrRenderPDF: PDFDocument?
+    /// 在途的网络 OCR 任务（页 → task）。留着句柄只为**关窗时能取消**：任务闭包捕获着
+    /// `ocrRenderPDF`，不取消的话那份 PDF 会一直吊到网络请求自己结束（见 `teardown`）。
+    private var ocrTasks: [Int: Task<Void, Never>] = [:]
 
     /// 取 OCR 渲染用的文档实例（懒建独立副本；拿不到 URL 时退回共用）。仅主线程调用。
     private func ocrRenderDocument() -> PDFDocument? {
@@ -311,6 +314,8 @@ final class DocSession: ObservableObject, Identifiable {
 
     /// 换文档时重置 OCR 状态；若该内容已有缓存则自动启用（缓存直接复用，无需重跑）。
     func reloadOCRState() {
+        for t in ocrTasks.values { t.cancel() }   // 在途任务捕获着旧 ocrRenderPDF，不取消就放不掉那份文件
+        ocrTasks = [:]
         ocrQueue = []; ocrInFlight = 0; ocrActivePages = []; ocrRuns = [:]; ocrLastError = nil
         ocrEnabled = false
         ocrRenderPDF = nil   // 换文档 → 丢弃旧的 OCR 渲染副本，下次用时按新 pdf 懒建
@@ -355,7 +360,7 @@ final class DocSession: ObservableObject, Identifiable {
         let hash = contentHash
         ocrActivePages.insert(page)
         ocrInFlight += 1
-        Task { [weak self] in
+        ocrTasks[page] = Task { [weak self] in
             let img = await Self.renderPageForOCR(pdf: pdf, page: page)
             var runs: [TextRun]?
             var err: String?
@@ -372,6 +377,7 @@ final class DocSession: ObservableObject, Identifiable {
                 guard self.contentHash == hash else { return }
                 self.ocrInFlight -= 1
                 self.ocrActivePages.remove(page)
+                self.ocrTasks.removeValue(forKey: page)
                 if let runs {
                     self.ocrRuns[page] = runs
                     self.saveCachedOCR(page: page, runs: runs, imgW: imgW, imgH: imgH)
@@ -404,5 +410,35 @@ final class DocSession: ObservableObject, Identifiable {
         try? store.upsertOCRPage(OCRPage(contentHash: contentHash, page: page,
                                          provider: PaddleOCR.providerID, payload: data,
                                          lang: nil, createdAt: Date()))
+    }
+
+    // MARK: - 关窗收尾
+
+    /// 关窗时**立刻**放掉本会话持有的一切文件引用：两份 `PDFDocument`（阅读区的 + OCR 渲染副本）、
+    /// 库连接引用、在途的网络 OCR 任务（它们捕获着 OCR 那份 PDF）。
+    ///
+    /// ⚠️ 为什么要显式做、而不是等这个 `DocSession` 自己析构：它的强引用在 `ContentView` 的
+    /// `@StateObject` 里，SwiftUI 关窗后何时释放没有保证；只要 `PDFDocument` 活着，那本 PDF 的文件
+    /// 就一直被打开着，工作区所在的**可移动硬盘弹不出去**（用户 2026-08-05 报）。
+    ///
+    /// ⚠️ **严禁在这里清 `strokes` / `inkLayers` / `textNotes` / `highlights`**：那四个的落库是
+    /// `ContentView` 里的 `onChange` 增量对账，清空 = 对账认定「用户删光了」→ 把整篇笔记从库里删掉。
+    /// 本方法只碰**文件引用**，不碰任何会被对账看到的数据。
+    func teardown() {
+        clearSearch()
+        for t in ocrTasks.values { t.cancel() }
+        ocrTasks = [:]
+        ocrQueue = []
+        ocrRenderPDF = nil
+        contentHash = ""     // 在途 OCR 任务回主线程时按 hash 自弃（既有机制），不会再动已清空的状态
+        store = nil
+        toc = []
+        weak var probe = pdf
+        pdf = nil
+        // 诊断：`pdf` 置 nil 后这份文档理应立刻销毁；若 SwiftUI 视图树还吊着它（阅读区/缩略图列表
+        // 是按值传进去的），文件就还开着 —— 静默失效最难查，留个可开关的观察窗口（见 `wsLog`）。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            if probe != nil { wsLog("teardown：⚠️ PDFDocument 仍存活（文件未关闭）\(self?.title ?? "")") }
+        }
     }
 }

@@ -167,6 +167,19 @@ final class WorkspaceManager: ObservableObject {
         lastError = nil
     }
 
+    /// **彻底放手这个工作区**：关掉 SQLite 连接并置空 `store`，之后所有读写自动退化成 no-op。
+    /// 由 `WorkspaceRegistry.maybeTeardown` 在「本工作区已无窗口 + 关窗时的最后一次写库已落地」时调用。
+    ///
+    /// ⚠️ **不能只依赖 `deinit`**：实例的强引用在 `RootView` 的 `@State` 里，SwiftUI 关窗后何时释放
+    /// 它没有保证；只要 `library.sqlite` 的 fd 还开着，工作区所在的**可移动硬盘就弹不出去**
+    /// （用户 2026-08-05 报：必须退出整个 app 才能弹）。所以关闭必须是一个显式动作，而不是 ARC 的副产品。
+    func teardown() {
+        guard store != nil else { return }
+        store?.close()
+        store = nil
+        wsLog("teardown：已关闭库连接 \(folder?.lastPathComponent ?? "?")")
+    }
+
     /// 某窗口当前文档变化（nil = 该窗口清空选择）。把「打开集」重同步为「所有窗口当前文档」并持久化。
     /// 在一个窗口里切换文档 → 旧文档若不再被任何窗口显示，会随之退出「打开集」（不累积 → 不再「启动开一堆」）。
     func setWindowDoc(_ sessionId: UUID, _ docId: String?) {

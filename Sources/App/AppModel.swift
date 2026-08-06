@@ -199,6 +199,20 @@ final class AppModel: ObservableObject {
         padRenderPDF = pdf.documentURL.flatMap { PDFDocument(url: $0) } ?? pdf
     }
 
+    /// 已经没有任何会话在用这份平板渲染副本了 → **立刻**丢掉它。
+    ///
+    /// ⚠️ 这是个 App 级单例持有的独立 `PDFDocument`（= 一个一直开着的文件）：不显式清的话，
+    /// 关掉全部窗口后它仍吊着最后看过的那本书，工作区所在的**可移动硬盘照样弹不出去**
+    /// （用户 2026-08-05 报）—— 会话那边清干净了也没用，漏一处就前功尽弃。主线程调用。
+    private func releasePadRenderIfUnused() {
+        renderLock.lock(); defer { renderLock.unlock() }
+        guard padRenderPDF != nil else { return }
+        if !padRenderKey.isEmpty, sessions.contains(where: { $0.contentHash == padRenderKey }) { return }
+        padRenderPDF = nil
+        padRenderKey = ""
+        pageCache.removeAllObjects()
+    }
+
     /// 渲染平板当前会话的第 idx 页（缓存命中直接返回）。服务 queue 上调用。
     func renderPage(_ idx: Int) -> Data? {
         renderLock.lock()
@@ -718,6 +732,7 @@ final class AppModel: ObservableObject {
         if followedClosed { pushCurrentViewport() }
         broadcastDocs()
         broadcastLibrary(); broadcastTOC()   // 接班会话可能属于另一个工作区、装着另一本书
+        releasePadRenderIfUnused()           // 被关掉的那本若已无人在看 → 放掉平板那份 PDF 副本
     }
 
     /// 窗口成为 key window。

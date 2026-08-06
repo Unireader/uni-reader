@@ -40,10 +40,29 @@ final class SQLiteDB {
         try exec("PRAGMA foreign_keys=ON;")
     }
 
-    deinit { if let db { sqlite3_close_v2(db) } }
+    deinit { close() }
+
+    /// **显式**关闭连接（幂等）。关闭后所有读写抛 `.exec("database is closed")`
+    /// ——上层一律 `try?`，于是自动退化成 no-op。
+    ///
+    /// ⚠️ 光有 `deinit` 不够：这个连接的释放最终挂在 SwiftUI 的 `@State` 上，关窗后何时释放没有保证；
+    /// 而只要 `library.sqlite` 的 fd 还开着，工作区所在的**可移动硬盘就弹不出去**（Finder 报
+    /// 「磁盘正在使用中」），用户只能退出整个 app 才能弹。谁来调见 `WorkspaceRegistry.maybeTeardown`。
+    func close() {
+        guard let handle = db else { return }
+        db = nil
+        sqlite3_close_v2(handle)   // _v2：即便还有未 finalize 的语句也会在其释放后自动收尾
+    }
+
+    /// 取仍可用的连接句柄；已关闭则抛错（调用方的 `try?` 会把它变成 no-op）。
+    private func handle() throws -> OpaquePointer {
+        guard let db else { throw SQLiteError.exec("database is closed") }
+        return db
+    }
 
     /// 执行不带参数的语句（DDL / PRAGMA / 多条语句）。
     func exec(_ sql: String) throws {
+        let db = try handle()
         var err: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK {
             let msg = err.map { String(cString: $0) } ?? "exec failed"
@@ -96,6 +115,7 @@ final class SQLiteDB {
     }
 
     private func prepare(_ sql: String, _ params: [Value]) throws -> OpaquePointer? {
+        let db = try handle()
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw SQLiteError.prepare(String(cString: sqlite3_errmsg(db)))

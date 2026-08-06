@@ -222,15 +222,46 @@
 后写的一方会把先写的成果整段判为「已删除」而清库 —— **直接丢笔记**。这是数据安全约束，不是性能优化。
 所以「同一工作区开多个窗口」（⌘N、在新窗口打开文档）走的是同一个实例。
 
-**池按弱引用登记，条目不随窗口计数摘除**（2026-07-29 加固）：强引用在 `RootView` 的 `@State`，
-最后一个窗口关掉后实例由它自然析构、弱条目随之变空。早先是「计数归零就把条目摘掉」，但那一刻旧实例
-**还活着**（SwiftUI 关窗后 `@State` 释放是延后的，`ContentView` 的尾随进度补存最长还能再写 0.7s），
-这段空窗里同路径若被重新打开，就会给同一个库开出第二个 `LibraryStore` —— 正是红线禁止的状态。
-配套：`ContentView.onDisappear` 主动 `cancel()` 尾随补存任务（关窗本身紧接着同步存一次，不丢进度）。
+**池按弱引用登记**（2026-07-29 加固）：强引用在 `RootView` 的 `@State`。早先是强引用 + 「计数归零就把
+条目摘掉」，但那一刻旧实例**还活着**（SwiftUI 关窗后 `@State` 释放是延后的，`ContentView` 的尾随进度
+补存最长还能再写 0.7s），这段空窗里同路径若被重新打开，就会给同一个库开出第二个 `LibraryStore` ——
+正是红线禁止的状态。配套：`ContentView.onDisappear` 主动 `cancel()` 尾随补存任务（关窗本身紧接着同步
+存一次，不丢进度）。
 
 ⚠️ 记一笔：唯一性登记挂在 `WorkspaceManager` 上，而真正必须唯一的是它的 `LibraryStore` —— `DocSession`
 （OCR 缓存读写）也**强持有**同一个 store。目前两者都是窗口级、同时析构，所以等价；将来若让 store escape
 到别处（后台任务、跨窗口缓存），唯一性就要改挂到 store 本身。
+
+### 🔴 关掉工作区 = 当场放掉它的所有文件引用（2026-08-05，可移动硬盘弹不出去）
+
+用户报：工作区放在移动硬盘上，**关掉窗口后 Finder 仍说「磁盘正在使用中」，必须退出整个 app 才能弹**。
+根因不是某一处泄漏，而是**整条链路都在依赖 ARC 的时机**：`WorkspaceManager`→`LibraryStore`→SQLite 的
+fd、`DocSession.pdf`/OCR 渲染副本这两份 `PDFDocument`，强引用全在 SwiftUI 的 `@State`/`@StateObject` 里，
+关窗后何时释放**没有任何保证**；再加上 `AppModel.padRenderPDF` 是 App 级单例持有的第三份 PDF，压根不随
+窗口走。只要还有一个 fd 开着，整块盘就弹不掉。
+
+于是「关闭」改成**显式动作**，三处各自负责，缺一不可：
+
+| 谁 | 放掉什么 | 触发点 |
+|---|---|---|
+| `DocSession.teardown()` | 阅读区 PDF + OCR 渲染副本 + 库引用 + 在途网络 OCR 任务（它们捕获着那份 PDF） | `ContentView.onDisappear` 末尾 |
+| `WorkspaceManager.teardown()` | `LibraryStore.close()` → `sqlite3_close_v2`，`store` 置 nil（之后所有读写自动 no-op） | `WorkspaceRegistry.maybeTeardown` |
+| `AppModel.releasePadRenderIfUnused()` | 平板渲染用的那份独立 `PDFDocument` + 页图缓存 | `unregister`（该书已无窗口在看时） |
+
+**关库的时机由两个触发点合判**（`releaseKey` 与 `noteWindow(_:nil)` 都调 `maybeTeardown`，条件 =
+「retain 归零」+「`windowPaths` 里没这条路径」）：AppKit 的 `willClose` 与 SwiftUI 的 `onDisappear`
+**没有保证的先后**，而这两项恰好分别由这两条路清零，后发生的那一个才同时满足「窗口没了」+「该窗口的
+最后一次写库（进度 / 打开集，都在 `onDisappear` 里同步完成）已落地」。**早关一步 = 静默丢进度。**
+
+配套：`maybeTeardown` 会把池条目摘掉（连接已关、`store` 已 nil，旧实例再也写不进库 —— 红线约束的是
+**活着的连接**，不是活着的实例），所以同路径重新打开时新建的实例仍是该库唯一的连接。
+
+⚠️ **`DocSession.teardown` 严禁碰 `strokes`/`inkLayers`/`textNotes`/`highlights`**：那四个的落库是
+`ContentView` 里的 `onChange` 增量对账，清空 = 对账认定「用户删光了」→ 把整篇笔记从库里删掉。
+teardown 只碰文件引用。
+
+诊断：teardown 后 2s 各查一次 weak 探针，`PDFDocument` 或 manager 仍存活就写 `wsLog`（默认关闭的通道，
+见下文「诊断通道」）—— 这类「以为放掉了其实没放」正是只能靠打点发现的静默失效。
 
 ### 🔴 「窗口关闭」只能听 AppKit 的 `willClose`，不能用 SwiftUI 的 `onDisappear`
 

@@ -196,8 +196,11 @@ struct ContentView: View {
             progressSaveTask = nil
             saveProgress(docId: selectedDocID)
             workspace.closeWindow(session.id)
+            // ⚠️ 次序有讲究：写库那两步（进度 / 打开集）必须**先**做完，`noteWindow(nil)` 才可以把
+            // 「本工作区已无窗口」这件事告诉 registry —— 它据此关掉库连接（`maybeTeardown`）。
             WorkspaceRegistry.shared.noteWindow(session.id, path: nil)
             app.unregister(session)
+            session.teardown()   // 放掉本窗口持有的 PDF / 库引用（不然移动硬盘弹不出去）
         }
         .onReceive(NotificationCenter.default.publisher(for: .openPDFRequested)) { _ in
             if isKeyWindow { openPDF() }

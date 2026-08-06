@@ -17,6 +17,10 @@ final class LibraryStore {
         try migrate()
     }
 
+    /// **显式**关闭底层连接（幂等）；之后所有读写自动退化成 no-op。
+    /// 为什么不能只靠 ARC/`deinit`：见 `SQLiteDB.close()`（可移动硬盘弹不出去）。
+    func close() { db.close() }
+
     // MARK: - Schema / 迁移
 
     private func migrate() throws {

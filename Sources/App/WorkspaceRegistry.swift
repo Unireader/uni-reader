@@ -25,6 +25,10 @@ final class WorkspaceRegistry: ObservableObject {
     /// 释放是延后的，`ContentView` 的尾随进度补存也还能写库），这段空窗里同路径再 `acquire` 就会给
     /// 同一个库开出第二个 `LibraryStore` —— 正是本类型开头那条红线禁止的状态。改成弱引用后，
     /// 「同路径同实例」只取决于旧实例是否还活着，不再取决于引用计数的时序。
+    ///
+    /// 条目在 `maybeTeardown`（无窗口 + 写库已落地）里摘掉。**那一刻摘是安全的**：连接已被显式关闭、
+    /// 旧实例的 `store` 已置 nil，它再也写不进库，所以「同时存在两个活 store」这件事不会发生
+    /// ——红线约束的是**活着的连接**，不是活着的实例。
     private var byPath: [String: Weak] = [:]
     /// 当前有几个窗口在显示该工作区（不负责生命周期，见上）；归零时清掉「已恢复过」的记号（`claimRestore`）。
     private var retain: [String: Int] = [:]
@@ -80,9 +84,9 @@ final class WorkspaceRegistry: ObservableObject {
         return m
     }
 
-    /// 窗口放手：最后一个窗口关掉后，manager 会在窗口状态释放时自行析构（连带关掉 SQLite 连接），
-    /// 池里的弱条目随之变空。**这里不摘条目**——旧实例还活着的那段空窗里若同路径再 `acquire`，
-    /// 必须复用它而不是新建第二个 store（红线，见 `byPath` 注释）。
+    /// 窗口放手：最后一个窗口关掉后（且该窗口的写库已落地），`maybeTeardown` 显式关掉 SQLite 连接
+    /// 并摘掉池条目 —— **不等 manager 自己析构**：那个时机挂在 SwiftUI 的 `@State` 上，没有保证，
+    /// 而连接一天不关，工作区所在的可移动硬盘就一天弹不出去。
     func release(_ manager: WorkspaceManager) {
         guard let k = byPath.first(where: { $0.value.manager === manager })?.key else {
             wsLog("release：⚠️ 实例不在池中，什么都没做（\(manager.folder?.lastPathComponent ?? "nil")）")
@@ -102,6 +106,31 @@ final class WorkspaceRegistry: ObservableObject {
         // （`WorkspaceManager.closeWindow`），两边的时间尺度必须一致。
         restoredWorkspaces.remove(k)
         byPath = byPath.filter { $0.value.manager != nil }   // 顺手清掉已析构的空条目
+        maybeTeardown(k)
+    }
+
+    /// 「这个工作区已经没有任何窗口在用了」→ **立刻**关掉它的库连接并摘掉池条目。
+    ///
+    /// ⚠️ **必须显式关，不能等 ARC**（2026-08-05 用户报的可移动硬盘问题）：关窗后 manager 的强引用
+    /// 还在 SwiftUI 的 `@State` 里，何时释放没有保证；只要 `library.sqlite` 的 fd 还开着，工作区所在的
+    /// 移动硬盘在 Finder 里就弹不出去，用户只能退出整个 app。会话那边的 PDF 文件引用同理，由
+    /// `DocSession.teardown` 负责。
+    ///
+    /// **两个触发点都要调**（`releaseKey` 与 `noteWindow(_:nil)`）：AppKit 的 `willClose` 与 SwiftUI 的
+    /// `onDisappear` 没有保证的先后，而条件里的两项恰好分别由这两条路清零。后发生的那一个才同时满足
+    /// 「窗口没了」+「该窗口最后一次写库（进度 / 打开集，都在 `ContentView.onDisappear` 里**同步**完成）
+    /// 已经落地」—— 早关一步就是静默丢进度。
+    ///
+    /// 摘条目**不违反**「同路径同实例」红线（见类型注释）：连接已关、`store` 已置 nil，那个旧实例
+    /// 再也写不进库，下次 `acquire` 新建的实例仍是这个库唯一的连接。
+    private func maybeTeardown(_ k: String) {
+        guard retain[k, default: 0] <= 0, !windowPaths.values.contains(k) else { return }
+        guard let m = byPath.removeValue(forKey: k)?.manager else { return }
+        m.teardown()
+        // 诊断：连接已关，弹盘不再受阻；实例本身若迟迟不释放说明别处还强引用着它（只记一笔，不影响功能）。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak m] in
+            if m != nil { wsLog("teardown：⚠️ manager 仍存活（连接已关，仅记录）\((k as NSString).lastPathComponent)") }
+        }
     }
 
     /// 把显示该工作区的窗口调到前台（「双击已打开的工作区」= 激活，不重复开窗）。
@@ -166,8 +195,11 @@ final class WorkspaceRegistry: ObservableObject {
     func noteWindow(_ sessionId: UUID, path: String?) {
         if let path { windowPaths[sessionId] = Self.key(URL(fileURLWithPath: path)) }
         else {
-            windowPaths.removeValue(forKey: sessionId)
+            let gone = windowPaths.removeValue(forKey: sessionId)
             windowsBySession.removeValue(forKey: sessionId)
+            // 关窗时这里是「本窗口对工作区的最后一次写库之后」的那一刻（`ContentView.onDisappear`
+            // 的调用次序），故要在此再判一次能否收尾——willClose 可能已经先跑过 `releaseKey` 了。
+            if let gone { maybeTeardown(gone) }
         }
     }
 
