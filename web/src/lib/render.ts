@@ -407,6 +407,14 @@ export function initRender(refs: CaptureRefs): void {
   /// 草稿纸图钉：标记「这张纸是在页面的哪儿建的」，手指单击即打开那张纸（见 input.ts endTouch）。
   /// 与文字笔记标记同层（hover canvas）同套路，只是换个形状与配色以便一眼分得清：
   /// 笔记是圆形蓝底 + 首字，草稿纸是**圆角方片 + 折角**（呼应「一张纸」）。
+  /// 图钉当前显示位置：拖动中 / 松手后等 `scratchpads` 回推期间用乐观位置（pinGhost），
+  /// 其余时间用 Mac 下发的真源坐标。绘制与命中判定共用，保证点到的就是看到的。
+  function padPinPos(i: number): { nx: number; ny: number } {
+    const gh = G.pinGhost;
+    if (gh && gh.index === i) return gh;
+    return G.pads[i];
+  }
+
   function drawPadPins(): void {
     if (!G.pads.length) return;
     const r = padPinRadius();
@@ -414,7 +422,8 @@ export function initRender(refs: CaptureRefs): void {
     for (let i = 0; i < G.pads.length; i++) {
       const p = G.pads[i];
       if (!pageVisible(p.page)) continue;
-      const v = pageToView(p.page, p.nx, p.ny);
+      const pos = padPinPos(i);
+      const v = pageToView(p.page, pos.nx, pos.ny);
       if (v.y < BAR - r || v.y > window.innerHeight + r || v.x < -r || v.x > window.innerWidth + r) continue;
       const on = i === G.padOpen;
       hctx.save();
@@ -447,7 +456,8 @@ export function initRender(refs: CaptureRefs): void {
     for (let i = G.pads.length - 1; i >= 0; i--) {   // 后建的压在上面，命中也先算它
       const p = G.pads[i];
       if (!pageVisible(p.page)) continue;
-      const v = pageToView(p.page, p.nx, p.ny);
+      const pos = padPinPos(i);
+      const v = pageToView(p.page, pos.nx, pos.ny);
       if (Math.abs(x - v.x) <= hot && Math.abs(y - v.y) <= hot) return i;
     }
     return -1;
@@ -492,7 +502,7 @@ export function initRender(refs: CaptureRefs): void {
   // ---- 环形选笔盘（Surface Dial 形制）----
   // 长按检测、扇区判定、选中提交**全在 Mac**；这里只画 Mac 下发的 `radial` 状态，不做任何判定。
   // 半径/角度常量必须与 Mac 端 `RadialLayout` 逐个对齐（shared.ts 的 RD）。
-  const TOOL_LABEL: Record<string, string> = { erase: "橡皮", page: "翻页" };
+  const TOOL_LABEL: Record<string, string> = { erase: "橡皮", page: "翻页", scratchAdd: "新建草稿纸", textNote: "新建文字笔记" };
 
   function setRadial(o: WireMsg | null): void { G.radialState = (o && o.open) ? o as unknown as RadialState : null; drawRadial(); }
 
@@ -540,6 +550,9 @@ export function initRender(refs: CaptureRefs): void {
   function tintOf(item: RadialItem): string {
     if (item.kind === "erase") return "rgba(245,140,51,0.92)";
     if (item.kind === "page") return "rgba(64,184,179,0.92)";
+    // 与 Mac `RadialMenuView.tint` 同色：scratchAdd 紫 / textNote 蓝
+    if (item.kind === "scratchAdd") return "rgba(153,115,230,0.92)";
+    if (item.kind === "textNote") return "rgba(77,153,242,0.92)";
     const c = rgbaParts(item.color || "");
     return "rgba(" + (c[0] | 0) + "," + (c[1] | 0) + "," + (c[2] | 0) + ",0.92)";
   }
@@ -636,10 +649,30 @@ export function initRender(refs: CaptureRefs): void {
       roundRect(-9, -5.5, 18, 11, 2.5); rctx.fill();
       rctx.strokeStyle = "rgba(0,0,0,0.3)"; rctx.lineWidth = 1.2;
       rctx.beginPath(); rctx.moveTo(-2, -5.5); rctx.lineTo(-2, 5.5); rctx.stroke();
-    } else {                          // page：举起的手（掌 + 四指），对应 Mac 的 hand.raised.fill
+    } else if (item.kind === "page") {    // 翻页：举起的手（掌 + 四指），对应 Mac 的 hand.raised.fill
       rctx.scale(r / 17, r / 17);
       roundRect(-6.5, -1, 13, 9.5, 3); rctx.fill();
       for (let f = 0; f < 4; f++) { roundRect(-6 + f * 3.2, -8.5, 2.4, 8.5, 1.2); rctx.fill(); }
+    } else {                            // scratchAdd / textNote：一页纸 + 右下角加号徽章
+                                        //（对应 Mac 的 doc.badge.plus / note.text.badge.plus）
+      const tint = tintOf(item);
+      rctx.scale(r / 17, r / 17);
+      roundRect(-8, -8.5, 12.5, 15.5, 2); rctx.fill();              // 纸（白）
+      if (item.kind === "textNote") {                               // 纸上的两行字
+        rctx.strokeStyle = tint; rctx.lineWidth = 1.6; rctx.lineCap = "round";
+        rctx.beginPath();
+        rctx.moveTo(-5.2, -3.4); rctx.lineTo(1.4, -3.4);
+        rctx.moveTo(-5.2, 0.6); rctx.lineTo(1.4, 0.6);
+        rctx.stroke();
+      }
+      // 加号徽章：扇区色圆片 + 白十字
+      rctx.beginPath(); rctx.arc(4.4, 5.4, 4.6, 0, Math.PI * 2);
+      rctx.fillStyle = tint; rctx.fill();
+      rctx.strokeStyle = "#fff"; rctx.lineWidth = 1.5; rctx.lineCap = "round";
+      rctx.beginPath();
+      rctx.moveTo(2, 5.4); rctx.lineTo(6.8, 5.4);
+      rctx.moveTo(4.4, 3); rctx.lineTo(4.4, 7.8);
+      rctx.stroke();
     }
     rctx.restore();
   }

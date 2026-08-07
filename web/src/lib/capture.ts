@@ -58,6 +58,8 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     // （不上线不落库——三端各自独立的缩放滚动就是靠它，见 PROTOCOL.md §4.4）。
     pads: [], padOpen: -1, padStrokes: [], padCur: null,
     padVp: { ox: 0, oy: 0, z: 1 }, padMini: true, padMiniDrag: false, padPinch: null,
+    // 图钉页内拖动（见 shared.ts 字段注释）
+    pinDragIndex: -1, pinDragMoved: false, pinGhost: null,
     // 页宽上报去重
     lastGeomW: -1,
     // WebSocket

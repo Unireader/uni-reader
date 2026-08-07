@@ -53,7 +53,14 @@ export function initInput(refs: CaptureRefs): void {
   }
 
   // ---- 指针：笔=画/平移，手指=平移/双指缩放 ----
+  /// 图钉拖动作废（第二指落下变捏合 / 草稿纸列表被 Mac 回推换掉）：清手势瞬态与乐观预览。
+  function cancelPinDrag(): void {
+    if (G.pinDragIndex < 0 && !G.pinGhost) return;
+    G.pinDragIndex = -1; G.pinDragMoved = false;
+    if (G.pinGhost) { G.pinGhost = null; G.drawNotes(); }
+  }
   function beginPinch(): void {
+    cancelPinDrag();   // 双指 = 捏合，按住图钉的那次拖动作废
     const a = G.touches[G.touchOrder[0]], b = G.touches[G.touchOrder[1]];
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, p = pw();
     G.pinch = {
@@ -79,6 +86,9 @@ export function initInput(refs: CaptureRefs): void {
         G.panId = e.pointerId; G.lastPanX = e.clientX; G.lastPanY = e.clientY;
         G.panDownX = e.clientX; G.panDownY = e.clientY; G.panStarted = false;
         G.vx = 0; G.vy = 0; G.lastMoveT = performance.now();
+        // 落在图钉热区内 → 可能是图钉拖动（越过死区才判定；没越过就是原来的单击开纸）。
+        // 只认手指，与 endTouch 的单击判定同一条纪律。
+        G.pinDragIndex = G.padPinHit(e.clientX, e.clientY); G.pinDragMoved = false;
       }
       e.preventDefault(); return;
     }
@@ -157,6 +167,21 @@ export function initInput(refs: CaptureRefs): void {
         G.ensureImages(); G.drawAll(); updateHud();   // 缩放/双指为本地查看，不上报位置，避免回环
         G.emitGeom();   // 页宽变了要告诉 Mac（选笔盘的像素判定基准），与位置无关、不构成回环
       } else if (e.pointerId === G.panId) {
+        // 图钉拖动：起点在图钉热区内、越过死区后不再平移页面，改为实时拖动图钉。
+        // 只动乐观预览（pinGhost），位置 clamp 在锚点页内，松手才提交 scratchMove。
+        if (G.pinDragIndex >= 0) {
+          if (!G.pinDragMoved) {
+            if (Math.hypot(e.clientX - G.panDownX, e.clientY - G.panDownY) < DEAD) { e.preventDefault(); return; }
+            G.pinDragMoved = true;
+          }
+          const pad = G.pads[G.pinDragIndex];
+          if (pad) {
+            const pl = G.pageLocClamped(e.clientX, e.clientY, pad.page);
+            G.pinGhost = { index: G.pinDragIndex, nx: pl.nx, ny: pl.ny };
+            G.drawNotes();
+          }
+          e.preventDefault(); return;
+        }
         if (!G.panStarted) {
           if (Math.hypot(e.clientX - G.panDownX, e.clientY - G.panDownY) < DEAD) { e.preventDefault(); return; }
           G.panStarted = true; G.lastPanX = e.clientX; G.lastPanY = e.clientY; G.lastMoveT = performance.now();   // 越过死区才开始
@@ -251,12 +276,17 @@ export function initInput(refs: CaptureRefs): void {
       G.lastPanX = t.x; G.lastPanY = t.y; G.panDownX = t.x; G.panDownY = t.y; G.panStarted = false;
     } else if (G.touchOrder.length === 0) {
       if (G.panStarted) startMomentum();   // 松手甩动 → 惯性
-      else {
+      else if (G.pinDragMoved && G.pinGhost) {
+        // 图钉拖动松手：提交 scratchMove（Mac 钳位/判定后经 scratchpads 全量回推）。
+        // pinGhost 不清——留着当乐观预览，等回推在 applyScratchPads 里对齐（同 scratchPaper 惯例）。
+        G.send({ type: "scratchMove", index: G.pinGhost.index, nx: G.pinGhost.nx, ny: G.pinGhost.ny });
+      } else {
         // 单指**单击**（全程没越过死区）：命中草稿纸图钉就打开那张纸。
         // 只认手指、不认笔——平板上笔是用来写字的，让笔点图钉必然会在图钉上落笔时误触发。
         const i = G.padPinHit(G.panDownX, G.panDownY);
         if (i >= 0) G.padOpenIndex(i);
       }
+      G.pinDragIndex = -1; G.pinDragMoved = false;
       G.panId = null; G.panStarted = false;
     } else if (G.touchOrder.length >= 2) {
       beginPinch();

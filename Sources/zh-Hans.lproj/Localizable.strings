@@ -202,6 +202,8 @@
 "Scratchpad %d" = "草稿纸 %d";
 "Scratchpads" = "草稿纸";
 "New Scratchpad Here" = "在此新建草稿纸";
+"New Scratchpad" = "新建草稿纸";
+"New Text Note" = "新建文字笔记";
 "No scratchpads yet. Right-click in the page to add one." = "还没有草稿纸。在页面上右键即可新建一张。";
 "Open · anchored on page %d" = "打开 · 挂在第 %d 页";
 "Go to anchor" = "跳到锚点";

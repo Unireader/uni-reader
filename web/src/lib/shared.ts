@@ -44,7 +44,7 @@ export interface WireMsg {
 
 /// 环形选笔盘扇区项（Mac 下发）。
 export interface RadialItem {
-  kind: string;           // "pen" | "erase" | "page"
+  kind: string;           // "pen" | "erase" | "page" | "scratchAdd" | "textNote"
   color?: string;
   t?: string;
   w?: number;
@@ -189,6 +189,12 @@ export interface GState {
   padMini: boolean;                // minimap 开关
   padMiniDrag: boolean;            // 正在 minimap 上拖动定位
   padPinch: { d0: number; z0: number } | null;   // 草稿纸上的双指捏合锚点
+  // 图钉页内拖动（手指按住图钉、越过死区 = 拖动，否则保持单击开纸）：
+  // pinDragIndex/pinDragMoved 是手势瞬态；pinGhost 是乐观预览位置（拖动中 + 松手后等
+  // scratchpads 回推期间），applyScratchPads 落地即清——以 Mac 回推为权威（同 scratchPaper 惯例）。
+  pinDragIndex: number;            // 按住时命中的图钉下标（-1 = 无）
+  pinDragMoved: boolean;           // 已越过死区 → 本次是拖动而非单击
+  pinGhost: { index: number; nx: number; ny: number } | null;
   // 页宽上报去重
   lastGeomW: number;
   // WebSocket

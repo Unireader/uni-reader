@@ -34,6 +34,8 @@ enum RadialItem: Equatable {
     case pen(Int)   // `AppModel.pens` 下标
     case erase
     case page
+    case scratchAdd   // 新建草稿纸（盘心即锚点，线上 kind=3）
+    case textNote     // 新建文字笔记（线上 kind=4，Mac 下发 noteNew 让平板开编辑器）
 }
 
 /// 环形选笔盘的布局契约（Mac 判定 / Mac 绘制 / 平板绘制三处唯一真源）。
@@ -42,9 +44,10 @@ enum RadialItem: Equatable {
 /// 不看半径——半径分层（旧版内环笔/外环工具）要求用户精确控制笔离中心的距离，而那个距离在页内归一化
 /// 坐标里随两端缩放漂移，是「选择很不友好」的根因。现在半径只用来判「有没有离开中心取消区」。
 enum RadialLayout {
-    /// 扇区顺序：N 支笔在前（0 号笔在正上方），橡皮擦、翻页收尾。
+    /// 扇区顺序：N 支笔在前（0 号笔在正上方），橡皮擦、翻页、新建草稿纸、新建笔记收尾。
+    /// ⚠️ 线上 kind 按**追加**扩展（0=pen 1=erase 2=page 3=scratchAdd 4=textNote），顺序与这里一一对应。
     static func items(penCount: Int) -> [RadialItem] {
-        (0..<max(0, penCount)).map { RadialItem.pen($0) } + [.erase, .page]
+        (0..<max(0, penCount)).map { RadialItem.pen($0) } + [.erase, .page, .scratchAdd, .textNote]
     }
 
     // 盘的屏幕尺度。Mac 用 pt、平板用 CSS px，取同一组数值 → 两端看到的是同一个盘。

@@ -124,6 +124,20 @@
       🔗 新依赖方向：pad→local 引用了 `ScratchController.PALETTE` 等三个常量（介意可上移到 shared）。
     - **未做/待验**：纸上「笔当橡皮」（侧键/橡皮头）与环形盘不做（同 web 决策）；真机联调清单见
       「接下来」第 8 条。
+    - **2026-08-07：圆盘加「新建草稿纸/新建文字笔记」扇区 + 图钉页内拖动（三端，待真机验证）**：
+      · **协议扩展（只追加）**：`radial`(0x37) kind 表加 `3=scratchAdd 4=textNote`；新 opcode
+        `scratchMove`(0x2E, C→S：`u16 index·f32 nx·f32 ny`，图钉同页内挪锚点，回推为权威）与
+        `noteNew`(0x3F, S→C：`u32 page·f32 nx·f32 ny`，叫平板在该点开笔记编辑器，保存走现有
+        textNote 上行闭环）。向量 #65~#69，`wire-codec-test` 74 / `wire-cross-test` 138 全绿。
+      · **Mac**：`RadialItem` 加两 case（扇区顺序：笔…/橡皮/翻页/新建草稿纸/新建笔记）；commit
+        建纸走右键菜单同路径、textNote 广播 noteNew；`applyScratchMove` 钳位 0~1、越界丢弃。
+        Mac 本机图钉 UI 拖动没做（用户没要求）。
+      · **安卓两模式**：模式1 `RadialController` 加两扇区（建纸锚点=盘心 / 该点开编辑器）；
+        模式2 只画新扇区（判定在 Mac），noteNew 先 `scrollToPageFrac` 本地定位（不发 gotoPage
+        抢 Mac 视口）再开编辑器。**图钉拖动**：基类 `PageCanvasView` 加手指拖动钩子（越过平移
+        死区才转拖动、单击开纸不变、只认手指），模式1 松手落库、模式2 发 scratchMove 乐观预览。
+      · **web**：新扇区绘制 + noteNew 开编辑器 + 图钉拖动（pinGhost 乐观，回推对齐）。
+      · 真机待验：新扇区图标/高亮观感、拖图钉松手后回推不跳位、textNote 扇区提交后平板弹编辑器。
     - **2026-08-07 点阵强化**（用户报「太小了基本看不出来」）：点从 `max(.8, min(1.6, z))` / 0.10
       放到 `max(1.5, min(3, z*1.8))` / 0.18。间距本来就有 22~88px，点再细就没了。
       **Mac `ScratchGridLayer` 与 web `scratch.ts drawPattern` 是同一套数，改一边必须同步另一边。**

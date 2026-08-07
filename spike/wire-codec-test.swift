@@ -112,6 +112,18 @@ let canonical: [[String: Any]] = [
     // 改纸样（0x2D）：底色 + 底纹。plain 也要走一遍（编码 0，是最容易被 `?? 1` 兜底吃掉的值）。
     ["type": "scratchPaper", "index": 1, "bg": "rgba(246,236,214,1.0)", "pattern": "grid"],
     ["type": "scratchPaper", "index": 0, "bg": "rgba(255,255,255,1.0)", "pattern": "plain"],
+    // —— 环形盘新扇区（radial kind 尾部追加 3=scratchAdd 4=textNote）+ 图钉拖动/新建笔记 ——
+    // kind≠0 的项 pen 字段为占位 0（定长惯例），与 #33 的 erase/page 同款。
+    ["type": "radial", "open": true, "page": 2, "cx": 0.5, "cy": 0.5, "highlight": 3,
+     "items": [["kind": "pen", "color": "rgba(24,90,210,0.5)", "w": 8, "t": "ballpoint"],
+               ["kind": "scratchAdd", "color": "rgba(0,0,0,1.0)", "w": 0, "t": "ballpoint"],
+               ["kind": "textNote", "color": "rgba(0,0,0,1.0)", "w": 0, "t": "ballpoint"]]],
+    // 图钉页内拖动（0x2E，C→S）：u16 index · f32 nx · f32 ny。index 大值 + nx/ny 边界值。
+    ["type": "scratchMove", "index": 0, "nx": 0, "ny": 1],
+    ["type": "scratchMove", "index": 65535, "nx": 1, "ny": 0],
+    // 新建文字笔记下发（0x3F，S→C）：u32 page · f32 nx · f32 ny。
+    ["type": "noteNew", "page": 0, "nx": 0, "ny": 1],
+    ["type": "noteNew", "page": 305419896, "nx": 1, "ny": 0],
 ]
 
 var pass = 0, fail = 0

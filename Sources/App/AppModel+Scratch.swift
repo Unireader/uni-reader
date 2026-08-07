@@ -153,6 +153,19 @@ extension AppModel {
         s.scratchPads[i].updatedAt = .now
     }
 
+    /// 平板请求把第 index 张纸的图钉锚点挪到**同页内** (nx, ny)（页不变，页内归一化 0~1，越界钳位）。
+    /// 与 `applyScratchPaper` 同套路：改完 `scratchPads` 的 @Published 变化被 ContentView 的 onChange
+    /// 捕获 → 落库 + 回推 `scratchpads`；本机 UI 的图钉位置同一条链路自动刷新（无需显式通知）。
+    func applyScratchMove(_ obj: [String: Any], to s: DocSession) {
+        guard let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
+        let nx = min(max(0, (obj["nx"] as? NSNumber)?.doubleValue ?? 0.5), 1)
+        let ny = min(max(0, (obj["ny"] as? NSNumber)?.doubleValue ?? 0.5), 1)
+        guard s.scratchPads[i].anchorX != nx || s.scratchPads[i].anchorY != ny else { return }
+        s.scratchPads[i].anchorX = nx
+        s.scratchPads[i].anchorY = ny
+        s.scratchPads[i].updatedAt = .now
+    }
+
     /// 平板请求在某页某处新建一张草稿纸并打开它。
     func applyScratchAdd(_ obj: [String: Any], to s: DocSession) {
         let maxPage = max(0, (s.pdf?.pageCount ?? 1) - 1)

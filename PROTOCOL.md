@@ -75,6 +75,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x2B` | scratchOpen | C→S | 可靠 |
 | `0x2C` | scratchAdd | C→S | 可靠 |
 | `0x2D` | scratchPaper | C→S | 可靠 |
+| `0x2E` | scratchMove | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -90,6 +91,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x3C` | toc | S→C | 可靠 |
 | `0x3D` | scratchpads | S→C | 可靠 |
 | `0x3E` | scratchStrokes | S→C | 可靠 |
+| `0x3F` | noteNew | S→C | 可靠 |
 | `0x40` | scroll | C→S | **RT** |
 | `0x41` | hover | C→S | **RT** |
 | `0x42` | ink | C→S | **RT** |
@@ -121,6 +123,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `scratchOpen` | `u16 index` | `{type:"scratchOpen", index}`（开第几张草稿纸；`0xFFFF` = 关闭，对象里 `-1`）|
 | `scratchAdd` | `u32 page` · `f32 nx` · `f32 ny` | `{type:"scratchAdd", page, nx, ny}`（在该页该处新建一张并打开）|
 | `scratchPaper` | `u16 index` · `u8 r` · `u8 g` · `u8 b` · `f32 a` · `u8 pattern` | `{type:"scratchPaper", index, bg, pattern}`（改第几张纸的纸样）|
+| `scratchMove` | `u16 index` · `f32 nx` · `f32 ny` | `{type:"scratchMove", index, nx, ny}`（把第几张纸的图钉锚点挪到**同页内**该处，页不变）|
 | `mode` | `u8 mode` | `{type:"mode", mode}`（"note"/"erase"/"page"）|
 | `pen` | `u16 index` | `{type:"pen", index}` |
 | `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|
@@ -206,12 +209,15 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `toc` | `str docId` · `u16 n` · `n ×( u8 depth, u8 hasPage, u32 page, f32 frac, str label )` |
 | `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a, u8 pattern )` |
 | `scratchStrokes` | `u32 ackRel` · `u32 n` · `n ×( pen, u16 m, m × pt3 )` |
+| `noteNew` | `u32 page` · `f32 nx` · `f32 ny` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
 
 `radial`（环形选笔盘）：长按检测、扇区判定、选中提交**全部在 Mac**，这条只是把盘的状态镜像给平板去画
 （平板不做任何判定）。`open=0` 时 payload 到此为止（收盘）。`highlight` = 当前指向的扇区下标，
-`0xFFFF` = 无（指针在中心取消区）；解码后对象里是 `-1`。`kind` u8：`0=pen 1=erase 2=page`，
-`kind≠0` 的项 `pen` 字节为占位 0（保持定长）。扇区**整圆均分**，第 0 项中心在正上方（12 点）、顺时针排列。
+`0xFFFF` = 无（指针在中心取消区）；解码后对象里是 `-1`。`kind` u8：`0=pen 1=erase 2=page 3=scratchAdd 4=textNote`
+（**只许尾部追加**），`kind≠0` 的项 `pen` 字节为占位 0（保持定长）。扇区**整圆均分**，第 0 项中心在正上方（12 点）、顺时针排列。
+`scratchAdd` = 盘心新建一张草稿纸并打开（与 `scratchAdd`(0x2C) 上行殊途同归，只是落点取盘心）；
+`textNote` = Mac 提交后下发 `noteNew`（§4.2）让平板在盘心点开文字笔记编辑器。
 
 `pressRing`（长按进度环，环形盘的前置动画）：同样是 Mac 判定、平板照画。落笔即 `on=1`（Mac 起 1s 定时），
 判为在画（位移超阈值）/ 长按达成转成盘 / 抬笔，都发 `on=0`。**不下发时间戳**——平板收到 `on=1` 就用
@@ -239,8 +245,10 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   > 的隐含契约，还得配超时兜底，安卓端为此翻车两次（补丁史见 `ANDROID-STANDALONE-PLAN.md §9.9`）。
   > `ackRel` 单调递增且由真源侧给出，不需要兜底：它最终必然追上。乐观笔迹同理——快照一旦满足判据，
   > 就说明所有已发出的 `ink end` 都已进真源，本端的乐观副本可以整批撤掉，不必逐条配对。
-- `radial` → `{type:"radial", open:true, page, cx, cy, highlight, items:[{kind:"pen"|"erase"|"page", color, w, t},…]}`；收盘 → `{type:"radial", open:false}`
+- `radial` → `{type:"radial", open:true, page, cx, cy, highlight, items:[{kind:"pen"|"erase"|"page"|"scratchAdd"|"textNote", color, w, t},…]}`；收盘 → `{type:"radial", open:false}`
 - `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
+- `noteNew` → `{type:"noteNew", page, nx, ny}`（Mac 在环形盘提交「新建文字笔记」扇区后下发：
+  平板在 `page` 页内 (nx, ny) 处点开文字笔记编辑器；编辑完成走现有 `textNote`(0x24) 上行闭环）
 - `notes` → `{type:"notes", list:[{id, page, nx, ny, text},…]}`（文字笔记**全量镜像**，类比 strokes：
   Mac 是唯一真源，平板不落库；对选区锚定的注解用 anchor 原点作 nx/ny。文档切换/增删后重发）
 - `layers` → `{type:"layers", active, list:[{r,g,b,visible,name},…]}`（多层笔迹的图层表，类比 `pens`：
@@ -359,6 +367,9 @@ Mac 是「当前打开哪张草稿纸」的唯一真源（`scratchpads.open`）�
 - `scratchOpen`：平板请求开/关。Mac 判定后回推 `scratchpads`+`scratchStrokes`，两端自然一致。
 - `scratchAdd`：平板请求新建一张并打开（锚在它给的页与页内位置）。
 - `scratchPaper`：平板请求改第 `index` 张纸的纸样。Mac 判定 + 落库后回推 `scratchpads`。
+- `scratchMove`：平板请求把第 `index` 张纸的图钉锚点挪到**同页内** (nx, ny)（页不变；
+  nx/ny 越界由 Mac 钳位到 0~1，index 越界整帧丢弃——同 `scratchPaper` 的防御风格）。
+  Mac 判定 + 落库后照旧回推 `scratchpads`（锚点字段就在全量镜像里，两端自然一致）。
 
 **视口不上线**：每一端的滚动/缩放/minimap 各自独立（用户明确要求），打开一律回到画布原点。
 库里也不存视口——存了就会变成「谁最后关谁说了算」的跨端争用。

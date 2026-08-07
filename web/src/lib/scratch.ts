@@ -478,6 +478,9 @@ export function initScratch(refs: CaptureRefs): void {
 
   /// Mac 下发的 `scratchpads`：列表 + 开着第几张。开/关/换纸都在这里落地。
   function applyScratchPads(o: { open?: number; list?: Pad[] }): void {
+    // 图钉拖动的乐观预览到此对齐（回推为权威）；进行中的拖动手势一并作废——
+    // 列表已整体替换，按下标记的拖动目标语义已经变了。
+    G.pinDragIndex = -1; G.pinDragMoved = false; G.pinGhost = null;
     const wasOpen = G.padOpen, wasId = G.pads[wasOpen] ? G.pads[wasOpen].id : "";
     G.pads = o.list || [];
     G.padOpen = typeof o.open === "number" ? o.open : -1;

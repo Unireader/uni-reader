@@ -23,11 +23,13 @@ enum WireCodec {
         static let layerSelect: UInt8 = 0x26, layerVisible: UInt8 = 0x27, layerAdd: UInt8 = 0x28, gotoPage: UInt8 = 0x29
         static let openDoc: UInt8 = 0x2A
         static let scratchOpen: UInt8 = 0x2B, scratchAdd: UInt8 = 0x2C, scratchPaper: UInt8 = 0x2D
+        static let scratchMove: UInt8 = 0x2E
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
         static let layers: UInt8 = 0x3A, library: UInt8 = 0x3B, toc: UInt8 = 0x3C
         static let scratchPads: UInt8 = 0x3D, scratchStrokes: UInt8 = 0x3E
+        static let noteNew: UInt8 = 0x3F
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
         static let eraser: UInt8 = 0x46
@@ -41,8 +43,8 @@ enum WireCodec {
     private static let patterns = ["plain", "dots", "grid"]
     static func patternCode(_ p: String) -> UInt8 { UInt8(patterns.firstIndex(of: p) ?? 1) }
     static func patternName(_ c: UInt8) -> String { Int(c) < patterns.count ? patterns[Int(c)] : "dots" }
-    /// 环形盘扇区类型：`0=pen 1=erase 2=page`。
-    private static let radialKinds = ["pen", "erase", "page"]
+    /// 环形盘扇区类型：`0=pen 1=erase 2=page 3=scratchAdd 4=textNote`（只许尾部追加）。
+    private static let radialKinds = ["pen", "erase", "page", "scratchAdd", "textNote"]
     static func radialKindCode(_ k: String) -> UInt8 { UInt8(radialKinds.firstIndex(of: k) ?? 0) }
     static func radialKindName(_ c: UInt8) -> String { Int(c) < radialKinds.count ? radialKinds[Int(c)] : "pen" }
     /// `highlight` 线上用 u16 表示，`0xFFFF` = 无高亮（中心取消区），对象模型里是 -1。
@@ -260,12 +262,19 @@ enum WireCodec {
         case "scratchOpen": w.u8(Op.scratchOpen); w.u16(intOf(o["index"]) < 0 ? scratchNoOpen : intOf(o["index"]))
         case "scratchAdd":
             w.u8(Op.scratchAdd); w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"]))
+        case "noteNew":
+            // Mac 判盘提交「新建文字笔记」扇区后下发（S→C）：平板在该页该处点开文字笔记编辑器。
+            w.u8(Op.noteNew); w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"]))
         case "scratchPaper":
             // 改第 index 张纸的纸样（底色 + 底纹）。Mac 判定后回推 scratchpads，两端自然一致。
             w.u8(Op.scratchPaper); w.u16(intOf(o["index"]))
             let (pr, pg, pb, pa) = parseColor(strOf(o["bg"]))
             w.u8(pr); w.u8(pg); w.u8(pb); w.f32(Double(pa))
             w.u8(patternCode(strOf(o["pattern"])))
+        case "scratchMove":
+            // 页内拖动图钉：挪第 index 张纸的锚点（页不变，nx/ny 页内归一化）。Mac 判定后回推 scratchpads。
+            w.u8(Op.scratchMove); w.u16(intOf(o["index"]))
+            w.f32(num(o["nx"])); w.f32(num(o["ny"]))
         case "inkCancel": w.u8(Op.inkCancel)
         case "strokes":
             w.u8(Op.strokes)
@@ -520,11 +529,17 @@ enum WireCodec {
         case Op.scratchAdd:
             out = ["type": "scratchAdd", "page": NSNumber(value: r.u32()),
                    "nx": NSNumber(value: r.f32()), "ny": NSNumber(value: r.f32())]
+        case Op.noteNew:
+            out = ["type": "noteNew", "page": NSNumber(value: r.u32()),
+                   "nx": NSNumber(value: r.f32()), "ny": NSNumber(value: r.f32())]
         case Op.scratchPaper:
             let idx = r.u16()
             let pr = r.u8(), pg = r.u8(), pb = r.u8(); let pa = r.f32()
             out = ["type": "scratchPaper", "index": NSNumber(value: idx),
                    "bg": cssColor(pr, pg, pb, Float(pa)), "pattern": patternName(r.u8())]
+        case Op.scratchMove:
+            out = ["type": "scratchMove", "index": NSNumber(value: r.u16()),
+                   "nx": NSNumber(value: r.f32()), "ny": NSNumber(value: r.f32())]
         case Op.radial:
             if r.u8() == 0 { out = ["type": "radial", "open": false]; break }
             let page = r.u32(), cx = r.f32(), cy = r.f32()

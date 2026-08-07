@@ -202,6 +202,8 @@
 "Scratchpad %d" = "Scratchpad %d";
 "Scratchpads" = "Scratchpads";
 "New Scratchpad Here" = "New Scratchpad Here";
+"New Scratchpad" = "New Scratchpad";
+"New Text Note" = "New Text Note";
 "No scratchpads yet. Right-click in the page to add one." = "No scratchpads yet. Right-click in the page to add one.";
 "Open · anchored on page %d" = "Open · anchored on page %d";
 "Go to anchor" = "Go to anchor";

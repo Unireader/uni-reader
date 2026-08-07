@@ -100,6 +100,8 @@ struct RadialMenuView: View {
         case .pen(let i): return pens.indices.contains(i) ? pens[i].color.swiftUIColor : .accentColor
         case .erase: return Color(red: 0.96, green: 0.55, blue: 0.20)
         case .page: return Color(red: 0.25, green: 0.72, blue: 0.70)
+        case .scratchAdd: return Color(red: 0.60, green: 0.45, blue: 0.90)
+        case .textNote: return Color(red: 0.30, green: 0.60, blue: 0.95)
         }
     }
 
@@ -116,6 +118,10 @@ struct RadialMenuView: View {
             disc(fill: tint(.erase), symbol: "eraser.fill", symbolColor: .white, highlighted: on)
         case .page:
             disc(fill: tint(.page), symbol: "hand.raised.fill", symbolColor: .white, highlighted: on)
+        case .scratchAdd:
+            disc(fill: tint(.scratchAdd), symbol: "doc.badge.plus", symbolColor: .white, highlighted: on)
+        case .textNote:
+            disc(fill: tint(.textNote), symbol: "note.text.badge.plus", symbolColor: .white, highlighted: on)
         }
     }
 
@@ -164,6 +170,8 @@ struct RadialMenuView: View {
         case .pen(let i): return pens.indices.contains(i) ? pens[i].name : L("Pen")
         case .erase: return L("Eraser")
         case .page: return L("Page Turn")
+        case .scratchAdd: return L("New Scratchpad")
+        case .textNote: return L("New Text Note")
         }
     }
 

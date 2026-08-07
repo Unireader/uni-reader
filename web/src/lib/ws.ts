@@ -1,6 +1,6 @@
 // WebSocket 模块：二进制线格式收发、自动重连（1.5s 起步翻倍封顶 10s）、心跳看门狗、
 // Mac 下行消息分发（布局/视口/文档/笔/模式/环形盘/笔迹）。逐行移植自原 capture.html IIFE。
-import { G, MODES, clamp, pw, curMode } from "./shared.js";
+import { G, BAR, MODES, clamp, pw, curMode } from "./shared.js";
 import type { Layer, Pen, WireMsg } from "./shared.js";
 import { S, updateHud, updatePageLabel, recordRtt } from "./hud.svelte.js";
 import type { LibEntry, TocEntry } from "./hud.svelte.js";
@@ -114,6 +114,8 @@ export function initWs(): void {
     }
     // 草稿纸列表 + 开着第几张（Mac 是「哪张纸开着」的唯一真源；本地只发 scratchOpen/scratchAdd 请求）。
     else if (o.type === "scratchpads") { G.applyScratchPads(o); }
+    // Mac 在环形盘提交「新建文字笔记」→ 在指定页内锚点打开编辑器（新建态，保存走 textNote 上行闭环）。
+    else if (o.type === "noteNew") { openNoteAt(o); }
     // 当前那张纸上的全量笔迹（画布坐标，与页内笔迹不是一套坐标系，见 PROTOCOL.md §4.4）。
     else if (o.type === "scratchStrokes") { G.applyScratchStrokes(o); }
     // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
@@ -129,6 +131,24 @@ export function initWs(): void {
   function setDocs(o: WireMsg): void {
     S.docs = o.list || [];
     S.docValue = o.following ? "" : (o.selected || "");
+  }
+
+  /// Mac 下发的 noteNew（环形盘「新建文字笔记」扇区）：在该页内锚点打开 TextNoteEditor 新建态。
+  /// 复用「文字笔记模式点页面开编辑器」的同一入口（S.noteEditor），保存仍走 textNote 上行闭环。
+  /// 盘本就开在平板当前可见页，锚点正常必然可见；万一不可见（页已滚走）就先程序化翻到该处
+  /// 再开——本地滚动 + emitScroll 让 Mac 跟随（同翻页按钮惯例），不发 gotoPage（不抢 Mac 的视口）。
+  function openNoteAt(o: WireMsg): void {
+    const pg = o.page || 0;
+    if (pg < 0 || pg >= G.pageCount) return;   // 越界丢弃
+    const nx = o.nx || 0, ny = o.ny || 0;
+    const v0 = G.pageToView(pg, nx, ny);
+    if (v0.y < BAR || v0.y > window.innerHeight) {
+      G.cancelMomentum();
+      G.scrollY = clamp(G.offY[pg] + ny * G.dispH[pg] - G.availH / 2, 0, G.maxScrollY);
+      G.ensureImages(); G.drawAll(); updatePageLabel(); G.emitScroll();
+    }
+    const v = G.pageToView(pg, nx, ny);
+    S.noteEditor = { id: crypto.randomUUID(), page: pg, nx: nx, ny: ny, x: v.x, y: v.y, text: "", isNew: true };
   }
 
   // 收到 Mac 视口 → 程序化滚到该(页,纵向比例)，不回发。

@@ -333,6 +333,8 @@ final class AppModel: ObservableObject {
             applyScratchAdd(obj, to: s)
         case "scratchPaper":
             applyScratchPaper(obj, to: s)
+        case "scratchMove":
+            applyScratchMove(obj, to: s)
         default:
             break
         }
@@ -487,6 +489,12 @@ final class AppModel: ObservableObject {
                 case .pen(let i): applyPenSelection(index: i)   // 选笔 → 顺带回笔记模式
                 case .erase: setPadMode("erase")
                 case .page: setPadMode("page")
+                case .scratchAdd:
+                    // 盘心即锚点：与右键菜单「在此新建草稿纸」同一条路径（建纸+打开，回推 scratchpads）
+                    if let s = padSession { addScratchPad(in: s, page: r.page, nx: r.cx, ny: r.cy) }
+                case .textNote:
+                    // 让平板在该处点开文字笔记编辑器（平板编辑完走 textNote 上行闭环，Mac 不落任何数据）
+                    server.broadcast(["type": "noteNew", "page": r.page, "nx": r.cx, "ny": r.cy])
                 }
             }
             padSession?.radial = nil
@@ -524,6 +532,8 @@ final class AppModel: ObservableObject {
             case .pen(let i): return entry("pen", pens.indices.contains(i) ? pens[i] : nil)
             case .erase: return entry("erase", nil)
             case .page: return entry("page", nil)
+            case .scratchAdd: return entry("scratchAdd", nil)
+            case .textNote: return entry("textNote", nil)
             }
         }
         server.broadcast(["type": "radial", "open": true, "page": r.page, "cx": r.cx, "cy": r.cy,

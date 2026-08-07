@@ -13,17 +13,18 @@
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
     layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28, gotoPage: 0x29, openDoc: 0x2A,
-    scratchOpen: 0x2B, scratchAdd: 0x2C, scratchPaper: 0x2D,
+    scratchOpen: 0x2B, scratchAdd: 0x2C, scratchPaper: 0x2D, scratchMove: 0x2E,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A, library: 0x3B, toc: 0x3C,
-    scratchPads: 0x3D, scratchStrokes: 0x3E,
+    scratchPads: 0x3D, scratchStrokes: 0x3E, noteNew: 0x3F,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
     lassoMove: 0x47,
     nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
-  var RKIND = ["pen", "erase", "page"];      // 环形盘扇区类型
+  // 环形盘扇区类型。**只许尾部追加**（kind≠0 的项 pen 字段是占位 0，照旧按定长读掉）。
+  var RKIND = ["pen", "erase", "page", "scratchAdd", "textNote"];
   var NO_HL = 0xFFFF;                        // highlight 线上哨兵：无高亮（中心取消区）→ 对象里 -1
   var NO_PAD = 0xFFFF;
   // 草稿纸底纹：0=plain 1=dots 2=grid（同 BRUSH/MODEK 的编码惯例，越界回退 dots）
@@ -236,6 +237,15 @@
         w.u8(patCode(o.pattern));
         break;
       }
+      case "scratchMove":
+        // 图钉页内拖动（0x2E，C→S）：把第 index 张纸的图钉锚点挪到**同页内** (nx, ny)。
+        // Mac 钳位 0~1、越界 index 丢弃，经 scratchpads 全量回推（以回推为权威，同 scratchPaper 惯例）。
+        w.u8(OP.scratchMove); w.u16(o.index || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
+        break;
+      case "noteNew":
+        // Mac 在环形盘提交「新建文字笔记」后下发（0x3F，S→C）：平板在该页内锚点打开编辑器。
+        w.u8(OP.noteNew); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
+        break;
       case "inkCancel": w.u8(OP.inkCancel); break;
       case "strokes": {
         // ackRel：Mac 已连续处理到的该客户端 REL seq，按收件人填（PROTOCOL.md §4.2）。
@@ -405,6 +415,10 @@
                  bg: "rgba(" + qr + "," + qg + "," + qb + "," + qa + ")",
                  pattern: PATK[r.u8()] || "dots" };
       }
+      case OP.scratchMove:
+        return { type: "scratchMove", index: r.u16(), nx: r.f32(), ny: r.f32() };
+      case OP.noteNew:
+        return { type: "noteNew", page: r.u32(), nx: r.f32(), ny: r.f32() };
       case OP.inkCancel: return { type: "inkCancel" };
       case OP.strokes: {
         var sack = r.u32(), sn = r.u32(), slist = new Array(sn);
