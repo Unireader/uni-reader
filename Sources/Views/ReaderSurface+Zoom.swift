@@ -45,7 +45,8 @@ extension ReaderSurface {
     }
 
     func pinchChanged(_ v: MagnifyGesture.Value) {
-        guard layout != nil, scratch.didInitialGeo else { return }
+        // 草稿纸盖着时捏合归草稿纸（它有自己的无限画布缩放），别让下面的 PDF 跟着一起缩。
+        guard layout != nil, scratch.didInitialGeo, session.openPadID == nil else { return }
         if scratch.pinch == nil {
             follower.reset()                                   // 用户接管
             cancelZoomAnim()                                   // 捏合接管：停掉进行中的按钮/⌘ 缩放动画
@@ -192,7 +193,8 @@ extension ReaderSurface {
     func installWheelMonitor() {
         guard scratch.wheelMonitor == nil else { return }
         scratch.wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
-            guard event.modifierFlags.contains(.command),
+            guard session.openPadID == nil,   // 草稿纸开着时滚轮全归它（它自己也装了个监视器）
+                  event.modifierFlags.contains(.command),
                   event.momentumPhase == [],
                   let p = scratch.cursorP,
                   layout != nil, scratch.didInitialGeo, scratch.pinch == nil else { return event }

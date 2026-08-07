@@ -24,6 +24,14 @@ export interface TocEntry {
   label: string;
 }
 
+/// 草稿纸列表一项（Mac `scratchpads` 广播）。`page` = 锚点所在页（列表里显示「第 N 页」）。
+export interface PadEntry {
+  id: string;
+  title: string;
+  page: number;
+  index: number;
+}
+
 /// 文字笔记编辑器的打开状态（低频 UI，放 runes；面板定位用打开瞬间的视口坐标）。
 export interface NoteEditorState {
   id: string;                          // 笔记 id（新建时打开即生成）
@@ -61,6 +69,11 @@ export const S = $state({
   library: [] as LibEntry[],  // 工作区书库（Mac library 广播镜像）
   libraryWs: "",           // 工作区显示名
   curPage: 0,              // 当前页（0-based）：目录的「当前章节」追踪用
+  // ---- 草稿纸（v8）----
+  pads: [] as PadEntry[],  // 草稿纸列表（Mac scratchpads 广播镜像）
+  padOpen: -1,             // 当前打开第几张（-1 = 没开）
+  padMini: true,           // minimap 开关（顶栏按钮回显）
+  padList: false,          // 草稿纸列表弹层开关
 });
 
 export function updatePageLabel(): void {

@@ -72,6 +72,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x28` | layerAdd | C→S | 可靠 |
 | `0x29` | gotoPage | C→S | 可靠 |
 | `0x2A` | openDoc | C→S | 可靠 |
+| `0x2B` | scratchOpen | C→S | 可靠 |
+| `0x2C` | scratchAdd | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -85,6 +87,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x3A` | layers | S→C | 可靠 |
 | `0x3B` | library | S→C | 可靠 |
 | `0x3C` | toc | S→C | 可靠 |
+| `0x3D` | scratchpads | S→C | 可靠 |
+| `0x3E` | scratchStrokes | S→C | 可靠 |
 | `0x40` | scroll | C→S | **RT** |
 | `0x41` | hover | C→S | **RT** |
 | `0x42` | ink | C→S | **RT** |
@@ -196,6 +200,8 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `layers` | `u16 active` · `u16 n` · `n ×( u8 r, u8 g, u8 b, u8 visible, str name )` |
 | `library` | `str wsName` · `u16 n` · `n ×( str id, str title, u8 open )` |
 | `toc` | `str docId` · `u16 n` · `n ×( u8 depth, u8 hasPage, u32 page, f32 frac, str label )` |
+| `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a )` |
+| `scratchStrokes` | `u32 ackRel` · `u32 n` · `n ×( pen, u16 m, m × pt3 )` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
 
 `radial`（环形选笔盘）：长按检测、扇区判定、选中提交**全部在 Mac**，这条只是把盘的状态镜像给平板去画
@@ -254,6 +260,10 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   （Mac 端 `TOCListView` 同款语义：不显示页码、disabled、不参与当前章节追踪）。
   没有目录的 PDF 发 `n=0`（平板显示「无目录」空态）。**发送时机**：文档载入完成、客户端接入、
   平板跟随的会话变化）
+- `scratchpads` → `{type:"scratchpads", open, list:[{id, title, page, nx, ny, bg},…]}`（**草稿纸列表全量镜像**）
+- `scratchStrokes` → `{type:"scratchStrokes", ackRel, list:[{pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
+
+  见下方 §4.4。
 - `nack` → `{type:"nack", seqs:[…]}`
 - `eraser` → `{type:"eraser", size, mode, ring}`（双向消息，布局见 §4.1；S→C 方向用于 Mac 侧变更/新客户端补发）
 
@@ -291,6 +301,50 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | 0 | `line` | 这一笔是**直线（尺子）笔**：整笔恒为「起点 + 当前终点」两点 |
 
 `line=1` 时后续 `ink move` 的点是**替换终点**而不是追加：Mac 取该批的**最后一个点**（前面的是拖动过程中的中间终点，丢弃），把活体笔迹重置为 `[起点, 该点]`，抬笔提交的就是一条两点直线。45° 吸附本身在**客户端**算完再上行（客户端要即时回显，Mac 复算只会两端算出两条线），Mac 只负责认「两点」这个语义。`line=0` 或缺 flags = 老行为（move 追加点）。
+
+### 4.4 草稿纸（v8，0x2B/0x2C/0x3D/0x3E）
+
+草稿纸 = 盖在 PDF 之上的**无限白板**，不改 PDF 原文、不属于任何一页。一篇文档可有多张，
+各自由 (页, 页内归一化点) 锚定「当初在哪儿建的」（页面上留一枚图钉）。
+
+#### 🔴 画布坐标系（三端契约，改它等于改数据格式）
+
+**单位 = 逻辑点**（macOS pt / CSS px / Android dp），原点 = 创建那一刻的视口中心，
+x 向右 y 向下，**无界且可负**。因此：
+
+- `scratchStrokes` 的 `pts` 与草稿纸打开时上行的 `ink`/`erase` 的 `pts`，**都是画布坐标**，
+  不是页内 0~1 归一化。线上都是 `f32`，负值/大值天然装得下。
+- 笔宽 `pen.w` 与页内笔迹**同语义**（zoom=1 时的屏幕宽度）→ 三端现成的笔迹渲染器只要把
+  「点 × 页宽」换成「(点 − 视口原点) × zoom」就能原样复用，四种笔型的观感不用重新对。
+- 橡皮半径线上仍是 `eraser.size`（页宽归一化），草稿纸上按固定基准折成画布点：
+  **`画布半径 = size × 800`**。三端必须用同一个 800，否则同一次擦除两端擦掉的笔迹不一样多。
+
+#### 🔴 `ink`/`erase` 的解释取决于「哪张纸开着」，线格式一个字节没改
+
+Mac 是「当前打开哪张草稿纸」的唯一真源（`scratchpads.open`）。草稿纸打开时：
+
+- 客户端把触点换算成**画布坐标**再发 `ink`/`erase`，`page` 字段作废（填什么都行，Mac 不读）；
+- Mac 收到后整条走草稿纸链路，**不会落到 PDF 页面上**（「笔迹只能在草稿纸上使用」是这个功能的定义）；
+- `probe`（长按环形选笔盘的探针流）在草稿纸上**不生效**：那套判定全建立在页内归一化 +
+  `padGeom.pageW` 上，喂画布坐标进去阈值会整个失真。两端都不呼盘。
+
+于是加草稿纸没有动 RT 流的任何字节。代价是两端必须对「开着哪张」有一致认知——靠 `scratchpads`
+这条可靠通道的全量镜像保证，且开/关纸时 Mac 会先 `inkCancel` 丢掉在飞的半截笔。
+
+#### 消息细节
+
+- `scratchpads`：**全量镜像**（类比 `strokes`/`notes`，Mac 唯一真源，客户端不落库）。
+  `open` = 当前打开的是 `list` 里第几张，`0xFFFF` = 一张都没开（解码后 **-1**）。
+  `bg` 线上按 `pen` 同款拆成 `r/g/b/a`，对象模型里仍是 CSS 串（默认 `rgba(255,255,255,1.0)`）。
+  `page`/`nx`/`ny` = 锚点（图钉画在这儿），不是纸的内容位置。
+  **发送时机**：客户端接入、服务启动、草稿纸增删改、开/关纸、平板跟随的会话变化（换窗口＝换文档＝换一整套）。
+- `scratchStrokes`：**当前打开那张纸**上的全量笔迹（没开纸就发 `n=0`，客户端据此清掉本地残留）。
+  **没有 `page` 字段**。`ackRel` 语义与 `strokes` 完全一致（按收件人填，客户端靠它分辨中途快照）。
+- `scratchOpen`：平板请求开/关。Mac 判定后回推 `scratchpads`+`scratchStrokes`，两端自然一致。
+- `scratchAdd`：平板请求新建一张并打开（锚在它给的页与页内位置）。
+
+**视口不上线**：每一端的滚动/缩放/minimap 各自独立（用户明确要求），打开一律回到画布原点。
+库里也不存视口——存了就会变成「谁最后关谁说了算」的跨端争用。
 
 ## 5. 兼容与版本
 

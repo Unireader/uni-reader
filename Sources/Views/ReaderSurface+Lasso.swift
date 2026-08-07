@@ -17,7 +17,8 @@ extension ReaderSurface {
     var lassoGesture: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .local)
             .onChanged { v in
-                guard app.pointerTool == .lasso, scratch.pinch == nil else { return }
+                guard app.pointerTool == .lasso, scratch.pinch == nil,
+                      session.openPadID == nil else { return }   // 草稿纸盖着时阅读区一概不响应
                 if scratch.lassoDragMode == nil {
                     // 起点落在选中高亮框（含 8pt 抓手余量）内 → 移动；否则重新框选
                     var mode = LassoDragMode.select

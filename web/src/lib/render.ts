@@ -172,17 +172,28 @@ export function initRender(refs: CaptureRefs): void {
 
   /// 构建几何（页局部坐标）。**不碰 canvas**，纯算——这样它既能进缓存，也能给活体层每帧现算。
   function buildGeom(s: Stroke): InkGeom {
+    const p = pw(), ph = G.dispH[s.page] || 0;
+    return buildGeomWith(s,
+      (i) => clamp(s.pts[i][0], 0, 1) * p,
+      (i) => clamp(s.pts[i][1], 0, 1) * ph,
+      1, p);
+  }
+
+  /// 同上，但**坐标映射与线宽倍率由调用方给**。草稿纸走这条：它的点是画布坐标（逻辑 px，可负无界），
+  /// 映射 = `点 × zoom`、`wScale = zoom`（无限画布上放大就该连笔迹一起放大）。
+  /// 拆出来的唯一目的是让四种笔型的几何**一份实现两处用**，别再抄一遍（抄一遍就会分叉）。
+  /// `key` 存进 `InkGeom.pw` 作缓存失效键（页笔迹用页宽，草稿纸用 zoom）。
+  function buildGeomWith(s: Stroke, px: (i: number) => number, py: (i: number) => number,
+                         wScale: number, key: number): InkGeom {
     const pts = s.pts;
     const t = s.pen.t || "ballpoint";
     const color = scaledColor(s.pen.color, opacityMultFor(t));
-    const p = pw(), ph = G.dispH[s.page] || 0;
-    const px = (i: number): number => clamp(pts[i][0], 0, 1) * p;
-    const py = (i: number): number => clamp(pts[i][1], 0, 1) * ph;
+    const p = key;
     const segs: InkSeg[] = [];
 
     if (pts.length === 1) {   // 单点 = 一个圆点（同 Mac 端单点分支）
       const path = new Path2D();
-      path.arc(px(0), py(0), strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2);
+      path.arc(px(0), py(0), strokeWidthFor(t, pts[0][2], s.pen.w) * wScale / 2, 0, Math.PI * 2);
       segs.push({ w: 0, path, fill: true });
       return { pw: p, color, multiply: false, segs };
     }
@@ -199,7 +210,7 @@ export function initRender(refs: CaptureRefs): void {
         lx = qx; ly = qy;
       }
       path.lineTo(lx, ly);   // 补末段（同下方分支：中点平滑链止于倒数两点的中点）
-      segs.push({ w: s.pen.w, path });
+      segs.push({ w: s.pen.w * wScale, path });
       return { pw: p, color, multiply: true, segs };
     }
 
@@ -210,7 +221,7 @@ export function initRender(refs: CaptureRefs): void {
     // 「黑点瑕疵」根因，那边已改成整条一次 fill），攒进同一条路径后不再重复合成。
     // 断开用**迟滞**而不是绝对分桶：压感几乎每点都在抖，按固定档位会断得比不合并还碎。
     const dot = new Path2D();
-    dot.arc(lx, ly, strokeWidthFor(t, pts[0][2], s.pen.w) / 2, 0, Math.PI * 2);
+    dot.arc(lx, ly, strokeWidthFor(t, pts[0][2], s.pen.w) * wScale / 2, 0, Math.PI * 2);
     segs.push({ w: 0, path: dot, fill: true });   // 起笔圆点
 
     let lastMidX = lx, lastMidY = ly, curW = -1;
@@ -224,7 +235,7 @@ export function initRender(refs: CaptureRefs): void {
     const needsBreak = (w: number): boolean => cur === null || Math.abs(w - curW) > Math.max(0.35, curW * 0.08);
     for (let i = 1; i < pts.length; i++) {
       const qx = px(i), qy = py(i);
-      const w = strokeWidthFor(t, pts[i][2], s.pen.w);
+      const w = strokeWidthFor(t, pts[i][2], s.pen.w) * wScale;
       if (needsBreak(w)) openAt(w);
       const mx = (lx + qx) / 2, my = (ly + qy) / 2;
       cur!.quadraticCurveTo(lx, ly, mx, my);
@@ -232,7 +243,7 @@ export function initRender(refs: CaptureRefs): void {
     }
     // 补末段：上面每步只画到「相邻两点的中点」，末点从来没被连上——长笔画差这半段看不出来，
     // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。补一段 lastMid → 末点才落到笔尖。
-    const lastW = strokeWidthFor(t, pts[pts.length - 1][2], s.pen.w);
+    const lastW = strokeWidthFor(t, pts[pts.length - 1][2], s.pen.w) * wScale;
     if (needsBreak(lastW)) openAt(lastW);
     cur!.lineTo(lx, ly);
     return { pw: p, color, multiply: false, segs };
@@ -240,10 +251,13 @@ export function initRender(refs: CaptureRefs): void {
 
   /// 把几何画到指定 context：只 translate 到该页当前位置，不重算任何坐标。
   function paintGeom(cx: CanvasRenderingContext2D, s: Stroke, g: InkGeom): void {
-    const left = contentLeft();
-    const top = BAR + G.offY[s.page] - G.scrollY;
+    paintGeomAt(cx, g, contentLeft(), BAR + G.offY[s.page] - G.scrollY);
+  }
+
+  /// 把几何画到指定 context 的指定平移处（页笔迹平移到页左上角，草稿纸平移到 `−视口原点×zoom`）。
+  function paintGeomAt(cx: CanvasRenderingContext2D, g: InkGeom, tx: number, ty: number): void {
     cx.save();
-    cx.translate(left, top);
+    cx.translate(tx, ty);
     if (g.multiply) { cx.globalCompositeOperation = "multiply"; cx.lineCap = "square"; }
     cx.strokeStyle = g.color; cx.fillStyle = g.color;
     for (let i = 0; i < g.segs.length; i++) {
@@ -375,6 +389,7 @@ export function initRender(refs: CaptureRefs): void {
       hctx.fillText((n.text || "T").charAt(0), v.x, v.y);
     }
     hctx.restore();
+    drawPadPins();
     // 橡皮尺寸圆环（擦除模式 + 开关开 + 有笔尖位置）：直径 = 2×G.eraserSize×当前页显示宽。
     // 双描边（外暗内亮）保证在白页/夜间反转页上都可读；位置由 input.ts 在 hover/擦除拖动时维护。
     if (G.eraserRing && G.eraserRingAt && curMode() === "erase") {
@@ -389,6 +404,55 @@ export function initRender(refs: CaptureRefs): void {
   /// 框选移动叠层（同 hover 层，画在最后不受笔记/橡皮圆环遮挡）：
   /// · 进行中的框选虚线矩形（`lassoDragMode==="select"`）；
   /// · 选中集高亮框（`lassoSelection`，拖动移动/提交待回传期间随 `lassoTranslate` 一起偏移）。
+  /// 草稿纸图钉：标记「这张纸是在页面的哪儿建的」，手指单击即打开那张纸（见 input.ts endTouch）。
+  /// 与文字笔记标记同层（hover canvas）同套路，只是换个形状与配色以便一眼分得清：
+  /// 笔记是圆形蓝底 + 首字，草稿纸是**圆角方片 + 折角**（呼应「一张纸」）。
+  function drawPadPins(): void {
+    if (!G.pads.length) return;
+    const r = padPinRadius();
+    hctx.save();
+    for (let i = 0; i < G.pads.length; i++) {
+      const p = G.pads[i];
+      if (!pageVisible(p.page)) continue;
+      const v = pageToView(p.page, p.nx, p.ny);
+      if (v.y < BAR - r || v.y > window.innerHeight + r || v.x < -r || v.x > window.innerWidth + r) continue;
+      const on = i === G.padOpen;
+      hctx.save();
+      hctx.shadowColor = "rgba(0,0,0,0.3)"; hctx.shadowBlur = 3; hctx.shadowOffsetY = 1;
+      roundRectPath(hctx, v.x - r, v.y - r, r * 2, r * 2, r * 0.34);
+      hctx.fillStyle = on ? "rgba(31,111,235,0.95)" : "rgba(246,248,252,0.96)";
+      hctx.fill();
+      hctx.restore();
+      roundRectPath(hctx, v.x - r, v.y - r, r * 2, r * 2, r * 0.34);
+      hctx.strokeStyle = on ? "rgba(255,255,255,0.9)" : "rgba(31,111,235,0.85)";
+      hctx.lineWidth = 1.5; hctx.stroke();
+      // 纸上的两道「字迹」——比放个字母更像草稿纸，也不必care字体度量
+      hctx.strokeStyle = on ? "rgba(255,255,255,0.95)" : "rgba(31,111,235,0.9)";
+      hctx.lineWidth = Math.max(1.2, r * 0.14);
+      hctx.beginPath();
+      hctx.moveTo(v.x - r * 0.45, v.y - r * 0.18); hctx.lineTo(v.x + r * 0.45, v.y - r * 0.18);
+      hctx.moveTo(v.x - r * 0.45, v.y + r * 0.28); hctx.lineTo(v.x + r * 0.1, v.y + r * 0.28);
+      hctx.stroke();
+    }
+    hctx.restore();
+  }
+
+  /// 图钉半径（视口 px）：随页宽走但夹取，缩得再小也点得着。
+  function padPinRadius(): number { return clamp(pw() * 0.016, 11, 18); }
+
+  /// 图钉命中判定 → 草稿纸下标；没命中 -1。热区比画出来的略大（触摸目标不小于 ~44px 见方）。
+  function padPinHit(x: number, y: number): number {
+    if (!G.pads.length) return -1;
+    const r = padPinRadius(), hot = Math.max(r + 6, 22);
+    for (let i = G.pads.length - 1; i >= 0; i--) {   // 后建的压在上面，命中也先算它
+      const p = G.pads[i];
+      if (!pageVisible(p.page)) continue;
+      const v = pageToView(p.page, p.nx, p.ny);
+      if (Math.abs(x - v.x) <= hot && Math.abs(y - v.y) <= hot) return i;
+    }
+    return -1;
+  }
+
   function drawLasso(): void {
     if (G.lassoDragMode === "select" && G.lassoAnchor && G.lassoCurBox) {
       const a = G.lassoAnchor, c = G.lassoCurBox;
@@ -586,5 +650,6 @@ export function initRender(refs: CaptureRefs): void {
     drawAll, drawBg, drawInk, drawLive, eraseHit, ensureImages,
     clearHover, drawNotes, setRadial, setPressRing,
     pageLocClamped, lassoHitTest, clearLasso,
+    buildGeomWith, paintInkGeom: paintGeomAt, padPinHit,
   });
 }

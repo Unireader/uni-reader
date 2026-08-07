@@ -199,6 +199,10 @@ struct ReaderSurface: View {
         // 本机擦除的尺寸圆环（同挂 ScrollView 视口坐标系）：pointerTool==.ink 且 erase 模式跟光标，
         // 直径 = 2×eraserRadius×页宽；eraserRing 关则不画。
         .overlay { localEraserOverlay }
+        // 草稿纸覆盖层：铺满视口盖住 PDF（**必须排在笔架之前**——笔架要浮在草稿纸之上，
+        // 否则纸一开就够不着笔/橡皮/图层了）。它自己吃掉全部指针与滚轮事件，下面的阅读区
+        // 手势另有 `session.openPadID == nil` 的显式门控兜底（见各 gesture）。
+        .overlay { scratchPadLayer }
         // 笔架悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
         .overlay { GeometryReader { proxy in PenRackView(session: session, viewportSize: proxy.size, topInset: indicatorTopInset, isActiveWindow: isActiveWindow) } }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
@@ -309,7 +313,9 @@ struct ReaderSurface: View {
                      pressRing: session.pressRing?.page == i ? session.pressRing : nil,
                      hoverD: app.padMode == "erase" && app.eraserRing ? app.eraserRadius * 2 * pageW : 10,
                      onOpenNote: { editorTarget = .edit($0) },
-                     noteDrag: notePinDrag)
+                     noteDrag: notePinDrag,
+                     scratchPins: buckets.scratchPins[i] ?? [],
+                     onOpenScratchPad: { session.openPadID = $0 })
             .offset(x: pageX, y: layout.offsets[i] * dispScale)
     }
 
@@ -325,6 +331,17 @@ struct ReaderSurface: View {
                     }
             }
             .allowsHitTesting(false)
+        }
+    }
+
+    /// 草稿纸覆盖层（开着才挂载）。`.id(pad.id)` 让切换草稿纸 = 全新视口状态，不带着上一张的缩放滚动。
+    @ViewBuilder var scratchPadLayer: some View {
+        if let pad = session.openPad,
+           let idx = session.scratchPads.firstIndex(where: { $0.id == pad.id }) {
+            ScratchPadOverlay(session: session, pad: pad, padIndex: idx,
+                              topInset: indicatorTopInset)
+                .id(pad.id)
+                .transition(.identity)
         }
     }
 

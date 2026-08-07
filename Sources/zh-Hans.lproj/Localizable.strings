@@ -197,3 +197,19 @@
 "Cannot Open Workspace" = "无法打开工作区";
 "New Window" = "新建窗口";
 "A workspace with this name already exists here. Open it instead, or choose another name." = "此处已存在同名工作区。请改用「打开工作区…」打开它，或换一个名字。";
+
+/* 草稿纸（v8） */
+"Scratchpad %d" = "草稿纸 %d";
+"Scratchpads" = "草稿纸";
+"New Scratchpad Here" = "在此新建草稿纸";
+"No scratchpads yet. Right-click in the page to add one." = "还没有草稿纸。在页面上右键即可新建一张。";
+"Open · anchored on page %d" = "打开 · 挂在第 %d 页";
+"Go to anchor" = "跳到锚点";
+"Delete this scratchpad and its ink" = "删除这张草稿纸及其笔迹";
+"%d strokes" = "%d 笔";
+"Recenter" = "回中";
+"Fit Content" = "适应内容";
+"Minimap" = "缩略图";
+"Close Scratchpad (Esc)" = "关闭草稿纸（Esc）";
+"Double-click to rename" = "双击可重命名";
+"Name" = "名称";

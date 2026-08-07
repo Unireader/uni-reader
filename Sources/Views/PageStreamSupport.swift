@@ -100,6 +100,8 @@ struct PageBuckets {
     var matchRects: [Int: [CGRect]] = [:]
     var highlights: [Int: [Highlight]] = [:]
     var notes: [Int: [TextNote]] = [:]
+    /// 本窗口内各页的草稿纸图钉（id + 页内归一化位置 + 显示名）。
+    var scratchPins: [Int: [(id: UUID, nx: Double, ny: Double, name: String)]] = [:]
     var activeMatch: TextMatch?
 
     init(session: DocSession, range: ClosedRange<Int>) {
@@ -112,6 +114,10 @@ struct PageBuckets {
         }
         for n in session.textNotes where range.contains(n.page) {
             notes[n.page, default: []].append(n)
+        }
+        for (i, p) in session.scratchPads.enumerated() where range.contains(p.anchorPage) {
+            scratchPins[p.anchorPage, default: []].append(
+                (p.id, p.anchorX, p.anchorY, p.displayName(index: i)))
         }
         activeMatch = session.currentMatchIndex.flatMap {
             session.searchMatches.indices.contains($0) ? session.searchMatches[$0] : nil

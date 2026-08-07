@@ -94,7 +94,22 @@ export interface Pinch {
   fy: number;
 }
 
-/// App.svelte 传给 startCapture 的 DOM 引用（5 层 canvas + 选笔盘毛玻璃底盘）。
+/// 一张草稿纸（Mac `scratchpads` 广播元素）。`page/nx/ny` 是**锚点**（Mac 页面上那枚图钉的位置），
+/// 不是纸的内容位置；纸上的内容坐标是画布坐标，见 PROTOCOL.md §4.4。
+export interface Pad {
+  id: string;
+  title: string;
+  page: number;
+  nx: number;
+  ny: number;
+  bg: string;
+}
+
+/// 草稿纸视口（本端私有，不上线也不落库：三端各自独立缩放滚动）。
+/// `ox/oy` = 视口左上角对应的画布坐标，`z` = 画布→屏幕倍率。
+export interface PadViewport { ox: number; oy: number; z: number }
+
+/// App.svelte 传给 startCapture 的 DOM 引用（页图/笔迹层 + 草稿纸层 + 选笔盘毛玻璃底盘）。
 export interface CaptureRefs {
   bg: HTMLCanvasElement;
   ink: HTMLCanvasElement;
@@ -102,6 +117,7 @@ export interface CaptureRefs {
   hover: HTMLCanvasElement;
   radial: HTMLCanvasElement;
   radialGlass: HTMLDivElement;
+  scratch: HTMLCanvasElement;
 }
 
 /// 全局可变状态袋的形状：原 capture.html IIFE 的模块级 var + 各模块挂上来的跨模块函数。
@@ -160,6 +176,17 @@ export interface GState {
   hoverPending: boolean; hoverMsg: WireMsg | null; hoverOn: boolean;
   // 环形选笔盘 + 长按进度环（Mac 下发的镜像状态）
   radialState: RadialState | null; pressRing: PressRing | null; pressRAF: number | null;
+  // ---- 草稿纸（v8，见 lib/scratch.ts；坐标系契约 PROTOCOL.md §4.4）----
+  // pads/padOpen 是 Mac `scratchpads` 广播的全量镜像（唯一真源）；padStrokes 同理来自 scratchStrokes。
+  // padVp 是**本端私有**的视口，不上线不落库——三端各自独立的缩放滚动就是靠这个。
+  pads: Pad[];
+  padOpen: number;                 // 开着第几张（-1 = 没开，此时草稿纸层整层隐藏）
+  padStrokes: Stroke[];            // 当前那张纸上的已成形笔迹（pts 是画布坐标，page 恒 0 无意义）
+  padCur: Stroke | null;           // 正在写的这一笔（本地即时回显）
+  padVp: PadViewport;
+  padMini: boolean;                // minimap 开关
+  padMiniDrag: boolean;            // 正在 minimap 上拖动定位
+  padPinch: { d0: number; z0: number } | null;   // 草稿纸上的双指捏合锚点
   // 页宽上报去重
   lastGeomW: number;
   // WebSocket
@@ -204,6 +231,27 @@ export interface GState {
   emitScroll(): void;
   topVisiblePage(): number;
   endHover(): void;
+  // render.ts：笔迹几何的可复用内核（页内与草稿纸共用一份实现，见 buildGeomWith 注释）
+  buildGeomWith(s: Stroke, px: (i: number) => number, py: (i: number) => number,
+                wScale: number, key: number): unknown;
+  paintInkGeom(cx: CanvasRenderingContext2D, g: unknown, tx: number, ty: number): void;
+  /// 草稿纸图钉命中 → 下标（-1 = 没命中）。手指单击用，见 input.ts endTouch。
+  padPinHit(x: number, y: number): number;
+  // scratch.ts（草稿纸）
+  padActive(): boolean;
+  drawScratch(): void;
+  padRecenter(): void;
+  padFit(): void;
+  padClamp(): void;
+  padPointerDown(e: PointerEvent): boolean;
+  padPointerMove(e: PointerEvent): boolean;
+  padPointerUp(e: PointerEvent): boolean;
+  padFlush(kind: "ink" | "erase"): void;
+  padOpenIndex(i: number): void;
+  padClose(): void;
+  padAdd(): void;
+  applyScratchPads(o: WireMsg): void;
+  applyScratchStrokes(o: WireMsg): void;
   // capture.ts（键盘侧键走 G，input.ts 的 keydown 调用）
   cycleMode(): void;
   cyclePen(): void;

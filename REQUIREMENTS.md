@@ -94,6 +94,28 @@
 - 触发后这一笔（按下产生的墨点）**清除**。
 - **关键**：正常落笔立即出墨（不等 300ms，避免延迟）；一旦判定为长按手势再**回溯清除**那一笔，保证书写零延迟。
 
+### 1.8 草稿纸（无限白板覆盖层，2026-08-07）
+
+**用户原话**：「在 pdf 任何一处创建一个草稿纸，打开后从该处显示，默认无限，覆盖在 pdf 上面，底色默认白色，
+整个笔迹只能在草稿纸上使用……更像一个 UI 覆盖在 pdf 上，而不是在现有 pdf 上加，这样三端都能独立添加草稿纸、
+有自己的缩放滚动；默认无限制但要避免滚动到无限位置，需要有个回中，以及一个 minimap。」
+
+- **它是一层 UI，不是 PDF 的一部分**：不改 PDF 原文、不属于任何一页。因此三端各自独立地开/关/缩放/滚动，
+  互不牵连；同步的只有「有哪几张纸、开着哪张、纸上有哪些笔迹」。
+- **锚点**：在阅读区任意位置右键「在此新建草稿纸」→ 记下 (页, 页内归一化点)，页面上留一枚图钉。
+  打开时视口回到**画布原点**（= 创建那一刻的位置），即「从该处显示」。
+- **无限画布**：坐标无界可负。但**不允许滑到天边**——软边界把可视区限制在「内容包围盒 ± 1.5 屏」内，
+  空白纸只能在原点附近小范围移动。另有「回中」（回原点）与「适应内容」（装下全部笔迹）两个按钮。
+- **minimap**：右下角，全部笔迹骨架 + 当前视口框，点/拖即跳。可关。
+- **笔迹只落草稿纸**：纸开着时，`ink`/`erase` 整条链路被拦下改走画布坐标，PDF 页面上不会留下任何东西。
+  长按环形选笔盘在纸上**不生效**（那套判定建立在页内归一化 + `padGeom.pageW` 上，喂画布坐标会整个失真）。
+- **底色**默认纯白；夜间模式下**不反色**——草稿纸是「一张纸」，不是 PDF 内容。
+- **入口**：阅读区右键新建 / 页面图钉 / Inspector「笔记」页的草稿纸列表（打开、跳锚点、删除）/
+  平板顶栏的草稿纸按钮（列表 + 新建）。
+- **🔴 画布坐标系（三端契约）**：单位 = 逻辑点（pt / CSS px / dp），原点 = 创建点，可负无界；
+  笔宽与页内笔迹同语义。这么定是为了让三端现成的笔迹渲染器原样复用（详见 `PROTOCOL.md §4.4`）。
+- **范围**：Mac + 网页平板已落地（2026-08-07）；**安卓两模式未做**（下一轮）。
+
 ## 2. 目标设备验证（小米平板 6）
 
 > ✅ **Step 0 已实测通过**（2026-07-19，小米平板 6 + 灵感触控笔，Chrome 与 Firefox，测试页 `spike/pen-test.html`）：
@@ -194,8 +216,8 @@
 | 工作区切换 | 侧栏文件夹菜单：**「打开工作区…」与「新建工作区…」严格分离**（2026-07-28）——打开时 `NSOpenPanel` 只认已存在的 `.unrd` 包（`canChooseDirectories=false`、无 `canCreateDirectories`），选中的文件夹若不含 `UniReader/library.sqlite` 会报错而非静默建空库（`WorkspaceManager.validate`）；新建走 `createWorkspace(at:)`，`NSSavePanel` 选位置+起名现场创建全新包。最近工作区同走 `validate` 校验；最近列表存**本机** UserDefaults，不进文件夹。**2026-07-29 起「切换」的语义 = 开一个属于该工作区的窗口**（见 §8.1），不再替换当前窗口 | 此前「打开」面板混用选择/创建/选目录，误选到无关或空文件夹会被静默建成一个新空库（表现为「打开工作区却看到空的」） |
 | 多工作区并存 | **一个 `WorkspaceManager` 实例 = 一个工作区**，窗口级；实例由 `WorkspaceRegistry` 按路径分配（2026-07-29，详见 §8.1） | 原先是 App 级单例、靠换 `folder` 切工作区 → 双击另一个 `.unrd` 会把**所有**窗口一起换掉 |
 
-**Schema v3（跨平台契约，见 `Sources/Store/`）：**
-`meta(key,value)` · `document(id,title,page_count,added_at,last_opened_at,sort_order,read_page,read_frac)` · `variant(id,document_id→,content_hash UNIQUE,page_count,added_at)` · `location(id,variant_id→,path,is_valid,last_validated_at,in_workspace,is_relative)` · `note(id,document_id→,kind,page,anchor_x/y/w/h,payload BLOB=JSON,created_at,updated_at)` · **`ocr_page(content_hash,page,provider, payload BLOB=JSON,lang,created_at)` PK(content_hash,page,provider)**（v3 新增，扫描页 OCR 结果缓存；payload=`{w,h,runs:[{text,x,y,w,h}]}` 归一化 0~1）。时间戳 ISO-8601 文本、id UUID、payload JSON。**无 macOS security-scoped bookmark**（不跨平台）。`in_workspace=1` 时 `location.path` 为**工作区相对路径**。`is_relative=1`（v6 新增）：外部文件（未拷入工作区）但与工作区文件夹同属一块**可移动/外置卷**（`volumeIsInternal==false`，如移动硬盘/外置 SSD）时，`path` 也存**相对工作区文件夹的路径**（可含 `..`）——换电脑/换挂载点（`/Volumes/X` 变 `/Volumes/X 1`）仍可解析；系统内置盘不做此处理（挂载点稳定，绝对路径已足够，且避免「只挪工作区不挪源文件」时反而失效）。迁移：`meta.schema_version` + `ADD COLUMN IF missing` / `CREATE TABLE IF NOT EXISTS`（v1→v2、v2→v3 均已验证：`spike/store-test.swift` 32/32、`spike/ocr-store-test.swift` 15/15）。
+**Schema v8（跨平台契约，见 `Sources/Store/`）：**
+`meta(key,value)` · `document(id,title,page_count,added_at,last_opened_at,sort_order,read_page,read_frac)` · `variant(id,document_id→,content_hash UNIQUE,page_count,added_at)` · `location(id,variant_id→,path,is_valid,last_validated_at,in_workspace,is_relative)` · `note(id,document_id→,kind,page,anchor_x/y/w/h,payload BLOB=JSON,created_at,updated_at)` · **`ocr_page(content_hash,page,provider, payload BLOB=JSON,lang,created_at)` PK(content_hash,page,provider)**（v3 新增，扫描页 OCR 结果缓存；payload=`{w,h,runs:[{text,x,y,w,h}]}` 归一化 0~1）。时间戳 ISO-8601 文本、id UUID、payload JSON。**无 macOS security-scoped bookmark**（不跨平台）。`in_workspace=1` 时 `location.path` 为**工作区相对路径**。`is_relative=1`（v6 新增）：外部文件（未拷入工作区）但与工作区文件夹同属一块**可移动/外置卷**（`volumeIsInternal==false`，如移动硬盘/外置 SSD）时，`path` 也存**相对工作区文件夹的路径**（可含 `..`）——换电脑/换挂载点（`/Volumes/X` 变 `/Volumes/X 1`）仍可解析；系统内置盘不做此处理（挂载点稳定，绝对路径已足够，且避免「只挪工作区不挪源文件」时反而失效）。**`scratch_pad(id,document_id→,title,anchor_page,anchor_x,anchor_y,bg,created_at,updated_at)`**（v8 新增，草稿纸；挂逻辑文档、全版本共用，同 note/ink_layer。锚点＝创建时所在页 + 页内归一化点，`bg` 为 CSS `rgba(...)` 串）。草稿纸上的笔迹**不另建表**，仍在 `note` 但 `kind=4`、`page` 恒 0、payload 里带 `padId` 指回 `scratch_pad`，且点集是**画布坐标（逻辑点，可负无界）**而不是页内 0~1 归一化——坐标系契约见 `PROTOCOL.md §4.4`。**视口（滚动/缩放）刻意不落库**：三端各自独立，存了就变成「谁最后关谁说了算」的跨端争用。迁移：`meta.schema_version` + `ADD COLUMN IF missing` / `CREATE TABLE IF NOT EXISTS`（v1→v2、v2→v3、v7→v8 均已验证：`spike/store-test.swift` 32/32、`spike/ocr-store-test.swift` 15/15、`spike/scratch-store-test.swift` 35/35）。
 
 **已实现**：`SQLite.swift`（libsqlite3 薄封装）+ `LibraryStore.swift`（建表/迁移/`findOrCreate` 去重/`mergeDocument`+`linkVariant`/`addVariant`/`add·removeLocation`/`updateProgress`/notes CRUD）+ `WorkspaceManager`（当前工作区、最近列表、导入、打开探测路径优先工作区副本、进度存取、复制/移出工作区、重定位、合并）；SwiftData 整套移除。UI：侧栏工作区切换 + **重命名**、文档右键 **复制到工作区/从工作区删除**、**关联为同一文档**（合并，带确认）、路径失效 **重新关联文件** 提示；**阅读进度**自动记录并重开恢复（切文档/关窗/滚动节流各存一次）。运行时验证：建库/schema/meta/WAL、v1→v2 迁移、32/32 DAO 测试（`spike/store-test.swift`）。
 **待补**：① 旧 SwiftData 数据不迁移（全新开始，需重新导入）；② ✅ 手写笔迹已写入 `note` 表（kind=2，payload=JSON `InkStroke`；2026-07-20，见 §6 S3.5）；③ 合并的「拆分」逆操作暂无。

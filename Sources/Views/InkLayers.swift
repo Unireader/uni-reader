@@ -35,8 +35,19 @@ struct InkLiveLayer: View, Equatable {
 /// 四种笔型差异化渲染（与 capture.html 的 `drawStroke` 同参数/同算法，见 `PenBrushType`/`InkRender`；墨迹不随夜间反色）：
 ///  · ballpoint 干净压感线；· fountain 压感 + 起收锥度；· marker 恒宽·平头·multiply 叠加；· pencil 多道微波动叠加。
 func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize, inkScale: CGFloat) {
+    // 页内笔迹：归一化点 × 页显示尺寸。x/y 各乘各的（页内归一化两轴尺度不同）。
+    inkDrawStroke(st, in: &ctx, inkScale: inkScale) {
+        CGPoint(x: $0.x * size.width, y: $0.y * size.height)
+    }
+}
+
+/// 同上，但坐标映射由调用方给。草稿纸走这条：画布坐标是**等比**的逻辑点，
+/// 映射 = `(p − 视口原点) × zoom`，`inkScale` 同样传 zoom → 线宽随缩放走，与页内语义一致。
+/// 拆出来的唯一目的是让四种笔型的渲染算法**一份实现两处用**，别再抄一遍（抄一遍就会分叉）。
+func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, inkScale: CGFloat,
+                   map: (SIMD3<Double>) -> CGPoint) {
     guard !st.points.isEmpty else { return }
-    let pts = st.points.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) }
+    let pts = st.points.map(map)
     let type = st.type, w = st.width
     func color(_ a: Double) -> Color {
         Color(red: st.color.r / 255, green: st.color.g / 255, blue: st.color.b / 255, opacity: a)

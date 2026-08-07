@@ -380,7 +380,7 @@ final class LANServer: ObservableObject {
         var dict = dict
         // `strokes` 的 ackRel 要按**收件人**填：每个客户端的 REL 流进度各不相同，所以只能在这里补，
         // 不能由 AppModel 在 broadcastStrokes 里填一个值发给所有人（见 PROTOCOL.md §4.2）。
-        if dict["type"] as? String == "strokes" {
+        if dict["type"] as? String == "strokes" || dict["type"] as? String == "scratchStrokes" {
             let s = sessionByConn[ObjectIdentifier(conn)]
             dict["ackRel"] = NSNumber(value: s.flatMap { udp?.ackRel(session: $0) } ?? 0)
         }

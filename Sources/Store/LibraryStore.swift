@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 7
+    static let schemaVersion = 8
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -72,6 +72,20 @@ final class LibraryStore {
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_ink_layer_document ON ink_layer(document_id);
+        -- v8：草稿纸（盖在 PDF 之上的无限白板，不改 PDF 原文）。挂逻辑文档，全版本共用，同 note。
+        -- 锚点 = 创建时所在页 + 页内归一化点（页面上那枚图钉）；草稿纸上的笔迹仍在 note，但 kind=4、
+        -- payload 里带 pad_id 指回这里，且点集是**画布坐标（逻辑点，可负无界）**而非页内 0~1 归一化。
+        -- 视口（滚动/缩放）刻意不落库：三端各自独立，打开一律回画布原点。
+        CREATE TABLE IF NOT EXISTS scratch_pad (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+          title TEXT NOT NULL DEFAULT '',
+          anchor_page INTEGER NOT NULL DEFAULT 0,
+          anchor_x REAL NOT NULL DEFAULT 0, anchor_y REAL NOT NULL DEFAULT 0,
+          bg TEXT NOT NULL DEFAULT 'rgba(255,255,255,1.0)',
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_scratch_pad_document ON scratch_pad(document_id);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -84,6 +98,8 @@ final class LibraryStore {
         try addColumnIfMissing("document", "read_hfrac", "REAL NOT NULL DEFAULT 0")
         // v5 → v6：外部文件与工作区同盘（移动硬盘等）时，path 存工作区相对路径而非绝对路径。
         try addColumnIfMissing("location", "is_relative", "INTEGER NOT NULL DEFAULT 0")
+        // v7 → v8 只新增 scratch_pad 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
+        // 草稿纸笔迹复用 note 表（kind=4），故 note 也不用改结构。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -263,6 +279,7 @@ final class LibraryStore {
             try db.run("UPDATE variant SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("UPDATE note SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("UPDATE ink_layer SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
+            try db.run("UPDATE scratch_pad SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("DELETE FROM document WHERE id=?", [.text(sourceId)])
         }
         return true
@@ -321,6 +338,29 @@ final class LibraryStore {
               .int(Int64(l.sortOrder)), .int(l.visible ? 1 : 0), .text(ISO.string(l.createdAt))])
     }
     func deleteInkLayer(id: String) throws { try db.run("DELETE FROM ink_layer WHERE id=?", [.text(id)]) }
+
+    // MARK: - 草稿纸（scratch_pad，v8）
+
+    func scratchPads(documentId: String) throws -> [LibScratchPad] {
+        try db.query("SELECT * FROM scratch_pad WHERE document_id=? ORDER BY created_at ASC",
+                     [.text(documentId)]).map(Self.scratchPad)
+    }
+    func upsertScratchPad(_ p: LibScratchPad) throws {
+        try db.run("""
+        INSERT INTO scratch_pad(id,document_id,title,anchor_page,anchor_x,anchor_y,bg,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, anchor_page=excluded.anchor_page,
+          anchor_x=excluded.anchor_x, anchor_y=excluded.anchor_y, bg=excluded.bg,
+          updated_at=excluded.updated_at
+        """, [.text(p.id), .text(p.documentId), .text(p.title), .int(Int64(p.anchorPage)),
+              .double(p.anchorX), .double(p.anchorY), .text(p.bg),
+              .text(ISO.string(p.createdAt)), .text(ISO.string(p.updatedAt))])
+    }
+    /// 删除一张草稿纸。**纸上的笔迹（note kind=4）不在这里删**——它们由上层的 `session.scratchStrokes`
+    /// 对账机制按 id 删除（与擦除同一条路径）。这里多删一次只会和对账重复。
+    func deleteScratchPad(id: String) throws {
+        try db.run("DELETE FROM scratch_pad WHERE id=?", [.text(id)])
+    }
 
     // MARK: - OCR 缓存（ocr_page，v3）
 
@@ -391,6 +431,15 @@ final class LibraryStore {
                     sortOrder: Int(r["sort_order"] as? Int64 ?? 0),
                     visible: (r["visible"] as? Int64 ?? 1) != 0,
                     createdAt: ISO.date(r["created_at"] as? String) ?? .now)
+    }
+    private static func scratchPad(_ r: [String: Any]) -> LibScratchPad {
+        LibScratchPad(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String ?? "",
+                      title: r["title"] as? String ?? "",
+                      anchorPage: Int(r["anchor_page"] as? Int64 ?? 0),
+                      anchorX: r["anchor_x"] as? Double ?? 0, anchorY: r["anchor_y"] as? Double ?? 0,
+                      bg: r["bg"] as? String ?? "rgba(255,255,255,1.0)",
+                      createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                      updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
     }
     private static func ocr(_ r: [String: Any]) -> OCRPage {
         OCRPage(contentHash: r["content_hash"] as? String ?? "",

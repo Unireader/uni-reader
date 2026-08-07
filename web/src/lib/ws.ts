@@ -112,6 +112,10 @@ export function initWs(): void {
       G.notes = o.list || [];
       if (G.lassoCommitted) G.clearLasso(); else G.drawNotes();
     }
+    // 草稿纸列表 + 开着第几张（Mac 是「哪张纸开着」的唯一真源；本地只发 scratchOpen/scratchAdd 请求）。
+    else if (o.type === "scratchpads") { G.applyScratchPads(o); }
+    // 当前那张纸上的全量笔迹（画布坐标，与页内笔迹不是一套坐标系，见 PROTOCOL.md §4.4）。
+    else if (o.type === "scratchStrokes") { G.applyScratchStrokes(o); }
     // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
   }
 

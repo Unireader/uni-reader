@@ -22,10 +22,12 @@ enum WireCodec {
         static let penset: UInt8 = 0x25
         static let layerSelect: UInt8 = 0x26, layerVisible: UInt8 = 0x27, layerAdd: UInt8 = 0x28, gotoPage: UInt8 = 0x29
         static let openDoc: UInt8 = 0x2A
+        static let scratchOpen: UInt8 = 0x2B, scratchAdd: UInt8 = 0x2C
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
         static let layers: UInt8 = 0x3A, library: UInt8 = 0x3B, toc: UInt8 = 0x3C
+        static let scratchPads: UInt8 = 0x3D, scratchStrokes: UInt8 = 0x3E
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
         static let eraser: UInt8 = 0x46
@@ -41,6 +43,8 @@ enum WireCodec {
     static func radialKindName(_ c: UInt8) -> String { Int(c) < radialKinds.count ? radialKinds[Int(c)] : "pen" }
     /// `highlight` 线上用 u16 表示，`0xFFFF` = 无高亮（中心取消区），对象模型里是 -1。
     static let radialNoHighlight = 0xFFFF
+    /// 草稿纸「没打开任何一张」的线上哨兵（`scratchpads.open` / `scratchOpen.index`），对象模型里同样是 -1。
+    static let scratchNoOpen = 0xFFFF
     private static let phaseBegin: UInt8 = 0, phaseMove: UInt8 = 1, phaseEnd: UInt8 = 2
 
     static func brushCode(_ t: String) -> UInt8 { UInt8(brushes.firstIndex(of: t) ?? 0) }
@@ -222,6 +226,35 @@ enum WireCodec {
                 w.u8(page >= 0 ? 1 : 0)
                 w.u32(max(0, page)); w.f32(num(e["frac"])); w.str(strOf(e["label"]))
             }
+        // 草稿纸（v8）。`open` = 当前打开的是 list 里第几张，`0xFFFF` = 没开（对象模型里 -1，
+        // 与 radial 的 highlight 同惯例）。`bg` 走 pen 同款 r/g/b/a 拆包，线上不传 CSS 串。
+        case "scratchpads":
+            w.u8(Op.scratchPads)
+            let open = intOf(o["open"])
+            w.u16(open < 0 ? scratchNoOpen : open)
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for p in list {
+                w.str(strOf(p["id"])); w.str(strOf(p["title"]))
+                w.u32(intOf(p["page"])); w.f32(num(p["nx"])); w.f32(num(p["ny"]))
+                let (r, g, b, a) = parseColor(strOf(p["bg"]))
+                w.u8(r); w.u8(g); w.u8(b); w.f32(Double(a))
+            }
+        case "scratchStrokes":
+            // 当前打开那张纸上的全量笔迹。**没有 page 字段**——画布不属于任何一页，点集是画布坐标
+            // （逻辑点，可负无界，见 ScratchPad 坐标系契约）。ackRel 语义同 `strokes`。
+            w.u8(Op.scratchStrokes)
+            w.u32(intOf(o["ackRel"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u32(list.count)
+            for s in list {
+                let (c, ww, t) = penDict(s["pen"])
+                w.pen(color: c, w: ww, t: t)
+                w.pts(pairsOf(s["pts"]), dim: 3)
+            }
+        case "scratchOpen": w.u8(Op.scratchOpen); w.u16(intOf(o["index"]) < 0 ? scratchNoOpen : intOf(o["index"]))
+        case "scratchAdd":
+            w.u8(Op.scratchAdd); w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"]))
         case "inkCancel": w.u8(Op.inkCancel)
         case "strokes":
             w.u8(Op.strokes)
@@ -447,6 +480,34 @@ enum WireCodec {
                 list.append(["page": NSNumber(value: page), "pen": pen, "pts": pts])
             }
             out = ["type": "strokes", "ackRel": NSNumber(value: ackRel), "list": list]
+        case Op.scratchPads:
+            let openRaw = r.u16(), n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n {
+                let id = r.str(), title = r.str()
+                let page = r.u32(), nx = r.f32(), ny = r.f32()
+                let bgR = r.u8(), bgG = r.u8(), bgB = r.u8(); let bgA = r.f32()
+                list.append(["id": id, "title": title, "page": NSNumber(value: page),
+                             "nx": NSNumber(value: nx), "ny": NSNumber(value: ny),
+                             "bg": cssColor(bgR, bgG, bgB, Float(bgA))])
+            }
+            out = ["type": "scratchpads",
+                   "open": NSNumber(value: openRaw == scratchNoOpen ? -1 : openRaw), "list": list]
+        case Op.scratchStrokes:
+            let ackRel = r.u32()
+            let n = r.u32()
+            var list = [[String: Any]](); list.reserveCapacity(max(0, n))
+            for _ in 0..<max(0, n) {
+                let pen = r.pen(); let pts = r.pts(3)
+                list.append(["pen": pen, "pts": pts])
+            }
+            out = ["type": "scratchStrokes", "ackRel": NSNumber(value: ackRel), "list": list]
+        case Op.scratchOpen:
+            let idx = r.u16()
+            out = ["type": "scratchOpen", "index": NSNumber(value: idx == scratchNoOpen ? -1 : idx)]
+        case Op.scratchAdd:
+            out = ["type": "scratchAdd", "page": NSNumber(value: r.u32()),
+                   "nx": NSNumber(value: r.f32()), "ny": NSNumber(value: r.f32())]
         case Op.radial:
             if r.u8() == 0 { out = ["type": "radial", "open": false]; break }
             let page = r.u32(), cx = r.f32(), cy = r.f32()

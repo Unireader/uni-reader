@@ -18,6 +18,14 @@ export interface Actions {
   toggleEye(): void;
   toggleLock(): void;
   toggleFull(): void;
+  // ---- 草稿纸（v8）：开/关/新建只发请求，Mac 是「哪张纸开着」的唯一真源 ----
+  openPad(i: number): void;
+  closePad(): void;
+  addPad(): void;
+  togglePadList(): void;
+  padRecenter(): void;
+  padFit(): void;
+  togglePadMini(): void;
 }
 
 export const actions = {} as Actions;

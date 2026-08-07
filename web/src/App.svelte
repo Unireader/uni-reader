@@ -8,6 +8,7 @@
   import PenStat from "./PenStat.svelte";
   import LayerStat from "./LayerStat.svelte";
   import TextNoteEditor from "./TextNoteEditor.svelte";
+  import PadBar from "./PadBar.svelte";
   import { startCapture } from "./lib/capture.js";
   import { PORT, TOKEN, PENS } from "./lib/config.js";
 
@@ -17,9 +18,10 @@
   let hover: HTMLCanvasElement;
   let radial: HTMLCanvasElement;
   let radialGlass: HTMLDivElement;
+  let scratch: HTMLCanvasElement;
 
   onMount(() => {
-    startCapture({ bg, ink, live, hover, radial, radialGlass }, { port: PORT, token: TOKEN, pens: PENS });
+    startCapture({ bg, ink, live, hover, radial, radialGlass, scratch }, { port: PORT, token: TOKEN, pens: PENS });
   });
 </script>
 
@@ -29,9 +31,11 @@
 <canvas id="hover" bind:this={hover}></canvas>
 <div id="radialGlass" bind:this={radialGlass}></div>
 <canvas id="radial" bind:this={radial}></canvas>
+<canvas id="scratch" bind:this={scratch}></canvas>
 <TopBar />
 <Drawer />
 <StatsPanel />
 <PenStat />
 <LayerStat />
 <TextNoteEditor />
+<PadBar />

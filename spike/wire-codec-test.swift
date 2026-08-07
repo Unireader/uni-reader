@@ -94,6 +94,19 @@ let canonical: [[String: Any]] = [
                                                 ["depth": 0, "page": -1, "frac": 0.0, "label": "坏书签"]]],
     // 目录跳转（0x29 带尾部可选 frac）：与上面 #? 的「只跳页」老形态各测一遍。
     ["type": "gotoPage", "page": 7, "frac": 0.5],
+    // —— 草稿纸（v8，0x2B/0x2C/0x3D/0x3E）——
+    // 列表 + 当前打开第几张（-1 = 没开，线上 0xFFFF）。bg 是 CSS 串，线上拆 r/g/b/a。
+    ["type": "scratchpads", "open": 1,
+     "list": [["id": "P1", "title": "推导", "page": 3, "nx": 0.25, "ny": 0.5, "bg": "rgba(255,255,255,1.0)"],
+              ["id": "P2", "title": "", "page": 0, "nx": 0.5, "ny": 0.125, "bg": "rgba(250,248,240,1.0)"]]],
+    ["type": "scratchpads", "open": -1, "list": []],
+    // 纸上笔迹：**无 page 字段**，点集是画布坐标（逻辑点，可负无界）。
+    ["type": "scratchStrokes", "ackRel": 7,
+     "list": [["pen": ["color": "rgba(20,20,20,1.0)", "w": 10.0, "t": "pencil"],
+               "pts": [[-120.5, 64.25, 0.5], [512.0, -8.125, 1.0]]]]],
+    ["type": "scratchOpen", "index": 2],
+    ["type": "scratchOpen", "index": -1],
+    ["type": "scratchAdd", "page": 5, "nx": 0.75, "ny": 0.25],
 ]
 
 var pass = 0, fail = 0

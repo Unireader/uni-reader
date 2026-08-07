@@ -92,7 +92,9 @@ final class AppModel: ObservableObject {
     private var inRadial = false
     private let longPressSeconds = 1.0
     /// 平板这一笔是不是直线（尺子）笔：ink begin 的 flags bit0 带来，决定后续 move 是替换终点还是追加点。
-    private var padInkLine = false
+    /// **非 private**：草稿纸链路（`AppModel+Scratch`）要用同一个标记——漏了它，平板上用尺子画的直线
+    /// 到了草稿纸上会把一路的中间终点全追加进来，成一条歪歪扭扭的线。
+    var padInkLine = false
     /// 平板上报的内容页宽（CSS px）。长按/选盘的距离阈值都是**平板屏幕上的**物理尺度，必须用它换算——
     /// 用 Mac 阅读区页宽（`pageViewWidth`）换算的话，手感会随任意一端的缩放漂移。0 = 平板没上报（旧端）。
     private var padPageWidth: Double = 0
@@ -119,6 +121,7 @@ final class AppModel: ObservableObject {
                 if running {
                     self?.push(); self?.broadcastDocs(); self?.broadcastPens(); self?.broadcastEraser()
                     self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)
+                    self?.broadcastScratchPads(); self?.broadcastScratchStrokes()
                 }
             }
             .store(in: &cancellables)
@@ -129,6 +132,7 @@ final class AppModel: ObservableObject {
             .sink { [weak self] _ in
                 self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastStrokes(); self?.broadcastNotes(); self?.broadcastLayers()
                 self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)   // 新客户端要补书库 + 目录
+                self?.broadcastScratchPads(); self?.broadcastScratchStrokes()          // 草稿纸列表 + 开着那张的笔迹
                 self?.pushCurrentViewport()   // 必须在 pushLayout 之后：平板端收到 layout 会重置滚动/seq
             }
             .store(in: &cancellables)
@@ -248,6 +252,9 @@ final class AppModel: ObservableObject {
             return
         }
         guard let s = padSession else { return }
+        // 草稿纸打开时，笔只能落在草稿纸上（功能定义，用户要求）：`ink`/`erase`/`probe` 整条拦下改走
+        // 画布坐标那套（见 `AppModel+Scratch`）。线格式没改——Mac 是「哪张纸开着」的唯一真源。
+        if handleScratchInput(obj, to: s) { return }
         switch obj["type"] as? String {
         case "ink":
             let phase = obj["phase"] as? String ?? ""
@@ -319,6 +326,11 @@ final class AppModel: ObservableObject {
             applyTextNote(obj, to: s)
         case "lassoMove":
             applyLassoMove(obj, to: s)
+        // 草稿纸：平板只发「请求」，开哪张/新建全部由 Mac 判定（同多层笔迹的 layerSelect 一族）。
+        case "scratchOpen":
+            applyScratchOpen(obj, to: s)
+        case "scratchAdd":
+            applyScratchAdd(obj, to: s)
         default:
             break
         }
@@ -732,6 +744,7 @@ final class AppModel: ObservableObject {
         if followedClosed { pushCurrentViewport() }
         broadcastDocs()
         broadcastLibrary(); broadcastTOC()   // 接班会话可能属于另一个工作区、装着另一本书
+        broadcastScratchPads(); broadcastScratchStrokes()   // 草稿纸挂文档，换会话即换一整套
         releasePadRenderIfUnused()           // 被关掉的那本若已无人在看 → 放掉平板那份 PDF 副本
     }
 
@@ -744,7 +757,10 @@ final class AppModel: ObservableObject {
         // 两端收到都会把本地滚动位置清零），不补推 viewport 平板就停在第 1 页——同 selectPadDoc。
         if followedSwitched { pushCurrentViewport() }
         broadcastDocs()
-        if followedSwitched { broadcastLibrary(); broadcastTOC() }   // 跟随模式换窗口 = 可能换工作区/换书
+        if followedSwitched {
+            broadcastLibrary(); broadcastTOC()                   // 跟随模式换窗口 = 可能换工作区/换书
+            broadcastScratchPads(); broadcastScratchStrokes()    // …连草稿纸也是另一篇文档的那套
+        }
     }
 
     /// 某会话页码变化（Mac 滚动或加载新文档）。

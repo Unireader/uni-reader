@@ -44,7 +44,27 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemScheme
 
     var body: some View {
-        eventRoutes(mainSplit)
+        eventRoutes(scratchRoutes(mainSplit))
+    }
+
+    /// 草稿纸的落库/广播路由。**必须单独包一层**，不能挂进 `mainSplit`——那个表达式的修饰符已经到顶，
+    /// 再加三个 `onChange` 当场把 SwiftUI 类型检查器顶爆（实测 `unable to type-check in reasonable time`）。
+    /// 同 `eventRoutes` 的既有分层理由。
+    private func scratchRoutes<V: View>(_ base: V) -> some View {
+        base
+        .onChange(of: session.scratchPads) { _, _ in
+            persistScratchPads()       // 草稿纸新建/改名/删除时增量落库
+            app.broadcastScratchPads() // 列表变了 → 平板的草稿纸列表跟着变
+        }
+        .onChange(of: session.scratchStrokes) { _, _ in
+            persistScratchStrokes()    // 草稿纸上落笔/擦除时增量落库（scratchLive 变化不触发）
+            app.broadcastScratchStrokes()
+        }
+        .onChange(of: session.openPadID) { _, _ in
+            // 打开/关闭草稿纸 = 平板跟着切过去（笔迹共享、视图各自独立）；同时把纸上的笔迹推过去。
+            app.broadcastScratchPads()
+            app.broadcastScratchStrokes()
+        }
     }
 
     /// 主分栏视图（侧栏 + 阅读区 + 工具栏/inspector + 状态联动）。窗口事件路由挂 `eventRoutes`——
@@ -608,7 +628,8 @@ struct ContentView: View {
         session.restoreHFrac = 0; session.readHFrac = 0
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; session.toc = []; session.title = ""
-            clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); session.reloadOCRState(); return
+            clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); clearScratch()
+            session.reloadOCRState(); return
         }
         guard let target = workspace.openTarget(documentId: id),
               let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
@@ -620,6 +641,7 @@ struct ContentView: View {
             clearInkLayers()
             clearTextNotes()
             clearHighlights()
+            clearScratch()
             return
         }
         missingDoc = nil
@@ -634,6 +656,7 @@ struct ContentView: View {
         session.noteTypeFilter = .all               // 筛选仅内存，开文档复位
         loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
         loadHighlights(documentId: id)             // 恢复该文档已落库的高亮
+        loadScratch(documentId: id)                // 恢复该文档的草稿纸与纸上笔迹（默认不打开任何一张）
         // 恢复阅读进度：缩放倍率 + 定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。
         let p = workspace.progress(documentId: id)
         session.restoreZoom = CGFloat(p.zoom)      // 首帧定基准后由 PageStreamView 套用
@@ -869,6 +892,62 @@ struct ContentView: View {
             workspace.deleteHighlight(id: goneID)
         }
         session.persistedHighlights = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    // MARK: - 草稿纸持久化（scratch_pad 表 + note kind=4，v8）
+
+    /// 加载文档时清空内存草稿纸/纸上笔迹与两份对账集（无文档 / 路径失效时用）。
+    /// ⚠️ 与 `clearInk` 同一条纪律：对账集必须**先于**列表赋值，否则 `.onChange` 会拿旧文档的
+    /// 快照对账新（空）列表，把上一篇的草稿纸整个从库里删掉。
+    private func clearScratch() {
+        session.openPadID = nil
+        session.scratchLive = nil
+        session.persistedScratchPads = [:]
+        session.persistedScratchStrokes = [:]
+        session.scratchPads = []
+        session.scratchStrokes = []
+    }
+
+    /// 恢复该文档已落库的草稿纸与纸上笔迹。**默认一张都不打开**——草稿纸是覆盖层，
+    /// 开着文档就弹一张纸盖住正文不是用户要的语义（要看哪张走图钉/侧栏列表）。
+    private func loadScratch(documentId id: String) {
+        session.openPadID = nil
+        session.scratchLive = nil
+        let pads = workspace.scratchPads(documentId: id)
+        let strokes = workspace.scratchStrokes(documentId: id)
+        session.persistedScratchPads = Dictionary(uniqueKeysWithValues: pads.map { ($0.id, $0) })
+        session.persistedScratchStrokes = Dictionary(uniqueKeysWithValues: strokes.map { ($0.id, $0) })
+        session.scratchPads = pads
+        session.scratchStrokes = strokes
+    }
+
+    /// 内存草稿纸 ↔ 库对账：新增/改名/改底色 upsert；已删除的 delete（纸上笔迹由下面那个函数
+    /// 一并对账掉——删纸时调用方要同时把它的笔迹从 `scratchStrokes` 里摘掉）。
+    private func persistScratchPads() {
+        guard let id = session.documentId else { return }
+        let current = session.scratchPads
+        let currentIDs = Set(current.map(\.id))
+        for p in current where session.persistedScratchPads[p.id] != p {
+            workspace.saveScratchPad(documentId: id, p)
+        }
+        for goneID in session.persistedScratchPads.keys where !currentIDs.contains(goneID) {
+            workspace.deleteScratchPad(id: goneID)
+        }
+        session.persistedScratchPads = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    /// 内存草稿纸笔迹 ↔ 库对账（与 `persistInk` 同套路，只是走 kind=4）。
+    private func persistScratchStrokes() {
+        guard let id = session.documentId else { return }
+        let current = session.scratchStrokes
+        let currentIDs = Set(current.map(\.id))
+        for st in current where session.persistedScratchStrokes[st.id] != st {
+            workspace.saveInkStroke(documentId: id, st)
+        }
+        for goneID in session.persistedScratchStrokes.keys where !currentIDs.contains(goneID) {
+            workspace.deleteInkStroke(id: goneID)
+        }
+        session.persistedScratchStrokes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     // MARK: - 重定位

@@ -64,6 +64,22 @@ struct LibInkLayer: Identifiable, Equatable {
     var createdAt: Date
 }
 
+/// 一张草稿纸（`scratch_pad` 表，v8）。挂逻辑文档，全版本共用（同 note/ink_layer）。
+/// 锚点＝创建时所在页 + 页内归一化点（图钉位置）；`bg` 为 CSS `rgba(...)` 串（跨平台易读）。
+/// 草稿纸上的笔迹在 `note` 表 kind=4，payload 里带 `padId` 指回这里，坐标是**画布坐标**
+/// （逻辑点，可负无界，见 `ScratchPad` 的坐标系契约）。
+struct LibScratchPad: Identifiable, Equatable {
+    var id: String              // UUID
+    var documentId: String
+    var title: String
+    var anchorPage: Int
+    var anchorX: Double
+    var anchorY: Double
+    var bg: String
+    var createdAt: Date
+    var updatedAt: Date
+}
+
 /// 一页的 OCR 缓存（`ocr_page` 表，v3）。按内容 hash（= variant 物理内容）+ 页 + 引擎缓存，
 /// 随文件移动/换机复用。`payload` = JSON `OCRPagePayload`（归一化 0~1 文本框，见 `OCR.swift`）。
 struct OCRPage: Equatable {

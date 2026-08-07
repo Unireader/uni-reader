@@ -158,6 +158,16 @@ extension ReaderSurface {
         } else {
             Button(L("Add Note Here")) { beginAddNoteAtCursor() }   // 点注解（锚到右键处页面坐标）
         }
+        Divider()
+        Button(L("New Scratchpad Here")) { newScratchPadAtCursor() }
+    }
+
+    /// 在右键处新建一张草稿纸并立即打开：锚点取 `.onContinuousHover` 维护的光标位
+    /// （与「在此添加批注」同源），页面上从此留一枚图钉指着这张纸。
+    func newScratchPadAtCursor() {
+        guard let p = scratch.cursorP, let n = containerPointToPageNorm(p) else { return }
+        clearSelection()
+        app.addScratchPad(in: session, page: n.page, nx: Double(n.nx), ny: Double(n.ny))
     }
 
     /// 高亮当前选区：逐页各落一条高亮（每页自己的行框），跨页选区各页都铺色。无正文、无图钉、无编辑器。
@@ -259,7 +269,8 @@ extension ReaderSurface {
     var dragSelectGesture: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .local)
             .onChanged { v in
-                guard app.pointerTool == .textSelect, scratch.pinch == nil else { return }
+                guard app.pointerTool == .textSelect, scratch.pinch == nil,
+                      session.openPadID == nil else { return }   // 草稿纸盖着时阅读区一概不响应
                 if scratch.selDragAnchor == nil {
                     if pointNotePinHit(v.startLocation) != nil { return }   // selDragAnchor 保持 nil → 整段拖选不启动
                     scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
@@ -301,7 +312,8 @@ extension ReaderSurface {
     var notePinDragGesture: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .local)
             .onChanged { v in
-                guard app.pointerTool == .textSelect, scratch.pinch == nil else { return }
+                guard app.pointerTool == .textSelect, scratch.pinch == nil,
+                      session.openPadID == nil else { return }
                 if scratch.noteDragID == nil {
                     guard let hit = pointNotePinHit(v.startLocation) else { return }
                     scratch.noteDragID = hit.id
@@ -349,7 +361,8 @@ extension ReaderSurface {
     var localInkDragGesture: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .local)
             .onChanged { v in
-                guard app.pointerTool == .ink, scratch.pinch == nil else { return }
+                guard app.pointerTool == .ink, scratch.pinch == nil,
+                      session.openPadID == nil else { return }   // 笔迹只落草稿纸（覆盖层自己收）
                 let isErase = app.padMode == "erase"
                 // 起笔（本手势首个回调）：定锚 + inkBegin / 首点擦除
                 if scratch.localInkStart == nil {

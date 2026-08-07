@@ -13,8 +13,10 @@
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
     layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28, gotoPage: 0x29, openDoc: 0x2A,
+    scratchOpen: 0x2B, scratchAdd: 0x2C,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A, library: 0x3B, toc: 0x3C,
+    scratchPads: 0x3D, scratchStrokes: 0x3E,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
     lassoMove: 0x47,
     nack: 0x50
@@ -23,6 +25,7 @@
   var MODEK = ["note", "erase", "page", "lasso"];
   var RKIND = ["pen", "erase", "page"];      // 环形盘扇区类型
   var NO_HL = 0xFFFF;                        // highlight 线上哨兵：无高亮（中心取消区）→ 对象里 -1
+  var NO_PAD = 0xFFFF;                       // 草稿纸「一张都没开」的线上哨兵 → 对象里 -1
   var PH = { begin: 0, move: 1, end: 2 };
   var PHNAME = ["begin", "move", "end"];
 
@@ -189,6 +192,38 @@
         }
         break;
       }
+      // 草稿纸（v8）。open = 当前打开 list 里第几张，0xFFFF = 没开（对象里 -1，同 radial.highlight 惯例）。
+      case "scratchpads": {
+        w.u8(OP.scratchPads);
+        var spo = o.open == null ? -1 : o.open;
+        w.u16(spo < 0 ? NO_PAD : spo);
+        var SP = o.list || []; w.u16(SP.length);
+        for (var sp = 0; sp < SP.length; sp++) {
+          var pd = SP[sp];
+          w.str(pd.id || ""); w.str(pd.title || "");
+          w.u32(pd.page || 0); w.f32(pd.nx || 0); w.f32(pd.ny || 0);
+          var bgc = parseColor(pd.bg);
+          w.u8(bgc[0]); w.u8(bgc[1]); w.u8(bgc[2]); w.f32(bgc[3]);
+        }
+        break;
+      }
+      case "scratchStrokes": {
+        // 当前打开那张纸上的全量笔迹。**无 page 字段**——画布不属于任何一页，点集是画布坐标
+        // （逻辑点，可负无界，见 PROTOCOL.md 的草稿纸坐标系）。ackRel 语义同 strokes。
+        w.u8(OP.scratchStrokes); w.u32(o.ackRel || 0);
+        var SS = o.list || []; w.u32(SS.length);
+        for (var ss = 0; ss < SS.length; ss++) { w.pen(SS[ss].pen); w.pts(SS[ss].pts, 3); }
+        break;
+      }
+      case "scratchOpen": {
+        w.u8(OP.scratchOpen);
+        var soi = o.index == null ? -1 : o.index;
+        w.u16(soi < 0 ? NO_PAD : soi);
+        break;
+      }
+      case "scratchAdd":
+        w.u8(OP.scratchAdd); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
+        break;
       case "inkCancel": w.u8(OP.inkCancel); break;
       case "strokes": {
         // ackRel：Mac 已连续处理到的该客户端 REL seq，按收件人填（PROTOCOL.md §4.2）。
@@ -330,6 +365,27 @@
         }
         return { type: "toc", docId: tdoc, list: tlist };
       }
+      case OP.scratchPads: {
+        var spOpen = r.u16(), spn = r.u16(), splist = new Array(spn);
+        for (var spi = 0; spi < spn; spi++) {
+          var pid = r.str(), ptitle = r.str(), ppage = r.u32(), pnx = r.f32(), pny = r.f32();
+          var br = r.u8(), bg = r.u8(), bb = r.u8(), ba = r.f32();
+          splist[spi] = { id: pid, title: ptitle, page: ppage, nx: pnx, ny: pny,
+                          bg: "rgba(" + br + "," + bg + "," + bb + "," + ba + ")" };
+        }
+        return { type: "scratchpads", open: spOpen === NO_PAD ? -1 : spOpen, list: splist };
+      }
+      case OP.scratchStrokes: {
+        var ssack = r.u32(), ssn = r.u32(), sslist = new Array(ssn);
+        for (var ssi = 0; ssi < ssn; ssi++) sslist[ssi] = { pen: r.pen(), pts: r.pts(3) };
+        return { type: "scratchStrokes", ackRel: ssack, list: sslist };
+      }
+      case OP.scratchOpen: {
+        var soIdx = r.u16();
+        return { type: "scratchOpen", index: soIdx === NO_PAD ? -1 : soIdx };
+      }
+      case OP.scratchAdd:
+        return { type: "scratchAdd", page: r.u32(), nx: r.f32(), ny: r.f32() };
       case OP.inkCancel: return { type: "inkCancel" };
       case OP.strokes: {
         var sack = r.u32(), sn = r.u32(), slist = new Array(sn);

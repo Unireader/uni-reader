@@ -30,7 +30,8 @@ enum InkEdit {
     /// 局部擦除切段：剔除距任一擦除点 ≤ r 的点，连续未命中段各成一条新笔画
     /// （**新 UUID**，保留 page/color/width/type；单点段保留为圆点笔划；全部命中返回空）。
     /// - erasePts: (nx, ny, page)——z 分量是页号（擦除点无压感，z 槽位闲置）；
-    ///   只命中与本笔画同页的擦除点，跨页天然不串。
+    ///   只命中与本笔画同页的擦除点，跨页天然不串。草稿纸笔迹的 `page` 恒为 0，调用方同样填 0。
+    /// - 坐标系无关：只认「距离 ≤ r」，页内归一化与草稿纸画布坐标都能用，调用方保证 r 与点同单位。
     /// - 一个点都没命中时原样返回 `[s]`（id 不变），调用方替换后持久化对账为零变化。
     /// - 新 id 正好被 persistInk 值快照对账识别为「旧 id 删 + 新 id 增」。
     static func splitStroke(_ s: InkStroke, erasePts: [SIMD3<Double>], r: Double) -> [InkStroke] {
@@ -47,7 +48,10 @@ enum InkEdit {
         var anyHit = false
         func flush() {
             guard !seg.isEmpty else { return }
-            out.append(InkStroke(page: s.page, color: s.color, width: s.width, type: s.type, points: seg, layerId: s.layerId))
+            // ⚠️ `padId` 必须跟着走：漏了它，草稿纸上被局部擦过的笔迹会变成 padId=nil 的孤儿——
+            // 界面上当场消失（按 padId 过滤取不到），却以 kind=2 的身份留在库里污染页内笔迹。
+            out.append(InkStroke(page: s.page, color: s.color, width: s.width, type: s.type,
+                                 points: seg, layerId: s.layerId, padId: s.padId))
             seg = []
         }
         for p in s.points {

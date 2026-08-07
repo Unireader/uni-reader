@@ -6,6 +6,7 @@ import { S, updateHud, updatePageLabel, startStats } from "./hud.svelte.js";
 import { initRender } from "./render.js";
 import { initInput } from "./input.js";
 import { initWs } from "./ws.js";
+import { initScratch } from "./scratch.js";
 import { actions } from "./actions.js";
 
 export interface StartConfig {
@@ -53,6 +54,10 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     hoverPending: false, hoverMsg: null, hoverOn: false,
     // 环形选笔盘 + 长按进度环（Mac 下发的镜像状态）
     radialState: null, pressRing: null, pressRAF: null,
+    // 草稿纸（v8）：pads/padOpen/padStrokes 是 Mac 广播的镜像；padVp 是本端私有视口
+    // （不上线不落库——三端各自独立的缩放滚动就是靠它，见 PROTOCOL.md §4.4）。
+    pads: [], padOpen: -1, padStrokes: [], padCur: null,
+    padVp: { ox: 0, oy: 0, z: 1 }, padMini: true, padMiniDrag: false, padPinch: null,
     // 页宽上报去重
     lastGeomW: -1,
     // WebSocket
@@ -63,6 +68,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
   });
 
   initRender(refs);
+  initScratch(refs);   // 必须在 initInput 之前：input 的指针拦截要调 G.padActive/padPointerDown
   initInput(refs);
   initWs();
   startStats();
@@ -136,6 +142,15 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     // 尺子模式：独立本地开关，只影响 note 模式 pointermove 的采点（45° 吸附直线）。
     toggleRuler() { G.rulerOn = !G.rulerOn; S.rulerOn = G.rulerOn; },
     toggleLock() { G.zoomLocked = !G.zoomLocked; S.zoomLocked = G.zoomLocked; },
+    // ---- 草稿纸（v8）----
+    // 开/关/新建都只发请求，Mac 判定后回推 scratchpads，本地照做（同 layerAdd 一族的分工）。
+    openPad(i: number) { G.padOpenIndex(i); S.padList = false; },
+    closePad() { G.padClose(); },
+    addPad() { G.padAdd(); S.padList = false; },
+    togglePadList() { S.padList = !S.padList; },
+    padRecenter() { G.padRecenter(); },
+    padFit() { G.padFit(); },
+    togglePadMini() { G.padMini = !G.padMini; S.padMini = G.padMini; G.drawScratch(); },
     toggleFull() {
       if (!document.fullscreenElement) {
         const root = document.documentElement;

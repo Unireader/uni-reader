@@ -19,6 +19,9 @@ canvas { position:fixed; inset:0; }
     -webkit-backdrop-filter:blur(16px) saturate(140%); backdrop-filter:blur(16px) saturate(140%); }
 }
 #radial { z-index:6; pointer-events:none; }
+/* 草稿纸层：盖在页图/笔迹/选笔盘之上（开着时笔迹只落它上面）。没开纸时 display:none，
+   不吃任何事件；开着时 touch-action:none，指针事件由 lib/scratch.ts 全接管。 */
+#scratch { z-index:7; touch-action:none; }
 #topbar { position:fixed; left:0; right:0; top:0; height:46px; z-index:10;
   display:flex; align-items:center; gap:10px; padding:0 10px;
   overflow-x:auto; scrollbar-width:none;
@@ -163,3 +166,34 @@ canvas { position:fixed; inset:0; }
 .libTitle { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .libBadge { flex:none; font-size:11px; color:#3fb950; border:1px solid rgba(63,185,80,.45);
   border-radius:999px; padding:1px 7px; }
+
+/* ---- 草稿纸（v8）：工具条 + 列表弹层。入口按钮在 #topbar 里，用顶栏那套按钮样式。 ----
+   ⚠️ 别把这些搬回 PadBar.svelte 的 <style>：Svelte 5 对带 `class:` 指令的元素会漏作用域类，
+   规则写成 `#id.svelte-xxxx{}` 而元素上没那个类 → 整块样式失效（踩过一次，按钮被 canvas 盖死）。*/
+#padbar { position:fixed; left:50%; transform:translateX(-50%); top:52px; z-index:12;
+  display:flex; align-items:center; gap:4px; padding:5px 8px; border-radius:10px;
+  background:rgba(22,27,34,.92); border:1px solid #30363d; color:#e6edf3;
+  -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  font:500 13px/1 -apple-system,'PingFang SC',system-ui,sans-serif; }
+#padbar button { display:inline-flex; align-items:center; justify-content:center;
+  width:32px; height:32px; padding:0; border:0; border-radius:7px;
+  background:transparent; color:inherit; }
+#padbar button:active { background:#30363d; }
+#padbar button.on { background:#1f6feb; color:#fff; }
+#padbar button svg { width:18px; height:18px; display:block; }
+#padName { padding:0 8px; max-width:38vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#padListMask { position:fixed; inset:0; z-index:19; margin:0; padding:0; border:0; background:transparent; cursor:default; }
+#padlist { position:fixed; right:8px; top:52px; z-index:20; width:240px; max-height:60vh; overflow:auto;
+  padding:6px; border:1px solid #30363d; border-radius:10px; background:rgba(22,27,34,.96); color:#e6edf3;
+  font:14px/1.4 -apple-system,'PingFang SC',system-ui,sans-serif; }
+#padlist .phead { padding:6px 8px; font-weight:600; color:#8b949e; font-size:13px; }
+#padlist .pempty { padding:8px; color:#8b949e; font-size:13px; }
+#padlist .prow { display:flex; align-items:center; gap:8px; width:100%; padding:10px 8px;
+  border:0; border-radius:7px; background:transparent; color:inherit; text-align:left; font:inherit; }
+#padlist .prow:active { background:#30363d; }
+#padlist .prow.cur { background:#1f6feb; color:#fff; }
+#padlist .prow svg { width:16px; height:16px; flex:none; }
+#padlist .pt { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#padlist .pp { flex:none; color:#8b949e; font-size:12px; }
+#padlist .prow.cur .pp { color:rgba(255,255,255,.75); }
+#padlist .padd { margin-top:4px; border-top:1px solid #30363d; border-radius:0 0 7px 7px; }

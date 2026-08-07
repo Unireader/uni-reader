@@ -147,6 +147,29 @@ final class DocSession: ObservableObject, Identifiable {
         }
     }
 
+    // MARK: 草稿纸（scratch_pad 表 + note kind=4，v8）
+    //
+    // 草稿纸是**盖在 PDF 之上的一层 UI**，不属于任何一页；一篇文档可有多张，各自锚在创建处。
+    // 打开哪张是**窗口级**状态（`openPadID`），平板跟随它（见 `AppModel.broadcastScratchPads`）。
+
+    /// 本文档的全部草稿纸（按创建序）。
+    @Published var scratchPads: [ScratchPad] = []
+    /// 已落库的草稿纸快照（id → 值），增量对账用，非 @Published。
+    var persistedScratchPads: [UUID: ScratchPad] = [:]
+    /// 当前打开的草稿纸（nil = 没开，阅读区照常）。开着时笔迹只落在草稿纸上（用户要求）。
+    @Published var openPadID: UUID?
+    /// **全部**草稿纸上的已完成笔迹（不分纸；点集是画布坐标）。渲染时按 `padId` 过滤一次即可
+    /// ——同时只可能开一张纸，不像页内笔迹要每帧按页分桶，故不做 `visibleStrokesByPage` 那种批量版。
+    @Published var scratchStrokes: [InkStroke] = []
+    /// 已落库的草稿纸笔迹快照（id → 值），增量对账用，非 @Published。
+    var persistedScratchStrokes: [UUID: InkStroke] = [:]
+    /// 草稿纸上正在书写的那一笔（与页内的 `liveStroke` 分开，免得两条链路互相看见对方的半成品）。
+    @Published var scratchLive: InkStroke?
+
+    var openPad: ScratchPad? { scratchPads.first { $0.id == openPadID } }
+    /// 某张草稿纸上的笔迹（按原顺序）。
+    func strokes(pad: UUID) -> [InkStroke] { scratchStrokes.filter { $0.padId == pad } }
+
     // 文字注解（note kind=0）。运行时驻留于此，阅读区(渲染标记)与 Inspector(列表) 共读；
     // 由 ContentView `.onChange` 增量对账落库（新增/编辑 upsert、删除 delete），与手写笔迹同套路。
     @Published var textNotes: [TextNote] = []
@@ -421,9 +444,9 @@ final class DocSession: ObservableObject, Identifiable {
     /// `@StateObject` 里，SwiftUI 关窗后何时释放没有保证；只要 `PDFDocument` 活着，那本 PDF 的文件
     /// 就一直被打开着，工作区所在的**可移动硬盘弹不出去**（用户 2026-08-05 报）。
     ///
-    /// ⚠️ **严禁在这里清 `strokes` / `inkLayers` / `textNotes` / `highlights`**：那四个的落库是
-    /// `ContentView` 里的 `onChange` 增量对账，清空 = 对账认定「用户删光了」→ 把整篇笔记从库里删掉。
-    /// 本方法只碰**文件引用**，不碰任何会被对账看到的数据。
+    /// ⚠️ **严禁在这里清 `strokes` / `inkLayers` / `textNotes` / `highlights` / `scratchPads` /
+    /// `scratchStrokes`**：它们的落库是 `ContentView` 里的 `onChange` 增量对账，清空 = 对账认定
+    /// 「用户删光了」→ 把整篇笔记从库里删掉。本方法只碰**文件引用**，不碰任何会被对账看到的数据。
     func teardown() {
         clearSearch()
         for t in ocrTasks.values { t.cancel() }

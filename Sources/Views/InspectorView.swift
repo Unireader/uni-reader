@@ -67,6 +67,7 @@ struct InspectorView: View {
                         infoBlock(doc)
                         filesBlock
                     } else {
+                        scratchBlock
                         inkBlock
                         textBlock
                         highlightBlock
@@ -190,6 +191,66 @@ struct InspectorView: View {
                 }
             }
         }
+    }
+
+    // MARK: 草稿纸（v8）
+
+    /// 草稿纸列表：点开、跳到锚点、删除。新建走阅读区右键「在此新建草稿纸」（要有个落点才谈得上锚定）。
+    private var scratchBlock: some View {
+        block("\(L("Scratchpads")) · \(session.scratchPads.count)") {
+            if session.scratchPads.isEmpty {
+                Text(L("No scratchpads yet. Right-click in the page to add one."))
+                    .foregroundStyle(.secondary).font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(Array(session.scratchPads.enumerated()), id: \.element.id) { i, pad in
+                    scratchRow(index: i, pad: pad)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func scratchRow(index i: Int, pad: ScratchPad) -> some View {
+        let count = session.scratchStrokes.count { $0.padId == pad.id }
+        HStack(spacing: 6) {
+            Button {
+                session.openPadID = pad.id      // 打开覆盖层
+            } label: {
+                HStack(spacing: 6) {
+                    Label(pad.displayName(index: i), systemImage: "square.and.pencil")
+                        .font(.callout).lineLimit(1)
+                    Spacer()
+                    Text("\(count)").foregroundStyle(.secondary).font(.caption)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(String(format: L("Open · anchored on page %d"), pad.anchorPage + 1))
+
+            Button {
+                onJumpTo(pad.anchorPage, pad.anchorY)   // 跳到它挂着的那一页那一处（不打开纸）
+            } label: {
+                Image(systemName: "scope").font(.caption).foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help(L("Go to anchor"))
+
+            Button {
+                deleteScratchPad(pad.id)
+            } label: {
+                Image(systemName: "xmark.circle.fill").font(.body).foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help(L("Delete this scratchpad and its ink"))
+        }
+    }
+
+    /// 删除一张草稿纸：纸与纸上的笔迹一起摘掉（两个数组各自的 onChange 对账会清库）。
+    private func deleteScratchPad(_ id: UUID) {
+        if session.openPadID == id { session.openPadID = nil; session.scratchLive = nil }
+        session.scratchPads.removeAll { $0.id == id }
+        session.scratchStrokes.removeAll { $0.padId == id }
     }
 
     /// 该页笔迹最靠上的归一化 y（0 顶 1 底），略上移一点作跳转目标。

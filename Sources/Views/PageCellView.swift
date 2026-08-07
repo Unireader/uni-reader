@@ -25,6 +25,8 @@ struct PageCellView: View {
     var hoverD: CGFloat = 10               // 平板笔尖光标直径（erase 模式+圆环开 = 橡皮直径 2×eraserRadius×页宽）
     var onOpenNote: (TextNote) -> Void = { _ in }
     var noteDrag: (id: UUID, off: CGSize)? = nil   // 点注解拖拽 ghost（非空且 id 匹配时该图钉按 off 挪显示位）
+    var scratchPins: [(id: UUID, nx: Double, ny: Double, name: String)] = []   // 本页的草稿纸图钉（点开那张纸）
+    var onOpenScratchPad: (UUID) -> Void = { _ in }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -127,6 +129,22 @@ struct PageCellView: View {
                         .position(x: pos.x + off.width, y: pos.y + off.height)
                 }
             }
+            // 草稿纸图钉：标记「这张纸是在页面的哪儿建的」，点开对应草稿纸。与批注图钉同款钳制/样式约束
+            // （扁平圆底 + SF Symbol，无渐变高光），只是换个图标与配色以便一眼分得清。
+            ForEach(scratchPins, id: \.id) { pin in
+                Button { onOpenScratchPad(pin.id) } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.black.opacity(0.75))
+                        .padding(3)
+                        .background(Self.scratchMarker, in: Circle())
+                        .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                .help(pin.name)
+                .position(x: min(max(pin.nx * size.width, 12), size.width - 12),
+                          y: min(max(pin.ny * size.height, 10), size.height - 10))
+            }
             // 平板笔尖光标（页锚定，纯位置指示）：压在墨迹/图钉之上、随页滚动。仅显示、不挡点击。
             // erase 模式且尺寸圆环开时直径 = 橡皮直径（hoverD 由调用方按 eraserRadius × 页宽换算传入）。
             if let hover {
@@ -162,6 +180,7 @@ struct PageCellView: View {
 
     private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)
     private static let noteMarker = Color(red: 1, green: 0.80, blue: 0.15)
+    private static let scratchMarker = Color(red: 0.62, green: 0.83, blue: 0.98)
 
     /// 图钉落位：选区注解落在末端右侧（不遮文字起点）；点注解（无行框）落在锚点处。钳制在页内。
     private func markerPos(_ n: TextNote, size: CGSize) -> CGPoint {

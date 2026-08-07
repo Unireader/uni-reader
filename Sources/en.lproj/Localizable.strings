@@ -197,3 +197,19 @@
 "Cannot Open Workspace" = "Cannot Open Workspace";
 "New Window" = "New Window";
 "A workspace with this name already exists here. Open it instead, or choose another name." = "A workspace with this name already exists here. Open it instead, or choose another name.";
+
+/* Scratchpad (v8) */
+"Scratchpad %d" = "Scratchpad %d";
+"Scratchpads" = "Scratchpads";
+"New Scratchpad Here" = "New Scratchpad Here";
+"No scratchpads yet. Right-click in the page to add one." = "No scratchpads yet. Right-click in the page to add one.";
+"Open · anchored on page %d" = "Open · anchored on page %d";
+"Go to anchor" = "Go to anchor";
+"Delete this scratchpad and its ink" = "Delete this scratchpad and its ink";
+"%d strokes" = "%d strokes";
+"Recenter" = "Recenter";
+"Fit Content" = "Fit Content";
+"Minimap" = "Minimap";
+"Close Scratchpad (Esc)" = "Close Scratchpad (Esc)";
+"Double-click to rename" = "Double-click to rename";
+"Name" = "Name";

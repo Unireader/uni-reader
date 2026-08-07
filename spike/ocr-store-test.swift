@@ -22,8 +22,10 @@ defer { try? FileManager.default.removeItem(at: tmp) }
 
 let store = try LibraryStore(workspaceFolder: tmp)
 
-// 0) 新库 schema_version == 3
-check(store.meta("schema_version") == "3", "新库 schema_version = 3")
+// 0) 新库 schema_version == 当前版本。**别写死数字**：这行原本硬编码 "3"，schema 一路升到 v8
+// 都没人跟着改，于是从 v4 起它就一直是红的、没人当回事。跟着常量走才不会再烂。
+check(store.meta("schema_version") == String(LibraryStore.schemaVersion),
+      "新库 schema_version = \(LibraryStore.schemaVersion)")
 
 // 1) payload JSON 编码 → 落库 → 读回 → 解码，字段一致（跨平台契约）
 let payload = TPayload(w: 595, h: 842, runs: [
@@ -65,10 +67,11 @@ check(try store.ocrPage(contentHash: "hB", page: 1, provider: "vision") != nil, 
 // 6) miss → nil（上层据此决定真跑 OCR 再回填）
 check(try store.ocrPage(contentHash: "nope", page: 0, provider: "vision") == nil, "未缓存 → nil")
 
-// 7) 迁移幂等：把 schema_version 退回 2 再重开 → 迁移把它拉回 3，且 ocr 数据保留
+// 7) 迁移幂等：把 schema_version 退回 2 再重开 → 迁移把它拉回当前版本，且 ocr 数据保留
 try store.setMeta("schema_version", "2")
 let store2 = try LibraryStore(workspaceFolder: tmp)
-check(store2.meta("schema_version") == "3", "重开触发迁移 → schema_version 回到 3")
+check(store2.meta("schema_version") == String(LibraryStore.schemaVersion),
+      "重开触发迁移 → schema_version 回到 \(LibraryStore.schemaVersion)")
 check(try store2.ocrPage(contentHash: "hB", page: 1, provider: "vision") != nil, "迁移不丢已有 OCR 缓存")
 
 print("\n\(pass) passed, \(fail) failed")

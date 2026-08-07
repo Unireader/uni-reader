@@ -67,6 +67,8 @@ export function initInput(refs: CaptureRefs): void {
 
   ink.addEventListener("pointerdown", function (e: PointerEvent) {
     cancelMomentum();
+    // 草稿纸盖着时整段让给它（笔迹只能落在草稿纸上；平移/缩放也归它自己的无限画布视口）。
+    if (G.padActive()) { if (G.padPointerDown(e)) { e.preventDefault(); return; } }
     if (e.pointerType === "touch") {
       if (G.activeId !== null) { e.preventDefault(); return; }   // 笔在写 → 忽略手掌
       if (e.width > PALM || e.height > PALM) { e.preventDefault(); return; }   // 大面积接触（手掌）忽略
@@ -139,6 +141,7 @@ export function initInput(refs: CaptureRefs): void {
   }, { passive: false });
 
   ink.addEventListener("pointermove", function (e: PointerEvent) {
+    if (G.padActive()) { if (G.padPointerMove(e)) { e.preventDefault(); return; } }
     if (e.pointerType === "touch") {
       if (!(e.pointerId in G.touches)) return;
       G.touches[e.pointerId] = { x: e.clientX, y: e.clientY };
@@ -248,6 +251,12 @@ export function initInput(refs: CaptureRefs): void {
       G.lastPanX = t.x; G.lastPanY = t.y; G.panDownX = t.x; G.panDownY = t.y; G.panStarted = false;
     } else if (G.touchOrder.length === 0) {
       if (G.panStarted) startMomentum();   // 松手甩动 → 惯性
+      else {
+        // 单指**单击**（全程没越过死区）：命中草稿纸图钉就打开那张纸。
+        // 只认手指、不认笔——平板上笔是用来写字的，让笔点图钉必然会在图钉上落笔时误触发。
+        const i = G.padPinHit(G.panDownX, G.panDownY);
+        if (i >= 0) G.padOpenIndex(i);
+      }
       G.panId = null; G.panStarted = false;
     } else if (G.touchOrder.length >= 2) {
       beginPinch();
@@ -325,7 +334,10 @@ export function initInput(refs: CaptureRefs): void {
     if (G.pressRing) G.setPressRing(null);
     G.activeId = null; G.penMode = "";
   }
-  function onUp(e: PointerEvent): void { if (e.pointerType === "touch") endTouch(e.pointerId); else endPen(e); }
+  function onUp(e: PointerEvent): void {
+    if (G.padActive()) { if (G.padPointerUp(e)) return; }
+    if (e.pointerType === "touch") endTouch(e.pointerId); else endPen(e);
+  }
   ink.addEventListener("pointerup", onUp);
   ink.addEventListener("pointercancel", onUp);
   ink.addEventListener("pointerleave", function (e: PointerEvent) { if (e.pointerType !== "touch") endHover(); });
@@ -333,6 +345,7 @@ export function initInput(refs: CaptureRefs): void {
   // 鼠标滚轮 / 触控板滚动（桌面浏览器测试用）：等同单指平移，复用同一条
   // panBy→emitScroll 链路，方便无平板时在另一台电脑上测滚动同步/跟随。
   ink.addEventListener("wheel", function (e: WheelEvent) {
+    if (G.padActive()) { e.preventDefault(); return; }   // 草稿纸开着：滚轮归它（它自己那层已监听）
     cancelMomentum();
     const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? G.availH : 1);  // 行/页 → 像素
     let dx = e.deltaX * unit, dy = e.deltaY * unit;
@@ -358,6 +371,12 @@ export function initInput(refs: CaptureRefs): void {
   }
   function tick(): void {
     G.frames++;
+    if (G.padActive()) {
+      // 草稿纸的批点是画布坐标，必须走 padFlush（flushBatch 会按页内语义分组，坐标系不对）。
+      if (G.activeId !== null && G.batch.length) G.padFlush(G.penMode === "paderase" ? "erase" : "ink");
+      requestAnimationFrame(tick);
+      return;
+    }
     if (G.activeId !== null) {
       if (G.batch.length) flushBatch(G.penMode === "erase" ? "erase" : "ink");
       if (G.pbatch.length) { G.send({ type: "probe", phase: "move", pts: G.pbatch }); G.pbatch = []; }
@@ -383,6 +402,7 @@ export function initInput(refs: CaptureRefs): void {
     if (e.key === "PageUp") { e.preventDefault(); G.cycleMode(); }
     else if (e.key === "PageDown") { e.preventDefault(); G.cyclePen(); }
     // 框选移动的 Esc 清选中（同 Mac 端 NSEvent 本地监视器同款行为）。
+    else if (e.key === "Escape" && G.padActive()) { e.preventDefault(); G.padClose(); }
     else if (e.key === "Escape" && G.lassoSelection) { G.clearLasso(); }
   });
 

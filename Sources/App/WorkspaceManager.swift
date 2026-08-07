@@ -463,9 +463,32 @@ final class WorkspaceManager: ObservableObject {
         try? store.upsertNote(note)
     }
 
-    /// 删除一条手写笔画（擦除时调用；note.id == stroke.id）。
+    /// 删除一条手写笔画（擦除时调用；note.id == stroke.id）。草稿纸笔迹同走这里（同在 note 表）。
     func deleteInkStroke(id: UUID) {
         try? store?.deleteNote(id: id.uuidString)
+    }
+
+    // MARK: - 草稿纸持久化（scratch_pad 表 + note kind=4，v8；挂逻辑文档，全版本共用）
+
+    /// 读取某文档的全部草稿纸（按创建序）。
+    func scratchPads(documentId: String) -> [ScratchPad] {
+        ((try? store?.scratchPads(documentId: documentId)) ?? []).map(ScratchPad.init(row:))
+    }
+
+    /// 落库/更新一张草稿纸（新建/改名/改底色）。
+    func saveScratchPad(documentId: String, _ pad: ScratchPad) {
+        try? store?.upsertScratchPad(pad.toRow(documentId: documentId))
+    }
+
+    /// 删除一张草稿纸（纸上的笔迹由调用方同时从 `scratchStrokes` 移除，走对账删除）。
+    func deleteScratchPad(id: UUID) {
+        try? store?.deleteScratchPad(id: id.uuidString)
+    }
+
+    /// 读取某文档全部草稿纸上的笔迹（含所有纸；点集是画布坐标）。用 `saveInkStroke`/`deleteInkStroke` 写。
+    func scratchStrokes(documentId: String) -> [InkStroke] {
+        ((try? store?.notes(documentId: documentId)) ?? [])
+            .compactMap { $0.kind == InkStroke.scratchNoteKind ? InkStroke(note: $0) : nil }
     }
 
     // MARK: - 笔迹图层持久化（ink_layer 表，v7；挂逻辑文档，全版本共用）
