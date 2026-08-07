@@ -18,6 +18,11 @@ struct ScratchPadOverlay: View {
     let padIndex: Int
     /// 玻璃工具栏避让量（同阅读区 `indicatorTopInset`）。
     let topInset: CGFloat
+    /// 阅读区的页间底色（`ReaderSurface.voidColor`）。用来在工具栏那条带子后面**顶掉纸色**：
+    /// macOS 26 的工具栏是玻璃的，图标颜色跟外观走（深色外观 = 白图标），而草稿纸是**白纸**——
+    /// 纸一路铺到工具栏底下就是白图标压白纸，整条工具栏当场看不见（用户 2026-08-07 报）。
+    /// 铺回阅读区自己的底色，工具栏就拿回了它平时的背景。
+    let voidColor: Color
 
     // 视口（本端私有，不落库不上线：三端各自独立缩放滚动）
     @State private var vp = ScratchViewport()
@@ -44,6 +49,13 @@ struct ScratchPadOverlay: View {
     private var bg: Color {
         Color(red: pad.bg.r / 255, green: pad.bg.g / 255, blue: pad.bg.b / 255, opacity: pad.bg.a)
     }
+    /// 网格/提示文字用的「墨色」。**不能直接用 `Color.primary`**——那跟随系统深浅外观，
+    /// 而纸色是这张纸自己的属性（默认白，也可以是别的）：深色外观 + 白纸时 primary 是白的，
+    /// 网格就整个消失了。改由纸色明度推：浅纸配深墨、深纸配浅墨。
+    private var gridInk: Color {
+        let lum = (0.299 * pad.bg.r + 0.587 * pad.bg.g + 0.114 * pad.bg.b) / 255
+        return lum > 0.5 ? Color.black : Color.white
+    }
     private var isErasing: Bool { app.pointerTool == .ink && app.padMode == "erase" }
     /// 橡皮在画布坐标下的半径（页宽归一化 → 画布点，三端同一个换算，见 `ScratchPad.eraserRefWidth`）。
     private var eraserCanvasRadius: Double { app.eraserRadius * ScratchPad.eraserRefWidth }
@@ -52,7 +64,9 @@ struct ScratchPadOverlay: View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 bg
+                ScratchGridLayer(viewport: vp, ink: gridInk)   // 定位参照：淡点阵 + 原点标记
                 inkLayers
+                emptyHint
                 eraserRing
                 gestureCatcher
             }
@@ -67,6 +81,10 @@ struct ScratchPadOverlay: View {
                 vp.origin.y += (old.height - new.height) / (2 * vp.zoom)
                 clampViewport()
             }
+        }
+        // 工具栏底衬（必须在 toolbar 之下、纸之上）：见 `voidColor` 的注释。
+        .overlay(alignment: .top) {
+            if topInset > 0 { voidColor.frame(height: topInset).allowsHitTesting(false) }
         }
         .overlay(alignment: .top) { toolbar }
         .overlay(alignment: .bottomTrailing) { minimapPanel }
@@ -83,6 +101,23 @@ struct ScratchPadOverlay: View {
         ScratchInkLayer(strokes: strokes, viewport: vp)
         if let live = session.scratchLive, live.padId == pad.id {
             ScratchInkLayer(strokes: [live], viewport: vp)
+        }
+    }
+
+    /// 空白纸的引导：一张全白的纸不说话，用户不知道能干嘛。有笔迹后自动消失。
+    @ViewBuilder private var emptyHint: some View {
+        if strokes.isEmpty, session.scratchLive == nil {
+            VStack(spacing: 6) {
+                Text(L("Blank scratchpad"))
+                    .font(.title3)
+                Text(app.pointerTool == .ink
+                     ? L("Draw anywhere. Drag with the hand tool to pan, pinch to zoom.")
+                     : L("Pick the pen in the pen rack to write. Drag to pan, pinch to zoom."))
+                    .font(.callout)
+            }
+            .foregroundStyle(gridInk.opacity(0.28))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
         }
     }
 
@@ -103,6 +138,11 @@ struct ScratchPadOverlay: View {
     private var gestureCatcher: some View {
         Color.clear
             .contentShape(Rectangle())
+            // 光标反馈：手型 = 拖动即平移，十字 = 会落墨。没有这个，草稿纸上「拖一下会发生什么」
+            // 全靠试——这是它最初读起来「生硬」的一大来源。
+            // （`PointerStyle` 没有 `.crosshair`；`.rectSelection` 在 macOS 上渲染的正是十字光标）
+            .pointerStyle(app.pointerTool == .ink ? .rectSelection
+                                                  : (panStart == nil ? .grabIdle : .grabActive))
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let p): cursor = p
@@ -200,47 +240,76 @@ struct ScratchPadOverlay: View {
         withAnimation(.easeOut(duration: 0.18)) { vp = target }
     }
 
-    // MARK: 工具条（扁平、原生；无渐变/高光/投影）
+    // MARK: 工具条
+    //
+    // **悬浮胶囊，不是横贯全宽的工具栏**：最初那版是一条 `.bar` 横杠，把阅读区从上面一刀切开，
+    // 观感最生硬的就是它。改成与 `PenRackView`/`findBanner` 完全同一套的浮层语言
+    // （`.regularMaterial in Capsule()` + 0.5 描边 + 轻投影），于是它读起来是「浮在纸上的一个控件」，
+    // 而不是「把界面劈成两半的一根梁」。
 
     private var toolbar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "square.and.pencil").foregroundStyle(.secondary)
+        HStack(spacing: 8) {
             if renaming {
                 TextField(L("Name"), text: $draftTitle)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
+                    .textFieldStyle(.plain)
+                    .frame(width: 150)
                     .onSubmit { commitRename() }
+                    .onExitCommand { renaming = false }
             } else {
-                Text(pad.displayName(index: padIndex))
-                    .fontWeight(.medium)
-                    .onTapGesture(count: 2) { draftTitle = pad.title; renaming = true }
-                    .help(L("Double-click to rename"))
+                Button {
+                    draftTitle = pad.title; renaming = true
+                } label: {
+                    Label(pad.displayName(index: padIndex), systemImage: "square.and.pencil")
+                        .labelStyle(.titleAndIcon)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
+                .help(L("Click to rename"))
             }
-            Text(String(format: L("%d strokes"), strokes.count))
-                .font(.caption).foregroundStyle(.secondary)
-            Divider().frame(height: 16)
-            Button { recenter() } label: { Image(systemName: "scope") }
-                .help(L("Recenter"))
-            Button { fitContent() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                .help(L("Fit Content"))
+            Divider().frame(height: 14)
+            padButton("scope", L("Recenter")) { recenter() }
+            padButton("arrow.up.left.and.arrow.down.right", L("Fit Content")) { fitContent() }
                 .disabled(strokes.isEmpty)
-            Button { showMinimap.toggle() } label: {
-                Image(systemName: showMinimap ? "map.fill" : "map")
+            padButton("map", L("Minimap"), tint: showMinimap ? .accentColor : .primary) {
+                withAnimation(.easeOut(duration: 0.16)) { showMinimap.toggle() }
             }
-            .help(L("Minimap"))
-            Text(String(format: "%.0f%%", vp.zoom * 100))
-                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .trailing)
-            Divider().frame(height: 16)
-            Button { close() } label: { Image(systemName: "xmark") }
-                .help(L("Close Scratchpad (Esc)"))
+            // 缩放读数只在不是 100% 时出现：常驻一个「100%」是纯噪音。
+            if abs(vp.zoom - 1) > 0.005 {
+                // ⚠️ 不用 `.secondary`：在 material 底上它淡到读不出来（用户 2026-08-07 报）。
+                // 这是**读数**不是装饰，与按钮同为 `.primary`。
+                Text(String(format: "%.0f%%", vp.zoom * 100))
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.primary)
+                    .transition(.opacity)
+            }
+            Divider().frame(height: 14)
+            padButton("xmark", L("Close Scratchpad (Esc)")) { close() }
         }
-        .buttonStyle(.borderless)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
-        .padding(.top, topInset)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+        .shadow(radius: 6, y: 2)
+        .padding(.top, topInset + 10)
+        .animation(.easeOut(duration: 0.16), value: strokes.isEmpty)
+    }
+
+    /// 胶囊里的一枚图标按钮。
+    /// ⚠️ **不能用 `.buttonStyle(.borderless)`**：它在 material 底上把图标画得极淡，
+    /// 用户 2026-08-07 报「非激活的按钮看不清」就是这个——截图里只有显式染了强调色的那枚看得见。
+    /// 一律 `.plain` + 显式 `.primary`（禁用态由系统自己压暗），并给足 24×24 的命中区。
+    private func padButton(_ icon: String, _ help: String, tint: Color = .primary,
+                           action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(tint)
+        .help(help)
     }
 
     private func commitRename() {
@@ -260,15 +329,16 @@ struct ScratchPadOverlay: View {
     // MARK: minimap
 
     @ViewBuilder private var minimapPanel: some View {
-        if showMinimap {
+        if showMinimap, !strokes.isEmpty {   // 空纸的缩略图里什么都没有，只是块占地方的噪音
             ScratchMinimap(strokes: strokes, viewport: vp, viewSize: viewSize) { center in
                 // 点/拖 minimap → 视口中心跳到那儿。
                 vp.origin = CGPoint(x: center.x - viewSize.width / (2 * vp.zoom),
                                     y: center.y - viewSize.height / (2 * vp.zoom))
                 clampViewport()
             }
-            .frame(width: 180, height: 130)
-            .padding(12)
+            .frame(width: 176, height: 124)
+            .padding(14)
+            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
         }
     }
 
@@ -307,99 +377,5 @@ struct ScratchPadOverlay: View {
     private func removeMonitors() {
         if let m = wheelMonitor { NSEvent.removeMonitor(m); wheelMonitor = nil }
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
-    }
-}
-
-// MARK: - 笔迹层（Equatable，同 `InkStaticLayer` 的拆层理由）
-
-struct ScratchInkLayer: View, Equatable {
-    let strokes: [InkStroke]
-    let viewport: ScratchViewport
-
-    static func == (l: Self, r: Self) -> Bool { l.strokes == r.strokes && l.viewport == r.viewport }
-
-    var body: some View {
-        Canvas { ctx, _ in
-            let o = viewport.origin, z = viewport.zoom
-            for st in strokes {
-                // 线宽同样乘 zoom（`inkScale`）→ 与页内笔迹「放大即变粗」的语义一致。
-                inkDrawStroke(st, in: &ctx, inkScale: z) {
-                    CGPoint(x: ($0.x - o.x) * z, y: ($0.y - o.y) * z)
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-// MARK: - minimap
-
-/// 右下角缩略图：把「全部笔迹包围盒 ∪ 当前视口」等比装进小窗，画笔迹骨架 + 当前视口框。
-/// 点或拖窗内任意处 → 视口中心跳到对应画布位置（`onJump` 给画布坐标）。
-struct ScratchMinimap: View {
-    let strokes: [InkStroke]
-    let viewport: ScratchViewport
-    let viewSize: CGSize
-    let onJump: (CGPoint) -> Void
-
-    /// minimap 覆盖的画布范围 = 内容 ∪ 视口，再留一点边。两者都空时给一块围绕原点的默认区。
-    private var world: CGRect {
-        let vis = viewport.visibleRect(viewport: viewSize)
-        var r = ScratchBounds.contentBounds(strokes).map { $0.union(vis) } ?? vis
-        if r.width < 1 || r.height < 1 { r = CGRect(x: -400, y: -300, width: 800, height: 600) }
-        return r.insetBy(dx: -r.width * 0.08, dy: -r.height * 0.08)
-    }
-
-    /// 画布 → 小窗的等比映射（含居中偏移）。`s <= 0` 表示小窗还没量到尺寸。
-    private struct Fit {
-        let world: CGRect, s: CGFloat, ox: CGFloat, oy: CGFloat
-        func map(_ x: Double, _ y: Double) -> CGPoint {
-            CGPoint(x: ox + (CGFloat(x) - world.minX) * s, y: oy + (CGFloat(y) - world.minY) * s)
-        }
-        func unmap(_ p: CGPoint) -> CGPoint {
-            CGPoint(x: world.minX + (p.x - ox) / s, y: world.minY + (p.y - oy) / s)
-        }
-    }
-
-    private func fit(in box: CGSize) -> Fit {
-        let w = world
-        let s = min(box.width / max(w.width, 1), box.height / max(w.height, 1))
-        return Fit(world: w, s: s,
-                   ox: (box.width - w.width * s) / 2, oy: (box.height - w.height * s) / 2)
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            let f = fit(in: geo.size)
-            let vis = viewport.visibleRect(viewport: viewSize)
-            let tl = f.map(Double(vis.minX), Double(vis.minY))
-            ZStack(alignment: .topLeading) {
-                Canvas { ctx, _ in
-                    // 骨架线即可（minimap 不必还原笔型/压感，1px 折线最省也最清楚）
-                    for st in strokes where st.points.count > 1 {
-                        var path = Path()
-                        path.move(to: f.map(st.points[0].x, st.points[0].y))
-                        for p in st.points.dropFirst() { path.addLine(to: f.map(p.x, p.y)) }
-                        ctx.stroke(path, with: .color(Color.primary.opacity(0.55)),
-                                   style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
-                    }
-                }
-                Rectangle()   // 当前视口框
-                    .stroke(Color.accentColor, lineWidth: 1.5)
-                    .frame(width: max(4, vis.width * f.s), height: max(4, vis.height * f.s))
-                    .offset(x: tl.x, y: tl.y)
-                    .allowsHitTesting(false)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                    .onChanged { v in
-                        guard f.s > 0 else { return }
-                        onJump(f.unmap(v.location))
-                    }
-            )
-        }
-        .background(.bar)
-        .overlay(Rectangle().stroke(Color.primary.opacity(0.15), lineWidth: 0.5))
     }
 }

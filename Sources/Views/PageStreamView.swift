@@ -335,14 +335,20 @@ struct ReaderSurface: View {
     }
 
     /// 草稿纸覆盖层（开着才挂载）。`.id(pad.id)` 让切换草稿纸 = 全新视口状态，不带着上一张的缩放滚动。
+    /// 外面套一层 ZStack + `.animation(value:)`：开/关不再是硬切，而是 0.16s 的淡入淡出 + 极轻微缩放
+    /// （硬切在「盖住整个阅读区」这种大面积变化上特别刺眼）。
+    /// ⚠️ 动画**只作用在这一层**，不会渗进 `contentBody`——阅读区的零闪烁纪律是「无隐式动画」。
     @ViewBuilder var scratchPadLayer: some View {
-        if let pad = session.openPad,
-           let idx = session.scratchPads.firstIndex(where: { $0.id == pad.id }) {
-            ScratchPadOverlay(session: session, pad: pad, padIndex: idx,
-                              topInset: indicatorTopInset)
-                .id(pad.id)
-                .transition(.identity)
+        ZStack {
+            if let pad = session.openPad,
+               let idx = session.scratchPads.firstIndex(where: { $0.id == pad.id }) {
+                ScratchPadOverlay(session: session, pad: pad, padIndex: idx,
+                                  topInset: indicatorTopInset, voidColor: voidColor)
+                    .id(pad.id)
+                    .transition(.opacity.combined(with: .scale(scale: 0.99)))
+            }
         }
+        .animation(.easeOut(duration: 0.16), value: session.openPadID)
     }
 
     /// 本机擦除的尺寸圆环（pointerTool == .ink 且 erase 模式）：跟随光标（`eraseCursor`，
