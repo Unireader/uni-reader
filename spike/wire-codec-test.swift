@@ -97,8 +97,10 @@ let canonical: [[String: Any]] = [
     // —— 草稿纸（v8，0x2B/0x2C/0x3D/0x3E）——
     // 列表 + 当前打开第几张（-1 = 没开，线上 0xFFFF）。bg 是 CSS 串，线上拆 r/g/b/a。
     ["type": "scratchpads", "open": 1,
-     "list": [["id": "P1", "title": "推导", "page": 3, "nx": 0.25, "ny": 0.5, "bg": "rgba(255,255,255,1.0)"],
-              ["id": "P2", "title": "", "page": 0, "nx": 0.5, "ny": 0.125, "bg": "rgba(250,248,240,1.0)"]]],
+     "list": [["id": "P1", "title": "推导", "page": 3, "nx": 0.25, "ny": 0.5,
+               "bg": "rgba(255,255,255,1.0)", "pattern": "dots"],
+              ["id": "P2", "title": "", "page": 0, "nx": 0.5, "ny": 0.125,
+               "bg": "rgba(250,248,240,1.0)", "pattern": "grid"]]],
     ["type": "scratchpads", "open": -1, "list": []],
     // 纸上笔迹：**无 page 字段**，点集是画布坐标（逻辑点，可负无界）。
     ["type": "scratchStrokes", "ackRel": 7,
@@ -107,6 +109,9 @@ let canonical: [[String: Any]] = [
     ["type": "scratchOpen", "index": 2],
     ["type": "scratchOpen", "index": -1],
     ["type": "scratchAdd", "page": 5, "nx": 0.75, "ny": 0.25],
+    // 改纸样（0x2D）：底色 + 底纹。plain 也要走一遍（编码 0，是最容易被 `?? 1` 兜底吃掉的值）。
+    ["type": "scratchPaper", "index": 1, "bg": "rgba(246,236,214,1.0)", "pattern": "grid"],
+    ["type": "scratchPaper", "index": 0, "bg": "rgba(255,255,255,1.0)", "pattern": "plain"],
 ]
 
 var pass = 0, fail = 0

@@ -19,8 +19,11 @@ import SwiftUI
 struct ScratchGridLayer: View, Equatable {
     let viewport: ScratchViewport
     let ink: Color
+    let pattern: ScratchPattern
 
-    static func == (l: Self, r: Self) -> Bool { l.viewport == r.viewport && l.ink == r.ink }
+    static func == (l: Self, r: Self) -> Bool {
+        l.viewport == r.viewport && l.ink == r.ink && l.pattern == r.pattern
+    }
 
     /// 画布坐标下的网格步长：从 24 起，按 2 的幂调到屏幕间距落进 [18, 72]。
     private var step: CGFloat {
@@ -33,23 +36,38 @@ struct ScratchGridLayer: View, Equatable {
 
     var body: some View {
         Canvas { ctx, size in
+            guard pattern != .plain else { return }   // 纯色纸：连原点十字都不画
             let z = viewport.zoom, o = viewport.origin, st = step
             let dot = max(0.8, min(1.6, z))          // 点半径随缩放微调，别缩没了也别糊成块
             // 视口覆盖的画布范围 → 对齐到网格
             let x0 = (o.x / st).rounded(.down) * st, y0 = (o.y / st).rounded(.down) * st
             let cols = Int(size.width / (st * z)) + 2, rows = Int(size.height / (st * z)) + 2
             guard cols > 0, rows > 0, cols * rows <= 20_000 else { return }   // 极端缩放下的安全阀
-            var path = Path()
-            for i in 0...cols {
-                for j in 0...rows {
-                    let cx = x0 + CGFloat(i) * st, cy = y0 + CGFloat(j) * st
-                    let p = CGPoint(x: (cx - o.x) * z, y: (cy - o.y) * z)
-                    // 用方点不用圆点：1~1.6px 上两者肉眼无差，但 `addRect` 比 `addEllipse` 便宜得多
-                    // ——这层每帧平移都要重画，大屏上一屏上万个点，圆点的代价是白花的。
-                    path.addRect(CGRect(x: p.x - dot / 2, y: p.y - dot / 2, width: dot, height: dot))
+            if pattern == .grid {
+                // 小格：横竖各一组细线。线比点更「有格子感」，但也更容易抢戏，故比点阵再淡一档。
+                var lines = Path()
+                for i in 0...cols {
+                    let x = (x0 + CGFloat(i) * st - o.x) * z
+                    lines.move(to: CGPoint(x: x, y: 0)); lines.addLine(to: CGPoint(x: x, y: size.height))
                 }
+                for j in 0...rows {
+                    let y = (y0 + CGFloat(j) * st - o.y) * z
+                    lines.move(to: CGPoint(x: 0, y: y)); lines.addLine(to: CGPoint(x: size.width, y: y))
+                }
+                ctx.stroke(lines, with: .color(ink.opacity(0.085)), lineWidth: 1)
+            } else {
+                var path = Path()
+                for i in 0...cols {
+                    for j in 0...rows {
+                        let cx = x0 + CGFloat(i) * st, cy = y0 + CGFloat(j) * st
+                        let p = CGPoint(x: (cx - o.x) * z, y: (cy - o.y) * z)
+                        // 用方点不用圆点：1~1.6px 上两者肉眼无差，但 `addRect` 比 `addEllipse` 便宜得多
+                        // ——这层每帧平移都要重画，大屏上一屏上万个点，圆点的代价是白花的。
+                        path.addRect(CGRect(x: p.x - dot / 2, y: p.y - dot / 2, width: dot, height: dot))
+                    }
+                }
+                ctx.fill(path, with: .color(ink.opacity(0.10)))
             }
-            ctx.fill(path, with: .color(ink.opacity(0.10)))
 
             // 原点十字（画布 0,0）：稍明显一点，是「回中」的落点也是这张纸的锚。
             let og = CGPoint(x: -o.x * z, y: -o.y * z)
@@ -170,5 +188,49 @@ struct ScratchMinimap: View {
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
             .stroke(.white.opacity(0.15), lineWidth: 0.5))
         .shadow(radius: 6, y: 2)
+    }
+}
+
+
+// MARK: - 纸样小样（选择器里的缩略预览）
+
+/// 一小块「这张纸长什么样」：底色 + 底纹。**故意不复用 `ScratchGridLayer`**——那个的网格步长
+/// 是按视口缩放自适应的，塞进 52×38 的小格子里会算出一屏一个点，看不出区别。这里用固定步长。
+struct PaperSwatch: View {
+    let bg: InkColor
+    let pattern: ScratchPattern
+
+    var body: some View {
+        let paper = Color(red: bg.r / 255, green: bg.g / 255, blue: bg.b / 255, opacity: bg.a)
+        let lum = (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) / 255
+        let ink: Color = lum > 0.5 ? .black : .white
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(paper)
+            .overlay {
+                Canvas { ctx, size in
+                    let st: CGFloat = 7
+                    switch pattern {
+                    case .plain:
+                        break
+                    case .dots:
+                        var p = Path()
+                        var y: CGFloat = st / 2
+                        while y < size.height { var x: CGFloat = st / 2
+                            while x < size.width { p.addRect(CGRect(x: x, y: y, width: 1.2, height: 1.2)); x += st }
+                            y += st }
+                        ctx.fill(p, with: .color(ink.opacity(0.32)))
+                    case .grid:
+                        var p = Path()
+                        var x: CGFloat = st / 2
+                        while x < size.width { p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: size.height)); x += st }
+                        var y: CGFloat = st / 2
+                        while y < size.height { p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: size.width, y: y)); y += st }
+                        ctx.stroke(p, with: .color(ink.opacity(0.26)), lineWidth: 0.7)
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .stroke(Color.primary.opacity(0.22), lineWidth: 0.5))
     }
 }

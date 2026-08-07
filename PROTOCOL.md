@@ -74,6 +74,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x2A` | openDoc | C→S | 可靠 |
 | `0x2B` | scratchOpen | C→S | 可靠 |
 | `0x2C` | scratchAdd | C→S | 可靠 |
+| `0x2D` | scratchPaper | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -117,6 +118,9 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `pageTurn` | `u8 dir` | `{type:"pageTurn", dir}`（"prev"/"next"）|
 | `gotoPage` | `u32 page` · **可选** `f32 frac` | `{type:"gotoPage", page, frac}`（0-based 目标页号，平板输入的是 1-based，本地转 0 后上行）|
 | `openDoc` | `str docId` | `{type:"openDoc", id}`（**库** docId，见 `library`）|
+| `scratchOpen` | `u16 index` | `{type:"scratchOpen", index}`（开第几张草稿纸；`0xFFFF` = 关闭，对象里 `-1`）|
+| `scratchAdd` | `u32 page` · `f32 nx` · `f32 ny` | `{type:"scratchAdd", page, nx, ny}`（在该页该处新建一张并打开）|
+| `scratchPaper` | `u16 index` · `u8 r` · `u8 g` · `u8 b` · `f32 a` · `u8 pattern` | `{type:"scratchPaper", index, bg, pattern}`（改第几张纸的纸样）|
 | `mode` | `u8 mode` | `{type:"mode", mode}`（"note"/"erase"/"page"）|
 | `pen` | `u16 index` | `{type:"pen", index}` |
 | `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|
@@ -200,7 +204,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `layers` | `u16 active` · `u16 n` · `n ×( u8 r, u8 g, u8 b, u8 visible, str name )` |
 | `library` | `str wsName` · `u16 n` · `n ×( str id, str title, u8 open )` |
 | `toc` | `str docId` · `u16 n` · `n ×( u8 depth, u8 hasPage, u32 page, f32 frac, str label )` |
-| `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a )` |
+| `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a, u8 pattern )` |
 | `scratchStrokes` | `u32 ackRel` · `u32 n` · `n ×( pen, u16 m, m × pt3 )` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
 
@@ -260,7 +264,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   （Mac 端 `TOCListView` 同款语义：不显示页码、disabled、不参与当前章节追踪）。
   没有目录的 PDF 发 `n=0`（平板显示「无目录」空态）。**发送时机**：文档载入完成、客户端接入、
   平板跟随的会话变化）
-- `scratchpads` → `{type:"scratchpads", open, list:[{id, title, page, nx, ny, bg},…]}`（**草稿纸列表全量镜像**）
+- `scratchpads` → `{type:"scratchpads", open, list:[{id, title, page, nx, ny, bg, pattern},…]}`（**草稿纸列表全量镜像**）
 - `scratchStrokes` → `{type:"scratchStrokes", ackRel, list:[{pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
 
   见下方 §4.4。
@@ -331,6 +335,18 @@ Mac 是「当前打开哪张草稿纸」的唯一真源（`scratchpads.open`）�
 于是加草稿纸没有动 RT 流的任何字节。代价是两端必须对「开着哪张」有一致认知——靠 `scratchpads`
 这条可靠通道的全量镜像保证，且开/关纸时 Mac 会先 `inkCancel` 丢掉在飞的半截笔。
 
+#### 🔴 纸样（v9）：底色 × 底纹
+
+`bg` = **自由 CSS rgba 串**（不是枚举，各端 UI 给的备选项互不约束，加减颜色不影响解码）。
+`pattern` = **u8 枚举**：`0=plain 1=dots 2=grid`（同 brush/mode 的编码惯例，越界回退 `dots`）。
+
+- 底纹只是无限画布的**定位参照**（纯色纸平移时看不出自己在动），画在纸色之上、笔迹之下。
+- **底纹墨色由纸色明度推**（`0.299R+0.587G+0.114B > 0.5` → 深纹，否则浅纹），
+  **不许跟系统深浅外观走**——纸色是这张纸自己的属性，深色外观 + 白纸时跟外观走就整个消失了。
+- 网格步长也是契约：画布步长从 **24** 起按 2 的幂折算，直到屏幕间距落进 **[22, 88] px**。
+  不统一的话同一张纸在两端的格子大小不一样。
+- 夜间模式下草稿纸**不反色**（它是一张纸，不是 PDF 内容）。
+
 #### 消息细节
 
 - `scratchpads`：**全量镜像**（类比 `strokes`/`notes`，Mac 唯一真源，客户端不落库）。
@@ -342,6 +358,7 @@ Mac 是「当前打开哪张草稿纸」的唯一真源（`scratchpads.open`）�
   **没有 `page` 字段**。`ackRel` 语义与 `strokes` 完全一致（按收件人填，客户端靠它分辨中途快照）。
 - `scratchOpen`：平板请求开/关。Mac 判定后回推 `scratchpads`+`scratchStrokes`，两端自然一致。
 - `scratchAdd`：平板请求新建一张并打开（锚在它给的页与页内位置）。
+- `scratchPaper`：平板请求改第 `index` 张纸的纸样。Mac 判定 + 落库后回推 `scratchpads`。
 
 **视口不上线**：每一端的滚动/缩放/minimap 各自独立（用户明确要求），打开一律回到画布原点。
 库里也不存视口——存了就会变成「谁最后关谁说了算」的跨端争用。

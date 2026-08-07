@@ -217,3 +217,15 @@
 "Draw anywhere. Drag with the hand tool to pan, pinch to zoom." = "随手写。切到抓手拖动可平移，双指捏合缩放。";
 "Pick the pen in the pen rack to write. Drag to pan, pinch to zoom." = "在笔架里选笔即可书写。拖动平移，双指捏合缩放。";
 "Click to rename" = "点击可重命名";
+"Plain" = "纯色";
+"Dots" = "点阵";
+"Grid" = "小格";
+"Paper" = "纸样";
+"Pattern" = "底纹";
+"Paper Color" = "纸色";
+"Paper White" = "纸白";
+"Cream" = "米白";
+"Light Gray" = "浅灰";
+"Kraft" = "牛皮";
+"Eye Green" = "护眼绿";
+"Cool Blue" = "淡蓝";

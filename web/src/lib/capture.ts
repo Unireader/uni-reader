@@ -151,6 +151,8 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     padRecenter() { G.padRecenter(); },
     padFit() { G.padFit(); },
     togglePadMini() { G.padMini = !G.padMini; S.padMini = G.padMini; G.drawScratch(); },
+    togglePadPaper() { S.padPaper = !S.padPaper; },
+    setPadPaper(bg: string | null, pattern: string | null) { G.padSetPaper(bg, pattern); },
     toggleFull() {
       if (!document.fullscreenElement) {
         const root = document.documentElement;

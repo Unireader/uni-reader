@@ -197,3 +197,25 @@ canvas { position:fixed; inset:0; }
 #padlist .pp { flex:none; color:#8b949e; font-size:12px; }
 #padlist .prow.cur .pp { color:rgba(255,255,255,.75); }
 #padlist .padd { margin-top:4px; border-top:1px solid #30363d; border-radius:0 0 7px 7px; }
+
+/* ---- 草稿纸的纸样面板（底纹 × 纸色）---- */
+#padPaperMask { position:fixed; inset:0; z-index:19; margin:0; padding:0; border:0; background:transparent; cursor:default; }
+#padpaper { position:fixed; left:50%; transform:translateX(-50%); top:96px; z-index:20;
+  padding:10px 12px; border:1px solid #30363d; border-radius:10px;
+  background:rgba(22,27,34,.96); color:#e6edf3;
+  font:14px/1.4 -apple-system,'PingFang SC',system-ui,sans-serif; }
+#padpaper .phead { padding:2px 0 6px; font-size:13px; font-weight:600; color:#8b949e; }
+#padpaper .prow2 { display:flex; gap:8px; padding-bottom:10px; }
+#padpaper .pswatch { display:flex; flex-direction:column; align-items:center; gap:4px;
+  padding:0; border:0; background:transparent; color:#8b949e; font:12px/1 inherit; }
+#padpaper .pswatch.cur { color:#58a6ff; }
+/* 底纹小样：底色由内联 style 给，纹样用 background-image 叠上去（深纹压浅纸，与两端同口径） */
+#padpaper .pv { display:block; width:52px; height:36px; border-radius:6px;
+  border:1px solid rgba(255,255,255,.18); background-repeat:repeat; }
+#padpaper .pswatch.cur .pv { border-color:#58a6ff; }
+#padpaper .pv.dots { background-image:radial-gradient(rgba(0,0,0,.34) 1px, transparent 1px); background-size:7px 7px; }
+#padpaper .pv.grid { background-image:linear-gradient(rgba(0,0,0,.26) 1px, transparent 1px),
+  linear-gradient(90deg, rgba(0,0,0,.26) 1px, transparent 1px); background-size:7px 7px; }
+#padpaper .pcolor { width:30px; height:30px; padding:0; border-radius:6px;
+  border:1px solid rgba(255,255,255,.22); }
+#padpaper .pcolor.cur { border:2px solid #58a6ff; }

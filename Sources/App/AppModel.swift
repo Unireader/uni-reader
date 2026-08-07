@@ -331,6 +331,8 @@ final class AppModel: ObservableObject {
             applyScratchOpen(obj, to: s)
         case "scratchAdd":
             applyScratchAdd(obj, to: s)
+        case "scratchPaper":
+            applyScratchPaper(obj, to: s)
         default:
             break
         }

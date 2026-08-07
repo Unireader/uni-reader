@@ -7,7 +7,7 @@
 // 分工同页内笔迹：Mac 是唯一真源（`scratchStrokes` 全量镜像），本地只即时回显正在写的这一笔。
 // 「当前开着哪张纸」也由 Mac 定（`scratchpads.open`），本地只发 scratchOpen/scratchAdd 请求。
 import { G, BAR, clamp, curMode, curPen, rulerSnap } from "./shared.js";
-import type { CaptureRefs, Stroke } from "./shared.js";
+import type { CaptureRefs, Pad, Stroke } from "./shared.js";
 import { S } from "./hud.svelte.js";
 
 /// 橡皮半径的画布换算基准，**必须与 Mac 端 `ScratchPad.eraserRefWidth` 是同一个数**：
@@ -15,6 +15,9 @@ import { S } from "./hud.svelte.js";
 export const PAD_ERASER_REF_W = 800;
 
 const MINZ = 0.2, MAXZ = 8;
+/// 底纹网格的画布步长与屏幕舒适区间——**与 Mac `ScratchGridLayer` 是同一套数**，
+/// 改一边必须同步另一边，否则同一张纸在两端的格子大小不一样。
+const GRID_BASE = 24, GRID_MIN_PX = 22, GRID_MAX_PX = 88;
 const SLACK = 1.5;          // 软边界：可视区必须与「内容包围盒 ± SLACK 屏」相交
 const MINI_W = 150, MINI_H = 108, MINI_PAD = 12;
 
@@ -125,8 +128,10 @@ export function initScratch(refs: CaptureRefs): void {
     const W = window.innerWidth, H = window.innerHeight;
     cx.clearRect(0, 0, W, H);
     // 纸面（顶栏之下整块）。底色由 Mac 下发，默认纯白；夜间模式不反色——草稿纸是「一张纸」。
-    cx.fillStyle = G.pads[G.padOpen] ? G.pads[G.padOpen].bg : "rgba(255,255,255,1)";
+    const pad = G.pads[G.padOpen];
+    cx.fillStyle = pad ? pad.bg : "rgba(255,255,255,1)";
     cx.fillRect(0, BAR, W, H - BAR);
+    drawPattern(pad);
     // 视口外的笔迹裁掉（画布是全文档级的一大坨，不裁就是每帧把整张纸重画一遍）
     const z = G.padVp.z, x0 = G.padVp.ox, y0 = G.padVp.oy;
     const x1 = x0 + W / z, y1 = y0 + (H - BAR) / z;
@@ -144,6 +149,69 @@ export function initScratch(refs: CaptureRefs): void {
       cx.stroke(); cx.restore();
     }
     if (G.padMini) drawMinimap();
+  }
+
+  /// 底纹（无 / 点阵 / 小格）：无限画布的定位参照。纯白纸平移时看不出自己在动，缩放时也看不出
+  /// 缩了多少——这层就是解决这个的。与 Mac `ScratchGridLayer` 同一套：步长按 2 的幂自适应到
+  /// [22,88] 屏幕 px，故任何缩放级别下密度都差不多；墨色由**纸色明度**推（浅纸配深纹）。
+  function drawPattern(pad: { bg: string; pattern: string } | undefined): void {
+    const kind = pad ? pad.pattern : "dots";
+    if (kind === "plain") return;
+    const z = G.padVp.z, ox = G.padVp.ox, oy = G.padVp.oy;
+    let st = GRID_BASE;
+    while (st * z < GRID_MIN_PX) st *= 2;
+    while (st * z > GRID_MAX_PX) st /= 2;
+    const W = window.innerWidth, H = window.innerHeight;
+    const x0 = Math.floor(ox / st) * st, y0 = Math.floor(oy / st) * st;
+    const cols = Math.ceil(W / (st * z)) + 2, rows = Math.ceil((H - BAR) / (st * z)) + 2;
+    if (cols * rows > 20000) return;   // 极端缩放下的安全阀（同 Mac）
+    const dark = inkIsDark(pad ? pad.bg : "rgba(255,255,255,1)");
+    cx.save();
+    cx.beginPath(); cx.rect(0, BAR, W, H - BAR); cx.clip();   // 别画进顶栏
+    if (kind === "grid") {
+      cx.strokeStyle = dark ? "rgba(0,0,0,.085)" : "rgba(255,255,255,.085)";
+      cx.lineWidth = 1;
+      cx.beginPath();
+      for (let i = 0; i <= cols; i++) {
+        const x = (x0 + i * st - ox) * z;
+        cx.moveTo(x, BAR); cx.lineTo(x, H);
+      }
+      for (let j = 0; j <= rows; j++) {
+        const y = BAR + (y0 + j * st - oy) * z;
+        cx.moveTo(0, y); cx.lineTo(W, y);
+      }
+      cx.stroke();
+    } else {
+      const d = Math.max(0.8, Math.min(1.6, z));
+      cx.fillStyle = dark ? "rgba(0,0,0,.10)" : "rgba(255,255,255,.10)";
+      for (let i = 0; i <= cols; i++) {
+        const x = (x0 + i * st - ox) * z;
+        for (let j = 0; j <= rows; j++) {
+          const y = BAR + (y0 + j * st - oy) * z;
+          cx.fillRect(x - d / 2, y - d / 2, d, d);   // 方点：同 Mac，比圆点便宜得多
+        }
+      }
+    }
+    // 原点十字（画布 0,0）＝这张纸创建的位置，也是「回中」的落点。
+    const gx = -ox * z, gy = BAR - oy * z;
+    if (gx > -40 && gx < W + 40 && gy > BAR - 40 && gy < H + 40) {
+      cx.strokeStyle = dark ? "rgba(0,0,0,.16)" : "rgba(255,255,255,.16)";
+      cx.lineWidth = 1;
+      cx.beginPath();
+      cx.moveTo(gx - 9, gy); cx.lineTo(gx + 9, gy);
+      cx.moveTo(gx, gy - 9); cx.lineTo(gx, gy + 9);
+      cx.stroke();
+    }
+    cx.restore();
+  }
+
+  /// 纸色是浅的吗（→ 底纹用深墨）。与 Mac `ScratchPad.inkIsDark` 同一条公式。
+  /// **不能跟系统深浅外观走**——纸色是这张纸自己的属性。
+  function inkIsDark(css: string): boolean {
+    const m = /rgba?\(([^)]+)\)/.exec(css || "");
+    if (!m) return true;
+    const p = m[1].split(",").map(function (v) { return parseFloat(v); });
+    return (0.299 * (p[0] || 0) + 0.587 * (p[1] || 0) + 0.114 * (p[2] || 0)) / 255 > 0.5;
   }
 
   /// 这条笔迹的包围盒与可视矩形有没有交集（粗筛，逐点算一遍比重画便宜得多）。
@@ -393,6 +461,14 @@ export function initScratch(refs: CaptureRefs): void {
   function padOpenIndex(i: number): void { G.send({ type: "scratchOpen", index: i }); }
   function padClose(): void { G.send({ type: "scratchOpen", index: -1 }); }
   /// 在当前视口中心所在的页面位置新建一张（锚点＝那一处，Mac 据此画图钉）。
+  /// 改当前这张纸的纸样（底色 / 底纹，各自可单独改）。只发请求，Mac 判定后回推 scratchpads。
+  function padSetPaper(bg: string | null, pattern: string | null): void {
+    if (!padActive()) return;
+    const cur = G.pads[G.padOpen];
+    G.send({ type: "scratchPaper", index: G.padOpen,
+             bg: bg || cur.bg, pattern: pattern || cur.pattern });
+  }
+
   function padAdd(): void {
     const loc = G.locate(window.innerWidth / 2, BAR + (window.innerHeight - BAR) / 2);
     G.send({ type: "scratchAdd", page: loc ? loc.page : G.topVisiblePage(),
@@ -400,13 +476,16 @@ export function initScratch(refs: CaptureRefs): void {
   }
 
   /// Mac 下发的 `scratchpads`：列表 + 开着第几张。开/关/换纸都在这里落地。
-  function applyScratchPads(o: { open?: number; list?: { id: string; title: string; page: number; nx: number; ny: number; bg: string }[] }): void {
+  function applyScratchPads(o: { open?: number; list?: Pad[] }): void {
     const wasOpen = G.padOpen, wasId = G.pads[wasOpen] ? G.pads[wasOpen].id : "";
     G.pads = o.list || [];
     G.padOpen = typeof o.open === "number" ? o.open : -1;
     if (G.padOpen >= G.pads.length) G.padOpen = -1;
     S.pads = G.pads.map((p, i) => ({ id: p.id, title: p.title, page: p.page, index: i }));
     S.padOpen = G.padOpen;
+    const op = G.pads[G.padOpen];
+    S.padBg = op ? op.bg : "";
+    S.padPattern = op ? op.pattern : "dots";
     const nowId = G.pads[G.padOpen] ? G.pads[G.padOpen].id : "";
     if (nowId !== wasId) {
       // 换了纸（含开/关）：丢掉上一张的本地状态并回到画布原点（与 Mac 端 `.id(pad.id)` 同语义）。
@@ -450,7 +529,7 @@ export function initScratch(refs: CaptureRefs): void {
   Object.assign(G, {
     padActive, drawScratch, padRecenter, padFit, padClamp,
     padPointerDown, padPointerMove, padPointerUp, padFlush,
-    padOpenIndex, padClose, padAdd, applyScratchPads, applyScratchStrokes,
+    padOpenIndex, padClose, padAdd, padSetPaper, applyScratchPads, applyScratchStrokes,
   });
 }
 

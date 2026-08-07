@@ -74,6 +74,9 @@ export const S = $state({
   padOpen: -1,             // 当前打开第几张（-1 = 没开）
   padMini: true,           // minimap 开关（顶栏按钮回显）
   padList: false,          // 草稿纸列表弹层开关
+  padPaper: false,         // 纸样面板开关
+  padBg: "",               // 当前那张纸的底色（CSS rgba，色块选中态回显）
+  padPattern: "dots",      // 当前那张纸的底纹
 });
 
 export function updatePageLabel(): void {

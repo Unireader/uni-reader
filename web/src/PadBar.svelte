@@ -13,6 +13,27 @@
   import Icon from "./Icon.svelte";
 
   const name = (p: { title: string; index: number }) => p.title || "草稿纸 " + (p.index + 1);
+
+  // 纸样备选（与 Mac 端 ScratchPattern / ScratchPad.paperPalette 同一组，改一边要同步另一边）。
+  const PATTERNS = [
+    { key: "plain", label: "纯色" },
+    { key: "dots", label: "点阵" },
+    { key: "grid", label: "小格" },
+  ];
+  const PAPERS = [
+    { key: "white", css: "rgba(255,255,255,1.0)" },
+    { key: "cream", css: "rgba(252,247,235,1.0)" },
+    { key: "gray",  css: "rgba(241,242,245,1.0)" },
+    { key: "kraft", css: "rgba(246,236,214,1.0)" },
+    { key: "green", css: "rgba(233,243,234,1.0)" },
+    { key: "blue",  css: "rgba(234,241,250,1.0)" },
+  ];
+  /// 线上颜色串的写法可能有细微差异（"1" vs "1.0"），比对时按数值归一。
+  const sameColor = (a: string, b: string) => {
+    const n = (c: string) => (/rgba?\(([^)]+)\)/.exec(c || "")?.[1] || "")
+      .split(",").map((v) => Math.round(parseFloat(v) * 1000) / 1000).join(",");
+    return n(a) === n(b);
+  };
 </script>
 
 {#if S.padOpen >= 0 && S.pads[S.padOpen]}
@@ -22,7 +43,32 @@
     <button title="回中" onclick={() => actions.padRecenter()}><Icon name="scope" /></button>
     <button title="适应内容" onclick={() => actions.padFit()}><Icon name="fit" /></button>
     <button class:on={S.padMini} title="缩略图" onclick={() => actions.togglePadMini()}><Icon name="map" /></button>
+    <button class:on={S.padPaper} title="纸样" onclick={() => actions.togglePadPaper()}><Icon name="palette" /></button>
     <button title="关闭草稿纸（Esc）" onclick={() => actions.closePad()}><Icon name="x" /></button>
+  </div>
+{/if}
+
+{#if S.padPaper && S.padOpen >= 0}
+  <button id="padPaperMask" aria-label="关闭纸样" onclick={() => actions.togglePadPaper()}></button>
+  <div id="padpaper">
+    <div class="phead">底纹</div>
+    <div class="prow2">
+      {#each PATTERNS as pt (pt.key)}
+        <button class="pswatch" class:cur={S.padPattern === pt.key}
+          onclick={() => actions.setPadPaper(null, pt.key)}>
+          <span class="pv {pt.key}" style="background:{S.padBg || '#fff'}"></span>
+          <span class="pl">{pt.label}</span>
+        </button>
+      {/each}
+    </div>
+    <div class="phead">纸色</div>
+    <div class="prow2">
+      {#each PAPERS as c (c.key)}
+        <button class="pcolor" class:cur={sameColor(S.padBg, c.css)}
+          style="background:{c.css}" aria-label={c.key}
+          onclick={() => actions.setPadPaper(c.css, null)}></button>
+      {/each}
+    </div>
   </div>
 {/if}
 

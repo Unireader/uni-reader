@@ -103,6 +103,8 @@ export interface Pad {
   nx: number;
   ny: number;
   bg: string;
+  /// 底纹（"plain" | "dots" | "grid"，v9）。与 Mac `ScratchPattern` 同一张表。
+  pattern: string;
 }
 
 /// 草稿纸视口（本端私有，不上线也不落库：三端各自独立缩放滚动）。
@@ -250,6 +252,7 @@ export interface GState {
   padOpenIndex(i: number): void;
   padClose(): void;
   padAdd(): void;
+  padSetPaper(bg: string | null, pattern: string | null): void;
   applyScratchPads(o: WireMsg): void;
   applyScratchStrokes(o: WireMsg): void;
   // capture.ts（键盘侧键走 G，input.ts 的 keydown 调用）

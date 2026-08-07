@@ -84,6 +84,21 @@
       🔴 真正的教训在这儿：**样张的复刻里当时压根没画这个读数**，所以上一轮「逐张看过」也看不出来。
       `spike/scratch-look.swift` 的 `capsuleMock` 与 `ScratchPadView.toolbar` **必须逐件对齐**，
       少复刻一件，那件就是下一个漏网的。
+    - **2026-08-07 纸样（schema v9，Mac + 网页）**：用户要「几个模板」——底纹（纯色 / 点阵 / 小格）
+      × 纸色（纸白/米白/浅灰/牛皮/护眼绿/淡蓝）两个维度，两端都能改、跨端同步。
+      · `scratch_pad` 加 `pattern` 列（v8→v9 补列，老纸兜底 `dots` = 与 v8 观感一致）；
+      `bg` 仍是**自由 CSS rgba 串**，色板只是各端 UI 的备选项，加减颜色不影响任何一端解码。
+      · 协议：`scratchpads`(0x3D) 每项尾部加 `u8 pattern`；新增 `scratchPaper`(0x2D, C→S) 改纸样。
+      · **网页端此前根本没画底纹**（Mac 才有），这轮一并补齐——`scratch.ts drawPattern` 与
+      Mac `ScratchGridLayer` 是同一套数：步长从 24 起按 2 的幂折到屏幕 [22,88]px、墨色由**纸色明度**
+      推（不跟系统外观走）、方点不用圆点。这三条改一边必须同步另一边，否则同一张纸两端长得不一样。
+      · 样张已扩到 3 底纹 × 3 纸色 + 选择器小样。**顺带靠样张抓到一处**：小样那张图第一次看像是
+      plain 也画了点阵，实为 HStack 宽度溢出被压缩的假象——加宽后确认正确（别急着改代码）。
+      · 验证：`scratch-store-test` 44（含 v8→v9 迁移 + plain 不被默认值吃掉）／`wire-codec-test` 69／
+      `wire-cross-test` 128／`store-test` 34／`ink-store-test` 21／`ocr-store-test` 15／
+      `xcodebuild`／`tsc`／`vite build` 全绿。
+      🔴 **PROTOCOL.md §4.1 的三条草稿纸 C→S 行当初是漏的**——首版那次 `s.replace` 没加断言、
+      静默没命中。这轮补齐（scratchOpen/scratchAdd/scratchPaper）。改文档的脚本一律要断言。
 
 ## 🔧 整体优化路线图（2026-07-25 起，用户需求「整体优化」）
 

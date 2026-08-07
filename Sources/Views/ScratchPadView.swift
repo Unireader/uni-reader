@@ -39,6 +39,7 @@ struct ScratchPadOverlay: View {
     @State private var keyMonitor: Any?
     @State private var renaming = false
     @State private var draftTitle = ""
+    @State private var showPaper = false   // 纸样选择器（底色 × 底纹）
 
     private var strokes: [InkStroke] { session.strokes(pad: pad.id) }
     /// 本窗口是不是当前活动窗口。**不能用传进来的 `isActiveWindow`**：那是 struct 的 `let`，
@@ -52,10 +53,7 @@ struct ScratchPadOverlay: View {
     /// 网格/提示文字用的「墨色」。**不能直接用 `Color.primary`**——那跟随系统深浅外观，
     /// 而纸色是这张纸自己的属性（默认白，也可以是别的）：深色外观 + 白纸时 primary 是白的，
     /// 网格就整个消失了。改由纸色明度推：浅纸配深墨、深纸配浅墨。
-    private var gridInk: Color {
-        let lum = (0.299 * pad.bg.r + 0.587 * pad.bg.g + 0.114 * pad.bg.b) / 255
-        return lum > 0.5 ? Color.black : Color.white
-    }
+    private var gridInk: Color { pad.inkIsDark ? .black : .white }
     private var isErasing: Bool { app.pointerTool == .ink && app.padMode == "erase" }
     /// 橡皮在画布坐标下的半径（页宽归一化 → 画布点，三端同一个换算，见 `ScratchPad.eraserRefWidth`）。
     private var eraserCanvasRadius: Double { app.eraserRadius * ScratchPad.eraserRefWidth }
@@ -64,7 +62,7 @@ struct ScratchPadOverlay: View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 bg
-                ScratchGridLayer(viewport: vp, ink: gridInk)   // 定位参照：淡点阵 + 原点标记
+                ScratchGridLayer(viewport: vp, ink: gridInk, pattern: pad.pattern)   // 定位参照
                 inkLayers
                 emptyHint
                 eraserRing
@@ -274,6 +272,8 @@ struct ScratchPadOverlay: View {
             padButton("map", L("Minimap"), tint: showMinimap ? .accentColor : .primary) {
                 withAnimation(.easeOut(duration: 0.16)) { showMinimap.toggle() }
             }
+            padButton("paintpalette", L("Paper")) { showPaper.toggle() }
+                .popover(isPresented: $showPaper, arrowEdge: .bottom) { paperPicker }
             // 缩放读数只在不是 100% 时出现：常驻一个「100%」是纯噪音。
             if abs(vp.zoom - 1) > 0.005 {
                 // ⚠️ 不用 `.secondary`：在 material 底上它淡到读不出来（用户 2026-08-07 报）。
@@ -310,6 +310,54 @@ struct ScratchPadOverlay: View {
         .buttonStyle(.plain)
         .foregroundStyle(tint)
         .help(help)
+    }
+
+    /// 纸样选择器：底纹（无/点阵/小格）× 底色（一组预设纸色）。改动写回 `session.scratchPads`，
+    /// 由 ContentView 的对账落库 + 广播回平板——与改名走的是同一条路。
+    private var paperPicker: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L("Pattern")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ForEach(ScratchPattern.allCases, id: \.self) { pat in
+                    Button { setPaper(pattern: pat) } label: {
+                        VStack(spacing: 5) {
+                            PaperSwatch(bg: pad.bg, pattern: pat)
+                                .frame(width: 52, height: 38)
+                            Text(pat.label).font(.caption)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(pad.pattern == pat ? Color.accentColor : Color.primary)
+                }
+            }
+            Text(L("Paper Color")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ForEach(ScratchPad.paperPalette, id: \.key) { item in
+                    Button { setPaper(bg: item.color) } label: {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(Color(nsColor: item.color.nsColor))
+                            .frame(width: 26, height: 26)
+                            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .stroke(pad.bg == item.color ? Color.accentColor : Color.primary.opacity(0.25),
+                                        lineWidth: pad.bg == item.color ? 2 : 0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .help(L(item.name))
+                }
+            }
+        }
+        .padding(14)
+    }
+
+    /// 改纸样（底纹与底色各自可单独改；不变则不写，免得白白 bump updatedAt 触发一次对账+广播）。
+    private func setPaper(bg: InkColor? = nil, pattern: ScratchPattern? = nil) {
+        guard let i = session.scratchPads.firstIndex(where: { $0.id == pad.id }) else { return }
+        var p = session.scratchPads[i]
+        if let bg { p.bg = bg }
+        if let pattern { p.pattern = pattern }
+        guard p.bg != session.scratchPads[i].bg || p.pattern != session.scratchPads[i].pattern else { return }
+        p.updatedAt = .now
+        session.scratchPads[i] = p
     }
 
     private func commitRename() {

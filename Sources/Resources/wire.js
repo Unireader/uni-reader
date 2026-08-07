@@ -13,7 +13,7 @@
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
     layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28, gotoPage: 0x29, openDoc: 0x2A,
-    scratchOpen: 0x2B, scratchAdd: 0x2C,
+    scratchOpen: 0x2B, scratchAdd: 0x2C, scratchPaper: 0x2D,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A, library: 0x3B, toc: 0x3C,
     scratchPads: 0x3D, scratchStrokes: 0x3E,
@@ -25,7 +25,10 @@
   var MODEK = ["note", "erase", "page", "lasso"];
   var RKIND = ["pen", "erase", "page"];      // 环形盘扇区类型
   var NO_HL = 0xFFFF;                        // highlight 线上哨兵：无高亮（中心取消区）→ 对象里 -1
-  var NO_PAD = 0xFFFF;                       // 草稿纸「一张都没开」的线上哨兵 → 对象里 -1
+  var NO_PAD = 0xFFFF;
+  // 草稿纸底纹：0=plain 1=dots 2=grid（同 BRUSH/MODEK 的编码惯例，越界回退 dots）
+  var PATK = ["plain", "dots", "grid"];
+  function patCode(p) { var i = PATK.indexOf(p); return i < 0 ? 1 : i; }                       // 草稿纸「一张都没开」的线上哨兵 → 对象里 -1
   var PH = { begin: 0, move: 1, end: 2 };
   var PHNAME = ["begin", "move", "end"];
 
@@ -204,6 +207,7 @@
           w.u32(pd.page || 0); w.f32(pd.nx || 0); w.f32(pd.ny || 0);
           var bgc = parseColor(pd.bg);
           w.u8(bgc[0]); w.u8(bgc[1]); w.u8(bgc[2]); w.f32(bgc[3]);
+          w.u8(patCode(pd.pattern));   // 底纹（v9）
         }
         break;
       }
@@ -224,6 +228,14 @@
       case "scratchAdd":
         w.u8(OP.scratchAdd); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
         break;
+      case "scratchPaper": {
+        // 改第 index 张纸的纸样（底色 + 底纹）。Mac 判定后回推 scratchpads，两端自然一致。
+        w.u8(OP.scratchPaper); w.u16(o.index == null ? 0 : o.index);
+        var pc = parseColor(o.bg);
+        w.u8(pc[0]); w.u8(pc[1]); w.u8(pc[2]); w.f32(pc[3]);
+        w.u8(patCode(o.pattern));
+        break;
+      }
       case "inkCancel": w.u8(OP.inkCancel); break;
       case "strokes": {
         // ackRel：Mac 已连续处理到的该客户端 REL seq，按收件人填（PROTOCOL.md §4.2）。
@@ -370,8 +382,9 @@
         for (var spi = 0; spi < spn; spi++) {
           var pid = r.str(), ptitle = r.str(), ppage = r.u32(), pnx = r.f32(), pny = r.f32();
           var br = r.u8(), bg = r.u8(), bb = r.u8(), ba = r.f32();
+          var ppat = PATK[r.u8()] || "dots";
           splist[spi] = { id: pid, title: ptitle, page: ppage, nx: pnx, ny: pny,
-                          bg: "rgba(" + br + "," + bg + "," + bb + "," + ba + ")" };
+                          bg: "rgba(" + br + "," + bg + "," + bb + "," + ba + ")", pattern: ppat };
         }
         return { type: "scratchpads", open: spOpen === NO_PAD ? -1 : spOpen, list: splist };
       }
@@ -386,6 +399,12 @@
       }
       case OP.scratchAdd:
         return { type: "scratchAdd", page: r.u32(), nx: r.f32(), ny: r.f32() };
+      case OP.scratchPaper: {
+        var spi2 = r.u16(), qr = r.u8(), qg = r.u8(), qb = r.u8(), qa = r.f32();
+        return { type: "scratchPaper", index: spi2,
+                 bg: "rgba(" + qr + "," + qg + "," + qb + "," + qa + ")",
+                 pattern: PATK[r.u8()] || "dots" };
+      }
       case OP.inkCancel: return { type: "inkCancel" };
       case OP.strokes: {
         var sack = r.u32(), sn = r.u32(), slist = new Array(sn);

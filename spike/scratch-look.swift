@@ -59,14 +59,45 @@ func run() {
         save("grid-\(label)", size) {
             ZStack {
                 paper
-                ScratchGridLayer(viewport: vp, ink: ink)
+                ScratchGridLayer(viewport: vp, ink: ink, pattern: .dots)
                 ScratchInkLayer(strokes: strokes, viewport: vp)
             }
         }
-        // 只有网格、没有笔迹：验「空白纸是不是淡到还算白底」
+        // 只有底纹、没有笔迹：验「空白纸是不是淡到还算白底」
         save("gridonly-\(label)", size) {
-            ZStack { paper; ScratchGridLayer(viewport: vp, ink: ink) }
+            ZStack { paper; ScratchGridLayer(viewport: vp, ink: ink, pattern: .dots) }
         }
+    }
+
+    // 三种底纹 × 三种纸色：验「底纹淡到不抢戏」「深色纸上底纹不消失」「纸色不吃笔色」。
+    let vp1 = ScratchViewport(origin: CGPoint(x: -size.width / 2, y: -size.height / 2), zoom: 1)
+    for (pk, pat) in [("plain", ScratchPattern.plain), ("dots", .dots), ("grid", .grid)] {
+        for (ck, col) in [("white", InkColor.paper),
+                          ("kraft", InkColor(r: 246, g: 236, b: 214, a: 1)),
+                          ("dark",  InkColor(r: 30, g: 32, b: 36, a: 1))] {
+            let pad = ScratchPad(anchorPage: 0, anchorX: 0, anchorY: 0, bg: col, pattern: pat)
+            save("paper-\(pk)-\(ck)", CGSize(width: 360, height: 230)) {
+                ZStack {
+                    Color(red: col.r / 255, green: col.g / 255, blue: col.b / 255, opacity: col.a)
+                    ScratchGridLayer(viewport: vp1, ink: pad.inkIsDark ? .black : .white, pattern: pat)
+                    ScratchInkLayer(strokes: strokes, viewport: vp1)
+                }
+            }
+        }
+    }
+
+    // 纸样选择器里的小样（52×38，固定步长；不复用 ScratchGridLayer——它按视口自适应，塞小格子里看不出区别）
+    save("swatches", CGSize(width: 560, height: 60)) {
+        HStack(spacing: 10) {
+            ForEach(ScratchPattern.allCases, id: \.self) { pat in
+                PaperSwatch(bg: .paper, pattern: pat).frame(width: 52, height: 38)
+            }
+            ForEach(Array(ScratchPad.paperPalette.enumerated()), id: \.offset) { _, it in
+                PaperSwatch(bg: it.color, pattern: .dots).frame(width: 34, height: 38)
+            }
+        }
+        .padding(8)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // minimap 样张：内容偏在一侧，视口框只框住一部分 → 看得出「我在哪」

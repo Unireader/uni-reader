@@ -141,6 +141,18 @@ extension AppModel {
         }
     }
 
+    /// 平板请求改第 index 张纸的纸样（底色 + 底纹）。Mac 是真源：改完 `scratchPads` 的 @Published
+    /// 变化被 ContentView 的 onChange 捕获 → 落库 + 回推 `scratchpads`，两端自然一致。
+    func applyScratchPaper(_ obj: [String: Any], to s: DocSession) {
+        guard let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
+        let bg = InkColor.parse(obj["bg"] as? String)
+        let pat = ScratchPattern(rawValue: obj["pattern"] as? String ?? "") ?? .dots
+        guard s.scratchPads[i].bg != bg || s.scratchPads[i].pattern != pat else { return }
+        s.scratchPads[i].bg = bg
+        s.scratchPads[i].pattern = pat
+        s.scratchPads[i].updatedAt = .now
+    }
+
     /// 平板请求在某页某处新建一张草稿纸并打开它。
     func applyScratchAdd(_ obj: [String: Any], to s: DocSession) {
         let maxPage = max(0, (s.pdf?.pageCount ?? 1) - 1)
@@ -175,7 +187,7 @@ extension AppModel {
         let open = s.scratchPads.firstIndex { $0.id == s.openPadID } ?? -1
         let list: [[String: Any]] = s.scratchPads.map { p in
             ["id": p.id.uuidString, "title": p.title, "page": p.anchorPage,
-             "nx": p.anchorX, "ny": p.anchorY, "bg": p.bg.cssRGBA]
+             "nx": p.anchorX, "ny": p.anchorY, "bg": p.bg.cssRGBA, "pattern": p.pattern.rawValue]
         }
         server.broadcast(["type": "scratchpads", "open": open, "list": list])
     }

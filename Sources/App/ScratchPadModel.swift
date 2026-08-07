@@ -17,6 +17,35 @@ import CoreGraphics
 ///
 /// 视口（原点/缩放）**不落库、不上线**：每一端各自维护自己那份，打开一律回到画布原点
 /// （用户要的「从该处显示」），要找已经写过的内容走「适应内容」或 minimap。
+///
+/// ## 纸样
+/// 底色（`bg`，自由 CSS rgba）× 底纹（`pattern`，见 `ScratchPattern`）两个维度，各端可改、跨端同步。
+
+/// 草稿纸的底纹（**三端契约**，线上是 u8：`0=plain 1=dots 2=grid`，同 brush/mode 的编码惯例）。
+/// 底纹只是「参照物」，画在纸色之上、笔迹之下；墨色由纸色明度推出来（浅纸配深纹，反之亦然）。
+enum ScratchPattern: String, CaseIterable, Codable {
+    case plain   // 纯色，无参照物
+    case dots    // 点阵
+    case grid    // 小格
+
+    var label: String {
+        switch self {
+        case .plain: return L("Plain")
+        case .dots: return L("Dots")
+        case .grid: return L("Grid")
+        }
+    }
+    /// SF Symbol（Mac 的纸样选择器用）。
+    var icon: String {
+        switch self {
+        case .plain: return "square"
+        case .dots: return "circle.grid.3x3"
+        case .grid: return "grid"
+        }
+    }
+}
+
+/// 一张草稿纸（文件头的坐标系/纸样契约说明适用于本类型）。
 struct ScratchPad: Identifiable, Equatable {
     var id: UUID = UUID()
     /// 标题（空 = 界面按创建序显示「草稿纸 N」）。
@@ -27,6 +56,8 @@ struct ScratchPad: Identifiable, Equatable {
     var anchorY: Double
     /// 画布底色，默认纯白（用户指定；夜间模式下不反色——草稿纸是「一张纸」，不是 PDF 内容）。
     var bg: InkColor = .paper
+    /// 底纹（无 / 点阵 / 小格）。默认点阵：无限画布不给参照物的话，平移时看不出自己在动。
+    var pattern: ScratchPattern = .dots
     var createdAt: Date = .now
     var updatedAt: Date = .now
 
@@ -46,6 +77,24 @@ struct ScratchPad: Identifiable, Equatable {
 extension InkColor {
     /// 草稿纸默认底色：纯白不透明。
     static let paper = InkColor(r: 255, g: 255, b: 255, a: 1)
+}
+
+extension ScratchPad {
+    /// 可选纸色（**只是 UI 备选项，不是契约**——`bg` 在库里/线上都是自由的 CSS rgba 串，
+    /// 将来加减颜色不影响任何一端的解码）。取常见纸张观感：白 / 米白 / 浅灰 / 牛皮 /
+    /// 护眼绿 / 淡蓝，都压得很淡，保证任何笔色压上去都读得出来。
+    static let paperPalette: [(key: String, name: String, color: InkColor)] = [
+        ("white",  "Paper White", InkColor(r: 255, g: 255, b: 255, a: 1)),
+        ("cream",  "Cream",       InkColor(r: 252, g: 247, b: 235, a: 1)),
+        ("gray",   "Light Gray",  InkColor(r: 241, g: 242, b: 245, a: 1)),
+        ("kraft",  "Kraft",       InkColor(r: 246, g: 236, b: 214, a: 1)),
+        ("green",  "Eye Green",   InkColor(r: 233, g: 243, b: 234, a: 1)),
+        ("blue",   "Cool Blue",   InkColor(r: 234, g: 241, b: 250, a: 1)),
+    ]
+
+    /// 底纹/提示文字的墨色是深还是浅：由**纸色明度**定，浅纸配深纹、深纸配浅纹。
+    /// **不能跟系统深浅外观走**——纸色是这张纸自己的属性，深色外观 + 白纸时跟外观走就整个消失了。
+    var inkIsDark: Bool { (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) / 255 > 0.5 }
 }
 
 // MARK: - 无限画布的视口
@@ -144,12 +193,15 @@ extension ScratchPad {
     init(row: LibScratchPad) {
         self.init(id: UUID(uuidString: row.id) ?? UUID(), title: row.title,
                   anchorPage: row.anchorPage, anchorX: row.anchorX, anchorY: row.anchorY,
-                  bg: InkColor.parse(row.bg), createdAt: row.createdAt, updatedAt: row.updatedAt)
+                  bg: InkColor.parse(row.bg),
+                  pattern: ScratchPattern(rawValue: row.pattern) ?? .dots,   // 未知/老行兜底点阵
+                  createdAt: row.createdAt, updatedAt: row.updatedAt)
     }
 
     func toRow(documentId: String) -> LibScratchPad {
         LibScratchPad(id: id.uuidString, documentId: documentId, title: title,
                       anchorPage: anchorPage, anchorX: anchorX, anchorY: anchorY,
-                      bg: bg.cssRGBA, createdAt: createdAt, updatedAt: updatedAt)
+                      bg: bg.cssRGBA, pattern: pattern.rawValue,
+                      createdAt: createdAt, updatedAt: updatedAt)
     }
 }

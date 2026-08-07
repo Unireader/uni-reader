@@ -21,7 +21,8 @@ let store = try LibraryStore(workspaceFolder: tmp)
 let (doc, _) = try store.findOrCreate(hash: "h1", title: "Doc", pageCount: 20, path: "/tmp/a.pdf")
 
 print("① scratch_pad 表")
-check(store.meta("schema_version") == "8", "schema_version = 8")
+check(store.meta("schema_version") == String(LibraryStore.schemaVersion),
+      "schema_version = \(LibraryStore.schemaVersion)")
 
 let padA = ScratchPad(title: "推导", anchorPage: 3, anchorX: 0.25, anchorY: 0.5)
 let padB = ScratchPad(anchorPage: 0, anchorX: 0.5, anchorY: 0.125)
@@ -34,6 +35,24 @@ check(pads.contains { $0.id == padA.id && $0.title == "推导" && $0.anchorPage 
       "锚点/标题 round-trip 一致")
 check(pads.contains { $0.id == padB.id && $0.title.isEmpty }, "空标题原样保留（显示名由 UI 兜底）")
 check(pads.allSatisfy { $0.bg == InkColor.paper }, "默认底色 = 纯白 rgba(255,255,255,1)")
+check(pads.allSatisfy { $0.pattern == .dots }, "默认底纹 = 点阵（v9）")
+
+// 纸样（v9）：底色 + 底纹各自 round-trip。plain 单独试——它编码为 0，最容易被兜底逻辑吃掉。
+var repapered = padB
+repapered.bg = InkColor(r: 246, g: 236, b: 214, a: 1)   // 牛皮
+repapered.pattern = .grid
+try store.upsertScratchPad(repapered.toRow(documentId: doc.id))
+var back = store.scratchPadsRT(doc.id).first { $0.id == padB.id }
+check(back?.bg == repapered.bg && back?.pattern == .grid, "改纸样（牛皮 + 小格）round-trip")
+repapered.pattern = .plain
+try store.upsertScratchPad(repapered.toRow(documentId: doc.id))
+back = store.scratchPadsRT(doc.id).first { $0.id == padB.id }
+check(back?.pattern == .plain, "plain 底纹不会被默认值吃掉")
+check(store.scratchPadsRT(doc.id).count == 2, "改纸样走 upsert，不新增行")
+// 墨色由纸色明度推（浅纸配深纹）——底纹在深色纸上不能消失。
+check(ScratchPad(anchorPage: 0, anchorX: 0, anchorY: 0, bg: .paper).inkIsDark, "白纸 → 深色底纹")
+check(!ScratchPad(anchorPage: 0, anchorX: 0, anchorY: 0,
+                  bg: InkColor(r: 30, g: 32, b: 36, a: 1)).inkIsDark, "深色纸 → 浅色底纹")
 
 var renamed = padA; renamed.title = "改过的名字"; renamed.updatedAt = Date()
 try store.upsertScratchPad(renamed.toRow(documentId: doc.id))
@@ -90,6 +109,13 @@ check(store.scratchPadsRT(doc.id).count == 1, "deleteScratchPad 删掉一行")
 try store.deleteNote(id: s1.id.uuidString)
 check((try store.notes(documentId: doc.id)).compactMap {
           $0.kind == InkStroke.scratchNoteKind ? $0 : nil }.isEmpty, "纸上笔迹按 id 删得掉")
+
+// v8 → v9 迁移：老库（scratch_pad 没有 pattern 列）重开后应补上列、老纸兜底 dots、数据不丢。
+try store.setMeta("schema_version", "8")
+let store2 = try LibraryStore(workspaceFolder: tmp)
+check(store2.meta("schema_version") == String(LibraryStore.schemaVersion), "退回 v8 重开 → 迁移拉回当前版本")
+check(store2.scratchPadsRT(doc.id).count == 1, "迁移不丢已有草稿纸（此刻库里剩 padA 一张）")
+check(store2.scratchPadsRT(doc.id).first?.pattern == .dots, "迁移后老纸兜底 dots（与 v8 观感一致）")
 
 print("③ 无限画布几何 + 擦除")
 let box = ScratchBounds.contentBounds([s1])

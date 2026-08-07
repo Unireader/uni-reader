@@ -76,6 +76,8 @@ struct LibScratchPad: Identifiable, Equatable {
     var anchorX: Double
     var anchorY: Double
     var bg: String
+    /// 底纹 `ScratchPattern.rawValue`（"plain"/"dots"/"grid"，v9）。老行为空 → 解码兜底 dots。
+    var pattern: String
     var createdAt: Date
     var updatedAt: Date
 }

@@ -26,6 +26,8 @@ export interface Actions {
   padRecenter(): void;
   padFit(): void;
   togglePadMini(): void;
+  togglePadPaper(): void;
+  setPadPaper(bg: string | null, pattern: string | null): void;
 }
 
 export const actions = {} as Actions;
