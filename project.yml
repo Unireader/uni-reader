@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.12"
-    CURRENT_PROJECT_VERSION: "2"
+    MARKETING_VERSION: "0.1.13"
+    CURRENT_PROJECT_VERSION: "3"
 targets:
   UniReader:
     type: application

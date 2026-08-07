@@ -99,6 +99,31 @@
       `xcodebuild`／`tsc`／`vite build` 全绿。
       🔴 **PROTOCOL.md §4.1 的三条草稿纸 C→S 行当初是漏的**——首版那次 `s.replace` 没加断言、
       静默没命中。这轮补齐（scratchOpen/scratchAdd/scratchPaper）。改文档的脚本一律要断言。
+  - **2026-08-07：草稿纸安卓两模式落地（按 `SCRATCHPAD-ANDROID-HANDOFF.md` 执行，待真机验证）**：
+    - **数据层（模式1）**：`NoteKind.SCRATCH_INK=4`；`ScratchPad` 模型；`LibraryStore` 加 `scratch_pad`
+      读写（`PRAGMA table_info` 探表、v7 无表当空、v8 无 `pattern` 列兜底 dots + 降级 upsert、删纸连带删
+      kind=4 笔迹、`scratchStrokes` 按 padId 分纸、孤儿行判坏）；`Payloads` 原地加 `padId` 键；
+      `Stroke.padId`（空=页内）；🔴 `InkEdit.splitStroke` 抽成纯函数且切段**继承 id/layerId/padId**
+      （不继承会被擦笔迹当场消失并污染页内）。测试：`InkEditTest` 7/7（+4）、新建 androidTest
+      `ScratchPadStoreTest`（8 用例，无设备只过了编译）。
+    - **协议（模式2）**：`WireCodec.kt` 加五条消息（scratchpads/scratchStrokes/scratchOpen/scratchAdd/
+      scratchPaper），与 Swift/JS 字节级一致；`WireCodecTest` 向量补到 64 条（#57~#64，含 `open=-1`↔0xFFFF
+      与 `pattern=plain`=0 两个易被兜底吃掉的值），`wire-cross-test` 128 通过。
+    - **渲染+画布**：`InkRenderer.build` 泛化为「点→像素映射 + 线宽倍率」（页内走 `buildPage` 行为不变）；
+      新建 `shared/ScratchGeom.kt`（纯几何：底纹契约数/CSS rgba 解析/软边界 ±1.5 屏/回中/适应内容，
+      `ScratchGeomTest` 12/12）+ `shared/ScratchCanvas.kt`（两模式共用无限画布：方点底纹、原点十字、
+      单指平移/双指捏合、minimap、橡皮圆环；触点 ÷density 只在 `toCanvas` 一处——dp 坑就守在这里；
+      线宽 ×zoom、几何缓存键页宽换 zoom）。**草稿纸层不挂夜间反色滤镜**（独立 View 天然排除）。
+    - **模式1**：`local/ScratchController.kt`（StoreQueue 读写 + 乐观落地 + reconcileScratchStrokes）；
+      顶栏入口 + Sheet 列表/纸样面板（六色板）+ 悬浮胶囊浮条；图钉画在页面上、**手指单击**开纸（不认笔）；
+      覆盖层加在 chrome 之下让开顶栏（§7.1 白压白坑）；返回键先关纸。模拟器冒烟过：读出 Mac 建的纸、
+      笔迹位置/粗细一致、点阵像素级核对、改纸样落库确认。
+    - **模式2**：`pad/PadScratch.kt`（收 `scratchpads` 照做、换纸 `openSession` 回中、ackRel 判据与页内
+      `setStrokes` 一字不差、乐观落地 3s 兜底）；**纸开着时 ink/erase 发画布坐标、page 填 0，编码函数
+      一行未动**；不发 probe 不呼环形盘；不写库；图钉手指单击发 `scratchOpen`；`MacClient` 加两条路由。
+      🔗 新依赖方向：pad→local 引用了 `ScratchController.PALETTE` 等三个常量（介意可上移到 shared）。
+    - **未做/待验**：纸上「笔当橡皮」（侧键/橡皮头）与环形盘不做（同 web 决策）；真机联调清单见
+      「接下来」第 8 条。
     - **2026-08-07 点阵强化**（用户报「太小了基本看不出来」）：点从 `max(.8, min(1.6, z))` / 0.10
       放到 `max(1.5, min(3, z*1.8))` / 0.18。间距本来就有 22~88px，点再细就没了。
       **Mac `ScratchGridLayer` 与 web `scratch.ts drawPattern` 是同一套数，改一边必须同步另一边。**
@@ -138,7 +163,13 @@
      尺子模式在纸上画直线（这条走的是 `line` 标记的替换终点语义，最容易出「歪线」）。
    - **边界**：一篇文档开多张纸来回切、关掉文档再打开笔迹还在、删纸后纸上笔迹是否一并从库里清掉、
      多窗口各开一张纸时滚轮不串窗口。
-   - **未做**：安卓两模式（模式1 独立版 / 模式2 输入板）都还没有草稿纸，下一轮再补。
+   - **安卓模式1（独立版）**：顶栏入口/列表/新建；纸上写字与擦除（模拟器验不了 stylus，这条最关键）；
+     **笔迹大小与 Mac 一致吗**（dp 坑，3x 屏最容易露馅）；双指捏合/软边界/回中/适应内容/minimap 手感；
+     图钉点得开吗；底纹三种 × 纸色六种观感、深色主题下底纹不消失；橡皮半径手感（×800 不对就调，
+     三端一起改）；v7 老库（无 `scratch_pad` 表）打开不炸、新建有提示。
+   - **安卓模式2（输入板）**：Mac 开纸 → 安卓自动跟过去（换纸回中、关纸回 PDF）；安卓落笔/擦除 →
+     Mac 出现；纸样两端互改；**缩放滚动与 Mac 各自独立**；快速连写乐观笔迹与回推不闪；擦除中途
+     快照不复活已擦笔迹（ackRel）；断线重连后纸状态恢复；返回键先关纸。
 
 ## 🐞 已知 Bug（待修）
 
