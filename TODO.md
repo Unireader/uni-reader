@@ -187,7 +187,13 @@
 
 ## 🐞 已知 Bug（待修）
 
-- **安卓圆盘工具图标观感偏小**（2026-08-07 用户真机报，**未修好，后面统一看**）：长按环形盘里除「笔」以外的工具图标（橡皮/翻页/新建草稿纸/新建笔记）在真机上读着明显小。已试：新图标几何先对齐 web `drawRadialIcon`（纸+徽章），再把工具图标缩放基准从 `r/17` 提到 `r/13`（≈1.3 倍，与笔的 62% 半径占比持平），用户确认仍小。已核实包装的是新代码（dumpsys lastUpdateTime 比对过），排除装错包。下次排查方向：① 真机 screencap 量像素，对比 Mac `RadialMenuView`（SF Symbol 13pt/28pt 圆片 ≈46%）与安卓实际观感差在哪——可能是笔以外的图标视觉密度（填充率）低，而非外接圆小；② web 端同款几何还没动，要改一起改（`web/src/lib/render.ts` drawRadialIcon）。
+- ~~安卓圆盘工具图标观感偏小~~ **2026-08-07 已修（待真机确认）**：根因是**单位搞混**——工具图标的
+  缩放系数写的是 `k = r/dp(13f)`（dp 值除像素值），单位网格被压掉一个 density 倍（3x 屏上小 2.6 倍），
+  笔图标用纯像素比 `r×0.62` 所以正常。修为 `k = r/17f`，与 web `drawRadialIcon` 的 `scale(r/17)` 完全一致
+  （web 本来就是对的，不用改）。验证手段：`androidTest/.../shared/RadialIconProbeTest.kt`（渲染探针，
+  把整个盘按设备 density 画成 PNG 落 app 专属目录，pull 出来逐像素看）——修前图标占圆片 27%、修后 ~50%，
+  与 Mac 的 46% 持平。教训：**跨端抄绘制几何时先确认两端坐标单位**（web canvas 是 px，安卓这里 `dp()`
+  换算过的也是 px，但 `dp(常量)` 是「dp 常量折 px」，两者混用就出这种 density 倍数的错）。
 - **一个工作区里只有第一篇文档能有默认图层**（2026-08-05 做安卓多标签页时撞见，**Mac 与安卓同病，未修**）：`ink_layer.id` 是全局主键而默认图层用固定 UUID，`ensureDefaultLayer` 的 `ON CONFLICT(id) DO UPDATE` **不更新 `document_id`** → 第二篇起插不进自己的行，图层面板是空的、笔迹的 `layerId` 指向别人家那一行。当前不丢数据（可见性过滤按 `document_id` 取，取不到＝全可见），但按 id 做重命名/删除/改色时会跨文档互相影响。**默认图层 id 的语义是三端契约，要两端一起改**：① 默认层也用随机 UUID，没有 `layerId` 的老笔迹兜底到该文档第一层；② 主键改 `(id, document_id)`（要迁移）。证据与实证见 `ANDROID-STANDALONE-PLAN.md §9.11`。
 - 笔迹打磨（已知简化，非阻塞）：马克笔叠笔接缝变深；pad 实时反馈阶段铅笔无抖动纹理。**原计划靠路线图 ⑤ 三端算法统一一并解决，该路线 2026-07-30 已搁置** → 现在是「各端各修、谁碍眼修谁」，两条都还没修。
 - ~~安卓 marker 观感偏暗发浊~~ **2026-07-30 已修**（`ANDROID-STANDALONE-PLAN.md §9.4`，两模式共用 `shared/InkRenderer.kt`）：`PorterDuffXfermode(MULTIPLY)`（预乘 alpha 的老式合成）换成 API 29+ 的 `BlendMode.MULTIPLY`，26~28 保留兜底。模拟器用 `screencap` 逐像素对过公式：白底量到 (255,239,169)、压在蓝笔上量到 (36,92,141)，与 W3C multiply 逐位相符。**并排观感仍待真机**（§11.1 第 4 条）。
