@@ -38,7 +38,10 @@ struct ScratchGridLayer: View, Equatable {
         Canvas { ctx, size in
             guard pattern != .plain else { return }   // 纯色纸：连原点十字都不画
             let z = viewport.zoom, o = viewport.origin, st = step
-            let dot = max(0.8, min(1.6, z))          // 点半径随缩放微调，别缩没了也别糊成块
+            // 点的大小/浓度：初版（1.6px 上限 / 0.10）在真机上「基本看不出来」——点阵间距本来就
+             // 有 22~88px，点再细就没了。放大到 3px 上限 + 0.18 浓度，仍远淡于笔迹。
+             // ⚠️ 这两个数与 web `scratch.ts drawPattern` 是同一套，改一边必须同步另一边。
+            let dot = max(1.5, min(3, z * 1.8))
             // 视口覆盖的画布范围 → 对齐到网格
             let x0 = (o.x / st).rounded(.down) * st, y0 = (o.y / st).rounded(.down) * st
             let cols = Int(size.width / (st * z)) + 2, rows = Int(size.height / (st * z)) + 2
@@ -66,7 +69,7 @@ struct ScratchGridLayer: View, Equatable {
                         path.addRect(CGRect(x: p.x - dot / 2, y: p.y - dot / 2, width: dot, height: dot))
                     }
                 }
-                ctx.fill(path, with: .color(ink.opacity(0.10)))
+                ctx.fill(path, with: .color(ink.opacity(0.18)))
             }
 
             // 原点十字（画布 0,0）：稍明显一点，是「回中」的落点也是这张纸的锚。

@@ -182,8 +182,9 @@ export function initScratch(refs: CaptureRefs): void {
       }
       cx.stroke();
     } else {
-      const d = Math.max(0.8, Math.min(1.6, z));
-      cx.fillStyle = dark ? "rgba(0,0,0,.10)" : "rgba(255,255,255,.10)";
+      // 点的大小/浓度：与 Mac `ScratchGridLayer` 同一套数（初版太细，真机上基本看不出来）。
+      const d = Math.max(1.5, Math.min(3, z * 1.8));
+      cx.fillStyle = dark ? "rgba(0,0,0,.18)" : "rgba(255,255,255,.18)";
       for (let i = 0; i <= cols; i++) {
         const x = (x0 + i * st - ox) * z;
         for (let j = 0; j <= rows; j++) {
