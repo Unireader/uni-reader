@@ -87,6 +87,7 @@ extension ReaderSurface {
             if !userZoomed { userZoomed = true }   // @State 写入不比较旧值，逐帧写 true = 逐帧多一次无谓失效
             pos.scrollTo(point: target)
         }
+        scratch.zoomFromRestore = false   // 用户接管缩放：启动窗内的「按恢复倍率重算」到此为止
         p.cCur = c1
         scratch.pendingTarget = target
         scratch.pendingTries = 0
@@ -136,6 +137,7 @@ extension ReaderSurface {
     func animateZoom(to z1raw: CGFloat, anchorP P: CGPoint, fitAfter: CGFloat? = nil) {
         guard layout != nil, scratch.didInitialGeo else { return }
         follower.reset()
+        scratch.zoomFromRestore = false   // 用户接管缩放（⌘±/⌘0/工具栏），同 commitZoom
         let z1 = clampZoom(z1raw)
         guard abs(z1 - zoom) > 0.0001 else {
             if let nb = fitAfter { fitBasis = nb; zoom = 1; userZoomed = false }   // 已在目标：仍刷新基准

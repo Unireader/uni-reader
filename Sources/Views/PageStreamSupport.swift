@@ -164,6 +164,11 @@ final class Scratch {
     var zoomAnim: ZoomAnim?        // 进行中的命令式缩放动画（pinch/⌘wheel 介入即取消）
     var pendingRestore: ScrollAnchor?
     var pendingZoom: CGFloat = 1           // 待恢复的缩放倍率（首帧定基准后套用）
+    /// 当前 `zoom` 是「从库里恢复来的倍率」而非用户手动缩的。启动稳定窗内窗口宽度落位时，它必须按
+    /// **新的 fit 基准重算倍率**（存的是相对 fit 的倍数），不能走 refit 的「尺寸保持」把首帧那个瞬态
+    /// 宽度对应的**绝对页宽**锁死——那正是「上次缩放没恢复」的根因，见 `refitToViewport`。
+    /// 用户一动缩放（捏合/⌘±/⌘0/⌘滚轮）即清零，之后一律按手动缩放的既有语义走。
+    var zoomFromRestore = false
     var pendingHFrac: CGFloat?             // 待恢复的横向滚动比例（首帧定位后一次性套用，nil=无）
     var lastRefitFullW: CGFloat = 0        // 上次 refit 时的全宽（区分窗口缩放 vs 侧栏/Inspector 开合）
     var appearAt: CFTimeInterval = 0       // 视图出现时刻：启动稳定窗内宽度变化一律真 fit（防瞬态宽被锁死）

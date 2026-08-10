@@ -23,12 +23,24 @@ extension ReaderSurface {
         // 会把窄页渲染出来、40ms 后再跳到整窗宽 = 启动闪烁。未就绪则整体早退（didInitialGeo 前不实化/不渲染）。
         if !scratch.didInitialGeo {
             guard n.containerW > 0, fullWidth > 0 else { return }
+            // ⚠️ **`fullWidth > 0` 挡不住 SwiftUI 的占位几何**（2026-08-10 日志实测：开窗首帧
+            // `fullWidth=100`，真实值 900）。窗口帧恢复 / 分栏落位之前，两个 GeometryReader 会先报
+            // 一个占位尺寸；按它定基准就是整条页图流按 83pt 页宽排版并真的出图，落位后再跳到 883
+            // ——用户看到的「开窗一瞬页面很小、然后突然放大」。
+            // 侧栏最小宽本身就有 200pt（`navigationSplitViewColumnWidth(min: 200)`），所以比这还窄的
+            // 全宽不可能是真实布局。等真实测量到达再定基准；等待期间 didInitialGeo 仍为假 =
+            // 不实化、不渲染 = **留白**，与 `RootView.resolve` 同一取舍：宁可白一下也不闪一下。
+            // 重新进入本函数由 `onChange(of: fullWidth)` / `onChange(of: unobSize.width)` /
+            // `onScrollGeometryChange` 三路兜底保证——占位值一旦被真实布局替换必然触发其中之一。
+            guard layoutW >= minPlausibleLayoutW else { return }
             scratch.didInitialGeo = true
             fitBasis = fitAvail                   // 首帧定 fit 基准（全窗宽 − legacy 滚动条占位）
             // 恢复上次缩放（相对 fit 的倍率）：此刻定标 zoom 即首帧就以正确页宽渲染；
             // 随后 pendingRestore 的 page/frac 锚点用带缩放的 dispScale 换算 → 位置仍准。
             let rz = clampZoom(scratch.pendingZoom)
-            if abs(rz - 1) > 0.001 { zoom = rz; userZoomed = true }
+            // 恢复来的倍率也要置 userZoomed（否则窗口一变宽就被当成 fit 模式重排），但同时打上
+            // `zoomFromRestore` —— 启动瞬态宽度落位时 refit 要按新基准重算倍率而不是锁死绝对页宽。
+            if abs(rz - 1) > 0.001 { zoom = rz; userZoomed = true; scratch.zoomFromRestore = true }
             scratch.lastRefitFullW = fullWidth
         }
         verifyPendingTarget(n)
@@ -122,6 +134,11 @@ extension ReaderSurface {
     func scheduleRefit() {
         guard scratch.didInitialGeo else { return }
         scratch.resizeWork?.cancel()
+        scratch.resizeWork = nil
+        // 启动落位期（窗口帧恢复 / 分栏落位，宽度会连环变几次）**不防抖**：那 200ms 是为「用户拖窗口
+        // 边框」准备的，落位期没有什么好等的，每多等一帧就是「先按旧基准显示一下再跳」的可见闪动。
+        // 首帧定基准已挡掉占位宽（见 geometryChanged），这里是宽度分两步到位时的第二道防线。
+        if CACurrentMediaTime() - scratch.appearAt < 1.5 { refitToViewport(); return }
         let work = DispatchWorkItem { refitToViewport() }
         scratch.resizeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
@@ -136,7 +153,32 @@ extension ReaderSurface {
         guard abs(newW - fitBasis) > 0.5 || windowWidthChanged else { return }   // 无实质变化
         // 启动稳定窗（窗口恢复/分栏落位的瞬态宽度会连环变化）：未缩放前一律真 fit，
         // 否则首帧捕获的瞬态宽会被「零视觉变化」重定标逻辑永久锁死（页宽偏窄、跑到左边）。
-        let startupSettling = !userZoomed && CACurrentMediaTime() - scratch.appearAt < 1.5
+        let inStartupWindow = CACurrentMediaTime() - scratch.appearAt < 1.5
+        let startupSettling = !userZoomed && inStartupWindow
+        // 恢复来的缩放：库里存的是**相对 fit 的倍率**，所以启动瞬态宽度落位时要按新基准重算倍率
+        // （zoom 保持 = 页宽跟着窗口走），而**不能**走下面的「尺寸保持」——那会把首帧那个瞬态宽度
+        // 对应的绝对页宽锁死，倍率被反算成别的值（首帧宽偏窄 → 倍率被压小），表现就是
+        // 「关掉全部窗口后从 Dock 重开，PDF 恢复了但缩放回到 100%」。用户一动缩放即退出本分支。
+        if scratch.zoomFromRestore, inStartupWindow, windowWidthChanged {
+            let z = clampZoom(scratch.pendingZoom)
+            let oldBasis = basis
+            let newPageW = newW * z
+            let r = newPageW / max(0.0001, pageW)
+            let topDispY = g.offsetY + g.insetTop
+            let target = clampOffset(CGPoint(x: g.offsetX * r, y: topDispY * r - g.insetTop),
+                                     pageWidth: newPageW)
+            var t = Transaction(); t.animation = nil
+            withTransaction(t) {
+                fitBasis = newW
+                zoom = z
+                pos.scrollTo(point: target)
+            }
+            scratch.pendingTarget = target
+            scratch.pendingTries = 0
+            scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
+            scheduleSettleRender()
+            return
+        }
         if userZoomed || (!windowWidthChanged && !startupSettling) {
             // 尺寸保持：显示页宽不变，仅重定标 fit 基准 → 零视觉变化（窗口缩放且手动缩放态走这里）
             let eff = pageW

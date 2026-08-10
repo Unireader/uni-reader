@@ -94,6 +94,10 @@ struct ReaderSurface: View {
 
     let zoomMin: CGFloat = 0.25
     let zoomMax: CGFloat = 6
+    /// 「这个宽度不可能是真实布局」的下限（pt）：侧栏最小宽就有 200（见 `navigationSplitViewColumnWidth`），
+    /// 而 `layoutW` 是**含侧栏延伸区的全窗宽**，比它还窄只能是 SwiftUI 尚未落位时报的占位几何。
+    /// 用途见 `geometryChanged` 的首帧定基准（占位宽定基准 = 开窗时小页闪一下）。
+    let minPlausibleLayoutW: CGFloat = 200
     let basePixelCap = 2800               // 整页基图像素宽上限；超出由贴片补清晰
 
     /// legacy（占空间）滚动条宽度（系统度量；触摸板 overlay 模式 = 0）。
