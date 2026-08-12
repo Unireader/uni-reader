@@ -12,6 +12,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - 无测试 target；验证走 spike 脚本：`swift spike/<name>.swift`（如 `store-test.swift` 32 项 DAO、`ink-store-test.swift` 21 项）。
 - 采集页前端（`web/`，Svelte + Vite）：改动后跑 `scripts/build-web.sh`（npm install + 单文件构建 + 占位符自检 + 覆盖 `Sources/Resources/capture.html`），再重新编译 App。`capture.html` 是构建产物、**不入 git**——新克隆先跑一次 `build-web.sh`；`scripts/package.sh` 打包时会自动重建。
 - 项目级用户规则：不代用户执行安装（brew/pip/npm 一律给脚本让用户跑）；交流用中文或英文。
+- Android 端（`android/`，Gradle 工程，wrapper 已补齐）：构建 `./gradlew assembleDebug`；打包 `android/pack.sh`（release，adb 恰好一台设备时顺带安装，`--debug`/`--no-install`）。签名：debug/release 共用 `~/.keystores/xVanTuring.jks`（alias `key0`），密码从 `android/local.properties` 的 `releaseStorePassword`/`releaseKeyPassword` 读（本机文件，不入 git）。
 
 ## 文档地图（改代码前先读）
 
