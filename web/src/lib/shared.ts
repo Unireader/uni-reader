@@ -170,6 +170,10 @@ export interface GState {
   touches: Record<number, { x: number; y: number }>; touchOrder: number[];
   panId: number | null; lastPanX: number; lastPanY: number; pinch: Pinch | null;
   zoomLocked: boolean;
+  // 双指滚动模式（防误触）：单指划动不平移页面/草稿纸，滚动与缩放一律双指。
+  // 单指仍可轻点图钉开纸、按住图钉拖动（刻意动作，不会是误触）。
+  twoFinger: boolean;
+  gestureBlocked: boolean;         // 本次手指手势被 twoFinger 挡下过 → 抬手不能再当轻点去开图钉
   showPage: boolean;
   panDownX: number; panDownY: number; panStarted: boolean;
   vx: number; vy: number; lastMoveT: number; momentumRAF: number | null;
@@ -188,7 +192,8 @@ export interface GState {
   padVp: PadViewport;
   padMini: boolean;                // minimap 开关
   padMiniDrag: boolean;            // 正在 minimap 上拖动定位
-  padPinch: { d0: number; z0: number } | null;   // 草稿纸上的双指捏合锚点
+  // 草稿纸上的双指捏合锚点；mx/my = 上一帧两指中点（中点整体挪动 = 平移，见 scratch.ts padPointerMove）
+  padPinch: { d0: number; z0: number; mx: number; my: number } | null;
   // 图钉页内拖动（手指按住图钉、越过死区 = 拖动，否则保持单击开纸）：
   // pinDragIndex/pinDragMoved 是手势瞬态；pinGhost 是乐观预览位置（拖动中 + 松手后等
   // scratchpads 回推期间），applyScratchPads 落地即清——以 Mac 回推为权威（同 scratchPaper 惯例）。

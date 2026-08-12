@@ -8,6 +8,8 @@
     lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "lock-open": '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
     maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
+    // 双指滚动（防误触）：两个指尖 + 一根上下双向箭头
+    "two-finger": '<circle cx="8" cy="5.5" r="2.5"/><circle cx="16" cy="5.5" r="2.5"/><path d="M12 10.5v9"/><path d="m9 13.5 3-3 3 3"/><path d="m9 16.5 3 3 3-3"/>',
     "chevron-up": '<path d="m18 15-6-6-6 6"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     type: '<path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',

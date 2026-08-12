@@ -46,6 +46,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     pbatch: [], probePage: 0, probing: false,           // 探针流（擦除/翻页模式专用）：平行上报笔位置给 Mac 做长按检测/环形盘
     touches: {}, touchOrder: [], panId: null, lastPanX: 0, lastPanY: 0, pinch: null,
     zoomLocked: false,
+    twoFinger: false, gestureBlocked: false,            // 双指滚动模式（防误触，见 shared.ts）
     showPage: true,                                     // false = 纯手写板（不取图、只白底）
     panDownX: 0, panDownY: 0, panStarted: false,
     vx: 0, vy: 0, lastMoveT: 0, momentumRAF: null,      // 惯性滚动（速度单位: scroll px/ms）
@@ -144,6 +145,9 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     // 尺子模式：独立本地开关，只影响 note 模式 pointermove 的采点（45° 吸附直线）。
     toggleRuler() { G.rulerOn = !G.rulerOn; S.rulerOn = G.rulerOn; },
     toggleLock() { G.zoomLocked = !G.zoomLocked; S.zoomLocked = G.zoomLocked; },
+    // 双指滚动（防误触）：单指划动不再平移页面/草稿纸，滚动与缩放一律双指。
+    // 手掌/虎口在落笔前先蹭到屏幕那一下，从此什么都不做。
+    toggleTwoFinger() { G.twoFinger = !G.twoFinger; S.twoFinger = G.twoFinger; },
     // ---- 草稿纸（v8）----
     // 开/关/新建都只发请求，Mac 判定后回推 scratchpads，本地照做（同 layerAdd 一族的分工）。
     openPad(i: number) { G.padOpenIndex(i); S.padList = false; },

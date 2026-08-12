@@ -309,7 +309,10 @@ export function initScratch(refs: CaptureRefs): void {
       if (G.touchOrder.indexOf(e.pointerId) < 0) G.touchOrder.push(e.pointerId);
       if (G.touchOrder.length >= 2) {
         const a = G.touches[G.touchOrder[0]], b = G.touches[G.touchOrder[1]];
-        G.padPinch = { d0: Math.max(40, Math.hypot(a.x - b.x, a.y - b.y)), z0: G.padVp.z };
+        G.padPinch = {
+          d0: Math.max(40, Math.hypot(a.x - b.x, a.y - b.y)), z0: G.padVp.z,
+          mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
+        };
         G.panId = null;
       } else {
         if (inMinimap(e.clientX, e.clientY)) { G.padMiniDrag = true; padMiniJump(e.clientX, e.clientY); return true; }
@@ -347,11 +350,17 @@ export function initScratch(refs: CaptureRefs): void {
       if (G.padPinch && G.touchOrder.length >= 2) {
         const a = G.touches[G.touchOrder[0]], b = G.touches[G.touchOrder[1]];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
         if (!G.zoomLocked) {
           const target = clamp(G.padPinch.z0 * d / G.padPinch.d0, MINZ, MAXZ);
-          padZoomAt(target / G.padVp.z, (a.x + b.x) / 2, (a.y + b.y) / 2);
+          padZoomAt(target / G.padVp.z, mx, my);
         }
+        // 中点整体挪动 = 平移。缩放锚点只保证「中点底下那一点不动」，两指齐挪时 factor≈1、
+        // padZoomAt 原地返回，光靠它双指是拖不动纸的——双指滚动模式下纸就等于钉死了。
+        padPanBy(G.padPinch.mx - mx, G.padPinch.my - my);
+        G.padPinch.mx = mx; G.padPinch.my = my;
       } else if (e.pointerId === G.panId) {
+        if (G.twoFinger) return true;   // 双指滚动模式：单指划动不平移这张纸（防误触）
         padPanBy(G.lastPanX - e.clientX, G.lastPanY - e.clientY);
         G.lastPanX = e.clientX; G.lastPanY = e.clientY;
       }

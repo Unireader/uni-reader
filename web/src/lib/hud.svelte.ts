@@ -60,6 +60,7 @@ export const S = $state({
   noteEditor: null as NoteEditorState | null,   // 文字笔记编辑器（非 null = 打开中）
   showPage: true,          // 页面图显示（眼睛按钮回显）
   zoomLocked: false,       // 锁定缩放（锁按钮回显）
+  twoFinger: false,        // 双指滚动模式 / 防误触（顶栏按钮激活态回显）
   // ---- 侧拉抽屉（目录 / 书库）----
   drawer: false,           // 抽屉开关
   drawerTab: "toc" as "toc" | "lib",   // 停在哪一页（关掉再开回到这里）

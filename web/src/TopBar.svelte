@@ -62,6 +62,8 @@
   <button id="padBtn" class:on={S.padOpen >= 0 || S.padList} title="草稿纸" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
   <button id="eye" title="显示/隐藏页面" onclick={() => actions.toggleEye()}><Icon name={S.showPage ? "eye" : "eye-off"} /></button>
   <button id="lock" title="锁定缩放" onclick={() => actions.toggleLock()}><Icon name={S.zoomLocked ? "lock" : "lock-open"} /></button>
+  <button id="twoFinger" class:on={S.twoFinger} title="双指滚动（防误触）：单指划动不再平移"
+    onclick={() => actions.toggleTwoFinger()}><Icon name="two-finger" /></button>
   <button id="full" title="全屏" onclick={() => actions.toggleFull()}><Icon name="maximize" /></button>
   <button id="hideBar" title="隐藏顶栏" onclick={() => (hidden = true)}><Icon name="chevron-up" /></button>
 </div>

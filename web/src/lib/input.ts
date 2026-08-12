@@ -79,6 +79,7 @@ export function initInput(refs: CaptureRefs): void {
     if (e.pointerType === "touch") {
       if (G.activeId !== null) { e.preventDefault(); return; }   // 笔在写 → 忽略手掌
       if (e.width > PALM || e.height > PALM) { e.preventDefault(); return; }   // 大面积接触（手掌）忽略
+      if (!G.touchOrder.length) G.gestureBlocked = false;   // 一次新手势的第一根手指
       G.touches[e.pointerId] = { x: e.clientX, y: e.clientY };
       if (G.touchOrder.indexOf(e.pointerId) < 0) G.touchOrder.push(e.pointerId);
       if (G.touchOrder.length >= 2) beginPinch();
@@ -184,6 +185,9 @@ export function initInput(refs: CaptureRefs): void {
         }
         if (!G.panStarted) {
           if (Math.hypot(e.clientX - G.panDownX, e.clientY - G.panDownY) < DEAD) { e.preventDefault(); return; }
+          // 双指滚动模式：单指划动到此为止——不平移、不记速度、松手也不甩惯性。
+          // （图钉拖动在上面已经 return 掉了：那是按住一个图钉的刻意动作，不算误触。）
+          if (G.twoFinger) { G.gestureBlocked = true; e.preventDefault(); return; }
           G.panStarted = true; G.lastPanX = e.clientX; G.lastPanY = e.clientY; G.lastMoveT = performance.now();   // 越过死区才开始
         }
         const dx = G.lastPanX - e.clientX, dy = G.lastPanY - e.clientY;
@@ -280,9 +284,10 @@ export function initInput(refs: CaptureRefs): void {
         // 图钉拖动松手：提交 scratchMove（Mac 钳位/判定后经 scratchpads 全量回推）。
         // pinGhost 不清——留着当乐观预览，等回推在 applyScratchPads 里对齐（同 scratchPaper 惯例）。
         G.send({ type: "scratchMove", index: G.pinGhost.index, nx: G.pinGhost.nx, ny: G.pinGhost.ny });
-      } else {
+      } else if (!G.gestureBlocked) {
         // 单指**单击**（全程没越过死区）：命中草稿纸图钉就打开那张纸。
         // 只认手指、不认笔——平板上笔是用来写字的，让笔点图钉必然会在图钉上落笔时误触发。
+        // 双指滚动模式下划过一道再抬手的（gestureBlocked）不算单击，否则误触又从这条路进来了。
         const i = G.padPinHit(G.panDownX, G.panDownY);
         if (i >= 0) G.padOpenIndex(i);
       }
