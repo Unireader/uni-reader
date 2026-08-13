@@ -168,7 +168,7 @@ final class AppModel: ObservableObject {
         server.onMessage = { [weak self] obj in self?.handleInk(obj) }
 
         // 方案 B：平板按需取任意页图（带缓存，服务 queue 上调用）。
-        server.pageProvider = { [weak self] idx in self?.renderPage(idx) }
+        server.pageProvider = { [weak self] req in self?.renderPage(req) }
 
         // 方案 B：平板本地滚动 → 落为平板当前会话的锚点（origin=pad），驱动 Mac PDFView 跟随。
         server.onScroll = { [weak self] page, frac, t in
@@ -182,7 +182,13 @@ final class AppModel: ObservableObject {
     private let renderLock = NSLock()
     private var padRenderPDF: PDFDocument?
     private var padRenderKey = ""              // = 文档 contentHash，作缓存/版本键
-    private let pageCache = NSCache<NSString, NSData>()
+    /// 平板页图缓存。**按字节记额度**（`cost` = 编码后的字节数）：档位化之后同一页会有不止一份，
+    /// 按条数记的 `countLimit` 拦不住内存。256MB 够装满一整本中等厚度的书的常看那几十页。
+    private let pageCache: NSCache<NSString, NSData> = {
+        let c = NSCache<NSString, NSData>()
+        c.totalCostLimit = 256 * 1024 * 1024
+        return c
+    }()
 
     /// 更新按页渲染的文档源；文档变（key 变）时清空页图缓存。主线程调用。
     ///
@@ -218,18 +224,31 @@ final class AppModel: ObservableObject {
     }
 
     /// 渲染平板当前会话的第 idx 页（缓存命中直接返回）。服务 queue 上调用。
-    func renderPage(_ idx: Int) -> Data? {
+    func renderPage(_ req: LANServer.PageImageRequest) -> Data? {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let idx = req.index
         renderLock.lock()
         let pdf = padRenderPDF
         let key = padRenderKey
-        let ck = "\(key)#\(idx)" as NSString
-        if let cached = pageCache.object(forKey: ck) { renderLock.unlock(); return cached as Data }
+        // 缓存键必须含宽度与格式：平板按视口宽度取图（`?w=`），同一页会有不止一个档位。
+        let ck = "\(key)#\(idx)@\(req.width)/\(req.format.name)" as NSString
+        if let cached = pageCache.object(forKey: ck) {
+            renderLock.unlock()
+            PadLog.log("页图 #\(idx)@\(req.width) 缓存命中 \(PadLog.ms(CFAbsoluteTimeGetCurrent() - t0))，\(cached.length / 1024)KB")
+            return cached as Data
+        }
         renderLock.unlock()
 
+        PadLog.log("页图 #\(idx)@\(req.width) 未命中，开渲…")
         guard let pdf, idx >= 0, idx < pdf.pageCount, let page = pdf.page(at: idx),
-              let png = PageRenderer.png(page: page, maxWidth: 1600) else { return nil }
-        renderLock.lock(); pageCache.setObject(png as NSData, forKey: ck); renderLock.unlock()
-        return png
+              let data = PageRenderer.image(page: page, pixelWidth: CGFloat(req.width), format: req.format) else {
+            PadLog.log("页图 #\(idx)@\(req.width) 渲染失败（\(PadLog.ms(CFAbsoluteTimeGetCurrent() - t0))）")
+            return nil
+        }
+        // cost = 字节数：档位化之后同一页可能有好几份，按条数记的 NSCache 拦不住内存
+        renderLock.lock(); pageCache.setObject(data as NSData, forKey: ck, cost: data.count); renderLock.unlock()
+        PadLog.log("页图 #\(idx)@\(req.width) 渲染完成 \(PadLog.ms(CFAbsoluteTimeGetCurrent() - t0))，\(data.count / 1024)KB")
+        return data
     }
 
     // MARK: - 手写路由

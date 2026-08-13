@@ -47,12 +47,37 @@ final class LANServer: ObservableObject {
 
     /// 收到平板已鉴权消息（如手写笔画）的回调，在主线程调用。
     var onMessage: (([String: Any]) -> Void)?
-    /// 按页号渲染 PNG（方案 B：平板按需取任意页图）。在服务 queue 上调用，须自带缓存/线程安全。
-    var pageProvider: ((Int) -> Data?)?
+    /// 按页号渲染页图（方案 B：平板按需取任意页图）。在服务 queue 上调用，须自带缓存/线程安全。
+    var pageProvider: ((PageImageRequest) -> Data?)?
+
+    /// 一次页图请求（`/page.png` 的 query 解析结果）。
+    struct PageImageRequest {
+        let index: Int
+        /// 目标像素宽度，**已归到 [pageWidthSteps] 的档位**（客户端也归一次，两边同一张阶梯）
+        let width: Int
+        let format: PageRenderer.Format
+    }
+
+    /// 页图宽度档位。
+    ///
+    /// ⚠️ **安卓端 `shared/PageWidths.kt` 有一份同样的阶梯**，改这里必须同步改那边——不一致的
+    /// 表现是「客户端按 2160 存、服务端按 2880 渲」，两边缓存永远不命中。这不是线格式，
+    /// 不涉及 `PROTOCOL.md` 的字节向量。服务端要再归一次：旧客户端/手敲 URL 不归档的话，
+    /// 每个像素宽度都会在 `AppModel.pageCache` 里占一份，缓存直接被打散。
+    static let pageWidthSteps = [480, 720, 1080, 1440, 2160, 2880]
+
+    /// 不带 `w=` 时的宽度（浏览器采集页就不带）——保持旧行为，不改网页那侧的观感。
+    static let defaultPageWidth = 1600
+
+    static func snapPageWidth(_ w: Int) -> Int {
+        pageWidthSteps.first { $0 >= max(1, w) } ?? pageWidthSteps[pageWidthSteps.count - 1]
+    }
     /// 平板上报滚动锚点（页 + 页内归一化比例 + 发送端单调时钟 ms），在主线程调用。
     var onScroll: ((Int, Double, Double) -> Void)?
 
     private let queue = DispatchQueue(label: "com.xvan.UniReader.lan")
+    /// 上一次 `/page.png` 处理完的时刻（只在 [queue] 上碰）。用于日志里那个「距上次页图请求结束」。
+    private var lastPagePNGEnd: CFAbsoluteTime = 0
     private var httpListener: NWListener?
     private var wsListener: NWListener?
     private var clients: [NWConnection] = []
@@ -183,7 +208,17 @@ final class LANServer: ObservableObject {
                 conn.cancel(); return
             }
             let target = LANServer.requestTarget(request)
+            let t0 = CFAbsoluteTimeGetCurrent()
             let (status, contentType, body) = self.route(target)
+            // 页图请求的耗时账（`PadLog`，默认关；开关见 UniReaderApp.swift）。
+            // 「距上次结束」是关键的第二个数：本 queue 是**串行**的，页图渲染、WS 收发、广播全排在
+            // 同一条上。这个数逼近 0 就说明请求是背靠背排队的——平板等的其实是队列，不是单页渲染。
+            if target.hasPrefix("/page.png") {
+                let t1 = CFAbsoluteTimeGetCurrent()
+                PadLog.log("HTTP \(target) → \(status)，\(body.count / 1024)KB，"
+                    + "占用服务队列 \(PadLog.ms(t1 - t0))（距上次页图请求结束 \(PadLog.ms(t0 - self.lastPagePNGEnd))）")
+                self.lastPagePNGEnd = t1
+            }
             var head = "HTTP/1.1 \(status)\r\n"
             head += "Content-Type: \(contentType)\r\n"
             head += "Content-Length: \(body.count)\r\n"
@@ -208,9 +243,21 @@ final class LANServer: ObservableObject {
             // 方案 B：`?i=N` 按页号取图；无 i 时回退当前页（兼容旧采集页）。
             // 两条都走 `pageProvider`（服务 queue 上跑、自带 NSCache）——兜底那条曾用主线程预渲染好的
             // `pagePNG`，代价是每次翻页阻塞主线程渲一张没人取的图（见 `AppModel.push` 注释），已删除。
+            //
+            // `w=` 目标像素宽度（不带 = 旧行为 1600，浏览器采集页就不带）；
+            // `f=png` 要无损原样，`q=NN` 调 JPEG 质量；**默认 JPEG**——不是为省流量（省不了），
+            // 是因为高分辨率下 PNG 编码要 130~260ms 且占的是本条串行队列，见 `PageRenderer.Format`。
             let idx = query["i"].flatMap(Int.init) ?? currentPageIndex
-            if let png = pageProvider?(idx), !png.isEmpty {
-                return ("200 OK", "image/png", png)
+            // 只归一**客户端报上来的**宽度；不带 `w=` 的（浏览器采集页）原样走旧的 1600，
+            // 免得顺手把网页那侧的观感/流量也改了。
+            let width = query["w"].flatMap(Int.init).map(LANServer.snapPageWidth) ?? LANServer.defaultPageWidth
+            // `q=` 是 JPEG 质量旋钮（1~100），只为对比/调参留的；不带就用默认档。
+            let quality = query["q"].flatMap(Double.init).map { min(max($0, 1), 100) / 100 }
+            let format: PageRenderer.Format =
+                query["f"] == "png" ? .png : .jpeg(quality: quality ?? PageRenderer.defaultJPEGQuality)
+            let req = PageImageRequest(index: idx, width: width, format: format)
+            if let data = pageProvider?(req), !data.isEmpty {
+                return ("200 OK", format.contentType, data)
             }
             return ("404 Not Found", "text/plain; charset=utf-8", Data("no page".utf8))
         case "/health":

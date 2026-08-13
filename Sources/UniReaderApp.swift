@@ -24,6 +24,56 @@ func wsLog(_ msg: String) {
     try? h.write(contentsOf: data)
 }
 
+/// 平板页图链路的耗时日志（`[PAD]` 前缀）。开关口径同 [wsLog]——**文件在不在就是开关**：
+/// ```
+/// touch ~/Library/Logs/UniReader-pad.log    # 开启
+/// rm    ~/Library/Logs/UniReader-pad.log    # 关闭
+/// ```
+/// 为什么单开一支而不并进 `wsLog`：这条是**每张页图都写一行**的高频通道，混进工作区打开链路的
+/// 日志里会把那份冲没；而且它量的就是渲染延迟本身，所以：
+/// - **不发 `NSLog`**（unified logging 在这台机器上抓不到，还白付一次格式化）；
+/// - **写盘甩到独立队列**——`LANServer` 那条服务 queue 是串行的，日志 I/O 落在上面等于把
+///   被测对象也算进读数里；
+/// - 关着的时候只剩一次「每秒最多一遍」的 `fileExists`，热路径上零开销。
+enum PadLog {
+    static let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/UniReader-pad.log")
+
+    private static let queue = DispatchQueue(label: "com.xvan.UniReader.padlog", qos: .utility)
+    private static var handle: FileHandle?      // 只在 queue 上碰
+    private static var checkedAt: CFAbsoluteTime = 0   // 以下两个只在 LANServer 服务 queue 上碰
+    private static var isOn = false
+
+    /// 每张页图都会问一遍，故探盘节流到 1s 一次（开关是给人用的，秒级生效足够）。
+    private static var enabled: Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - checkedAt > 1 {
+            checkedAt = now
+            let on = FileManager.default.fileExists(atPath: url.path)
+            if on != isOn {
+                isOn = on
+                queue.async { handle = nil }   // 关掉/被 rm 过 → 下次写重新开句柄
+            }
+        }
+        return isOn
+    }
+
+    static func log(_ msg: @autoclosure () -> String) {
+        guard enabled else { return }
+        let line = "\(Date.now.formatted(date: .omitted, time: .standard)) [PAD] \(msg())\n"
+        queue.async {
+            if handle == nil {
+                handle = try? FileHandle(forWritingTo: url)
+                _ = try? handle?.seekToEnd()
+            }
+            guard let h = handle, let d = line.data(using: .utf8) else { return }
+            try? h.write(contentsOf: d)
+        }
+    }
+
+    /// 秒 → 毫秒的统一格式（日志里的数都是 `12.3ms` 这个样子）
+    static func ms(_ seconds: CFAbsoluteTime) -> String { String(format: "%.1fms", seconds * 1000) }
+}
+
 /// 单实例守卫（新实例接管 / last-wins）：本次启动时若已有同一 App 在跑，
 /// 优雅终止旧实例并接管——释放局域网服务端口（8770/8771），杜绝多份状态与端口冲突。
 /// 选 last-wins 而非 first-wins：Xcode 每次 Run = 新进程，需保证看到的永远是最新构建，
