@@ -30,6 +30,8 @@ export interface PadEntry {
   title: string;
   page: number;
   index: number;
+  /// 这张纸有没有垫着它锚定的那一页（v10；几何契约见 PROTOCOL.md §4.4）
+  showPage: boolean;
 }
 
 /// 文字笔记编辑器的打开状态（低频 UI，放 runes；面板定位用打开瞬间的视口坐标）。
@@ -78,6 +80,9 @@ export const S = $state({
   padPaper: false,         // 纸样面板开关
   padBg: "",               // 当前那张纸的底色（CSS rgba，色块选中态回显）
   padPattern: "dots",      // 当前那张纸的底纹
+  padShowPage: false,      // 当前那张纸是否垫着锚定页（v10，工具条按钮激活态回显）
+  padRenaming: -1,         // 列表里正在改名的是第几张（-1 = 没有；行内输入框）
+  padDeleting: -1,         // 列表里正在等确认删除的是第几张（-1 = 没有；两步删，防误触）
 });
 
 export function updatePageLabel(): void {

@@ -347,7 +347,7 @@ struct ReaderSurface: View {
             if let pad = session.openPad,
                let idx = session.scratchPads.firstIndex(where: { $0.id == pad.id }) {
                 ScratchPadOverlay(session: session, pad: pad, padIndex: idx,
-                                  topInset: indicatorTopInset, voidColor: voidColor)
+                                  topInset: indicatorTopInset, docKey: docKey, voidColor: voidColor)
                     .id(pad.id)
                     .transition(.opacity.combined(with: .scale(scale: 0.99)))
             }

@@ -13,12 +13,12 @@
     ping: 0x10, pong: 0x11, latency: 0x12,
     selectDoc: 0x20, pageTurn: 0x21, mode: 0x22, pen: 0x23, textNote: 0x24, penset: 0x25,
     layerSelect: 0x26, layerVisible: 0x27, layerAdd: 0x28, gotoPage: 0x29, openDoc: 0x2A,
-    scratchOpen: 0x2B, scratchAdd: 0x2C, scratchPaper: 0x2D, scratchMove: 0x2E,
+    scratchOpen: 0x2B, scratchAdd: 0x2C, scratchPaper: 0x2D, scratchMove: 0x2E, scratchPageShow: 0x2F,
     page: 0x30, layout: 0x31, viewport: 0x32, docs: 0x33, pens: 0x34, inkCancel: 0x35, strokes: 0x36,
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A, library: 0x3B, toc: 0x3C,
     scratchPads: 0x3D, scratchStrokes: 0x3E, noteNew: 0x3F,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
-    lassoMove: 0x47,
+    lassoMove: 0x47, scratchDelete: 0x48, scratchRename: 0x49,
     nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
@@ -209,6 +209,7 @@
           var bgc = parseColor(pd.bg);
           w.u8(bgc[0]); w.u8(bgc[1]); w.u8(bgc[2]); w.f32(bgc[3]);
           w.u8(patCode(pd.pattern));   // 底纹（v9）
+          w.u8(pd.showPage ? 1 : 0);   // 页面底图开关（v10）
         }
         break;
       }
@@ -241,6 +242,18 @@
         // 图钉页内拖动（0x2E，C→S）：把第 index 张纸的图钉锚点挪到**同页内** (nx, ny)。
         // Mac 钳位 0~1、越界 index 丢弃，经 scratchpads 全量回推（以回推为权威，同 scratchPaper 惯例）。
         w.u8(OP.scratchMove); w.u16(o.index || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
+        break;
+      case "scratchPageShow":
+        // 页面底图开关（0x2F，C→S）：第 index 张纸要不要垫它锚定的那一页（几何契约见 PROTOCOL.md §4.4）。
+        w.u8(OP.scratchPageShow); w.u16(o.index || 0); w.u8(o.show ? 1 : 0);
+        break;
+      case "scratchDelete":
+        // 删第 index 张纸（连同纸上笔迹，0x48，C→S）。Mac 判定 + 落库后回推 scratchpads/scratchStrokes。
+        w.u8(OP.scratchDelete); w.u16(o.index || 0);
+        break;
+      case "scratchRename":
+        // 改第 index 张纸的名字（0x49，C→S）。空串 = 回到「草稿纸 N」兜底名。
+        w.u8(OP.scratchRename); w.u16(o.index || 0); w.str(o.title || "");
         break;
       case "noteNew":
         // Mac 在环形盘提交「新建文字笔记」后下发（0x3F，S→C）：平板在该页内锚点打开编辑器。
@@ -393,8 +406,10 @@
           var pid = r.str(), ptitle = r.str(), ppage = r.u32(), pnx = r.f32(), pny = r.f32();
           var br = r.u8(), bg = r.u8(), bb = r.u8(), ba = r.f32();
           var ppat = PATK[r.u8()] || "dots";
+          var pshow = r.u8() !== 0;   // 页面底图开关（v10）
           splist[spi] = { id: pid, title: ptitle, page: ppage, nx: pnx, ny: pny,
-                          bg: "rgba(" + br + "," + bg + "," + bb + "," + ba + ")", pattern: ppat };
+                          bg: "rgba(" + br + "," + bg + "," + bb + "," + ba + ")", pattern: ppat,
+                          showPage: pshow };
         }
         return { type: "scratchpads", open: spOpen === NO_PAD ? -1 : spOpen, list: splist };
       }
@@ -417,6 +432,12 @@
       }
       case OP.scratchMove:
         return { type: "scratchMove", index: r.u16(), nx: r.f32(), ny: r.f32() };
+      case OP.scratchPageShow:
+        return { type: "scratchPageShow", index: r.u16(), show: r.u8() !== 0 };
+      case OP.scratchDelete:
+        return { type: "scratchDelete", index: r.u16() };
+      case OP.scratchRename:
+        return { type: "scratchRename", index: r.u16(), title: r.str() };
       case OP.noteNew:
         return { type: "noteNew", page: r.u32(), nx: r.f32(), ny: r.f32() };
       case OP.inkCancel: return { type: "inkCancel" };

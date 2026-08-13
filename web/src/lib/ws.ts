@@ -127,6 +127,10 @@ export function initWs(): void {
     G.docV = v; S.docV = v; G.pageCount = o.count || 0; G.pagesWH = o.pages || [];
     if (changed) { G.strokes = []; G.cur = null; G.imgs = {}; G.scrollX = 0; G.scrollY = 0; G.zoom = 1; G.vpSeq = 0; }
     G.relayout();
+    // 页尺寸表刚到位 → 草稿纸的页面底图矩形（高按页纵横比算）要跟着重画一次：
+    // `scratchpads` 与 `layout` 两条广播的先后没有保证，先收到纸的那一次页会画成 A4 兜底的形状，
+    // 不在这儿补一刀就要等用户平移/缩放才纠正过来。
+    if (G.padActive()) G.drawScratch();
   }
   function setDocs(o: WireMsg): void {
     S.docs = o.list || [];

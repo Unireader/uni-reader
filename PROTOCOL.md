@@ -76,6 +76,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x2C` | scratchAdd | C→S | 可靠 |
 | `0x2D` | scratchPaper | C→S | 可靠 |
 | `0x2E` | scratchMove | C→S | 可靠 |
+| `0x2F` | scratchPageShow | C→S | 可靠 |
 | `0x30` | page | S→C | 可靠 |
 | `0x31` | layout | S→C | 可靠 |
 | `0x32` | viewport | S→C | 可靠 |
@@ -100,6 +101,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x45` | padGeom | C→S | 可靠 |
 | `0x46` | eraser | 双向 | 可靠 |
 | `0x47` | lassoMove | C→S | 可靠 |
+| `0x48` | scratchDelete | C→S | 可靠 |
+| `0x49` | scratchRename | C→S | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -124,6 +127,9 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `scratchAdd` | `u32 page` · `f32 nx` · `f32 ny` | `{type:"scratchAdd", page, nx, ny}`（在该页该处新建一张并打开）|
 | `scratchPaper` | `u16 index` · `u8 r` · `u8 g` · `u8 b` · `f32 a` · `u8 pattern` | `{type:"scratchPaper", index, bg, pattern}`（改第几张纸的纸样）|
 | `scratchMove` | `u16 index` · `f32 nx` · `f32 ny` | `{type:"scratchMove", index, nx, ny}`（把第几张纸的图钉锚点挪到**同页内**该处，页不变）|
+| `scratchPageShow` | `u16 index` · `u8 show` | `{type:"scratchPageShow", index, show}`（第几张纸要不要在纸上垫它锚定的那一页，见 §4.4）|
+| `scratchDelete` | `u16 index` | `{type:"scratchDelete", index}`（删第几张纸，连同纸上笔迹）|
+| `scratchRename` | `u16 index` · `str title` | `{type:"scratchRename", index, title}`（改第几张纸的名字；空串 = 回到「草稿纸 N」兜底名）|
 | `mode` | `u8 mode` | `{type:"mode", mode}`（"note"/"erase"/"page"）|
 | `pen` | `u16 index` | `{type:"pen", index}` |
 | `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|
@@ -207,7 +213,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `layers` | `u16 active` · `u16 n` · `n ×( u8 r, u8 g, u8 b, u8 visible, str name )` |
 | `library` | `str wsName` · `u16 n` · `n ×( str id, str title, u8 open )` |
 | `toc` | `str docId` · `u16 n` · `n ×( u8 depth, u8 hasPage, u32 page, f32 frac, str label )` |
-| `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a, u8 pattern )` |
+| `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a, u8 pattern, u8 showPage )` |
 | `scratchStrokes` | `u32 ackRel` · `u32 n` · `n ×( pen, u16 m, m × pt3 )` |
 | `noteNew` | `u32 page` · `f32 nx` · `f32 ny` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
@@ -272,7 +278,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   （Mac 端 `TOCListView` 同款语义：不显示页码、disabled、不参与当前章节追踪）。
   没有目录的 PDF 发 `n=0`（平板显示「无目录」空态）。**发送时机**：文档载入完成、客户端接入、
   平板跟随的会话变化）
-- `scratchpads` → `{type:"scratchpads", open, list:[{id, title, page, nx, ny, bg, pattern},…]}`（**草稿纸列表全量镜像**）
+- `scratchpads` → `{type:"scratchpads", open, list:[{id, title, page, nx, ny, bg, pattern, showPage},…]}`（**草稿纸列表全量镜像**）
 - `scratchStrokes` → `{type:"scratchStrokes", ackRel, list:[{pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
 
   见下方 §4.4。
@@ -314,7 +320,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 
 `line=1` 时后续 `ink move` 的点是**替换终点**而不是追加：Mac 取该批的**最后一个点**（前面的是拖动过程中的中间终点，丢弃），把活体笔迹重置为 `[起点, 该点]`，抬笔提交的就是一条两点直线。45° 吸附本身在**客户端**算完再上行（客户端要即时回显，Mac 复算只会两端算出两条线），Mac 只负责认「两点」这个语义。`line=0` 或缺 flags = 老行为（move 追加点）。
 
-### 4.4 草稿纸（v8，0x2B/0x2C/0x3D/0x3E）
+### 4.4 草稿纸（v8 起，0x2B~0x2F / 0x3D / 0x3E / 0x48 / 0x49）
 
 草稿纸 = 盖在 PDF 之上的**无限白板**，不改 PDF 原文、不属于任何一页。一篇文档可有多张，
 各自由 (页, 页内归一化点) 锚定「当初在哪儿建的」（页面上留一枚图钉）。
@@ -355,6 +361,25 @@ Mac 是「当前打开哪张草稿纸」的唯一真源（`scratchpads.open`）�
   不统一的话同一张纸在两端的格子大小不一样。
 - 夜间模式下草稿纸**不反色**（它是一张纸，不是 PDF 内容）。
 
+#### 🔴 页面底图（v10）：把纸锚定的那一页垫在纸下面
+
+每张纸带一个 `showPage` 开关（线上 `u8`，`scratchpads` 每项尾部；库里 `scratch_pad.show_page`）。
+开着时，纸上垫一张**它锚定的那一页**的页图（只是参照物，不是 PDF 编辑——纸上的笔迹仍只属于这张纸）。
+
+**几何是三端契约**（对不上就是「同一张纸在 Mac 上写在公式旁边、在平板上写到页边空白处」）：
+
+- 页图宽度恒为 **`pageRefWidth = 800` 画布点**，高 = `800 × 页高/页宽`（**显示尺寸**口径：
+  CropBox 有效则 CropBox、否则 MediaBox，含 rotation——与页内笔迹用的是同一个页面尺寸）。
+- 位置：这张纸的**锚点** (`nx`,`ny`) 落在**画布原点** (0,0) → 页矩形 = `(−nx·W, −ny·H, W, H)`。
+  于是「打开纸 = 回画布原点」正好把当初创建它的那一处摆在视口正中（同一句「从该处显示」）。
+- 层序：**纸色 → 底纹 → 页图 → 笔迹**（页图盖住它底下的底纹，笔迹永远在页图之上）。
+- 页图**不参与夜间反色**（草稿纸整体不反色的既有规则），并沿页边描一条淡边——白页压白纸看不出边界。
+- 开着时，「内容包围盒」（软边界 / 适应内容 / minimap）= 笔迹包围盒 **∪ 页矩形**，
+  否则空白纸上垫了页也走不到页边（软边界只认笔迹）。
+
+`showPage` 是**纸的属性**（跟着纸走、跨端同步、重开文档还在），不是视口那种各端私有状态。
+默认值：**新建的纸开**（在这一处做草稿，页面就该在眼前）、**v9 迁移过来的老纸关**（不惊扰既有的白纸）。
+
 #### 消息细节
 
 - `scratchpads`：**全量镜像**（类比 `strokes`/`notes`，Mac 唯一真源，客户端不落库）。
@@ -370,6 +395,14 @@ Mac 是「当前打开哪张草稿纸」的唯一真源（`scratchpads.open`）�
 - `scratchMove`：平板请求把第 `index` 张纸的图钉锚点挪到**同页内** (nx, ny)（页不变；
   nx/ny 越界由 Mac 钳位到 0~1，index 越界整帧丢弃——同 `scratchPaper` 的防御风格）。
   Mac 判定 + 落库后照旧回推 `scratchpads`（锚点字段就在全量镜像里，两端自然一致）。
+- `scratchPageShow`：平板请求开/关第 `index` 张纸的页面底图（`show` 非 0 即开）。同上，回推为准。
+- `scratchDelete`：平板请求删掉第 `index` 张纸，**连同纸上的全部笔迹**（Mac 侧与本机删除同一条路径）。
+  删的若正是开着的那张，Mac 顺手关纸；回推 `scratchpads` + `scratchStrokes`（后者此时是空表）。
+- `scratchRename`：平板请求改第 `index` 张纸的名字。空串 = 清掉自定义名，回到「草稿纸 N」兜底显示。
+  Mac 只做 trim，不做去重/长度限制（同本机改名）。
+
+以上三条与 `scratchPaper`/`scratchMove` 同一套防御风格：**`index` 越界整帧丢弃**，
+Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自作主张改本地列表。
 
 **视口不上线**：每一端的滚动/缩放/minimap 各自独立（用户明确要求），打开一律回到画布原点。
 库里也不存视口——存了就会变成「谁最后关谁说了算」的跨端争用。

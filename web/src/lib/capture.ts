@@ -159,6 +159,10 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     togglePadMini() { G.padMini = !G.padMini; S.padMini = G.padMini; G.drawScratch(); },
     togglePadPaper() { S.padPaper = !S.padPaper; },
     setPadPaper(bg: string | null, pattern: string | null) { G.padSetPaper(bg, pattern); },
+    // 页面底图 / 删除 / 改名（v10）：同样只发请求，以 Mac 回推的 scratchpads 为权威。
+    togglePadPage() { G.padSetShowPage(!S.padShowPage); },
+    deletePad(i: number) { G.padDelete(i); S.padDeleting = -1; },
+    renamePad(i: number, title: string) { G.padRename(i, title); S.padRenaming = -1; },
     toggleFull() {
       if (!document.fullscreenElement) {
         const root = document.documentElement;

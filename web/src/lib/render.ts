@@ -54,12 +54,19 @@ export function initRender(refs: CaptureRefs): void {
       if (G.offY[i] + G.dispH[i] >= top && G.offY[i] <= bot) loadImg(i);
     }
   }
-  function loadImg(i: number): void {
-    if (G.imgs[i]) return;
+  function loadImg(i: number): HTMLImageElement | null {
+    if (G.imgs[i]) return G.imgs[i];
+    if (i < 0 || i >= G.pageCount) return null;
     const im = new Image();
-    im.onload = function () { drawBg(); };
+    im.onload = function () {
+      drawBg();
+      // 草稿纸的页面底图也可能在等这张图（它取的是**锚定页**，未必是可视页）——
+      // 不在这儿补一刀，纸上那页就要等到下一次平移/缩放才冒出来。
+      if (G.padActive && G.padActive()) G.drawScratch();
+    };
     im.src = "/page.png?i=" + i + "&v=" + encodeURIComponent(G.docV);
     G.imgs[i] = im;
+    return im;
   }
 
   // ---- 坐标映射（跨页 + 缩放）----
@@ -680,7 +687,7 @@ export function initRender(refs: CaptureRefs): void {
   // 跨模块调用面（input / ws / capture 经 G 调用）
   Object.assign(G, {
     relayout, recompute, locate, pageToView, inContent,
-    drawAll, drawBg, drawInk, drawLive, eraseHit, ensureImages,
+    drawAll, drawBg, drawInk, drawLive, eraseHit, ensureImages, loadPageImage: loadImg,
     clearHover, drawNotes, setRadial, setPressRing,
     pageLocClamped, lassoHitTest, clearLasso,
     buildGeomWith, paintInkGeom: paintGeomAt, padPinHit,

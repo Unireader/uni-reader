@@ -97,9 +97,10 @@ const canonical = [
   { type: "gotoPage", page: 7, frac: 0.5 },
   // —— 草稿纸（v8，0x2B/0x2C/0x3D/0x3E）——
   // 列表 + 当前打开第几张（-1 = 没开，线上 0xFFFF）。bg 是 CSS 串，线上拆 r/g/b/a。
+  // showPage（v10 尾部 u8）：P1 显式 true、P2 **整个键缺失**（两端都要兜底成 0，别各兜各的）。
   { type: "scratchpads", open: 1,
     list: [{ id: "P1", title: "推导", page: 3, nx: 0.25, ny: 0.5,
-             bg: "rgba(255,255,255,1.0)", pattern: "dots" },
+             bg: "rgba(255,255,255,1.0)", pattern: "dots", showPage: true },
            { id: "P2", title: "", page: 0, nx: 0.5, ny: 0.125,
              bg: "rgba(250,248,240,1.0)", pattern: "grid" }] },
   { type: "scratchpads", open: -1, list: [] },
@@ -125,6 +126,14 @@ const canonical = [
   // 新建文字笔记下发（0x3F，S→C）：u32 page · f32 nx · f32 ny。
   { type: "noteNew", page: 0, nx: 0, ny: 1 },
   { type: "noteNew", page: 305419896, nx: 1, ny: 0 },
+  // —— 草稿纸 v10：页面底图开关 + 客户端删除/改名（0x2F / 0x48 / 0x49，均 C→S）——
+  { type: "scratchPageShow", index: 0, show: true },
+  { type: "scratchPageShow", index: 65535, show: false },
+  { type: "scratchDelete", index: 0 },
+  { type: "scratchDelete", index: 65535 },
+  // 改名：非 ASCII 标题 + 空串（空串 = 清掉自定义名，回到「草稿纸 N」兜底显示）。
+  { type: "scratchRename", index: 3, title: "第三张·推导" },
+  { type: "scratchRename", index: 0, title: "" },
 ];
 
 let pass = 0, fail = 0;

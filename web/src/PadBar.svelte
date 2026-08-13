@@ -14,6 +14,14 @@
 
   const name = (p: { title: string; index: number }) => p.title || "草稿纸 " + (p.index + 1);
 
+  /// 行内改名的草稿（只在「正在改名的那一行」有意义；提交/取消后由 S.padRenaming 归位）。
+  let draft = $state("");
+  function startRename(p: { title: string; index: number }): void {
+    draft = p.title;
+    S.padDeleting = -1;
+    S.padRenaming = p.index;
+  }
+
   // 纸样备选（与 Mac 端 ScratchPattern / ScratchPad.paperPalette 同一组，改一边要同步另一边）。
   const PATTERNS = [
     { key: "plain", label: "纯色" },
@@ -43,6 +51,8 @@
     <button title="回中" onclick={() => actions.padRecenter()}><Icon name="scope" /></button>
     <button title="适应内容" onclick={() => actions.padFit()}><Icon name="fit" /></button>
     <button class:on={S.padMini} title="缩略图" onclick={() => actions.togglePadMini()}><Icon name="map" /></button>
+    <!-- 页面底图（v10）：把这张纸锚定的那一页垫在纸下面。跟着纸走、跨端同步 -->
+    <button class:on={S.padShowPage} title="显示所在页面" onclick={() => actions.togglePadPage()}><Icon name="doc" /></button>
     <button class:on={S.padPaper} title="纸样" onclick={() => actions.togglePadPaper()}><Icon name="palette" /></button>
     <button title="关闭草稿纸（Esc）" onclick={() => actions.closePad()}><Icon name="x" /></button>
   </div>
@@ -80,10 +90,35 @@
       <div class="pempty">还没有草稿纸</div>
     {/if}
     {#each S.pads as p (p.id)}
-      <button class="prow" class:cur={p.index === S.padOpen} onclick={() => actions.openPad(p.index)}>
-        <span class="pt">{name(p)}</span>
-        <span class="pp">第 {p.page + 1} 页</span>
-      </button>
+      {#if S.padRenaming === p.index}
+        <!-- 行内改名：平板上没有键盘弹窗可用，就地改最省事（空串 = 回到「草稿纸 N」兜底名） -->
+        <div class="prow prename">
+          <!-- svelte-ignore a11y_autofocus -->
+          <input bind:value={draft} autofocus aria-label="草稿纸名字"
+            onkeydown={(e) => { if (e.key === "Enter") actions.renamePad(p.index, draft.trim());
+                                if (e.key === "Escape") S.padRenaming = -1; }} />
+          <button class="pact" title="确定" onclick={() => actions.renamePad(p.index, draft.trim())}>
+            <Icon name="check" /></button>
+          <button class="pact" title="取消" onclick={() => (S.padRenaming = -1)}><Icon name="x" /></button>
+        </div>
+      {:else if S.padDeleting === p.index}
+        <!-- 两步删：纸上的笔迹会一起没，误触一下就没了太亏 -->
+        <div class="prow pconfirm">
+          <span class="pt">删除《{name(p)}》？</span>
+          <button class="pbtn danger" onclick={() => actions.deletePad(p.index)}>删除</button>
+          <button class="pbtn" onclick={() => (S.padDeleting = -1)}>取消</button>
+        </div>
+      {:else}
+        <div class="prow" class:cur={p.index === S.padOpen}>
+          <button class="popen" onclick={() => actions.openPad(p.index)}>
+            <span class="pt">{name(p)}</span>
+            <span class="pp">第 {p.page + 1} 页</span>
+          </button>
+          <button class="pact" title="改名" onclick={() => startRename(p)}><Icon name="pencil" /></button>
+          <button class="pact danger" title="删除" onclick={() => { S.padRenaming = -1; S.padDeleting = p.index; }}>
+            <Icon name="trash" /></button>
+        </div>
+      {/if}
     {/each}
     <button class="prow padd" onclick={() => actions.addPad()}>
       <Icon name="plus" /><span class="pt">在当前位置新建</span>

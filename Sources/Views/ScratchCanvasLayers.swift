@@ -85,6 +85,47 @@ struct ScratchGridLayer: View, Equatable {
     }
 }
 
+// MARK: - 页面底图层（v10）
+
+/// 把这张纸**锚定的那一页**垫在纸上当参照（开关 = `ScratchPad.showPage`）。
+///
+/// 几何是**三端契约**（`PROTOCOL.md §4.4` / `ScratchPad.pageRect`）：页宽恒 800 画布点、
+/// 锚点落在画布原点。位置对不上的表现是「同一张纸，Mac 上写在公式旁边、平板上写到页边空白处」。
+///
+/// 两条纪律：
+///  · **页图之上还有笔迹**（本层在 `ScratchInkLayer` 之前挂），页图只是参照物，永远不该盖住墨；
+///  · **不跟夜间反色**（草稿纸整体不反色的既有规则）——本层的图一律按 `night: false` 取。
+///
+/// 图还没渲出来时先铺一块白 + 描边占位（同阅读区「白纸占位、只替换」的零闪烁纪律），
+/// 免得开了开关却什么都没有、让人以为开关坏了。描边是必需的：白页压白纸看不出页边在哪。
+struct ScratchPageLayer: View, Equatable {
+    let image: CGImage?
+    /// 页面在**画布坐标**下的矩形（由 `ScratchPad.pageRect(aspect:)` 算，别在这里另算一套）。
+    let rect: CGRect
+    let viewport: ScratchViewport
+    /// 页边描边色：与底纹同一个「由纸色明度推」的墨色（不跟系统深浅外观走）。
+    let ink: Color
+
+    static func == (l: Self, r: Self) -> Bool {
+        l.image === r.image && l.rect == r.rect && l.viewport == r.viewport && l.ink == r.ink
+    }
+
+    var body: some View {
+        Canvas { ctx, _ in
+            let o = viewport.origin, z = viewport.zoom
+            let r = CGRect(x: (rect.minX - o.x) * z, y: (rect.minY - o.y) * z,
+                           width: rect.width * z, height: rect.height * z)
+            guard r.width > 0.5, r.height > 0.5 else { return }
+            ctx.fill(Path(r), with: .color(.white))          // 占位/纸色打底，页图是不透明的
+            if let image {
+                ctx.draw(Image(decorative: image, scale: 1, orientation: .up), in: r)
+            }
+            ctx.stroke(Path(r), with: .color(ink.opacity(0.3)), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 // MARK: - 笔迹层（Equatable，同 `InkStaticLayer` 的拆层理由）
 
 struct ScratchInkLayer: View, Equatable {
@@ -115,12 +156,14 @@ struct ScratchMinimap: View {
     let strokes: [InkStroke]
     let viewport: ScratchViewport
     let viewSize: CGSize
+    /// 页面底图的画布矩形（这张纸开着页面底图才非 nil）：它也算内容，缩略图里画一个淡框。
+    var pageRect: CGRect? = nil
     let onJump: (CGPoint) -> Void
 
     /// minimap 覆盖的画布范围 = 内容 ∪ 视口，再留一点边。两者都空时给一块围绕原点的默认区。
     private var world: CGRect {
         let vis = viewport.visibleRect(viewport: viewSize)
-        var r = ScratchBounds.contentBounds(strokes).map { $0.union(vis) } ?? vis
+        var r = ScratchBounds.contentBounds(strokes, page: pageRect).map { $0.union(vis) } ?? vis
         if r.width < 1 || r.height < 1 { r = CGRect(x: -400, y: -300, width: 800, height: 600) }
         return r.insetBy(dx: -r.width * 0.08, dy: -r.height * 0.08)
     }
@@ -156,6 +199,13 @@ struct ScratchMinimap: View {
             let tl = f.map(Double(vis.minX), Double(vis.minY))
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, _ in
+                    // 页面底图：只画一个淡框（缩略图里塞进整页图既贵又看不清，框足以说明「页在这儿」）
+                    if let pr = pageRect {
+                        let tl = f.map(Double(pr.minX), Double(pr.minY))
+                        let box = CGRect(x: tl.x, y: tl.y, width: pr.width * f.s, height: pr.height * f.s)
+                        ctx.fill(Path(box), with: .color(Color.primary.opacity(0.06)))
+                        ctx.stroke(Path(box), with: .color(Color.primary.opacity(0.3)), lineWidth: 0.75)
+                    }
                     // 骨架线即可（minimap 不必还原笔型/压感，1px 折线最省也最清楚）
                     for st in strokes where st.points.count > 1 {
                         var path = Path()

@@ -383,3 +383,26 @@ cd android
 - 橡皮半径手感（`eraserRefWidth=800` 是拍的，不对就调——**但三端要一起改**）。
 - 模式2：Mac 开纸 → 安卓自动跟过去；笔迹双向同步；**缩放滚动与 Mac 各自独立**（设计前提）。
 - 边界：一篇文档多张纸来回切、关文档再开笔迹还在、删纸后笔迹一并清掉。
+
+
+## 12. 补遗：页面底图与客户端管理（v10，2026-08-13）
+
+用户两条需求：「所在 pdf 页面显示在草稿纸上面（可以切换显示）」「客户端现在可以管理（删除）草稿纸吗」。
+四端同时落地，安卓这边的三处改动：
+
+- **数据层（模式1）**：`ScratchPad.showPage`；`scratch_pad` 加 `show_page` 列。安卓不建表不迁移的老规矩不变
+  → `upsertScratchPad` 现在探三档（v10 全列 / v9 无 `show_page` / v8 无 `pattern`），
+  读取侧 `c.bool("show_page", false)` 兜底。**新建的纸 `showPage=true`**（同 Mac），
+  v9 老纸读回来是 false——与 Mac 的迁移口径一字不差，不然同一个库在两端长得不一样。
+- **🔴 几何是三端契约**：`ScratchGeom.PAGE_REF_W = 800`（画布 dp）、高 = 800 × 页纵横比
+  （`PageCanvasView.pageAspect` / 模式1 用 `PdfSource.pageSizes`，都是 CropBox 口径）、
+  **锚点落在画布原点** → `ScratchGeom.pageRect(nx, ny, aspect)`。开着底图时页矩形**计入
+  `contentBounds`**（软边界/适应内容/minimap），否则空纸垫了页也走不到页边。
+- **页图从哪来**：`ScratchCanvas.pageSource` 就是两模式各自的 `PageImageSource`
+  （模式1 Pdfium / 模式2 `PageFetcher`），像素宽走**共用档位** `PageWidths.snap`——
+  另立一套档位 = 阅读画布刚看过的那一页在纸上要重渲/重下一份大图。
+- **管理**：模式2 的纸样面板补上「管理」组（改名 `scratchRename` 0x49 / 删除 `scratchDelete` 0x48），
+  与模式1 一字排开；开关走 `scratchPageShow` 0x2F。客户端一律只发请求，`scratchpads` 回推为权威。
+- 测试：`ScratchGeomTest` +2（页矩形、页也算内容）、`WireCodecTest` 向量到 75、
+  `ScratchPadStoreTest` +2（开关 round-trip、v9 形状兜底关）。**观感与手感照旧只能真机验**，
+  清单见 `TODO.md`「接下来」第 8 条末尾那一块。

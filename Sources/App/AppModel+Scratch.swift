@@ -166,6 +166,31 @@ extension AppModel {
         s.scratchPads[i].updatedAt = .now
     }
 
+    /// 平板请求开/关第 index 张纸的**页面底图**（把它锚定的那一页垫在纸下面）。
+    /// 与 `applyScratchPaper` 同套路：只改真源，落库 + 回推由 ContentView 的 onChange 接手。
+    func applyScratchPageShow(_ obj: [String: Any], to s: DocSession) {
+        guard let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
+        let show = (obj["show"] as? Bool) ?? ((obj["show"] as? NSNumber)?.boolValue ?? false)
+        guard s.scratchPads[i].showPage != show else { return }
+        s.scratchPads[i].showPage = show
+        s.scratchPads[i].updatedAt = .now
+    }
+
+    /// 平板请求删掉第 index 张纸（连同纸上笔迹）。与 Inspector 里的删除是同一条路径。
+    func applyScratchDelete(_ obj: [String: Any], to s: DocSession) {
+        guard let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
+        removeScratchPad(in: s, id: s.scratchPads[i].id)
+    }
+
+    /// 平板请求改第 index 张纸的名字（空串 = 清掉自定义名，回到「草稿纸 N」兜底显示）。
+    func applyScratchRename(_ obj: [String: Any], to s: DocSession) {
+        guard let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
+        let t = (obj["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard s.scratchPads[i].title != t else { return }
+        s.scratchPads[i].title = t
+        s.scratchPads[i].updatedAt = .now
+    }
+
     /// 平板请求在某页某处新建一张草稿纸并打开它。
     func applyScratchAdd(_ obj: [String: Any], to s: DocSession) {
         let maxPage = max(0, (s.pdf?.pageCount ?? 1) - 1)
@@ -200,7 +225,8 @@ extension AppModel {
         let open = s.scratchPads.firstIndex { $0.id == s.openPadID } ?? -1
         let list: [[String: Any]] = s.scratchPads.map { p in
             ["id": p.id.uuidString, "title": p.title, "page": p.anchorPage,
-             "nx": p.anchorX, "ny": p.anchorY, "bg": p.bg.cssRGBA, "pattern": p.pattern.rawValue]
+             "nx": p.anchorX, "ny": p.anchorY, "bg": p.bg.cssRGBA, "pattern": p.pattern.rawValue,
+             "showPage": p.showPage]
         }
         server.broadcast(["type": "scratchpads", "open": open, "list": list])
     }

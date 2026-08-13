@@ -14,6 +14,11 @@ import { S } from "./hud.svelte.js";
 /// `eraserSize` 是页宽归一化的（0.02 = 页宽 2%），草稿纸没有「页宽」，统一按这个折成画布 px。
 export const PAD_ERASER_REF_W = 800;
 
+/// 页面底图的宽度（画布 px，**三端契约**，Mac `ScratchPad.pageRefWidth` / 安卓 `ScratchGeom.PAGE_REF_W`）：
+/// 画布没有「页宽」这回事，页图就按这个固定宽度落在画布上，高由页面纵横比推，
+/// **锚点落在画布原点**。三端对不上的表现是「同一张纸，Mac 上写在公式旁边、平板上写到页边空白处」。
+export const PAD_PAGE_REF_W = 800;
+
 const MINZ = 0.2, MAXZ = 8;
 /// 底纹网格的画布步长与屏幕舒适区间——**与 Mac `ScratchGridLayer` 是同一套数**，
 /// 改一边必须同步另一边，否则同一张纸在两端的格子大小不一样。
@@ -41,7 +46,19 @@ export function initScratch(refs: CaptureRefs): void {
     return [G.padVp.ox + x / G.padVp.z, G.padVp.oy + (y - BAR) / G.padVp.z];
   }
 
-  /// 全部笔迹的画布包围盒（含正在写的这一笔），空 → null。minimap 与「适应内容」共用。
+  /// 当前这张纸的页面底图矩形（画布坐标 [x,y,w,h]）；没开底图/没有页面尺寸 → null。
+  /// 契约（三端一致）：宽恒 `PAD_PAGE_REF_W`，高 = 宽 × 页纵横比，**锚点落在画布原点**。
+  function padPageBox(): [number, number, number, number] | null {
+    const pad = G.pads[G.padOpen];
+    if (!pad || !pad.showPage) return null;
+    const wh = G.pagesWH[pad.page];
+    const aspect = wh && wh[0] > 0 ? wh[1] / wh[0] : 1.4142;   // 拿不到页面尺寸按 A4 兜底
+    const W = PAD_PAGE_REF_W, H = W * aspect;
+    return [-pad.nx * W, -pad.ny * H, W, H];
+  }
+
+  /// 全部笔迹（含正在写的这一笔）∪ 页面底图 的画布包围盒，空 → null。
+  /// minimap、软边界与「适应内容」共用；**页面底图也算内容**，否则空白纸上垫了页也走不到页边。
   function contentBox(): [number, number, number, number] | null {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, any = false;
     const all = G.padCur ? G.padStrokes.concat([G.padCur]) : G.padStrokes;
@@ -54,6 +71,12 @@ export function initScratch(refs: CaptureRefs): void {
         if (pts[j][1] < y0) y0 = pts[j][1];
         if (pts[j][1] > y1) y1 = pts[j][1];
       }
+    }
+    const pb = padPageBox();
+    if (pb) {
+      any = true;
+      x0 = Math.min(x0, pb[0]); y0 = Math.min(y0, pb[1]);
+      x1 = Math.max(x1, pb[0] + pb[2]); y1 = Math.max(y1, pb[1] + pb[3]);
     }
     return any ? [x0, y0, x1 - x0, y1 - y0] : null;
   }
@@ -132,6 +155,7 @@ export function initScratch(refs: CaptureRefs): void {
     cx.fillStyle = pad ? pad.bg : "rgba(255,255,255,1)";
     cx.fillRect(0, BAR, W, H - BAR);
     drawPattern(pad);
+    drawPageUnder(pad);   // 底纹之上、笔迹之下（页图只是参照物，墨永远在最上面）
     // 视口外的笔迹裁掉（画布是全文档级的一大坨，不裁就是每帧把整张纸重画一遍）
     const z = G.padVp.z, x0 = G.padVp.ox, y0 = G.padVp.oy;
     const x1 = x0 + W / z, y1 = y0 + (H - BAR) / z;
@@ -206,6 +230,31 @@ export function initScratch(refs: CaptureRefs): void {
     cx.restore();
   }
 
+  /// 页面底图：把这张纸**锚定的那一页**垫在纸上当参照（开关跟着纸走、跨端同步，见 PROTOCOL.md §4.4）。
+  /// 几何全在 `padPageBox`（三端契约），这里只负责画：
+  ///  · 页图还没下载完先铺一块白 + 描边占位（免得开了开关却什么都没有、以为开关坏了）；
+  ///  · 描边是必需的——白页压白纸看不出页边在哪；
+  ///  · **不跟夜间反色**（草稿纸整体不反色，页图层同理，`/page.png` 取的本来就是原色图）。
+  function drawPageUnder(pad: { bg: string; showPage: boolean; page: number } | undefined): void {
+    const box = padPageBox();
+    if (!pad || !box) return;
+    const z = G.padVp.z, W = window.innerWidth, H = window.innerHeight;
+    const x = (box[0] - G.padVp.ox) * z, y = BAR + (box[1] - G.padVp.oy) * z;
+    const w = box[2] * z, h = box[3] * z;
+    if (x > W || y > H || x + w < 0 || y + h < BAR) return;   // 完全在视口外
+    const dark = inkIsDark(pad.bg);
+    cx.save();
+    cx.beginPath(); cx.rect(0, BAR, W, H - BAR); cx.clip();   // 别画进顶栏
+    cx.fillStyle = "#fff";
+    cx.fillRect(x, y, w, h);
+    const im = G.loadPageImage(pad.page);
+    if (im && im.complete && im.naturalWidth > 0) cx.drawImage(im, x, y, w, h);
+    cx.strokeStyle = dark ? "rgba(0,0,0,.3)" : "rgba(255,255,255,.3)";
+    cx.lineWidth = 1;
+    cx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    cx.restore();
+  }
+
   /// 纸色是浅的吗（→ 底纹用深墨）。与 Mac `ScratchPad.inkIsDark` 同一条公式。
   /// **不能跟系统深浅外观走**——纸色是这张纸自己的属性。
   function inkIsDark(css: string): boolean {
@@ -257,6 +306,14 @@ export function initScratch(refs: CaptureRefs): void {
     cx.beginPath(); cx.rect(mx, my, MINI_W, MINI_H); cx.clip();
     const MX = (x: number): number => mx + f.ox + (x - f.wx) * f.s;
     const MY = (y: number): number => my + f.oy + (y - f.wy) * f.s;
+    // 页面底图：只画一个淡框（缩略图里塞整页图既贵又看不清，框足以说明「页在这儿」；同 Mac）
+    const pb = padPageBox();
+    if (pb) {
+      cx.fillStyle = "rgba(255,255,255,.10)";
+      cx.fillRect(MX(pb[0]), MY(pb[1]), pb[2] * f.s, pb[3] * f.s);
+      cx.strokeStyle = "rgba(255,255,255,.45)"; cx.lineWidth = 1;
+      cx.strokeRect(MX(pb[0]), MY(pb[1]), pb[2] * f.s, pb[3] * f.s);
+    }
     // 骨架线即可（minimap 不必还原笔型/压感）
     cx.strokeStyle = "rgba(255,255,255,.7)"; cx.lineWidth = 1;
     const all = G.padCur ? G.padStrokes.concat([G.padCur]) : G.padStrokes;
@@ -479,6 +536,24 @@ export function initScratch(refs: CaptureRefs): void {
              bg: bg || cur.bg, pattern: pattern || cur.pattern });
   }
 
+  /// 开/关当前这张纸的页面底图（v10）。同纸样：只发请求，Mac 判定 + 落库后回推 scratchpads。
+  function padSetShowPage(show: boolean): void {
+    if (!padActive()) return;
+    G.send({ type: "scratchPageShow", index: G.padOpen, show });
+  }
+
+  /// 删掉第 i 张纸（连同纸上笔迹）。二次确认在 UI 层（PadBar），这里只发请求。
+  function padDelete(i: number): void {
+    if (i < 0 || i >= G.pads.length) return;
+    G.send({ type: "scratchDelete", index: i });
+  }
+
+  /// 改第 i 张纸的名字（空串 = 回到「草稿纸 N」兜底名）。
+  function padRename(i: number, title: string): void {
+    if (i < 0 || i >= G.pads.length) return;
+    G.send({ type: "scratchRename", index: i, title });
+  }
+
   function padAdd(): void {
     const loc = G.locate(window.innerWidth / 2, BAR + (window.innerHeight - BAR) / 2);
     G.send({ type: "scratchAdd", page: loc ? loc.page : G.topVisiblePage(),
@@ -494,11 +569,16 @@ export function initScratch(refs: CaptureRefs): void {
     G.pads = o.list || [];
     G.padOpen = typeof o.open === "number" ? o.open : -1;
     if (G.padOpen >= G.pads.length) G.padOpen = -1;
-    S.pads = G.pads.map((p, i) => ({ id: p.id, title: p.title, page: p.page, index: i }));
+    S.pads = G.pads.map((p, i) => ({ id: p.id, title: p.title, page: p.page, index: i,
+                                     showPage: !!p.showPage }));
     S.padOpen = G.padOpen;
+    // 列表整体换过了 → 行内改名/等确认删除的下标语义已变，一并作废（同上面图钉拖动的处理）
+    S.padRenaming = -1;
+    S.padDeleting = -1;
     const op = G.pads[G.padOpen];
     S.padBg = op ? op.bg : "";
     S.padPattern = op ? op.pattern : "dots";
+    S.padShowPage = op ? !!op.showPage : false;
     const nowId = G.pads[G.padOpen] ? G.pads[G.padOpen].id : "";
     if (nowId !== wasId) {
       // 换了纸（含开/关）：丢掉上一张的本地状态并回到画布原点（与 Mac 端 `.id(pad.id)` 同语义）。
@@ -510,7 +590,13 @@ export function initScratch(refs: CaptureRefs): void {
       if (nowId) padRecenter();
     }
     if (!nowId) { cv.style.display = "none"; G.drawAll(); }
-    else { cv.style.display = "block"; drawScratch(); }
+    else {
+      cv.style.display = "block";
+      // 关掉页面底图时页矩形不再算「内容」，此刻视口可能已经落在软边界外了（人正停在页面上）：
+      // 不 clamp 一下就要等下一次平移才「啪」地弹回来。
+      padClamp();
+      drawScratch();
+    }
     // 列表本身变了（新建/删除/改名/换开着的那张）都要重画页面上的图钉——图钉画在 hover 层，
     // 而那层只有 drawNotes 会重画，不显式调一次的话新建的纸在页面上看不到图钉。
     G.drawNotes();
@@ -542,7 +628,8 @@ export function initScratch(refs: CaptureRefs): void {
   Object.assign(G, {
     padActive, drawScratch, padRecenter, padFit, padClamp,
     padPointerDown, padPointerMove, padPointerUp, padFlush,
-    padOpenIndex, padClose, padAdd, padSetPaper, applyScratchPads, applyScratchStrokes,
+    padOpenIndex, padClose, padAdd, padSetPaper, padSetShowPage, padDelete, padRename,
+    applyScratchPads, applyScratchStrokes,
   });
 }
 

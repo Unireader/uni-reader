@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit   // 仅 NSEvent 监视器（事件管道）；阅读区/覆盖层无 AppKit 视图（红线）
+import PDFKit   // 页面底图：取锚定页的显示尺寸 + 走 PageRenderEngine 出图
 
 /// 草稿纸覆盖层：盖在阅读区之上的一张**无限白纸**（纯 SwiftUI，同阅读区红线）。
 ///
@@ -18,6 +19,9 @@ struct ScratchPadOverlay: View {
     let padIndex: Int
     /// 玻璃工具栏避让量（同阅读区 `indicatorTopInset`）。
     let topInset: CGFloat
+    /// 页图缓存键的文档维度（同阅读区 `ReaderSurface.docKey`）：页面底图与阅读区共用一个渲染引擎，
+    /// 键不同源就会各渲各的、白白多一份大图。
+    let docKey: String
     /// 阅读区的页间底色（`ReaderSurface.voidColor`）。用来在工具栏那条带子后面**顶掉纸色**：
     /// macOS 26 的工具栏是玻璃的，图标颜色跟外观走（深色外观 = 白图标），而草稿纸是**白纸**——
     /// 纸一路铺到工具栏底下就是白图标压白纸，整条工具栏当场看不见（用户 2026-08-07 报）。
@@ -40,6 +44,9 @@ struct ScratchPadOverlay: View {
     @State private var renaming = false
     @State private var draftTitle = ""
     @State private var showPaper = false   // 纸样选择器（底色 × 底纹）
+    // 页面底图（v10）：锚定那一页的页图 + 它是按多宽渲的（缩放跨档才重渲，见 pageStepWidth）
+    @State private var pageImage: CGImage?
+    @State private var pageImageWidth = 0
 
     private var strokes: [InkStroke] { session.strokes(pad: pad.id) }
     /// 本窗口是不是当前活动窗口。**不能用传进来的 `isActiveWindow`**：那是 struct 的 `let`，
@@ -63,6 +70,11 @@ struct ScratchPadOverlay: View {
             ZStack(alignment: .topLeading) {
                 bg
                 ScratchGridLayer(viewport: vp, ink: gridInk, pattern: pad.pattern)   // 定位参照
+                // 页面底图（在底纹之上、笔迹之下：它是参照物，墨永远在最上面）。
+                // 没有这一页（文档换过/页码越界）就整层不挂——否则纸上会永远糊着一块空白占位。
+                if showsPage {
+                    ScratchPageLayer(image: pageImage, rect: pageCanvasRect, viewport: vp, ink: gridInk)
+                }
                 inkLayers
                 emptyHint
                 eraserRing
@@ -70,7 +82,10 @@ struct ScratchPadOverlay: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
-            .onAppear { place(geo.size) }
+            .onAppear { place(geo.size); refreshPageImage() }
+            .onChange(of: vp.zoom) { _, _ in refreshPageImage() }   // 跨清晰度档才真的重渲
+            .onChange(of: pad.showPage) { _, _ in refreshPageImage(); clampViewport() }
+            .onChange(of: pad.anchorPage) { _, _ in pageImageWidth = 0; refreshPageImage() }
             .onChange(of: geo.size) { old, new in
                 viewSize = new
                 // 窗口缩放：保持画布中心不动（否则每次拉窗口内容都往一边跑）。
@@ -88,7 +103,11 @@ struct ScratchPadOverlay: View {
         .overlay(alignment: .bottomTrailing) { minimapPanel }
         .background(bg)   // GeometryReader 首帧 size 为 0 时不露出下面的 PDF
         .onAppear { installMonitors() }
-        .onDisappear { removeMonitors() }
+        .onDisappear {
+            removeMonitors()
+            // 关纸/切纸后这张页图不再需要：撤掉本端的 wanted 声明，别让渲染队列继续为它排队。
+            PageRenderEngine.shared.setWanted([], client: pageClientID)
+        }
     }
 
     // MARK: 笔迹
@@ -102,9 +121,80 @@ struct ScratchPadOverlay: View {
         }
     }
 
+    // MARK: 页面底图（v10）
+    //
+    // 「这张纸挂在哪一页」以前只有那枚图钉知道；开了这个开关，那一页就垫在纸下面当参照。
+    // 几何全在 `ScratchPad.pageRect`（三端契约），本段只负责**把图取来**：
+    //  · 走阅读区同一个 `PageRenderEngine`（同 docKey 键空间，命中即复用，不多渲一份）；
+    //  · **一律 `night: false`**——草稿纸不反色（它是一张纸，不是 PDF 内容）；
+    //  · 像素宽按缩放折进固定几档，缩放时不跨档就不重渲（否则捏合每一帧都在排队渲整页）。
+
+    /// 锚定页的显示纵横比（页高/页宽，CropBox 优先 + rotation，与页内笔迹同一个口径）。
+    private var pageAspect: Double {
+        guard let page = session.pdf?.page(at: pad.anchorPage) else { return 1.4142 }
+        let s = PageBitmap.displaySize(page)
+        return s.width > 0 ? Double(s.height / s.width) : 1.4142
+    }
+    /// 页面底图在画布坐标下的矩形（契约见 `ScratchPad.pageRect`）。
+    private var pageCanvasRect: CGRect { pad.pageRect(aspect: pageAspect) }
+    /// 这张纸锚定的那一页还在不在（文档换过/页码越界时就没有了）。
+    private var hasAnchorPage: Bool { session.pdf?.page(at: pad.anchorPage) != nil }
+    /// 软边界 / 适应内容 / minimap 共用的「内容」：开着页面底图时它也算内容。
+    private var contentBounds: CGRect? {
+        ScratchBounds.contentBounds(strokes, page: showsPage ? pageCanvasRect : nil)
+    }
+    /// 这一刻纸上到底垫没垫页（开关开着 + 那一页确实存在）。
+    private var showsPage: Bool { pad.showPage && hasAnchorPage }
+    /// 有没有东西可看（空纸 + 没垫页 → minimap 与「适应内容」都无意义）。
+    private var hasContent: Bool { !strokes.isEmpty || showsPage }
+
+    /// 页图像素宽：按当前缩放折进固定几档（跨档才重渲，缓存也才有复用）。
+    private func pageStepWidth() -> Int {
+        let scale = Double(NSScreen.main?.backingScaleFactor ?? 2)
+        let need = ScratchPad.pageRefWidth * Double(vp.zoom) * scale
+        for w in [768, 1024, 1536, 2048, 3072] where Double(w) >= need { return w }
+        return 3072
+    }
+
+    /// 按需取页图（缓存命中即同步换上；否则后台渲，回来再原位替换——同阅读区的零闪烁纪律）。
+    private func refreshPageImage() {
+        guard pad.showPage, let page = session.pdf?.page(at: pad.anchorPage) else {
+            if pageImage != nil { pageImage = nil }
+            pageImageWidth = 0
+            return
+        }
+        let w = pageStepWidth()
+        guard w != pageImageWidth || pageImage == nil else { return }
+        let key = PageRenderEngine.baseKey(doc: docKey, page: pad.anchorPage, pixelWidth: w, night: false)
+        PageRenderEngine.shared.setWanted([key], client: pageClientID)
+        if let hit = PageRenderEngine.shared.cached(key) {
+            pageImage = hit; pageImageWidth = w
+            return
+        }
+        let padID = pad.id
+        PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: w, night: false)) { doneKey, img in
+            // ⚠️ 逃逸闭包里的 `pad` 是落笔那一刻的**值拷贝**（同 `isFrontWindow` 记的那个坑）：
+            // 图渲完可能已经关了开关/切了纸，判据一律从引用类型 `session` 现读。
+            guard doneKey == key, session.openPadID == padID,
+                  session.scratchPads.first(where: { $0.id == padID })?.showPage == true else { return }
+            pageImage = img; pageImageWidth = w
+        }
+    }
+
+    /// 页图请求在渲染引擎里的「客户端」名（与阅读区各自一份 wanted 集合，互不覆盖）。
+    private var pageClientID: String { "scratchpad-\(session.id)" }
+
+    /// 开/关页面底图。与改名/改纸样同一条路：只改真源，落库 + 广播由 ContentView 的 onChange 接手。
+    private func togglePage() {
+        guard let i = session.scratchPads.firstIndex(where: { $0.id == pad.id }) else { return }
+        session.scratchPads[i].showPage.toggle()
+        session.scratchPads[i].updatedAt = .now
+    }
+
     /// 空白纸的引导：一张全白的纸不说话，用户不知道能干嘛。有笔迹后自动消失。
+    /// 垫着页面时不出（那时纸上已经有东西看了，这行字只会压在页面上碍事）。
     @ViewBuilder private var emptyHint: some View {
-        if strokes.isEmpty, session.scratchLive == nil {
+        if strokes.isEmpty, !showsPage, session.scratchLive == nil {
             VStack(spacing: 6) {
                 Text(L("Blank scratchpad"))
                     .font(.title3)
@@ -210,7 +300,7 @@ struct ScratchPadOverlay: View {
                 if pinchStart == nil { pinchStart = vp }
                 let anchor = cursor ?? CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
                 vp = ScratchBounds.clamp(base.zoomed(by: v.magnification, anchorScreen: anchor),
-                                         content: ScratchBounds.contentBounds(strokes), viewport: viewSize)
+                                         content: contentBounds, viewport: viewSize)
             }
             .onEnded { _ in pinchStart = nil }
     }
@@ -226,7 +316,7 @@ struct ScratchPadOverlay: View {
     }
 
     private func clampViewport() {
-        vp = ScratchBounds.clamp(vp, content: ScratchBounds.contentBounds(strokes), viewport: viewSize)
+        vp = ScratchBounds.clamp(vp, content: contentBounds, viewport: viewSize)
     }
 
     private func recenter() {
@@ -234,7 +324,7 @@ struct ScratchPadOverlay: View {
     }
 
     private func fitContent() {
-        let target = ScratchBounds.fit(content: ScratchBounds.contentBounds(strokes), viewport: viewSize)
+        let target = ScratchBounds.fit(content: contentBounds, viewport: viewSize)
         withAnimation(.easeOut(duration: 0.18)) { vp = target }
     }
 
@@ -268,10 +358,14 @@ struct ScratchPadOverlay: View {
             Divider().frame(height: 14)
             padButton("scope", L("Recenter")) { recenter() }
             padButton("arrow.up.left.and.arrow.down.right", L("Fit Content")) { fitContent() }
-                .disabled(strokes.isEmpty)
+                .disabled(!hasContent)
             padButton("map", L("Minimap"), tint: showMinimap ? .accentColor : .primary) {
                 withAnimation(.easeOut(duration: 0.16)) { showMinimap.toggle() }
             }
+            // 页面底图开关：把这张纸锚定的那一页垫在纸下面（跟着纸走、跨端同步，见 PROTOCOL.md §4.4）
+            padButton("doc.text", String(format: L("Show Page %d"), pad.anchorPage + 1),
+                      tint: pad.showPage ? .accentColor : .primary) { togglePage() }
+                .disabled(session.pdf?.page(at: pad.anchorPage) == nil)
             padButton("paintpalette", L("Paper")) { showPaper.toggle() }
                 .popover(isPresented: $showPaper, arrowEdge: .bottom) { paperPicker }
             // 缩放读数只在不是 100% 时出现：常驻一个「100%」是纯噪音。
@@ -292,7 +386,7 @@ struct ScratchPadOverlay: View {
         .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
         .shadow(radius: 6, y: 2)
         .padding(.top, topInset + 10)
-        .animation(.easeOut(duration: 0.16), value: strokes.isEmpty)
+        .animation(.easeOut(duration: 0.16), value: hasContent)
     }
 
     /// 胶囊里的一枚图标按钮。
@@ -377,8 +471,9 @@ struct ScratchPadOverlay: View {
     // MARK: minimap
 
     @ViewBuilder private var minimapPanel: some View {
-        if showMinimap, !strokes.isEmpty {   // 空纸的缩略图里什么都没有，只是块占地方的噪音
-            ScratchMinimap(strokes: strokes, viewport: vp, viewSize: viewSize) { center in
+        if showMinimap, hasContent {   // 既没笔迹也没垫页 → 缩略图里什么都没有，只是块占地方的噪音
+            ScratchMinimap(strokes: strokes, viewport: vp, viewSize: viewSize,
+                           pageRect: showsPage ? pageCanvasRect : nil) { center in
                 // 点/拖 minimap → 视口中心跳到那儿。
                 vp.origin = CGPoint(x: center.x - viewSize.width / (2 * vp.zoom),
                                     y: center.y - viewSize.height / (2 * vp.zoom))
@@ -403,7 +498,7 @@ struct ScratchPadOverlay: View {
                     let factor = min(max(exp(-dy * 0.008), 0.5), 2)   // 手感旋钮同阅读区 ⌘滚轮
                     let anchor = cursor ?? CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
                     vp = ScratchBounds.clamp(vp.zoomed(by: factor, anchorScreen: anchor),
-                                             content: ScratchBounds.contentBounds(strokes), viewport: viewSize)
+                                             content: contentBounds, viewport: viewSize)
                     return nil
                 }
                 guard dx != 0 || dy != 0 else { return nil }

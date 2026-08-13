@@ -46,6 +46,34 @@ func sampleStrokes() -> [InkStroke] {
     ]
 }
 
+/// 假页图：白底 + 几条灰条（当「正文」）+ 一块图版。样张只需要「像一页纸」，不必真去渲 PDF。
+func fakePageImage(width: Int, aspect: Double) -> CGImage? {
+    let h = Int(Double(width) * aspect)
+    guard let ctx = CGContext(data: nil, width: width, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+    ctx.fill(CGRect(x: 0, y: 0, width: width, height: h))
+    ctx.setFillColor(CGColor(gray: 0.25, alpha: 1))
+    let m = Double(width) * 0.12, lh = Double(h) * 0.022
+    var y = Double(h) - m - lh
+    var i = 0
+    while y > m {
+        let w = (Double(width) - 2 * m) * (i % 7 == 6 ? 0.55 : 1)
+        if i == 12 {   // 中间空出一块「图版」
+            ctx.setFillColor(CGColor(gray: 0.85, alpha: 1))
+            ctx.fill(CGRect(x: m, y: y - lh * 8, width: Double(width) - 2 * m, height: lh * 9))
+            ctx.setFillColor(CGColor(gray: 0.25, alpha: 1))
+            y -= lh * 11
+        } else {
+            ctx.fill(CGRect(x: m, y: y, width: w, height: lh * 0.55))
+            y -= lh * 1.8
+        }
+        i += 1
+    }
+    return ctx.makeImage()
+}
+
 @MainActor
 func run() {
     let size = CGSize(width: 720, height: 460)
@@ -100,10 +128,45 @@ func run() {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    // 页面底图（v10）：把纸锚定的那一页垫在纸下面。样张要看三件事——
+    // ① 页矩形位置对不对（锚点必须落在画布原点，即视口正中那个十字上）；
+    // ② 白页压白纸时页边描边看不看得见（没有它整页就「化」进纸里了）；
+    // ③ 笔迹是不是压在页图**之上**（页图只是参照物，永远不该盖住墨）。
+    let fakePage = fakePageImage(width: 900, aspect: 1.4142)
+    for (label, zoom) in [("z060", 0.6), ("z100", 1.0)] as [(String, CGFloat)] {
+        let vpp = ScratchViewport(origin: CGPoint(x: -size.width / (2 * zoom), y: -size.height / (2 * zoom)),
+                                  zoom: zoom)
+        let padP = ScratchPad(anchorPage: 2, anchorX: 0.5, anchorY: 0.35)
+        let rect = padP.pageRect(aspect: 1.4142)
+        save("page-\(label)", size) {
+            ZStack {
+                paper
+                ScratchGridLayer(viewport: vpp, ink: ink, pattern: .dots)
+                ScratchPageLayer(image: fakePage, rect: rect, viewport: vpp, ink: ink)
+                ScratchInkLayer(strokes: strokes, viewport: vpp)
+            }
+        }
+        // 页图还没渲出来的那一瞬（占位白 + 描边）：不能什么都不显示，否则像开关坏了
+        save("page-placeholder-\(label)", size) {
+            ZStack {
+                Color(red: 246 / 255, green: 236 / 255, blue: 214 / 255)   // 牛皮纸：占位白必须区分得出来
+                ScratchGridLayer(viewport: vpp, ink: ink, pattern: .dots)
+                ScratchPageLayer(image: nil, rect: rect, viewport: vpp, ink: ink)
+            }
+        }
+    }
+
     // minimap 样张：内容偏在一侧，视口框只框住一部分 → 看得出「我在哪」
     let vp = ScratchViewport(origin: CGPoint(x: -120, y: -60), zoom: 1)
     save("minimap", CGSize(width: 176, height: 124)) {
         ScratchMinimap(strokes: strokes, viewport: vp, viewSize: size, onJump: { _ in })
+    }
+    // minimap（开着页面底图）：多一个淡页框，看它会不会把笔迹骨架压掉
+    save("minimap-page", CGSize(width: 176, height: 124)) {
+        ScratchMinimap(strokes: strokes, viewport: vp, viewSize: size,
+                       pageRect: ScratchPad(anchorPage: 0, anchorX: 0.5, anchorY: 0.35)
+                           .pageRect(aspect: 1.4142),
+                       onJump: { _ in })
     }
     // 胶囊工具条的**对比度**样张（浅色/深色 × 白纸底）。加这一组是因为首版用了
     // `.buttonStyle(.borderless)`，它在 material 底上把图标画得极淡——用户当场报「非激活的按钮
@@ -134,6 +197,8 @@ var capsuleMock: some View {
         btn("scope")
         btn("arrow.up.left.and.arrow.down.right", .primary, true)   // 空纸时禁用
         btn("map", .accentColor)
+        btn("doc.text", .accentColor)   // 页面底图开着（v10）
+        btn("paintpalette")             // 纸样
         // 缩放读数（只在非 100% 时出现）。**首版样张漏了它**，于是没看出 `.secondary` 在
         // material 上根本读不出来——复刻缺一件，样张就代表不了真实观感。
         Text("150%").font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(.primary)

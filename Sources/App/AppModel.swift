@@ -354,6 +354,12 @@ final class AppModel: ObservableObject {
             applyScratchPaper(obj, to: s)
         case "scratchMove":
             applyScratchMove(obj, to: s)
+        case "scratchPageShow":
+            applyScratchPageShow(obj, to: s)
+        case "scratchDelete":
+            applyScratchDelete(obj, to: s)
+        case "scratchRename":
+            applyScratchRename(obj, to: s)
         default:
             break
         }

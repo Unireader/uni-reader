@@ -58,6 +58,9 @@ struct ScratchPad: Identifiable, Equatable {
     var bg: InkColor = .paper
     /// 底纹（无 / 点阵 / 小格）。默认点阵：无限画布不给参照物的话，平移时看不出自己在动。
     var pattern: ScratchPattern = .dots
+    /// 把这张纸**锚定的那一页**垫在纸下面当参照（v10，几何见 `pageRect`）。
+    /// 默认 true：在页面某处新建的纸，那一页就该在眼前；v9 迁移过来的老纸补列即 false（不惊扰）。
+    var showPage: Bool = true
     var createdAt: Date = .now
     var updatedAt: Date = .now
 
@@ -72,6 +75,20 @@ struct ScratchPad: Identifiable, Equatable {
     /// 于是默认橡皮在草稿纸上的手感与在页面上大致相当（0.02 × 800 = 16pt 半径）。
     /// 三端必须用同一个数，否则同一次擦除在两端擦掉的笔迹不一样多。
     static let eraserRefWidth: Double = 800
+
+    /// 页面底图的宽度（画布点，**三端契约**，见 `PROTOCOL.md §4.4`）。画布没有「页宽」这回事，
+    /// 页图就按这个固定宽度落在画布上；高由页面显示纵横比推。三端对不上的表现是「同一张纸，
+    /// Mac 上写在公式旁边、平板上写到了页边空白处」。
+    static let pageRefWidth: Double = 800
+
+    /// 页面底图在画布上的矩形。`aspect` = 页高 / 页宽（**显示尺寸**口径：CropBox 优先、含 rotation，
+    /// 与页内笔迹用的是同一个页面尺寸）。位置由契约定死：**锚点落在画布原点**，
+    /// 于是「打开纸 = 回画布原点」正好把当初创建它的那一处摆在视口正中。
+    func pageRect(aspect: Double) -> CGRect {
+        let w = Self.pageRefWidth
+        let h = w * (aspect > 0 ? aspect : 1.4142)   // 拿不到页面尺寸时按 A4 兜底
+        return CGRect(x: -anchorX * w, y: -anchorY * h, width: w, height: h)
+    }
 }
 
 extension InkColor {
@@ -158,8 +175,16 @@ enum ScratchBounds {
         return out
     }
 
-    /// 笔迹集合的画布包围盒（空集 → nil）。minimap 与「适应内容」共用。
-    static func contentBounds(_ strokes: [InkStroke]) -> CGRect? {
+    /// 笔迹集合（可选并上页面底图矩形）的画布包围盒（空 → nil）。minimap、软边界与「适应内容」共用。
+    /// `page` 非空 = 这张纸开着页面底图：它也算「内容」，否则软边界只认笔迹，空白纸上垫了页也走不到页边。
+    static func contentBounds(_ strokes: [InkStroke], page: CGRect? = nil) -> CGRect? {
+        guard let ink = inkBounds(strokes) else { return page }
+        guard let page else { return ink }
+        return ink.union(page)
+    }
+
+    /// 纯笔迹包围盒（不含页面底图）。
+    private static func inkBounds(_ strokes: [InkStroke]) -> CGRect? {
         var minX = Double.greatestFiniteMagnitude, minY = Double.greatestFiniteMagnitude
         var maxX = -Double.greatestFiniteMagnitude, maxY = -Double.greatestFiniteMagnitude
         var any = false
@@ -195,13 +220,14 @@ extension ScratchPad {
                   anchorPage: row.anchorPage, anchorX: row.anchorX, anchorY: row.anchorY,
                   bg: InkColor.parse(row.bg),
                   pattern: ScratchPattern(rawValue: row.pattern) ?? .dots,   // 未知/老行兜底点阵
+                  showPage: row.showPage,   // v9 老行补列即 false（新建的纸才默认 true）
                   createdAt: row.createdAt, updatedAt: row.updatedAt)
     }
 
     func toRow(documentId: String) -> LibScratchPad {
         LibScratchPad(id: id.uuidString, documentId: documentId, title: title,
                       anchorPage: anchorPage, anchorX: anchorX, anchorY: anchorY,
-                      bg: bg.cssRGBA, pattern: pattern.rawValue,
+                      bg: bg.cssRGBA, pattern: pattern.rawValue, showPage: showPage,
                       createdAt: createdAt, updatedAt: updatedAt)
     }
 }

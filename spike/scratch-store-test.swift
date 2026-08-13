@@ -36,6 +36,22 @@ check(pads.contains { $0.id == padA.id && $0.title == "推导" && $0.anchorPage 
 check(pads.contains { $0.id == padB.id && $0.title.isEmpty }, "空标题原样保留（显示名由 UI 兜底）")
 check(pads.allSatisfy { $0.bg == InkColor.paper }, "默认底色 = 纯白 rgba(255,255,255,1)")
 check(pads.allSatisfy { $0.pattern == .dots }, "默认底纹 = 点阵（v9）")
+check(pads.allSatisfy { $0.showPage }, "新建的纸默认垫着它锚定的那一页（v10）")
+
+// 页面底图开关（v10）round-trip：关掉也要真的存下来（默认值是 true，最容易被兜底写回成开）。
+var hidPage = padA
+hidPage.showPage = false
+try store.upsertScratchPad(hidPage.toRow(documentId: doc.id))
+check(store.scratchPadsRT(doc.id).first { $0.id == padA.id }?.showPage == false,
+      "关掉页面底图 round-trip（不被 true 的默认值吃掉）")
+hidPage.showPage = true
+try store.upsertScratchPad(hidPage.toRow(documentId: doc.id))
+check(store.scratchPadsRT(doc.id).first { $0.id == padA.id }?.showPage == true, "再开回来 round-trip")
+// 页面底图的画布几何（三端契约）：宽恒 800，锚点落在画布原点。
+let prect = padA.pageRect(aspect: 1.5)   // padA 锚点 (0.25, 0.5)
+check(abs(prect.width - 800) < 1e-9 && abs(prect.height - 1200) < 1e-9, "页矩形 = 800 × 800·aspect")
+check(abs(prect.minX - (-200)) < 1e-9 && abs(prect.minY - (-600)) < 1e-9,
+      "锚点落在画布原点（rect 原点 = −nx·W, −ny·H）")
 
 // 纸样（v9）：底色 + 底纹各自 round-trip。plain 单独试——它编码为 0，最容易被兜底逻辑吃掉。
 var repapered = padB
@@ -116,6 +132,35 @@ let store2 = try LibraryStore(workspaceFolder: tmp)
 check(store2.meta("schema_version") == String(LibraryStore.schemaVersion), "退回 v8 重开 → 迁移拉回当前版本")
 check(store2.scratchPadsRT(doc.id).count == 1, "迁移不丢已有草稿纸（此刻库里剩 padA 一张）")
 check(store2.scratchPadsRT(doc.id).first?.pattern == .dots, "迁移后老纸兜底 dots（与 v8 观感一致）")
+
+// v9 → v10 迁移：**真的没有 show_page 列**的老库（上面那条只能证明「重开不丢数据」，
+// 因为列早就在了）。手搓一个 v9 形状的库，再让 LibraryStore 打开它补列。
+let legacyDir = tmp.appendingPathComponent("legacy_v9")
+try FileManager.default.createDirectory(at: legacyDir.appendingPathComponent("UniReader"),
+                                        withIntermediateDirectories: true)
+let legacyDB = try SQLiteDB(path: legacyDir.appendingPathComponent("UniReader/library.sqlite").path)
+try legacyDB.exec("""
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+INSERT INTO meta(key,value) VALUES('schema_version','9');
+CREATE TABLE scratch_pad (
+  id TEXT PRIMARY KEY, document_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+  anchor_page INTEGER NOT NULL DEFAULT 0,
+  anchor_x REAL NOT NULL DEFAULT 0, anchor_y REAL NOT NULL DEFAULT 0,
+  bg TEXT NOT NULL DEFAULT 'rgba(255,255,255,1.0)', pattern TEXT NOT NULL DEFAULT 'dots',
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+INSERT INTO scratch_pad(id,document_id,title,anchor_page,anchor_x,anchor_y,bg,pattern,created_at,updated_at)
+VALUES('11111111-1111-1111-1111-111111111111','D9','老纸',2,0.5,0.5,
+       'rgba(246,236,214,1.0)','grid','2026-08-01T00:00:00Z','2026-08-01T00:00:00Z');
+""")
+legacyDB.close()
+let store3 = try LibraryStore(workspaceFolder: legacyDir)
+let oldPad = store3.scratchPadsRT("D9").first
+check(store3.meta("schema_version") == String(LibraryStore.schemaVersion), "v9 老库打开即迁到当前版本")
+check(oldPad != nil, "v9 → v10 补列不丢老纸")
+check(oldPad?.showPage == false, "v9 老纸迁移后页面底图是关的（不惊扰既有白纸）")
+check(oldPad?.pattern == .grid && oldPad?.title == "老纸", "老纸的纸样/标题原样保留")
+store3.close()
 
 print("③ 无限画布几何 + 擦除")
 let box = ScratchBounds.contentBounds([s1])

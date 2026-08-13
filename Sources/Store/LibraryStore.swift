@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 9
+    static let schemaVersion = 10
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -84,6 +84,7 @@ final class LibraryStore {
           anchor_x REAL NOT NULL DEFAULT 0, anchor_y REAL NOT NULL DEFAULT 0,
           bg TEXT NOT NULL DEFAULT 'rgba(255,255,255,1.0)',
           pattern TEXT NOT NULL DEFAULT 'dots',
+          show_page INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_scratch_pad_document ON scratch_pad(document_id);
@@ -103,6 +104,9 @@ final class LibraryStore {
         // 草稿纸笔迹复用 note 表（kind=4），故 note 也不用改结构。
         // v8 → v9：草稿纸加底纹（无/点阵/小格）。已有的纸补列即得默认 dots，与 v8 的观感一致。
         try addColumnIfMissing("scratch_pad", "pattern", "TEXT NOT NULL DEFAULT 'dots'")
+        // v9 → v10：草稿纸可以把它锚定的那一页垫在纸下面当参照。**已有的纸补列即 0（关）**——
+        // 老纸的观感一点不变；只有新建的纸默认开（见 `ScratchPad.showPage`）。
+        try addColumnIfMissing("scratch_pad", "show_page", "INTEGER NOT NULL DEFAULT 0")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -350,13 +354,14 @@ final class LibraryStore {
     }
     func upsertScratchPad(_ p: LibScratchPad) throws {
         try db.run("""
-        INSERT INTO scratch_pad(id,document_id,title,anchor_page,anchor_x,anchor_y,bg,pattern,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO scratch_pad(id,document_id,title,anchor_page,anchor_x,anchor_y,bg,pattern,show_page,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET title=excluded.title, anchor_page=excluded.anchor_page,
           anchor_x=excluded.anchor_x, anchor_y=excluded.anchor_y, bg=excluded.bg,
-          pattern=excluded.pattern, updated_at=excluded.updated_at
+          pattern=excluded.pattern, show_page=excluded.show_page, updated_at=excluded.updated_at
         """, [.text(p.id), .text(p.documentId), .text(p.title), .int(Int64(p.anchorPage)),
               .double(p.anchorX), .double(p.anchorY), .text(p.bg), .text(p.pattern),
+              .int(p.showPage ? 1 : 0),
               .text(ISO.string(p.createdAt)), .text(ISO.string(p.updatedAt))])
     }
     /// 删除一张草稿纸。**纸上的笔迹（note kind=4）不在这里删**——它们由上层的 `session.scratchStrokes`
@@ -442,6 +447,7 @@ final class LibraryStore {
                       anchorX: r["anchor_x"] as? Double ?? 0, anchorY: r["anchor_y"] as? Double ?? 0,
                       bg: r["bg"] as? String ?? "rgba(255,255,255,1.0)",
                       pattern: r["pattern"] as? String ?? "dots",
+                      showPage: (r["show_page"] as? Int64 ?? 0) != 0,
                       createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                       updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
     }

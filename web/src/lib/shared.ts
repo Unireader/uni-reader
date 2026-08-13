@@ -105,6 +105,8 @@ export interface Pad {
   bg: string;
   /// 底纹（"plain" | "dots" | "grid"，v9）。与 Mac `ScratchPattern` 同一张表。
   pattern: string;
+  /// 页面底图（v10）：把这张纸锚定的那一页垫在纸下面当参照。几何契约见 PROTOCOL.md §4.4。
+  showPage: boolean;
 }
 
 /// 草稿纸视口（本端私有，不上线也不落库：三端各自独立缩放滚动）。
@@ -229,6 +231,8 @@ export interface GState {
   drawLive(): void;
   eraseHit(x: number, y: number): void;
   ensureImages(): void;
+  /// 取某一页的页图（缺就发起加载，返回当前的 Image 对象；草稿纸的页面底图用）。
+  loadPageImage(i: number): HTMLImageElement | null;
   clearHover(): void;
   drawNotes(): void;
   setRadial(o: WireMsg | null): void;
@@ -264,6 +268,9 @@ export interface GState {
   padClose(): void;
   padAdd(): void;
   padSetPaper(bg: string | null, pattern: string | null): void;
+  padSetShowPage(show: boolean): void;
+  padDelete(i: number): void;
+  padRename(i: number, title: string): void;
   applyScratchPads(o: WireMsg): void;
   applyScratchStrokes(o: WireMsg): void;
   // capture.ts（键盘侧键走 G，input.ts 的 keydown 调用）

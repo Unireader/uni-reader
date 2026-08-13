@@ -78,6 +78,9 @@ struct LibScratchPad: Identifiable, Equatable {
     var bg: String
     /// 底纹 `ScratchPattern.rawValue`（"plain"/"dots"/"grid"，v9）。老行为空 → 解码兜底 dots。
     var pattern: String
+    /// 页面底图（v10）：要不要把这张纸锚定的那一页垫在纸下面（几何契约见 `ScratchPad.pageRefWidth`）。
+    /// v9 迁移过来的老纸补列即 0（关），新建的纸默认开——见 `ScratchPad.showPage`。
+    var showPage: Bool
     var createdAt: Date
     var updatedAt: Date
 }

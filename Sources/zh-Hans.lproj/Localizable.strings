@@ -225,6 +225,7 @@
 "Dots" = "点阵";
 "Grid" = "小格";
 "Paper" = "纸样";
+"Show Page %d" = "在纸上显示第 %d 页";
 "Pattern" = "底纹";
 "Paper Color" = "纸色";
 "Paper White" = "纸白";

@@ -30,6 +30,12 @@ export interface Actions {
   togglePadMini(): void;
   togglePadPaper(): void;
   setPadPaper(bg: string | null, pattern: string | null): void;
+  /// 页面底图开关（v10）：把当前这张纸锚定的那一页垫在纸下面。跟着纸走、跨端同步。
+  togglePadPage(): void;
+  /// 删掉第 i 张纸（连同纸上笔迹）。UI 上是两步确认，这里只发请求。
+  deletePad(i: number): void;
+  /// 改第 i 张纸的名字（空串 = 回到「草稿纸 N」兜底名）。
+  renamePad(i: number, title: string): void;
 }
 
 export const actions = {} as Actions;

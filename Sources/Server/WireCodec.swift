@@ -23,7 +23,8 @@ enum WireCodec {
         static let layerSelect: UInt8 = 0x26, layerVisible: UInt8 = 0x27, layerAdd: UInt8 = 0x28, gotoPage: UInt8 = 0x29
         static let openDoc: UInt8 = 0x2A
         static let scratchOpen: UInt8 = 0x2B, scratchAdd: UInt8 = 0x2C, scratchPaper: UInt8 = 0x2D
-        static let scratchMove: UInt8 = 0x2E
+        static let scratchMove: UInt8 = 0x2E, scratchPageShow: UInt8 = 0x2F
+        static let scratchDelete: UInt8 = 0x48, scratchRename: UInt8 = 0x49
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
@@ -246,6 +247,7 @@ enum WireCodec {
                 let (r, g, b, a) = parseColor(strOf(p["bg"]))
                 w.u8(r); w.u8(g); w.u8(b); w.f32(Double(a))
                 w.u8(patternCode(strOf(p["pattern"])))   // 底纹（v9）
+                w.u8(boolOf(p["showPage"]) ? 1 : 0)      // 页面底图开关（v10）
             }
         case "scratchStrokes":
             // 当前打开那张纸上的全量笔迹。**没有 page 字段**——画布不属于任何一页，点集是画布坐标
@@ -275,6 +277,15 @@ enum WireCodec {
             // 页内拖动图钉：挪第 index 张纸的锚点（页不变，nx/ny 页内归一化）。Mac 判定后回推 scratchpads。
             w.u8(Op.scratchMove); w.u16(intOf(o["index"]))
             w.f32(num(o["nx"])); w.f32(num(o["ny"]))
+        case "scratchPageShow":
+            // 页面底图开关（第 index 张纸要不要垫它锚定的那一页；几何契约见 PROTOCOL.md §4.4）。
+            w.u8(Op.scratchPageShow); w.u16(intOf(o["index"])); w.u8(boolOf(o["show"]) ? 1 : 0)
+        case "scratchDelete":
+            // 删第 index 张纸（连同纸上笔迹）。Mac 判定 + 落库后回推 scratchpads/scratchStrokes。
+            w.u8(Op.scratchDelete); w.u16(intOf(o["index"]))
+        case "scratchRename":
+            // 改第 index 张纸的名字（空串 = 回到「草稿纸 N」兜底名）。
+            w.u8(Op.scratchRename); w.u16(intOf(o["index"])); w.str(strOf(o["title"]))
         case "inkCancel": w.u8(Op.inkCancel)
         case "strokes":
             w.u8(Op.strokes)
@@ -508,9 +519,11 @@ enum WireCodec {
                 let page = r.u32(), nx = r.f32(), ny = r.f32()
                 let bgR = r.u8(), bgG = r.u8(), bgB = r.u8(); let bgA = r.f32()
                 let pat = patternName(r.u8())
+                let showPage = r.u8() != 0   // 页面底图开关（v10）
                 list.append(["id": id, "title": title, "page": NSNumber(value: page),
                              "nx": NSNumber(value: nx), "ny": NSNumber(value: ny),
-                             "bg": cssColor(bgR, bgG, bgB, Float(bgA)), "pattern": pat])
+                             "bg": cssColor(bgR, bgG, bgB, Float(bgA)), "pattern": pat,
+                             "showPage": showPage])
             }
             out = ["type": "scratchpads",
                    "open": NSNumber(value: openRaw == scratchNoOpen ? -1 : openRaw), "list": list]
@@ -540,6 +553,12 @@ enum WireCodec {
         case Op.scratchMove:
             out = ["type": "scratchMove", "index": NSNumber(value: r.u16()),
                    "nx": NSNumber(value: r.f32()), "ny": NSNumber(value: r.f32())]
+        case Op.scratchPageShow:
+            out = ["type": "scratchPageShow", "index": NSNumber(value: r.u16()), "show": r.u8() != 0]
+        case Op.scratchDelete:
+            out = ["type": "scratchDelete", "index": NSNumber(value: r.u16())]
+        case Op.scratchRename:
+            out = ["type": "scratchRename", "index": NSNumber(value: r.u16()), "title": r.str()]
         case Op.radial:
             if r.u8() == 0 { out = ["type": "radial", "open": false]; break }
             let page = r.u32(), cx = r.f32(), cy = r.f32()

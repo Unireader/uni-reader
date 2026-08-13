@@ -188,15 +188,32 @@ canvas { position:fixed; inset:0; }
   font:14px/1.4 -apple-system,'PingFang SC',system-ui,sans-serif; }
 #padlist .phead { padding:6px 8px; font-weight:600; color:#8b949e; font-size:13px; }
 #padlist .pempty { padding:8px; color:#8b949e; font-size:13px; }
-#padlist .prow { display:flex; align-items:center; gap:8px; width:100%; padding:10px 8px;
+/* 一行 = 打开区（占满剩余宽）+ 改名/删除两枚图标钮；改名/删确认时整行换成另一种形态 */
+#padlist .prow { display:flex; align-items:center; gap:4px; width:100%; padding:0;
   border:0; border-radius:7px; background:transparent; color:inherit; text-align:left; font:inherit; }
-#padlist .prow:active { background:#30363d; }
 #padlist .prow.cur { background:#1f6feb; color:#fff; }
 #padlist .prow svg { width:16px; height:16px; flex:none; }
+#padlist .popen { flex:1; min-width:0; display:flex; align-items:center; gap:8px; padding:11px 8px;
+  border:0; border-radius:7px; background:transparent; color:inherit; text-align:left; font:inherit; }
+#padlist .popen:active { background:rgba(255,255,255,.10); }
+#padlist .pact { flex:none; display:flex; align-items:center; justify-content:center;
+  width:36px; height:36px; padding:0; border:0; border-radius:7px; background:transparent; color:#8b949e; }
+#padlist .pact:active { background:#30363d; }
+#padlist .pact.danger { color:#f0776c; }
+#padlist .prow.cur .pact { color:rgba(255,255,255,.8); }
 #padlist .pt { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #padlist .pp { flex:none; color:#8b949e; font-size:12px; }
 #padlist .prow.cur .pp { color:rgba(255,255,255,.75); }
-#padlist .padd { margin-top:4px; border-top:1px solid #30363d; border-radius:0 0 7px 7px; }
+#padlist .prename { padding:6px; gap:6px; }
+#padlist .prename input { flex:1; min-width:0; padding:8px; border-radius:6px;
+  border:1px solid #30363d; background:#0d1117; color:#e6edf3; font:14px/1.4 inherit; }
+#padlist .pconfirm { padding:8px; gap:6px; }
+#padlist .pconfirm .pt { font-size:13px; }
+#padlist .pbtn { flex:none; padding:7px 12px; border:1px solid #30363d; border-radius:7px;
+  background:#21262d; color:#e6edf3; font:13px/1 inherit; }
+#padlist .pbtn.danger { border-color:#f85149; color:#f0776c; }
+#padlist .padd { margin-top:4px; padding:11px 8px; border-top:1px solid #30363d; border-radius:0 0 7px 7px; }
+#padlist .padd:active { background:#30363d; }
 
 /* ---- 草稿纸的纸样面板（底纹 × 纸色）---- */
 #padPaperMask { position:fixed; inset:0; z-index:19; margin:0; padding:0; border:0; background:transparent; cursor:default; }
