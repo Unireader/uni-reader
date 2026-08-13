@@ -33,7 +33,13 @@ final class LANServer: ObservableObject {
 
     struct GotoTarget { let page: Int; let frac: Double }
 
-    let token = Pairing.makeToken()
+    /// 配对 token 的**主线程镜像**：只给面板用（二维码 / 地址栏 / 复制）。
+    /// 鉴权那份是 [authToken]——两份同值，分开是因为读它们的线程不同（见 [resetToken]）。
+    @Published private(set) var token: String
+
+    /// 鉴权用的那份，**只在服务 queue 上读写**（HTTP 路由拼采集页、WS `auth` 比对）。
+    private var authToken: String
+
     let httpPort: UInt16 = 8770
     let wsPort: UInt16 = 8771
     /// UDP 监听端口（仅原生客户端 RT 上行；浏览器永远 WS）。随 authOK 下发。
@@ -73,6 +79,12 @@ final class LANServer: ObservableObject {
         return "http://\(host):\(httpPort)/?token=\(token)"
     }
 
+    init() {
+        let t = Pairing.persistentToken()
+        token = t
+        authToken = t
+    }
+
     // MARK: - 生命周期
 
     func start() {
@@ -109,6 +121,26 @@ final class LANServer: ObservableObject {
             self.clientList = []
             self.isRunning = false
         }
+    }
+
+    /// 换一张配对码（面板上的「重置配对码」）。**在主线程调用。**
+    ///
+    /// 旧码立即作废：连着的平板会被踢下线，安卓「历史设备」里那条也要重扫码才能再连
+    /// ——这正是这颗按钮存在的意义（token 现在是持久的，不重置就永远是同一个）。
+    ///
+    /// 两处细节都踩过：
+    /// - 鉴权用的 [authToken] 只在服务 queue 上碰，所以写它要 `queue.async`（排在 `stop()`
+    ///   那个关连接的块后面，FIFO 保证新连接一定看到新码）；面板那份 [token] 在主线程写。
+    /// - `stop()` 把 `isRunning` 置回 false 是 `DispatchQueue.main.async` 的，此刻仍是 true
+    ///   → 紧接着调 `start()` 会被开头的 `guard !isRunning` 挡掉，服务就再也起不来。
+    ///   所以重启也得排到主线程队列的后面去。
+    func resetToken() {
+        let fresh = Pairing.resetToken()
+        let wasRunning = isRunning
+        if wasRunning { stop() }
+        queue.async { self.authToken = fresh }
+        token = fresh
+        if wasRunning { DispatchQueue.main.async { self.start() } }
     }
 
     // MARK: - 页面推送（由 ContentView 在主线程调用）
@@ -167,7 +199,7 @@ final class LANServer: ObservableObject {
         let (path, query) = LANServer.splitQuery(target)
         switch path {
         case "/", "/index.html":
-            let html = CapturePage.html(token: token, wsPort: wsPort)
+            let html = CapturePage.html(token: authToken, wsPort: wsPort)
             return ("200 OK", "text/html; charset=utf-8", Data(html.utf8))
         case "/wire.js":
             // 二进制线格式编解码器（采集页与 Mac 共用同一份，见 PROTOCOL.md）。无秘密，不校验 token。
@@ -183,9 +215,28 @@ final class LANServer: ObservableObject {
             return ("404 Not Found", "text/plain; charset=utf-8", Data("no page".utf8))
         case "/health":
             return ("200 OK", "text/plain; charset=utf-8", Data("ok".utf8))
+        case "/info":
+            // 这台 Mac 的名字，给安卓输入板的「历史设备」列表当标题用（那边手里只有一个 IP，
+            // DHCP 换个地址就分不清刚才连的是谁）。**刻意不走线格式**：加一个字段就要三端同步 +
+            // 重出字节向量（PROTOCOL.md 开头那条红线），而这只是一句展示用的文本。
+            // 不校验 token——与 `/page.png`、`/health` 同级，机器名在同一局域网里本来就是公开的
+            // （Bonjour/SMB 都在广播它）。
+            return ("200 OK", "application/json; charset=utf-8", LANServer.infoJSON())
         default:
             return ("404 Not Found", "text/plain; charset=utf-8", Data("not found".utf8))
         }
+    }
+
+    /// `/info` 的机器名。两个都给，客户端优先用 `name`：
+    /// - `name` = 「电脑名称」（系统设置里那个，如「xVan 的 MacBook Pro」）——人一眼能认；
+    /// - `hostName` = 真主机名（如 `xvans-macbook-pro.local`）——某些环境下前者为空时的兜底。
+    /// 用 `JSONSerialization` 而不是手拼字符串：机器名里带中文/引号是常态，手拼一定会漏转义。
+    private static func infoJSON() -> Data {
+        let dict: [String: Any] = [
+            "name": Host.current().localizedName ?? "",
+            "hostName": ProcessInfo.processInfo.hostName,
+        ]
+        return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data("{}".utf8)
     }
 
     /// 采集页共用的二进制编解码器 JS（Resources/wire.js）。
@@ -297,7 +348,7 @@ final class LANServer: ObservableObject {
     private func handle(_ obj: [String: Any], text: String, conn: NWConnection, authed: Bool) -> Bool {
         let type = obj["type"] as? String ?? ""
         if !authed {
-            if type == "auth", (obj["token"] as? String) == token {
+            if type == "auth", (obj["token"] as? String) == authToken {
                 addClient(conn)
                 // 生成 UDP 会话号并登记（session↔WS 连接映射；UDP 数据报凭它鉴权/路由）。
                 var session = UInt32.random(in: 1...UInt32.max)

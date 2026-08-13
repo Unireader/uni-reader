@@ -4,6 +4,9 @@ import Foundation
 
 enum Pairing {
     static func makeToken() -> String { "testtoken" }   // 确定性 token，node 端写死同款
+    // 真实实现存 UserDefaults（面板可「重置配对码」）；harness 里要的是确定性，不落盘。
+    static func persistentToken() -> String { makeToken() }
+    static func resetToken() -> String { makeToken() }
 }
 
 enum NetInfo {

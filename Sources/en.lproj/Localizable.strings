@@ -12,6 +12,8 @@
 "Server stopped" = "Server stopped";
 "Open this URL in Firefox on your tablet:" = "Open this URL in Firefox on your tablet:";
 "Copy URL" = "Copy URL";
+"Reset pairing code" = "Reset pairing code";
+"Old code stops working immediately; paired tablets must scan again." = "Old code stops working immediately; paired tablets must scan again.";
 "File Changed" = "File Changed";
 "Link as New Version" = "Link as New Version";
 "Open Anyway" = "Open Anyway";

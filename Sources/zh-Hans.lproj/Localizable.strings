@@ -12,6 +12,8 @@
 "Server stopped" = "服务已停止";
 "Open this URL in Firefox on your tablet:" = "在平板的 Firefox 中打开此地址：";
 "Copy URL" = "复制地址";
+"Reset pairing code" = "重置配对码";
+"Old code stops working immediately; paired tablets must scan again." = "旧码立即失效，已配对的平板要重新扫码。";
 "File Changed" = "文件已变化";
 "Link as New Version" = "关联为新版本";
 "Open Anyway" = "仍打开";

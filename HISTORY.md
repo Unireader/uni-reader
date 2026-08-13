@@ -3,6 +3,36 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 完成（2026-08-12，安卓模式2「历史设备」+ Mac 新增 HTTP `/info` + 配对码持久化）
+
+用户需求：**模式2 连 Mac 做历史设备记录，方便选择，设备名就用连接的那台机器的主机名**。
+设计与名单规则见 `ANDROID-STANDALONE-PLAN.md §15`，这里记 Mac 侧与共性结论。
+
+- **Mac 侧只加了一条 HTTP 路由**：`LANServer.route` 的 `GET /info` →
+  `{"name": Host.current().localizedName, "hostName": ProcessInfo.hostName}`（`JSONSerialization`
+  拼，机器名里带中文/引号是常态）。**刻意不动线格式**——往 `authOK` 里加个字段就是三端同步 +
+  重出字节向量（`PROTOCOL.md` 开头的红线），而这只是一句展示用的文本。不校验 token，与
+  `/page.png`、`/health` 同级。
+- **探不到名字不算失败**：安卓侧 3s 超时，拿不到就先按 IP 显示，下次连上再补；连旧版 Mac
+  （没有这条路由）也是这个下场，功能不残废。
+- **配对 token 改成持久（同日用户拍板「token 也持久化」）**：原先 `LANServer.token` 是每次启动现
+  生成的，历史条目里的 token 在 Mac 重开 App 后必然失效 → 点了必 authFail，名单只剩「省了打 IP」
+  这点用。现在走 `Pairing.persistentToken()`（存 `UserDefaults` 的 `pairingToken`），同一台 Mac
+  长期是同一个码。**配套给了一颗「重置配对码」**（面板 URL 行下面，`LANServer.resetToken()`）：
+  码持久了就必须有作废的路——旧码立即失效、连着的平板被踢，重扫即可。
+  - 两处线程细节：鉴权那份 token 只在服务 queue 上读（HTTP 路由 / WS `auth`），所以拆成
+    `authToken`（queue）+ `@Published token`（主线程镜像，只给面板/二维码）；换码时 `queue.async`
+    写前者、主线程写后者。另外 `stop()` 把 `isRunning` 置回 false 是 `main.async` 的，**紧接着
+    调 `start()` 会被 `guard !isRunning` 挡掉**，重启必须也排到主线程队列后面去。
+- 连接弹窗同时改成**预填这次尝试的 host/token**（原先读的是 prefs 里最后一次**成功**的那组，等于把
+  用户刚点的那台冲掉了）：重置过配对码、或名单里存着更早的旧码时都会走到这条。
+- 顺带把启动页私有的「图标 + 主行 + 灰次行」一行挪进 `shared`（`PadPanels.twoLineRow`），
+  历史设备列表与「最近打开 / 扫描结果 / 存储卷」从此是同一份。
+- 验证：`xcodebuild` 绿、安卓 `assembleDebug` + JVM 单测绿；名单规则的插桩测试
+  `KnownMacsTest`（7 项：重连保名、换 IP 清同名僵尸、探测失败原样返回、超量截断、中文往返、
+  坏数据不炸、prefs 往返）在**小米 Pad 6 真机上跑过全绿**。整条连接链路的人眼部分未验，
+  攒进 `ANDROID-STANDALONE-PLAN.md §11.1` 第 49 条。
+
 ## 完成（2026-08-12，三端防误触：双指滚动模式 + 锁缩放常驻）
 
 用户两条需求：模式1 的缩放锁定提到顶栏并持久化；网站与平板加「双指滚动」模式减少误触

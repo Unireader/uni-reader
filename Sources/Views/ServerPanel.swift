@@ -55,6 +55,15 @@ struct ServerPanel: View {
                     .buttonStyle(.borderless)
                     .help(L("Copy URL"))
                 }
+                // 配对码现在是持久的（`Pairing.persistentToken`，平板的「历史设备」靠它才连得上），
+                // 所以必须给一条换码的路：泄露了、或者不想让某台平板再连，就点这里重扫。
+                HStack {
+                    Button(L("Reset pairing code")) { server.resetToken() }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .help(L("Old code stops working immediately; paired tablets must scan again."))
+                    Spacer()
+                }
                 Divider()
                 HStack {
                     Text(String(format: L("Connected tablets: %d"), server.clientCount))
