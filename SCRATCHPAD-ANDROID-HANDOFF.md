@@ -357,15 +357,13 @@ Mac 侧踩过两个观感坑，安卓照着避开：内容与视口框**别贴�
 
 ## 10. 怎么编译与测试（安卓）
 
-`android/` 是**独立 git 仓库**且**没有 gradlew**，用 `~/.gradle` 缓存里的 gradle：
+`android/` 是**独立 git 仓库**（改动在那边单独提交），**构建与验证的权威说明在 `android/AGENTS.md`**：
 
 ```bash
-G=$(find ~/.gradle/wrapper/dists/gradle-9.5.1-bin -name gradle -type f -path "*/bin/*" | head -1)
-"$G" -p /Users/xvan/agent-home/uni-reader/android test --offline -q          # 单测
-"$G" -p /Users/xvan/agent-home/uni-reader/android assembleDebug --offline    # 打包
+cd android
+./gradlew test            # 单测（wrapper 已补齐，2026-08-12 起不必再找 ~/.gradle 里的裸 gradle）
+./gradlew assembleDebug   # 打包
 ```
-
-（9.1.0 那份版本太低，AGP 要求 ≥ 9.4.1。）
 
 模拟器验证的四个已知坑（`ANDROID-STANDALONE-PLAN.md §11.2`，别重新踩）：
 `adb pull` 库要**带 `-wal`** / 按文本点击别记坐标 / stylus swipe 终点走不到 / 长按用分次 motionevent。

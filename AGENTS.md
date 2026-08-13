@@ -12,7 +12,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - 无测试 target；验证走 spike 脚本：`swift spike/<name>.swift`（如 `store-test.swift` 32 项 DAO、`ink-store-test.swift` 21 项）。
 - 采集页前端（`web/`，Svelte + Vite）：改动后跑 `scripts/build-web.sh`（npm install + 单文件构建 + 占位符自检 + 覆盖 `Sources/Resources/capture.html`），再重新编译 App。`capture.html` 是构建产物、**不入 git**——新克隆先跑一次 `build-web.sh`；`scripts/package.sh` 打包时会自动重建。
 - 项目级用户规则：不代用户执行安装（brew/pip/npm 一律给脚本让用户跑）；交流用中文或英文。
-- Android 端（`android/`，Gradle 工程，wrapper 已补齐）：构建 `./gradlew assembleDebug`；打包 `android/pack.sh`（release，adb 恰好一台设备时顺带安装，`--debug`/`--no-install`）。签名：debug/release 共用 `~/.keystores/xVanTuring.jks`（alias `key0`），密码从 `android/local.properties` 的 `releaseStorePassword`/`releaseKeyPassword` 读（本机文件，不入 git）。
+- Android 端（`android/`）：构建 `cd android && ./gradlew assembleDebug`，打包 `android/pack.sh`。**其余规则、结构与坑全在 `android/AGENTS.md`（改安卓代码前先读它），本文件不再重复。**
 
 ## 文档地图（改代码前先读）
 
@@ -20,6 +20,18 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `HISTORY.md` — 已完成事项归档；**TODO 里的条目做完即迁移到这里**
 - `REQUIREMENTS.md` — 需求与 §8 工作区持久化方案
 - `PDF-VIEWER-REBUILD-PLAN.md` — 阅读区 v2（`PageStreamView`）的五条硬指标与零闪烁纪律
+- `PROTOCOL.md` — 二进制线格式**唯一契约**（Mac / web / 安卓三端字节级一致），改协议先改它
+- **`android/AGENTS.md`** — 安卓端（两种模式）的构建、结构、红线与坑；**动安卓代码只需读它 + 上面的跨端契约**
+
+### 子目录可以自带 AGENTS.md（`android/` 就是这么做的）
+
+`android/` 是**独立 git 仓库**（根仓库 `.gitignore` 忽略了它，安卓改动在那边单独提交），所以安卓端的规则
+**写在 `android/AGENTS.md` 里**（`android/CLAUDE.md` 是它的软链，与根目录同款约定），跟着安卓仓库一起走；
+根目录这份只留一句引用，不复制内容——**同一条规则只在一处维护**，避免两边各改一半互相矛盾。
+
+新增其他子工程（如将来的 Windows 端）照此办理：子目录自己写 `AGENTS.md` + `CLAUDE.md` 软链，
+根目录在「文档地图」加一行指过去。跨端契约（`PROTOCOL.md`、schema、跨平台方案文档）仍留在根目录，
+子目录用 `../` 相对路径引用，别在子目录里复制一份。
 
 ## 红线（用户明确否决过，勿重走）
 
