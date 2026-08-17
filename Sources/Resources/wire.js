@@ -18,7 +18,7 @@
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A, library: 0x3B, toc: 0x3C,
     scratchPads: 0x3D, scratchStrokes: 0x3E, noteNew: 0x3F,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
-    lassoMove: 0x47, scratchDelete: 0x48, scratchRename: 0x49,
+    lassoMove: 0x47, scratchDelete: 0x48, scratchRename: 0x49, lassoScale: 0x4A,
     nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
@@ -82,6 +82,13 @@
     }
   };
   Writer.prototype.bytes = function () { return this.buf.subarray(0, this.n); };
+  // 尾部可选多边形（lassoMove/lassoScale，PROTOCOL.md §4.1）：扁平数组 [x0,y0,x1,y1,…]，
+  // 缺省/<3 点一律不写（老形态字节不变）。
+  Writer.prototype.polyTail = function (poly) {
+    if (!poly || poly.length < 6) return;
+    this.u16(poly.length / 2);
+    for (var i = 0; i < poly.length; i++) this.f32(poly[i]);
+  };
 
   // ---- Reader ----
   function Reader(ab) {
@@ -98,6 +105,15 @@
     var L = this.u16(); var b = new Uint8Array(this.dv.buffer, this.dv.byteOffset + this.n, L); this.n += L; return td.decode(b);
   };
   Reader.prototype.left = function () { return this.len - this.n; };   // 尾部可选字段用（gotoPage.frac）
+  // 尾部可选多边形（lassoMove/lassoScale）：无尾部 → null（矩形命中）；截断/残缺 → null。
+  Reader.prototype.polyTail = function () {
+    if (this.left() < 2) return null;
+    var m = this.u16();
+    if (m < 3 || this.left() < m * 8) return null;
+    var out = new Array(m * 2);
+    for (var i = 0; i < m * 2; i++) out[i] = this.f32();
+    return out;
+  };
   Reader.prototype.pen = function () {
     var r = this.u8(), g = this.u8(), b = this.u8(), a = this.f32(), w = this.f32(), t = this.u8();
     return { color: "rgba(" + r + "," + g + "," + b + "," + a + ")", w: w, t: BRUSH[t] || "ballpoint" };
@@ -288,6 +304,13 @@
         w.u8(OP.lassoMove); w.u32(o.page || 0);
         w.f32(o.x0 || 0); w.f32(o.y0 || 0); w.f32(o.x1 || 0); w.f32(o.y1 || 0);
         w.f32(o.dx || 0); w.f32(o.dy || 0);
+        w.polyTail(o.poly);   // 尾部可选多边形（PROTOCOL.md §4.1）：缺省 = 老形态字节不变
+        break;
+      case "lassoScale":
+        w.u8(OP.lassoScale); w.u32(o.page || 0);
+        w.f32(o.x0 || 0); w.f32(o.y0 || 0); w.f32(o.x1 || 0); w.f32(o.y1 || 0);
+        w.f32(o.ax || 0); w.f32(o.ay || 0); w.f32(o.sx || 1); w.f32(o.sy || 1);
+        w.polyTail(o.poly);
         break;
       case "layerSelect": w.u8(OP.layerSelect); w.u16(o.index || 0); break;
       case "layerVisible": w.u8(OP.layerVisible); w.u16(o.index || 0); w.u8(o.visible ? 1 : 0); break;
@@ -464,7 +487,14 @@
       case OP.padGeom: return { type: "padGeom", pageW: r.f32() };
       case OP.lassoMove: {
         var lmPage = r.u32(), lmX0 = r.f32(), lmY0 = r.f32(), lmX1 = r.f32(), lmY1 = r.f32(), lmDx = r.f32(), lmDy = r.f32();
-        return { type: "lassoMove", page: lmPage, x0: lmX0, y0: lmY0, x1: lmX1, y1: lmY1, dx: lmDx, dy: lmDy };
+        return { type: "lassoMove", page: lmPage, x0: lmX0, y0: lmY0, x1: lmX1, y1: lmY1, dx: lmDx, dy: lmDy,
+                 poly: r.polyTail() };
+      }
+      case OP.lassoScale: {
+        var lsPage = r.u32(), lsX0 = r.f32(), lsY0 = r.f32(), lsX1 = r.f32(), lsY1 = r.f32(),
+            lsAx = r.f32(), lsAy = r.f32(), lsSx = r.f32(), lsSy = r.f32();
+        return { type: "lassoScale", page: lsPage, x0: lsX0, y0: lsY0, x1: lsX1, y1: lsY1,
+                 ax: lsAx, ay: lsAy, sx: lsSx, sy: lsSy, poly: r.polyTail() };
       }
       case OP.layerSelect: return { type: "layerSelect", index: r.u16() };
       case OP.layerVisible: { var lvi = r.u16(), lvv = r.u8() === 1; return { type: "layerVisible", index: lvi, visible: lvv }; }

@@ -25,6 +25,7 @@ enum WireCodec {
         static let scratchOpen: UInt8 = 0x2B, scratchAdd: UInt8 = 0x2C, scratchPaper: UInt8 = 0x2D
         static let scratchMove: UInt8 = 0x2E, scratchPageShow: UInt8 = 0x2F
         static let scratchDelete: UInt8 = 0x48, scratchRename: UInt8 = 0x49
+        static let lassoScale: UInt8 = 0x4A
         static let page: UInt8 = 0x30, layout: UInt8 = 0x31, viewport: UInt8 = 0x32
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
@@ -101,6 +102,13 @@ enum WireCodec {
         if let a = v as? [[Any]] { return a.map { $0.map { num($0) } } }
         return []
     }
+    /// 把扁平数组（`[Double]`/`[NSNumber]`/`[Any]`）规整为 `[Double]`（lasso 多边形尾部用）。
+    private static func floatsOf(_ v: Any?) -> [Double] {
+        if let a = v as? [Double] { return a }
+        if let a = v as? [NSNumber] { return a.map { $0.doubleValue } }
+        if let a = v as? [Any] { return a.map { num($0) } }
+        return []
+    }
 
     // MARK: - Writer
 
@@ -135,6 +143,13 @@ enum WireCodec {
                 f32(p.count > 0 ? p[0] : 0); f32(p.count > 1 ? p[1] : 0)
                 if dim == 3 { f32(p.count > 2 ? p[2] : 0.5) }
             }
+        }
+        /// 尾部可选多边形（lassoMove/lassoScale，PROTOCOL.md §4.1）：扁平数组 [x0,y0,x1,y1,…]，
+        /// 缺省/<3 点一律不写（老形态字节不变）。
+        mutating func polyTail(_ poly: [Double]) {
+            guard poly.count >= 6 else { return }
+            u16(poly.count / 2)
+            for v in poly { f32(v) }
         }
     }
 
@@ -320,6 +335,12 @@ enum WireCodec {
             w.u8(Op.lassoMove); w.u32(intOf(o["page"]))
             w.f32(num(o["x0"])); w.f32(num(o["y0"])); w.f32(num(o["x1"])); w.f32(num(o["y1"]))
             w.f32(num(o["dx"])); w.f32(num(o["dy"]))
+            w.polyTail(floatsOf(o["poly"]))   // 尾部可选多边形（PROTOCOL.md §4.1）：缺省 = 老形态字节不变
+        case "lassoScale":
+            w.u8(Op.lassoScale); w.u32(intOf(o["page"]))
+            w.f32(num(o["x0"])); w.f32(num(o["y0"])); w.f32(num(o["x1"])); w.f32(num(o["y1"]))
+            w.f32(num(o["ax"])); w.f32(num(o["ay"])); w.f32(num(o["sx"])); w.f32(num(o["sy"]))
+            w.polyTail(floatsOf(o["poly"]))
         case "layerSelect": w.u8(Op.layerSelect); w.u16(intOf(o["index"]))
         case "layerVisible": w.u8(Op.layerVisible); w.u16(intOf(o["index"])); w.u8(boolOf(o["visible"]) ? 1 : 0)
         case "layerAdd": w.u8(Op.layerAdd)
@@ -395,6 +416,15 @@ enum WireCodec {
                 if dim == 3 { let p = f32(); out.append([NSNumber(value: x), NSNumber(value: y), NSNumber(value: p)]) }
                 else { out.append([NSNumber(value: x), NSNumber(value: y)]) }
             }
+            return out
+        }
+        /// 尾部可选多边形（lassoMove/lassoScale）：无尾部/残缺 → nil（调用方按矩形命中兜底）。
+        mutating func polyTail() -> [NSNumber]? {
+            guard remaining >= 2 else { return nil }
+            let m = u16()
+            guard m >= 3, need(m * 8) else { return nil }
+            var out = [NSNumber](); out.reserveCapacity(m * 2)
+            for _ in 0..<(m * 2) { out.append(NSNumber(value: f32())) }
             return out
         }
     }
@@ -587,6 +617,17 @@ enum WireCodec {
                    "x0": NSNumber(value: lmX0), "y0": NSNumber(value: lmY0),
                    "x1": NSNumber(value: lmX1), "y1": NSNumber(value: lmY1),
                    "dx": NSNumber(value: lmDx), "dy": NSNumber(value: lmDy)]
+            if let poly = r.polyTail() { out?["poly"] = poly }
+        case Op.lassoScale:
+            let lsPage = r.u32()
+            let lsX0 = r.f32(), lsY0 = r.f32(), lsX1 = r.f32(), lsY1 = r.f32()
+            let lsAx = r.f32(), lsAy = r.f32(), lsSx = r.f32(), lsSy = r.f32()
+            out = ["type": "lassoScale", "page": NSNumber(value: lsPage),
+                   "x0": NSNumber(value: lsX0), "y0": NSNumber(value: lsY0),
+                   "x1": NSNumber(value: lsX1), "y1": NSNumber(value: lsY1),
+                   "ax": NSNumber(value: lsAx), "ay": NSNumber(value: lsAy),
+                   "sx": NSNumber(value: lsSx), "sy": NSNumber(value: lsSy)]
+            if let poly = r.polyTail() { out?["poly"] = poly }
         case Op.layerSelect: out = ["type": "layerSelect", "index": NSNumber(value: r.u16())]
         case Op.layerVisible:
             let lvIdx = r.u16(), lvVisible = r.u8() == 1

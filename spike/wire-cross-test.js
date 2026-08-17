@@ -134,6 +134,15 @@ const canonical = [
   // 改名：非 ASCII 标题 + 空串（空串 = 清掉自定义名，回到「草稿纸 N」兜底显示）。
   { type: "scratchRename", index: 3, title: "第三张·推导" },
   { type: "scratchRename", index: 0, title: "" },
+  // —— 框选增强（2026-08-17）：lassoMove/lassoScale 的尾部可选多边形 + 新消息 lassoScale(0x4A) ——
+  // 无尾部 = 老形态字节不变（上面矩形 lassoMove 已覆盖）；这里测带多边形尾部与新消息两种形态。
+  { type: "lassoMove", page: 2, x0: 0.2, y0: 0.3, x1: 0.6, y1: 0.5, dx: 0.1, dy: -0.05,
+    poly: [0.2, 0.3, 0.6, 0.3, 0.4, 0.5] },
+  { type: "lassoScale", page: 1, x0: 0.2, y0: 0.3, x1: 0.6, y1: 0.5,
+    ax: 0.2, ay: 0.3, sx: 1.5, sy: 0.75 },
+  { type: "lassoScale", page: 1, x0: 0.2, y0: 0.3, x1: 0.6, y1: 0.5,
+    ax: 0.2, ay: 0.3, sx: 1.5, sy: 0.75,
+    poly: [0.2, 0.3, 0.6, 0.3, 0.6, 0.5, 0.2, 0.5] },
 ];
 
 let pass = 0, fail = 0;

@@ -297,59 +297,128 @@ export function initInput(refs: CaptureRefs): void {
       beginPinch();
     }
   }
-  // ---- 框选移动（lasso 模式：拖空白=框选 / 拖选中高亮框内=移动，起点一次性判定拖动形态）----
+  // ---- 框选（lasso 模式：拖空白=自由框选 / 拖选中高亮框内=移动 / 拖手柄=缩放，起点一次性判定拖动形态）----
 
-  /// 越过死区（2px，同 Mac `DragGesture(minimumDistance: 2)`）后判一次形态：落笔点落在当前
-  /// 选中高亮框内（含 8px 抓手余量）→ 移动；否则重新框选（并放弃旧选中，同 Mac 逻辑）。
+  /// 对侧手柄（缩放锚点）：角的对角 / 边的对边中点（同 Mac `LassoHandle.opposite`）。
+  const LASSO_HANDLE_OPP: Record<string, string> =
+    { tl: "br", tr: "bl", bl: "tr", br: "tl", t: "b", b: "t", l: "r", r: "l" };
+
+  /// 越过死区（2px，同 Mac `DragGesture(minimumDistance: 2)`）后判一次形态：落笔点命中手柄（10px）→ 缩放；
+  /// 落在当前选中高亮框内（含 8px 抓手余量）→ 移动；否则重新自由框选（并放弃旧选中，同 Mac 逻辑）。
   function handleLassoMove(e: PointerEvent): void {
     const a = G.lassoAnchor; if (!a) return;
     if (!G.lassoMoved) {
       if (Math.hypot(e.clientX - G.lassoDownX, e.clientY - G.lassoDownY) < 2) return;
       G.lassoMoved = true;
-      let mode: "select" | "move" = "select";
+      let mode: "select" | "move" | "scale" = "select";
       if (G.lassoSelection && G.lassoSelection.page === a.page) {
-        const b = G.lassoSelection.bounds;
-        const p0 = G.pageToView(a.page, b[0], b[1]);
-        const p1 = G.pageToView(a.page, b[0] + b[2], b[1] + b[3]);
-        const m = 8;
-        if (G.lassoDownX >= Math.min(p0.x, p1.x) - m && G.lassoDownX <= Math.max(p0.x, p1.x) + m &&
-            G.lassoDownY >= Math.min(p0.y, p1.y) - m && G.lassoDownY <= Math.max(p0.y, p1.y) + m) mode = "move";
+        const hd = G.lassoHandlePts();
+        for (let i = 0; i < hd.length; i++) {
+          if (Math.hypot(G.lassoDownX - hd[i].x, G.lassoDownY - hd[i].y) <= 10) {
+            mode = "scale"; G.lassoHandle = hd[i].h; break;
+          }
+        }
+        if (mode === "select") {
+          const box = G.lassoViewBox();
+          if (box && G.lassoDownX >= box.x - 8 && G.lassoDownX <= box.x + box.w + 8 &&
+              G.lassoDownY >= box.y - 8 && G.lassoDownY <= box.y + box.h + 8) mode = "move";
+        }
       }
       G.lassoDragMode = mode;
-      if (mode === "select") G.lassoSelection = null;
+      if (mode === "select") {
+        G.lassoSelection = null;
+        G.lassoPath = [{ nx: a.nx, ny: a.ny }];
+      } else if (mode === "scale") {
+        // 缩放锚点 = 对侧手柄（页内归一化）：屏显 → norm 折算一次，整个拖动期间不变
+        const sel = G.lassoSelection!;
+        const opp = LASSO_HANDLE_OPP[G.lassoHandle!];
+        const pts = G.lassoHandlePts();
+        for (let i = 0; i < pts.length; i++) {
+          if (pts[i].h === opp) {
+            const an = G.pageLocClamped(pts[i].x, pts[i].y, sel.page);
+            G.lassoScale = { ax: an.nx, ay: an.ny, sx: 1, sy: 1 };
+            break;
+          }
+        }
+      }
     }
     if (G.lassoDragMode === "select") {
-      G.lassoCurBox = G.pageLocClamped(e.clientX, e.clientY, a.page);
+      // 自由路径：≥3px 抽稀（更密的点对多边形命中无增益，白耗 O(点数×边数)）
+      const path = G.lassoPath!;
+      const lastV = G.pageToView(a.page, path[path.length - 1].nx, path[path.length - 1].ny);
+      if (Math.hypot(e.clientX - lastV.x, e.clientY - lastV.y) >= 3) {
+        path.push(G.pageLocClamped(e.clientX, e.clientY, a.page));
+      }
     } else if (G.lassoDragMode === "move") {
       const cur = G.pageLocClamped(e.clientX, e.clientY, a.page);
       G.lassoTranslate = { dx: cur.nx - a.nx, dy: cur.ny - a.ny };
+    } else if (G.lassoDragMode === "scale") {
+      const sel = G.lassoSelection, h = G.lassoHandle;
+      if (sel && h && G.lassoScale) {
+        // 屏显空间算缩放比（按轴线性变换，与归一化坐标严格等价，同 Mac updateLassoScaleGhost）：
+        // 角手柄 = 等比（取变化幅度更大的一轴）、边中点手柄 = 单轴（另一轴恒 1）。
+        const aV = G.pageToView(sel.page, G.lassoScale.ax, G.lassoScale.ay);
+        const pts = G.lassoHandlePts();
+        let startV: { x: number; y: number } | null = null;
+        for (let i = 0; i < pts.length; i++) if (pts[i].h === h) startV = { x: pts[i].x, y: pts[i].y };
+        if (startV) {
+          const denomX = startV.x - aV.x, denomY = startV.y - aV.y;
+          let sx = 1, sy = 1;
+          if (h === "t" || h === "b") {
+            if (Math.abs(denomY) > 1) sy = (e.clientY - aV.y) / denomY;
+          } else if (h === "l" || h === "r") {
+            if (Math.abs(denomX) > 1) sx = (e.clientX - aV.x) / denomX;
+          } else if (Math.abs(denomX) > 1 && Math.abs(denomY) > 1) {
+            sx = (e.clientX - aV.x) / denomX; sy = (e.clientY - aV.y) / denomY;
+            const s = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy;
+            sx = s; sy = s;
+          }
+          G.lassoScale.sx = clamp(sx, 0.05, 20); G.lassoScale.sy = clamp(sy, 0.05, 20);
+        }
+      }
     }
     G.drawNotes();
   }
 
+  /// 提交后的共同收尾：标 committed + 乐观重绘 + 1s 兜底超时（Mac 判定为零命中/零变化时不会回传
+  /// strokes/notes，靠超时兜底清掉乐观预览，避免永久错位显示）。
+  function commitLassoPending(): void {
+    G.lassoCommitted = true;
+    if (G.lassoPendingTimer) clearTimeout(G.lassoPendingTimer);
+    G.lassoPendingTimer = setTimeout(function () { G.lassoPendingTimer = null; if (G.lassoCommitted) G.clearLasso(); }, 1000);
+    G.drawInk(); G.drawNotes();
+  }
+
   /// 松手收尾：纯点击（未越过死区）→ 清除选中（同 Mac `.onTapGesture` 无条件清，与是否命中无关）；
-  /// select → 本地判定命中集（渲染高亮，不上行）；move → 提交位移给 Mac（Mac 用真源复判 + 持久化）。
+  /// select → 本地判定命中集（渲染高亮，不上行）；move → 提交位移；scale → 提交缩放
+  /// （后两者 Mac 用真源复判 + 持久化，协议见 PROTOCOL.md `lassoMove`/`lassoScale`）。
   function finishLasso(): void {
     const a = G.lassoAnchor, mode = G.lassoDragMode;
     if (!G.lassoMoved || !mode) {
       if (G.lassoSelection) { G.lassoSelection = null; G.drawNotes(); }
-    } else if (mode === "select" && a && G.lassoCurBox) {
-      G.lassoSelection = G.lassoHitTest(a.page, a.nx, a.ny, G.lassoCurBox.nx, G.lassoCurBox.ny);
+    } else if (mode === "select" && a && G.lassoPath && G.lassoPath.length >= 3) {
+      const poly: number[] = [];
+      for (let i = 0; i < G.lassoPath.length; i++) poly.push(G.lassoPath[i].nx, G.lassoPath[i].ny);
+      G.lassoSelection = G.lassoHitTest(a.page, poly);
       G.drawNotes();
     } else if (mode === "move" && G.lassoSelection) {
       const { dx, dy } = G.lassoTranslate;
       if (dx !== 0 || dy !== 0) {
         const sel = G.lassoSelection;
-        G.send({ type: "lassoMove", page: sel.page, x0: sel.box[0], y0: sel.box[1], x1: sel.box[2], y1: sel.box[3], dx: dx, dy: dy });
-        G.lassoCommitted = true;
-        if (G.lassoPendingTimer) clearTimeout(G.lassoPendingTimer);
-        // 兜底：Mac 判定为零命中/零变化时不会回传 strokes/notes，靠超时兜底清掉乐观预览，避免永久错位显示。
-        G.lassoPendingTimer = setTimeout(function () { G.lassoPendingTimer = null; if (G.lassoCommitted) G.clearLasso(); }, 1000);
-        G.drawInk(); G.drawNotes();
+        G.send({ type: "lassoMove", page: sel.page, x0: sel.box[0], y0: sel.box[1], x1: sel.box[2], y1: sel.box[3],
+                 dx: dx, dy: dy, poly: sel.poly });
+        commitLassoPending();
+      }
+    } else if (mode === "scale" && G.lassoSelection && G.lassoScale) {
+      const sel = G.lassoSelection, sc = G.lassoScale;
+      if (sc.sx !== 1 || sc.sy !== 1) {
+        G.send({ type: "lassoScale", page: sel.page, x0: sel.box[0], y0: sel.box[1], x1: sel.box[2], y1: sel.box[3],
+                 ax: sc.ax, ay: sc.ay, sx: sc.sx, sy: sc.sy, poly: sel.poly });
+        commitLassoPending();
       }
     }
-    G.lassoDragMode = null; G.lassoMoved = false; G.lassoCurBox = null; G.lassoAnchor = null;
-    if (!G.lassoCommitted) G.lassoTranslate = { dx: 0, dy: 0 };
+    G.lassoDragMode = null; G.lassoMoved = false; G.lassoPath = null; G.lassoAnchor = null; G.lassoHandle = null;
+    if (!G.lassoCommitted) { G.lassoTranslate = { dx: 0, dy: 0 }; G.lassoScale = null; }
   }
 
   function endPen(e: PointerEvent): void {

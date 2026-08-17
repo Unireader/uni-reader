@@ -75,12 +75,13 @@ export interface PageLoc {
   ny: number;
 }
 
-/// 框选移动（lasso 模式）本地判定的选中集：镜像 Mac 端 `LassoSelection`，但这里只用于渲染高亮——
-/// 命中算法是客户端复刻的一份乐观预览（同 `eraseHit` 先例），提交移动时 Mac 用真源重新判定，
+/// 框选（lasso 模式）本地判定的选中集：镜像 Mac 端 `LassoSelection`，但这里只用于渲染高亮——
+/// 命中算法是客户端复刻的一份乐观预览（同 `eraseHit` 先例），提交移动/缩放时 Mac 用真源重新判定，
 /// 不信任这里算出来的 strokeIdx/noteIdx。
 export interface LassoSelection {
   page: number;
-  box: [number, number, number, number];      // x0,y0,x1,y1：框选矩形（归一化，提交时原样带给 Mac 复判）
+  box: [number, number, number, number];      // x0,y0,x1,y1：选区包围盒（归一化，提交时原样带给 Mac 复判）
+  poly: number[] | null;                      // 自由框选路径（扁平 [x0,y0,x1,y1,…]，归一化；提交时带给 Mac 多边形复判）
   strokeIdx: number[];                        // 命中的 G.strokes 下标（本地渲染高亮/ghost 用）
   noteIdx: number[];                          // 命中的 G.notes 下标
   bounds: [number, number, number, number];   // x,y,w,h：命中内容的联合包围盒（画高亮框用）
@@ -155,16 +156,20 @@ export interface GState {
   eraserMode: number;
   eraserRing: boolean;
   eraserRingAt: { x: number; y: number } | null;
-  // 框选移动（lasso 模式，仅页内；命中算法本地复刻一份 Mac 端算法，只为即时预览，
-  // 真正的判定+平移+持久化在 Mac，见 PROTOCOL.md `lassoMove`）：
+  // 框选（lasso 模式，仅页内；命中算法本地复刻一份 Mac 端算法，只为即时预览，
+  // 真正的判定+变更+持久化在 Mac，见 PROTOCOL.md `lassoMove`/`lassoScale`）：
   lassoSelection: LassoSelection | null;              // 当前选中集（本地判定）
-  lassoDragMode: "select" | "move" | null;            // 进行中框选手势的形态（null=无手势在飞）
+  lassoDragMode: "select" | "move" | "scale" | null;  // 进行中框选手势的形态（null=无手势在飞）
   lassoAnchor: { page: number; nx: number; ny: number } | null;  // 落笔点（页内归一化）
   lassoDownX: number; lassoDownY: number;             // 落笔点（视口 px，判是否越过死区）
   lassoMoved: boolean;                                 // 是否已越过最小拖动距离（同 Mac DragGesture minimumDistance）
-  lassoCurBox: { nx: number; ny: number } | null;      // select 模式下当前点（clamp 到锚点页）
+  lassoPath: { nx: number; ny: number }[] | null;      // select 模式自由框选路径（页内归一化，clamp 到锚点页，≥3px 抽稀）
+  lassoHandle: string | null;                          // scale 模式被拖的手柄（tl/tr/bl/br=角·等比，t/b/l/r=边中点·单轴）
+  /// scale 模式的缩放（页内归一化锚点 + 按轴缩放比）：拖动中 = ghost 预览；提交后保留作乐观渲染
+  /// （同 lassoTranslate 的「提交后等回传」语义），clearLasso 一并清掉。
+  lassoScale: { ax: number; ay: number; sx: number; sy: number } | null;
   lassoTranslate: { dx: number; dy: number };          // move 模式下的位移（拖动中 = ghost；提交后 = 乐观预览用）
-  lassoCommitted: boolean;                             // 已发 lassoMove、等 Mac 回传 strokes/notes 期间为 true
+  lassoCommitted: boolean;                             // 已发 lassoMove/lassoScale、等 Mac 回传 strokes/notes 期间为 true
   lassoPendingTimer: ReturnType<typeof setTimeout> | null;  // 提交后的兜底超时（Mac 判定为零变化时不会回传，靠它兜底清状态）
   // 指针/批点（batch 元素：note=[nx,ny,pressure]，erase=[nx,ny,page]）
   activeId: number | null; penMode: string; penX: number; penY: number; batch: number[][];
@@ -237,9 +242,14 @@ export interface GState {
   drawNotes(): void;
   setRadial(o: WireMsg | null): void;
   setPressRing(o: WireMsg | null): void;
-  // 框选移动（lasso 模式，本地判定，见上 GState 字段注释）
+  // 框选（lasso 模式，本地判定，见上 GState 字段注释）
   pageLocClamped(x: number, y: number, page: number): { nx: number; ny: number };
-  lassoHitTest(page: number, x0: number, y0: number, x1: number, y1: number): LassoSelection | null;
+  lassoHitTest(page: number, poly: number[]): LassoSelection | null;
+  /// 当前选中集的屏显框（外扩 6px + 最小 16px，**不含 ghost**）：渲染高亮框/手柄与手柄命中判定共用，
+  /// 别各算各的（同 Mac `lassoDisplayBox`）。
+  lassoViewBox(): { x: number; y: number; w: number; h: number } | null;
+  /// 8 个缩放手柄的屏显位置（不含 ghost）：手柄命中判定与缩放锚点计算用（同 Mac `LassoHandle`）。
+  lassoHandlePts(): { h: string; x: number; y: number }[];
   clearLasso(): void;
   // input.ts
   panBy(dx: number, dy: number): void;

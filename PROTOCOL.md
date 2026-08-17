@@ -103,6 +103,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x47` | lassoMove | C→S | 可靠 |
 | `0x48` | scratchDelete | C→S | 可靠 |
 | `0x49` | scratchRename | C→S | 可靠 |
+| `0x4A` | lassoScale | C→S | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -139,7 +140,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `layerSelect` | `u16 index` | `{type:"layerSelect", index}` |
 | `layerVisible` | `u16 index` · `u8 visible` | `{type:"layerVisible", index, visible}` |
 | `layerAdd` | 空 | `{type:"layerAdd"}` |
-| `lassoMove` | `u32 page` · `f32 x0` · `f32 y0` · `f32 x1` · `f32 y1` · `f32 dx` · `f32 dy` | `{type:"lassoMove", page, x0, y0, x1, y1, dx, dy}` |
+| `lassoMove` | `u32 page` · `f32 x0` · `f32 y0` · `f32 x1` · `f32 y1` · `f32 dx` · `f32 dy` · 〔可选〕`u16 n` · n×(`f32 x` `f32 y`) | `{type:"lassoMove", page, x0, y0, x1, y1, dx, dy, poly?}` |
+| `lassoScale` | `u32 page` · `f32 x0` · `f32 y0` · `f32 x1` · `f32 y1` · `f32 ax` · `f32 ay` · `f32 sx` · `f32 sy` · 〔可选〕`u16 n` · n×(`f32 x` `f32 y`) | `{type:"lassoScale", page, x0, y0, x1, y1, ax, ay, sx, sy, poly?}` |
 
 `textNote`（平板自由文字笔记，C→S）：`op` u8 `0=upsert 1=delete`。`id` 由平板生成（UUID 串），
 Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anchor=落点、无 quote/rects）；
@@ -168,15 +170,29 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 （`InkLayer.next(after:)`），追加后立即设为当前作画图层。
 
 `lassoMove`（框选移动提交，平板发起，C→S）：`mode=lasso` 下平板本地用与 Mac 端
-`ReaderSurface+Lasso.finishLassoSelect` 同一套算法（任一点/锚点落框即命中）对本地镜像的
+`ReaderSurface+Lasso.finishLassoSelect` 同一套算法对本地镜像的
 `strokes`/`notes` 做框选判定与拖动 ghost 预览，这一步**纯本地、不上行**（同 `eraseHit` 先例：
-命中算法客户端复刻一份，只为即时回显）；只有松手提交移动时才发这一条：`x0,y0,x1,y1` = 框选时
-的矩形（页内归一化，`min≤max`），`dx,dy` = 拖动位移（页内归一化，可为负）。Mac 收到后**不信任
-平板的本地判定结果**，而是用同一套命中算法在自己的真源 `session.strokes`/`textNotes` 上按
-`page`+`x0..y1` 重新框选、`InkEdit.translated` 平移命中项、持久化，再 `broadcastStrokes`/
+命中算法客户端复刻一份，只为即时回显）；只有松手提交移动时才发这一条：`x0,y0,x1,y1` = 框选
+区域的包围盒（页内归一化，`min≤max`），`dx,dy` = 拖动位移（页内归一化，可为负）。Mac 收到后
+**不信任平板的本地判定结果**，而是用同一套命中算法在自己的真源 `session.strokes`/`textNotes`
+上重新框选、`InkEdit.translated` 平移命中项、持久化，再 `broadcastStrokes`/
 `broadcastNotes` 把结果镜像回所有客户端——与 `erase`（平板发点、Mac 用真源做 `eraseNear`）是
 同一套「客户端乐观预览 + 服务端复判执行」惯例，规避了 `strokes`/`notes` 线上不带稳定 id、
 平板无法直接引用具体某条笔迹/注解的问题。
+
+**尾部可选多边形**（同 `gotoPage.frac` 先例，缺省 = 老形态字节不变）：自由框选（2026-08-17 起，
+三端框选一律为不规则路径而非矩形）时，平板把框选路径逐点附上——`u16 n` + n 个 (`f32 x`,`f32 y`)
+页内归一化点（n≥3，首尾自动闭合；JSON 形态为扁平数组 `poly:[x0,y0,x1,y1,…]`）。有尾部时 Mac 按
+**多边形命中**复判（笔迹任一点落多边形内、注解 anchor 中心落多边形内，`InkEdit.pointInPolygon`
+射线法）；无尾部则按 `x0..y1` 矩形命中（兼容老客户端）。命中规则与 Mac 本机
+`finishLassoSelect` 严格一致——多端实现同一算法，改动必须三端同步。
+
+`lassoScale`（框选缩放提交，平板发起，C→S，2026-08-17 新增）：与 `lassoMove` 同一套
+「客户端乐观预览 + 服务端复判执行」惯例，提交的是缩放而非平移：`ax,ay` = 缩放锚点（被拖手柄的
+对侧手柄，页内归一化；角手柄默认等比、边中点手柄单轴——这个交互约束只影响客户端怎么算
+`sx,sy`，线上不体现），`sx,sy` = 按轴缩放比（正数，客户端 clamp 0.05...20）。Mac 复判命中后
+`InkEdit.scaled`（点集绕锚点按轴缩放 + clamp 0...1、线宽 ×√(sx·sy)、注解 anchor/rects 同缩放）、
+持久化、镜像回所有客户端。多边形尾部语义与 `lassoMove` 完全相同。
 
 `gotoPage` 的 `frac`（**尾部可选 f32**，同 `ink begin` 的 `flags` 先例）：目标页内的纵向归一化位置，
 语义与 `viewport.frac`/`scroll.frac` 完全一致（0=页顶）。**缺省或 0 时编码端一律省略这 4 字节**——

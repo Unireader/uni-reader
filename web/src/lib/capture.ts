@@ -37,9 +37,10 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     rulerOn: false, lineStroke: false,
     // 橡皮：归一化半径（页宽比）/ 模式（1=局部）/ 尺寸圆环开关与位置（Mac 的 eraser 消息下发后更新）
     eraserSize: 0.02, eraserMode: 1, eraserRing: true, eraserRingAt: null,
-    // 框选移动（lasso 模式，全部瞬态，本地判定仅用于预览）
+    // 框选（lasso 模式，全部瞬态，本地判定仅用于预览）
     lassoSelection: null, lassoDragMode: null, lassoAnchor: null,
-    lassoDownX: 0, lassoDownY: 0, lassoMoved: false, lassoCurBox: null,
+    lassoDownX: 0, lassoDownY: 0, lassoMoved: false,
+    lassoPath: null, lassoHandle: null, lassoScale: null,
     lassoTranslate: { dx: 0, dy: 0 }, lassoCommitted: false, lassoPendingTimer: null,
     // 指针/批点
     activeId: null, penMode: "", penX: 0, penY: 0, batch: [],
