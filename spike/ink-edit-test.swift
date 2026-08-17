@@ -142,5 +142,61 @@ check(near(pt0.anchor.minX, 0.0) && near(pt0.anchor.minY, 0.35) && pt0.anchor.wi
 let rr = InkEdit.translatedRect(CGRect(x: 0.9, y: 0.05, width: 0.2, height: 0.1), dx: 0.2, dy: -0.1)
 check(near(rr.minX, 1.0) && rr.width == 0 && near(rr.minY, 0.0), "rect 双向 clamp（贴角收缩为零宽）")
 
+// ---- scaled（InkStroke：绕 anchor 按轴缩放 + clamp + 线宽几何平均）----
+print("scaled（InkStroke 绕 anchor 缩放 + clamp 0...1）")
+let sc = InkStroke(id: base.id, page: 1, color: color, width: 4, type: .ballpoint,
+                   points: [SIMD3(0.2, 0.2, 0.3), SIMD3(0.4, 0.6, 0.8)])
+let anchor = SIMD2<Double>(0.2, 0.2)
+// 绕 anchor 放大 2 倍：anchor 点不动，(0.4,0.6) → (0.2+0.2×2, 0.2+0.4×2) = (0.6,1.0)
+let s2 = InkEdit.scaled(sc, anchor: anchor, sx: 2, sy: 2)
+check(near(s2.points[0].x, 0.2) && near(s2.points[0].y, 0.2), "anchor 上的点缩放后不动")
+check(near(s2.points[1].x, 0.6) && near(s2.points[1].y, 1.0), "(0.4,0.6) 放大 2× → (0.6,1.0)，y 恰贴上界")
+check(near(s2.width, 8.0), "等比 2× → 线宽 ×2（4→8）")
+check(near(s2.points[0].z, 0.3) && near(s2.points[1].z, 0.8), "压感 z 不动")
+check(s2.id == sc.id && s2.page == sc.page && s2.type == sc.type, "id/page/type 不变")
+// 非等比：sx=2, sy=0.5 → 线宽 ×√(2×0.5)=×1 不变
+let sAniso = InkEdit.scaled(sc, anchor: anchor, sx: 2, sy: 0.5)
+check(near(sAniso.points[1].x, 0.6) && near(sAniso.points[1].y, 0.4), "非等比 (sx2,sy0.5)：(0.4,0.6) → (0.6,0.4)")
+check(near(sAniso.width, 4.0), "非等比 (2,0.5) → 线宽 ×√1 不变")
+// clamp：缩小成负数不越下界；放大越 1 clamp
+let sClamp = InkEdit.scaled(sc, anchor: SIMD2(0.8, 0.8), sx: 4, sy: 4)
+check(near(sClamp.points[0].x, 0.0) && near(sClamp.points[0].y, 0.0), "绕 (0.8,0.8) 放大 4× → 双轴 clamp 到 0")
+// 线宽 clamp：极大放大 capped 40，极小 floored 0.5
+check(InkEdit.scaled(sc, anchor: anchor, sx: 20, sy: 20).width == 40, "线宽上界 clamp 40")
+check(InkEdit.scaled(sc, anchor: anchor, sx: 0.05, sy: 0.05).width == 0.5, "线宽下界 clamp 0.5")
+
+// ---- scaled（TextNote：anchor + rects 一起缩放，页内 clamp）----
+print("scaled（TextNote 缩放 + clamp 0...1）")
+let sNote = TextNote(id: UUID(), page: 2,
+                     anchor: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.1),
+                     quote: "q", text: "t",
+                     rects: [CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.04)])
+let sn = InkEdit.scaled(sNote, anchor: SIMD2(0.4, 0.4), sx: 2, sy: 2)
+check(near(sn.anchor.minX, 0.4) && near(sn.anchor.maxX, 0.8) && near(sn.anchor.maxY, 0.6), "anchor 绕自身左上角放大 2×")
+check(sn.rects.count == 1 && near(sn.rects[0].width, 0.4) && near(sn.rects[0].height, 0.08), "rect 同缩放")
+check(sn.id == sNote.id && sn.page == sNote.page && sn.quote == sNote.quote && sn.text == sNote.text, "id/page/quote/text 不动")
+check(sn.updatedAt > sNote.updatedAt, "updatedAt bump（对账识别为变更）")
+let snClamp = InkEdit.scaled(sNote, anchor: SIMD2(0.0, 0.0), sx: 4, sy: 4)
+check(near(snClamp.anchor.maxX, 1.0) && near(snClamp.anchor.maxY, 1.0), "绕原点放大 → maxX/maxY clamp 到 1")
+// scaledRect：绕 anchor 缩放 + clamp
+let sr = InkEdit.scaledRect(CGRect(x: 0.5, y: 0.5, width: 0.2, height: 0.2), anchor: SIMD2(0.5, 0.5), sx: 3, sy: 0.5)
+check(near(sr.minX, 0.5) && near(sr.maxX, 1.0) && near(sr.height, 0.1), "scaledRect：x 放大 3× clamp、y 缩 0.5×")
+
+// ---- pointInPolygon（射线法；边界算内）----
+print("pointInPolygon（自由框选命中）")
+let quad = [SIMD2(0.1, 0.1), SIMD2(0.5, 0.1), SIMD2(0.5, 0.5), SIMD2(0.1, 0.5)]
+check(InkEdit.pointInPolygon(SIMD2(0.3, 0.3), polygon: quad), "方形：内部点 → true")
+check(!InkEdit.pointInPolygon(SIMD2(0.6, 0.3), polygon: quad), "方形：右侧外部点 → false")
+check(!InkEdit.pointInPolygon(SIMD2(0.3, 0.6), polygon: quad), "方形：下方外部点 → false")
+check(InkEdit.pointInPolygon(SIMD2(0.5, 0.3), polygon: quad), "边界上的点 → true（框线擦到算选中）")
+// 凹多边形（U 形）：凹槽内的点不在多边形内
+let concave = [SIMD2(0.0, 0.0), SIMD2(0.6, 0.0), SIMD2(0.6, 0.6), SIMD2(0.4, 0.6),
+               SIMD2(0.4, 0.2), SIMD2(0.2, 0.2), SIMD2(0.2, 0.6), SIMD2(0.0, 0.6)]
+check(InkEdit.pointInPolygon(SIMD2(0.1, 0.4), polygon: concave), "凹多边形：实体内点 → true")
+check(!InkEdit.pointInPolygon(SIMD2(0.3, 0.4), polygon: concave), "凹多边形：凹槽内点 → false")
+check(InkEdit.pointInPolygon(SIMD2(0.3, 0.1), polygon: concave), "凹多边形：顶部横梁内点 → true")
+// 退化：< 3 点恒 false
+check(!InkEdit.pointInPolygon(SIMD2(0.3, 0.3), polygon: [SIMD2(0.1, 0.1), SIMD2(0.5, 0.5)]), "两点多边形 → false")
+
 print("\n\(pass) passed, \(fail) failed")
 exit(fail == 0 ? 0 : 1)

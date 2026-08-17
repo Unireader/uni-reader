@@ -85,9 +85,50 @@ struct LassoSelection: Equatable {
     var bounds: CGRect
 }
 
-/// 进行中的框选手势形态：拖空白 = 重新框选（虚线框）；拖选中高亮框内 = 移动选中项（ghost 预览）。
-enum LassoDragMode {
-    case select, move
+/// 进行中的框选手势形态：拖空白 = 重新框选（自由路径虚线）；拖选中高亮框内 = 移动选中项（ghost 预览）；
+/// 拖手柄 = 缩放（ghost 预览：**角手柄 = 等比**（⇧ 临时自由两轴）、**边中点手柄 = 单轴**；anchor = 对角/对边中点）。
+enum LassoDragMode: Equatable {
+    case select, move, scale(LassoHandle)
+}
+
+/// 高亮框缩放手柄：四角（等比缩放）+ 四边中点（单轴缩放）。
+enum LassoHandle: Equatable, CaseIterable {
+    case tl, tr, bl, br, t, b, l, r
+
+    var isCorner: Bool {
+        switch self {
+        case .tl, .tr, .bl, .br: return true
+        case .t, .b, .l, .r: return false
+        }
+    }
+
+    /// 手柄在 rect 上的点（角 / 边中点）。
+    func point(in r: CGRect) -> CGPoint {
+        switch self {
+        case .tl: return CGPoint(x: r.minX, y: r.minY)
+        case .tr: return CGPoint(x: r.maxX, y: r.minY)
+        case .bl: return CGPoint(x: r.minX, y: r.maxY)
+        case .br: return CGPoint(x: r.maxX, y: r.maxY)
+        case .t:  return CGPoint(x: r.midX, y: r.minY)
+        case .b:  return CGPoint(x: r.midX, y: r.maxY)
+        case .l:  return CGPoint(x: r.minX, y: r.midY)
+        case .r:  return CGPoint(x: r.maxX, y: r.midY)
+        }
+    }
+
+    /// 对侧手柄（缩放 anchor：角的对角 / 边的对边中点）。
+    var opposite: LassoHandle {
+        switch self {
+        case .tl: return .br
+        case .tr: return .bl
+        case .bl: return .tr
+        case .br: return .tl
+        case .t:  return .b
+        case .b:  return .t
+        case .l:  return .r
+        case .r:  return .l
+        }
+    }
 }
 
 /// 一帧内共享的逐页数据分桶。

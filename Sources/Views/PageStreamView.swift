@@ -82,10 +82,12 @@ struct ReaderSurface: View {
     @State var selection: TextSelection?
     /// 批注编辑器目标（非 nil 即呈现 sheet）：新建（选区草稿）或编辑（点页面图钉）。
     @State var editorTarget: NoteEditorTarget?
-    // 框选移动（pointerTool == .lasso，仅页内；全部瞬态，不持久化——逻辑见 ReaderSurface+Lasso）
+    // 框选移动/缩放（pointerTool == .lasso，仅页内；全部瞬态，不持久化——逻辑见 ReaderSurface+Lasso）
     @State var lassoSelection: LassoSelection?      // 选中集（同页笔迹/注解 id + 归一化联合包围盒）
-    @State var lassoRect: CGRect?                   // 进行中的框选虚线矩形（视口坐标）
+    @State var lassoPath: [CGPoint]?                // 进行中的自由框选路径（视口坐标，≥3pt 抽稀）
     @State var lassoGhostOffset: CGSize = .zero     // 移动中的 ghost 预览偏移（显示点；数据在松手前不动）
+    /// 缩放中的 ghost 预览（显示空间缩放比 + 被拖的手柄；anchor = 其对侧手柄；数据在松手前不动）。
+    @State var lassoGhostScale: (sx: CGFloat, sy: CGFloat, handle: LassoHandle)?
     /// 点注解图钉拖拽的 ghost 预览偏移（note id + 页内像素位移；数据在松手前不动，逻辑见 ReaderSurface+Selection）。
     @State var notePinDrag: (id: UUID, off: CGSize)?
     /// 本机擦除的尺寸圆环位置（视口坐标；pointerTool==.ink 且 erase 模式时跟随光标，其余时刻 nil）。
@@ -198,7 +200,7 @@ struct ReaderSurface: View {
                             onCancel: { editorTarget = nil })
         }
         .overlay(alignment: .topLeading) { followTicker }
-        // 框选进行中的虚线矩形（视口坐标，与 DragGesture .local 同空间；不随内容滚动——框选拖动中不滚动）。
+        // 框选进行中的虚线自由路径（视口坐标，与 DragGesture .local 同空间；不随内容滚动——框选拖动中不滚动）。
         .overlay { lassoDragOverlay }
         // 本机擦除的尺寸圆环（同挂 ScrollView 视口坐标系）：pointerTool==.ink 且 erase 模式跟光标，
         // 直径 = 2×eraserRadius×页宽；eraserRing 关则不画。
@@ -285,7 +287,8 @@ struct ReaderSurface: View {
                 ForEach(Array(realized), id: \.self) { i in
                     pageCell(i, layout: layout, buckets: buckets)
                 }
-                lassoHighlight   // 框选选中项高亮框 + 移动 ghost（内容坐标，置于页元胞之上）
+                lassoStrokeHalo  // 框选选中笔迹的光晕边缘（内容坐标，置于页元胞之上，随 ghost 变换）
+                lassoHighlight   // 框选选中项高亮框 + 四角缩放手柄 + 移动/缩放 ghost（内容坐标）
             }
             .frame(width: contentW, height: contentH, alignment: .topLeading)
             .transaction { $0.animation = nil }   // 零闪烁纪律 4：阅读区无隐式动画

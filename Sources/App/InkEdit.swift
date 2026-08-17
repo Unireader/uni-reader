@@ -1,7 +1,7 @@
 import Foundation
 
 /// 笔迹编辑纯函数集（无 UI 依赖，spike 可测）。
-/// 覆盖：尺子 45° 吸附（③）、局部擦除切段（②）、框选平移（④）。
+/// 覆盖：尺子 45° 吸附（③）、局部擦除切段（②）、框选平移（④）、框选缩放（⑤）、自由框选多边形命中（⑥）。
 ///
 /// ⚠️ `splitStroke` 与网页端 `web/src/lib/render.ts` 的切段实现是**同一算法两份实现**
 /// （②接入时移植），改一边必须同步另一边，否则平板乐观擦除与 Mac 真源对不上——
@@ -87,5 +87,61 @@ enum InkEdit {
         let x1 = cl(Double(r.minX) + dx), x2 = cl(Double(r.maxX) + dx)
         let y1 = cl(Double(r.minY) + dy), y2 = cl(Double(r.maxY) + dy)
         return CGRect(x: min(x1, x2), y: min(y1, y2), width: abs(x2 - x1), height: abs(y2 - y1))
+    }
+
+    /// 框选缩放（⑤）：点集绕 anchor 按轴缩放 `(p−a)×s+a`，x/y 各 clamp 到 0...1
+    /// （压感不动，id 不变）。归一化坐标 x/y 两轴尺度不同，但按轴缩放是逐轴线性变换，
+    /// 与「显示空间算 sx/sy 再回作用到归一化坐标」严格等价，无需 aspect 折算。
+    /// 线宽按几何平均 `√(sx·sy)` 同步缩放（笔迹放大不变细、缩小不变粗），
+    /// 宽度结果 clamp 到 0.5...40（防缩没/撑爆；s 本身由调用方 clamp 过）。
+    static func scaled(_ s: InkStroke, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> InkStroke {
+        func cl(_ v: Double) -> Double { min(1, max(0, v)) }
+        var t = s
+        t.points = s.points.map { p in
+            SIMD3(cl(a.x + (p.x - a.x) * sx), cl(a.y + (p.y - a.y) * sy), p.z)
+        }
+        t.width = min(40, max(0.5, s.width * (sx * sy).squareRoot()))
+        return t
+    }
+
+    /// 文字注解缩放（⑤ 框选缩放）：anchor 与每个 rect 绕 anchor 点按轴缩放，各角 clamp 到 0...1
+    /// （字号不缩——注解是文字不是图形；bump updatedAt 让 persistTextNotes 值快照识别为变更）。
+    static func scaled(_ n: TextNote, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> TextNote {
+        var t = n
+        t.anchor = scaledRect(n.anchor, anchor: a, sx: sx, sy: sy)
+        t.rects = n.rects.map { scaledRect($0, anchor: a, sx: sx, sy: sy) }
+        t.updatedAt = .now
+        return t
+    }
+
+    /// 归一化 rect 缩放：min/max 角各绕 anchor 按轴缩放并 clamp 到 0...1。
+    static func scaledRect(_ r: CGRect, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> CGRect {
+        func cl(_ v: Double) -> Double { min(1, max(0, v)) }
+        let x1 = cl(a.x + (Double(r.minX) - a.x) * sx), x2 = cl(a.x + (Double(r.maxX) - a.x) * sx)
+        let y1 = cl(a.y + (Double(r.minY) - a.y) * sy), y2 = cl(a.y + (Double(r.maxY) - a.y) * sy)
+        return CGRect(x: min(x1, x2), y: min(y1, y2), width: abs(x2 - x1), height: abs(y2 - y1))
+    }
+
+    /// 点在不规则多边形内（⑥ 自由框选命中）：射线法（向右水平射线计奇偶交点）。
+    /// 多边形无需闭合（首末点自动连边）；< 3 个点恒 false；恰在边界上的点判内（框线擦到也算选中，手感宽）。
+    static func pointInPolygon(_ p: SIMD2<Double>, polygon poly: [SIMD2<Double>]) -> Bool {
+        guard poly.count >= 3 else { return false }
+        var inside = false
+        var j = poly.count - 1
+        for i in 0..<poly.count {
+            let a = poly[i], b = poly[j]
+            // 边界判定：p 落在线段 a-b 上（共线且在包围盒内，容差 1e-9）
+            let cross = (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x)
+            if abs(cross) < 1e-9,
+               p.x >= min(a.x, b.x) - 1e-9, p.x <= max(a.x, b.x) + 1e-9,
+               p.y >= min(a.y, b.y) - 1e-9, p.y <= max(a.y, b.y) + 1e-9 { return true }
+            // 射线法：边跨越 p.y 水平线时，比较交点 x 与 p.x
+            if (a.y > p.y) != (b.y > p.y) {
+                let xInt = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+                if p.x < xInt { inside.toggle() }
+            }
+            j = i
+        }
+        return inside
     }
 }
