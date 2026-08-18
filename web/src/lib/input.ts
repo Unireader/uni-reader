@@ -380,10 +380,11 @@ export function initInput(refs: CaptureRefs): void {
     G.drawNotes();
   }
 
-  /// 提交后的共同收尾：标 committed + 乐观重绘 + 1s 兜底超时（Mac 判定为零命中/零变化时不会回传
-  /// strokes/notes，靠超时兜底清掉乐观预览，避免永久错位显示）。
+  /// 提交后的共同收尾：标 committed + 两条镜像记账清零 + 乐观重绘 + 1s 兜底超时
+  /// （正常路径 Mac 必回传——零命中也会回传未变镜像让客户端当场收敛，超时只是保险丝）。
   function commitLassoPending(): void {
     G.lassoCommitted = true;
+    G.lassoSyncStrokes = false; G.lassoSyncNotes = false;
     if (G.lassoPendingTimer) clearTimeout(G.lassoPendingTimer);
     G.lassoPendingTimer = setTimeout(function () { G.lassoPendingTimer = null; if (G.lassoCommitted) G.clearLasso(); }, 1000);
     G.drawInk(); G.drawNotes();
@@ -392,13 +393,16 @@ export function initInput(refs: CaptureRefs): void {
   /// 松手收尾：纯点击（未越过死区）→ 清除选中（同 Mac `.onTapGesture` 无条件清，与是否命中无关）；
   /// select → 本地判定命中集（渲染高亮，不上行）；move → 提交位移；scale → 提交缩放
   /// （后两者 Mac 用真源复判 + 持久化，协议见 PROTOCOL.md `lassoMove`/`lassoScale`）。
+  /// ⚠️ 手势瞬态（mode/path/anchor/handle）必须先清再画——各分支里的 draw* 已经是「手势结束后」
+  /// 的画面；先画后清会让虚线路径残留在选中框上直到下一次重绘（2026-08-18 实测 bug）。
   function finishLasso(): void {
-    const a = G.lassoAnchor, mode = G.lassoDragMode;
-    if (!G.lassoMoved || !mode) {
+    const a = G.lassoAnchor, mode = G.lassoDragMode, moved = G.lassoMoved, path = G.lassoPath;
+    G.lassoDragMode = null; G.lassoMoved = false; G.lassoPath = null; G.lassoAnchor = null; G.lassoHandle = null;
+    if (!moved || !mode) {
       if (G.lassoSelection) { G.lassoSelection = null; G.drawNotes(); }
-    } else if (mode === "select" && a && G.lassoPath && G.lassoPath.length >= 3) {
+    } else if (mode === "select" && a && path && path.length >= 3) {
       const poly: number[] = [];
-      for (let i = 0; i < G.lassoPath.length; i++) poly.push(G.lassoPath[i].nx, G.lassoPath[i].ny);
+      for (let i = 0; i < path.length; i++) poly.push(path[i].nx, path[i].ny);
       G.lassoSelection = G.lassoHitTest(a.page, poly);
       G.drawNotes();
     } else if (mode === "move" && G.lassoSelection) {
@@ -417,7 +421,6 @@ export function initInput(refs: CaptureRefs): void {
         commitLassoPending();
       }
     }
-    G.lassoDragMode = null; G.lassoMoved = false; G.lassoPath = null; G.lassoAnchor = null; G.lassoHandle = null;
     if (!G.lassoCommitted) { G.lassoTranslate = { dx: 0, dy: 0 }; G.lassoScale = null; }
   }
 

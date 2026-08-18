@@ -440,7 +440,12 @@ final class AppModel: ObservableObject {
         for i in s.textNotes.indices where s.textNotes[i].page == page {
             if noteHit(s.textNotes[i]) { hitN.insert(i) }
         }
-        guard !hitS.isEmpty || !hitN.isEmpty else { return }
+        guard !hitS.isEmpty || !hitN.isEmpty else {
+            // 零命中也要回传未变镜像：客户端提交后进入乐观预览并等回传（web/安卓都是「两条镜像
+            // 到齐才清预览」），不回传它只能等 1s 超时弹回——慢网络下肉眼可见闪烁（2026-08-18 用户报）。
+            if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
+            return
+        }
         mutate((hitS, hitN))
         if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
     }

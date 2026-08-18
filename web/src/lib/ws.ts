@@ -100,17 +100,28 @@ export function initWs(): void {
     // 长按进度环（盘的前置动画）：同样是 Mac 判定，on=false 撤环。
     else if (o.type === "pressRing") { G.setPressRing(o); }
     // Mac 回传的全部笔迹（唯一真源）：平板据此显示 + 刷新/重连/切档后恢复。正在写的这一笔(cur)不清，避免闪断。
-    // 框选移动已提交、正等这条回来：新数据本身就是移动后的真源，乐观预览（lassoTranslate 偏移渲染）到此为止。
+    // 框选提交后等回传：两条镜像（strokes/notes）**分开记账**——这条到了笔迹层改画真源（该层命中
+    // 下标作废），notes 层继续乐观预览直到它的镜像也到；两条都到齐才 clearLasso（否则先到的那条
+    // 把乐观变换全清掉，另一层跳回原位再跳回来 = 闪烁，2026-08-18 用户报）。
     else if (o.type === "strokes") {
       G.strokes = o.list || [];
       if (G.activeId === null) { G.cur = null; G.drawLive(); }
-      if (G.lassoCommitted) G.clearLasso(); else G.drawInk();
+      if (G.lassoCommitted) {
+        G.lassoSyncStrokes = true;
+        if (G.lassoSelection) G.lassoSelection.strokeIdx = [];   // 下标按旧数组算的，新数组上已失效
+        if (G.lassoSyncNotes) G.clearLasso(); else { G.drawInk(); G.drawNotes(); }
+      } else G.drawInk();
     }
     // 文字笔记全量镜像（Mac 是唯一真源）：收到即整体替换本地列表并重画标记。
     // layout 切文档后 Mac 会重发 notes，故 setLayout 不像 strokes 那样清空 notes（等重发即可，避免闪空）。
+    // 框选提交后的分开记账同上（notes 层到了改画真源，strokes 层继续乐观直到其镜像到达）。
     else if (o.type === "notes") {
       G.notes = o.list || [];
-      if (G.lassoCommitted) G.clearLasso(); else G.drawNotes();
+      if (G.lassoCommitted) {
+        G.lassoSyncNotes = true;
+        if (G.lassoSelection) G.lassoSelection.noteIdx = [];
+        if (G.lassoSyncStrokes) G.clearLasso(); else G.drawNotes();
+      } else G.drawNotes();
     }
     // 草稿纸列表 + 开着第几张（Mac 是「哪张纸开着」的唯一真源；本地只发 scratchOpen/scratchAdd 请求）。
     else if (o.type === "scratchpads") { G.applyScratchPads(o); }

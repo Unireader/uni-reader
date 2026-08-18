@@ -170,7 +170,12 @@ export interface GState {
   lassoScale: { ax: number; ay: number; sx: number; sy: number } | null;
   lassoTranslate: { dx: number; dy: number };          // move 模式下的位移（拖动中 = ghost；提交后 = 乐观预览用）
   lassoCommitted: boolean;                             // 已发 lassoMove/lassoScale、等 Mac 回传 strokes/notes 期间为 true
-  lassoPendingTimer: ReturnType<typeof setTimeout> | null;  // 提交后的兜底超时（Mac 判定为零变化时不会回传，靠它兜底清状态）
+  /// 提交后两条镜像（strokes/notes）**分开记账**：Mac 是两条独立广播，任意一条先到就清掉全部乐观
+  /// 变换会让另一层跳回原位再跳回来（2026-08-18 用户报「放下后笔迹闪烁」的根因）——
+  /// 哪条到了哪层改画真源（该层命中下标同时清空，halo/乐观变换停止作用于它），**两条都到齐才 clearLasso**。
+  lassoSyncStrokes: boolean;
+  lassoSyncNotes: boolean;
+  lassoPendingTimer: ReturnType<typeof setTimeout> | null;  // 提交后的兜底超时（正常路径 Mac 必回传——含零命中，这只是保险丝）
   // 指针/批点（batch 元素：note=[nx,ny,pressure]，erase=[nx,ny,page]）
   activeId: number | null; penMode: string; penX: number; penY: number; batch: number[][];
   pbatch: [number, number][]; probePage: number; probing: boolean;

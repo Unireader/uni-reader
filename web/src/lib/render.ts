@@ -175,11 +175,12 @@ export function initRender(refs: CaptureRefs): void {
     return { x, y, w, h };
   }
 
-  /// 清掉框选的全部瞬态状态（切走工具/Esc/收到 Mac 权威回传时调用）。
+  /// 清掉框选的全部瞬态状态（切走工具/Esc/两条镜像都回传时调用）。
   function clearLasso(): void {
     if (G.lassoPendingTimer) { clearTimeout(G.lassoPendingTimer); G.lassoPendingTimer = null; }
     G.lassoSelection = null; G.lassoDragMode = null; G.lassoMoved = false;
     G.lassoPath = null; G.lassoAnchor = null; G.lassoCommitted = false;
+    G.lassoSyncStrokes = false; G.lassoSyncNotes = false;
     G.lassoHandle = null; G.lassoScale = null;
     G.lassoTranslate = { dx: 0, dy: 0 };
     drawInk(); drawNotes();
@@ -339,10 +340,11 @@ export function initRender(refs: CaptureRefs): void {
   /// 静态层：已成形的笔迹（Mac 回传的唯一真源）。
   /// 框选移动/缩放已提交（`lassoCommitted`）、等 Mac 回传新 strokes 期间：被选中的笔迹按提交量乐观渲染，
   /// 避免「松手瞬间弹回原位、新 strokes 到达才跳到新位置」的闪烁——数据本身不动，只是画的时候偏一下。
+  /// strokes 镜像一到（`lassoSyncStrokes`）即改画真源（乐观只作用于还没到的层，两条镜像分开记账）。
   function drawInk(): void {
     ictx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    const sel = G.lassoCommitted ? G.lassoSelection : null;
-    const xf = lassoXform(false);   // 仅已提交（等回传）期间非 null
+    const sel = (G.lassoCommitted && !G.lassoSyncStrokes) ? G.lassoSelection : null;
+    const xf = sel ? lassoXform(false) : null;
     const wScale = sel && G.lassoScale ? Math.sqrt(G.lassoScale.sx * G.lassoScale.sy) : 1;   // 线宽同步（同 Mac InkEdit.scaled）
     for (let i = 0; i < G.strokes.length; i++) {
       const s = G.strokes[i];
@@ -419,8 +421,8 @@ export function initRender(refs: CaptureRefs): void {
     hctx.save();
     hctx.textAlign = "center"; hctx.textBaseline = "middle";
     hctx.font = "600 " + Math.round(r * 0.9) + "px -apple-system,'PingFang SC',system-ui,sans-serif";
-    const lassoNoteSel = G.lassoCommitted ? G.lassoSelection : null;
-    const noteXf = lassoXform(false);
+    const lassoNoteSel = (G.lassoCommitted && !G.lassoSyncNotes) ? G.lassoSelection : null;
+    const noteXf = lassoNoteSel ? lassoXform(false) : null;
     for (let i = 0; i < G.notes.length; i++) {
       const n = G.notes[i];
       let nnx = n.nx, nny = n.ny;
@@ -564,6 +566,8 @@ export function initRender(refs: CaptureRefs): void {
     if (!box) return;
     const xf = lassoXform(true);
     // —— 选中笔迹光晕（accent 半透明包边；线宽 = 笔宽 + 5，与笔迹渲染同一页局部 px 尺度）——
+    // strokes 镜像已到（lassoSyncStrokes）则跳过：那层已改画真源，halo 的命中下标随回传作废。
+    if (!G.lassoSyncStrokes) {
     hctx.save();
     hctx.lineCap = "round"; hctx.lineJoin = "round";
     hctx.strokeStyle = "rgba(31,111,235,0.35)"; hctx.fillStyle = "rgba(31,111,235,0.35)";
@@ -589,6 +593,7 @@ export function initRender(refs: CaptureRefs): void {
       hctx.stroke();
     }
     hctx.restore();
+    }
     // —— 高亮框 + 手柄（ghost：scale 绕锚点缩放 / move 平移；屏显坐标系直接变换）——
     let ghostPt = function (x: number, y: number): { x: number; y: number } { return { x, y }; };
     if (xf && G.lassoScale) {

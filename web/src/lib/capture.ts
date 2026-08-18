@@ -41,7 +41,8 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     lassoSelection: null, lassoDragMode: null, lassoAnchor: null,
     lassoDownX: 0, lassoDownY: 0, lassoMoved: false,
     lassoPath: null, lassoHandle: null, lassoScale: null,
-    lassoTranslate: { dx: 0, dy: 0 }, lassoCommitted: false, lassoPendingTimer: null,
+    lassoTranslate: { dx: 0, dy: 0 }, lassoCommitted: false,
+    lassoSyncStrokes: false, lassoSyncNotes: false, lassoPendingTimer: null,
     // 指针/批点
     activeId: null, penMode: "", penX: 0, penY: 0, batch: [],
     pbatch: [], probePage: 0, probing: false,           // 探针流（擦除/翻页模式专用）：平行上报笔位置给 Mac 做长按检测/环形盘
