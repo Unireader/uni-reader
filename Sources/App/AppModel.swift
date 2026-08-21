@@ -3,7 +3,7 @@ import PDFKit
 import Combine
 
 /// 本机指针工具：Mac 鼠标/触控板在阅读区干什么——默认文字选择；`.ink` = 本机直接落墨/擦除
-/// （共用笔架当前选中笔与橡皮）；`.lasso` = 框选移动（仅页内：虚线框选中同页笔迹+文字注解，整体平移）。
+/// （共用笔架当前选中笔与橡皮）；`.lasso` = 框选移动/缩放（页内：同页笔迹+文字注解；草稿纸：纸上笔迹）。
 enum PointerTool: String {
     case textSelect
     case ink

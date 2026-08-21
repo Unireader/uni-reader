@@ -5,7 +5,8 @@ import PDFKit   // 页面底图：取锚定页的显示尺寸 + 走 PageRenderEn
 /// 草稿纸覆盖层：盖在阅读区之上的一张**无限白纸**（纯 SwiftUI，同阅读区红线）。
 ///
 /// 交互取通用无限画布的那套，不发明新手势：
-///  · 拖动 = 平移；`pointerTool == .ink` 时 = 落墨/擦除（与阅读区本机落墨同一个开关）
+///  · 拖动 = 平移；`pointerTool == .ink` 时 = 落墨/擦除（与阅读区本机落墨同一个开关）；
+///    `pointerTool == .lasso` 时 = 框选移动/缩放纸上笔迹（与页内框选同一套，见文件末尾扩展）
 ///  · 双指捏合 / ⌘滚轮 = 以指针为锚缩放；普通滚轮/双指滑 = 平移
 ///  · 「回中」回到画布原点（= 创建这张纸时的位置，用户要的「从该处显示」）；「适应内容」装下全部笔迹
 ///  · 右下 minimap：全部笔迹缩略 + 当前视口框，点/拖即跳
@@ -44,6 +45,13 @@ struct ScratchPadOverlay: View {
     @State private var renaming = false
     @State private var draftTitle = ""
     @State private var showPaper = false   // 纸样选择器（底色 × 底纹）
+    // 框选（pointerTool == .lasso）：与页内框选同一套交互（自由路径选中 → 拖框移动 / 拖手柄缩放），
+    // 逻辑全在文件末尾的 lasso 扩展里。全部瞬态，bounds 记**画布坐标**（随视口平移缩放自动跟手）。
+    @State private var lassoPath: [CGPoint]?                 // 进行中的自由框选路径（视图坐标）
+    @State private var lassoSel: (ids: Set<UUID>, bounds: CGRect)?   // 选中集：笔迹 id + 画布联合包围盒
+    @State private var lassoGhost: CGSize = .zero            // 移动 ghost 偏移（视图点；松手前数据不动）
+    @State private var lassoScale: (sx: CGFloat, sy: CGFloat, handle: LassoHandle)?   // 缩放 ghost
+    @State private var lassoMode: LassoDragMode?             // 本次拖拽的形态（起点一次性判定）
     // 页面底图（v10）：锚定那一页的页图 + 它是按多宽渲的（缩放跨档才重渲，见 pageStepWidth）
     @State private var pageImage: CGImage?
     @State private var pageImageWidth = 0
@@ -77,6 +85,7 @@ struct ScratchPadOverlay: View {
                 }
                 inkLayers
                 emptyHint
+                lassoLayers      // 框选：选中光晕 + 高亮框/手柄 + 进行中虚线路径（全 allowsHitTesting(false)）
                 eraserRing
                 gestureCatcher
             }
@@ -103,6 +112,9 @@ struct ScratchPadOverlay: View {
         .overlay(alignment: .bottomTrailing) { minimapPanel }
         .background(bg)   // GeometryReader 首帧 size 为 0 时不露出下面的 PDF
         .onAppear { installMonitors() }
+        .onChange(of: app.pointerTool) { _, t in
+            if t != .lasso { _ = clearLassoSelection() }   // 切走框选工具即放弃选中（残留高亮框会误导）
+        }
         .onDisappear {
             removeMonitors()
             // 关纸/切纸后这张页图不再需要：撤掉本端的 wanted 声明，别让渲染队列继续为它排队。
@@ -227,10 +239,11 @@ struct ScratchPadOverlay: View {
         Color.clear
             .contentShape(Rectangle())
             // 光标反馈：手型 = 拖动即平移，十字 = 会落墨。没有这个，草稿纸上「拖一下会发生什么」
-            // 全靠试——这是它最初读起来「生硬」的一大来源。
+            // 全靠试——这是它最初读起来「生硬」的一大来源。框选 = 默认箭头（与阅读区一致）。
             // （`PointerStyle` 没有 `.crosshair`；`.rectSelection` 在 macOS 上渲染的正是十字光标）
             .pointerStyle(app.pointerTool == .ink ? .rectSelection
-                                                  : (panStart == nil ? .grabIdle : .grabActive))
+                          : app.pointerTool == .lasso ? .default
+                          : (panStart == nil ? .grabIdle : .grabActive))
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let p): cursor = p
@@ -244,23 +257,28 @@ struct ScratchPadOverlay: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { v in
-                if app.pointerTool == .ink {
-                    inkDrag(v)
-                } else {
-                    if panStart == nil { panStart = vp.origin }
-                    guard let s = panStart else { return }
-                    vp.origin = CGPoint(x: s.x - v.translation.width / vp.zoom,
-                                        y: s.y - v.translation.height / vp.zoom)
-                    clampViewport()
+                switch app.pointerTool {
+                case .ink: inkDrag(v)
+                case .lasso: lassoDrag(v)          // 见文件末尾 lasso 扩展
+                case .textSelect: panDrag(v)
                 }
             }
             .onEnded { _ in
+                if app.pointerTool == .lasso { lassoDragEnd() }
                 panStart = nil
                 if inking {
                     inking = false
                     if !isErasing { app.scratchInkEnd(in: session) }   // 擦除每批即时生效，无需收尾
                 }
             }
+    }
+
+    private func panDrag(_ v: DragGesture.Value) {
+        if panStart == nil { panStart = vp.origin }
+        guard let s = panStart else { return }
+        vp.origin = CGPoint(x: s.x - v.translation.width / vp.zoom,
+                            y: s.y - v.translation.height / vp.zoom)
+        clampViewport()
     }
 
     private func inkDrag(_ v: DragGesture.Value) {
@@ -511,6 +529,7 @@ struct ScratchPadOverlay: View {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 guard isFrontWindow, session.openPadID == pad.id, !renaming else { return event }
                 guard event.keyCode == 53 else { return event }   // Esc
+                if clearLassoSelection() { return nil }   // 有框选选中集：Esc 先清选中，不关纸
                 close()
                 return nil
             }
@@ -520,5 +539,288 @@ struct ScratchPadOverlay: View {
     private func removeMonitors() {
         if let m = wheelMonitor { NSEvent.removeMonitor(m); wheelMonitor = nil }
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+    }
+}
+
+// MARK: - 框选（pointerTool == .lasso）
+//
+// 与页内框选（`ReaderSurface+Lasso`）同一套交互：拖空白画自由路径选中 → 拖高亮框内移动 /
+// 拖角手柄（等比，⇧ 临时自由）或边中点手柄（单轴）缩放。两处刻意**不同**：
+//  · 坐标是**画布坐标**（等比逻辑点、无界），不是页内归一化——因此不能用 `InkEdit.translated/scaled`
+//    （它们把点 clamp 到 0...1，草稿纸上第一笔就会被拍回左上角）。下面的 `shifted/scaled` 是无 clamp 版，
+//    其余语义对齐：缩放线宽 ×√(sx·sy) 且 clamp 0.5...40，压感/id 不动。
+//  · 选中集不含文字注解（草稿纸上没有注解），也没有图层可见性过滤。
+// 提交只改 `session.scratchStrokes`（@Published 值快照）→ ContentView 对账落库 + 广播镜像平板，
+// 与擦除走的是同一条路，无需显式通知。
+extension ScratchPadOverlay {
+
+    /// 选中笔迹的画布包围盒。
+    private func strokeBounds(_ st: InkStroke) -> CGRect {
+        var lo = SIMD2<Double>(.infinity, .infinity), hi = SIMD2<Double>(-.infinity, -.infinity)
+        for p in st.points {
+            lo = SIMD2(min(lo.x, p.x), min(lo.y, p.y))
+            hi = SIMD2(max(hi.x, p.x), max(hi.y, p.y))
+        }
+        return CGRect(x: lo.x, y: lo.y, width: hi.x - lo.x, height: hi.y - lo.y)
+    }
+
+    /// 选中集显示框（**视图坐标**）：画布包围盒映到视口，外扩 6pt + 最小 16pt（极薄笔迹也有得抓）。
+    private func displayBox(_ sel: (ids: Set<UUID>, bounds: CGRect)) -> CGRect {
+        let b = sel.bounds, z = vp.zoom
+        let r = CGRect(x: (b.minX - vp.origin.x) * z, y: (b.minY - vp.origin.y) * z,
+                       width: b.width * z, height: b.height * z)
+        let box = r.insetBy(dx: -6, dy: -6)
+        let w = max(box.width, 16), h = max(box.height, 16)
+        return CGRect(x: box.midX - w / 2, y: box.midY - h / 2, width: w, height: h)
+    }
+
+    /// 点经 ghost 变换后的位置（视图坐标；缩放 = 绕对侧手柄 anchor 按轴缩放，否则 = 移动平移）。
+    private func ghostPoint(_ p: CGPoint, in box: CGRect) -> CGPoint {
+        if let gs = lassoScale {
+            let a = gs.handle.opposite.point(in: box)
+            return CGPoint(x: a.x + (p.x - a.x) * gs.sx, y: a.y + (p.y - a.y) * gs.sy)
+        }
+        return CGPoint(x: p.x + lassoGhost.width, y: p.y + lassoGhost.height)
+    }
+
+    // MARK: 手势
+
+    /// 框选拖拽（拖空白 = 自由框选 / 拖选中框内 = 移动 / 拖手柄 = 缩放，起点一次性判定）。
+    func lassoDrag(_ v: DragGesture.Value) {
+        if lassoMode == nil {
+            var mode = LassoDragMode.select
+            if let sel = lassoSel {
+                let box = displayBox(sel)
+                // 手柄优先（10pt 命中半径）：拖手柄 = 缩放；框内（含 8pt 抓手余量）= 移动
+                if let h = LassoHandle.allCases.first(where: {
+                    let p = $0.point(in: box)
+                    return hypot(v.startLocation.x - p.x, v.startLocation.y - p.y) <= 10
+                }) {
+                    mode = .scale(h)
+                } else if box.insetBy(dx: -8, dy: -8).contains(v.startLocation) {
+                    mode = .move
+                }
+            }
+            lassoMode = mode
+            if mode == .select {   // 起新框选即放弃旧选中（点空白单击也因此天然清选中）
+                lassoSel = nil
+                lassoPath = [v.location]
+            }
+        }
+        switch lassoMode {
+        case .select:
+            // ≥3pt 抽稀（同页内：更密的点对多边形命中无增益，白耗 O(点数×边数)）
+            if let last = lassoPath?.last,
+               hypot(v.location.x - last.x, v.location.y - last.y) >= 3 {
+                lassoPath?.append(v.location)
+            }
+        case .move:
+            lassoGhost = v.translation      // ghost 预览：只动框，不改数据
+        case .scale(let handle):
+            updateScaleGhost(handle: handle, drag: v)
+        case nil:
+            break
+        }
+    }
+
+    /// 松手一次性提交（移动/缩放）或结算选中（框选）。数据在拖动全程不动，这里一次写完。
+    func lassoDragEnd() {
+        let mode = lassoMode
+        lassoMode = nil
+        let path = lassoPath
+        lassoPath = nil
+        let ghost = lassoGhost
+        lassoGhost = .zero
+        let gs = lassoScale
+        lassoScale = nil
+        switch mode {
+        case .select: if let path { finishLassoSelect(path: path) }
+        case .move: commitLassoMove(translation: ghost)
+        case .scale: if let gs { commitLassoScale(gs) }
+        case nil: break
+        }
+    }
+
+    /// 缩放 ghost：与页内同一套规则——角手柄等比（⇧ 放开两轴）、边中点单轴，clamp 0.05...20。
+    /// 视图坐标是等比空间，sx/sy 直接作用到画布坐标严格等价，无需折算。
+    private func updateScaleGhost(handle: LassoHandle, drag v: DragGesture.Value) {
+        guard let sel = lassoSel else { return }
+        let box = displayBox(sel)
+        let anchor = handle.opposite.point(in: box)
+        let start = handle.point(in: box)
+        let denomX = start.x - anchor.x, denomY = start.y - anchor.y
+        var sx: CGFloat = 1, sy: CGFloat = 1
+        switch handle {
+        case .t, .b:
+            guard abs(denomY) > 1 else { return }
+            sy = (v.location.y - anchor.y) / denomY
+        case .l, .r:
+            guard abs(denomX) > 1 else { return }
+            sx = (v.location.x - anchor.x) / denomX
+        case .tl, .tr, .bl, .br:
+            guard abs(denomX) > 1, abs(denomY) > 1 else { return }
+            sx = (v.location.x - anchor.x) / denomX
+            sy = (v.location.y - anchor.y) / denomY
+            if !NSEvent.modifierFlags.contains(.shift) {
+                let s = abs(sx - 1) >= abs(sy - 1) ? sx : sy
+                sx = s; sy = s
+            }
+        }
+        func cl(_ s: CGFloat) -> CGFloat { min(20, max(0.05, s)) }
+        lassoScale = (cl(sx), cl(sy), handle)
+    }
+
+    // MARK: 结算 / 提交
+
+    /// 自由路径 → 画布多边形，命中任一点落多边形内的笔迹（与页内同款宽手感）。
+    private func finishLassoSelect(path: [CGPoint]) {
+        guard path.count >= 3 else { return }
+        let poly = path.map { p -> SIMD2<Double> in
+            let c = vp.toCanvas(p)
+            return SIMD2(Double(c.x), Double(c.y))
+        }
+        var ids = Set<UUID>()
+        var bbox = CGRect.null
+        for st in session.strokes(pad: pad.id)
+        where st.points.contains(where: { InkEdit.pointInPolygon(SIMD2($0.x, $0.y), polygon: poly) }) {
+            ids.insert(st.id)
+            bbox = bbox.union(strokeBounds(st))
+        }
+        guard !ids.isEmpty else { return }
+        lassoSel = (ids, bbox)
+    }
+
+    /// 无 clamp 的画布平移（`InkEdit.translated` 的 0...1 clamp 对无界画布是错的，见扩展头注释）。
+    private func shifted(_ s: InkStroke, dx: Double, dy: Double) -> InkStroke {
+        var t = s
+        t.points = s.points.map { SIMD3($0.x + dx, $0.y + dy, $0.z) }
+        return t
+    }
+
+    /// 无 clamp 的画布缩放：点绕 anchor 按轴缩放，线宽 ×√(sx·sy) clamp 0.5...40（同 `InkEdit.scaled`）。
+    private func scaled(_ s: InkStroke, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> InkStroke {
+        var t = s
+        t.points = s.points.map { SIMD3(a.x + ($0.x - a.x) * sx, a.y + ($0.y - a.y) * sy, $0.z) }
+        t.width = min(40, max(0.5, s.width * (sx * sy).squareRoot()))
+        return t
+    }
+
+    private func commitLassoMove(translation t: CGSize) {
+        guard let sel = lassoSel else { return }
+        let dx = Double(t.width / vp.zoom), dy = Double(t.height / vp.zoom)
+        guard dx != 0 || dy != 0 else { return }
+        var changed = false
+        for i in session.scratchStrokes.indices where sel.ids.contains(session.scratchStrokes[i].id) {
+            session.scratchStrokes[i] = shifted(session.scratchStrokes[i], dx: dx, dy: dy)
+            changed = true
+        }
+        guard changed else { lassoSel = nil; return }   // 选中项已被擦除
+        lassoSel = (sel.ids, sel.bounds.offsetBy(dx: dx, dy: dy))
+    }
+
+    private func commitLassoScale(_ gs: (sx: CGFloat, sy: CGFloat, handle: LassoHandle)) {
+        guard let sel = lassoSel else { return }
+        let sx = Double(gs.sx), sy = Double(gs.sy)
+        guard sx != 1 || sy != 1 else { return }
+        let av = gs.handle.opposite.point(in: displayBox(sel))   // 对侧手柄（视图）→ 画布 anchor
+        let ac = vp.toCanvas(av)
+        let a = SIMD2(Double(ac.x), Double(ac.y))
+        var changed = false
+        for i in session.scratchStrokes.indices where sel.ids.contains(session.scratchStrokes[i].id) {
+            session.scratchStrokes[i] = scaled(session.scratchStrokes[i], anchor: a, sx: sx, sy: sy)
+            changed = true
+        }
+        guard changed else { lassoSel = nil; return }   // 选中项已被擦除
+        let b = sel.bounds
+        let x1 = a.x + (Double(b.minX) - a.x) * sx, x2 = a.x + (Double(b.maxX) - a.x) * sx
+        let y1 = a.y + (Double(b.minY) - a.y) * sy, y2 = a.y + (Double(b.maxY) - a.y) * sy
+        lassoSel = (sel.ids, CGRect(x: min(x1, x2), y: min(y1, y2), width: abs(x2 - x1), height: abs(y2 - y1)))
+    }
+
+    /// 清除选中/进行中状态。返回是否有选中集被清掉（Esc 监视器据此决定要不要拦下这次按键）。
+    @discardableResult
+    func clearLassoSelection() -> Bool {
+        let had = lassoSel != nil || lassoPath != nil
+        lassoSel = nil
+        lassoPath = nil
+        lassoGhost = .zero
+        lassoScale = nil
+        lassoMode = nil
+        return had
+    }
+
+    // MARK: 渲染（纯功能 overlay：虚线路径/高亮框/手柄/光晕，非仿系统控件；全部视图坐标）
+
+    @ViewBuilder var lassoLayers: some View {
+        lassoHalo
+        lassoHighlight
+        lassoDragPath
+    }
+
+    /// 选中笔迹的光晕边缘（所见即所选；ghost 期间随 ghost 变换 = 预览即提交结果）。
+    @ViewBuilder private var lassoHalo: some View {
+        if let sel = lassoSel {
+            let z = vp.zoom, o = vp.origin
+            let box = displayBox(sel)
+            let strokes = session.strokes(pad: pad.id).filter { sel.ids.contains($0.id) }
+            Canvas { ctx, _ in
+                for st in strokes {
+                    func mapPt(_ p: SIMD3<Double>) -> CGPoint {
+                        ghostPoint(CGPoint(x: (p.x - o.x) * z, y: (p.y - o.y) * z), in: box)
+                    }
+                    if st.points.count == 1 {
+                        let p0 = mapPt(st.points[0])
+                        let r = CGFloat(st.type.strokeWidth(pressure: st.points[0].z, base: st.width)) * z / 2 + 2.5
+                        ctx.fill(Path(ellipseIn: CGRect(x: p0.x - r, y: p0.y - r, width: r * 2, height: r * 2)),
+                                 with: .color(.accentColor.opacity(0.35)))
+                    } else {
+                        var path = Path()
+                        path.addLines(st.points.map(mapPt))
+                        ctx.stroke(path, with: .color(.accentColor.opacity(0.35)),
+                                   style: StrokeStyle(lineWidth: CGFloat(st.width) * z + 5,
+                                                      lineCap: .round, lineJoin: .round))
+                    }
+                }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// 选中集高亮框 + 缩放手柄（四角等比 / 四边中点单轴）+ 移动/缩放 ghost（瞬态，数据未动）。
+    @ViewBuilder private var lassoHighlight: some View {
+        if let sel = lassoSel {
+            let box = displayBox(sel)
+            let pts = LassoHandle.allCases.map { ghostPoint($0.point(in: box), in: box) }
+            let lo = pts.reduce(pts[0]) { CGPoint(x: min($0.x, $1.x), y: min($0.y, $1.y)) }
+            let hi = pts.reduce(pts[0]) { CGPoint(x: max($0.x, $1.x), y: max($0.y, $1.y)) }
+            Group {
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                    .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
+                    .frame(width: hi.x - lo.x, height: hi.y - lo.y)
+                    .offset(x: lo.x, y: lo.y)
+                ForEach(pts.indices, id: \.self) { i in
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.25))
+                        .overlay(Circle().stroke(Color.accentColor, lineWidth: 1.5))
+                        .frame(width: 9, height: 9)
+                        .position(pts[i])
+                }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// 进行中的自由框选虚线路径（视图坐标，不随视口动——框选拖动中不平移）。
+    @ViewBuilder private var lassoDragPath: some View {
+        if let path = lassoPath, path.count >= 2 {
+            ZStack {
+                Path { p in p.addLines(path); p.closeSubpath() }
+                    .fill(Color.accentColor.opacity(0.06))
+                Path { p in p.addLines(path); p.closeSubpath() }
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+            }
+            .allowsHitTesting(false)
+        }
     }
 }
