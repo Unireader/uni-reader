@@ -247,6 +247,7 @@ struct ReaderSurface: View {
             setup()
             installWheelMonitor()
             installLassoEscMonitor()
+            installToolKeyMonitor()
             // 切文档重建后补跑一次首帧几何求值：onScrollGeometryChange 可能不重发，靠 onAppear(layout 就绪)
             // + fullWidth/unobSize 的 onChange 三路兜底，任一到位即定基准（防新文档首屏空白、须拖窗口才出）。
             if !scratch.didInitialGeo { geometryChanged(scratch.geo) }
@@ -255,6 +256,7 @@ struct ReaderSurface: View {
             follower.reset()
             removeWheelMonitor()
             removeLassoEscMonitor()
+            removeToolKeyMonitor()
             PageRenderEngine.shared.setWanted([], client: scratch.clientID)
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomIn)) { _ in

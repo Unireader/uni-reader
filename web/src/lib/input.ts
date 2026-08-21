@@ -503,7 +503,7 @@ export function initInput(refs: CaptureRefs): void {
     G.hoverOn = false; G.eraserRingAt = null; G.clearHover(); G.send({ type: "hover", phase: "end" });
   }
 
-  // ---- 键盘侧键（PageUp 切模式 / PageDown 切笔）----
+  // ---- 键盘侧键（PageUp 切模式 / PageDown 切笔）+ 单键工具快捷键（e 橡皮 / 1-9 选笔 / n 笔记 / v 翻页 / l 框选）----
   window.addEventListener("keydown", function (e: KeyboardEvent) {
     if (e.repeat) return;
     if (e.key === "PageUp") { e.preventDefault(); G.cycleMode(); }
@@ -511,6 +511,20 @@ export function initInput(refs: CaptureRefs): void {
     // 框选移动的 Esc 清选中（同 Mac 端 NSEvent 本地监视器同款行为）。
     else if (e.key === "Escape" && G.padActive()) { e.preventDefault(); G.padClose(); }
     else if (e.key === "Escape" && G.lassoSelection) { G.clearLasso(); }
+    // 单键工具快捷键：只认无修饰键的单字母，输入框焦点（改页码/重命名/文字笔记）一律放行
+    else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const k = e.key.toLowerCase();
+      if (k === "e") { e.preventDefault(); G.toggleErase(); }
+      else if (k === "n" || k === "b") { e.preventDefault(); G.setModeKey("note"); }
+      else if (k === "v") { e.preventDefault(); G.setModeKey(curMode() === "page" ? "note" : "page"); }
+      else if (k === "l") { e.preventDefault(); G.setModeKey(curMode() === "lasso" ? "note" : "lasso"); }
+      else if (k >= "1" && k <= "9") {
+        const i = +k - 1;
+        if (i < G.PENS.length) { e.preventDefault(); G.selectPen(i); }
+      }
+    }
   });
 
   window.addEventListener("contextmenu", function (e: Event) { e.preventDefault(); });

@@ -282,6 +282,15 @@ struct UniReaderApp: App {
             // 阅读区缩放（由 key 窗口的 PageStreamView 响应）。
             CommandGroup(after: .sidebar) {
                 Divider()
+                Button(L("Toggle Sidebar")) {
+                    NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+                }
+                .keyboardShortcut("b", modifiers: .command)
+                Button(L("Toggle Inspector")) {
+                    NotificationCenter.default.post(name: .toggleInspector, object: nil)
+                }
+                .keyboardShortcut("i", modifiers: .command)
+                Divider()
                 Button(L("Zoom In")) {
                     NotificationCenter.default.post(name: .readerZoomIn, object: nil)
                 }
@@ -367,4 +376,6 @@ extension Notification.Name {
     static let newWindowRequested = Notification.Name("com.xvan.UniReader.newWindowRequested")
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
+    static let toggleSidebar = Notification.Name("com.xvan.UniReader.toggleSidebar")
+    static let toggleInspector = Notification.Name("com.xvan.UniReader.toggleInspector")
 }

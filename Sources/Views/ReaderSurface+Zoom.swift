@@ -216,6 +216,42 @@ extension ReaderSurface {
         }
     }
 
+    // MARK: 单键工具快捷键（e 橡皮 / 1-9 选笔 / b 书写 / v 翻页 / l 框选 / i 本机笔 / t 文字选择）
+    // 与 ⌥ 菜单快捷键（UniReaderApp .commands）同一套 apply 路径，广播到平板天然生效。
+    // **只认无修饰键的单字母**：带 ⌘/⌥/⌃ 的组合键、文本框焦点（查找/笔记编辑/重命名）一律放行。
+    // 笔架里的 eraser/钢笔图标 Button 不能挂 `.keyboardShortcut("e")`——那在文本框焦点时也会抢键。
+
+    func installToolKeyMonitor() {
+        guard scratch.toolKeyMonitor == nil else { return }
+        scratch.toolKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard scratch.isActiveWindow,
+                  event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                  !(NSApp.keyWindow?.firstResponder is NSText),
+                  let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
+            switch key {
+            case "e": app.setPadMode(app.padMode == "erase" ? "note" : "erase")
+            case "b", "n": app.setPadMode("note")
+            case "v": app.setPadMode(app.padMode == "page" ? "note" : "page")
+            case "l": app.pointerTool = app.pointerTool == .lasso ? .textSelect : .lasso
+            case "i": app.pointerTool = app.pointerTool == .ink ? .textSelect : .ink
+            case "t": app.pointerTool = .textSelect
+            case "1"..."9":
+                let i = Int(key)! - 1
+                guard i < app.pens.count else { return event }
+                app.applyPenSelection(index: i)
+            default: return event
+            }
+            return nil
+        }
+    }
+
+    func removeToolKeyMonitor() {
+        if let m = scratch.toolKeyMonitor {
+            NSEvent.removeMonitor(m)
+            scratch.toolKeyMonitor = nil
+        }
+    }
+
     /// ⌘0：动画回 fit-width；到位后基准重定标到当前实测可用宽（fitAfter，pageW 不变零跳变）。
     func commandZoomFit() {
         guard layout != nil, scratch.didInitialGeo else { return }

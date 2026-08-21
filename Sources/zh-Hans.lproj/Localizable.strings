@@ -35,6 +35,8 @@
 "Page Turn" = "翻页";
 "Notes will appear here." = "笔记功能即将上线，会显示在这里。";
 "Sidebar" = "侧边栏";
+"Toggle Sidebar" = "切换侧边栏";
+"Toggle Inspector" = "切换检查器";
 "Delete" = "删除";
 "Workspace" = "工作区";
 "Open Workspace…" = "打开工作区…";

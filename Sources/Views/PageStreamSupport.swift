@@ -226,6 +226,7 @@ final class Scratch {
     var lassoDragMode: LassoDragMode?  // 进行中框选手势的形态（nil = 无框选/移动在飞）
     var noteDragID: UUID?              // 进行中点注解图钉拖拽的 note id（起点命中定锚一次；非 nil = 有图钉在拖）
     var lassoEscMonitor: Any?          // Esc 清除框选选中集的 NSEvent 本地监视器（事件管道，非视图）
+    var toolKeyMonitor: Any?           // 单键工具切换（e 橡皮 / 数字选笔等）的 NSEvent 本地监视器
     var wheelMonitor: Any?             // ⌘+滚轮的 NSEvent 本地监视器（事件管道，非视图）
     var isActiveWindow = false         // 供监视器闭包读取的实时值（struct let 会在 onAppear 后过期，需经 scratch 转发）
     let clientID = UUID().uuidString   // 渲染引擎多窗口 wanted 隔离键

@@ -291,6 +291,10 @@ export interface GState {
   // capture.ts（键盘侧键走 G，input.ts 的 keydown 调用）
   cycleMode(): void;
   cyclePen(): void;
+  // 单键快捷键（input.ts keydown）：直切模式 / e 橡皮来回切 / 数字键直选笔
+  setModeKey(key: string): void;
+  toggleErase(): void;
+  selectPen(i: number): void;
 }
 
 export const BAR = 46, GAP = 8, MINZ = 0.5, MAXZ = 5;

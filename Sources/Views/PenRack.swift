@@ -19,12 +19,17 @@ struct PenRackView: View {
     let isActiveWindow: Bool
 
     /// 位置存视口宽高的 0~1 比例（不存绝对像素）——跟这个代码库一贯「阅读区状态用比例不用绝对值」的
-    /// 偏好一致，窗口缩放后面板位置仍然合理。默认落在左下角附近。
+    /// 偏好一致，窗口缩放后面板位置仍然合理。默认落在**顶部居中**（`moved == false` 时横向位置由
+    /// 实测宽度现算居中，不读 fracX）。
     /// **锚的是胶囊左上缘（不是中心）**：收起/展开时左缘固定、右侧收进/放出，即「靠左对齐」。
     /// （key 沿用旧的 penToolbar* 名字，不动；旧值按中心锚解释，一次性右移半个胶囊宽，
     /// 越界会被夹取拉回，用户拖一下即可。）
     @AppStorage("penToolbarFracX") private var fracX: Double = 0.03
-    @AppStorage("penToolbarFracY") private var fracY: Double = 0.92
+    @AppStorage("penToolbarFracY") private var fracY: Double = 0.02
+    /// 用户是否手动拖过位置。false = 默认顶部居中（横向居中现算，宽度变化也跟得上）；
+    /// 拖过一次就永远按存储位置来。**老用户迁移**：已有 penToolbarFracX 存储值的视为拖过（init 置 true），
+    /// 不会被新版本拽到顶部。
+    @AppStorage("penToolbarMoved") private var moved = false
     @AppStorage(PenRackView.collapsedKey) private var collapsed = false
     static let collapsedKey = "penToolbarCollapsed"
     /// 布局实际读的收起态：`@AppStorage` 写入经 UserDefaults 通知异步回投，`withAnimation`
@@ -60,6 +65,12 @@ struct PenRackView: View {
         self.viewportSize = viewportSize
         self.topInset = topInset
         self.isActiveWindow = isActiveWindow
+        // 老用户迁移：这个 key 在新版本之前不存在，而存在 fracX 存储值说明用户（或旧版本默认值）
+        // 已经定过位置——置为「已拖动」，保持原位，不被新的顶部居中默认值拽走。
+        if UserDefaults.standard.object(forKey: "penToolbarMoved") == nil,
+           UserDefaults.standard.object(forKey: "penToolbarFracX") != nil {
+            UserDefaults.standard.set(true, forKey: "penToolbarMoved")
+        }
         // 首帧就落在正确的收起态。留给 onAppear 赋值不行：内容淡化用的 `.animation(_:value:)`
         // 是无条件的，会连这次「初始化赋值」也配上动画——启动时若是收起态，就会看见
         // 展开态内容凭空淡出一次。（State(initialValue:) 只在视图首次建立时生效，
@@ -214,6 +225,8 @@ struct PenRackView: View {
 
     /// 夹取后的胶囊左上缘：存储锚的就是左上缘，按实测宽高留边；上边界额外加 `topInset`
     /// （不进工具栏）。视口比胶囊还窄/矮的极端情况退化为固定在上/左合法点。
+    /// **未拖过（moved == false）时横向居中现算**（基于实测宽度，收起/展开/窗口缩放都跟着居中），
+    /// 只有纵读 fracY；拖过一次后横纵都读存储比例。
     ///
     /// 收起时宽度只会变小 → 右边界更宽松 → 左缘算出来原地不动；展开时若会捅出右边缘，
     /// 左缘随实测宽度连续左移把胶囊拉回可视区，同样是平滑的。
@@ -221,13 +234,16 @@ struct PenRackView: View {
         let w = viewportSize.width, h = viewportSize.height
         let maxX = max(edgeMargin, w - barSize.width - edgeMargin)
         let minY = topInset + edgeMargin, maxY = max(minY, h - barSize.height - edgeMargin)
-        let raw = CGPoint(x: fracX * w + drag.width, y: fracY * h + drag.height)
+        let baseX = moved ? fracX * w : Double((w - barSize.width) / 2)
+        let raw = CGPoint(x: baseX + drag.width, y: fracY * h + drag.height)
         return CGPoint(x: min(max(raw.x, edgeMargin), maxX),
                        y: min(max(raw.y, minY), maxY))
     }
 
     /// 初始/视口变化校正：存储位置若已越界（窗口变矮变窄、旧版本无限制留下的值）拉回可见区。
+    /// 未拖过时位置是现算居中的，没有要校的存储值。
     private func reclampStored() {
+        guard moved else { return }
         let p = clampedOrigin(drag: .zero)
         fracX = Double(p.x / viewportSize.width)
         fracY = Double(p.y / viewportSize.height)
@@ -473,8 +489,12 @@ struct PenRackView: View {
                 state = value.translation
             }
             .onEnded { value in
-                // 落点同样过夹取（与拖拽中的实时显示一致），再折算回 0~1 比例存盘
+                // 落点同样过夹取（与拖拽中的实时显示一致），再折算回 0~1 比例存盘；
+                // 拖过即离开「默认顶部居中」，以后按存储位置来。
+                // ⚠️ 必须先算 p 再置 moved：clampedOrigin 在 moved=true 时改读 fracX 基准，
+                // 顺序反了这次落点会拿还没更新的旧 fracX 当基准，胶囊瞬移。
                 let p = clampedOrigin(drag: value.translation)
+                moved = true
                 fracX = Double(p.x / viewportSize.width)
                 fracY = Double(p.y / viewportSize.height)
             }

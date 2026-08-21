@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var showServer = false
     @State private var isKeyWindow = false
     @State private var showNotes = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all   // ⌘B 切侧栏
     @State private var searchIsActive = false   // 标准 .searchable 搜索字段的展开态（⌘F 激活）
     @State private var hashMismatch: HashMismatch?   // 同路径内容被替换（hash 与入库版本不符）待确认
     @State private var didChooseInitialDoc = false   // 本窗口的初始文档已定（防重复恢复）
@@ -70,7 +71,7 @@ struct ContentView: View {
     /// 主分栏视图（侧栏 + 阅读区 + 工具栏/inspector + 状态联动）。窗口事件路由挂 `eventRoutes`——
     /// 全部修饰符挂一个表达式上会让类型检查器超时（已踩过，见 toolbarContent 的同款注释）。
     private var mainSplit: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(selection: $selectedDocID, onChooseWorkspace: chooseWorkspace,
                         onCreateWorkspace: createNewWorkspace,
                         onOpenRecent: openRecentWorkspace,
@@ -237,6 +238,14 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleNightMode)) { _ in
             if isKeyWindow { nightMode.toggle() }   // ⌥⌘N：与工具栏月亮按钮同一 @AppStorage 状态
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
+            if isKeyWindow {                    // ⌘B：侧栏 ⇄ 仅阅读区
+                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
+            if isKeyWindow { showNotes.toggle() }   // ⌘I：与工具栏 inspector 按钮同一状态
         }
         .onChange(of: searchIsActive) { _, on in
             if !on { session.clearSearch() }   // 收起搜索字段 = 清空高亮，下次重新打字

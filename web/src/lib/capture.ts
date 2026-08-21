@@ -121,6 +121,28 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     G.modeIdx = 0; updateHud();
     G.send({ type: "pen", index: G.penIdx }); G.send({ type: "mode", mode: curMode() });
   }
+  // 直切模式（单键快捷键 n/v/l 用）：与 cycleMode 同一套收尾，只是目标模式指定而非轮替。
+  // 目标就是当前模式时为 no-op（来回切由调用方先算好目标，如 toggleErase）。
+  function setModeKey(key: string): void {
+    const i = MODES.findIndex((m) => m.key === key);
+    if (i < 0 || i === G.modeIdx) return;
+    const leavingLasso = curMode() === "lasso";
+    G.modeIdx = i;
+    G.activeId = null; G.penMode = ""; G.eraserRingAt = null;
+    if (leavingLasso) G.clearLasso();
+    G.drawNotes(); G.endHover(); updateHud();
+    G.send({ type: "mode", mode: curMode() });
+  }
+  // e：橡皮 ⇄ 笔记 来回切（Mac 单键监视器 / 安卓 e 键同语义）。
+  function toggleErase(): void { setModeKey(curMode() === "erase" ? "note" : "erase"); }
+  // 数字键直选某支笔：与 cyclePen 同语义（选笔即回笔记模式），只是指定槽位不轮替。
+  function selectPen(i: number): void {
+    if (i < 0 || i >= G.PENS.length) return;
+    G.penIdx = i;
+    if (curMode() === "lasso") G.clearLasso();
+    G.modeIdx = 0; updateHud();
+    G.send({ type: "pen", index: G.penIdx }); G.send({ type: "mode", mode: curMode() });
+  }
   Object.assign(actions, {
     turn,
     gotoPage,
@@ -179,6 +201,9 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
   // 键盘侧键走 G（input.ts 的 keydown 调用）
   G.cycleMode = cycleMode;
   G.cyclePen = cyclePen;
+  G.setModeKey = setModeKey;
+  G.toggleErase = toggleErase;
+  G.selectPen = selectPen;
 
   updateHud(); G.relayout(); G.connect();
 }
