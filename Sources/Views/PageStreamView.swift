@@ -196,6 +196,7 @@ struct ReaderSurface: View {
                             noteTypes: session.noteTypes,
                             usageCount: { id in session.textNotes.filter { $0.typeId == id }.count },
                             onSave: { saveEditor(target, text: $0, typeId: $1) },
+                            onDelete: target.editedNote == nil ? nil : { deleteEditorNote(target) },
                             onChangeTypes: { saveNoteTypes($0) },
                             onCancel: { editorTarget = nil })
         }

@@ -74,6 +74,11 @@ enum NoteEditorTarget: Identifiable {
         case .edit(let n): return n.typeId
         }
     }
+    /// 编辑已存在注解时才给「删除」入口（新建草稿没有可删的东西）。
+    var editedNote: TextNote? {
+        if case .edit(let n) = self { return n }
+        return nil
+    }
 }
 
 /// 框选移动（pointerTool == .lasso，仅页内）的选中集：同页笔迹 id + 文字注解 id + 联合包围盒

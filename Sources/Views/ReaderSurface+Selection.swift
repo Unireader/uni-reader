@@ -228,6 +228,14 @@ extension ReaderSurface {
         session.textNotes[idx] = n
     }
 
+    /// 编辑器「删除」（仅 .edit 入口有按钮）：从内存移除 → ContentView 的 onChange 对账删库
+    /// （与 InspectorView.deleteTextNote 同一条路径）。
+    func deleteEditorNote(_ target: NoteEditorTarget) {
+        guard let note = target.editedNote else { return }
+        session.textNotes.removeAll { $0.id == note.id }
+        editorTarget = nil
+    }
+
     /// 类型增删改回写（编辑器管理面板 → onChangeTypes）：更新内存 + 整体落库（meta JSON）；
     /// 被删类型的引用笔记回落通用（typeId=nil，走 textNotes 对账落库，无需逐条手动 upsert）。
     func saveNoteTypes(_ types: [NoteType]) {

@@ -9,6 +9,7 @@ struct NoteEditorSheet: View {
     let noteTypes: [NoteType]                 // 工作区自定义类型（不含通用）
     let usageCount: (UUID) -> Int             // 某类型被多少条笔记引用（删除确认用）
     let onSave: (String, UUID?) -> Void       // 批注文本 + 类型（nil=通用）
+    let onDelete: (() -> Void)?               // 编辑已存在注解时给「删除」入口（新建草稿为 nil）
     let onChangeTypes: ([NoteType]) -> Void   // 管理面板增删改后整体回写
     let onCancel: () -> Void
 
@@ -21,6 +22,7 @@ struct NoteEditorSheet: View {
          noteTypes: [NoteType], usageCount: @escaping (UUID) -> Int,
          saveTitle: String = L("Save"),
          onSave: @escaping (String, UUID?) -> Void,
+         onDelete: (() -> Void)? = nil,
          onChangeTypes: @escaping ([NoteType]) -> Void,
          onCancel: @escaping () -> Void) {
         self.quote = quote
@@ -28,6 +30,7 @@ struct NoteEditorSheet: View {
         self.noteTypes = noteTypes
         self.usageCount = usageCount
         self.onSave = onSave
+        self.onDelete = onDelete
         self.onChangeTypes = onChangeTypes
         self.onCancel = onCancel
         _text = State(initialValue: initialText)
@@ -61,6 +64,9 @@ struct NoteEditorSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
 
             HStack {
+                if let onDelete {
+                    Button(L("Delete"), role: .destructive) { onDelete() }
+                }
                 Spacer()
                 Button(L("Cancel")) { onCancel() }
                     .keyboardShortcut(.cancelAction)
