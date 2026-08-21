@@ -92,6 +92,18 @@ check(try store.document(id: d3.id) == nil, "mergeDocument 后源文档删除")
 check(try store.variant(hash: "h9")?.documentId == d1.id, "被并入的 variant 归 d1")
 check(try store.notes(documentId: d1.id).contains { $0.page == 1 }, "被并入文档的 note 归 d1")
 
+// 7f) 一级分组（schema v11）：设置 / 读回 / 整组改名 / 解散
+try store.setGroup(documentId: d1.id, group: "数学")
+check(try store.document(id: d1.id)?.group == "数学", "分组写入/读回")
+let (d4, _) = try store.findOrCreate(hash: "h10", title: "DocD", pageCount: 6, path: "/tmp/e.pdf")
+check(d4.group.isEmpty, "新文档默认未分组")
+try store.setGroup(documentId: d4.id, group: "数学")
+try store.renameGroup(from: "数学", to: "物理")
+check(try store.document(id: d1.id)?.group == "物理" && store.document(id: d4.id)?.group == "物理", "整组改名")
+try store.renameGroup(from: "物理", to: "")
+check(try store.document(id: d1.id)?.group.isEmpty == true, "解散分组 → 未分组")
+try store.deleteDocument(id: d4.id)
+
 // 8) 级联删除：删 document → variant/location/note 全清
 try store.deleteDocument(id: d1.id)
 check(try store.allDocuments().isEmpty, "删 document 后无文档")

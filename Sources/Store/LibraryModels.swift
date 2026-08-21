@@ -16,6 +16,7 @@ struct LibDocument: Identifiable, Equatable {
     var readFrac: Double = 0    // 阅读进度：页内归一化比例（0 顶 1 底）
     var readZoom: Double = 1    // 上次缩放倍率（相对 fit-width，1=贴合宽度）
     var readHFrac: Double = 0   // 上次横向滚动比例（offsetX / pageW，缩放态才非 0）
+    var group: String = ""      // 一级分组名（v11；空串 = 未分组）
 }
 
 /// 一个内容版本＝一个 content hash（加 TOC 等致 hash 变即新增一个 variant）。

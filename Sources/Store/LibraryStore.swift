@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 10
+    static let schemaVersion = 11
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -32,7 +32,8 @@ final class LibraryStore {
           id TEXT PRIMARY KEY, title TEXT NOT NULL, page_count INTEGER NOT NULL,
           added_at TEXT NOT NULL, last_opened_at TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
           read_page INTEGER NOT NULL DEFAULT 0, read_frac REAL NOT NULL DEFAULT 0,
-          read_zoom REAL NOT NULL DEFAULT 1, read_hfrac REAL NOT NULL DEFAULT 0
+          read_zoom REAL NOT NULL DEFAULT 1, read_hfrac REAL NOT NULL DEFAULT 0,
+          group_name TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS variant (
           id TEXT PRIMARY KEY,
@@ -107,6 +108,9 @@ final class LibraryStore {
         // v9 → v10：草稿纸可以把它锚定的那一页垫在纸下面当参照。**已有的纸补列即 0（关）**——
         // 老纸的观感一点不变；只有新建的纸默认开（见 `ScratchPad.showPage`）。
         try addColumnIfMissing("scratch_pad", "show_page", "INTEGER NOT NULL DEFAULT 0")
+        // v10 → v11：文档一级分组（工作区内再分组，快速筛选用）。空串 = 未分组；不建分组表——
+        // 分组没有独立元数据（顺序按名字排），一个字符串列最省，跨端读取也零成本兼容。
+        try addColumnIfMissing("document", "group_name", "TEXT NOT NULL DEFAULT ''")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -176,6 +180,14 @@ final class LibraryStore {
     }
     func rename(documentId: String, title: String) throws {
         try db.run("UPDATE document SET title=? WHERE id=?", [.text(title), .text(documentId)])
+    }
+    /// 设置文档分组（v11；空串 = 未分组）。调用方负责 trim。
+    func setGroup(documentId: String, group: String) throws {
+        try db.run("UPDATE document SET group_name=? WHERE id=?", [.text(group), .text(documentId)])
+    }
+    /// 整组改名（to 为空串 = 解散该组，文档回未分组）。
+    func renameGroup(from: String, to: String) throws {
+        try db.run("UPDATE document SET group_name=? WHERE group_name=?", [.text(to), .text(from)])
     }
     func deleteDocument(id: String) throws {
         try db.run("DELETE FROM document WHERE id=?", [.text(id)])   // variant/location/note 级联删
@@ -408,7 +420,8 @@ final class LibraryStore {
                     readPage: Int(r["read_page"] as? Int64 ?? 0),
                     readFrac: r["read_frac"] as? Double ?? 0,
                     readZoom: r["read_zoom"] as? Double ?? 1,
-                    readHFrac: r["read_hfrac"] as? Double ?? 0)
+                    readHFrac: r["read_hfrac"] as? Double ?? 0,
+                    group: r["group_name"] as? String ?? "")
     }
     private static func variant(_ r: [String: Any]) -> LibVariant {
         LibVariant(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String ?? "",

@@ -3,6 +3,27 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 完成（2026-08-21，工作区内文档一级分组 + Keychain 密钥 + 两个 UI 小需求 + 页码恢复 bug）
+
+- **工作区内一级分组（schema v11）**：`document.group_name TEXT NOT NULL DEFAULT ''`（空串=未分组）。
+  用户要的是「快速筛选」，在一级分组与 tag 间选定**一级分组**（每篇至多一个组）。刻意**不建分组表**：
+  分组没有独立元数据（按名字排序），整组改名/解散 = 一条 `UPDATE ... WHERE group_name=?`，跨端读取零成本
+  （安卓 `SELECT *` 直接忽略未知列）。侧栏：有分组时按分组分段（未分组在前、原生可折叠 Section），
+  文档右键「Move to Group」（现有分组 / 新建分组… / 无分组），分组段头右键改名/删除（删除=文档回未分组）。
+  `spike/store-test.swift` 38/38（新增分组读写/整组改名/解散 4 项）。安卓分组 UI 未做，见 TODO Backlog。
+- **API 密钥改存 Keychain**：新增 `Sources/Support/Keychain.swift`（Security 框架 generic password 极简封装）。
+  PaddleOCR key 从 UserDefaults 明文迁走——`PaddleOCR.apiKey()` 首次读取时一次性迁移并清掉 plist 旧值；
+  设置页改 `@State` 读写 Keychain。配对 token 不动（印在二维码/地址栏，且有明确的持久化决策）。
+- **文字笔记编辑弹窗加删除按钮**：`NoteEditorSheet` 新增可选 `onDelete`（仅编辑已存在笔记时传入），
+  删除走 `session.textNotes` 移除 → onChange 对账删库，与 Inspector 删除同路径。
+- **索套工具在草稿纸上可用**：草稿纸开着时 `pointerTool == .lasso` 框选纸上笔迹 → 拖框移动、角/边手柄缩放，
+  与页内框选同一套交互。画布坐标无界，不能用 `InkEdit.translated/scaled`（clamp 0...1），扩展内写无 clamp
+  版本，其余语义对齐（线宽 ×√(sx·sy)，clamp 0.5...40）。提交只改 `session.scratchStrokes` → 对账落库 +
+  广播镜像。细节：Esc 有选中集时先清选中（不再直接关纸）；切走工具自动清选中。
+- **fix：打开 PDF 页码显示 1/xxxx 直到滚动才更新**：`geometryChanged` 里 `updateRealized` 先于
+  `pendingRestore` 恢复锚点执行，首帧偏移为 0 把已恢复的 `currentPageIndex` 回写成第 1 页；随后恢复滚动
+  全程抑制不再回写。回写与 `maybeEmit` 均加 `pendingRestore == nil` 守卫。
+
 ## 完成（2026-08-12，安卓模式2「历史设备」+ Mac 新增 HTTP `/info` + 配对码持久化）
 
 用户需求：**模式2 连 Mac 做历史设备记录，方便选择，设备名就用连接的那台机器的主机名**。

@@ -264,6 +264,30 @@ final class WorkspaceManager: ObservableObject {
     func rename(documentId: String, title: String) { try? store?.rename(documentId: documentId, title: title); refresh() }
     func document(id: String) -> LibDocument? { documents.first { $0.id == id } }
 
+    // MARK: - 分组（v11：工作区内一级分组）
+
+    /// 当前存在的分组名（按名字排序；未分组不在内）。从 documents 派生，不单独存。
+    var groups: [String] {
+        Array(Set(documents.map(\.group).filter { !$0.isEmpty })).sorted()
+    }
+    /// 移动文档到分组（空串 = 未分组）。
+    func setGroup(documentId: String, group: String) {
+        setGroup(ids: [documentId], group: group)
+    }
+    /// 批量移动（侧栏多选/拖拽）；一次 refresh。
+    func setGroup(ids: some Collection<String>, group: String) {
+        let g = group.trimmingCharacters(in: .whitespacesAndNewlines)
+        for id in ids { try? store?.setGroup(documentId: id, group: g) }
+        refresh()
+    }
+    /// 整组改名；空串 = 解散该组（文档回未分组）。
+    func renameGroup(from: String, to: String) {
+        let t = to.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !from.isEmpty, t != from else { return }
+        try? store?.renameGroup(from: from, to: t)
+        refresh()
+    }
+
     /// location 的实际绝对路径：工作区内副本 / 与工作区同盘的外部文件都存相对路径（随文件夹或整块
     /// 移动硬盘一起移动仍有效）；其余外部文件存绝对路径。
     func resolvedPath(_ loc: LibLocation) -> String {

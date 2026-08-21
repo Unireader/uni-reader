@@ -234,3 +234,12 @@
 "Kraft" = "牛皮";
 "Eye Green" = "护眼绿";
 "Cool Blue" = "淡蓝";
+"Ungrouped" = "未分组";
+"Move to Group" = "移动到分组";
+"No Group" = "无分组";
+"New Group…" = "新建分组…";
+"New Group" = "新建分组";
+"Rename Group…" = "重命名分组…";
+"Rename Group “%@”" = "重命名分组「%@」";
+"Delete Group" = "删除分组";
+"Group Name" = "分组名称";
