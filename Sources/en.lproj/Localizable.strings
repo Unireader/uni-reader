@@ -136,7 +136,7 @@
 "Off" = "Off";
 "Paddle OCR (API)" = "Paddle OCR (API)";
 "Paddle API Key" = "Paddle API Key";
-"For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored locally on this Mac only." = "For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored locally on this Mac only.";
+"For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored in this Mac's Keychain." = "For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored in this Mac's Keychain.";
 "Enable API OCR in Settings (⌘,) and paste your key first." = "Enable API OCR in Settings (⌘,) and paste your key first.";
 "Open Settings…" = "Open Settings…";
 "Use OCR text for this document" = "Use OCR text for this document";

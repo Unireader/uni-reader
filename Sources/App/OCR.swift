@@ -34,7 +34,7 @@ struct HTTPOCRProvider: OCRProvider {
     }
 }
 
-/// 远端 OCR 配置：存 **App 设置/UserDefaults（本机级、可含密钥）**，
+/// 远端 OCR 配置：存 **App 设置（本机级）**，密钥部分（apiKey）落 **Keychain**（见 `Keychain.swift`），
 /// **不进工作区共享文件夹**（避免密钥随文件夹外泄；OCR「结果」才进工作区库）。
 struct OCRRemoteConfig: Equatable, Codable {
     var id: String            // 作缓存 provider 列（如 "paddle-http"）

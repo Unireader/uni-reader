@@ -8,14 +8,15 @@ import UniformTypeIdentifiers
 /// PP-OCRv6 的结果里逐行文本在 `result.ocrResults[].prunedResult.rec_texts`、行框在 `rec_boxes`
 /// （输入图**像素坐标、左上原点**）——正好和页图（`PageBitmap.render` 出的显示朝向图，top-origin）同坐标系，
 /// 直接按图宽高归一化成 `TextRun`（0~1 左上原点），无需 rotation 变换。
-/// 配置（引擎选择 + API key）存 **UserDefaults**（本机级、含密钥，不进工作区共享文件夹）。
+/// 引擎选择存 UserDefaults；API key 存 **Keychain**（本机密钥，不进工作区共享文件夹、不落 plist 明文）。
 enum PaddleOCR {
     static let jobURL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
     static let model = "PP-OCRv6"
     static let providerID = "paddle-ppocrv6"
 
-    /// UserDefaults 键（与 `SettingsView` / `ContentView` 共用）。
+    /// UserDefaults 键（引擎选择；与 `SettingsView` / `ContentView` 共用）。
     static let engineKey = "ocrEngine"        // "off" | "paddle"
+    /// API key 的 Keychain account；同时也是 UserDefaults 里的**旧**键（仅迁移用，见 `apiKey()`）。
     static let apiKeyKey = "ocrPaddleKey"
 
     struct Config { var apiKey: String }
@@ -38,8 +39,26 @@ enum PaddleOCR {
     static func configFromDefaults() -> Config? {
         let d = UserDefaults.standard
         guard d.string(forKey: engineKey) == "paddle" else { return nil }
-        let key = (d.string(forKey: apiKeyKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = apiKey()
         return key.isEmpty ? nil : Config(apiKey: key)
+    }
+
+    /// 读 API key：Keychain 为唯一下落；UserDefaults 里的旧明文一次性迁入 Keychain 并清除。
+    static func apiKey() -> String {
+        if let k = Keychain.read(apiKeyKey)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !k.isEmpty { return k }
+        let legacy = (UserDefaults.standard.string(forKey: apiKeyKey) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !legacy.isEmpty {
+            Keychain.write(apiKeyKey, legacy)
+            UserDefaults.standard.removeObject(forKey: apiKeyKey)
+        }
+        return legacy
+    }
+
+    /// 设置页写入（去首尾空白）；空串 = 从 Keychain 删除。
+    static func setApiKey(_ key: String) {
+        Keychain.write(apiKeyKey, key.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     // MARK: 识别一页

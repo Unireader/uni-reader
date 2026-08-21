@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// 标准设置页（⌘,）：多 Tab 分类（通用 / 平板 / 阅读），持久化到 UserDefaults，全窗口共享。
+/// 例外：API key 这类密钥存 Keychain（见 `PaddleOCR.apiKey()`），不落 UserDefaults 明文。
 /// Tab 用系统标准 `Tab`（macOS 26 设置页样式：顶部图标标签页），布局/观感交给系统。
 struct SettingsView: View {
     @EnvironmentObject private var app: AppModel
@@ -9,7 +10,7 @@ struct SettingsView: View {
     @AppStorage("scrollInterp") private var scrollInterp = true      // true=时间戳插值 / false=纯低通
     @AppStorage("autoStartServer") private var autoStartServer = false
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // "off" | "paddle"
-    @AppStorage("ocrPaddleKey") private var ocrPaddleKey = ""
+    @State private var ocrPaddleKey = ""   // Paddle API key：存 Keychain（不进 UserDefaults），见 PaddleOCR.apiKey()
     @AppStorage("renderCacheMB") private var renderCacheMB = 512     // 页图缓存上限（MB）
     @AppStorage("showTOCButton") private var showTOCButton = true    // 工具栏「目录」按钮
     @AppStorage("showOCRButton") private var showOCRButton = true    // 工具栏「文字识别」按钮
@@ -96,11 +97,13 @@ struct SettingsView: View {
                 if ocrEngine == "paddle" {
                     SecureField(L("Paddle API Key"), text: $ocrPaddleKey)
                         .textFieldStyle(.roundedBorder)
+                        .onAppear { ocrPaddleKey = PaddleOCR.apiKey() }
+                        .onChange(of: ocrPaddleKey) { _, v in PaddleOCR.setApiKey(v) }
                 }
             } header: {
                 Text(L("Text Recognition (OCR)"))
             } footer: {
-                Text(L("For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored locally on this Mac only."))
+                Text(L("For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored in this Mac's Keychain."))
             }
         }
         .formStyle(.grouped)
