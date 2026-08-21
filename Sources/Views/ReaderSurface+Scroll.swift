@@ -105,7 +105,9 @@ extension ReaderSurface {
             if session.ocrEnabled { session.enqueueOCR(Array(range)) }   // 「看到哪页处理哪页」：可见窗口入队 OCR
         }
         // 顶端页 → currentPageIndex（非程序化滚动期间；平板/进度依赖它）
-        if !follower.isSuppressing, CACurrentMediaTime() >= scratch.suppressEmitUntil {
+        // 有 pendingRestore 时本帧偏移还是 0（恢复锚点在 geometryChanged 后段才应用），
+        // 照它回写会把 ContentView 已恢复的页码打回第 1 页 → 标题显示 1/xxxx 直到用户滚动。
+        if scratch.pendingRestore == nil, !follower.isSuppressing, CACurrentMediaTime() >= scratch.suppressEmitUntil {
             let page = layout.locate(docY: scratch.topDocY).page
             if session.currentPageIndex != page { session.currentPageIndex = page }
         }
@@ -113,7 +115,8 @@ extension ReaderSurface {
 
     func maybeEmit(_ n: GeoSnap, layout: PageLayout) {
         let now = CACurrentMediaTime()
-        guard !follower.isSuppressing,
+        guard scratch.pendingRestore == nil,          // 恢复锚点未应用前偏移仍是 0，会误发 (0,0) 锚点
+              !follower.isSuppressing,
               now >= scratch.suppressEmitUntil,
               scratch.pendingTarget == nil,
               now - scratch.lastEmitAt >= 1.0 / 120 else { return }
