@@ -29,10 +29,10 @@ struct PageTile: Equatable {
     var image: CGImage
 }
 
-/// 一次文字选择的结果（T1）：逐页归一化行框（画高亮）+ 选中纯文本（⌘C 复制）。
-/// 归一化 0~1 左上原点 → 随页尺寸自适应，缩放/滚动免重算；由 PDFKit 原生选择引擎产出（视觉阅读顺序）。
+/// 一次文字选择的结果（T1）：逐页归一化行框/行内片段框（画高亮）+ 选中纯文本（⌘C 复制）。
+/// 归一化 0~1 左上原点 → 随页尺寸自适应，缩放/滚动免重算；原生页由 PDFKit 选择引擎产出，OCR 页由 `OCRTextSelect` 行内字符级裁剪产出。
 struct TextSelection: Equatable {
-    var rects: [Int: [CGRect]]   // page → 该页归一化行框
+    var rects: [Int: [CGRect]]   // page → 该页归一化行框（OCR 选区首末行可能是行内片段框）
     var text: String
 }
 

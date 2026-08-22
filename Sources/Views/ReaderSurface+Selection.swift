@@ -4,7 +4,7 @@ import QuartzCore
 import AppKit
 
 extension ReaderSurface {
-    // MARK: 文字选择（T1：原生页走 PDFKit 选择引擎；OCR 页走行级文本层；双击选词/行；单击取消；⌘C 复制）
+    // MARK: 文字选择（T1：原生页走 PDFKit 选择引擎；OCR 页走行级文本层（行内字符级定位，见 OCRTextSelect）；双击选词/行；单击取消；⌘C 复制）
 
     /// 容器/视口坐标 P（与 pinch/hover 同 `.local` 空间）→ (页, 页内归一化坐标 0~1 左上原点)。
     /// 越界按页边缘 clamp（拖到页外 = 选到页边）。原生选择再由 `pageSpacePoint` 转 PDF 页空间点，OCR 选择直接用归一化点命中行框。
@@ -52,7 +52,7 @@ extension ReaderSurface {
                                   text: sel.string ?? "")
     }
 
-    /// OCR 行级选区：锚点/焦点各命中一「行」（run）。
+    /// OCR 选区：锚点/焦点各命中一「行」（run），行内再按 x 定位到字符级（`OCRTextSelect`）。
     /// **同页**走「分组感知」约束（见 `ocrGroupSelection`）——只在锚点所在列/块分组内连选，
     /// 与「可选分组」调试视图完全一致（所见即所选）；**跨页**（罕见）仍走原阅读顺序线性切片。
     func setOCRSelection(anchor a: (page: Int, nx: CGFloat, ny: CGFloat),
@@ -60,8 +60,8 @@ extension ReaderSurface {
         guard let ai = ocrLineHit(page: a.page, nx: a.nx, ny: a.ny),
               let fi = ocrLineHit(page: f.page, nx: f.nx, ny: f.ny) else { return }
         selection = a.page == f.page
-            ? ocrGroupSelection(page: a.page, ai: ai, fi: fi)
-            : ocrLinearSelection(a: (a.page, ai), f: (f.page, fi))
+            ? ocrGroupSelection(page: a.page, ai: ai, fi: fi, ax: a.nx, fx: f.nx)
+            : ocrLinearSelection(a: (a.page, ai, a.nx), f: (f.page, fi, f.nx))
     }
 
     /// 同页 OCR 选区（分组感知，所见即所选）：
@@ -70,13 +70,15 @@ extension ReaderSurface {
     /// 于是「左列拖右列」「思维导图黄块拖远处蓝节点」都只落在锚点那一列/块——与调试视图同色块严格一致。
     ///  · **单行横拖**（带高 ≤1.8 行高）例外：走阅读顺序线性切片，含右对齐页码等同行元素（分组会把页码单列成组，
     ///    横拖时不该被分组挡掉）。
-    /// 正常单列连续文本：整列是一个分组 → 带内所有行全选（与旧行为一致）。
-    func ocrGroupSelection(page: Int, ai: Int, fi: Int) -> TextSelection? {
+    ///  · **首末行字符级裁剪**：带内首行裁掉端点左侧、末行裁掉端点右侧（`OCRTextSelect` 行内 x → 字符），
+    ///    中间行整行——多行拖选同样能「从某行中间选到某行中间」。
+    /// 正常单列连续文本：整列是一个分组 → 带内所有行全选（首末行仍按端点 x 裁剪）。
+    func ocrGroupSelection(page: Int, ai: Int, fi: Int, ax: CGFloat, fx: CGFloat) -> TextSelection? {
         guard let runs = ocrRuns(page: page), runs.indices.contains(ai), runs.indices.contains(fi) else { return nil }
         let a = runs[ai].rect, f = runs[fi].rect
         let bandMin = min(a.minY, f.minY), bandMax = max(a.maxY, f.maxY)
         if bandMax - bandMin <= 1.8 * max(a.height, f.height) {
-            return ocrLinearSelection(a: (page, ai), f: (page, fi))
+            return ocrLinearSelection(a: (page, ai, ax), f: (page, fi, fx))
         }
         let groups = session.ocrGroups(page: page)
         let ga = groups.indices.contains(ai) ? groups[ai] : -1
@@ -91,15 +93,41 @@ extension ReaderSurface {
             let r0 = runs[$0].rect, r1 = runs[$1].rect
             return r0.midY != r1.midY ? r0.midY < r1.midY : r0.minX < r1.minX
         }
-        let text = picked.map { runs[$0].text }.joined(separator: "\n")
-        return text.isEmpty ? nil : TextSelection(rects: [page: picked.map { runs[$0].rect }], text: text)
+        // 字符级裁剪：端点在带的哪头就裁哪头（顶行裁端点左侧、底行裁端点右侧）。
+        let topIsAnchor = runs[ai].rect.midY <= runs[fi].rect.midY
+        let (topIdx, topX) = topIsAnchor ? (ai, ax) : (fi, fx)
+        let (botIdx, botX) = topIsAnchor ? (fi, fx) : (ai, ax)
+        var items = picked.map { (idx: $0, run: runs[$0]) }
+        if let i = items.firstIndex(where: { $0.idx == topIdx }) {
+            let off = OCRTextSelect.charOffset(in: items[i].run, atNX: topX)
+            if let c = OCRTextSelect.clip(run: items[i].run, from: off, to: items[i].run.text.count) {
+                items[i].run = c
+            } else { items.remove(at: i) }
+        }
+        if botIdx != topIdx, let i = items.lastIndex(where: { $0.idx == botIdx }) {
+            let off = OCRTextSelect.charOffset(in: items[i].run, atNX: botX)
+            if let c = OCRTextSelect.clip(run: items[i].run, from: 0, to: off) {
+                items[i].run = c
+            } else { items.remove(at: i) }
+        }
+        let text = items.map { $0.run.text }.joined(separator: "\n")
+        return text.isEmpty ? nil : TextSelection(rects: [page: items.map { $0.run.rect }], text: text)
     }
 
-    /// 跨页 OCR 选区：按阅读顺序（页号→行序）线性切片（保留旧逻辑，跨页场景罕见）。
-    func ocrLinearSelection(a: (page: Int, idx: Int), f: (page: Int, idx: Int)) -> TextSelection? {
+    /// 线性切片选区（单行横拖 / 跨页）：按阅读顺序（页号→行序）切片，
+    /// 首行裁掉端点左侧、末行裁掉端点右侧（字符级），中间行整行；同一行 = 两端点间的字符区间。
+    func ocrLinearSelection(a: (page: Int, idx: Int, nx: CGFloat), f: (page: Int, idx: Int, nx: CGFloat)) -> TextSelection? {
+        // 同页同行：两端点 x 之间的字符区间（拖反了也一样，取 min/max）
+        if a.page == f.page, a.idx == f.idx {
+            guard let runs = ocrRuns(page: a.page), runs.indices.contains(a.idx) else { return nil }
+            let lo = OCRTextSelect.charOffset(in: runs[a.idx], atNX: Double(min(a.nx, f.nx)))
+            let hi = OCRTextSelect.charOffset(in: runs[a.idx], atNX: Double(max(a.nx, f.nx)))
+            guard let sub = OCRTextSelect.clip(run: runs[a.idx], from: lo, to: hi) else { return nil }
+            return TextSelection(rects: [a.page: [sub.rect]], text: sub.text)
+        }
         let aFirst = a.page < f.page || (a.page == f.page && a.idx <= f.idx)
-        let (sp, si) = aFirst ? a : f
-        let (ep, ei) = aFirst ? f : a
+        let (sp, si, sx) = aFirst ? a : f
+        let (ep, ei, ex) = aFirst ? f : a
         var rects: [Int: [CGRect]] = [:]
         var parts: [String] = []
         for p in sp...ep {
@@ -107,7 +135,21 @@ extension ReaderSurface {
             let lo = p == sp ? si : 0
             let hi = p == ep ? ei : runs.count - 1
             guard lo <= hi, lo >= 0, hi < runs.count else { continue }
-            let slice = Array(runs[lo...hi])
+            var slice = Array(runs[lo...hi])
+            if p == sp {   // 首行：裁掉起点左侧（起点在行尾 → 整行不选）
+                let off = OCRTextSelect.charOffset(in: slice[0], atNX: Double(sx))
+                if let c = OCRTextSelect.clip(run: slice[0], from: off, to: slice[0].text.count) {
+                    slice[0] = c
+                } else { slice.removeFirst() }
+            }
+            if p == ep, !slice.isEmpty {   // 末行：裁掉终点右侧（终点在行首 → 整行不选）
+                let li = slice.count - 1
+                let off = OCRTextSelect.charOffset(in: slice[li], atNX: Double(ex))
+                if let c = OCRTextSelect.clip(run: slice[li], from: 0, to: off) {
+                    slice[li] = c
+                } else { slice.removeLast() }
+            }
+            guard !slice.isEmpty else { continue }
             rects[p] = slice.map(\.rect)
             parts.append(slice.map(\.text).joined(separator: "\n"))
         }
@@ -261,10 +303,12 @@ extension ReaderSurface {
     }
 
     /// 双击：OCR 页选整行、原生页选整词。
+    /// OCR 分支不走 `setOCRSelection`（同点锚定在字符级逻辑下是空选区），直接选命中行整行。
     func selectWord(atContainer P: CGPoint) {
         guard let n = containerPointToPageNorm(P) else { return }
-        if ocrRuns(page: n.page) != nil {
-            setOCRSelection(anchor: n, focus: n)
+        if let runs = ocrRuns(page: n.page), let i = ocrLineHit(page: n.page, nx: n.nx, ny: n.ny) {
+            let r = runs[i]
+            selection = r.text.isEmpty ? nil : TextSelection(rects: [n.page: [r.rect]], text: r.text)
         } else if let pdf = session.pdf, let page = pdf.page(at: n.page), let pt = pageSpacePoint(n) {
             setSelection(page.selectionForWord(at: pt))
         }
