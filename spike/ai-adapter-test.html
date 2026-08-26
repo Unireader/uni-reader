@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>UniReader 发送适配器自检</title>
+<!--
+  发送适配器（Sources/Resources/ai-adapters.js）的本地自检页。**单一真源**：这里直接 <script src>
+  引用那份脚本，不复制。
+
+  为什么必须有这个页面：第三方站点没法写 spike 测试，站点一改版「发不过去」就成了黑箱。
+  这里摆三种目标（隐藏 file input / 拖放区 / 粘贴监听），跑同一份脚本，三条链路各出一个 PASS/FAIL
+  —— 一分钟就能分清是**脚本坏了**还是**站点变了**。
+
+  运行：  open spike/ai-adapter-test.html
+  （file:// 下即可，不需要服务器）
+-->
+<style>
+  body { font: 14px/1.6 -apple-system, sans-serif; margin: 24px; max-width: 900px; }
+  h2 { font-size: 15px; margin: 22px 0 8px; }
+  #composer { border: 1px solid #bbb; border-radius: 10px; padding: 10px; }
+  textarea { width: 100%; height: 70px; box-sizing: border-box; border: 1px solid #ddd;
+             border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
+  #previews { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; min-height: 4px; }
+  #previews img { height: 44px; border: 1px solid #ccc; border-radius: 4px; }
+  .chip { font-size: 12px; background: #eee; border-radius: 10px; padding: 2px 8px; }
+  #log { white-space: pre-wrap; font: 12px/1.5 ui-monospace, Menlo, monospace;
+         background: #f6f6f6; border-radius: 8px; padding: 12px; margin-top: 12px; }
+  .pass { color: #1a7f37; } .fail { color: #b3261e; font-weight: 600; }
+  button { font: inherit; padding: 6px 14px; border-radius: 8px; margin-top: 12px; }
+</style>
+
+<h1>UniReader 发送适配器自检</h1>
+<p>三条链路各测一遍，再测一次「首选不可用时能否自动退级」。绿 = 通过。</p>
+
+<h2>模拟输入区（扮演 AI 网页版的 composer）</h2>
+<div id="composer">
+  <textarea id="editor" placeholder="这里扮演主输入框"></textarea>
+  <input type="file" id="picker" accept="image/*" hidden>
+  <div id="previews"></div>
+</div>
+
+<button id="run">重新跑一遍</button>
+<div id="log">准备中…</div>
+
+<script src="../Sources/Resources/ai-adapters.js"></script>
+<script>
+const log = document.getElementById('log');
+const previews = document.getElementById('previews');
+const editor = document.getElementById('editor');
+const picker = document.getElementById('picker');
+const composer = document.getElementById('composer');
+
+let pass = 0, fail = 0;
+function line(ok, msg) {
+  ok ? pass++ : fail++;
+  log.innerHTML += `<span class="${ok ? 'pass' : 'fail'}">${ok ? '✅' : '❌'} ${msg}</span>\n`;
+}
+function note(msg) { log.innerHTML += msg + '\n'; }
+
+// ── 三种目标各自的接收处理器：收下文件后**同时**产出两种证据
+//    （blob 预览缩略图 + 带文件名的附件条），正好覆盖 verified() 认的两种形态。
+let enabled = { input: true, drop: true, paste: true };
+
+function accept(file, how) {
+  if (!file) return;
+  const img = document.createElement('img');
+  img.src = URL.createObjectURL(file);
+  previews.appendChild(img);
+  const chip = document.createElement('span');
+  chip.className = 'chip';
+  chip.textContent = file.name + ' · ' + how;
+  previews.appendChild(chip);
+}
+
+picker.addEventListener('change', () => {
+  if (!enabled.input) return;
+  accept(picker.files && picker.files[0], 'input');
+});
+
+['dragenter', 'dragover'].forEach((t) =>
+  composer.addEventListener(t, (e) => e.preventDefault()));
+composer.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (!enabled.drop) return;
+  accept(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0], 'drop');
+});
+
+editor.addEventListener('paste', (e) => {
+  if (!enabled.paste) return;
+  accept(e.clipboardData && e.clipboardData.files && e.clipboardData.files[0], 'paste');
+});
+
+// ── 造一张小测试图（canvas → JPEG base64），免得往仓库里塞二进制
+function makeImage() {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 40;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 64, 40);
+  g.fillStyle = '#333'; g.font = '12px sans-serif'; g.fillText('UR', 6, 25);
+  return c.toDataURL('image/jpeg', 0.85).split(',')[1];
+}
+
+function reset() {
+  previews.innerHTML = '';
+  editor.value = '';
+  picker.value = '';
+  enabled = { input: true, drop: true, paste: true };
+}
+
+async function run() {
+  pass = 0; fail = 0;
+  log.innerHTML = '';
+  const b64 = makeImage();
+
+  if (!window.__unireader) {
+    line(false, '适配器脚本没加载（检查 ../Sources/Resources/ai-adapters.js 路径）');
+    return;
+  }
+  const p = window.__unireader.probe();
+  note(`probe: editor=${p.editor} area=${p.editorArea} fileInputs=${p.fileInputs} usable=${p.hasUsableFileInput}`);
+  line(p.editor === 'TEXTAREA', 'findEditor 认出了主输入框');
+  line(p.hasUsableFileInput, 'findFileInput 认出了隐藏的 file input');
+
+  // ① 逐条链路单独测
+  for (const step of ['input', 'drop', 'paste']) {
+    reset();
+    const name = `unireader-${step}-${Date.now()}.jpg`;
+    const r = await window.__unireader.attach(b64, name, 'image/jpeg', '', [step]);
+    line(r.ok && r.method === step, `${step} 链路走通（tried: ${r.tried}）`);
+    line(previews.textContent.includes(name), `${step}：目标确实收到了文件（附件条出现）`);
+  }
+
+  // ② 退级：首选不可用时应当自动往下退
+  reset();
+  enabled.input = false;                       // file input 收了但不处理 → 无证据
+  const nameA = `unireader-fb1-${Date.now()}.jpg`;
+  const rA = await window.__unireader.attach(b64, nameA, 'image/jpeg', '');
+  line(rA.ok && rA.method === 'drop', `input 无响应时退到 drop（tried: ${rA.tried}）`);
+
+  reset();
+  enabled.input = false; enabled.drop = false;
+  const nameB = `unireader-fb2-${Date.now()}.jpg`;
+  const rB = await window.__unireader.attach(b64, nameB, 'image/jpeg', '');
+  line(rB.ok && rB.method === 'paste', `input+drop 都无响应时退到 paste（tried: ${rB.tried}）`);
+
+  // ③ 三条全哑：必须老实报失败，不能假装成功
+  reset();
+  enabled.input = false; enabled.drop = false; enabled.paste = false;
+  const rC = await window.__unireader.attach(b64, `unireader-none-${Date.now()}.jpg`, 'image/jpeg', '');
+  line(!rC.ok && rC.method === null, `三条全哑 → ok=false（tried: ${rC.tried}）`);
+
+  // ④ 提示词注入（React 受控组件那条原生 setter 路径）
+  reset();
+  const prompt = '《测试书》第 12 页，这段在讲什么？';
+  const rD = await window.__unireader.attach(b64, `unireader-text-${Date.now()}.jpg`, 'image/jpeg', prompt);
+  line(rD.textOK && editor.value.includes(prompt), '提示词写进了输入框');
+  line(document.activeElement === editor, '结束时焦点落在输入框上');
+
+  note('');
+  note(`${pass} 通过，${fail} 失败`);
+}
+
+document.getElementById('run').addEventListener('click', run);
+run();
+</script>

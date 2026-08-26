@@ -164,6 +164,92 @@
       放到 `max(1.5, min(3, z*1.8))` / 0.18。间距本来就有 22~88px，点再细就没了。
       **Mac `ScratchGridLayer` 与 web `scratch.ts drawPattern` 是同一套数，改一边必须同步另一边。**
 
+  - **2026-08-25：AI 面板 S1 落地（macOS，仅 Mac 端）**——**不接 API key**，内嵌 webview 直接用各家 AI
+    网页版。完整方案（S1~S6、存储契约、红线）见 **`AI-PLAN.md`**（权威），本条只留交接要点：
+    - **全原生**：macOS 26 的 WebKit for SwiftUI（`WebView` + `WebPage`），**没有 NSViewRepresentable 包
+      `WKWebView`**。`Configuration.userContentController`／`urlSchemeHandlers`／`customUserAgent`／
+      `callJavaScript(…contentWorld:)` 都是公开 API（已核 SDK swiftinterface），S3 的注入适配器够用。
+      ⚠️ 但 `.webViewContextMenu` 的 `ActivatedElementInfo` **只有 `linkURL`，拿不到选中文字** ——
+      S5 的「右键加到笔记」必须靠注入脚本回传选区。
+    - **形态 = 全局唯一浮窗**（`Window` scene，⌘⇧A / 菜单栏「AI」），每家平台一个 `WebPage`、
+      共享 `WKWebsiteDataStore.default()`；`maxLive=3` LRU，关窗只留当前那家。
+      不是每个阅读窗口一个 —— 那会撞上「一个 WKWebView 不能同时挂两个视图」。
+    - **存储（S2 用，尚未写）**：会话绑定**复用 `note` 表 kind=1**（`REQUIREMENTS.md §1.2` 早就预留的
+      「会话笔记」），payload 存 `{provider,url,title,state,contexts[]}`，`contexts[0]` 的页与归一化矩形
+      写进 note 的 page/anchor 列。**零 schema 迁移**，级联删除/`mergeDocument` 迁移/跨端读取全部原样继承
+      （同草稿纸笔迹复用 kind=4 的先例）。
+    - 新增 `Sources/AI/{AIProvider,AIPanelModel}.swift` + `Sources/Views/AIPanelView.swift`，
+      `WindowAccessor.swift` 加 `WindowLevelAccessor`（置顶用 AppKit 设 `NSWindow.level`，
+      不用 scene 级 `.windowLevel()`——后者对已开着的窗口是否即时生效没把握）。中英双语已补。
+      `xcodebuild` 通过，**真机待验见「接下来」第 10 条**。
+  - **2026-08-25：内置平台表收窄到只有 DeepSeek**（用户「先只做 deepseek，我目前也只用 deepseek」）。
+    其余七家的 home / 会话 URL 形态移到 `AI-PLAN.md §7` 当参考（一条都没实测过，留在代码里会被
+    当成「已支持」）；想加就写外部配置。工具栏在**只有一家平台时不摆切换器**。
+    另：首版工具栏用户报「太大太高」→ 改用系统的 `.windowToolbarStyle(.unifiedCompact(showsTitle: false))`
+    并去掉 `.navigationSubtitle`（副标题把标题区撑成两行，是偏高的主因）。两处都是系统 API。
+  - **2026-08-25：AI 面板 S2 落地（会话绑定）**。规格见 `AI-PLAN.md §1/§2/§11.1`，交接要点：
+    - **绑定落 `note` 表 kind=1**，零 schema 迁移（`REQUIREMENTS.md §1.2` 早就预留的槽位，
+      本次把它的定义从「消息数组」改写成「外链会话 + 上下文列表」）。payload 存
+      `{provider,url,title,state,contexts[],last_opened_at}`；**page/anchor 走 note 的列、取
+      `contexts[0]`**（用户定的「多张图用第一张」），于是图钉位置与回填锚点都不用另存。
+    - 🔴 **面板不碰库**：面板是 App 级、`LibraryStore` 是窗口级且同库只许一个连接（§8.1 红线）。
+      面板只发 `AIThreadUpsert`，由 **sessionID + documentId 双对**的窗口认领 → 写
+      `session.aiThreads` → 既有增量对账落库。别图省事在面板里直接开库。
+    - **两段式绑定**：发起时还没有会话 URL（各家都要发出第一条消息才 `replaceState` 出唯一链接），
+      所以先记 pending 上下文，等捕到匹配 `threadPattern` 的 URL 才 commit。
+      「新对话」不清 bindContext——还是为那一页服务。
+    - `WebPage` 是 Observation 类型，**模型自己订阅不了**：URL/标题/加载状态由 `PageObservers`
+      这个 ViewModifier 在视图里读到再转交模型。
+    - **又撞一次类型检查器时限**：两条 `onChange` 挂进 `mainSplit` 当场超时 → 照 `scratchRoutes`
+      先例抽出 `aiRoutes` 一层。这个坑在本文件里已经是第三次了。
+    - 验证：`spike/ai-thread-store-test.swift` **41/41**（round-trip / 第一条决定锚点 / kind 隔离与
+      损坏容错 / **会话 URL 正则**四块）+ `xcodebuild`。真机待验见「接下来」第 10 条。
+  - **2026-08-25：AI 面板 S3+S4 落地（框选截图 → 自动发过去）**。用户要求「一定要方便」。
+    规格见 `AI-PLAN.md §4/§5/§11.2`，交接要点：
+    - **⌥ 拖是主入口**（任何工具下按住 ⌥ 拖，松手回原工具），另有常驻工具 `PointerTool.snip`
+      （笔架一枚 / ⌥S）。另外三个拖拽手势在 ⌥ 按下时**只让「尚未起手」的那一次**——
+      已经在拖的不打断（读 `snipModifierDown` + 各自锚点，等价于不用新状态的闩）。
+    - 🔴 **不截屏幕，按页重渲染**：`PageSnip.slices` 折成逐页归一化矩形 → `PageBitmap.renderTile`
+      重出图，倍率按目标长边定（1.5~4×）**与当前缩放无关**。缩小状态下直接截屏 = 小字全糊。
+      跨页各切一片纵向拼接（中间 8px 浅灰分隔）。夜间反色**天然不进截图**（`renderTile` 不反色，
+      反色是 `PageRenderEngine` 之后才加的）。
+    - 🔴 **渲染走 `PageRenderEngine.renderOffMain`（新增）那条队列**，不在主线程：阅读区页图渲染
+      就在它上面，同一份 `PDFDocument` 不能并发使用。
+    - **注入适配器三级回退 + 逐级验证**（`Sources/Resources/ai-adapters.js`）：file input → 合成 drop
+      → 合成 paste。**光派发了事件不等于站点收下了** → 每级之后看证据（冒出 blob:/data: 预览，
+      或正文里出现我们的文件名——所以文件名取页面上不可能自然出现的串）。三级全哑老实报失败。
+    - 🔴 **base64 走 `callJavaScript` 参数传、JS 里手工 atob**，不用 `fetch(dataURL)`（站点 CSP 的
+      connect-src 会挡）；脚本注入 **`.page` world**（隔离世界里造的 File/DataTransfer 页面 React 拿不到）。
+      适配器可被 `~/Library/Application Support/UniReader/ai-adapters.js` 覆盖，站点改版不用发版。
+    - **不自动按发送**：填好图 + 一行上下文（`《书名》· p.12 · 章节`）后聚焦输入框，用户自己发。
+    - 又为类型检查器分了一层：`ReaderSurface.body` 拆出 `surfaceBody` + `snipRoutes`。
+    - 验证：`spike/page-snip-test.swift` **34/34**（几何）、`spike/ai-adapter-test.html` **13/13**
+      （三条链路 + 退级 + 全哑报错，Chromium 实跑）、`xcodebuild`。真机待验见「接下来」第 10 条。
+  - **2026-08-26：AI 面板 S5 落地（webview 选区 → 回填文字笔记）**——用户三条核心需求的最后一条。
+    规格见 `AI-PLAN.md §6/§11.3`，交接要点：
+    - **选区必须靠注入脚本推上来**：`.webViewContextMenu` 的 `ActivatedElementInfo` **只有 linkURL**。
+      ⚠️ **messageHandler 的 contentWorld 必须与注入脚本一致**（都 `.page`）——不一致时
+      `webkit.messageHandlers.unireader` 是 undefined，而 postMessage 包在 try 里，**不报错、
+      只是一声不响什么都收不到**。这是本功能最像「静默失效」的一处。
+    - ⚠️ `.webViewContextMenu` **取代**系统默认网页右键菜单 → 剪切/拷贝/粘贴要自己补回来
+      （`NSApp.sendAction` 转发响应链）。
+    - **锚点 = `boundThread.contexts.first`**（用户定的「多张图用第一张」）；没发过东西就回落到
+      发起绑定的页 + 零尺寸锚点（同点注解形态）。
+    - `TextNote.source`（provider/url/thread_id/at）**零迁移**：旧 payload 无此键 → nil；
+      没有来源时也不写这个键。Inspector 笔记行加 💬 徽标点回出处对话（绑定已解则 `openLoose`
+      只开 URL、不重建绑定 —— 否则点一下「看看出处」就凭空多一条会话）。
+    - 验证：`spike/ai-thread-store-test.swift` 扩到 **53/53**（新增第 ⑤ 块：source round-trip +
+      零迁移 + 「没有来源不写 source 键」）、自检页仍 13/13、`xcodebuild`。真机待验见第 10 条。
+  - **2026-08-26：面板快捷键修复**（用户报「⌘C ⌘V 这些基本快捷键还是要有」）。
+    🔴 根因：`UniReaderApp` 的 `CommandGroup(replacing: .pasteboard)` 用
+    `firstResponder is NSText` 当判据，而面板的第一响应者是 **WKWebView** → 走 else 分支发
+    `.readerCopy` 通知 → 那时没有任何 ContentView 是 key 窗口 → **⌘C 一声不响什么都不做**。
+    改成**先试响应链、没人接才回落阅读区**（`NSApp.sendAction` 的返回值就是「有没有响应者接住」，
+    纯 SwiftUI 的阅读区不在链上必然 false，正好当分流开关）。⌘X/⌘V/Delete 本来就无条件 sendAction。
+    另加窗口级 ⌘R / ⌘[ / ⌘] / ⌘G，以及 ⌘F 页内查找（走注入侧 `window.find()`——
+    WebKit for SwiftUI 没有 `findNavigator`，`WKWebView.find` 又够不着 `WebPage`）。
+    ⌘±/⌘0 刻意不接：捏合缩放已可用，CSS `zoom` 会搞坏聊天站点的固定定位布局。
+
 ## 🔧 整体优化路线图（2026-07-25 起，用户需求「整体优化」）
 
 四项大改，分里程碑推进。用户已定：UDP=整条实时流走 UDP（原生客户端自管序号/丢弃/轻量重传，控制握手仍走可靠通道，浏览器用不了 UDP 永远走 WS）；安卓 = 工作区内 `android/` 子目录独立 git 仓库。
@@ -218,6 +304,37 @@
      ⑧ 安卓模式2 纸样面板的「管理」组改名/删除是否同样落到 Mac。
 
 9. **框选三增强真机验证**（2026-08-17 三端落地；2026-08-18 两个 bug 已修：web 虚线路径残留、提交后分层镜像闪烁，web 侧已用户确认）：① 自由框选：凹形凹槽内笔迹应**不**被选中、边缘擦到算选中；跨页 clamp 在起笔页内。② 光晕所见即所选，ghost 期间随预览走。③ 缩放：角手柄等比（Mac ⇧ 放开两轴）、边中点单轴；线宽随框变、贴页边 clamp 不越界。④ 回归：框内移动、单击/Esc/切工具清选中、隐藏图层不命中。**剩最后一项**：安卓模式2 连 Mac 提交移动/缩放后，笔迹与注解两层应各自随镜像就位、不再跳回（分层记账刚装上，`413aba0`）；验过即可把本条与状态速览的 2026-08-17 条目迁往 HISTORY。
+
+10. **AI 面板 S1 真机验证**（2026-08-25 落地；方案与后续步骤见 `AI-PLAN.md`）。⌘⇧A 或菜单栏「AI」打开浮窗：
+    ① 各平台能否**正常登录并聊天**——内置八家（ChatGPT / DeepSeek / Kimi / Qwen / Doubao / Claude / Grok / Gemini），
+    Gemini 是已知风险项（Google 常拒 WKWebView 登录，UA 已伪装成 Safari 试一次，**不行就从内置表里去掉**）；
+    ② **置顶**（图钉按钮）是否真的生效——`WindowLevelAccessor` 直接设 `NSWindow.level`，是这版唯一没把握的点，
+    按了没反应就是它；③ 切平台再切回来**是否保留原页面状态**（不重新登录、不丢输入框草稿）；
+    ④「更多 → 清除登录数据」后是否**确实需要重新登录**（不需要 = `AIProvider.dataDomains` 的域名单不够，
+    登录常挂在另一个域上）；⑤ 关掉面板再 ⌘⇧A 打开，当前这家应当**即时出现、不重新加载**
+    （`releaseIdle` 只留当前那一家）；⑥ 需要代理的平台走系统代理能不能通。
+    ⑦ 工具栏高度现在可以接受吗（已改 `.unifiedCompact(showsTitle: false)` + 去 subtitle）。
+    **S2 部分**（2026-08-25 同日落地）：① 右键「用 DeepSeek 讨论本页」→ 面板开、新对话、上下文条
+    显示《书名》+ 页码 +「等待第一条消息」；② 发出第一条消息 → 上下文条变 🔗 已绑定、Inspector
+    「笔记」页的「AI 会话」出现一条；③ 关文档再打开，那条还在；④ 点列表条目回到那次对话，点 ⊙
+    跳到那一页；⑤ **在 DeepSeek 上删掉那个对话**再从列表打开 → 应标「⚠️ 可能已不存在」而不是
+    静默显示首页；⑥ 换文档/关窗后上下文条不该还挂着上一本书。
+    （`threadPattern` 已用用户实测 URL 核对并钉进 spike 第 ④ 块，不必再手工对。）
+    **S3+S4 部分**（框选截图，同日落地）：① 按住 **⌥ 拖**一个框 → 区域外压暗、框角显示 p.N；
+    ② 松手 → 面板开、右下角「已加到 DeepSeek」→ **DeepSeek 输入框里出现图片附件 + 一行上下文**；
+    ③ **把阅读区缩到很小再框一小块公式** → 发过去应当依然清晰（这条就是「按页重渲染」的意义，
+    也是最能证伪的一条）；④ 跨页框选 → 两段纵向拼接、中间一条浅灰分隔；⑤ 夜间模式下框选 →
+    发过去的图应当是**白底黑字**；⑥ ⌥ 没按住时拖选文字/本机落墨/框选移动都不受影响。
+    **投递失败怎么给我信息**：先 `touch ~/Library/Logs/UniReader-ws.log`，复现后找 `[SNIP] 投递失败
+    tried=...` 那一行——它写明三级各自的结果（`input:no-evidence, drop:ok` 之类），一眼能定位断在哪。
+    站点改版嫌疑先跑自检页：`cd ~/agent-home/uni-reader && python3 -m http.server 8899 &`
+    然后 `open http://127.0.0.1:8899/spike/ai-adapter-test.html`（三条链路各出 PASS/FAIL，
+    一分钟分清是脚本坏了还是站点变了）。
+    **S5 部分**（选区回填笔记）：① 面板里选中一段回答 → 右键「添加到文字笔记」→ 上下文条闪
+    「已加到笔记」；② Inspector 笔记页出现这条、正文是那段回答、行尾有 💬 徽标；③ 点 💬 回到
+    那次对话，点条目本身跳到**第一张图那一页那一处**；④ 右键菜单里的剪切/拷贝/粘贴仍可用
+    （这条菜单换掉了系统默认的）；⑤ 没选中文字 / 没绑定时「添加到文字笔记」应当是灰的；
+    ⑥ 关文档再打开，笔记与徽标都在。
 
 ## 🐞 已知 Bug（待修）
 

@@ -58,6 +58,7 @@ struct ReaderSurface: View {
     let indicatorTopInset: CGFloat // 滚动条顶端下压量（避让玻璃工具栏；内容仍垫底）
 
     @Environment(\.displayScale) var displayScale
+    @Environment(\.openWindow) var openWindow          // 右键「用 … 讨论本页」开 AI 面板浮窗
 
     // 布局/缩放状态
     @State var layout: PageLayout?
@@ -90,6 +91,9 @@ struct ReaderSurface: View {
     @State var lassoGhostScale: (sx: CGFloat, sy: CGFloat, handle: LassoHandle)?
     /// 点注解图钉拖拽的 ghost 预览偏移（note id + 页内像素位移；数据在松手前不动，逻辑见 ReaderSurface+Selection）。
     @State var notePinDrag: (id: UUID, off: CGSize)?
+
+    @State var snipRect: SnipRect?                  // 进行中的框选截图矩形（容器坐标）
+    @State var snipToast: SnipToast?                // 截图投递的即时反馈（自动消失）
     /// 本机擦除的尺寸圆环位置（视口坐标；pointerTool==.ink 且 erase 模式时跟随光标，其余时刻 nil）。
     /// scratch.cursorP 在引用型 scratch 里、不触发刷新，圆环要实时跟手故单独走 @State。
     @State var eraseCursor: CGPoint?
@@ -143,6 +147,12 @@ struct ReaderSurface: View {
     var voidColor: Color { nightMode ? Color(white: 0.06) : Color(nsColor: .windowBackgroundColor) }
 
     var body: some View {
+        snipRoutes(surfaceBody)
+    }
+
+    /// 阅读区主体。**框选截图的手势与覆盖层单独包一层**（`snipRoutes`，见 `ReaderSurface+Snip`）——
+    /// 这条修饰符链早就到顶了，再往上直接加会超类型检查器时限（ContentView 为同一个坑已经分了三层）。
+    private var surfaceBody: some View {
         ScrollView([.vertical, .horizontal]) {
             contentBody
         }

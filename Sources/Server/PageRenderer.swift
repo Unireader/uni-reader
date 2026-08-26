@@ -82,7 +82,9 @@ enum PageRenderer {
         return data
     }
 
-    private static func encode(_ image: CGImage, format: Format) -> Data? {
+    /// CGImage → 编码字节。**非 private**：框选截图（`PageSnipRender`）拼完页面切片后要走同一条
+    /// 编码路径，别再复制一份 `CGImageDestination` 样板。
+    static func encode(_ image: CGImage, format: Format) -> Data? {
         let buf = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(
             buf, format.utType, 1, nil) else { return nil }

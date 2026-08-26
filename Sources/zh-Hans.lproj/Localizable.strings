@@ -245,3 +245,58 @@
 "Rename Group “%@”" = "重命名分组「%@」";
 "Delete Group" = "删除分组";
 "Group Name" = "分组名称";
+
+/* AI 面板（S1） */
+"AI" = "AI";
+"AI Panel" = "AI 面板";
+"No AI Platform" = "没有可用平台";
+"Pick a platform from the toolbar to get started." = "从工具栏选一个平台开始。";
+"Platform" = "平台";
+"Switch AI Platform" = "切换 AI 平台";
+"Back" = "后退";
+"Forward" = "前进";
+"Reload" = "重新载入";
+"Stop" = "停止";
+"New Chat" = "新对话";
+"Keep Panel on Top" = "面板置顶";
+"More" = "更多";
+"Open in Browser" = "在浏览器中打开";
+"Copy Link" = "拷贝链接";
+"Clear Login Data…" = "清除登录数据…";
+"Clear login data for this platform?" = "清除该平台的登录数据？";
+"Cookies and local data for %@ will be removed. You will need to sign in again." = "%@ 的 Cookie 与本地数据将被清除，需要重新登录。";
+"Clear" = "清除";
+"Platforms: Built-in" = "平台表：内置";
+"Platforms: External Config" = "平台表：外部配置";
+"Reveal Config File…" = "在访达中显示配置文件…";
+"Reload Config" = "重新载入配置";
+"Google may reject in-app login" = "Google 可能拒绝应用内登录";
+
+/* AI 会话绑定（S2） */
+"AI Chats" = "AI 会话";
+"No AI chats yet. Right-click in the page to start one." = "还没有 AI 会话。在页面上右键即可发起一次。";
+"Untitled chat" = "未命名对话";
+"Unbind" = "解绑";
+"Unbind (the conversation itself stays on the platform)" = "解绑（平台上那个对话本身不会被删）";
+"Bound to this conversation" = "已绑定到这次对话";
+"This conversation may no longer exist." = "这个对话可能已经不存在了。";
+"waiting for first message" = "等待第一条消息";
+"Discuss This Page with %@" = "用 %@ 讨论本页";
+"p.%d" = "第 %d 页";
+
+/* 框选截图（S3+S4） */
+"Snip to AI" = "框选发给 AI";
+"Capturing…" = "正在截取…";
+"Added to %@" = "已加到 %@";
+"Could not capture that area." = "这块区域截不出来。";
+"Couldn't put it in the chat box." = "没能放进输入框，去 AI 面板看看。";
+
+/* 选区回填笔记（S5） */
+"Add to Text Notes" = "添加到文字笔记";
+"Added to notes" = "已加到笔记";
+"Open the AI conversation this came from" = "打开这条笔记的出处对话";
+
+/* 面板快捷键与页内查找 */
+"Find on Page" = "在页面中查找";
+"Next Match" = "下一个";
+"Previous Match" = "上一个";

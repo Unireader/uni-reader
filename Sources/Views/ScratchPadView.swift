@@ -260,7 +260,8 @@ struct ScratchPadOverlay: View {
                 switch app.pointerTool {
                 case .ink: inkDrag(v)
                 case .lasso: lassoDrag(v)          // 见文件末尾 lasso 扩展
-                case .textSelect: panDrag(v)
+                // 框选截图在草稿纸上不适用（纸上没有 PDF 页可重渲），当平移处理。
+                case .textSelect, .snip: panDrag(v)
                 }
             }
             .onEnded { _ in

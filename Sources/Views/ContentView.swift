@@ -11,6 +11,8 @@ struct ContentView: View {
     @EnvironmentObject private var workspace: WorkspaceManager
 
     @StateObject private var session = DocSession()
+    /// AI 面板（App 级单例）。这里只**读**它的落库请求 —— 面板不碰库，见 `applyAIThreadUpsert`。
+    @ObservedObject private var aiPanel = AIPanelModel.shared
     @State private var selectedDocID: String?
     @State private var missingDoc: LibDocument?      // 选中但所有路径失效 → 显示重定位提示
     @State private var lastProgressSave = Date.distantPast
@@ -45,7 +47,22 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemScheme
 
     var body: some View {
-        eventRoutes(scratchRoutes(mainSplit))
+        eventRoutes(aiRoutes(scratchRoutes(mainSplit)))
+    }
+
+    /// AI 会话绑定的落库路由。**同 `scratchRoutes` 的理由单独包一层**——这两条 `onChange` 直接挂进
+    /// `mainSplit` 当场把类型检查器顶爆（2026-08-25 实测 `unable to type-check in reasonable time`）。
+    private func aiRoutes<V: View>(_ base: V) -> some View {
+        base
+            .onChange(of: session.aiThreads) { _, _ in
+                persistAIThreads()   // 新建/改标题/改失效状态/解绑时增量落库
+            }
+            .onChange(of: aiPanel.threadUpsert) { _, req in
+                applyAIThreadUpsert(req)   // 面板捕到会话 URL → 只有发起绑定的那个窗口认领落库
+            }
+            .onChange(of: aiPanel.noteRequest) { _, req in
+                applyAINoteRequest(req)    // 面板里选中一段回答 → 回填成本窗口的文字笔记
+            }
     }
 
     /// 草稿纸的落库/广播路由。**必须单独包一层**，不能挂进 `mainSplit`——那个表达式的修饰符已经到顶，
@@ -632,12 +649,15 @@ struct ContentView: View {
 
     private func loadSelected(_ id: String?) {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
+        // 换文档 → 本窗口发起的那条 AI 绑定上下文作废，否则面板的上下文条会一直显示上一本书。
+        aiPanel.noteDocumentChanged(sessionID: session.id, documentId: id)
         session.store = workspace.store   // OCR 缓存读写用（仅主线程）
         session.restoreZoom = 1; session.readZoom = 1   // 默认 fit-width；成功路径按库覆盖
         session.restoreHFrac = 0; session.readHFrac = 0
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; session.toc = []; session.title = ""
             clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); clearScratch()
+            clearAIThreads()
             session.reloadOCRState(); return
         }
         guard let target = workspace.openTarget(documentId: id),
@@ -651,6 +671,7 @@ struct ContentView: View {
             clearTextNotes()
             clearHighlights()
             clearScratch()
+            clearAIThreads()
             return
         }
         missingDoc = nil
@@ -665,6 +686,7 @@ struct ContentView: View {
         session.noteTypeFilter = .all               // 筛选仅内存，开文档复位
         loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
         loadHighlights(documentId: id)             // 恢复该文档已落库的高亮
+        loadAIThreads(documentId: id)              // 恢复该文档已落库的 AI 会话绑定
         loadScratch(documentId: id)                // 恢复该文档的草稿纸与纸上笔迹（默认不打开任何一张）
         // 恢复阅读进度：缩放倍率 + 定页 + 精确滚到页内比例（restore 锚点，阅读区(PageStreamView)会跟随）。
         let p = workspace.progress(documentId: id)
@@ -873,6 +895,59 @@ struct ContentView: View {
             workspace.deleteTextNote(id: goneID)
         }
         session.persistedTextNotes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    // MARK: - AI 会话绑定持久化（note kind=1）
+
+    /// 清空内存 AI 会话与对账集（对账集先于列表赋值，同 loadTextNotes 防切档误删）。
+    private func clearAIThreads() {
+        session.persistedAIThreads = [:]
+        session.aiThreads = []
+    }
+
+    private func loadAIThreads(documentId id: String) {
+        let loaded = workspace.aiThreads(documentId: id)
+        session.persistedAIThreads = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+        session.aiThreads = loaded
+    }
+
+    private func persistAIThreads() {
+        guard let id = session.documentId else { return }
+        let current = session.aiThreads
+        let currentIDs = Set(current.map(\.id))
+        for t in current where session.persistedAIThreads[t.id] != t {
+            workspace.saveAIThread(documentId: id, t)
+        }
+        for goneID in session.persistedAIThreads.keys where !currentIDs.contains(goneID) {
+            workspace.deleteAIThread(id: goneID)
+        }
+        session.persistedAIThreads = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    /// 应用 AI 面板发来的落库请求。
+    ///
+    /// **为什么要绕这一圈**：面板是 App 级单例（一个浮窗服务所有窗口），而 `LibraryStore` 是窗口级
+    /// 且同一个库只许一个连接（`REQUIREMENTS.md §8.1` 红线）。面板不碰库，只发请求，由**发起这次
+    /// 绑定的那个窗口**认领落库——认领条件是 `sessionID` + `documentId` 双对（同 `padOpenDocRequest`
+    /// 带 sessionID 的理由：不带的话每个窗口都会执行一遍）。
+    /// 写进 `session.aiThreads` 之后，上面的 `.onChange` 增量对账会把它写库，不在这里直接写。
+    private func applyAIThreadUpsert(_ req: AIThreadUpsert?) {
+        guard let req, req.sessionID == session.id, req.documentId == session.documentId else { return }
+        if let i = session.aiThreads.firstIndex(where: { $0.id == req.thread.id }) {
+            session.aiThreads[i] = req.thread
+        } else {
+            session.aiThreads.append(req.thread)
+        }
+        aiPanel.consumeUpsert()
+    }
+
+    /// 认领 AI 面板发来的建笔记请求（S5）。认领条件与 `applyAIThreadUpsert` 一样是
+    /// **sessionID + documentId 双对**；写进 `session.textNotes` 之后，既有的 `.onChange`
+    /// 增量对账会把它落库，不在这里直接写库。
+    private func applyAINoteRequest(_ req: AINoteRequest?) {
+        guard let req, req.sessionID == session.id, req.documentId == session.documentId else { return }
+        session.textNotes.append(req.note)
+        aiPanel.consumeNoteRequest()
     }
 
     // MARK: - 文字高亮持久化（note kind=3）

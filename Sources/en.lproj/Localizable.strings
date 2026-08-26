@@ -243,3 +243,58 @@
 "Rename Group “%@”" = "Rename Group “%@”";
 "Delete Group" = "Delete Group";
 "Group Name" = "Group Name";
+
+/* AI 面板（S1） */
+"AI" = "AI";
+"AI Panel" = "AI Panel";
+"No AI Platform" = "No AI Platform";
+"Pick a platform from the toolbar to get started." = "Pick a platform from the toolbar to get started.";
+"Platform" = "Platform";
+"Switch AI Platform" = "Switch AI Platform";
+"Back" = "Back";
+"Forward" = "Forward";
+"Reload" = "Reload";
+"Stop" = "Stop";
+"New Chat" = "New Chat";
+"Keep Panel on Top" = "Keep Panel on Top";
+"More" = "More";
+"Open in Browser" = "Open in Browser";
+"Copy Link" = "Copy Link";
+"Clear Login Data…" = "Clear Login Data…";
+"Clear login data for this platform?" = "Clear login data for this platform?";
+"Cookies and local data for %@ will be removed. You will need to sign in again." = "Cookies and local data for %@ will be removed. You will need to sign in again.";
+"Clear" = "Clear";
+"Platforms: Built-in" = "Platforms: Built-in";
+"Platforms: External Config" = "Platforms: External Config";
+"Reveal Config File…" = "Reveal Config File…";
+"Reload Config" = "Reload Config";
+"Google may reject in-app login" = "Google may reject in-app login";
+
+/* AI 会话绑定（S2） */
+"AI Chats" = "AI Chats";
+"No AI chats yet. Right-click in the page to start one." = "No AI chats yet. Right-click in the page to start one.";
+"Untitled chat" = "Untitled chat";
+"Unbind" = "Unbind";
+"Unbind (the conversation itself stays on the platform)" = "Unbind (the conversation itself stays on the platform)";
+"Bound to this conversation" = "Bound to this conversation";
+"This conversation may no longer exist." = "This conversation may no longer exist.";
+"waiting for first message" = "waiting for first message";
+"Discuss This Page with %@" = "Discuss This Page with %@";
+"p.%d" = "p.%d";
+
+/* 框选截图（S3+S4） */
+"Snip to AI" = "Snip to AI";
+"Capturing…" = "Capturing…";
+"Added to %@" = "Added to %@";
+"Could not capture that area." = "Could not capture that area.";
+"Couldn't put it in the chat box." = "Couldn't put it in the chat box.";
+
+/* 选区回填笔记（S5） */
+"Add to Text Notes" = "Add to Text Notes";
+"Added to notes" = "Added to notes";
+"Open the AI conversation this came from" = "Open the AI conversation this came from";
+
+/* 面板快捷键与页内查找 */
+"Find on Page" = "Find on Page";
+"Next Match" = "Next Match";
+"Previous Match" = "Previous Match";

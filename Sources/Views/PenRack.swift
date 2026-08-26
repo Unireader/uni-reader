@@ -167,6 +167,7 @@ struct PenRackView: View {
             }
             cell(keep: false) { localInkButton }
             cell(keep: false) { lassoButton }
+            cell(keep: false) { snipButton }
             cell(keep: false) { layersButton }
         }
         // 内容永远按自然宽度布局：外面那层 frame 是取景窗，不许反过来把按钮挤扁。
@@ -415,6 +416,21 @@ struct PenRackView: View {
         }
         .buttonStyle(.plain)
         .help(L("Lasso Select"))
+    }
+
+    /// 框选截图：拖一个矩形 → 按页重渲染成图 → 塞进 AI 面板当前对话的输入框。
+    /// 常驻模式用这枚；**临时截一块直接按住 ⌥ 拖**即可，不必切工具（见 `ReaderSurface+Snip`）。
+    private var snipButton: some View {
+        let active = app.pointerTool == .snip
+        return Button { app.pointerTool = active ? .textSelect : .snip } label: {
+            Image(systemName: "rectangle.dashed.badge.record")
+                .imageScale(.medium)
+                .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("Snip to AI"))
     }
 
     /// 图层：弹出图层管理面板（显示/隐藏、改名/改色、拖拽排序、新建/删除，见 `LayerManagerView`）。

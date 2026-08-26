@@ -202,6 +202,26 @@ extension ReaderSurface {
         }
         Divider()
         Button(L("New Scratchpad Here")) { newScratchPadAtCursor() }
+        Divider()
+        Button(String(format: L("Discuss This Page with %@"), aiProviderName)) { discussPageWithAI() }
+            .disabled(session.documentId == nil)
+    }
+
+    /// 当前 AI 平台显示名（菜单文案用）。平台表为空时退回通用「AI」。
+    var aiProviderName: String { AIPanelModel.shared.currentProvider?.name ?? L("AI") }
+
+    /// 「用 … 讨论本页」：开 AI 面板 → 新对话 → 把这次对话绑到右键处那一页。
+    ///
+    /// 此刻**还没有会话 URL**（各家都是发出第一条消息才 `replaceState` 出唯一链接），所以这里只
+    /// 落一个 pending 上下文，等面板捕到匹配 `threadPattern` 的 URL 再 commit 落库
+    /// （两段式绑定，见 `AIPanelModel.syncFromPage`）。
+    func discussPageWithAI() {
+        guard let docId = session.documentId else { return }
+        let page = scratch.cursorP.flatMap { containerPointToPageNorm($0)?.page } ?? session.currentPageIndex
+        clearSelection()
+        openWindow(id: AIPanelModel.windowID)
+        AIPanelModel.shared.beginBind(AIBindContext(sessionID: session.id, documentId: docId,
+                                                    docTitle: session.title, page: page))
     }
 
     /// 在右键处新建一张草稿纸并立即打开：锚点取 `.onContinuousHover` 维护的光标位
@@ -323,6 +343,8 @@ extension ReaderSurface {
             .onChanged { v in
                 guard app.pointerTool == .textSelect, scratch.pinch == nil,
                       session.openPadID == nil else { return }   // 草稿纸盖着时阅读区一概不响应
+                // ⌥ 按下 = 用户要框选截图 → **尚未起手**的才让位（已经在拖选的不打断）
+                guard !(snipModifierDown && scratch.selDragAnchor == nil) else { return }
                 if scratch.selDragAnchor == nil {
                     if pointNotePinHit(v.startLocation) != nil { return }   // selDragAnchor 保持 nil → 整段拖选不启动
                     scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
@@ -415,6 +437,7 @@ extension ReaderSurface {
             .onChanged { v in
                 guard app.pointerTool == .ink, scratch.pinch == nil,
                       session.openPadID == nil else { return }   // 笔迹只落草稿纸（覆盖层自己收）
+                guard !(snipModifierDown && scratch.localInkStart == nil) else { return }   // ⌥ 让位截图
                 let isErase = app.padMode == "erase"
                 // 起笔（本手势首个回调）：定锚 + inkBegin / 首点擦除
                 if scratch.localInkStart == nil {

@@ -185,6 +185,13 @@ final class DocSession: ObservableObject, Identifiable {
     /// Inspector 笔记列表筛选：.all 全部 / .only(nil) 通用 / .only(id) 指定类型。仅内存，重启复位。
     @Published var noteTypeFilter: NoteTypeFilter = .all
 
+    // AI 会话绑定（note kind=1）。同上套路：Inspector 列表读它，ContentView `.onChange` 增量对账落库。
+    // 谁往里写：AI 面板捕到会话 URL 后经 `AIPanelModel.threadUpsert` 请求，由**发起绑定的那个窗口**
+    // 的 ContentView 应用到这里（面板是 App 级、库是窗口级，跨不过去——同 `broadcastLibrary` 走快照的理由）。
+    @Published var aiThreads: [AIThread] = []
+    /// 已落库的 AI 会话快照（id → 值），增量对账用，非 @Published。
+    var persistedAIThreads: [UUID: AIThread] = [:]
+
     // 文字高亮（note kind=3）。同上套路：阅读区铺色 + Inspector 列表，ContentView `.onChange` 增量对账。
     @Published var highlights: [Highlight] = []
     /// 已落库的高亮快照（id → 值），增量对账用，非 @Published。

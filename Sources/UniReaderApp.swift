@@ -257,6 +257,21 @@ struct UniReaderApp: App {
         // `SwiftUI.PresentedWindowContent<…>-AppWindow-N`，是 SwiftUI 自己开的，与状态恢复无关。
         .restorationBehavior(.disabled)
 
+        // AI 面板：**全局唯一浮窗**（不是每个阅读窗口一个）。⌘⇧A 打开，见 `AIPanelMenu`。
+        // 用 `Window` 而不是 `WindowGroup` 就是要这个「只有一个」的语义——每家平台一个 WebPage
+        // 已经够用，还顺带绕开「一个 WKWebView 不能同时挂两个视图」。
+        // 状态恢复同样关掉：面板开不开由用户当次决定，系统替我们记反而碍事。
+        Window(L("AI"), id: AIPanelModel.windowID) {
+            AIPanelView()
+        }
+        .defaultSize(width: 480, height: 760)
+        .defaultPosition(.trailing)
+        // 紧凑工具栏（系统标准样式，不是自己压高度）：默认的 expanded 样式在 Tahoe 上又高又占地方，
+        // 一个聊天浮窗不该拿两行去放标题。`showsTitle: false` 连标题行一起省掉——当前是哪家平台，
+        // 工具栏中间那枚平台菜单自己就写着。
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
+        .restorationBehavior(.disabled)
+
         // 标准设置窗口（⌘,）：夜间模式自动化 / 平板滚动跟随算法 / 平板服务自启。
         Settings {
             SettingsView()
@@ -322,9 +337,12 @@ struct UniReaderApp: App {
                 Button(L("Cut")) { NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil) }
                     .keyboardShortcut("x")
                 Button(L("Copy")) {
-                    if NSApp.keyWindow?.firstResponder is NSText {
-                        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
-                    } else {
+                    // ⚠️ **先试响应链，没人接才回落到阅读区**（2026-08-26 改）。
+                    // 原先的判据是 `firstResponder is NSText`，AI 面板里第一响应者是 WKWebView
+                    // ——既不是 NSText，也没有哪个 ContentView 是 key 窗口，于是 ⌘C **一声不响什么都不做**。
+                    // `sendAction` 的返回值就是「有没有响应者接住」：webview / 文本框都会接，
+                    // 纯 SwiftUI 的阅读区不在响应链上必然返回 false，正好当分流开关。
+                    if !NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) {
                         NotificationCenter.default.post(name: .readerCopy, object: nil)
                     }
                 }
@@ -333,9 +351,7 @@ struct UniReaderApp: App {
                     .keyboardShortcut("v")
                 Button(L("Delete")) { NSApp.sendAction(#selector(NSText.delete(_:)), to: nil, from: nil) }
                 Button(L("Select All")) {
-                    if NSApp.keyWindow?.firstResponder is NSText {
-                        NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-                    } else {
+                    if !NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) {
                         NotificationCenter.default.post(name: .readerSelectAll, object: nil)
                     }
                 }
@@ -365,6 +381,15 @@ struct UniReaderApp: App {
                 }
                 .keyboardShortcut("n", modifiers: [.command, .option])
             }
+            // AI 菜单。⌥S 与阅读区的单键工具约定（e/1~9/n/b/v/l）同一族，只是菜单项要带修饰键。
+            CommandMenu(L("AI")) {
+                AIPanelMenu()
+                Divider()
+                Button(L("Snip to AI")) {
+                    NotificationCenter.default.post(name: .toggleSnipTool, object: nil)
+                }
+                .keyboardShortcut("s", modifiers: .option)
+            }
         }
     }
 }
@@ -378,4 +403,5 @@ extension Notification.Name {
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
     static let toggleSidebar = Notification.Name("com.xvan.UniReader.toggleSidebar")
     static let toggleInspector = Notification.Name("com.xvan.UniReader.toggleInspector")
+    static let toggleSnipTool = Notification.Name("com.xvan.UniReader.toggleSnipTool")
 }

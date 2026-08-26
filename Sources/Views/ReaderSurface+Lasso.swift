@@ -24,6 +24,7 @@ extension ReaderSurface {
             .onChanged { v in
                 guard app.pointerTool == .lasso, scratch.pinch == nil,
                       session.openPadID == nil else { return }   // 草稿纸盖着时阅读区一概不响应
+                guard !(snipModifierDown && scratch.lassoDragMode == nil) else { return }   // ⌥ 让位截图
                 if scratch.lassoDragMode == nil {
                     let g = scratch.geo
                     let startContent = CGPoint(x: g.offsetX + v.startLocation.x,

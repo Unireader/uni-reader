@@ -111,3 +111,25 @@ struct WindowAccessor: NSViewRepresentable {
         deinit { tokens.forEach { NotificationCenter.default.removeObserver($0) } }
     }
 }
+
+/// 把所在窗口的层级设成浮动/普通——AI 面板的「置顶」开关。
+///
+/// ⚠️ 用 AppKit 而不是 scene 级的 `.windowLevel()`：后者对**已经开着**的窗口是否即时生效没把握，
+/// 而「按了没反应」正是最难查的那类静默失效（见 `WindowCloser` 上方那段同类教训）。
+/// `floating` 必须是本结构体的**存储属性**——存储属性不变时 SwiftUI 会跳过 `updateNSView`，
+/// 变化值不显式传进来就永远只应用初值。
+struct WindowLevelAccessor: NSViewRepresentable {
+    let floating: Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { [weak view] in apply(view?.window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) { apply(nsView.window) }
+
+    private func apply(_ window: NSWindow?) {
+        window?.level = floating ? .floating : .normal
+    }
+}

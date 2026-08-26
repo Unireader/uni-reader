@@ -13,6 +13,8 @@ struct InspectorView: View {
     var onSelectTOC: (TOCEntry) -> Void
     var onJumpTo: (Int, Double) -> Void   // 跳到 (页, 页内比例)：Inspector 笔迹项点击用
 
+    @Environment(\.openWindow) private var openWindow   // 打开 AI 面板浮窗
+
     @State private var variants: [LibVariant] = []
     @State private var locations: [LibLocation] = []
 
@@ -67,6 +69,7 @@ struct InspectorView: View {
                         infoBlock(doc)
                         filesBlock
                     } else {
+                        aiBlock
                         scratchBlock
                         inkBlock
                         textBlock
@@ -193,6 +196,68 @@ struct InspectorView: View {
         }
     }
 
+    // MARK: AI 会话绑定（note kind=1）
+
+    /// AI 会话列表：打开会话 / 跳到锚点页 / 解绑。
+    /// 新建走阅读区右键「用 … 讨论本页」——绑定总得先有个落点才谈得上锚定（同草稿纸）。
+    private var aiBlock: some View {
+        block("\(L("AI Chats")) · \(session.aiThreads.count)") {
+            if session.aiThreads.isEmpty {
+                Text(L("No AI chats yet. Right-click in the page to start one."))
+                    .foregroundStyle(.secondary).font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(session.aiThreads) { t in aiRow(t) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func aiRow(_ t: AIThread) -> some View {
+        HStack(spacing: 6) {
+            Button { openAIThread(t) } label: {
+                HStack(spacing: 6) {
+                    Label(t.hasTitle ? t.title : L("Untitled chat"),
+                          systemImage: t.state == .suspect ? "exclamationmark.bubble"
+                                                           : "bubble.left.and.text.bubble.right")
+                        .font(.callout).lineLimit(1)
+                    Spacer()
+                    Text(String(format: L("p.%d"), t.page + 1))
+                        .foregroundStyle(.secondary).font(.caption)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(t.state == .suspect ? L("This conversation may no longer exist.") : t.url)
+
+            Button {
+                onJumpTo(t.page, Double(t.anchor.minY))
+            } label: {
+                Image(systemName: "scope").font(.caption).foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help(L("Go to anchor"))
+
+            Button {
+                session.aiThreads.removeAll { $0.id == t.id }   // onChange 对账把这条 note 删库
+            } label: {
+                Image(systemName: "xmark.circle.fill").font(.body).foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help(L("Unbind (the conversation itself stays on the platform)"))
+        }
+    }
+
+    /// 打开一条已绑会话：开面板 → 载入那条 URL。绑定上下文照原记录重建，于是标题/失效状态的
+    /// 后续更新仍会回到**本窗口**落库（`AIThreadUpsert` 认 sessionID + documentId 双对）。
+    private func openAIThread(_ t: AIThread) {
+        guard let docId = documentId else { return }
+        openWindow(id: AIPanelModel.windowID)
+        AIPanelModel.shared.openThread(t, in: AIBindContext(sessionID: session.id, documentId: docId,
+                                                            docTitle: session.title,
+                                                            page: t.page, anchor: t.anchor))
+    }
+
     // MARK: 草稿纸（v8）
 
     /// 草稿纸列表：点开、跳到锚点、删除。新建走阅读区右键「在此新建草稿纸」（要有个落点才谈得上锚定）。
@@ -308,6 +373,15 @@ struct InspectorView: View {
                         }
                         .buttonStyle(.plain)
 
+                        if let src = n.source, src.isAI {
+                            Button { openAISource(src) } label: {
+                                Image(systemName: "bubble.left.and.text.bubble.right")
+                                    .font(.caption).foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                            .help(L("Open the AI conversation this came from"))
+                        }
+
                         Button {
                             deleteTextNote(n)   // × → 从内存移除 → ContentView onChange 对账删 note 行
                         } label: {
@@ -323,6 +397,17 @@ struct InspectorView: View {
                 }
             }
         }
+    }
+
+    /// 从一条 AI 回填的笔记跳回它的出处对话。绑定记录还在就正常打开（连带上下文），
+    /// 已被解绑就只按 URL 开一次、不重新建绑定。
+    private func openAISource(_ src: NoteSource) {
+        if let tid = src.threadId, let t = session.aiThreads.first(where: { $0.id == tid }) {
+            openAIThread(t)
+            return
+        }
+        openWindow(id: AIPanelModel.windowID)
+        AIPanelModel.shared.openLoose(src.url, provider: src.provider)
     }
 
     /// 类型筛选菜单：全部 / 通用 / 各自定义类型。选中项显示在 label 上。

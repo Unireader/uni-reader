@@ -594,4 +594,24 @@ final class WorkspaceManager: ObservableObject {
     func deleteHighlight(id: UUID) {
         try? store?.deleteNote(id: id.uuidString)
     }
+
+    // MARK: - AI 会话绑定持久化（note kind=1；挂逻辑文档，全版本共用）
+
+    /// 读取某文档已落库的全部 AI 会话绑定（按页 / 页内位置序），用于重开恢复。
+    func aiThreads(documentId: String) -> [AIThread] {
+        ((try? store?.notes(documentId: documentId)) ?? [])
+            .compactMap { $0.kind == AIThread.noteKind ? AIThread(note: $0) : nil }
+            .sorted { $0.page != $1.page ? $0.page < $1.page : $0.createdAt < $1.createdAt }
+    }
+
+    /// 落库/更新一条 AI 会话绑定。
+    func saveAIThread(documentId: String, _ t: AIThread) {
+        guard let store, let n = t.toNote(documentId: documentId) else { return }
+        try? store.upsertNote(n)
+    }
+
+    /// 删除一条 AI 会话绑定（note.id == AIThread.id）。**只解绑，不动平台上那个对话。**
+    func deleteAIThread(id: UUID) {
+        try? store?.deleteNote(id: id.uuidString)
+    }
 }

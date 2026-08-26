@@ -73,6 +73,17 @@ final class PageRenderEngine {
     }
 
     /// 入队渲染。缓存命中/重复在途都不会重复渲染。
+    /// 在渲染队列上跑一次自定义栅格化，完成后回主线程（框选截图 `PageSnip.render` 用）。
+    ///
+    /// 🔴 **必须走这条队列**：阅读区的页图渲染就在它上面，而 `PDFDocument` 不能被并发使用。
+    /// 直接在主线程渲一张截图看着「更简单」，但那就是拿同一份 PDF 跟后台渲染撞车。
+    func renderOffMain<T>(_ work: @escaping () -> T, completion: @escaping (T) -> Void) {
+        queue.async {
+            let out = work()
+            DispatchQueue.main.async { completion(out) }
+        }
+    }
+
     func request(_ r: Request, completion: @escaping (String, CGImage) -> Void) {
         if let hit = cached(r.key) {
             completion(r.key, hit)

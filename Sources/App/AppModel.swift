@@ -8,6 +8,9 @@ enum PointerTool: String {
     case textSelect
     case ink
     case lasso
+    /// 框选截图：拖一个矩形 → 按页重渲染 → 塞进 AI 面板当前对话（见 `ReaderSurface+Snip`）。
+    /// 常驻用这个；临时截一块直接按住 ⌥ 拖即可，不必切工具。
+    case snip
 }
 
 /// 橡皮擦除模式：整笔（任一点命中即删整条）/ 局部（剔除命中点、剩余连续段各成新笔画）。

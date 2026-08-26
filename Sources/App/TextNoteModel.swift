@@ -7,6 +7,22 @@ import Foundation
 ///  · `quote`  = 被选中的原文（可能跨页；注解锚到选区起始页，原文完整保留）。
 ///  · `text`   = 用户写的批注内容。
 /// 落 `note` 表 kind=0（挂逻辑文档，全版本共用；payload=JSON 跨平台可读）。
+/// 一条笔记的来源。目前只有一种：从 AI 面板里选中一段回答回填过来的。
+///
+/// 有了它，笔记能**点回原对话**，也能筛出「哪些笔记是 AI 来的」。
+/// 旧 payload 没有这个键 → nil，**零迁移**（与 `type_id` 完全同一个先例）。
+struct NoteSource: Equatable {
+    static let aiKind = "ai"
+
+    var kind: String            // 目前恒为 "ai"，留着是为了将来还有别的来源
+    var provider: String        // AIProvider.id
+    var url: String             // 那次对话的唯一链接
+    var threadId: UUID?         // 对应的 AIThread（note kind=1）；解绑过就可能为 nil
+    var at: Date
+
+    var isAI: Bool { kind == Self.aiKind }
+}
+
 struct TextNote: Identifiable, Equatable {
     var id: UUID = UUID()
     var page: Int
@@ -16,6 +32,7 @@ struct TextNote: Identifiable, Equatable {
     var rects: [CGRect]         // 选区逐行归一化框（页局部）——渲染精确高亮用
     var color: InkColor?        // 预留：高亮色（高亮形态复用）
     var typeId: UUID? = nil     // 笔记类型（工作区 NoteType.id）；nil/未知 = 通用
+    var source: NoteSource? = nil   // 来源（AI 回填）；nil = 用户自己写的
     var createdAt: Date = .now
     var updatedAt: Date = .now
 }
@@ -30,9 +47,23 @@ private struct TextNotePayload: Codable {
     var rects: [[Double]]
     var color: InkColor?
     var typeId: String?     // JSON 键 type_id；旧 payload 无此键 → nil（通用），零迁移
+    var source: Src?        // JSON 键 source；旧 payload 无此键 → nil，同样零迁移
+
+    struct Src: Codable {
+        var kind: String
+        var provider: String
+        var url: String
+        var threadId: String?
+        var at: String      // ISO-8601，跨平台可读（同 AIThread 的 contexts）
+
+        enum CodingKeys: String, CodingKey {
+            case kind, provider, url, at
+            case threadId = "thread_id"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
-        case quote, text, rects, color
+        case quote, text, rects, color, source
         case typeId = "type_id"
     }
 }
@@ -45,7 +76,13 @@ extension TextNote {
     func toNote(documentId: String) -> LibNote? {
         let payload = TextNotePayload(quote: quote, text: text,
                                       rects: rects.map { [$0.minX, $0.minY, $0.width, $0.height] },
-                                      color: color, typeId: typeId?.uuidString)
+                                      color: color, typeId: typeId?.uuidString,
+                                      source: source.map {
+                                          TextNotePayload.Src(kind: $0.kind, provider: $0.provider,
+                                                              url: $0.url,
+                                                              threadId: $0.threadId?.uuidString,
+                                                              at: ISO.string($0.at))
+                                      })
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
                        page: page, anchor: anchor, payload: data,
@@ -65,8 +102,13 @@ extension TextNote {
             let h: Double = a.count > 3 ? a[3] : 0
             return CGRect(x: x, y: y, width: w, height: h)
         }
+        let src = p.source.map {
+            NoteSource(kind: $0.kind, provider: $0.provider, url: $0.url,
+                       threadId: $0.threadId.flatMap { UUID(uuidString: $0) },
+                       at: ISO.date($0.at) ?? note.createdAt)
+        }
         self.init(id: uuid, page: note.page, anchor: note.anchor, quote: p.quote, text: p.text,
                   rects: rects, color: p.color, typeId: p.typeId.flatMap { UUID(uuidString: $0) },
-                  createdAt: note.createdAt, updatedAt: note.updatedAt)
+                  source: src, createdAt: note.createdAt, updatedAt: note.updatedAt)
     }
 }
