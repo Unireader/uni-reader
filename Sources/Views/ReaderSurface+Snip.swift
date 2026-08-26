@@ -134,6 +134,7 @@ extension ReaderSurface {
             .overlay { Capsule().strokeBorder(.separator, lineWidth: 0.5) }
             .shadow(radius: 6, y: 2)
             .padding(18)
+            .padding(.trailing, aiInlineInset)
             .transition(.opacity)
             .allowsHitTesting(false)
         }
@@ -153,7 +154,7 @@ extension ReaderSurface {
         guard let first = PageSnip.slices(region).first else { return }
 
         // 面板先开起来、绑定上下文对齐到这一页（不强制新对话——框第二块多半是想接着问）。
-        openWindow(id: AIPanelModel.windowID)
+        AIPanelModel.shared.present(session: session.id) { openWindow(id: $0) }
         AIPanelModel.shared.prepareForSend(
             AIBindContext(sessionID: session.id, documentId: docId, docTitle: session.title,
                           page: first.page, anchor: first.rect))
@@ -220,6 +221,16 @@ extension ReaderSurface {
     /// （见 `ai-adapters.js` 的 `evidence`）。
     private func snipFileName(page: Int) -> String {
         "unireader-p\(page + 1)-\(UUID().uuidString.prefix(6)).jpg"
+    }
+
+    /// 内置 AI 面板在本窗口占掉的右侧宽度（气泡时按气泡算）——toast 靠右下，得给它让开。
+    /// **刻意不 observe `AIPanelModel`**：ReaderSurface 订阅一个 App 级 `@Published` 会让面板的
+    /// 任何变化都重算整个阅读区（`readZoom` 那条性能红线就是这么踩出来的）。toast 是按需出现的，
+    /// 出现那一刻现读一次就够。
+    var aiInlineInset: CGFloat {
+        let p = AIPanelModel.shared
+        guard p.mode == .inline else { return 0 }
+        return p.isInlineOpen(session.id) ? CGFloat(p.inlineWidth) : 60
     }
 
     /// 显示一条反馈并定时收起。`working` 给长一点的兜底超时（正常会被结果那条顶掉）。

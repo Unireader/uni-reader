@@ -300,3 +300,13 @@
 "Find on Page" = "在页面中查找";
 "Next Match" = "下一个";
 "Previous Match" = "上一个";
+
+/* 吸附与内置模式 */
+"Dock to Reading Window" = "吸附到阅读窗口";
+"Sit at the right edge of the reading window and follow it. Off while that window is maximized." = "贴在阅读窗口右侧并跟随移动；该窗口最大化时自动松开。";
+"Show Inside the Window" = "改为窗口内置";
+"Shown Inside the Window" = "已内置到窗口";
+"The AI panel is docked inside the reading window." = "AI 面板正显示在阅读窗口里面。";
+"Open as Separate Window" = "弹出为独立窗口";
+"Open AI Panel" = "打开 AI 面板";
+"Collapse" = "收起";

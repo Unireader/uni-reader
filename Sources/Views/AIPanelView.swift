@@ -36,17 +36,37 @@ struct AIPanelView: View {
     @State private var findText = ""
     @FocusState private var findFocused: Bool
 
+    @Environment(\.dismissWindow) private var dismissWindow
+
+    /// 本视图就是 `.window` 这个宿主，它有**自己那一份** `WebPage`（见 `AIPanelModel` 的宿主说明）。
+    private let host = AIHost.window
+    /// 🔴 **body 里直接从模型查，不用 `@State` 缓存**（重建后 `@State` 归 nil 会闪一帧占位）；
+    /// 创建只在 `onAppear`/`onChange` 里做。
+    private var box: AIPageBox? { panel.existingPage(for: host) }
+
     var body: some View {
         shell
-            .modifier(PageObservers(panel: panel))
             .onReceive(NotificationCenter.default.publisher(for: .readerFind)) { _ in
                 guard isKey else { return }     // ⌘F 是 App 级菜单命令，只有 key 窗口该响应
                 findOpen = true
                 findFocused = true
             }
-            .background(WindowAccessor(onKeyChange: { isKey = $0 }))
+            .onAppear {
+                AIPanelDock.shared.setEnabled(panel.docked)
+                panel.setActiveHost(host)
+                _ = panel.page(for: host)
+            }
+            .onDisappear { panel.releaseHost(host) }
+            .onChange(of: panel.currentID) { _, _ in _ = panel.page(for: host) }
+            .onChange(of: panel.mode) { _, m in
+                if m == .inline { dismissWindow(id: AIPanelModel.windowID) }
+            }
+            .background(WindowAccessor(onKeyChange: { key in
+                isKey = key
+                if key { panel.setActiveHost(host) }   // 前台切回浮窗 → 模型级操作作用到它这一份页面
+            }, onWindow: { AIPanelDock.shared.setPanel($0) }))
             .background(WindowLevelAccessor(floating: floating))
-            .background(WindowLifecycle { AIPanelModel.shared.releaseIdle() })
+            .background(WindowLifecycle { AIPanelModel.shared.releaseHost(.window) })
     }
 
     private var shell: some View {
@@ -115,10 +135,9 @@ struct AIPanelView: View {
     }
 
     private func runFind(backwards: Bool) {
-        guard !findText.isEmpty, let page = panel.current else { return }
+        guard !findText.isEmpty, let box = panel.current else { return }
         let js = "return window.find(q, false, back, true, false, true, false);"
-        Task { _ = try? await page.callJavaScript(js, arguments: ["q": findText, "back": backwards],
-                                                  contentWorld: .page) }
+        Task { await box.callJS(js, arguments: ["q": findText, "back": backwards]) }
     }
 
     private func closeFind() {
@@ -128,8 +147,13 @@ struct AIPanelView: View {
 
     @ViewBuilder
     private var pageArea: some View {
-        if let page = panel.current {
-            webBody(page)
+        if panel.mode == .inline {
+            // 🔴 内置模式下网页归内置面板渲染——同一个 WebPage 不能被两个 WebView 同时挂着。
+            // 窗口这会儿多半正在关，画个占位是为了「关之前那一帧」不去抢那个 page。
+            ContentUnavailableView(L("Shown Inside the Window"), systemImage: "sidebar.trailing",
+                                   description: Text(L("The AI panel is docked inside the reading window.")))
+        } else if let box {
+            AIWebArea(panel: panel, box: box, host: host)
         } else {
             ContentUnavailableView(L("No AI Platform"),
                                    systemImage: "bubble.left.and.bubble.right",
@@ -180,51 +204,6 @@ struct AIPanelView: View {
             }
         } else {
             Text(L("waiting for first message")).foregroundStyle(.tertiary)
-        }
-    }
-
-    /// 加载进度压在顶边：只在真的在加载时出现（常驻一条 0% 是纯噪音）。
-    private func webBody(_ page: WebPage) -> some View {
-        WebView(page)
-            .webViewBackForwardNavigationGestures(.enabled)
-            .webViewMagnificationGestures(.enabled)
-            .webViewContextMenu { info in webMenu(info) }
-            .overlay(alignment: .top) { progressBar(page) }
-            .animation(.easeOut(duration: 0.15), value: page.isLoading)
-    }
-
-    /// webview 的右键菜单。
-    ///
-    /// ⚠️ 这条**取代**了系统默认的网页右键菜单，所以剪贴板三项要自己补回来——走
-    /// `NSApp.sendAction` 转发给响应链（webview 就在链上），比自己实现靠谱。
-    /// 「添加到文字笔记」是这个菜单存在的理由：`ActivatedElementInfo` 只带 linkURL，
-    /// 选中文字得靠注入脚本推上来（`panel.pageSelection`）。
-    @ViewBuilder
-    private func webMenu(_ info: WebView.ActivatedElementInfo) -> some View {
-        Button(L("Add to Text Notes")) { panel.requestNoteFromSelection() }
-            .disabled(!panel.canMakeNote)
-        Divider()
-        Button(L("Cut")) { NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil) }
-        Button(L("Copy")) { NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) }
-        Button(L("Paste")) { NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil) }
-        if let link = info.linkURL {
-            Divider()
-            Button(L("Open in Browser")) { NSWorkspace.shared.open(link) }
-            Button(L("Copy Link")) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(link.absoluteString, forType: .string)
-            }
-        }
-        Divider()
-        Button(L("Reload")) { panel.reload() }
-    }
-
-    @ViewBuilder
-    private func progressBar(_ page: WebPage) -> some View {
-        if page.isLoading {
-            ProgressView(value: page.estimatedProgress)
-                .progressViewStyle(.linear)
-                .transition(.opacity)
         }
     }
 
@@ -310,6 +289,11 @@ struct AIPanelView: View {
         }
         .disabled(panel.currentProvider == nil)
         Divider()
+        Toggle(L("Dock to Reading Window"), isOn: Binding(get: { panel.docked },
+                                                          set: { panel.setDocked($0) }))
+            .help(L("Sit at the right edge of the reading window and follow it. Off while that window is maximized."))
+        Button(L("Show Inside the Window")) { panel.setMode(.inline) }
+        Divider()
         Section(panel.usingExternalConfig ? L("Platforms: External Config") : L("Platforms: Built-in")) {
             Button(L("Reveal Config File…"), action: revealConfig)
             Button(L("Reload Config")) { panel.reloadConfig() }
@@ -346,29 +330,17 @@ struct AIPanelView: View {
     }
 }
 
-/// 页面状态观察器。`WebPage` 是 Observation 类型——**只有在 View 的 body 求值里读它才有跟踪**，
-/// `AIPanelModel` 自己订阅不了，所以 URL/标题/加载状态的变化一律由视图这边转交给模型。
-/// 抽成 `ViewModifier` 是为了不把三条 `onChange` 再堆进 `shell` 的修饰符链（那条链已经超过一次时限）。
-private struct PageObservers: ViewModifier {
-    @ObservedObject var panel: AIPanelModel
-
-    func body(content: Content) -> some View {
-        content
-            .onChange(of: panel.current?.url) { _, _ in panel.syncFromPage() }
-            .onChange(of: panel.current?.title) { _, _ in panel.syncFromPage() }
-            .onChange(of: panel.current?.isLoading) { _, loading in
-                if loading == false { panel.noteLoadSettled() }   // 加载停下来才谈得上「有没有被重定向」
-            }
-    }
-}
-
 /// 「打开 AI 面板」菜单项。抽成独立 `View` 是因为 `openWindow` 是 environment action，
 /// `.commands { }` 的闭包里拿不到（同 `OpenRecentMenu` 的理由）。
 struct AIPanelMenu: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button(L("AI Panel")) { openWindow(id: AIPanelModel.windowID) }
-            .keyboardShortcut("a", modifiers: [.command, .shift])
+        // 内置模式下 ⌘⇧A 是展开/收起那块侧面板，而不是凭空开一扇窗（那扇窗此刻不该存在）。
+        Button(L("AI Panel")) {
+            if AIPanelModel.shared.mode == .inline { AIPanelModel.shared.toggleInlineActive() }
+            else { openWindow(id: AIPanelModel.windowID) }
+        }
+        .keyboardShortcut("a", modifiers: [.command, .shift])
     }
 }

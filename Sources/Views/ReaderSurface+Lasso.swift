@@ -346,7 +346,8 @@ extension ReaderSurface {
         guard scratch.lassoEscMonitor == nil else { return }
         scratch.lassoEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard scratch.isActiveWindow, event.keyCode == 53, lassoSelection != nil,
-                  !(NSApp.keyWindow?.firstResponder is NSText) else { return event }
+                  !(NSApp.keyWindow?.firstResponder is NSText),
+                  !aiWebInputHasFocus() else { return event }   // Esc 在内置面板里归网页（关弹窗等）
             clearLassoSelection()
             return nil
         }

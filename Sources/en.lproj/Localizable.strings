@@ -298,3 +298,13 @@
 "Find on Page" = "Find on Page";
 "Next Match" = "Next Match";
 "Previous Match" = "Previous Match";
+
+/* 吸附与内置模式 */
+"Dock to Reading Window" = "Dock to Reading Window";
+"Sit at the right edge of the reading window and follow it. Off while that window is maximized." = "Sit at the right edge of the reading window and follow it. Off while that window is maximized.";
+"Show Inside the Window" = "Show Inside the Window";
+"Shown Inside the Window" = "Shown Inside the Window";
+"The AI panel is docked inside the reading window." = "The AI panel is docked inside the reading window.";
+"Open as Separate Window" = "Open as Separate Window";
+"Open AI Panel" = "Open AI Panel";
+"Collapse" = "Collapse";

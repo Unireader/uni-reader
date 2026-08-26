@@ -216,7 +216,16 @@ struct ContentView: View {
             .navigationSubtitle(windowSubtitle)
             .background(WindowAccessor(onKeyChange: { key in
                 isKeyWindow = key
-                if key { app.setActive(session) }
+                if key {
+                    app.setActive(session)
+                    // AI 浮窗吸附：贴到刚激活的这扇窗口上（换窗口就跟过去）。
+                    AIPanelDock.shared.setHost(WorkspaceRegistry.shared.window(for: session.id))
+                    // 内置模式下每扇窗口都显示自己的面板 → **哪扇是 key，模型级操作就作用在哪扇**
+                    // （绑定捕获 / 投递 / 导航按钮都读 `activeHost` 那一份页面）。
+                    if AIPanelModel.shared.mode == .inline {
+                        AIPanelModel.shared.setActiveHost(.inline(session.id))
+                    }
+                }
             }, onWindow: { win in
                 WorkspaceRegistry.shared.noteWindowObject(session.id, window: win)
             }))
@@ -233,6 +242,10 @@ struct ContentView: View {
             progressSaveTask?.cancel()
             progressSaveTask = nil
             saveProgress(docId: selectedDocID)
+            // 本窗口的内置 AI 面板那一份页面到这里才该放——**只在窗口真的没了时放**，
+            // 切到别的窗口/收成气泡都不算（那会清掉正在进行的对话状态）。
+            AIPanelModel.shared.releaseHost(.inline(session.id))
+            AIPanelModel.shared.forgetInline(session.id)
             workspace.closeWindow(session.id)
             // ⚠️ 次序有讲究：写库那两步（进度 / 打开集）必须**先**做完，`noteWindow(nil)` 才可以把
             // 「本工作区已无窗口」这件事告诉 registry —— 它据此关掉库连接（`maybeTeardown`）。
@@ -282,8 +295,26 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
+    /// 阅读列 = 阅读区内容 + 内置 AI 面板覆盖层。
+    ///
+    /// 🔴 **AI 面板必须挂在这一层**，理由有两条，缺一不可：
+    ///  ① **身份要稳定**。它不能落在 `readerContent` 那个 `if` 分支里，也不能落在
+    ///     `PageStreamView` 内部 `.id(docKey)` 的下游 —— 换文档时那些都会**整体重建**，
+    ///     新的内置层向模型要页面拿到的还是同一个 `WebPage`，而旧的 `WebView` 尚未拆干净，
+    ///     于是 `_WebKit_SwiftUI.makeViewProvider` 当场 trap（2026-08-26「开着 webview 切换书」秒崩）。
+    ///     **「每宿主一份页面」只保证不同宿主不撞，挡不住同一宿主被重建。**
+    ///  ② **要挡住阅读区的手势**。阅读区那四个拖拽手势挂在 `ScrollView` 容器上，用 `.overlay`
+    ///     加在**同一个视图**上的覆盖层挡不住它们（草稿纸就是为此才要在每个 gesture 里写
+    ///     `openPadID == nil`）。挂在这一层是普通遮挡关系，一行门控都不用加。
+    ///
+    /// 挂在 `readerColumn` 而不是更外层的 `mainSplit`：这样它只盖阅读区，不会盖住 Inspector。
     private var readerColumn: some View {
+        readerContent
+            .overlay { AIInlineLayer(session: session) }
+    }
+
+    @ViewBuilder
+    private var readerContent: some View {
         if session.pdf != nil {
             PageStreamView(session: session,
                            docKey: session.contentHash,

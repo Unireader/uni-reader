@@ -218,7 +218,8 @@ extension ReaderSurface {
 
     // MARK: 单键工具快捷键（e 橡皮 / 1-9 选笔 / b 书写 / v 翻页 / l 框选 / i 本机笔 / t 文字选择）
     // 与 ⌥ 菜单快捷键（UniReaderApp .commands）同一套 apply 路径，广播到平板天然生效。
-    // **只认无修饰键的单字母**：带 ⌘/⌥/⌃ 的组合键、文本框焦点（查找/笔记编辑/重命名）一律放行。
+    // **只认无修饰键的单字母**：带 ⌘/⌥/⌃ 的组合键、文本框焦点（查找/笔记编辑/重命名）、
+    // 以及**内置 AI 面板里的 webview 焦点**一律放行（后者见 `aiWebInputHasFocus`）。
     // 笔架里的 eraser/钢笔图标 Button 不能挂 `.keyboardShortcut("e")`——那在文本框焦点时也会抢键。
 
     func installToolKeyMonitor() {
@@ -227,6 +228,7 @@ extension ReaderSurface {
             guard scratch.isActiveWindow,
                   event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
                   !(NSApp.keyWindow?.firstResponder is NSText),
+                  !aiWebInputHasFocus(),          // 内置 AI 面板在打字 → 键归它（WKWebView 不是 NSText）
                   let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
             switch key {
             case "e": app.setPadMode(app.padMode == "erase" ? "note" : "erase")

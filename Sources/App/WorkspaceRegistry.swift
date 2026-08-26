@@ -151,6 +151,9 @@ final class WorkspaceRegistry: ObservableObject {
         else { windowsBySession.removeValue(forKey: sessionId) }
     }
 
+    /// 取某个会话的窗口（AI 面板吸附要知道贴到哪一扇上）。
+    func window(for sessionId: UUID) -> NSWindow? { windowsBySession[sessionId] }
+
     private var windowsBySession: [UUID: NSWindow] = [:]
 
     /// 上次使用的工作区路径（冷启动默认打开它）；没有则用内置默认工作区。

@@ -252,7 +252,7 @@ struct InspectorView: View {
     /// 后续更新仍会回到**本窗口**落库（`AIThreadUpsert` 认 sessionID + documentId 双对）。
     private func openAIThread(_ t: AIThread) {
         guard let docId = documentId else { return }
-        openWindow(id: AIPanelModel.windowID)
+        AIPanelModel.shared.present(session: session.id) { openWindow(id: $0) }
         AIPanelModel.shared.openThread(t, in: AIBindContext(sessionID: session.id, documentId: docId,
                                                             docTitle: session.title,
                                                             page: t.page, anchor: t.anchor))
@@ -406,7 +406,7 @@ struct InspectorView: View {
             openAIThread(t)
             return
         }
-        openWindow(id: AIPanelModel.windowID)
+        AIPanelModel.shared.present(session: session.id) { openWindow(id: $0) }
         AIPanelModel.shared.openLoose(src.url, provider: src.provider)
     }
 
