@@ -32,7 +32,7 @@ struct AIThreadUpsert: Equatable {
 /// **登录态**：所有平台共用 `WKWebsiteDataStore.default()`（非沙盒，落
 /// `~/Library/WebKit/tech.xvanturing.UniReader`），关 app 不掉登录。
 ///
-/// **内存**：webview 有内存代价（**具体数字尚未实测**，见 `AI-PLAN.md §11.6`），所以 `maxLive` 封顶、按 LRU 淘汰，关窗只留当前这家
+/// **内存**：每个宿主一个独立 WebContent 进程 ≈ 100~110MB（2026-08-26 实测，见 `AI-PLAN.md §11.6`），所以 `maxLive` 封顶、按 LRU 淘汰，关窗只留当前这家
 /// （`releaseIdle`），退出全放（`teardownAll`）——沿用 `REQUIREMENTS.md §8.1`
 /// 「关闭 = 当场显式放掉，别等 ARC」的纪律。
 /// 面板 → 阅读窗口的**建笔记**请求（S5：webview 里选一段回答 → 回填成文字笔记）。
