@@ -33,6 +33,8 @@ enum WireCodec {
         static let scratchPads: UInt8 = 0x3D, scratchStrokes: UInt8 = 0x3E
         static let noteNew: UInt8 = 0x3F
         static let canvas: UInt8 = 0x4B
+        /// 与 `strokes` 逐字节相同，语义是「追加」（`PROTOCOL.md §4.2`）
+        static let strokesAppend: UInt8 = 0x4C
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
         static let eraser: UInt8 = 0x46
@@ -162,7 +164,8 @@ enum WireCodec {
     /// 编码一条 Mac→平板（及测试用的平板→Mac）字典为二进制帧。未知 type 返回 nil。
     static func encode(_ o: [String: Any]) -> Data? {
         var w = BW()
-        switch o["type"] as? String ?? "" {
+        let type = o["type"] as? String ?? ""
+        switch type {
         case "auth": w.u8(Op.auth); w.str(strOf(o["token"]))
         case "authOK":
             w.u8(Op.authOK)
@@ -305,8 +308,9 @@ enum WireCodec {
             // 改第 index 张纸的名字（空串 = 回到「草稿纸 N」兜底名）。
             w.u8(Op.scratchRename); w.u16(intOf(o["index"])); w.str(strOf(o["title"]))
         case "inkCancel": w.u8(Op.inkCancel)
-        case "strokes":
-            w.u8(Op.strokes)
+        // 两者 payload 逐字节相同，只差语义（整表替换 / 追加），故共用一段编码
+        case "strokes", "strokesAppend":
+            w.u8(type == "strokes" ? Op.strokes : Op.strokesAppend)
             w.u32(intOf(o["ackRel"]))   // 按收件人填，见 LANServer.rawSend / PROTOCOL.md §4.2
             let list = o["list"] as? [[String: Any]] ?? []
             w.u32(list.count)
@@ -540,7 +544,7 @@ enum WireCodec {
             }
             out = ["type": "toc", "docId": docId, "list": list]
         case Op.inkCancel: out = ["type": "inkCancel"]
-        case Op.strokes:
+        case Op.strokes, Op.strokesAppend:
             let ackRel = r.u32()
             let n = r.u32()
             var list = [[String: Any]](); list.reserveCapacity(max(0, n))
@@ -548,7 +552,8 @@ enum WireCodec {
                 let page = r.u32(); let pen = r.pen(); let pts = r.pts(3)
                 list.append(["page": NSNumber(value: page), "pen": pen, "pts": pts])
             }
-            out = ["type": "strokes", "ackRel": NSNumber(value: ackRel), "list": list]
+            out = ["type": op == Op.strokes ? "strokes" : "strokesAppend",
+                   "ackRel": NSNumber(value: ackRel), "list": list]
         case Op.scratchPads:
             let openRaw = r.u16(), n = r.u16()
             var list = [[String: Any]](); list.reserveCapacity(n)

@@ -152,6 +152,11 @@ final class AppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // 某个客户端堵住、追加队列被迫作废 → 重发一份全量把它拉回同步（见 `LANServer.desync`）
+        server.onMirrorDesync = { [weak self] in
+            DispatchQueue.main.async { self?.broadcastStrokes(); self?.broadcastScratchStrokes() }
+        }
+
         // 新平板连接 → 补发文档列表、当前页、收藏笔列表、当前阅读位置。
         server.$clientCount
             .receive(on: RunLoop.main)
@@ -781,7 +786,8 @@ final class AppModel: ObservableObject {
     func inkEnd(in session: DocSession? = nil) {
         guard let s = session ?? padSession, let st = s.liveStroke else { return }
         s.strokes.append(st); s.liveStroke = nil
-        if s.id == padSession?.id { broadcastStrokes() }   // 非平板会话只落库，不做无谓广播
+        // 纯追加：只发这一条（非平板会话只落库，不做无谓广播）。**唯一用追加帧的地方**，理由见那里。
+        broadcastStrokeAppended(st, in: s)
     }
     func inkErase(_ pts: [SIMD3<Double>], page: Int, in session: DocSession? = nil) {
         guard let s = session ?? padSession else { return }
@@ -796,12 +802,29 @@ final class AppModel: ObservableObject {
     func broadcastStrokes() {
         guard server.isRunning, let s = padSession else { return }
         let vis = s.visibleLayerIDs
-        let list: [[String: Any]] = s.strokes.filter { vis.contains($0.layerId) }.map { st in
+        server.broadcast(["type": "strokes", "list": strokeDicts(s.strokes.filter { vis.contains($0.layerId) })])
+    }
+
+    /// 只把**新追加的这几条**推给平板（`strokesAppend`, `PROTOCOL.md §4.2`）。
+    ///
+    /// 为什么非有它不可：`broadcastStrokes` 是全量镜像，而每收一条笔迹就要广播一次，payload 是
+    /// 全文档可见图层的所有点（`pt3` 12 字节 → 一页密字 ≈ 720KB）。于是「写第 N 笔」的开销正比于 N，
+    /// 整篇下来是 **O(n²)**：`e2e` 随累计笔迹一路爬，大帧还会在 WS 上把后面几十字节的控制帧
+    /// （`radial`/`pressRing`/`inkCancel`）一起压住。追加帧的体积与文档大小无关，这条路径于是变成常数。
+    ///
+    /// **只许在纯追加处调用**（当前就 `inkEnd` 一处）：擦除、框选、图层显隐、切档一律照旧发全量——
+    /// 它们会删改已有笔迹，追加表达不了。不可见图层的笔迹照 `broadcastStrokes` 的口径过滤掉。
+    func broadcastStrokeAppended(_ st: InkStroke, in s: DocSession) {
+        guard server.isRunning, s.id == padSession?.id, s.visibleLayerIDs.contains(st.layerId) else { return }
+        server.broadcast(["type": "strokesAppend", "list": strokeDicts([st])])
+    }
+
+    private func strokeDicts(_ strokes: [InkStroke]) -> [[String: Any]] {
+        strokes.map { st in
             ["page": st.page,
              "pen": ["color": st.color.cssRGBA, "w": st.width, "t": st.type.rawValue],
              "pts": st.points.map { [$0.x, $0.y, $0.z] }]
         }
-        server.broadcast(["type": "strokes", "list": list])
     }
 
     /// 把平板当前会话的图层表（名字/颜色/可见性）+ 当前作画图层推给平板（同 `broadcastPens` 套路）。

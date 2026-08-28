@@ -533,12 +533,24 @@ final class LANServer: ObservableObject {
         // 值本身来自 broadcast 在建快照那一刻取的 [appliedRel] 快照；直发（非广播）没有这个快照，
         // 填 0 = 「不适用」，客户端照单全收——新接入时它本来也没有待认领的乐观笔迹。
         let type = dict["type"] as? String ?? ""
-        if type == "strokes" || type == "scratchStrokes" {
-            let s = sessionByConn[ObjectIdentifier(conn)]
-            dict["ackRel"] = NSNumber(value: s.flatMap { acks[$0] } ?? 0)
-            // 整份镜像**后一份完全覆盖前一份**，所以上一份还没发完时，新的直接顶掉它（见 [mirrorPending]）
-            let key = MirrorKey(conn: ObjectIdentifier(conn), type: type)
-            if mirrorInFlight.contains(key) { mirrorPending[key] = dict; return }
+        if let family = Self.mirrorFamily(type) {
+            let oid = ObjectIdentifier(conn)
+            let key = MirrorKey(conn: oid, family: family)
+            let isFull = type != "strokesAppend"
+            if isFull {
+                mirrorSynced.insert(key)
+            } else if !mirrorSynced.contains(key) {
+                // 还没给这个客户端发过全量：它的镜像是空的，追加没有落脚点。丢掉即可——
+                // 新客户端接入本来就会补一份全量（`AppModel` 的 clientCount sink），那一份含这一条。
+                return
+            }
+            dict["ackRel"] = NSNumber(value: sessionByConn[oid].flatMap { acks[$0] } ?? 0)
+            if mirrorInFlight.contains(key) {
+                // 全量顶掉排在它前面的全部（它已经含了那些追加）；追加则排到队尾，顺序不能乱
+                if isFull { mirrorPending[key] = [dict] } else { mirrorPending[key, default: []].append(dict) }
+                if mirrorPending[key]!.count > Self.mirrorQueueCap { desync(key) }
+                return
+            }
             mirrorInFlight.insert(key)
             rawWrite(dict, to: conn) { [weak self] in self?.mirrorSent(key, to: conn) }
             return
@@ -546,13 +558,25 @@ final class LANServer: ObservableObject {
         rawWrite(dict, to: conn, done: nil)
     }
 
-    /// 一份整份镜像发完了：有攒着的新版就接着发，没有就把在飞标记撤掉。在 queue 上调用。
+    /// 一份镜像发完了：队列里还有就接着发，空了就把在飞标记撤掉。在 queue 上调用。
     private func mirrorSent(_ key: MirrorKey, to conn: NWConnection) {
-        guard let next = mirrorPending.removeValue(forKey: key) else {
+        guard var q = mirrorPending[key], !q.isEmpty else {
             mirrorInFlight.remove(key)
+            mirrorPending[key] = nil
             return
         }
+        let next = q.removeFirst()
+        mirrorPending[key] = q.isEmpty ? nil : q
         rawWrite(next, to: conn) { [weak self] in self?.mirrorSent(key, to: conn) }
+    }
+
+    /// 这一路堵得太久、攒的追加太多了：把队列丢掉、标记未同步，并请求真源重发一份全量。
+    /// 追加不能丢一条留一条（丢了就是镜像缺笔），所以只能整队作废回到「等一份全量」。
+    private func desync(_ key: MirrorKey) {
+        NSLog("镜像队列积压超 %d 帧，丢弃追加队列并请求重发全量", Self.mirrorQueueCap)
+        mirrorPending[key] = nil
+        mirrorSynced.remove(key)
+        onMirrorDesync?()
     }
 
     private func rawWrite(_ dict: [String: Any], to conn: NWConnection, done: (() -> Void)?) {
@@ -569,25 +593,45 @@ final class LANServer: ObservableObject {
 
     private struct MirrorKey: Hashable {
         let conn: ObjectIdentifier
-        let type: String
+        let family: String
     }
 
-    /// 这一路（连接 × 镜像种类）有一份镜像正在往外写。
+    /// 镜像种类 → **家族**。`strokesAppend` 与 `strokes` 同族：一份新的全量会顶掉排在它前面的
+    /// 全部追加（全量是照当前状态现建的，本来就含那些追加）。非镜像消息返回 nil，走普通发送。
+    private static func mirrorFamily(_ type: String) -> String? {
+        switch type {
+        case "strokes", "strokesAppend": return "strokes"
+        case "scratchStrokes": return "scratchStrokes"
+        default: return nil
+        }
+    }
+
+    /// 一路上最多攒多少帧追加，超了就整队作废、请真源重发全量（见 [desync]）。
+    /// 一条笔迹的追加帧 ≈ 2.4KB，64 帧 ≈ 150KB——到这个量级重发一份全量本来也不亏。
+    private static let mirrorQueueCap = 64
+
+    /// 这一路（连接 × 镜像家族）有一份镜像正在往外写。
     private var mirrorInFlight: Set<MirrorKey> = []
 
-    /// 攒着的**下一份**镜像，每路最多一份——新的直接覆盖旧的。
+    /// 这一路**已经收到过至少一份全量**，追加才有落脚点（见 rawSend 里的丢弃分支）。
+    private var mirrorSynced: Set<MirrorKey> = []
+
+    /// 攒着的待发镜像队列（每路一条：**一份全量 + 其后若干追加**）。
     ///
     /// `strokes`/`scratchStrokes` 是**全量镜像**：后一份完全覆盖前一份，中间那些发出去纯属浪费。
-    /// 而 Mac 每条 `ink end`、擦除时的**每一批**擦除点都广播一次，一篇写久了的文档整份能到几百 KB ~
-    /// 几 MB；WS 是单条有序通道，这些大帧一旦堆在队列里，后面那些**几十字节的控制帧**（`radial`
+    /// 而 Mac 擦除时的**每一批**擦除点都广播一次，一篇写久了的文档整份能到几百 KB ~ 几 MB；
+    /// WS 是单条有序通道，这些大帧一旦堆在队列里，后面那些**几十字节的控制帧**（`radial`
     /// 环形选笔盘、`pressRing`、`inkCancel`）就全被压在后面 —— 表现就是用户报的
     /// 「Mac 上盘出来了、安卓上没出来」（等它到的时候人已经抬笔，`endPen` 无条件收盘）。
     ///
-    /// 合帧只丢**已经被更新版本取代**的镜像，最后一份必定发出，客户端看到的最终状态不变。
-    /// 镜像之间也不需要保序——`PROTOCOL.md` 已经写明 `strokes`/`notes` 是两条到达顺序无保证的独立广播。
-    ///
-    /// ⚠️ 这只是**止血**：真正的账要算在「每收笔一次就重发整篇」上，见 `TODO.md` 已知 Bug 里那条 O(n²)。
-    private var mirrorPending: [MirrorKey: [String: Any]] = [:]
+    /// 合帧只丢**已经被更新版本取代**的全量，最后一份必定发出，客户端看到的最终状态不变。
+    /// 镜像之间不需要与别的消息保序——`PROTOCOL.md` 已写明 `strokes`/`notes` 是两条到达顺序无保证的
+    /// 独立广播。**但同一家族内部必须保序**：追加是相对前一份状态说的，顺序乱了就是镜像错乱。
+    private var mirrorPending: [MirrorKey: [[String: Any]]] = [:]
+
+    /// 某一路积压到 [mirrorQueueCap] 被迫作废追加队列时的回调：请真源重发一份全量镜像。
+    /// 在 queue 上调用；接线方（`AppModel`）自己跳回主线程。
+    var onMirrorDesync: (() -> Void)?
 
     // MARK: - 客户端集合（统一在 queue 上改动）
 
@@ -611,9 +655,10 @@ final class LANServer: ObservableObject {
             forgetApplied(session: session)   // 重连会分到新 session，旧记账留着只是泄漏
             udp?.removeSession(session)
         }
-        // 攒着的镜像与在飞标记随连接一起清（send 的 completion 在连接取消后不保证还会回来）
+        // 攒着的镜像与在飞/已同步标记随连接一起清（send 的 completion 在连接取消后不保证还会回来）
         let oid = ObjectIdentifier(conn)
         mirrorInFlight = mirrorInFlight.filter { $0.conn != oid }
+        mirrorSynced = mirrorSynced.filter { $0.conn != oid }
         mirrorPending = mirrorPending.filter { $0.key.conn != oid }
         conn.cancel()
         if clients.count != before { publishClients() }

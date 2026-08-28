@@ -106,6 +106,13 @@ export function initWs(): void {
     // 框选提交后等回传：两条镜像（strokes/notes）**分开记账**——这条到了笔迹层改画真源（该层命中
     // 下标作废），notes 层继续乐观预览直到它的镜像也到；两条都到齐才 clearLasso（否则先到的那条
     // 把乐观变换全清掉，另一层跳回原位再跳回来 = 闪烁，2026-08-18 用户报）。
+    // 追加帧（strokesAppend, 0x4C）：Mac 只在纯追加（收笔）时发，payload 与 strokes 逐字节相同。
+    // 全量镜像每收一笔就重发整篇是 O(n²)，写久了 e2e 一路爬、还会把后面的控制帧压在 WS 队列里
+    // （PROTOCOL.md §4.2）。这边只要把这几条接在末尾——擦除/框选/图层/切档 Mac 仍发全量。
+    else if (o.type === "strokesAppend") {
+      for (const s of o.list || []) G.strokes.push(s);
+      G.drawInk();
+    }
     else if (o.type === "strokes") {
       G.strokes = o.list || [];
       if (G.activeId === null) { G.cur = null; G.drawLive(); }

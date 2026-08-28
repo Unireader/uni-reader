@@ -153,6 +153,10 @@ const canonical = [
   { type: "canvas", on: true, margin: 0.5 },
   { type: "canvas", on: true, margin: 2.5 },
   { type: "canvas", on: true, margin: 0 },   // C→S：只有 on 有意义
+  // 追加帧（0x4C）：payload 与 strokes 逐字节相同，只差 opcode 与语义（追加而非整表替换）
+  { type: "strokesAppend", ackRel: 305419896,
+    list: [{ page: 1, pen: { color: "rgba(20,20,20,1)", w: 10, t: "pencil" },
+             pts: [[0.5, 0.25, 0.5], [0.75, 0.125, 1.0]] }] },
 ];
 
 let pass = 0, fail = 0;

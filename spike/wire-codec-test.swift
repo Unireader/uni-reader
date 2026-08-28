@@ -156,6 +156,11 @@ let canonical: [[String: Any]] = [
     ["type": "canvas", "on": true, "margin": 2.5],
     // C→S 形态（平板请求切开关）：只有 on 有意义，margin 恒 0（页边宽度轮不到客户端定）。
     ["type": "canvas", "on": true, "margin": 0],
+    // 追加帧（0x4C）：payload 与 strokes 逐字节相同，只差 opcode 与语义（追加而非整表替换）。
+    // 刻意与上面 #32 那条 strokes 用同一份 list：两条向量除首字节外必须完全一样。
+    ["type": "strokesAppend", "ackRel": 305419896,
+     "list": [["page": 1, "pen": ["color": "rgba(20,20,20,1)", "w": 10, "t": "pencil"],
+               "pts": [[0.5, 0.25, 0.5], [0.75, 0.125, 1.0]]]]],
 ]
 
 var pass = 0, fail = 0

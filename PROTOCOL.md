@@ -105,6 +105,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x49` | scratchRename | C→S | 可靠 |
 | `0x4A` | lassoScale | C→S | 可靠 |
 | `0x4B` | canvas | 双向 | 可靠 |
+| `0x4C` | strokesAppend | S→C | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -233,6 +234,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `pens` | `u16 active` · `u16 n` · `n × pen` |
 | `inkCancel` | 空 |
 | `strokes` | `u32 ackRel` · `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
+| `strokesAppend` | 与 `strokes` **逐字节相同**，只是语义是「追加」而非「整表替换」 |
 | `radial` | `u8 open` · open=1 时续 `u32 page` · `f32 cx` · `f32 cy` · `u16 highlight` · `u16 n` · `n ×( u8 kind, pen )` |
 | `pressRing` | `u8 on` · on=1 时续 `u32 page` · `f32 nx` · `f32 ny` |
 | `notes` | `u16 n` · `n ×( str id, u32 page, f32 nx, f32 ny, str text, u8 display )` |
@@ -309,6 +311,30 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   > **反面教材（2026-08-28 用户报）**：曾用「`ackRel >= 本端已发出的最后一个 seqRel` 才应用」
   > 这一条统管两件事。连续写字时 ink move 每 8ms 就是一个新 `seqRel`，回推路上必然又涨了好几个，
   > 判据于是**永远为假**、快照全被丢弃；乐观笔迹只能靠 3s 超时撤掉，屏幕上「上一个字的笔画依次闪烁」。
+- `strokesAppend` → `{type:"strokesAppend", ackRel, list:[…]}`（2026-08-28 加）
+
+  **payload 与 `strokes` 逐字节相同，语义换成「把这几条追加到你的镜像末尾」**，不是整表替换。
+
+  为什么要有它：`strokes` 是全量镜像，而 Mac **每收一条 `ink end` 就广播一次**，payload 是全文档
+  可见图层的所有点（`pt3` 12 字节 → 一条 200 点的笔迹 ≈ 2.4KB，一页密字 ≈ 720KB）。于是「写第 N 笔」
+  的开销正比于 N，整篇写下来是 **O(n²)**：用户实测 `e2e` 读数随累计笔迹一路爬，且大帧堵在 WS 上会
+  把后面几十字节的控制帧（`radial`/`pressRing`/`inkCancel`）一起压住（「Mac 上盘出来了、安卓上没出来」）。
+  追加帧的体积**与文档大小无关**，这条路径于是变成常数。
+
+  **只有纯追加才用它**（Mac 侧就一处：`AppModel.inkEnd`）。擦除、框选移动/缩放、图层显隐、切换文档、
+  新客户端接入——凡是会**删改已有笔迹**或客户端镜像可能对不上的，一律照旧发全量 `strokes`。
+  客户端因此不需要任何"能不能追加"的判断：**收到哪条就按哪条的语义做**。
+
+  > **实现方必须守住的两条**（漏一条就是"增量贴在过期镜像上"）：
+  > ① 发送端若有「整份镜像合帧」（`LANServer` 那种：同一路上后一份全量顶掉还没发完的前一份），
+  >    队列必须是「一份全量 + 其后若干追加」，**新的全量清空整条队列**——它已经含了前面所有追加。
+  > ② 追加帧照样按收件人填 `ackRel`（语义与 `strokes` 完全一致）。客户端收到后**在同一次操作里**
+  >    先追加真源的这几条、再把 `seq <= ackRel` 的乐观笔迹销账，屏幕上恰好一条，不会先双份再闪掉。
+  >    追加**不需要**擦除那道「比 `lastEraseRel` 旧就整份丢弃」的闸——追加不会把擦掉的复活。
+
+  > 擦除路径仍是全量（每收一批擦除点广播一次）。要把它也做成增量，得给笔迹上**稳定 id**，
+  > 而线上是**刻意不带 id** 的（客户端无法引用具体某条，全靠「乐观预览 + 服务端复判」那套惯例，
+  > 见 `lassoMove`）。当前靠发送端合帧把它从「每 8ms 一帧」压到「每 RTT 一帧」，够用。
 - `radial` → `{type:"radial", open:true, page, cx, cy, highlight, items:[{kind:"pen"|"erase"|"page"|"scratchAdd"|"textNote", color, w, t},…]}`；收盘 → `{type:"radial", open:false}`
 - `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
 - `canvas` → `{type:"canvas", on, margin}`（画板模式；`on` 布尔，`margin` = 每侧页边宽度 ÷ 页宽。
