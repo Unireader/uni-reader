@@ -10,7 +10,7 @@ export function initInput(refs: CaptureRefs): void {
 
   // ---- 平移 / 缩放 / 纵向锚点 ----
   function panBy(dx: number, dy: number): void {
-    G.scrollX = clamp(G.scrollX + dx, 0, G.maxScrollX);
+    if (!G.hLocked) G.scrollX = clamp(G.scrollX + dx, 0, G.maxScrollX);
     G.scrollY = clamp(G.scrollY + dy, 0, G.maxScrollY);
     G.ensureImages(); G.drawAll(); updatePageLabel(); emitScroll();
   }
@@ -18,6 +18,7 @@ export function initInput(refs: CaptureRefs): void {
   // 松手惯性：按松手速度继续滚，指数衰减；碰边界该轴停；期间持续上报让 Mac 平滑跟随。
   function startMomentum(): void {
     cancelMomentum();
+    if (G.hLocked) G.vx = 0;                     // 横向锁死，甩出去的那一下也不许带横向分量
     if (Math.hypot(G.vx, G.vy) < 0.05) return;   // 太慢不惯性
     let last = performance.now();
     function step(): void {
@@ -171,14 +172,19 @@ export function initInput(refs: CaptureRefs): void {
         const a = G.touches[G.touchOrder[0]], b = G.touches[G.touchOrder[1]];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const z0 = G.zoom;
         if (!G.zoomLocked) G.zoom = clamp(G.pinch.z0 * d / G.pinch.d0, MINZ, MAXZ);
         G.recompute();
+        const x0 = G.scrollX;
         // 固定锚点比例始终跟随当前中点 → 缩放与双指整体移动都跟手、不漂移
         G.scrollY = clamp(G.pinch.fy * G.totalH - (my - BAR), 0, G.maxScrollY);
         // scrollX 的基准是**内容**左缘，而 fx 抓的是**页内**比例 → 画板模式下要补上左侧页边那一段
         // （关着时 cmargin()==0，与画板模式之前同式）。
         G.scrollX = contentW() > G.vw
           ? clamp(cmargin() * pw() + G.pinch.fx * pw() - mx, 0, G.maxScrollX) : 0;
+        // 锁横向：zoom 没变 = 这是双指整体挪动，横向该被挡下；zoom 变了则是缩放重锚，照旧
+        // （不然放大后画面会横向乱跳）。与安卓 PageCanvasView.pinchMove 同款。
+        if (G.hLocked && G.zoom === z0) G.scrollX = clamp(x0, 0, G.maxScrollX);
         G.ensureImages(); G.drawAll(); updateHud();   // 缩放/双指为本地查看，不上报位置，避免回环
         G.emitGeom();   // 页宽变了要告诉 Mac（选笔盘的像素判定基准），与位置无关、不构成回环
       } else if (e.pointerId === G.panId) {

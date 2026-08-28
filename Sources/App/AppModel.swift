@@ -112,6 +112,22 @@ final class AppModel: ObservableObject {
     private let moveCancelNorm = 0.02      // 同上，`padPageWidth` 未知时的归一化回退
     private let radialDeadzoneNorm = 0.045 // 中心取消区，`padPageWidth` 未知时的归一化回退
 
+    /// 长按判据的**第二道闸：笔尖速度**（2026-08-28 用户报「很容易误触」）。
+    ///
+    /// 只看「离落笔点的总位移」挡不住小字：写一个小字全程都在 14px 半径里打转，
+    /// 停留满 1s 就被当成长按，盘凭空弹出来。而**写字必然在动、长按必然不动**——
+    /// 用滑动窗口内的平均速度一判就分得干净。两道闸并存：位移管「跑远了」，速度管「一直在动」。
+    ///
+    /// ⚠️ 这三个数与安卓模式1 的 `PadConst.LP`（`SPEED_WINDOW_MS`/`MOVE_CANCEL_SPEED`/
+    /// `MOVE_CANCEL_SPEED_NORM`）是**同一套常量的两份实现**，改一边必须同步另一边，
+    /// 否则同一个动作在两种模式下呼出不同的东西。
+    private let holdSpeedWindow = 0.15     // 速度判定的滑动窗口（秒）
+    private let holdSpeedPx = 30.0         // 窗口内平均速度超此 平板px/s → 判为在画
+    private let holdSpeedNorm = 0.043      // 同上的归一化/秒回退（≈ holdSpeedPx / 700，与位移那对同比例）
+
+    /// 长按候选期间的笔位采样（y 已乘页面纵横比折成与 x 同尺度），只保留窗口内的那几个。
+    private var holdSamples: [(p: SIMD2<Double>, t: Date)] = []
+
     init() {
         // 平板翻页 → 应用到平板当前会话，并重推页图。
         server.$requestedPageIndex
@@ -504,17 +520,40 @@ final class AppModel: ObservableObject {
         cancelRadial()
         guard let f = first else { return }
         inkStart = (page, f.x, f.y); inkMovedFar = false; inRadial = false
+        holdSamples = [(SIMD2(f.x, f.y * currentPageAspect(page: page)), Date())]
         setPressRing(PressRing(page: page, nx: f.x, ny: f.y, start: Date()))
         let work = DispatchWorkItem { [weak self] in self?.fireLongPress() }
         longPressWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + longPressSeconds, execute: work)
     }
 
-    /// 画的时候（位移超阈值）取消长按候选 + 撤掉进度环。
+    /// 画的时候取消长按候选 + 撤掉进度环。**两道闸，任一条中即撤**：
+    /// ① 离落笔点的总位移超 [moveCancelPx]（跑远了）；
+    /// ② [holdSpeedWindow] 窗口内的平均速度超 [holdSpeedPx]（一直在动 = 在写字，见那里的注释）。
     private func checkLongPressMovement(_ last: SIMD3<Double>?) {
         guard !inkMovedFar, let s0 = inkStart, let p = last else { return }
-        let dx = p.x - s0.nx, dy = (p.y - s0.ny) * currentPageAspect(page: s0.page)
-        if exceedsPad((dx * dx + dy * dy).squareRoot(), px: moveCancelPx, norm: moveCancelNorm) {
+        let aspect = currentPageAspect(page: s0.page)
+        let dx = p.x - s0.nx, dy = (p.y - s0.ny) * aspect
+        var moving = exceedsPad((dx * dx + dy * dy).squareRoot(), px: moveCancelPx, norm: moveCancelNorm)
+
+        // 速度闸：只保留窗口内的采样（外加**窗口外最近的那一个**当参照点，否则刚落笔时无从比起）
+        let now = Date()
+        let cur = SIMD2(p.x, p.y * aspect)
+        holdSamples.append((cur, now))
+        while holdSamples.count > 1, now.timeIntervalSince(holdSamples[1].t) > holdSpeedWindow {
+            holdSamples.removeFirst()
+        }
+        if !moving, let ref = holdSamples.first {
+            let dt = now.timeIntervalSince(ref.t)
+            // dt 太小时分母噪声会放大成假速度（WiFi 成批投递，一批点的时间戳几乎相同）
+            if dt >= 0.04 {
+                let d = (cur - ref.p)
+                moving = exceedsPad((d.x * d.x + d.y * d.y).squareRoot() / dt,
+                                    px: holdSpeedPx, norm: holdSpeedNorm)
+            }
+        }
+
+        if moving {
             inkMovedFar = true
             longPressWork?.cancel(); longPressWork = nil
             setPressRing(nil)
@@ -547,6 +586,10 @@ final class AppModel: ObservableObject {
         setPressRing(nil)   // 环展开成盘，两者互斥
         inRadial = true
         s.radial = RadialState(page: s0.page, cx: s0.nx, cy: s0.ny, highlight: -1)
+        // 打点：用户报「Mac 上盘出来了、安卓上没出来」。盘的下发走 WS，与 `strokes` 全量镜像同一条
+        // 有序通道 —— 镜像大起来就会把这一帧压在后面（队头阻塞）。要判断是不是这个，就得两边都有
+        // 时刻：这里记发出时刻，安卓 `UniReader/Canvas` 记收到时刻，一减就是这一帧在路上花的时间。
+        NSLog("环形盘呼出 page=%d cx=%.3f cy=%.3f（下发中）", s0.page, s0.nx, s0.ny)
         server.broadcast(["type": "inkCancel"])
         broadcastRadial()
     }
@@ -604,6 +647,7 @@ final class AppModel: ObservableObject {
         if inRadial { padSession?.radial = nil; broadcastRadial() }
         setPressRing(nil)
         inRadial = false; inkStart = nil; inkMovedFar = false
+        holdSamples.removeAll(keepingCapacity: true)
     }
 
     /// 把环形盘状态镜像给平板（平板照着画，不做任何判定）。盘一收就发 `open:false`。

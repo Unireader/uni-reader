@@ -66,6 +66,8 @@
   <button id="lock" title="锁定缩放" onclick={() => actions.toggleLock()}><Icon name={S.zoomLocked ? "lock" : "lock-open"} /></button>
   <button id="twoFinger" class:on={S.twoFinger} title="双指滚动（防误触）：单指划动不再平移"
     onclick={() => actions.toggleTwoFinger()}><Icon name="two-finger" /></button>
+  <button id="hLock" class:on={S.hLocked} title="锁定水平滚动：拖动/惯性只走纵向（缩放重锚不受影响）"
+    onclick={() => actions.toggleHLock()}><Icon name="h-lock" /></button>
   <button id="full" title="全屏" onclick={() => actions.toggleFull()}><Icon name="maximize" /></button>
   <button id="hideBar" title="隐藏顶栏" onclick={() => (hidden = true)}><Icon name="chevron-up" /></button>
 </div>

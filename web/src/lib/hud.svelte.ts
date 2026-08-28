@@ -64,6 +64,7 @@ export const S = $state({
   showPage: true,          // 页面图显示（眼睛按钮回显）
   canvasOn: false,         // 画板模式（Mac 下发，顶栏按钮回显）
   zoomLocked: false,       // 锁定缩放（锁按钮回显）
+  hLocked: false,          // 锁定水平滚动（顶栏按钮激活态回显）
   twoFinger: false,        // 双指滚动模式 / 防误触（顶栏按钮激活态回显）
   // ---- 侧拉抽屉（目录 / 书库）----
   drawer: false,           // 抽屉开关

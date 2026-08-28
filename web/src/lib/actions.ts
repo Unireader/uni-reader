@@ -17,6 +17,8 @@ export interface Actions {
   toggleRuler(): void;
   toggleEye(): void;
   toggleLock(): void;
+  /// 锁定水平滚动：内容横向位置不再跟手改变（拖动/惯性只走纵向），缩放重锚不受影响。
+  toggleHLock(): void;
   /// 双指滚动模式（防误触）：单指划动不平移，滚动/缩放一律双指。
   toggleTwoFinger(): void;
   /// 画板模式（页面两侧的空白也能写字）：只发请求，Mac 是唯一真源（逐文档记，见 PROTOCOL.md `canvas`）。

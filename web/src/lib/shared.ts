@@ -193,6 +193,9 @@ export interface GState {
   touches: Record<number, { x: number; y: number }>; touchOrder: number[];
   panId: number | null; lastPanX: number; lastPanY: number; pinch: Pinch | null;
   zoomLocked: boolean;
+  /// 锁定水平滚动：内容的横向位置不再跟手改变（拖动/惯性只走纵向）。放大了看、或画板模式下
+  /// 在页边写字时，竖着划一道很难不带横向分量，页面于是慢慢跑偏。缩放引起的横向重锚不受影响。
+  hLocked: boolean;
   // 双指滚动模式（防误触）：单指划动不平移页面/草稿纸，滚动与缩放一律双指。
   // 单指仍可轻点图钉开纸、按住图钉拖动（刻意动作，不会是误触）。
   twoFinger: boolean;

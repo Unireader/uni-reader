@@ -532,15 +532,62 @@ final class LANServer: ObservableObject {
         // 不能由 AppModel 在 broadcastStrokes 里填一个值发给所有人（见 PROTOCOL.md §4.2）。
         // 值本身来自 broadcast 在建快照那一刻取的 [appliedRel] 快照；直发（非广播）没有这个快照，
         // 填 0 = 「不适用」，客户端照单全收——新接入时它本来也没有待认领的乐观笔迹。
-        if dict["type"] as? String == "strokes" || dict["type"] as? String == "scratchStrokes" {
+        let type = dict["type"] as? String ?? ""
+        if type == "strokes" || type == "scratchStrokes" {
             let s = sessionByConn[ObjectIdentifier(conn)]
             dict["ackRel"] = NSNumber(value: s.flatMap { acks[$0] } ?? 0)
+            // 整份镜像**后一份完全覆盖前一份**，所以上一份还没发完时，新的直接顶掉它（见 [mirrorPending]）
+            let key = MirrorKey(conn: ObjectIdentifier(conn), type: type)
+            if mirrorInFlight.contains(key) { mirrorPending[key] = dict; return }
+            mirrorInFlight.insert(key)
+            rawWrite(dict, to: conn) { [weak self] in self?.mirrorSent(key, to: conn) }
+            return
         }
-        guard let data = WireCodec.encode(dict) else { return }
+        rawWrite(dict, to: conn, done: nil)
+    }
+
+    /// 一份整份镜像发完了：有攒着的新版就接着发，没有就把在飞标记撤掉。在 queue 上调用。
+    private func mirrorSent(_ key: MirrorKey, to conn: NWConnection) {
+        guard let next = mirrorPending.removeValue(forKey: key) else {
+            mirrorInFlight.remove(key)
+            return
+        }
+        rawWrite(next, to: conn) { [weak self] in self?.mirrorSent(key, to: conn) }
+    }
+
+    private func rawWrite(_ dict: [String: Any], to conn: NWConnection, done: (() -> Void)?) {
+        guard let data = WireCodec.encode(dict) else { done?(); return }
         let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
         let ctx = NWConnection.ContentContext(identifier: "send", metadata: [meta])
-        conn.send(content: data, contentContext: ctx, isComplete: true, completion: .contentProcessed { _ in })
+        conn.send(content: data, contentContext: ctx, isComplete: true, completion: .contentProcessed { [weak self] _ in
+            guard let done else { return }
+            self?.queue.async(execute: done)
+        })
     }
+
+    // MARK: - 整份镜像的合帧（`strokes` / `scratchStrokes`）
+
+    private struct MirrorKey: Hashable {
+        let conn: ObjectIdentifier
+        let type: String
+    }
+
+    /// 这一路（连接 × 镜像种类）有一份镜像正在往外写。
+    private var mirrorInFlight: Set<MirrorKey> = []
+
+    /// 攒着的**下一份**镜像，每路最多一份——新的直接覆盖旧的。
+    ///
+    /// `strokes`/`scratchStrokes` 是**全量镜像**：后一份完全覆盖前一份，中间那些发出去纯属浪费。
+    /// 而 Mac 每条 `ink end`、擦除时的**每一批**擦除点都广播一次，一篇写久了的文档整份能到几百 KB ~
+    /// 几 MB；WS 是单条有序通道，这些大帧一旦堆在队列里，后面那些**几十字节的控制帧**（`radial`
+    /// 环形选笔盘、`pressRing`、`inkCancel`）就全被压在后面 —— 表现就是用户报的
+    /// 「Mac 上盘出来了、安卓上没出来」（等它到的时候人已经抬笔，`endPen` 无条件收盘）。
+    ///
+    /// 合帧只丢**已经被更新版本取代**的镜像，最后一份必定发出，客户端看到的最终状态不变。
+    /// 镜像之间也不需要保序——`PROTOCOL.md` 已经写明 `strokes`/`notes` 是两条到达顺序无保证的独立广播。
+    ///
+    /// ⚠️ 这只是**止血**：真正的账要算在「每收笔一次就重发整篇」上，见 `TODO.md` 已知 Bug 里那条 O(n²)。
+    private var mirrorPending: [MirrorKey: [String: Any]] = [:]
 
     // MARK: - 客户端集合（统一在 queue 上改动）
 
@@ -564,6 +611,10 @@ final class LANServer: ObservableObject {
             forgetApplied(session: session)   // 重连会分到新 session，旧记账留着只是泄漏
             udp?.removeSession(session)
         }
+        // 攒着的镜像与在飞标记随连接一起清（send 的 completion 在连接取消后不保证还会回来）
+        let oid = ObjectIdentifier(conn)
+        mirrorInFlight = mirrorInFlight.filter { $0.conn != oid }
+        mirrorPending = mirrorPending.filter { $0.key.conn != oid }
         conn.cancel()
         if clients.count != before { publishClients() }
     }

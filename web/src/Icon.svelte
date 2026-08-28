@@ -10,6 +10,8 @@
     maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
     // 双指滚动（防误触）：两个指尖 + 一根上下双向箭头
     "two-finger": '<circle cx="8" cy="5.5" r="2.5"/><circle cx="16" cy="5.5" r="2.5"/><path d="M12 10.5v9"/><path d="m9 13.5 3-3 3 3"/><path d="m9 16.5 3 3 3-3"/>',
+    // 锁定水平滚动：一根横向双向箭头被两道竖挡板夹住（横向走不动，纵向不管）
+    "h-lock": '<path d="M8 12h8"/><path d="m10.5 9.5-2.5 2.5 2.5 2.5"/><path d="m13.5 9.5 2.5 2.5-2.5 2.5"/><path d="M4 5v14"/><path d="M20 5v14"/>',
     "chevron-up": '<path d="m18 15-6-6-6 6"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     type: '<path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
