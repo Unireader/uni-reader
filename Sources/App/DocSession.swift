@@ -125,6 +125,12 @@ final class DocSession: ObservableObject, Identifiable {
     /// 值快照而非纯 id 集合：框选移动后 id 不变、点集变，纯 id 对账会漏写（仿 `persistedTextNotes`）。
     var persistedStrokes: [UUID: InkStroke] = [:]
 
+    /// 上一次收笔的时刻（`AppModel.inkEnd` 写，`ContentView.persistInk` 读）。**非 @Published**——
+    /// 纯诊断用：它与 `persistInk` 开跑那一刻的差 = 「SwiftUI 从 `strokes` 变到把 onChange 派下来」
+    /// 花了多久（含它对整个 `[InkStroke]` 数组做的相等性比较，那是 O(笔迹数 × 点数)）。
+    /// 只有开了 `PadLog` 才会被读，平时零成本。
+    var lastInkEndAt: CFAbsoluteTime = 0
+
     // 实时手写：已完成笔画 + 正在书写的一笔。
     @Published var strokes: [InkStroke] = []
     @Published var liveStroke: InkStroke?

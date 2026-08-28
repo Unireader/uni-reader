@@ -24,7 +24,8 @@ func wsLog(_ msg: String) {
     try? h.write(contentsOf: data)
 }
 
-/// 平板页图链路的耗时日志（`[PAD]` 前缀）。开关口径同 [wsLog]——**文件在不在就是开关**：
+/// 平板链路的耗时日志（`[PAD]` 前缀）：页图渲染 + **每收一笔的主线程账**（对账/落库/广播）。
+/// 开关口径同 [wsLog]——**文件在不在就是开关**：
 /// ```
 /// touch ~/Library/Logs/UniReader-pad.log    # 开启
 /// rm    ~/Library/Logs/UniReader-pad.log    # 关闭
@@ -40,11 +41,15 @@ enum PadLog {
 
     private static let queue = DispatchQueue(label: "com.xvan.UniReader.padlog", qos: .utility)
     private static var handle: FileHandle?      // 只在 queue 上碰
-    private static var checkedAt: CFAbsoluteTime = 0   // 以下两个只在 LANServer 服务 queue 上碰
+    /// 以下两个由 [gate] 保护：调用方不止一条线程（`LANServer` 服务 queue 的页图账 +
+    /// 主线程的收笔对账账），裸静态变量在这里就是数据竞争。
+    private static var checkedAt: CFAbsoluteTime = 0
     private static var isOn = false
+    private static let gate = NSLock()
 
-    /// 每张页图都会问一遍，故探盘节流到 1s 一次（开关是给人用的，秒级生效足够）。
+    /// 每张页图 / 每次收笔都会问一遍，故探盘节流到 1s 一次（开关是给人用的，秒级生效足够）。
     private static var enabled: Bool {
+        gate.lock(); defer { gate.unlock() }
         let now = CFAbsoluteTimeGetCurrent()
         if now - checkedAt > 1 {
             checkedAt = now

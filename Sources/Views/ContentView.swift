@@ -874,15 +874,32 @@ struct ContentView: View {
     /// 旧版只对账 id 集合，移动笔迹后 id 不变、内容变，会被漏写。
     private func persistInk() {
         guard let id = session.documentId else { return }
+        let t0 = CFAbsoluteTimeGetCurrent()
         let current = session.strokes
         let currentIDs = Set(current.map(\.id))
+        var upserts = 0, deletes = 0
         for st in current where session.persistedStrokes[st.id] != st {
             workspace.saveInkStroke(documentId: id, st)
+            upserts += 1
         }
         for goneID in session.persistedStrokes.keys where !currentIDs.contains(goneID) {
             workspace.deleteInkStroke(id: goneID)
+            deletes += 1
         }
         session.persistedStrokes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        // 每收一笔主线程要花的账（`PadLog`，默认关；开关见 UniReaderApp.swift）。
+        // 三段各自的量纲不同，要分开看：
+        // - **派发**＝ `strokes` 变了到这里开跑，含 SwiftUI 对整个 `[InkStroke]` 数组做的相等性比较；
+        // - **对账**＝ 本函数自身：逐条整值比较（比的是全部点）+ 重建整张 id→笔迹 快照；
+        // 后两段都是 O(笔迹数 × 点数)、每收一笔跑一遍，写久了的文档就是它们在吃主线程。
+        if session.lastInkEndAt > 0 {
+            let dispatch = t0 - session.lastInkEndAt
+            let reconcile = CFAbsoluteTimeGetCurrent() - t0
+            // 字符串（含那个数点数的 reduce）在 PadLog 的 @autoclosure 里，关着的时候一行都不跑
+            PadLog.log("收笔对账 \(current.count)条/\(current.reduce(0) { $0 + $1.points.count })点："
+                + "派发 \(PadLog.ms(dispatch))，对账 \(PadLog.ms(reconcile))（写 \(upserts) 删 \(deletes)）")
+            session.lastInkEndAt = 0   // 只量收笔那一次；擦除/框选也会进来，别混进同一条读数
+        }
     }
 
     // MARK: - 笔迹图层持久化（ink_layer 表，v7）

@@ -785,9 +785,13 @@ final class AppModel: ObservableObject {
     }
     func inkEnd(in session: DocSession? = nil) {
         guard let s = session ?? padSession, let st = s.liveStroke else { return }
+        let t0 = CFAbsoluteTimeGetCurrent()
         s.strokes.append(st); s.liveStroke = nil
         // 纯追加：只发这一条（非平板会话只落库，不做无谓广播）。**唯一用追加帧的地方**，理由见那里。
         broadcastStrokeAppended(st, in: s)
+        // 收笔那一刻记时（诊断用，见 `DocSession.lastInkEndAt` / `ContentView.persistInk`）
+        s.lastInkEndAt = CFAbsoluteTimeGetCurrent()
+        PadLog.log("收笔 广播 \(PadLog.ms(s.lastInkEndAt - t0))（本笔 \(st.points.count) 点）")
     }
     func inkErase(_ pts: [SIMD3<Double>], page: Int, in session: DocSession? = nil) {
         guard let s = session ?? padSession else { return }
@@ -801,8 +805,13 @@ final class AppModel: ObservableObject {
     /// 平板本地不落库、只即时回显正在写的这一笔；已成形/已存的笔迹以 Mac 为唯一真源，靠这里回传。
     func broadcastStrokes() {
         guard server.isRunning, let s = padSession else { return }
+        let t0 = CFAbsoluteTimeGetCurrent()
         let vis = s.visibleLayerIDs
-        server.broadcast(["type": "strokes", "list": strokeDicts(s.strokes.filter { vis.contains($0.layerId) })])
+        let list = strokeDicts(s.strokes.filter { vis.contains($0.layerId) })
+        server.broadcast(["type": "strokes", "list": list])
+        // 全量镜像的建帧成本（`PadLog`，默认关）：擦除时每收一批点就走一遍这里，
+        // 每个点都要装箱成 `[NSNumber]`——这是「已知 Bug」里那条尾巴的现场读数。
+        PadLog.log("全量镜像 \(list.count)条：建 \(PadLog.ms(CFAbsoluteTimeGetCurrent() - t0))")
     }
 
     /// 只把**新追加的这几条**推给平板（`strokesAppend`, `PROTOCOL.md §4.2`）。
