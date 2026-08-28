@@ -17,6 +17,7 @@ struct InspectorView: View {
 
     @State private var variants: [LibVariant] = []
     @State private var locations: [LibLocation] = []
+    @State private var inkExpanded = false   // 笔迹区块默认折叠
 
     private let tabs: [(tab: InspectorTab, icon: String)] = [
         (.info, "info.circle"),
@@ -71,9 +72,9 @@ struct InspectorView: View {
                     } else {
                         aiBlock
                         scratchBlock
-                        inkBlock
                         textBlock
                         highlightBlock
+                        inkBlock       // 手写笔迹条目最多最杂 → 沉到最底、默认折叠
                     }
                 }
                 .padding(16)
@@ -158,9 +159,21 @@ struct InspectorView: View {
         reload()
     }
 
+    /// 手写笔迹：默认折叠（系统 DisclosureGroup，不自绘），标题行保持与其他区块同款样式。
     private var inkBlock: some View {
         let byPage = Dictionary(grouping: session.strokes, by: { $0.page })
-        return block("\(L("Ink")) · \(session.strokes.count)") {
+        return DisclosureGroup(isExpanded: $inkExpanded) {
+            inkRows(byPage)
+                .padding(.top, 8)
+        } label: {
+            Text("\(L("Ink")) · \(session.strokes.count)")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func inkRows(_ byPage: [Int: [InkStroke]]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             if session.strokes.isEmpty {
                 Text(L("No ink yet.")).foregroundStyle(.secondary).font(.callout)
             } else {
