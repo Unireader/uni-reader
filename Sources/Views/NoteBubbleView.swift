@@ -82,8 +82,11 @@ struct NoteBubbleView: View {
                 .padding(.top, pad)
                 .allowsHitTesting(false)
             if let onEdit {
+                // 图标 = `square.and.pencil`（macOS 惯用的「编辑」符号）。**别用裸 `pencil`**：
+                // 它在这个尺寸下没有外框、读起来像掉在气泡角上的一道斜杠（2026-08-27 用户报「有点丑」，
+                // 候选对比样张见 `spike/note-bubble-icon-look.swift`）。网页/安卓画的是同一个形状。
                 Button(action: onEdit) {
-                    Image(systemName: "pencil")
+                    Image(systemName: "square.and.pencil")
                         .font(.system(size: fs * 0.95, weight: .medium))
                         .foregroundStyle(NoteBubble.editGlyph)
                         .frame(width: edit, height: edit)

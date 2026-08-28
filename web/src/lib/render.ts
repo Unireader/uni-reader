@@ -468,7 +468,8 @@ export function initRender(refs: CaptureRefs): void {
   // ---- 文字笔记展开气泡（每条笔记自己的 display：0=点击 1=悬浮 2=始终）----
   // 🔴 尺寸全部是**页宽的比例**（用户拍板「跟页缩放」），这套比例常数与 Mac `NoteBubble`、
   // 安卓 `PadOverlays` 各存一份，改一处必须同步另外两处。折行各端用各自的排版引擎，允许细微差异。
-  const BUB = { w: 0.30, fs: 0.022, lh: 1.35, pad: 0.55, radius: 0.5, gap: 0.25, edit: 1.7, maxLines: 10 };
+  const BUB = { w: 0.30, fs: 0.022, lh: 1.35, pad: 0.55, radius: 0.5, gap: 0.25, edit: 1.7,
+                icon: 0.78, maxLines: 10 };
 
   /// 这条笔记此刻要不要展开：空正文永不展开（没有可看的东西）。
   /// `hover` 模式在触摸端没有笔悬停时**降级为点击展开**（手指点一下也进 noteExpanded）。
@@ -560,10 +561,9 @@ export function initRender(refs: CaptureRefs): void {
         hctx.fillText(b.lines[k], b.x + b.pad, b.y + b.pad + k * b.fs * BUB.lh + b.fs * 0.15);
       }
       if (b.sticky) {   // 右上角铅笔（热区 = 这块方形，见 noteEditHit）
-        hctx.textAlign = "center"; hctx.textBaseline = "middle";
-        hctx.font = Math.round(b.fs * 1.05) + "px -apple-system,'PingFang SC',system-ui,sans-serif";
-        hctx.fillStyle = "rgba(0,0,0,0.6)";
-        hctx.fillText("✎", b.x + b.w - b.edit / 2 - b.pad * 0.4, b.y + b.edit / 2 + b.pad * 0.4);
+        const s = b.edit * BUB.icon;
+        drawEditIcon(hctx, b.x + b.w - b.edit / 2 - b.pad * 0.4 - s / 2,
+                     b.y + b.edit / 2 + b.pad * 0.4 - s / 2, s, "rgba(0,0,0,0.55)");
       }
       hctx.restore();
     }
@@ -579,6 +579,46 @@ export function initRender(refs: CaptureRefs): void {
       if (Math.abs(x - v.x) <= hot && Math.abs(y - v.y) <= hot) return n;
     }
     return null;
+  }
+
+  /// 「编辑」图标（**画出来的，不用字符**）：`✎` 这种字形随系统字体走，各机器长得都不一样、基线还飘。
+  /// 形状照 macOS 的 SF Symbol `square.and.pencil`：**右上角开口的圆角方框 + 斜插出去的铅笔**——
+  /// 裸铅笔在这个尺寸下读起来就是一道斜杠（2026-08-27 用户报「有点丑」）。
+  /// 坐标是 24 网格 ÷ 24；安卓 `PadOverlays.drawEditIcon` 是同一组数，**改一边必须同步另一边**。
+  // 24 网格坐标（内容 4.5~21，与 SF 的视觉大小对齐）：方框圆角 3、描边 2；铅笔沿 45° 斜插出右上角缺口。
+  const EDIT_SHAFT = [[19.08, 3.08], [20.92, 4.92], [14.92, 10.92], [13.08, 9.08]];
+  const EDIT_TIP = [[13.08, 9.08], [14.92, 10.92], [12.44, 11.56]];
+
+  function drawEditIcon(cx: CanvasRenderingContext2D, x: number, y: number,
+                        s: number, color: string): void {
+    const u = s / 24;
+    const P = (a: number, b: number): [number, number] => [x + a * u, y + b * u];
+    const r = 3;
+    cx.save();
+    cx.strokeStyle = color;
+    cx.fillStyle = color;
+    cx.lineWidth = Math.max(1, 2 * u);
+    cx.lineJoin = "round"; cx.lineCap = "round";
+    // 方框：右上角开口（缺口留给铅笔），另三角圆角
+    cx.beginPath();
+    cx.moveTo(...P(14, 4.5));
+    cx.lineTo(...P(4.5 + r, 4.5));
+    cx.quadraticCurveTo(...P(4.5, 4.5), ...P(4.5, 4.5 + r));
+    cx.lineTo(...P(4.5, 19.5 - r));
+    cx.quadraticCurveTo(...P(4.5, 19.5), ...P(4.5 + r, 19.5));
+    cx.lineTo(...P(19.5 - r, 19.5));
+    cx.quadraticCurveTo(...P(19.5, 19.5), ...P(19.5, 19.5 - r));
+    cx.lineTo(...P(19.5, 10));
+    cx.stroke();
+    // 铅笔：笔杆 + 笔尖（填充，小尺寸下比描边清楚）
+    for (const poly of [EDIT_SHAFT, EDIT_TIP]) {
+      cx.beginPath();
+      cx.moveTo(...P(poly[0][0], poly[0][1]));
+      for (let i = 1; i < poly.length; i++) cx.lineTo(...P(poly[i][0], poly[i][1]));
+      cx.closePath();
+      cx.fill();
+    }
+    cx.restore();
   }
 
   /// 气泡右上角铅笔命中 → 那条笔记（没命中 null）：点它进编辑器。
