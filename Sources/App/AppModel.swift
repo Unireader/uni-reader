@@ -470,13 +470,16 @@ final class AppModel: ObservableObject {
         let page = min(max(0, (obj["page"] as? NSNumber)?.intValue ?? 0), maxPage)
         let nx = (obj["nx"] as? NSNumber)?.doubleValue ?? 0
         let ny = (obj["ny"] as? NSNumber)?.doubleValue ?? 0
+        // 展开方式随正文一起改（平板编辑器里也能选）：线上没带这个字节的老客户端解码出 0 = tap。
+        let display = NoteDisplay.fromWire(UInt8(clamping: (obj["display"] as? NSNumber)?.intValue ?? 0))
         if let i = s.textNotes.firstIndex(where: { $0.id == uuid }) {
             s.textNotes[i].text = text
+            s.textNotes[i].display = display
             s.textNotes[i].updatedAt = .now
         } else {
             s.textNotes.append(TextNote(id: uuid, page: page,
                                         anchor: CGRect(x: nx, y: ny, width: 0, height: 0),
-                                        quote: "", text: text, rects: []))
+                                        quote: "", text: text, rects: [], display: display))
         }
     }
 
@@ -760,7 +763,8 @@ final class AppModel: ObservableObject {
         guard server.isRunning, let s = padSession else { return }
         let list: [[String: Any]] = s.textNotes.map { n in
             ["id": n.id.uuidString, "page": n.page,
-             "nx": n.anchor.minX, "ny": n.anchor.minY, "text": n.text]
+             "nx": n.anchor.minX, "ny": n.anchor.minY, "text": n.text,
+             "display": Int(n.display.wire)]
         }
         server.broadcast(["type": "notes", "list": list])
     }

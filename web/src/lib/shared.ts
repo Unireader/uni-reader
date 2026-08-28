@@ -34,6 +34,9 @@ export interface TextNote {
   nx: number;
   ny: number;
   text: string;
+  /// 展开方式（每条自己的属性，与 Mac `NoteDisplay` 同值）：0=点击 1=悬浮 2=始终。
+  /// 老 Mac 不带这个字节时解码为 0，行为与从前一致。
+  display: number;
 }
 
 /// 线上消息：字段随 type 变（契约 PROTOCOL.md / Sources/Resources/wire.js），这里保持宽松。
@@ -145,6 +148,11 @@ export interface GState {
   strokes: Stroke[]; cur: Stroke | null; radialActive: boolean; drawPage: number;
   // 文字笔记：notes = Mac 下发的全量镜像（本地只乐观更新，回传即整体替换）；noteMode = 文字笔记模式开关
   notes: TextNote[]; noteMode: boolean;
+  /// 手指点开着的笔记气泡 id（**瞬态、不上行**：本端自己的展开状态，同 Mac 的 expandedNotes）。
+  /// `hover` 模式的笔记在没有笔悬停的触摸端也走这条降级路径。
+  noteExpanded: string[];
+  /// 笔正悬停在哪条笔记的标记上（`hover` 模式的展开条件）；null = 没有。
+  noteHover: string | null;
   // 尺子模式：独立本地开关，note 模式下笔迹吸附 45° 倍数直线（吸附在上行点生成处做）；
   // lineStroke = 落笔那一刻锁进当前这一笔的尺子状态（随 ink begin 的 line 标记上报 Mac）
   rulerOn: boolean;
@@ -269,6 +277,10 @@ export interface GState {
   paintInkGeom(cx: CanvasRenderingContext2D, g: unknown, tx: number, ty: number): void;
   /// 草稿纸图钉命中 → 下标（-1 = 没命中）。手指单击用，见 input.ts endTouch。
   padPinHit(x: number, y: number): number;
+  /// 文字笔记标记命中 → 那条笔记（null = 没命中）。手指单击展开/收起气泡、笔悬停判 hover 模式用。
+  noteMarkerHit(x: number, y: number): TextNote | null;
+  /// 展开气泡右上角铅笔命中 → 那条笔记（null = 没命中）：点它进编辑器。
+  noteEditHit(x: number, y: number): TextNote | null;
   // scratch.ts（草稿纸）
   padActive(): boolean;
   drawScratch(): void;

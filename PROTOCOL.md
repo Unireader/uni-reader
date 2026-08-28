@@ -135,7 +135,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `pen` | `u16 index` | `{type:"pen", index}` |
 | `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|
 | `eraser` | `f32 size` · `u8 mode` · `u8 ring` | `{type:"eraser", size, mode, ring}` |
-| `textNote` | `str id` · `u8 op` · `u32 page` · `f32 nx` · `f32 ny` · `str text` | `{type:"textNote", id, op, page, nx, ny, text}` |
+| `textNote` | `str id` · `u8 op` · `u32 page` · `f32 nx` · `f32 ny` · `str text` · `u8 display` | `{type:"textNote", id, op, page, nx, ny, text, display}` |
 | `padGeom` | `f32 pageW` | `{type:"padGeom", pageW}` |
 | `layerSelect` | `u16 index` | `{type:"layerSelect", index}` |
 | `layerVisible` | `u16 index` · `u8 visible` | `{type:"layerVisible", index, visible}` |
@@ -147,6 +147,15 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anchor=落点、无 quote/rects）；
 **空文本 upsert 视为 delete**（对齐 Mac 端丢弃空点注解的语义）。坐标为页内归一化（与 ink 同系）。
 文本内容丢不得，永远走可靠通道。
+
+`display` u8（2026-08-27 加）= **这条笔记的正文在页面上怎么展开**：`0=点击 1=悬停 2=始终`
+（**只许尾部追加**新态；未知值各端一律回落 0）。它是**笔记自己的属性**、跟着笔记落库
+（Mac payload 的 `display` 键，值是同义小写串 `tap`/`hover`/`always`；旧笔记无此键 = 0，零迁移），
+所以 upsert 时和正文一起改：Mac `applyTextNote` 收到就写进 `TextNote.display`。
+`delete` 帧照样带这个字节（定长），值无意义。
+**「哪几条此刻正展开着」不上线**——那是各端自己的瞬态显示状态（同缩放/滚动的口径），
+Mac 上点开的气泡不会跟着同步到平板。
+悬停模式在触摸端由**笔悬停**触发；纯手指的设备退化成点击展开（各端本地决定，不改线格式）。
 
 `padGeom`：平板上报**自己**当前的内容页宽（CSS px，= 页在平板屏幕上的显示宽度）。Mac 端环形选笔盘的
 「中心取消区半径」「长按位移阈值」都是**平板屏幕上的物理尺度**，必须用平板页宽把归一化位移换算成
@@ -225,7 +234,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `strokes` | `u32 ackRel` · `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
 | `radial` | `u8 open` · open=1 时续 `u32 page` · `f32 cx` · `f32 cy` · `u16 highlight` · `u16 n` · `n ×( u8 kind, pen )` |
 | `pressRing` | `u8 on` · on=1 时续 `u32 page` · `f32 nx` · `f32 ny` |
-| `notes` | `u16 n` · `n ×( str id, u32 page, f32 nx, f32 ny, str text )` |
+| `notes` | `u16 n` · `n ×( str id, u32 page, f32 nx, f32 ny, str text, u8 display )` |
 | `layers` | `u16 active` · `u16 n` · `n ×( u8 r, u8 g, u8 b, u8 visible, str name )` |
 | `library` | `str wsName` · `u16 n` · `n ×( str id, str title, u8 open )` |
 | `toc` | `str docId` · `u16 n` · `n ×( u8 depth, u8 hasPage, u32 page, f32 frac, str label )` |
@@ -271,8 +280,9 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 - `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
 - `noteNew` → `{type:"noteNew", page, nx, ny}`（Mac 在环形盘提交「新建文字笔记」扇区后下发：
   平板在 `page` 页内 (nx, ny) 处点开文字笔记编辑器；编辑完成走现有 `textNote`(0x24) 上行闭环）
-- `notes` → `{type:"notes", list:[{id, page, nx, ny, text},…]}`（文字笔记**全量镜像**，类比 strokes：
-  Mac 是唯一真源，平板不落库；对选区锚定的注解用 anchor 原点作 nx/ny。文档切换/增删后重发）
+- `notes` → `{type:"notes", list:[{id, page, nx, ny, text, display},…]}`（文字笔记**全量镜像**，类比 strokes：
+  Mac 是唯一真源，平板不落库；对选区锚定的注解用 anchor 原点作 nx/ny。文档切换/增删后重发。
+  `display` = 展开方式 `0=点击 1=悬停 2=始终`，语义见 §4.1 的 `textNote`）
 - `layers` → `{type:"layers", active, list:[{r,g,b,visible,name},…]}`（多层笔迹的图层表，类比 `pens`：
   `list` 按图层 `sortOrder` 排、**按下标对齐**，`active` = 当前作画图层在 `list` 里的下标；
   颜色只是图层列表的色点标识（与笔画自身墨色无关），Mac 端由 `colorKey` 解析成 r/g/b 再打包。

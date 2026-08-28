@@ -24,6 +24,10 @@ struct PageCellView: View {
     var pressRing: PressRing? = nil        // 长按进度环（非空且属本页时在笔尖处画填充进度）
     var hoverD: CGFloat = 10               // 平板笔尖光标直径（erase 模式+圆环开 = 橡皮直径 2×eraserRadius×页宽）
     var onOpenNote: (TextNote) -> Void = { _ in }
+    var expandedNotes: Set<UUID> = []      // 点开着的 tap 模式笔记（瞬态、不落库；见 NoteDisplay）
+    var hoverNote: UUID? = nil             // 指针正悬在哪枚图钉上（hover 模式的展开条件）
+    var onToggleNote: (TextNote) -> Void = { _ in }        // 点图钉：tap 模式展开/收起气泡
+    var onHoverNote: (UUID, Bool) -> Void = { _, _ in }    // 图钉悬停进出（hover 模式用）
     var noteDrag: (id: UUID, off: CGSize)? = nil   // 点注解拖拽 ghost（非空且 id 匹配时该图钉按 off 挪显示位）
     var scratchPins: [(id: UUID, nx: Double, ny: Double, name: String)] = []   // 本页的草稿纸图钉（点开那张纸）
     var onOpenScratchPad: (UUID) -> Void = { _ in }
@@ -107,7 +111,9 @@ struct PageCellView: View {
             if let live {
                 InkLiveLayer(live: live, inkScale: inkScale)
             }
-            // 批注图钉（可点）：点开编辑器查看/编辑。悬停显示批注/原文预览。
+            // 批注图钉（可点）：`tap` 模式点开/收起页面上的气泡，`hover`/`always` 模式点开编辑器
+            // （那两种模式正文已经看得见，图钉的点击留给「改」）。空正文的选区注解没有可展开的东西，
+            // 一律直接进编辑器。悬停在 hover 模式下展开气泡，其余模式仍是系统 tooltip。
             // 通用保持既有样式（note.text + 黄底）；自定义类型用类型图标 + 类型色底。
             // 点注解拖拽由容器手势（ReaderSurface.notePinDragGesture）驱动：原位 Button 不动只变淡，
             // 另画不响应命中的 ghost 跟手——若 Button 本体跟手，松手时光标仍在 Button 内会误触发开编辑器。
@@ -116,17 +122,27 @@ struct PageCellView: View {
                 let t = NoteType.resolve(n.typeId, in: noteTypes)
                 let pos = markerPos(n, size: size)
                 let dragging = noteDrag?.id == n.id
-                Button { onOpenNote(n) } label: {
+                Button { expandable(n) ? onToggleNote(n) : onOpenNote(n) } label: {
                     notePin(typed: typed, t: t)
                 }
                 .buttonStyle(.plain)
-                .help(n.text.isEmpty ? n.quote : n.text)
+                .help(n.display == .hover && !n.text.isEmpty ? "" : (n.text.isEmpty ? n.quote : n.text))
                 .opacity(dragging ? 0.3 : 1)
                 .position(pos)
+                .onHover { onHoverNote(n.id, $0) }
                 if dragging, let off = noteDrag?.off {
                     notePin(typed: typed, t: t)
                         .allowsHitTesting(false)
                         .position(x: pos.x + off.width, y: pos.y + off.height)
+                }
+            }
+            // 展开的笔记气泡（压在图钉之上、光标/选笔盘之下）：每条笔记按自己的 `display` 决定显不显。
+            // 拖拽中的那条不画——气泡跟不跟手都是错的（跟手＝一大块跟着晃，不跟＝指着旧位置）。
+            ForEach(notes) { n in
+                if bubbleVisible(n), noteDrag?.id != n.id {
+                    NoteBubbleView(text: n.text, pageSize: size, pin: markerPos(n, size: size),
+                                   pinRadius: Self.pinRadius,
+                                   onEdit: n.display == .hover ? nil : { onOpenNote(n) })
                 }
             }
             // 草稿纸图钉：标记「这张纸是在页面的哪儿建的」，点开对应草稿纸。与批注图钉同款钳制/样式约束
@@ -181,6 +197,22 @@ struct PageCellView: View {
     private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)
     private static let noteMarker = Color(red: 1, green: 0.80, blue: 0.15)
     private static let scratchMarker = Color(red: 0.62, green: 0.83, blue: 0.98)
+
+    /// 图钉半径（`notePin` 的实际外圆：11pt 图标 + 3pt 内边距），气泡避让用。
+    static let pinRadius: CGFloat = 9
+
+    /// 点图钉是「展开/收起」还是「进编辑器」：只有 tap 模式且有正文才是前者。
+    private func expandable(_ n: TextNote) -> Bool { n.display == .tap && !n.text.isEmpty }
+
+    /// 这条笔记此刻要不要画气泡（空正文没有可展开的东西，任何模式都不画）。
+    private func bubbleVisible(_ n: TextNote) -> Bool {
+        guard !n.text.isEmpty else { return false }
+        switch n.display {
+        case .always: return true
+        case .tap: return expandedNotes.contains(n.id)
+        case .hover: return hoverNote == n.id
+        }
+    }
 
     /// 图钉落位：选区注解落在末端右侧（不遮文字起点）；点注解（无行框）落在锚点处。钳制在页内。
     private func markerPos(_ n: TextNote, size: CGSize) -> CGPoint {

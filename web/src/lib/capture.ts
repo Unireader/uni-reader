@@ -32,7 +32,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     // 笔迹：strokes = Mac 回传的已成形笔迹（静态层，唯一真源），cur = 正在写的这一笔（活体层）
     strokes: [], cur: null, radialActive: false, drawPage: 0,
     // 文字笔记：Mac 下发全量镜像；noteMode = 文字笔记模式开关
-    notes: [], noteMode: false,
+    notes: [], noteMode: false, noteExpanded: [], noteHover: null,
     // 尺子模式：独立本地开关（note 模式下 45° 吸附直线）；lineStroke = 当前这一笔锁定的尺子状态
     rulerOn: false, lineStroke: false,
     // 橡皮：归一化半径（页宽比）/ 模式（1=局部）/ 尺寸圆环开关与位置（Mac 的 eraser 消息下发后更新）

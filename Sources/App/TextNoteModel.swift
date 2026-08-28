@@ -23,6 +23,34 @@ struct NoteSource: Equatable {
     var isAI: Bool { kind == Self.aiKind }
 }
 
+/// 一条文字笔记在页面上**怎么展开正文**（每条笔记自己的属性，三端同款语义）。
+///
+/// 线上是 u8（`notes`/`textNote`，见 `PROTOCOL.md`）、payload 里是同名小写串；
+/// 旧 payload 无 `display` 键 → `.tap`，**零迁移**（与 `type_id`/`source` 同一个先例）。
+/// 🔴 只许尾部追加新态：安卓/网页按数值解码，中间插一个会把老数据整体错位。
+enum NoteDisplay: String, Codable, CaseIterable {
+    case tap        // 点图钉展开/收起气泡（默认；气泡右上角铅笔进编辑器）
+    case hover      // 指针（Mac）/ 笔（平板）悬停在图钉上才展开；手指没有悬停 → 当 tap 用
+    case always     // 始终展开
+
+    var wire: UInt8 {
+        switch self {
+        case .tap: return 0
+        case .hover: return 1
+        case .always: return 2
+        }
+    }
+
+    /// 线上 u8 → 模式；未知值（跨端版本错位/手改坏）一律回落 `.tap`（与解析不出 payload 同口径）。
+    static func fromWire(_ v: UInt8) -> NoteDisplay {
+        switch v {
+        case 1: return .hover
+        case 2: return .always
+        default: return .tap
+        }
+    }
+}
+
 struct TextNote: Identifiable, Equatable {
     var id: UUID = UUID()
     var page: Int
@@ -33,6 +61,7 @@ struct TextNote: Identifiable, Equatable {
     var color: InkColor?        // 预留：高亮色（高亮形态复用）
     var typeId: UUID? = nil     // 笔记类型（工作区 NoteType.id）；nil/未知 = 通用
     var source: NoteSource? = nil   // 来源（AI 回填）；nil = 用户自己写的
+    var display: NoteDisplay = .tap // 页面上怎么展开正文（每条自己的属性）
     var createdAt: Date = .now
     var updatedAt: Date = .now
 }
@@ -48,6 +77,7 @@ private struct TextNotePayload: Codable {
     var color: InkColor?
     var typeId: String?     // JSON 键 type_id；旧 payload 无此键 → nil（通用），零迁移
     var source: Src?        // JSON 键 source；旧 payload 无此键 → nil，同样零迁移
+    var display: String?    // JSON 键 display（tap/hover/always）；旧 payload 无此键 → tap，零迁移
 
     struct Src: Codable {
         var kind: String
@@ -63,7 +93,7 @@ private struct TextNotePayload: Codable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case quote, text, rects, color, source
+        case quote, text, rects, color, source, display
         case typeId = "type_id"
     }
 }
@@ -82,7 +112,8 @@ extension TextNote {
                                                               url: $0.url,
                                                               threadId: $0.threadId?.uuidString,
                                                               at: ISO.string($0.at))
-                                      })
+                                      },
+                                      display: display.rawValue)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
                        page: page, anchor: anchor, payload: data,
@@ -109,6 +140,7 @@ extension TextNote {
         }
         self.init(id: uuid, page: note.page, anchor: note.anchor, quote: p.quote, text: p.text,
                   rects: rects, color: p.color, typeId: p.typeId.flatMap { UUID(uuidString: $0) },
-                  source: src, createdAt: note.createdAt, updatedAt: note.updatedAt)
+                  source: src, display: p.display.flatMap { NoteDisplay(rawValue: $0) } ?? .tap,
+                  createdAt: note.createdAt, updatedAt: note.updatedAt)
     }
 }

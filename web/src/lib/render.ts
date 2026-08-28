@@ -3,7 +3,7 @@
 // 注意：原版有一个定义了却从未调用的 drawHover()（本地悬停圆环），移植时按死代码丢弃——
 // 悬停光标由 Mac 端画，平板只上报位置（见 input.ts reportHover）。
 import { G, BAR, GAP, RD, PR, BRUSH_LABELS, clamp, pw, contentLeft, curMode, strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
-import type { CaptureRefs, LassoSelection, RadialItem, RadialState, Stroke, WireMsg } from "./shared.js";
+import type { CaptureRefs, LassoSelection, RadialItem, RadialState, Stroke, TextNote, WireMsg } from "./shared.js";
 import { updateHud } from "./hud.svelte.js";
 
 export function initRender(refs: CaptureRefs): void {
@@ -417,19 +417,13 @@ export function initRender(refs: CaptureRefs): void {
   /// 配色日间/夜间通用（夜间只反转 bg canvas，蓝底白边在深浅页面上都可读，与环形盘图标同理）。
   function drawNotes(): void {
     hctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    const r = clamp(pw() * 0.02, 12, 22);
+    const r = noteMarkerRadius();
     hctx.save();
     hctx.textAlign = "center"; hctx.textBaseline = "middle";
     hctx.font = "600 " + Math.round(r * 0.9) + "px -apple-system,'PingFang SC',system-ui,sans-serif";
-    const lassoNoteSel = (G.lassoCommitted && !G.lassoSyncNotes) ? G.lassoSelection : null;
-    const noteXf = lassoNoteSel ? lassoXform(false) : null;
     for (let i = 0; i < G.notes.length; i++) {
       const n = G.notes[i];
-      let nnx = n.nx, nny = n.ny;
-      if (lassoNoteSel && noteXf && lassoNoteSel.page === n.page && lassoNoteSel.noteIdx.indexOf(i) >= 0) {
-        const q = noteXf(nnx, nny); nnx = q[0]; nny = q[1];
-      }
-      const v = pageToView(n.page, nnx, nny);
+      const v = noteViewPos(i);
       if (v.y < BAR - r || v.y > window.innerHeight + r || v.x < -r || v.x > window.innerWidth + r) continue;
       hctx.save();
       hctx.shadowColor = "rgba(0,0,0,0.3)"; hctx.shadowBlur = 3; hctx.shadowOffsetY = 1;
@@ -442,6 +436,7 @@ export function initRender(refs: CaptureRefs): void {
       hctx.fillText((n.text || "T").charAt(0), v.x, v.y);
     }
     hctx.restore();
+    drawNoteBubbles();
     drawPadPins();
     // 橡皮尺寸圆环（擦除模式 + 开关开 + 有笔尖位置）：直径 = 2×G.eraserSize×当前页显示宽。
     // 双描边（外暗内亮）保证在白页/夜间反转页上都可读；位置由 input.ts 在 hover/擦除拖动时维护。
@@ -452,6 +447,149 @@ export function initRender(refs: CaptureRefs): void {
       hctx.strokeStyle = "rgba(255,255,255,0.9)"; hctx.lineWidth = 1.5; hctx.stroke();
     }
     drawLasso();
+  }
+
+  /// 笔记标记半径（视口 px）：随页宽走但夹取，缩得再小也点得着（同草稿纸图钉的口径）。
+  function noteMarkerRadius(): number { return clamp(pw() * 0.02, 12, 22); }
+
+  /// 一条笔记标记此刻的视口坐标：**框选提交后等回传期间**要跟着乐观变换走（同笔迹层的口径），
+  /// 标记绘制 / 气泡布局 / 命中判定三处共用这一份，别各算各的（画到哪儿就该点到哪儿）。
+  function noteViewPos(i: number): { x: number; y: number } {
+    const n = G.notes[i];
+    const sel = (G.lassoCommitted && !G.lassoSyncNotes) ? G.lassoSelection : null;
+    const xf = sel ? lassoXform(false) : null;
+    let nnx = n.nx, nny = n.ny;
+    if (sel && xf && sel.page === n.page && sel.noteIdx.indexOf(i) >= 0) {
+      const q = xf(nnx, nny); nnx = q[0]; nny = q[1];
+    }
+    return pageToView(n.page, nnx, nny);
+  }
+
+  // ---- 文字笔记展开气泡（每条笔记自己的 display：0=点击 1=悬浮 2=始终）----
+  // 🔴 尺寸全部是**页宽的比例**（用户拍板「跟页缩放」），这套比例常数与 Mac `NoteBubble`、
+  // 安卓 `PadOverlays` 各存一份，改一处必须同步另外两处。折行各端用各自的排版引擎，允许细微差异。
+  const BUB = { w: 0.30, fs: 0.022, lh: 1.35, pad: 0.55, radius: 0.5, gap: 0.25, edit: 1.7, maxLines: 10 };
+
+  /// 这条笔记此刻要不要展开：空正文永不展开（没有可看的东西）。
+  /// `hover` 模式在触摸端没有笔悬停时**降级为点击展开**（手指点一下也进 noteExpanded）。
+  function noteBubbleOn(n: TextNote): boolean {
+    if (!n.text) return false;
+    if (n.display === 2) return true;
+    if (n.display === 1) return G.noteHover === n.id || G.noteExpanded.indexOf(n.id) >= 0;
+    return G.noteExpanded.indexOf(n.id) >= 0;
+  }
+
+  /// 常驻气泡（点开的 / 始终展示的）才画铅笔：笔悬停的那只是只读预览，鼠标一离开图钉就收了，
+  /// 那颗按钮够不着（与 Mac `NoteBubbleView.onEdit == nil` 同一条判据）。
+  function noteBubbleSticky(n: TextNote): boolean {
+    return n.display === 2 || G.noteExpanded.indexOf(n.id) >= 0;
+  }
+
+  /// 正文折行：canvas 不会自动折行，逐字符塞（中英混排一律按字符宽度累加，够用）。
+  /// 超过 maxLines 就在末行加省略号——一条笔记不该糊住半页，全文去编辑器里看。
+  function wrapNoteText(text: string, maxW: number): string[] {
+    const out: string[] = [];
+    const paras = text.split("\n");
+    let truncated = false;
+    for (let p = 0; p < paras.length && !truncated; p++) {
+      let line = "";
+      const s = paras[p];
+      for (let i = 0; i < s.length; i++) {
+        const t = line + s[i];
+        if (line && hctx.measureText(t).width > maxW) {
+          out.push(line); line = s[i];
+          if (out.length >= BUB.maxLines) { truncated = true; break; }
+        } else line = t;
+      }
+      if (truncated) break;         // 段落没排完就满了
+      out.push(line);
+      if (out.length >= BUB.maxLines && p < paras.length - 1) truncated = true;
+    }
+    if (truncated && out.length) {
+      const last = out[out.length - 1];
+      out[out.length - 1] = last.slice(0, Math.max(0, last.length - 1)) + "…";
+    }
+    return out;
+  }
+
+  /// 气泡布局（视口 px）：图钉右侧优先、放不下翻左侧，再整体钳进**该页**的显示矩形内
+  /// （位置规则与 Mac `NoteBubbleView.origin` 一致）。返回 null = 这条此刻不画。
+  function noteBubbleBox(i: number): {
+    x: number; y: number; w: number; h: number; fs: number; pad: number;
+    edit: number; lines: string[]; sticky: boolean;
+  } | null {
+    const n = G.notes[i];
+    if (!noteBubbleOn(n) || !pageVisible(n.page)) return null;
+    const W = pw();
+    const fs = W * BUB.fs, w = W * BUB.w, pad = fs * BUB.pad;
+    const sticky = noteBubbleSticky(n);
+    const edit = sticky ? fs * BUB.edit : 0;
+    hctx.save();
+    hctx.font = Math.round(fs) + "px -apple-system,'PingFang SC',system-ui,sans-serif";
+    const lines = wrapNoteText(n.text, Math.max(fs, w - pad * 2 - edit));
+    hctx.restore();
+    const h = pad * 2 + lines.length * fs * BUB.lh;
+    const v = noteViewPos(i), r = noteMarkerRadius(), gap = fs * BUB.gap;
+    const p0 = pageToView(n.page, 0, 0), p1 = pageToView(n.page, 1, 1);
+    let x = v.x + r + gap;
+    if (x + w > p1.x) x = v.x - r - gap - w;
+    const y = v.y - r;
+    return {
+      x: clamp(x, p0.x, Math.max(p0.x, p1.x - w)),
+      y: clamp(y, p0.y, Math.max(p0.y, p1.y - h)),
+      w: w, h: h, fs: fs, pad: pad, edit: edit, lines: lines, sticky: sticky,
+    };
+  }
+
+  /// 画全部展开着的气泡（在标记之上、草稿纸图钉之下）。纸白底 + 发丝描边 + 深灰字，
+  /// **无投影无渐变**（红线：不做拟物），夜间只反转页图那一层故气泡照旧可读。
+  function drawNoteBubbles(): void {
+    if (!G.notes.length) return;
+    for (let i = 0; i < G.notes.length; i++) {
+      const b = noteBubbleBox(i);
+      if (!b) continue;
+      const rad = Math.min(b.fs * BUB.radius, b.w / 2, b.h / 2);
+      hctx.save();
+      roundRectPath(hctx, b.x, b.y, b.w, b.h, rad);
+      hctx.fillStyle = "rgba(255,253,242,0.97)"; hctx.fill();
+      hctx.strokeStyle = "rgba(0,0,0,0.18)"; hctx.lineWidth = 1; hctx.stroke();
+      hctx.textAlign = "left"; hctx.textBaseline = "top";
+      hctx.font = Math.round(b.fs) + "px -apple-system,'PingFang SC',system-ui,sans-serif";
+      hctx.fillStyle = "#1f1f21";
+      for (let k = 0; k < b.lines.length; k++) {
+        hctx.fillText(b.lines[k], b.x + b.pad, b.y + b.pad + k * b.fs * BUB.lh + b.fs * 0.15);
+      }
+      if (b.sticky) {   // 右上角铅笔（热区 = 这块方形，见 noteEditHit）
+        hctx.textAlign = "center"; hctx.textBaseline = "middle";
+        hctx.font = Math.round(b.fs * 1.05) + "px -apple-system,'PingFang SC',system-ui,sans-serif";
+        hctx.fillStyle = "rgba(0,0,0,0.6)";
+        hctx.fillText("✎", b.x + b.w - b.edit / 2 - b.pad * 0.4, b.y + b.edit / 2 + b.pad * 0.4);
+      }
+      hctx.restore();
+    }
+  }
+
+  /// 笔记标记命中 → 那条笔记（没命中 null）。热区比画出来的略大，同草稿纸图钉。
+  function noteMarkerHit(x: number, y: number): TextNote | null {
+    const r = noteMarkerRadius(), hot = Math.max(r + 6, 22);
+    for (let i = G.notes.length - 1; i >= 0; i--) {
+      const n = G.notes[i];
+      if (!pageVisible(n.page)) continue;
+      const v = noteViewPos(i);
+      if (Math.abs(x - v.x) <= hot && Math.abs(y - v.y) <= hot) return n;
+    }
+    return null;
+  }
+
+  /// 气泡右上角铅笔命中 → 那条笔记（没命中 null）：点它进编辑器。
+  function noteEditHit(x: number, y: number): TextNote | null {
+    for (let i = G.notes.length - 1; i >= 0; i--) {
+      const b = noteBubbleBox(i);
+      if (!b || !b.sticky) continue;
+      const ex = b.x + b.w - b.edit - b.pad * 0.4, ey = b.y + b.pad * 0.4;
+      if (x >= ex && x <= ex + b.edit && y >= ey && y <= ey + b.edit) return G.notes[i];
+    }
+    return null;
   }
 
   /// 草稿纸图钉：标记「这张纸是在页面的哪儿建的」，手指单击即打开那张纸（见 input.ts endTouch）。
@@ -820,5 +958,6 @@ export function initRender(refs: CaptureRefs): void {
     clearHover, drawNotes, setRadial, setPressRing,
     pageLocClamped, lassoHitTest, lassoViewBox, lassoHandlePts, clearLasso,
     buildGeomWith, paintInkGeom: paintGeomAt, padPinHit,
+    noteMarkerHit, noteEditHit,
   });
 }

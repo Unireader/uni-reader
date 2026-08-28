@@ -40,6 +40,7 @@ export interface NoteEditorState {
   page: number; nx: number; ny: number; // 页内归一化锚点（与笔迹同系）
   x: number; y: number;                // 打开时的视口坐标（面板定位用）
   text: string;                        // 初始文本
+  display: number;                     // 展开方式 0=点击 1=悬浮 2=始终（每条笔记自己的属性）
   isNew: boolean;                      // true = 新建（编辑器不显示删除按钮）
 }
 

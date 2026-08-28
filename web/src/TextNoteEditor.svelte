@@ -7,8 +7,13 @@
   import { G, BAR, clamp } from "./lib/shared.js";
 
   let text = $state("");
-  // 每次打开（S.noteEditor 变化）重置输入框为初始文本
+  let display = $state(0);   // 展开方式 0=点击 1=悬浮 2=始终（每条笔记自己的属性，随 upsert 上行）
+  // 每次打开（S.noteEditor 变化）重置输入框为初始文本 + 展开方式
   $effect(() => { text = S.noteEditor ? S.noteEditor.text : ""; });
+  $effect(() => { display = S.noteEditor ? S.noteEditor.display : 0; });
+
+  const DISPLAYS: { v: number; label: string }[] =
+    [{ v: 0, label: "点击" }, { v: 1, label: "悬浮" }, { v: 2, label: "始终" }];
 
   const PANEL_W = 280;   // 面板宽（定位夹取用，与 CSS 一致）
 
@@ -27,9 +32,10 @@
       if (!ed.isNew) removeNote(ed.id);
       close(); return;
     }
-    G.send({ type: "textNote", id: ed.id, op: "upsert", page: ed.page, nx: ed.nx, ny: ed.ny, text: t });
+    G.send({ type: "textNote", id: ed.id, op: "upsert", page: ed.page, nx: ed.nx, ny: ed.ny,
+             text: t, display: display });
     // 乐观更新本地列表（不等 Mac 回传）并重画标记
-    const rec = { id: ed.id, page: ed.page, nx: ed.nx, ny: ed.ny, text: t };
+    const rec = { id: ed.id, page: ed.page, nx: ed.nx, ny: ed.ny, text: t, display: display };
     const i = G.notes.findIndex((n) => n.id === ed.id);
     if (i >= 0) G.notes[i] = rec; else G.notes.push(rec);
     G.drawNotes();
@@ -38,7 +44,8 @@
 
   function removeNote(id: string): void {
     const ed = S.noteEditor; if (!ed) return;
-    G.send({ type: "textNote", id: id, op: "delete", page: ed.page, nx: ed.nx, ny: ed.ny, text: "" });
+    G.send({ type: "textNote", id: id, op: "delete", page: ed.page, nx: ed.nx, ny: ed.ny,
+             text: "", display: 0 });
     G.notes = G.notes.filter((n) => n.id !== id);
     G.drawNotes();
   }
@@ -63,6 +70,12 @@
   <button id="noteEditorMask" aria-label="关闭编辑器" onclick={close}></button>
   <div id="noteEditor" style={panelPos(S.noteEditor)}>
     <textarea bind:value={text} placeholder="输入笔记内容…" use:focusMe></textarea>
+    <!-- 展开方式：这条笔记的正文在页面上怎么露出来（与 Mac 编辑器的分段选择同一个属性） -->
+    <div class="seg" role="group" aria-label="展开方式">
+      {#each DISPLAYS as d (d.v)}
+        <button class:on={display === d.v} onclick={() => (display = d.v)}>{d.label}</button>
+      {/each}
+    </div>
     <div class="row">
       {#if !S.noteEditor.isNew}
         <button class="del" onclick={del}>删除</button>

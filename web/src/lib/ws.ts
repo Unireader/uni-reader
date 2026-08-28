@@ -163,7 +163,8 @@ export function initWs(): void {
       G.ensureImages(); G.drawAll(); updatePageLabel(); G.emitScroll();
     }
     const v = G.pageToView(pg, nx, ny);
-    S.noteEditor = { id: crypto.randomUUID(), page: pg, nx: nx, ny: ny, x: v.x, y: v.y, text: "", isNew: true };
+    S.noteEditor = { id: crypto.randomUUID(), page: pg, nx: nx, ny: ny, x: v.x, y: v.y,
+                     text: "", display: 0, isNew: true };
   }
 
   // 收到 Mac 视口 → 程序化滚到该(页,纵向比例)，不回发。

@@ -1,5 +1,5 @@
 // NoteType 模型 + 工作区 meta 持久化回归测试。运行：
-//   cp spike/note-type-test.swift /tmp/main.swift && swiftc Sources/Store/*.swift Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/InkModel.swift Sources/App/PenPreset.swift Sources/Support/L.swift /tmp/main.swift -o /tmp/nt && /tmp/nt
+//   cp spike/note-type-test.swift /tmp/main.swift && swiftc Sources/Store/*.swift Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/InkModel.swift Sources/App/InkLayerModel.swift Sources/App/PenPreset.swift Sources/Support/L.swift /tmp/main.swift -o /tmp/nt && /tmp/nt
 // （须命名为 main.swift 编译：swiftc 多文件时顶层代码只允许在 main.swift）
 
 import Foundation
@@ -62,6 +62,24 @@ let badRow = LibNote(id: note.id.uuidString, documentId: docId, kind: TextNote.n
                      payload: Data("{\"quote\":\"原文\",\"text\":\"批注\",\"rects\":[[0.1,0.2,0.3,0.05]],\"type_id\":\"not-a-uuid\"}".utf8),
                      createdAt: note.createdAt, updatedAt: note.updatedAt)
 check(TextNote(note: badRow)?.typeId == nil, "损坏 type_id 字符串 → typeId nil（落通用）")
+
+// 6) TextNote.display（展开方式）：旧 payload 无 display 键 → tap（零迁移）；三态回环；坏值落 tap
+check(TextNote(note: oldRow)?.display == .tap, "旧 payload（无 display）→ tap")
+for d in NoteDisplay.allCases {
+    note.display = d
+    let r = note.toNote(documentId: docId)!
+    check(String(data: r.payload, encoding: .utf8)!.contains("\"display\""), "payload 含 display 键（\(d.rawValue)）")
+    check(TextNote(note: r)?.display == d, "display 编解码回环（\(d.rawValue)）")
+}
+let badDisplay = LibNote(id: note.id.uuidString, documentId: docId, kind: TextNote.noteKind,
+                         page: 2, anchor: note.anchor,
+                         payload: Data("{\"quote\":\"\",\"text\":\"x\",\"rects\":[],\"display\":\"popover\"}".utf8),
+                         createdAt: note.createdAt, updatedAt: note.updatedAt)
+check(TextNote(note: badDisplay)?.display == .tap, "未知 display 值 → tap")
+// 线上 u8 与 payload 串是同一套语义（三端按数值解码，只许尾部追加）
+check(NoteDisplay.tap.wire == 0 && NoteDisplay.hover.wire == 1 && NoteDisplay.always.wire == 2,
+      "display 线上编号 0/1/2")
+check(NoteDisplay.fromWire(9) == .tap, "未知线上编号 → tap")
 
 print("\n通过 \(pass)，失败 \(fail)")
 if fail > 0 { exit(1) }

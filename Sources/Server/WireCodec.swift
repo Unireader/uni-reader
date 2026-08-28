@@ -195,6 +195,7 @@ enum WireCodec {
             w.u8(Op.textNote); w.str(strOf(o["id"]))
             w.u8(strOf(o["op"]) == "delete" ? 1 : 0)
             w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"])); w.str(strOf(o["text"]))
+            w.u8(UInt8(clamping: intOf(o["display"])))                        // 展开方式 0=tap 1=hover 2=always
         case "notes":
             w.u8(Op.notes)
             let list = o["list"] as? [[String: Any]] ?? []
@@ -202,6 +203,7 @@ enum WireCodec {
             for n in list {
                 w.str(strOf(n["id"])); w.u32(intOf(n["page"]))
                 w.f32(num(n["nx"])); w.f32(num(n["ny"])); w.str(strOf(n["text"]))
+                w.u8(UInt8(clamping: intOf(n["display"])))                    // 同上，逐条自己的展开方式
             }
         case "page":
             w.u8(Op.page); w.u32(intOf(o["v"])); w.u32(intOf(o["index"]))
@@ -469,17 +471,20 @@ enum WireCodec {
                    "mode": NSNumber(value: r.u8()), "ring": NSNumber(value: r.u8())]
         case Op.textNote:
             let id = r.str(), opRaw = r.u8()
-            let page = r.u32(), nx = r.f32(), ny = r.f32(), text = r.str()
+            let page = r.u32(), nx = r.f32(), ny = r.f32(), text = r.str(), display = r.u8()
             out = ["type": "textNote", "id": id, "op": opRaw == 1 ? "delete" : "upsert",
                    "page": NSNumber(value: page), "nx": NSNumber(value: nx),
-                   "ny": NSNumber(value: ny), "text": text]
+                   "ny": NSNumber(value: ny), "text": text,
+                   "display": NSNumber(value: display)]
         case Op.notes:
             let n = r.u16()
             var list = [[String: Any]](); list.reserveCapacity(n)
             for _ in 0..<n {
-                list.append(["id": r.str(), "page": NSNumber(value: r.u32()),
-                             "nx": NSNumber(value: r.f32()), "ny": NSNumber(value: r.f32()),
-                             "text": r.str()])
+                let id = r.str(), page = r.u32(), nx = r.f32(), ny = r.f32()
+                let text = r.str(), display = r.u8()
+                list.append(["id": id, "page": NSNumber(value: page),
+                             "nx": NSNumber(value: nx), "ny": NSNumber(value: ny),
+                             "text": text, "display": NSNumber(value: display)])
             }
             out = ["type": "notes", "list": list]
         case Op.page:

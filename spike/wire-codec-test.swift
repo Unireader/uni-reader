@@ -142,6 +142,13 @@ let canonical: [[String: Any]] = [
     ["type": "lassoScale", "page": 1, "x0": 0.2, "y0": 0.3, "x1": 0.6, "y1": 0.5,
      "ax": 0.2, "ay": 0.3, "sx": 1.5, "sy": 0.75,
      "poly": [0.2, 0.3, 0.6, 0.3, 0.6, 0.5, 0.2, 0.5]],
+    // —— 文字笔记展开方式（2026-08-27）：textNote / notes 的每条尾部追加 u8 display（0=点击 1=悬浮 2=始终）——
+    // display=0 的老形态由上面既有的 textNote/notes 两条覆盖（它们的字节各多了一个 0x00）；
+    // 这里专测另外两个值，防止被「缺省即 0」的兜底吃掉（同 scratchPaper 的 pattern=plain 先例）。
+    ["type": "textNote", "id": "n3", "op": "upsert", "page": 1, "nx": 0.25, "ny": 0.5,
+     "text": "悬浮", "display": 1],
+    ["type": "notes", "list": [["id": "n1", "page": 0, "nx": 0.5, "ny": 0.5, "text": "hello", "display": 2],
+                               ["id": "n2", "page": 3, "nx": 0.25, "ny": 0.75, "text": "笔记", "display": 1]]],
 ]
 
 var pass = 0, fail = 0

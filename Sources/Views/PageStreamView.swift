@@ -91,6 +91,10 @@ struct ReaderSurface: View {
     @State var lassoGhostScale: (sx: CGFloat, sy: CGFloat, handle: LassoHandle)?
     /// 点注解图钉拖拽的 ghost 预览偏移（note id + 页内像素位移；数据在松手前不动，逻辑见 ReaderSurface+Selection）。
     @State var notePinDrag: (id: UUID, off: CGSize)?
+    /// 点开着的 `tap` 模式笔记气泡（**瞬态、不落库**：换文档/关窗即忘，同选区高亮的口径）。
+    @State var expandedNotes: Set<UUID> = []
+    /// 指针悬停在哪枚图钉上（`hover` 模式的展开条件；离开即 nil）。
+    @State var hoveredNote: UUID?
 
     @State var snipRect: SnipRect?                  // 进行中的框选截图矩形（容器坐标）
     @State var snipToast: SnipToast?                // 截图投递的即时反馈（自动消失）
@@ -203,9 +207,10 @@ struct ReaderSurface: View {
         .sheet(item: $editorTarget) { target in
             NoteEditorSheet(quote: target.quote, initialText: target.initialText,
                             initialTypeId: target.initialTypeId,
+                            initialDisplay: target.initialDisplay,
                             noteTypes: session.noteTypes,
                             usageCount: { id in session.textNotes.filter { $0.typeId == id }.count },
-                            onSave: { saveEditor(target, text: $0, typeId: $1) },
+                            onSave: { saveEditor(target, text: $0, typeId: $1, display: $2) },
                             onDelete: target.editedNote == nil ? nil : { deleteEditorNote(target) },
                             onChangeTypes: { saveNoteTypes($0) },
                             onCancel: { editorTarget = nil })
@@ -333,6 +338,15 @@ struct ReaderSurface: View {
                      pressRing: session.pressRing?.page == i ? session.pressRing : nil,
                      hoverD: app.padMode == "erase" && app.eraserRing ? app.eraserRadius * 2 * pageW : 10,
                      onOpenNote: { editorTarget = .edit($0) },
+                     expandedNotes: expandedNotes,
+                     hoverNote: hoveredNote,
+                     onToggleNote: { n in
+                         if expandedNotes.contains(n.id) { expandedNotes.remove(n.id) }
+                         else { expandedNotes.insert(n.id) }
+                     },
+                     onHoverNote: { id, inside in
+                         if inside { hoveredNote = id } else if hoveredNote == id { hoveredNote = nil }
+                     },
                      noteDrag: notePinDrag,
                      scratchPins: buckets.scratchPins[i] ?? [],
                      onOpenScratchPad: { session.openPadID = $0 })

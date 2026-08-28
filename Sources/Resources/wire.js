@@ -155,12 +155,14 @@
         break;
       case "textNote":
         w.u8(OP.textNote); w.str(o.id || ""); w.u8(o.op === "delete" ? 1 : 0);
-        w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0); w.str(o.text || ""); break;
+        w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0); w.str(o.text || "");
+        w.u8(o.display || 0); break;                   // 展开方式 0=tap 1=hover 2=always
       case "notes": {
         w.u8(OP.notes); var NL = o.list || []; w.u16(NL.length);
         for (var ni = 0; ni < NL.length; ni++) {
           w.str(NL[ni].id || ""); w.u32(NL[ni].page || 0);
           w.f32(NL[ni].nx || 0); w.f32(NL[ni].ny || 0); w.str(NL[ni].text || "");
+          w.u8(NL[ni].display || 0);                   // 同上，逐条自己的展开方式
         }
         break;
       }
@@ -379,10 +381,11 @@
       }
       case OP.eraser: return { type: "eraser", size: r.f32(), mode: r.u8(), ring: r.u8() };
       case OP.textNote: return { type: "textNote", id: r.str(), op: r.u8() === 1 ? "delete" : "upsert",
-                                 page: r.u32(), nx: r.f32(), ny: r.f32(), text: r.str() };
+                                 page: r.u32(), nx: r.f32(), ny: r.f32(), text: r.str(), display: r.u8() };
       case OP.notes: {
         var nn2 = r.u16(), nlist = new Array(nn2);
-        for (var nj = 0; nj < nn2; nj++) nlist[nj] = { id: r.str(), page: r.u32(), nx: r.f32(), ny: r.f32(), text: r.str() };
+        for (var nj = 0; nj < nn2; nj++)
+          nlist[nj] = { id: r.str(), page: r.u32(), nx: r.f32(), ny: r.f32(), text: r.str(), display: r.u8() };
         return { type: "notes", list: nlist };
       }
       case OP.page: return { type: "page", v: r.u32(), index: r.u32(), count: r.u32(), w: r.f32(), h: r.f32() };

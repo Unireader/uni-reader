@@ -74,6 +74,13 @@ enum NoteEditorTarget: Identifiable {
         case .edit(let n): return n.typeId
         }
     }
+    /// 展开方式：新建按默认（tap），编辑取这条笔记自己的。
+    var initialDisplay: NoteDisplay {
+        switch self {
+        case .new: return .tap
+        case .edit(let n): return n.display
+        }
+    }
     /// 编辑已存在注解时才给「删除」入口（新建草稿没有可删的东西）。
     var editedNote: TextNote? {
         if case .edit(let n) = self { return n }

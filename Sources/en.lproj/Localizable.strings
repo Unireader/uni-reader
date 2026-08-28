@@ -308,3 +308,10 @@
 "Open as Separate Window" = "Open as Separate Window";
 "Open AI Panel" = "Open AI Panel";
 "Collapse" = "Collapse";
+
+/* Text note display mode (per-note property) */
+"Show note" = "Show";
+"On tap" = "On tap";
+"On hover" = "On hover";
+"Always" = "Always";
+"Edit note" = "Edit note";

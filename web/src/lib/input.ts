@@ -94,6 +94,12 @@ export function initInput(refs: CaptureRefs): void {
       e.preventDefault(); return;
     }
     // 笔
+    // 鼠标（桌面浏览器）落在笔记标记/气泡铅笔上 → 展开·收起·进编辑器，这一下不落墨也不平移。
+    // **只认鼠标**：平板上这条路走手指（endTouch → tapNote），笔要留给写字。
+    // 放在 noteMode 分支之前——点图钉的语义在哪个模式下都一样，不该被当前工具改写。
+    if (e.pointerType === "mouse" && tapNote(e.clientX, e.clientY, true)) {
+      e.preventDefault(); return;
+    }
     // 文字笔记模式最优先：点空白开新笔记编辑器、点已有标记开编辑/删除。
     // 该分支绝不发 probe/ink/hover（probe 会让 Mac 呼出环形选笔盘），直接 return。
     if (G.noteMode) {
@@ -106,8 +112,10 @@ export function initInput(refs: CaptureRefs): void {
           if (n.page === loc.page && Math.hypot(n.nx - loc.nx, n.ny - loc.ny) < 0.03) { hit = n; break; }
         }
         S.noteEditor = hit
-          ? { id: hit.id, page: hit.page, nx: hit.nx, ny: hit.ny, x: e.clientX, y: e.clientY, text: hit.text, isNew: false }
-          : { id: crypto.randomUUID(), page: loc.page, nx: loc.nx, ny: loc.ny, x: e.clientX, y: e.clientY, text: "", isNew: true };
+          ? { id: hit.id, page: hit.page, nx: hit.nx, ny: hit.ny, x: e.clientX, y: e.clientY,
+              text: hit.text, display: hit.display, isNew: false }
+          : { id: crypto.randomUUID(), page: loc.page, nx: loc.nx, ny: loc.ny, x: e.clientX, y: e.clientY,
+              text: "", display: 0, isNew: true };
       }
       e.preventDefault(); return;
     }
@@ -199,6 +207,9 @@ export function initInput(refs: CaptureRefs): void {
       e.preventDefault(); return;
     }
     // 笔
+    // 笔悬停在笔记标记上 → `hover` 模式的那条笔记展开正文（**只认笔**：手指没有悬停这回事，
+    // 触摸端走点击降级，见 tapNote）。与上报给 Mac 的 hover 光标彼此独立，任何模式下都生效。
+    if (e.buttons === 0) hoverNote(e.clientX, e.clientY);
     if (e.pointerId !== G.activeId) {
       if (e.buttons === 0 && curMode() !== "page" && G.inContent(e.clientX, e.clientY)) {
         const hl = G.locate(e.clientX, e.clientY);   // 纯输入板：不画本地环，只上报位置给 Mac 显示光标
@@ -285,11 +296,13 @@ export function initInput(refs: CaptureRefs): void {
         // pinGhost 不清——留着当乐观预览，等回推在 applyScratchPads 里对齐（同 scratchPaper 惯例）。
         G.send({ type: "scratchMove", index: G.pinGhost.index, nx: G.pinGhost.nx, ny: G.pinGhost.ny });
       } else if (!G.gestureBlocked) {
-        // 单指**单击**（全程没越过死区）：命中草稿纸图钉就打开那张纸。
+        // 单指**单击**（全程没越过死区）：命中草稿纸图钉就打开那张纸；命中笔记标记就展开/收起
+        // 那条笔记的气泡；命中已展开气泡右上角的铅笔就进编辑器。
         // 只认手指、不认笔——平板上笔是用来写字的，让笔点图钉必然会在图钉上落笔时误触发。
         // 双指滚动模式下划过一道再抬手的（gestureBlocked）不算单击，否则误触又从这条路进来了。
         const i = G.padPinHit(G.panDownX, G.panDownY);
         if (i >= 0) G.padOpenIndex(i);
+        else tapNote(G.panDownX, G.panDownY);
       }
       G.pinDragIndex = -1; G.pinDragMoved = false;
       G.panId = null; G.panStarted = false;
@@ -297,6 +310,33 @@ export function initInput(refs: CaptureRefs): void {
       beginPinch();
     }
   }
+  /// 点在笔记上：先看铅笔（进编辑器），再看标记（展开/收起气泡）。返回 true = 这一下被笔记吃掉了。
+  /// 展开状态纯本地、不上行——它是「这台设备此刻看不看得到正文」，不是笔记的属性
+  /// （笔记的属性是 display，改它要走 textNote 上行）。
+  ///
+  /// 入口有两个：平板上是**手指轻点**（endTouch，笔不认——笔是用来写字的，同草稿纸图钉的纪律），
+  /// PC 上是**鼠标按下**（`mouse=true`）。桌面浏览器没有手指，不给鼠标这条路就等于这个功能
+  /// 在 PC 上整个不存在（2026-08-27 用户实测报的就是这个）。
+  function tapNote(x: number, y: number, mouse: boolean = false): boolean {
+    const edit = G.noteEditHit(x, y);
+    if (edit) { openNote(edit, x, y); return true; }
+    const n = G.noteMarkerHit(x, y);
+    if (!n || !n.text) return false;   // 空正文没有可展开的东西（选区注解可能只是个标记）
+    // 鼠标端与 Mac 同款语义：点击模式点标记 = 展开/收起；悬浮/始终模式正文本来就看得见，
+    // 点标记直接进编辑器。触摸端一律 toggle——手指没有悬停，点击是唯一的展开入口。
+    if (mouse && n.display !== 0) { openNote(n, x, y); return true; }
+    const k = G.noteExpanded.indexOf(n.id);
+    if (k >= 0) G.noteExpanded.splice(k, 1); else G.noteExpanded.push(n.id);
+    G.drawNotes();
+    return true;
+  }
+
+  /// 打开笔记编辑器（点铅笔 / 鼠标点悬浮·始终模式的标记）：带上这条笔记的展开方式，别在编辑器里丢掉它。
+  function openNote(n: TextNote, x: number, y: number): void {
+    S.noteEditor = { id: n.id, page: n.page, nx: n.nx, ny: n.ny,
+                     x: x, y: y, text: n.text, display: n.display, isNew: false };
+  }
+
   // ---- 框选（lasso 模式：拖空白=自由框选 / 拖选中高亮框内=移动 / 拖手柄=缩放，起点一次性判定拖动形态）----
 
   /// 对侧手柄（缩放锚点）：角的对角 / 边的对边中点（同 Mac `LassoHandle.opposite`）。
@@ -498,7 +538,16 @@ export function initInput(refs: CaptureRefs): void {
     if (G.hoverPending) return; G.hoverPending = true;
     requestAnimationFrame(function () { G.hoverPending = false; if (G.hoverMsg) { G.send(G.hoverMsg); G.hoverMsg = null; } });
   }
+  /// 笔悬停命中笔记标记 → 记下它（只对 `hover` 模式的笔记生效；变了才重画整层）。
+  function hoverNote(x: number, y: number): void {
+    const n = G.noteMarkerHit(x, y);
+    const id = n && n.text && n.display === 1 ? n.id : null;
+    if (id === G.noteHover) return;
+    G.noteHover = id;
+    G.drawNotes();
+  }
   function endHover(): void {
+    if (G.noteHover) { G.noteHover = null; G.drawNotes(); }   // 笔离开内容区 = 悬浮气泡收起
     if (!G.hoverOn && !G.eraserRingAt) return;
     G.hoverOn = false; G.eraserRingAt = null; G.clearHover(); G.send({ type: "hover", phase: "end" });
   }

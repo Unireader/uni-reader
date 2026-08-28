@@ -310,3 +310,10 @@
 "Open as Separate Window" = "弹出为独立窗口";
 "Open AI Panel" = "打开 AI 面板";
 "Collapse" = "收起";
+
+/* 文字笔记展开方式（每条笔记自己的属性） */
+"Show note" = "展开方式";
+"On tap" = "点击";
+"On hover" = "悬浮";
+"Always" = "始终";
+"Edit note" = "编辑笔记";

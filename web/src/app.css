@@ -121,6 +121,11 @@ canvas { position:fixed; inset:0; }
   border:1px solid #30363d; border-radius:12px; background:rgba(13,17,23,.85); color:#e6edf3;
   font:14px/1.5 -apple-system,"PingFang SC",system-ui,sans-serif;
   -webkit-user-select:text; user-select:text; }   /* 全局 user-select:none，输入框要还回来 */
+/* 展开方式分段（点击/悬浮/始终）：形制同 penPanel 的整笔/局部分段 */
+#noteEditor .seg { display:flex; border:1px solid #30363d; border-radius:10px; overflow:hidden; }
+#noteEditor .seg button { flex:1; padding:6px 0; font-size:13px; border:0; border-radius:0;
+  background:#21262d; color:#e6edf3; }
+#noteEditor .seg button.on { background:#1f6feb; color:#fff; }
 #noteEditor .row { display:flex; gap:8px; justify-content:flex-end; }
 #noteEditor button { padding:7px 14px; font-size:14px; border:1px solid #30363d;
   border-radius:999px; background:#21262d; color:#e6edf3; }
