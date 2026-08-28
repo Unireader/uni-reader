@@ -983,6 +983,16 @@ final class AppModel: ObservableObject {
         broadcastStrokes()
         broadcastNotes()
         broadcastLayers()
+        broadcastCanvas()   // 画板模式逐文档记，换文档必须跟着换（否则平板还按上一本的页边布局画）
+    }
+
+    /// 把画板模式（开关 + 每侧页边宽度）推给平板。**Mac 是唯一真源**（同 radial/pressRing 的惯例）：
+    /// 页边宽度由阅读区按笔迹越界量档位化（`CanvasMargin`），跳档时经 `session.canvasMarginLive` 落到
+    /// 这里再广播。页边笔迹本身仍走既有的 `strokes`/`ink`（只是 x 越出 0…1），故不需要别的协议改动。
+    func broadcastCanvas() {
+        guard server.isRunning, let s = padSession else { return }
+        server.broadcast(["type": "canvas", "on": s.canvasMode,
+                          "margin": s.canvasMode ? s.canvasMarginLive : 0])
     }
 
     // MARK: - 方案 B：布局与视口

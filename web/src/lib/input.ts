@@ -1,6 +1,7 @@
 // 输入模块：笔/手指指针事件（画/擦/平移/双指缩放/防误触）、滚轮平移、松手惯性、
 // 批点 rAF 合批、悬停上报、键盘侧键。逐行移植自原 capture.html IIFE 的对应段落。
-import { G, BAR, GAP, MINZ, MAXZ, PALM, DEAD, clamp, pw, contentLeft, curMode, curPen, rulerSnap } from "./shared.js";
+import { G, BAR, GAP, MINZ, MAXZ, PALM, DEAD, clamp, pw, contentLeft, contentW, cmargin,
+         inkXMin, inkXMax, curMode, curPen, rulerSnap } from "./shared.js";
 import type { CaptureRefs, TextNote } from "./shared.js";
 import { S, updatePageLabel, updateHud } from "./hud.svelte.js";
 
@@ -128,8 +129,10 @@ export function initInput(refs: CaptureRefs): void {
       if (ploc) { G.probing = true; G.probePage = ploc.page; G.send({ type: "probe", phase: "begin", page: ploc.page, pts: [[ploc.nx, ploc.ny]] }); }
       endHover(); e.preventDefault(); return;
     }
-    const loc = G.locate(e.clientX, e.clientY);
+    // 落墨/擦除/框选：x 放宽到页边（画板模式），并按起笔点先把软边界长够（滚到页边深处再下笔的情形）
+    const loc = G.locate(e.clientX, e.clientY, true);
     if (!loc) return;
+    G.growCanvas(loc.nx);
     G.activeId = e.pointerId; G.penMode = m;
     try { ink.setPointerCapture(e.pointerId); } catch (x) {}
     endHover();
@@ -172,7 +175,10 @@ export function initInput(refs: CaptureRefs): void {
         G.recompute();
         // 固定锚点比例始终跟随当前中点 → 缩放与双指整体移动都跟手、不漂移
         G.scrollY = clamp(G.pinch.fy * G.totalH - (my - BAR), 0, G.maxScrollY);
-        G.scrollX = pw() > G.vw ? clamp(G.pinch.fx * pw() - mx, 0, G.maxScrollX) : 0;
+        // scrollX 的基准是**内容**左缘，而 fx 抓的是**页内**比例 → 画板模式下要补上左侧页边那一段
+        // （关着时 cmargin()==0，与画板模式之前同式）。
+        G.scrollX = contentW() > G.vw
+          ? clamp(cmargin() * pw() + G.pinch.fx * pw() - mx, 0, G.maxScrollX) : 0;
         G.ensureImages(); G.drawAll(); updateHud();   // 缩放/双指为本地查看，不上报位置，避免回环
         G.emitGeom();   // 页宽变了要告诉 Mac（选笔盘的像素判定基准），与位置无关、不构成回环
       } else if (e.pointerId === G.panId) {
@@ -241,9 +247,10 @@ export function initInput(refs: CaptureRefs): void {
     if (!evs.length) evs = [e];
     let grew = false, ringUpd = false;
     for (let i = 0; i < evs.length; i++) {
-      const ev = evs[i], loc = G.locate(ev.clientX, ev.clientY);
+      const ev = evs[i], loc = G.locate(ev.clientX, ev.clientY, true);
       if (G.penMode === "note") {
-        const nx = loc ? loc.nx : clamp((ev.clientX - contentLeft()) / pw(), 0, 1);
+        const nx = loc ? loc.nx : clamp((ev.clientX - contentLeft()) / pw(), inkXMin(), inkXMax());
+        G.growCanvas(nx);   // 写到离页边不足 slack 就本地先跳一档（Mac 的权威值随后覆盖）
         const ny = loc && loc.page === G.drawPage ? loc.ny
                : clamp((ev.clientY - BAR + G.scrollY - G.offY[G.drawPage]) / Math.max(1, G.dispH[G.drawPage]), 0, 1);
         if (G.lineStroke && !G.radialActive && G.cur && G.cur.pts.length) {
@@ -375,7 +382,7 @@ export function initInput(refs: CaptureRefs): void {
         const pts = G.lassoHandlePts();
         for (let i = 0; i < pts.length; i++) {
           if (pts[i].h === opp) {
-            const an = G.pageLocClamped(pts[i].x, pts[i].y, sel.page);
+            const an = G.pageLocClamped(pts[i].x, pts[i].y, sel.page, true);
             G.lassoScale = { ax: an.nx, ay: an.ny, sx: 1, sy: 1 };
             break;
           }
@@ -387,10 +394,10 @@ export function initInput(refs: CaptureRefs): void {
       const path = G.lassoPath!;
       const lastV = G.pageToView(a.page, path[path.length - 1].nx, path[path.length - 1].ny);
       if (Math.hypot(e.clientX - lastV.x, e.clientY - lastV.y) >= 3) {
-        path.push(G.pageLocClamped(e.clientX, e.clientY, a.page));
+        path.push(G.pageLocClamped(e.clientX, e.clientY, a.page, true));
       }
     } else if (G.lassoDragMode === "move") {
-      const cur = G.pageLocClamped(e.clientX, e.clientY, a.page);
+      const cur = G.pageLocClamped(e.clientX, e.clientY, a.page, true);
       G.lassoTranslate = { dx: cur.nx - a.nx, dy: cur.ny - a.ny };
     } else if (G.lassoDragMode === "scale") {
       const sel = G.lassoSelection, h = G.lassoHandle;

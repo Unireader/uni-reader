@@ -148,6 +148,10 @@ const canonical = [
   { type: "textNote", id: "n3", op: "upsert", page: 1, nx: 0.25, ny: 0.5, text: "悬浮", display: 1 },
   { type: "notes", list: [{ id: "n1", page: 0, nx: 0.5, ny: 0.5, text: "hello", display: 2 },
                           { id: "n2", page: 3, nx: 0.25, ny: 0.75, text: "笔记", display: 1 }] },
+  // —— 画板模式（2026-08-28）：canvas(0x4B, S→C) = u8 on · f32 margin（每侧页边宽度 ÷ 页宽）——
+  { type: "canvas", on: false, margin: 0 },
+  { type: "canvas", on: true, margin: 0.5 },
+  { type: "canvas", on: true, margin: 2.5 },
 ];
 
 let pass = 0, fail = 0;

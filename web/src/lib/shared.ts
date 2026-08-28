@@ -144,6 +144,9 @@ export interface GState {
   vw: number; availH: number; dispH: number[]; offY: number[]; totalH: number;
   zoom: number; scrollX: number; scrollY: number; maxScrollX: number; maxScrollY: number;
   imgs: Record<number, HTMLImageElement>; vpSeq: number;
+  // 画板模式（Mac 下发的 `canvas`，逐文档）：页面两侧的空白也可书写。
+  // canvasMargin = 每侧页边宽度 ÷ 页宽；落笔中本端可乐观跳档，下一条下发即以 Mac 为准。
+  canvasOn: boolean; canvasMargin: number;
   // 笔迹：strokes = Mac 回传的已成形笔迹（静态层，唯一真源），cur = 正在写的这一笔（活体层）
   strokes: Stroke[]; cur: Stroke | null; radialActive: boolean; drawPage: number;
   // 文字笔记：notes = Mac 下发的全量镜像（本地只乐观更新，回传即整体替换）；noteMode = 文字笔记模式开关
@@ -240,7 +243,11 @@ export interface GState {
   // render.ts
   relayout(): void;
   recompute(): void;
-  locate(x: number, vy: number): PageLoc | null;
+  locate(x: number, vy: number, wide?: boolean): PageLoc | null;
+  /// 画板模式变更（Mac 下发的 `canvas`，或落笔中的本地乐观跳档）：改内容宽 + 重算几何 + 重画。
+  setCanvas(on: boolean, margin: number): void;
+  /// 落笔中的乐观跳档：这一笔写到离页边不足 slack 就本地先把页边放宽一档，别等 Mac 的回程。
+  growCanvas(nx: number): void;
   pageToView(page: number, nx: number, ny: number): { x: number; y: number };
   inContent(x: number, y: number): boolean;
   drawAll(): void;
@@ -256,7 +263,7 @@ export interface GState {
   setRadial(o: WireMsg | null): void;
   setPressRing(o: WireMsg | null): void;
   // 框选（lasso 模式，本地判定，见上 GState 字段注释）
-  pageLocClamped(x: number, y: number, page: number): { nx: number; ny: number };
+  pageLocClamped(x: number, y: number, page: number, wide?: boolean): { nx: number; ny: number };
   lassoHitTest(page: number, poly: number[]): LassoSelection | null;
   /// 当前选中集的屏显框（外扩 6px + 最小 16px，**不含 ghost**）：渲染高亮框/手柄与手柄命中判定共用，
   /// 别各算各的（同 Mac `lassoDisplayBox`）。
@@ -349,8 +356,34 @@ export function curMode(): string { return MODES[G.modeIdx].key; }
 export function curPen(): Pen { return G.PENS[G.penIdx]; }
 export function curLayer(): Layer | undefined { return G.LAYERS[G.layerIdx]; }
 
-export function pw(): number { return G.vw * G.zoom; }                                    // 页(内容)宽
-export function contentLeft(): number { const p = pw(); return p <= G.vw ? (G.vw - p) / 2 : -G.scrollX; }   // 内容左缘视口 x
+export function pw(): number { return G.vw * G.zoom; }                                    // 页宽
+
+// ---- 画板模式（PROTOCOL.md `canvas`）：页面两侧的空白也可书写，内容因此比页面宽 ----
+// 页边笔迹仍是页内笔迹，只是归一化 x 越出 0…1；`margin` 由 Mac 单方面下发（页宽的倍数）。
+// 关着时 cmargin()==0，下面三个函数全部退化成画板模式之前的老式子。
+
+/// 每侧页边宽度（页宽的倍数）。
+export function cmargin(): number { return G.canvasOn ? Math.max(0, G.canvasMargin) : 0; }
+/// 可滚动内容总宽（页 + 两侧页边）。
+export function contentW(): number { return pw() * (1 + 2 * cmargin()); }
+/// 内容左缘视口 x（页边最左，画页边纸用）。窄于视口时整体居中。
+export function canvasLeft(): number { const c = contentW(); return c <= G.vw ? (G.vw - c) / 2 : -G.scrollX; }
+/// **页**左缘视口 x（页内归一化 x=0 处）——所有页内坐标换算都用它。
+export function contentLeft(): number { return canvasLeft() + cmargin() * pw(); }
+/// 页内归一化 x 的合法区间（画板模式放宽到页边），同 Mac `CanvasMargin.xRange`。
+export function inkXMin(): number { return -cmargin(); }
+export function inkXMax(): number { return 1 + cmargin(); }
+
+// 软边界档位（**与 Mac `CanvasMargin` 同一组常数**）：客户端只在落笔中做乐观跳档，
+// 免得写到边缘要等一个 RTT 才有地方下笔；Mac 的下发值一到即以它为准。
+export const CANVAS_STEP = 0.5;
+export const CANVAS_SLACK = 0.35;
+export const CANVAS_LIMIT = 8;
+/// 越界量 → 每侧页边宽度（档位化），同 Mac `CanvasMargin.margin(overflow:)`。
+export function canvasMarginFor(overflow: number): number {
+  const need = Math.max(0, overflow) + CANVAS_SLACK;
+  return Math.min(CANVAS_LIMIT, Math.max(CANVAS_STEP, Math.ceil(need / CANVAS_STEP) * CANVAS_STEP));
+}
 
 // ---- 笔触类型：跟 Mac 端 PenBrushType.strokeWidth/opacityMultiplier 同一套公式 ----
 export function strokeWidthFor(t: string, p: number, w: number): number {

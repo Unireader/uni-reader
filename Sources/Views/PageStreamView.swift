@@ -181,6 +181,8 @@ struct ReaderSurface: View {
             // 用 count 而非整个数组：数组比较是每帧 O(总点数)，而边界只在「有笔画进出」时才可能变；
             // 同一笔被移到页外（count 不变）由 `commitLassoMove`/`commitLassoScale` 显式补一次。
             .onChange(of: session.strokes.count) { _, _ in refreshCanvasMargin() }
+            // 平板正在写的那一笔（本机落墨在手势里已生长）：笔尖越界即跳档，别等抬笔
+            .onChange(of: session.liveStroke?.points.count) { _, _ in growCanvasForLive() }
     }
 
     /// 阅读区主体。**框选截图的手势与覆盖层单独包一层**（`snipRoutes`，见 `ReaderSurface+Snip`）——

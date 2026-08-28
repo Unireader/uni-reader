@@ -29,6 +29,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     vw: 1, availH: 1, dispH: [], offY: [], totalH: 0,
     zoom: 1, scrollX: 0, scrollY: 0, maxScrollX: 0, maxScrollY: 0,
     imgs: {}, vpSeq: 0,
+    canvasOn: false, canvasMargin: 0,   // 画板模式：等 Mac 的 `canvas` 下发
     // 笔迹：strokes = Mac 回传的已成形笔迹（静态层，唯一真源），cur = 正在写的这一笔（活体层）
     strokes: [], cur: null, radialActive: false, drawPage: 0,
     // 文字笔记：Mac 下发全量镜像；noteMode = 文字笔记模式开关

@@ -104,6 +104,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x48` | scratchDelete | C→S | 可靠 |
 | `0x49` | scratchRename | C→S | 可靠 |
 | `0x4A` | lassoScale | C→S | 可靠 |
+| `0x4B` | canvas | S→C | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -241,7 +242,22 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a, u8 pattern, u8 showPage )` |
 | `scratchStrokes` | `u32 ackRel` · `u32 n` · `n ×( pen, u16 m, m × pt3 )` |
 | `noteNew` | `u32 page` · `f32 nx` · `f32 ny` |
+| `canvas` | `u8 on` · `f32 margin` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
+
+`canvas`（画板模式，v12 起）：页面**两侧的空白也是可书写区**，横向按笔迹「软边界」生长。
+`margin` = **每侧**页边宽度，单位是**页宽的倍数**（0.5 = 每侧半个页宽；`on=0` 时编 0）。
+
+> **页边笔迹不是新的东西**：它仍是**页内笔迹**（`strokes`/`ink` 里那一套，归属那一页），
+> 只是页内归一化 `x` 越出 `0…1`（单位还是页宽的倍数，`x=-0.5` = 页左边缘再往左半个页宽；
+> `y` 永远还在 `0…1`，页边只横向延伸）。**故本条之外的线格式一个字节都没变**——
+> 老客户端收到越界的 x 会把笔迹画到页外被裁掉，不崩、不丢数据。
+
+内容宽 = `页宽 × (1 + 2×margin)`，页面居中其中。三端布局必须按同一个 `margin` 算，否则
+「Mac 上写在公式右边、平板上写到了页面里」。**`margin` 由 Mac 单方面决定**（同 `radial`/`pressRing`
+的「Mac 判定、平板照画」惯例）：Mac 按可见图层笔迹的最大横向越界量档位化（每档 0.5 页宽，
+写到离边界不足 0.35 页宽就跳一档，上限 8），变了就重发本条。客户端**落笔中可以本地乐观跳档**
+（同一组档位常数，避免等一个 RTT 才有地方下笔），Mac 的下发值一到即以它为准。
 
 `radial`（环形选笔盘）：长按检测、扇区判定、选中提交**全部在 Mac**，这条只是把盘的状态镜像给平板去画
 （平板不做任何判定）。`open=0` 时 payload 到此为止（收盘）。`highlight` = 当前指向的扇区下标，
@@ -278,6 +294,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   > 就说明所有已发出的 `ink end` 都已进真源，本端的乐观副本可以整批撤掉，不必逐条配对。
 - `radial` → `{type:"radial", open:true, page, cx, cy, highlight, items:[{kind:"pen"|"erase"|"page"|"scratchAdd"|"textNote", color, w, t},…]}`；收盘 → `{type:"radial", open:false}`
 - `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
+- `canvas` → `{type:"canvas", on, margin}`（画板模式；`on` 布尔，`margin` = 每侧页边宽度 ÷ 页宽）
 - `noteNew` → `{type:"noteNew", page, nx, ny}`（Mac 在环形盘提交「新建文字笔记」扇区后下发：
   平板在 `page` 页内 (nx, ny) 处点开文字笔记编辑器；编辑完成走现有 `textNote`(0x24) 上行闭环）
 - `notes` → `{type:"notes", list:[{id, page, nx, ny, text, display},…]}`（文字笔记**全量镜像**，类比 strokes：

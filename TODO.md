@@ -365,7 +365,29 @@
     - `InkEdit.translated/scaled` 加 `xRange` 参数，**默认仍是 `0...1`** → web/安卓那两份实现无需同步。
     - 入口：工具栏（夜间模式左边）+ 菜单「显示 › 画板模式」⌥⌘C。
     - 验证：`canvas-margin-test`(24 新增)／`ink-edit-test`(62)／`store-test`(38)／`ink-store-test`(21)／
-      `xcodebuild` 全绿。**待真机验证**见「接下来」第 10 条。
+      `xcodebuild` 全绿。**待真机验证**见「接下来」第 11 条。
+  - **2026-08-28（同日）：画板模式补齐 web + 安卓两端**（用户「给其他两个端也做一下」）。
+    - **协议只加一条**：`canvas`(0x4B, S→C) = `u8 on · f32 margin`（每侧页边宽度 ÷ 页宽）。
+      页边笔迹本身仍走既有的 `strokes`/`ink`（只是 x 越出 0…1），**除这一条外线格式一个字节没变**
+      ——老客户端收到越界的 x 会把笔迹画到页外被裁掉，不崩、不丢数据。
+    - **页边宽度由 Mac 单方面决定**（同 radial/pressRing 的「Mac 判定、平板照画」）：
+      `ReaderSurface.applyCanvasMargin` → `session.canvasMarginLive` → `AppModel.broadcastCanvas`；
+      切文档（`pushStrokesIfDocChanged`）与跳档时各发一次。客户端**落笔中可乐观跳档**
+      （三端同一组档位常数），下一条下发即以 Mac 为准。
+    - **三端各一处渲染红线**：页外的点**不能靠 clamp 收边**（那会压成页边一条竖线），
+      一律「放宽 clamp + 整层 clip 到内容宽」——Mac 是 `PageCellView.wide` 的双层 frame、
+      web 是 `clipContent`、安卓是 `onDraw` 里那次 `canvas.clipRect`。画板一关，页外笔迹随之看不见
+      （数据还在）。安卓另需 `ink.clearCache()`：几何是按 clamp 后的点建的，页边一变旧几何就是错的。
+    - **两端各修一个同款 bug**：捏合锚点的 `scrollX` 基准是**内容**左缘而 `fx` 抓的是**页内**比例，
+      画板模式下要补上左侧页边那一段（web `input.ts` / 安卓 `pinchMove`），否则一捏合页面就横跳。
+    - **安卓两模式真源不同**：模式2 用 Mac 下发值；模式1（独立版）本机就是真源，
+      从库里的 `canvas_mode` 列 + 笔迹越界量自己算（`shared/CanvasMargin.kt`），开关在顶栏 ⋯ 菜单。
+      **`presetCanvas` 必须赶在首次几何就绪之前调**，否则 `applyHFrac` 用的还是没有页边的内容宽、
+      上次的横向位置会落偏。`updateProgress` 的 hfrac 上限同 Mac 放宽到 20（页边让它可以大于 1）。
+    - 验证：`canvas-margin-test`(24)／`ink-edit-test`(62)／`store-test`(38)／`ink-store-test`(21)／
+      `wire-codec-test`(88)／`wire-cross-test`(166)／安卓 `WireCodecTest`(向量扩到 83 条) +
+      新 `CanvasMarginTest`(4)／`xcodebuild`／`tsc --noEmit`／`vite build`／`assembleDebug` 全绿。
+      **待真机验证**见「接下来」第 11 条 ⑧⑨⑩。
 
 ## 🔧 整体优化路线图（2026-07-25 起，用户需求「整体优化」）
 
@@ -470,8 +492,13 @@
     ⑤ 页边笔迹的擦除、框选（自由路径圈到页外）、移动/缩放手柄、图层显隐是否都正常。
     ⑥ **重开文档**：页边笔迹与横向位置都应在原处；画板开关本身逐文档记（另一本书不受影响）。
     ⑦ 夜间模式下页边纸色应与页面一致（同一张纸的横向延伸，不是灰底）。
-    ⑧ 平板/安卓端此刻**看不到**页边笔迹（会被裁在页宽内，数据不丢）——确认是否可接受、
-       要不要排后续的三端同步。
+    ⑧ **网页采集页**（平板）：Mac 开画板 → 平板应当跟着长出页边并能在上面写；平板写到页边时
+       边界自己往外长（本地乐观跳档，不该等一个 RTT 才有地方下笔）；双指捏合缩放后页面不横跳。
+    ⑨ **安卓两模式**：模式2 同上；模式1（独立版）顶栏 ⋯ →「画板模式」开关逐文档记，
+       **重开这篇文档时横向位置应当还在页边那处**（`presetCanvas` 的时序坑）；
+       两模式下页边笔迹的擦除/框选/图层显隐是否都正常。
+    ⑩ 三端**同一篇文档**互看：同一笔页边笔迹在 Mac/网页/安卓上应当落在同一个位置
+       （页边宽度对不上的表现是「Mac 上写在公式右边、平板上写到了页面里」）。
 
 ## 🐞 已知 Bug（待修）
 

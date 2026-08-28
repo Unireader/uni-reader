@@ -32,6 +32,7 @@ enum WireCodec {
         static let layers: UInt8 = 0x3A, library: UInt8 = 0x3B, toc: UInt8 = 0x3C
         static let scratchPads: UInt8 = 0x3D, scratchStrokes: UInt8 = 0x3E
         static let noteNew: UInt8 = 0x3F
+        static let canvas: UInt8 = 0x4B
         static let scroll: UInt8 = 0x40, hover: UInt8 = 0x41, ink: UInt8 = 0x42, erase: UInt8 = 0x43, probe: UInt8 = 0x44
         static let padGeom: UInt8 = 0x45
         static let eraser: UInt8 = 0x46
@@ -332,6 +333,8 @@ enum WireCodec {
             w.u8(Op.pressRing)
             guard boolOf(o["on"]) else { w.u8(0); break }
             w.u8(1); w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"]))
+        // 画板模式：on + 每侧页边宽度（页宽的倍数）。定长 5 字节，on=0 时 margin 编 0。
+        case "canvas": w.u8(Op.canvas); w.u8(boolOf(o["on"]) ? 1 : 0); w.f32(num(o["margin"]))
         case "padGeom": w.u8(Op.padGeom); w.f32(num(o["pageW"]))
         case "lassoMove":
             w.u8(Op.lassoMove); w.u32(intOf(o["page"]))
@@ -613,6 +616,9 @@ enum WireCodec {
             let page = r.u32(), nx = r.f32(), ny = r.f32()
             out = ["type": "pressRing", "on": true, "page": NSNumber(value: page),
                    "nx": NSNumber(value: nx), "ny": NSNumber(value: ny)]
+        case Op.canvas:
+            let cvOn = r.u8() != 0
+            out = ["type": "canvas", "on": cvOn, "margin": NSNumber(value: r.f32())]
         case Op.padGeom: out = ["type": "padGeom", "pageW": NSNumber(value: r.f32())]
         case Op.lassoMove:
             let lmPage = r.u32()

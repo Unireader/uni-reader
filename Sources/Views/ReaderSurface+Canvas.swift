@@ -30,6 +30,10 @@ extension ReaderSurface {
             scratch.pendingTarget = target
             scratch.pendingTries = 0
         }
+        // 镜像平板：Mac 是页边宽度的唯一真源（PROTOCOL.md `canvas`）。仅当本窗口恰是 padSession
+        // 才广播——同 broadcastStrokes 的门控，否则推的是别的窗口的布局。
+        session.canvasMarginLive = newEffective
+        if session.id == app.padSession?.id { app.broadcastCanvas() }
     }
 
     /// 按当前笔迹重算页边宽度（笔画增删、框选移动/缩放提交、开画板、载入文档后各跑一次）。
@@ -46,6 +50,14 @@ extension ReaderSurface {
         let over = nx < 0 ? -nx : (nx > 1 ? nx - 1 : 0)
         let want = CanvasMargin.margin(overflow: over)
         if want > canvasMarginState { applyCanvasMargin(want) }
+    }
+
+    /// **平板**正在写的那一笔也要能撑开页边（本机落墨在 `localInkDragGesture` 里已经做了）：
+    /// 不然平板往页边写时，Mac 这边要等抬笔（`strokes` 变化）才跳档，中途那段被裁着看不见。
+    /// 只看最后一个点——每帧扫全笔没必要，笔尖越界了就够判。
+    func growCanvasForLive() {
+        guard session.canvasMode, let p = session.liveStroke?.points.last else { return }
+        growCanvasMargin(towardX: p.x)
     }
 
     /// 画板开关切换（`session.canvasMode` 的 onChange）：开 = 按现有笔迹定边界，关 = 收回页宽。

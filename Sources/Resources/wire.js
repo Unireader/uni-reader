@@ -18,7 +18,7 @@
     radial: 0x37, pressRing: 0x38, notes: 0x39, layers: 0x3A, library: 0x3B, toc: 0x3C,
     scratchPads: 0x3D, scratchStrokes: 0x3E, noteNew: 0x3F,
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
-    lassoMove: 0x47, scratchDelete: 0x48, scratchRename: 0x49, lassoScale: 0x4A,
+    lassoMove: 0x47, scratchDelete: 0x48, scratchRename: 0x49, lassoScale: 0x4A, canvas: 0x4B,
     nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
@@ -301,6 +301,8 @@
         w.u8(1); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
         break;
       }
+      // 画板模式：on + 每侧页边宽度（页宽的倍数）。定长 5 字节，on=0 时 margin 编 0。
+      case "canvas": w.u8(OP.canvas); w.u8(o.on ? 1 : 0); w.f32(o.margin || 0); break;
       case "padGeom": w.u8(OP.padGeom); w.f32(o.pageW || 0); break;
       case "lassoMove":
         w.u8(OP.lassoMove); w.u32(o.page || 0);
@@ -487,6 +489,7 @@
         if (r.u8() === 0) return { type: "pressRing", on: false };
         return { type: "pressRing", on: true, page: r.u32(), nx: r.f32(), ny: r.f32() };
       }
+      case OP.canvas: { var cvOn = r.u8() !== 0; return { type: "canvas", on: cvOn, margin: r.f32() }; }
       case OP.padGeom: return { type: "padGeom", pageW: r.f32() };
       case OP.lassoMove: {
         var lmPage = r.u32(), lmX0 = r.f32(), lmY0 = r.f32(), lmX1 = r.f32(), lmY1 = r.f32(), lmDx = r.f32(), lmDy = r.f32();

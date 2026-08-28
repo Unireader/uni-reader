@@ -2,7 +2,8 @@
 // 逐行移植自原 capture.html IIFE 的对应段落（原文件已被本工程取代）。
 // 注意：原版有一个定义了却从未调用的 drawHover()（本地悬停圆环），移植时按死代码丢弃——
 // 悬停光标由 Mac 端画，平板只上报位置（见 input.ts reportHover）。
-import { G, BAR, GAP, RD, PR, BRUSH_LABELS, clamp, pw, contentLeft, curMode, strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
+import { G, BAR, GAP, RD, PR, BRUSH_LABELS, clamp, pw, contentLeft, canvasLeft, contentW, cmargin,
+         inkXMin, inkXMax, canvasMarginFor, curMode, strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
 import type { CaptureRefs, LassoSelection, RadialItem, RadialState, Stroke, TextNote, WireMsg } from "./shared.js";
 import { updateHud } from "./hud.svelte.js";
 
@@ -34,7 +35,7 @@ export function initRender(refs: CaptureRefs): void {
     }
     G.totalH = Math.max(0, y - GAP);
     G.maxScrollY = Math.max(0, G.totalH - G.availH);
-    G.maxScrollX = Math.max(0, p - G.vw);
+    G.maxScrollX = Math.max(0, contentW() - G.vw);   // 画板模式下 fit 也有横向可滚（页两侧的页边）
   }
   function relayout(): void {
     G.DPR = Math.max(1, window.devicePixelRatio || 1);
@@ -70,12 +71,15 @@ export function initRender(refs: CaptureRefs): void {
   }
 
   // ---- 坐标映射（跨页 + 缩放）----
-  function locate(x: number, vy: number): { page: number; nx: number; ny: number } | null {
+  /// `wide` = 画板模式下把 nx 放宽到页边（落墨/擦除/框选走这条）；默认页内，同 Mac
+  /// `containerPointToPageNorm` 的 `xRange`（文字笔记等按页内 clamp 的路径不受影响）。
+  function locate(x: number, vy: number, wide = false): { page: number; nx: number; ny: number } | null {
     const cl = contentLeft(), p = pw();
+    const lo = wide ? inkXMin() : 0, hi = wide ? inkXMax() : 1;
     const docY = vy - BAR + G.scrollY;
     for (let i = 0; i < G.pageCount; i++) {
       if (docY >= G.offY[i] && docY <= G.offY[i] + G.dispH[i]) {
-        return { page: i, nx: clamp((x - cl) / p, 0, 1), ny: clamp((docY - G.offY[i]) / G.dispH[i], 0, 1) };
+        return { page: i, nx: clamp((x - cl) / p, lo, hi), ny: clamp((docY - G.offY[i]) / G.dispH[i], 0, 1) };
       }
     }
     return null;
@@ -90,9 +94,9 @@ export function initRender(refs: CaptureRefs): void {
   /// 框选移动专用：与 `locate` 不同，**不要求**命中某一页——超出锚定页的上/下边缘时 clamp 到
   /// 该页边缘（0/1），横向仍按当前内容宽折算。镜像 Mac 端 `finishLassoSelect` 对拖出页外终点的
   /// 处理（"跨页拖拽的终点 clamp 到该页边缘"），故框选/移动手势允许指针滑出锚定页而不中断。
-  function pageLocClamped(x: number, y: number, page: number): { nx: number; ny: number } {
+  function pageLocClamped(x: number, y: number, page: number, wide = false): { nx: number; ny: number } {
     const cl = contentLeft(), p = pw();
-    const nx = clamp((x - cl) / p, 0, 1);
+    const nx = clamp((x - cl) / p, wide ? inkXMin() : 0, wide ? inkXMax() : 1);
     const docY = y - BAR + G.scrollY;
     const ny = docY < G.offY[page] ? 0
       : docY > G.offY[page] + G.dispH[page] ? 1
@@ -200,10 +204,13 @@ export function initRender(refs: CaptureRefs): void {
   function drawBg(): void {
     bctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     const cl = contentLeft(), p = pw();
+    // 画板模式：白纸连同两侧页边一起铺（同 Mac `PageCellView.wide`——页边是「同一页的横向延伸」，
+    // 不是另一块灰底）。页图仍只占中间那 p 宽。
+    const wl = canvasLeft(), ww = contentW();
     for (let i = 0; i < G.pageCount; i++) {
       const vy = BAR + G.offY[i] - G.scrollY;
       if (vy + G.dispH[i] < BAR || vy > window.innerHeight) continue;
-      bctx.fillStyle = "#fff"; bctx.fillRect(cl, vy, p, G.dispH[i]);
+      bctx.fillStyle = "#fff"; bctx.fillRect(wl, vy, ww, G.dispH[i]);
       if (!G.showPage) continue;   // 手写板模式：仅白底，不取图
       const im = G.imgs[i];
       if (im && im.complete && im.naturalWidth) bctx.drawImage(im, cl, vy, p, G.dispH[i]);
@@ -222,10 +229,45 @@ export function initRender(refs: CaptureRefs): void {
   /// 构建几何（页局部坐标）。**不碰 canvas**，纯算——这样它既能进缓存，也能给活体层每帧现算。
   function buildGeom(s: Stroke): InkGeom {
     const p = pw(), ph = G.dispH[s.page] || 0;
+    // x 放宽到页边（画板模式）：几何仍是页局部坐标，负值/超 1 的点自然落到页外那片空白上。
+    // **不能靠 clamp 收边**——那会把页外的笔迹压成页边一条竖线；画不画得出来由 `clipContent` 裁。
     return buildGeomWith(s,
-      (i) => clamp(s.pts[i][0], 0, 1) * p,
+      (i) => clamp(s.pts[i][0], inkXMin(), inkXMax()) * p,
       (i) => clamp(s.pts[i][1], 0, 1) * ph,
       1, p);
+  }
+
+  /// 画板模式变更。`on` 变了 = Mac 那边切了开关 → **把页面摆回视口正中**（同 Mac `canvasModeChanged`
+  /// 的 recenter）；只有 `margin` 变 = 软边界跳了一档 → **零位移补偿**（内容宽增量的一半，页面在
+  /// 屏幕上纹丝不动，否则写字时页面在笔下平移）。两种口径与 Mac 端一一对应。
+  function setCanvas(on: boolean, margin: number): void {
+    const changedOn = G.canvasOn !== on;
+    const oldW = contentW();
+    G.canvasOn = on;
+    G.canvasMargin = Math.max(0, margin);
+    recompute();
+    G.scrollX = changedOn ? clamp(cmargin() * pw() + (pw() - G.vw) / 2, 0, G.maxScrollX)
+                          : clamp(G.scrollX + (contentW() - oldW) / 2, 0, G.maxScrollX);
+    G.scrollY = clamp(G.scrollY, 0, G.maxScrollY);
+    ensureImages(); drawAll(); updateHud();
+  }
+
+  /// 落笔中的乐观跳档（档位公式与 Mac `CanvasMargin` 同一组常数）：写到离页边不足 slack
+  /// 就本地先放宽一档，不然要等一个 RTT 才有地方下笔。**只增不减**，Mac 的下发值一到即以它为准。
+  function growCanvas(nx: number): void {
+    if (!G.canvasOn) return;
+    const over = nx < 0 ? -nx : (nx > 1 ? nx - 1 : 0);
+    const want = canvasMarginFor(over);
+    if (want > G.canvasMargin) setCanvas(true, want);
+  }
+
+  /// 把一层墨迹裁到「内容宽」（页 + 两侧页边）。画板一关，页外的笔迹就该看不见——数据还在，
+  /// 只是没地方画了（同 Mac：`PageCellView` 的墨迹 Canvas 只有页宽，越界部分被裁）。
+  /// 整层裁一次，不是每笔裁一次。
+  function clipContent(cx: CanvasRenderingContext2D): void {
+    cx.beginPath();
+    cx.rect(canvasLeft(), 0, contentW(), window.innerHeight);
+    cx.clip();
   }
 
   /// 同上，但**坐标映射与线宽倍率由调用方给**。草稿纸走这条：它的点是画布坐标（逻辑 px，可负无界），
@@ -343,6 +385,11 @@ export function initRender(refs: CaptureRefs): void {
   /// strokes 镜像一到（`lassoSyncStrokes`）即改画真源（乐观只作用于还没到的层，两条镜像分开记账）。
   function drawInk(): void {
     ictx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    ictx.save(); clipContent(ictx);
+    drawInkClipped();
+    ictx.restore();
+  }
+  function drawInkClipped(): void {
     const sel = (G.lassoCommitted && !G.lassoSyncStrokes) ? G.lassoSelection : null;
     const xf = sel ? lassoXform(false) : null;
     const wScale = sel && G.lassoScale ? Math.sqrt(G.lassoScale.sx * G.lassoScale.sy) : 1;   // 线宽同步（同 Mac InkEdit.scaled）
@@ -363,7 +410,10 @@ export function initRender(refs: CaptureRefs): void {
   /// 与 Mac 端 `InkLiveLayer` 同构；单独一层，故重画一笔不牵动整页笔迹。
   function drawLive(): void {
     lctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    if (G.cur) drawStrokeLive(lctx, G.cur);
+    if (!G.cur) return;
+    lctx.save(); clipContent(lctx);
+    drawStrokeLive(lctx, G.cur);
+    lctx.restore();
   }
 
   /// 擦除分派（与 Mac 端 `eraseNear` 两模式一一对应，命中判定都在页内归一化坐标做、同页过滤、
@@ -372,7 +422,7 @@ export function initRender(refs: CaptureRefs): void {
   /// - 局部（=== 1）：与 Mac 端 `InkEdit.splitStroke` 是**同一算法两份实现**，改一边必须同步另一边。
   /// 半径 G.eraserSize 是页宽比，x 向折算 = eraserSize × 当前页显示宽 CSS px。
   function eraseHit(x: number, y: number): void {
-    const loc = locate(x, y);
+    const loc = locate(x, y, true);   // 页边的笔迹也要能擦到（画板模式）
     if (!loc) return;
     const r2 = G.eraserSize * G.eraserSize;
     if (G.eraserMode === 0) {   // 整笔
@@ -993,7 +1043,7 @@ export function initRender(refs: CaptureRefs): void {
 
   // 跨模块调用面（input / ws / capture 经 G 调用）
   Object.assign(G, {
-    relayout, recompute, locate, pageToView, inContent,
+    relayout, recompute, locate, pageToView, inContent, setCanvas, growCanvas,
     drawAll, drawBg, drawInk, drawLive, eraseHit, ensureImages, loadPageImage: loadImg,
     clearHover, drawNotes, setRadial, setPressRing,
     pageLocClamped, lassoHitTest, lassoViewBox, lassoHandlePts, clearLasso,

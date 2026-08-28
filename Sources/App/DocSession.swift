@@ -117,6 +117,10 @@ final class DocSession: ObservableObject, Identifiable {
     /// 画板模式（v12，逐文档记）：页面两侧的空白也是可书写区，横向按笔迹软边界生长。
     /// 页边笔迹仍是**页内笔迹**（note kind=2、归属那一页），只是归一化 x 越出 0~1 —— 见 `CanvasMargin`。
     @Published var canvasMode = false
+    /// 当前每侧页边宽度（页宽的倍数）。阅读区（`ReaderSurface.applyCanvasMargin`）是唯一写入方，
+    /// `AppModel.broadcastCanvas` 读它推给平板。**非 @Published**——同 `readHFrac`，避免跳档时
+    /// 把整窗视图树重算一遍（它只是给广播看的一个数，界面自己有 `canvasMarginState`）。
+    var canvasMarginLive: Double = CanvasMargin.step
     /// 已落库的笔画快照（id → 值），用于增量对账（新增/内容变更 upsert、擦除 delete），非 @Published。
     /// 值快照而非纯 id 集合：框选移动后 id 不变、点集变，纯 id 对账会漏写（仿 `persistedTextNotes`）。
     var persistedStrokes: [UUID: InkStroke] = [:]
