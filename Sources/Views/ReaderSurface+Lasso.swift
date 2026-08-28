@@ -124,11 +124,12 @@ extension ReaderSurface {
 
     func finishLassoSelect(path: [CGPoint]) {
         guard path.count >= 3, let first = path.first,
-              let anchorPage = containerPointToPageNorm(first)?.page else { return }
+              let anchorPage = containerPointToPageNorm(first, xRange: inkXRange)?.page else { return }
         // 逐点转页内归一化：横向页与页同 pageX/pageW，nx 通用；纵向跨页点贴 anchor 页边缘（仅页内，不跨页选）
+        // 画板模式下 x 放宽到页边（否则框在页外的路径全被 clamp 成 x=1 的一条竖线，圈不中页边笔迹）
         var poly: [SIMD2<Double>] = []
         for p in path {
-            guard let n = containerPointToPageNorm(p) else { continue }
+            guard let n = containerPointToPageNorm(p, xRange: inkXRange) else { continue }
             let ny = n.page == anchorPage ? n.ny : (n.page > anchorPage ? 1 : 0)
             poly.append(SIMD2(Double(n.nx), Double(ny)))
         }
@@ -156,8 +157,11 @@ extension ReaderSurface {
     }
 
     /// 笔迹点集的页内归一化包围盒。
+    /// 初值取**首个点**而非 (1,1)/(0,0)：画板模式下整条笔画可能全在页外（x 恒 >1 或恒 <0），
+    /// 按页角起算会把包围盒硬撑到页边，选中框和缩放锚点全错位。
     func strokeBounds(_ st: InkStroke) -> CGRect {
-        var lo = SIMD2<Double>(1, 1), hi = SIMD2<Double>(0, 0)
+        guard let f = st.points.first else { return .zero }
+        var lo = SIMD2<Double>(f.x, f.y), hi = SIMD2<Double>(f.x, f.y)
         for p in st.points {
             lo = SIMD2(min(lo.x, p.x), min(lo.y, p.y))
             hi = SIMD2(max(hi.x, p.x), max(hi.y, p.y))
@@ -176,7 +180,7 @@ extension ReaderSurface {
         var changed = false
         for i in session.strokes.indices
         where session.strokes[i].page == sel.page && sel.strokeIDs.contains(session.strokes[i].id) {
-            session.strokes[i] = InkEdit.translated(session.strokes[i], dx: dx, dy: dy)
+            session.strokes[i] = InkEdit.translated(session.strokes[i], dx: dx, dy: dy, xRange: inkXRange)
             changed = true
         }
         for i in session.textNotes.indices
@@ -188,6 +192,7 @@ extension ReaderSurface {
         var s = sel
         s.bounds = InkEdit.translatedRect(sel.bounds, dx: dx, dy: dy)
         lassoSelection = s
+        refreshCanvasMargin()   // 笔迹被挪到页边更远处：笔画数没变，软边界得自己跟上
         // 镜像平板：仅当本窗口恰是 padSession（同 inkEnd 语义；否则 broadcast 的是 padSession 的旧数据）
         if session.id == app.padSession?.id { app.broadcastStrokes(); app.broadcastNotes() }
     }
@@ -209,7 +214,7 @@ extension ReaderSurface {
         var changed = false
         for i in session.strokes.indices
         where session.strokes[i].page == sel.page && sel.strokeIDs.contains(session.strokes[i].id) {
-            session.strokes[i] = InkEdit.scaled(session.strokes[i], anchor: a, sx: sx, sy: sy)
+            session.strokes[i] = InkEdit.scaled(session.strokes[i], anchor: a, sx: sx, sy: sy, xRange: inkXRange)
             changed = true
         }
         for i in session.textNotes.indices
@@ -221,6 +226,7 @@ extension ReaderSurface {
         var s = sel
         s.bounds = InkEdit.scaledRect(sel.bounds, anchor: a, sx: sx, sy: sy)
         lassoSelection = s
+        refreshCanvasMargin()   // 同 commitLassoMove
         // 镜像平板：仅当本窗口恰是 padSession（同 commitLassoMove 语义）
         if session.id == app.padSession?.id { app.broadcastStrokes(); app.broadcastNotes() }
     }

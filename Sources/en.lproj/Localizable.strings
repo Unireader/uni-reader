@@ -315,3 +315,7 @@
 "On hover" = "On hover";
 "Always" = "Always";
 "Edit note" = "Edit note";
+
+/* Canvas mode (v12): the blank space beside the page is writable too */
+"Canvas Mode" = "Canvas Mode";
+"Write in the blank space beside the page" = "Write in the blank space beside the page";

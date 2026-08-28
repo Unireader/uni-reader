@@ -51,10 +51,11 @@ extension ReaderSurface {
             follower.pageCount = layout.pageCount
             follower.apply(a)
         }
-        // 横向恢复（一次性）：缩放态才有横向可滚。定位到上次的页宽比例，跟随器只驱动 y、保持 x。
+        // 横向恢复（一次性）：缩放态**或画板模式**才有横向可滚（后者 fit 下也有页边）。
+        // 定位到上次的页宽比例，跟随器只驱动 y、保持 x。
         if let hf = scratch.pendingHFrac {
             scratch.pendingHFrac = nil
-            if pageW > fitAvail + 0.5 {
+            if contentW > fitAvail + 0.5 {
                 let target = clampOffset(CGPoint(x: hf * pageW, y: n.offsetY), pageWidth: pageW)
                 pos.scrollTo(point: target)
             }

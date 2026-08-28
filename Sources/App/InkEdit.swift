@@ -62,10 +62,14 @@ enum InkEdit {
     }
 
     /// 平移：点集 +(dx, dy)，x/y 各 clamp 到 0...1（压感不动，id 不变）。
-    static func translated(_ s: InkStroke, dx: Double, dy: Double) -> InkStroke {
+    /// `xRange` 默认 `0...1` = 三端同款的「不出本页」；Mac 的画板模式（v12）传放宽后的页边区间
+    /// （`CanvasMargin.xRange`），让页边笔迹能在页外平移。默认值不变 → web/安卓两份实现无需同步。
+    static func translated(_ s: InkStroke, dx: Double, dy: Double,
+                           xRange: ClosedRange<Double> = 0...1) -> InkStroke {
         var t = s
         t.points = s.points.map { p in
-            SIMD3(min(1, max(0, p.x + dx)), min(1, max(0, p.y + dy)), p.z)
+            SIMD3(min(xRange.upperBound, max(xRange.lowerBound, p.x + dx)),
+                  min(1, max(0, p.y + dy)), p.z)
         }
         return t
     }
@@ -94,11 +98,14 @@ enum InkEdit {
     /// 与「显示空间算 sx/sy 再回作用到归一化坐标」严格等价，无需 aspect 折算。
     /// 线宽按几何平均 `√(sx·sy)` 同步缩放（笔迹放大不变细、缩小不变粗），
     /// 宽度结果 clamp 到 0.5...40（防缩没/撑爆；s 本身由调用方 clamp 过）。
-    static func scaled(_ s: InkStroke, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> InkStroke {
+    /// `xRange` 同 `translated`：默认页内，Mac 画板模式传页边区间。
+    static func scaled(_ s: InkStroke, anchor a: SIMD2<Double>, sx: Double, sy: Double,
+                       xRange: ClosedRange<Double> = 0...1) -> InkStroke {
         func cl(_ v: Double) -> Double { min(1, max(0, v)) }
+        func clx(_ v: Double) -> Double { min(xRange.upperBound, max(xRange.lowerBound, v)) }
         var t = s
         t.points = s.points.map { p in
-            SIMD3(cl(a.x + (p.x - a.x) * sx), cl(a.y + (p.y - a.y) * sy), p.z)
+            SIMD3(clx(a.x + (p.x - a.x) * sx), cl(a.y + (p.y - a.y) * sy), p.z)
         }
         t.width = min(40, max(0.5, s.width * (sx * sy).squareRoot()))
         return t

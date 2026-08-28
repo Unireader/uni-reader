@@ -352,10 +352,17 @@ final class WorkspaceManager: ObservableObject {
     func saveProgress(documentId: String, page: Int, frac: Double, zoom: Double, hfrac: Double) {
         try? store?.updateProgress(documentId: documentId, page: page, frac: frac, zoom: zoom, hfrac: hfrac)
     }
-    /// 读取最新进度（直接查库，绕过可能过时的 documents 缓存）。含缩放倍率 + 横向比例。
-    func progress(documentId: String) -> (page: Int, frac: Double, zoom: Double, hfrac: Double) {
-        if let d = try? store?.document(id: documentId) { return (d.readPage, d.readFrac, d.readZoom, d.readHFrac) }
-        return (0, 0, 1, 0)
+    /// 读取最新进度（直接查库，绕过可能过时的 documents 缓存）。含缩放倍率 + 横向比例 + 画板模式。
+    func progress(documentId: String) -> (page: Int, frac: Double, zoom: Double, hfrac: Double, canvas: Bool) {
+        if let d = try? store?.document(id: documentId) {
+            return (d.readPage, d.readFrac, d.readZoom, d.readHFrac, d.canvasMode)
+        }
+        return (0, 0, 1, 0, false)
+    }
+
+    /// 画板模式开关（v12，逐文档）。切换即时落库——它不像滚动位置那样每帧都变，没有节流的必要。
+    func setCanvasMode(documentId: String, on: Bool) {
+        try? store?.setCanvasMode(documentId: documentId, on: on)
     }
 
     // MARK: - 复制进/移出工作区

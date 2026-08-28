@@ -25,10 +25,12 @@ extension ReaderSurface {
     }
 
     /// 目标偏移夹取（用给定显示页宽下的内容尺寸）。
-    func clampOffset(_ o: CGPoint, pageWidth pw: CGFloat) -> CGPoint {
+    /// `margin` 只在画板模式改边界的那一刻显式传（新边界还没落到 `@State` 上），其余一律用当前值。
+    func clampOffset(_ o: CGPoint, pageWidth pw: CGFloat, margin m: Double? = nil) -> CGPoint {
         guard let layout else { return o }
         let g = scratch.geo
-        let cw = max(fitAvail, pw)                      // 与 contentW 同源
+        // 与 contentW 同源（页边宽度是页宽的倍数，故缩放时跟着 pw 一起变）
+        let cw = max(fitAvail, pw * CGFloat(1 + 2 * (m ?? canvasMargin)))
         let ch = layout.totalHeight * pw / PageLayout.refWidth
         // 水平有效视口 = fitAvail（= 未遮宽 − 占位竖滚动条 = 真实 clip 视口；ScrollGeometry 的 insets/containerW 不可用作视口）
         let minX: CGFloat = 0

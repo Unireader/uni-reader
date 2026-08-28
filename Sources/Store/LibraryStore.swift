@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 11
+    static let schemaVersion = 12
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -33,7 +33,7 @@ final class LibraryStore {
           added_at TEXT NOT NULL, last_opened_at TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
           read_page INTEGER NOT NULL DEFAULT 0, read_frac REAL NOT NULL DEFAULT 0,
           read_zoom REAL NOT NULL DEFAULT 1, read_hfrac REAL NOT NULL DEFAULT 0,
-          group_name TEXT NOT NULL DEFAULT ''
+          group_name TEXT NOT NULL DEFAULT '', canvas_mode INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS variant (
           id TEXT PRIMARY KEY,
@@ -111,6 +111,9 @@ final class LibraryStore {
         // v10 → v11：文档一级分组（工作区内再分组，快速筛选用）。空串 = 未分组；不建分组表——
         // 分组没有独立元数据（顺序按名字排），一个字符串列最省，跨端读取也零成本兼容。
         try addColumnIfMissing("document", "group_name", "TEXT NOT NULL DEFAULT ''")
+        // v11 → v12：画板模式（页面两侧空白也能写字）。逐文档记；已有文档补列即 0（关），观感不变。
+        // 页边笔迹仍是页内笔迹（note kind=2），只是归一化 x 越出 0~1，故 note 表不用动。
+        try addColumnIfMissing("document", "canvas_mode", "INTEGER NOT NULL DEFAULT 0")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -173,10 +176,16 @@ final class LibraryStore {
         try db.run("UPDATE document SET last_opened_at=? WHERE id=?", [.text(ISO.string(date)), .text(documentId)])
     }
     /// 记录阅读进度（视口顶部所在页 + 页内比例 + 缩放倍率 + 横向滚动比例）。
+    /// `hfrac` = offsetX / 页宽：画板模式（v12）下页两侧还有页边，它可以大于 1，
+    /// 故上限按 `CanvasMargin.limit` 那一侧的最大可能值放宽（原来硬 clamp 到 1 会把横向位置截断）。
     func updateProgress(documentId: String, page: Int, frac: Double, zoom: Double, hfrac: Double) throws {
         try db.run("UPDATE document SET read_page=?, read_frac=?, read_zoom=?, read_hfrac=? WHERE id=?",
                    [.int(Int64(page)), .double(min(max(0, frac), 1)), .double(zoom),
-                    .double(min(max(0, hfrac), 1)), .text(documentId)])
+                    .double(min(max(0, hfrac), 20)), .text(documentId)])
+    }
+    /// 画板模式开关（v12，逐文档）。
+    func setCanvasMode(documentId: String, on: Bool) throws {
+        try db.run("UPDATE document SET canvas_mode=? WHERE id=?", [.int(on ? 1 : 0), .text(documentId)])
     }
     func rename(documentId: String, title: String) throws {
         try db.run("UPDATE document SET title=? WHERE id=?", [.text(title), .text(documentId)])
@@ -421,7 +430,8 @@ final class LibraryStore {
                     readFrac: r["read_frac"] as? Double ?? 0,
                     readZoom: r["read_zoom"] as? Double ?? 1,
                     readHFrac: r["read_hfrac"] as? Double ?? 0,
-                    group: r["group_name"] as? String ?? "")
+                    group: r["group_name"] as? String ?? "",
+                    canvasMode: (r["canvas_mode"] as? Int64 ?? 0) != 0)
     }
     private static func variant(_ r: [String: Any]) -> LibVariant {
         LibVariant(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String ?? "",

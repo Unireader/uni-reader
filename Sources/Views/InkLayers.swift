@@ -8,12 +8,17 @@ import SwiftUI
 struct InkStaticLayer: View, Equatable {
     let strokes: [InkStroke]
     let inkScale: CGFloat
+    /// 画板模式的每侧页边宽度（像素）。Canvas 自己比页宽 `2×margin`，一条跨页边的笔画因此
+    /// **整条画在同一层**（分成页内/页外两层会让跨界的那一笔被页图切成两段）。
+    var margin: CGFloat = 0
 
-    static func == (l: Self, r: Self) -> Bool { l.strokes == r.strokes && l.inkScale == r.inkScale }
+    static func == (l: Self, r: Self) -> Bool {
+        l.strokes == r.strokes && l.inkScale == r.inkScale && l.margin == r.margin
+    }
 
     var body: some View {
         Canvas { ctx, sz in
-            for st in strokes { inkDrawStroke(st, in: &ctx, size: sz, inkScale: inkScale) }
+            for st in strokes { inkDrawStroke(st, in: &ctx, size: sz, inkScale: inkScale, margin: margin) }
         }
         .allowsHitTesting(false)
     }
@@ -23,10 +28,11 @@ struct InkStaticLayer: View, Equatable {
 struct InkLiveLayer: View, Equatable {
     let live: InkStroke
     let inkScale: CGFloat
+    var margin: CGFloat = 0
 
     var body: some View {
         Canvas { ctx, sz in
-            inkDrawStroke(live, in: &ctx, size: sz, inkScale: inkScale)
+            inkDrawStroke(live, in: &ctx, size: sz, inkScale: inkScale, margin: margin)
         }
         .allowsHitTesting(false)
     }
@@ -34,10 +40,14 @@ struct InkLiveLayer: View, Equatable {
 
 /// 四种笔型差异化渲染（与 capture.html 的 `drawStroke` 同参数/同算法，见 `PenBrushType`/`InkRender`；墨迹不随夜间反色）：
 ///  · ballpoint 干净压感线；· fountain 压感 + 起收锥度；· marker 恒宽·平头·multiply 叠加；· pencil 多道微波动叠加。
-func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize, inkScale: CGFloat) {
+/// `margin` = 画板模式下 Canvas 比页面**每侧**多出的像素：页宽 = `size.width − 2×margin`，
+/// 页的左边缘落在 x = margin，于是归一化 x 越界（页边笔迹）自然画到页外那片空白上。
+func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize, inkScale: CGFloat,
+                   margin: CGFloat = 0) {
     // 页内笔迹：归一化点 × 页显示尺寸。x/y 各乘各的（页内归一化两轴尺度不同）。
+    let pw = size.width - margin * 2
     inkDrawStroke(st, in: &ctx, inkScale: inkScale) {
-        CGPoint(x: $0.x * size.width, y: $0.y * size.height)
+        CGPoint(x: $0.x * pw + margin, y: $0.y * size.height)
     }
 }
 

@@ -77,6 +77,10 @@ struct ReaderSurface: View {
     @State var lastAppliedSeq = 0
     // 非渲染暂存
     @State var scratch = Scratch()
+    /// 画板模式（`session.canvasMode`）下每侧页边的宽度（**页宽的倍数**，见 `CanvasMargin`）。
+    /// 由笔迹越界量档位化而来；写到边缘就跳一档（`growCanvasMargin`），改它必走 `setCanvasMargin`
+    /// ——内容宽一变页面就在内容里平移，须同 runloop 补一次 `scrollTo`，屏幕上才纹丝不动。
+    @State var canvasMarginState: Double = CanvasMargin.step
     // 文字选择（T1）：直接复用 PDFKit 原生选择引擎（`selection(from:at:to:at:)`），拿到与 PDFView 同款
     // 的「视觉阅读顺序」连续选区——不再自研词框排序（旧实现对多栏/思维导图版面会东一块西一块）。
     // 存归一化逐页行框 + 选中串；拖选期间实时重算，随缩放/滚动免重算（归一化随页尺寸自适应）。
@@ -141,9 +145,21 @@ struct ReaderSurface: View {
     /// ③ **SwiftUI ScrollView 会把「窄于容器的内容」在整窗宽里居中，居中内边距=(全窗宽−内容宽)/2 两侧对称、
     ///    会被算进可滚区间**（= 竖滚动条宽 17）→ 常驻横条。故 body 上加 `.defaultScrollAnchor(.topLeading)` 关掉自动居中；
     ///    页面改由 `pageX` 在 contentW 内居中（页面居中在真实视口/整窗，非在自动居中的整窗）。
-    var contentW: CGFloat { max(fitAvail, pageW) }
+    var contentW: CGFloat { contentWidth(margin: canvasMargin) }
     var contentH: CGFloat { (layout?.totalHeight ?? 1) * dispScale }
     var pageX: CGFloat { (contentW - pageW) / 2 }
+
+    /// 画板模式的每侧页边宽度（页宽的倍数）；关着就是 0 = 与画板模式之前逐字节同布局。
+    var canvasMargin: Double { session.canvasMode ? canvasMarginState : 0 }
+    /// 页边宽度的显示像素（每侧）。
+    var marginPx: CGFloat { CGFloat(canvasMargin) * pageW }
+    /// 笔迹落点的合法 x 区间（页内 0...1，画板模式放宽到页边）。
+    var inkXRange: ClosedRange<Double> { CanvasMargin.xRange(margin: canvasMargin) }
+
+    /// 给定页边宽度时的内容宽。`contentW` 与 `clampOffset` 共用一处公式，别再各写一遍。
+    func contentWidth(margin m: Double) -> CGFloat {
+        max(fitAvail, pageW * CGFloat(1 + 2 * m))
+    }
     var paper: Color { nightMode ? Color(white: 0.10) : .white }
     /// 页与页之间/未实化区域的底色（比 paper 略深，同亮色下"纸张浮在浅灰底"的观感）。
     /// 夜间模式下若仍用系统默认底色（不随 nightMode 变——那是系统外观，与阅读区内切换是两回事），
@@ -151,7 +167,20 @@ struct ReaderSurface: View {
     var voidColor: Color { nightMode ? Color(white: 0.06) : Color(nsColor: .windowBackgroundColor) }
 
     var body: some View {
-        snipRoutes(surfaceBody)
+        snipRoutes(canvasRoutes(surfaceBody))
+    }
+
+    /// 画板模式的两条 onChange 单独包一层。**别往 `surfaceBody` 上继续挂**——那条修饰符链早就到顶，
+    /// 再加两个 onChange 就会「the compiler is unable to type-check this expression in reasonable time」
+    /// （同 `snipRoutes` 与 ContentView 的 `mainSplit`/`eventRoutes` 分层，实测踩过）。
+    private func canvasRoutes<V: View>(_ content: V) -> some View {
+        content
+            // 画板开/关：两个方向都走原子补偿（内容宽变、页面在屏幕上不动）
+            .onChange(of: session.canvasMode) { _, on in canvasModeChanged(on) }
+            // 笔画增删（本机落笔收尾、擦除、平板上行、框选提交）→ 重算页边软边界。
+            // 用 count 而非整个数组：数组比较是每帧 O(总点数)，而边界只在「有笔画进出」时才可能变；
+            // 同一笔被移到页外（count 不变）由 `commitLassoMove`/`commitLassoScale` 显式补一次。
+            .onChange(of: session.strokes.count) { _, _ in refreshCanvasMargin() }
     }
 
     /// 阅读区主体。**框选截图的手势与覆盖层单独包一层**（`snipRoutes`，见 `ReaderSurface+Snip`）——
@@ -349,7 +378,8 @@ struct ReaderSurface: View {
                      },
                      noteDrag: notePinDrag,
                      scratchPins: buckets.scratchPins[i] ?? [],
-                     onOpenScratchPad: { session.openPadID = $0 })
+                     onOpenScratchPad: { session.openPadID = $0 },
+                     inkMargin: marginPx)
             .offset(x: pageX, y: layout.offsets[i] * dispScale)
     }
 
@@ -410,6 +440,8 @@ struct ReaderSurface: View {
         scratch.appearAt = CACurrentMediaTime()
         scratch.pendingZoom = session.restoreZoom   // 上次缩放：首帧定 fitBasis 后套用（见 geometryChanged）
         scratch.pendingHFrac = session.restoreHFrac > 0.0001 ? session.restoreHFrac : nil   // 横向恢复
+        // 页边软边界的首值（首帧没有几何可补偿，直接置；笔迹后到由 strokes.count 的 onChange 兜底）
+        canvasMarginState = CanvasMargin.margin(overflow: CanvasMargin.overflow(session.strokes))
         // fitBasis 由首帧 geometryChanged 设定（此处不预设，避免与真实值有偏差）
         // 视图创建前就已发出的 restore/toc 锚点（loadSelected 先 emit 后建视图）
         if let a = session.scrollAnchor, a.origin != "mac" {

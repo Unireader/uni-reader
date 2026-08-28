@@ -31,10 +31,15 @@ struct PageCellView: View {
     var noteDrag: (id: UUID, off: CGSize)? = nil   // 点注解拖拽 ghost（非空且 id 匹配时该图钉按 off 挪显示位）
     var scratchPins: [(id: UUID, nx: Double, ny: Double, name: String)] = []   // 本页的草稿纸图钉（点开那张纸）
     var onOpenScratchPad: (UUID) -> Void = { _ in }
+    /// 画板模式（v12）的每侧页边宽度（像素，0 = 关）。纸面与墨迹层按它向两侧铺开，
+    /// 其余各层（页图/高亮/选择/图钉/光标）一律还是页内坐标——页边只是「同一页的横向延伸」。
+    var inkMargin: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            paper                                        // 纪律 1：未出图 = 一张白纸，永不闪灰/黑
+            // 纪律 1：未出图 = 一张白纸，永不闪灰/黑。画板模式下这张纸连同页边一起铺
+            //（内层 frame 比页宽 2×margin，外层 frame 钳回页尺寸 → 居中溢出，不撑大 ZStack）。
+            wide { paper }
             if let image {
                 Image(decorative: image, scale: 1)
                     .resizable()
@@ -106,10 +111,10 @@ struct PageCellView: View {
                 .allowsHitTesting(false)
             }
             if !strokes.isEmpty {
-                InkStaticLayer(strokes: strokes, inkScale: inkScale)
+                wide { InkStaticLayer(strokes: strokes, inkScale: inkScale, margin: inkMargin) }
             }
             if let live {
-                InkLiveLayer(live: live, inkScale: inkScale)
+                wide { InkLiveLayer(live: live, inkScale: inkScale, margin: inkMargin) }
             }
             // 批注图钉（可点）：`tap` 模式点开/收起页面上的气泡，`hover`/`always` 模式点开编辑器
             // （那两种模式正文已经看得见，图钉的点击留给「改」）。空正文的选区注解没有可展开的东西，
@@ -192,6 +197,17 @@ struct PageCellView: View {
             }
         }
         .frame(width: size.width, height: size.height)
+    }
+
+    /// 画板模式下「铺到页边」的那两层（纸面、墨迹）：内层 frame 比页宽 `2×inkMargin`，
+    /// 外层再把**布局尺寸**钳回页尺寸——SwiftUI 的 frame 只定布局不裁剪，内层于是居中溢出、
+    /// 左右各露出 `inkMargin`，同时 ZStack 的尺寸半点不变（其余各层的页内坐标一律不受影响）。
+    /// `inkMargin == 0` 时两层 frame 同尺寸 = 与画板模式之前逐像素同渲染。
+    @ViewBuilder
+    private func wide<V: View>(@ViewBuilder _ content: () -> V) -> some View {
+        content()
+            .frame(width: size.width + inkMargin * 2, height: size.height)
+            .frame(width: size.width, height: size.height)
     }
 
     private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)

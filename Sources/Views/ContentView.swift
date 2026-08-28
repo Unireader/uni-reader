@@ -269,6 +269,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleNightMode)) { _ in
             if isKeyWindow { nightMode.toggle() }   // ⌥⌘N：与工具栏月亮按钮同一 @AppStorage 状态
         }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleCanvasMode)) { _ in
+            if isKeyWindow { toggleCanvasMode() }   // ⌥⌘C：与工具栏画板按钮同一路径（逐文档落库）
+        }
         .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
             if isKeyWindow {                    // ⌘B：侧栏 ⇄ 仅阅读区
                 columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
@@ -374,6 +377,15 @@ struct ContentView: View {
                 .popover(isPresented: $showOCR, arrowEdge: .bottom) { ocrPopover }
             }
 
+            Button {
+                toggleCanvasMode()
+            } label: {
+                Label(L("Canvas Mode"),
+                      systemImage: session.canvasMode ? "arrow.left.and.right.square.fill"
+                                                      : "arrow.left.and.right.square")
+            }
+            .disabled(session.pdf == nil)
+            .help(L("Write in the blank space beside the page"))
             Button {
                 nightMode.toggle()
             } label: {
@@ -685,6 +697,7 @@ struct ContentView: View {
         session.store = workspace.store   // OCR 缓存读写用（仅主线程）
         session.restoreZoom = 1; session.readZoom = 1   // 默认 fit-width；成功路径按库覆盖
         session.restoreHFrac = 0; session.readHFrac = 0
+        session.canvasMode = false                      // 画板模式逐文档记，同上按库覆盖
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; session.toc = []; session.title = ""
             clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); clearScratch()
@@ -723,8 +736,9 @@ struct ContentView: View {
         let p = workspace.progress(documentId: id)
         session.restoreZoom = CGFloat(p.zoom)      // 首帧定基准后由 PageStreamView 套用
         session.readZoom = CGFloat(p.zoom)
-        session.restoreHFrac = CGFloat(p.hfrac)    // 横向滚动比例（缩放态才非 0）
+        session.restoreHFrac = CGFloat(p.hfrac)    // 横向滚动比例（缩放态/画板模式才非 0）
         session.readHFrac = p.hfrac
+        session.canvasMode = p.canvas              // 画板模式（v12）
         let page = min(max(0, p.page), max(0, pdf.pageCount - 1))
         session.currentPageIndex = page
         lastProgressSave = .now                    // 避免恢复动作立刻又写一遍
@@ -776,6 +790,16 @@ struct ContentView: View {
     private func hashAlertMessage(_ m: HashMismatch) -> Text {
         Text(String(format: L("The file “%@” was replaced on disk and no longer matches the version in your library. Link it as a new version of this document? (Notes are kept either way.)"),
                     (m.path as NSString).lastPathComponent))
+    }
+
+    // MARK: - 画板模式（v12）
+
+    /// 切画板模式：改 session（阅读区 onChange 里做布局补偿）+ 立即落库（逐文档记，
+    /// 不走阅读进度那套节流——它不像滚动位置那样每帧都变）。没开文档时空转。
+    private func toggleCanvasMode() {
+        guard session.pdf != nil, let id = selectedDocID else { return }
+        session.canvasMode.toggle()
+        workspace.setCanvasMode(documentId: id, on: session.canvasMode)
     }
 
     // MARK: - 阅读进度

@@ -8,16 +8,22 @@ extension ReaderSurface {
 
     /// 容器/视口坐标 P（与 pinch/hover 同 `.local` 空间）→ (页, 页内归一化坐标 0~1 左上原点)。
     /// 越界按页边缘 clamp（拖到页外 = 选到页边）。原生选择再由 `pageSpacePoint` 转 PDF 页空间点，OCR 选择直接用归一化点命中行框。
-    func containerPointToPageNorm(_ P: CGPoint) -> (page: Int, nx: CGFloat, ny: CGFloat)? {
+    /// `xRange` 是 x 的合法区间：默认 `0...1`（页内，文字选择/图钉拖拽等一律走这条），
+    /// 落墨/擦除/框选在画板模式下传 `inkXRange` 把它放宽到页边（y 永远还是 0...1——页边只横向延伸）。
+    func containerPointToPageNorm(_ P: CGPoint,
+                                  xRange: ClosedRange<Double> = 0...1) -> (page: Int, nx: CGFloat, ny: CGFloat)? {
         guard let layout else { return nil }
-        let g = scratch.geo
         let ds = max(0.0001, dispScale)
-        let cx = g.offsetX + P.x, cy = g.offsetY + P.y            // 内容坐标
+        // ⚠️ 用 `anchorOffset`（刚提交但尚未汇报的 scrollTo 目标优先）而非 `scratch.geo`：
+        // 画板模式下落笔中跳一档边界 = 布局与偏移同帧改，`onScrollGeometryChange` 慢半拍，
+        // 这中间读旧 offset 配新 `pageX`，笔尖会整整偏出半个页宽（缩放路径同款坑，见 anchorOffset）。
+        let o = anchorOffset
+        let cx = o.x + P.x, cy = o.y + P.y                        // 内容坐标
         let page = layout.locate(docY: cy / ds).page
         let pageTopDisp = layout.offsets[page] * ds
         let pageHDisp = layout.heights[page] * ds
         guard pageW > 0, pageHDisp > 0 else { return nil }
-        let nx = min(max((cx - pageX) / pageW, 0), 1)
+        let nx = min(max((cx - pageX) / pageW, CGFloat(xRange.lowerBound)), CGFloat(xRange.upperBound))
         let ny = min(max((cy - pageTopDisp) / pageHDisp, 0), 1)
         return (page, nx, ny)
     }
@@ -443,7 +449,8 @@ extension ReaderSurface {
                 let isErase = app.padMode == "erase"
                 // 起笔（本手势首个回调）：定锚 + inkBegin / 首点擦除
                 if scratch.localInkStart == nil {
-                    guard let n0 = containerPointToPageNorm(v.startLocation) else { return }
+                    guard let n0 = containerPointToPageNorm(v.startLocation, xRange: inkXRange) else { return }
+                    growCanvasMargin(towardX: Double(n0.nx))   // 起笔就在页边深处（滚过去写）也要先长够
                     let p0 = SIMD3(Double(n0.nx), Double(n0.ny), 0.5)
                     if isErase {
                         app.inkErase([p0], page: n0.page, in: session)
@@ -457,7 +464,9 @@ extension ReaderSurface {
                     return
                 }
                 guard let start = scratch.localInkStart,
-                      let n = containerPointToPageNorm(v.location) else { return }
+                      let n = containerPointToPageNorm(v.location, xRange: inkXRange) else { return }
+                // 写到离页边不足 slack 就把边界往外跳一档（同 runloop 补偿横向偏移，页面在笔下不动）
+                if !isErase { growCanvasMargin(towardX: Double(n.nx)) }
                 let pt = SIMD3(Double(n.nx), Double(n.ny), 0.5)
                 if isErase {
                     app.inkErase([pt], page: n.page, in: session)   // 擦除可跨页（按点所在页逐批）

@@ -317,3 +317,7 @@
 "On hover" = "悬浮";
 "Always" = "始终";
 "Edit note" = "编辑笔记";
+
+/* 画板模式（v12）：页面旁边的空白也能写 */
+"Canvas Mode" = "画板模式";
+"Write in the blank space beside the page" = "在页面两侧的空白处书写";

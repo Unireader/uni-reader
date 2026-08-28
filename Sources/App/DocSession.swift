@@ -114,6 +114,9 @@ final class DocSession: ObservableObject, Identifiable {
     var readHFrac: Double = 0
     /// 待恢复的横向滚动比例（loadSelected 读入，PageStreamView 首帧定位后一次性套用）。
     var restoreHFrac: CGFloat = 0
+    /// 画板模式（v12，逐文档记）：页面两侧的空白也是可书写区，横向按笔迹软边界生长。
+    /// 页边笔迹仍是**页内笔迹**（note kind=2、归属那一页），只是归一化 x 越出 0~1 —— 见 `CanvasMargin`。
+    @Published var canvasMode = false
     /// 已落库的笔画快照（id → 值），用于增量对账（新增/内容变更 upsert、擦除 delete），非 @Published。
     /// 值快照而非纯 id 集合：框选移动后 id 不变、点集变，纯 id 对账会漏写（仿 `persistedTextNotes`）。
     var persistedStrokes: [UUID: InkStroke] = [:]

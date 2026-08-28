@@ -380,6 +380,10 @@ struct UniReaderApp: App {
                     NotificationCenter.default.post(name: .toggleNightMode, object: nil)
                 }
                 .keyboardShortcut("n", modifiers: [.command, .option])
+                Button(L("Canvas Mode")) {
+                    NotificationCenter.default.post(name: .toggleCanvasMode, object: nil)
+                }
+                .keyboardShortcut("c", modifiers: [.command, .option])
             }
             // AI 菜单。⌥S 与阅读区的单键工具约定（e/1~9/n/b/v/l）同一族，只是菜单项要带修饰键。
             CommandMenu(L("AI")) {
@@ -401,6 +405,7 @@ extension Notification.Name {
     static let newWindowRequested = Notification.Name("com.xvan.UniReader.newWindowRequested")
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
+    static let toggleCanvasMode = Notification.Name("com.xvan.UniReader.toggleCanvasMode")
     static let toggleSidebar = Notification.Name("com.xvan.UniReader.toggleSidebar")
     static let toggleInspector = Notification.Name("com.xvan.UniReader.toggleInspector")
     static let toggleSnipTool = Notification.Name("com.xvan.UniReader.toggleSnipTool")
