@@ -334,11 +334,22 @@ final class LANServer: ObservableObject {
     private func startUDP() throws {
         let udp = UDPTransport(queue: queue)
         // 已排序就绪的 UDP 帧本体：WireCodec.decode 后走与 WS 完全相同的路由（handleInk/onScroll 零改动）。
-        udp.onFrame = { [weak self] session, body in
-            guard let self, let conn = self.connBySession[session],
-                  let obj = WireCodec.decode(body) else { return }
-            let text = "[udp] " + (obj["type"] as? String ?? "?")
-            _ = self.handle(obj, text: text, conn: conn, authed: true)
+        udp.onFrame = { [weak self] session, relSeq, body in
+            guard let self else { return }
+            guard let conn = self.connBySession[session], let obj = WireCodec.decode(body) else {
+                // 连接没了 / 帧解不出来：这一帧不会有任何效果，但 ackRel **必须照样推进**——
+                // 卡住的话客户端会永远等一个不会到来的序号（乐观笔迹撤不掉、擦除后的快照全被丢弃）。
+                if relSeq > 0 { DispatchQueue.main.async { self.noteApplied(session: session, seq: relSeq) } }
+                return
+            }
+            let type = obj["type"] as? String ?? ""
+            let text = "[udp] " + type
+            _ = self.handle(obj, text: text, conn: conn, authed: true, relSeq: relSeq, session: session)
+            // REL 流按契约只跑 ink/erase/probe（`PROTOCOL.md §3`），它们必定走到 handle 末尾那个
+            // 主线程块、在那里记账。万一将来别的类型走了 REL 且被 handle 提前 return，这里补一次。
+            if relSeq > 0, type != "ink", type != "erase", type != "probe" {
+                DispatchQueue.main.async { self.noteApplied(session: session, seq: relSeq) }
+            }
         }
         // REL 缺口：汇总进 pendingNacks，由 maintenanceTimer 节流后经 WS 发 nack（NACK 绝不能丢，不走 UDP）。
         udp.onGap = { [weak self] session, seqs in
@@ -392,7 +403,13 @@ final class LANServer: ObservableObject {
     }
 
     /// 在 queue 上调用。
-    private func handle(_ obj: [String: Any], text: String, conn: NWConnection, authed: Bool) -> Bool {
+    ///
+    /// `relSeq`/`session`：这一帧若来自 UDP 可靠流，就是它自己的 REL 序号 —— 末尾那个主线程块会在
+    /// **应用它之前**把 `appliedRel` 推到这个数（见 [noteApplied]）。0 = WS 或 UNREL，不记账。
+    private func handle(
+        _ obj: [String: Any], text: String, conn: NWConnection, authed: Bool,
+        relSeq: UInt32 = 0, session: UInt32 = 0,
+    ) -> Bool {
         let type = obj["type"] as? String ?? ""
         if !authed {
             if type == "auth", (obj["token"] as? String) == authToken {
@@ -459,28 +476,65 @@ final class LANServer: ObservableObject {
 
         DispatchQueue.main.async {
             self.lastInbound = String(text.prefix(200))
+            // 顺序要紧：先推 appliedRel 再应用。两句之间主线程不会跑别的，而 onMessage 里同步触发的
+            // `broadcastStrokes` 读到的就是「含这一帧」的值——正是这份快照的真实内容。
+            if relSeq > 0 { self.noteApplied(session: session, seq: relSeq) }
             self.onMessage?(obj)
         }
         return true
     }
 
+    // MARK: - ackRel 记账（`PROTOCOL.md §4.2`）
+
+    /// session → **已在主线程上应用到**的最大 REL 序号。`strokes`/`scratchStrokes` 广播带的
+    /// `ackRel` 就是它，且必须在**建快照的那一刻**（主线程）取值：
+    ///
+    /// 输入帧的接收在 `queue` 上、应用在主线程上，两者之间隔着一次 `DispatchQueue.main.async`；
+    /// 广播的发送又是 `queue.async` 出去的。若像旧版那样在 `rawSend` 里现取
+    /// `UDPTransport.ackRel`（接收进度），拿到的是「收到了多少」而不是「这份快照含了多少」——
+    /// 回推越大、发送队列越堵，两者差得越多。客户端据此把还没回来的乐观笔迹当成「真源已有」撤掉，
+    /// 屏幕上刚写完的字就闪一下（2026-08-28 用户报「上一个字的笔画依次闪烁」）。
+    private var appliedRel: [UInt32: UInt32] = [:]
+    private let ackLock = NSLock()
+
+    /// 主线程上调用：把该 session 的已应用序号推到 seq（只增不减）。
+    private func noteApplied(session: UInt32, seq: UInt32) {
+        ackLock.lock(); defer { ackLock.unlock() }
+        if seq > (appliedRel[session] ?? 0) { appliedRel[session] = seq }
+    }
+
+    private func appliedRelSnapshot() -> [UInt32: UInt32] {
+        ackLock.lock(); defer { ackLock.unlock() }
+        return appliedRel
+    }
+
+    private func forgetApplied(session: UInt32) {
+        ackLock.lock(); defer { ackLock.unlock() }
+        appliedRel[session] = nil
+    }
+
     // MARK: - 发送
 
     func broadcast(_ dict: [String: Any]) {
-        queue.async { for c in self.clients { self.rawSend(dict, to: c) } }
+        // ackRel 必须**在这里**（调用方线程 = 主线程，快照刚刚建好）取，不能等 queue.async 之后：
+        // 那时又收进来的输入会被算进 ackRel，可这份快照里并没有它们。详见 [appliedRel]。
+        let acks = appliedRelSnapshot()
+        queue.async { for c in self.clients { self.rawSend(dict, to: c, acks: acks) } }
     }
 
     private func send(_ dict: [String: Any], to conn: NWConnection) {
         rawSend(dict, to: conn)
     }
 
-    private func rawSend(_ dict: [String: Any], to conn: NWConnection) {
+    private func rawSend(_ dict: [String: Any], to conn: NWConnection, acks: [UInt32: UInt32] = [:]) {
         var dict = dict
         // `strokes` 的 ackRel 要按**收件人**填：每个客户端的 REL 流进度各不相同，所以只能在这里补，
         // 不能由 AppModel 在 broadcastStrokes 里填一个值发给所有人（见 PROTOCOL.md §4.2）。
+        // 值本身来自 broadcast 在建快照那一刻取的 [appliedRel] 快照；直发（非广播）没有这个快照，
+        // 填 0 = 「不适用」，客户端照单全收——新接入时它本来也没有待认领的乐观笔迹。
         if dict["type"] as? String == "strokes" || dict["type"] as? String == "scratchStrokes" {
             let s = sessionByConn[ObjectIdentifier(conn)]
-            dict["ackRel"] = NSNumber(value: s.flatMap { udp?.ackRel(session: $0) } ?? 0)
+            dict["ackRel"] = NSNumber(value: s.flatMap { acks[$0] } ?? 0)
         }
         guard let data = WireCodec.encode(dict) else { return }
         let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
@@ -507,6 +561,7 @@ final class LANServer: ObservableObject {
             sessionByConn[ObjectIdentifier(conn)] = nil
             connBySession[session] = nil
             pendingNacks[session] = nil
+            forgetApplied(session: session)   // 重连会分到新 session，旧记账留着只是泄漏
             udp?.removeSession(session)
         }
         conn.cancel()

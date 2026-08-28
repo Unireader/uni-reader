@@ -3,6 +3,34 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 已修（2026-08-28，模式2「上一个字的笔画依次闪烁」——ackRel 的两处误用）
+
+用户报：安卓模式2 连续写字时上一个字的笔画会依次闪一下，同时顶栏 e2e 读数很高且一路增长。
+根因**两条独立的**、都出在「回推快照与本端输入的对账」（`PROTOCOL.md §4.2` 的 `ackRel`）：
+
+- **客户端把「落墨」和「擦除」用同一条判据管**（`PageCanvasView.setStrokes` / `PadScratch.applyStrokes`）：
+  原判据是「`sentRel > ackRel` 就整份丢弃」，而 `sentRel` 是**全部** REL 帧的最新序号 —— 连续写字时
+  ink move 每 8ms 就涨一个，回推路上必然又涨了好几个 → **快照一份都进不来**，乐观笔迹只能等 3s
+  兜底超时被撤掉（`乐观笔迹 opt:N 等真源超时，撤掉`），到下一次快照才恢复 = 逐笔闪烁。
+  改法：整份丢弃只看**最后一帧擦除**的序号（`lastEraseRel`，只有擦除会被旧快照实质破坏）；落墨改
+  **逐条认领**——每条乐观笔记下自己 `ink end` 帧的 REL 序号，`ackRel` 追上才销账，没追上的原样叠在
+  快照之上继续画。兜底超时也从「等够 3s 就撤」改成「**3s 内一份回推都没收到**才撤」（真源哑了才算掉线）。
+  配套：`UdpSender.sendRel` 改**同步定序**并返回本帧序号（原先 seq 是在 io 线程上加的，
+  `onInkEnd()` 之后读回来的是上一帧的号）。
+
+- **Mac 填的 `ackRel` 与快照内容对不上**（`LANServer`）：原先在 `rawSend` 里现取 `UDPTransport.ackRel`
+  ＝ 网络队列上的**接收**进度，而帧的效果是 `DispatchQueue.main.async` 到主线程才应用、快照也在主线程建。
+  于是「快照里还没有那一笔、`ackRel` 却已经盖过它」，客户端据此撤掉尚未回来的乐观笔迹 = 同样是闪一下；
+  **回推越大、发送队列越堵，窗口越宽**，正好解释了「e2e 越高闪得越凶」。改法：`UDPTransport.onFrame`
+  多带一个本帧 REL 序号，LANServer 在**主线程上、应用该帧之前**把 `appliedRel` 推到它；`broadcast()` 在
+  **建快照的那一刻**（主线程）取 `appliedRel` 快照随消息带到发送队列，`rawSend` 只按收件人取值。
+  解不出/连接已断的帧照样推进记账，否则 `ackRel` 会永久卡住。`PROTOCOL.md §4.2` 的 `ackRel` 定义
+  已同步改写为「**已应用到**」并记了这两个反面教材。
+
+验证：`xcodebuild` / 安卓 `assembleDebug` + `test` / `udp-reorder-test`(26) 全绿。**真机待验**（见 TODO 接下来）。
+顺带加了一条 1s 节流的诊断打点（`回推 strokes N条/M点 ≈XKB ackRel=… e2e=…`），用来定 e2e 爬升是不是
+被全量镜像体积拖的 —— 该问题本身**未修**，见 TODO「已知 Bug」。
+
 ## 完成（2026-08-21，工作区内文档一级分组 + Keychain 密钥 + 两个 UI 小需求 + 页码恢复 bug）
 
 - **工作区内一级分组（schema v11）**：`document.group_name TEXT NOT NULL DEFAULT ''`（空串=未分组）。

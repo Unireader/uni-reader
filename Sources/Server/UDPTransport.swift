@@ -15,8 +15,12 @@ final class UDPTransport {
         case dataUnrel = 1, dataRel = 2, hello = 3, bye = 4
     }
 
-    /// 就绪帧回调：(session, 帧本体)。乱序重排后按序交付 / UNREL 最新胜放行。在 queue 上调用。
-    var onFrame: ((UInt32, Data) -> Void)?
+    /// 就绪帧回调：(session, REL seq, 帧本体)。乱序重排后按序交付 / UNREL 最新胜放行。在 queue 上调用。
+    ///
+    /// `seq` 是这一帧**自己**的 REL 序号（UNREL 帧恒 0）。LANServer 拿它在主线程上记
+    /// 「已应用到哪个序号」，`strokes` 广播的 `ackRel` 就是那个数——**不能**用本类的接收进度
+    /// 代替，见 [ackRel] 的废弃说明。
+    var onFrame: ((UInt32, UInt32, Data) -> Void)?
     /// REL 缺口回调：(session, 缺失 seq 列表)——LANServer 节流后经 WS 发 nack。在 queue 上调用。
     var onGap: ((UInt32, [UInt32]) -> Void)?
 
@@ -56,11 +60,13 @@ final class UDPTransport {
         sessions[session] = nil
     }
 
-    /// 该 session 的 REL 流**已连续处理到**的最大 seq（`relExpected - 1`）；未登记/一包没收过则 0。
+    /// 该 session 的 REL 流**已收到并交付**的最大 seq（`relExpected - 1`）；未登记/一包没收过则 0。
     ///
-    /// 随 `strokes` 广播回给客户端（`PROTOCOL.md §4.2` 的 `ackRel`），让它分得清收到的全量快照
-    /// 含不含自己刚发出去的输入——擦除途中 Mac 每收一批点就广播一次，那一串中途快照都比客户端
-    /// 本地的乐观状态旧，照单全收会把已擦掉的笔迹一份份恢复出来。
+    /// ⚠️ **这不是 `strokes` 广播该带的 `ackRel`**（2026-08-28 修）。「已交付」发生在本队列上，
+    /// 而帧的**效果**（落墨/擦除）是 `DispatchQueue.main.async` 到主线程上才应用的，快照也在主线程上建。
+    /// 拿本值当 ackRel，就会出现「快照里还没有那一笔、ackRel 却已经盖过它」——客户端据此撤掉
+    /// 自己的乐观笔迹，屏幕上刚写完的字就闪掉一下（回推越大、队列越堵，窗口越宽）。
+    /// 真正的 ackRel 由 `LANServer.appliedRel` 在主线程上记账，见那里。本函数只留作诊断。
     func ackRel(session: UInt32) -> UInt32 {
         guard let r = sessions[session] else { return 0 }
         return r.relExpected > 1 ? r.relExpected - 1 : 0
@@ -74,7 +80,10 @@ final class UDPTransport {
             sessions[session] = r
             if !out.isEmpty {
                 NSLog("UDP session %u: flushStale 跳过缺口，补交 %u 帧", session, out.count)
-                for body in out { onFrame?(session, body) }
+                // 补交的这批是从跳到的 minSeq 起**连续**的（见 UDPReorder.flushStale），
+                // 故末尾即 relExpected-1，倒推出每一帧自己的 seq
+                var s = r.relExpected - UInt32(out.count)
+                for body in out { onFrame?(session, s, body); s += 1 }
             }
         }
     }
@@ -124,16 +133,19 @@ final class UDPTransport {
             let seq = Self.seq(b)
             if let body = reorder.unreliable(seq, data.subdata(in: 10..<b.count)) {
                 sessions[session] = reorder
-                onFrame?(session, body)
+                onFrame?(session, 0, body)   // UNREL 不参与 ackRel 记账
             } else {
                 sessions[session] = reorder
             }
         case .dataRel:
             guard b.count >= 10 else { return }
             let seq = Self.seq(b)
+            // 交付批是从**调用前**的 relExpected 起连续的（见 UDPReorder.reliable），据此还原每帧的 seq
+            let first = reorder.relExpected
             let result = reorder.reliable(seq, data.subdata(in: 10..<b.count))
             sessions[session] = reorder
-            for body in result.deliver { onFrame?(session, body) }
+            var s = first
+            for body in result.deliver { onFrame?(session, s, body); s += 1 }
             if !result.nack.isEmpty { onGap?(session, result.nack) }
         }
     }
