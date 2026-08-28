@@ -104,7 +104,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x48` | scratchDelete | C→S | 可靠 |
 | `0x49` | scratchRename | C→S | 可靠 |
 | `0x4A` | lassoScale | C→S | 可靠 |
-| `0x4B` | canvas | S→C | 可靠 |
+| `0x4B` | canvas | 双向 | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -247,6 +247,8 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 
 `canvas`（画板模式，v12 起）：页面**两侧的空白也是可书写区**，横向按笔迹「软边界」生长。
 `margin` = **每侧**页边宽度，单位是**页宽的倍数**（0.5 = 每侧半个页宽；`on=0` 时编 0）。
+**双向**（同 `mode`/`pen`/`eraser` 的先例）：C→S 是「请求切开关」，客户端**只有 `on` 有意义**、
+`margin` 一律编 0（页边宽度轮不到客户端定）；Mac 执行后照旧广播权威值回来。
 
 > **页边笔迹不是新的东西**：它仍是**页内笔迹**（`strokes`/`ink` 里那一套，归属那一页），
 > 只是页内归一化 `x` 越出 `0…1`（单位还是页宽的倍数，`x=-0.5` = 页左边缘再往左半个页宽；
@@ -294,7 +296,8 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   > 就说明所有已发出的 `ink end` 都已进真源，本端的乐观副本可以整批撤掉，不必逐条配对。
 - `radial` → `{type:"radial", open:true, page, cx, cy, highlight, items:[{kind:"pen"|"erase"|"page"|"scratchAdd"|"textNote", color, w, t},…]}`；收盘 → `{type:"radial", open:false}`
 - `pressRing` → `{type:"pressRing", on:true, page, nx, ny}`；撤环 → `{type:"pressRing", on:false}`
-- `canvas` → `{type:"canvas", on, margin}`（画板模式；`on` 布尔，`margin` = 每侧页边宽度 ÷ 页宽）
+- `canvas` → `{type:"canvas", on, margin}`（画板模式；`on` 布尔，`margin` = 每侧页边宽度 ÷ 页宽。
+  C→S 时只带 `on`，`margin` 编 0——客户端不决定页边宽度）
 - `noteNew` → `{type:"noteNew", page, nx, ny}`（Mac 在环形盘提交「新建文字笔记」扇区后下发：
   平板在 `page` 页内 (nx, ny) 处点开文字笔记编辑器；编辑完成走现有 `textNote`(0x24) 上行闭环）
 - `notes` → `{type:"notes", list:[{id, page, nx, ny, text, display},…]}`（文字笔记**全量镜像**，类比 strokes：

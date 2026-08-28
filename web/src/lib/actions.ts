@@ -19,6 +19,8 @@ export interface Actions {
   toggleLock(): void;
   /// 双指滚动模式（防误触）：单指划动不平移，滚动/缩放一律双指。
   toggleTwoFinger(): void;
+  /// 画板模式（页面两侧的空白也能写字）：只发请求，Mac 是唯一真源（逐文档记，见 PROTOCOL.md `canvas`）。
+  toggleCanvas(): void;
   toggleFull(): void;
   // ---- 草稿纸（v8）：开/关/新建只发请求，Mac 是「哪张纸开着」的唯一真源 ----
   openPad(i: number): void;

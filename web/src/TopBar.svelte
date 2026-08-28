@@ -60,6 +60,8 @@
   <button id="textNote" class:on={S.noteMode} title="文字笔记" onclick={() => actions.toggleTextNote()}><Icon name="type" /></button>
   <button id="ruler" class:on={S.rulerOn} title="尺子（45° 吸附直线）" onclick={() => actions.toggleRuler()}><Icon name="ruler" /></button>
   <button id="padBtn" class:on={S.padOpen >= 0 || S.padList} title="草稿纸" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
+  <button id="canvasBtn" class:on={S.canvasOn} title="画板模式（页面两侧的空白也能写）"
+    onclick={() => actions.toggleCanvas()}><Icon name="canvas" /></button>
   <button id="eye" title="显示/隐藏页面" onclick={() => actions.toggleEye()}><Icon name={S.showPage ? "eye" : "eye-off"} /></button>
   <button id="lock" title="锁定缩放" onclick={() => actions.toggleLock()}><Icon name={S.zoomLocked ? "lock" : "lock-open"} /></button>
   <button id="twoFinger" class:on={S.twoFinger} title="双指滚动（防误触）：单指划动不再平移"

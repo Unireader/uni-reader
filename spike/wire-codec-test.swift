@@ -154,6 +154,8 @@ let canonical: [[String: Any]] = [
     ["type": "canvas", "on": false, "margin": 0],
     ["type": "canvas", "on": true, "margin": 0.5],
     ["type": "canvas", "on": true, "margin": 2.5],
+    // C→S 形态（平板请求切开关）：只有 on 有意义，margin 恒 0（页边宽度轮不到客户端定）。
+    ["type": "canvas", "on": true, "margin": 0],
 ]
 
 var pass = 0, fail = 0

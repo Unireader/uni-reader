@@ -101,7 +101,7 @@ export function initWs(): void {
     else if (o.type === "pressRing") { G.setPressRing(o); }
     // 画板模式（Mac 是页边宽度的唯一真源，逐文档）：改内容宽 → 重算几何 → 整屏重画。
     // 本端落笔中的乐观跳档也会被这条覆盖回权威值（正常情况两者相等）。
-    else if (o.type === "canvas") { G.setCanvas(!!o.on, +o.margin || 0); }
+    else if (o.type === "canvas") { G.setCanvas(!!o.on, +o.margin || 0); S.canvasOn = !!o.on; }
     // Mac 回传的全部笔迹（唯一真源）：平板据此显示 + 刷新/重连/切档后恢复。正在写的这一笔(cur)不清，避免闪断。
     // 框选提交后等回传：两条镜像（strokes/notes）**分开记账**——这条到了笔迹层改画真源（该层命中
     // 下标作废），notes 层继续乐观预览直到它的镜像也到；两条都到齐才 clearLasso（否则先到的那条

@@ -152,6 +152,7 @@ const canonical = [
   { type: "canvas", on: false, margin: 0 },
   { type: "canvas", on: true, margin: 0.5 },
   { type: "canvas", on: true, margin: 2.5 },
+  { type: "canvas", on: true, margin: 0 },   // C→S：只有 on 有意义
 ];
 
 let pass = 0, fail = 0;

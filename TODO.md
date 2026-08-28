@@ -384,8 +384,16 @@
       从库里的 `canvas_mode` 列 + 笔迹越界量自己算（`shared/CanvasMargin.kt`），开关在顶栏 ⋯ 菜单。
       **`presetCanvas` 必须赶在首次几何就绪之前调**，否则 `applyHFrac` 用的还是没有页边的内容宽、
       上次的横向位置会落偏。`updateProgress` 的 hfrac 上限同 Mac 放宽到 20（页边让它可以大于 1）。
+    - **开关三端都有**（用户 2026-08-28 追问「web 端没看到 toggle 是没做吗」——第一版确实只做了
+      跟随显示 + 书写，开关只在 Mac）：`canvas` 改成**双向**（同 mode/pen/eraser 的先例），
+      C→S 只有 `on` 有意义、`margin` 恒编 0。客户端**只发请求不改本地**（同 openPad 的惯例），
+      Mac 执行后广播权威值回来才改布局。Mac 侧照 `padOpenDocRequest` 的老路子走
+      `AppModel.padCanvasRequest` → 那个窗口的 ContentView 认领 → 与工具栏按钮共用 `setCanvasMode`
+      （AppModel 够不着 @MainActor 的 WorkspaceManager，落库只能在 View 层做）。
+      入口：web 顶栏画板按钮／安卓模式2 顶栏 ⋯ 菜单／安卓模式1 同菜单（本机真源，直接改库）。
+      **ContentView 又踩了一次类型检查器超时**——这条 onChange 只能单独包一层 `canvasRoutes`。
     - 验证：`canvas-margin-test`(24)／`ink-edit-test`(62)／`store-test`(38)／`ink-store-test`(21)／
-      `wire-codec-test`(88)／`wire-cross-test`(166)／安卓 `WireCodecTest`(向量扩到 83 条) +
+      `wire-codec-test`(89)／`wire-cross-test`(168)／安卓 `WireCodecTest`(向量扩到 84 条) +
       新 `CanvasMarginTest`(4)／`xcodebuild`／`tsc --noEmit`／`vite build`／`assembleDebug` 全绿。
       **待真机验证**见「接下来」第 11 条 ⑧⑨⑩。
 
@@ -492,6 +500,8 @@
     ⑤ 页边笔迹的擦除、框选（自由路径圈到页外）、移动/缩放手柄、图层显隐是否都正常。
     ⑥ **重开文档**：页边笔迹与横向位置都应在原处；画板开关本身逐文档记（另一本书不受影响）。
     ⑦ 夜间模式下页边纸色应与页面一致（同一张纸的横向延伸，不是灰底）。
+    ⑦.5 **三端的开关互相同步**：在任一端切画板，另外两端应当跟着变（平板切 = 只发请求、
+       等 Mac 广播回来才动；所以平板上按下去到画面变化之间有一个 RTT，确认这个延迟能接受）。
     ⑧ **网页采集页**（平板）：Mac 开画板 → 平板应当跟着长出页边并能在上面写；平板写到页边时
        边界自己往外长（本地乐观跳档，不该等一个 RTT 才有地方下笔）；双指捏合缩放后页面不横跳。
     ⑨ **安卓两模式**：模式2 同上；模式1（独立版）顶栏 ⋯ →「画板模式」开关逐文档记，

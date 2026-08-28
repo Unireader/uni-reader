@@ -47,7 +47,19 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemScheme
 
     var body: some View {
-        eventRoutes(aiRoutes(scratchRoutes(mainSplit)))
+        eventRoutes(aiRoutes(scratchRoutes(canvasRoutes(mainSplit))))
+    }
+
+    /// 平板请求切画板模式（`canvas` 上行）。**同 `scratchRoutes`/`aiRoutes` 的理由单独包一层**：
+    /// 直接挂进 `mainSplit` 那条链当场把类型检查器顶爆（2026-08-28 实测，同款）。
+    /// 与工具栏按钮走同一条 `setCanvasMode`（改 session + 逐文档落库），权威值随后由阅读区的
+    /// onChange → `applyCanvasMargin` → `broadcastCanvas` 广播回平板。
+    private func canvasRoutes<V: View>(_ base: V) -> some View {
+        base.onChange(of: app.padCanvasRequest) { _, req in
+            guard let req, req.sessionID == session.id else { return }
+            app.padCanvasRequest = nil
+            setCanvasMode(req.on)
+        }
     }
 
     /// AI 会话绑定的落库路由。**同 `scratchRoutes` 的理由单独包一层**——这两条 `onChange` 直接挂进
@@ -794,12 +806,16 @@ struct ContentView: View {
 
     // MARK: - 画板模式（v12）
 
-    /// 切画板模式：改 session（阅读区 onChange 里做布局补偿）+ 立即落库（逐文档记，
+    /// 切画板模式（工具栏按钮 / ⌥⌘C）。
+    private func toggleCanvasMode() { setCanvasMode(!session.canvasMode) }
+
+    /// 设画板模式：改 session（阅读区 onChange 里做布局补偿 + 广播给平板）+ 立即落库（逐文档记，
     /// 不走阅读进度那套节流——它不像滚动位置那样每帧都变）。没开文档时空转。
-    private func toggleCanvasMode() {
-        guard session.pdf != nil, let id = selectedDocID else { return }
-        session.canvasMode.toggle()
-        workspace.setCanvasMode(documentId: id, on: session.canvasMode)
+    /// 本机按钮与**平板上行**（`padCanvasRequest`）共用这一条，别在两处各写一遍落库。
+    private func setCanvasMode(_ on: Bool) {
+        guard session.pdf != nil, let id = selectedDocID, session.canvasMode != on else { return }
+        session.canvasMode = on
+        workspace.setCanvasMode(documentId: id, on: on)
     }
 
     // MARK: - 阅读进度

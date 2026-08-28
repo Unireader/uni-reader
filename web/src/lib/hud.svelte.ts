@@ -62,6 +62,7 @@ export const S = $state({
   rulerOn: false,          // 尺子模式（顶栏按钮激活态回显）
   noteEditor: null as NoteEditorState | null,   // 文字笔记编辑器（非 null = 打开中）
   showPage: true,          // 页面图显示（眼睛按钮回显）
+  canvasOn: false,         // 画板模式（Mac 下发，顶栏按钮回显）
   zoomLocked: false,       // 锁定缩放（锁按钮回显）
   twoFinger: false,        // 双指滚动模式 / 防误触（顶栏按钮激活态回显）
   // ---- 侧拉抽屉（目录 / 书库）----

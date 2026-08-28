@@ -173,6 +173,10 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     // 双指滚动（防误触）：单指划动不再平移页面/草稿纸，滚动与缩放一律双指。
     // 手掌/虎口在落笔前先蹭到屏幕那一下，从此什么都不做。
     toggleTwoFinger() { G.twoFinger = !G.twoFinger; S.twoFinger = G.twoFinger; },
+    // 画板模式：**只发请求**，本地什么都不改——Mac 是开关与页边宽度的唯一真源，
+    // 它执行后广播 `canvas` 回来（`ws.ts` → `G.setCanvas`），本端那时才改布局。
+    // 同 openPad/closePad「开关归 Mac 判」的惯例。
+    toggleCanvas() { G.send({ type: "canvas", on: !G.canvasOn, margin: 0 }); },
     // ---- 草稿纸（v8）----
     // 开/关/新建都只发请求，Mac 判定后回推 scratchpads，本地照做（同 layerAdd 一族的分工）。
     openPad(i: number) { G.padOpenIndex(i); S.padList = false; },

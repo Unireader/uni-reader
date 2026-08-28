@@ -37,6 +37,13 @@ final class AppModel: ObservableObject {
         let docId: String
     }
     @Published var padOpenDocRequest: PadOpenDocRequest?
+    /// 平板请求切画板模式（`canvas` 上行）：由 `sessionID` 那个窗口的 ContentView 认领并落库。
+    struct PadCanvasRequest: Equatable {
+        let id = UUID()
+        let sessionID: UUID
+        let on: Bool
+    }
+    @Published var padCanvasRequest: PadCanvasRequest?
     /// 平板发起 `openDoc` 后等待就位的库文档 id：新窗口装好它就把平板锁过去（见 `sessionDocumentChanged`）。
     private var pendingPadFollowDocId: String?
     /// `library`/`toc` 广播去重签名（内容没变就不重发，同 `pushedLayoutKey`）。
@@ -328,6 +335,13 @@ final class AppModel: ObservableObject {
             }
         case "mode":
             if let m = obj["mode"] as? String { padMode = m }
+        // 平板请求切画板模式（C→S 只有 on 有意义）。这里**不直接改 session**——开关要逐文档落库，
+        // 而 `WorkspaceManager` 是 @MainActor、AppModel 够不着；照 `padOpenDocRequest` 的老路子
+        // 发个请求，由那个窗口的 ContentView 认领（它知道 selectedDocID，也拿得到 workspace）。
+        case "canvas":
+            if let on = obj["on"] as? Bool {
+                padCanvasRequest = PadCanvasRequest(sessionID: s.id, on: on)
+            }
         case "pen":
             if let i = (obj["index"] as? NSNumber)?.intValue { padPenIndex = i }
         // 多层笔迹：平板只发「请求」，图层的增删改全部由 Mac 判定；应用后 s.inkLayers/activeLayerID
