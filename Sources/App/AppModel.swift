@@ -235,7 +235,10 @@ final class AppModel: ObservableObject {
         renderLock.lock(); defer { renderLock.unlock() }
         // 同文档已建好独立实例就不重开（`push()` 每次翻页都会调进来）。
         guard padRenderKey != key || padRenderPDF == nil else { return }
-        pageCache.removeAllObjects()
+        // ⚠️ **换文档不清 `pageCache`**（2026-08-29 修，用户报「平板切标签页每次都要重新加载 PDF 页」）：
+        // 缓存键里本来就带 `padRenderKey`（= contentHash），两篇文档的页图不会串；一清，平板切回
+        // 上一篇就得让 Mac 把每一页重渲一遍，而这活儿占的是 `LANServer` 那条串行 queue（连笔迹 RT
+        // 一起压）。额度是按字节的 NSCache，多留一篇挤不爆；真挤了也只是按 LRU 淘汰。
         padRenderKey = key
         padRenderPDF = pdf.documentURL.flatMap { PDFDocument(url: $0) } ?? pdf
     }
@@ -270,6 +273,14 @@ final class AppModel: ObservableObject {
         }
         renderLock.unlock()
 
+        // 内存没有再问磁盘：这张图很可能上次开这本书时就渲过了（跨换文档/关窗/重启都留着，
+        // 见 `PageDiskCache`）。读几百 KB 是几毫秒，而重渲是 100~300ms 且压着本条串行 queue。
+        if let disk = PageDiskCache.shared.data(for: ck as String), !disk.isEmpty {
+            renderLock.lock(); pageCache.setObject(disk as NSData, forKey: ck, cost: disk.count); renderLock.unlock()
+            PadLog.log("页图 #\(idx)@\(req.width) 磁盘命中 \(PadLog.ms(CFAbsoluteTimeGetCurrent() - t0))，\(disk.count / 1024)KB")
+            return disk
+        }
+
         PadLog.log("页图 #\(idx)@\(req.width) 未命中，开渲…")
         guard let pdf, idx >= 0, idx < pdf.pageCount, let page = pdf.page(at: idx),
               let data = PageRenderer.image(page: page, pixelWidth: CGFloat(req.width), format: req.format) else {
@@ -278,6 +289,7 @@ final class AppModel: ObservableObject {
         }
         // cost = 字节数：档位化之后同一页可能有好几份，按条数记的 NSCache 拦不住内存
         renderLock.lock(); pageCache.setObject(data as NSData, forKey: ck, cost: data.count); renderLock.unlock()
+        PageDiskCache.shared.store(data, for: ck as String)   // 异步落盘，不占本条服务 queue
         PadLog.log("页图 #\(idx)@\(req.width) 渲染完成 \(PadLog.ms(CFAbsoluteTimeGetCurrent() - t0))，\(data.count / 1024)KB")
         return data
     }
