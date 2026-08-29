@@ -11,7 +11,9 @@ struct SettingsView: View {
     @AppStorage("autoStartServer") private var autoStartServer = false
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // "off" | "paddle"
     @State private var ocrPaddleKey = ""   // Paddle API key：存 Keychain（不进 UserDefaults），见 PaddleOCR.apiKey()
-    @AppStorage("renderCacheMB") private var renderCacheMB = 512     // 页图缓存上限（MB）
+    /// 页图缓存上限（MB，= 真实占用；引擎按「一张图三份」计费，见 `PageRenderEngine.copiesPerImage`）。
+    /// ⚠️ 默认值与 `ContentView` 启动时那句 `?? 256` **必须一致**，改一处要改两处。
+    @AppStorage("renderCacheMB") private var renderCacheMB = 256
     @AppStorage("showTOCButton") private var showTOCButton = true    // 工具栏「目录」按钮
     @AppStorage("showOCRButton") private var showOCRButton = true    // 工具栏「文字识别」按钮
 
@@ -80,13 +82,17 @@ struct SettingsView: View {
                     Text("256 MB").tag(256)
                     Text("512 MB").tag(512)
                     Text("1 GB").tag(1024)
-                    Text("2 GB").tag(2048)
                 }
                 .onChange(of: renderCacheMB) { _, mb in PageRenderEngine.shared.setCacheLimitMB(mb) }
+                // 每秒重算：设置窗不销毁，静态取值会一直显示第一次打开时的快照（诊断时被这个骗过一次）。
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    LabeledContent(L("In use now"),
+                                   value: "\(PageRenderEngine.shared.cacheUsageMB) MB · \(PageRenderEngine.shared.debugSummary)")
+                }
             } header: {
                 Text(L("Rendering"))
             } footer: {
-                Text(L("A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM."))
+                Text(L("A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM. This figure is actual memory used."))
             }
 
             Section {

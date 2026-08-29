@@ -150,7 +150,8 @@
 "Selectable groups" = "Selectable groups";
 "Rendering" = "Rendering";
 "Page render cache limit" = "Page render cache limit";
-"A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM." = "A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM.";
+"A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM. This figure is actual memory used." = "A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM. This figure is actual memory used.";
+"In use now" = "In use now";
 "Pen" = "Pen";
 "Add Pen" = "Add Pen";
 "Width" = "Width";

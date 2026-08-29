@@ -397,6 +397,19 @@
       新 `CanvasMarginTest`(4)／`xcodebuild`／`tsc --noEmit`／`vite build`／`assembleDebug` 全绿。
       **待真机验证**见「接下来」第 11 条 ⑧⑨⑩。
 
+  - **2026-08-29：内存占用大修（纯滚动 65 页 1604MB → 275MB，−83%）**，根因与改动全在 `HISTORY.md` 同日条目。
+    四条要记住的（都是 `PageBitmap.draw` 里几行代码的事，但少一条就前功尽弃）：
+    ① 🔴 **页图像素格式必须是 BGRX**（`noneSkipFirst | byteOrder32Little`，CA 在 Apple Silicon 上的原生格式）。
+    用 RGBA 的话 CG 每次合成都要转换、转换结果还按固定条数缓存住，表现是 `MALLOC_LARGE` 涨到 31 块
+    （≈515MB）就封顶、静置不降、`Reclaimable=0`、**改缓存上限完全无效**。改格式后要**日间+夜间各看一眼截图**：
+    字节序搞反会红蓝互换。
+    ② **像素缓冲自己 `mmap`/`munmap`**，别退回 `CGContext(data: nil)`+`makeImage()`（缓冲归 CG 的
+    purgeable zone，CGImage 死了它不还），也别改用 `malloc`（分配器的 large cache 同样不还）。
+    ③ **缓存计费要乘 `PageRenderEngine.copiesPerImage`**（现为 2 = 我们的缓冲 + CA 的合成副本）：
+    只按 `bytesPerRow*height` 计费就是「设置页写 512MB、实际吃 1.5GB」。改这个系数前先 `vmmap` 复测。
+    ④ **排查这类问题别信 `vmmap` 的「已分配」**：free 掉但被分配器缓存的大块照样列成已分配，
+    以 `PageBitmap.liveImages`（我们自己数的存活位图）为准——我为此绕了一整轮。
+
 ## 🔧 整体优化路线图（2026-07-25 起，用户需求「整体优化」）
 
 四项大改，分里程碑推进。用户已定：UDP=整条实时流走 UDP（原生客户端自管序号/丢弃/轻量重传，控制握手仍走可靠通道，浏览器用不了 UDP 永远走 WS）；安卓 = 工作区内 `android/` 子目录独立 git 仓库。
@@ -416,7 +429,16 @@
 
 6. **安卓模式1 多标签页真机验证**（2026-08-05 落地，见上；清单在 `ANDROID-STANDALONE-PLAN.md §11.1` 第 41~44 条）：① 两条栏叠起来会不会太吃阅读区、34dp 的 × 会不会误触（想切标签结果关掉了）；② 慢卷上切标签页的快慢——保活着的应当瞬间，被 LRU 卸过的要重开 Pdfium，那一下有多长决定 `MAX_LIVE` 要不要调大；③ 开满 8 个（含几百页的大书）来回切的内存与卡顿；④ 用工作区芯片在两个慢卷工作区之间来回切，进度与标签页组是否都在原处。
 
-7. **移动硬盘弹出验证**（2026-08-05 落地，见上）：工作区放在移动硬盘上 → 打开、翻几页、写几笔 → **只关窗口不退出 app** → Finder 弹出该盘应当立刻成功。反例排查（先 `touch ~/Library/Logs/UniReader-ws.log` 开日志，再看有没有 `⚠️ PDFDocument 仍存活` / `⚠️ manager 仍存活`）：
+7. **缩放路径的内存尾巴**（2026-08-29 大修后的残留，见 `HISTORY.md` 同日条目「留在 TODO 的尾巴」）：
+   滚动路径已降到 275MB，但 ⌘+ ×5 后仍有 ~612MB 且 ⌘0 回不来。性质是干净的：几乎全是**我们自己的图**
+   （`VM_ALLOCATE` 201MB ↔ `CoreAnimation` 198MB，1:1），根源就一条——**缩放后页图本身就大**：
+   `basePixelCap=2800` 下一页 49MB，而 fit 只有 17MB。
+   候选做法（都需先验手感，别直接改）：`recentBaseWidths` 4 → 2（`fallbackBase` 的兜底深度，减了可能在
+   连续缩放时露白，撞「零闪烁纪律」）；或缩放 settle 后主动清掉非当前档的宽度。
+   **另外**：本轮全部实测都在 900×450 小窗口做的，日常是 4K 大窗口——那时 `pageW*displayScale`
+   顶到 `basePixelCap`，单页标称 50MB，量级完全不同，**真机得按真实窗口重测一遍**。
+
+8. **移动硬盘弹出验证**（2026-08-05 落地，见上）：工作区放在移动硬盘上 → 打开、翻几页、写几笔 → **只关窗口不退出 app** → Finder 弹出该盘应当立刻成功。反例排查（先 `touch ~/Library/Logs/UniReader-ws.log` 开日志，再看有没有 `⚠️ PDFDocument 仍存活` / `⚠️ manager 仍存活`）：
    ```
    lsof -p $(pgrep -x UniReader) | grep /Volumes/<盘名>     # 关窗后应当一条都没有
    ```

@@ -3,6 +3,82 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 完成（2026-08-29，内存占用：打开一个 PDF 就 900MB → 滚 65 页 543MB）
+
+用户报「debug 包打开一个 pdf 就占用了 900MB」。`footprint`/`vmmap` 实测（900×450 窗口、
+199MB 高清扫描 PDF 340 页）：**纯滚动 60 页、零缩放就能到 1604MB，峰值 1763MB**，且空闲永不回落。
+
+### 根因（按发现顺序，每一条都是实测钉死的）
+
+1. **一张页图在进程里存了三份，而缓存只按一份计费**。vmmap 数出 30/30/30——同一批图同时在
+   `MALLOC_LARGE`(CG 的 DefaultPurgeableMallocZone) / `CG raster data`(SM=COW) /
+   `CoreAnimation`(SM=SHM)，三者精确字节数互不相同（17,432,576 / 17,383,424 / 17,498,112），
+   是三份真拷贝不是重复计账。而 `RenderImageCache` 传的 `cost` 是 `bytesPerRow*height` = 一份
+   → 它以为 498MB/512MB 上限，实际吃 1.5GB。设置页写「512 MB」= 真吃 1.5GB。
+2. **缩放单调累加**：`baseKey` 含 `pixelWidth`，每档缩放一整套新图，而 `fallbackBase` 只查
+   `recentBaseWidths` 那 4 个——挤出名单的整套图从此谁也找不到，纯死重。⌘+ ×5 涨 723MB、
+   ⌘0 回 fit 只掉 24MB（那 24MB 还是 IOSurface 释放贴片）。
+3. **关窗/换文档不清缓存**：`RenderImageCache` 连 `removeAll` 都没有，只 `setWanted([])`。
+4. **贴片与基图共用一个池**：贴片是视口尺寸、单价常比整页还高，而 `tileKey` 把矩形量化到 1/64，
+   平移一格就是新键 → 放大后平移几下就能把基图全挤光。
+5. **`CGContext(data: nil)` + `makeImage()` 的缓冲不还**：两者共享 COW 缓冲，缓冲归 CG 的
+   purgeable zone 管，CGImage 释放后它不跟着还。实测 31 块 17,432,576B 的 `MALLOC_LARGE`
+   而活着的 CGImage 只有 11 张 → 20 块 ≈ 348MB 是孤儿，且窗口改尺寸后仍冻在旧尺寸。
+6. **像素格式不是 CA 原生格式 → CoreGraphics 每次合成都要转换，转换结果还被它按固定条数缓存住**
+   （**本轮最大的一笔**）。原来用 RGBA(`premultipliedLast`)，而 Apple Silicon 上 CoreAnimation 的原生
+   格式是 BGRA/BGRX。表现：`MALLOC_LARGE` 一路涨到 **31 块就不涨了**（31×16.6MB≈515MB），静置不降、
+   `Reclaimable=0`、改缓存上限完全无效——因为那是 CG 的副本，不是我们的图。
+   判别实验：往前滚 24 页 → 涨到 416MB；退回同样 24 页 → 515MB；**再走第三遍同样的页 → 一点不涨**
+   （按页缓存、条数封顶）。
+7. **malloc 的 large cache 不还给系统**：改成自持 `malloc` 缓冲后，`PageBitmap` 自己数的存活位图
+   只剩 4 张/66MB（free 回调确实跑了），`vmmap` 的 `MALLOC_LARGE` 却仍是 632MB。
+   ⚠️ **`vmmap` 会把这些块照样列成「已分配」**，光看它会得出「有人在持有」的错误结论（被骗了一轮），
+   **以 `PageBitmap.liveImages` 为准**。
+
+### 改动
+
+- `PageRenderEngine`：① `copiesPerImage` 计费系数（现为 **2**，改前先复测三个 zone）；
+  ② 基图/贴片**两个独立 LRU**（3:1 分总额）；③ `purge(doc:)`（关窗/换文档，带「别的窗口还在看
+  就跳过」的守卫）与 `purgeBase(doc:pixelWidth:)`（缩放换宽度，带「任何窗口仍 wanted 的键不动」守卫）；
+  ④ `trim(toFraction:)` + `DispatchSource` 内存压力源（warning 砍半 / critical 砍到 1/4，
+  **不改 limit**，压力过去照常回填——与「本缓存不做机会性驱逐」不冲突，那条针对的是 NSCache 的无端清空）；
+  ⑤ `trim()` 加 `t !== head` 守卫：单张图自己就超上限时（大窗口高倍贴片能上百 MB）不留这条会写入即自我淘汰、
+  缓存恒空、每次 settle 重渲同一张；⑥ `relieveMallocPressure`（限流 2s + **尾随 1.5s**，
+  尾随不能省——限流会吞掉最后几次淘汰，而渲染一停就再没人来催）。
+- `PageBitmap.draw`（三处，缺一不可）：
+  · **像素格式改 BGRX**（`noneSkipFirst | byteOrder32Little`）—— CA 原生格式，CG 不再转换、不再缓存副本。
+  页图是不透明的（整张填白后才画 PDF），连 alpha 都不需要。**这一条单独就把滚动路径从 543MB 砍到 275MB。**
+  · **自己 `mmap` 像素缓冲 + `CGDataProvider` 回调 `munmap`**，不再走 `CGContext(data: nil)`+`makeImage()`。
+  用 mmap 而非 malloc 是为了绕开分配器的大块缓存，释放即还给内核。副作用：`CG raster data` 整类归零。
+  · 行宽显式对齐 64 字节；另加 `liveImages` 存活计数（alloc/free 各记一笔）——排查「缓存淘汰了内存却
+  不降」时以它为准。
+- `ReaderSurface.adoptBaseWidth`：被挤出 `recentBaseWidths` 的宽度连带 `purgeBase`。
+- `PageStreamView.onDisappear`：`purge(doc:)`（**必须排在 `setWanted([])` 之后**，否则守卫
+  把自己当成「还在看」而跳过）；`DocSession.teardown` 同样清一次（赶在 `contentHash` 清空前）。
+- 默认上限 512 → **256**（`ContentView` 与 `SettingsView.@AppStorage` 两处必须一致）；
+  设置页加实时诊断行（`TimelineView(.periodic)`——设置窗不销毁，静态取值会一直显示第一次打开时的快照，
+  被这个骗过一次）。
+
+### 实测对比（同一协议：900×450 窗口、⌘0 后滚 ~65 页 / ⌘+ ×5）
+
+| 场景 | 改前 | 改后 |
+|---|---|---|
+| fit | ~200 MB | 207 MB |
+| 纯滚动 ~65 页 | **1604 MB**（峰值 1763） | **275 MB**（−83%） |
+| 同上的 `MALLOC_LARGE` | 270~515 MB | **17 MB** |
+| ⌘+ ×5 | 994 MB，⌘0 只掉 24MB | 612 MB（峰值 641） |
+
+回归：`render-rotation-test` 9/0、`page-layout-test` 25/0（它编译的正是改过的 `PageBitmap.swift`）、
+`page-snip-test` 34/0、`xcodebuild` 通过；真机截图确认**日间/夜间两种模式**渲染都无通道错位
+（红色水印仍是红的——BGRX 字节序搞反的话会红蓝互换，这是必查项；夜间走 `CIColorInvert`+`CIHueAdjust`
+另一条路径，也要单独看一眼）。
+
+### 留在 TODO 的尾巴
+
+缩放路径仍有 ~612MB，但性质变了：现在几乎全是**我们自己的图**（`VM_ALLOCATE` 201MB ↔
+`CoreAnimation` 198MB，仍是干净的 1:1），根源是「缩放后页图本身就大」——`basePixelCap=2800` 下
+一页 49MB，而 fit 只有 17MB。见 TODO 对应条目。
+
 ## 完成（2026-08-29，笔迹闪烁：缩放期改用**墨迹位图快照**，零重画）
 
 页面不闪之后，用户报「手指缩放和按键缩放都会让笔迹出现闪烁」，并直接给了取舍：

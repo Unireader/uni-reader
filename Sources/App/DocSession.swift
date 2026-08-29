@@ -476,6 +476,10 @@ final class DocSession: ObservableObject, Identifiable {
         ocrTasks = [:]
         ocrQueue = []
         ocrRenderPDF = nil
+        // 这份文档的页图缓存整批清掉（`docKey` 就是 contentHash，见 `ContentView` 传给阅读区那处）。
+        // 不清的话关窗/换文档后那几百 MB 会一直挂到被别的文档慢慢挤掉——引擎内部会先确认
+        // 没有别的窗口还在看同一份文档，多窗口场景不会误伤。**必须赶在 contentHash 清空之前。**
+        PageRenderEngine.shared.purge(doc: contentHash)
         contentHash = ""     // 在途 OCR 任务回主线程时按 hash 自弃（既有机制），不会再动已清空的状态
         store = nil
         toc = []

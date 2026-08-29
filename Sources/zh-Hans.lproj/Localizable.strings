@@ -152,7 +152,8 @@
 "Selectable groups" = "可选分组";
 "Rendering" = "渲染";
 "Page render cache limit" = "页图缓存上限";
-"A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM." = "缓存越大，回看或切换文档时越少重新渲染，代价是占用更多内存。";
+"A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM. This figure is actual memory used." = "缓存越大，回看或切换文档时越少重新渲染，代价是占用更多内存。此处是实际占用量。";
+"In use now" = "当前已用";
 "Pen" = "笔";
 "Add Pen" = "添加笔";
 "Width" = "粗细";

@@ -168,8 +168,9 @@ struct ContentView: View {
             // 必须在 register 之前：AppModel 要靠会话捎带的工作区快照才知道该把哪个书库广播给平板。
             syncWorkspaceSnapshot()
             app.register(session)
-            // 页图缓存上限：启动套用存储值（设置页改动即时生效，这里覆盖引擎默认 400MB）。
-            PageRenderEngine.shared.setCacheLimitMB(UserDefaults.standard.object(forKey: "renderCacheMB") as? Int ?? 512)
+            // 页图缓存上限：启动套用存储值（设置页改动即时生效，这里覆盖引擎默认 256MB）。
+            // ⚠️ 默认值与 `SettingsView.renderCacheMB` 的 `@AppStorage` 默认**必须一致**，改一处要改两处。
+            PageRenderEngine.shared.setCacheLimitMB(UserDefaults.standard.object(forKey: "renderCacheMB") as? Int ?? 256)
             if autoStartServer, !app.server.isRunning { app.server.start() }   // 平板服务开机自启
             if autoNightMode { nightMode = (systemScheme == .dark) }           // 夜间模式跟随系统
             WorkspaceRegistry.shared.noteWindow(session.id, path: workspace.folder?.path)

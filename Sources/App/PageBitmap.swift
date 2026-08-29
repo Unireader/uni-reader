@@ -53,20 +53,79 @@ enum PageBitmap {
                     subOrigin: CGPoint(x: subRect.minX, y: disp.height - subRect.maxY))  // 左上原点 → CG 底左原点
     }
 
+    /// 🔴 **像素缓冲必须自己 `mmap` + 用 `CGDataProvider` 的释放回调 `munmap`**，别用
+    /// `CGContext(data: nil…)` + `ctx.makeImage()`（2026-08-29 实测定位的内存主项）：
+    /// 那条路里 `makeImage` 与 context 共享同一块 COW 缓冲，缓冲本身归 CoreGraphics 的
+    /// `DefaultPurgeableMallocZone` 管——**CGImage 释放后它不跟着还**。实测（199MB 扫描 PDF、
+    /// 滚 60 页）：`vmmap` 里 31 块 17,432,576 B 的 `MALLOC_LARGE`，而同期活着的 CGImage
+    /// （`CG raster data` 块数）只有 11 张 → 20 块 ≈ 348MB 是没人认领的孤儿，且不随缓存上限变化
+    /// （上限压到 128MB 照样涨到 555MB）、窗口改尺寸后仍冻在旧尺寸不释放。
+    /// 🔴 而且**用 `mmap` 而不是 `malloc`**：改成自持缓冲后仍见「存活位图只有 113MB、
+    /// `MALLOC_LARGE` 却是 435MB」——`free` 回调确实跑了（`liveImages` 是我们自己数的），是 macOS 的
+    /// magazine malloc 把 free 掉的大块留在自己的 large cache 里等复用。`malloc_zone_pressure_relief`
+    /// 能催回来一部分，但要限流、要尾随、活动一停就没人催，账始终对不齐。`mmap`/`munmap` 直接绕开
+    /// 这层缓存：释放即还给内核，无条件、无延迟。页图动辄十几到几十 MB，malloc 本来也是走 mmap，
+    /// 只是多垫了一层缓存——这里不需要那层。
+    ///
+    /// 自己持有后：一张图一块缓冲，`CGImage` 一死 `munmap` 立刻执行，`PageRenderEngine` 的 LRU
+    /// 淘汰才真的等于还内存。
+    ///
+    /// 行宽显式对齐 64 字节（CG 快路径要求；原来传 `bytesPerRow: 0` 是让 CG 自己挑）。
     private static func draw(page: PDFPage, pixelSize: CGSize, scale: CGFloat, subOrigin: CGPoint) -> CGImage? {
         let pw = Int(pixelSize.width), ph = Int(pixelSize.height)
-        guard pw > 0, ph > 0,
-              let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return nil }
+        guard pw > 0, ph > 0, let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        // 🔴 像素格式必须是 **BGRX（`noneSkipFirst` + 小端）**，别用 RGBA(`premultipliedLast`)：
+        // 后者不是 Apple Silicon 上 CoreAnimation 的原生格式，CG 每次合成都要转换，转换结果还被它
+        // 按固定条数缓存住——实测表现为 `MALLOC_LARGE` 一路涨到 **31 块就不涨了**（31×16.6MB≈515MB），
+        // 静置不降、Reclaimable=0，改缓存上限也没用，因为那是 CG 的副本不是我们的图。
+        // 页图是**不透明**的（下面整张填白后才画 PDF），所以连 alpha 通道都不需要，`noneSkipFirst`
+        // 比 `premultipliedFirst` 还省一步混合。
+        let alphaInfo = CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        let bytesPerRow = (pw * 4 + 63) & ~63
+        let byteCount = bytesPerRow * ph
+        let mapped = mmap(nil, byteCount, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+        guard let buf = mapped, buf != MAP_FAILED else { return nil }
+        guard let ctx = CGContext(data: buf, width: pw, height: ph, bitsPerComponent: 8,
+                                  bytesPerRow: bytesPerRow, space: space, bitmapInfo: alphaInfo)
+        else { munmap(buf, byteCount); return nil }
         ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         ctx.fill(CGRect(origin: .zero, size: pixelSize))
         ctx.interpolationQuality = .high
         ctx.scaleBy(x: scale, y: scale)
         ctx.translateBy(x: -subOrigin.x, y: -subOrigin.y)
         page.draw(with: effectiveBox(page), to: ctx)
-        return ctx.makeImage()
+        // 缓冲的所有权在这里移交给 provider：它是唯一的持有者，回调在最后一个引用消失时跑。
+        guard let provider = CGDataProvider(dataInfo: nil, data: buf, size: byteCount,
+                                            releaseData: { _, ptr, size in
+                                                munmap(UnsafeMutableRawPointer(mutating: ptr), size)
+                                                PageBitmap.noteFree(size)
+                                            })
+        else { munmap(buf, byteCount); return nil }
+        noteAlloc(byteCount)
+        return CGImage(width: pw, height: ph, bitsPerComponent: 8, bitsPerPixel: 32,
+                       bytesPerRow: bytesPerRow, space: space,
+                       bitmapInfo: CGBitmapInfo(rawValue: alphaInfo), provider: provider,
+                       decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+    }
+
+    // MARK: 存活页位图统计（诊断）
+
+    /// 缓冲由 `draw` 自己 malloc、`CGDataProvider` 回调 free，所以这两个计数就是
+    /// **「进程里还有多少张页图活着」的真值**。排查「缓存明明淘汰了、内存却不降」时先看它：
+    /// 与 `PageRenderEngine.cacheUsageMB` 对不上，就说明缓存之外还有人在持有。
+    private static let liveLock = NSLock()
+    private static var liveCount = 0
+    private static var liveBytes = 0
+
+    static var liveImages: (count: Int, bytes: Int) {
+        liveLock.lock(); defer { liveLock.unlock() }
+        return (liveCount, liveBytes)
+    }
+    fileprivate static func noteAlloc(_ n: Int) {
+        liveLock.lock(); liveCount += 1; liveBytes += n; liveLock.unlock()
+    }
+    fileprivate static func noteFree(_ n: Int) {
+        liveLock.lock(); liveCount -= 1; liveBytes -= n; liveLock.unlock()
     }
 
     /// 夜间反色：CIColorInvert + CIHueAdjust(π)（色相复原：白底变黑，彩色不变怪）。

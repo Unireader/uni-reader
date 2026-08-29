@@ -12,13 +12,22 @@ extension ReaderSurface {
     }
 
     /// 采纳一个基图像素宽（记进 `recentBaseWidths`：最新在前、去重、最多 4 个），供缺图回退查找。
+    ///
+    /// 🔴 被挤出名单的宽度**必须连带清缓存**：`fallbackBase` 只查名单里那 4 个，出了名单的整套页图
+    /// 从此谁也找不到，纯粹是死重。而连续缩放每停一档就产生一整套（键含 `w<pixelWidth>`）——
+    /// 2026-08-29 实测 ⌘+ ×5 内存单调涨 723MB、⌘0 回 fit 只掉 24MB，堆的就是这批图。
     func adoptBaseWidth(_ w: Int) {
         scratch.basePixelW = w
         guard scratch.recentBaseWidths.first != w else { return }
         var l = scratch.recentBaseWidths.filter { $0 != w }
         l.insert(w, at: 0)
-        if l.count > 4 { l.removeLast(l.count - 4) }
+        var dropped: [Int] = []
+        if l.count > 4 {
+            dropped = Array(l[4...])
+            l.removeLast(l.count - 4)
+        }
         scratch.recentBaseWidths = l
+        for old in dropped { PageRenderEngine.shared.purgeBase(doc: docKey, pixelWidth: old) }
     }
 
     /// 目标宽度的图还没渲出来时的**兜底图**：拿这一页以前渲过的任意宽度的缓存图先顶上。

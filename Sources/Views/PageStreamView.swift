@@ -391,6 +391,11 @@ struct ReaderSurface: View {
             removeLassoEscMonitor()
             removeToolKeyMonitor()
             PageRenderEngine.shared.setWanted([], client: scratch.clientID)
+            // 本窗口不再看这份文档了（关窗 / 换文档——外层挂了 `.id(docKey)`，换文档就是本视图
+            // 销毁重建）：把它那几百 MB 页图整批清掉。**必须排在 `setWanted([])` 之后**——引擎靠
+            // 「还有没有窗口声明要这份文档的键」判断该不该清，顺序反了会把自己当成"还在看"而跳过。
+            // 多窗口开同一份文档时，别的窗口的 wanted 还在，这次清理会被正确跳过。
+            PageRenderEngine.shared.purge(doc: docKey)
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomIn)) { _ in
             if isActiveWindow { commandZoom(factor: 1.25) }
