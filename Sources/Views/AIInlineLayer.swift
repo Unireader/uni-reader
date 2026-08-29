@@ -28,12 +28,12 @@ struct AIInlineLayer: View {
     private var hosts: Bool { panel.mode == .inline }
 
     /// 本窗口的面板是展开的还是收成气泡。
-    private var isOpen: Bool { panel.isInlineOpen(session.id) }
+    private var isOpen: Bool { panel.isInlineOpen(session.windowID) }
 
     /// 该不该挂 webview：展开时才挂（收成气泡就不占着）。
     private var wantsHost: Bool { hosts && isOpen }
 
-    private var host: AIHost { .inline(session.id) }
+    private var host: AIHost { .inline(session.windowID) }
 
     /// 🔴 **body 里直接从模型查，不用 `@State` 缓存**：视图一被重建 `@State` 就归 nil，
     /// 会先渲一帧占位再切回网页 —— 那一下必然闪。创建仍只在 `onAppear`/`onChange` 里做。
@@ -54,7 +54,7 @@ struct AIInlineLayer: View {
             }
             .animation(.easeOut(duration: 0.18), value: isOpen)
             .onAppear {
-                panel.seedInlineOpen(session.id)   // 新窗口沿用「上次是展开还是收着」
+                panel.seedInlineOpen(session.windowID)   // 新窗口沿用「上次是展开还是收着」
                 if wantsHost { takePage() }
             }
             .onChange(of: wantsHost) { _, want in if want { takePage() } }
@@ -73,7 +73,7 @@ struct AIInlineLayer: View {
     // MARK: - 气泡
 
     private var bubble: some View {
-        Button { panel.setInlineOpen(true, for: session.id) } label: {
+        Button { panel.setInlineOpen(true, for: session.windowID) } label: {
             Image(systemName: "bubble.left.and.text.bubble.right")
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.primary)
@@ -119,7 +119,7 @@ struct AIInlineLayer: View {
                 panel.setMode(.window)
                 openWindow(id: AIPanelModel.windowID)
             }
-            headerButton("chevron.right", L("Collapse")) { panel.setInlineOpen(false, for: session.id) }
+            headerButton("chevron.right", L("Collapse")) { panel.setInlineOpen(false, for: session.windowID) }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)

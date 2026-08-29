@@ -102,7 +102,9 @@ struct RootView: View {
             // （实测：判定了 4 次，只关掉 2 个）。挂在撑满的 Color.clear 背景上才保证被挂载。
             Color.clear.background(WindowCloser())
         } else if let workspace {
-            ContentView(launchDocId: target?.docId)
+            // `app`/`workspace` 除了照旧注入环境，还显式传进 `ContentView.init` ——
+            // 它要在 `@StateObject` 的初值里就建好 `DocTabModel`（那时环境还取不到，见那边注释）。
+            ContentView(launchDocId: target?.docId, app: app, workspace: workspace)
                 .environmentObject(workspace)
         } else if let failure {
             ContentUnavailableView {

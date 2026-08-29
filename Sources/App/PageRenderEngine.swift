@@ -167,6 +167,23 @@ final class PageRenderEngine {
         relieveMallocPressure(force: true)
     }
 
+    /// 清掉某文档**除 `keep` 之外**所有基图宽度的页图（贴片整批丢，切回来重出很快）。
+    ///
+    /// 用途：**标签切到后台**。切走时不能像关窗那样整篇清掉（那正是「切回来要重渲一整屏」的
+    /// 加载感来源，见 `ReaderSurface.releaseRenderCache`），但也不能原样全留着——缩放每停一档就
+    /// 攒下一整套页图（`recentBaseWidths` 最多 4 档），三个标签各攒几档，内存就是几百 MB 地涨
+    /// （2026-08-29 实测：3 个标签用了一阵子后 footprint 1617MB、峰值 1919MB）。
+    /// 折中：只留**当前正在用的那一档**——切回来靠它零加载，其余档位重新缩放时本来也要重渲。
+    func purgeBase(doc: String, keeping keep: Int) {
+        let prefix = doc + "#", keepNeedle = "#w\(keep)#n"
+        lock.lock()
+        let wanted = Set(wantedByClient.values.joined())
+        lock.unlock()
+        cache.purge { $0.hasPrefix(prefix) && !$0.contains(keepNeedle) && !wanted.contains($0) }
+        tileCache.purge { $0.hasPrefix(prefix) }
+        relieveMallocPressure(force: true)   // 淘汰只是 free，还得催 malloc 还给系统
+    }
+
     /// 声明某窗口当前需要的键集合（该窗口旧集合作废；出队时任何窗口都不要的请求直接丢弃）。
     /// 窗口关闭/换文档时传空集合清理。
     func setWanted(_ keys: Set<String>, client: String) {

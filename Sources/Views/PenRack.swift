@@ -16,6 +16,7 @@ struct PenRackView: View {
     @ObservedObject var session: DocSession   // 图层是"这个窗口当前文档"自己的状态，不是设备级全局
     let viewportSize: CGSize
     let topInset: CGFloat          // 工具栏（玻璃）高度：笔架上沿不许进入该区域
+    let bottomInset: CGFloat       // 底部标签栏高度：笔架下沿不许进入该区域（叠在标签栏上就点不着标签了）
     let isActiveWindow: Bool
 
     /// 位置存视口宽高的 0~1 比例（不存绝对像素）——跟这个代码库一贯「阅读区状态用比例不用绝对值」的
@@ -60,10 +61,11 @@ struct PenRackView: View {
 
     private let edgeMargin: CGFloat = 6
 
-    init(session: DocSession, viewportSize: CGSize, topInset: CGFloat, isActiveWindow: Bool) {
+    init(session: DocSession, viewportSize: CGSize, topInset: CGFloat, bottomInset: CGFloat, isActiveWindow: Bool) {
         self.session = session
         self.viewportSize = viewportSize
         self.topInset = topInset
+        self.bottomInset = bottomInset
         self.isActiveWindow = isActiveWindow
         // 老用户迁移：这个 key 在新版本之前不存在，而存在 fracX 存储值说明用户（或旧版本默认值）
         // 已经定过位置——置为「已拖动」，保持原位，不被新的顶部居中默认值拽走。
@@ -234,7 +236,7 @@ struct PenRackView: View {
     private func clampedOrigin(drag: CGSize) -> CGPoint {
         let w = viewportSize.width, h = viewportSize.height
         let maxX = max(edgeMargin, w - barSize.width - edgeMargin)
-        let minY = topInset + edgeMargin, maxY = max(minY, h - barSize.height - edgeMargin)
+        let minY = topInset + edgeMargin, maxY = max(minY, h - barSize.height - edgeMargin - bottomInset)
         let baseX = moved ? fracX * w : Double((w - barSize.width) / 2)
         let raw = CGPoint(x: baseX + drag.width, y: fracY * h + drag.height)
         return CGPoint(x: min(max(raw.x, edgeMargin), maxX),

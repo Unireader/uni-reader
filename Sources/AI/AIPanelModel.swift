@@ -113,7 +113,7 @@ final class AIPanelModel: ObservableObject {
     /// 🔴 **按窗口分别记**：内置模式下**每扇阅读窗口都显示自己的聊天**，展开/收起也各管各的
     /// （用户 2026-08-26：「我要每个 windows 同时显示聊天」）。早先「只有活跃窗口显示」是为了
     /// 规避崩溃临时加的——那条现在由「webview 归我们自己持有」彻底解决，这个限制没有任何存在理由。
-    @Published private(set) var inlineOpenSessions: Set<UUID> = []
+    @Published private(set) var inlineOpenWindows: Set<UUID> = []
     /// 新窗口的默认展开状态（持久化；session id 每次启动都是新的，存 id 没意义）。
     @Published private(set) var inlineOpenDefault = false
     /// 浮窗吸附到主窗口右侧并跟随移动。
@@ -130,20 +130,20 @@ final class AIPanelModel: ObservableObject {
         if m == .inline {
             inlineOpenDefault = true
             UserDefaults.standard.set(true, forKey: Self.inlineOpenKey)
-            if case .inline(let id) = activeHost { inlineOpenSessions.insert(id) }
+            if case .inline(let id) = activeHost { inlineOpenWindows.insert(id) }
         }
     }
 
-    func isInlineOpen(_ session: UUID) -> Bool { inlineOpenSessions.contains(session) }
+    func isInlineOpen(_ window: UUID) -> Bool { inlineOpenWindows.contains(window) }
 
-    func setInlineOpen(_ open: Bool, for session: UUID) {
-        if open { inlineOpenSessions.insert(session) } else { inlineOpenSessions.remove(session) }
+    func setInlineOpen(_ open: Bool, for window: UUID) {
+        if open { inlineOpenWindows.insert(window) } else { inlineOpenWindows.remove(window) }
         guard open != inlineOpenDefault else { return }
         inlineOpenDefault = open        // 新开的窗口沿用最后一次选择
         UserDefaults.standard.set(open, forKey: Self.inlineOpenKey)
     }
 
-    func toggleInline(_ session: UUID) { setInlineOpen(!isInlineOpen(session), for: session) }
+    func toggleInline(_ window: UUID) { setInlineOpen(!isInlineOpen(window), for: window) }
 
     /// ⌘⇧A 用：切当前 key 窗口那一扇（`activeHost` 跟着 key 窗口走）。
     func toggleInlineActive() {
@@ -152,13 +152,13 @@ final class AIPanelModel: ObservableObject {
     }
 
     /// 某扇阅读窗口的内置层首次出现时，按持久化的默认值决定展开还是收成气泡。
-    func seedInlineOpen(_ session: UUID) {
-        guard !inlineOpenSessions.contains(session), inlineOpenDefault else { return }
-        inlineOpenSessions.insert(session)
+    func seedInlineOpen(_ window: UUID) {
+        guard !inlineOpenWindows.contains(window), inlineOpenDefault else { return }
+        inlineOpenWindows.insert(window)
     }
 
     /// 阅读窗口关闭：把它的展开记号一并去掉（session id 不会复用）。
-    func forgetInline(_ session: UUID) { inlineOpenSessions.remove(session) }
+    func forgetInline(_ window: UUID) { inlineOpenWindows.remove(window) }
 
     func setInlineWidth(_ w: Double) {
         let clamped = min(max(w, 300), 900)
@@ -177,10 +177,10 @@ final class AIPanelModel: ObservableObject {
     /// 让面板出现在用户眼前：内置模式展开**这扇窗口**的侧栏，浮窗模式开窗口。
     /// 各处入口（右键讨论本页 / 框选投递 / 从列表打开会话）都走它，免得每处各写一遍分支。
     /// 顺手把 `activeHost` 指到这一扇——发起动作的那扇窗口就该是模型级操作的作用对象。
-    func present(session: UUID, _ openWindow: (String) -> Void) {
+    func present(window: UUID, _ openWindow: (String) -> Void) {
         if mode == .inline {
-            setActiveHost(.inline(session))
-            setInlineOpen(true, for: session)
+            setActiveHost(.inline(window))
+            setInlineOpen(true, for: window)
         } else {
             setActiveHost(.window)
             openWindow(Self.windowID)

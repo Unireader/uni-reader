@@ -225,7 +225,7 @@ extension ReaderSurface {
         guard let docId = session.documentId else { return }
         let page = scratch.cursorP.flatMap { containerPointToPageNorm($0)?.page } ?? session.currentPageIndex
         clearSelection()
-        AIPanelModel.shared.present(session: session.id) { openWindow(id: $0) }   // 内置模式展开侧面板，浮窗模式开窗口
+        AIPanelModel.shared.present(window: session.windowID) { openWindow(id: $0) }   // 内置模式展开侧面板，浮窗模式开窗口
         AIPanelModel.shared.beginBind(AIBindContext(sessionID: session.id, documentId: docId,
                                                     docTitle: session.title, page: page))
     }

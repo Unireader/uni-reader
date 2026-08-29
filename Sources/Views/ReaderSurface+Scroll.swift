@@ -16,8 +16,20 @@ extension ReaderSurface {
             n.containerW = unobSize.width
             n.containerH = unobSize.height
         }
+        // 🔴 **高度退化的那几拍必须整帧丢掉**（2026-08-29 实测定位，切标签闪烁的真凶）。
+        // 上面那条只兜得住「宽退化」；视图重建后 ScrollView 会先来几拍 `containerH == 0` 的几何，
+        // 它一路走下去的后果是致命的：`updateRealized` 据此把实化窗口算成 **0…0**，紧接着
+        // 「驱逐窗口外页图」把 `images` 清空 —— 切标签刚在 `init` 里种好的那一屏，在 `onAppear`
+        // 之前就被当场抹掉了（日志表现：快照明明有料，`已装载` 却恒为 `realized=0…0 图0张`）。
+        // 顺带也是坏快照的来源：那一帧算出的 0…0 会被写回快照，自我复制。
+        // 先用未遮视口的高度兜一次（与上面同一口径），仍然退化就这一帧什么都不做，等下一拍真几何。
+        if n.containerH <= 1, unobSize.height > 0 { n.containerH = unobSize.height }
+        guard n.containerH > 1 else { return }
         scratch.geo = n
         guard let layout else { return }
+        // 首帧那一趟里 `fitBasis`/`zoom` 正要被写（下面那个 if），此刻读它们同样是旧值，
+        // 所以那一趟不拍快照——等下一趟几何回调再拍，反正只差一帧。
+        let hadInitialGeo = scratch.didInitialGeo
         // ⚠️ 此处严禁读取 n.containerW/contentW 做宽度决策（会与内容互抬成环，见 fitAvail 注释）。
         // 首帧定基准必须等 `fullWidth > 0`（后台 GeometryReader 慢半拍）——否则 layoutW 回退未遮宽=窄，
         // 会把窄页渲染出来、40ms 后再跳到整窗宽 = 启动闪烁。未就绪则整体早退（didInitialGeo 前不实化/不渲染）。
@@ -45,7 +57,7 @@ extension ReaderSurface {
         }
         verifyPendingTarget(n)
         scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)
-        updateRealized(n, layout: layout)
+        let liveRealized = updateRealized(n, layout: layout)
         if let a = scratch.pendingRestore {
             scratch.pendingRestore = nil
             follower.pageCount = layout.pageCount
@@ -62,6 +74,20 @@ extension ReaderSurface {
         }
         // 上报当前横向比例（非 @Published，不触发重渲；存进度时读）。
         session.readHFrac = pageW > 0 ? Double(n.offsetX / pageW) : 0
+        // 留一份「现在长什么样」的快照：切标签回来时 `setup` 靠它让首帧就到位（见 ReaderSnapshot）。
+        // 同 `readHFrac`，非 @Published，纯结构体赋值。
+        // 阅读区快照（切标签时拿它种回去，见 `DocSession.ReaderSnapshot`）。三道门缺一不可：
+        //  · `hadInitialGeo` —— 首帧那一趟 `fitBasis`/`zoom` 正要被写，此刻读到的是旧值；
+        //  · `realized` 用 `updateRealized` 的**返回值**，别回头读 `@State`（同上，同一趟读到旧值）；
+        //  · 🔴 **几何得是真的、且已经渲过图**：视图重建/布局未落位时会来几拍**退化几何**
+        //    （`containerH == 0`）→ `updateRealized` 把实化窗口算成 `0…0`，拿这种帧覆盖快照，
+        //    切回来的种子就是空的。2026-08-29 实测就是这条：快照里的 realized 恒为 `0…0`、
+        //    页图 0 张，种子「命中」了却什么也没种上，画面照旧先空一帧。
+        if hadInitialGeo, n.containerH > 1, scratch.basePixelW > 0 {
+            session.readerSnapshot = DocSession.ReaderSnapshot(
+                layoutW: layoutW, fitBasis: fitBasis, zoom: zoom, userZoomed: userZoomed,
+                basePixelW: scratch.basePixelW, recentBaseWidths: scratch.recentBaseWidths)
+        }
         maybeEmit(n, layout: layout)
         scheduleSettleRender()
     }
@@ -86,7 +112,12 @@ extension ReaderSurface {
         }
     }
 
-    func updateRealized(_ n: GeoSnap, layout: PageLayout) {
+    /// 返回本帧**settle 后的实化窗口**。
+    /// 🔴 一定要用这个返回值，别在调用方转头去读 `realized`：那是 `@State`，同一趟更新里
+    /// 刚写完再读回来拿到的还是旧值（2026-08-29 实测——阅读区快照里的 `realized` 一直是初值
+    /// `0…0`，于是切标签的种子等于没种，页图一张都取不回来）。
+    @discardableResult
+    func updateRealized(_ n: GeoSnap, layout: PageLayout) -> ClosedRange<Int> {
         let ds = max(0.0001, dispScale)
         let buffer = n.containerH / ds                    // 上下各约一屏预实化
         let top = n.offsetY / ds - buffer
@@ -139,6 +170,7 @@ extension ReaderSurface {
             let page = layout.locate(docY: scratch.topDocY).page
             if session.currentPageIndex != page { session.currentPageIndex = page }
         }
+        return range
     }
 
     func maybeEmit(_ n: GeoSnap, layout: PageLayout) {

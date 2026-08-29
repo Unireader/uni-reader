@@ -322,3 +322,14 @@
 /* 画板模式（v12）：页面旁边的空白也能写 */
 "Canvas Mode" = "画板模式";
 "Write in the blank space beside the page" = "在页面两侧的空白处书写";
+
+/* 标签页（MAC-TABS-PLAN.md） */
+"New Tab" = "新标签页";
+"Close Tab" = "关闭标签页";
+"Close Other Tabs" = "关闭其他标签页";
+"Close Window" = "关闭窗口";
+"Next Tab" = "下一个标签页";
+"Previous Tab" = "上一个标签页";
+"Pin to Bottom" = "固定到底部";
+"Float" = "浮动显示";
+"The tablet is following this tab" = "平板正跟随这个标签页";

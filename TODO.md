@@ -410,6 +410,77 @@
     ④ **排查这类问题别信 `vmmap` 的「已分配」**：free 掉但被分配器缓存的大块照样列成已分配，
     以 `PageBitmap.liveImages`（我们自己数的存活位图）为准——我为此绕了一整轮。
 
+  - **2026-08-29：macOS 多标签页第 2 步「标签化」已落地，待真机验证**（方案 `MAC-TABS-PLAN.md §9`）。
+    新增 `TabsModel`（窗口的标签集，不变式：永远至少一个标签，故 `active` 非可选）、
+    `TabBarChrome.swift`（纯呈现层，只吃值）+ `TabBarView.swift`（适配器）+ `spike/tabbar-look.swift`（样张）。
+    - **`DocPane` 拆层没做也不需要**：`TabsModel` 只转发**活动标签**的 `objectWillChange`
+      （会话 → 标签 → TabsModel → ContentView）就等价于从前的 `@StateObject var session`，
+      `ContentView` 只把 `tab` 改成 `tabs.active` 一行。
+    - 语义：侧栏点文档 = 已开着就切过去、没开就新标签；平板 `openDoc` 改成**开新标签**；
+      ⌘W 关标签（只剩一个时关窗口，同 Safari）、⇧⌘W 关窗口、⌘T 新标签、⌃Tab / ⌃⇧Tab；
+      标签序 + 活动标签存 `UserDefaults`（不动 SQLite schema），冷启动最多恢复 8 个标签。
+    - **必改项已改**：AI 内置面板宿主从 `session.id` 改成 **`session.windowID`**——按标签分的话
+      切标签就是换宿主，会复现 2026-08-26「开着 webview 切换书」那个 WebKit trap。
+    - **三个坑（细节在方案 §9）**：① 切回标签会跳回「装载那一刻」的位置（阅读区首帧只认
+      非 "mac" 来源的锚点，而本机滚动发的正是 "mac"）→ `prepareForReactivation()` 把活值翻译成
+      `restore` 锚点；② **样张当场抓到**横向 ScrollView 把浮动胶囊撑成满宽 + 浅色下活动标签反而更浅
+      → `ViewThatFits` + `fixedSize` + 活动标签加粗；③ 关标签会把平板跟随交给另一扇窗口。
+    - **2026-08-29 用户真机报的四处，已全部修掉并复验通过**（细节与教训全在 `MAC-TABS-PLAN.md §9`）：
+      ① 「切换标签有加载感、闪烁」——**真凶是 `ReaderSurface.onDisappear` 里的
+      `PageRenderEngine.purge(doc:)`**：它的前提「视图销毁 = 不再看这份文档」在多标签下不成立，
+      切走标签只是拆了阅读区，文档还在后台标签开着，却把整篇几百 MB 页图全清了 → 每次切回来
+      都要从头重渲。改成「这篇文档不再被任何会话持有」时才清。同轮另建「首帧种子」机制让重建后
+      的首帧直接是离开时那一屏（种在 `ReaderSurface.init` 的 `@State` 初值里——`onAppear` 是
+      **首帧画完之后**才调用的，在它里面做什么都救不了那一帧）。
+      ② **⌘W 关掉了整扇窗口**（预判的冲突坐实）——AppKit 自带「文件 › 关闭」也占 ⌘W，菜单快捷键
+      抢不过。改用**本地 keyDown 监视器**（跑在菜单等价键判定之前），每窗一个、先核对是不是
+      key window，只剩一个标签时放行让系统关窗。
+      ③ **阅读进度整个不保存/不恢复**——**第 1 步「纯搬家」埋的**，与标签无关、所有窗口都中招：
+      `saveProgress` 原本 `guard let docId else { return }`，我加默认参数改成 `docId ?? docID`，
+      于是 `select()` 里「窗口第一次开文档、旧 id 为 nil」那一下被兜底成「存到当前这篇」，
+      在 `load()` 读进度**之前**用空会话状态（第 0 页）把它覆盖了。每次打开文档都自毁一次进度。
+      ④ **切标签位置回不去**——快照里存了「滚动偏移/实化窗口」这种**每帧都在变的量**，而视图销毁前
+      会来最后一拍零几何把它们写成 0。改成快照只放慢变量，位置从 `scrollAnchor`（页+页内比例）
+      现算；且种下后必须**显式 `scrollTo` 一次**（`ScrollPosition` 初值不保证被采纳，而兜底重试是
+      几何回调驱动的，页面不动就永远不重试）。
+      🔴 **排查方式本身是这轮最大的收获**：① 我在渲染时序里连猜三次（`@Published` willSet /
+      `@State` 同趟读写 / 退化几何帧）——那三处都是真 bug 也都修了，**但没有一个是主因**。
+      改按仓库纪律「静默失效先打点再改码」加了三处 `ZoomProbe.mark` 后，**第一份日志就给出了答案**。
+      这类「改了没效果」的问题，打点的成本永远低于再猜一轮。
+    - 故意没做：标签拖拽重排、⌘1…⌘9。
+    - 验证：编译零 error 零 warning；13 个 spike 全绿（向量逐字节未变）；16 张样张已逐张目检。
+      **真机清单见「接下来」第 9 条。**
+
+  - **2026-08-29：macOS 多标签页第 1 步「落库搬家」已落地，待真机回归**（方案与全部决策见
+    **`MAC-TABS-PLAN.md`**，那是这件事的唯一权威）。用户需求：标签自建 UI 不走 NSWindow 原生标签、
+    标签栏浮在 PDF 区域底部、切换零加载、同工作区打开一律走新标签。四条拍板：标签栏**两种形态都要**
+    （浮动胶囊 ⇄ 贴底整条，可互切）且**关闭按钮在左**／**≥2 个标签才显示**／平板 `openDoc` 改成
+    **开新标签**（推翻 2026-08-05「新开 Mac 窗口」的旧决定）／后台标签**每个 tab 独立存活，不做 LRU 休眠**。
+    - **核心原则：一个标签 = 今天的一个窗口。** `AppModel.sessions`、平板 `docs`、工作区「打开集」
+      `windowDocs`、`WorkspaceRegistry.windowPaths` 这四处记账本来就按 `DocSession.id` 走，
+      所以标签化后它们语义一行不改，**平板协议一个字节不改**。
+    - **本次只做第 1 步（纯搬家，界面上零区别）**：新建 `Sources/App/DocTabModel.swift`，
+      `ContentView` 1146 → 645 行。16 条 per-doc `onChange`（含 `canvasRoutes`/`aiRoutes`/`scratchRoutes`
+      三层包装，它们当初纯为绕开类型检查器超时才拆的，现在不需要了）+ `loadSelected` + 全部
+      `clear*`/`load*`/`persist*` + 进度存取 + `verifyContentHash` + `setCanvasMode` + 四个 per-doc 状态
+      整体搬进去，`onChange` 换成 Combine 订阅。
+      🔴 **为什么必须搬**：多标签之后后台标签**没有视图在跑**，落库若仍挂在 `ContentView.onChange` 上，
+      平板往后台标签写一笔、AI 面板绑到后台标签就会**静默丢数据**。
+    - **搬的过程中撞到三个坑（都写进代码注释了，细节见方案 §9）**：
+      ① `@Published` 在 **willSet** 发送 → 同步 sink 里读 `session.x` 拿到的是**旧值**，
+      落库和广播会整体慢一个版本 → `on()` 一律 `.receive(on: DispatchQueue.main)` 跳一拍；
+      ② `session` 从 `@StateObject` 变计算属性 = **ContentView 不再观察它**（标题栏/工具栏禁用态/
+      查找条/OCR 面板全靠它刷新）→ `DocTabModel` 转发 `session.objectWillChange`；
+      没有 `$session` 投影了，`.searchable`/`Toggle`/`Picker` 改用 `bind(\.keyPath)`；
+      ③ 异步跳拍开了「切文档/关窗把最后一次改动甩掉」的窗口 → `select()` 与 `close()` 开头
+      同步跑一遍 `flushPersist()`（七个 persist 全幂等）。
+    - 验证：`xcodebuild` 零 error 零 warning；13 个 spike 全绿（`store-test` 38／`ink-store-test` 21／
+      `ink-edit-test` 62／`scratch-store-test` 53／`ocr-store-test` 15／`ai-thread-store-test` 53／
+      `note-type-test` 27／`canvas-margin-test` 24／`page-layout-test` 25／`page-snip-test` 34／
+      `ocr-char-select-test` 26／`udp-reorder-test` 26／`wire-codec-test` 90 且导出向量与库里的
+      `wire-vectors-swift.txt` 逐字节一致 → 跨端向量未变）。**真机回归清单见「接下来」第 8 条。**
+      验过再做第 2 步（标签栏 UI + 打开语义改道 + AI 宿主键改窗口 id + 平板 openDoc 改道 + 恢复成多标签）。
+
 ## 🔧 整体优化路线图（2026-07-25 起，用户需求「整体优化」）
 
 四项大改，分里程碑推进。用户已定：UDP=整条实时流走 UDP（原生客户端自管序号/丢弃/轻量重传，控制握手仍走可靠通道，浏览器用不了 UDP 永远走 WS）；安卓 = 工作区内 `android/` 子目录独立 git 仓库。
@@ -635,6 +706,33 @@
     `setPages(reset=true)` 清掉 `images` 并把滚动归零，要等 Mac 的 `viewport` 广播回来才跳到原位
     ——图全在缓存里也照闪。根治＝平板自己记住每篇的滚动位置（`v → scrollY/zoom`，模式2 也存一份），
     换文档立刻恢复、不等那条广播；Mac 的 viewport 到了再按老规矩覆盖。
+
+8. **macOS 多标签页第 1 步「落库搬家」真机回归 —— 2026-08-29 用户已验主干，可以推进第 2 步**。
+   这一步**界面上看不出任何区别**——它把 per-doc 的加载与落库整体从 `ContentView` 搬进了
+   `DocTabModel`，所以验的不是「新功能对不对」，而是「**有没有搬丢东西**」。
+   - ✅ **标题栏页码跟着翻页实时变**（验会话变更转发是否生效，即坑 ②）
+   - ✅ **落笔/擦除后立刻切文档再切回来东西还在**（验切档前的同步补落库，即坑 ③）
+   - ✅ **平板全链路**（跟随滚动 / 落笔回传 / 换文档 / 草稿纸 / 图层显隐同步）
+   - ⏸ **关窗后移动硬盘立刻弹出**——未测（工作区在内置盘上）。`close()` 的次序红线守在这儿，
+     哪天工作区放到移动盘上顺手验一下。
+   - ⏸ 以下几项尚未逐一手测（都走同一套增量对账，主干过了风险不大，遇到异常先怀疑这里）：
+     草稿纸 CRUD、AI 绑定与「选中回答建笔记」、画板模式三条入口（按钮/⌥⌘C/平板上行）、
+     重定位、文件被原地替换的提示、冷启动进度恢复。
+
+9. **macOS 多标签页第 2 步「标签化」真机验证**（2026-08-29 落地，见上；完整清单在 `MAC-TABS-PLAN.md §10`）。
+   ① 切标签**看不看得出加载**（页图被 LRU 挤掉那种情况是重点）；
+   ② 切回标签阅读位置/缩放/横向滚动**精确复位**，不跳不闪；
+   ③ 两种标签栏形态的观感与对比度（浅/深）、关闭按钮在左的手感、右键切形态；
+   ④ 标签栏与笔架/滚动条/草稿纸/AI 面板的遮挡关系；
+   ⑤ 平板：文档列表列出全部标签、书库点没开的 → Mac 开**新标签**并跟过去、后台标签上那枚 iPad 标记；
+   ⑥ 后台标签独立落库（平板往后台标签写一笔 → 切过去/重启还在）；
+   ⑦ 内存：1 / 3 / 6 个标签的 footprint（手法见 `unireader-memory-profiling` 的纪律）；
+   ⑧ 关标签后移动硬盘能否立刻弹出；
+   ⑨ 冷启动恢复的标签顺序与活动标签；
+   ⑩ **⌘W 关的是标签还是整扇窗**（与 AppKit 自带「文件 › 关闭」抢快捷键，若被抢改用 keyDown 监视器）、
+      ⇧⌘W / ⌘T / ⌃Tab / ⌃⇧Tab；
+   ⑪ 开十几个标签时的横向滚动（样张里 ScrollView 渲染是空白，只能真机看）；
+   ⑫ **开着 AI 内置面板切标签不崩**（宿主改按窗口分就是为这条），切回来对话还在。
 
 ## 🐞 已知 Bug（待修）
 

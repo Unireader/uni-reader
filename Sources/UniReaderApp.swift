@@ -446,8 +446,35 @@ struct UniReaderApp: App {
                     NotificationCenter.default.post(name: .openPDFRequested, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: .command)
+                Button(L("New Tab")) {
+                    NotificationCenter.default.post(name: .newTabRequested, object: nil)
+                }
+                .keyboardShortcut("t", modifiers: .command)
                 Divider()
                 OpenRecentMenu()
+            }
+            // 标签页（`MAC-TABS-PLAN.md`）。⌘W 关的是**当前标签**，只剩一个标签时才关窗口
+            // （同 Safari / Xcode）；⇧⌘W 直接关窗口。
+            // ⚠️ 真机待验：AppKit 自带的「文件 › 关闭」也占着 ⌘W，两者谁拿到快捷键要看菜单顺序。
+            // 若真机上 ⌘W 关掉的是整扇窗，改用一个 keyDown 本地监视器抢在菜单等价键之前处理。
+            CommandGroup(after: .saveItem) {
+                Divider()
+                Button(L("Close Tab")) {
+                    NotificationCenter.default.post(name: .closeTabRequested, object: nil)
+                }
+                .keyboardShortcut("w", modifiers: .command)
+                Button(L("Close Window")) {
+                    NotificationCenter.default.post(name: .closeWindowRequested, object: nil)
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+                Button(L("Next Tab")) {
+                    NotificationCenter.default.post(name: .nextTabRequested, object: nil)
+                }
+                .keyboardShortcut(.tab, modifiers: .control)
+                Button(L("Previous Tab")) {
+                    NotificationCenter.default.post(name: .prevTabRequested, object: nil)
+                }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
             }
             // 阅读区缩放（由 key 窗口的 PageStreamView 响应）。
             CommandGroup(after: .sidebar) {
@@ -558,6 +585,11 @@ extension Notification.Name {
     static let openWorkspaceRequested = Notification.Name("com.xvan.UniReader.openWorkspaceRequested")
     static let appDidFinishLaunching = Notification.Name("com.xvan.UniReader.appDidFinishLaunching")
     static let newWindowRequested = Notification.Name("com.xvan.UniReader.newWindowRequested")
+    static let newTabRequested = Notification.Name("com.xvan.UniReader.newTabRequested")
+    static let closeTabRequested = Notification.Name("com.xvan.UniReader.closeTabRequested")
+    static let closeWindowRequested = Notification.Name("com.xvan.UniReader.closeWindowRequested")
+    static let nextTabRequested = Notification.Name("com.xvan.UniReader.nextTabRequested")
+    static let prevTabRequested = Notification.Name("com.xvan.UniReader.prevTabRequested")
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
     static let toggleCanvasMode = Notification.Name("com.xvan.UniReader.toggleCanvasMode")

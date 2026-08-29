@@ -320,3 +320,14 @@
 /* Canvas mode (v12): the blank space beside the page is writable too */
 "Canvas Mode" = "Canvas Mode";
 "Write in the blank space beside the page" = "Write in the blank space beside the page";
+
+/* 标签页（MAC-TABS-PLAN.md） */
+"New Tab" = "New Tab";
+"Close Tab" = "Close Tab";
+"Close Other Tabs" = "Close Other Tabs";
+"Close Window" = "Close Window";
+"Next Tab" = "Next Tab";
+"Previous Tab" = "Previous Tab";
+"Pin to Bottom" = "Pin to Bottom";
+"Float" = "Float";
+"The tablet is following this tab" = "The tablet is following this tab";

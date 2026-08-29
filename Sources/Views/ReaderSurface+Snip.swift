@@ -154,7 +154,7 @@ extension ReaderSurface {
         guard let first = PageSnip.slices(region).first else { return }
 
         // 面板先开起来、绑定上下文对齐到这一页（不强制新对话——框第二块多半是想接着问）。
-        AIPanelModel.shared.present(session: session.id) { openWindow(id: $0) }
+        AIPanelModel.shared.present(window: session.windowID) { openWindow(id: $0) }
         AIPanelModel.shared.prepareForSend(
             AIBindContext(sessionID: session.id, documentId: docId, docTitle: session.title,
                           page: first.page, anchor: first.rect))
@@ -230,7 +230,7 @@ extension ReaderSurface {
     var aiInlineInset: CGFloat {
         let p = AIPanelModel.shared
         guard p.mode == .inline else { return 0 }
-        return p.isInlineOpen(session.id) ? CGFloat(p.inlineWidth) : 60
+        return p.isInlineOpen(session.windowID) ? CGFloat(p.inlineWidth) : 60
     }
 
     /// 显示一条反馈并定时收起。`working` 给长一点的兜底超时（正常会被结果那条顶掉）。

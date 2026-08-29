@@ -17,6 +17,9 @@ struct PageStreamView: View {
     let nightMode: Bool
     let interpEnabled: Bool
     let isActiveWindow: Bool
+    /// 底部标签栏占掉的高度（`TabBarMetrics.inset`，只有一个标签时为 0）。
+    /// 用途两处：滚动条不钻到标签栏底下、笔架拖不到标签栏底下。**内容仍然垫到底**（同 topInset 的口径）。
+    let bottomInset: CGFloat
 
     /// 全宽（含侧栏/Inspector 玻璃下延伸区）。与未遮宽对比可区分「窗口缩放」vs「侧栏开合」。
     @State var fullWidth: CGFloat = 0
@@ -30,7 +33,8 @@ struct PageStreamView: View {
                           isActiveWindow: isActiveWindow,
                           unobSize: geo.size,
                           fullWidth: fullWidth,
-                          indicatorTopInset: geo.safeAreaInsets.top)
+                          indicatorTopInset: geo.safeAreaInsets.top,
+                          bottomInset: bottomInset)
                 .ignoresSafeArea()
         }
         .background {
@@ -56,6 +60,113 @@ struct ReaderSurface: View {
     let unobSize: CGSize          // 未遮视口尺寸（fit 基准；GeometryReader 提供，与内容无关）
     let fullWidth: CGFloat        // 全宽（第二个 GeometryReader；区分窗口缩放 vs 侧栏开合）
     let indicatorTopInset: CGFloat // 滚动条顶端下压量（避让玻璃工具栏；内容仍垫底）
+    let bottomInset: CGFloat       // 底部标签栏占掉的高度（滚动条与笔架都要避让它；内容仍垫底）
+    /// 本次是不是**从快照种下的**（= 切标签回来）。见 `init` 的红线。
+    let seededFromSnapshot: Bool
+
+    /// 🔴 **切标签回来必须在这里（首次求值）就把状态摆好，`onAppear` 已经晚一帧**
+    /// （2026-08-29 用户录像实测：先空白一下再出内容）。
+    ///
+    /// 切标签时阅读区被 `PageStreamView` 上的 `.id(docKey)` 整体重建，而 `onAppear` 是**视图首帧
+    /// 画完之后**才调用的——在它里面做多少事都救不了那一帧空白（那正是 `geometryChanged` 里
+    /// 「宁可白一下也不闪一下」注释描述的状态：`didInitialGeo` 未成立 = 不实化、不出图 = 留白）。
+    /// `@State` 的初值则在**结构体第一次被创建**时就定下，赶在首帧之前。
+    ///
+    /// 种子来自 `DocSession.ReaderSnapshot`（离开时的 fit 基准 / 缩放 / 偏移 / 实化窗口 / 基图宽），
+    /// 页图直接从 `PageRenderEngine` 缓存同步取——首帧就是「离开时那一屏」，一帧都不空。
+    ///
+    /// 三条前提缺一不可，任一不满足就原样走常规首帧路径（开窗 / 换文档都该走那条）：
+    /// 有「待种」标记（`readerSeedPending`，切标签时才置）、几何已是真的、**fit 基准没变**
+    /// （期间窗口或侧栏尺寸变过的话旧快照是错的）。
+    init(session: DocSession, docKey: String, nightMode: Bool, interpEnabled: Bool,
+         isActiveWindow: Bool, unobSize: CGSize, fullWidth: CGFloat,
+         indicatorTopInset: CGFloat, bottomInset: CGFloat) {
+        _session = ObservedObject(wrappedValue: session)
+        self.docKey = docKey
+        self.nightMode = nightMode
+        self.interpEnabled = interpEnabled
+        self.isActiveWindow = isActiveWindow
+        self.unobSize = unobSize
+        self.fullWidth = fullWidth
+        self.indicatorTopInset = indicatorTopInset
+        self.bottomInset = bottomInset
+
+        // ⚠️ 这里用不了实例属性（还没初始化完），故 `layoutW` 就地重算一遍。
+        let lw = fullWidth > 0 ? fullWidth : unobSize.width
+        let s = session.readerSnapshot
+        let lay = session.cachedLayout
+        // 🔴 **宽度核对只在「量到的宽度可信」时才做**：`lw < 200` 是 SwiftUI 尚未落位时报的占位几何
+        // （侧栏最小宽就有 200，见 `minPlausibleLayoutW`）。占位值什么都证明不了，而 `@State` 初值
+        // **只在结构体第一次被创建时生效**——这一次不种，后面再创建也补不上了。所以占位时照种，
+        // 真宽度到达后若确实变过，由既有的 `onChange(of: fullWidth)` → `refitToViewport` 收拾。
+        let widthChanged = (lw >= 200) && abs((s?.layoutW ?? lw) - lw) > 0.5
+        // 位置来自 `scrollAnchor`（页 + 页内比例），没有锚点就没得恢复，不种。
+        let anchor = session.scrollAnchor
+        guard session.readerSeedPending, let s, let lay, let a = anchor, !widthChanged else {
+            // 跳过的原因值得留一行（默认关；`touch ~/Library/Logs/UniReader-zoom.log` 开）：
+            // 这条路径静默失效过好几轮，下次再出问题第一眼要看的就是它。
+            if session.readerSeedPending {
+                let why = s == nil ? "无快照" : (lay == nil ? "无布局缓存"
+                        : (anchor == nil ? "无锚点" : "宽度变了 \(Int(s?.layoutW ?? -1))→\(Int(lw))"))
+                ZoomProbe.mark("标签种子：跳过（\(why)）")
+            }
+            seededFromSnapshot = false
+            return
+        }
+        seededFromSnapshot = true
+        let avail = max(1, lw - NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy))
+        // 拆成局部常量而不是写进一个大表达式：本项目被 SwiftUI 类型检查器超时坑过多次
+        // （ContentView / ReaderSurface 都为此分过层），算术嵌套一深就是下一个。
+        let pw: CGFloat = s.fitBasis * s.zoom
+        let ds: CGFloat = pw / PageLayout.refWidth
+        // **位置由锚点现算**（页 + 页内比例 → docY → 显示偏移），不从快照拿，理由见 `ReaderSnapshot`。
+        let offY: CGFloat = lay.docY(page: a.page, frac: a.frac) * ds
+        let offX: CGFloat = CGFloat(session.readHFrac) * pw
+        let off = CGPoint(x: offX, y: offY)
+        // 实化窗口同样现推（上下各留一屏，与 `updateRealized` 同口径）。
+        let buffer: CGFloat = unobSize.height / max(0.0001, ds)
+        let realizedNow = lay.pageRange(fromDocY: offY / max(0.0001, ds) - buffer,
+                                        toDocY: (offY + unobSize.height) / max(0.0001, ds) + buffer)
+        _layout = State(initialValue: lay)
+        _fitBasis = State(initialValue: s.fitBasis)
+        _zoom = State(initialValue: s.zoom)
+        _userZoomed = State(initialValue: s.userZoomed)
+        _realized = State(initialValue: realizedNow)
+        _pos = State(initialValue: ScrollPosition(point: off))
+        let seeded = Self.seedImages(docKey: docKey, pages: realizedNow,
+                                     width: s.basePixelW, night: nightMode)
+        _images = State(initialValue: seeded)
+        let sc = Scratch()
+        sc.didInitialGeo = true                       // 首帧就当作「基准已定」，别再等几何回调
+        sc.nightLive = nightMode
+        sc.imagesNight = nightMode
+        sc.basePixelW = s.basePixelW
+        sc.recentBaseWidths = s.recentBaseWidths
+        sc.seedOffset = off                           // `setup` 拿它显式提交一次滚动
+        sc.geo = GeoSnap(offsetX: off.x, offsetY: off.y,
+                         containerW: unobSize.width, containerH: unobSize.height,
+                         contentW: max(avail, pw), contentH: lay.totalHeight * ds)
+        sc.topDocY = offY / max(0.0001, ds)
+        _scratch = State(initialValue: sc)
+        ZoomProbe.mark("标签种子：p\(a.page)+\(String(format: "%.3f", a.frac)) → y=\(Int(offY))"
+            + " 实化 \(realizedNow.lowerBound)…\(realizedNow.upperBound)"
+            + " 图 \(seeded.count)/\(realizedNow.count) 张")
+    }
+
+    /// 从页图缓存同步取回「离开时那一屏」的图。取不到（被 LRU 挤掉了）就空着，
+    /// 常规渲染调度随后会补——那是真正需要重渲的情况，不是本方案能省掉的。
+    private static func seedImages(docKey: String, pages: ClosedRange<Int>,
+                                   width: Int, night: Bool) -> [Int: CGImage] {
+        guard width > 0 else { return [:] }
+        var out: [Int: CGImage] = [:]
+        for i in pages {
+            if let hit = PageRenderEngine.shared.cached(
+                PageRenderEngine.baseKey(doc: docKey, page: i, pixelWidth: width, night: night)) {
+                out[i] = hit
+            }
+        }
+        return out
+    }
 
     @Environment(\.displayScale) var displayScale
     @Environment(\.openWindow) var openWindow          // 右键「用 … 讨论本页」开 AI 面板浮窗
@@ -283,6 +394,7 @@ struct ReaderSurface: View {
         //    → 把内容撑回全窗宽 > 真实视口(全窗宽−占位竖滚动条) → 常驻横条。靠首端对齐关掉居中；页面仍由 pageX 在内容内居中。
         .defaultScrollAnchor(.topLeading)
         .contentMargins(.top, indicatorTopInset, for: .scrollIndicators)   // 滚动条不进工具栏区
+        .contentMargins(.bottom, bottomInset, for: .scrollIndicators)      // 也不钻到底部标签栏底下
         .scrollPosition($pos)
         .onScrollGeometryChange(for: GeoSnap.self) { g in
             GeoSnap(offsetX: g.contentOffset.x, offsetY: g.contentOffset.y,
@@ -344,7 +456,7 @@ struct ReaderSurface: View {
         // 手势另有 `session.openPadID == nil` 的显式门控兜底（见各 gesture）。
         .overlay { scratchPadLayer }
         // 笔架悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
-        .overlay { GeometryReader { proxy in PenRackView(session: session, viewportSize: proxy.size, topInset: indicatorTopInset, isActiveWindow: isActiveWindow) } }
+        .overlay { GeometryReader { proxy in PenRackView(session: session, viewportSize: proxy.size, topInset: indicatorTopInset, bottomInset: bottomInset, isActiveWindow: isActiveWindow) } }
         .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: app.pointerTool) { _, t in
             if t != .lasso { clearLassoSelection() }   // 切走框选工具即放弃选中（手势已门控，残留高亮框会误导）
@@ -390,12 +502,7 @@ struct ReaderSurface: View {
             removeWheelMonitor()
             removeLassoEscMonitor()
             removeToolKeyMonitor()
-            PageRenderEngine.shared.setWanted([], client: scratch.clientID)
-            // 本窗口不再看这份文档了（关窗 / 换文档——外层挂了 `.id(docKey)`，换文档就是本视图
-            // 销毁重建）：把它那几百 MB 页图整批清掉。**必须排在 `setWanted([])` 之后**——引擎靠
-            // 「还有没有窗口声明要这份文档的键」判断该不该清，顺序反了会把自己当成"还在看"而跳过。
-            // 多窗口开同一份文档时，别的窗口的 wanted 还在，这次清理会被正确跳过。
-            PageRenderEngine.shared.purge(doc: docKey)
+            releaseRenderCache()
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomIn)) { _ in
             if isActiveWindow { commandZoom(factor: 1.25) }
@@ -527,19 +634,67 @@ struct ReaderSurface: View {
 
     // MARK: 生命周期
 
+    /// 阅读区销毁时的页图收尾。**必须排在 `setWanted([])` 之后**——引擎靠「还有没有窗口声明要
+    /// 这份文档的键」判断该不该清，顺序反了会把自己当成"还在看"而跳过。多窗口开同一份文档时，
+    /// 别的窗口的 wanted 还在，这次清理会被正确跳过。
+    ///
+    /// 🔴 **「本视图销毁」≠「不再看这份文档」——多标签之后这条前提就不成立了**
+    /// （2026-08-29 实测定位，「切标签有加载感」的真凶，与阅读区快照那套毫无关系）：
+    /// 切到别的标签只是把这个阅读区拆了（外层 `.id(docKey)`），文档还在后台标签里开着，
+    /// 切回来还要用这批图。照旧清的话，每次切回来都得从头重渲一整屏 = 必然的加载感。
+    /// 真正该清的时机是**这篇文档不再被任何会话持有**：关标签 / 关窗（`DocSession.teardown`
+    /// 里另有一次清理兜底）、或本标签换了文档（那时会话的 `contentHash` 已经是新的了）。
+    ///
+    /// （抽成方法而不是内联在 `onDisappear` 里：那条修饰符链早就到顶，多两行就
+    /// 「unable to type-check in reasonable time」——本文件的老地雷。）
+    func releaseRenderCache() {
+        let stillOpen = app.sessions.contains { $0.contentHash == docKey }
+        guard !stillOpen else {
+            // **切到后台的标签**：图要留着（切回来靠它零加载），但只留**当前这一档宽度**。
+            // 🔴 原样全留是不行的（2026-08-29 实测：3 个标签用一阵子 footprint 1617MB、峰值 1919MB）——
+            // 缩放每停一档就攒下一整套页图，几个标签各攒几档就是几百 MB。而且原来那句 `purge`
+            // 顺带干的第二件事**同样重要**：`relieveMallocPressure` 催 malloc 把释放的大块真正还给
+            // 系统，去掉它 `MALLOC_LARGE` 就一路挂着不降（见 `PageRenderEngine` 那段注释）。
+            PageRenderEngine.shared.purgeBase(doc: docKey, keeping: scratch.basePixelW)
+            return
+        }
+        PageRenderEngine.shared.purge(doc: docKey)
+    }
+
     func setup() {
         guard let pdf = session.pdf else { return }
-        let lay = PageLayout(doc: pdf)
+        // 布局缓存在会话上：切标签重建时不必再遍历全部页取尺寸（`init` 的种子也读它）。
+        let lay = session.cachedLayout ?? PageLayout(doc: pdf)
+        session.cachedLayout = lay
         layout = lay
         follower.pageCount = lay.pageCount
         follower.interpEnabled = interpEnabled
         scratch.nightLive = nightMode     // 引用侧实时值（键计算唯一真源，见 baseKey 注释）
         scratch.imagesNight = nightMode   // 首批渲染直接用当前夜间键出图，与本地显示模式对齐
         scratch.appearAt = CACurrentMediaTime()
-        scratch.pendingZoom = session.restoreZoom   // 上次缩放：首帧定 fitBasis 后套用（见 geometryChanged）
-        scratch.pendingHFrac = session.restoreHFrac > 0.0001 ? session.restoreHFrac : nil   // 横向恢复
         // 页边软边界的首值（首帧没有几何可补偿，直接置；笔迹后到由 strokes.count 的 onChange 兜底）
         canvasMarginState = CanvasMargin.margin(overflow: CanvasMargin.overflow(session.strokes))
+
+        // 切标签回来：基准/缩放/实化窗口/页图/滚动位置已由 `init` 的 `@State` 初值种好
+        // （赶在首帧之前，见那里的红线）。这里只把「待种」标记用掉，并补一次滚动位置的校验重试。
+        if seededFromSnapshot {
+            session.readerSeedPending = false
+            scratch.pendingZoom = zoom
+            if let off = scratch.seedOffset {
+                // 🔴 **必须显式滚一次**（2026-08-29 用户报「切 tab 进度没恢复」的根因）：
+                //  · `ScrollPosition` 的**初值**（init 里种的那个）不保证被采纳；
+                //  · `verifyPendingTarget` 那套兜底重试是**几何回调驱动**的，而页面停着不动
+                //    就不会再有几何回调 —— 光挂一个 `pendingTarget` 等于永远不重试。
+                // 于是这里主动提交一次，未达再由既有的校验环重试（同 runloop 原子提交见其注释）。
+                pos.scrollTo(point: off)
+                scratch.pendingTarget = off
+                scratch.pendingTries = 0
+            }
+            return
+        }
+
+        scratch.pendingZoom = session.restoreZoom   // 上次缩放：首帧定 fitBasis 后套用（见 geometryChanged）
+        scratch.pendingHFrac = session.restoreHFrac > 0.0001 ? session.restoreHFrac : nil   // 横向恢复
         // fitBasis 由首帧 geometryChanged 设定（此处不预设，避免与真实值有偏差）
         // 视图创建前就已发出的 restore/toc 锚点（loadSelected 先 emit 后建视图）
         if let a = session.scrollAnchor, a.origin != "mac" {

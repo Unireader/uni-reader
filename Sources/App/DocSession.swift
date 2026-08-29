@@ -78,6 +78,16 @@ struct TextMatch: Identifiable, Equatable {
 /// 一个打开中的 PDF 窗口的运行时状态。每个 reader 窗口一个。
 final class DocSession: ObservableObject, Identifiable {
     let id = UUID()
+
+    /// **本会话所在窗口的身份**（由 `DocTabModel` 在建标签时写入，之后不变）。
+    ///
+    /// 🔴 为什么把它挂在会话上：多标签之后「一个标签 = 一个会话」，而有些东西是**按窗口**分的，
+    /// 最要命的是内置 AI 面板那一份网页（`AIHost.inline(...)`）——按 `session.id` 分宿主的话，
+    /// 切标签就是换宿主，而 `AIInlineLayer` 的注释白纸黑字写着「同一宿主被重建 =
+    /// `_WebKit_SwiftUI.makeViewProvider` 当场 trap」（2026-08-26「开着 webview 切换书」秒崩）。
+    /// 需要窗口身份的地方（`AIInlineLayer` / `ReaderSurface+Snip` 的面板宽度）都在会话拿得到的
+    /// 位置，挂这儿就不必层层传参——同 `workspaceFolder` 那几个窗口级快照的先例。
+    var windowID = UUID()
     @Published var title = ""
     @Published var contentHash = ""
     @Published var pdf: PDFDocument?
@@ -114,6 +124,50 @@ final class DocSession: ObservableObject, Identifiable {
     var readHFrac: Double = 0
     /// 待恢复的横向滚动比例（loadSelected 读入，PageStreamView 首帧定位后一次性套用）。
     var restoreHFrac: CGFloat = 0
+
+    /// 阅读区**「离开时长什么样」的快照**，切标签回来时用它让重建后的**首帧就是对的**。
+    ///
+    /// 🔴 为什么需要它（2026-08-29 用户报「切换标签有加载感，有点闪烁」）：切标签时阅读区被
+    /// `PageStreamView` 上的 `.id(docKey)` 整体重建，而常规首帧路径要等 `onScrollGeometryChange`
+    /// 回调才 `didInitialGeo` → 定基准 → 实化 → 出图，那是**下一拍**的事；这一拍屏幕上是空的
+    /// （`voidColor`）。开窗时那是刻意的取舍（「宁可白一下也不闪一下」，见 `geometryChanged`），
+    /// 但切标签时用户刚刚还在看这一页，白一下就是「加载感」。
+    ///
+    /// 有了它，`ReaderSurface.setup`（仍在本次事务内）就能把基准/缩放/实化窗口/页图/滚动位置
+    /// 一次摆好——项目实测「同一 runloop 周期内改布局 + scrollTo = 同一次 CA commit = 屏幕原子」。
+    ///
+    /// **非 @Published**：每次滚动几何回调都写，发布出去就是每帧重算整窗视图树（同 `readHFrac`）。
+    /// 换文档时由 `DocTabModel.load` 清空——那时该走库里的进度，不是上一篇的屏幕状态。
+    struct ReaderSnapshot {
+        /// 拍快照时的**布局宽**（`layoutW`，含侧栏延伸区的全窗宽）。核对「窗口宽有没有变过」只能用它：
+        /// 🔴 别拿 `fitBasis` 去和现算的 `fitAvail` 比——`fitAvail` 要减 `scrollerAllowance`，
+        /// 而那个值在触摸板（overlay 滚动条）机器上运行时会被校正成 0，与 init 里现算的 legacy 宽度
+        /// 差着 15pt，核对必然不通过、种子永远种不上（2026-08-29 第一版就栽在这儿）。
+        var layoutW: CGFloat
+        var fitBasis: CGFloat
+        var zoom: CGFloat
+        var userZoomed: Bool
+        var basePixelW: Int            // 当时用的基图像素宽 —— 用它去缓存里取图才命中得上
+        var recentBaseWidths: [Int]
+        // 🔴 **这里刻意不存「滚动偏移」和「实化窗口」**（2026-08-29 实测教训）：
+        // 那两个是**每帧都在变的量**，而视图销毁前会来最后一拍零几何，正好把它们写成
+        // `offset=0 / realized=0…0` —— 快照存的位置于是永远是文档顶端，切回来自然回不到原处。
+        // 位置改从 `scrollAnchor`（页 + 页内比例）+ `readHFrac` 现算：那是阅读区一路维护、
+        // **存阅读进度也在用**的可靠真相，跟视图的生死无关。实化窗口据算出来的偏移现推即可。
+        // 留在这里的几项都是「慢变量」（fit 基准 / 缩放 / 基图宽），零几何那一拍不会污染它们。
+    }
+    var readerSnapshot: ReaderSnapshot?
+
+    /// 「**下一次阅读区重建要用快照种子**」——由 `DocTabModel.prepareForReactivation` 在切到这个
+    /// 标签之前置上，`ReaderSurface.setup` 用掉即清。
+    /// 没有这个门的话，`ReaderSurface` 的 init（写字时每落一个点都会重建一次 struct）每次都要去
+    /// 页图缓存里查一轮，纯浪费。**故意不在 init 里清**：SwiftUI 允许在一次布局里多次创建 struct，
+    /// 清早了真正被装载的那一次就拿不到种子了。
+    var readerSeedPending = false
+
+    /// 页面布局缓存（`PageLayout(doc:)` 要遍历全部页取尺寸，切标签重建时不该重算）。
+    /// 换文档时由 `DocTabModel.load` 清空。
+    var cachedLayout: PageLayout?
     /// 画板模式（v12，逐文档记）：页面两侧的空白也是可书写区，横向按笔迹软边界生长。
     /// 页边笔迹仍是**页内笔迹**（note kind=2、归属那一页），只是归一化 x 越出 0~1 —— 见 `CanvasMargin`。
     @Published var canvasMode = false

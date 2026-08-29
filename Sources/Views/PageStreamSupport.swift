@@ -232,6 +232,8 @@ final class Scratch {
     var lastRefitFullW: CGFloat = 0        // 上次 refit 时的全宽（区分窗口缩放 vs 侧栏/Inspector 开合）
     var appearAt: CFTimeInterval = 0       // 视图出现时刻：启动稳定窗内宽度变化一律真 fit（防瞬态宽被锁死）
     var didInitialGeo = false
+    /// 切标签种子算出的滚动偏移（`ReaderSurface.init` 写、`setup` 读着提交一次）。
+    var seedOffset: CGPoint?
     var didFirstKick = false
     var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点 / 双击选词定位；域外为 nil）
     var selDragAnchor: (page: Int, nx: CGFloat, ny: CGFloat)?   // 进行中拖选的锚点（页号 + 页内归一化坐标）
