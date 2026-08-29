@@ -74,7 +74,7 @@ extension ReaderSurface {
         // 缩放收尾处（pinchEnded / zoomAnimStep 到位分支）都会显式再排一次，不会漏。
         guard !isZooming else { scratch.settleWork?.cancel(); return }
         scratch.settleWork?.cancel()
-        let work = DispatchWorkItem { settleRender() }
+        let work = DispatchWorkItem { ZoomProbe.measure("settle") { settleRender() } }
         scratch.settleWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
@@ -143,10 +143,17 @@ extension ReaderSurface {
     /// 只声明进渲染引擎的全局 LRU 缓存，**不写本地 `images`**：那些页不在 `realized` 里、没有 `PageCellView`
     /// 承载，写了也用不上，还会绕开 `updateRealized` 的驱逐逻辑白占内存（本地 dict 强引用会拖住缓存该淘汰的图）。
     func settleRender(nightRadius: Int = 0) {
+        // 墨迹换回高质量描边：缩放停了，按最终倍率重画一次（缩放期间走的是快速路径，半透明笔的
+        // 接缝会略深）。放在 guard 之前——没有 layout/pdf 时同样不该把快速态留在屏幕上。
+        if inkFastDraw {
+            inkFastDraw = false
+            inkSnaps = [:]     // 丢掉位图快照 → 页元胞自动回到矢量 Canvas，按最终倍率重画一次
+            ZoomProbe.mark("settle → 墨迹换回矢量高质量（zoom \(String(format: "%.2f", zoom))）")
+        }
         guard let layout, let pdf = session.pdf, scratch.didInitialGeo else { return }
         // 先定新宽再收窗口：`updateRealized` 内部的 kickBaseRenders 才会按最终宽度入队（顺序反了
-        // 就会先照旧宽度发一批注定作废的请求）。缩放期间实化窗口被冻成"只扩不缩"（见 updateRealized），
-        // 这里是缩放收尾的第一站，补跑一次让它按最终缩放收回正常大小并驱逐真正出界的页。
+        // 就会先照旧宽度发一批注定作废的请求）。缩放期间**不驱逐**任何已出图的页（见 updateRealized），
+        // 这里是缩放收尾的第一站，补跑一次把真正出界的那些驱逐掉。
         adoptBaseWidth(currentBaseWidth())
         updateRealized(scratch.geo, layout: layout)
         // 缩放稳定了才回报倍率（供进度持久化）。这是缩放路径上**唯一**该写 `session.readZoom` 的地方
@@ -156,7 +163,7 @@ extension ReaderSurface {
         var wanted = Set<String>()
         // 贴片先行：放大超过基图上限后，清晰全靠视口贴片——必须排在基图重渲之前，
         // 否则要等整个实化窗口的基图渲完才轮到眼前这页的清晰贴片（用户感知的「放大后糊很久」）。
-        wanted.formUnion(refreshTiles(layout: layout, pdf: pdf))
+        wanted.formUnion(ZoomProbe.measure("贴片") { refreshTiles(layout: layout, pdf: pdf) })
         // 基图按「当前页 → 由近及远」入队：单串行队列按提交序出图，可视页插队先清晰。
         for i in Self.centerOutOrder(center: session.currentPageIndex, bounds: realized) {
             guard let page = pdf.page(at: i) else { continue }
@@ -221,6 +228,7 @@ extension ReaderSurface {
         let night = scratch.nightLive
         PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
                                               tileRect: nil, tileScale: 1, night: night)) { doneKey, img in
+            ZoomProbe.measure("图落地") {
             // 「仍是当前期望键」（键含夜间标志与宽度）= 正解，直接写入。
             if doneKey == baseKey(index, width: scratch.basePixelW) {
                 images[index] = img
@@ -231,6 +239,7 @@ extension ReaderSurface {
             // 用户就得对着白纸干等下一轮渲染（连续缩放白屏的主因）。改为：这页空着就先顶上，等正解替换。
             // **夜间标志必须相符**，否则会把亮色图糊到夜间模式上（夜间"切不回来"那类 bug 的老路）。
             if images[index] == nil, night == scratch.nightLive { images[index] = img }
+            }
         }
     }
 

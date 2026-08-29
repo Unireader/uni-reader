@@ -34,6 +34,13 @@ struct PageCellView: View {
     /// 画板模式（v12）的每侧页边宽度（像素，0 = 关）。纸面与墨迹层按它向两侧铺开，
     /// 其余各层（页图/高亮/选择/图钉/光标）一律还是页内坐标——页边只是「同一页的横向延伸」。
     var inkMargin: CGFloat = 0
+    /// 缩放进行中：墨迹走快速描边路径（见 `inkDrawStroke` 的 `fast`）。几何不变、只是接缝合成方式变，
+    /// 收尾 `settleRender` 换回高质量重画一次。
+    var inkFast: Bool = false
+    /// 页号（仅 `ZoomProbe` 报"这一帧重绘了哪几页"用）。
+    var pageIndex: Int = -1
+    /// 缩放期间的墨迹位图快照（非 nil 即用它顶替墨迹 Canvas）。见 `ReaderSurface.makeInkSnapshots`。
+    var inkSnapshot: CGImage? = nil
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -43,13 +50,19 @@ struct PageCellView: View {
             if let image {
                 Image(decorative: image, scale: 1)
                     .resizable()
-                    .interpolation(.high)
+                    // 缩放中降到 .medium：此刻显示的本来就是**旧宽度基图被拉伸**的糊图（新宽度的图
+                    // 要等 settle 后才渲），再为它做高质量重采样纯属白付——一张 2800px 基图的 high
+                    // 插值每帧每页要几毫秒，视口两页就吃掉大半个帧预算。settle 后自动换回 .high。
+                    // 🔴 **不能用 `.low`**：最近邻式采样在缩小的文字页上会产生密集噪点，而页面尺寸
+                    // 每帧微变、噪点图案跟着变 —— 看起来就是**整页在闪**（2026-08-29 用户报的"闪烁"，
+                    // 我上一轮为省这几毫秒改的 `.low` 就是祸首）。`.medium` 是双线性，无噪点、也不贵。
+                    .interpolation(inkFast ? .medium : .high)
                     .frame(width: size.width, height: size.height)
             }
             if let tile {
                 Image(decorative: tile.image, scale: 1)
                     .resizable()
-                    .interpolation(.high)
+                    .interpolation(inkFast ? .medium : .high)
                     .frame(width: tile.normRect.width * size.width,
                            height: tile.normRect.height * size.height)
                     .offset(x: tile.normRect.minX * size.width,
@@ -110,11 +123,21 @@ struct PageCellView: View {
                 }
                 .allowsHitTesting(false)
             }
-            if !strokes.isEmpty {
-                wide { InkStaticLayer(strokes: strokes, inkScale: inkScale, margin: inkMargin) }
+            if let inkSnapshot {
+                // 缩放进行中：显示起手时渲好的墨迹位图，只做纹理拉伸——一笔都不重画，所以不会闪。
+                // 拉伸会糊（用户拍板接受），settle 后 `inkSnaps` 清空即换回下面的矢量 Canvas。
+                wide {
+                    Image(decorative: inkSnapshot, scale: 1)
+                        .resizable()
+                        .interpolation(.medium)
+                        .allowsHitTesting(false)
+                }
+            } else if !strokes.isEmpty {
+                wide { InkStaticLayer(strokes: strokes, inkScale: inkScale, margin: inkMargin,
+                                      fast: inkFast, pageIndex: pageIndex) }
             }
             if let live {
-                wide { InkLiveLayer(live: live, inkScale: inkScale, margin: inkMargin) }
+                wide { InkLiveLayer(live: live, inkScale: inkScale, margin: inkMargin, fast: inkFast) }
             }
             // 批注图钉（可点）：`tap` 模式点开/收起页面上的气泡，`hover`/`always` 模式点开编辑器
             // （那两种模式正文已经看得见，图钉的点击留给「改」）。空正文的选区注解没有可展开的东西，
@@ -205,9 +228,15 @@ struct PageCellView: View {
     /// `inkMargin == 0` 时两层 frame 同尺寸 = 与画板模式之前逐像素同渲染。
     @ViewBuilder
     private func wide<V: View>(@ViewBuilder _ content: () -> V) -> some View {
-        content()
-            .frame(width: size.width + inkMargin * 2, height: size.height)
-            .frame(width: size.width, height: size.height)
+        if inkMargin > 0 {
+            content()
+                .frame(width: size.width + inkMargin * 2, height: size.height)
+                .frame(width: size.width, height: size.height)
+        } else {
+            // 画板模式关着时两层 frame 完全相同 = 纯冗余，而 Canvas 每多套一层就多被测/画一遍
+            // （真机实测：一次 body 求值里同一页墨迹被画 1.6~2 次）。这里直接给原样。
+            content().frame(width: size.width, height: size.height)
+        }
     }
 
     private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)

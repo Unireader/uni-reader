@@ -66,6 +66,12 @@ struct ReaderSurface: View {
     @State var fitBasis: CGFloat = 0      // fit 基准宽（pt）；resize settle 时重定标
     @State var userZoomed = false
     @State var zoomAnimOn = false         // 缩放动画进行中（驱动 TimelineView 帧源）
+    /// 缩放进行中：墨迹层走快速描边（见 `inkDrawStroke` 的 `fast`）。
+    /// 用 `@State` 而非 `scratch`：进出快速态各需要一次 body 重算（后者要按高质量重画一遍）。
+    @State var inkFastDraw = false
+    /// 缩放期间各页墨迹的**位图快照**（页 → 图）：起手时一次性渲好，整个缩放过程只做纹理拉伸。
+    /// 见 `makeInkSnapshots`。settle 时清空，回到矢量 Canvas。
+    @State var inkSnaps: [Int: CGImage] = [:]
     // 滚动
     @State var pos = ScrollPosition()
     // 视图数据
@@ -137,6 +143,87 @@ struct ReaderSurface: View {
     var basis: CGFloat { fitBasis > 0 ? fitBasis : fitAvail }
     var pageW: CGFloat { basis * zoom }
     var dispScale: CGFloat { pageW / PageLayout.refWidth }
+
+    // MARK: 缩放期间的墨迹渲染（`inkFastDraw`）
+    //
+    // 🔴 缩放**每帧**都改 `zoom` → 每个实化页的墨迹 Canvas 每帧重画一遍。真正贵的不是"重画"，
+    // 是高质量描边那套：逐段 `strokedPath()` 转轮廓、攒成一条上万子路径的自相交 Path、一次 fill。
+    // `spike/reader-zoom-probe.swift`（复刻真实层级，178 笔/15000 点一页 × 3 页，一次真实捏合）：
+    //   现状 `strokedPath`+`fill`  27ms/页 → **33 fps**
+    //   逐段 `stroke`（保压感）    6.3ms/页 → **99 fps**   ← 采用
+    //   整条一次 `stroke`（丢压感）2.3ms/页 → 118 fps
+    //   墨迹位图快照（0 重画）              → 126 fps（上界）
+    // ⚠️ 走过的弯路：先试过「冻结绘制尺度 + `scaleEffect` 拉伸」。在只有一个 Canvas 的简化 spike 里
+    // 漂亮得很（绘制闭包全程 1 次、125 fps），**放进真实层级就没用了**（45 次 vs 现状 49 次，
+    // 33→47 fps）——外层每帧变的内容尺寸/页 offset 会把 Canvas 一并标脏，SwiftUI 照样按新尺度重绘。
+    // 教训：**这类"SwiftUI 会不会复用"的探针必须连外层结构一起复刻**，孤立组件的读数会骗人。
+    // 更大的教训：spike 只能量"一次绘制多贵"，量不出"每帧到底画了几页"——后者才是主项，
+    // 只有真机探针（`ZoomProbe`）说得清。缩放性能的账要从那份日志读，别再从 spike 外推。
+
+    /// 缩放起手：把当前要显示墨迹的页各渲成一张位图，缩放期间只拉伸它、一笔都不重画。
+    ///
+    /// 🔴 为什么非这么做不可（2026-08-29 用户报「手指缩放和按键缩放都会让笔迹闪烁」）：
+    /// 缩放中墨迹每帧重画，而快速路径按**屏幕距离**抽稀——每帧的缩放比不同，保留下来的点就不同，
+    /// 笔画轮廓于是每帧微微变形；叠加页面进出视口时整层的出现/消失，观感就是笔迹在闪。
+    /// 只要缩放期间**不重画**，这两个来源同时消失。用户拍板的取舍原话：「可以先糊一点，然后再更新」。
+    ///
+    /// 成本：起手一次，每页约几毫秒（走 `fast` 的整层分组绘制，不是高质量那条），2~4 页合计
+    /// 10~20ms —— 一帧的抖动，换整个缩放过程零重画。`scale = 1` 而非 displayScale：
+    /// 缩放中本来就允许糊（同页图用旧宽度基图顶着的既有取舍），还省一半内存与渲染时间。
+    /// settle 时 `inkSnaps` 清空 → 自动回到矢量 Canvas 按最终倍率重画一次 → 清晰。
+    @MainActor
+    func makeInkSnapshots() -> [Int: CGImage] {
+        guard let layout else { return [:] }
+        return inkSnapshots(for: realized, layout: layout)
+    }
+
+    /// 为指定页渲快照（`makeInkSnapshots` 与「缩放中新滑入的页」共用）。
+    @MainActor
+    func inkSnapshots(for pages: some Sequence<Int>, layout: PageLayout) -> [Int: CGImage] {
+        guard !session.strokes.isEmpty, pageW > 1 else { return [:] }
+        var out: [Int: CGImage] = [:]
+        for i in pages {
+            guard inkWanted(i, layout: layout) else { continue }
+            let strokes = session.visibleStrokesByPage(in: i...i)[i] ?? []
+            guard !strokes.isEmpty else { continue }
+            let h = layout.heights[i] * dispScale
+            guard h > 1 else { continue }
+            let r = ImageRenderer(content:
+                InkStaticLayer(strokes: strokes, inkScale: zoom, margin: marginPx, fast: true)
+                    .frame(width: pageW + marginPx * 2, height: h))
+            r.scale = 1
+            if let img = r.cgImage { out[i] = img }
+        }
+        return out
+    }
+
+    /// 缩放中新滑入实化窗口的页**当场补一张快照**——否则它们没得可拉伸，只能退回逐帧重画，
+    /// 那几页就会在缩小过程中闪（日志里表现为 `重绘页 p114×4 p111×2 …` 这种视口边缘的页）。
+    /// 每页只渲一次（已有的跳过），按各自生成时刻的倍率渲、各自拉伸，互不影响。
+    @MainActor
+    func addInkSnapshots(for pages: Set<Int>) {
+        guard inkFastDraw, let layout else { return }
+        let missing = pages.filter { inkSnaps[$0] == nil }
+        guard !missing.isEmpty else { return }
+        let made = inkSnapshots(for: missing, layout: layout)
+        guard !made.isEmpty else { return }
+        inkSnaps.merge(made) { a, _ in a }
+    }
+
+    /// 缩放进行中：墨迹只画与**真实视口**相交的页（上下各留半屏余量）。
+    /// 实化窗口本身要带一屏 buffer（滚动预热），但缩放中给看不见的页重画墨迹是纯浪费——
+    /// 真机探针实测每次墨迹绘制约 1ms，缩小态一帧要画 7~10 页，而视口里只有 3 页。
+    /// 松手后 `settleRender` 关掉 `inkFastDraw`，全实化窗口按高质量重画一次，不会留缺口。
+    func inkWanted(_ i: Int, layout: PageLayout) -> Bool {
+        guard inkFastDraw else { return true }
+        let ds = dispScale
+        let g = scratch.geo
+        // 余量给足一屏：缩放中视口在动，余量太小的话同一页会在"要画/不画"之间反复横跳，
+        // 那本身就是一种闪烁（墨迹一会儿有一会儿没有）。一屏余量下页进出视口是单向的、不来回。
+        let pad = g.containerH
+        let top = layout.offsets[i] * ds
+        return top + layout.heights[i] * ds >= g.offsetY - pad && top <= g.offsetY + g.containerH + pad
+    }
     /// ⚠️ 三条实测钉死的语义（2026-07-21，NSScrollView 层级 dump 实锤，见 PROBE 日志）：
     /// ① **严禁动态切换 ScrollView 轴集合**——轴只在创建时生效，之后变更不应用（水平轴会被永久固化）。
     /// ② **legacy 竖滚动条是「占位」的**：ScrollView 因 ignoresSafeArea 铺满整窗（容器=全窗宽），但真实可视
@@ -204,7 +291,7 @@ struct ReaderSurface: View {
                     insetTop: g.contentInsets.top, insetLeading: g.contentInsets.leading,
                     insetBottom: g.contentInsets.bottom, insetTrailing: g.contentInsets.trailing)
         } action: { _, new in
-            geometryChanged(new)
+            ZoomProbe.measure("几何回调") { geometryChanged(new) }
         }
         .onContinuousHover(coordinateSpace: .local) { phase in
             switch phase {
@@ -332,6 +419,7 @@ struct ReaderSurface: View {
         if let layout, scratch.didInitialGeo {   // 未定基准前只占位空白（防启动窄宽渲染 → 闪烁）
             // 逐页数据整帧算一次（见 PageBuckets 注释）：旧写法每页各跑一遍全数组过滤，缩放每帧重算 body 时是掉帧大头。
             let buckets = PageBuckets(session: session, range: realized)
+            let _ = ZoomProbe.frame(realized: realized)   // 探针：这一帧阅读区内容重算了（默认关，零开销）
             ZStack(alignment: .topLeading) {
                 ForEach(Array(realized), id: \.self) { i in
                     pageCell(i, layout: layout, buckets: buckets)
@@ -352,7 +440,7 @@ struct ReaderSurface: View {
                      image: images[i],
                      tile: tiles[i],
                      paper: paper,
-                     strokes: buckets.strokes[i] ?? [],
+                     strokes: inkWanted(i, layout: layout) ? (buckets.strokes[i] ?? []) : [],
                      live: session.liveStroke?.page == i ? session.liveStroke : nil,
                      hover: session.hover?.page == i ? session.hover : nil,
                      inkScale: zoom,
@@ -381,7 +469,10 @@ struct ReaderSurface: View {
                      noteDrag: notePinDrag,
                      scratchPins: buckets.scratchPins[i] ?? [],
                      onOpenScratchPad: { session.openPadID = $0 },
-                     inkMargin: marginPx)
+                     inkMargin: marginPx,
+                     inkFast: inkFastDraw,
+                     pageIndex: i,
+                     inkSnapshot: inkFastDraw ? inkSnaps[i] : nil)
             .offset(x: pageX, y: layout.offsets[i] * dispScale)
     }
 
@@ -393,7 +484,7 @@ struct ReaderSurface: View {
                     .frame(width: 1, height: 1)
                     .onChange(of: tl.date) { _, _ in
                         if follower.isActive { followStep() }
-                        if zoomAnimOn { zoomAnimStep() }
+                        if zoomAnimOn { ZoomProbe.measure("动画帧") { zoomAnimStep() } }
                     }
             }
             .allowsHitTesting(false)

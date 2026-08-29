@@ -67,11 +67,18 @@ extension ReaderSurface {
     }
 
     /// commit 校验环：同 runloop 原子提交已由 spike 证实；此处兜底（万一被夹取/竞争）。
+    ///
+    /// 🔴 **缩放进行中不重试**（2026-08-29 真机探针定位）：缩放每帧都提交一个新目标，而
+    /// `onScrollGeometryChange` 的回报是异步、慢半拍的 —— 于是每帧拿到的几何都对不上刚提交的
+    /// 那个目标，判定"没达成"就补一次 `scrollTo`，那次 scrollTo 又触发一轮几何回调 + body 重算。
+    /// 自激的结果：**每个动画帧有约 2 次 contentBody 求值**，日志里表现为"几何回调"在 250ms 窗口里
+    /// 占到 33~64ms（比墨迹还贵）。上一帧的目标本来就已经作废，重试它没有任何意义。
+    /// 缩放收尾（`settleRender` 那一轮）不在 `isZooming` 内，兜底照旧生效。
     func verifyPendingTarget(_ n: GeoSnap) {
         guard let t = scratch.pendingTarget else { return }
         if abs(n.offsetX - t.x) <= 1, abs(n.offsetY - t.y) <= 1 {
             scratch.pendingTarget = nil
-        } else if scratch.pendingTries < 5 {
+        } else if scratch.pendingTries < 5, !isZooming {
             scratch.pendingTries += 1
             pos.scrollTo(point: t)   // ⚠️ 单轴 scrollTo(x:)/(y:) 是后写覆盖+重置另一轴（scroll-x-probe T1/T4），全文件禁用
         } else {
@@ -85,16 +92,36 @@ extension ReaderSurface {
         let top = n.offsetY / ds - buffer
         let bottom = (n.offsetY + n.containerH) / ds + buffer
         var range = layout.pageRange(fromDocY: top, toDocY: bottom)
-        // 缩放进行中（按钮/⌘± 动画、捏合、⌘滚轮）：实化窗口**只扩不缩**，且一页都不驱逐。两个理由：
-        //  ① 每帧收缩再扩张 → `realized` 反复变动，每变一次多一轮完整 body 重算（掉帧）；
-        //  ② 收缩驱逐的正是刚还在屏幕上的页，缩放过程中它又回到视口 → 无图 → 白纸（用户报的"白屏"）。
-        // 缩放收尾的 settleRender 会显式再跑一次本函数，那时 zooming 已假、窗口正常收回。
+        // 缩放进行中（按钮/⌘± 动画、捏合、⌘滚轮）：**一页都不驱逐**（见下面的 `if !zooming`）。
+        // 驱逐掉的正是刚还在屏幕上的页，缩放过程中它又回到视口 → 无图 → 白纸（用户报过的"白屏"）。
+        // 窗口本身照实跟随视口收缩，只是图留在 `images`/`tiles` 里，滑回来立刻有图。
+        //
+        // 🔴 这里曾经还把窗口**冻成"只扩不缩"**（理由：`realized` 每变一次多一轮 body 重算）。
+        // 2026-08-29 真机探针（`ZoomProbe`）实测证明那是笔糊涂账：缩小时锚点缩放会让 offset 大幅
+        // 移动，"只扩不缩"的并集一路涨到 **74 页**（96…169，而视口只在 p128 附近 3 页），
+        // 每帧要构建/布局/渲染 74 个 `PageCellView` ≈ 26ms。实测每页每帧约 0.35ms，且严格线性：
+        // 实化 14 页 = 195fps / 30 页 = 55fps / 74 页 = 36fps。省下的那点 range 变动开销，
+        // 换来的是二十倍的无用页——用户报的"缩放卡顿"主项就是它（且卡的都是**看不见的邻页**，
+        // 所以"我缩放的页明明没有笔迹"和"照样卡"并不矛盾）。
         let zooming = isZooming
+        // 缩放中**只扩不缩，但带上界**。两个方向的坑各踩过一次，这里同时躲开：
+        //  ① 会收缩 → `realized` 一缩，刚还在屏幕上的 `PageCellView` 当场销毁，下一帧视口晃回来
+        //     又要重建 —— 用户看到的就是「缩放时 PDF 页闪烁」（2026-08-29 报）。光"不驱逐 images"
+        //     救不了：闪的是**视图**的销毁重建，不是图没了。
+        //  ② 无上界的只扩不缩 → 缩小时锚点缩放让 offset 大幅移动，并集一路累积到 **74 页**，
+        //     每帧构建 74 个页元胞 ≈ 26ms（36fps）。这是同一天早些时候的那个真凶。
+        // 于是：合并（不缩），但合并结果超过「当前视口窗口 + 8 页」就放弃合并、直接跟随视口
+        // ——只在真跑远了才收一次，日常缩放里窗口是稳的，不会反复抖。
         if zooming {
-            range = min(range.lowerBound, realized.lowerBound)...max(range.upperBound, realized.upperBound)
+            let merged = min(range.lowerBound, realized.lowerBound)...max(range.upperBound, realized.upperBound)
+            if merged.count <= range.count + 8 { range = merged }
         }
         if range != realized || !scratch.didFirstKick {
             scratch.didFirstKick = true
+            // 缩放中新滑入的页要补墨迹快照（在 realized 换掉之前算差集），否则那几页会逐帧重画 = 闪
+            if zooming, inkFastDraw {
+                addInkSnapshots(for: Set(range).subtracting(Set(realized)))
+            }
             realized = range
             if !zooming {
                 var evict = [Int]()
@@ -102,7 +129,7 @@ extension ReaderSurface {
                 for k in evict { images.removeValue(forKey: k) }
                 for k in tiles.keys where !(range ~= k) { tiles.removeValue(forKey: k) }
             }
-            kickBaseRenders()
+            ZoomProbe.measure("页图调度") { kickBaseRenders() }
             if session.ocrEnabled { session.enqueueOCR(Array(range)) }   // 「看到哪页处理哪页」：可见窗口入队 OCR
         }
         // 顶端页 → currentPageIndex（非程序化滚动期间；平板/进度依赖它）

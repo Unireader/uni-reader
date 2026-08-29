@@ -8,6 +8,18 @@ extension ReaderSurface {
 
     func clampZoom(_ z: CGFloat) -> CGFloat { min(max(z, zoomMin), zoomMax) }
 
+    /// 缩放开始：墨迹层切到快速描边（缩放中每帧都要重画，别再逐段转轮廓）。切回在 `settleRender`
+    /// ——所有缩放路径的收尾都会经它（连续 ⌘滚轮期间 settle 被反复取消 → 全程保持快速态）。
+    /// 理由与实测数据见 `ReaderSurface` 的 `inkFastDraw` 一节。
+    func beginFastInk() {
+        guard !inkFastDraw else { return }
+        // 顺序要紧：先渲快照（此刻 zoom/pageW 还是缩放前的值，与屏幕上正显示的那一版一致，
+        // 切过去零跳变），再置 `inkFastDraw`——两个 @State 在同一次事件里写，合并成一轮 body。
+        inkSnaps = makeInkSnapshots()
+        inkFastDraw = true
+        ZoomProbe.mark("缩放开始 → 墨迹切位图快照 \(inkSnaps.count) 页（zoom \(String(format: "%.2f", zoom))）")
+    }
+
     /// 缩放正在进行（命令式动画 / 捏合任一在飞）。逐帧改 `zoom` 期间，凡是「反正马上要重来一遍」的
     /// 周边工作都按这个开关让路：实化窗口不收缩不驱逐、settle 不重排、不入队注定作废宽度的渲染。
     /// 每省一处就少一轮 body 重算或一次后台渲染抢占 —— 按钮缩放掉帧就是被这些每帧重复劳动堆出来的。
@@ -52,6 +64,7 @@ extension ReaderSurface {
         if scratch.pinch == nil {
             follower.reset()                                   // 用户接管
             cancelZoomAnim()                                   // 捏合接管：停掉进行中的按钮/⌘ 缩放动画
+            beginFastInk()                                     // 墨迹切快速描边（缩放中每帧都要重画）
             let o = anchorOffset
             // 手势现挂在 ScrollView 容器 → startLocation 为容器/视口坐标 P（屏幕不动点，与 ⌘wheel/anchorP 同约定）；
             // 内容锚点 c = 偏移 + P。（旧实现挂 content 层取内容坐标，捏合页外空白无手势 → 不缩放。）
@@ -61,10 +74,15 @@ extension ReaderSurface {
             scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
         }
         guard var p = scratch.pinch else { return }
+        // 同 `zoomAnimStep` 的理由：触摸板手势事件可达 120Hz，而每次提交都要重画整页墨迹。
+        // 限流到 ~60Hz（末次提交由 `pinchEnded` 的 settle 兜底，不会停在半路）。
+        let now = CACurrentMediaTime()
+        guard now - scratch.lastPinchCommitAt >= 1.0 / 62 else { return }
+        scratch.lastPinchCommitAt = now
         let m = max(0.05, v.magnification)
         commitZoom(to: clampZoom(p.startZoom * m), pinch: &p)  // 逐帧真 commit（两方向统一）
         scratch.pinch = p
-        scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3
+        scratch.suppressEmitUntil = now + 0.3
     }
 
     func pinchEnded() {
@@ -101,6 +119,7 @@ extension ReaderSurface {
         guard layout != nil, scratch.didInitialGeo else { return }
         follower.reset()
         cancelZoomAnim()   // 连续输入接管：停掉进行中的命令式动画，避免两路同时写 zoom
+        beginFastInk()     // 连滚期间 settle 被反复取消 → 全程快速描边，停手 0.15s 才换回高质量
         let o = anchorOffset
         let c = CGPoint(x: o.x + P.x, y: o.y + P.y)
         var p = PinchInfo(startZoom: zoom, viewportP: P, cCur: c)
@@ -132,53 +151,81 @@ extension ReaderSurface {
 
     // MARK: 命令式缩放动画（逐帧插值；每帧 = pinch 同款原子 commit，平滑且零闪烁）
 
-    var zoomAnimDuration: CFTimeInterval { 0.22 }   // 计算属性：扩展里不能放存储属性
+    /// 指数趋近的时间常数（秒）——**手感旋钮**：越大越慢越柔。
+    /// 0.13 ≈ 起步后 130ms 走完 63%、约 0.4s 收敛到位（旧实现是定长 0.22s smoothstep）。
+    /// 觉得慢/快就只改这一个数，别回去改成定时长缓动（连点会跳，理由见 `ZoomAnim`）。
+    var zoomAnimTau: CFTimeInterval { 0.13 }   // 计算属性：扩展里不能放存储属性
 
-    /// 启动一次缩放动画：锚点 P 不动，zoom 从当前值插值到 z1（smoothstep 缓动）。
+    /// 启动/续接一次缩放动画：锚点 P 不动，zoom 指数趋近 z1。
+    /// **已有动画在飞时只更新目标**（速度、锚点都不重置）——这就是连点不再一跳一跳的原因。
     /// `fitAfter` 仅 ⌘0 用：动画到位后把 fitBasis 重定标、zoom 归 1（此时 pageW 恰好相等，零跳变）。
     func animateZoom(to z1raw: CGFloat, anchorP P: CGPoint, fitAfter: CGFloat? = nil) {
         guard layout != nil, scratch.didInitialGeo else { return }
         follower.reset()
         scratch.zoomFromRestore = false   // 用户接管缩放（⌘±/⌘0/工具栏），同 commitZoom
         let z1 = clampZoom(z1raw)
+        if var a = scratch.zoomAnim {     // 续接：连点/连按只改目标，速度连续
+            a.target = z1
+            // ⚠️ `fitAfter` 必须**整个换成新命令的**（含 nil）：新命令完全接管旧的。
+            // 只在非 nil 时覆盖的话，「⌘0 动画途中按 1:1」会留着 ⌘0 的 fitAfter，
+            // 到位后 fitBasis 重定标 + zoom 归 1，把 1:1 的结果当场吃掉。
+            a.fitAfter = fitAfter
+            scratch.zoomAnim = a
+            return
+        }
         guard abs(z1 - zoom) > 0.0001 else {
             if let nb = fitAfter { fitBasis = nb; zoom = 1; userZoomed = false }   // 已在目标：仍刷新基准
             return
         }
+        beginFastInk()     // 动画每帧改 zoom，同 pinch：走快速描边，到位后 settleRender 换回高质量
         let o = anchorOffset
-        scratch.zoomAnim = ZoomAnim(z0: zoom, z1: z1, anchorP: P,
-                                    c0: CGPoint(x: o.x + P.x, y: o.y + P.y),
-                                    start: CACurrentMediaTime(), fitAfter: fitAfter)
+        scratch.zoomAnim = ZoomAnim(target: z1, anchorP: P,
+                                    cCur: CGPoint(x: o.x + P.x, y: o.y + P.y),
+                                    lastT: CACurrentMediaTime(), fitAfter: fitAfter)
         zoomAnimOn = true
     }
 
-    /// 动画帧：插值 zoom，锚点内容坐标等比缩放后减回 P 得目标偏移，布局+scrollTo 同事务提交。
+    /// 动画帧：zoom 按 dt 指数趋近 target，锚点内容坐标等比缩放后减回 P 得目标偏移，同事务提交。
     func zoomAnimStep() {
-        guard let a = scratch.zoomAnim else { zoomAnimOn = false; return }
-        let raw = (CACurrentMediaTime() - a.start) / zoomAnimDuration
-        if raw >= 1 {
-            zoomAnimFrame(z: a.z1, a)
+        guard var a = scratch.zoomAnim else { zoomAnimOn = false; return }
+        let now = CACurrentMediaTime()
+        // 🔴 提交限流到 ~60Hz：墨迹层的 Canvas 尺寸每帧都变 → **每次提交都要重画整页笔迹**
+        // （真机实测：一页 100+ 笔约 2.6ms，视口两页就是 5ms/帧）。ProMotion 屏上 TimelineView
+        // 按 120Hz 给帧，等于这笔钱付两遍，而缩放动画在 60Hz 与 120Hz 之间肉眼分不出。
+        // 注意是「不提交、也不推进 lastT」——dt 累积到下一次 tick，动画速度完全不受影响。
+        guard now - a.lastT >= 1.0 / 62 else { return }
+        let dt = min(0.05, max(0, now - a.lastT))   // 掉帧/后台回来时钳住，别一步跨过头
+        a.lastT = now
+        let remain = a.target - zoom
+        // 收敛：一次精确落到目标（指数趋近永远到不了，末尾必须显式对齐），然后收尾
+        if abs(remain) < 0.0008 || dt <= 0 {
+            zoomAnimFrame(z: a.target, &a)
             scratch.zoomAnim = nil
             zoomAnimOn = false
             if let nb = a.fitAfter { fitBasis = nb; zoom = 1; userZoomed = false }
             scheduleSettleRender()
             return
         }
-        let t = raw * raw * (3 - 2 * raw)   // smoothstep 缓动（起止速度为 0）
-        zoomAnimFrame(z: a.z0 + (a.z1 - a.z0) * t, a)
+        zoomAnimFrame(z: zoom + remain * (1 - exp(-dt / zoomAnimTau)), &a)
+        scratch.zoomAnim = a
     }
 
-    func zoomAnimFrame(z: CGFloat, _ a: ZoomAnim) {
-        let r = z / a.z0
-        let c1 = CGPoint(x: a.c0.x * r, y: a.c0.y * r)
+    /// 单帧提交（与 `commitZoom` 同款增量数学：锚点内容坐标按比率滚动更新，不依赖起始快照）。
+    func zoomAnimFrame(z: CGFloat, _ a: inout ZoomAnim) {
+        let z0 = zoom
+        let z1 = clampZoom(z)
+        guard abs(z1 - z0) > 0.00001 else { return }
+        let r = z1 / z0
+        let c1 = CGPoint(x: a.cCur.x * r, y: a.cCur.y * r)
         let target = clampOffset(CGPoint(x: c1.x - a.anchorP.x, y: c1.y - a.anchorP.y),
-                                 pageWidth: basis * z)
+                                 pageWidth: basis * z1)
         var t = Transaction(); t.animation = nil
         withTransaction(t) {
-            zoom = z
+            zoom = z1
             if !userZoomed { userZoomed = true }   // 同 commitZoom：逐帧写同一个值也会逐帧触发失效
             pos.scrollTo(point: target)
         }
+        a.cCur = c1
         scratch.pendingTarget = target
         scratch.pendingTries = 0
         scratch.suppressEmitUntil = CACurrentMediaTime() + 0.3

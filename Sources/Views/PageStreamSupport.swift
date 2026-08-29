@@ -187,14 +187,19 @@ struct PinchInfo {
     var cCur: CGPoint          // 当前布局下的锚点内容坐标（每次 commit 后更新）
 }
 
-/// 命令式缩放动画（工具栏按钮 / ⌘± / ⌘0 / 1:1）：锚点不动、逐帧插值 zoom，
-/// 每帧走与 pinch 相同的「布局+scrollTo 同 runloop 原子 commit」→ 平滑且零闪烁。
+/// 命令式缩放动画（工具栏按钮 / ⌘± / ⌘0 / 1:1）：**指数趋近**目标倍率（临界阻尼低通，
+/// 与 `ScrollFollower` 同一套手感哲学），每帧走与 pinch 相同的「布局+scrollTo 同 runloop 原子 commit」。
+///
+/// 🔴 为什么不是定时长缓动（旧实现：0.22s smoothstep）——用户 2026-08-29 报「动画太快太生硬」，
+/// 而同一轮的 `ZoomProbe` 日志证明**帧一点没掉**（145~175fps、最长帧 17~41ms、首帧延迟 1~3ms），
+/// 所以问题不在性能而在曲线：smoothstep 起止速度都是 0，**连点第二下会把速度重置为 0 再重新加速**，
+/// 观感就是一跳一跳。指数趋近下连点只更新 `target`，速度天然连续（越点越快地滑向更远的目标），
+/// 且没有"到点急停"，收尾自然。
 struct ZoomAnim {
-    var z0: CGFloat            // 起始缩放
-    var z1: CGFloat            // 目标缩放
+    var target: CGFloat        // 目标缩放（连点时就地更新，不重建动画）
     var anchorP: CGPoint       // 屏幕不动点（容器坐标）
-    var c0: CGPoint            // 锚点内容坐标（z0 布局下）
-    var start: CFTimeInterval
+    var cCur: CGPoint          // 当前布局下的锚点内容坐标（每帧按比率更新，同 `PinchInfo.cCur`）
+    var lastT: CFTimeInterval  // 上一帧时刻（算 dt；掉帧时 dt 被钳住，不会一步跨过头）
     var fitAfter: CGFloat?     // 非 nil（⌘0）：动画到位后 fitBasis 重定标为该值、zoom 归 1（pageW 不变，零跳变）
 }
 
@@ -214,6 +219,7 @@ final class Scratch {
     var settleWork: DispatchWorkItem?
     var resizeWork: DispatchWorkItem?
     var pinch: PinchInfo?
+    var lastPinchCommitAt: CFTimeInterval = 0   // 捏合提交限流（~60Hz，见 pinchChanged）
     var zoomAnim: ZoomAnim?        // 进行中的命令式缩放动画（pinch/⌘wheel 介入即取消）
     var pendingRestore: ScrollAnchor?
     var pendingZoom: CGFloat = 1           // 待恢复的缩放倍率（首帧定基准后套用）

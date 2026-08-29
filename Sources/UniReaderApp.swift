@@ -79,6 +79,156 @@ enum PadLog {
     static func ms(_ seconds: CFAbsoluteTime) -> String { String(format: "%.1fms", seconds * 1000) }
 }
 
+/// 阅读区**每帧成本**探针（`[ZOOM]` 前缀）。开关口径同上两支——**文件在不在就是开关**：
+/// ```
+/// touch ~/Library/Logs/UniReader-zoom.log    # 开启
+/// rm    ~/Library/Logs/UniReader-zoom.log    # 关闭
+/// ```
+/// 为什么要有它（2026-08-28 的教训）：缩放卡顿排查连着两轮靠 spike 外推方案、真机不灵——
+/// spike 能量准"一个 Canvas 画多久"，量不准"SwiftUI 每帧到底重绘了哪几层、几次"。这支探针
+/// 直接在真机上数：**每帧画了哪些页的墨迹、各多少笔、快速态有没有生效、各花多少毫秒**。
+///
+/// 高频路径（每帧、每次 Canvas 绘制）故：关着时只剩一次「每秒最多一遍」的 `fileExists`；
+/// 开着时也不每次都写盘，按 250ms 窗口**聚合成一行**（逐次写盘的 I/O 会把被测对象本身拖慢）。
+enum ZoomProbe {
+    static let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/UniReader-zoom.log")
+
+    private static let queue = DispatchQueue(label: "com.xvan.UniReader.zoomprobe", qos: .utility)
+    private static var handle: FileHandle?
+    private static var checkedAt: CFAbsoluteTime = 0
+    private static var isOn = false
+
+    // 聚合窗口（只在主线程碰：帧与 Canvas 绘制都在主线程）
+    private static var windowStart: CFAbsoluteTime = 0
+    private static var frames = 0
+    private static var draws = 0, fastDraws = 0
+    private static var drawMs = 0.0
+    private static var strokeCount = 0
+    private static var pages: [Int: Int] = [:]      // 页号 → 本窗口内被重绘次数
+    private static var realizedDesc = ""
+    /// 本窗口内**最长的一次帧间隔**。平均帧率高不代表不卡——一帧卡 100ms 用户就明显感到一顿，
+    /// 而它会被平均数吃掉（220ms 的按钮缩放动画里混一个长帧，均值仍是 200fps）。
+    private static var maxGapMs = 0.0
+    private static var lastFrameAt: CFAbsoluteTime = 0
+    /// 最近一次 `mark`（缩放开始/settle）的时刻：用来量**首帧延迟**——"点下按钮到画面开始动"
+    /// 这段空白是掉帧统计看不见的，但用户看得见。
+    private static var markAt: CFAbsoluteTime = 0
+    private static var framesSinceMark = 0
+    /// 阻塞式重活的自计时（`settleRender` 等）：`名字 → 累计 ms`。
+    private static var blocking: [String: Double] = [:]
+
+    static var enabled: Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - checkedAt > 1 {
+            checkedAt = now
+            let on = FileManager.default.fileExists(atPath: url.path)
+            if on != isOn { isOn = on; queue.async { handle = nil } }
+        }
+        return isOn
+    }
+
+    /// 一次 contentBody 求值（= SwiftUI 认为阅读区内容要重算一次）。
+    static func frame(realized: ClosedRange<Int>) {
+        guard enabled else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        // 首帧延迟：mark（缩放开始）到画面真正动起来这段。用户感知的"点下去顿一下"就藏在这里。
+        if markAt > 0 {
+            write(String(format: "   ↳ 首帧延迟 %.0fms（mark 到第一帧）", (now - markAt) * 1000))
+            markAt = 0
+        }
+        if lastFrameAt > 0 {
+            let gap = (now - lastFrameAt) * 1000
+            if gap < 400 {
+                maxGapMs = max(maxGapMs, gap)   // >400ms 视为"没在动"，不是掉帧
+                // 长帧单独记一行：均值会把它吃掉，但它才是用户看见的那一顿。
+                if gap > 50 {
+                    write(String(format: "   ⚠️ 长帧 %.0fms（本轮第 %d 帧，实化 %@）",
+                                 gap, framesSinceMark + 1, realizedDesc as NSString))
+                }
+            }
+        }
+        lastFrameAt = now
+        frames += 1
+        framesSinceMark += 1
+        realizedDesc = "\(realized.lowerBound)…\(realized.upperBound)(\(realized.count)页)"
+        flushIfDue()
+    }
+
+    /// 主线程上的一段阻塞重活（`settleRender` 之类）。累计进当前窗口，flush 时一起报。
+    static func blockingWork(_ name: String, ms: Double) {
+        guard enabled else { return }
+        blocking[name, default: 0] += ms
+    }
+
+    /// 给调用方包一段活并计时（关闭时零开销：直接执行）。
+    static func measure<T>(_ name: String, _ work: () -> T) -> T {
+        guard enabled else { return work() }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        defer { blockingWork(name, ms: (CFAbsoluteTimeGetCurrent() - t0) * 1000) }
+        return work()
+    }
+
+    /// 一次墨迹 Canvas 绘制。
+    static func inkDraw(page: Int, strokes: Int, fast: Bool, ms: Double) {
+        guard enabled else { return }
+        draws += 1
+        if fast { fastDraws += 1 }
+        drawMs += ms
+        strokeCount += strokes
+        pages[page, default: 0] += 1
+        flushIfDue()
+    }
+
+    /// 时间线标记（缩放开始 / settle 收尾等）。立即输出，且先把当前窗口结清。
+    static func mark(_ msg: @autoclosure () -> String) {
+        guard enabled else { return }
+        flush(force: true)
+        write("── \(msg())")
+        markAt = CFAbsoluteTimeGetCurrent()
+        framesSinceMark = 0
+    }
+
+    private static func flushIfDue() {
+        let now = CFAbsoluteTimeGetCurrent()
+        if windowStart == 0 { windowStart = now; return }
+        if now - windowStart >= 0.25 { flush(force: true) }
+    }
+
+    private static func flush(force: Bool) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard force, windowStart > 0, frames > 0 || draws > 0 else {
+            if windowStart == 0 { windowStart = now }
+            return
+        }
+        let span = max(0.0001, now - windowStart)
+        let fps = Double(frames) / span
+        let perFrame = frames > 0 ? drawMs / Double(frames) : 0
+        let top = pages.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .prefix(6).map { "p\($0.key)×\($0.value)" }.joined(separator: " ")
+        let block = blocking.sorted { $0.value > $1.value }
+            .map { String(format: "%@ %.0fms", $0.key, $0.value) }.joined(separator: " ")
+        write(String(format: "%.0fms 窗口: 帧 %d (%.0f fps)  最长帧 %.0fms  墨迹绘制 %d 次(快速 %d) 共 %.0fms = %.1fms/帧  笔画合计 %d  实化 %@  重绘页 %@%@",
+                     span * 1000, frames, fps, maxGapMs, draws, fastDraws, drawMs, perFrame,
+                     strokeCount, realizedDesc as NSString, top.isEmpty ? "—" : top,
+                     block.isEmpty ? "" : "  ⏱ \(block)"))
+        windowStart = now
+        frames = 0; draws = 0; fastDraws = 0; drawMs = 0; strokeCount = 0; maxGapMs = 0
+        pages.removeAll(keepingCapacity: true); blocking.removeAll(keepingCapacity: true)
+    }
+
+    private static func write(_ msg: String) {
+        let line = "\(Date.now.formatted(date: .omitted, time: .standard)) [ZOOM] \(msg)\n"
+        queue.async {
+            if handle == nil {
+                handle = try? FileHandle(forWritingTo: url)
+                _ = try? handle?.seekToEnd()
+            }
+            guard let h = handle, let d = line.data(using: .utf8) else { return }
+            try? h.write(contentsOf: d)
+        }
+    }
+}
+
 /// 单实例守卫（新实例接管 / last-wins）：本次启动时若已有同一 App 在跑，
 /// 优雅终止旧实例并接管——释放局域网服务端口（8770/8771），杜绝多份状态与端口冲突。
 /// 选 last-wins 而非 first-wins：Xcode 每次 Run = 新进程，需保证看到的永远是最新构建，
