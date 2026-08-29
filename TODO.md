@@ -608,19 +608,25 @@
     ```
     adb logcat -c && adb logcat -s UniReader/PageFetch UniReader/PageDisk UniReader/Pad
     ```
-    切回来那几页应当是「**磁盘命中**」或「命中位图，零等待」，**不该**再出现「等 Mac …ms」。
-    启动那行「页图缓存额度 目标档 xxMB + 低清档 xxMB + 字节 xxMB（堆上限 xxMB）」把**堆上限**记下来
-    ——它决定还要不要上 `largeHeap`（见下）。换文档那行「换文档 v=… 缓存 …」能看出走之前攒了几张。
-    Mac 侧对照（`touch ~/Library/Logs/UniReader-pad.log` 开）：`grep 页图 ~/Library/Logs/UniReader-pad.log`
-    应当多是「磁盘命中 xms」，「未命中，开渲…」只该在第一次看这一页时出现。
-    ② **要不要更进一步**（切回来**立刻清晰**，需要用户拍板取舍，三选一或都不选）：
-    `largeHeap`（堆 256→512MB，缓存额度翻倍，代价是本 app 内存占用上限翻倍）／页图解码改
-    `RGB_565`（每页字节减半，扫描件可能有色带）／位图改 `Config.HARDWARE`（不占 Java 堆，
-    但那之后页图不能再被软件 canvas 读写）。**先看①的实际手感，不够快再选。**
-    ③ **磁盘占用**：`adb shell du -sh /sdcard/Android/data/com.xvan.unireader/cache/pageimg`
+    切回来那几页应当是「命中位图，零等待」或「**磁盘命中**」，**不该**再出现「等 Mac …ms」。
+    启动那行「页图缓存额度 目标档 xxMB + 低清档 xxMB + 字节 xxMB」把**目标档额度**记下来
+    （现在按设备总内存算，Pad 6 8GB → 384MB ≈ 8 张横屏页图）；换文档那行「换文档 v=… 缓存 …」
+    能看出走之前那篇攒了几张。Mac 侧对照（`touch ~/Library/Logs/UniReader-pad.log` 开）：
+    `grep 页图 ~/Library/Logs/UniReader-pad.log` 应当多是「磁盘命中 xms」，
+    「未命中，开渲…」只该在第一次看这一页时出现。
+    ② **内存回归**（额度从 85MB 提到 384MB，这条比手感更要紧）：两篇大书来回切十几次 +
+    退后台再回来 + 开着别的重应用，**不该被系统杀掉重启**（被杀的表现是切回来变冷启动、
+    要重连 Mac）。`adb shell dumpsys meminfo com.xvan.unireader | head -20` 看 Native Heap；
+    退到后台后再看一次，应当有明显回落（`onTrimMemory` 缩到 32MB 了）。logcat 里对应
+    「目标档额度 → 32MB（前台=false）」「系统要内存 level=…」。**模式1 也一起验**（同一套口径）。
+    ③ **还要不要更快**（切回来**立刻清晰**，先看①够不够，不够再选）：模式2 解码改
+    `Config.HARDWARE`（像素进图形内存，几乎不占进程内存；代价：页图不能再被软件 canvas 读写，
+    模式1 的 Pdfium 用不了）／`RGB_565`（每张字节减半，扫描件可能有色带）。
+    `largeHeap` 已排除——位图不在 Java 堆里，抬它没用。
+    ④ **磁盘占用**：`adb shell du -sh /sdcard/Android/data/com.xvan.unireader/cache/pageimg`
     与 Mac 的 `du -sh ~/Library/Caches/tech.xvanturing.UniReader/padpage`——上限分别是 512MB/1GB，
     嫌多就调 `PadActivity.PAGE_DISK_BYTES` / `PageDiskCache(maxBytes:)`。
-    ④ **框选移动后选中留着**（两模式）：框中几笔 → 拖着挪一次 → 高亮框/手柄/光晕应当**跟着内容
+    ⑤ **框选移动后选中留着**（两模式）：框中几笔 → 拖着挪一次 → 高亮框/手柄/光晕应当**跟着内容
     留在新位置**（从前一挪就整个消失）；紧接着**再挪一次 / 拖手柄缩一次**应当照常生效（这条最要紧：
     它验的是重判后的多边形跟着内容走了）；点框外空白才清、点框内不清；切工具/换文档仍然清。
     模式1 尤其要试**选区里既有笔迹又有文字笔记**的情形（注解那半靠推迟一轮消息才判得对）。
