@@ -397,6 +397,19 @@
       新 `CanvasMarginTest`(4)／`xcodebuild`／`tsc --noEmit`／`vite build`／`assembleDebug` 全绿。
       **待真机验证**见「接下来」第 11 条 ⑧⑨⑩。
 
+  - **2026-08-29：修「新客户端连上来收不到画板状态」**（用户报：Mac 开着画板，安卓模式2 进来同步不到，
+    状态就错了）。根因两处，都在 Mac 侧：
+    - **连接时不补发 `canvas`**：`broadcastCanvas` 只在切开关/跳档（`applyCanvasMargin`）和**换文档**
+      （`pushStrokesIfDocChanged`）时发，而后者被 `pushedStrokesKey` 挡着——同一本书不会再触发。
+      于是新客户端连上来根本没收到过这条，画的还是页宽布局（页边笔迹被裁、写到页边也回不去）。
+      修法：`AppModel` 的**新客户端**（`server.$clientCount`）与**服务起来**（`$isRunning`）两条补发链
+      里各加一发。位置必须在 `pushLayout` 之后、`pushCurrentViewport` 之前（layout 会重置几何）。
+    - **`canvasMarginLive` 在载入文档时没对齐**：`ReaderSurface.setup()` 是直接置 `canvasMarginState`
+      的（首帧没有几何可补偿），绕开了 `applyCanvasMargin` 那个唯一写入方 → 广播读到的还是初值
+      `step`（半个页宽）。表现是页边已长过几档的文档，客户端连上来页边比 Mac 窄、远处笔迹被裁。
+      修法：`setup()` 里跟着同步一次。
+    - 验证：`xcodebuild` 全绿；**真机验证见「接下来」第 11 条 ⑪**。
+
   - **2026-08-29：内存占用大修（纯滚动 65 页 1604MB → 275MB，−83%）**，根因与改动全在 `HISTORY.md` 同日条目。
     四条要记住的（都是 `PageBitmap.draw` 里几行代码的事，但少一条就前功尽弃）：
     ① 🔴 **页图像素格式必须是 BGRX**（`noneSkipFirst | byteOrder32Little`，CA 在 Apple Silicon 上的原生格式）。
@@ -602,6 +615,10 @@
        两模式下页边笔迹的擦除/框选/图层显隐是否都正常。
     ⑩ 三端**同一篇文档**互看：同一笔页边笔迹在 Mac/网页/安卓上应当落在同一个位置
        （页边宽度对不上的表现是「Mac 上写在公式右边、平板上写到了页面里」）。
+    ⑪ **后连上来的客户端要补到画板状态**（2026-08-29 用户报的 bug，已修见状态速览）：
+       Mac 先开画板 → 再启动安卓模式2 / 刷新网页采集页 → 连上的那一刻就该是带页边的布局；
+       断线重连、Mac 端换标签页/换文档之后再连，也都该对得上（尤其**页边已经长宽过几档**的文档，
+       连上来的页边宽度要与 Mac 一致，而不是起步的半个页宽）。
 
 12. **模式2 笔画闪烁真机验证**（2026-08-28 修，见 `HISTORY.md`；Mac 与安卓**都要重装**，
     两端各改了一半，只更一端不生效）：

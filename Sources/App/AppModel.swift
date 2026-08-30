@@ -148,6 +148,7 @@ final class AppModel: ObservableObject {
                     self?.push(); self?.broadcastDocs(); self?.broadcastPens(); self?.broadcastEraser()
                     self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)
                     self?.broadcastScratchPads(); self?.broadcastScratchStrokes()
+                    self?.broadcastCanvas()   // 画板模式：新起的服务也要把当前状态交代一遍
                 }
             }
             .store(in: &cancellables)
@@ -164,6 +165,11 @@ final class AppModel: ObservableObject {
                 self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastStrokes(); self?.broadcastNotes(); self?.broadcastLayers()
                 self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)   // 新客户端要补书库 + 目录
                 self?.broadcastScratchPads(); self?.broadcastScratchStrokes()          // 草稿纸列表 + 开着那张的笔迹
+                // 画板模式（PROTOCOL.md `canvas`）：Mac 是唯一真源，但只在切开关/跳档时广播 ——
+                // 新客户端不补这一发就永远收不到（`pushStrokesIfDocChanged` 那处被 pushedStrokesKey
+                // 挡住，同一本书不会再触发）。表现：Mac 开着画板，平板/安卓模式2 连上来仍是页宽布局，
+                // 页边笔迹被裁掉、写到页边也回不去。必须在 pushLayout 之后（layout 会重置几何）。
+                self?.broadcastCanvas()
                 self?.pushCurrentViewport()   // 必须在 pushLayout 之后：平板端收到 layout 会重置滚动/seq
             }
             .store(in: &cancellables)

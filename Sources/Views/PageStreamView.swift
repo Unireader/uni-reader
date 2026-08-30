@@ -674,6 +674,9 @@ struct ReaderSurface: View {
         scratch.appearAt = CACurrentMediaTime()
         // 页边软边界的首值（首帧没有几何可补偿，直接置；笔迹后到由 strokes.count 的 onChange 兜底）
         canvasMarginState = CanvasMargin.margin(overflow: CanvasMargin.overflow(session.strokes))
+        // 这条路径绕开了 `applyCanvasMargin`，得自己把广播用的那个数对齐（否则新客户端连上来
+        // 收到的还是 `canvasMarginLive` 的初值 step，页边比 Mac 这边窄，远处的笔迹被裁掉）。
+        session.canvasMarginLive = session.canvasMode ? canvasMarginState : 0
 
         // 切标签回来：基准/缩放/实化窗口/页图/滚动位置已由 `init` 的 `@State` 初值种好
         // （赶在首帧之前，见那里的红线）。这里只把「待种」标记用掉，并补一次滚动位置的校验重试。
