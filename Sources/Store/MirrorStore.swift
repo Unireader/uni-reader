@@ -148,6 +148,49 @@ enum MirrorStore {
         return out
     }
 
+    // MARK: - 快照与干跑
+
+    /// 一个库里**参与同步的全部行**：`表名 → (row_id → 行)`。`meta` 只取白名单键（同 `fingerprints`）。
+    /// 三方合并的两个输入（mine / theirs）都由它来取。
+    static func snapshot(_ db: SQLiteDB) throws -> MirrorDiff.Snapshot {
+        var out: MirrorDiff.Snapshot = [:]
+        for spec in MirrorFp.specs {
+            var rows = try db.query("SELECT * FROM \(spec.table)")
+            if spec.table == "meta" {
+                rows = rows.filter { ($0["key"] as? String).map(MirrorFp.syncedMetaKeys.contains) ?? false }
+            }
+            var byId: [String: [String: Any]] = [:]
+            for row in rows {
+                guard case .text(let id) = MirrorFp.coerce(row[spec.key], as: .text) else { continue }
+                byId[id] = row
+            }
+            out[spec.table] = byId
+        }
+        return out
+    }
+
+    /// **干跑**：算出这次同步会做什么，一个字都不写。
+    ///
+    /// 源库走调用方传进来的 `LibraryStore` 实例（§8.1「同一路径同一实例」红线）；
+    /// 镜像库是本端自己开的连接。
+    static func plan(mirror: SQLiteDB, source: LibraryStore) throws -> MirrorDiff.Plan {
+        MirrorDiff.compute(base: try syncBase(mirror),
+                           mine: try snapshot(mirror),
+                           theirs: try source.mirrorSnapshot())
+    }
+
+    /// 两侧合起来的 `documentId → 书名`，给报告用。
+    /// **两侧都要**：源盘新增的书在镜像里还不存在，只查一边就会显示成「（已删除的文档）」。
+    static func titles(mine: MirrorDiff.Snapshot, theirs: MirrorDiff.Snapshot) -> [String: String] {
+        var out: [String: String] = [:]
+        for snap in [theirs, mine] {          // mine 后放：同 id 时以镜像那份为准（顺手，无所谓）
+            for (id, row) in snap["document"] ?? [:] {
+                if let t = row["title"] as? String { out[id] = t }
+            }
+        }
+        return out
+    }
+
     static func hasSyncBase(_ db: SQLiteDB) -> Bool {
         let r = (try? db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_base'")) ?? []
         return !r.isEmpty

@@ -41,11 +41,21 @@ enum MirrorFp {
         init(_ name: String, _ type: ColType) { self.name = name; self.type = type }
     }
 
-    /// 一张参与同步的表：主键列 + 参与指纹的列（**顺序即契约**）。
+    /// 一张参与同步的表：主键列 + 参与指纹的列（**顺序即契约**）+ 冲突时按哪一列判新旧。
     struct TableSpec {
         let table: String
         let key: String
         let columns: [Column]
+        /// 两端都改了同一行时，按这一列的 ISO-8601 时间戳取新的（方案 §6）。
+        /// nil = 这张表没有时间戳列，冲突一律**保留源盘那份**并报告。
+        ///
+        /// 放在表规格里而不是另起一张映射表：这一列就在上面 `columns` 里躺着，
+        /// 分开写迟早出现「加了 updated_at 却忘了登记 LWW」。
+        let lww: String?
+
+        init(table: String, key: String, columns: [Column], lww: String? = nil) {
+            self.table = table; self.key = key; self.columns = columns; self.lww = lww
+        }
     }
 
     /// 🔴 **列顺序是写死的，不许改成读 `PRAGMA table_info`。**
@@ -74,7 +84,7 @@ enum MirrorFp {
             Column("anchor_x", .real), Column("anchor_y", .real),
             Column("anchor_w", .real), Column("anchor_h", .real),
             Column("payload", .blob), Column("created_at", .text), Column("updated_at", .text),
-        ]),
+        ], lww: "updated_at"),
         TableSpec(table: "ink_layer", key: "id", columns: [
             Column("id", .text), Column("document_id", .text), Column("name", .text),
             Column("color_key", .text), Column("sort_order", .int), Column("visible", .int),
@@ -85,7 +95,7 @@ enum MirrorFp {
             Column("anchor_page", .int), Column("anchor_x", .real), Column("anchor_y", .real),
             Column("bg", .text), Column("pattern", .text), Column("show_page", .int),
             Column("created_at", .text), Column("updated_at", .text),
-        ]),
+        ], lww: "updated_at"),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),
         ]),

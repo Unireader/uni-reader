@@ -37,6 +37,18 @@ final class LibraryStore {
         try db.run("VACUUM INTO ?", [.text(path)])
     }
 
+    /// 本库里**参与同步的全部行**（离线镜像三方合并的一个输入，见 `MirrorStore.snapshot`）。
+    /// 走这里而不是把 `db` 开放出去：这个类的约定是「所有读写走 DAO」，
+    /// 为一个功能破例交出连接，下一个功能就会照着做。
+    func mirrorSnapshot() throws -> MirrorDiff.Snapshot { try MirrorStore.snapshot(db) }
+
+    /// 镜像基线（`sync_base`）。不是镜像时返回空 —— 那张表只在镜像库里存在。
+    func syncBase() throws -> [String: [String: String]] { try MirrorStore.syncBase(db) }
+
+    /// 重算基线（合并完成后要重置成「此刻两端一致」的样子）。
+    @discardableResult
+    func rebuildSyncBase() throws -> Int { try MirrorStore.rebuildSyncBase(db) }
+
     // MARK: - Schema / 迁移
 
     private func migrate() throws {

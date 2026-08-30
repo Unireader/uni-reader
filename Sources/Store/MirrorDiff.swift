@@ -1,0 +1,219 @@
+import Foundation
+
+/// 离线镜像的**三方合并**：算出「哪些行要写进源盘、哪些要拉回镜像、哪些冲突」。
+/// 方案 `OFFLINE-MIRROR-PLAN.md` §3.1 的判定表 + §6 的冲突规则。
+///
+/// 🔴 **本文件只算不写。** 应用合并是 M5 的事（单事务 + 合并前备份源库）。
+/// 分开的理由不是洁癖：干跑预览是这个功能唯一的安全闸，它必须能在**完全不碰任何库**的前提下
+/// 跑出完整结论给用户看。算和写混在一起，预览就永远只是"大概会这样"。
+///
+/// 🔴 跨端契约：与安卓 `local/mirror/MirrorDiff.kt` 是同一套判定，改一边必须同步另一边。
+/// 判错一格的后果不是"某个功能不好用"，是**静默丢笔迹**。
+enum MirrorDiff {
+
+    // MARK: - 输入
+
+    /// 一侧的全部行：`表名 → (row_id → 行)`。
+    typealias Snapshot = [String: [String: [String: Any]]]
+
+    /// 基线：`表名 → (row_id → fp)`（镜像库的 `sync_base`）。
+    typealias Base = [String: [String: String]]
+
+    // MARK: - 输出
+
+    /// 这条改动要落到哪一边。
+    enum Side: String { case source, mirror }
+
+    enum Op: String { case upsert, delete }
+
+    /// 为什么产生这条改动 —— 给报告用，也让「为什么它要删我的东西」永远答得上来。
+    enum Reason: String {
+        case mirrorAdded, mirrorDeleted, mirrorModified   // 镜像侧的动作，落到源盘
+        case sourceAdded, sourceDeleted, sourceModified   // 源盘侧的动作，落到镜像
+        case conflictNewer      // 两端都改 → 按 lww 取新的
+        case conflictKeptSource // 两端都改但表没有时间戳列 → 保留源盘
+        case conflictKeptEdit   // 一端删一端改 → 保留"改"（不丢数据优先）
+    }
+
+    struct Change {
+        var table: String
+        var rowId: String
+        var op: Op
+        var side: Side
+        var reason: Reason
+        /// upsert 时要写入的整行；delete 时为 nil。
+        var row: [String: Any]?
+        /// 这行属于哪篇文档、`note` 的话是哪一类（kind）。**删除也带**——报告要说
+        /// 「《高等数学》的一条笔迹」，而删除那条 `row` 是 nil，事后就查不出来了。
+        var docId: String?
+        var kind: Int?
+        var page: Int?
+    }
+
+    enum ConflictKind: String {
+        case bothModified   // 两端都改了同一行
+        case deleteVsEdit   // 一端删了、另一端改了
+        case bothAdded      // 两端各自新建了同一个 id 的行（UUID 表几乎不可能，`meta` 会）
+    }
+
+    struct Conflict {
+        var table: String
+        var rowId: String
+        var kind: ConflictKind
+        var kept: Side
+        /// 人话说明（报告直接用）。
+        var note: String
+    }
+
+    struct Plan {
+        var changes: [Change] = []
+        var conflicts: [Conflict] = []
+        /// `document.last_opened_at` **不在指纹里**（方案 §4：进了指纹「翻开过」就把整行标记成改过），
+        /// 所以 diff 看不见它 —— 这里单独算出「两边取较大的那个」，`docId → ISO`。
+        ///
+        /// 放在 Plan 里而不是留给 M5 自己记：一条不在主流程里的规则，交代在文档里迟早被漏掉。
+        var lastOpenedMerges: [String: String] = [:]
+
+        var isEmpty: Bool { changes.isEmpty && lastOpenedMerges.isEmpty }
+
+        func changes(to side: Side) -> [Change] { changes.filter { $0.side == side } }
+
+        func count(_ side: Side, _ op: Op) -> Int {
+            changes.lazy.filter { $0.side == side && $0.op == op }.count
+        }
+    }
+
+    // MARK: - 判定
+
+    /// 一侧的某一行相对基线处于什么状态。
+    enum RowState { case added, deleted, unchanged, modified, absent }
+
+    static func state(base: String?, now: String?) -> RowState {
+        switch (base, now) {
+        case (nil, nil): return .absent
+        case (nil, _): return .added
+        case (_, nil): return .deleted
+        case (let b?, let n?): return b == n ? .unchanged : .modified
+        }
+    }
+
+    /// 三方合并主函数。**纯函数，不碰任何库**。
+    ///
+    /// - Parameters:
+    ///   - base: 建镜像那一刻的指纹（镜像库的 `sync_base`）
+    ///   - mine: 镜像库现在的全部行
+    ///   - theirs: 源库现在的全部行
+    static func compute(base: Base, mine: Snapshot, theirs: Snapshot) -> Plan {
+        var plan = Plan()
+        for spec in MirrorFp.specs {
+            let t = spec.table
+            let baseFps = base[t] ?? [:]
+            let mineRows = mine[t] ?? [:]
+            let theirsRows = theirs[t] ?? [:]
+            let mineFps = mineRows.mapValues { MirrorFp.fingerprint(row: $0, spec: spec) }
+            let theirsFps = theirsRows.mapValues { MirrorFp.fingerprint(row: $0, spec: spec) }
+
+            for id in Set(baseFps.keys).union(mineFps.keys).union(theirsFps.keys).sorted() {
+                let m = state(base: baseFps[id], now: mineFps[id])
+                let s = state(base: baseFps[id], now: theirsFps[id])
+                apply(spec: spec, id: id, m: m, s: s,
+                      mineFp: mineFps[id], theirsFp: theirsFps[id],
+                      mineRow: mineRows[id], theirsRow: theirsRows[id], into: &plan)
+            }
+
+            // `last_opened_at` 不进指纹，单独取 max（见 `Plan.lastOpenedMerges`）
+            if t == "document" {
+                for id in Set(mineRows.keys).intersection(theirsRows.keys) {
+                    let a = mineRows[id]?["last_opened_at"] as? String ?? ""
+                    let b = theirsRows[id]?["last_opened_at"] as? String ?? ""
+                    if a != b, !max(a, b).isEmpty { plan.lastOpenedMerges[id] = max(a, b) }
+                }
+            }
+        }
+        return plan
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity
+    private static func apply(spec: MirrorFp.TableSpec, id: String,
+                              m: RowState, s: RowState,
+                              mineFp: String?, theirsFp: String?,
+                              mineRow: [String: Any]?, theirsRow: [String: Any]?,
+                              into plan: inout Plan) {
+        let t = spec.table
+        // 删除那条没有 row，所以标签信息要在这里、趁两侧的行还在手上时取下来
+        let any = mineRow ?? theirsRow
+        func mk(_ op: Op, _ side: Side, _ reason: Reason, _ row: [String: Any]?) -> Change {
+            Change(table: t, rowId: id, op: op, side: side, reason: reason, row: row,
+                   docId: any?["document_id"] as? String,
+                   kind: (any?["kind"] as? Int64).map(Int.init),
+                   page: (any?["page"] as? Int64).map(Int.init))
+        }
+        switch (m, s) {
+
+        // —— 两边一致，什么都不用做 ——
+        case (.unchanged, .unchanged), (.absent, .absent), (.deleted, .deleted):
+            return
+
+        // —— 只有一边动了 ——
+        case (.added, .absent):      // 镜像新增 → 写进源盘
+            plan.changes.append(mk(.upsert, .source, .mirrorAdded, mineRow))
+        case (.absent, .added):      // 源盘新增 → 拉进镜像
+            plan.changes.append(mk(.upsert, .mirror, .sourceAdded, theirsRow))
+        case (.deleted, .unchanged): // 镜像删了、源盘没动 → 源盘也删
+            plan.changes.append(mk(.delete, .source, .mirrorDeleted, nil))
+        case (.unchanged, .deleted): // 源盘删了、镜像没动 → 镜像也删
+            plan.changes.append(mk(.delete, .mirror, .sourceDeleted, nil))
+        case (.modified, .unchanged):
+            plan.changes.append(mk(.upsert, .source, .mirrorModified, mineRow))
+        case (.unchanged, .modified):
+            plan.changes.append(mk(.upsert, .mirror, .sourceModified, theirsRow))
+
+        // —— 一端删、一端改：**保留"改"**（方案 §6，不丢用户数据优先）——
+        case (.deleted, .modified):
+            plan.changes.append(mk(.upsert, .mirror, .conflictKeptEdit, theirsRow))
+            plan.conflicts.append(Conflict(table: t, rowId: id, kind: .deleteVsEdit, kept: .source,
+                                           note: "本机删掉了它、硬盘上又改过它 —— 保留了硬盘上那份"))
+        case (.modified, .deleted):
+            plan.changes.append(mk(.upsert, .source, .conflictKeptEdit, mineRow))
+            plan.conflicts.append(Conflict(table: t, rowId: id, kind: .deleteVsEdit, kept: .mirror,
+                                           note: "硬盘上删掉了它、本机又改过它 —— 保留了本机那份"))
+
+        // —— 两端都动了 ——
+        case (.modified, .modified), (.added, .added):
+            if mineFp == theirsFp { return }   // 两边改成一样了，无操作
+            let kind: ConflictKind = (m == .added) ? .bothAdded : .bothModified
+            resolveBoth(spec: spec, id: id, kind: kind,
+                        mineRow: mineRow, theirsRow: theirsRow, mk: mk, into: &plan)
+
+        // —— 剩下的组合在数学上到不了（一边 absent 意味着 base 里没有，另一边就不可能是
+        //     unchanged/modified/deleted）。真到了说明判定表被改坏了，宁可留个痕迹也不要静默。——
+        default:
+            assertionFailure("MirrorDiff: 不该出现的状态组合 \(t)/\(id) mine=\(m) theirs=\(s)")
+        }
+    }
+
+    /// 两端都改了同一行：有时间戳列就取新的，没有就保留源盘（方案 §6）。
+    private static func resolveBoth(spec: MirrorFp.TableSpec, id: String, kind: ConflictKind,
+                                    mineRow: [String: Any]?, theirsRow: [String: Any]?,
+                                    mk: (Op, Side, Reason, [String: Any]?) -> Change,
+                                    into plan: inout Plan) {
+        let t = spec.table
+        if let col = spec.lww {
+            // 时间戳是定宽 UTC（`yyyy-MM-ddTHH:mm:ss.SSSZ`，两端同一格式，见 `ISO`/`Iso`），
+            // **直接比字符串**：不引入日期解析，也就没有「两端的解析器对同一个串给出不同结果」这条缝。
+            let a = mineRow?[col] as? String ?? ""
+            let b = theirsRow?[col] as? String ?? ""
+            let keepMine = a > b
+            plan.changes.append(mk(.upsert, keepMine ? .source : .mirror, .conflictNewer, keepMine ? mineRow : theirsRow))
+            plan.conflicts.append(Conflict(table: t, rowId: id, kind: kind,
+                                           kept: keepMine ? .mirror : .source,
+                                           note: "两端都改过 —— 保留了较新的那份（\(max(a, b))）"))
+        } else {
+            // 无时间戳列的表（document/variant/ink_layer/meta）：可冲突的字段只有标题、分组、
+            // 阅读进度这类低价值项，保守选一边即可，但**必须报出来**。
+            plan.changes.append(mk(.upsert, .mirror, .conflictKeptSource, theirsRow))
+            plan.conflicts.append(Conflict(table: t, rowId: id, kind: kind, kept: .source,
+                                           note: "两端都改过，这张表没有时间戳可比 —— 保留了硬盘上那份"))
+        }
+    }
+}
