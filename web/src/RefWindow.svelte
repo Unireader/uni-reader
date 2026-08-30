@@ -149,16 +149,31 @@
   });
 
   // ---- 摆位 / 改尺寸（指针拖拽） ----
+  //
+  // 🔴 **标题栏整条都能拖，而且不妨碍里面的按钮**：按下不抢、不 `preventDefault`，
+  // 移动超过阈值才算拖动，拖过就抑制随后的 click。原先在按钮上 `stopPropagation`，
+  // 结果只有按钮之间那点空隙能拖（安卓端同款毛病，用户 2026-08-30 实测报的第三条）。
+  //
+  // 监听挂 window 而不是 setPointerCapture：捕获会打乱子按钮的 click 判定，而 window
+  // 监听既保证拖出小窗也不断，又完全不碰按钮。
+  const SLOP = 4;
   let drag: { mode: "move" | "w" | "h" | "wh"; x: number; y: number; b: typeof box } | null = null;
+  let dragged = false;
+  let suppressClick = false;
+
   function down(mode: "move" | "w" | "h" | "wh", e: PointerEvent) {
-    e.stopPropagation(); e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (mode !== "move") { e.stopPropagation(); e.preventDefault(); }   // 尺寸手柄直接接管
     drag = { mode, x: e.clientX, y: e.clientY, b: { ...box } };
+    dragged = false;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+    window.addEventListener("pointercancel", up, { once: true });
   }
   function move(e: PointerEvent) {
     if (!drag) return;
-    e.stopPropagation();
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!dragged && Math.hypot(dx, dy) < SLOP) return;   // 还没过阈值：可能只是想点按钮
+    dragged = true;
     if (drag.mode === "move") {
       box.x = Math.min(0, Math.max(drag.b.x + dx, -(innerWidth - box.w - 16)));
       box.y = Math.min(0, Math.max(drag.b.y + dy, -(innerHeight - box.h - 16)));
@@ -168,9 +183,16 @@
       if (drag.mode !== "w") box.h = Math.min(Math.max(drag.b.h - dy, MIN_H), innerHeight - 24);
     }
   }
-  function up(e: PointerEvent) {
+  function up() {
+    window.removeEventListener("pointermove", move);
     if (!drag) return;
-    drag = null; e.stopPropagation(); saveBox();
+    const moved = dragged;
+    drag = null; dragged = false;
+    if (moved) {
+      saveBox();
+      suppressClick = true;                       // 拖完那一下别再当成点击
+      setTimeout(() => (suppressClick = false), 0);
+    }
   }
 
   // ---- 双指捏合缩放（锚在两指中点） ----
@@ -218,28 +240,23 @@
   {:else}
     <div class="refWin" style="width:{box.w}px; height:{box.h}px; right:{14 - box.x}px; bottom:{14 - box.y}px">
       <!-- 尺寸手柄：左 / 上 / 左上角三条透明热区（同 Mac 端，不画图标） -->
-      <div class="refEdge refEdgeW" role="presentation" onpointerdown={(e) => down("w", e)} onpointermove={move}
-        onpointerup={up} onpointercancel={up}></div>
-      <div class="refEdge refEdgeH" role="presentation" onpointerdown={(e) => down("h", e)} onpointermove={move}
-        onpointerup={up} onpointercancel={up}></div>
-      <div class="refEdge refEdgeWH" role="presentation" onpointerdown={(e) => down("wh", e)} onpointermove={move}
-        onpointerup={up} onpointercancel={up}></div>
+      <div class="refEdge refEdgeW" role="presentation" onpointerdown={(e) => down("w", e)}></div>
+      <div class="refEdge refEdgeH" role="presentation" onpointerdown={(e) => down("h", e)}></div>
+      <div class="refEdge refEdgeWH" role="presentation" onpointerdown={(e) => down("wh", e)}></div>
 
-      <div class="refBar" role="presentation" onpointerdown={(e) => down("move", e)} onpointermove={move}
-        onpointerup={up} onpointercancel={up}>
-        <button class="refPick" onpointerdown={(e) => e.stopPropagation()}
-          onclick={() => (picker = !picker)}>
+      <div class="refBar" role="presentation" onpointerdown={(e) => down("move", e)}>
+        <button class="refPick" onclick={() => { if (!suppressClick) picker = !picker; }}>
           <Icon name="book" /><span class="refTitle">{S.refTitle || "参考"}</span>
         </button>
         {#if box.w >= 300 && S.refPageCount}
           <span class="refPage">{S.refCurPage + 1} / {S.refPageCount}</span>
         {/if}
-        <button class="refBtn" title="回到进度" onpointerdown={(e) => e.stopPropagation()}
-          onclick={rewind}><Icon name="scope" /></button>
-        <button class="refBtn" title="收起" onpointerdown={(e) => e.stopPropagation()}
-          onclick={() => (S.refCollapsed = true)}><Icon name="chevron-down" /></button>
-        <button class="refBtn" title="关闭" onpointerdown={(e) => e.stopPropagation()}
-          onclick={() => (S.ref = false)}><Icon name="x" /></button>
+        <button class="refBtn" title="回到进度"
+          onclick={() => { if (!suppressClick) rewind(); }}><Icon name="scope" /></button>
+        <button class="refBtn" title="收起"
+          onclick={() => { if (!suppressClick) S.refCollapsed = true; }}><Icon name="chevron-down" /></button>
+        <button class="refBtn" title="关闭"
+          onclick={() => { if (!suppressClick) S.ref = false; }}><Icon name="x" /></button>
       </div>
 
       {#if picker}

@@ -291,3 +291,18 @@ wantPx = 小窗内容区宽度(px) × 当前缩放
 验证：`xcodebuild` / `vite build`（a11y 零警告）/ `assembleDebug` / 安卓 `test` 全绿；
 `capture.html` 已按 `build-web.sh` 的占位符自检回写（三项齐全）。
 **手感与观感一律真机验**：小窗默认大小、拖动与捏合手感、笔会不会误触小窗、模式1 第二个 Pdfium 的内存。
+
+### 12.1 安卓模式2 首轮真机反馈与修复（2026-08-30）
+
+| 反馈 | 根因 | 修法 |
+|---|---|---|
+| 第一次打开小窗一片空白，换一次书就再没复现 | `open()` 只认 `SharedPreferences` 里记着的那本，**首次没有记忆就什么都不加载**（web 端做了兜底，安卓这份漏了） | `Host` 加 `refDefaultDoc()`：模式2 取 Mac 当前开着的那本、模式1 取当前标签那本 |
+| 小窗没有阴影，边界难分辨 | 面板只有 `setBackgroundColor` 一块纯色矩形，压在 PDF 上糊成一片（Mac 是 material+描边+投影、web 是 border+box-shadow，只有安卓漏了） | 圆角 + 描边 + `elevation` 投影 + `clipToOutline` |
+| 标题栏能拖的地方很少，文档名处拖不动 | 文档名有自己的点击监听、把触摸吃掉了，可拖的只剩按钮之间那点空隙 | 标题栏改成 `DragBar`：**按下先放给子 View，移动超过 touch slop 才接管**（子 View 收到 CANCEL，点击不触发）→ 点标题=选书、按住标题拖=移窗口 |
+
+🔴 第三条 **web 端是一模一样的毛病**（按钮上 `stopPropagation` + `preventDefault` 把可拖区域切碎），
+同轮一起改成阈值判定 + 拖过抑制那一次 click；监听挂 `window` 而不是 `setPointerCapture`——
+捕获会打乱子按钮的 click 判定。
+
+**教训**：「浮窗标题栏」这种既要点又要拖的控件，三端都得走同一条路子——
+**按下不抢、超过阈值才接管**。哪一端图省事直接在子控件上拦事件，那一端的标题栏就废掉一半。
