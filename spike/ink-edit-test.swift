@@ -198,5 +198,54 @@ check(InkEdit.pointInPolygon(SIMD2(0.3, 0.1), polygon: concave), "凹多边形�
 // 退化：< 3 点恒 false
 check(!InkEdit.pointInPolygon(SIMD2(0.3, 0.3), polygon: [SIMD2(0.1, 0.1), SIMD2(0.5, 0.5)]), "两点多边形 → false")
 
+// ---- bounds / fitTranslation（刚性平移：整团位移先夹再平移，撞边界只停不变形）----
+// 🔴 这一块钉的是用户 2026-08-30 报的「画板模式下框选移动把笔迹压缩了」：
+// 逐点 clamp 的 translated 单独用时，越界那一头会被摁成一条线；fitTranslation 先夹位移就不会。
+print("bounds / fitTranslation（框选整团平移不变形）")
+func stroke(_ pts: [SIMD3<Double>]) -> InkStroke {
+    InkStroke(page: 1, color: color, width: 4, type: .ballpoint, points: pts)
+}
+check(InkEdit.bounds([]).isNull, "空集 → .null（union 时是中性元）")
+check(InkEdit.bounds([stroke([])]).isNull, "无点的笔画 → .null")
+let bb = InkEdit.bounds([stroke([SIMD3(1.2, 0.3, 1), SIMD3(1.8, 0.5, 1)]), stroke([SIMD3(1.4, 0.2, 1)])])
+check(near(bb.minX, 1.2) && near(bb.maxX, 1.8) && near(bb.minY, 0.2) && near(bb.maxY, 0.5),
+      "整团都在页外（x>1）时包围盒按点算，不被页角撑大")
+// 画板模式：一团位于页边 1.2...1.8 的笔迹想右移 0.5，但 x 上限只有 2.0 → 位移夹到 0.2
+let canvasRange = -8.0...9.0
+let far = InkEdit.bounds([stroke([SIMD3(1.2, 0.3, 1), SIMD3(1.8, 0.5, 1)])])
+let f1 = InkEdit.fitTranslation(dx: 0.5, dy: 0, inkBounds: far, xRange: -2.0...2.0)
+check(near(f1.dx, 0.2) && near(f1.dy, 0), "撞上界：位移被夹成 0.2（不是把 1.8 那头摁在 2.0）")
+let moved = InkEdit.translated(stroke([SIMD3(1.2, 0.3, 1), SIMD3(1.8, 0.5, 1)]),
+                               dx: f1.dx, dy: f1.dy, xRange: -2.0...2.0)
+check(near(moved.points[1].x - moved.points[0].x, 0.6), "夹过位移再平移：两点间距仍是 0.6（形状不变）")
+// 反例存档：不夹位移直接平移 = 压扁（这就是那个 bug）
+let squashed = InkEdit.translated(stroke([SIMD3(1.2, 0.3, 1), SIMD3(1.8, 0.5, 1)]),
+                                  dx: 0.5, dy: 0, xRange: -2.0...2.0)
+check(near(squashed.points[1].x - squashed.points[0].x, 0.3), "反例：不夹位移直接平移，间距 0.6 → 0.3（被压扁）")
+// 画板区间够宽时原样通过
+let f2 = InkEdit.fitTranslation(dx: 0.5, dy: 0, inkBounds: far, xRange: canvasRange)
+check(near(f2.dx, 0.5), "区间够宽 → 位移原样通过")
+// y 恒按页内 0...1 夹（页边只横向延伸）
+let f3 = InkEdit.fitTranslation(dx: 0, dy: 0.8, inkBounds: far, xRange: canvasRange)
+check(near(f3.dy, 0.5), "y 上界：0.5 的 maxY 最多再走 0.5")
+let f4 = InkEdit.fitTranslation(dx: 0, dy: -0.9, inkBounds: far, xRange: canvasRange)
+check(near(f4.dy, -0.3), "y 下界：0.3 的 minY 最多再走 -0.3")
+// 注解与笔迹同选：注解按页内 0...1 定界，取交集（注解不能被拖出页）
+let f5 = InkEdit.fitTranslation(dx: 0.5, dy: 0, inkBounds: InkEdit.bounds([stroke([SIMD3(0.1, 0.5, 1)])]),
+                                xRange: canvasRange,
+                                noteBounds: CGRect(x: 0.7, y: 0.5, width: 0.2, height: 0.05))
+check(near(f5.dx, 0.1), "同选注解时取交集：注解 maxX 0.9 只能再走 0.1")
+// 只有注解（无笔迹）
+let f6 = InkEdit.fitTranslation(dx: -0.5, dy: 0, inkBounds: .null, xRange: canvasRange,
+                                noteBounds: CGRect(x: 0.2, y: 0.5, width: 0.2, height: 0.05))
+check(near(f6.dx, -0.2), "只选中注解：按注解自己的页内界夹")
+// 两类都没有 → 原样返回（调用方自己 guard）
+let f7 = InkEdit.fitTranslation(dx: 0.3, dy: 0.3, inkBounds: .null, xRange: canvasRange)
+check(near(f7.dx, 0.3) && near(f7.dy, 0.3), "无选中项 → 位移原样返回")
+// 退化：选中集比可写区间还宽 → 不夹（保形优先，逐点 clamp 兜底）
+let wide = InkEdit.bounds([stroke([SIMD3(-3, 0.3, 1), SIMD3(3, 0.5, 1)])])
+let f8 = InkEdit.fitTranslation(dx: 0.5, dy: 0, inkBounds: wide, xRange: -1.0...1.0)
+check(near(f8.dx, 0.5), "选中集比区间还宽 → 不夹，原样返回")
+
 print("\n\(pass) passed, \(fail) failed")
 exit(fail == 0 ? 0 : 1)

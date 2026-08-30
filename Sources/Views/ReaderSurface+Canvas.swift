@@ -11,6 +11,7 @@ extension ReaderSurface {
     ///    或放大着看页面左半边，这时按零位移切开关会把页面留在屏幕外/贴边上。
     func applyCanvasMargin(_ newState: Double, recenter: Bool = false) {
         let clamped = min(max(newState, CanvasMargin.step), CanvasMargin.limit)
+        let oldMargin = canvasMargin   // 打点用：下面 canvasMarginState 一写就取不到旧值了
         let oldW = contentWidth(margin: canvasMargin)
         let newEffective = session.canvasMode ? clamped : 0
         let newW = contentWidth(margin: newEffective)
@@ -33,7 +34,13 @@ extension ReaderSurface {
         // 镜像平板：Mac 是页边宽度的唯一真源（PROTOCOL.md `canvas`）。仅当本窗口恰是 padSession
         // 才广播——同 broadcastStrokes 的门控，否则推的是别的窗口的布局。
         session.canvasMarginLive = newEffective
-        if session.id == app.padSession?.id { app.broadcastCanvas() }
+        let isPad = session.id == app.padSession?.id
+        // 打点（同 `applyLassoMove` 那条，touch ~/Library/Logs/UniReader-pad.log 开）：平板那侧
+        // 是按**它自己那份**页边宽度 clamp 着画的，这条没广播出去就等于「数据对了、平板画出来
+        // 还是挤在页边上」。看两处：→ 后面那个数有没有涨、pad 是不是 true。
+        PadLog.log("页边档位 \(String(format: "%.2f", oldMargin)) → \(String(format: "%.2f", newEffective))"
+                   + "（recenter=\(recenter) pad=\(isPad)）")
+        if isPad { app.broadcastCanvas() }
     }
 
     /// 按当前笔迹重算页边宽度（笔画增删、框选移动/缩放提交、开画板、载入文档后各跑一次）。

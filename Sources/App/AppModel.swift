@@ -432,12 +432,29 @@ final class AppModel: ObservableObject {
     /// 一次性判定 + 变更 + 持久化 + 镜像回所有客户端。
     private func applyLassoMove(_ obj: [String: Any], to s: DocSession) {
         let page = (obj["page"] as? NSNumber)?.intValue ?? s.currentPageIndex
-        let dx = (obj["dx"] as? NSNumber)?.doubleValue ?? 0
-        let dy = (obj["dy"] as? NSNumber)?.doubleValue ?? 0
-        guard dx != 0 || dy != 0 else { return }
+        let rawDx = (obj["dx"] as? NSNumber)?.doubleValue ?? 0
+        let rawDy = (obj["dy"] as? NSNumber)?.doubleValue ?? 0
+        guard rawDx != 0 || rawDy != 0 else { return }
         lassoApply(obj, to: s, page: page) { changed in
+            // 🔴 两处都不能省（用户 2026-08-30 报「平板上框选移动把笔迹压缩了」）：
+            //  ① `xRange` 要按画板模式放宽——不传就是默认页内 `0...1`，页边笔迹一移动就被
+            //     逐点摁回页边（平板这条路径比 Mac 本机那条更糟：那边至少还是当前那档软边界）；
+            //  ② 位移先经 `fitTranslation` 整体夹住再平移 = **刚性**，撞上边界也只是停住、不变形。
+            let xr = CanvasMargin.xRange(margin: s.canvasMode ? CanvasMargin.limit : 0)
+            let (dx, dy) = InkEdit.fitTranslation(
+                dx: rawDx, dy: rawDy,
+                inkBounds: InkEdit.bounds(changed.strokes.map { s.strokes[$0] }), xRange: xr,
+                noteBounds: changed.notes.reduce(CGRect.null) { $0.union(s.textNotes[$1].anchor) })
+            guard dx != 0 || dy != 0 else { return }
+            // 打点（touch ~/Library/Logs/UniReader-pad.log 开）：这条一行就能判「压缩」出在哪一侧——
+            // 夹后位移与原始位移差很多 = 撞了边界；x 区间是 0...1 = 画板没开到 Mac 这边。
+            PadLog.log("框选移动 page=\(page) 命中 笔迹=\(changed.strokes.count) 注解=\(changed.notes.count) "
+                       + "d=(\(String(format: "%.4f", rawDx)),\(String(format: "%.4f", rawDy)))"
+                       + "→(\(String(format: "%.4f", dx)),\(String(format: "%.4f", dy))) "
+                       + "canvas=\(s.canvasMode) x区间=\(String(format: "%.1f…%.1f", xr.lowerBound, xr.upperBound)) "
+                       + "margin=\(String(format: "%.2f", s.canvasMarginLive))")
             for i in s.strokes.indices where s.strokes[i].page == page && changed.strokes.contains(i) {
-                s.strokes[i] = InkEdit.translated(s.strokes[i], dx: dx, dy: dy)
+                s.strokes[i] = InkEdit.translated(s.strokes[i], dx: dx, dy: dy, xRange: xr)
             }
             for i in s.textNotes.indices where s.textNotes[i].page == page && changed.notes.contains(i) {
                 s.textNotes[i] = InkEdit.translated(s.textNotes[i], dx: dx, dy: dy)
@@ -455,8 +472,10 @@ final class AppModel: ObservableObject {
         let sy = (obj["sy"] as? NSNumber)?.doubleValue ?? 1
         guard sx > 0, sy > 0, sx != 1 || sy != 1 else { return }
         lassoApply(obj, to: s, page: page) { changed in
+            // xRange 同 applyLassoMove：不放宽的话画板模式下页边笔迹一缩放就被摁回页内
+            let xr = CanvasMargin.xRange(margin: s.canvasMode ? CanvasMargin.limit : 0)
             for i in s.strokes.indices where s.strokes[i].page == page && changed.strokes.contains(i) {
-                s.strokes[i] = InkEdit.scaled(s.strokes[i], anchor: a, sx: sx, sy: sy)
+                s.strokes[i] = InkEdit.scaled(s.strokes[i], anchor: a, sx: sx, sy: sy, xRange: xr)
             }
             for i in s.textNotes.indices where s.textNotes[i].page == page && changed.notes.contains(i) {
                 s.textNotes[i] = InkEdit.scaled(s.textNotes[i], anchor: a, sx: sx, sy: sy)
@@ -503,6 +522,10 @@ final class AppModel: ObservableObject {
             return
         }
         mutate((hitS, hitN))
+        // 页边软边界得跟上：笔画**数**没变，阅读区那个 `onChange(of: strokes.count)` 不会触发
+        // （Mac 本机框选是在 commitLassoMove 里显式补的一次，平板这条路径当初漏了）。
+        // 不补的后果不是「压缩」而是「看不见」：笔迹被挪到当前内容宽之外，两端都画在可视区外面。
+        s.inkMovedRev &+= 1
         if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
     }
 

@@ -175,7 +175,13 @@ private struct TabChip: View {
         }
         // 用具体的 `Color.primary/.secondary`，不用层级样式 `.primary/.secondary`——后者是相对
         // **当前前景**解析的，套在 material + `.quaternary` 底片上时会被一路稀释掉。
-        .foregroundStyle(isActive ? Color.primary : Color.secondary)
+        //
+        // 🔴 非活动标签**不能用 `Color.secondary`**（用户 2026-08-30：「几乎看不清」）：
+        // `secondaryLabelColor` 本身就只有五成不透明度，再叠在浮动胶囊那层半透明 material 上、
+        // 底下还透着 PDF 的白纸，实际对比度掉到勉强能认字。主次已经由**字重**分开了
+        // （活动 semibold / 非活动 regular，见上），颜色这一路只留一点点差就够，
+        // 于是非活动也走 `Color.primary`，只压一档不透明度。
+        .foregroundStyle(isActive ? Color.primary : Color.primary.opacity(0.78))
         .padding(.horizontal, 8)
         .frame(height: TabBarMetrics.rowHeight)
         .frame(minWidth: 96, maxWidth: 220)

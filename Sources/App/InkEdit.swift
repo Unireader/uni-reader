@@ -61,9 +61,50 @@ enum InkEdit {
         return anyHit ? out : [s]
     }
 
+    /// 点集的归一化包围盒（画板模式下 x 可越出 `0...1`）。空集/空笔画返回 `.null`
+    /// （`CGRect.null` 与任何 rect 求并都是对方，可直接 `union` 串起来）。
+    /// 初值取首个点而非页角：整条笔画都在页外时按页角起算会把盒子硬撑到页边。
+    static func bounds(_ strokes: [InkStroke]) -> CGRect {
+        var lo = SIMD2(Double.infinity, Double.infinity), hi = SIMD2(-Double.infinity, -Double.infinity)
+        for st in strokes {
+            for p in st.points {
+                lo = SIMD2(min(lo.x, p.x), min(lo.y, p.y))
+                hi = SIMD2(max(hi.x, p.x), max(hi.y, p.y))
+            }
+        }
+        guard lo.x <= hi.x else { return .null }
+        return CGRect(x: lo.x, y: lo.y, width: hi.x - lo.x, height: hi.y - lo.y)
+    }
+
+    /// 刚性平移的**位移夹取**：把 `(dx, dy)` 整体夹进「选中集不越界」的范围，调用方随后原样平移每个点。
+    ///
+    /// 🔴 框选移动**必须**先过这里再调 `translated`：`translated` 是**逐点** clamp 的，
+    /// 一整团笔迹撞上边界时，越界的那一头会被逐点摁在边界线上 = 笔迹被压扁成一条线
+    /// （用户 2026-08-30 报的「画板模式下框选移动后笔迹被压缩」）。先夹位移则形状恒定。
+    ///
+    /// 笔迹按 `xRange` 定界、文字注解按页内 `0...1` 定界（注解不出页），两者取交集；
+    /// `.null`（无此类选中项）不参与。选中集本身比可写区间还宽这种退化情形不夹
+    /// （保形优先，逐点 clamp 兜底）。y 两者同为页内 `0...1`。
+    static func fitTranslation(dx: Double, dy: Double, inkBounds: CGRect,
+                               xRange: ClosedRange<Double> = 0...1,
+                               noteBounds: CGRect = .null) -> (dx: Double, dy: Double) {
+        var loX = -Double.greatestFiniteMagnitude, hiX = Double.greatestFiniteMagnitude
+        var loY = loX, hiY = hiX
+        func fit(_ b: CGRect, _ xr: ClosedRange<Double>) {
+            guard !b.isNull else { return }
+            loX = max(loX, xr.lowerBound - Double(b.minX)); hiX = min(hiX, xr.upperBound - Double(b.maxX))
+            loY = max(loY, -Double(b.minY));                hiY = min(hiY, 1 - Double(b.maxY))
+        }
+        fit(inkBounds, xRange)
+        fit(noteBounds, 0...1)
+        return (loX <= hiX ? min(max(dx, loX), hiX) : dx,
+                loY <= hiY ? min(max(dy, loY), hiY) : dy)
+    }
+
     /// 平移：点集 +(dx, dy)，x/y 各 clamp 到 0...1（压感不动，id 不变）。
     /// `xRange` 默认 `0...1` = 三端同款的「不出本页」；Mac 的画板模式（v12）传放宽后的页边区间
     /// （`CanvasMargin.xRange`），让页边笔迹能在页外平移。默认值不变 → web/安卓两份实现无需同步。
+    /// ⚠️ 逐点 clamp：**整团平移必须先过 `fitTranslation` 夹位移**，否则撞边界就压扁（见上）。
     static func translated(_ s: InkStroke, dx: Double, dy: Double,
                            xRange: ClosedRange<Double> = 0...1) -> InkStroke {
         var t = s

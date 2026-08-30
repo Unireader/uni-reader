@@ -251,6 +251,8 @@ export interface GState {
   setCanvas(on: boolean, margin: number): void;
   /// 落笔中的乐观跳档：这一笔写到离页边不足 slack 就本地先把页边放宽一档，别等 Mac 的回程。
   growCanvas(nx: number): void;
+  /// 真源回推的笔迹越界 → 本地放宽一档（只增不减；渲染按当前页边 clamp，档位不跟上就画成一条）
+  growCanvasForStrokes(): void;
   pageToView(page: number, nx: number, ny: number): { x: number; y: number };
   inContent(x: number, y: number): boolean;
   drawAll(): void;

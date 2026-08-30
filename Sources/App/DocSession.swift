@@ -185,6 +185,11 @@ final class DocSession: ObservableObject, Identifiable {
     /// 只有开了 `PadLog` 才会被读，平时零成本。
     var lastInkEndAt: CFAbsoluteTime = 0
 
+    /// 「有笔迹被原地挪动/缩放过」的计数器（平板发起的框选提交，`AppModel.lassoApply` 递增）。
+    /// 阅读区靠它补一次 `refreshCanvasMargin()`——那边的触发器是 `strokes.count`（数组整体比较是
+    /// 每帧 O(总点数)，红线），而框选移动**不改笔画数**，只能另给一个便宜的信号。
+    @Published var inkMovedRev: Int = 0
+
     // 实时手写：已完成笔画 + 正在书写的一笔。
     @Published var strokes: [InkStroke] = []
     @Published var liveStroke: InkStroke?

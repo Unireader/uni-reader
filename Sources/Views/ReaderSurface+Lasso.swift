@@ -156,31 +156,60 @@ extension ReaderSurface {
         lassoSelection = LassoSelection(page: anchorPage, strokeIDs: strokeIDs, noteIDs: noteIDs, bounds: bbox)
     }
 
-    /// 笔迹点集的页内归一化包围盒。
-    /// 初值取**首个点**而非 (1,1)/(0,0)：画板模式下整条笔画可能全在页外（x 恒 >1 或恒 <0），
-    /// 按页角起算会把包围盒硬撑到页边，选中框和缩放锚点全错位。
-    func strokeBounds(_ st: InkStroke) -> CGRect {
-        guard let f = st.points.first else { return .zero }
-        var lo = SIMD2<Double>(f.x, f.y), hi = SIMD2<Double>(f.x, f.y)
-        for p in st.points {
-            lo = SIMD2(min(lo.x, p.x), min(lo.y, p.y))
-            hi = SIMD2(max(hi.x, p.x), max(hi.y, p.y))
-        }
-        return CGRect(x: lo.x, y: lo.y, width: hi.x - lo.x, height: hi.y - lo.y)
+    /// 笔迹点集的页内归一化包围盒（画板模式下可越出 `0...1`，故不能按页角起算——
+    /// 整条笔画都在页外时会被硬撑到页边，选中框与缩放锚点跟着全错位）。数学见 `InkEdit.bounds`。
+    func strokeBounds(_ st: InkStroke) -> CGRect { InkEdit.bounds([st]) }
+
+    // MARK: 框选编辑的边界与包围盒（移动/缩放共用）
+
+    /// 框选编辑（移动/缩放）时笔迹的合法 x 区间。
+    ///
+    /// 画板模式下取**硬上限** `CanvasMargin.limit`，而不是当前这一档软边界 `inkXRange`：
+    /// 软边界是「跟着笔迹长出来的」，提交后 `refreshCanvasMargin()` 立刻会跳到够用的档位；
+    /// 提交的那一刻还拿旧档位卡着，等于禁止把笔迹挪进「还没长出来」的那片页边。
+    /// 画板关着时照旧是页内 `0...1`（与画板模式之前逐字节同行为）。
+    var lassoEditXRange: ClosedRange<Double> {
+        CanvasMargin.xRange(margin: session.canvasMode ? CanvasMargin.limit : 0)
     }
 
-    // MARK: 移动提交（松手一次性平移，页内 clamp）
+    /// 选中集在页内归一化坐标下的**实际**包围盒（画板模式下 x 可越出 `0...1`）。
+    /// 不拿 `sel.bounds` 顺着 `translatedRect`/`scaledRect` 递推——那两个函数把结果夹在 `0...1`，
+    /// 页边笔迹一动，选中框就塌回页边上（框、手柄、缩放锚点跟着全错位）。
+    func lassoSelectionBounds(_ sel: LassoSelection, strokes: Bool = true, notes: Bool = true) -> CGRect {
+        var box = CGRect.null
+        if strokes {
+            for st in session.strokes where st.page == sel.page && sel.strokeIDs.contains(st.id) {
+                box = box.union(strokeBounds(st))
+            }
+        }
+        if notes {
+            for n in session.textNotes where n.page == sel.page && sel.noteIDs.contains(n.id) {
+                box = box.union(n.anchor)
+            }
+        }
+        return box
+    }
+
+    /// 把位移整体夹进「选中集不越界」的范围——**刚性平移**的关键一步，数学在
+    /// `InkEdit.fitTranslation`（纯函数，`spike/ink-edit-test.swift` 覆盖；平板那条路径
+    /// `AppModel.applyLassoMove` 调的是同一个）。这里只负责把两类选中项的包围盒取出来。
+
+    // MARK: 移动提交（松手一次性平移；先夹位移再整体平移 = 刚性，形状不变）
 
     func commitLassoMove(translation t: CGSize) {
         guard let sel = lassoSelection, let layout,
               layout.heights.indices.contains(sel.page), pageW > 0 else { return }
         let pageHDisp = layout.heights[sel.page] * max(0.0001, dispScale)
-        let dx = Double(t.width / pageW), dy = Double(t.height / pageHDisp)
+        let xr = lassoEditXRange
+        let (dx, dy) = InkEdit.fitTranslation(
+            dx: Double(t.width / pageW), dy: Double(t.height / pageHDisp),
+            inkBounds: lassoSelectionBounds(sel, notes: false), xRange: xr,
+            noteBounds: lassoSelectionBounds(sel, strokes: false))
         guard dx != 0 || dy != 0 else { return }
         var changed = false
         for i in session.strokes.indices
         where session.strokes[i].page == sel.page && sel.strokeIDs.contains(session.strokes[i].id) {
-            session.strokes[i] = InkEdit.translated(session.strokes[i], dx: dx, dy: dy, xRange: inkXRange)
+            session.strokes[i] = InkEdit.translated(session.strokes[i], dx: dx, dy: dy, xRange: xr)
             changed = true
         }
         for i in session.textNotes.indices
@@ -190,7 +219,8 @@ extension ReaderSurface {
         }
         guard changed else { lassoSelection = nil; return }   // 选中项已被擦除/删除
         var s = sel
-        s.bounds = InkEdit.translatedRect(sel.bounds, dx: dx, dy: dy)
+        let box = lassoSelectionBounds(s)
+        s.bounds = box.isNull ? InkEdit.translatedRect(sel.bounds, dx: dx, dy: dy) : box
         lassoSelection = s
         refreshCanvasMargin()   // 笔迹被挪到页边更远处：笔画数没变，软边界得自己跟上
         // 镜像平板：仅当本窗口恰是 padSession（同 inkEnd 语义；否则 broadcast 的是 padSession 的旧数据）
@@ -214,7 +244,9 @@ extension ReaderSurface {
         var changed = false
         for i in session.strokes.indices
         where session.strokes[i].page == sel.page && sel.strokeIDs.contains(session.strokes[i].id) {
-            session.strokes[i] = InkEdit.scaled(session.strokes[i], anchor: a, sx: sx, sy: sy, xRange: inkXRange)
+            // xRange 同 commitLassoMove：画板模式用硬上限，别拿「还没长出来的软边界」把放大的笔迹削平
+            session.strokes[i] = InkEdit.scaled(session.strokes[i], anchor: a, sx: sx, sy: sy,
+                                                xRange: lassoEditXRange)
             changed = true
         }
         for i in session.textNotes.indices
@@ -224,7 +256,8 @@ extension ReaderSurface {
         }
         guard changed else { lassoSelection = nil; return }   // 选中项已被擦除/删除
         var s = sel
-        s.bounds = InkEdit.scaledRect(sel.bounds, anchor: a, sx: sx, sy: sy)
+        let nb = lassoSelectionBounds(s)   // 同 commitLassoMove：按真实数据重算，别让 0...1 的夹取递推进框里
+        s.bounds = nb.isNull ? InkEdit.scaledRect(sel.bounds, anchor: a, sx: sx, sy: sy) : nb
         lassoSelection = s
         refreshCanvasMargin()   // 同 commitLassoMove
         // 镜像平板：仅当本窗口恰是 padSession（同 commitLassoMove 语义）

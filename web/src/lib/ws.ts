@@ -115,6 +115,7 @@ export function initWs(): void {
     }
     else if (o.type === "strokes") {
       G.strokes = o.list || [];
+      G.growCanvasForStrokes();   // 页外笔迹越出当前档位 → 本地先放宽，不然画出来是页边一条竖线
       if (G.activeId === null) { G.cur = null; G.drawLive(); }
       if (G.lassoCommitted) {
         G.lassoSyncStrokes = true;

@@ -130,13 +130,16 @@ export function initRender(refs: CaptureRefs): void {
   /// 注解锚点落多边形内=命中）：只用于渲染高亮预览，真正的判定在 Mac（见 PROTOCOL.md `lassoMove`）。
   function lassoHitTest(page: number, poly: number[]): LassoSelection | null {
     if (poly.length < 6) return null;
-    let bx0 = 1, by0 = 1, bx1 = 0, by1 = 0;
+    // 🔴 包围盒初值取 ±Infinity 而不是页角 1/0：画板模式下笔迹/框选路径可以整个落在页外
+    //（x 恒 > 1 或恒 < 0），按页角起算的话 `Math.min(1, 1.2)` 还是 1 —— 选中框的那条边就永远
+    // 钉在页边上，框比笔迹大出一整片页边（用户 2026-08-30 在平板上报，安卓那份复刻同病同改）。
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
     for (let i = 0; i + 1 < poly.length; i += 2) {
       bx0 = Math.min(bx0, poly[i]); bx1 = Math.max(bx1, poly[i]);
       by0 = Math.min(by0, poly[i + 1]); by1 = Math.max(by1, poly[i + 1]);
     }
     const strokeIdx: number[] = [], noteIdx: number[] = [];
-    let lox = 1, loy = 1, hix = 0, hiy = 0;
+    let lox = Infinity, loy = Infinity, hix = -Infinity, hiy = -Infinity;   // 同上，别按页角起算
     for (let i = 0; i < G.strokes.length; i++) {
       const s = G.strokes[i];
       if (s.page !== page) continue;
@@ -257,6 +260,23 @@ export function initRender(refs: CaptureRefs): void {
   function growCanvas(nx: number): void {
     if (!G.canvasOn) return;
     const over = nx < 0 ? -nx : (nx > 1 ? nx - 1 : 0);
+    const want = canvasMarginFor(over);
+    if (want > G.canvasMargin) setCanvas(true, want);
+  }
+
+  /// 真源回推的笔迹越出了当前页边 → 本地先放宽一档（**只增不减**，Mac 随后下发的值仍是权威）。
+  /// 少了这一步就是「框选把笔迹移到页边深处，平板上看到笔迹挤成一条」——**本端渲染是按当前页边
+  /// clamp 的**（`drawStroke` 里的 `inkXMin()/inkXMax()`），数据对了、档位没跟上照样画成一条竖线。
+  /// Mac 的 `canvas` 是另一条独立广播，到达有先后，中间那一拍屏幕上就是错的（同安卓 `growCanvasFor`）。
+  function growCanvasForStrokes(): void {
+    if (!G.canvasOn) return;
+    let over = 0;
+    for (const s of G.strokes) {
+      for (const p of s.pts) {
+        const o = p[0] < 0 ? -p[0] : (p[0] > 1 ? p[0] - 1 : 0);
+        if (o > over) over = o;
+      }
+    }
     const want = canvasMarginFor(over);
     if (want > G.canvasMargin) setCanvas(true, want);
   }
@@ -750,11 +770,12 @@ export function initRender(refs: CaptureRefs): void {
     if (G.lassoScale) {
       const { ax, ay, sx, sy } = G.lassoScale;
       if (sx === 1 && sy === 1) return null;
-      return (nx, ny) => [clamp(ax + (nx - ax) * sx, 0, 1), clamp(ay + (ny - ay) * sy, 0, 1)];
+      return (nx, ny) => [clamp(ax + (nx - ax) * sx, inkXMin(), inkXMax()), clamp(ay + (ny - ay) * sy, 0, 1)];
     }
     const { dx, dy } = G.lassoTranslate;
     if (dx === 0 && dy === 0) return null;
-    return (nx, ny) => [clamp(nx + dx, 0, 1), clamp(ny + dy, 0, 1)];
+    // x 放宽到页边区间：夹回页内的话，往页边拖的预览会被摁在页边上（画板关着时就是 0…1，行为不变）
+    return (nx, ny) => [clamp(nx + dx, inkXMin(), inkXMax()), clamp(ny + dy, 0, 1)];
   }
 
   /// 8 个缩放手柄的屏显位置（四角 tl/tr/bl/br + 四边中点 t/b/l/r，**不含 ghost**）：
@@ -1043,7 +1064,7 @@ export function initRender(refs: CaptureRefs): void {
 
   // 跨模块调用面（input / ws / capture 经 G 调用）
   Object.assign(G, {
-    relayout, recompute, locate, pageToView, inContent, setCanvas, growCanvas,
+    relayout, recompute, locate, pageToView, inContent, setCanvas, growCanvas, growCanvasForStrokes,
     drawAll, drawBg, drawInk, drawLive, eraseHit, ensureImages, loadPageImage: loadImg,
     clearHover, drawNotes, setRadial, setPressRing,
     pageLocClamped, lassoHitTest, lassoViewBox, lassoHandlePts, clearLasso,

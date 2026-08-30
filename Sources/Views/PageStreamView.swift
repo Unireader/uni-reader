@@ -379,6 +379,8 @@ struct ReaderSurface: View {
             // 用 count 而非整个数组：数组比较是每帧 O(总点数)，而边界只在「有笔画进出」时才可能变；
             // 同一笔被移到页外（count 不变）由 `commitLassoMove`/`commitLassoScale` 显式补一次。
             .onChange(of: session.strokes.count) { _, _ in refreshCanvasMargin() }
+            // 平板发起的框选移动/缩放：笔画数不变，`AppModel.lassoApply` 递增这个计数器代替信号
+            .onChange(of: session.inkMovedRev) { _, _ in refreshCanvasMargin() }
             // 平板正在写的那一笔（本机落墨在手势里已生长）：笔尖越界即跳档，别等抬笔
             .onChange(of: session.liveStroke?.points.count) { _, _ in growCanvasForLive() }
     }
