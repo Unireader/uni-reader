@@ -206,6 +206,7 @@ final class AppModel: ObservableObject {
 
         // 方案 B：平板按需取任意页图（带缓存，服务 queue 上调用）。
         server.pageProvider = { [weak self] req in self?.renderPage(req) }
+        server.docMetaProvider = { [weak self] id in self?.refDocMeta(id) }
 
         // 方案 B：平板本地滚动 → 落为平板当前会话的锚点（origin=pad），驱动 Mac PDFView 跟随。
         server.onScroll = { [weak self] page, frac, t in
@@ -255,6 +256,7 @@ final class AppModel: ObservableObject {
     /// 关掉全部窗口后它仍吊着最后看过的那本书，工作区所在的**可移动硬盘照样弹不出去**
     /// （用户 2026-08-05 报）—— 会话那边清干净了也没用，漏一处就前功尽弃。主线程调用。
     private func releasePadRenderIfUnused() {
+        releaseRefRender()
         renderLock.lock(); defer { renderLock.unlock() }
         guard padRenderPDF != nil else { return }
         if !padRenderKey.isEmpty, sessions.contains(where: { $0.contentHash == padRenderKey }) { return }
@@ -263,13 +265,85 @@ final class AppModel: ObservableObject {
         pageCache.removeAllObjects()
     }
 
+    // MARK: - 参考窗（`/page.png?d=` 与 `/docmeta?d=`）
+
+    /// 参考文档的渲染实例。**又是独立的一份**，理由与 `padRenderPDF` 完全相同（PDFKit 文档对象
+    /// 不能跨队列共用，2026-07-27 阅读区整片白屏那笔账）；这一份只归服务 queue 用。
+    /// 只留最近一本——参考窗一次只看一本书，换书即换实例。
+    private var refRenderPDF: PDFDocument?
+    private var refRenderDocId = ""
+    private var refRenderKey = ""      // = contentHash，页图缓存/磁盘缓存的键前缀
+
+    /// 库文档 id → 路径/哈希/标题/进度。主线程注入（`WorkspaceManager` 是 `@MainActor`，
+    /// 服务 queue 够不着它），由 `push()` 顺带从会话快照捎带过来。
+    private var refIndex: [String: RefDocInfo] = [:]
+
+    /// 服务 queue 上按 id 取参考文档的渲染实例。**必须在 `renderLock` 内调用。**
+    private func refDocLocked(_ docId: String) -> (PDFDocument?, String) {
+        if docId == refRenderDocId, refRenderPDF != nil { return (refRenderPDF, refRenderKey) }
+        guard let info = refIndex[docId] else { return (nil, "") }
+        let doc = PDFDocument(url: URL(fileURLWithPath: info.path))
+        refRenderPDF = doc
+        refRenderDocId = doc == nil ? "" : docId
+        refRenderKey = doc == nil ? "" : (info.hash.isEmpty ? docId : info.hash)
+        return (refRenderPDF, refRenderKey)
+    }
+
+    /// 参考窗要的文档元信息：页尺寸表 + 页数 + 进度。**JSON 走 HTTP，刻意不进线格式**——
+    /// 加一条带大数组的消息就要三端同步 + 重出字节向量（`PROTOCOL.md` 开头那条），
+    /// 而这只是客户端自己按需拉一次的只读数据（同 `/info` 的先例）。服务 queue 上调用。
+    func refDocMeta(_ docId: String) -> Data? {
+        renderLock.lock()
+        let info = refIndex[docId]
+        let (pdf, _) = refDocLocked(docId)
+        renderLock.unlock()
+        guard let info, let pdf else { return nil }
+        var pages: [[Double]] = []
+        pages.reserveCapacity(pdf.pageCount)
+        for i in 0..<pdf.pageCount {
+            guard let p = pdf.page(at: i) else { pages.append([612, 792]); continue }
+            // 与页内笔迹/平板 `layout` 同一个口径：CropBox 有效则 CropBox、否则 MediaBox，含 rotation。
+            let sz = PageBitmap.displaySize(p)
+            pages.append([Double(sz.width), Double(sz.height)])
+        }
+        let dict: [String: Any] = [
+            "title": info.title, "pageCount": pdf.pageCount,
+            "readPage": info.readPage, "readFrac": info.readFrac, "pages": pages,
+        ]
+        return try? JSONSerialization.data(withJSONObject: dict)
+    }
+
+    /// 主线程注入参考索引（书库变了才会真的换一份）。
+    private func setRefIndex(_ idx: [String: RefDocInfo]) {
+        renderLock.lock()
+        if idx.count != refIndex.count || idx != refIndex { refIndex = idx }
+        renderLock.unlock()
+    }
+
+    /// 参考文档也要能**当场放掉**：它同样是「一直开着的文件」，漏一处工作区所在的可移动硬盘
+    /// 就弹不出去（2026-08-05 那笔账）。主线程调用。
+    func releaseRefRender() {
+        renderLock.lock()
+        refRenderPDF = nil
+        refRenderDocId = ""
+        refRenderKey = ""
+        renderLock.unlock()
+    }
+
     /// 渲染平板当前会话的第 idx 页（缓存命中直接返回）。服务 queue 上调用。
+    /// `req.docId` 非空 = 参考窗在取**别的**文档的页图，走 `refRenderPDF` 那份实例。
     func renderPage(_ req: LANServer.PageImageRequest) -> Data? {
         let t0 = CFAbsoluteTimeGetCurrent()
         let idx = req.index
         renderLock.lock()
-        let pdf = padRenderPDF
-        let key = padRenderKey
+        let pdf: PDFDocument?
+        let key: String
+        if req.docId.isEmpty {
+            pdf = padRenderPDF
+            key = padRenderKey
+        } else {
+            (pdf, key) = refDocLocked(req.docId)
+        }
         // 缓存键必须含宽度与格式：平板按视口宽度取图（`?w=`），同一页会有不止一个档位。
         let ck = "\(key)#\(idx)@\(req.width)/\(req.format.name)" as NSString
         if let cached = pageCache.object(forKey: ck) {
@@ -1037,6 +1111,9 @@ final class AppModel: ObservableObject {
     /// （每次换文档/开关窗口 open 标记都可能变）。
     func broadcastLibrary(force: Bool = false) {
         guard server.isRunning, let s = padSession, s.workspaceFolder != nil else { return }
+        // 参考窗的取图索引跟着书库一起更新。**放在这里而不是 `push()`**：那边要求当前标签已经
+        // 打开了 PDF（空标签时不跑），而参考窗恰恰可以在空标签上看别的书。
+        setRefIndex(s.libraryRefIndex)
         let folder = s.workspaceFolder
         let openIds = Set(sessions.compactMap { $0.workspaceFolder == folder ? $0.documentId : nil })
         let list: [[String: Any]] = s.libraryDocs.map {

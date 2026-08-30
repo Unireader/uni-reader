@@ -75,6 +75,17 @@ struct TextMatch: Identifiable, Equatable {
     var frac: Double
 }
 
+/// 参考窗要的一条文档信息（`WorkspaceManager.refDocIndex()` 产出，随会话快照过一道）。
+/// 路径与哈希给取图用，标题与进度给「打开时定位到那本书的进度」用。
+struct RefDocInfo: Equatable {
+    var path: String
+    var hash: String
+    var title: String
+    var pageCount: Int
+    var readPage: Int
+    var readFrac: Double
+}
+
 /// 一个打开中的 PDF 窗口的运行时状态。每个 reader 窗口一个。
 final class DocSession: ObservableObject, Identifiable {
     let id = UUID()
@@ -108,6 +119,9 @@ final class DocSession: ObservableObject, Identifiable {
     var workspaceName = ""
     var workspaceFolder: URL?
     var libraryDocs: [LibDocument] = []
+    /// 参考窗取图/定位要的索引（id → 路径/哈希/标题/进度）。与 `libraryDocs` 同批注入，
+    /// 只在书库真的变了时重建（那次遍历要查 location/variant 两张表）。
+    var libraryRefIndex: [String: RefDocInfo] = [:]
 
     /// 阅读区当前缩放倍率（相对 fit-width，1=贴合宽度）。ContentView 读来存进度。
     /// ⚠️ **只许在缩放稳定后（settleRender）写一次，严禁每帧回报**（2026-07-29 掉帧根因）：

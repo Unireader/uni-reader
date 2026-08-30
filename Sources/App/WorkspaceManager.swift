@@ -346,6 +346,28 @@ final class WorkspaceManager: ObservableObject {
         return nil
     }
 
+    /// 参考窗（`/page.png?d=` 与 `/docmeta?d=`）要的**纯查询**索引：库文档 id → 路径/哈希/标题/进度。
+    ///
+    /// 🔴 **不能用 `openTarget`**：那个会写库（`updateLastOpened` / `setLocationValidity`），
+    /// 对整个书库批量调用等于每次同步都把「最近打开」全刷一遍。这里只读，文件在不在留给
+    /// 渲染时 `PDFDocument(url:)` 失败去报 404。
+    ///
+    /// 调用方是主线程（`WorkspaceManager` 是 `@MainActor`，而服务 queue 够不着它）——
+    /// 结果由 `DocSession` 捎带成快照，同 `libraryDocs` 的既有办法。
+    func refDocIndex() -> [String: RefDocInfo] {
+        guard let store else { return [:] }
+        var out: [String: RefDocInfo] = [:]
+        for d in documents {
+            var locs = (try? store.locations(documentId: d.id)) ?? []
+            locs.sort { $0.inWorkspace && !$1.inWorkspace }   // 工作区副本优先（同 openTarget）
+            guard let loc = locs.first else { continue }
+            let hash = (try? store.variant(id: loc.variantId))?.contentHash ?? ""
+            out[d.id] = RefDocInfo(path: resolvedPath(loc), hash: hash, title: d.title,
+                                   pageCount: d.pageCount, readPage: d.readPage, readFrac: d.readFrac)
+        }
+        return out
+    }
+
     // MARK: - 阅读进度
 
     /// 保存进度（不 refresh，避免列表抖动；下次打开从 store 读最新）。含缩放倍率 + 横向比例。

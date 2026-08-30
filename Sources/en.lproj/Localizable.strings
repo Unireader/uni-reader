@@ -331,3 +331,12 @@
 "Pin to Bottom" = "Pin to Bottom";
 "Float" = "Float";
 "The tablet is following this tab" = "The tablet is following this tab";
+
+/* 参考窗（只读浮窗） */
+"Reference Window" = "Reference Window";
+"Open a second PDF as reference" = "Open a second PDF as reference";
+"Reference" = "Reference";
+"Pick a document to reference" = "Pick a document to reference";
+"Back to Progress" = "Back to Progress";
+"Show This Page in Main View" = "Show This Page in Main View";
+"Close" = "Close";

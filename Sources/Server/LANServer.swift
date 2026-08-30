@@ -49,9 +49,14 @@ final class LANServer: ObservableObject {
     var onMessage: (([String: Any]) -> Void)?
     /// 按页号渲染页图（方案 B：平板按需取任意页图）。在服务 queue 上调用，须自带缓存/线程安全。
     var pageProvider: ((PageImageRequest) -> Data?)?
+    /// 参考窗要的文档元信息 JSON（库文档 id → 页尺寸表/页数/进度）。同样在服务 queue 上调用。
+    var docMetaProvider: ((String) -> Data?)?
 
     /// 一次页图请求（`/page.png` 的 query 解析结果）。
     struct PageImageRequest {
+        /// 取哪份文档的页图。**空串 = 平板当前跟随的那篇**（旧行为，客户端不带 `d=` 时的字节完全不变）；
+        /// 非空 = 库文档 id，参考窗在看别的书（`REF-WINDOW-PLAN.md` §4）。
+        let docId: String
         let index: Int
         /// 目标像素宽度，**已归到 [pageWidthSteps] 的档位**（客户端也归一次，两边同一张阶梯）
         let width: Int
@@ -247,7 +252,9 @@ final class LANServer: ObservableObject {
             // `w=` 目标像素宽度（不带 = 旧行为 1600，浏览器采集页就不带）；
             // `f=png` 要无损原样，`q=NN` 调 JPEG 质量；**默认 JPEG**——不是为省流量（省不了），
             // 是因为高分辨率下 PNG 编码要 130~260ms 且占的是本条串行队列，见 `PageRenderer.Format`。
-            let idx = query["i"].flatMap(Int.init) ?? currentPageIndex
+            // 兜底页号只对「当前文档」有意义：带 `d=` 时那是别的书，用本文档的当前页号是错的 → 取第 0 页。
+            let refDoc = query["d"] ?? ""
+            let idx = query["i"].flatMap(Int.init) ?? (refDoc.isEmpty ? currentPageIndex : 0)
             // 只归一**客户端报上来的**宽度；不带 `w=` 的（浏览器采集页）原样走旧的 1600，
             // 免得顺手把网页那侧的观感/流量也改了。
             let width = query["w"].flatMap(Int.init).map(LANServer.snapPageWidth) ?? LANServer.defaultPageWidth
@@ -255,11 +262,20 @@ final class LANServer: ObservableObject {
             let quality = query["q"].flatMap(Double.init).map { min(max($0, 1), 100) / 100 }
             let format: PageRenderer.Format =
                 query["f"] == "png" ? .png : .jpeg(quality: quality ?? PageRenderer.defaultJPEGQuality)
-            let req = PageImageRequest(index: idx, width: width, format: format)
+            // `d=` 库文档 id：参考窗要的是**别的**文档的页图（不带 = 当前文档，旧行为）。
+            let req = PageImageRequest(docId: refDoc, index: idx, width: width, format: format)
             if let data = pageProvider?(req), !data.isEmpty {
                 return ("200 OK", format.contentType, data)
             }
             return ("404 Not Found", "text/plain; charset=utf-8", Data("no page".utf8))
+        case "/docmeta":
+            // 参考窗：某篇库文档的页尺寸表 + 页数 + 阅读进度。**刻意不走线格式**——加一条带大数组的
+            // 消息就要三端同步 + 重出字节向量（`PROTOCOL.md` 开头那条红线），而这只是客户端换书时
+            // 按需拉一次的只读数据（同 `/info` 的取舍）。
+            guard let id = query["d"], !id.isEmpty, let data = docMetaProvider?(id), !data.isEmpty else {
+                return ("404 Not Found", "text/plain; charset=utf-8", Data("no doc".utf8))
+            }
+            return ("200 OK", "application/json; charset=utf-8", data)
         case "/health":
             return ("200 OK", "text/plain; charset=utf-8", Data("ok".utf8))
         case "/info":

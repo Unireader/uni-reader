@@ -232,7 +232,12 @@ final class DocTabModel: ObservableObject, Identifiable {
     func syncWorkspaceSnapshot() {
         session.workspaceName = workspace.name
         session.workspaceFolder = workspace.folder
-        session.libraryDocs = workspace.documents
+        // 书库没变就别重建参考索引：那次遍历要逐篇查 location + variant 两张表，而本方法的触发点
+        // 很密（换文档 / 开关窗口 / 工作区改名都会调）。
+        if session.libraryDocs != workspace.documents {
+            session.libraryDocs = workspace.documents
+            session.libraryRefIndex = workspace.refDocIndex()
+        }
     }
 
     /// 工作区路径变了（改名联动改包名）→ 把「会话↔工作区」的登记跟到新路径。

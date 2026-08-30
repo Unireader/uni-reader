@@ -18,6 +18,10 @@ struct ContentView: View {
     /// 依赖的唯一办法，否则只能退化成「先建空壳再 attach」，凭空多出一个「尚未 attach」的中间态。
     @StateObject private var tabs: TabsModel
 
+    /// 参考窗（只读浮窗，`REF-WINDOW-PLAN.md`）。**窗口级**：本视图每窗口一个实例，
+    /// `@StateObject` 只建一次 → 切标签时小窗不重建、照旧摆在旁边（对照场景要的就是这个）。
+    @StateObject private var refWindow = RefWindowModel()
+
     init(launchDocId: String?, app: AppModel, workspace: WorkspaceManager) {
         self.launchDocId = launchDocId
         _tabs = StateObject(wrappedValue: TabsModel(app: app, workspace: workspace))
@@ -249,6 +253,9 @@ struct ContentView: View {
             // 本窗口的内置 AI 面板那一份页面到这里才该放——**只在窗口真的没了时放**，
             // 切到别的窗口/收成气泡都不算（那会清掉正在进行的对话状态）。
             if let m = closeTabMonitor.value { NSEvent.removeMonitor(m); closeTabMonitor.value = nil }
+            // 参考窗那份独立 `PDFDocument` 也要当场放掉：它同样是「一直开着的文件」，
+            // 漏一处工作区所在的可移动硬盘就弹不出去（2026-08-05 那笔账）。
+            refWindow.close()
             AIPanelModel.shared.releaseHost(.inline(session.windowID))
             AIPanelModel.shared.forgetInline(session.windowID)
             // 每个标签各自结清：掐尾随补存 → 同步补落库 → 存进度 → 退出打开集 → 交还工作区登记 →
@@ -321,6 +328,25 @@ struct ContentView: View {
         readerContent
             .overlay(alignment: .bottom) { tabBar }
             .overlay { AIInlineLayer(session: session) }
+            .overlay { refWindowLayer }
+    }
+
+    /// 参考窗层。排在 AI 面板**之后** = 叠在它上面（面板是贴右缘的一条，小窗是浮在阅读区上的一块，
+    /// 真重叠时该让小窗在上）。草稿纸开着时不显示——同标签栏的既有处理，避免三层浮层打架。
+    @ViewBuilder
+    private var refWindowLayer: some View {
+        if session.openPadID == nil {
+            RefWindowView(model: refWindow,
+                          workspace: workspace,
+                          nightMode: nightMode,
+                          currentDocID: tab.docID,
+                          onGotoMain: { page in
+                              // 与目录跳转同一条路径；`origin` 沿用 "toc"（同类「外部指定位置」的跳转，
+                              // 防回环语义一致），不新造一个各端都没见过的来源名。
+                              session.currentPageIndex = page
+                              session.emitAnchor(page: page, frac: 0, origin: "toc")
+                          })
+        }
     }
 
     /// 底部标签栏。草稿纸开着时不显示——那是盖满阅读区的覆盖层，自带工具条与 minimap，
@@ -413,6 +439,15 @@ struct ContentView: View {
             } label: {
                 Label(L("Night Mode"), systemImage: nightMode ? "sun.max.fill" : "moon.fill")
             }
+            Button {
+                if refWindow.isOpen { refWindow.close() }
+                else { refWindow.open(preferring: tab.docID, workspace: workspace) }
+            } label: {
+                Label(L("Reference Window"),
+                      systemImage: refWindow.isOpen ? "rectangle.on.rectangle.fill"
+                                                    : "rectangle.on.rectangle")
+            }
+            .help(L("Open a second PDF as reference"))
             Button {
                 showServer.toggle()
             } label: {

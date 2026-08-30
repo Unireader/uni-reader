@@ -333,3 +333,12 @@
 "Pin to Bottom" = "固定到底部";
 "Float" = "浮动显示";
 "The tablet is following this tab" = "平板正跟随这个标签页";
+
+/* 参考窗（只读浮窗） */
+"Reference Window" = "参考窗";
+"Open a second PDF as reference" = "打开另一份 PDF 作为参考";
+"Reference" = "参考";
+"Pick a document to reference" = "选择要参考的文档";
+"Back to Progress" = "回到进度";
+"Show This Page in Main View" = "在主视图显示这一页";
+"Close" = "关闭";
