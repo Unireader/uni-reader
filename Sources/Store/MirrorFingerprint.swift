@@ -93,6 +93,14 @@ enum MirrorFp {
 
     static func spec(_ table: String) -> TableSpec? { specs.first { $0.table == table } }
 
+    /// `meta` 表里**参与同步**的键（方案 §4）。`meta` 是个杂物袋：既有工作区级配置（该同步），
+    /// 也有本机状态与库自身属性（绝不能同步）。所以它跟别的表不一样，除了列规格还要一张键白名单。
+    ///
+    /// 刻意在外的：`schema_version`/`created_at`（库自身属性）、`open_documents`（本机开着哪几篇）、
+    /// `workspace_id`/`mirror_*`/`offline_checkouts`（血缘元数据 —— 同步它们就是让两边互相
+    /// 把对方的身份覆盖掉）。
+    static let syncedMetaKeys: Set<String> = ["workspace_name", "note_types"]
+
     // MARK: - 值与编码
 
     enum Value: Equatable {

@@ -21,6 +21,22 @@ final class LibraryStore {
     /// 为什么不能只靠 ARC/`deinit`：见 `SQLiteDB.close()`（可移动硬盘弹不出去）。
     func close() { db.close() }
 
+    // MARK: - 整库操作（离线镜像用，`MirrorBuilder`）
+
+    /// 把 `-wal` 合并回主库。搬运/复制工作区前必做——只拷 `.sqlite` 会静默丢掉最近的写入
+    /// （安卓端为此踩过坑，`ANDROID-STANDALONE-PLAN.md §9.2`）。
+    /// FAT32/exFAT 上 WAL 建不起来时这是空操作，不报错。
+    func checkpointTruncate() { try? db.exec("PRAGMA wal_checkpoint(TRUNCATE)") }
+
+    /// 把整库一致地拷到 [path]（`VACUUM INTO`）。
+    ///
+    /// **为什么不是 `cp` 那三个文件**：`.sqlite`/`-wal`/`-shm` 分三次拷不是原子的，中间还有写入
+    /// 就拿到一份撕裂的库；而 `VACUUM INTO` 在一个读事务里生成，天生一致，还顺带压缩、不需要停写。
+    /// 目标文件**已存在会失败**（SQLite 的行为），正好挡住误覆盖。
+    func vacuumInto(_ path: String) throws {
+        try db.run("VACUUM INTO ?", [.text(path)])
+    }
+
     // MARK: - Schema / 迁移
 
     private func migrate() throws {
@@ -347,6 +363,13 @@ final class LibraryStore {
     }
 
     // MARK: - Note
+
+    /// 整个工作区的笔记条数（笔迹一笔也算一条）。借出记录里存一份纯展示用，
+    /// 让用户在源盘那端一眼看出「借走时是 3800 条」。
+    func noteCount() -> Int {
+        let r = (try? db.query("SELECT COUNT(*) AS n FROM note")) ?? []
+        return Int((r.first?["n"] as? Int64) ?? 0)
+    }
 
     func notes(documentId: String) throws -> [LibNote] {
         try db.query("SELECT * FROM note WHERE document_id=? ORDER BY page ASC, created_at ASC", [.text(documentId)]).map(Self.note)
