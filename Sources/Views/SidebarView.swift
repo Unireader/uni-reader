@@ -20,6 +20,8 @@ struct SidebarView: View {
     var onOpenInNewWindow: (String) -> Void
 
     @State private var renameShown = false
+    @State private var makeMirrorShown = false
+    @State private var syncShown = false
     @State private var nameField = ""
     @State private var mergePending: MergePair?
     // 分组（v11 一级分组）：新建/改名共用一个带输入框的 alert
@@ -117,6 +119,18 @@ struct SidebarView: View {
                     Button { nameField = workspace.name; renameShown = true } label: {
                         Label(L("Rename Workspace…"), systemImage: "pencil")
                     }
+                    Divider()
+                    // 镜像与源盘互斥：镜像不能再做镜像（`MirrorBuilder` 也会拦），
+                    // 源盘也没有"同步回去"这回事 —— 两个入口只出现一个，不给用户做无效选择的机会。
+                    if workspace.isMirror {
+                        Button { syncShown = true } label: {
+                            Label(L("Sync to Source…"), systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    } else {
+                        Button { makeMirrorShown = true } label: {
+                            Label(L("Make Offline Mirror…"), systemImage: "externaldrive.badge.timemachine")
+                        }
+                    }
                     if !registry.recents.isEmpty {
                         Divider()
                         // 侧栏只留「快速切过去」。移除/清空统一在「文件 → 最近打开 → 清空最近打开」
@@ -131,10 +145,15 @@ struct SidebarView: View {
                         }
                     }
                 } label: {
-                    Label(workspace.name.isEmpty ? L("Workspace") : workspace.name, systemImage: "folder")
+                    // 镜像换一个图标就够了：用户要的是"一眼认出这不是硬盘上那份"，
+                    // 不是一段说明。真要看来历，菜单里「同步到源盘…」那条会讲。
+                    Label(workspace.name.isEmpty ? L("Workspace") : workspace.name,
+                          systemImage: workspace.isMirror ? "externaldrive.badge.timemachine" : "folder")
                 }
             }
         }
+        .sheet(isPresented: $makeMirrorShown) { MakeMirrorSheet() }
+        .sheet(isPresented: $syncShown) { MirrorSyncSheet() }
         .alert(L("Rename Workspace"), isPresented: $renameShown) {
             TextField(L("Name"), text: $nameField)
             Button(L("OK")) { workspace.rename(nameField) }
@@ -173,7 +192,12 @@ struct SidebarView: View {
     }
 
     private func row(_ doc: LibDocument) -> some View {
-        Label(doc.title, systemImage: "doc.richtext")
+        // 镜像里没带 PDF 的书：元数据与笔记都在，只是打不开正文 —— 灰一档 + 换个图标，
+        // **不隐藏**（隐藏了用户会以为笔记也没了）。
+        let local = workspace.hasLocalFile(doc.id)
+        return Label(doc.title, systemImage: local ? "doc.richtext" : "doc.badge.ellipsis")
+            .foregroundStyle(local ? .primary : .secondary)
+            .help(local ? "" : L("Not available offline — reconnect the source drive to read it."))
             .tag(doc.id)
             .draggable(doc.id)   // 拖到分组段头换分组（多选时整批，见 moveDropped）
             .contextMenu { menu(for: doc) }

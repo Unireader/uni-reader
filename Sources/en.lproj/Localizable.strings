@@ -340,3 +340,20 @@
 "Back to Progress" = "Back to Progress";
 "Show This Page in Main View" = "Show This Page in Main View";
 "Close" = "Close";
+
+// 离线镜像（OFFLINE-MIRROR-PLAN.md）
+"Make Offline Mirror…" = "Make Offline Mirror…";
+"Sync to Source…" = "Sync to Source…";
+"Offline Mirror" = "Offline Mirror";
+"All books and notes come along. Only the PDFs you tick are copied — the rest stay readable as entries you can open once the drive is back." = "All books and notes come along. Only the PDFs you tick are copied — the rest stay readable as entries you can open once the drive is back.";
+"file missing" = "file missing";
+"%d files · about %@" = "%d files · about %@";
+"%d ticked books have no file right now and will be skipped." = "%d ticked books have no file right now and will be skipped.";
+"Mirror created: %d files, %d baseline rows." = "Mirror created: %d files, %d baseline rows.";
+"Create Mirror…" = "Create Mirror…";
+"Sync Preview" = "Sync Preview";
+"Looking for the source workspace…" = "Looking for the source workspace…";
+"The source workspace isn’t connected." = "The source workspace isn’t connected.";
+"Last seen at: %@" = "Last seen at: %@";
+"Nothing has been written. Applying a merge isn’t available yet." = "Nothing has been written. Applying a merge isn’t available yet.";
+"Not available offline — reconnect the source drive to read it." = "Not available offline — reconnect the source drive to read it.";

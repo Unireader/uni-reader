@@ -342,3 +342,20 @@
 "Back to Progress" = "回到进度";
 "Show This Page in Main View" = "在主视图显示这一页";
 "Close" = "关闭";
+
+// 离线镜像（OFFLINE-MIRROR-PLAN.md）
+"Make Offline Mirror…" = "制作离线镜像…";
+"Sync to Source…" = "同步到源盘…";
+"Offline Mirror" = "离线镜像";
+"All books and notes come along. Only the PDFs you tick are copied — the rest stay readable as entries you can open once the drive is back." = "所有书和笔记都会带上。只有勾选的书会拷贝 PDF，其余仍在列表里，插回硬盘就能看。";
+"file missing" = "文件不在";
+"%d files · about %@" = "%d 个文件 · 约 %@";
+"%d ticked books have no file right now and will be skipped." = "有 %d 本勾选的书现在找不到文件，会被跳过。";
+"Mirror created: %d files, %d baseline rows." = "镜像已建好：%d 个文件，基线 %d 行。";
+"Create Mirror…" = "建立镜像…";
+"Sync Preview" = "同步预览";
+"Looking for the source workspace…" = "正在找源工作区…";
+"The source workspace isn’t connected." = "源工作区没有连接。";
+"Last seen at: %@" = "上次见到它在：%@";
+"Nothing has been written. Applying a merge isn’t available yet." = "以上只是预演，什么都没有写入。应用合并尚未实现。";
+"Not available offline — reconnect the source drive to read it." = "没有离线，插回源盘才能看。";
