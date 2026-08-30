@@ -153,6 +153,23 @@ final class LibraryStore {
     }
     func setWorkspaceName(_ name: String) throws { try setMeta("workspace_name", name) }
 
+    /// 工作区的**稳定身份**（离线镜像用，见 `OFFLINE-MIRROR-PLAN.md` §5.1）。只读，不存在返回 nil。
+    ///
+    /// 为什么不能拿 `workspace_name` 或路径当身份：名字会被改、路径换台机器/换挂载点必变，
+    /// 而镜像要靠它认出「我的源盘是哪一个」——插上任意一块盘都能自动匹配，靠路径就得让用户手指。
+    var workspaceId: String? { meta("workspace_id").flatMap { $0.isEmpty ? nil : $0 } }
+
+    /// 取工作区 id，没有就地补一个。**只在真的要用到时调**（建镜像/同步），
+    /// 不塞进 `migrate()`：那样每个老库一打开就被写一次，而绝大多数工作区永远不会做镜像。
+    /// 库只读（镜像挂在只读卷上等）时写入会失败 → 抛错，调用方据此提示，不静默当成功。
+    @discardableResult
+    func ensureWorkspaceId() throws -> String {
+        if let id = workspaceId { return id }
+        let id = UUID().uuidString
+        try setMeta("workspace_id", id)
+        return id
+    }
+
     /// 工作区当前打开的文档集合（多窗口会话，存 meta·JSON，随文件夹移动而保留）。
     func openDocuments() -> [String] {
         guard let s = meta("open_documents"), let data = s.data(using: .utf8),

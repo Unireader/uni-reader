@@ -19,6 +19,13 @@ let store = try LibraryStore(workspaceFolder: tmp)
 try store.setWorkspaceName("Test WS")
 check(store.workspaceName == "Test WS", "workspace name 写入/读回")
 
+// workspace_id（离线镜像的身份，OFFLINE-MIRROR-PLAN.md §5.1）：**懒建**，不在 migrate 里种
+check(store.workspaceId == nil, "新库默认没有 workspace_id（不塞进 migrate：绝大多数工作区永不做镜像）")
+let wsid = try store.ensureWorkspaceId()
+check(UUID(uuidString: wsid) != nil, "ensureWorkspaceId 生成合法 UUID")
+check(try store.ensureWorkspaceId() == wsid, "ensureWorkspaceId 幂等（再调不换 id —— 换了就等于把镜像的血缘切断）")
+check(store.workspaceId == wsid, "workspaceId 读回一致")
+
 // 1) 新建
 let (d1, v1) = try store.findOrCreate(hash: "h1", title: "DocA", pageCount: 10, path: "/tmp/a.pdf")
 check(d1.title == "DocA" && v1.contentHash == "h1", "findOrCreate 新建 document+variant")
