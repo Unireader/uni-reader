@@ -578,7 +578,24 @@
     ——绝大多数工作区永远不会做镜像。名字会改、路径必变，只有它能让镜像认出源盘。
   - 验证：`spike/mirror-fp-test.swift` 50/50、`spike/store-test.swift` 42/42、
     安卓 `./gradlew test` 66/66（含 `MirrorFpTest` 6）、`xcodebuild` + `assembleDebug` 均过。
-- ⬜ **M2** 建镜像（`VACUUM INTO` 拿一致快照 + PDF 选择性 + 内化外部文件 + base 快照落 `sync_base`）
+- ✅ **M2 建镜像**（2026-08-30）：Mac `Sources/Store/MirrorStore.swift`+`MirrorBuilder.swift`
+  ↔ 安卓 `local/mirror/MirrorStore.kt`+`MirrorBuilder.kt`。
+  - **拷库用 `VACUUM INTO` 而不是 cp 那三个文件**：`.sqlite`/`-wal`/`-shm` 分三次拷不是原子的，
+    中间还有写入就拿到一份撕裂的库；`VACUUM INTO` 在一个读事务里生成，天生一致还顺带压缩。
+    安卓 minSdk 26 但它要 SQLite 3.27（API 30）→ 留了「checkpoint + 整文件拷」兜底，
+    **那条路只因为建镜像独占 `StoreQueue` 线程才安全**；30+ 上用例断言必须走 VACUUM，不许悄悄退到兜底。
+  - **工作区内副本保持同一条相对路径**拷过去 → 镜像库里那行 location 原样有效，一个字都不用改；
+    只有外部文件才内化（补一条 `in_workspace=1`，原来那条留着不动）。
+  - **镜像必须换一个自己的 `workspace_id`**：拷出来的副本原样带着源库的 id，不换的话
+    「扫一圈盘按 workspace_id 找源」会把镜像自己也认成源。
+  - 借出记录 JSON 是**跨端契约**：键按字典序 + `last_synced_at` 为空时**省略整个键**
+    （Swift `JSONEncoder` 对 nil Optional 的默认行为，写成 `null` 两端字节就对不上）。
+    向量 `spike/mirror-checkout-vector.json` 由 Mac 生成、安卓逐字比对。
+  - 验证：`spike/mirror-build-test.swift` 50/50；安卓 `MirrorBuilderTest` 4/4（模拟器 API 36）。
+    ⚠️ 同一次 `connectedDebugAndroidTest` 里另有 **30 条既有失败**（`LibraryStoreTest`/
+    `ScratchPadStoreTest`/`StoreQueueTest`/`StrokeEchoTest`）——它们要 `/sdcard/Download/内覆盖.unrd`
+    这个真工作区 fixture + 全盘权限，**换台干净模拟器就必然全红**；`git stash -u` 跑过基线，
+    改动前后同样是这 30 条。
 - ⬜ **M3** 镜像 UI（角标 / 没带 PDF 的书 / 源盘在场检测）
 - ⬜ **M4** 三方 diff + 干跑预览 + 冲突报告（**只算不写**）
 - ⬜ **M5** 应用合并（单事务 + 合并前备份源库 + 文件补齐）
