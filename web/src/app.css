@@ -241,3 +241,48 @@ canvas { position:fixed; inset:0; }
 #padpaper .pcolor { width:30px; height:30px; padding:0; border-radius:6px;
   border:1px solid rgba(255,255,255,.22); }
 #padpaper .pcolor.cur { border:2px solid #58a6ff; }
+
+/* ---- 参考窗（只读小窗，REF-WINDOW-PLAN.md）---- */
+/* 层级压在草稿纸(7)之上、顶栏(10)之下：它是浮在阅读内容上的一块，但不该盖住全局工具栏。 */
+.refWin { position:fixed; z-index:9; display:flex; flex-direction:column; overflow:hidden;
+  background:rgba(22,27,34,.96); border:1px solid #30363d; border-radius:12px;
+  box-shadow:0 8px 28px rgba(0,0,0,.45);
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
+/* 标题栏：高度写死，任何内容都撑不高它（文本换行会把整条挤高——Mac 端同款教训） */
+.refBar { display:flex; align-items:center; gap:4px; height:34px; padding:0 6px; flex:none;
+  border-bottom:1px solid #30363d; touch-action:none; cursor:move; }
+.refPick { display:flex; align-items:center; gap:4px; min-width:0; padding:4px 6px;
+  border:0; border-radius:6px; background:transparent; color:#e6edf3; font-size:13px; }
+.refPick:active { background:#30363d; }
+.refPick svg { width:15px; height:15px; flex:none; }
+/* 文档名是那个「该缩的」：超长中间截断，绝不换行 */
+.refTitle { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.refPage { margin-left:auto; padding:0 4px; color:#8b949e; font-size:12px;
+  font-variant-numeric:tabular-nums; white-space:nowrap; flex:none; }
+.refBtn { flex:none; padding:4px; border:0; border-radius:6px; background:transparent; color:#e6edf3; }
+.refBtn:active { background:#30363d; }
+.refBtn svg { width:15px; height:15px; display:block; }
+/* 滚动区：单指纵向滚动交给浏览器（惯性免费），双指捏合自己接管 */
+.refBody { flex:1; overflow:auto; overscroll-behavior:contain; touch-action:pan-y;
+  background:#161b22; -webkit-overflow-scrolling:touch; }
+.refBody.night { filter:invert(1) hue-rotate(180deg); }
+.refContent { position:relative; width:100%; }
+.refImg { position:absolute; display:block; background:#fff; }
+/* 尺寸手柄：左 / 上 / 左上角三条透明热区（右下角固定不动，同 Mac 端；不画图标） */
+.refEdge { position:absolute; z-index:2; touch-action:none; }
+.refEdgeW { left:0; top:0; bottom:0; width:10px; cursor:ew-resize; }
+.refEdgeH { left:0; right:0; top:0; height:10px; cursor:ns-resize; }
+.refEdgeWH { left:0; top:0; width:18px; height:18px; cursor:nwse-resize; }
+/* 换书弹层 */
+.refPicker { position:absolute; left:6px; top:36px; z-index:3; width:min(260px,80%); max-height:60%;
+  overflow:auto; padding:4px; border:1px solid #30363d; border-radius:8px; background:rgba(33,38,45,.98); }
+.refPickItem { display:block; width:100%; padding:8px 10px; border:0; border-radius:6px;
+  background:transparent; color:#e6edf3; font-size:14px; text-align:left;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.refPickItem.on { background:#1f6feb; color:#fff; }
+.refEmpty { margin:8px 10px; color:#8b949e; font-size:13px; }
+/* 折叠气泡 */
+.refBubble { position:fixed; z-index:9; width:44px; height:44px; padding:0; border-radius:50%;
+  border:1px solid #30363d; background:rgba(33,38,45,.92); color:#e6edf3;
+  box-shadow:0 4px 14px rgba(0,0,0,.4); }
+.refBubble svg { width:20px; height:20px; display:block; margin:auto; }

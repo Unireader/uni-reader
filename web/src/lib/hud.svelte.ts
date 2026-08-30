@@ -86,6 +86,21 @@ export const S = $state({
   padShowPage: false,      // 当前那张纸是否垫着锚定页（v10，工具条按钮激活态回显）
   padRenaming: -1,         // 列表里正在改名的是第几张（-1 = 没有；行内输入框）
   padDeleting: -1,         // 列表里正在等确认删除的是第几张（-1 = 没有；两步删，防误触）
+  // ---- 参考窗（只读小窗，`../../REF-WINDOW-PLAN.md`）----
+  // 🔴 **整组都是本端私有**：不落库、不上线（开着没有 / 看的哪本 / 滚到哪，都没有跨端真源可言）。
+  // 位置与尺寸另存 localStorage，见 RefWindow.svelte。
+  ref: false,              // 小窗开关
+  refCollapsed: false,     // 折叠成气泡（展开保持滚动位置；关闭再开才回到进度）
+  refDocId: "",            // 看的哪本（**库文档 id**，与 docs 的窗口会话 id 不是一个空间）
+  refTitle: "",
+  refPageCount: 0,
+  refPages: [] as [number, number][],   // 页尺寸表（/docmeta 拉来）
+  refSeedPage: 0,          // 那本书在库里的阅读进度（打开就定位到这儿）
+  refSeedFrac: 0,
+  refSeedRev: 0,           // 「打开 / 换书 / 回到进度」各 +1，组件据此重新定位
+  refViewPage: 0,          // 当前视口顶端位置（折叠→展开靠它复位）
+  refViewFrac: 0,
+  refCurPage: 0,           // 标题栏那个页码
 });
 
 export function updatePageLabel(): void {

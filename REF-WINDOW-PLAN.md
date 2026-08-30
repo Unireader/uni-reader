@@ -260,3 +260,34 @@ wantPx = 小窗内容区宽度(px) × 当前缩放
 🔴 **合并成一条纪律**：凡是逐帧改布局 + `scrollTo` 的地方，
 **必须 `withTransaction(animation = nil)` 原子提交，且锚点只信自己刚提交的目标**。
 主阅读区 `ReaderSurface+Zoom.commitZoom` 是这条的参考实现，新写滚动容器时照抄它，别重新发明。
+
+## 12. 实现记录 — web 采集页与安卓两模式（2026-08-30 落地，待真机验证）
+
+### web（`web/src/RefWindow.svelte`）
+
+- 面板是**绝对定位的 DOM**，z-index 置于 `#scratch`(7) 之上、`#topbar`(10) 之下；
+  事件绑在 `ink` canvas 上（不是 window），所以 DOM 浮层天然不会触发落墨——一行门控都不用写。
+- 滚动交给浏览器原生（`touch-action: pan-y`，惯性免费），**双指捏合自己接管**（`preventDefault`）。
+- 🔴 **位置真源用 `(page, frac)` 而不是像素**：页宽一变像素全变，而 (page, frac) 天然守恒，
+  于是缩放与改尺寸都不必写补偿计算——Mac 端在这上面栽过两轮（见 §11.1）。
+- 取图 `/page.png?d=&i=&w=`，**档位只在停手 180ms 后才换**：捏合中途换 `src` 会让每张图重新加载、白一下。
+- 状态整组挂在 `S`（`hud.svelte.ts`），位置/尺寸/看的哪本存 `localStorage`。
+  🔴 样式一律在 `app.css`（Svelte 5 对带 `class:` 的元素会漏作用域类，PadBar 那次教训）。
+
+### 安卓（`shared/RefWindow.kt`，两模式共用）
+
+- **直接复用 `PageCanvasView`**，只读靠两件事：① 固定在 `MODE_PAGE`（笔只翻页、不落墨）；
+  ② **不覆写任何提交钩子**——它们默认就是空实现，于是「提交给谁」在参考窗里根本不存在。
+  唯一覆写的是 `onScrollReport`（标题栏页码）。这是各端里最省的一端，与方案 §5 的判断一致。
+- **改尺寸时保持文档位置是白拿的**：`PageCanvasView.onSizeChanged` 本来就会「宽度一变就按
+  页+页内比例锚回原处」（转屏那条老账），正是 Mac 端手写的那套。
+- 差异全在 `Host` 三个方法：
+  · 模式1 → 工作区书库 + 库里的 `read_page/read_frac` + **第二个 `PdfSource`**（换书/关窗当场 `close()`，
+    别把文件吊着）；
+  · 模式2 → `library` 镜像 + `GET /docmeta?d=` + `PageFetcher.fetch(..., docId)`。
+- `PageFetcher` 加 `docId`：**缓存键与磁盘键都带上它**，否则参考窗与正文的同页号会互相顶掉；
+  空串时键格式一字未变（老缓存不作废）。
+
+验证：`xcodebuild` / `vite build`（a11y 零警告）/ `assembleDebug` / 安卓 `test` 全绿；
+`capture.html` 已按 `build-web.sh` 的占位符自检回写（三项齐全）。
+**手感与观感一律真机验**：小窗默认大小、拖动与捏合手感、笔会不会误触小窗、模式1 第二个 Pdfium 的内存。

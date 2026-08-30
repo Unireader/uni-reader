@@ -58,6 +58,8 @@
   <button id="next" onclick={() => actions.turn("next")}>›</button>
   <button id="night" title="夜间模式" onclick={() => actions.toggleNight()}><Icon name={S.night ? "sun" : "moon"} /></button>
   <button id="textNote" class:on={S.noteMode} title="文字笔记" onclick={() => actions.toggleTextNote()}><Icon name="type" /></button>
+  <button id="refWin" class:on={S.ref} title="参考窗（另开一本书对照）"
+    onclick={() => { S.ref = !S.ref; if (S.ref) S.refCollapsed = false; }}><Icon name="doc" /></button>
   <button id="ruler" class:on={S.rulerOn} title="尺子（45° 吸附直线）" onclick={() => actions.toggleRuler()}><Icon name="ruler" /></button>
   <button id="padBtn" class:on={S.padOpen >= 0 || S.padList} title="草稿纸" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
   <button id="canvasBtn" class:on={S.canvasOn} title="画板模式（页面两侧的空白也能写）"

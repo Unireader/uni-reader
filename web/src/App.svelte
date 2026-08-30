@@ -9,6 +9,7 @@
   import LayerStat from "./LayerStat.svelte";
   import TextNoteEditor from "./TextNoteEditor.svelte";
   import PadBar from "./PadBar.svelte";
+  import RefWindow from "./RefWindow.svelte";
   import { startCapture } from "./lib/capture.js";
   import { PORT, TOKEN, PENS } from "./lib/config.js";
 
@@ -39,3 +40,4 @@
 <LayerStat />
 <TextNoteEditor />
 <PadBar />
+<RefWindow />
