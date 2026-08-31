@@ -23,6 +23,8 @@ enum MirrorApply {
         var mirrorUpserts = 0, mirrorDeletes = 0
         /// 因为父文档已经不在了而被丢弃的行（见 `livingDocuments`）。
         var orphansSkipped = 0
+        /// 因为**对面已经有同一份内容**而被丢弃的 `variant` 行（见 `write` 里那段）。
+        var hashClashesSkipped = 0
         var lastOpenedTouched = 0
         var filesCopiedToSource = 0
         var backup: URL?
@@ -114,6 +116,22 @@ enum MirrorApply {
                    !live.contains(doc) {
                     result.orphansSkipped += 1
                     continue
+                }
+                // `variant.content_hash` 是 UNIQUE：同一份 PDF 在两份镜像上各自入过库时，
+                // 两边的 variant **id 不同、hash 相同**，硬插就是
+                // `UNIQUE constraint failed` → 整个事务回滚 → **整次同步失败**，
+                // 而且抛给用户的是一句看不懂的 SQLite 报错（2026-08-31 多镜像用例实测到）。
+                // 跳过并计数：那一行本来就是冗余的（同 hash 即同内容）。
+                // ⚠️ 它**不会自动收敛** —— 下次干跑还会把它算成待写。这是刻意的：
+                // 「这两本是不是同一本书」是用户的语义判断，书库里有现成的「关联为同一文档」，
+                // 同步这一步不该替他决定。报告里会明说该怎么处理。
+                if table == "variant", let hash = row["content_hash"] as? String {
+                    let clash = (try? db.query("SELECT id FROM variant WHERE content_hash=? AND id<>?",
+                                               [.text(hash), .text(c.rowId)])) ?? []
+                    if !clash.isEmpty {
+                        result.hashClashesSkipped += 1
+                        continue
+                    }
                 }
                 let use = cols.filter { row.index(forKey: $0) != nil }
                 guard !use.isEmpty else { continue }

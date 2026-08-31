@@ -365,3 +365,4 @@
 "The source library is backed up first; the three most recent backups are kept." = "会先把硬盘上的资料库整份备份出来，保留最近 3 份。";
 "Synced. Backup saved as %@" = "已同步。备份：%@";
 "%d rows were skipped: their document no longer exists." = "有 %d 行被跳过：它们所属的文档已经不在了。";
+"%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them." = "有 %d 个版本被跳过：对面已经有同一份文件了。用「关联为同一文档」把它们合并。";

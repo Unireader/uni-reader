@@ -177,10 +177,16 @@ struct MirrorSyncSheet: View {
                     Label(String(format: L("Synced. Backup saved as %@"),
                                  a.backup?.lastPathComponent ?? "—"),
                           systemImage: "checkmark.circle").font(.callout)
+                    // 静默丢行是绝对不行的：哪怕只有一条，也要让用户知道，还要说清怎么办
                     if a.orphansSkipped > 0 {
-                        // 静默丢行是绝对不行的：哪怕只有一条，也要让用户知道
                         Label(String(format: L("%d rows were skipped: their document no longer exists."),
                                      a.orphansSkipped),
+                              systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.orange)
+                    }
+                    if a.hashClashesSkipped > 0 {
+                        Label(String(format: L("%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them."),
+                                     a.hashClashesSkipped),
                               systemImage: "exclamationmark.triangle")
                             .font(.callout).foregroundStyle(.orange)
                     }
