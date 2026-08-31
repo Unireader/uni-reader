@@ -357,5 +357,11 @@
 "Looking for the source workspace…" = "正在找源工作区…";
 "The source workspace isn’t connected." = "源工作区没有连接。";
 "Last seen at: %@" = "上次见到它在：%@";
-"Nothing has been written. Applying a merge isn’t available yet." = "以上只是预演，什么都没有写入。应用合并尚未实现。";
 "Not available offline — reconnect the source drive to read it." = "没有离线，插回源盘才能看。";
+"Nothing has been written yet." = "以上只是预演，什么都没有写入。";
+"Sync…" = "同步…";
+"Sync" = "同步";
+"Apply this merge?" = "要应用这次合并吗？";
+"The source library is backed up first; the three most recent backups are kept." = "会先把硬盘上的资料库整份备份出来，保留最近 3 份。";
+"Synced. Backup saved as %@" = "已同步。备份：%@";
+"%d rows were skipped: their document no longer exists." = "有 %d 行被跳过：它们所属的文档已经不在了。";

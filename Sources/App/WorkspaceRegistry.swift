@@ -58,6 +58,12 @@ final class WorkspaceRegistry: ObservableObject {
 
     static func key(_ url: URL) -> String { url.standardizedFileURL.path }
 
+    /// 这个工作区**此刻有没有活着的实例**（不 +1 引用、不新建）。
+    ///
+    /// 给「同步到源盘」用：源盘那个工作区可能正被另一个窗口开着，那就必须写它那条连接，
+    /// 不能另开一条 —— 两条活连接同时写同一个库，正是 §8.1 红线要根除的。
+    func openManager(at folder: URL) -> WorkspaceManager? { byPath[Self.key(folder)]?.manager }
+
     // MARK: - 实例池
 
     /// 取（或建）某工作区的 manager 并 +1 引用。**同路径必返回同一实例**（红线，见类型注释）。

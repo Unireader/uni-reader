@@ -355,5 +355,11 @@
 "Looking for the source workspace…" = "Looking for the source workspace…";
 "The source workspace isn’t connected." = "The source workspace isn’t connected.";
 "Last seen at: %@" = "Last seen at: %@";
-"Nothing has been written. Applying a merge isn’t available yet." = "Nothing has been written. Applying a merge isn’t available yet.";
 "Not available offline — reconnect the source drive to read it." = "Not available offline — reconnect the source drive to read it.";
+"Nothing has been written yet." = "Nothing has been written yet.";
+"Sync…" = "Sync…";
+"Sync" = "Sync";
+"Apply this merge?" = "Apply this merge?";
+"The source library is backed up first; the three most recent backups are kept." = "The source library is backed up first; the three most recent backups are kept.";
+"Synced. Backup saved as %@" = "Synced. Backup saved as %@";
+"%d rows were skipped: their document no longer exists." = "%d rows were skipped: their document no longer exists.";

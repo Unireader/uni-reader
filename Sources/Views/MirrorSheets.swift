@@ -119,8 +119,9 @@ struct MakeMirrorSheet: View {
 
 // MARK: - 同步预览
 
-/// 干跑：**只算不写**。按下同步会发生什么，在这里一次说清。
-/// （真正应用合并是 M5；本面板刻意不提供那个按钮，免得给出"点了就会同步"的错觉。）
+/// 先干跑（**只算不写**）给用户看清「按下去会发生什么」，确认之后才应用。
+/// **干跑与应用用的是同一份 Plan**，不重算 —— 重算就意味着「用户看到的」和「实际做的」
+/// 可能不是同一件事，而这一步会大批量改用户数据。
 struct MirrorSyncSheet: View {
     @EnvironmentObject var workspace: WorkspaceManager
     @EnvironmentObject var registry: WorkspaceRegistry
@@ -128,9 +129,16 @@ struct MirrorSyncSheet: View {
 
     @State private var searching = true
     @State private var sourceURL: URL?
+    /// 干跑算出来的那一份，**应用时原样用它**（见类型注释）
+    @State private var plan: MirrorDiff.Plan?
     @State private var lines: [MirrorReport.Line] = []
     @State private var headline = ""
     @State private var error: String?
+    @State private var confirming = false
+    @State private var applying = false
+    @State private var step = ""
+    @State private var fraction: Double = 0
+    @State private var applied: MirrorApply.Result?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -160,8 +168,23 @@ struct MirrorSyncSheet: View {
                     }
                 }
                 .frame(minHeight: 180)
-                Text(L("Nothing has been written. Applying a merge isn’t available yet."))
-                    .font(.callout).foregroundStyle(.secondary)
+                if applied == nil {
+                    Text(L("Nothing has been written yet."))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                if applying { ProgressView(value: fraction) { Text(step) } }
+                if let a = applied {
+                    Label(String(format: L("Synced. Backup saved as %@"),
+                                 a.backup?.lastPathComponent ?? "—"),
+                          systemImage: "checkmark.circle").font(.callout)
+                    if a.orphansSkipped > 0 {
+                        // 静默丢行是绝对不行的：哪怕只有一条，也要让用户知道
+                        Label(String(format: L("%d rows were skipped: their document no longer exists."),
+                                     a.orphansSkipped),
+                              systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.orange)
+                    }
+                }
             }
 
             if let error {
@@ -170,12 +193,24 @@ struct MirrorSyncSheet: View {
 
             HStack {
                 Spacer()
-                Button(L("Done")) { dismiss() }.keyboardShortcut(.defaultAction)
+                Button(L("Done")) { dismiss() }.keyboardShortcut(.cancelAction)
+                if let p = plan, !p.isEmpty, applied == nil {
+                    Button(L("Sync…")) { confirming = true }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(applying)
+                }
             }
         }
         .padding(20)
         .frame(width: 480)
         .onAppear(perform: run)
+        // 这一步会大批量改用户数据 —— 不给「直接执行」的入口，必须再点一次
+        .confirmationDialog(L("Apply this merge?"), isPresented: $confirming) {
+            Button(L("Sync"), role: .destructive) { applyNow() }
+            Button(L("Cancel"), role: .cancel) {}
+        } message: {
+            Text(L("The source library is backed up first; the three most recent backups are kept."))
+        }
     }
 
     private func run() {
@@ -188,14 +223,35 @@ struct MirrorSyncSheet: View {
                 return
             }
             do {
-                let (plan, titles) = try workspace.mirrorDryRun(sourceFolder: found)
-                let ls = MirrorReport.summary(plan, titles: titles)
-                let hl = MirrorReport.headline(plan)
+                let (dry, titles) = try workspace.mirrorDryRun(sourceFolder: found)
+                let ls = MirrorReport.summary(dry, titles: titles)
+                let hl = MirrorReport.headline(dry)
                 DispatchQueue.main.async {
-                    sourceURL = found; lines = ls; headline = hl; searching = false
+                    sourceURL = found; plan = dry; lines = ls; headline = hl; searching = false
                 }
             } catch {
                 DispatchQueue.main.async { searching = false; self.error = error.localizedDescription }
+            }
+        }
+    }
+
+    private func applyNow() {
+        guard let src = sourceURL, let p = plan else { return }
+        applying = true; error = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let r = try workspace.mirrorApply(sourceFolder: src, plan: p) { s, f in
+                    DispatchQueue.main.async { step = s; fraction = f }
+                }
+                DispatchQueue.main.async {
+                    applying = false; applied = r
+                    // 合并完两端就一致了：重算一遍报告，用户看到的是「现在还剩什么」而不是刚才那份
+                    if let (np, nt) = try? workspace.mirrorDryRun(sourceFolder: src) {
+                        plan = np; lines = MirrorReport.summary(np, titles: nt); headline = MirrorReport.headline(np)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { applying = false; self.error = error.localizedDescription }
             }
         }
     }

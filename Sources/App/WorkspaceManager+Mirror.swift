@@ -117,4 +117,37 @@ extension WorkspaceManager {
         let plan = MirrorDiff.compute(base: try store.syncBase(), mine: mine, theirs: theirs)
         return (plan, MirrorStore.titles(mine: mine, theirs: theirs))
     }
+
+    // MARK: - 应用合并
+
+    /// 应用一次合并（M5）。**在后台线程调用。**
+    ///
+    /// 传进来的 `plan` 就是**干跑给用户看的那一份**，不在这里重算 —— 重算就意味着
+    /// 「用户看到的」和「实际做的」可能不是同一件事，而这一步会大批量改用户数据。
+    ///
+    /// 🔴 源工作区若**此刻正被别的窗口开着**，必须写它那条连接（`WorkspaceRegistry.openManager`），
+    /// 不能另开一条：两条活连接同时写同一个库正是 §8.1 红线要根除的。没开着才临时开一条、用完即关。
+    func mirrorApply(sourceFolder: URL, plan: MirrorDiff.Plan,
+                     progress: ((String, Double) -> Void)? = nil) throws -> MirrorApply.Result {
+        guard let store, let folder, isMirror else { throw MirrorBuilder.Failure.sourceIsMirror }
+        let opened = WorkspaceRegistry.shared.openManager(at: sourceFolder)
+        let temp: LibraryStore? = opened == nil ? try LibraryStore(workspaceFolder: sourceFolder) : nil
+        defer { temp?.close() }
+        guard let sourceStore = opened?.store ?? temp else { throw MirrorBuilder.Failure.sourceIsMirror }
+
+        let srcResolver: (LibLocation) -> String? = { loc in
+            (loc.inWorkspace || loc.isRelative)
+                ? sourceFolder.appendingPathComponent(loc.path).path : loc.path
+        }
+        let r = try MirrorApply.apply(plan: plan,
+                                      mirrorFolder: folder, mirrorStore: store,
+                                      sourceFolder: sourceFolder, sourceStore: sourceStore,
+                                      resolveMirror: mirrorResolver(), resolveSource: srcResolver,
+                                      progress: progress)
+        DispatchQueue.main.async {
+            self.refresh()
+            opened?.refresh()
+        }
+        return r
+    }
 }

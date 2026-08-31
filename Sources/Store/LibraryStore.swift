@@ -49,6 +49,14 @@ final class LibraryStore {
     @discardableResult
     func rebuildSyncBase() throws -> Int { try MirrorStore.rebuildSyncBase(db) }
 
+    /// 把底层连接**限时**交给离线镜像的合并逻辑（`MirrorApply`）。
+    ///
+    /// 这是本类「所有读写走 DAO」这条约定的**唯一例外**，理由在于合并要对**任意表**做通用的
+    /// upsert/delete（列由 `PRAGMA table_info` 现取），给它写一套 DAO 等于把 `MirrorApply`
+    /// 抄进这个文件。作用域式交出、只此一处、名字里带 `mirror` 便于 grep ——
+    /// **别拿它当"拿连接的口子"用**，下一个功能照着做，这个类就名存实亡了。
+    func withMirrorDB<T>(_ body: (SQLiteDB) throws -> T) rethrows -> T { try body(db) }
+
     // MARK: - Schema / 迁移
 
     private func migrate() throws {
