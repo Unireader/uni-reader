@@ -149,6 +149,16 @@ check(p.changes.count == 1 && p.changes[0].side == .mirror
         && (p.changes[0].row?["read_page"] as? Int64) == 87,
       "硬盘那端读得更晚 → 拉回本机")
 
+// 报告：只差进度的那条**不再以「修改书的信息」的面目又数一遍**（2026-09-01 用户问「这是什么意思」）
+let pgLines = MirrorReport.summary(p, titles: ["D1": "王道 2027 计算机组成原理"])
+check(pgLines.count == 1, "只差进度 → 报告就一行（现 \(pgLines.count) 行：\(pgLines.map(\.text))）")
+check(pgLines[0].text == "1 篇文档两端都读过，阅读进度取最近读的那次",
+      "🔴 而且不带「另有」——前面本来就没有别的：\(pgLines[0].text)")
+check(!pgLines.contains { $0.text.contains("书的信息") || $0.text.contains("拉回本机") },
+      "🔴 不再出现「拉回本机：修改书的信息 1」这种同一件事数两遍")
+check(MirrorReport.headline(p) == "只更新阅读进度", "一行式结论也是人话：\(MirrorReport.headline(p))")
+check(p.changes.count == 1, "⚠️ 只是不报，plan 里那条改动一条不少（M5 照常要写下去）")
+
 print("③ last_opened_at：不进指纹，但两端取较晚的")
 let dA = doc("D1", title: "同名", lastOpened: "2026-08-30T10:00:00.000Z")
 let dB = doc("D1", title: "同名", lastOpened: "2026-08-31T20:00:00.000Z")
@@ -179,18 +189,18 @@ check(lines.first?.detail.first == "《高等数学》：笔迹 −1",
       "🔴 删除也带得出标签（row 是 nil，靠 Change 上事先取下的 docId/kind）：\(lines.first?.detail.first ?? "-")")
 
 // document 表自己那行**没有 document_id 列** → 从前 docId 是 nil，被算进「工作区级设置」，
-// 冲突行还拼出「的一条文档信息：…」这种断头句（2026-09-01 用户截图）。
+// 冲突行还拼出「的一条书的信息：…」这种断头句（2026-09-01 用户截图）。
 p = MirrorDiff.compute(base: baseFp,
                        mine: ["document": ["D1": doc("D1", title: "本机改的名",
                                                      lastOpened: "2026-09-01T08:00:00.000Z")]],
                        theirs: ["document": ["D1": doc("D1", title: "硬盘改的名")]])
 lines = MirrorReport.summary(p, titles: titles)
-check(lines.first?.detail.first == "《高等数学》：文档信息 改 1",
+check(lines.first?.detail.first == "《高等数学》：书的信息 改 1",
       "🔴 document 行归到它自己那本书名下：\(lines.first?.detail.first ?? "-")")
 check(!lines.contains { $0.detail.contains { $0.contains("工作区") } },
       "…不再被当成「工作区级设置」")
 let conflictLine = lines.first { $0.text.contains("冲突") }?.detail.first ?? ""
-check(conflictLine.hasPrefix("《高等数学》的一条文档信息："), "🔴 冲突行带上书名：\(conflictLine)")
+check(conflictLine.hasPrefix("《高等数学》的一条书的信息："), "🔴 冲突行带上书名：\(conflictLine)")
 
 // 既没有书名也没有页码时（meta 就是这样）不许拼出「的一条…」这种断头句
 let metaSpec = MirrorFp.spec("meta")!

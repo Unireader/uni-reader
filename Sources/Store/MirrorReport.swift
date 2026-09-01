@@ -27,7 +27,9 @@ enum MirrorReport {
 
     static func tableName(_ table: String) -> String {
         switch table {
-        case "document": return "文档信息"
+        // 「文档信息」是表名漏到界面上（2026-09-01 用户问「这是什么意思」）。这张表存的就是
+        // 书名、分组、排序这些——说「书的信息」谁都懂。
+        case "document": return "书的信息"
         case "variant": return "文档版本"
         case "ink_layer": return "笔迹图层"
         case "scratch_pad": return "草稿纸"
@@ -45,7 +47,10 @@ enum MirrorReport {
     static func summary(_ plan: MirrorDiff.Plan, titles: [String: String]) -> [Line] {
         var out: [Line] = []
         for (side, heading) in [(MirrorDiff.Side.source, "写入硬盘"), (.mirror, "拉回本机")] {
-            let list = plan.changes(to: side)
+            // 只差阅读进度的那些**不进明细**：底下「阅读进度取最近读的那次」已经把它说完整了，
+            // 再以「修改书的信息 1」的面目出现一次，用户只会问「这是什么意思」（2026-09-01 实测）。
+            // ⚠️ 只是不"报"，`plan.changes` 一条不少 —— M5 照常要把它们写下去。
+            let list = plan.changes(to: side).filter { !isProgressOnly($0, plan) }
             if list.isEmpty { continue }
             // 按「类别 + 增/删/改」聚合。逐条列出来的话，一次正常同步就是几百行，等于没给用户看。
             var buckets: [String: Int] = [:]
@@ -62,12 +67,14 @@ enum MirrorReport {
             out.append(Line(text: "\(heading)：" + parts.joined(separator: "、"),
                             detail: bookBreakdown(list, titles: titles)))
         }
+        // 「另有」只在**真的还有别的**时候才说得通
+        func also(_ s: String) -> String { out.isEmpty ? s : "另有" + s }
         if !plan.progressMerges.isEmpty {
-            out.append(Line(text: "另有 \(plan.progressMerges.count) 篇文档两端都读过，阅读进度取最近读的那次"))
+            out.append(Line(text: also("\(plan.progressMerges.count) 篇文档两端都读过，阅读进度取最近读的那次")))
         }
         // 「上次打开」是纯记账（进度那条已经涵盖了用户真正关心的），只在没有进度合并时单独说一句
         if !plan.lastOpenedMerges.isEmpty, plan.progressMerges.isEmpty {
-            out.append(Line(text: "另有 \(plan.lastOpenedMerges.count) 篇文档的「上次打开」两端取较晚的那个"))
+            out.append(Line(text: also("\(plan.lastOpenedMerges.count) 篇文档的「上次打开」两端取较晚的那个")))
         }
         if !plan.conflicts.isEmpty {
             out.append(Line(text: "冲突 \(plan.conflicts.count) 条", detail: conflictLines(plan, titles: titles)))
@@ -135,15 +142,22 @@ enum MirrorReport {
         }.sorted()
     }
 
-    /// 一行式结论（顶栏/按钮旁用）。
+    /// 这条改动是不是「只差读到哪儿」。**只影响报告，不影响要不要写**（见 `summary`）。
+    static func isProgressOnly(_ c: MirrorDiff.Change, _ plan: MirrorDiff.Plan) -> Bool {
+        c.table == "document" && plan.progressMerges.contains(c.rowId)
+    }
+
+    /// 一行式结论（顶栏/按钮旁用）。数的口径与明细一致 —— 明细里不显示的，这里也不该计数，
+    /// 否则就是「顶上写着 1 条，底下找不到是哪条」。
     static func headline(_ plan: MirrorDiff.Plan) -> String {
         if plan.isEmpty { return "两端一致" }
-        let toSource = plan.changes(to: .source).count
-        let toMirror = plan.changes(to: .mirror).count
+        let toSource = plan.changes(to: .source).filter { !isProgressOnly($0, plan) }.count
+        let toMirror = plan.changes(to: .mirror).filter { !isProgressOnly($0, plan) }.count
         var bits: [String] = []
         if toSource > 0 { bits.append("写入硬盘 \(toSource)") }
         if toMirror > 0 { bits.append("拉回本机 \(toMirror)") }
         if plan.conflicts.count > 0 { bits.append("冲突 \(plan.conflicts.count)") }
-        return bits.isEmpty ? "只更新「上次打开」" : bits.joined(separator: " · ")
+        if !bits.isEmpty { return bits.joined(separator: " · ") }
+        return plan.progressMerges.isEmpty ? "只更新「上次打开」" : "只更新阅读进度"
     }
 }
