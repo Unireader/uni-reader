@@ -315,6 +315,8 @@ struct SidebarView: View {
         // 而「切走」正是个天然的收尾时机（也是用户接下来最可能去拔盘的时刻）
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.willResignActiveNotification)) { _ in refreshNotice() }
+        // 源盘插回来了 → 当场重算，不用等用户切窗口才发现「哦原来能同步了」
+        .onReceive(NotificationCenter.default.publisher(for: .volumeDidMount)) { _ in refreshNotice() }
         // 删的是 GB 级数据、还可能带着没同步回来的笔迹 —— 必须确认一次，且把后果说清楚
         .confirmationDialog(L("Delete the offline copy?"), isPresented: $dropMirrorShown) {
             Button(L("Delete"), role: .destructive) { dropMirror() }

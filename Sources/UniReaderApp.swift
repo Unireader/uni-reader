@@ -302,6 +302,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wsLog("didFinishLaunching：pendingWorkspacePath=\(Self.pendingWorkspacePath ?? "nil")")
         Self.didFinishLaunching = true
         NotificationCenter.default.post(name: .appDidFinishLaunching, object: nil)
+        observeVolumes()
+    }
+
+    // MARK: - 硬盘弹出 / 插回
+
+    /// 盯着卷的挂载与卸载。
+    ///
+    /// 🔴 **必须注册在 `NSWorkspace.shared.notificationCenter` 上**，不是默认中心
+    /// ——AppKit 头文件原话：「All notifications in this header file must be registered on
+    /// this notification center. If you register on other notification centers, you will not
+    /// receive the notifications.」注册错地方是**静默收不到**，不报错。
+    ///
+    /// 三条都要接，各管一段：
+    /// - `willUnmount`：用户按了弹出、系统真正卸载**之前**。这是唯一能让弹盘成功的窗口期
+    ///   ——在这一下里把 fd 放掉，Finder 才不会报「磁盘正在使用中」。
+    /// - `didUnmount`：已经卸载了。**硬拔**（不点弹出直接拔线）只会走这条，所以它不是冗余，
+    ///   是另一半场景；重复执行是安全的（`evacuate` 幂等）。
+    /// - `didMount`：盘插回来了 —— 让还开着的窗口重算一次提示条（不然得等用户切窗口才发现）。
+    private func observeVolumes() {
+        let nc = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.willUnmountNotification, NSWorkspace.didUnmountNotification] {
+            nc.addObserver(forName: name, object: nil, queue: .main) { note in
+                MainActor.assumeIsolated { Self.handleUnmount(note) }
+            }
+        }
+        nc.addObserver(forName: NSWorkspace.didMountNotification, object: nil, queue: .main) { _ in
+            // 提示条自己会在后台跑干跑；这里只是给个「该重算了」的信号
+            NotificationCenter.default.post(name: .volumeDidMount, object: nil)
+        }
+    }
+
+    /// 盘要走了：开着它上面工作区的窗口不能死卡在那儿。
+    /// **有离线副本就切过去，没有就把那扇窗关掉。**
+    ///
+    /// 次序有讲究：**先把副本的窗口开出来，再关旧的**。副本走
+    /// `deliverWorkspace` → 通知 → key 窗口的 `ContentView` 路由，而屏幕上一个
+    /// `ContentView` 都没有时那个请求会被静默丢弃（2026-07-29 实测过的老账）——
+    /// 先关旧窗就可能把唯一的订阅者关掉。
+    @MainActor
+    private static func handleUnmount(_ note: Notification) {
+        guard let vol = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+        let registry = WorkspaceRegistry.shared
+        let affected = registry.openWorkspaces(onVolume: vol)
+        guard !affected.isEmpty else { return }
+        wsLog("卷 \(vol.lastPathComponent) 要卸载，受影响的工作区：\(affected.count) 个")
+        for folder in affected {
+            if let mirror = registry.mirrorPath(forSource: folder, id: nil) {
+                wsLog("→ 切到离线副本 \((mirror as NSString).lastPathComponent)")
+                deliverWorkspace(mirror)
+            } else {
+                wsLog("→ 没有离线副本，关掉这扇窗")
+            }
+            registry.evacuate(folder)
+        }
     }
 
     /// 是否已过 `applicationDidFinishLaunching`（= 冷启动的 open 事件窗口已关闭）。
@@ -586,6 +640,8 @@ struct UniReaderApp: App {
 extension Notification.Name {
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
     static let openWorkspaceRequested = Notification.Name("com.xvan.UniReader.openWorkspaceRequested")
+    /// 有卷挂上了 —— 可能就是那块源盘插回来了，提示条该重算一次
+    static let volumeDidMount = Notification.Name("com.xvan.UniReader.volumeDidMount")
     static let appDidFinishLaunching = Notification.Name("com.xvan.UniReader.appDidFinishLaunching")
     static let newWindowRequested = Notification.Name("com.xvan.UniReader.newWindowRequested")
     static let newTabRequested = Notification.Name("com.xvan.UniReader.newTabRequested")

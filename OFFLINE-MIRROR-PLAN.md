@@ -335,6 +335,24 @@ A 同步完源盘变了，B 再同步时会把 A 的改动当作 "theirs 侧新�
     与镜像侧那两个是**同一件事、角色对调**（`base`/`mine` 永远取副本那侧），
     所以 `MirrorDiff`/`MirrorApply`/同步面板都只有一份，没有第二套合并逻辑。
 - 镜像窗口的侧栏菜单仍留「同步到源盘…」（手动入口，与提示条互不排斥）。
+- 🔴 **弹盘不能把 app 卡死**（2026-09-01 用户要求）。接 `NSWorkspace` 的卷通知
+  （**必须注册在 `NSWorkspace.shared.notificationCenter`**，AppKit 头文件原话：注册到别的
+  通知中心是**静默收不到**）：
+  - `willUnmountNotification`（用户按了弹出、真正卸载**之前**）——唯一能让弹盘成功的窗口期：
+    在这一下里 `WorkspaceRegistry.evacuate` **同步**关掉库连接，Finder 才不会报「磁盘正在使用中」
+    （`WorkspaceManager.teardown()` 那条注释里用户 2026-08-05 报过的「必须退出整个 app 才能弹」）。
+  - `didUnmountNotification`——**硬拔**只走这条，不是冗余而是另一半场景；`evacuate` 幂等。
+  - `didMountNotification`——源盘插回来，让还开着的窗口当场重算提示条。
+  - 处置：**有离线副本就切过去，没有就把那扇窗关掉**。因为
+    「工作区归属定下来后就不再变」（`RootView`），所以「切过去」＝ 开副本的窗口 + 关旧窗；
+    **次序是先开后关**——副本走 `deliverWorkspace` → 通知 → key 窗口的 `ContentView` 路由，
+    屏幕上一个 `ContentView` 都没有时请求会被静默丢弃（2026-07-29 的老账）。
+  - 「哪些工作区在这块盘上」走 `VolumeScope.contains`：**按路径分量比，不是字符串前缀**
+    ——裸 `hasPrefix` 会让弹「/Volumes/备份」把「/Volumes/备份2」上的窗口也关掉，
+    而且现场不留线索（`spike/volume-scope-test.swift` 13 条，换成裸 hasPrefix 当场红 3 条）。
+  - ⚠️ **PDF 的文件句柄挂在窗口的视图状态上**，随窗口关闭走既有结清链路，不是同步的。
+    所以首次弹出仍可能被 PDF 占住；库连接是同步放的，第二次点弹出必成。真要一次成，
+    得把 PDFDocument 的释放也做成同步动作——**未做，待真机确认有没有必要**。
 - 镜像与源是**两个不同路径 = 两个 `WorkspaceManager` 实例**，天然可同时开着。
   同步时若源工作区**正在本进程开着**，必须走 `WorkspaceRegistry` 拿到那个实例的 store 来写，
   **不能另开一个连接**（违反「同一路径同一实例」红线）。

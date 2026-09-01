@@ -266,6 +266,33 @@ final class WorkspaceRegistry: ObservableObject {
         }
     }
 
+    // MARK: - 盘要弹了
+
+    /// 这个卷上现在开着哪些工作区。判据见 `VolumeScope.contains`
+    /// （按路径分量比，别让 `/Volumes/备份` 把 `/Volumes/备份2` 也算进去）。
+    func openWorkspaces(onVolume volume: URL) -> [URL] {
+        byPath.compactMap { key, box in
+            guard box.manager != nil,
+                  VolumeScope.contains(key, volume: volume.path) else { return nil }
+            return URL(fileURLWithPath: key)
+        }
+    }
+
+    /// 盘要弹了：**当场**关掉这个工作区的库连接，并关掉显示它的窗口。
+    ///
+    /// 🔴 连接必须**同步**关（不能等窗口拆完）：只要 `library.sqlite` 的 fd 还开着，
+    /// Finder 就报「磁盘正在使用中」——这正是 `WorkspaceManager.teardown()` 那条注释里
+    /// 用户 2026-08-05 报过的「必须退出整个 app 才能弹盘」。PDF 的文件句柄挂在窗口的
+    /// 视图状态上，随窗口关闭走既有的那条结清链路（`ContentView.onDisappear`）。
+    func evacuate(_ folder: URL) {
+        let k = Self.key(folder)
+        wsLog("evacuate：盘要弹了，撤离 \((k as NSString).lastPathComponent)")
+        byPath[k]?.manager?.teardown()
+        for (sid, path) in windowPaths where path == k {
+            windowsBySession[sid]?.close()
+        }
+    }
+
     /// 该工作区是否已有窗口在显示。
     func hasWindow(forWorkspace folder: URL) -> Bool {
         windowPaths.values.contains(Self.key(folder))
