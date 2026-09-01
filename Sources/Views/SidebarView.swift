@@ -227,7 +227,14 @@ struct SidebarView: View {
     }
 
     var body: some View {
-        sheetsAndAlerts(mainList)
+        // 🔴 侧栏样式要**显式声明**：迁移前它在 `NavigationSplitView` 的 sidebar 位置上，
+        // SwiftUI 自动套 `.sidebar` 外观；装进 `NSHostingController` 之后没人替它决定，
+        // 会退回普通 List（不透明底、方角选中行）——2026-09-01 用户报的「侧边栏不沉浸了」。
+        // `scrollContentBackground(.hidden)` 是另一半：List 自己那层不透明底会把
+        // `NSSplitViewItem` 的侧栏材质整个挡住。
+        sheetsAndAlerts(mainList
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden))
     }
 
     /// 列表 + 工具栏。面板/弹窗与提示条的重算时机挂在 `sheetsAndAlerts` ——

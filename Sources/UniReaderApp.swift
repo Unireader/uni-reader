@@ -233,7 +233,21 @@ enum ZoomProbe {
 /// 优雅终止旧实例并接管——释放局域网服务端口（8770/8771），杜绝多份状态与端口冲突。
 /// 选 last-wins 而非 first-wins：Xcode 每次 Run = 新进程，需保证看到的永远是最新构建，
 /// 且旧进程即便未被及时回收也会被这里清掉。正式发布如需「第二次打开只激活已有窗口」再切 first-wins。
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// 全局取用点（菜单动作、`ReaderPane` 里的「在新窗口打开」都要开窗）。
+    /// 迁移前这些事走 SwiftUI 的 `openWindow` environment action，只有视图够得着；
+    /// 现在窗口是我们建的，直接找 delegate 即可。
+    static private(set) var shared: AppDelegate?
+
+    /// App 级单例。迁移前是 `UniReaderApp` 的 `@StateObject`，现在归 delegate 持有，
+    /// 由各窗口 `.environmentObject(app)` 注入 SwiftUI 内容树。
+    let appModel = AppModel()
+
+    /// 开着的阅读窗。**强引用在这里**——`NSWindowController` 不像 SwiftUI Scene 有人替我们管，
+    /// 没人持有就会当场释放、窗口跟着消失。
+    private var readerWindows: [ReaderWindowController] = []
+
     /// 是否正在退出（cmd+q / 被单实例守卫接管）。用于区分「退出关窗」vs「cmd+w 单独关窗」：
     /// 退出时**不修改**工作区「打开集」（下次启动原样恢复所有窗口）；cmd+w 才逐个移除。
     /// `applicationShouldTerminate` 在各窗口 `onDisappear` **之前**触发，故此标志对关窗回调可见。
@@ -266,6 +280,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 统一投递：冷启动缓冲 + 发通知。两个入口共用，并做一次短时去重
     /// （同一路径 1s 内只投一次），免得将来两条都被调用时把工作区切两遍。
+    /// 统一投递：热启动**直接开窗**，冷启动才缓冲（那时 delegate 还没走完启动，窗口不该现在建）。
+    ///
+    /// 🔴 迁移前这里必须「置缓冲 + 发通知」，再由某个 `RootView` 抢着认领——因为窗口是 SwiftUI 建的，
+    /// app 级代码够不着 `openWindow`。那套机制附带两个踩过的坑（只剩错误态窗口时请求被静默丢弃、
+    /// 冷启动 `isKeyWindow` 全为假导致谁都不认领），现在一并作废：窗口由我们直接建。
     static func deliverWorkspace(_ path: String) {
         let now = Date.now
         if let last = lastDelivered, last.path == path, now.timeIntervalSince(last.at) < 1 {
@@ -273,9 +292,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         lastDelivered = (path, now)
-        pendingWorkspacePath = path
-        wsLog("投递 → 置 pendingWorkspacePath + 发通知：\(path)")
-        NotificationCenter.default.post(name: .openWorkspaceRequested, object: path)
+        guard didFinishLaunching, let me = shared else {
+            pendingWorkspacePath = path
+            wsLog("投递 → 冷启动缓冲：\(path)")
+            return
+        }
+        wsLog("投递 → 直接路由：\(path)")
+        me.routeWorkspace(URL(fileURLWithPath: path), strict: true)
     }
 
     private static var lastDelivered: (path: String, at: Date)?
@@ -287,6 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        Self.shared = self
         guard let bundleId = Bundle.main.bundleIdentifier else { return }
         let me = NSRunningApplication.current
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
@@ -301,9 +325,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         wsLog("didFinishLaunching：pendingWorkspacePath=\(Self.pendingWorkspacePath ?? "nil")")
         Self.didFinishLaunching = true
-        NotificationCenter.default.post(name: .appDidFinishLaunching, object: nil)
+        MainMenu.install(app: appModel)
+        // app 级初始化（迁移前挂在 ContentView.onAppear，那是「每开一扇窗跑一遍」的将就做法）。
+        // ⚠️ 缓存上限的默认值与 `SettingsView.renderCacheMB` 的 `@AppStorage` 默认**必须一致**。
+        PageRenderEngine.shared.setCacheLimitMB(
+            UserDefaults.standard.object(forKey: "renderCacheMB") as? Int ?? 256)
+        if UserDefaults.standard.bool(forKey: "autoStartServer") { appModel.server.start() }
         observeVolumes()
+        NotificationCenter.default.post(name: .appDidFinishLaunching, object: nil)
+        // 首个窗口：双击 .unrd 拉起就开那个工作区，否则开上次用的。
+        if let p = Self.consumePendingWorkspace() {
+            routeWorkspace(URL(fileURLWithPath: p), strict: true)
+        } else {
+            openReaderWindow(workspacePath: nil, docId: nil)
+        }
     }
+
+    // MARK: - 开窗
+
+    /// 开一扇阅读窗。`workspacePath` 为 nil = 用「上次使用的工作区」（首次启动会在默认位置建库，
+    /// 所以这条路径**不严格校验**——严格是给「用户指着某个具体工作区说打开它」用的）。
+    @discardableResult
+    func openReaderWindow(workspacePath: String?, docId: String?) -> ReaderWindowController? {
+        let folder: URL
+        let strict: Bool
+        if let p = workspacePath {
+            folder = URL(fileURLWithPath: p); strict = true
+        } else {
+            folder = WorkspaceRegistry.shared.lastOrDefaultFolder(); strict = false
+        }
+        do {
+            if strict { try WorkspaceManager.validate(folder) }
+            let ws = try WorkspaceRegistry.shared.acquire(folder: folder)
+            let c = ReaderWindowController(app: appModel, workspace: ws, launchDocId: docId)
+            // 第二扇起往右下错开：所有窗口共用一个 autosave frame，不错开就精确叠在一起、
+            // 看着像「只开了一扇」。
+            if let prev = readerWindows.last?.window, let w = c.window {
+                w.setFrameTopLeftPoint(NSPoint(x: prev.frame.minX + 26, y: prev.frame.maxY - 26))
+            }
+            readerWindows.append(c)
+            c.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            wsLog("开窗：\(folder.lastPathComponent) doc=\(docId ?? "nil")")
+            return c
+        } catch {
+            wsLog("开窗失败：\(error.localizedDescription)")
+            let a = NSAlert()
+            a.messageText = L("Cannot Open Workspace")
+            a.informativeText = error.localizedDescription
+            a.addButton(withTitle: L("OK"))
+            a.runModal()
+            return nil
+        }
+    }
+
+    /// 双击 `.unrd` / Dock 菜单 / 侧栏入口共用的路由：校验 → 已有窗口就激活 → 否则开新窗口。
+    func routeWorkspace(_ url: URL, strict: Bool) {
+        do { try WorkspaceRegistry.shared.route(to: url, strict: strict) }
+        catch {
+            let a = NSAlert()
+            a.messageText = L("Workspace Error")
+            a.informativeText = error.localizedDescription
+            a.addButton(withTitle: L("OK"))
+            a.runModal()
+        }
+    }
+
+    /// 窗口关掉了，放掉对 controller 的强引用。
+    func forget(_ controller: ReaderWindowController) {
+        readerWindows.removeAll { $0 === controller }
+    }
+
+    /// 关掉全部窗口不退出 app（macOS 惯例；也与迁移前 SwiftUI 的行为一致）。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     // MARK: - 硬盘弹出 / 插回
 
@@ -368,13 +462,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateNow
     }
 
-    /// 「重新打开」= 点 Dock 图标激活。有可见窗口时返回 false，没有时返回 true（让系统开一个）。
-    /// ⚠️ 实测（2026-07-29）**这个回调根本没被调用**——SwiftUI 的 App 生命周期自己处理了重新打开，
-    /// 不转发给 delegate。所以「app 激活时凭空多出一个空窗口」不是它造成的，别再往这儿查；
-    /// 真正的兜底是 `RootView` body 里的 `isStrayWindow`（必须在 body 求值时判定，不能等 onAppear，
-    /// 理由见那里）。保留本方法纯属防御。
+    /// 「重新打开」= 点 Dock 图标激活。没有可见窗口时开一扇。
+    ///
+    /// 🔴 迁移前这个回调**根本不会被调用**（SwiftUI 的 App 生命周期自己处理了重新打开、不转发给
+    /// delegate），当时「app 激活凭空多出一个空窗口」正是 SwiftUI 自己开的、只能识别后关掉。
+    /// 现在窗口全归我们：这里返回 false（自己开，不劳系统），凭空多窗那件事从根上不存在了。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        !flag
+        if !flag { openReaderWindow(workspacePath: nil, docId: nil) }
+        return false
     }
 
     /// Dock 图标右键菜单：最近打开的工作区。
@@ -405,258 +500,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let path = sender.representedObject as? String else { return }
         wsLog("Dock 菜单：打开最近工作区 \(path)")
         Self.deliverWorkspace(path)
-    }
-}
-
-/// 一个窗口要显示什么：哪个工作区（nil = 由 `RootView` 现场决定，见那里）+ 可选的初始文档。
-/// 作为 `WindowGroup` 的 value 传递，这样每个窗口都自带工作区归属，多工作区才能真正并存。
-struct WindowTarget: Codable, Hashable {
-    var workspacePath: String?
-    var docId: String?
-}
-
-/// 「文件 → 最近打开」子菜单（列最近工作区 + 末尾清空，同 macOS `Open Recent` 与 Obsidian 的排法）。
-///
-/// 抽成独立 `View` 是必需的：`.commands { }` 的内容不在窗口的视图层级里，得由它**自己**持有
-/// `@ObservedObject` 才能在 `recents` 变化后重建菜单项；把 `registry.recents` 直接写进
-/// `commands` 闭包只会在启动那一刻求值一次，之后打开新工作区菜单也不更新。
-///
-/// 点击走 `AppDelegate.deliverWorkspace`——与 Dock 右键菜单、双击 `.unrd` 完全同一条投递链路
-/// （已有窗口则激活，否则开新窗口），菜单栏是 App 级的，不该经由某个窗口的回调。
-private struct OpenRecentMenu: View {
-    @ObservedObject private var registry = WorkspaceRegistry.shared
-
-    var body: some View {
-        Menu(L("Open Recent")) {
-            ForEach(registry.recents) { r in
-                Button {
-                    AppDelegate.deliverWorkspace(WorkspaceRegistry.resolveOrSource(r).path)
-                } label: {
-                    Label(r.name, systemImage: WorkspaceRegistry.opensOffline(r)
-                          ? "externaldrive.badge.timemachine" : "folder")
-                }
-            }
-            if !registry.recents.isEmpty { Divider() }
-            // 空列表时不隐藏而是灰掉：菜单能展开、用户看得见"确实空了"，与系统 Clear Menu 一致。
-            Button(L("Clear Recent")) { registry.clearRecents() }
-                .disabled(registry.recents.isEmpty)
-        }
-    }
-}
-
-@main
-struct UniReaderApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var app = AppModel()
-
-    var body: some Scene {
-        // 主窗口组：⌘N 开新窗口；带 value 时 = 在指定工作区（可选指定文档）开一个窗口。
-        // ⚠️ 工作区**不再**是 App 级单例——每个窗口经 RootView 从 WorkspaceRegistry 领一个实例
-        // （同路径共享，见 WorkspaceRegistry 注释）。以前共用一个 manager，双击另一个 .unrd
-        // 会把所有窗口一起换掉。
-        // ⚠️ **app 每次被激活，SwiftUI 都会凭空开一个 value 为 nil 的窗口**（双击 .unrd 必然激活
-        // app，于是一次双击变两个窗口）。2026-07-29 逐一排除：不是 `applicationShouldHandleReopen`
-        // （压根没被调用，SwiftUI 自己处理了重新打开）、不是 `NSDocumentController`
-        // （`applicationShouldOpenUntitledFile` 也没被调用）、去掉 `defaultValue` 同样拦不住。
-        // 唯一可靠的处理是在 `RootView` 的 body 里认出这种窗口并关掉它（`isStrayWindow`，
-        // 必须在 body 求值时判定——等到 onAppear 窗口已上屏，关掉就是用户看到的「闪一下」）。
-        // 不给 `defaultValue` 只是顺带简化：这样 target 天然是 optional，"没人指定工作区"表达得更直白。
-        WindowGroup(for: WindowTarget.self) { $target in
-            RootView(target: target)
-                .environmentObject(app)
-        }
-        // 关掉系统的窗口状态恢复：本 app 自己就管着「上次开了哪些文档」（每个工作区的打开集 →
-        // restoreSession），系统再恢复一遍是重复的。
-        // ⚠️ 注意这**不是**多余空窗口的解药：实测那些窗口 `isRestorable=false`、identifier 形如
-        // `SwiftUI.PresentedWindowContent<…>-AppWindow-N`，是 SwiftUI 自己开的，与状态恢复无关。
-        .restorationBehavior(.disabled)
-
-        // AI 面板：**全局唯一浮窗**（不是每个阅读窗口一个）。⌘⇧A 打开，见 `AIPanelMenu`。
-        // 用 `Window` 而不是 `WindowGroup` 就是要这个「只有一个」的语义——每家平台一个 WebPage
-        // 已经够用，还顺带绕开「一个 WKWebView 不能同时挂两个视图」。
-        // 状态恢复同样关掉：面板开不开由用户当次决定，系统替我们记反而碍事。
-        Window(L("AI"), id: AIPanelModel.windowID) {
-            AIPanelView()
-        }
-        .defaultSize(width: 480, height: 760)
-        .defaultPosition(.trailing)
-        // 紧凑工具栏（系统标准样式，不是自己压高度）：默认的 expanded 样式在 Tahoe 上又高又占地方，
-        // 一个聊天浮窗不该拿两行去放标题。`showsTitle: false` 连标题行一起省掉——当前是哪家平台，
-        // 工具栏中间那枚平台菜单自己就写着。
-        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
-        .restorationBehavior(.disabled)
-
-        // 标准设置窗口（⌘,）：夜间模式自动化 / 平板滚动跟随算法 / 平板服务自启。
-        Settings {
-            SettingsView()
-                .environmentObject(app)
-        }
-        .commands {
-            // 接管整个「新建」组：系统默认的 ⌘N 开出来的窗口不带工作区（value 为 nil），
-            // 会去开「上次使用的工作区」而不是当前这个，也让下面 RootView 的自毁兜底没法区分
-            // 「用户主动 ⌘N」和「系统凭空塞的空窗口」。自己发通知给 key 窗口，由它带着**本窗口的**
-            // 工作区去开新窗口。
-            CommandGroup(replacing: .newItem) {
-                Button(L("New Window")) {
-                    NotificationCenter.default.post(name: .newWindowRequested, object: nil)
-                }
-                .keyboardShortcut("n", modifiers: .command)
-                Button(L("Open PDF…")) {
-                    NotificationCenter.default.post(name: .openPDFRequested, object: nil)
-                }
-                .keyboardShortcut("o", modifiers: .command)
-                Button(L("New Tab")) {
-                    NotificationCenter.default.post(name: .newTabRequested, object: nil)
-                }
-                .keyboardShortcut("t", modifiers: .command)
-                Divider()
-                OpenRecentMenu()
-            }
-            // 标签页（`MAC-TABS-PLAN.md`）。⌘W 关的是**当前标签**，只剩一个标签时才关窗口
-            // （同 Safari / Xcode）；⇧⌘W 直接关窗口。
-            // ⚠️ 真机待验：AppKit 自带的「文件 › 关闭」也占着 ⌘W，两者谁拿到快捷键要看菜单顺序。
-            // 若真机上 ⌘W 关掉的是整扇窗，改用一个 keyDown 本地监视器抢在菜单等价键之前处理。
-            CommandGroup(after: .saveItem) {
-                Divider()
-                Button(L("Close Tab")) {
-                    NotificationCenter.default.post(name: .closeTabRequested, object: nil)
-                }
-                .keyboardShortcut("w", modifiers: .command)
-                Button(L("Close Window")) {
-                    NotificationCenter.default.post(name: .closeWindowRequested, object: nil)
-                }
-                .keyboardShortcut("w", modifiers: [.command, .shift])
-                Button(L("Next Tab")) {
-                    NotificationCenter.default.post(name: .nextTabRequested, object: nil)
-                }
-                .keyboardShortcut(.tab, modifiers: .control)
-                Button(L("Previous Tab")) {
-                    NotificationCenter.default.post(name: .prevTabRequested, object: nil)
-                }
-                .keyboardShortcut(.tab, modifiers: [.control, .shift])
-            }
-            // 阅读区缩放（由 key 窗口的 PageStreamView 响应）。
-            CommandGroup(after: .sidebar) {
-                Divider()
-                Button(L("Toggle Sidebar")) {
-                    NotificationCenter.default.post(name: .toggleSidebar, object: nil)
-                }
-                .keyboardShortcut("b", modifiers: .command)
-                Button(L("Toggle Inspector")) {
-                    NotificationCenter.default.post(name: .toggleInspector, object: nil)
-                }
-                .keyboardShortcut("i", modifiers: .command)
-                // 「自定工具栏…」的**保底入口**：右键工具栏那条系统菜单项要 NSToolbar 的
-                // allowsUserCustomization 打开才给（见 `ToolbarCustomizationEnabler`），
-                // 而这里是自己调面板，同一套系统 UI，与右键那条等价。
-                Button(L("Customize Toolbar…")) {
-                    NSApp.keyWindow?.toolbar?.runCustomizationPalette(nil)
-                }
-                Divider()
-                Button(L("Zoom In")) {
-                    NotificationCenter.default.post(name: .readerZoomIn, object: nil)
-                }
-                .keyboardShortcut("=", modifiers: .command)
-                Button(L("Zoom Out")) {
-                    NotificationCenter.default.post(name: .readerZoomOut, object: nil)
-                }
-                .keyboardShortcut("-", modifiers: .command)
-                Button(L("Zoom to Fit Width")) {
-                    NotificationCenter.default.post(name: .readerZoomFit, object: nil)
-                }
-                .keyboardShortcut("0", modifiers: .command)
-                Divider()
-                // 跳转历史（`JumpHistory`）：⌘[ / ⌘] 是浏览器/Xcode 的通用口径。
-                // 浮窗开关用 ⌥⌘J —— ⌥⌘H 是系统的「隐藏其他」，抢不得。
-                Button(L("Back to Previous Position")) {
-                    NotificationCenter.default.post(name: .jumpBackRequested, object: nil)
-                }
-                .keyboardShortcut("[", modifiers: .command)
-                Button(L("Forward to Next Position")) {
-                    NotificationCenter.default.post(name: .jumpForwardRequested, object: nil)
-                }
-                .keyboardShortcut("]", modifiers: .command)
-                Button(L("Jump History")) {
-                    NotificationCenter.default.post(name: .toggleJumpHistory, object: nil)
-                }
-                .keyboardShortcut("j", modifiers: [.command, .option])
-                Divider()
-            }
-            // ⌘F 查找（由 key 窗口的 ContentView 响应，弹查找栏；同一套 notification 路由已被
-            // 缩放命令验证可靠，见上）。
-            CommandGroup(after: .textEditing) {
-                Divider()
-                Button(L("Find…")) {
-                    NotificationCenter.default.post(name: .readerFind, object: nil)
-                }
-                .keyboardShortcut("f", modifiers: .command)
-            }
-            // Edit 菜单剪切板组整体接管（replacing: .pasteboard）：阅读区是纯 SwiftUI 不在响应链上，
-            // 系统 Copy/Select All 永远灰色。重建 5 项——文本框焦点（查找/笔记编辑器）时转发响应链，
-            // 否则发通知路由到 key 窗口阅读区（PageStreamView 接收，与缩放命令同款）。
-            // 只读 PDF 不支持 Cut/Paste/Delete 改文档，它们只服务文本框。
-            CommandGroup(replacing: .pasteboard) {
-                Button(L("Cut")) { NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil) }
-                    .keyboardShortcut("x")
-                Button(L("Copy")) {
-                    // ⚠️ **先试响应链，没人接才回落到阅读区**（2026-08-26 改）。
-                    // 原先的判据是 `firstResponder is NSText`，AI 面板里第一响应者是 WKWebView
-                    // ——既不是 NSText，也没有哪个 ContentView 是 key 窗口，于是 ⌘C **一声不响什么都不做**。
-                    // `sendAction` 的返回值就是「有没有响应者接住」：webview / 文本框都会接，
-                    // 纯 SwiftUI 的阅读区不在响应链上必然返回 false，正好当分流开关。
-                    if !NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) {
-                        NotificationCenter.default.post(name: .readerCopy, object: nil)
-                    }
-                }
-                .keyboardShortcut("c")
-                Button(L("Paste")) { NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil) }
-                    .keyboardShortcut("v")
-                Button(L("Delete")) { NSApp.sendAction(#selector(NSText.delete(_:)), to: nil, from: nil) }
-                Button(L("Select All")) {
-                    if !NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) {
-                        NotificationCenter.default.post(name: .readerSelectAll, object: nil)
-                    }
-                }
-                .keyboardShortcut("a")
-            }
-            // 笔架/模式快捷键（设备级全局状态，直接调 AppModel——与画布笔架、平板环形盘
-            // 同一套 apply 路径，广播到平板的分支天然生效）。
-            CommandGroup(after: .sidebar) {
-                Divider()
-                Button(String(format: L("Pen Slot %d"), 1)) { if app.pens.count > 0 { app.applyPenSelection(index: 0) } }
-                    .keyboardShortcut("1", modifiers: .option)
-                Button(String(format: L("Pen Slot %d"), 2)) { if app.pens.count > 1 { app.applyPenSelection(index: 1) } }
-                    .keyboardShortcut("2", modifiers: .option)
-                Button(String(format: L("Pen Slot %d"), 3)) { if app.pens.count > 2 { app.applyPenSelection(index: 2) } }
-                    .keyboardShortcut("3", modifiers: .option)
-                Button(String(format: L("Pen Slot %d"), 4)) { if app.pens.count > 3 { app.applyPenSelection(index: 3) } }
-                    .keyboardShortcut("4", modifiers: .option)
-                Button(L("Eraser")) { app.setPadMode("erase") }
-                    .keyboardShortcut("e", modifiers: .option)
-                Button(L("Page Turn")) { app.setPadMode("page") }
-                    .keyboardShortcut("v", modifiers: .option)
-                Button(L("Write")) { app.setPadMode("note") }
-                    .keyboardShortcut("b", modifiers: .option)
-                Divider()
-                Button(L("Night Mode")) {
-                    NotificationCenter.default.post(name: .toggleNightMode, object: nil)
-                }
-                .keyboardShortcut("n", modifiers: [.command, .option])
-                Button(L("Canvas Mode")) {
-                    NotificationCenter.default.post(name: .toggleCanvasMode, object: nil)
-                }
-                .keyboardShortcut("c", modifiers: [.command, .option])
-            }
-            // AI 菜单。⌥S 与阅读区的单键工具约定（e/1~9/n/b/v/l）同一族，只是菜单项要带修饰键。
-            CommandMenu(L("AI")) {
-                AIPanelMenu()
-                Divider()
-                Button(L("Snip to AI")) {
-                    NotificationCenter.default.post(name: .toggleSnipTool, object: nil)
-                }
-                .keyboardShortcut("s", modifiers: .option)
-            }
-        }
     }
 }
 
