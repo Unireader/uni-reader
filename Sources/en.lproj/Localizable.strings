@@ -364,6 +364,8 @@
 "%d items written offline" = "%d items written offline";
 "Review and sync them back" = "Review and sync them back";
 "%d items to sync · tap to review" = "%d items to sync · tap to review";
+"Checking what needs syncing…" = "Checking what needs syncing…";
+"Both sides match · switch back" = "Both sides match · switch back";
 "Sync Preview" = "Sync Preview";
 "Looking for the source workspace…" = "Looking for the source workspace…";
 "The source workspace isn’t connected." = "The source workspace isn’t connected.";

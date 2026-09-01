@@ -366,6 +366,8 @@
 "%d items written offline" = "离线副本上有 %d 项还没同步回来";
 "Review and sync them back" = "看一眼再同步回源盘";
 "%d items to sync · tap to review" = "有 %d 项要同步 · 点开看看";
+"Checking what needs syncing…" = "正在看有什么要同步的…";
+"Both sides match · switch back" = "两边一致 · 点一下切回源盘";
 "Sync Preview" = "同步预览";
 "Looking for the source workspace…" = "正在找源工作区…";
 "The source workspace isn’t connected." = "源工作区没有连接。";

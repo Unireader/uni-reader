@@ -355,7 +355,12 @@ struct MirrorSyncSheet: View {
                 // 挪到后台 → 和主线程的 `refresh()`／侧栏渲染同时用同一条 SQLite 连接。
                 // 而它本来就是多余的：合并成功即意味着两端一致，屏幕上留着「刚才做了什么」
                 // 比留着一份「现在还剩什么」更贴合用户此刻要确认的事。
-                DispatchQueue.main.async { applying = false; applied = r; onSynced?(other) }
+                DispatchQueue.main.async {
+                    applying = false; applied = r
+                    // 「同步并切回」会**关掉本窗口**（连同它的 store）—— 先把面板收起来再交棒，
+                    // 别让一张挂在正在拆的窗口上的面板还引用着 workspace.store
+                    if let onSynced { dismiss(); onSynced(other) }
+                }
             } catch {
                 DispatchQueue.main.async { applying = false; self.error = error.localizedDescription }
             }

@@ -26,6 +26,8 @@ struct SidebarView: View {
     @State private var notice: Notice?
     /// 一次只跑一遍：干跑要快照整库、逐行算指纹，重入等于白烧一遍 CPU 和 USB 带宽
     @State private var noticeBusy = false
+    /// 跑的期间又来了请求（比如插盘）→ 记一笔，跑完补一轮。**不能直接丢**，见 `refreshNotice`
+    @State private var noticePending = false
 
     /// 同步面板要开成哪一侧；`switchTo` 非 nil = 同步成功后切到那个工作区（「同步并切回」）。
     private struct SyncTarget: Identifiable {
@@ -60,7 +62,10 @@ struct SidebarView: View {
     /// 侧栏顶部那一条。**只提示、不打断**（用户 2026-09-01 拍板）：正在写笔迹时被强行换库、
     /// 换窗口是最糟的体验，而且中途切换还要处理没落盘的那一笔。
     private enum Notice {
-        case sourceBack(URL, Int)   // 我是副本，源盘插回来了，且确实有 N 项要同步
+        /// 我是副本，源盘插回来了。`Int?` = 有多少项要同步，**nil 表示还在算**
+        /// ——找到盘只要几毫秒，算完要跑一次完整三方 diff（两个库整个快照 + 逐行指纹，
+        /// 盘还在 USB 上）。把「源盘已连接」压到算完才说，用户实测「插上去半天没反应」。
+        case sourceBack(URL, Int?)
         case unsynced(URL, Int)     // 我是源盘，副本里有 N 项要**推回源盘**，等人工确认
     }
 
@@ -69,19 +74,30 @@ struct SidebarView: View {
         switch n {
         case .sourceBack(let src, let count):
             Button {
-                // 同步完切回源盘那扇窗 —— 按钮上就是这么写的
-                syncTarget = SyncTarget(side: .fromMirror, switchTo: src)
+                // 没东西可同步就别开面板了，直接切回去 —— 那才是用户插盘时想做的事
+                if count == 0 { switchBack(to: src) }
+                else { syncTarget = SyncTarget(side: .fromMirror, switchTo: src) }
             } label: {
                 Label {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(L("Source drive is connected"))
-                        Text(String(format: L("%d items to sync · tap to review"), count))
-                            .font(.caption).foregroundStyle(.secondary)
+                        // nil = 还在算。先把「盘回来了」说出去，别让用户对着空气等
+                        switch count {
+                        case .none:
+                            Text(L("Checking what needs syncing…"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        case .some(0):
+                            Text(L("Both sides match · switch back")).font(.caption).foregroundStyle(.secondary)
+                        case .some(let n):
+                            Text(String(format: L("%d items to sync · tap to review"), n))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 } icon: {
                     Image(systemName: "eject")
                 }
             }
+            .disabled(count == nil)
         case .unsynced(let mirror, let count):
             Button {
                 syncTarget = SyncTarget(side: .fromSource(mirror: mirror), switchTo: nil)
@@ -108,19 +124,23 @@ struct SidebarView: View {
     /// 所以源盘侧只有一种情况会弹提示：**第 2 步还没做**（副本上有东西没合回来）——
     /// 而那时候恰好也正是不该静默动手的时候，两者是同一件事的两面。
     private func refreshNotice() {
-        guard !noticeBusy, let folder = workspace.folder else { return }
+        // 🔴 在跑就**记一笔待办**，不能直接丢：插盘通知正好撞上上一轮时，丢掉就等于
+        //    「插了盘再也不提示」（用户 2026-09-01 实测的一半原因）。
+        guard !noticeBusy else { noticePending = true; return }
+        guard let folder = workspace.folder else { notice = nil; return }
         if workspace.isMirror {
             guard let id = workspace.mirrorSourceId else { notice = nil; return }
             noticeBusy = true
             let recents = registry.recents.map { URL(fileURLWithPath: $0.sourcePath) }
             DispatchQueue.global(qos: .utility).async {
-                // 盘插上了但两边本来就一致 → 不出提示。否则就是在没事找事
+                // ① 找盘只要几毫秒 —— 先把「盘回来了」说出去
                 let src = WorkspaceManager.findMirrorSource(id: id, recents: recents)
-                let n = src.flatMap { try? workspace.mirrorDryRun(sourceFolder: $0) }?.plan.changes.count ?? 0
-                DispatchQueue.main.async {
-                    noticeBusy = false
-                    notice = (src != nil && n > 0) ? .sourceBack(src!, n) : nil
-                }
+                DispatchQueue.main.async { notice = src.map { .sourceBack($0, nil) } }
+                guard let src else { DispatchQueue.main.async { finishNotice() }; return }
+                // ② 再慢慢算「有多少要同步」：完整三方 diff，两个库整个快照 + 逐行指纹，
+                //    盘还在 USB 上，几十秒都可能。算完把那行小字换掉。
+                let n = (try? workspace.mirrorDryRun(sourceFolder: src))?.plan.changes.count ?? 0
+                DispatchQueue.main.async { notice = .sourceBack(src, n); finishNotice() }
             }
         } else if let p = registry.mirrorPath(forSource: folder, id: workspace.workspaceId) {
             noticeBusy = true
@@ -129,13 +149,28 @@ struct SidebarView: View {
                 // 该静默推的推掉，返回还剩多少要人工确认（副本→源盘那个方向）
                 let pending = workspace.autoPushToMirror(mirrorFolder: mirror) ?? 0
                 DispatchQueue.main.async {
-                    noticeBusy = false
                     notice = pending > 0 ? .unsynced(mirror, pending) : nil
+                    finishNotice()
                 }
             }
         } else {
             notice = nil
         }
+    }
+
+    /// 一轮跑完：期间来过请求就再跑一轮（合并成一次，不排队）。
+    private func finishNotice() {
+        noticeBusy = false
+        if noticePending { noticePending = false; refreshNotice() }
+    }
+
+    /// 切回源盘：**先开源盘那扇窗，再关副本这扇**。
+    /// 次序不能反 —— 开窗要经 key 窗口的 `ContentView` 路由，先关就可能把唯一的订阅者关掉
+    /// （2026-07-29 那笔老账，弹盘那条路径同理）。
+    private func switchBack(to src: URL) {
+        onOpenRecent(src)
+        registry.requestActivation(forWorkspace: src)
+        if let mirror = workspace.folder { registry.evacuate(mirror) }
     }
 
     // MARK: - 离线副本（开关的三段：现在有没有 / 上次同步 / 删掉）
@@ -305,7 +340,9 @@ struct SidebarView: View {
         base
         .sheet(isPresented: $makeMirrorShown, onDismiss: refreshNotice) { MakeMirrorSheet() }
         .sheet(item: $syncTarget, onDismiss: refreshNotice) { t in
-            MirrorSyncSheet(side: t.side, onSynced: t.switchTo.map { src in { _ in onOpenRecent(src) } })
+            // 「同步并切回」：同步成功后开源盘那扇窗，并**把副本这扇关掉**
+            // （只开不关的话屏幕上会留着一扇已经没意义的旧窗，用户 2026-09-01 实测提的）
+            MirrorSyncSheet(side: t.side, onSynced: t.switchTo.map { src in { _ in switchBack(to: src) } })
         }
         .onAppear(perform: refreshNotice)
         .onChange(of: workspace.folder) { _, _ in refreshNotice() }
