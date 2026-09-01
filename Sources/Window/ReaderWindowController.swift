@@ -42,6 +42,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var didChooseInitialDoc = false
 
     private let splitVC = NSSplitViewController()
+    /// 当前弹着的面板（目录/OCR/平板共用一个，一次只开一个）。
+    private var popover: NSPopover?
+    /// 搜索项（⌘F 要让它进入编辑态，校验时也要同步文本）。
+    private var searchItem: NSSearchToolbarItem?
     private var sidebarItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
 
@@ -198,6 +202,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         on(.prevTabRequested) { $0.tabs.activate(offset: -1) }
         on(.toggleSidebar) { $0.sidebarItem.animator().isCollapsed.toggle() }
         on(.toggleInspector) { $0.toggleInspector() }
+        // ⌘F：让工具栏的搜索框进入编辑态（迁移前是 `.searchable` 的 isPresented）
+        on(.readerFind) { $0.searchItem?.beginSearchInteraction() }
 
         // 平板请求打开工作区里尚未打开的文档 → 在它跟随的那扇窗口里开新标签
         app.$padOpenDocRequest
@@ -379,37 +385,69 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         if let window { a.beginSheetModal(for: window) } else { a.runModal() }
     }
 
-    // MARK: - 工具栏（M0 最小集；完整版见方案 §5 的 M2）
-
-    private func makeToolbar() -> NSToolbar {
-        let tb = NSToolbar(identifier: "reader")
-        tb.delegate = self
-        tb.displayMode = .iconOnly
-        tb.allowsUserCustomization = true      // 🔴 现在这个开关是我们的了，没人会把它拍回去
-        tb.autosavesConfiguration = true
-        return tb
-    }
+    // MARK: - 工具栏
+    //
+    // 🔴 **每枚按钮一个独立 item，分组靠 `.space` 断开**，不用 `NSToolbarItemGroup`：group 在
+    // 「自定工具栏…」面板里是一整块、拆不开，而用户 2026-09-01 明确要的是一枚一枚能增删
+    // （「一整个巨大的组！而不是一个一个（或者小组）」）。Tahoe 会把相邻的图标 item 自动粘成一个
+    // 玻璃胶囊，正好用来表达四组：缩放 | 去哪儿 | 这一篇怎么读 | 另开一块。
+    //
+    // 🔴 **item id 沿用 SwiftUI 时期那套**（`zoom.out`…`inspector`）：系统按 id 记住用户摆好的
+    // 工具栏，改 id 等于那一枚变成「新按钮」弹回默认位，用户白摆。
+    //
+    // ✅ 迁移的直接收益：这份 allowed 清单是我们自己写的——空格类只报一次（AppKit 惯例）、
+    // 也不会混进 SwiftUI 那两个每次启动都变的 UUID 项。为此写的那两层兜底
+    // （`ToolbarDelegateFilter` 去重代理、`ToolbarCustomizationEnabler` 的 KVO/didUpdate 双保险）
+    // 已随 M3 删除——`allowsUserCustomization` 现在没人会把它拍回 false。
 
     private enum ToolID {
         static let zoomOut = NSToolbarItem.Identifier("zoom.out")
         static let zoomActual = NSToolbarItem.Identifier("zoom.actual")
         static let zoomIn = NSToolbarItem.Identifier("zoom.in")
+        static let contents = NSToolbarItem.Identifier("nav.contents")
+        static let jumpBack = NSToolbarItem.Identifier("nav.back")
+        static let jumpHistory = NSToolbarItem.Identifier("nav.history")
+        static let ocr = NSToolbarItem.Identifier("doc.ocr")
+        static let canvas = NSToolbarItem.Identifier("doc.canvas")
+        static let night = NSToolbarItem.Identifier("doc.night")
+        static let reference = NSToolbarItem.Identifier("aux.reference")
+        static let tablet = NSToolbarItem.Identifier("aux.tablet")
+        static let search = NSToolbarItem.Identifier("search")
         static let inspector = NSToolbarItem.Identifier("inspector")
+    }
+
+    private func makeToolbar() -> NSToolbar {
+        let tb = NSToolbar(identifier: "reader")
+        tb.delegate = self
+        tb.displayMode = .iconOnly
+        tb.allowsUserCustomization = true      // 🔴 这个开关现在是我们的了，没人会把它拍回去
+        tb.autosavesConfiguration = true
+        return tb
     }
 
     /// 🔴 **`.sidebarTrackingSeparator` 不能省**：它是「侧栏区 ↔ 内容区」的分界，工具栏靠它知道
     /// 哪些 item 属于侧栏那一侧。少了它，侧栏开关会被当成普通 item 排到内容区里去
-    /// （2026-09-01 用户实测：「左侧边栏按钮跑右边去了」）。它由 `NSSplitViewController` 提供，
-    /// 我们只要把它摆在 toggleSidebar 之后。
+    /// （2026-09-01 用户实测：「左侧边栏按钮跑右边去了」）。
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator,
-         ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn,
-         .flexibleSpace, ToolID.inspector]
+         ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn, .space,
+         ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory, .space,
+         ToolID.ocr, ToolID.canvas, ToolID.night, .space,
+         ToolID.reference, ToolID.tablet,
+         .flexibleSpace, ToolID.search, ToolID.inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .space, .flexibleSpace,
-         ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn, ToolID.inspector]
+         ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn,
+         ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory,
+         ToolID.ocr, ToolID.canvas, ToolID.night,
+         ToolID.reference, ToolID.tablet, ToolID.search, ToolID.inspector]
+    }
+
+    /// Inspector 那枚钉死不许移除：它是笔记/目录/信息整个面板的唯一入口，拖丢了用户找不回来。
+    func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
+        [ToolID.inspector]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
@@ -421,8 +459,34 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             return button(id, L("Actual Size"), "1.magnifyingglass", #selector(zoomActual))
         case ToolID.zoomIn:
             return button(id, L("Zoom In"), "plus.magnifyingglass", #selector(zoomIn))
+        case ToolID.contents:
+            return popoverButton(id, L("Contents"), "list.bullet.indent", #selector(showContents(_:)))
+        case ToolID.jumpBack:
+            return button(id, L("Back to Previous Position"), "arrow.uturn.backward", #selector(jumpBack))
+        case ToolID.jumpHistory:
+            return button(id, L("Jump History"), "clock.arrow.circlepath", #selector(toggleJumpHistory))
+        case ToolID.ocr:
+            return popoverButton(id, L("Text Recognition (OCR)"), "text.viewfinder", #selector(showOCR(_:)))
+        case ToolID.canvas:
+            return button(id, L("Canvas Mode"), "arrow.left.and.right.square", #selector(toggleCanvas))
+        case ToolID.night:
+            return button(id, L("Night Mode"), "moon.fill", #selector(toggleNight))
+        case ToolID.reference:
+            return button(id, L("Reference Window"), "rectangle.on.rectangle", #selector(toggleReference))
+        case ToolID.tablet:
+            return popoverButton(id, L("Tablet"), "wifi", #selector(showTablet(_:)))
         case ToolID.inspector:
             return button(id, L("Inspector"), "sidebar.right", #selector(inspectorToggled))
+        case ToolID.search:
+            let it = NSSearchToolbarItem(itemIdentifier: id)
+            it.label = L("Find in Document")
+            it.paletteLabel = L("Find in Document")
+            it.searchField.target = self
+            it.searchField.action = #selector(searchChanged(_:))
+            it.searchField.sendsWholeSearchString = false
+            it.searchField.sendsSearchStringImmediately = true   // 边打边搜（会话内自带 250ms 防抖）
+            searchItem = it
+            return it
         default:
             return nil
         }
@@ -437,11 +501,142 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         it.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         it.target = self
         it.action = sel
+        it.isBordered = true
         return it
     }
+
+    /// 要弹面板的三枚（目录 / OCR / 平板）得自带一个 `NSButton` 当 view —— `NSPopover` 必须锚在
+    /// 一个真实的 view 上，而标准 `NSToolbarItem` 不把它内部那个按钮交出来。
+    /// ⚠️ 外观因此可能与相邻的标准 item 略有出入（Tahoe 的玻璃胶囊怎么处理带 view 的 item，
+    /// 只能真机看）；若不一致，退路是把这三个面板改成浮在阅读区上的层（同跳转历史窗）。
+    private func popoverButton(_ id: NSToolbarItem.Identifier, _ label: String,
+                               _ symbol: String, _ sel: Selector) -> NSToolbarItem {
+        let it = NSToolbarItem(itemIdentifier: id)
+        let btn = NSButton(frame: NSRect(x: 0, y: 0, width: 34, height: 26))
+        btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        btn.imagePosition = .imageOnly
+        btn.bezelStyle = .texturedRounded
+        btn.isBordered = true
+        btn.target = self
+        btn.action = sel
+        it.view = btn
+        it.label = label
+        it.paletteLabel = label
+        it.toolTip = label
+        return it
+    }
+
+    // MARK: 工具栏动作
 
     @objc private func zoomOut() { NotificationCenter.default.post(name: .readerZoomOut, object: nil) }
     @objc private func zoomActual() { NotificationCenter.default.post(name: .readerZoomActual, object: nil) }
     @objc private func zoomIn() { NotificationCenter.default.post(name: .readerZoomIn, object: nil) }
+    @objc private func jumpBack() { session.jumpBack() }
+    @objc private func toggleJumpHistory() { jumpPanel.toggle() }
+    @objc private func toggleCanvas() { tabs.active.toggleCanvasMode() }
     @objc private func inspectorToggled() { toggleInspector() }
+
+    @objc private func toggleNight() {
+        let d = UserDefaults.standard
+        d.set(!d.bool(forKey: "nightMode"), forKey: "nightMode")   // 与内容层的 @AppStorage 同一个键
+    }
+
+    @objc private func toggleReference() {
+        if refWindow.isOpen { refWindow.close() }
+        else { refWindow.open(preferring: tabs.active.docID, workspace: workspace) }
+    }
+
+    @objc private func searchChanged(_ sender: NSSearchField) {
+        session.searchQuery = sender.stringValue
+        session.scheduleSearch()
+    }
+
+    // MARK: 弹出面板
+
+    @objc private func showContents(_ sender: NSButton) {
+        present(NSHostingController(rootView: TOCPopoverContent(tabs: tabs, onPicked: { [weak self] in
+            self?.popover?.performClose(nil)
+        }).environmentObject(app).environmentObject(workspace)), from: sender)
+    }
+
+    @objc private func showOCR(_ sender: NSButton) {
+        present(NSHostingController(rootView: OCRPopoverContent(tabs: tabs)
+            .environmentObject(app).environmentObject(workspace)), from: sender)
+    }
+
+    @objc private func showTablet(_ sender: NSButton) {
+        present(NSHostingController(rootView: ServerPanel(server: app.server)
+            .environmentObject(app).environmentObject(workspace)), from: sender)
+    }
+
+    /// 一次只开一个面板：再点同一枚就是关掉（与 SwiftUI `.popover(isPresented:)` 的手感一致）。
+    ///
+    /// 位置不对时先看这行日志（`touch ~/Library/Logs/UniReader-ws.log` 开）：锚点 view 到底在不在
+    /// 窗口层级里、它在窗口坐标里的矩形是什么。**「面板跑到很高的地方」的两种成因完全不同**——
+    /// 边选错了（上下颠倒）看 `翻转=`，锚点本身就不对（比如 AppKit 没用我们这个 view）看 `窗口内=`。
+    private func present(_ vc: NSViewController, from view: NSView) {
+        if let p = popover, p.isShown {
+            p.performClose(nil)
+            popover = nil
+            return
+        }
+        let p = NSPopover()
+        p.contentViewController = vc
+        p.behavior = .transient
+        popover = p
+        // 尺寸显式给死：`NSHostingController` 不一定把 SwiftUI 的固有尺寸报给 popover，
+        // 而尺寸不定的 popover 定位起来就是「跑偏」。三个面板内容本来都带 `.frame(...)`。
+        p.contentSize = vc.view.fittingSize
+        let inWindow = view.superview?.convert(view.frame, to: nil) ?? .zero
+        wsLog("popover 锚点：bounds=\(view.bounds) 窗口内=\(inWindow)"
+              + " 翻转=\(view.isFlipped) 尺寸=\(p.contentSize)"
+              + " 屏幕高=\(view.window?.screen?.frame.height ?? -1)"
+              + " 窗口frame=\(view.window?.frame ?? .zero)")
+        // 🔴 **`.maxY` 才是这里的「按钮下方」**：`NSToolbarItemViewer` 里那个 `NSButton`
+        // 是**翻转坐标系**（2026-09-01 日志实测 `翻转=true`），翻转视图里 maxY 是视觉下边。
+        // 别照搬「非翻转时 minY 在下」的直觉——工具栏这一层恰恰相反。
+        p.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+    }
+
+    /// 校验 + **顺带刷新图标**：AppKit 每轮事件循环都会调它，正好用来让那几枚开关型按钮的图标
+    /// 跟着状态走（夜间的日月、画板的实心/空心、参考窗的开合），不必再各挂一条订阅。
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        let s = session
+        switch item.itemIdentifier {
+        case ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn, ToolID.contents, ToolID.ocr:
+            return s.pdf != nil
+        case ToolID.jumpBack:
+            return s.jumps.canGoBack
+        case ToolID.jumpHistory:
+            return s.pdf != nil
+        case ToolID.canvas:
+            item.image = NSImage(systemSymbolName: s.canvasMode ? "arrow.left.and.right.square.fill"
+                                                                : "arrow.left.and.right.square",
+                                 accessibilityDescription: nil)
+            return s.pdf != nil
+        case ToolID.night:
+            let on = UserDefaults.standard.bool(forKey: "nightMode")
+            item.image = NSImage(systemSymbolName: on ? "sun.max.fill" : "moon.fill",
+                                 accessibilityDescription: nil)
+            return true
+        case ToolID.reference:
+            (item.view as? NSButton)?.image = NSImage(
+                systemSymbolName: refWindow.isOpen ? "rectangle.on.rectangle.fill" : "rectangle.on.rectangle",
+                accessibilityDescription: nil)
+            item.image = NSImage(systemSymbolName: refWindow.isOpen ? "rectangle.on.rectangle.fill"
+                                                                    : "rectangle.on.rectangle",
+                                 accessibilityDescription: nil)
+            return true
+        case ToolID.search:
+            // 搜索词可能被别处改（换标签会 clearSearch），同步回输入框——但**正在输入时不碰**，
+            // 否则每轮校验都把光标顶掉。
+            if let f = searchItem?.searchField, f.currentEditor() == nil,
+               f.stringValue != s.searchQuery {
+                f.stringValue = s.searchQuery
+            }
+            return s.pdf != nil
+        default:
+            return true
+        }
+    }
 }

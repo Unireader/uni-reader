@@ -85,6 +85,29 @@ Window/AIPanelWindowController
 - **M4 其余窗口**：设置窗（⌘,）、AI 面板浮窗（保持「全局唯一」语义）。
 - **M5 回归**：按 §7 清单真机过一遍。
 
+## 5.1 落地记录（2026-09-01）
+
+**M0 / M1 / M2 / M3 已完成并经用户真机验证**，剩 M4（辅助窗口的细节）与 M5（完整回归）。
+以下是过程中**只有真机才能发现**的坑，逐条记在这里——同类问题下次直接查表：
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| ⌘T 开空标签，整扇窗当场缩成一小块；窗口尺寸也不恢复 | `NSHostingController` 默认把 SwiftUI 内容的 fitting size 报成 `preferredContentSize`，AppKit 拿它调整窗口；autosave 的尺寸随之被覆盖 | 三段一律 `sizingOptions = []` |
+| 侧栏开关跑到工具栏右边去了 | 少了 `.sidebarTrackingSeparator` —— 它是「侧栏区 ↔ 内容区」的分界 | default/allowed 里补上，摆在 `toggleSidebar` 之后 |
+| 侧栏没顶到窗口顶部（不是现代侧栏） | 窗口 styleMask 缺 `.fullSizeContentView`，内容区从标题栏下方才开始 | 补上；现代侧栏要三件齐备：这条 + `sidebarWithViewController` + `sidebarTrackingSeparator` |
+| 侧栏「不沉浸」（不透明底、方角选中行） | 原先在 `NavigationSplitView` 的 sidebar 位置上 SwiftUI 自动套 `.sidebar` 外观，装进 hosting controller 后没人替它决定 | 显式 `.listStyle(.sidebar)` + `.scrollContentBackground(.hidden)`（后者是另一半：List 那层不透明底会挡住 `NSSplitViewItem` 的侧栏材质） |
+| **工具栏的 popover 全弹到标题栏上方老远处** | **`NSToolbarItemViewer` 里那个 `NSButton` 是翻转坐标系**（日志实测 `翻转=true`），翻转视图里 `.maxY` 才是**视觉下边**——照搬「非翻转时 minY 在下」的直觉正好反了 | `preferredEdge: .maxY`；顺带把 `p.contentSize = vc.view.fittingSize` 给死，尺寸不定的 popover 定位也会跑偏 |
+
+🔴 最后一条值得单独记住：**工具栏这一层的坐标系与常识相反**。当时连试两个方向都不对，是靠在
+`present` 里打一行锚点日志（bounds / 窗口内矩形 / `isFlipped` / 有没有窗口）才定位的——
+「面板跑到很高的地方」有两种完全不同的成因（边选反了 vs 锚点 view 根本不对），
+不打点分不清，这正是本项目「静默失效先打点再改码」那条纪律的又一例。
+
+M3 顺带删掉的（迁移让它们变成死代码）：`WindowCloser`、`ToolbarCustomizationEnabler`、
+`ToolbarDelegateFilter`、`WorkspaceRegistry.hasOtherRootWindow`。
+`WindowLifecycle`/`WindowAccessor`/`WindowLevelAccessor` **保留**——AI 浮窗那个 SwiftUI 视图还在用，
+等 M4 把它也收进 `AIPanelWindowController` 再说。
+
 ## 6. 红线
 
 - **阅读区纯 SwiftUI 不变**：内容层一行不改，只是外面套 `NSHostingController`。

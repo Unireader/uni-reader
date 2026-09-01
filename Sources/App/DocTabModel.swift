@@ -12,9 +12,10 @@ import PDFKit
 /// `ContentView.onChange` 上就会静默丢数据。本类的订阅在 `init` 里建、在 `close()` 里断，
 /// 与「这个标签当前可不可见」完全无关。
 ///
-/// （本项目已被视图生命周期坑过两次——「零尺寸视图 SwiftUI 根本不创建」`RootView.WindowCloser`、
-/// 「`onDisappear` 在窗口建立过程中空放一次」`WindowLifecycle`——所以也没走「给每个标签挂一个
-/// 隐形视图替它跑 onChange」那条捷径。）
+/// （本项目已被视图生命周期坑过两次——「零尺寸视图 SwiftUI 根本不创建」`RootView.WindowCloser`
+/// 与「`onDisappear` 在窗口建立过程中空放一次」`WindowLifecycle`——所以也没走「给每个标签挂一个
+/// 隐形视图替它跑 onChange」那条捷径。前者随 2026-09-01 的 AppKit 窗口层迁移一并删除，
+/// 教训仍然成立：**别把落库押在视图生命周期上**。）
 ///
 /// 与 `DocSession` 的分工：`DocSession` 是**运行时状态**（当前 PDF / 笔迹 / 选区 / 滚动锚点，
 /// 阅读区和平板广播都读它）；本类是**这个标签的账房**（加载、增量对账落库、进度存取、

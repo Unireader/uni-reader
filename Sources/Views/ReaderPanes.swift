@@ -74,9 +74,6 @@ struct ReaderPane: View {
     @AppStorage(TabBarStyle.key) private var tabBarStyleRaw = TabBarStyle.floating.rawValue
     @Environment(\.colorScheme) private var systemScheme
 
-    @State private var findActive = false
-    @FocusState private var findFocused: Bool
-
     private var tab: DocTabModel { tabs.active }
     private var session: DocSession { tab.session }
 
@@ -92,19 +89,13 @@ struct ReaderPane: View {
     var body: some View {
         readerColumn
             .dropDestination(for: URL.self) { urls, _ in onIngest(urls); return true }
-            .overlay(alignment: .top) { findBar }
+            .overlay(alignment: .top) { findBanner }
             .onChange(of: systemScheme) { _, s in if autoNightMode { nightMode = (s == .dark) } }
             .onChange(of: autoNightMode) { _, on in if on { nightMode = (systemScheme == .dark) } }
             .onChange(of: tabs.activeID) { _, _ in
-                findActive = false          // 换标签 = 换一本书，查找条显示的是上一本的东西
-                session.clearSearch()
+                session.clearSearch()   // 换标签 = 换一本书，上一本的命中/高亮不该带过来
             }
             .onChange(of: session.searchQuery) { _, _ in session.scheduleSearch() }
-            .onReceive(NotificationCenter.default.publisher(for: .readerFind)) { _ in
-                guard chrome.isKeyWindow else { return }
-                findActive = true
-                findFocused = true
-            }
             .onReceive(NotificationCenter.default.publisher(for: .toggleNightMode)) { _ in
                 if chrome.isKeyWindow { nightMode.toggle() }
             }
@@ -188,37 +179,26 @@ struct ReaderPane: View {
         }
     }
 
-    /// 查找条（⌘F）。
+    /// 搜索状态条（Safari 式）：有搜索词时浮在阅读区顶部——命中计数 + 上/下一个。
     ///
-    /// 迁移前输入框是工具栏的 `.searchable`，而那是 SwiftUI 往 `window.toolbar` 里塞的东西之一
-    /// ——正是这次要收回的。M0 先用浮在顶部的一条自带输入框顶上，M2 换成
-    /// `NSSearchToolbarItem`（方案 §5）。
+    /// 输入框在工具栏（`NSSearchToolbarItem`，⌘F 让它进编辑态），这里只补「导航」这一层——
+    /// 与迁移前 `.searchable` + findBanner 的分工完全一致。
     @ViewBuilder
-    private var findBar: some View {
-        if findActive {
+    private var findBanner: some View {
+        if !session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").imageScale(.small).foregroundStyle(.secondary)
-                TextField(L("Find in Document"), text: bind(\.searchQuery))
-                    .textFieldStyle(.plain)
-                    .frame(width: 200)
-                    .focused($findFocused)
-                    .onSubmit { session.nextMatch() }
                 Text(findStatusText)
                     .font(.caption).foregroundStyle(.secondary).fixedSize()
                 Button { session.prevMatch() } label: {
-                    Image(systemName: "chevron.up").frame(width: 22, height: 22).contentShape(Rectangle())
+                    Image(systemName: "chevron.up").frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .disabled(session.searchMatches.isEmpty)
                 Button { session.nextMatch() } label: {
-                    Image(systemName: "chevron.down").frame(width: 22, height: 22).contentShape(Rectangle())
+                    Image(systemName: "chevron.down").frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .disabled(session.searchMatches.isEmpty)
-                Button {
-                    findActive = false
-                    session.clearSearch()
-                } label: {
-                    Image(systemName: "xmark").frame(width: 22, height: 22).contentShape(Rectangle())
-                }
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 12).padding(.vertical, 6)

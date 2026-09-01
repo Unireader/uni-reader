@@ -341,7 +341,6 @@ final class WorkspaceRegistry: ObservableObject {
     /// 「上次工作区」窗口）。
     /// ⚠️ 必须**排除本窗口自己**：`onAppear` 登记在前、`didFinishLaunching` 那一轮的判定在后，
     /// 不排除的话冷启动第一个窗口会数到自己、把自己判成幻影而自杀（普通启动直接白屏）。
-    func hasOtherRootWindow(than id: UUID) -> Bool { rootWindows.contains { $0 != id } }
 
     /// `RootView` 级窗口登记（不管有没有成功绑定工作区，错误态窗口也要登记）。
     func noteRootWindow(_ id: UUID) { rootWindows.insert(id) }
