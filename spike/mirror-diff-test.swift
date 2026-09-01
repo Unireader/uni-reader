@@ -115,21 +115,39 @@ check(cell(base: nil, mine: v1, theirs: v1).changes.isEmpty, "两边各自新增
 p = cell(base: nil, mine: v3, theirs: v2)
 check(p.conflicts.first?.kind == .bothAdded, "两端各自新建同 id 但内容不同 → bothAdded 冲突")
 
-print("② 没有时间戳列的表：冲突保留源盘并报告")
-func doc(_ id: String, title: String, lastOpened: String = "2026-08-30T10:00:00.000Z") -> [String: Any] {
+print("② document 两端都改：按 last_opened_at 裁决；只差进度不算冲突")
+func doc(_ id: String, title: String, lastOpened: String = "2026-08-30T10:00:00.000Z",
+         page: Int64 = 0) -> [String: Any] {
     ["id": id, "title": title, "page_count": Int64(10), "added_at": "2026-08-30T09:00:00.000Z",
-     "last_opened_at": lastOpened, "sort_order": Int64(0), "read_page": Int64(0), "read_frac": 0.0,
+     "last_opened_at": lastOpened, "sort_order": Int64(0), "read_page": page, "read_frac": 0.0,
      "read_zoom": 1.0, "read_hfrac": 0.0, "group_name": "", "canvas_mode": Int64(0)]
 }
 let dBase = doc("D1", title: "原名")
-let dMine = doc("D1", title: "本机改的名")
-let dTheirs = doc("D1", title: "硬盘改的名")
-p = MirrorDiff.compute(base: ["document": ["D1": MirrorFp.fingerprint(row: dBase, spec: docSpec)]],
-                       mine: ["document": ["D1": dMine]], theirs: ["document": ["D1": dTheirs]])
-check(p.conflicts.count == 1 && p.conflicts[0].kept == .source
-        && p.changes.first?.reason == .conflictKeptSource,
-      "document 没有 updated_at → 冲突保留源盘（可冲突字段只有标题/分组/进度这类低价值项）")
-check(p.conflicts[0].note.contains("没有时间戳"), "冲突说明讲清了为什么这么选（\(p.conflicts[0].note)）")
+let dMine = doc("D1", title: "本机改的名", lastOpened: "2026-09-01T08:00:00.000Z")
+let dTheirs = doc("D1", title: "硬盘改的名", lastOpened: "2026-08-31T20:00:00.000Z")
+let baseFp = ["document": ["D1": MirrorFp.fingerprint(row: dBase, spec: docSpec)]]
+p = MirrorDiff.compute(base: baseFp, mine: ["document": ["D1": dMine]], theirs: ["document": ["D1": dTheirs]])
+// 🔴 这张表没有 updated_at，原先 lww=nil ⇒ 一律「保留硬盘那份」，于是**离线副本上的阅读进度
+//    被静默丢弃**。改用 last_opened_at：谁最后打开过这本书，谁那份就是更近的那次阅读的结果。
+check(p.conflicts.count == 1 && p.conflicts[0].kept == .mirror
+        && p.changes.first?.reason == .conflictNewer,
+      "真差异（改了书名）仍报冲突，且按 last_opened_at 取最近打开的那端")
+check(p.conflicts[0].note.contains("2026-09-01T08:00:00.000Z"), "冲突说明点名保留了哪一份（\(p.conflicts[0].note)）")
+
+// 只差「读到哪儿」——两端各翻过同一本书，这是正常使用，不该弹给用户裁决
+let pgMine = doc("D1", title: "原名", lastOpened: "2026-09-01T08:00:00.000Z", page: 87)
+let pgTheirs = doc("D1", title: "原名", lastOpened: "2026-08-31T20:00:00.000Z", page: 12)
+p = MirrorDiff.compute(base: baseFp, mine: ["document": ["D1": pgMine]], theirs: ["document": ["D1": pgTheirs]])
+check(p.conflicts.isEmpty, "🔴 只差阅读进度 → 一条冲突都不报（用户「几乎什么都没动」却收到冲突）")
+check(p.progressMerges == ["D1"], "…但记进 progressMerges，报告里说一句「取最近读的那次」")
+check(p.changes.count == 1 && p.changes[0].side == .source,
+      "…且照常写：本机读得更晚 → 把本机这份推给硬盘")
+check((p.changes[0].row?["read_page"] as? Int64) == 87, "写过去的是本机那份进度（第 88 页）")
+// 反过来：硬盘那端读得更晚
+p = MirrorDiff.compute(base: baseFp, mine: ["document": ["D1": pgTheirs]], theirs: ["document": ["D1": pgMine]])
+check(p.changes.count == 1 && p.changes[0].side == .mirror
+        && (p.changes[0].row?["read_page"] as? Int64) == 87,
+      "硬盘那端读得更晚 → 拉回本机")
 
 print("③ last_opened_at：不进指纹，但两端取较晚的")
 let dA = doc("D1", title: "同名", lastOpened: "2026-08-30T10:00:00.000Z")
@@ -159,6 +177,33 @@ p = cell(base: note("N1", page: 86, w: 1, updated: "t"), mine: nil, theirs: note
 lines = MirrorReport.summary(p, titles: titles)
 check(lines.first?.detail.first == "《高等数学》：笔迹 −1",
       "🔴 删除也带得出标签（row 是 nil，靠 Change 上事先取下的 docId/kind）：\(lines.first?.detail.first ?? "-")")
+
+// document 表自己那行**没有 document_id 列** → 从前 docId 是 nil，被算进「工作区级设置」，
+// 冲突行还拼出「的一条文档信息：…」这种断头句（2026-09-01 用户截图）。
+p = MirrorDiff.compute(base: baseFp,
+                       mine: ["document": ["D1": doc("D1", title: "本机改的名",
+                                                     lastOpened: "2026-09-01T08:00:00.000Z")]],
+                       theirs: ["document": ["D1": doc("D1", title: "硬盘改的名")]])
+lines = MirrorReport.summary(p, titles: titles)
+check(lines.first?.detail.first == "《高等数学》：文档信息 改 1",
+      "🔴 document 行归到它自己那本书名下：\(lines.first?.detail.first ?? "-")")
+check(!lines.contains { $0.detail.contains { $0.contains("工作区") } },
+      "…不再被当成「工作区级设置」")
+let conflictLine = lines.first { $0.text.contains("冲突") }?.detail.first ?? ""
+check(conflictLine.hasPrefix("《高等数学》的一条文档信息："), "🔴 冲突行带上书名：\(conflictLine)")
+
+// 既没有书名也没有页码时（meta 就是这样）不许拼出「的一条…」这种断头句
+let metaSpec = MirrorFp.spec("meta")!
+func metaRow(_ v: String) -> [String: Any] { ["key": "workspace_name", "value": v] }
+p = MirrorDiff.compute(
+    base: ["meta": ["workspace_name": MirrorFp.fingerprint(row: metaRow("原名"), spec: metaSpec)]],
+    mine: ["meta": ["workspace_name": metaRow("本机改的")]],
+    theirs: ["meta": ["workspace_name": metaRow("硬盘改的")]])
+let metaLine = MirrorReport.summary(p, titles: [:]).first { $0.text.contains("冲突") }?.detail.first ?? ""
+check(!metaLine.hasPrefix("的"), "🔴 查不到书名/页码就别硬拼断头句：\(metaLine)")
+check(metaLine.hasPrefix("工作区设置："), "…直接说是哪张表的事：\(metaLine)")
+check(MirrorReport.summary(p, titles: [:]).first?.detail.first == "工作区设置 1 项",
+      "…明细也按表名说，而不是一律扣「工作区级设置」的帽子")
 
 // ============================================================
 // ⑤ 真库端到端

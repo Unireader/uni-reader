@@ -62,7 +62,11 @@ enum MirrorReport {
             out.append(Line(text: "\(heading)：" + parts.joined(separator: "、"),
                             detail: bookBreakdown(list, titles: titles)))
         }
-        if !plan.lastOpenedMerges.isEmpty {
+        if !plan.progressMerges.isEmpty {
+            out.append(Line(text: "另有 \(plan.progressMerges.count) 篇文档两端都读过，阅读进度取最近读的那次"))
+        }
+        // 「上次打开」是纯记账（进度那条已经涵盖了用户真正关心的），只在没有进度合并时单独说一句
+        if !plan.lastOpenedMerges.isEmpty, plan.progressMerges.isEmpty {
             out.append(Line(text: "另有 \(plan.lastOpenedMerges.count) 篇文档的「上次打开」两端取较晚的那个"))
         }
         if !plan.conflicts.isEmpty {
@@ -72,12 +76,21 @@ enum MirrorReport {
         return out
     }
 
+    /// 这条改动属于哪本书。
+    ///
+    /// 🔴 `document` 表自己那一行**没有 `document_id` 列**，`Change.docId` 因此是 nil ——
+    /// 直接拿它归组会把「改了某本书的信息」算成「工作区级设置」（2026-09-01 用户实测截图里
+    /// 就是这么显示的）。那一行的主键本身就是文档 id。
+    static func bookId(_ c: MirrorDiff.Change) -> String? {
+        c.docId ?? (c.table == "document" ? c.rowId : nil)
+    }
+
     /// 按书分组的明细：「《高等数学》：笔迹 +132 −8」。用户是按书来记事的，不是按表。
     static func bookBreakdown(_ list: [MirrorDiff.Change], titles: [String: String]) -> [String] {
         var byBook: [String: [String: (add: Int, del: Int, mod: Int)]] = [:]
-        var loose = 0
+        var loose: [String: Int] = [:]
         for c in list {
-            guard let doc = c.docId else { loose += 1; continue }
+            guard let doc = bookId(c) else { loose[tableName(c.table), default: 0] += 1; continue }
             var cat = byBook[doc] ?? [:]
             var t = cat[categoryName(c)] ?? (0, 0, 0)
             switch c.reason {
@@ -99,7 +112,8 @@ enum MirrorReport {
             }
             return "\(name)：\(parts.joined(separator: "，"))"
         }.sorted()
-        if loose > 0 { out.append("工作区级设置 \(loose) 项") }
+        // 不属于任何一本书的（`meta` 这类）按表名说，别一律扣上「工作区级设置」的帽子
+        out += loose.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value) 项" }
         return out
     }
 
@@ -111,9 +125,13 @@ enum MirrorReport {
         return plan.conflicts.map { k in
             let c = label["\(k.table)/\(k.rowId)"]
             let what = c.map { categoryName($0) } ?? tableName(k.table)
-            let book = c?.docId.flatMap { titles[$0] }.map { "《\($0)》" } ?? ""
+            // `document` 行的书名要用它自己的主键去查（同 `bookId`）；查不到书名就别硬拼
+            // ——原先在这里会拼出「的一条文档信息：…」这种断头句（2026-09-01 用户截图）。
+            let docId = c.flatMap(bookId) ?? (k.table == "document" ? k.rowId : nil)
+            let book = docId.flatMap { titles[$0] }.map { "《\($0)》" } ?? ""
             let page = c?.page.map { "第 \($0 + 1) 页" } ?? ""
-            return "\(book)\(page)的一条\(what)：\(k.note)"
+            let where_ = book + page
+            return where_.isEmpty ? "\(what)：\(k.note)" : "\(where_)的一条\(what)：\(k.note)"
         }.sorted()
     }
 

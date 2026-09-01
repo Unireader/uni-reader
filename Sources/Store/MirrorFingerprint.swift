@@ -74,7 +74,12 @@ enum MirrorFp {
             Column("group_name", .text), Column("canvas_mode", .int),
             // ⚠️ `last_opened_at` **刻意不在这里**（方案 §4）：进了指纹的话，「在镜像上翻开过这本书」
             // 就会把整行标记成「改过」，干跑预览里满屏都是无意义条目。合并时无条件取 max 即可。
-        ]),
+        ],
+        // 🔴 用 `last_opened_at` 当 LWW 依据（2026-09-01 实测后加）。这张表**没有** `updated_at`，
+        // 原先 lww=nil ⇒ 落到「没有时间戳可比，保留硬盘那份」——于是**在离线副本上读到哪儿会被
+        // 静默丢弃**，而方案 §13 拍板过「阅读进度跨镜像同步」。`last_opened_at` 是 NOT NULL、
+        // 一定有值，而且语义正好：**谁最后打开过这本书，谁那份进度就是更近的那次阅读的结果**。
+                  lww: "last_opened_at"),
         TableSpec(table: "variant", key: "id", columns: [
             Column("id", .text), Column("document_id", .text), Column("content_hash", .text),
             Column("page_count", .int), Column("added_at", .text),
@@ -110,6 +115,19 @@ enum MirrorFp {
     /// `workspace_id`/`mirror_*`/`offline_checkouts`（血缘元数据 —— 同步它们就是让两边互相
     /// 把对方的身份覆盖掉）。
     static let syncedMetaKeys: Set<String> = ["workspace_name", "note_types"]
+
+    /// `document` 里纯粹表示「读到哪儿」的列。
+    ///
+    /// 两端各翻过同一本书，这几列就都会变 —— 那是**正常使用**，不是冲突。按 `last_opened_at`
+    /// 取最近读过的那次即可，不该弹到用户面前让他裁决（2026-09-01 用户实测："几乎什么都没动"
+    /// 却收到一条看不懂的冲突）。除这几列之外还有差异，才是真冲突。
+    static let progressColumns: Set<String> = ["read_page", "read_frac", "read_zoom", "read_hfrac"]
+
+    /// 忽略掉某些列之后这一行的指纹，用来判断「两端的差异是不是只在那几列上」。
+    static func fingerprint(row: [String: Any], spec: TableSpec, ignoring: Set<String>) -> String {
+        fingerprint(spec.columns.filter { !ignoring.contains($0.name) }
+            .map { coerce(row[$0.name], as: $0.type) })
+    }
 
     // MARK: - 值与编码
 

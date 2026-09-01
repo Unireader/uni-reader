@@ -74,6 +74,10 @@ enum MirrorDiff {
         /// 放在 Plan 里而不是留给 M5 自己记：一条不在主流程里的规则，交代在文档里迟早被漏掉。
         var lastOpenedMerges: [String: String] = [:]
 
+        /// 「两端都翻过、但**只差读到哪儿**」的文档 id。照常写（按 `last_opened_at` 取最近读过的
+        /// 那次），但**不进 `conflicts`** —— 那不是要用户裁决的事，报出去只是噪音。
+        var progressMerges: Set<String> = []
+
         var isEmpty: Bool { changes.isEmpty && lastOpenedMerges.isEmpty }
 
         func changes(to side: Side) -> [Change] { changes.filter { $0.side == side } }
@@ -198,6 +202,20 @@ enum MirrorDiff {
                                     mk: (Op, Side, Reason, [String: Any]?) -> Change,
                                     into plan: inout Plan) {
         let t = spec.table
+        // 🔴 **只差「读到哪儿」不算冲突**：两端各翻过同一本书就会走到这里，但那是正常使用。
+        // 照常按 lww 选一边写，只是**不报成冲突** —— 报了用户既判断不了也不该判断
+        // （2026-09-01 用户实测："几乎什么都没动"却收到一条看不懂的冲突）。
+        if t == "document", let m = mineRow, let s = theirsRow,
+           MirrorFp.fingerprint(row: m, spec: spec, ignoring: MirrorFp.progressColumns)
+            == MirrorFp.fingerprint(row: s, spec: spec, ignoring: MirrorFp.progressColumns) {
+            let a = mineRow?[spec.lww ?? ""] as? String ?? ""
+            let b = theirsRow?[spec.lww ?? ""] as? String ?? ""
+            let keepMine = a > b
+            plan.changes.append(mk(.upsert, keepMine ? .source : .mirror, .conflictNewer,
+                                   keepMine ? mineRow : theirsRow))
+            plan.progressMerges.insert(id)
+            return
+        }
         if let col = spec.lww {
             // 时间戳是定宽 UTC（`yyyy-MM-ddTHH:mm:ss.SSSZ`，两端同一格式，见 `ISO`/`Iso`），
             // **直接比字符串**：不引入日期解析，也就没有「两端的解析器对同一个串给出不同结果」这条缝。
