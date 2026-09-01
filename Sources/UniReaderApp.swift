@@ -351,6 +351,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let mirror = registry.mirrorPath(forSource: folder, id: nil) {
                 wsLog("→ 切到离线副本 \((mirror as NSString).lastPathComponent)")
                 deliverWorkspace(mirror)
+                // 这扇窗是替用户开的，不能开在别人后面（弹出是在 Finder 里点的，此刻前台是它）
+                registry.requestActivation(forWorkspace: URL(fileURLWithPath: mirror))
             } else {
                 wsLog("→ 没有离线副本，关掉这扇窗")
             }

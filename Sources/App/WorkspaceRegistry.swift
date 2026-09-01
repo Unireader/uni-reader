@@ -206,7 +206,34 @@ final class WorkspaceRegistry: ObservableObject {
     func noteWindowObject(_ sessionId: UUID, window: NSWindow?) {
         if let window { windowsBySession[sessionId] = window }
         else { windowsBySession.removeValue(forKey: sessionId) }
+        if let k = windowPaths[sessionId] { activateIfPending(k) }
     }
+
+    /// 「这个工作区的窗口**一出现**就把它调到前台。」
+    ///
+    /// 弹盘切副本时用：那扇窗是我们**替用户开的**，开在别人后面等于没开
+    /// （用户 2026-09-01 实测：老窗关了、新窗开了，但躲在其他窗口后面）。
+    /// `activateWindow` 顶不了这个班——它要求窗口**此刻已经登记过**，而这里窗口还没建出来
+    /// （`openWindow` 是异步的）。所以记一笔待激活，等窗口登记时再兑现。
+    ///
+    /// 还必须 `NSApp.activate`：弹出是在 Finder 里点的，此刻前台是 Finder 不是我们。
+    func requestActivation(forWorkspace folder: URL) {
+        let k = Self.key(folder)
+        pendingActivation = k
+        activateIfPending(k)   // 窗口本来就开着的话，当场兑现
+    }
+
+    private func activateIfPending(_ k: String) {
+        guard pendingActivation == k,
+              let sid = windowPaths.first(where: { $0.value == k })?.key,
+              let win = windowsBySession[sid] else { return }
+        pendingActivation = nil
+        wsLog("激活等待中的窗口：\((k as NSString).lastPathComponent)")
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
+    }
+
+    private var pendingActivation: String?
 
     /// 取某个会话的窗口（AI 面板吸附要知道贴到哪一扇上）。
     func window(for sessionId: UUID) -> NSWindow? { windowsBySession[sessionId] }
@@ -256,7 +283,11 @@ final class WorkspaceRegistry: ObservableObject {
     // MARK: - 窗口 ↔ 工作区
 
     func noteWindow(_ sessionId: UUID, path: String?) {
-        if let path { windowPaths[sessionId] = Self.key(URL(fileURLWithPath: path)) }
+        if let path {
+            let k = Self.key(URL(fileURLWithPath: path))
+            windowPaths[sessionId] = k
+            activateIfPending(k)   // 两处登记谁先谁后没保证，两边都试一下（见 requestActivation）
+        }
         else {
             let gone = windowPaths.removeValue(forKey: sessionId)
             windowsBySession.removeValue(forKey: sessionId)

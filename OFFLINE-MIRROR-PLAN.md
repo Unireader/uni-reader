@@ -342,7 +342,13 @@ A 同步完源盘变了，B 再同步时会把 A 的改动当作 "theirs 侧新�
     在这一下里 `WorkspaceRegistry.evacuate` **同步**关掉库连接，Finder 才不会报「磁盘正在使用中」
     （`WorkspaceManager.teardown()` 那条注释里用户 2026-08-05 报过的「必须退出整个 app 才能弹」）。
   - `didUnmountNotification`——**硬拔**只走这条，不是冗余而是另一半场景；`evacuate` 幂等。
-  - `didMountNotification`——源盘插回来，让还开着的窗口当场重算提示条。
+  - `didMountNotification`——源盘插回来，发 `.volumeDidMount`，副本窗口的侧栏当场重算提示条
+    （不用等用户切窗口才发现「原来能同步了」）。
+  - 🔴 **替用户开的窗口必须自己调到前台**（2026-09-01 用户实测：老窗关了、新窗开了，
+    但躲在其他窗口后面）。`activateWindow` 顶不了这个班——它要求窗口此刻已登记，
+    而 `openWindow` 是异步的、那会儿窗口还没建出来。改成 `requestActivation` 记一笔待激活，
+    窗口登记时兑现（两处登记 `noteWindow`/`noteWindowObject` 谁先谁后没保证，两边都试）。
+    还必须 `NSApp.activate`：**弹出是在 Finder 里点的，此刻前台是 Finder 不是我们。**
   - 处置：**有离线副本就切过去，没有就把那扇窗关掉**。因为
     「工作区归属定下来后就不再变」（`RootView`），所以「切过去」＝ 开副本的窗口 + 关旧窗；
     **次序是先开后关**——副本走 `deliverWorkspace` → 通知 → key 窗口的 `ContentView` 路由，
