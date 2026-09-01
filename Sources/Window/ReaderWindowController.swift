@@ -85,6 +85,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         tabs.noteWindowObject(win)
 
         bindTitle()
+        observeToolbarStates()
         observeMenuCommands()
         decideInitialContent(launchDocId: launchDocId)
 
@@ -168,10 +169,26 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         refreshTitle()
     }
 
+    private func observeToolbarStates() {
+        refWindow.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshToolbarStates() }
+            .store(in: &bag)
+        jumpPanel.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshToolbarStates() }
+            .store(in: &bag)
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshToolbarStates() }
+            .store(in: &bag)
+    }
+
     private func refreshTitle() {
         let s = session
         window?.title = s.title.isEmpty ? L("Library") : s.title
         window?.subtitle = s.pdf.map { "\(s.currentPageIndex + 1)/\($0.pageCount)" } ?? ""
+        refreshToolbarStates()   // 会话的任何变化都过这里，画板模式的按下态跟着刷
     }
 
     // MARK: - 菜单命令（本窗口是 key 才认领）
@@ -464,15 +481,15 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         case ToolID.jumpBack:
             return button(id, L("Back to Previous Position"), "arrow.uturn.backward", #selector(jumpBack))
         case ToolID.jumpHistory:
-            return button(id, L("Jump History"), "clock.arrow.circlepath", #selector(toggleJumpHistory))
+            return toggleButton(id, L("Jump History"), "clock.arrow.circlepath", #selector(toggleJumpHistory))
         case ToolID.ocr:
             return popoverButton(id, L("Text Recognition (OCR)"), "text.viewfinder", #selector(showOCR(_:)))
         case ToolID.canvas:
-            return button(id, L("Canvas Mode"), "arrow.left.and.right.square", #selector(toggleCanvas))
+            return toggleButton(id, L("Canvas Mode"), "arrow.left.and.right.square", #selector(toggleCanvas))
         case ToolID.night:
-            return button(id, L("Night Mode"), "moon.fill", #selector(toggleNight))
+            return toggleButton(id, L("Night Mode"), "moon.fill", #selector(toggleNight))
         case ToolID.reference:
-            return button(id, L("Reference Window"), "rectangle.on.rectangle", #selector(toggleReference))
+            return toggleButton(id, L("Reference Window"), "rectangle.on.rectangle", #selector(toggleReference))
         case ToolID.tablet:
             return popoverButton(id, L("Tablet"), "wifi", #selector(showTablet(_:)))
         case ToolID.inspector:
@@ -503,6 +520,50 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         it.action = sel
         it.isBordered = true
         return it
+    }
+
+    /// 开关型按钮（画板 / 夜间 / 参考窗 / 跳转历史窗）。
+    ///
+    /// 🔴 **必须用 `pushOnPushOff` 让系统画选中背景**：只换 SF Symbol 的 fill 变体那点差别
+    /// 根本看不出来（2026-09-01 用户报「Canvas Mode 的 toggle 看不出来了」）。
+    /// 🔴 而且这类 item **拿不到 `validateToolbarItem`**——AppKit 对带 view 的 item 不走那条校验，
+    /// 状态得我们自己推（见 `refreshToolbarStates`）。
+    private func toggleButton(_ id: NSToolbarItem.Identifier, _ label: String,
+                              _ symbol: String, _ sel: Selector) -> NSToolbarItem {
+        let it = NSToolbarItem(itemIdentifier: id)
+        let btn = NSButton(frame: NSRect(x: 0, y: 0, width: 34, height: 26))
+        btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        btn.imagePosition = .imageOnly
+        btn.bezelStyle = .texturedRounded
+        btn.setButtonType(.pushOnPushOff)
+        btn.target = self
+        btn.action = sel
+        it.view = btn
+        it.label = label
+        it.paletteLabel = label
+        it.toolTip = label
+        return it
+    }
+
+    /// 把开关型按钮的按下态刷成当前状态。挂在几条现成的信号上：标签/会话的任何变化
+    /// （`tabs.objectWillChange`，画板模式就在里面）、参考窗开合、以及 `UserDefaults`
+    /// （夜间模式是 `@AppStorage`，内容层和菜单都可能改它）。
+    private func refreshToolbarStates() {
+        guard let items = window?.toolbar?.items else { return }
+        let night = UserDefaults.standard.bool(forKey: "nightMode")
+        for it in items {
+            guard let btn = it.view as? NSButton else { continue }
+            switch it.itemIdentifier {
+            case ToolID.canvas: btn.state = session.canvasMode ? .on : .off
+            case ToolID.night:
+                btn.state = night ? .on : .off
+                btn.image = NSImage(systemSymbolName: night ? "sun.max.fill" : "moon.fill",
+                                    accessibilityDescription: nil)
+            case ToolID.reference: btn.state = refWindow.isOpen ? .on : .off
+            case ToolID.jumpHistory: btn.state = jumpPanel.isOpen ? .on : .off
+            default: break
+            }
+        }
     }
 
     /// 要弹面板的三枚（目录 / OCR / 平板）得自带一个 `NSButton` 当 view —— `NSPopover` 必须锚在
@@ -609,24 +670,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             return s.jumps.canGoBack
         case ToolID.jumpHistory:
             return s.pdf != nil
-        case ToolID.canvas:
-            item.image = NSImage(systemSymbolName: s.canvasMode ? "arrow.left.and.right.square.fill"
-                                                                : "arrow.left.and.right.square",
-                                 accessibilityDescription: nil)
-            return s.pdf != nil
-        case ToolID.night:
-            let on = UserDefaults.standard.bool(forKey: "nightMode")
-            item.image = NSImage(systemSymbolName: on ? "sun.max.fill" : "moon.fill",
-                                 accessibilityDescription: nil)
-            return true
-        case ToolID.reference:
-            (item.view as? NSButton)?.image = NSImage(
-                systemSymbolName: refWindow.isOpen ? "rectangle.on.rectangle.fill" : "rectangle.on.rectangle",
-                accessibilityDescription: nil)
-            item.image = NSImage(systemSymbolName: refWindow.isOpen ? "rectangle.on.rectangle.fill"
-                                                                    : "rectangle.on.rectangle",
-                                 accessibilityDescription: nil)
-            return true
+        // 画板 / 夜间 / 参考窗 / 跳转历史这几枚是带 view 的开关，**不走这条校验**，
+        // 状态由 `refreshToolbarStates` 推（见那里的红线）。
         case ToolID.search:
             // 搜索词可能被别处改（换标签会 clearSearch），同步回输入框——但**正在输入时不碰**，
             // 否则每轮校验都把光标顶掉。

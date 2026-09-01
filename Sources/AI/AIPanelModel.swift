@@ -177,13 +177,16 @@ final class AIPanelModel: ObservableObject {
     /// 让面板出现在用户眼前：内置模式展开**这扇窗口**的侧栏，浮窗模式开窗口。
     /// 各处入口（右键讨论本页 / 框选投递 / 从列表打开会话）都走它，免得每处各写一遍分支。
     /// 顺手把 `activeHost` 指到这一扇——发起动作的那扇窗口就该是模型级操作的作用对象。
-    func present(window: UUID, _ openWindow: (String) -> Void) {
+    /// 🔴 2026-09-01 窗口层迁到 AppKit 后**不再需要外面传 `openWindow` 进来**：浮窗由
+    /// `AIPanelWindowController` 建，模型直接叫得动它（迁移前 `openWindow` 是 SwiftUI 的
+    /// environment action，只有视图够得着，于是四处调用点各传一份闭包）。
+    func present(window: UUID) {
         if mode == .inline {
             setActiveHost(.inline(window))
             setInlineOpen(true, for: window)
         } else {
             setActiveHost(.window)
-            openWindow(Self.windowID)
+            AIPanelWindowController.show()
         }
     }
 

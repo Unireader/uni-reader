@@ -169,7 +169,6 @@ struct ReaderSurface: View {
     }
 
     @Environment(\.displayScale) var displayScale
-    @Environment(\.openWindow) var openWindow          // 右键「用 … 讨论本页」开 AI 面板浮窗
 
     // 布局/缩放状态
     @State var layout: PageLayout?

@@ -20,7 +20,6 @@ import AppKit
 struct AIInlineLayer: View {
     @ObservedObject var session: DocSession
     @StateObject private var panel = AIPanelModel.shared
-    @Environment(\.openWindow) private var openWindow
 
     @State private var dragStartWidth: Double?
 
@@ -106,18 +105,32 @@ struct AIInlineLayer: View {
         HStack(spacing: 6) {
             Image(systemName: panel.currentProvider?.icon ?? "bubble.left.and.text.bubble.right")
                 .foregroundStyle(.secondary)
+            // 🔴 挤压优先级要写明，否则窄面板下先被挤没的正是最该看见的那两样
+            // （2026-09-01 用户报「内置模式下标题栏看不清链接的 pdf 和页」）：
+            // 平台名可以缩（图标已经说明是哪家），**文档名与页码优先保住**——它们回答的是
+            // 「这段对话绑在哪一页上」，是这条 header 存在的理由。
             Text(panel.currentProvider?.name ?? L("AI"))
-                .font(.callout.weight(.medium)).lineLimit(1)
+                .font(.callout.weight(.medium))
+                .lineLimit(1).truncationMode(.tail)
+                .layoutPriority(0)
             if let ctx = panel.bindContext {
-                Text(ctx.docTitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                // 🔴 **在 material 底上别用 `.secondary`**：会被画得极淡、几乎看不见
+                // （2026-09-01 用户截图实测；与 2026-08-07 草稿纸工具条「非激活按钮几乎看不见」
+                // 同一笔账）。层级差异靠**字号**表达就够了——这两样是「这段对话绑在哪一页」的答案，
+                // 是整条 header 存在的理由，不该比背景亮不了多少。
+                Text(ctx.docTitle)
+                    .font(.caption).foregroundStyle(.primary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .layoutPriority(1)
                 Text(String(format: L("p.%d"), ctx.page + 1))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption.monospacedDigit()).foregroundStyle(.primary)
+                    .fixedSize()          // 页码断不得，一断整条都白看
             }
             Spacer(minLength: 4)
             headerButton("house", L("New Chat")) { panel.goHome() }
             headerButton("macwindow", L("Open as Separate Window")) {
                 panel.setMode(.window)
-                openWindow(id: AIPanelModel.windowID)
+                AIPanelWindowController.show()   // 迁移后浮窗归 AppKit，不再走 SwiftUI 的 openWindow
             }
             headerButton("chevron.right", L("Collapse")) { panel.setInlineOpen(false, for: session.windowID) }
         }

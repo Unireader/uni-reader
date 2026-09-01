@@ -98,6 +98,14 @@ Window/AIPanelWindowController
 | 侧栏「不沉浸」（不透明底、方角选中行） | 原先在 `NavigationSplitView` 的 sidebar 位置上 SwiftUI 自动套 `.sidebar` 外观，装进 hosting controller 后没人替它决定 | 显式 `.listStyle(.sidebar)` + `.scrollContentBackground(.hidden)`（后者是另一半：List 那层不透明底会挡住 `NSSplitViewItem` 的侧栏材质） |
 | **工具栏的 popover 全弹到标题栏上方老远处** | **`NSToolbarItemViewer` 里那个 `NSButton` 是翻转坐标系**（日志实测 `翻转=true`），翻转视图里 `.maxY` 才是**视觉下边**——照搬「非翻转时 minY 在下」的直觉正好反了 | `preferredEdge: .maxY`；顺带把 `p.contentSize = vc.view.fittingSize` 给死，尺寸不定的 popover 定位也会跑偏 |
 
+**M4（辅助窗口）另有三条**，都在「AppKit 工具栏 vs SwiftUI 习惯」的接缝上：
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| AI 浮窗**整条工具栏不见了** | `AIPanelView` 那条 `.toolbar { }` 是 SwiftUI 的，只作用于 SwiftUI 自己创建的窗口，装进 `NSHostingController` 后对 AppKit 窗口无效 | 工具栏改由 `AIPanelWindowController` 建 `NSToolbar`；平台/更多两枚用 `NSMenuToolbarItem` + `menuNeedsUpdate` 按需重建 |
+| 画板/夜间/参考窗/置顶这些**开关看不出状态** | ① 只换 SF Symbol 的 fill 变体差别太小；② **带 view 的 item 拿不到 `validateToolbarItem`** —— AppKit 对 view-based item 不走那条校验，写在那里的图标切换代码根本没执行 | 改 `pushOnPushOff` 让系统画按下态；状态由自己推（`refreshToolbarStates`），挂在 `tabs.objectWillChange` / 浮窗 model 的 `objectWillChange` / `UserDefaults.didChangeNotification` 上 |
+| 工具栏图标偏大、顶到上下边缘、标题栏跟着高 | 不给 symbol configuration 时用默认大号；换成死的 `pointSize` 仍偏大 | 用 `.init(scale: .small)` —— 让符号按系统给的上下文自己缩 |
+
 🔴 最后一条值得单独记住：**工具栏这一层的坐标系与常识相反**。当时连试两个方向都不对，是靠在
 `present` 里打一行锚点日志（bounds / 窗口内矩形 / `isFlipped` / 有没有窗口）才定位的——
 「面板跑到很高的地方」有两种完全不同的成因（边选反了 vs 锚点 view 根本不对），

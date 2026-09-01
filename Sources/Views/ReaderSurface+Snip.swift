@@ -154,7 +154,7 @@ extension ReaderSurface {
         guard let first = PageSnip.slices(region).first else { return }
 
         // 面板先开起来、绑定上下文对齐到这一页（不强制新对话——框第二块多半是想接着问）。
-        AIPanelModel.shared.present(window: session.windowID) { openWindow(id: $0) }
+        AIPanelModel.shared.present(window: session.windowID)
         AIPanelModel.shared.prepareForSend(
             AIBindContext(sessionID: session.id, documentId: docId, docTitle: session.title,
                           page: first.page, anchor: first.rect))

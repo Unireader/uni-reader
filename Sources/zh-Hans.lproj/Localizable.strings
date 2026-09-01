@@ -391,3 +391,4 @@
 "Clear History" = "清空历史";
 "Right-click the toolbar in a reading window and choose “Customize Toolbar…” to add, remove or rearrange buttons." = "在阅读窗口的工具栏上点右键，选「自定工具栏…」就能增删、拖动重排那些按钮。";
 "Customize Toolbar…" = "自定工具栏…";
+"Platform: %@" = "平台：%@";
