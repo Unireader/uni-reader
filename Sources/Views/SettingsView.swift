@@ -14,9 +14,6 @@ struct SettingsView: View {
     /// 页图缓存上限（MB，= 真实占用；引擎按「一张图三份」计费，见 `PageRenderEngine.copiesPerImage`）。
     /// ⚠️ 默认值与 `ContentView` 启动时那句 `?? 256` **必须一致**，改一处要改两处。
     @AppStorage("renderCacheMB") private var renderCacheMB = 256
-    @AppStorage("showTOCButton") private var showTOCButton = true    // 工具栏「目录」按钮
-    @AppStorage("showOCRButton") private var showOCRButton = true    // 工具栏「文字识别」按钮
-    @AppStorage("showJumpHistoryButton") private var showJumpHistoryButton = true   // 工具栏「返回上一位置 / 跳转历史」
 
     var body: some View {
         TabView {
@@ -38,10 +35,12 @@ struct SettingsView: View {
                 Text(L("When on, Night Mode follows the system appearance automatically."))
             }
 
+            // 工具栏的显隐/排序改走**系统那套**（`.toolbar(id: "reader")`，见 `ContentView.toolbarContent`），
+            // 这里只留一句指路——设置页再放一份开关就是两套状态打架。
             Section {
-                Toggle(L("Show Contents Button"), isOn: $showTOCButton)
-                Toggle(L("Show Text Recognition (OCR) Button"), isOn: $showOCRButton)
-                Toggle(L("Show Jump History Buttons"), isOn: $showJumpHistoryButton)
+                Text(L("Right-click the toolbar in a reading window and choose “Customize Toolbar…” to add, remove or rearrange buttons."))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } header: {
                 Text(L("Toolbar"))
             }

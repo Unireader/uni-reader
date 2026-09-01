@@ -101,9 +101,6 @@ struct ContentView: View {
     @AppStorage("scrollInterp") private var scrollInterp = true   // 平板滚动跟随：true=时间戳插值 / false=纯低通（A/B 用）
     @AppStorage("autoNightMode") private var autoNightMode = false     // 夜间模式跟随系统深色外观
     @AppStorage("autoStartServer") private var autoStartServer = false // 启动即开平板服务
-    @AppStorage("showTOCButton") private var showTOCButton = true    // 工具栏「目录」按钮（设置页可关）
-    @AppStorage("showOCRButton") private var showOCRButton = true    // 工具栏「文字识别」按钮（设置页可关）
-    @AppStorage("showJumpHistoryButton") private var showJumpHistoryButton = true   // 工具栏「返回上一位置 / 跳转历史」两枚（设置页可关）
     @AppStorage(TabBarStyle.key) private var tabBarStyleRaw = TabBarStyle.floating.rawValue
     /// 阅读区底部要给标签栏让出的高度（笔架夹取 + 滚动条避让都用它；只有一个标签时为 0）。
     private var tabBarInset: CGFloat {
@@ -249,7 +246,11 @@ struct ContentView: View {
                 // （AI 浮窗吸附、「双击已打开的工作区 → 激活那扇窗」）才查得到。
                 tabs.noteWindowObject(win)
             }))
-            .toolbar { toolbarContent }
+            // 可定制工具栏：id 是系统持久化用户配置的键，**改不得**（见 toolbarContent）。
+            .toolbar(id: "reader") { toolbarContent }
+            // 🔴 光有 `.toolbar(id:)` 右键菜单里不会出现「自定工具栏…」（2026-09-01 实测），
+            // 得由 AppKit 把 NSToolbar 的 allowsUserCustomization 打开，见 ToolbarCustomizationEnabler。
+            .background(ToolbarCustomizationEnabler())
     }
 
     /// 窗口级事件路由：关窗保存 / 菜单通知（⌘O 打开、⌘F 查找、⌥⌘N 夜间）/ 搜索收起清空 / 文件变化提示。
@@ -418,60 +419,125 @@ struct ContentView: View {
 
     /// 工具栏内容：缩放组（最左）+ 中间一组（目录 / OCR / 夜间 / 平板服务）+ Inspector。
     /// 抽出独立 ToolbarContent——内联进 body 会让 SwiftUI 类型检查器超时。
+    /// 阅读窗工具栏 = **系统原生的可定制工具栏**（`.toolbar(id:)`，用户 2026-09-01 选定）：
+    /// 在工具栏上右键 →「自定工具栏…」，拖拽增删 / 排序 / 切「仅图标·图标和文字」，系统按
+    /// `reader` 这个 id 自动持久化，多扇窗口共享同一份配置。**设置页因此不再放显隐开关**
+    /// （原来的 `showTOCButton`/`showOCRButton`/`showJumpHistoryButton` 三个 `@AppStorage` 已删）。
+    ///
+    /// 🔴 **`ToolbarItemGroup` 进不来**：它不是 `CustomizableToolbarContent`，SDK 里也没有 id 版本
+    /// （`ToolbarItem`/`ToolbarSpacer` 才有）。所以四个玻璃胶囊改由「相邻 item 自动粘成一个胶囊
+    /// \+ `ToolbarSpacer()` 断开」来形成 —— 正是 CLAUDE.md 那条 Tahoe 实测规则的另一半用法。
+    ///
+    /// 🔴 **item 的 id 一旦发布就不能改**：系统是按 id 记住用户摆好的工具栏的，改 id 等于那一枚
+    /// 变成「新按钮」回到默认位置，用户自己摆的白摆。
+    ///
+    /// 🔴 顶层最多 10 个子项（结果构造器的 `buildBlock` 上限），故四组各自抽成一个块。
     @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        // 缩放一组（最左，参考 Preview：缩小 | 1:1 实际大小 | 放大；经通知路由到本窗口阅读区，
-        // 与 ⌘-/⌘= 菜单命令同一套 commit 路径）。Tahoe 胶囊合并规则（2026-07-28 实测）：
-        // 只有连续纯图标 Button 才被系统合并成单一胶囊——掺 Text label（如 "1:1"）整组散成
-        // 独立圆钮，故 1:1 用 "1.magnifyingglass" 图标；ControlGroup 在工具栏里同样被拆散，不可用。
-        ToolbarItemGroup(placement: .automatic) { zoomButtons }
-        // Tahoe 会把相邻 item 合并进同一玻璃胶囊——插 spacer 强制缩放组与下面那组分成两个胶囊。
-        ToolbarSpacer()
-        // 中间一组：目录 / OCR / 夜间 / 平板服务（查找走标准 .searchable，见 readerColumn；
-        // 目录/OCR 按钮可在设置里关掉）
-        ToolbarItemGroup(placement: .automatic) {
-            if showTOCButton {
-                Button {
-                    showTOCPopover.toggle()
-                } label: {
-                    Label(L("Contents"), systemImage: "list.bullet.indent")
-                }
-                .disabled(session.pdf == nil)
-                .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
-            }
+    private var toolbarContent: some CustomizableToolbarContent {
+        zoomItems
+        groupSpacer
+        navItems
+        groupSpacer
+        readingItems
+        groupSpacer
+        companionItems
+        inspectorItem
+    }
 
-            if showJumpHistoryButton {
-                // 返回上一位置（⌘[）。
-                // 🔴 **别在工具栏 Button 上挂 `.contextMenu`**：2026-09-01 真机实测长按/右键
-                // 都没有反应（Tahoe 工具栏的 item 不走视图那套 contextMenu）。挑着跳请开浮窗
-                // （⌥⌘J），那里是完整列表。想在工具栏上做下拉只能换成 `Menu`，而那会把这一组的
-                // 玻璃胶囊拆成独立圆钮（CLAUDE.md 里那条实测规则），不值当。
-                Button {
-                    session.jumpBack()
-                } label: {
-                    Label(L("Back to Previous Position"), systemImage: "arrow.uturn.backward")
-                }
-                .disabled(!session.jumps.canGoBack)
-                .help(L("Back to Previous Position"))
-                Button {
-                    jumpPanel.toggle()
-                } label: {
-                    Label(L("Jump History"), systemImage: "clock.arrow.circlepath")
-                }
-                .disabled(session.pdf == nil)
-                .help(L("Keep the jump history in a floating window"))
-            }
+    /// 组与组之间的分隔（= 断开 Tahoe 的胶囊合并）。
+    ///
+    /// **固定宽度**而不是默认的 flexible：flexible 在 NSToolbar 里是 `NSToolbarFlexibleSpaceItem`，
+    /// 自定工具栏面板会把每一个都列成一枚可拖的「可变宽度空格」——我们有三个，加上 SwiftUI 自己
+    /// 在最前和搜索框前各塞的一个，面板里就是一排重复项（2026-09-01 用户报「好多重复的
+    /// Flexible Space」）。顺带声明 `.customizationBehavior(.disabled)`：分组是设计的一部分，
+    /// 不该让用户把它拖走。
+    @ToolbarContentBuilder
+    private var groupSpacer: some CustomizableToolbarContent {
+        ToolbarSpacer(.fixed).customizationBehavior(.disabled)
+    }
 
-            if showOCRButton {
-                Button {
-                    showOCR.toggle()
-                } label: {
-                    Label(L("Text Recognition (OCR)"), systemImage: "text.viewfinder")
-                }
-                .disabled(session.pdf == nil)
-                .popover(isPresented: $showOCR, arrowEdge: .bottom) { ocrPopover }
+    /// 缩放：缩小 | 1:1 | 放大（参考 Preview；经通知路由到本窗口阅读区，与 ⌘-/⌘= 同一套 commit 路径）。
+    /// 1:1 用 `1.magnifyingglass` 图标而不是 `Text("1:1")`——掺一个文字 label 整组会散成独立圆钮
+    /// （2026-07-28 实测）。`Label` 的标题不上屏，但**自定工具栏面板里靠它显示名字**，不能省。
+    @ToolbarContentBuilder
+    private var zoomItems: some CustomizableToolbarContent {
+        ToolbarItem(id: "zoom.out") {
+            Button {
+                NotificationCenter.default.post(name: .readerZoomOut, object: nil)
+            } label: {
+                Label(L("Zoom Out"), systemImage: "minus.magnifyingglass")
             }
+            .disabled(session.pdf == nil)
+            .help(L("Zoom Out"))
+        }
+        ToolbarItem(id: "zoom.actual") {
+            Button {
+                NotificationCenter.default.post(name: .readerZoomActual, object: nil)
+            } label: {
+                Label(L("Actual Size"), systemImage: "1.magnifyingglass")
+            }
+            .disabled(session.pdf == nil)
+            .help(L("Actual Size"))
+        }
+        ToolbarItem(id: "zoom.in") {
+            Button {
+                NotificationCenter.default.post(name: .readerZoomIn, object: nil)
+            } label: {
+                Label(L("Zoom In"), systemImage: "plus.magnifyingglass")
+            }
+            .disabled(session.pdf == nil)
+            .help(L("Zoom In"))
+        }
+    }
 
+    /// 去哪儿：目录 / 返回上一位置 / 跳转历史（查找走标准 `.searchable`，见 `readerColumn`）。
+    @ToolbarContentBuilder
+    private var navItems: some CustomizableToolbarContent {
+        ToolbarItem(id: "nav.contents") {
+            Button {
+                showTOCPopover.toggle()
+            } label: {
+                Label(L("Contents"), systemImage: "list.bullet.indent")
+            }
+            .disabled(session.pdf == nil)
+            .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
+        }
+        ToolbarItem(id: "nav.back") {
+            // 返回上一位置（⌘[）。
+            // 🔴 **别在工具栏 Button 上挂 `.contextMenu`**：2026-09-01 真机实测长按/右键都没有
+            // 反应（Tahoe 工具栏的 item 不走视图那套 contextMenu）。挑着跳请开浮窗（⌥⌘J）。
+            Button {
+                session.jumpBack()
+            } label: {
+                Label(L("Back to Previous Position"), systemImage: "arrow.uturn.backward")
+            }
+            .disabled(!session.jumps.canGoBack)
+            .help(L("Back to Previous Position"))
+        }
+        ToolbarItem(id: "nav.history") {
+            Button {
+                jumpPanel.toggle()
+            } label: {
+                Label(L("Jump History"), systemImage: "clock.arrow.circlepath")
+            }
+            .disabled(session.pdf == nil)
+            .help(L("Keep the jump history in a floating window"))
+        }
+    }
+
+    /// 这一篇怎么读：文字识别 / 画板模式 / 夜间 —— 都是作用在当前这篇文档上的显示开关。
+    @ToolbarContentBuilder
+    private var readingItems: some CustomizableToolbarContent {
+        ToolbarItem(id: "doc.ocr") {
+            Button {
+                showOCR.toggle()
+            } label: {
+                Label(L("Text Recognition (OCR)"), systemImage: "text.viewfinder")
+            }
+            .disabled(session.pdf == nil)
+            .popover(isPresented: $showOCR, arrowEdge: .bottom) { ocrPopover }
+        }
+        ToolbarItem(id: "doc.canvas") {
             Button {
                 tab.toggleCanvasMode()
             } label: {
@@ -481,11 +547,21 @@ struct ContentView: View {
             }
             .disabled(session.pdf == nil)
             .help(L("Write in the blank space beside the page"))
+        }
+        ToolbarItem(id: "doc.night") {
             Button {
                 nightMode.toggle()
             } label: {
                 Label(L("Night Mode"), systemImage: nightMode ? "sun.max.fill" : "moon.fill")
             }
+            .help(L("Night Mode"))
+        }
+    }
+
+    /// 另开一块：参考窗 / 平板服务 —— 两个都是「把内容摆到本窗之外」。
+    @ToolbarContentBuilder
+    private var companionItems: some CustomizableToolbarContent {
+        ToolbarItem(id: "aux.reference") {
             Button {
                 if refWindow.isOpen { refWindow.close() }
                 else { refWindow.open(preferring: tab.docID, workspace: workspace) }
@@ -495,6 +571,8 @@ struct ContentView: View {
                                                     : "rectangle.on.rectangle")
             }
             .help(L("Open a second PDF as reference"))
+        }
+        ToolbarItem(id: "aux.tablet") {
             Button {
                 showServer.toggle()
             } label: {
@@ -504,41 +582,20 @@ struct ContentView: View {
                 ServerPanel(server: app.server)
             }
         }
-        // 单独一组：切换 Inspector
-        ToolbarItem(placement: .primaryAction) {
+    }
+
+    /// 右端的 Inspector 开关。**钉死不许移除也不许挪**（`.customizationBehavior(.disabled)`）：
+    /// 它是笔记/目录/信息那一整面板的唯一入口，拖丢了用户会找不回来（⌘I 仍在，但没人会去猜）。
+    @ToolbarContentBuilder
+    private var inspectorItem: some CustomizableToolbarContent {
+        ToolbarItem(id: "inspector", placement: .primaryAction) {
             Button {
                 showNotes.toggle()
             } label: {
                 Label(L("Inspector"), systemImage: "sidebar.right")
             }
         }
-    }
-
-    /// 工具栏缩放组：缩小 | 1:1 | 放大（无 PDF 时禁用）。纯 Button 交给外层 ToolbarItemGroup
-    /// 渲染成单一胶囊分段组（Tahoe 下 ControlGroup 反而会被拆成独立圆钮，见 toolbarContent 注释）。
-    @ViewBuilder
-    private var zoomButtons: some View {
-        Group {
-            Button {
-                NotificationCenter.default.post(name: .readerZoomOut, object: nil)
-            } label: {
-                Image(systemName: "minus.magnifyingglass")
-            }
-            .help(L("Zoom Out"))
-            Button {
-                NotificationCenter.default.post(name: .readerZoomActual, object: nil)
-            } label: {
-                Image(systemName: "1.magnifyingglass")
-            }
-            .help(L("Actual Size"))
-            Button {
-                NotificationCenter.default.post(name: .readerZoomIn, object: nil)
-            } label: {
-                Image(systemName: "plus.magnifyingglass")
-            }
-            .help(L("Zoom In"))
-        }
-        .disabled(session.pdf == nil)
+        .customizationBehavior(.disabled)
     }
 
     // 一次性目录弹窗：无分割线，点条目跳转并关闭。持久目录见 Inspector 的「目录」页。

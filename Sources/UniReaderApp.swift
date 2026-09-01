@@ -546,6 +546,12 @@ struct UniReaderApp: App {
                     NotificationCenter.default.post(name: .toggleInspector, object: nil)
                 }
                 .keyboardShortcut("i", modifiers: .command)
+                // 「自定工具栏…」的**保底入口**：右键工具栏那条系统菜单项要 NSToolbar 的
+                // allowsUserCustomization 打开才给（见 `ToolbarCustomizationEnabler`），
+                // 而这里是自己调面板，同一套系统 UI，与右键那条等价。
+                Button(L("Customize Toolbar…")) {
+                    NSApp.keyWindow?.toolbar?.runCustomizationPalette(nil)
+                }
                 Divider()
                 Button(L("Zoom In")) {
                     NotificationCenter.default.post(name: .readerZoomIn, object: nil)

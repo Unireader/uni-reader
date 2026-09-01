@@ -3,6 +3,59 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 改动（2026-09-01，Mac：工具栏分四组 + 改成系统可定制工具栏）
+
+用户两句：「toolbar 再分几个组吧，后面几个全在一起也不好」→「把夜间模式也加到可选显示的…
+事实上都可以加到可选…你看下我们自己做和 macOS 自带的 toolbar 编辑有啥区别，SwiftUI 能不能做」。
+拍板：**走系统那套**（`.toolbar(id:)`），设置页不再放显隐开关。
+
+### 分组：按「做什么」分，不按加进来的先后
+
+缩放 │ **去哪儿**（目录/返回上一位置/跳转历史）│ **这一篇怎么读**（文字识别/画板/夜间）│
+**另开一块**（参考窗/平板），右端 Inspector 单独一枚。组与组之间靠 `ToolbarSpacer()` 断开——
+不插的话 Tahoe 把相邻 item 粘进同一胶囊（CLAUDE.md 2026-07-28 那条实测规则的另一半用法）。
+
+### 可定制：11 枚各自带 id
+
+`.toolbar { }` → `.toolbar(id: "reader") { }`，每枚 `ToolbarItem(id:)`（`zoom.out`…`inspector`）。
+用户可增删、排序、切「仅图标 / 图标和文字」，系统按 id 持久化，多窗口共享。
+
+- 🔴 **`ToolbarItemGroup` 进不来**：它不是 `CustomizableToolbarContent`，SDK 里没有 id 版本
+  （只有 `ToolbarItem`/`ToolbarSpacer` 有）。分组只能靠「相邻自动合并 + spacer 断开」。
+- 🔴 **item 的 id 一旦发布就不能改**：系统按 id 记用户摆好的位置，改 id = 那枚变「新按钮」弹回默认位。
+- 缩放三枚原来是裸 `Image`，改成 `Label`：标题不上屏，但**自定工具栏面板靠它显示名字**。
+- Inspector 那枚 `.customizationBehavior(.disabled)` 钉死：它是笔记/目录/信息整个面板的唯一入口。
+- 设置页三个 `@AppStorage` 开关（`showTOCButton`/`showOCRButton`/`showJumpHistoryButton`）全删，
+  「工具栏」那栏换成一句指路——两套状态并存必然打架。
+
+### 🔴 三处 AppKit 兜底（`Sources/App/WindowAccessor.swift`，全是日志实测逼出来的）
+
+`.toolbar(id:)` 只是**声明内容可定制**，右键菜单里那条「自定工具栏…」归 AppKit 管，它看的是
+`NSToolbar.allowsUserCustomization`——而 SwiftUI 不开它，也没给对应修饰符。排查全程靠
+`ToolbarCustomizationEnabler` 往 `~/Library/Logs/UniReader-ws.log` 打点（先打点再改码）：
+
+1. **打开那两个开关**（`allowsUserCustomization`/`autosavesConfiguration`）。必须**重试**：
+   工具栏是 SwiftUI 在窗口上屏之后才装配的，`viewDidMoveToWindow` 那一拍 `window.toolbar` 还是 nil。
+2. **持续纠正**：SwiftUI 每次重建工具栏都把开关拍回 false（实测启动阶段就 3 次）。
+   KVO 盯 `allowsUserCustomization` 精准改回，**另留窗口 `didUpdate` 兜底**——AppKit 没承诺这个
+   属性 KVO-compliant，只押一条万一它不发通知就是静默失效（本项目在静默失效上吃过亏）。
+   日志第 1 次 + 此后每 20 次记一行，并标来源（`KVO`/`didUpdate`），跑一阵就知道哪条在干活。
+3. **`ToolbarDelegateFilter` 修整面板清单**（转发 SwiftUI 原 delegate，只改 allowed）：
+   · **空格类只留一份**——AppKit 的惯例是 space/flexibleSpace 在 allowed 里报一次（面板给一个，
+     想拖几个拖几个），而 SwiftUI 有几个 `ToolbarSpacer` 就报几次，面板里排出一列一模一样的项；
+   · **滤掉一次性 UUID 项**——SwiftUI 给标题/副标题区生成的内部项，标识符**每次启动都不一样**
+     （三次运行三组不同 UUID），面板里显示成当时的窗口标题/页码（«Open PDF…»、«301»）；
+   · **只改 allowed，不动 default**：default 是实际摆放，那三个空格正是四个胶囊的分界。
+   🔴 `NSToolbar.delegate` 是 **weak**，包完必须强引用原 delegate，否则 SwiftUI 那个对象没人要
+   会当场释放、工具栏变空。delegate 也会被 SwiftUI 换回去，同样在 `didUpdate` 里装回来。
+4. 菜单「显示 › 自定工具栏…」作保底入口（`runCustomizationPalette`），不依赖右键菜单。
+
+实测数据（日志）：`id=reader items=22`；allowed 22 →（空格去重）19 →（滤 UUID）17。
+
+**不走「纯 AppKit 自己建 NSToolbar」**（2026-09-01 用户问过、当场评估后否掉）：那要和
+`NavigationSplitView` 的侧栏开关、`.searchable` 的搜索框、标题区抢同一个 `window.toolbar`
+的所有权，失败后果是整条工具栏被换掉（搜索框和侧栏按钮一起没），赌注比「一个 Bool 被拍回」大得多。
+
 ## 新增（2026-09-01，Mac：跳转历史 + 悬浮窗）
 
 用户需求：「跳转历史记录，方便在多个 toc 跳转，做一个悬浮窗，方便在多个历史切换」。

@@ -190,8 +190,6 @@
 "Delete layer “%@”?" = "Delete layer “%@”?";
 "%d stroke(s) on this layer will be deleted too." = "%d stroke(s) on this layer will be deleted too.";
 "Toolbar" = "Toolbar";
-"Show Contents Button" = "Show Contents Button";
-"Show Text Recognition (OCR) Button" = "Show Text Recognition (OCR) Button";
 "Reading" = "Reading";
 "Cut" = "Cut";
 "Paste" = "Paste";
@@ -389,4 +387,5 @@
 "Contents, search and list jumps show up here." = "Contents, search and list jumps show up here.";
 "%d marks" = "%d marks";
 "Clear History" = "Clear History";
-"Show Jump History Buttons" = "Show Jump History Buttons";
+"Right-click the toolbar in a reading window and choose “Customize Toolbar…” to add, remove or rearrange buttons." = "Right-click the toolbar in a reading window and choose “Customize Toolbar…” to add, remove or rearrange buttons.";
+"Customize Toolbar…" = "Customize Toolbar…";

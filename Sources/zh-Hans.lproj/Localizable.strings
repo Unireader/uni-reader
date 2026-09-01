@@ -192,8 +192,6 @@
 "Delete layer “%@”?" = "删除图层“%@”？";
 "%d stroke(s) on this layer will be deleted too." = "该图层内的 %d 条笔迹也会一并删除。";
 "Toolbar" = "工具栏";
-"Show Contents Button" = "显示目录按钮";
-"Show Text Recognition (OCR) Button" = "显示文字识别按钮";
 "Reading" = "阅读";
 "Cut" = "剪切";
 "Paste" = "粘贴";
@@ -391,4 +389,5 @@
 "Contents, search and list jumps show up here." = "点目录、搜索命中、列表跳转都会记在这里。";
 "%d marks" = "%d 条记录";
 "Clear History" = "清空历史";
-"Show Jump History Buttons" = "显示跳转历史按钮";
+"Right-click the toolbar in a reading window and choose “Customize Toolbar…” to add, remove or rearrange buttons." = "在阅读窗口的工具栏上点右键，选「自定工具栏…」就能增删、拖动重排那些按钮。";
+"Customize Toolbar…" = "自定工具栏…";
