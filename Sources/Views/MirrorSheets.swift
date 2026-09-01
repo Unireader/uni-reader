@@ -158,7 +158,10 @@ struct MakeMirrorSheet: View {
 /// 可能不是同一件事，而这一步会大批量改用户数据。
 struct MirrorSyncSheet: View {
     @EnvironmentObject var workspace: WorkspaceManager
-    @EnvironmentObject var registry: WorkspaceRegistry
+    /// 🔴 **不能写 `@EnvironmentObject`**：全项目只注入了 `app` 与 `workspace`，
+    /// 注册表从来没进过环境，写成 EnvironmentObject 就是打开这张面板必崩。
+    /// 「最近工作区」本就是本机全局状态、不属于任何工作区，与 `SidebarView` 同款取单例。
+    @ObservedObject private var registry = WorkspaceRegistry.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var searching = true
