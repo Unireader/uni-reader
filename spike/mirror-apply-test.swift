@@ -221,6 +221,26 @@ let again = try! MirrorApply.fillFilesToSource(mirrorFolder: dst4, mirrorStore: 
                                                resolveMirror: resolver(dst4), resolveSource: resolver(src4))
 check(again == 0, "🔴 补齐是幂等的：再跑一次一个文件都不拷")
 
+print("⑤ 备份撞名：连着备份两次不许中止整次合并")
+// 时间戳只到毫秒，库小的时候两次备份就落在同一毫秒里 —— 这条以前是**随机挂**的：
+// `VACUUM INTO` 遇到已存在的文件直接报 "output file already exists"，整次同步当场中止。
+// 这里连做三次、不留间隔，把「撞名要自己绕开」钉死。
+var madeBackups: [URL] = []
+for _ in 0..<3 {
+    guard let b = try? MirrorApply.backupSource(store4, folder: src4) else {
+        check(false, "🔴 备份撞名把整次合并搞挂了")
+        break
+    }
+    madeBackups.append(b)
+}
+check(madeBackups.count == 3, "连着备份 3 次都成功（\(madeBackups.count)）")
+check(Set(madeBackups.map(\.lastPathComponent)).count == madeBackups.count, "三份备份各自一个文件名")
+check(madeBackups.allSatisfy { fm.fileExists(atPath: $0.path) }, "三份都真的落盘了")
+// keep=3：目录里恰好留最近 3 份，且字典序仍是时间序（序号排在时间戳之后）
+let kept = ((try? fm.contentsOfDirectory(atPath: src4.appendingPathComponent("UniReader/backup").path)) ?? [])
+    .filter { $0.hasPrefix("library-") }.sorted()
+check(kept.count == 3, "只留最近 3 份（\(kept.count)）")
+
 for s in [store, mirror, store2, mirror2, store3, mirror3, store4, mirror4] { s.close() }
 print("\n通过 \(pass) / 失败 \(fail)")
 exit(fail == 0 ? 0 : 1)

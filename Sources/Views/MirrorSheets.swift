@@ -7,7 +7,8 @@ import SwiftUI
 // MARK: - 建镜像
 
 /// 选内容 + 看估算 + 建。**位置不让用户挑**（理由见 `WorkspaceManager.mirrorsRoot`）：
-/// 这里只把算好的落点摆出来，建完给一个「在 Finder 中显示」，并自动进「最近工作区」。
+/// 这里只把算好的落点摆出来，建完挂到这个工作区那条最近记录上，
+/// 之后源盘不在时由打开链路自动选用 —— 副本**不占最近列表的一行**。
 struct MakeMirrorSheet: View {
     @EnvironmentObject var workspace: WorkspaceManager
     @Environment(\.dismiss) private var dismiss
@@ -95,8 +96,8 @@ struct MakeMirrorSheet: View {
                 Label(String(format: L("Mirror created: %d files, %d baseline rows."),
                              done.copiedFiles, done.baseRows),
                       systemImage: "checkmark.circle").font(.callout)
-                // 已经进了「最近工作区」，侧栏一键切过去；这个按钮只给想自己拷走的人
-                Text(L("It’s in Recent Workspaces now — switch to it from the workspace menu."))
+                // 这才是用户真正要知道的一句：以后不用管它
+                Text(L("From now on, opening this workspace without the drive connected uses this copy automatically."))
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button(L("Show in Finder")) { reveal(done.url) }.controlSize(.small)
@@ -161,6 +162,17 @@ struct MakeMirrorSheet: View {
 /// **干跑与应用用的是同一份 Plan**，不重算 —— 重算就意味着「用户看到的」和「实际做的」
 /// 可能不是同一件事，而这一步会大批量改用户数据。
 struct MirrorSyncSheet: View {
+    /// 从哪一侧发起。两边算的是**同一份 plan**（`base`/`mine` 永远取副本那侧），
+    /// 只是连接从哪来不同 —— 所以这张面板和 `MirrorApply` 都不必分两套。
+    enum Side {
+        case fromMirror                  // 我是副本，去找源盘
+        case fromSource(mirror: URL)     // 我是源盘，副本在本机这个路径
+    }
+
+    var side: Side = .fromMirror
+    /// 同步成功后回调「对面那份」的路径。副本侧的「同步并切回」靠它切窗口；菜单入口不传。
+    var onSynced: ((URL) -> Void)?
+
     @EnvironmentObject var workspace: WorkspaceManager
     /// 🔴 **不能写 `@EnvironmentObject`**：全项目只注入了 `app` 与 `workspace`，
     /// 注册表从来没进过环境，写成 EnvironmentObject 就是打开这张面板必崩。
@@ -261,21 +273,35 @@ struct MirrorSyncSheet: View {
     }
 
     private func run() {
-        guard let id = workspace.mirrorSourceId else { searching = false; return }
-        // 候选给的是**源盘那份**：副本自己不可能是自己的源
-        let recents = registry.recents.map { URL(fileURLWithPath: $0.sourcePath) }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let found = WorkspaceManager.findMirrorSource(id: id, recents: recents)
-            guard let found else {
-                DispatchQueue.main.async { searching = false }
-                return
+        switch side {
+        case .fromSource(let mirror):
+            // 副本就在本机，没有「找不找得到」这回事
+            sourceURL = mirror
+            dryRun(mirror)
+        case .fromMirror:
+            guard let id = workspace.mirrorSourceId else { searching = false; return }
+            // 候选给的是**源盘那份**：副本自己不可能是自己的源
+            let recents = registry.recents.map { URL(fileURLWithPath: $0.sourcePath) }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let found = WorkspaceManager.findMirrorSource(id: id, recents: recents)
+                DispatchQueue.main.async {
+                    guard let found else { searching = false; return }
+                    sourceURL = found
+                    dryRun(found)
+                }
             }
+        }
+    }
+
+    /// 算一次「按下同步会发生什么」。`other` = 对面那份的路径（副本侧是源盘，源盘侧是副本）。
+    private func dryRun(_ other: URL) {
+        DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let (dry, titles) = try workspace.mirrorDryRun(sourceFolder: found)
+                let (dry, titles) = try computePlan(against: other)
                 let ls = MirrorReport.summary(dry, titles: titles)
                 let hl = MirrorReport.headline(dry)
                 DispatchQueue.main.async {
-                    sourceURL = found; plan = dry; lines = ls; headline = hl; searching = false
+                    plan = dry; lines = ls; headline = hl; searching = false
                 }
             } catch {
                 DispatchQueue.main.async { searching = false; self.error = error.localizedDescription }
@@ -283,20 +309,35 @@ struct MirrorSyncSheet: View {
         }
     }
 
+    private func computePlan(against other: URL) throws -> (plan: MirrorDiff.Plan, titles: [String: String]) {
+        switch side {
+        case .fromMirror: return try workspace.mirrorDryRun(sourceFolder: other)
+        case .fromSource: return try workspace.mirrorDryRunFromSource(mirrorFolder: other)
+        }
+    }
+
     private func applyNow() {
-        guard let src = sourceURL, let p = plan else { return }
+        guard let other = sourceURL, let p = plan else { return }
         applying = true; error = nil
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let r = try workspace.mirrorApply(sourceFolder: src, plan: p) { s, f in
+                let progress: (String, Double) -> Void = { s, f in
                     DispatchQueue.main.async { step = s; fraction = f }
+                }
+                let r: MirrorApply.Result
+                switch side {
+                case .fromMirror:
+                    r = try workspace.mirrorApply(sourceFolder: other, plan: p, progress: progress)
+                case .fromSource:
+                    r = try workspace.mirrorApplyFromSource(mirrorFolder: other, plan: p, progress: progress)
                 }
                 DispatchQueue.main.async {
                     applying = false; applied = r
                     // 合并完两端就一致了：重算一遍报告，用户看到的是「现在还剩什么」而不是刚才那份
-                    if let (np, nt) = try? workspace.mirrorDryRun(sourceFolder: src) {
+                    if let (np, nt) = try? computePlan(against: other) {
                         plan = np; lines = MirrorReport.summary(np, titles: nt); headline = MirrorReport.headline(np)
                     }
+                    onSynced?(other)
                 }
             } catch {
                 DispatchQueue.main.async { applying = false; self.error = error.localizedDescription }

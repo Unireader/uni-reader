@@ -188,6 +188,50 @@ extension WorkspaceManager {
         return (plan, MirrorStore.titles(mine: mine, theirs: theirs))
     }
 
+    // MARK: - 从源盘这一侧发起（副本插回来之后的「收口」）
+
+    /// 与 `mirrorDryRun` 是**同一件事、角色对调**：`base`/`mine` 永远取副本那一侧
+    /// （`sync_base` 只存在于副本库里），只是这回副本的连接要现开。
+    /// 因此 `Plan.side` 的语义不变，界面与 `MirrorApply` 都不必知道是谁发起的。
+    ///
+    /// 🔴 副本若**此刻正被别的窗口开着**，必须写它那条连接（同 `mirrorApply` 的理由）。
+    func mirrorDryRunFromSource(mirrorFolder: URL) throws -> (plan: MirrorDiff.Plan, titles: [String: String]) {
+        guard let store, !isMirror else { throw MirrorBuilder.Failure.sourceIsMirror }
+        let opened = WorkspaceRegistry.shared.openManager(at: mirrorFolder)
+        let temp: LibraryStore? = opened == nil ? try LibraryStore(workspaceFolder: mirrorFolder) : nil
+        defer { temp?.close() }
+        guard let mirrorStore = opened?.store ?? temp else { throw MirrorBuilder.Failure.sourceIsMirror }
+        let mine = try mirrorStore.mirrorSnapshot()
+        let theirs = try store.mirrorSnapshot()
+        let plan = MirrorDiff.compute(base: try mirrorStore.syncBase(), mine: mine, theirs: theirs)
+        return (plan, MirrorStore.titles(mine: mine, theirs: theirs))
+    }
+
+    /// 从源盘这一侧应用合并。同样是角色对调，**合并逻辑一份都不重写**。
+    func mirrorApplyFromSource(mirrorFolder: URL, plan: MirrorDiff.Plan,
+                               progress: ((String, Double) -> Void)? = nil) throws -> MirrorApply.Result {
+        guard let store, let folder, !isMirror else { throw MirrorBuilder.Failure.sourceIsMirror }
+        let opened = WorkspaceRegistry.shared.openManager(at: mirrorFolder)
+        let temp: LibraryStore? = opened == nil ? try LibraryStore(workspaceFolder: mirrorFolder) : nil
+        defer { temp?.close() }
+        guard let mirrorStore = opened?.store ?? temp else { throw MirrorBuilder.Failure.sourceIsMirror }
+
+        let mirrorResolve: (LibLocation) -> String? = { loc in
+            (loc.inWorkspace || loc.isRelative)
+                ? mirrorFolder.appendingPathComponent(loc.path).path : loc.path
+        }
+        let r = try MirrorApply.apply(plan: plan,
+                                      mirrorFolder: mirrorFolder, mirrorStore: mirrorStore,
+                                      sourceFolder: folder, sourceStore: store,
+                                      resolveMirror: mirrorResolve, resolveSource: mirrorResolver(),
+                                      progress: progress)
+        DispatchQueue.main.async {
+            self.refresh()
+            opened?.refresh()
+        }
+        return r
+    }
+
     // MARK: - 应用合并
 
     /// 应用一次合并（M5）。**在后台线程调用。**

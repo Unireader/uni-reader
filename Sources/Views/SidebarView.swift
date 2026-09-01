@@ -22,7 +22,15 @@ struct SidebarView: View {
     @State private var renameShown = false
     @State private var makeMirrorShown = false
     @State private var dropMirrorShown = false
-    @State private var syncShown = false
+    @State private var syncTarget: SyncTarget?
+    @State private var notice: Notice?
+
+    /// 同步面板要开成哪一侧；`switchTo` 非 nil = 同步成功后切到那个工作区（「同步并切回」）。
+    private struct SyncTarget: Identifiable {
+        let id = UUID()
+        let side: MirrorSyncSheet.Side
+        let switchTo: URL?
+    }
     @State private var nameField = ""
     @State private var mergePending: MergePair?
     // 分组（v11 一级分组）：新建/改名共用一个带输入框的 alert
@@ -41,6 +49,69 @@ struct SidebarView: View {
             switch self {
             case .new(let d): return "new-\(d.joined(separator: ","))"
             case .rename(let g): return "rename-\(g)"
+            }
+        }
+    }
+
+    // MARK: - 离线副本的「自动收口」提示
+
+    /// 侧栏顶部那一条。**只提示、不打断**（用户 2026-09-01 拍板）：正在写笔迹时被强行换库、
+    /// 换窗口是最糟的体验，而且中途切换还要处理没落盘的那一笔。
+    private enum Notice {
+        case sourceBack(URL)        // 我是副本，源盘插回来了
+        case unsynced(URL, Int)     // 我是源盘，副本里有 N 处改动还没回来
+    }
+
+    @ViewBuilder
+    private func noticeRow(_ n: Notice) -> some View {
+        switch n {
+        case .sourceBack(let src):
+            Button {
+                // 同步完切回源盘那扇窗 —— 按钮上就是这么写的
+                syncTarget = SyncTarget(side: .fromMirror, switchTo: src)
+            } label: {
+                Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(L("Source drive is connected"))
+                        Text(L("Sync and switch back")).font(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "eject")
+                }
+            }
+        case .unsynced(let mirror, let count):
+            Button {
+                syncTarget = SyncTarget(side: .fromSource(mirror: mirror), switchTo: nil)
+            } label: {
+                Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(String(format: L("%d changes made offline"), count))
+                        Text(L("Sync them back")).font(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "externaldrive.badge.timemachine")
+                }
+            }
+        }
+    }
+
+    /// 算这一条。副本侧只需找一下源盘；源盘侧要真跑一次干跑才知道有没有东西没回来，
+    /// 所以放后台，**算不出来就什么都不显示**——宁可不提示，也不要挂一条不确定的横幅。
+    private func refreshNotice() {
+        notice = nil
+        guard let folder = workspace.folder else { return }
+        if workspace.isMirror {
+            guard let id = workspace.mirrorSourceId else { return }
+            let recents = registry.recents.map { URL(fileURLWithPath: $0.sourcePath) }
+            DispatchQueue.global(qos: .utility).async {
+                let found = WorkspaceManager.findMirrorSource(id: id, recents: recents)
+                DispatchQueue.main.async { if let found { notice = .sourceBack(found) } }
+            }
+        } else if let p = registry.mirrorPath(forSource: folder, id: workspace.workspaceId) {
+            let mirror = URL(fileURLWithPath: p)
+            DispatchQueue.global(qos: .utility).async {
+                let n = (try? workspace.mirrorDryRunFromSource(mirrorFolder: mirror))?.plan.changes.count ?? 0
+                DispatchQueue.main.async { if n > 0 { notice = .unsynced(mirror, n) } }
             }
         }
     }
@@ -95,6 +166,7 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $multiSel) {
+            if let notice { noticeRow(notice) }
             if workspace.groups.isEmpty {
                 Section(workspace.name.isEmpty ? L("Library") : workspace.name) {
                     ForEach(workspace.documents) { doc in row(doc) }
@@ -147,7 +219,9 @@ struct SidebarView: View {
                     // 镜像与源盘互斥：镜像不能再做镜像（`MirrorBuilder` 也会拦），
                     // 源盘也没有"同步回去"这回事 —— 两个入口只出现一个，不给用户做无效选择的机会。
                     if workspace.isMirror {
-                        Button { syncShown = true } label: {
+                        Button {
+                            syncTarget = SyncTarget(side: .fromMirror, switchTo: nil)
+                        } label: {
                             Label(L("Sync to Source…"), systemImage: "arrow.triangle.2.circlepath")
                         }
                     } else {
@@ -190,8 +264,12 @@ struct SidebarView: View {
                 }
             }
         }
-        .sheet(isPresented: $makeMirrorShown) { MakeMirrorSheet() }
-        .sheet(isPresented: $syncShown) { MirrorSyncSheet() }
+        .sheet(isPresented: $makeMirrorShown, onDismiss: refreshNotice) { MakeMirrorSheet() }
+        .sheet(item: $syncTarget, onDismiss: refreshNotice) { t in
+            MirrorSyncSheet(side: t.side, onSynced: t.switchTo.map { src in { _ in onOpenRecent(src) } })
+        }
+        .onAppear(perform: refreshNotice)
+        .onChange(of: workspace.folder) { _, _ in refreshNotice() }
         // 删的是 GB 级数据、还可能带着没同步回来的笔迹 —— 必须确认一次，且把后果说清楚
         .confirmationDialog(L("Delete the offline copy?"), isPresented: $dropMirrorShown) {
             Button(L("Delete"), role: .destructive) { dropMirror() }

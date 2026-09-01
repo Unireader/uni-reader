@@ -40,7 +40,16 @@ enum MirrorApply {
         let dir = folder.appendingPathComponent("UniReader/backup", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let stamp = ISO.string(.now).replacingOccurrences(of: ":", with: "-")
-        let dst = dir.appendingPathComponent("library-\(stamp).sqlite")
+        // 🔴 时间戳只到毫秒，连着做两次合并（或库小、备份快）就会撞同一个名字，而
+        // `VACUUM INTO` 遇到已存在的文件是**直接报错**（"output file already exists"）
+        // ——那会让整次同步中止，抛给用户一句看不懂的话。撞了就加序号，别让备份这道保险
+        // 反过来成为失败原因。序号排在时间戳之后，`pruneBackups` 的字典序仍是时间序。
+        var dst = dir.appendingPathComponent("library-\(stamp).sqlite")
+        var n = 2
+        while FileManager.default.fileExists(atPath: dst.path), n <= 99 {
+            dst = dir.appendingPathComponent("library-\(stamp)-\(n).sqlite")
+            n += 1
+        }
         store.checkpointTruncate()
         try store.vacuumInto(dst.path)
         pruneBackups(dir, keep: keep)

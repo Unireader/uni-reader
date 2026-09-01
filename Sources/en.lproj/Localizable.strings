@@ -358,7 +358,11 @@
 "Kept at %@" = "Kept at %@";
 "This workspace already has an offline copy on this Mac." = "This workspace already has an offline copy on this Mac.";
 "Sync that one back and delete it first if you want a fresh copy." = "Sync that one back and delete it first if you want a fresh copy.";
-"It’s in Recent Workspaces now — switch to it from the workspace menu." = "It’s in Recent Workspaces now — switch to it from the workspace menu.";
+"From now on, opening this workspace without the drive connected uses this copy automatically." = "From now on, opening this workspace without the drive connected uses this copy automatically.";
+"Source drive is connected" = "Source drive is connected";
+"Sync and switch back" = "Sync and switch back";
+"%d changes made offline" = "%d changes made offline";
+"Sync them back" = "Sync them back";
 "Sync Preview" = "Sync Preview";
 "Looking for the source workspace…" = "Looking for the source workspace…";
 "The source workspace isn’t connected." = "The source workspace isn’t connected.";
