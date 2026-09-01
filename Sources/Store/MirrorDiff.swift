@@ -80,6 +80,21 @@ enum MirrorDiff {
 
         var isEmpty: Bool { changes.isEmpty && lastOpenedMerges.isEmpty }
 
+        /// 这份 plan 能不能**自动静默地**从源盘推给副本（用户 2026-09-01 拍板的方向不对称：
+        /// 源→副本自动，副本→源必须人工确认）。
+        ///
+        /// 🔴 门槛是「整份都是推给副本、且零冲突」，不是「把推给副本的那些挑出来应用」。
+        /// 因为 `MirrorApply` 收尾会 `rebuildSyncBase()`，而基线是**按副本当前状态**重算的：
+        /// 只应用一半就重算，等于把没应用的那半的证据抹掉 —— 副本上你自己加的那条
+        /// （本来等着推给源盘）会在下一轮被判成「源盘删了它」，然后**静默从副本删掉**。
+        /// 所以副本只要有任何自己的改动、或有任何冲突，就一律不自动动手。
+        var isCleanPushToMirror: Bool {
+            !changes.isEmpty && conflicts.isEmpty && changes.allSatisfy { $0.side == .mirror }
+        }
+
+        /// 待人工确认的条数（副本 → 源盘那个方向）。提示条报的就是它。
+        var pendingToSource: Int { changes.lazy.filter { $0.side == .source }.count }
+
         func changes(to side: Side) -> [Change] { changes.filter { $0.side == side } }
 
         func count(_ side: Side, _ op: Op) -> Int {

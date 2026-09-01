@@ -361,8 +361,9 @@
 "From now on, opening this workspace without the drive connected uses this copy automatically." = "From now on, opening this workspace without the drive connected uses this copy automatically.";
 "Source drive is connected" = "Source drive is connected";
 "Sync and switch back" = "Sync and switch back";
-"%d changes made offline" = "%d changes made offline";
-"Sync them back" = "Sync them back";
+"%d items written offline" = "%d items written offline";
+"Review and sync them back" = "Review and sync them back";
+"%d items to sync · tap to review" = "%d items to sync · tap to review";
 "Sync Preview" = "Sync Preview";
 "Looking for the source workspace…" = "Looking for the source workspace…";
 "The source workspace isn’t connected." = "The source workspace isn’t connected.";

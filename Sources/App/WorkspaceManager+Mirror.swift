@@ -231,6 +231,28 @@ extension WorkspaceManager {
         return r
     }
 
+    // MARK: - 源 → 副本：自动、静默
+
+    /// 自动把源盘这边的改动推给本机副本（用户 2026-09-01 拍板：**源→副本自动静默，
+    /// 副本→源必须人工确认**）。**在后台线程调用。**
+    ///
+    /// 只在整份 plan **全是「推给副本」且零冲突**时才动手，理由见 `MirrorDiff.Plan.isCleanPushToMirror`
+    /// ——一句话：只应用一半会让收尾的基线重算抹掉另一半的证据，下一轮就变成静默删数据。
+    ///
+    /// 返回还剩多少条要人工确认（副本→源那个方向），给侧栏那条提示用；没有副本 → nil。
+    @discardableResult
+    func autoPushToMirror(mirrorFolder: URL) -> Int? {
+        guard !isMirror else { return nil }
+        guard let (plan, _) = try? mirrorDryRunFromSource(mirrorFolder: mirrorFolder) else { return nil }
+        guard plan.isCleanPushToMirror else { return plan.pendingToSource }
+        // 静默：不弹进度、不弹结果。失败也不打扰用户——下次再跑一遍即可（合并本身可重入），
+        // 真有东西没过去，副本那侧打开时的提示条会兜住。
+        guard (try? mirrorApplyFromSource(mirrorFolder: mirrorFolder, plan: plan)) != nil else {
+            return plan.pendingToSource
+        }
+        return 0
+    }
+
     // MARK: - 应用合并
 
     /// 应用一次合并（M5）。**在后台线程调用。**

@@ -24,6 +24,8 @@ struct SidebarView: View {
     @State private var dropMirrorShown = false
     @State private var syncTarget: SyncTarget?
     @State private var notice: Notice?
+    /// 一次只跑一遍：干跑要快照整库、逐行算指纹，重入等于白烧一遍 CPU 和 USB 带宽
+    @State private var noticeBusy = false
 
     /// 同步面板要开成哪一侧；`switchTo` 非 nil = 同步成功后切到那个工作区（「同步并切回」）。
     private struct SyncTarget: Identifiable {
@@ -58,14 +60,14 @@ struct SidebarView: View {
     /// 侧栏顶部那一条。**只提示、不打断**（用户 2026-09-01 拍板）：正在写笔迹时被强行换库、
     /// 换窗口是最糟的体验，而且中途切换还要处理没落盘的那一笔。
     private enum Notice {
-        case sourceBack(URL)        // 我是副本，源盘插回来了
-        case unsynced(URL, Int)     // 我是源盘，副本里有 N 处改动还没回来
+        case sourceBack(URL, Int)   // 我是副本，源盘插回来了，且确实有 N 项要同步
+        case unsynced(URL, Int)     // 我是源盘，副本里有 N 项要**推回源盘**，等人工确认
     }
 
     @ViewBuilder
     private func noticeRow(_ n: Notice) -> some View {
         switch n {
-        case .sourceBack(let src):
+        case .sourceBack(let src, let count):
             Button {
                 // 同步完切回源盘那扇窗 —— 按钮上就是这么写的
                 syncTarget = SyncTarget(side: .fromMirror, switchTo: src)
@@ -73,7 +75,8 @@ struct SidebarView: View {
                 Label {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(L("Source drive is connected"))
-                        Text(L("Sync and switch back")).font(.caption).foregroundStyle(.secondary)
+                        Text(String(format: L("%d items to sync · tap to review"), count))
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 } icon: {
                     Image(systemName: "eject")
@@ -85,8 +88,9 @@ struct SidebarView: View {
             } label: {
                 Label {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(String(format: L("%d changes made offline"), count))
-                        Text(L("Sync them back")).font(.caption).foregroundStyle(.secondary)
+                        // 只数**要推回源盘**的那些：反方向的已经自动过去了，不该算进来吓人
+                        Text(String(format: L("%d items written offline"), count))
+                        Text(L("Review and sync them back")).font(.caption).foregroundStyle(.secondary)
                     }
                 } icon: {
                     Image(systemName: "externaldrive.badge.timemachine")
@@ -95,24 +99,42 @@ struct SidebarView: View {
         }
     }
 
-    /// 算这一条。副本侧只需找一下源盘；源盘侧要真跑一次干跑才知道有没有东西没回来，
-    /// 所以放后台，**算不出来就什么都不显示**——宁可不提示，也不要挂一条不确定的横幅。
+    /// 顺一遍副本这件事，**并在源盘侧顺手把该推的推过去**。全在后台跑，
+    /// **算不出来就什么都不显示**——宁可不提示，也不要挂一条不确定的横幅。
+    ///
+    /// 用户 2026-09-01 定的完整流程（这段代码就是它的落点）：
+    ///   拔盘 → 用副本、改副本 → 插回来 → **副本→源盘合一次（要确认）** → 从此两边一致
+    ///   → 之后在源盘上改 → 每次都是「纯粹推给副本、零冲突」→ **静默推过去** → 再拔盘 → 又是副本。
+    /// 所以源盘侧只有一种情况会弹提示：**第 2 步还没做**（副本上有东西没合回来）——
+    /// 而那时候恰好也正是不该静默动手的时候，两者是同一件事的两面。
     private func refreshNotice() {
-        notice = nil
-        guard let folder = workspace.folder else { return }
+        guard !noticeBusy, let folder = workspace.folder else { return }
         if workspace.isMirror {
-            guard let id = workspace.mirrorSourceId else { return }
+            guard let id = workspace.mirrorSourceId else { notice = nil; return }
+            noticeBusy = true
             let recents = registry.recents.map { URL(fileURLWithPath: $0.sourcePath) }
             DispatchQueue.global(qos: .utility).async {
-                let found = WorkspaceManager.findMirrorSource(id: id, recents: recents)
-                DispatchQueue.main.async { if let found { notice = .sourceBack(found) } }
+                // 盘插上了但两边本来就一致 → 不出提示。否则就是在没事找事
+                let src = WorkspaceManager.findMirrorSource(id: id, recents: recents)
+                let n = src.flatMap { try? workspace.mirrorDryRun(sourceFolder: $0) }?.plan.changes.count ?? 0
+                DispatchQueue.main.async {
+                    noticeBusy = false
+                    notice = (src != nil && n > 0) ? .sourceBack(src!, n) : nil
+                }
             }
         } else if let p = registry.mirrorPath(forSource: folder, id: workspace.workspaceId) {
+            noticeBusy = true
             let mirror = URL(fileURLWithPath: p)
             DispatchQueue.global(qos: .utility).async {
-                let n = (try? workspace.mirrorDryRunFromSource(mirrorFolder: mirror))?.plan.changes.count ?? 0
-                DispatchQueue.main.async { if n > 0 { notice = .unsynced(mirror, n) } }
+                // 该静默推的推掉，返回还剩多少要人工确认（副本→源盘那个方向）
+                let pending = workspace.autoPushToMirror(mirrorFolder: mirror) ?? 0
+                DispatchQueue.main.async {
+                    noticeBusy = false
+                    notice = pending > 0 ? .unsynced(mirror, pending) : nil
+                }
             }
+        } else {
+            notice = nil
         }
     }
 
@@ -170,6 +192,13 @@ struct SidebarView: View {
     }
 
     var body: some View {
+        sheetsAndAlerts(mainList)
+    }
+
+    /// 列表 + 工具栏。面板/弹窗与提示条的重算时机挂在 `sheetsAndAlerts` ——
+    /// **全挂一个表达式上会让类型检查器超时**（2026-09-01 给提示条加了几个 `onChange` 后当场触发，
+    /// 同 `ContentView` 拆 `mainSplit` / `eventRoutes` 的理由）。
+    private var mainList: some View {
         List(selection: $multiSel) {
             if let notice { noticeRow(notice) }
             if workspace.groups.isEmpty {
@@ -269,12 +298,23 @@ struct SidebarView: View {
                 }
             }
         }
+    }
+
+    /// 侧栏挂着的全部面板/弹窗，外加离线副本提示条的重算时机（见 `mainList` 的注释）。
+    private func sheetsAndAlerts<V: View>(_ base: V) -> some View {
+        base
         .sheet(isPresented: $makeMirrorShown, onDismiss: refreshNotice) { MakeMirrorSheet() }
         .sheet(item: $syncTarget, onDismiss: refreshNotice) { t in
             MirrorSyncSheet(side: t.side, onSynced: t.switchTo.map { src in { _ in onOpenRecent(src) } })
         }
         .onAppear(perform: refreshNotice)
         .onChange(of: workspace.folder) { _, _ in refreshNotice() }
+        // 加书/删书当场就推过去；不然「静默同步」得等下次开窗口才发生，用户拔了盘才发现没跟上
+        .onChange(of: workspace.documents.count) { _, _ in refreshNotice() }
+        // 切走的时候再顺一遍：笔迹这类改动不会动 documents.count，
+        // 而「切走」正是个天然的收尾时机（也是用户接下来最可能去拔盘的时刻）
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.willResignActiveNotification)) { _ in refreshNotice() }
         // 删的是 GB 级数据、还可能带着没同步回来的笔迹 —— 必须确认一次，且把后果说清楚
         .confirmationDialog(L("Delete the offline copy?"), isPresented: $dropMirrorShown) {
             Button(L("Delete"), role: .destructive) { dropMirror() }

@@ -363,8 +363,9 @@
 "From now on, opening this workspace without the drive connected uses this copy automatically." = "以后源盘不在时，打开这个工作区会自动用这份副本。";
 "Source drive is connected" = "源盘已连接";
 "Sync and switch back" = "同步并切回";
-"%d changes made offline" = "离线期间有 %d 处改动";
-"Sync them back" = "同步回来";
+"%d items written offline" = "离线副本上有 %d 项还没同步回来";
+"Review and sync them back" = "看一眼再同步回源盘";
+"%d items to sync · tap to review" = "有 %d 项要同步 · 点开看看";
 "Sync Preview" = "同步预览";
 "Looking for the source workspace…" = "正在找源工作区…";
 "The source workspace isn’t connected." = "源工作区没有连接。";
