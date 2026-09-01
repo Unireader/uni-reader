@@ -141,8 +141,12 @@ struct MakeMirrorSheet: View {
                 }
                 DispatchQueue.main.async {
                     running = false; done = r
-                    // 路径藏在 ~/Library 下，这一步是「用户不必知道路径」的那半边保证
-                    WorkspaceRegistry.shared.rememberRecent(r.url)
+                    // 🔴 **不进最近列表**：副本挂到这个工作区那条记录上，由打开链路自动选用。
+                    // 让它自己占一行就退回「你自己拷了一份」——用户又得在两条里挑一条。
+                    if let folder = workspace.folder {
+                        WorkspaceRegistry.shared.setMirror(r.url.path, forSource: folder,
+                                                           id: workspace.workspaceId)
+                    }
                 }
             } catch {
                 DispatchQueue.main.async { running = false; self.error = error.localizedDescription }
@@ -258,7 +262,8 @@ struct MirrorSyncSheet: View {
 
     private func run() {
         guard let id = workspace.mirrorSourceId else { searching = false; return }
-        let recents = registry.recents
+        // 候选给的是**源盘那份**：副本自己不可能是自己的源
+        let recents = registry.recents.map { URL(fileURLWithPath: $0.sourcePath) }
         DispatchQueue.global(qos: .userInitiated).async {
             let found = WorkspaceManager.findMirrorSource(id: id, recents: recents)
             guard let found else {

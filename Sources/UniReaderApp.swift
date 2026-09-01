@@ -331,12 +331,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !recents.isEmpty else { return nil }
         let menu = NSMenu()
         menu.addItem(.sectionHeader(title: L("Recent Workspaces")))
-        for url in recents {
-            let item = NSMenuItem(title: WorkspaceManager.defaultWorkspaceName(for: url),
+        for r in recents {
+            let item = NSMenuItem(title: r.name,
                                   action: #selector(openWorkspaceFromDock(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = url.path
-            item.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+            item.representedObject = WorkspaceRegistry.resolveOrSource(r).path
+            let offline = WorkspaceRegistry.opensOffline(r)
+            item.image = NSImage(systemSymbolName: offline ? "externaldrive.badge.timemachine" : "folder",
+                                 accessibilityDescription: nil)
             menu.addItem(item)
         }
         return menu
@@ -370,11 +372,12 @@ private struct OpenRecentMenu: View {
 
     var body: some View {
         Menu(L("Open Recent")) {
-            ForEach(registry.recents, id: \.self) { url in
+            ForEach(registry.recents) { r in
                 Button {
-                    AppDelegate.deliverWorkspace(url.path)
+                    AppDelegate.deliverWorkspace(WorkspaceRegistry.resolveOrSource(r).path)
                 } label: {
-                    Label(WorkspaceManager.defaultWorkspaceName(for: url), systemImage: "folder")
+                    Label(r.name, systemImage: WorkspaceRegistry.opensOffline(r)
+                          ? "externaldrive.badge.timemachine" : "folder")
                 }
             }
             if !registry.recents.isEmpty { Divider() }

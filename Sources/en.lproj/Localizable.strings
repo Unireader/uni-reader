@@ -342,7 +342,11 @@
 "Close" = "Close";
 
 // 离线镜像（OFFLINE-MIRROR-PLAN.md）
-"Make Offline Mirror…" = "Make Offline Mirror…";
+"Keep Offline Copy" = "Keep Offline Copy";
+"Last synced %@" = "Last synced %@";
+"Never synced back" = "Never synced back";
+"Delete the offline copy?" = "Delete the offline copy?";
+"Anything written offline that hasn’t been synced back goes with it. To keep those, open the offline copy first and sync to the source." = "Anything written offline that hasn’t been synced back goes with it. To keep those, open the offline copy first and sync to the source.";
 "Sync to Source…" = "Sync to Source…";
 "Offline Mirror" = "Offline Mirror";
 "All books and notes come along. Only the PDFs you tick are copied — the rest stay readable as entries you can open once the drive is back." = "All books and notes come along. Only the PDFs you tick are copied — the rest stay readable as entries you can open once the drive is back.";

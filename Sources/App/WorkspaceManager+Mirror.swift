@@ -119,6 +119,19 @@ extension WorkspaceManager {
                                       resolve: mirrorResolver())
     }
 
+    /// 删掉本机那份离线副本（「保留离线副本」开关关掉时走这里）。
+    ///
+    /// 顺手把源库上对应的那条借出记录抹掉：借出记录**是信息不是锁**，但副本都没了还挂着
+    /// 「借出 1 份」，那句话就成了假话。先删文件再改库——删失败就抛出去，库保持原样。
+    func dropMirror(at mirror: URL) throws {
+        let mirrorId = LibraryStore.peekIdentity(folder: mirror)?.mirrorId
+        try FileManager.default.removeItem(at: mirror)
+        if let mirrorId, let store {
+            let left = checkouts.filter { $0.mirrorId != mirrorId }
+            try? store.setMeta(MirrorStore.metaCheckouts, MirrorStore.encodeCheckouts(left))
+        }
+    }
+
     // MARK: - 找源盘
 
     /// 在候选目录里找出本镜像的源工作区。

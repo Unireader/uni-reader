@@ -21,6 +21,7 @@ struct SidebarView: View {
 
     @State private var renameShown = false
     @State private var makeMirrorShown = false
+    @State private var dropMirrorShown = false
     @State private var syncShown = false
     @State private var nameField = ""
     @State private var mergePending: MergePair?
@@ -42,6 +43,29 @@ struct SidebarView: View {
             case .rename(let g): return "rename-\(g)"
             }
         }
+    }
+
+    // MARK: - 离线副本（开关的三段：现在有没有 / 上次同步 / 删掉）
+
+    /// 这个工作区当下**确实**有一份可用的离线副本（记录挂着、文件也还在）。
+    private var keptOffline: Bool {
+        guard let folder = workspace.folder else { return false }
+        return registry.mirrorPath(forSource: folder, id: workspace.workspaceId) != nil
+    }
+
+    /// 借出记录就在源库自己的 meta 里，读它不额外开连接。
+    private var lastSyncedLine: String {
+        guard let at = workspace.checkouts.first?.lastSyncedAt, let d = ISO.date(at) else {
+            return L("Never synced back")
+        }
+        return String(format: L("Last synced %@"), d.formatted(date: .abbreviated, time: .shortened))
+    }
+
+    private func dropMirror() {
+        guard let folder = workspace.folder,
+              let p = registry.mirrorPath(forSource: folder, id: workspace.workspaceId) else { return }
+        try? workspace.dropMirror(at: URL(fileURLWithPath: p))
+        registry.setMirror(nil, forSource: folder, id: workspace.workspaceId)
     }
 
     private var groupAlertTitle: String {
@@ -127,8 +151,17 @@ struct SidebarView: View {
                             Label(L("Sync to Source…"), systemImage: "arrow.triangle.2.circlepath")
                         }
                     } else {
-                        Button { makeMirrorShown = true } label: {
-                            Label(L("Make Offline Mirror…"), systemImage: "externaldrive.badge.timemachine")
+                        // 「保留离线副本」是**状态**不是动作：勾上 = 这个工作区我要能离线用，
+                        // 之后由打开链路在源盘不在时自动选用它；取消 = 连副本一起删掉。
+                        // 做成一次性的「制作镜像…」就退回「你自己拷了一份」，用户还得自己管它。
+                        Toggle(isOn: Binding(
+                            get: { keptOffline },
+                            set: { on in if on { makeMirrorShown = true } else { dropMirrorShown = true } }
+                        )) {
+                            Label(L("Keep Offline Copy"), systemImage: "externaldrive.badge.timemachine")
+                        }
+                        if keptOffline {
+                            Text(lastSyncedLine)
                         }
                     }
                     if !registry.recents.isEmpty {
@@ -137,10 +170,15 @@ struct SidebarView: View {
                         // （见 `OpenRecentMenu`）：这里原先还挂着一个「从最近列表移除」的三级嵌套
                         // 子菜单，既不是 macOS 的排法，也与菜单栏两处维护同一件事。
                         Section(L("Recent Workspaces")) {
-                            ForEach(registry.recents, id: \.self) { url in
-                                // 名字口径与菜单栏/Dock 菜单统一（原先的 deletingPathExtension
-                                // 会把含点的文件夹名截断：「v1.2 notes」→「v1」）
-                                Button(WorkspaceManager.defaultWorkspaceName(for: url)) { onOpenRecent(url) }
+                            ForEach(registry.recents) { r in
+                                // 点的是「工作区」，开哪一份副本由 registry 当场定（源盘不在就开本机那份）
+                                Button {
+                                    onOpenRecent(WorkspaceRegistry.resolveOrSource(r))
+                                } label: {
+                                    // 换图标就够了，不加字：一眼看出「点它现在是离线读」
+                                    Label(r.name, systemImage: WorkspaceRegistry.opensOffline(r)
+                                          ? "externaldrive.badge.timemachine" : "folder")
+                                }
                             }
                         }
                     }
@@ -154,6 +192,13 @@ struct SidebarView: View {
         }
         .sheet(isPresented: $makeMirrorShown) { MakeMirrorSheet() }
         .sheet(isPresented: $syncShown) { MirrorSyncSheet() }
+        // 删的是 GB 级数据、还可能带着没同步回来的笔迹 —— 必须确认一次，且把后果说清楚
+        .confirmationDialog(L("Delete the offline copy?"), isPresented: $dropMirrorShown) {
+            Button(L("Delete"), role: .destructive) { dropMirror() }
+            Button(L("Cancel"), role: .cancel) {}
+        } message: {
+            Text(L("Anything written offline that hasn’t been synced back goes with it. To keep those, open the offline copy first and sync to the source."))
+        }
         .alert(L("Rename Workspace"), isPresented: $renameShown) {
             TextField(L("Name"), text: $nameField)
             Button(L("OK")) { workspace.rename(nameField) }

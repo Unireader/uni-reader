@@ -174,6 +174,39 @@ final class LibraryStore {
             .first?["value"] as? String
     }
 
+    /// 一个工作区的**身份**：它是谁、是不是离线副本、源在哪。
+    struct Identity {
+        var id: String?          // workspace_id
+        var name: String?
+        /// 非 nil = 这是一份离线副本，值是它源工作区的 `workspace_id`
+        var mirrorOf: String?
+        /// 这份副本自己的 id（源库那边的借出记录按它记账）
+        var mirrorId: String?
+        /// 副本记下的「上次见到源盘在哪」。只用来给一句人话/迁移兜底，**不作判据**
+        var sourceHint: String?
+    }
+
+    /// 瞄一眼这个工作区的身份。
+    ///
+    /// 给「最近工作区」这类只想看一眼、不打算持有连接的地方用：不建 `LibraryStore` 实例，
+    /// 用完当场 `close()`（不靠 deinit —— 理由见 `SQLiteDB.close()`：可移动硬盘会弹不出去）。
+    /// 目录不在（盘没插）就是 nil，调用方不必先自己判断存在性。
+    static func peekIdentity(folder: URL) -> Identity? {
+        let file = folder.appendingPathComponent("UniReader/library.sqlite")
+        guard FileManager.default.fileExists(atPath: file.path),
+              let db = try? SQLiteDB(path: file.path) else { return nil }
+        defer { db.close() }
+        func v(_ key: String) -> String? {
+            let s = (try? db.query("SELECT value FROM meta WHERE key=?", [.text(key)]))?
+                .first?["value"] as? String
+            return (s?.isEmpty ?? true) ? nil : s
+        }
+        return Identity(id: v("workspace_id"), name: v("workspace_name"),
+                        mirrorOf: v(MirrorStore.metaMirrorOf),
+                        mirrorId: v(MirrorStore.metaMirrorId),
+                        sourceHint: v(MirrorStore.metaMirrorSourceHint))
+    }
+
     // MARK: - meta
 
     func meta(_ key: String) -> String? {

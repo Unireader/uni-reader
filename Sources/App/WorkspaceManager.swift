@@ -137,7 +137,7 @@ final class WorkspaceManager: ObservableObject {
     }
 
     /// 该文件夹（原始路径，改名迁移前）是否已是真实工作区：含 `UniReader/library.sqlite`。
-    private static func hasLibrary(_ folder: URL) -> Bool {
+    static func hasLibrary(_ folder: URL) -> Bool {
         FileManager.default.fileExists(atPath: folder.appendingPathComponent("UniReader/library.sqlite").path)
     }
 

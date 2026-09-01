@@ -2,6 +2,25 @@ import Foundation
 import AppKit
 import SwiftUI
 
+/// 「最近工作区」的一条记录。
+///
+/// 🔴 **列的是工作区身份，不是某个副本的路径**。一个工作区可能同时有两份副本——源盘上那份、
+/// 本机的离线副本——但在用户眼里**永远只有一个工作区**：点开哪一份由
+/// `WorkspaceRegistry.resolve` 当场决定（盘在就用盘上的，盘不在就用本机的）。
+///
+/// 离线副本因此**从不单独出现在最近列表 / Dock 菜单 / 文件→最近打开里**。
+/// 这正是「自动维护的副本」与「你自己拷了一份」的分界：后者要用户记住它在哪、
+/// 每次在两条记录里挑一条——那还不如手动复制。
+struct RecentWorkspace: Codable, Hashable, Identifiable {
+    /// `workspace_id`。迁移老记录时盘不在、读不出来，就先拿源路径顶着，下次成功打开即补正
+    var id: String
+    var name: String
+    /// 源工作区（可能在一块没插上的盘上）
+    var sourcePath: String
+    /// 本机离线副本，由 App 维护，用户不需要知道这个路径
+    var mirrorPath: String?
+}
+
 /// 工作区实例池：**同一个 `.unrd` 路径，全 app 只有一个 `WorkspaceManager`**（因而只有一个
 /// `LibraryStore` = 一个 SQLite 连接）。多工作区并存靠「多个 manager 各自绑一个窗口」，
 /// 而不是「一个 manager 换 folder」——后者正是 2026-07-29 之前的架构，双击另一个工作区会把
@@ -40,12 +59,13 @@ final class WorkspaceRegistry: ObservableObject {
     /// 各窗口正在显示的工作区（sessionId → 标准化路径），供「双击已打开的工作区 → 激活那个窗口」。
     private var windowPaths: [UUID: String] = [:]
 
-    /// 最近打开过的工作区（本机全局）。
-    @Published private(set) var recents: [URL] = []
+    /// 最近打开过的工作区（本机全局）。**列的是工作区身份，不是副本路径**——见 `RecentWorkspace`。
+    @Published private(set) var recents: [RecentWorkspace] = []
     /// 某「最近工作区」项已不存在（已顺带移出列表），非空即弹提示。
     @Published var missingRecentName: String?
 
-    private let recentsKey = "recentWorkspaces"
+    private let recentsKey = "recentWorkspaces"        // 老格式：[String]（纯路径）
+    private let recentsKeyV2 = "recentWorkspacesV2"    // 新格式：[RecentWorkspace] JSON
     private let lastKey = "lastWorkspacePath"
 
     private init() {
@@ -53,10 +73,41 @@ final class WorkspaceRegistry: ObservableObject {
         // 把已有的最近列表补喂系统一次：老用户升级上来时，系统那份「最近使用的文稿」还是空的，
         // 不补的话 app 未运行时 Dock 右键什么都看不到，得把每个工作区重新打开一遍才会出现。
         // 倒序喂 —— `noteNewRecentDocumentURL` 总把最新的置顶，倒着喂完顺序才和我们这份一致。
-        for url in recents.reversed() { NSDocumentController.shared.noteNewRecentDocumentURL(url) }
+        // 喂的是**源盘那份**：系统那张表点开走 `application(_:open:)`，不经我们的副本解析，
+        // 喂副本进去就等于把 `~/Library` 里那个路径捅到用户面前了。
+        for r in recents.reversed() {
+            NSDocumentController.shared.noteNewRecentDocumentURL(URL(fileURLWithPath: r.sourcePath))
+        }
     }
 
     static func key(_ url: URL) -> String { url.standardizedFileURL.path }
+
+    // MARK: - 一条记录**现在**该打开哪一份副本
+
+    /// 源盘在就开源盘，不在就开本机离线副本；两个都没有 → nil（调用方照旧走「工作区不存在」）。
+    ///
+    /// 这一步是整个离线功能的枢纽：用户点的是「工作区」，选副本是 App 的事。
+    static func resolve(_ r: RecentWorkspace) -> URL? {
+        let src = URL(fileURLWithPath: r.sourcePath)
+        if WorkspaceManager.hasLibrary(src) { return src }
+        if let m = r.mirrorPath {
+            let mirror = URL(fileURLWithPath: m)
+            if WorkspaceManager.hasLibrary(mirror) { return mirror }
+        }
+        return nil
+    }
+
+    /// 点它会开离线副本吗（= 源盘此刻没连接，但本机有副本）。列表据此换个图标。
+    static func opensOffline(_ r: RecentWorkspace) -> Bool {
+        guard !WorkspaceManager.hasLibrary(URL(fileURLWithPath: r.sourcePath)),
+              let m = r.mirrorPath else { return false }
+        return WorkspaceManager.hasLibrary(URL(fileURLWithPath: m))
+    }
+
+    /// 解析不出来时**照旧交源路径**给调用方：让既有的「工作区不存在 → 提示 + 移出列表」原样生效。
+    static func resolveOrSource(_ r: RecentWorkspace) -> URL {
+        resolve(r) ?? URL(fileURLWithPath: r.sourcePath)
+    }
 
     /// 这个工作区**此刻有没有活着的实例**（不 +1 引用、不新建）。
     ///
@@ -168,6 +219,9 @@ final class WorkspaceRegistry: ObservableObject {
             let u = URL(fileURLWithPath: p)
             var d: ObjCBool = false
             if FileManager.default.fileExists(atPath: u.path, isDirectory: &d), d.boolValue { return u }
+            // 上次那个工作区在一块现在没插的盘上：有本机离线副本就开副本，
+            // 而不是把用户扔回内置默认工作区——「拔了盘照样接着读」正是这个功能的全部意义。
+            if let r = recents.first(where: { $0.sourcePath == p }), let alt = Self.resolve(r) { return alt }
         }
         return WorkspaceManager.defaultFolder()
     }
@@ -263,48 +317,138 @@ final class WorkspaceRegistry: ObservableObject {
     // MARK: - 最近工作区（本机全局）
 
     private func loadRecents() {
-        let arr = (UserDefaults.standard.array(forKey: recentsKey) as? [String]) ?? []
-        recents = arr.map { URL(fileURLWithPath: $0) }
+        if let data = UserDefaults.standard.data(forKey: recentsKeyV2),
+           let arr = try? JSONDecoder().decode([RecentWorkspace].self, from: data) {
+            recents = arr
+            return
+        }
+        recents = Self.migrateRecents((UserDefaults.standard.array(forKey: recentsKey) as? [String]) ?? [])
+        saveRecents()
     }
 
+    private func saveRecents() {
+        if let data = try? JSONEncoder().encode(recents) {
+            UserDefaults.standard.set(data, forKey: recentsKeyV2)
+        }
+    }
+
+    /// 老格式（纯路径数组）→ 身份记录。**离线副本并入它源工作区那一条**，不单独留一行：
+    /// 老列表里副本和源是两条并排的记录，正是这次要消灭的东西。
+    ///
+    /// 盘没插 → 读不出 `workspace_id`，先用路径顶着当 id，下次成功打开时 `rememberRecent` 补正。
+    private static func migrateRecents(_ paths: [String]) -> [RecentWorkspace] {
+        var out: [RecentWorkspace] = []
+        var mirrors: [(of: String, hint: String, name: String, path: String)] = []
+        for p in paths {
+            let url = URL(fileURLWithPath: p)
+            let fallbackName = WorkspaceManager.defaultWorkspaceName(for: url)
+            let peek = LibraryStore.peekIdentity(folder: url)
+            if let of = peek?.mirrorOf {
+                mirrors.append((of, peek?.sourceHint ?? "", peek?.name ?? fallbackName, p))
+            } else {
+                out.append(RecentWorkspace(id: peek?.id ?? p, name: peek?.name ?? fallbackName,
+                                           sourcePath: p, mirrorPath: nil))
+            }
+        }
+        for m in mirrors {
+            if let i = out.firstIndex(where: { $0.id == m.of }) {
+                out[i].mirrorPath = m.path
+            } else if !m.hint.isEmpty {
+                // 源盘这次没在最近列表里，但副本记着它上次在哪 —— 够撑起一条记录
+                out.append(RecentWorkspace(id: m.of, name: m.name, sourcePath: m.hint, mirrorPath: m.path))
+            }
+            // 连 hint 都没有的副本：这条最近记录丢掉（副本本体不动）。它没有源，列出来也没法解析
+        }
+        return out
+    }
+
+    /// 记一次「打开过」。
+    ///
+    /// 🔴 打开的若是**离线副本**，只更新它所属工作区那一条记录的 `mirrorPath`，**绝不新建条目**：
+    /// 副本不是一个独立的工作区，用户不该在列表里看见它、更不该在两条里挑。
     func rememberRecent(_ url: URL) {
-        var paths = recents.map(\.path).filter { $0 != url.path }
-        paths.insert(url.path, at: 0)
-        paths = Array(paths.prefix(10))
-        UserDefaults.standard.set(paths, forKey: recentsKey)
-        recents = paths.map { URL(fileURLWithPath: $0) }
+        let peek = LibraryStore.peekIdentity(folder: url)
+        let name = peek?.name ?? WorkspaceManager.defaultWorkspaceName(for: url)
+        var list = recents
+        if let of = peek?.mirrorOf {
+            if let i = list.firstIndex(where: { $0.id == of }) {
+                var r = list.remove(at: i)
+                r.mirrorPath = url.path
+                list.insert(r, at: 0)
+            } else if let hint = peek?.sourceHint, !hint.isEmpty {
+                list.insert(RecentWorkspace(id: of, name: name, sourcePath: hint,
+                                            mirrorPath: url.path), at: 0)
+            }
+            recents = Array(list.prefix(10))
+            saveRecents()
+            return   // 系统那份「最近使用的文稿」不喂副本 —— 理由见 init
+        }
+        let id = peek?.id ?? url.path
+        if let i = list.firstIndex(where: { $0.id == id || $0.sourcePath == url.path }) {
+            var r = list.remove(at: i)
+            r.id = id; r.name = name; r.sourcePath = url.path
+            list.insert(r, at: 0)
+        } else {
+            list.insert(RecentWorkspace(id: id, name: name, sourcePath: url.path, mirrorPath: nil), at: 0)
+        }
+        recents = Array(list.prefix(10))
+        saveRecents()
         // 同时喂给系统的「最近使用的文稿」：**app 未运行时** Dock 右键显示的是这一份
         // （自定义的 applicationDockMenu 只在运行时生效），点击它会正常走 application(_:open:)。
         // 顺带也让「文件 → 打开最近使用」有内容。
         NSDocumentController.shared.noteNewRecentDocumentURL(url)
     }
 
+    /// 找某个源工作区那条记录：**先按 id，再按路径**——迁移上来的记录 id 可能是拿路径顶的，
+    /// 而工作区的 `workspace_id` 也可能是刚建镜像时才补上的。
+    private func recentIndex(id: String?, path: String) -> Int? {
+        if let id, let i = recents.firstIndex(where: { $0.id == id }) { return i }
+        return recents.firstIndex(where: { $0.sourcePath == path })
+    }
+
+    /// 给某个工作区挂上/摘掉它的离线副本（「保留离线副本」开关落到这里）。
+    /// 顺手把记录的 id 补正——第一次建副本时源工作区才拿到 `workspace_id`。
+    func setMirror(_ mirrorPath: String?, forSource folder: URL, id: String?) {
+        guard let i = recentIndex(id: id, path: folder.path) else { return }
+        if let id { recents[i].id = id }
+        recents[i].mirrorPath = mirrorPath
+        saveRecents()
+    }
+
+    /// 这个工作区在本机有没有离线副本（**记录里挂着、且那份文件确实还在**）。
+    func mirrorPath(forSource folder: URL, id: String?) -> String? {
+        guard let i = recentIndex(id: id, path: folder.path),
+              let p = recents[i].mirrorPath,
+              WorkspaceManager.hasLibrary(URL(fileURLWithPath: p)) else { return nil }
+        return p
+    }
+
     /// 从最近列表移除一条记录（只删记录，不动工作区本身）。
     /// ⚠️ 系统那份「最近使用的文稿」**没有删单条的 API**（`NSDocumentController` 只给整体
     /// `clearRecentDocuments`），所以这条移除只对运行时的 Dock 菜单与 App 内菜单生效；
     /// app 未运行时 Dock 右键里那条还会在。要清干净得用 `clearRecents()`。
+    /// 按**任一副本的路径**移除（调用方手上通常只有刚才没打开成的那个 URL）。
     func removeRecent(_ url: URL) {
-        let paths = recents.map(\.path).filter { $0 != url.path }
-        UserDefaults.standard.set(paths, forKey: recentsKey)
-        recents = paths.map { URL(fileURLWithPath: $0) }
+        recents.removeAll { $0.sourcePath == url.path || $0.mirrorPath == url.path }
+        saveRecents()
     }
 
     /// 清空最近列表（只删记录，不动任何工作区）。**两份数据源一起清**——自己这份 +
     /// 系统的「最近使用的文稿」，否则 app 未运行时 Dock 右键里旧条目照旧列出来（见 `rememberRecent`）。
     func clearRecents() {
-        UserDefaults.standard.set([String](), forKey: recentsKey)
         recents = []
+        saveRecents()
         NSDocumentController.shared.clearRecentDocuments(nil)
     }
 
     /// 工作区原地改名后，把最近列表里的旧路径替换为新路径（去重保序），并跟进池的键。
     func replaceRecent(old: URL, new: URL) {
-        var paths = recents.map(\.path)
-        if let i = paths.firstIndex(of: old.path) { paths[i] = new.path }
-        var seen = Set<String>()
-        paths = paths.filter { seen.insert($0).inserted }
-        UserDefaults.standard.set(paths, forKey: recentsKey)
-        recents = paths.map { URL(fileURLWithPath: $0) }
+        // 改名动的是源盘那份（副本在 ~/Library 下、名字由 App 定，用户改不到它）
+        for i in recents.indices where recents[i].sourcePath == old.path {
+            recents[i].sourcePath = new.path
+            recents[i].name = WorkspaceManager.defaultWorkspaceName(for: new)
+        }
+        saveRecents()
 
         let ok = Self.key(old), nk = Self.key(new)
         if let box = byPath.removeValue(forKey: ok) {

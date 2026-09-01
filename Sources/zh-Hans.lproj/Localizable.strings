@@ -344,7 +344,11 @@
 "Close" = "关闭";
 
 // 离线镜像（OFFLINE-MIRROR-PLAN.md）
-"Make Offline Mirror…" = "制作离线镜像…";
+"Keep Offline Copy" = "保留离线副本";
+"Last synced %@" = "上次同步 %@";
+"Never synced back" = "还没同步回来过";
+"Delete the offline copy?" = "删除离线副本？";
+"Anything written offline that hasn’t been synced back goes with it. To keep those, open the offline copy first and sync to the source." = "离线期间写下、还没同步回来的东西会一起没掉。想留住就先打开那份副本，同步到源盘。";
 "Sync to Source…" = "同步到源盘…";
 "Offline Mirror" = "离线镜像";
 "All books and notes come along. Only the PDFs you tick are copied — the rest stay readable as entries you can open once the drive is back." = "所有书和笔记都会带上。只有勾选的书会拷贝 PDF，其余仍在列表里，插回硬盘就能看。";
