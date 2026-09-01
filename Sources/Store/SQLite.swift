@@ -17,9 +17,23 @@ enum SQLiteError: Error, CustomStringConvertible {
 }
 
 /// 极简 SQLite 封装（系统 libsqlite3，无第三方依赖）。
-/// **非线程安全**：仅在持有者自己的串行队列/主线程上使用同一实例。
+///
+/// 🔴 **每条语句在实例自己的锁里跑**（2026-09-01 加）。原先这里写着「非线程安全，只在主线程用」，
+/// 而离线镜像功能从一开始就在后台线程上用主线程那条连接（建镜像、干跑、合并写入都是）。
+/// 后果不是"偶尔读到旧数据"，是**连接自己的 lookaside 分配器被写坏**，然后在之后某一次
+/// 毫不相干的 `prepare` 上崩掉——用户实测拿到的就是这个：主线程渲染侧栏右键菜单时
+/// `EXC_BAD_ACCESS in sqlite3DbMallocRawNNTyped`，堆栈里连第二个碰 SQLite 的线程都没有
+/// （因为写坏它的那次早就跑完了）。
+///
+/// 锁**按语句粒度**，不覆盖整个事务：覆盖事务的话，合并期间主线程一渲染就得等到 COMMIT，
+/// 几秒的界面冻结换掉一个崩溃不划算。代价是别的线程能读到事务里未提交的中间态——
+/// 这里的并发读者只有界面显示，认。
+///
+/// 这不是"可以随便跨线程用"的许可：想同时**写**同一个库仍然违反
+/// `WorkspaceRegistry` 那条「同一路径同一实例」红线，锁只保证不炸，保证不了语义。
 final class SQLiteDB {
     private var db: OpaquePointer?
+    private let lock = NSRecursiveLock()
 
     /// 绑定值类型。
     enum Value {
@@ -49,6 +63,7 @@ final class SQLiteDB {
     /// 而只要 `library.sqlite` 的 fd 还开着，工作区所在的**可移动硬盘就弹不出去**（Finder 报
     /// 「磁盘正在使用中」），用户只能退出整个 app 才能弹。谁来调见 `WorkspaceRegistry.maybeTeardown`。
     func close() {
+        lock.lock(); defer { lock.unlock() }   // 别在另一个线程正跑语句时把句柄拆了
         guard let handle = db else { return }
         db = nil
         sqlite3_close_v2(handle)   // _v2：即便还有未 finalize 的语句也会在其释放后自动收尾
@@ -62,6 +77,7 @@ final class SQLiteDB {
 
     /// 执行不带参数的语句（DDL / PRAGMA / 多条语句）。
     func exec(_ sql: String) throws {
+        lock.lock(); defer { lock.unlock() }
         let db = try handle()
         var err: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK {
@@ -73,6 +89,7 @@ final class SQLiteDB {
 
     /// 写语句（INSERT/UPDATE/DELETE）。
     func run(_ sql: String, _ params: [Value] = []) throws {
+        lock.lock(); defer { lock.unlock() }
         let stmt = try prepare(sql, params)
         defer { sqlite3_finalize(stmt) }
         let rc = sqlite3_step(stmt)
@@ -83,6 +100,7 @@ final class SQLiteDB {
 
     /// 查询：每行返回 列名→值（String / Int64 / Double / Data / NSNull）。
     func query(_ sql: String, _ params: [Value] = []) throws -> [[String: Any]] {
+        lock.lock(); defer { lock.unlock() }
         let stmt = try prepare(sql, params)
         defer { sqlite3_finalize(stmt) }
         var rows: [[String: Any]] = []

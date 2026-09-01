@@ -349,20 +349,13 @@ struct MirrorSyncSheet: View {
                 case .fromSource:
                     r = try workspace.mirrorApplyFromSource(mirrorFolder: other, plan: p, progress: progress)
                 }
-                // 🔴 先把「做完了」发出去，**再**去重算报告。
-                // 这两件事写在同一个 main.async 块里的话，块跑完之前 SwiftUI 一帧都渲染不出来
-                // ——而重算是一次完整干跑（开源盘的库、快照所有表、逐行算指纹，盘还在 USB 上），
-                // 于是界面就停在「进度条卡在半路 + 底下还写着『什么都没有写入』」，看着像死了。
-                // 2026-09-01 用户实测撞到，截图即此状。
+                // 🔴 合并完**不再重算一遍报告**（2026-09-01 删）。它两种放法都出过事：
+                // 放主线程（和 `applied = r` 同一个 main.async 块里）→ 块跑完之前 SwiftUI 一帧
+                // 都渲染不出来，界面停在「进度条卡在半路 + 底下还写着『什么都没有写入』」；
+                // 挪到后台 → 和主线程的 `refresh()`／侧栏渲染同时用同一条 SQLite 连接。
+                // 而它本来就是多余的：合并成功即意味着两端一致，屏幕上留着「刚才做了什么」
+                // 比留着一份「现在还剩什么」更贴合用户此刻要确认的事。
                 DispatchQueue.main.async { applying = false; applied = r; onSynced?(other) }
-
-                // 合并完两端就一致了：重算一遍报告，用户看到的是「现在还剩什么」而不是刚才那份。
-                // 慢就慢在这儿，所以留在后台线程上跑，算完再回主线程换内容。
-                if let (np, nt) = try? computePlan(against: other) {
-                    let ls = MirrorReport.summary(np, titles: nt)
-                    let hl = MirrorReport.headline(np)
-                    DispatchQueue.main.async { plan = np; lines = ls; headline = hl }
-                }
             } catch {
                 DispatchQueue.main.async { applying = false; self.error = error.localizedDescription }
             }
