@@ -119,17 +119,16 @@ extension WorkspaceManager {
                                       resolve: mirrorResolver())
     }
 
-    /// 删掉本机那份离线副本（「保留离线副本」开关关掉时走这里）。
+    /// 忘掉本机那份离线副本（「保留离线副本」开关关掉时走这里）：把源库上对应的那条借出记录抹掉。
+    /// 借出记录**是信息不是锁**，但副本都没了还挂着「借出 1 份」，那句话就成了假话。
     ///
-    /// 顺手把源库上对应的那条借出记录抹掉：借出记录**是信息不是锁**，但副本都没了还挂着
-    /// 「借出 1 份」，那句话就成了假话。先删文件再改库——删失败就抛出去，库保持原样。
-    func dropMirror(at mirror: URL) throws {
-        let mirrorId = LibraryStore.peekIdentity(folder: mirror)?.mirrorId
-        try FileManager.default.removeItem(at: mirror)
-        if let mirrorId, let store {
-            let left = checkouts.filter { $0.mirrorId != mirrorId }
-            try? store.setMeta(MirrorStore.metaCheckouts, MirrorStore.encodeCheckouts(left))
-        }
+    /// 🔴 **文件删除刻意不在这里做**：那是几 GB 的 `removeItem`，放主线程会整个卡住；
+    /// 而这个方法要动 `store`（单连接、非线程安全，只能在主线程碰）。两件事必须分开跑
+    /// ——调用方在主线程调它，再把目录扔到后台队列去删。
+    func forgetMirror(at mirror: URL) {
+        guard let mirrorId = LibraryStore.peekIdentity(folder: mirror)?.mirrorId, let store else { return }
+        let left = checkouts.filter { $0.mirrorId != mirrorId }
+        try? store.setMeta(MirrorStore.metaCheckouts, MirrorStore.encodeCheckouts(left))
     }
 
     // MARK: - 找源盘

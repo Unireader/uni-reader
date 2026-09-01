@@ -16,6 +16,8 @@ struct MakeMirrorSheet: View {
     /// 勾了「带 PDF」的书。默认全勾 —— 想做的本来就是「整个搬走」，取消才是少数动作。
     @State private var withPDF: Set<String> = []
     @State private var estimate: MirrorBuilder.Estimate?
+    /// 估算是异步的，连点勾选框时先发的那次可能后回来 —— 只认最后一次（见 `recomputeEstimate`）
+    @State private var estimateToken = 0
     /// 算好的落点（`onAppear` 定一次，全程就用它）
     @State private var destination: URL?
     /// 本机已经有的那份镜像。非 nil 就不给再建（见 `WorkspaceManager.existingMirror`）
@@ -118,13 +120,29 @@ struct MakeMirrorSheet: View {
         .frame(width: 460)
         .onAppear {
             withPDF = Set(workspace.documents.map(\.id))
-            recomputeEstimate()
-            existing = workspace.workspaceId.flatMap { WorkspaceManager.existingMirror(of: $0) }
             destination = WorkspaceManager.plannedMirrorURL(name: workspace.name)
+            recomputeEstimate()
+            // 要逐个打开 Mirrors/ 下每份副本的库看血缘 —— 本机盘，快，但没理由占着主线程
+            let wid = workspace.workspaceId
+            DispatchQueue.global(qos: .userInitiated).async {
+                let found = wid.flatMap { WorkspaceManager.existingMirror(of: $0) }
+                DispatchQueue.main.async { existing = found }
+            }
         }
     }
 
-    private func recomputeEstimate() { estimate = workspace.mirrorEstimate(documentsWithPDF: withPDF) }
+    /// 🔴 **估算要逐本 stat 文件，而源盘在 USB 上** —— 放主线程做，光是打开面板就卡一下，
+    /// 每点一个勾选框再卡一下（勾选会重算）。放后台，用 token 丢弃过期结果
+    /// （连点几下时先发的那次可能后回来，不丢就会把旧数字盖上去）。
+    private func recomputeEstimate() {
+        estimateToken += 1
+        let token = estimateToken
+        let ids = withPDF
+        DispatchQueue.global(qos: .userInitiated).async {
+            let e = workspace.mirrorEstimate(documentsWithPDF: ids)
+            DispatchQueue.main.async { if token == estimateToken { estimate = e } }
+        }
+    }
 
     private func tilde(_ url: URL) -> String { (url.path as NSString).abbreviatingWithTildeInPath }
 
@@ -331,13 +349,19 @@ struct MirrorSyncSheet: View {
                 case .fromSource:
                     r = try workspace.mirrorApplyFromSource(mirrorFolder: other, plan: p, progress: progress)
                 }
-                DispatchQueue.main.async {
-                    applying = false; applied = r
-                    // 合并完两端就一致了：重算一遍报告，用户看到的是「现在还剩什么」而不是刚才那份
-                    if let (np, nt) = try? computePlan(against: other) {
-                        plan = np; lines = MirrorReport.summary(np, titles: nt); headline = MirrorReport.headline(np)
-                    }
-                    onSynced?(other)
+                // 🔴 先把「做完了」发出去，**再**去重算报告。
+                // 这两件事写在同一个 main.async 块里的话，块跑完之前 SwiftUI 一帧都渲染不出来
+                // ——而重算是一次完整干跑（开源盘的库、快照所有表、逐行算指纹，盘还在 USB 上），
+                // 于是界面就停在「进度条卡在半路 + 底下还写着『什么都没有写入』」，看着像死了。
+                // 2026-09-01 用户实测撞到，截图即此状。
+                DispatchQueue.main.async { applying = false; applied = r; onSynced?(other) }
+
+                // 合并完两端就一致了：重算一遍报告，用户看到的是「现在还剩什么」而不是刚才那份。
+                // 慢就慢在这儿，所以留在后台线程上跑，算完再回主线程换内容。
+                if let (np, nt) = try? computePlan(against: other) {
+                    let ls = MirrorReport.summary(np, titles: nt)
+                    let hl = MirrorReport.headline(np)
+                    DispatchQueue.main.async { plan = np; lines = ls; headline = hl }
                 }
             } catch {
                 DispatchQueue.main.async { applying = false; self.error = error.localizedDescription }

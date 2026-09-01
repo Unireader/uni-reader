@@ -135,8 +135,13 @@ struct SidebarView: View {
     private func dropMirror() {
         guard let folder = workspace.folder,
               let p = registry.mirrorPath(forSource: folder, id: workspace.workspaceId) else { return }
-        try? workspace.dropMirror(at: URL(fileURLWithPath: p))
+        let url = URL(fileURLWithPath: p)
+        workspace.forgetMirror(at: url)                                   // 动 store，必须在主线程
         registry.setMirror(nil, forSource: folder, id: workspace.workspaceId)
+        notice = nil
+        // 几 GB 的 removeItem 放主线程会整个卡住。记录已经摘干净了，界面立刻就对；
+        // 万一删到一半退出，剩下的目录不再被任何记录引用，下次建副本会另起一个名字。
+        DispatchQueue.global(qos: .utility).async { try? FileManager.default.removeItem(at: url) }
     }
 
     private var groupAlertTitle: String {
