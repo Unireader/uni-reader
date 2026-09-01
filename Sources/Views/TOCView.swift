@@ -39,6 +39,25 @@ struct TOCEntry: Identifiable {
         }
         return walk(root)
     }
+
+    /// 某页归属的章节名（先序里起点不晚于该页、页码最大的那项；并列取先序靠后 = 更深一层）。
+    ///
+    /// 与 `TOCListView` 的当前章节追踪**同一口径**（含对乱序/坏书签免疫的 argmax 写法，
+    /// 理由见那边的注释）。跳转历史里没有现成名字的条目（缩略图、笔记列表跳转）靠它显示
+    /// 「落在哪一章」，比干巴巴一个页码有用。没有目录或没命中时返回空串。
+    static func chapterLabel(for page: Int, in entries: [TOCEntry]) -> String {
+        var best: (page: Int, label: String)? = nil
+        func walk(_ list: [TOCEntry]) {
+            for e in list {
+                if let p = e.pageIndex, p <= page, !(best.map { p < $0.page } ?? false) {
+                    best = (p, e.label)
+                }
+                walk(e.children)
+            }
+        }
+        walk(entries)
+        return best?.label.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
 }
 
 /// 目录列表（可折叠树）。空目录给出占位；点条目回调跳转。

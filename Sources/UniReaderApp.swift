@@ -560,6 +560,21 @@ struct UniReaderApp: App {
                 }
                 .keyboardShortcut("0", modifiers: .command)
                 Divider()
+                // 跳转历史（`JumpHistory`）：⌘[ / ⌘] 是浏览器/Xcode 的通用口径。
+                // 浮窗开关用 ⌥⌘J —— ⌥⌘H 是系统的「隐藏其他」，抢不得。
+                Button(L("Back to Previous Position")) {
+                    NotificationCenter.default.post(name: .jumpBackRequested, object: nil)
+                }
+                .keyboardShortcut("[", modifiers: .command)
+                Button(L("Forward to Next Position")) {
+                    NotificationCenter.default.post(name: .jumpForwardRequested, object: nil)
+                }
+                .keyboardShortcut("]", modifiers: .command)
+                Button(L("Jump History")) {
+                    NotificationCenter.default.post(name: .toggleJumpHistory, object: nil)
+                }
+                .keyboardShortcut("j", modifiers: [.command, .option])
+                Divider()
             }
             // ⌘F 查找（由 key 窗口的 ContentView 响应，弹查找栏；同一套 notification 路由已被
             // 缩放命令验证可靠，见上）。
@@ -657,4 +672,8 @@ extension Notification.Name {
     static let toggleSidebar = Notification.Name("com.xvan.UniReader.toggleSidebar")
     static let toggleInspector = Notification.Name("com.xvan.UniReader.toggleInspector")
     static let toggleSnipTool = Notification.Name("com.xvan.UniReader.toggleSnipTool")
+    /// 跳转历史：后退 / 前进 / 开关浮窗（由 key 窗口的 `ContentView` 响应）
+    static let jumpBackRequested = Notification.Name("com.xvan.UniReader.jumpBackRequested")
+    static let jumpForwardRequested = Notification.Name("com.xvan.UniReader.jumpForwardRequested")
+    static let toggleJumpHistory = Notification.Name("com.xvan.UniReader.toggleJumpHistory")
 }

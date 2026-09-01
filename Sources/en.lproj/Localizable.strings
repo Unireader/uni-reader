@@ -379,3 +379,14 @@
 "Synced. Backup saved as %@" = "Synced. Backup saved as %@";
 "%d rows were skipped: their document no longer exists." = "%d rows were skipped: their document no longer exists.";
 "%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them." = "%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them.";
+
+/* 跳转历史（JumpHistory）：目录/搜索/列表跳转的轨迹 + 悬浮窗 */
+"Jump History" = "Jump History";
+"Back to Previous Position" = "Back to Previous Position";
+"Forward to Next Position" = "Forward to Next Position";
+"Keep the jump history in a floating window" = "Keep the jump history in a floating window";
+"No jumps yet" = "No jumps yet";
+"Contents, search and list jumps show up here." = "Contents, search and list jumps show up here.";
+"%d marks" = "%d marks";
+"Clear History" = "Clear History";
+"Show Jump History Buttons" = "Show Jump History Buttons";

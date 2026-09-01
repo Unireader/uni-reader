@@ -22,6 +22,10 @@ struct ContentView: View {
     /// `@StateObject` 只建一次 → 切标签时小窗不重建、照旧摆在旁边（对照场景要的就是这个）。
     @StateObject private var refWindow = RefWindowModel()
 
+    /// 跳转历史浮窗的摆位与开关（`JumpHistoryPanel`）。同样**窗口级**：切标签时窗不动，
+    /// 内容换成那本书的轨迹（历史数据按文档分，挂在 `DocSession.jumps` 上）。
+    @StateObject private var jumpPanel = JumpHistoryPanel()
+
     init(launchDocId: String?, app: AppModel, workspace: WorkspaceManager) {
         self.launchDocId = launchDocId
         _tabs = StateObject(wrappedValue: TabsModel(app: app, workspace: workspace))
@@ -99,6 +103,7 @@ struct ContentView: View {
     @AppStorage("autoStartServer") private var autoStartServer = false // 启动即开平板服务
     @AppStorage("showTOCButton") private var showTOCButton = true    // 工具栏「目录」按钮（设置页可关）
     @AppStorage("showOCRButton") private var showOCRButton = true    // 工具栏「文字识别」按钮（设置页可关）
+    @AppStorage("showJumpHistoryButton") private var showJumpHistoryButton = true   // 工具栏「返回上一位置 / 跳转历史」两枚（设置页可关）
     @AppStorage(TabBarStyle.key) private var tabBarStyleRaw = TabBarStyle.floating.rawValue
     /// 阅读区底部要给标签栏让出的高度（笔架夹取 + 滚动条避让都用它；只有一个标签时为 0）。
     private var tabBarInset: CGFloat {
@@ -132,8 +137,9 @@ struct ContentView: View {
             InspectorView(session: session, documentId: tab.docID,
                           toc: session.toc, tab: $inspectorTab, onSelectTOC: jumpToTOC,
                           onJumpTo: { page, frac in
-                              session.currentPageIndex = page
-                              session.emitAnchor(page: page, frac: frac, origin: "toc")
+                              // 缩略图 / 笔迹 / 注解 / 高亮 / 草稿纸列表的跳转：同样入跳转历史
+                              // （`JumpHistory`），没有现成名字，浮窗按页推章节名显示。
+                              session.jump(page: page, frac: frac, kind: .list)
                           })
                 .inspectorColumnWidth(min: 240, ideal: 300, max: 400)
         }
@@ -290,6 +296,16 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
             if isKeyWindow { showNotes.toggle() }   // ⌘I：与工具栏 inspector 按钮同一状态
         }
+        // 跳转历史（⌘[ / ⌘] / ⌥⌘J）：与工具栏那两枚按钮同一路径。
+        .onReceive(NotificationCenter.default.publisher(for: .jumpBackRequested)) { _ in
+            if isKeyWindow { session.jumpBack() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .jumpForwardRequested)) { _ in
+            if isKeyWindow { session.jumpForward() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleJumpHistory)) { _ in
+            if isKeyWindow { jumpPanel.toggle() }
+        }
         .onChange(of: searchIsActive) { _, on in
             if !on { session.clearSearch() }   // 收起搜索字段 = 清空高亮，下次重新打字
         }
@@ -329,6 +345,16 @@ struct ContentView: View {
             .overlay(alignment: .bottom) { tabBar }
             .overlay { AIInlineLayer(session: session) }
             .overlay { refWindowLayer }
+            .overlay { jumpHistoryLayer }
+    }
+
+    /// 跳转历史浮窗层。排在参考窗**之后** = 叠在它上面（参考窗是摆着对照看的一块，历史窗是随手
+    /// 点两下就关的小东西，真重叠时该让它在上）。草稿纸开着时不显示——同标签栏/参考窗的既有处理。
+    @ViewBuilder
+    private var jumpHistoryLayer: some View {
+        if session.openPadID == nil {
+            JumpHistoryView(panel: jumpPanel, session: session)
+        }
     }
 
     /// 参考窗层。排在 AI 面板**之后** = 叠在它上面（面板是贴右缘的一条，小窗是浮在阅读区上的一块，
@@ -343,8 +369,7 @@ struct ContentView: View {
                           onGotoMain: { page in
                               // 与目录跳转同一条路径；`origin` 沿用 "toc"（同类「外部指定位置」的跳转，
                               // 防回环语义一致），不新造一个各端都没见过的来源名。
-                              session.currentPageIndex = page
-                              session.emitAnchor(page: page, frac: 0, origin: "toc")
+                              session.jump(page: page, frac: 0, kind: .list)
                           })
         }
     }
@@ -413,6 +438,28 @@ struct ContentView: View {
                 }
                 .disabled(session.pdf == nil)
                 .popover(isPresented: $showTOCPopover, arrowEdge: .bottom) { tocPopover }
+            }
+
+            if showJumpHistoryButton {
+                // 返回上一位置（⌘[）。
+                // 🔴 **别在工具栏 Button 上挂 `.contextMenu`**：2026-09-01 真机实测长按/右键
+                // 都没有反应（Tahoe 工具栏的 item 不走视图那套 contextMenu）。挑着跳请开浮窗
+                // （⌥⌘J），那里是完整列表。想在工具栏上做下拉只能换成 `Menu`，而那会把这一组的
+                // 玻璃胶囊拆成独立圆钮（CLAUDE.md 里那条实测规则），不值当。
+                Button {
+                    session.jumpBack()
+                } label: {
+                    Label(L("Back to Previous Position"), systemImage: "arrow.uturn.backward")
+                }
+                .disabled(!session.jumps.canGoBack)
+                .help(L("Back to Previous Position"))
+                Button {
+                    jumpPanel.toggle()
+                } label: {
+                    Label(L("Jump History"), systemImage: "clock.arrow.circlepath")
+                }
+                .disabled(session.pdf == nil)
+                .help(L("Keep the jump history in a floating window"))
             }
 
             if showOCRButton {
@@ -607,8 +654,8 @@ struct ContentView: View {
     /// 跳转到目录项（页 + 页内比例）。origin=toc → 阅读区(PageStreamView)跟随，同时推给平板。
     private func jumpToTOC(_ e: TOCEntry) {
         guard let page = e.pageIndex else { return }   // 坏书签（无目标页）：不跳转，别把它当第 1 页
-        session.currentPageIndex = page
-        session.emitAnchor(page: page, frac: e.frac, origin: "toc")
+        // 走 `jump` 而不是裸 `emitAnchor`：顺带在跳转历史里记一条（章节名就是现成的标签）。
+        session.jump(page: page, frac: e.frac, kind: .toc, label: e.label)
     }
 
     private var indexingBadge: some View {

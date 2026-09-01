@@ -188,8 +188,9 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] t in
                 guard let self, let s = self.padSession else { return }
-                if s.currentPageIndex != t.page { s.currentPageIndex = t.page }
-                s.emitAnchor(page: t.page, frac: t.frac, origin: "toc")
+                // 走 `jump` 而不是裸 `emitAnchor`：平板点目录/输入页码同样是「非连续跳转」，
+                // 该和 Mac 侧点目录一样在跳转历史里留一条（`JumpHistory`）。
+                s.jump(page: t.page, frac: t.frac, kind: .toc)
                 self.push()
             }
             .store(in: &cancellables)

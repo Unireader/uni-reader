@@ -381,3 +381,14 @@
 "Synced. Backup saved as %@" = "已同步。备份：%@";
 "%d rows were skipped: their document no longer exists." = "有 %d 行被跳过：它们所属的文档已经不在了。";
 "%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them." = "有 %d 个版本被跳过：对面已经有同一份文件了。用「关联为同一文档」把它们合并。";
+
+/* 跳转历史（JumpHistory）：目录/搜索/列表跳转的轨迹 + 悬浮窗 */
+"Jump History" = "跳转历史";
+"Back to Previous Position" = "返回上一位置";
+"Forward to Next Position" = "前进到下一位置";
+"Keep the jump history in a floating window" = "把跳转历史摆成悬浮窗";
+"No jumps yet" = "还没有跳转记录";
+"Contents, search and list jumps show up here." = "点目录、搜索命中、列表跳转都会记在这里。";
+"%d marks" = "%d 条记录";
+"Clear History" = "清空历史";
+"Show Jump History Buttons" = "显示跳转历史按钮";

@@ -300,6 +300,41 @@ final class DocSession: ObservableObject, Identifiable {
         scrollAnchor = ScrollAnchor(page: page, frac: min(max(0, frac), 1), seq: anchorSeq, origin: origin, senderT: senderT)
     }
 
+    // MARK: 跳转历史（每文档一份，纯内存不落库；见 `JumpHistory`）
+
+    /// 本文档走过的跳转轨迹。换文档时由 `DocTabModel.load` 清空。
+    @Published var jumps = JumpHistory()
+
+    /// 此刻停在哪儿 —— 作为「离开点」入历史。位置取一路维护着的 `scrollAnchor`
+    /// （本机滚动每帧在写），它比 `currentPageIndex` 多一个页内比例，回来才回得准。
+    var currentMark: JumpMark {
+        JumpMark(page: scrollAnchor?.page ?? currentPageIndex,
+                 frac: scrollAnchor?.frac ?? 0, kind: .reading)
+    }
+
+    /// **所有非连续跳转的唯一入口**：记一条历史 + 定页 + 发锚点。
+    ///
+    /// 连续滚动（origin `"mac"`/`"pad"`）与开文档/切标签的恢复（`"restore"`）**不走这里**——
+    /// 那些不是「跳转」，记进历史只会把轨迹淹掉。
+    func jump(page: Int, frac: Double, kind: JumpKind, label: String = "", origin: String = "toc") {
+        jumps.record(leaving: currentMark,
+                     to: JumpMark(page: page, frac: frac, kind: kind, label: label))
+        currentPageIndex = page
+        emitAnchor(page: page, frac: frac, origin: origin)
+    }
+
+    /// 历史内导航（后退/前进/点浮窗列表）：跳过去，但**不再记新历史**——
+    /// 否则每退一步都会生出一条新记录，越退越多、再也退不回去（自噬）。
+    private func goToMark(_ m: JumpMark) {
+        currentPageIndex = m.page
+        emitAnchor(page: m.page, frac: m.frac, origin: "toc")
+    }
+
+    func jumpBack() { if let m = jumps.back() { goToMark(m) } }
+    func jumpForward() { if let m = jumps.forward() { goToMark(m) } }
+    func jumpToMark(id: UUID) { if let m = jumps.go(to: id) { goToMark(m) } }
+    func clearJumps() { jumps.reset() }
+
     // MARK: 全文搜索（T2）——PDFKit `findString` 找命中，防抖后台跑，边打字边高亮+跳首个命中。
 
     @Published var searchQuery = ""
@@ -376,8 +411,9 @@ final class DocSession: ObservableObject, Identifiable {
         guard searchMatches.indices.contains(index) else { return }
         currentMatchIndex = index
         let m = searchMatches[index]
-        currentPageIndex = m.page
-        emitAnchor(page: m.page, frac: m.frac, origin: "search")
+        // 记历史：同一个搜索词的连续「下一个」会就地更新那一条，不会刷屏（`JumpHistory` 规则 ③）。
+        jump(page: m.page, frac: m.frac, kind: .search,
+             label: searchQuery.trimmingCharacters(in: .whitespacesAndNewlines), origin: "search")
     }
 
     // MARK: OCR（T3，Paddle PP-OCRv6）——逐页按需 + 手动全量；结果=准确文本层，选择/复制/搜索改用它。

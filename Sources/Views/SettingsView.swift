@@ -16,6 +16,7 @@ struct SettingsView: View {
     @AppStorage("renderCacheMB") private var renderCacheMB = 256
     @AppStorage("showTOCButton") private var showTOCButton = true    // 工具栏「目录」按钮
     @AppStorage("showOCRButton") private var showOCRButton = true    // 工具栏「文字识别」按钮
+    @AppStorage("showJumpHistoryButton") private var showJumpHistoryButton = true   // 工具栏「返回上一位置 / 跳转历史」
 
     var body: some View {
         TabView {
@@ -40,6 +41,7 @@ struct SettingsView: View {
             Section {
                 Toggle(L("Show Contents Button"), isOn: $showTOCButton)
                 Toggle(L("Show Text Recognition (OCR) Button"), isOn: $showOCRButton)
+                Toggle(L("Show Jump History Buttons"), isOn: $showJumpHistoryButton)
             } header: {
                 Text(L("Toolbar"))
             }
