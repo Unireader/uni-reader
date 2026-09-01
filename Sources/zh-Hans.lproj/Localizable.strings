@@ -352,7 +352,11 @@
 "%d files · about %@" = "%d 个文件 · 约 %@";
 "%d ticked books have no file right now and will be skipped." = "有 %d 本勾选的书现在找不到文件，会被跳过。";
 "Mirror created: %d files, %d baseline rows." = "镜像已建好：%d 个文件，基线 %d 行。";
-"Create Mirror…" = "建立镜像…";
+"Create Mirror" = "建立镜像";
+"Kept at %@" = "存放在 %@";
+"This workspace already has an offline copy on this Mac." = "这个工作区在本机已经有一份离线副本了。";
+"Sync that one back and delete it first if you want a fresh copy." = "想重做一份，先把那份同步回源盘、再把它删掉。";
+"It’s in Recent Workspaces now — switch to it from the workspace menu." = "它已经进了「最近工作区」，从工作区菜单一键切过去即可。";
 "Sync Preview" = "同步预览";
 "Looking for the source workspace…" = "正在找源工作区…";
 "The source workspace isn’t connected." = "源工作区没有连接。";

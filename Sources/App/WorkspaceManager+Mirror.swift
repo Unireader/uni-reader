@@ -42,9 +42,66 @@ extension WorkspaceManager {
         }
     }
 
+    // MARK: - 镜像放哪（不让用户挑）
+
+    /// 镜像的固定存放位置：`~/Library/Application Support/UniReader/Mirrors/`。
+    ///
+    /// **不弹保存面板让用户选位置**——「放哪」这件事没有一个「用户比我们更懂」的答案，反倒全是坑：
+    /// 挑回源盘上就等于没离线；挑到 `~/Documents` 或桌面，一旦开着 iCloud「桌面与文稿」，
+    /// 几 GB 的镜像会被整份上传，而且系统随时可能把它清成 dataless 占位文件——SQLite 和 PDF
+    /// 当场打不开，而这份镜像正是「硬盘不在手上时唯一能读的那份」。应用支持目录不参与任何同步，
+    /// 也与 `WorkspaceManager.defaultFolder()`（默认工作区）同一处根。
+    ///
+    /// 代价是它在 `~/Library` 下、Finder 里默认藏着。补偿两条：建完自动进「最近工作区」
+    /// （侧栏一键切过去，用户根本不需要知道路径），面板上再给一个「在 Finder 中显示」。
+    /// 这与安卓端 `MirrorBuilder.defaultParent()` 是同一条思路：位置由 App 定，用户只管内容。
+    static var mirrorsRoot: URL {
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("UniReader/Mirrors", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// 这个工作区的镜像该叫什么、落在哪。重名加序号——本机可能同时镜像着两块盘上的同名工作区。
+    static func plannedMirrorURL(name: String) -> URL {
+        let base = sanitizedPackageName(name, fallback: "Workspace")
+        let root = mirrorsRoot
+        let fm = FileManager.default
+        for i in 1...99 {
+            let leaf = i == 1 ? "\(base).\(packageExtension)" : "\(base) \(i).\(packageExtension)"
+            let candidate = root.appendingPathComponent(leaf, isDirectory: true)
+            if !fm.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return root.appendingPathComponent("\(base) \(UUID().uuidString.prefix(8)).\(packageExtension)",
+                                          isDirectory: true)
+    }
+
+    /// 本工作区的 id（没有就是还没参与过镜像）。**只读不生成**：建镜像时 `MirrorBuilder` 会补上。
+    var workspaceId: String? { store?.workspaceId }
+
+    /// 本机是否已经有这个工作区的镜像。**判据是 `workspace_id`，不是名字**（同 `findMirrorSource`）。
+    ///
+    /// 用来拦住「已经有一份了还闷头再建一份」：那等于把笔迹分散到两份镜像里，
+    /// 而且两份都各自带着自己的基线，谁也说不清哪份是全的。
+    static func existingMirror(of workspaceId: String) -> URL? {
+        let fm = FileManager.default
+        let kids = (try? fm.contentsOfDirectory(at: mirrorsRoot, includingPropertiesForKeys: nil,
+                                                options: [.skipsHiddenFiles])) ?? []
+        for url in kids where url.pathExtension == packageExtension {
+            guard let db = try? SQLiteDB(path: url.appendingPathComponent("UniReader/library.sqlite").path)
+            else { continue }
+            defer { db.close() }
+            let of = (try? db.query("SELECT value FROM meta WHERE key='\(MirrorStore.metaMirrorOf)'"))?
+                .first?["value"] as? String
+            if of == workspaceId { return url }
+        }
+        return nil
+    }
+
     // MARK: - 建镜像
 
     /// 建镜像。**在后台线程调用**（拷 PDF 是 GB 级）。
+    /// `destination` 由 [plannedMirrorURL] 算出、界面上先摆给用户看，不经保存面板挑选。
     func makeMirror(to destination: URL, documentsWithPDF: Set<String>,
                     progress: ((String, Double) -> Void)? = nil) throws -> MirrorBuilder.Result {
         guard let store, let folder else { throw MirrorBuilder.Failure.sourceIsMirror }

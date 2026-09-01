@@ -6,7 +6,8 @@ import SwiftUI
 
 // MARK: - 建镜像
 
-/// 选内容 + 选位置 + 看估算 + 建。
+/// 选内容 + 看估算 + 建。**位置不让用户挑**（理由见 `WorkspaceManager.mirrorsRoot`）：
+/// 这里只把算好的落点摆出来，建完给一个「在 Finder 中显示」，并自动进「最近工作区」。
 struct MakeMirrorSheet: View {
     @EnvironmentObject var workspace: WorkspaceManager
     @Environment(\.dismiss) private var dismiss
@@ -14,6 +15,10 @@ struct MakeMirrorSheet: View {
     /// 勾了「带 PDF」的书。默认全勾 —— 想做的本来就是「整个搬走」，取消才是少数动作。
     @State private var withPDF: Set<String> = []
     @State private var estimate: MirrorBuilder.Estimate?
+    /// 算好的落点（`onAppear` 定一次，全程就用它）
+    @State private var destination: URL?
+    /// 本机已经有的那份镜像。非 nil 就不给再建（见 `WorkspaceManager.existingMirror`）
+    @State private var existing: URL?
     @State private var running = false
     @State private var step = ""
     @State private var fraction: Double = 0
@@ -64,6 +69,22 @@ struct MakeMirrorSheet: View {
                 }
             }
 
+            if let existing {
+                // 已经有一份还闷头再建，等于把笔迹分散到两份镜像里，谁也说不清哪份是全的
+                Label(L("This workspace already has an offline copy on this Mac."),
+                      systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.orange)
+                Text(L("Sync that one back and delete it first if you want a fresh copy."))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(L("Show in Finder")) { reveal(existing) }.controlSize(.small)
+            } else if let destination, done == nil {
+                // 位置是 App 定的，但不能是个黑箱：先把落点摆出来
+                Text(String(format: L("Kept at %@"), tilde(destination)))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+            }
+
             if running {
                 ProgressView(value: fraction) { Text(step) }
             }
@@ -74,15 +95,22 @@ struct MakeMirrorSheet: View {
                 Label(String(format: L("Mirror created: %d files, %d baseline rows."),
                              done.copiedFiles, done.baseRows),
                       systemImage: "checkmark.circle").font(.callout)
+                // 已经进了「最近工作区」，侧栏一键切过去；这个按钮只给想自己拷走的人
+                Text(L("It’s in Recent Workspaces now — switch to it from the workspace menu."))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(L("Show in Finder")) { reveal(done.url) }.controlSize(.small)
             }
 
             HStack {
                 Spacer()
-                Button(L("Cancel")) { dismiss() }
+                Button(done == nil ? L("Cancel") : L("Done")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(L("Create Mirror…")) { chooseDestinationAndRun() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(running)
+                if done == nil {
+                    Button(L("Create Mirror")) { run() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(running || existing != nil)
+                }
             }
         }
         .padding(20)
@@ -90,17 +118,19 @@ struct MakeMirrorSheet: View {
         .onAppear {
             withPDF = Set(workspace.documents.map(\.id))
             recomputeEstimate()
+            existing = workspace.workspaceId.flatMap { WorkspaceManager.existingMirror(of: $0) }
+            destination = WorkspaceManager.plannedMirrorURL(name: workspace.name)
         }
     }
 
     private func recomputeEstimate() { estimate = workspace.mirrorEstimate(documentsWithPDF: withPDF) }
 
-    private func chooseDestinationAndRun() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.folder]
-        panel.nameFieldStringValue = "\(workspace.name).\(WorkspaceManager.packageExtension)"
-        panel.prompt = L("Create")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+    private func tilde(_ url: URL) -> String { (url.path as NSString).abbreviatingWithTildeInPath }
+
+    private func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+
+    private func run() {
+        guard let url = destination else { return }
         running = true; error = nil; done = nil
         let ids = withPDF
         // 拷 PDF 是 GB 级、慢卷上建库是秒级 —— 主线程做必然转菊花
@@ -109,7 +139,11 @@ struct MakeMirrorSheet: View {
                 let r = try workspace.makeMirror(to: url, documentsWithPDF: ids) { s, f in
                     DispatchQueue.main.async { step = s; fraction = f }
                 }
-                DispatchQueue.main.async { running = false; done = r }
+                DispatchQueue.main.async {
+                    running = false; done = r
+                    // 路径藏在 ~/Library 下，这一步是「用户不必知道路径」的那半边保证
+                    WorkspaceRegistry.shared.rememberRecent(r.url)
+                }
             } catch {
                 DispatchQueue.main.async { running = false; self.error = error.localizedDescription }
             }
