@@ -740,6 +740,11 @@ final class DocTabModel: ObservableObject, Identifiable {
         let loaded = workspace.bookmarks(documentId: id)   // 已按 Bookmark.before 排好
         session.persistedBookmarks = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
         session.bookmarks = loaded
+        // 打点（`touch ~/Library/Logs/UniReader-ws.log` 才写盘）：页右缘那枚旗标只画在**书签自己
+        // 那一页**上，所以「看不到」时第一件要分清的事就是「库里有没有、在第几页」。
+        if !loaded.isEmpty {
+            wsLog("书签装载 \(loaded.count) 枚，页码 \(loaded.map { $0.page + 1 })")
+        }
     }
 
     /// 内存书签 ↔ 库对账：新增/改名 upsert；已无的 delete。用值快照比较，改名也识别为「变更」。

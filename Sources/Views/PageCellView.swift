@@ -45,6 +45,9 @@ struct PageCellView: View {
     /// 缩放期间的墨迹位图快照（非 nil 即用它顶替墨迹 Canvas）。见 `ReaderSurface.makeInkSnapshots`。
     var inkSnapshot: CGImage? = nil
 
+    /// 哪一枚书签旗标正开着 popover（瞬态，不落库）。
+    @State private var openBookmark: UUID?
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             // 纪律 1：未出图 = 一张白纸，永不闪灰/黑。画板模式下这张纸连同页边一起铺
@@ -196,11 +199,11 @@ struct PageCellView: View {
             // 与两种图钉同一套形制（扁平圆底 + SF Symbol + 0.5 描边，无渐变高光），只换图标与配色。
             // 点它出菜单：书签点开没有内容可展示（跳转从目录去），页面上这一枚的用处是
             // 「一眼看出这一处标过」+ 就地改名/取消。
+            // 🔴 **别用 `Menu`**：它是 AppKit 托管控件，`spike/bookmark-flag-look.swift` 出的样张里
+            // 同样的位置 Button 画得出来、Menu 只剩一个「不支持」的黄框。这里换成
+            // Button + 原生 popover —— 与两种图钉同一种控件，渲染路径也就同一条。
             ForEach(bookmarks) { b in
-                Menu {
-                    Button(L("Rename…")) { onRenameBookmark(b) }
-                    Button(L("Delete"), role: .destructive) { onDeleteBookmark(b) }
-                } label: {
+                Button { openBookmark = (openBookmark == b.id ? nil : b.id) } label: {
                     Image(systemName: "bookmark.fill")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.black.opacity(0.75))
@@ -208,10 +211,23 @@ struct PageCellView: View {
                         .background(Self.bookmarkMarker, in: Circle())
                         .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)     // 不要那个下三角：这是一枚标记，不是下拉框
-                .fixedSize()
+                .buttonStyle(.plain)
                 .help(b.title)
+                .popover(isPresented: Binding(get: { openBookmark == b.id },
+                                              set: { if !$0 { openBookmark = nil } }),
+                         arrowEdge: .trailing) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // 红线：popover 是 material 底，文字一律显式 .primary，层级差异只用字号表达
+                        Text(b.title).font(.callout.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
+                        Text(String(format: L("Page %d"), b.page + 1))
+                            .font(.caption).foregroundStyle(.primary)
+                        Divider()
+                        Button(L("Rename…")) { openBookmark = nil; onRenameBookmark(b) }
+                        Button(L("Delete"), role: .destructive) { openBookmark = nil; onDeleteBookmark(b) }
+                    }
+                    .padding(12)
+                    .frame(minWidth: 160, alignment: .leading)
+                }
                 .position(x: size.width - 12,
                           y: min(max(b.frac * size.height, 10), size.height - 10))
             }
