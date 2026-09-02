@@ -506,8 +506,8 @@ final class WorkspaceManager: ObservableObject {
 
     /// 读取某文档已落库的全部手写笔画（按页/时间序），用于重开恢复。
     func inkStrokes(documentId: String) -> [InkStroke] {
-        ((try? store?.notes(documentId: documentId)) ?? [])
-            .compactMap { $0.kind == InkStroke.noteKind ? InkStroke(note: $0) : nil }
+        ((try? store?.notes(documentId: documentId, kind: InkStroke.noteKind)) ?? [])
+            .compactMap(InkStroke.init(note:))
     }
 
     /// 落库/更新一条手写笔画（笔画完成时调用）。空笔画自动跳过。
@@ -540,8 +540,8 @@ final class WorkspaceManager: ObservableObject {
 
     /// 读取某文档全部草稿纸上的笔迹（含所有纸；点集是画布坐标）。用 `saveInkStroke`/`deleteInkStroke` 写。
     func scratchStrokes(documentId: String) -> [InkStroke] {
-        ((try? store?.notes(documentId: documentId)) ?? [])
-            .compactMap { $0.kind == InkStroke.scratchNoteKind ? InkStroke(note: $0) : nil }
+        ((try? store?.notes(documentId: documentId, kind: InkStroke.scratchNoteKind)) ?? [])
+            .compactMap(InkStroke.init(note:))
     }
 
     // MARK: - 笔迹图层持久化（ink_layer 表，v7；挂逻辑文档，全版本共用）
@@ -588,8 +588,8 @@ final class WorkspaceManager: ObservableObject {
 
     /// 读取某文档已落库的全部文字注解（按页 / 页内位置序），用于重开恢复。
     func textNotes(documentId: String) -> [TextNote] {
-        ((try? store?.notes(documentId: documentId)) ?? [])
-            .compactMap { $0.kind == TextNote.noteKind ? TextNote(note: $0) : nil }
+        ((try? store?.notes(documentId: documentId, kind: TextNote.noteKind)) ?? [])
+            .compactMap(TextNote.init(note:))
             .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
     }
 
@@ -608,8 +608,8 @@ final class WorkspaceManager: ObservableObject {
 
     /// 读取某文档已落库的全部高亮（按页 / 页内位置序），用于重开恢复。
     func highlights(documentId: String) -> [Highlight] {
-        ((try? store?.notes(documentId: documentId)) ?? [])
-            .compactMap { $0.kind == Highlight.noteKind ? Highlight(note: $0) : nil }
+        ((try? store?.notes(documentId: documentId, kind: Highlight.noteKind)) ?? [])
+            .compactMap(Highlight.init(note:))
             .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
     }
 
@@ -628,8 +628,8 @@ final class WorkspaceManager: ObservableObject {
 
     /// 读取某文档已落库的全部 AI 会话绑定（按页 / 页内位置序），用于重开恢复。
     func aiThreads(documentId: String) -> [AIThread] {
-        ((try? store?.notes(documentId: documentId)) ?? [])
-            .compactMap { $0.kind == AIThread.noteKind ? AIThread(note: $0) : nil }
+        ((try? store?.notes(documentId: documentId, kind: AIThread.noteKind)) ?? [])
+            .compactMap(AIThread.init(note:))
             .sorted { $0.page != $1.page ? $0.page < $1.page : $0.createdAt < $1.createdAt }
     }
 

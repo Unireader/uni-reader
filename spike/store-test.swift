@@ -71,6 +71,39 @@ let got = try store.notes(documentId: d1.id).first!
 check(got.anchor == CGRect(x: 1, y: 2, width: 3, height: 4) && got.payload == Data("{\"pts\":[[0.1,0.2,0.5]]}".utf8),
       "note anchor/payload 往返一致")
 
+// 7a) 按 kind 过滤（开文档的热路径：五个 loader 各取一类，别再整表读五遍）
+var hi = LibNote(id: UUID().uuidString, documentId: d1.id, kind: 3, page: 3,
+                 anchor: .zero, payload: Data("{}".utf8), createdAt: now, updatedAt: now)
+try store.upsertNote(hi)
+check(try store.notes(documentId: d1.id).count == 2, "两类各一条")
+check(try store.notes(documentId: d1.id, kind: 2).count == 1, "kind=2 只取笔迹")
+check(try store.notes(documentId: d1.id, kind: 3).first?.id == hi.id, "kind=3 只取高亮")
+check(try store.notes(documentId: d1.id, kind: 4).isEmpty, "没有的 kind 返回空")
+hi.page = 1
+try store.upsertNote(hi)
+check(try store.notes(documentId: d1.id, kind: 3).map(\.page) == [1], "kind 过滤保持 page ASC 排序")
+try store.deleteNote(id: hi.id)
+
+// 7a2) ISO 时间戳：规范形态走手写解析，必须与 ISO8601DateFormatter 逐位一致（见 `ISO.date`）
+let refFmt: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+}()
+func sameDate(_ s: String) -> Bool {
+    switch (ISO.date(s), refFmt.date(from: s)) {
+    case (nil, nil): return true
+    case let (a?, b?): return abs(a.timeIntervalSince1970 - b.timeIntervalSince1970) < 0.0005
+    default: return false
+    }
+}
+check(["1970-01-01T00:00:00.000Z", "1969-12-31T23:59:59.999Z", "2000-02-29T12:00:00.500Z",
+       "2024-02-29T23:59:59.999Z", "2100-03-01T00:00:00.000Z", "1900-01-01T00:00:00.000Z",
+       "2026-09-02T01:52:43.855Z"].allSatisfy(sameDate), "ISO 规范形态：手写解析 == formatter")
+check(["2026-09-02T01:52:43Z", "2026-09-02T01:52:43.855+08:00", "2026-09-02 01:52:43.855Z",
+       "2026-13-02T01:52:43.855Z", "2026-09-32T01:52:43.855Z", "2026-09-02T25:52:43.855Z",
+       "2026-12-31T23:59:60.000Z", "", "x"].allSatisfy(sameDate), "ISO 非规范形态：回落 formatter，结论一致")
+let rt = Date(timeIntervalSince1970: 1_788_000_000.123)
+check(ISO.date(ISO.string(rt)).map { abs($0.timeIntervalSince(rt)) < 0.0005 } == true, "ISO string → date 往返")
+
 // 7b) 阅读进度往返（含缩放倍率 + 横向比例，schema v5）
 try store.updateProgress(documentId: d1.id, page: 5, frac: 0.375, zoom: 1.75, hfrac: 0.4)
 let dp = try store.document(id: d1.id)!

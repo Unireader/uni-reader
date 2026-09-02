@@ -427,6 +427,14 @@ final class LibraryStore {
     func notes(documentId: String) throws -> [LibNote] {
         try db.query("SELECT * FROM note WHERE document_id=? ORDER BY page ASC, created_at ASC", [.text(documentId)]).map(Self.note)
     }
+    /// 只取某一类。**开文档必须用它**：`note` 表混着五类（文字注解 0 / AI 会话 1 / 页内笔迹 2 /
+    /// 高亮 3 / 草稿纸笔迹 4），而 `load()` 里五个 loader 各要一类——都用上面那个不带 kind 的版本，
+    /// 就是把整张表连同全部 payload **读五遍**再在 Swift 里筛。
+    /// 2026-09-02 实测（3506 行 / 13.9MB 的文档）：五次全表读 1090ms，换成五次窄查约 220ms。
+    func notes(documentId: String, kind: Int) throws -> [LibNote] {
+        try db.query("SELECT * FROM note WHERE document_id=? AND kind=? ORDER BY page ASC, created_at ASC",
+                     [.text(documentId), .int(Int64(kind))]).map(Self.note)
+    }
     func notes(documentId: String, page: Int) throws -> [LibNote] {
         try db.query("SELECT * FROM note WHERE document_id=? AND page=? ORDER BY created_at ASC",
                      [.text(documentId), .int(Int64(page))]).map(Self.note)
