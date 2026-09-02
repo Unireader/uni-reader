@@ -163,6 +163,27 @@ canvas { position:fixed; inset:0; }
 .tocText { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tocPage { flex:none; font-size:12px; color:#8b949e; font-variant-numeric:tabular-nums; }
 .tocLabel.cur .tocPage { color:#58a6ff; }
+/* 书签（REQUIREMENTS.md §1.9）：与目录合并在同一棵树里，靠缎带图标 + 暖红一眼分出来。
+   行结构与目录行一样（.tocRow/.tocLabel），只多两枚操作键。 */
+.bmAddBar { display:flex; align-items:center; gap:6px; margin:2px 2px 8px; }
+.bmAdd { flex:1; display:flex; align-items:center; gap:7px; padding:8px;
+  border:1px dashed #30363d; border-radius:8px; background:transparent; color:#e6edf3;
+  font-size:13px; text-align:left; }
+.bmAdd:active { background:#21262d; }
+.bmAdd svg { width:15px; height:15px; flex:none; color:#d63c3c; }
+.bmInput { flex:1; min-width:0; padding:7px 8px; border:1px solid #30363d; border-radius:8px;
+  background:#0d1117; color:#e6edf3; font-size:14px; }
+.bmOk, .bmCancel { flex:none; padding:7px 10px; border:0; border-radius:8px; font-size:13px; }
+.bmOk { background:#1f6feb; color:#fff; }
+.bmOk:disabled { background:#21262d; color:#6e7681; }
+.bmCancel { background:transparent; color:#8b949e; }
+.bmDot { color:#d63c3c; }
+.bmDot svg { width:13px; height:13px; }
+.bmEdit, .bmDel { flex:none; width:26px; height:26px; display:flex; align-items:center;
+  justify-content:center; border:0; border-radius:7px; background:transparent; color:#8b949e; padding:0; }
+.bmEdit svg, .bmDel svg { width:14px; height:14px; }
+.bmEdit:active, .bmDel:active { background:#21262d; }
+
 /* 书库行 */
 .libRow { width:100%; display:flex; align-items:center; gap:9px; padding:9px 8px; margin-bottom:2px;
   border:0; border-radius:8px; background:transparent; color:#e6edf3; font-size:14px; text-align:left; }

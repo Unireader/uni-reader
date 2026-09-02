@@ -24,6 +24,16 @@ export interface TocEntry {
   label: string;
 }
 
+/// 一枚书签（Mac `bookmarks` 广播）。用户自己加的定位记录，与 PDF 自带目录是两回事，
+/// 但显示时与目录**合并成同一棵树**（规则见 `tocMerge.ts`）。线上恒按「页 → 页内位置 →
+/// 建立时刻」有序，**别再自己排**。
+export interface BookmarkEntry {
+  id: string;
+  page: number;
+  frac: number;
+  title: string;
+}
+
 /// 草稿纸列表一项（Mac `scratchpads` 广播）。`page` = 锚点所在页（列表里显示「第 N 页」）。
 export interface PadEntry {
   id: string;
@@ -71,6 +81,10 @@ export const S = $state({
   drawerTab: "toc" as "toc" | "lib",   // 停在哪一页（关掉再开回到这里）
   toc: [] as TocEntry[],   // 当前文档目录（Mac toc 广播镜像）
   tocDocId: "",            // 这份目录属于哪个文档（内容哈希）
+  bookmarks: [] as BookmarkEntry[],  // 当前文档书签（Mac bookmarks 广播镜像，与目录合并显示）
+  bookmarksDocId: "",      // 这份书签属于哪个文档（内容哈希，同 tocDocId 的核对口径）
+  bmRenaming: "",          // 正在改名的书签 id（""=没有）；纯本地瞬态
+  bmAdding: false,         // 正在输入新书签的名字；纯本地瞬态
   docV: "",                // 当前显示文档的内容哈希（layout 广播带来）——与 tocDocId 一致才敢渲染目录
   library: [] as LibEntry[],  // 工作区书库（Mac library 广播镜像）
   libraryWs: "",           // 工作区显示名

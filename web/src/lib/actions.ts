@@ -10,6 +10,11 @@ export interface Actions {
   selectDoc(id: string): void;
   /// 打开工作区里的某个文档（库文档 id）。已打开的 Mac 会自己切过去，未打开的新开一个 Mac 窗口。
   openDoc(id: string): void;
+  // ---- 书签（REQUIREMENTS.md §1.9）：三个都只发**请求**，Mac 是唯一真源，等 bookmarks 全量回推 ----
+  /// 在当前视口顶处加一枚（id 本端生成 UUID）。名字空白不发。
+  bookmarkAdd(title: string): void;
+  bookmarkRename(id: string, title: string): void;
+  bookmarkDelete(id: string): void;
   toggleDrawer(): void;
   toggleStats(): void;
   toggleNight(): void;

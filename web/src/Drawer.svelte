@@ -7,39 +7,87 @@
   import { untrack } from "svelte";
   import { S } from "./lib/hud.svelte.js";
   import { actions } from "./lib/actions.js";
+  import { placeBookmarks } from "./lib/tocMerge.js";
   import Icon from "./Icon.svelte";
 
   let expanded = $state(new Set<number>());
   let listEl: HTMLDivElement | undefined = $state(undefined);
+  let nameDraft = $state("");   // 新建/改名输入框里的字
 
   /// 目录归属核对：切档时 layout 与 toc 两条广播的先后没有保证，docId 对不上就不渲染
-  /// （宁可空一瞬，也不能把上一本的目录挂到新书上）。
+  /// （宁可空一瞬，也不能把上一本的目录挂到新书上）。书签同一口径。
   const tocReady = $derived(S.toc.length > 0 && S.tocDocId === S.docV);
+  const bmReady = $derived(S.bookmarks.length > 0 && S.bookmarksDocId === S.docV);
 
-  interface Row { i: number; depth: number; page: number; frac: number; label: string; kids: boolean; parents: number[] }
+  /// 一行：目录项（kind "toc"）或书签（kind "bm"）。`i` 只对目录行有意义（折叠态按它记）。
+  interface Row {
+    kind: "toc" | "bm";
+    key: string;
+    i: number;
+    depth: number;
+    page: number;
+    frac: number;
+    label: string;
+    kids: boolean;
+    parents: number[];
+    id: string;      // 书签 id（目录行为 ""）
+  }
 
-  const rows: Row[] = $derived.by(() => {
-    const t = S.toc, out: Row[] = [], stack: number[] = [];   // stack[d] = 深度 d 的最近一项下标
+  const tocRows: Row[] = $derived.by(() => {
+    const t = tocReady ? S.toc : [], out: Row[] = [], stack: number[] = [];   // stack[d] = 深度 d 的最近一项下标
     for (let i = 0; i < t.length; i++) {
       const e = t[i];
       stack.length = e.depth;
       out.push({
+        kind: "toc", key: "t" + i,
         i, depth: e.depth, page: e.page, frac: e.frac, label: e.label,
         kids: i + 1 < t.length && t[i + 1].depth > e.depth,
         parents: stack.slice().filter((p) => p !== undefined),
+        id: "",
       });
       stack[e.depth] = i;
     }
     return out;
   });
 
+  /// 目录 + 书签合并（规则在 `lib/tocMerge.ts`，与 Mac `TOCMerge.swift` / 安卓 `TocMerge.kt` 同源）。
+  const rows: Row[] = $derived.by(() => {
+    const base = tocRows;
+    const bms = bmReady ? S.bookmarks : [];
+    if (!bms.length) return base;
+    const slots = placeBookmarks(base.map((r) => ({ depth: r.depth, page: r.page })), bms.map((b) => b.page));
+    const ins = new Map<number, Row[]>();
+    bms.forEach((b, k) => {
+      const s = slots[k];
+      const owner = s.owner >= 0 ? base[s.owner] : null;
+      const row: Row = {
+        kind: "bm", key: "b" + b.id,
+        i: -1, depth: s.depth, page: b.page, frac: b.frac, label: b.title, kids: false,
+        parents: owner ? owner.parents.concat([owner.i]) : [],
+        id: b.id,
+      };
+      const arr = ins.get(s.insertBefore);
+      if (arr) arr.push(row); else ins.set(s.insertBefore, [row]);
+    });
+    const out: Row[] = [];
+    for (let i = 0; i < base.length; i++) {
+      const pre = ins.get(i);
+      if (pre) out.push(...pre);
+      out.push(base[i]);
+    }
+    const tail = ins.get(base.length);
+    if (tail) out.push(...tail);
+    return out;
+  });
+
   /// 当前章节：起点不晚于当前页的项里页码最大的那个，并列取先序靠后（更深一层）的。
   /// 不能简单取「最后一个 page <= curPage」——真实 PDF 的书签先序页码常常不单调（Mac 端
   /// TOCListView 同款注释：末尾挂着的坏书签会把高亮永远钉在最后一项）。
+  /// **只认目录行**：它回答的是「我在第几章」，跳到书签行上没有意义（同 Mac）。
   const curIdx = $derived.by(() => {
     let best = -1, bestPage = -1;
     for (const r of rows) {
-      if (r.page < 0 || r.page > S.curPage) continue;
+      if (r.kind !== "toc" || r.page < 0 || r.page > S.curPage) continue;
       if (r.page >= bestPage) { bestPage = r.page; best = r.i; }
     }
     return best;
@@ -78,6 +126,18 @@
     actions.gotoDest(r.page, r.frac);
     S.drawer = false;                // 跳完就收起，让出画布
   }
+  /// 开始输入名字（新建 / 改名共用一个输入框）。名字必填，所以「加书签」天然分两步。
+  function beginAdd(): void { S.bmRenaming = ""; S.bmAdding = true; nameDraft = ""; }
+  function beginRename(r: Row): void { S.bmAdding = false; S.bmRenaming = r.id; nameDraft = r.label; }
+  function cancelName(): void { S.bmAdding = false; S.bmRenaming = ""; nameDraft = ""; }
+  /// 提交：只发请求，Mac 落库后以 bookmarks 全量回推为准（回推到了才收输入态，见 ws.ts）。
+  function commitName(): void {
+    const t = nameDraft.trim();
+    if (!t) return;
+    if (S.bmAdding) actions.bookmarkAdd(t);
+    else if (S.bmRenaming) actions.bookmarkRename(S.bmRenaming, t);
+    nameDraft = "";
+  }
   function open(id: string): void {
     actions.openDoc(id);
     S.drawer = false;
@@ -107,23 +167,56 @@
 
     {#if S.drawerTab === "toc"}
       <div class="drawerBody" bind:this={listEl}>
-        {#if !tocReady}
+        <!-- 加书签：落点 = 当前视口顶那一处（与 Mac 的 ⌘D 同口径）。名字必填 → 先出输入框。 -->
+        <div class="bmAddBar">
+          {#if S.bmAdding}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input class="bmInput" placeholder="书签名字" bind:value={nameDraft} autofocus
+              onkeydown={(e) => { if (e.key === "Enter") commitName(); if (e.key === "Escape") cancelName(); }} />
+            <button class="bmOk" disabled={!nameDraft.trim()} onclick={commitName}>加</button>
+            <button class="bmCancel" onclick={cancelName}>取消</button>
+          {:else}
+            <button class="bmAdd" onclick={beginAdd}><Icon name="bookmark" /> 添加书签</button>
+          {/if}
+        </div>
+        {#if !tocReady && !bmReady}
           <p class="drawerEmpty">本文档没有目录</p>
         {:else}
-          {#each visible as r (r.i)}
-            <div class="tocRow" style="padding-left:{r.depth * 14}px" data-cur={r.i === curIdx}>
-              {#if r.kids}
-                <button class="tocTwist" class:open={expanded.has(r.i)} onclick={() => toggle(r.i)}
-                  aria-label="展开/折叠"><Icon name="chevron-right" /></button>
+          {#each visible as r (r.key)}
+            <div class="tocRow" style="padding-left:{r.depth * 14}px"
+              data-cur={r.kind === "toc" && r.i === curIdx}>
+              {#if r.kind === "bm"}
+                <span class="tocTwist bmDot"><Icon name="bookmark" /></span>
+                {#if S.bmRenaming === r.id}
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <input class="bmInput" bind:value={nameDraft} autofocus
+                    onkeydown={(e) => { if (e.key === "Enter") commitName(); if (e.key === "Escape") cancelName(); }} />
+                  <button class="bmOk" disabled={!nameDraft.trim()} onclick={commitName}>好</button>
+                  <button class="bmCancel" onclick={cancelName}>取消</button>
+                {:else}
+                  <button class="tocLabel bmLabel" onclick={() => jump(r)}>
+                    <span class="tocText">{r.label}</span>
+                    <span class="tocPage">{r.page + 1}</span>
+                  </button>
+                  <button class="bmEdit" title="重命名" aria-label="重命名"
+                    onclick={() => beginRename(r)}><Icon name="pencil" /></button>
+                  <button class="bmDel" title="删除" aria-label="删除"
+                    onclick={() => actions.bookmarkDelete(r.id)}><Icon name="x" /></button>
+                {/if}
               {:else}
-                <span class="tocTwist"></span>
+                {#if r.kids}
+                  <button class="tocTwist" class:open={expanded.has(r.i)} onclick={() => toggle(r.i)}
+                    aria-label="展开/折叠"><Icon name="chevron-right" /></button>
+                {:else}
+                  <span class="tocTwist"></span>
+                {/if}
+                <button class="tocLabel" class:cur={r.i === curIdx} class:dead={r.page < 0}
+                  disabled={r.page < 0} onclick={() => jump(r)}>
+                  <span class="tocText">{r.label || "—"}</span>
+                  <!-- 坏书签留空而不是显示「1」：配合 disabled 表达「跳不过去」（同 Mac 端） -->
+                  <span class="tocPage">{r.page >= 0 ? r.page + 1 : ""}</span>
+                </button>
               {/if}
-              <button class="tocLabel" class:cur={r.i === curIdx} class:dead={r.page < 0}
-                disabled={r.page < 0} onclick={() => jump(r)}>
-                <span class="tocText">{r.label || "—"}</span>
-                <!-- 坏书签留空而不是显示「1」：配合 disabled 表达「跳不过去」（同 Mac 端） -->
-                <span class="tocPage">{r.page >= 0 ? r.page + 1 : ""}</span>
-              </button>
             </div>
           {/each}
         {/if}

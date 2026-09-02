@@ -153,6 +153,21 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     cyclePen,
     selectDoc(id: string) { G.send({ type: "selectDoc", id: id }); },
     openDoc(id: string) { G.send({ type: "openDoc", id: id }); },
+    // 书签：三个都只发请求（Mac 唯一真源，等 bookmarks 全量回推；本地表一个字不改）。
+    // 落点 = **当前视口顶**那一页那一处，与 Mac 端 ⌘D 同一口径。
+    bookmarkAdd(title: string) {
+      if (!title.trim()) return;   // 名字必填：本端也守一遍，别只靠按钮禁用
+      const p = G.topVisiblePage();
+      const frac = G.dispH[p] ? clamp((G.scrollY - G.offY[p]) / G.dispH[p], 0, 1) : 0;
+      G.send({ type: "bookmarkEdit", op: 0, id: crypto.randomUUID(), page: p, frac: frac, title: title.trim() });
+    },
+    bookmarkRename(id: string, title: string) {
+      if (!title.trim()) return;
+      G.send({ type: "bookmarkEdit", op: 1, id: id, page: 0, frac: 0, title: title.trim() });
+    },
+    bookmarkDelete(id: string) {
+      G.send({ type: "bookmarkEdit", op: 2, id: id, page: 0, frac: 0, title: "" });
+    },
     toggleDrawer() { S.drawer = !S.drawer; },   // 开着就关（不管停在哪一页），关着就开回上次那页
     toggleStats() { S.statsOn = !S.statsOn; },
     // 夜间模式：仅反转背景页图 canvas（invert 反亮度、hue-rotate 复原彩色）；墨迹/圆环不反。

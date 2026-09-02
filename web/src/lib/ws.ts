@@ -3,7 +3,7 @@
 import { G, BAR, MODES, clamp, pw, curMode } from "./shared.js";
 import type { Layer, Pen, WireMsg } from "./shared.js";
 import { S, updateHud, updatePageLabel, recordRtt } from "./hud.svelte.js";
-import type { LibEntry, TocEntry } from "./hud.svelte.js";
+import type { BookmarkEntry, LibEntry, TocEntry } from "./hud.svelte.js";
 import { Wire } from "./wire.js";
 
 export function initWs(): void {
@@ -58,6 +58,14 @@ export function initWs(): void {
     // PDF 目录：**带 docId（内容哈希）**，渲染前必须与当前 layout 的 docV 核对——切档瞬间
     // 两条广播的先后没有保证，不核对就会把上一本的目录挂到新书上。
     else if (o.type === "toc") { S.tocDocId = o.docId || ""; S.toc = (o.list || []) as TocEntry[]; }
+    // 书签全量镜像（Mac 唯一真源）：同 toc 的核对口径。列表线上已按「页 → 页内位置 →
+    // 建立时刻」有序，**这里不排也不改**——本端只显示与发请求。
+    else if (o.type === "bookmarks") {
+      S.bookmarksDocId = o.docId || "";
+      S.bookmarks = (o.list || []) as BookmarkEntry[];
+      S.bmRenaming = "";   // 回推到了 = 上一轮改名/删除已落定，收掉输入态
+      S.bmAdding = false;
+    }
     // 收藏笔列表整体同步（画布悬浮工具条实时增删改后，Mac 推下来）：替换本地 PENS + 当前下标。
     else if (o.type === "pens") {
       G.PENS = ((o.list || []) as Pen[]).map(function (p) { return { color: p.color, w: p.w, t: p.t }; });
