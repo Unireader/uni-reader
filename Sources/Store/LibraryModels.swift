@@ -106,5 +106,52 @@ enum ISO {
         return f
     }()
     static func string(_ d: Date) -> String { fmt.string(from: d) }
-    static func date(_ s: String?) -> Date? { s.flatMap { fmt.date(from: $0) } }
+
+    /// 🔴 **规范形态走手写解析，别走 formatter**：`ISO8601DateFormatter.date(from:)` 一次约 30µs，
+    /// 而 `note` 表每行有**两个**时间戳。2026-09-02 实测（一篇 3506 行的文档）：`notes(documentId:)`
+    /// 单次 270ms 里，光这 7012 次解析就占 **209ms（77%）**——而笔迹那 99% 的行
+    /// （`InkStroke(note:)` 只取 id/page/payload）根本不读这两个字段。
+    /// 手写解析约 0.2µs，快两个数量级；不认识的形态照旧回落到 formatter，语义不变。
+    static func date(_ s: String?) -> Date? {
+        guard let s else { return nil }
+        return fast(s) ?? fmt.date(from: s)
+    }
+
+    /// 只认 `string(_:)` 产出的那一种：`YYYY-MM-DDTHH:MM:SS.sssZ`（24 字符，UTC）。
+    /// 任何一位对不上就返回 nil，交给 formatter 去认（别的端写进来的、老数据的其它写法）。
+    private static func fast(_ s: String) -> Date? {
+        if let r = s.utf8.withContiguousStorageIfAvailable({ parseCanonical($0) }) { return r }
+        return Array(s.utf8).withUnsafeBufferPointer { parseCanonical($0) }
+    }
+
+    private static func parseCanonical(_ b: UnsafeBufferPointer<UInt8>) -> Date? {
+        guard b.count == 24,
+              b[4] == 0x2D, b[7] == 0x2D, b[10] == 0x54,      // '-' '-' 'T'
+              b[13] == 0x3A, b[16] == 0x3A, b[19] == 0x2E,    // ':' ':' '.'
+              b[23] == 0x5A                                    // 'Z'
+        else { return nil }
+        func num(_ i: Int, _ n: Int) -> Int? {
+            var v = 0
+            for k in i..<(i + n) {
+                let c = Int(b[k]) &- 48
+                guard c >= 0, c <= 9 else { return nil }
+                v = v * 10 + c
+            }
+            return v
+        }
+        guard let y = num(0, 4), let mo = num(5, 2), let d = num(8, 2),
+              let h = num(11, 2), let mi = num(14, 2), let se = num(17, 2), let msec = num(20, 3),
+              mo >= 1, mo <= 12, d >= 1, d <= 31, h <= 23, mi <= 59, se <= 59
+        else { return nil }   // 秒上界取 59 而不是 60：闰秒 `…:60Z` 被 formatter 判为非法，两边要一致
+        // days-from-civil（Howard Hinnant 的公历算法）：直接算 1970-01-01 起的天数，
+        // 不碰 `Calendar`/`DateComponents`（那两位比 formatter 还慢）。
+        let yy = y - (mo <= 2 ? 1 : 0)
+        let era = (yy >= 0 ? yy : yy - 399) / 400
+        let yoe = yy - era * 400                                        // [0, 399]
+        let doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1      // [0, 365]
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy                 // [0, 146096]
+        let days = era * 146_097 + doe - 719_468
+        return Date(timeIntervalSince1970:
+            Double(days * 86_400 + h * 3600 + mi * 60 + se) + Double(msec) / 1000)
+    }
 }

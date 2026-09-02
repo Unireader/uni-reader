@@ -263,8 +263,10 @@ final class WorkspaceRegistry: ObservableObject {
     /// ⚠️ **这件事是 app 级的，不能挂在某个窗口的 `ContentView` 上**（2026-07-29 实测踩到）：
     /// 屏幕上只剩一个「打不开工作区」的错误态窗口时，那个窗口根本没有 `ContentView`，于是全 app
     /// 没有任何订阅者，双击请求被**静默丢弃**、`pendingWorkspacePath` 还留着陈旧值。
-    /// `openWindow` 只能从视图环境里拿，所以由调用方带进来——但决策逻辑只有这一份。
-    func route(to url: URL, strict: Bool, openWindow: OpenWindowAction) throws {
+    /// 🔴 2026-09-01 窗口层迁到 AppKit 后，`openWindow` 那个参数没了——开窗归
+    /// `AppDelegate.openReaderWindow`，app 级代码直接够得着。上面那条「只剩错误态窗口时请求被
+    /// 静默丢弃」的老账也随之作废（不再依赖任何窗口来认领）。
+    func route(to url: URL, strict: Bool) throws {
         if strict {
             do { try WorkspaceManager.validate(url) } catch {
                 wsLog("route 校验失败：\(error.localizedDescription)")
@@ -277,7 +279,7 @@ final class WorkspaceRegistry: ObservableObject {
             return
         }
         wsLog("route：开新窗口 \(url.path)")
-        openWindow(value: WindowTarget(workspacePath: url.standardizedFileURL.path, docId: nil))
+        AppDelegate.shared?.openReaderWindow(workspacePath: url.standardizedFileURL.path, docId: nil)
     }
 
     // MARK: - 窗口 ↔ 工作区
@@ -339,7 +341,6 @@ final class WorkspaceRegistry: ObservableObject {
     /// 「上次工作区」窗口）。
     /// ⚠️ 必须**排除本窗口自己**：`onAppear` 登记在前、`didFinishLaunching` 那一轮的判定在后，
     /// 不排除的话冷启动第一个窗口会数到自己、把自己判成幻影而自杀（普通启动直接白屏）。
-    func hasOtherRootWindow(than id: UUID) -> Bool { rootWindows.contains { $0 != id } }
 
     /// `RootView` 级窗口登记（不管有没有成功绑定工作区，错误态窗口也要登记）。
     func noteRootWindow(_ id: UUID) { rootWindows.insert(id) }

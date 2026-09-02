@@ -29,6 +29,8 @@ struct RefWindowView: View {
     /// 它与 `model` 此刻本来就相等。
     @State private var localSize: CGSize?
     @State private var localOffset: CGSize?
+    /// 目录弹窗开着没有。
+    @State private var tocOpen = false
 
     private static let corner: CGFloat = 12
     /// 拖动手柄的热区厚度。**比 header 的 8pt 内边距窄**，所以压不到里面那枚书本图标
@@ -82,9 +84,15 @@ struct RefWindowView: View {
     /// 它就会换行、把整条工具栏撑高（用户 2026-08-30 报「宽度太小的时候会被挤得很高」）。
     /// 页码那条当时漏了 `lineLimit`，而文档名又带着 `.fixedSize()` 不许压缩，两头顶着。
     /// 现在：条高固定，文档名可截断（优先让它缩），页码在窄窗下整条隐去。
+    ///
+    /// 🔴 **文档名是拖拽区，不是控件**（用户 2026-09-02）：它原先整块是「换书」菜单的 label，
+    /// 于是标题栏最顺手的那一片全被菜单吃掉、拖不动窗口（系统窗口的标题从来都是拖拽把手）。
+    /// 现在换书收进左边那枚书本图标，标题退回纯 `Text` —— 不吃点击 = 落到下面的 `moveGesture`。
     private func header(container: CGSize) -> some View {
         HStack(spacing: 4) {
             docPicker
+            if !model.toc.isEmpty { tocButton }
+            title
             Spacer(minLength: 2)
             if liveSize.width >= Self.pageNumMinWidth, let n = model.pdf?.pageCount, n > 0 {
                 Text("\(currentPage + 1) / \(n)")
@@ -107,7 +115,19 @@ struct RefWindowView: View {
         .gesture(moveGesture(container: container))
     }
 
+    /// 文档名。**纯文本、不吃点击**——这块是标题栏的拖拽把手（见 `header` 的红线）。
+    /// 🔴 不要 `.fixedSize()`：那会让它拒绝被压缩，窄窗下整条 HStack 的理想宽度超出可用宽度，
+    /// 挤压就落到别的元素上（文本换行 → 条被撑高）。让文档名当那个「可以缩的」。
+    private var title: some View {
+        Text(model.title.isEmpty ? L("Reference") : model.title)
+            .font(.callout).lineLimit(1).truncationMode(.middle)
+            .foregroundStyle(.primary)
+            .layoutPriority(0)
+            .help(model.title)
+    }
+
     /// 换一本书看。列的是**当前工作区的全部文档**（不只已打开的那几篇）。
+    /// 只留一枚图标：标题让位给拖拽（用户 2026-09-02）。
     private var docPicker: some View {
         Menu {
             ForEach(workspace.documents) { d in
@@ -117,20 +137,51 @@ struct RefWindowView: View {
                 }
             }
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "book").imageScale(.small).foregroundStyle(.secondary)
-                Text(model.title.isEmpty ? L("Reference") : model.title)
-                    .font(.callout).lineLimit(1).truncationMode(.middle)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
+            // material 底上一律显式 `.primary`：`.secondary` 会被画得几乎看不见（红线）。
+            Image(systemName: "book")
+                .imageScale(.small)
+                .foregroundStyle(.primary)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        // 🔴 不要 `.fixedSize()`：那会让它拒绝被压缩，窄窗下整条 HStack 的理想宽度超出可用宽度，
-        // 挤压就落到别的元素上（文本换行 → 条被撑高）。让文档名当那个「可以缩的」。
-        .layoutPriority(0)
+        .fixedSize()
+        .layoutPriority(1)   // 图标不参与压缩：要缩就缩文档名
         .help(L("Pick a document to reference"))
+    }
+
+    /// 目录跳转。用 SwiftUI 的 `.popover` 而不是工具栏那套 `NSPopover`——这枚按钮本来就活在
+    /// SwiftUI 覆盖层里，锚点是视图自己，不存在工具栏那次「翻转坐标系把 popover 弹到标题栏上方」
+    /// 的问题（那笔账记在 `APPKIT-WINDOW-PLAN.md §5.1`）。
+    ///
+    /// 条目复用主阅读区那份 `TOCListView`（它只吃 entries / currentPage / onSelect，
+    /// 与 `DocSession` 零耦合），连「当前章节自动展开并高亮」都是现成的。
+    private var tocButton: some View {
+        Button { tocOpen.toggle() } label: {
+            Image(systemName: "list.bullet")
+                .imageScale(.small)
+                .foregroundStyle(.primary)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .layoutPriority(1)
+        .help(L("Contents"))
+        .popover(isPresented: $tocOpen, arrowEdge: .bottom) {
+            VStack(spacing: 0) {
+                Text(L("Contents"))
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                TOCListView(entries: model.toc, currentPage: currentPage) { e in
+                    guard let page = e.pageIndex else { return }   // 坏书签：跳不过去
+                    model.goto(page: page, frac: e.frac)
+                    tocOpen = false
+                }
+                .frame(width: 300, height: 380)
+            }
+        }
     }
 
     /// `.plain` + 显式 `.primary`：`.borderless` 在 material 底上会把图标画得极淡

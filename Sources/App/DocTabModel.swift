@@ -12,9 +12,10 @@ import PDFKit
 /// `ContentView.onChange` 上就会静默丢数据。本类的订阅在 `init` 里建、在 `close()` 里断，
 /// 与「这个标签当前可不可见」完全无关。
 ///
-/// （本项目已被视图生命周期坑过两次——「零尺寸视图 SwiftUI 根本不创建」`RootView.WindowCloser`、
-/// 「`onDisappear` 在窗口建立过程中空放一次」`WindowLifecycle`——所以也没走「给每个标签挂一个
-/// 隐形视图替它跑 onChange」那条捷径。）
+/// （本项目已被视图生命周期坑过两次——「零尺寸视图 SwiftUI 根本不创建」`RootView.WindowCloser`
+/// 与「`onDisappear` 在窗口建立过程中空放一次」`WindowLifecycle`——所以也没走「给每个标签挂一个
+/// 隐形视图替它跑 onChange」那条捷径。前者随 2026-09-01 的 AppKit 窗口层迁移一并删除，
+/// 教训仍然成立：**别把落库押在视图生命周期上**。）
 ///
 /// 与 `DocSession` 的分工：`DocSession` 是**运行时状态**（当前 PDF / 笔迹 / 选区 / 滚动锚点，
 /// 阅读区和平板广播都读它）；本类是**这个标签的账房**（加载、增量对账落库、进度存取、
@@ -39,6 +40,14 @@ final class DocTabModel: ObservableObject, Identifiable {
     @Published var hashMismatch: HashMismatch?
     /// 正在算 hash 入库（导入 / 重定位）→ 阅读区顶部显示「正在索引…」。
     @Published var isHashing = false
+
+    /// **只记下了要开哪篇、还没真装**（懒装载）。
+    ///
+    /// 「装」= 打开 PDF + 解目录 + 把这篇的笔迹/注解/高亮/AI 会话/草稿纸全读进来。2026-09-02 实测
+    /// 一篇 586 页、3506 条笔记的书要 0.33s（冷盘上还要再加 0.6s，见 `HISTORY.md` 同日那条剖析），
+    /// 而冷启动 `restoreTabs` 会一口气恢复一组标签——**一扇窗里只有一个看得见**，其余全是白装。
+    /// 现在只装活动那一个，其余等切过去再装（同安卓模式1 早就有的懒装载）。
+    private(set) var staged = false
 
     /// 本标签是不是窗口里**正显示着**的那个（由 `TabsModel` 维护）。
     /// 🔴 `load()` 只在自己是活动标签时才 `app.setActive` —— 否则冷启动恢复一组标签时，
@@ -250,6 +259,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 切到另一篇文档（原 `ContentView.onChange(of: selectedDocID)` 那一整块）。
     func select(_ id: String?) {
         guard id != docID else { return }
+        staged = false          // 从这一刻起这个标签是"装过的"（哪怕装成空态），进度可以存了
         let old = docID
         // 🔴 **先把旧文档还排在异步队列里的落库同步结清**（同 `close()` 的理由）：`on()` 把落库
         // 跳到了下一拍，万一「最后一次擦除」和「点侧栏切文档」落在同一轮，那一拍就会排到
@@ -293,6 +303,31 @@ final class DocTabModel: ObservableObject, Identifiable {
         let a = session.scrollAnchor
         session.emitAnchor(page: a?.page ?? session.currentPageIndex,
                            frac: a?.frac ?? 0, origin: "restore")
+    }
+
+    // MARK: - 懒装载
+
+    /// 记下这个标签要开哪篇，但**先不装**（见 `staged`）。冷启动恢复标签组用。
+    ///
+    /// 标签栏照常显示书名——`tabTitle` 本来就会退回库里的文档名，不依赖已加载的会话。
+    /// 「打开集」也照常登记：它管的是「这个窗口开着哪几篇」，与装没装无关（下次启动仍要恢复它）。
+    func stage(_ id: String) {
+        guard docID != id else { return }
+        docID = id
+        staged = true
+        // 书名先填上：平板那份会话列表（`AppModel` 的 `docs` 广播）读的是 `session.title`，
+        // 不填的话后台标签在平板上会显示成「未命名」。纯展示字段，装载时照常被 `load` 覆盖。
+        session.title = workspace.document(id: id)?.title ?? ""
+        workspace.setWindowDoc(session.id, id)
+    }
+
+    /// 真正装载（切到这个标签时调）。已经装过、或本来就没 stage 过 → 空操作。
+    func realize() {
+        guard staged, let id = docID else { return }
+        // `select` 按「id 没变就早退」设计，这里先把 `docID` 抹掉，让它把这次当成「从空态开一篇」。
+        // 同一轮同步跑完，界面看不到中间那一下。
+        docID = nil
+        select(id)
     }
 
     private func load(_ id: String?) {
@@ -461,6 +496,10 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 把这篇文档存着的进度覆盖掉。表现就是每次打开文档都自毁一次进度，从来回不到上次的位置。
     private func saveProgress(documentId: String?, anchor: ScrollAnchor? = nil) {
         guard let id = documentId else { return }
+        // 🔴 **还没装载过的标签没有「当前位置」**：此刻 `session` 还是空的（第 0 页、缩放 1），
+        // 存下去就是把库里那篇真正的进度抹成开头。这是懒装载引进来的头号陷阱——关窗（`close`）
+        // 与切走（`select` 存旧文档）两条路都会打到这里，所以守卫放在这个最里层的出口。
+        guard !staged else { return }
         let a = anchor ?? session.scrollAnchor
         workspace.saveProgress(documentId: id, page: a?.page ?? session.currentPageIndex,
                                frac: a?.frac ?? 0, zoom: Double(session.readZoom),

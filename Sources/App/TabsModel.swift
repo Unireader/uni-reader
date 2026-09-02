@@ -33,6 +33,7 @@ final class TabsModel: ObservableObject {
     /// 只订阅**活动标签**的变更并转发（`ContentView` 观察 `tabs` 即等价于观察当前会话）。
     /// 不转发后台标签：它们的落笔/落库与界面无关，转发只会让整窗视图树白重算。
     private var activeBag = Set<AnyCancellable>()
+    private var bag = Set<AnyCancellable>()
     private var closed = false
     /// 本窗口的 NSWindow（`WindowAccessor` 拿到就交过来）。**新建标签时要立刻替它登记**——
     /// 各处按会话 id 反查窗口（AI 浮窗吸附、⌘W 兜底关窗、「双击已打开的工作区 → 激活那扇窗」），
@@ -47,6 +48,23 @@ final class TabsModel: ObservableObject {
         tabs = [first]
         activeID = first.id
         bindActive()
+        bindPadPin()
+    }
+
+    /// 平板可以把跟随**钉**到任意一个会话上（`padSelectedSessionID`），包括本窗口某个还没装载的
+    /// 后台标签——那时推给平板的是一份空会话（没有 PDF、没有笔迹），平板上就是一片空白。
+    /// 所以钉过来就把那个标签装出来；装完 `load()` 末尾的 `sessionDocumentChanged` 会再推一次。
+    private func bindPadPin() {
+        app.$padSelectedSessionID
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] sid in
+                MainActor.assumeIsolated {
+                    guard let self, let sid, let t = self.tabs.first(where: { $0.id == sid }) else { return }
+                    t.realize()
+                }
+            }
+            .store(in: &bag)
     }
 
     /// 转发活动标签的变更。切标签时要重订一次——`DocTabModel` 又转发着它自己会话的变更，
@@ -93,18 +111,24 @@ final class TabsModel: ObservableObject {
     }
 
     /// 建标签但**不切过去**（冷启动恢复一组标签时用：切来切去会让平板跟随反复易主）。
+    /// `staged` = 只记下要开哪篇、先不装（见 `DocTabModel.staged`），由 `activate` 负责装。
     @discardableResult
-    private func appendTab(docID: String?) -> DocTabModel {
+    private func appendTab(docID: String?, staged: Bool = false) -> DocTabModel {
         let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
         tabs.append(t)
         WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
-        if let docID { t.select(docID) }
+        if let docID {
+            if staged { t.stage(docID) } else { t.select(docID) }
+        }
         persist()
         return t
     }
 
     func activate(_ id: UUID) {
         guard let next = tabs.first(where: { $0.id == id }) else { return }
+        // 懒装载：切过去才真装。**必须在 `activeID != id` 判断之外**——冷启动恢复完那一组标签后
+        // `activate` 点的常常就是当前这个（`tabs[0]`），走进去反而不装了，界面就是一片空白。
+        next.realize()
         if activeID != id {
             // 阅读区马上要为这个标签整体重建，先把它「停在哪儿」翻译成待恢复值（见那个方法的红线）。
             next.prepareForReactivation()
@@ -226,9 +250,12 @@ final class TabsModel: ObservableObject {
         }
         ids = ids.filter { workspace.document(id: $0) != nil }   // 已删掉的不恢复
         guard !ids.isEmpty else { return }
-        wsLog("restoreTabs：\(ids.count) 篇 → 本窗口开 \(min(ids.count, max)) 个标签")
+        wsLog("restoreTabs：\(ids.count) 篇 → 本窗口开 \(min(ids.count, max)) 个标签（只装活动那一个）")
+        // 🔴 一律 `stage`（只记 id 不装），最后由下面那句 `activate` 把用户上次停在的那一个装出来。
+        // 从前这里是逐个 `select`，等于冷启动就把每一篇的 PDF、目录、笔迹全读一遍——而窗口里
+        // 只有一个标签看得见（2026-09-02 剖析：大书一篇 0.33s，冷盘上近 1s）。
         for id in ids.prefix(max) where !tabs.contains(where: { $0.docID == id }) {
-            if active.docID == nil && tabs.count == 1 { active.select(id) } else { appendTab(docID: id) }
+            if active.docID == nil && tabs.count == 1 { active.stage(id) } else { appendTab(docID: id, staged: true) }
         }
         if let wantActive, let hit = tabs.first(where: { $0.docID == wantActive }) {
             activate(hit.id)

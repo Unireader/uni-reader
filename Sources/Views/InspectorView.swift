@@ -13,7 +13,6 @@ struct InspectorView: View {
     var onSelectTOC: (TOCEntry) -> Void
     var onJumpTo: (Int, Double) -> Void   // 跳到 (页, 页内比例)：Inspector 笔迹项点击用
 
-    @Environment(\.openWindow) private var openWindow   // 打开 AI 面板浮窗
 
     @State private var variants: [LibVariant] = []
     @State private var locations: [LibLocation] = []
@@ -130,6 +129,7 @@ struct InspectorView: View {
                             Spacer()
                             Text(String((hashByVar[l.variantId] ?? "").prefix(8)))
                                 .font(.system(.caption2, design: .monospaced)).foregroundStyle(.secondary)
+                                .lineLimit(1).fixedSize()   // 同上：8 位哈希断不得，断了也会撑高整行
                         }
                         Text(workspace.resolvedPath(l))
                             .font(.caption2).foregroundStyle(.secondary)
@@ -265,7 +265,7 @@ struct InspectorView: View {
     /// 后续更新仍会回到**本窗口**落库（`AIThreadUpsert` 认 sessionID + documentId 双对）。
     private func openAIThread(_ t: AIThread) {
         guard let docId = documentId else { return }
-        AIPanelModel.shared.present(window: session.windowID) { openWindow(id: $0) }
+        AIPanelModel.shared.present(window: session.windowID)
         AIPanelModel.shared.openThread(t, in: AIBindContext(sessionID: session.id, documentId: docId,
                                                             docTitle: session.title,
                                                             page: t.page, anchor: t.anchor))
@@ -419,7 +419,7 @@ struct InspectorView: View {
             openAIThread(t)
             return
         }
-        AIPanelModel.shared.present(window: session.windowID) { openWindow(id: $0) }
+        AIPanelModel.shared.present(window: session.windowID)
         AIPanelModel.shared.openLoose(src.url, provider: src.provider)
     }
 
@@ -512,8 +512,13 @@ struct InspectorView: View {
         session.highlights.removeAll { $0.id == h.id }
     }
 
+    /// 🔴 `lineLimit(1) + fixedSize()` 一个都不能少：面板窄下来时这行文字会换行，胶囊跟着变高、
+    /// 把整条文件行撑起来（2026-09-01 用户报「Files 的标签挤得很高」，与参考窗顶栏那笔账同源）。
+    /// `fixedSize` 让它拒绝被压缩，于是挤压落到**文件名**上——那一条本来就带 `lineLimit(1)`，
+    /// 截断即可，正是该缩的那个。
     private func badge(_ text: String, _ color: Color) -> some View {
         Text(text).font(.caption2)
+            .lineLimit(1).fixedSize()
             .padding(.horizontal, 5).padding(.vertical, 1)
             .background(color.opacity(0.2), in: Capsule())
             .foregroundStyle(color)

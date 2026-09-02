@@ -85,6 +85,61 @@ Window/AIPanelWindowController
 - **M4 其余窗口**：设置窗（⌘,）、AI 面板浮窗（保持「全局唯一」语义）。
 - **M5 回归**：按 §7 清单真机过一遍。
 
+## 5.1 落地记录（2026-09-01）
+
+**M0 / M1 / M2 / M3 已完成并经用户真机验证**，剩 M4（辅助窗口的细节）与 M5（完整回归）。
+以下是过程中**只有真机才能发现**的坑，逐条记在这里——同类问题下次直接查表：
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| ⌘T 开空标签，整扇窗当场缩成一小块；窗口尺寸也不恢复 | `NSHostingController` 默认把 SwiftUI 内容的 fitting size 报成 `preferredContentSize`，AppKit 拿它调整窗口；autosave 的尺寸随之被覆盖 | 三段一律 `sizingOptions = []` |
+| 侧栏开关跑到工具栏右边去了 | 少了 `.sidebarTrackingSeparator` —— 它是「侧栏区 ↔ 内容区」的分界 | default/allowed 里补上，摆在 `toggleSidebar` 之后 |
+| 侧栏没顶到窗口顶部（不是现代侧栏） | 窗口 styleMask 缺 `.fullSizeContentView`，内容区从标题栏下方才开始 | 补上；现代侧栏要三件齐备：这条 + `sidebarWithViewController` + `sidebarTrackingSeparator` |
+| 侧栏「不沉浸」（不透明底、方角选中行） | 原先在 `NavigationSplitView` 的 sidebar 位置上 SwiftUI 自动套 `.sidebar` 外观，装进 hosting controller 后没人替它决定 | 显式 `.listStyle(.sidebar)` + `.scrollContentBackground(.hidden)`（后者是另一半：List 那层不透明底会挡住 `NSSplitViewItem` 的侧栏材质） |
+| **工具栏的 popover 全弹到标题栏上方老远处** | **`NSToolbarItemViewer` 里那个 `NSButton` 是翻转坐标系**（日志实测 `翻转=true`），翻转视图里 `.maxY` 才是**视觉下边**——照搬「非翻转时 minY 在下」的直觉正好反了 | `preferredEdge: .maxY`；顺带把 `p.contentSize = vc.view.fittingSize` 给死，尺寸不定的 popover 定位也会跑偏 |
+
+**M4（辅助窗口）另有三条**，都在「AppKit 工具栏 vs SwiftUI 习惯」的接缝上：
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| AI 浮窗**整条工具栏不见了** | `AIPanelView` 那条 `.toolbar { }` 是 SwiftUI 的，只作用于 SwiftUI 自己创建的窗口，装进 `NSHostingController` 后对 AppKit 窗口无效 | 工具栏改由 `AIPanelWindowController` 建 `NSToolbar`；平台/更多两枚用 `NSMenuToolbarItem` + `menuNeedsUpdate` 按需重建 |
+| 画板/夜间/参考窗/置顶这些**开关看不出状态** | ① 只换 SF Symbol 的 fill 变体差别太小；② **带 view 的 item 拿不到 `validateToolbarItem`** —— AppKit 对 view-based item 不走那条校验，写在那里的图标切换代码根本没执行 | 改 `pushOnPushOff` 让系统画按下态；状态由自己推（`refreshToolbarStates`），挂在 `tabs.objectWillChange` / 浮窗 model 的 `objectWillChange` / `UserDefaults.didChangeNotification` 上 |
+| 工具栏图标偏大、顶到上下边缘、标题栏跟着高 | 不给 symbol configuration 时用默认大号；换成死的 `pointSize` 仍偏大 | 用 `.init(scale: .small)` —— 让符号按系统给的上下文自己缩 |
+
+**侧栏的 z 轴（2026-09-01 收尾）**：迁到 `NSSplitViewController` 后侧栏变成并排、把内容推窄，
+丢了迁移前那个「页面纹丝不动、半透明玻璃盖住左侧、底下透出真内容」的观感（`PageStreamView.layoutW`
+的 Option A，2026-07-21 用户选定）。macOS 26 有现成开关：**内容 item 上的
+`automaticallyAdjustsSafeAreaInsets = true`** —— 侧栏/Inspector 改为叠在内容之上，被遮住的宽度
+以 `safeAreaInsets` 交给内容。打开它之后**阅读区几何一行都不用改**，默认表现正好就是 Option A。
+
+🔴 **中途试过「推开」（布局按未遮宽 + `contentMargins` 让内容避开侧栏），已撤回**：`contentMargins`
+把内容推了 `safeLeading`，而 `clampOffset` / 缩放锚定那套算式全按 `fitAvail`（未遮宽）算、**不知道
+这个 margin 存在**，真实可滚范围与算式差一截 → 页面刚放大到略超出可读区时目标偏移被 clamp，
+表现是**左边缘"啪"地贴到侧栏边上**（居中放大时尤其别扭）。教训：**别用 margin 去给阅读区腾地方**；
+真要做推开，正确路子是让视口本身等于未遮区、再用 `.scrollClipDisabled()` 让内容溢出绘制，
+这样那套算式仍在同一个坐标系里。
+
+🔴 最后一条值得单独记住：**工具栏这一层的坐标系与常识相反**。当时连试两个方向都不对，是靠在
+`present` 里打一行锚点日志（bounds / 窗口内矩形 / `isFlipped` / 有没有窗口）才定位的——
+「面板跑到很高的地方」有两种完全不同的成因（边选反了 vs 锚点 view 根本不对），
+不打点分不清，这正是本项目「静默失效先打点再改码」那条纪律的又一例。
+
+M3 顺带删掉的（迁移让它们变成死代码）：`WindowCloser`、`ToolbarCustomizationEnabler`、
+`ToolbarDelegateFilter`、`WorkspaceRegistry.hasOtherRootWindow`。
+`WindowLifecycle`/`WindowAccessor`/`WindowLevelAccessor` **保留**——AI 浮窗那个 SwiftUI 视图还在用，
+等 M4 把它也收进 `AIPanelWindowController` 再说。
+
+### M5 回归发现（2026-09-02）
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| **关掉窗口（交通灯）再开一扇，尺寸永远回不来**（停在 720×500 的最小尺寸） | `NSWindow.setFrameAutosaveName` 要求名字**整个 app 内唯一**，而旧 `NSWindow` 关闭后往往还没析构、名字仍被它占着 → 第二扇拿到 `false`，于是**既不恢复、以后也不自动存**。窗口就停在 `contentViewController` 把它压下去的 `minSize`。日志实证：第一扇 `autosave=true` frame 1442×854，第二扇 `autosave=false` frame 720×500 | 两头自己管：`setFrameUsingName`（不看名字归谁）恢复，`windowDidResize`/`windowDidMove`/`shutdown` 里 `saveFrame(usingName:)` 存。键与 AppKit 那套一样，老存档接着用。顺带：`shouldCascadeWindows = false`（默认 true，`showWindow` 会覆盖刚恢复的位置），首次运行没存档时显式给 1280×860 再居中 |
+| **⌘Q 退出后，最后那段阅读进度 / 最后一笔笔迹没存上** | 🔴 **AppKit 退出根本不关窗**：`NSApp.terminate:` 问完 `applicationShouldTerminate` 就发 `willTerminate` 并结束进程，**一扇窗的 `windowWillClose` 都不发**；而全部结清（`flushPersist` → `saveProgress` → 退出打开集 → 放引用）只挂在那个回调上。迁移前这条是 SwiftUI 的 `onDisappear` 兜着的——它在 ⌘Q 时**会**触发（代码里为此才有 `isTerminating` 守卫去区分「退出关窗」和「⌘W 关窗」），换成自建窗口后这条链路就断了 | `applicationShouldTerminate` 里置好 `isTerminating` 后，**逐扇窗显式调 `ReaderWindowController.shutdown()`**（从 `windowWillClose` 抽出来的同一份次序，幂等）。遍历前先拷一份数组：结清里会 `forget(self)` 改它 |
+
+⚠️ 这条是**整类问题的代表**：凡是迁移前挂在 SwiftUI 生命周期（`onDisappear`/`onAppear`/`.toolbar`）
+上的东西，AppKit 那边的"对应回调"**语义未必一样**——`onDisappear` 覆盖「关窗 + 退出」两种情形，
+而 `windowWillClose` **只覆盖前一种**。排查同类问题时先问一句：**这个回调在退出时到底发不发？**
+
 ## 6. 红线
 
 - **阅读区纯 SwiftUI 不变**：内容层一行不改，只是外面套 `NSHostingController`。

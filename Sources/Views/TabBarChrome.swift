@@ -11,6 +11,10 @@ enum TabBarStyle: String {
 enum TabBarMetrics {
     static let rowHeight: CGFloat = 26      // 单个标签的高度（不含容器内边距）
     static let pad: CGFloat = 4             // 容器内边距
+    /// 浮动胶囊**两端额外的水平内边距**。胶囊左右各是一个半圆（半径 ≈ 半个条高），4pt 的
+    /// 通用内边距在直边上够用，到了圆弧那儿就显得贴边——尤其收窄到只剩一两个标签时
+    /// （2026-09-01 用户报「收紧的时候有点贴边」）。贴底形态是直角条，不需要这一份。
+    static let capsuleSideInset: CGFloat = 7
     static let floatBottom: CGFloat = 12    // 浮动形态离阅读区底边的距离
 
     /// **阅读区底部要给标签栏让出多少**：笔架的拖拽夹取、滚动条的 `contentMargins` 都读它。
@@ -55,7 +59,12 @@ struct TabStrip: View {
         case .floating:
             strip
                 .padding(TabBarMetrics.pad)
+                .padding(.horizontal, TabBarMetrics.capsuleSideInset)   // 两端圆弧处别贴边
                 .background(.regularMaterial, in: Capsule())
+                // 🔴 **裁到胶囊里**：`background(in:)` 只画底，不管内容画到哪儿。窄到放不下时
+                // （`ViewThatFits` 退到横向滚动的那一刻前后）标签会画出胶囊外面——2026-09-01
+                // 用户截图：关闭按钮整个挂在胶囊边上。裁剪要排在描边**之前**，不然连边也裁掉。
+                .clipShape(Capsule())
                 .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
                 .shadow(radius: 6, y: 2)
                 .padding(.bottom, TabBarMetrics.floatBottom)
@@ -66,6 +75,7 @@ struct TabStrip: View {
                 .padding(.vertical, TabBarMetrics.pad)
                 .padding(.horizontal, 8)   // 4pt 时第一个标签的圆角片直接贴着窗口左边，太挤
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()                 // 同上：贴底那条也别让标签画到窗口边框外
                 .background(.bar)
                 .overlay(alignment: .top) { Divider() }
                 .contextMenu { styleMenu }
@@ -87,7 +97,13 @@ struct TabStrip: View {
     private var strip: some View {
         ViewThatFits(in: .horizontal) {
             row
-            ScrollView(.horizontal) { row }.scrollIndicators(.never)
+            // 🔴 `scrollClipDisabled()`：`ScrollView` 自带一层**矩形**裁剪，且发生在外层那层
+            // `clipShape(Capsule())` **之前**——内容因此先被直角切一刀，胶囊的圆弧根本没机会
+            // 起作用，滚到两端时切口生硬（2026-09-01 用户报）。关掉它，裁剪就只由外层的胶囊做，
+            // 切口跟着圆弧走。溢出不必担心：外层那层裁剪兜着。
+            ScrollView(.horizontal) { row }
+                .scrollIndicators(.never)
+                .scrollClipDisabled()
         }
         .frame(height: TabBarMetrics.rowHeight)
     }
