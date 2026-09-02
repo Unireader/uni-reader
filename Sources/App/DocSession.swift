@@ -283,6 +283,17 @@ final class DocSession: ObservableObject, Identifiable {
     /// 已落库的高亮快照（id → 值），增量对账用，非 @Published。
     var persistedHighlights: [UUID: Highlight] = [:]
 
+    // 书签（note kind=5，`REQUIREMENTS.md §1.9`）。同上套路：目录树里与 TOC 合并显示，
+    // `DocTabModel` 的 `.onChange` 增量对账落库。列表**恒按 `Bookmark.before` 有序**
+    // （读库时排一次，新增/改名后再排一次）——合并算法与三端显示都指望这个不变量。
+    @Published var bookmarks: [Bookmark] = []
+    /// 已落库的书签快照（id → 值），增量对账用，非 @Published。
+    var persistedBookmarks: [UUID: Bookmark] = [:]
+
+    /// 待命名的书签（非 nil = 正在弹命名框）。名字必填，所以「加书签」这个动作分两步：
+    /// 先记下落点，输入并确认后才真的落进 [bookmarks]。取消 = 什么都不留下。
+    @Published var bookmarkDraft: BookmarkDraft?
+
     // 平板笔悬停位置（nil = 无悬停 / 已落笔）。
     @Published var hover: HoverPoint?
 

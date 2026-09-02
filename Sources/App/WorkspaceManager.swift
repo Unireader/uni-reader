@@ -624,6 +624,27 @@ final class WorkspaceManager: ObservableObject {
         try? store?.deleteNote(id: id.uuidString)
     }
 
+    // MARK: - 书签持久化（note kind=5；挂逻辑文档，全版本共用。`REQUIREMENTS.md §1.9`）
+
+    /// 读取某文档已落库的全部书签，**按 `Bookmark.before` 排好**（页 → 页内位置 → 建立时刻）。
+    /// 目录合并算法与三端显示都指望这个有序不变量，排序口径只在这里和 `sortBookmarks` 两处。
+    func bookmarks(documentId: String) -> [Bookmark] {
+        ((try? store?.notes(documentId: documentId, kind: Bookmark.noteKind)) ?? [])
+            .compactMap(Bookmark.init(note:))
+            .sorted(by: Bookmark.before)
+    }
+
+    /// 落库/更新一条书签（新建或改名时调用）。
+    func saveBookmark(documentId: String, _ b: Bookmark) {
+        guard let store, let n = b.toNote(documentId: documentId) else { return }
+        try? store.upsertNote(n)
+    }
+
+    /// 删除一条书签（note.id == Bookmark.id）。
+    func deleteBookmark(id: UUID) {
+        try? store?.deleteNote(id: id.uuidString)
+    }
+
     // MARK: - AI 会话绑定持久化（note kind=1；挂逻辑文档，全版本共用）
 
     /// 读取某文档已落库的全部 AI 会话绑定（按页 / 页内位置序），用于重开恢复。

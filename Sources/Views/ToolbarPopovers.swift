@@ -17,7 +17,14 @@ struct TOCPopoverContent: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12).padding(.vertical, 10)
-            TOCListView(entries: session.toc, currentPage: session.currentPageIndex) { e in
+            // 书签一并列在这儿（与 Inspector 目录页同一棵树）：用户来这里就是找「跳哪儿去」，
+            // 书签正是自己标的那些落点，藏起来反而要跑两个地方找。改名/删除仍走 Inspector 那一份。
+            TOCListView(entries: session.toc, currentPage: session.currentPageIndex,
+                        bookmarks: session.bookmarks,
+                        onSelectBookmark: { b in
+                            session.jump(page: b.page, frac: b.frac, kind: .toc, label: b.title)
+                            onPicked()
+                        }) { e in
                 guard let page = e.pageIndex else { return }   // 坏书签：跳不过去
                 session.jump(page: page, frac: e.frac, kind: .toc, label: e.label)
                 onPicked()

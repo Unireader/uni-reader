@@ -123,6 +123,9 @@ enum MainMenu {
         m.addItem(.separator())
         // 跳转历史（`JumpHistory`）：⌘[ / ⌘] 是浏览器/Xcode 的通用口径；
         // 浮窗开关用 ⌥⌘J —— ⌥⌘H 是系统的「隐藏其他」，抢不得。
+        // 书签：⌘D 在**当前阅读位置**加一枚（落点更精确的那条入口是阅读区右键「在此添加书签」）。
+        m.addItem(post(L("Add Bookmark"), .addBookmarkRequested, key: "d"))
+        m.addItem(.separator())
         m.addItem(post(L("Back to Previous Position"), .jumpBackRequested, key: "["))
         m.addItem(post(L("Forward to Next Position"), .jumpForwardRequested, key: "]"))
         m.addItem(post(L("Jump History"), .toggleJumpHistory, key: "j", mods: [.command, .option]))

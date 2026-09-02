@@ -111,6 +111,16 @@ struct ReaderPane: View {
             .onReceive(NotificationCenter.default.publisher(for: .toggleJumpHistory)) { _ in
                 if chrome.isKeyWindow { jumpPanel.toggle() }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .addBookmarkRequested)) { _ in
+                if chrome.isKeyWindow, session.documentId != nil { session.beginBookmarkAtCurrent() }
+            }
+            // 书签命名框：三条入口（⌘D / 阅读区右键 / Inspector 目录页的 +）都只是把落点写进
+            // `session.bookmarkDraft`，弹框统一挂在这一层——它们分属不同视图树，宿主放这儿才都够得着。
+            .sheet(item: bind(\.bookmarkDraft)) { draft in
+                BookmarkNameSheet(draft: draft,
+                                  onSave: { session.commitBookmarkDraft(title: $0) },
+                                  onCancel: { session.bookmarkDraft = nil })
+            }
             .alert(L("File Changed"), isPresented: hashAlertPresented, presenting: tab.hashMismatch,
                    actions: hashAlertActions, message: hashAlertMessage)
     }

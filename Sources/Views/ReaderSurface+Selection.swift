@@ -207,6 +207,7 @@ extension ReaderSurface {
             Button(L("Add Note Here")) { beginAddNoteAtCursor() }   // 点注解（锚到右键处页面坐标）
         }
         Divider()
+        Button(L("Add Bookmark Here")) { addBookmarkAtCursor() }
         Button(L("New Scratchpad Here")) { newScratchPadAtCursor() }
         Divider()
         Button(String(format: L("Discuss This Page with %@"), aiProviderName)) { discussPageWithAI() }
@@ -228,6 +229,14 @@ extension ReaderSurface {
         AIPanelModel.shared.present(window: session.windowID)   // 内置模式展开侧面板，浮窗模式开窗口
         AIPanelModel.shared.beginBind(AIBindContext(sessionID: session.id, documentId: docId,
                                                     docTitle: session.title, page: page))
+    }
+
+    /// 在右键处加一枚书签：落点取 `.onContinuousHover` 维护的光标位（与「在此添加批注」同源），
+    /// 随后弹命名框——名字必填，输完确认才真的落库（`REQUIREMENTS.md §1.9`）。
+    func addBookmarkAtCursor() {
+        guard let p = scratch.cursorP, let n = containerPointToPageNorm(p) else { return }
+        clearSelection()
+        session.beginBookmark(page: n.page, frac: Double(n.ny))
     }
 
     /// 在右键处新建一张草稿纸并立即打开：锚点取 `.onContinuousHover` 维护的光标位

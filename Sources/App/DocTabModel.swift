@@ -166,6 +166,9 @@ final class DocTabModel: ObservableObject, Identifiable {
         on(session.$highlights) { s in
             s.persistHighlights()        // 高亮新建/改色/删除时增量落库
         }
+        on(session.$bookmarks) { s in
+            s.persistBookmarks()         // 书签新建/改名/删除时增量落库
+        }
         on(session.$aiThreads) { s in
             s.persistAIThreads()         // 新建/改标题/改失效状态/解绑时增量落库
         }
@@ -228,6 +231,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         persistInkLayers()
         persistTextNotes()
         persistHighlights()
+        persistBookmarks()
         persistAIThreads()
         persistScratchPads()
         persistScratchStrokes()
@@ -345,7 +349,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.canvasMode = false                      // 画板模式逐文档记，同上按库覆盖
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; session.toc = []; session.title = ""
-            clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); clearScratch()
+            clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); clearBookmarks(); clearScratch()
             clearAIThreads()
             session.reloadOCRState(); return
         }
@@ -359,6 +363,7 @@ final class DocTabModel: ObservableObject, Identifiable {
             clearInkLayers()
             clearTextNotes()
             clearHighlights()
+            clearBookmarks()
             clearScratch()
             clearAIThreads()
             return
@@ -375,6 +380,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.noteTypeFilter = .all              // 筛选仅内存，开文档复位
         loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
         loadHighlights(documentId: id)             // 恢复该文档已落库的高亮
+        loadBookmarks(documentId: id)              // 恢复该文档已落库的书签（与目录合并显示）
         loadAIThreads(documentId: id)              // 恢复该文档已落库的 AI 会话绑定
         loadScratch(documentId: id)                // 恢复该文档的草稿纸与纸上笔迹（默认不打开任何一张）
         // 恢复阅读进度：缩放倍率 + 定页 + 精确滚到页内比例（restore 锚点，阅读区会跟随）。
@@ -719,6 +725,35 @@ final class DocTabModel: ObservableObject, Identifiable {
             workspace.deleteHighlight(id: goneID)
         }
         session.persistedHighlights = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    // MARK: - 书签持久化（note kind=5，`REQUIREMENTS.md §1.9`）
+
+    /// 清空内存书签与对账集（对账集先于列表赋值，同 `clearHighlights` 防切档误删）。
+    private func clearBookmarks() {
+        session.bookmarkDraft = nil
+        session.persistedBookmarks = [:]
+        session.bookmarks = []
+    }
+
+    private func loadBookmarks(documentId id: String) {
+        let loaded = workspace.bookmarks(documentId: id)   // 已按 Bookmark.before 排好
+        session.persistedBookmarks = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+        session.bookmarks = loaded
+    }
+
+    /// 内存书签 ↔ 库对账：新增/改名 upsert；已无的 delete。用值快照比较，改名也识别为「变更」。
+    private func persistBookmarks() {
+        guard let id = session.documentId else { return }
+        let current = session.bookmarks
+        let currentIDs = Set(current.map(\.id))
+        for b in current where session.persistedBookmarks[b.id] != b {
+            workspace.saveBookmark(documentId: id, b)
+        }
+        for goneID in session.persistedBookmarks.keys where !currentIDs.contains(goneID) {
+            workspace.deleteBookmark(id: goneID)
+        }
+        session.persistedBookmarks = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     // MARK: - 草稿纸持久化（scratch_pad 表 + note kind=4，v8）

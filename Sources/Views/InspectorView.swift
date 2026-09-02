@@ -56,7 +56,29 @@ struct InspectorView: View {
     @ViewBuilder
     private var content: some View {
         if tab == .contents {
-            TOCListView(entries: toc, currentPage: session.currentPageIndex, onSelect: onSelectTOC)
+            // 目录页 = PDF 目录 + 书签（合并成一棵树，规格 `REQUIREMENTS.md §1.9`）。
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button { session.beginBookmarkAtCurrent() } label: {
+                        Label(L("Add Bookmark"), systemImage: "bookmark")
+                            .font(.callout)
+                            .foregroundStyle(.primary)   // 红线：别用 .secondary，系统会画得几乎看不见
+                    }
+                    .buttonStyle(.plain)
+                    .help(L("Add Bookmark"))
+                    .disabled(session.documentId == nil)
+                }
+                .padding(.horizontal, 12).padding(.bottom, 6)
+                TOCListView(entries: toc, currentPage: session.currentPageIndex,
+                            bookmarks: session.bookmarks,
+                            onSelectBookmark: { b in
+                                session.jump(page: b.page, frac: b.frac, kind: .toc, label: b.title)
+                            },
+                            onRenameBookmark: { session.beginBookmarkRename($0) },
+                            onDeleteBookmark: { session.deleteBookmark(id: $0.id) },
+                            onSelect: onSelectTOC)
+            }
         } else if tab == .thumbnails {
             ThumbnailListView(pdf: session.pdf, documentId: session.contentHash,
                               currentPage: session.currentPageIndex) { page in

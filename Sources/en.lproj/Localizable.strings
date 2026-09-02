@@ -390,3 +390,11 @@
 "Right-click the toolbar in a reading window and choose “Customize Toolbar…” to add, remove or rearrange buttons." = "Right-click the toolbar in a reading window and choose “Customize Toolbar…” to add, remove or rearrange buttons.";
 "Customize Toolbar…" = "Customize Toolbar…";
 "Platform: %@" = "Platform: %@";
+
+/* Bookmarks (REQUIREMENTS.md §1.9) */
+"Add Bookmark" = "Add Bookmark";
+"Add Bookmark Here" = "Add Bookmark Here";
+"Rename Bookmark" = "Rename Bookmark";
+"Bookmark name" = "Bookmark name";
+"Rename…" = "Rename…";
+"Add" = "Add";

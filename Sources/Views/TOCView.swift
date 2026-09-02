@@ -60,31 +60,60 @@ struct TOCEntry: Identifiable {
     }
 }
 
-/// 目录列表（可折叠树）。空目录给出占位；点条目回调跳转。
+/// 目录列表（可折叠树），**书签与目录合并显示**（规格 `REQUIREMENTS.md §1.9`）。
+/// 空目录且没有书签时给出占位；点条目回调跳转。
 /// **当前页追踪**：归属当前页的条目（先序最后一个 pageIndex ≤ 当前页）自动展开其祖先链 +
 /// 强调显示 + 滚动到位——不用每次手动展开找所在章节。自动追踪只增展开、不动用户手动折叠的其它分支。
+/// 追踪**只认目录项**，书签行不参与：它回答的是「我在第几章」，跳到书签行上没有意义。
 ///
 /// 实现说明：系统 `List(children:)` 大纲不支持程序化展开/定位，故改手动树（ScrollView + LazyVStack，
 /// 展开态自持 `expanded`）；行外观维持原纯文字行 + 页码，chevron 只管折叠。
+///
+/// ⚠️ `onSelect` 刻意留在**参数表最后**：三处调用点里有两处用尾随闭包写法，书签那几个参数
+/// 插在它前面（都有默认值）才不会把尾随闭包绑错人。参考窗与工具栏弹窗不传书签 = 行为一行没变。
 struct TOCListView: View {
     let entries: [TOCEntry]
     let currentPage: Int                    // 0 基当前页（追踪高亮用）
+    var bookmarks: [Bookmark] = []          // 已按 `Bookmark.before` 有序（`WorkspaceManager.bookmarks`）
+    var onSelectBookmark: ((Bookmark) -> Void)? = nil
+    var onRenameBookmark: ((Bookmark) -> Void)? = nil
+    var onDeleteBookmark: ((Bookmark) -> Void)? = nil
     let onSelect: (TOCEntry) -> Void
 
     @State private var expanded: Set<UUID> = []
 
-    /// 先序拍平：深度 + 祖先链（可见性判定与自动展开都要用）。
+    /// 一行：目录项或书签。先序拍平后带深度 + 祖先链（可见性判定与自动展开都要用）。
     private struct Flat {
-        let entry: TOCEntry
+        enum Kind {
+            case toc(TOCEntry)
+            case bookmark(Bookmark)
+        }
+        let kind: Kind
         let depth: Int
         let parents: [UUID]
+
+        var id: UUID {
+            switch kind {
+            case .toc(let e): return e.id
+            case .bookmark(let b): return b.id
+            }
+        }
+        var page: Int? {
+            switch kind {
+            case .toc(let e): return e.pageIndex
+            case .bookmark(let b): return b.page
+            }
+        }
+        var tocEntry: TOCEntry? { if case .toc(let e) = kind { return e }; return nil }
+        var bookmark: Bookmark? { if case .bookmark(let b) = kind { return b }; return nil }
     }
 
-    private var flat: [Flat] {
+    /// 纯目录的先序拍平（合并书签之前的那一份）。
+    private var tocFlat: [Flat] {
         var out: [Flat] = []
         func walk(_ list: [TOCEntry], depth: Int, parents: [UUID]) {
             for e in list {
-                out.append(Flat(entry: e, depth: depth, parents: parents))
+                out.append(Flat(kind: .toc(e), depth: depth, parents: parents))
                 if let cs = e.childrenOrNil { walk(cs, depth: depth + 1, parents: parents + [e.id]) }
             }
         }
@@ -92,7 +121,34 @@ struct TOCListView: View {
         return out
     }
 
-    /// 归属当前页的条目：起点不晚于当前页的项里页码最大的那个，并列取先序最后一个（＝最深一层）。
+    /// 目录 + 书签合并后的完整先序行表。**规则本身在 `TOCMerge`**（纯函数、三端契约、有 spike 覆盖），
+    /// 这里只负责把落位表翻译成带 id 与祖先链的行。
+    private var flat: [Flat] {
+        let base = tocFlat
+        guard !bookmarks.isEmpty else { return base }
+
+        let slots = TOCMerge.place(rows: base.map { TOCMerge.Row(depth: $0.depth, page: $0.page) },
+                                   bookmarkPages: bookmarks.map(\.page))
+        var insertions: [Int: [Flat]] = [:]   // 插在 base 的哪个下标**之前**（base.count = 末尾）
+        for (i, b) in bookmarks.enumerated() {
+            let s = slots[i]
+            // 祖先链 = 那个一级组自己的链 + 它本身 → 组折叠时书签跟着藏起来
+            let parents: [UUID] = s.owner.map { base[$0].parents + [base[$0].id] } ?? []
+            insertions[s.insertBefore, default: []]
+                .append(Flat(kind: .bookmark(b), depth: s.depth, parents: parents))
+        }
+
+        var out: [Flat] = []
+        out.reserveCapacity(base.count + bookmarks.count)
+        for (i, f) in base.enumerated() {
+            if let ins = insertions[i] { out.append(contentsOf: ins) }
+            out.append(f)
+        }
+        if let tail = insertions[base.count] { out.append(contentsOf: tail) }
+        return out
+    }
+
+    /// 归属当前页的**目录项**：起点不晚于当前页的项里页码最大的那个，并列取先序最后一个（＝最深一层）。
     ///
     /// 不能简单取「先序最后一个 pageIndex ≤ currentPage」——那要求先序页码单调不减，而真实 PDF 的书签
     /// 常常不满足：见过整本书末尾挂着两个空 destination 的项，一旦把它们当第 0 页，就会在**任何**页都
@@ -100,9 +156,9 @@ struct TOCListView: View {
     private var currentId: UUID? {
         var best: (page: Int, id: UUID)? = nil
         for f in flat {
-            guard let p = f.entry.pageIndex, p <= currentPage else { continue }
+            guard let e = f.tocEntry, let p = e.pageIndex, p <= currentPage else { continue }
             if let b = best, p < b.page { continue }     // ≥ 才更新 → 同页并列时取先序靠后的（更深一层）
-            best = (p, f.entry.id)
+            best = (p, e.id)
         }
         return best?.id
     }
@@ -113,7 +169,7 @@ struct TOCListView: View {
     }
 
     var body: some View {
-        if entries.isEmpty {
+        if entries.isEmpty, bookmarks.isEmpty {
             VStack(spacing: 8) {
                 Image(systemName: "list.bullet.indent").font(.title2).foregroundStyle(.tertiary)
                 Text(L("No table of contents")).font(.callout).foregroundStyle(.secondary)
@@ -123,7 +179,7 @@ struct TOCListView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(visibleRows, id: \.entry.id) { row($0) }
+                        ForEach(visibleRows, id: \.id) { row($0) }
                     }
                     .padding(.horizontal, 8).padding(.vertical, 6)
                 }
@@ -135,14 +191,24 @@ struct TOCListView: View {
 
     /// 自动追踪：展开目标条目的祖先链并滚动到位（只增展开，不折叠任何分支）。
     private func reveal(_ id: UUID?, proxy: ScrollViewProxy) {
-        guard let id, let f = flat.first(where: { $0.entry.id == id }) else { return }
+        guard let id, let f = flat.first(where: { $0.id == id }) else { return }
         expanded.formUnion(f.parents)
         // 等展开后的布局落地再滚，否则目标行还没插进树里
         DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
     }
 
     @ViewBuilder private func row(_ f: Flat) -> some View {
-        let e = f.entry
+        Group {
+            if let e = f.tocEntry {
+                tocRow(e, depth: f.depth)
+            } else if let b = f.bookmark {
+                bookmarkRow(b, depth: f.depth)
+            }
+        }
+        .id(f.id)
+    }
+
+    @ViewBuilder private func tocRow(_ e: TOCEntry, depth: Int) -> some View {
         let isCurrent = e.id == currentId
         HStack(spacing: 4) {
             if e.childrenOrNil != nil {
@@ -175,8 +241,39 @@ struct TOCListView: View {
             .buttonStyle(.plain)
             .disabled(e.pageIndex == nil)
         }
-        .padding(.leading, CGFloat(f.depth) * 14)
-        .id(e.id)
+        .padding(.leading, CGFloat(depth) * 14)
+    }
+
+    /// 书签行：与目录项一眼分得开（前面一枚书签图标），但排版对齐同一套。
+    /// 图标占的正是目录项 chevron 那 14pt，于是有子项的目录项与书签行的文字仍在同一条竖线上。
+    @ViewBuilder private func bookmarkRow(_ b: Bookmark, depth: Int) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "bookmark.fill")
+                .font(.caption2)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 14, height: 14)
+            Button { onSelectBookmark?(b) } label: {
+                HStack(spacing: 8) {
+                    Text(b.title).lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 6)
+                    Text("\(b.page + 1)").font(.caption).monospacedDigit()
+                        .foregroundStyle(Color.secondary)
+                }
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(onSelectBookmark == nil)
+        }
+        .padding(.leading, CGFloat(depth) * 14)
+        .contextMenu {
+            if let rename = onRenameBookmark {
+                Button(L("Rename…")) { rename(b) }
+            }
+            if let del = onDeleteBookmark {
+                Button(L("Delete"), role: .destructive) { del(b) }
+            }
+        }
     }
 
     private func toggle(_ id: UUID) {
