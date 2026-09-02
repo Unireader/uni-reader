@@ -128,6 +128,17 @@ final class AppModel: ObservableObject {
     /// 长按候选期间的笔位采样（y 已乘页面纵横比折成与 x 同尺度），只保留窗口内的那几个。
     private var holdSamples: [(p: SIMD2<Double>, t: Date)] = []
 
+    /// 已经下发给平板的环/盘状态，**记在 AppModel（设备级）而不是 `DocSession` 上**。
+    ///
+    /// 🔴 2026-09-02 修：`padSession` 是**计算属性**（`padSelectedSessionID ?? activeSessionID`），
+    /// 手势中途切个标签它就换了一个对象。从前的去重写成 `guard padSession?.pressRing != r`，
+    /// 于是「撤环」那一帧会被新会话的空状态吃掉（`nil != nil` 为假 → 直接 return）——
+    /// 平板上就留着一个永远不消失的环。判定本身是设备级的（`inkStart`/`inRadial` 都在这儿），
+    /// 下发记账也必须跟着放在设备级。
+    private var sentPressRing: PressRing?
+    /// 环/盘当前挂在哪个会话上（换会话时把旧的那份清掉，否则旧标签上会残留一个画不掉的环/盘）。
+    private weak var overlaySession: DocSession?
+
     init() {
         // 平板翻页 → 应用到平板当前会话，并重推页图。
         server.$requestedPageIndex
@@ -683,15 +694,25 @@ final class AppModel: ObservableObject {
 
     /// 设长按进度环并镜像给平板（值没变就不发，免得每次落笔来回空广播）。
     /// 平板收到 `on=1` 用本机时钟起计，两端的起显示/填满时长是各自硬编码的同一组常量。
+    ///
+    /// 去重记在 [sentPressRing]（设备级）而不是会话上——理由见那里的注释。
     private func setPressRing(_ r: PressRing?) {
-        guard padSession?.pressRing != r else { return }
+        adoptOverlaySession()
         padSession?.pressRing = r
-        guard server.isRunning else { return }
+        guard server.isRunning, sentPressRing != r else { return }
+        sentPressRing = r
         if let r {
             server.broadcast(["type": "pressRing", "on": true, "page": r.page, "nx": r.nx, "ny": r.ny])
         } else {
             server.broadcast(["type": "pressRing", "on": false])
         }
+    }
+
+    /// 环/盘换了会话就把旧会话上那份瞬态覆盖层收掉（它俩只该出现在平板当前跟随的那个标签上）。
+    private func adoptOverlaySession() {
+        let cur = padSession
+        if let old = overlaySession, old !== cur { old.pressRing = nil; old.radial = nil }
+        overlaySession = cur
     }
 
     /// 页内归一化距离（已做长宽比校正）是否超过给定的**平板屏幕**阈值。
@@ -911,10 +932,17 @@ final class AppModel: ObservableObject {
     }
     func inkErase(_ pts: [SIMD3<Double>], page: Int, in session: DocSession? = nil) {
         guard let s = session ?? padSession else { return }
-        eraseNear(s, pts, page: page)
+        let changed = eraseNear(s, pts, page: page)
         // 擦除中笔尖圆环同样跟随
         if let last = pts.last { s.hover = HoverPoint(page: page, nx: last.x, ny: last.y) }
-        if s.id == padSession?.id { broadcastStrokes() }
+        // 🔴 **没擦到东西就什么都不做**（2026-09-02）。橡皮压在纸上不动、或从空白处划过时，平板照样
+        // 每 8ms 送一批擦除点上来；从前每一批都无条件 `s.strokes = out` + 广播一份**全量镜像**，于是
+        // ① 每批都把整个窗口的视图树重算一遍（`@Published` 扇出）+ 走一遍 `persistInk` 全表对账；
+        // ② WS 上常驻一个几百 KB 的大帧在飞，把后面那些几十字节的控制帧（`radial`/`pressRing`/
+        //    `inkCancel`）全压住 —— 那正是「长按呼盘：环乱冒、盘唤不出」的信道成因（见 `LANServer`
+        //    合帧那段注释与 `TODO.md` 已知 Bug）。擦除模式下长按呼盘时，橡皮恰恰是**停着不动**的，
+        //    也就是每一批都擦不到东西 —— 这条路径于是从「必然堵」变成「一帧不发」。
+        if changed, s.id == padSession?.id { broadcastStrokes() }
     }
 
     /// 把平板当前会话的**全部笔迹**推给平板（平板据此显示 + 刷新/重连后恢复）。
@@ -988,32 +1016,52 @@ final class AppModel: ObservableObject {
     /// - 整笔（`.stroke`）：任一点命中即删整条（旧 eraseNear 的 removeAll 语义）；
     /// - 局部（`.partial`）：逐笔用 `InkEdit.splitStroke` 切段替换——剔除命中点，连续未命中段各成新笔画
     ///   （空 = 整笔消除）；新 id 被 persistInk 对账识别为「旧删新增」，持久化零改动。
-    private func eraseNear(_ s: DocSession, _ es: [SIMD3<Double>], page: Int) {
-        guard !es.isEmpty else { return }
+    /// 返回**这一批到底擦掉了东西没有**。没擦到就一个字节都不写回 `s.strokes`——那次赋值本身
+    /// （`@Published`）就是一次全窗视图树重算 + 一次全表对账，调用方还会据此决定发不发全量镜像。
+    @discardableResult
+    private func eraseNear(_ s: DocSession, _ es: [SIMD3<Double>], page: Int) -> Bool {
+        guard !es.isEmpty else { return false }
         let r2 = eraserRadius * eraserRadius
         let vis = s.visibleLayerIDs   // 橡皮只影响可见图层：隐藏的图层不该被误擦
         if eraserMode == .stroke {
-            s.strokes.removeAll { st in
-                guard st.page == page, vis.contains(st.layerId) else { return false }
-                for sp in st.points {
-                    for e in es {
-                        let dx = sp.x - e.x, dy = sp.y - e.y
-                        if dx * dx + dy * dy <= r2 { return true }
+            let before = s.strokes.count
+            var kept: [InkStroke] = []
+            kept.reserveCapacity(before)
+            for st in s.strokes {
+                var hit = false
+                if st.page == page, vis.contains(st.layerId) {
+                    outer: for sp in st.points {
+                        for e in es {
+                            let dx = sp.x - e.x, dy = sp.y - e.y
+                            if dx * dx + dy * dy <= r2 { hit = true; break outer }
+                        }
                     }
                 }
-                return false
+                if !hit { kept.append(st) }
             }
-            return
+            guard kept.count != before else { return false }
+            s.strokes = kept
+            return true
         }
         // 擦除点无压感，z 槽位按 `InkEdit.splitStroke` 约定改装页号（跨页不串）。
         let eps = es.map { SIMD3($0.x, $0.y, Double(page)) }
         var out: [InkStroke] = []
         out.reserveCapacity(s.strokes.count)
+        var changed = false
         for st in s.strokes {
-            if st.page == page, vis.contains(st.layerId) { out.append(contentsOf: InkEdit.splitStroke(st, erasePts: eps, r: eraserRadius)) }
-            else { out.append(st) }
+            if st.page == page, vis.contains(st.layerId) {
+                let parts = InkEdit.splitStroke(st, erasePts: eps, r: eraserRadius)
+                // 「原样一条、点数不变」＝这一笔没被碰到。切了段（parts 变多/变空）或剔了点
+                // （点数变少）才算改过 —— 逐点比值没必要，splitStroke 只会删点不会改点。
+                if parts.count != 1 || parts[0].points.count != st.points.count { changed = true }
+                out.append(contentsOf: parts)
+            } else {
+                out.append(st)
+            }
         }
+        guard changed else { return false }
         s.strokes = out
+        return true
     }
 
     /// 当前应显示到平板的会话。
