@@ -106,6 +106,19 @@ Window/AIPanelWindowController
 | 画板/夜间/参考窗/置顶这些**开关看不出状态** | ① 只换 SF Symbol 的 fill 变体差别太小；② **带 view 的 item 拿不到 `validateToolbarItem`** —— AppKit 对 view-based item 不走那条校验，写在那里的图标切换代码根本没执行 | 改 `pushOnPushOff` 让系统画按下态；状态由自己推（`refreshToolbarStates`），挂在 `tabs.objectWillChange` / 浮窗 model 的 `objectWillChange` / `UserDefaults.didChangeNotification` 上 |
 | 工具栏图标偏大、顶到上下边缘、标题栏跟着高 | 不给 symbol configuration 时用默认大号；换成死的 `pointSize` 仍偏大 | 用 `.init(scale: .small)` —— 让符号按系统给的上下文自己缩 |
 
+**侧栏的 z 轴（2026-09-01 收尾）**：迁到 `NSSplitViewController` 后侧栏变成并排、把内容推窄，
+丢了迁移前那个「页面纹丝不动、半透明玻璃盖住左侧、底下透出真内容」的观感（`PageStreamView.layoutW`
+的 Option A，2026-07-21 用户选定）。macOS 26 有现成开关：**内容 item 上的
+`automaticallyAdjustsSafeAreaInsets = true`** —— 侧栏/Inspector 改为叠在内容之上，被遮住的宽度
+以 `safeAreaInsets` 交给内容。打开它之后**阅读区几何一行都不用改**，默认表现正好就是 Option A。
+
+🔴 **中途试过「推开」（布局按未遮宽 + `contentMargins` 让内容避开侧栏），已撤回**：`contentMargins`
+把内容推了 `safeLeading`，而 `clampOffset` / 缩放锚定那套算式全按 `fitAvail`（未遮宽）算、**不知道
+这个 margin 存在**，真实可滚范围与算式差一截 → 页面刚放大到略超出可读区时目标偏移被 clamp，
+表现是**左边缘"啪"地贴到侧栏边上**（居中放大时尤其别扭）。教训：**别用 margin 去给阅读区腾地方**；
+真要做推开，正确路子是让视口本身等于未遮区、再用 `.scrollClipDisabled()` 让内容溢出绘制，
+这样那套算式仍在同一个坐标系里。
+
 🔴 最后一条值得单独记住：**工具栏这一层的坐标系与常识相反**。当时连试两个方向都不对，是靠在
 `present` 里打一行锚点日志（bounds / 窗口内矩形 / `isFlipped` / 有没有窗口）才定位的——
 「面板跑到很高的地方」有两种完全不同的成因（边选反了 vs 锚点 view 根本不对），

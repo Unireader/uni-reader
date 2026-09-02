@@ -146,6 +146,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         sidebarItem.maximumThickness = 420
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = 400
+        // macOS 26：侧栏/Inspector 叠在内容之上，被遮住的宽度以 `safeAreaInsets` 交给内容。
+        // 这一行是**唯一**的改动——先看 AppKit + 现有阅读区代码的原生默认表现，再决定要不要动几何。
+        contentItem.automaticallyAdjustsSafeAreaInsets = true
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = 240
         inspectorItem.maximumThickness = 400
