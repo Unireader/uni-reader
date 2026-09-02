@@ -10,6 +10,12 @@ extension Notification.Name {
     static let readerZoomActual = Notification.Name("com.xvan.UniReader.readerZoomActual")
     static let readerCopy = Notification.Name("com.xvan.UniReader.readerCopy")
     static let readerSelectAll = Notification.Name("com.xvan.UniReader.readerSelectAll")
+    // 编辑（Edit 菜单里没人接时路由给阅读区/草稿纸；对象都是**框选选中集**，见 `ReaderSurface+InkClip`）
+    static let readerCut = Notification.Name("com.xvan.UniReader.readerCut")
+    static let readerPaste = Notification.Name("com.xvan.UniReader.readerPaste")
+    static let readerDelete = Notification.Name("com.xvan.UniReader.readerDelete")
+    static let readerUndo = Notification.Name("com.xvan.UniReader.readerUndo")
+    static let readerRedo = Notification.Name("com.xvan.UniReader.readerRedo")
 }
 
 // MARK: - 内部实现

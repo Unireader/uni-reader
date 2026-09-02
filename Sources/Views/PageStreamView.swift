@@ -364,7 +364,32 @@ struct ReaderSurface: View {
     var voidColor: Color { nightMode ? Color(white: 0.06) : Color(nsColor: .windowBackgroundColor) }
 
     var body: some View {
-        snipRoutes(canvasRoutes(surfaceBody))
+        snipRoutes(canvasRoutes(editRoutes(surfaceBody)))
+    }
+
+    /// Edit 菜单路由（撤销/重做 + 框选选中集的剪切/粘贴/删除）单独包一层，理由同 `canvasRoutes`：
+    /// `surfaceBody` 那条修饰符链早就到类型检查器的顶了。
+    ///
+    /// 认领条件都是「本窗口激活 **且** 没开草稿纸」——纸开着时这些动作归纸自己
+    /// （`ScratchPadOverlay` 收同一批通知，对象是纸上的笔迹）。⌘C 例外：先给框选选中集，
+    /// 没有选中集才退回「复制选中文字」的老行为，见 `surfaceBody` 里那条。
+    private func editRoutes<V: View>(_ content: V) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .readerUndo)) { _ in
+                if isActiveWindow, session.openPadID == nil { performUndo(redo: false) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerRedo)) { _ in
+                if isActiveWindow, session.openPadID == nil { performUndo(redo: true) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerCut)) { _ in
+                if isActiveWindow, session.openPadID == nil { cutLassoSelection() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerPaste)) { _ in
+                if isActiveWindow, session.openPadID == nil { pasteInk() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerDelete)) { _ in
+                if isActiveWindow, session.openPadID == nil { deleteLassoSelection() }
+            }
     }
 
     /// 画板模式的两条 onChange 单独包一层。**别往 `surfaceBody` 上继续挂**——那条修饰符链早就到顶，
@@ -518,8 +543,10 @@ struct ReaderSurface: View {
             if isActiveWindow { commandZoomActual() }
         }
         // Edit 菜单 Copy / Select All（UniReaderApp 接管 .pasteboard 组后路由过来）。
+        // ⌘C 一键两用：有框选选中集就复制笔迹/注解，没有才退回复制选中文字。
         .onReceive(NotificationCenter.default.publisher(for: .readerCopy)) { _ in
-            if isActiveWindow { copySelectionToPasteboard() }
+            guard isActiveWindow, session.openPadID == nil else { return }   // 纸开着 = 归纸
+            if !copyLassoSelection() { copySelectionToPasteboard() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerSelectAll)) { _ in
             if isActiveWindow { selectAllText() }

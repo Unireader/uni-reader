@@ -73,7 +73,39 @@ struct ScratchPadOverlay: View {
     /// 橡皮在画布坐标下的半径（页宽归一化 → 画布点，三端同一个换算，见 `ScratchPad.eraserRefWidth`）。
     private var eraserCanvasRadius: Double { app.eraserRadius * ScratchPad.eraserRefWidth }
 
-    var body: some View {
+    var body: some View { editRoutes(padBody) }
+
+    /// Edit 菜单路由（撤销/重做 + 剪切/复制/粘贴/删除）单独包一层，理由同阅读区的 `editRoutes`：
+    /// 下面那条修饰符链已经不短了，再往上挂五个 onReceive 就是下一个类型检查器超时。
+    ///
+    /// 认领条件都是「本窗口在前台 **且** 开着的正是这张纸」——纸开着时这些动作归纸，
+    /// 阅读区那边同一批通知按 `openPadID == nil` 让开，两边不会同时动手。
+    private func editRoutes<V: View>(_ content: V) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .readerUndo)) { _ in
+                if claims { undoStep(redo: false) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerRedo)) { _ in
+                if claims { undoStep(redo: true) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerCopy)) { _ in
+                if claims { copyLassoSelection() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerCut)) { _ in
+                if claims { cutLassoSelection() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerPaste)) { _ in
+                if claims { pasteInk() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerDelete)) { _ in
+                if claims { deleteLassoSelection() }
+            }
+    }
+
+    /// 这张纸是不是该认领 Edit 菜单发来的动作。
+    private var claims: Bool { isFrontWindow && session.openPadID == pad.id }
+
+    private var padBody: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 bg
@@ -91,6 +123,8 @@ struct ScratchPadOverlay: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
+            // 右键：框选选中集的剪切/复制/删除 + 粘贴（原生 .contextMenu，同阅读区那份）。
+            .contextMenu { clipMenuItems }
             .onAppear { place(geo.size); refreshPageImage() }
             .onChange(of: vp.zoom) { _, _ in refreshPageImage() }   // 跨清晰度档才真的重渲
             .onChange(of: pad.showPage) { _, _ in refreshPageImage(); clampViewport() }
@@ -270,6 +304,7 @@ struct ScratchPadOverlay: View {
                 if inking {
                     inking = false
                     if !isErasing { app.scratchInkEnd(in: session) }   // 擦除每批即时生效，无需收尾
+                    session.scratchUndo.seal()   // 抬笔 = 这一组擦除封口（下一次拖动另起一步撤销）
                 }
             }
     }
@@ -528,11 +563,20 @@ struct ScratchPadOverlay: View {
         }
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                guard isFrontWindow, session.openPadID == pad.id, !renaming else { return event }
-                guard event.keyCode == 53 else { return event }   // Esc
-                if clearLassoSelection() { return nil }   // 有框选选中集：Esc 先清选中，不关纸
-                close()
-                return nil
+                guard isFrontWindow, session.openPadID == pad.id, !renaming,
+                      !(NSApp.keyWindow?.firstResponder is NSText) else { return event }
+                switch event.keyCode {
+                case 53:            // Esc
+                    if clearLassoSelection() { return nil }   // 有框选选中集：Esc 先清选中，不关纸
+                    close()
+                    return nil
+                case 51, 117:       // ⌫ / ⌦：删掉框选选中的笔迹（没选中就放行，别吞掉退格）
+                    guard lassoSel != nil else { return event }
+                    deleteLassoSelection()
+                    return nil
+                default:
+                    return event
+                }
             }
         }
     }
@@ -711,9 +755,11 @@ extension ScratchPadOverlay {
         let dx = Double(t.width / vp.zoom), dy = Double(t.height / vp.zoom)
         guard dx != 0 || dy != 0 else { return }
         var changed = false
-        for i in session.scratchStrokes.indices where sel.ids.contains(session.scratchStrokes[i].id) {
-            session.scratchStrokes[i] = shifted(session.scratchStrokes[i], dx: dx, dy: dy)
-            changed = true
+        session.scratchEdit("Move", kind: .move) {   // 撤销记账（同页内 `commitLassoMove`）
+            for i in session.scratchStrokes.indices where sel.ids.contains(session.scratchStrokes[i].id) {
+                session.scratchStrokes[i] = shifted(session.scratchStrokes[i], dx: dx, dy: dy)
+                changed = true
+            }
         }
         guard changed else { lassoSel = nil; return }   // 选中项已被擦除
         lassoSel = (sel.ids, sel.bounds.offsetBy(dx: dx, dy: dy))
@@ -727,15 +773,96 @@ extension ScratchPadOverlay {
         let ac = vp.toCanvas(av)
         let a = SIMD2(Double(ac.x), Double(ac.y))
         var changed = false
-        for i in session.scratchStrokes.indices where sel.ids.contains(session.scratchStrokes[i].id) {
-            session.scratchStrokes[i] = scaled(session.scratchStrokes[i], anchor: a, sx: sx, sy: sy)
-            changed = true
+        session.scratchEdit("Resize", kind: .scale) {   // 撤销记账（同页内 `commitLassoScale`）
+            for i in session.scratchStrokes.indices where sel.ids.contains(session.scratchStrokes[i].id) {
+                session.scratchStrokes[i] = scaled(session.scratchStrokes[i], anchor: a, sx: sx, sy: sy)
+                changed = true
+            }
         }
         guard changed else { lassoSel = nil; return }   // 选中项已被擦除
         let b = sel.bounds
         let x1 = a.x + (Double(b.minX) - a.x) * sx, x2 = a.x + (Double(b.maxX) - a.x) * sx
         let y1 = a.y + (Double(b.minY) - a.y) * sy, y2 = a.y + (Double(b.maxY) - a.y) * sy
         lassoSel = (sel.ids, CGRect(x: min(x1, x2), y: min(y1, y2), width: abs(x2 - x1), height: abs(y2 - y1)))
+    }
+
+    // MARK: 剪切 / 复制 / 粘贴（与阅读区共用 `InkClipboard`，跨空间由它折算坐标）
+
+    /// 复制选中的笔迹到系统剪贴板。返回是否真的复制了东西（⌘C 的路由用不到返回值，与阅读区那份对齐）。
+    @discardableResult
+    func copyLassoSelection() -> Bool {
+        guard let sel = lassoSel else { return false }
+        let picked = session.strokes(pad: pad.id).filter { sel.ids.contains($0.id) }
+        guard !picked.isEmpty else { return false }
+        InkClipboard.write(strokes: picked, space: .canvas)   // 纸上是画布点，没有页纵横比可言
+        return true
+    }
+
+    @discardableResult
+    func cutLassoSelection() -> Bool {
+        guard copyLassoSelection() else { return false }
+        deleteLassoSelection()
+        return true
+    }
+
+    /// 粘贴到纸上。落点 = 指针处（没有指针就落视口正中）；从**页里**抄来的先按源页纵横比折成画布点
+    /// （`InkClipboard.scaled`，1 页宽 = 800 画布点），于是粘出来的大小与它在页面上的一样。
+    /// 画布无界，不做任何 clamp——那是页内才有的约束（同 `shifted` 不用 `InkEdit.translated` 的理由）。
+    func pasteInk() {
+        PadLog.log("草稿纸粘贴：剪贴板有料=\(InkClipboard.hasInk())")
+        guard let clip = InkClipboard.read(), !clip.strokes.isEmpty else { return }
+        let src = clip.space == .page
+            ? InkClipboard.scaled(clip.strokes, toCanvas: true, aspect: clip.aspect)
+            : clip.strokes
+        var box = CGRect.null
+        for st in src { box = box.union(strokeBounds(st)) }
+        guard !box.isNull else { return }
+        let target = vp.toCanvas(cursor ?? CGPoint(x: viewSize.width / 2, y: viewSize.height / 2))
+        let dx = Double(target.x - box.midX), dy = Double(target.y - box.midY)
+
+        var ids = Set<UUID>()
+        var placed = CGRect.null
+        session.scratchEdit("Paste", kind: .paste) {
+            for st0 in src {
+                var st = shifted(st0, dx: dx, dy: dy)
+                st.padId = pad.id      // 落到这张纸上（页号无意义，恒 0）
+                st.page = 0
+                session.scratchStrokes.append(st)
+                ids.insert(st.id)
+                placed = placed.union(strokeBounds(st))
+            }
+        }
+        guard !ids.isEmpty else { return }
+        // 粘完即选中 + 切到框选工具：接着拖就能摆位置（同阅读区那份）。
+        app.pointerTool = .lasso
+        lassoSel = (ids, placed)
+    }
+
+    /// 右键菜单项（有选中集给四项；没有就只给「粘贴」）。
+    @ViewBuilder var clipMenuItems: some View {
+        if lassoSel != nil {
+            Button(L("Cut")) { cutLassoSelection() }
+            Button(L("Copy")) { copyLassoSelection() }
+            Button(L("Paste")) { pasteInk() }.disabled(!InkClipboard.hasInk())
+            Button(L("Delete")) { deleteLassoSelection() }
+        } else {
+            Button(L("Paste")) { pasteInk() }.disabled(!InkClipboard.hasInk())
+        }
+    }
+
+    /// 删掉框选选中的笔迹（⌫ / Edit 菜单 Delete）。可撤销。
+    func deleteLassoSelection() {
+        guard let sel = lassoSel else { return }
+        session.scratchEdit("Delete", kind: .delete) {
+            session.scratchStrokes.removeAll { sel.ids.contains($0.id) }
+        }
+        _ = clearLassoSelection()
+    }
+
+    /// 撤销/重做一步纸上编辑（⌘Z / ⇧⌘Z 路由过来）。选中集里的 id 可能整批被撤没了，一并清掉。
+    func undoStep(redo: Bool) {
+        _ = clearLassoSelection()
+        app.undoScratch(in: session, redo: redo)
     }
 
     /// 清除选中/进行中状态。返回是否有选中集被清掉（Esc 监视器据此决定要不要拦下这次按键）。

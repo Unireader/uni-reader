@@ -402,3 +402,11 @@
 "No bookmarks yet." = "No bookmarks yet.";
 "Rename this bookmark" = "Rename this bookmark";
 "Delete this bookmark" = "Delete this bookmark";
+
+/* 编辑撤销/重做（Edit 菜单；动作名接在「Undo 」后面，如 Undo Move） */
+"Undo" = "Undo";
+"Redo" = "Redo";
+"Draw" = "Draw";
+"Erase" = "Erase";
+"Move" = "Move";
+"Resize" = "Resize";

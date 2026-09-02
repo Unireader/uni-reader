@@ -207,15 +207,17 @@ extension ReaderSurface {
             noteBounds: lassoSelectionBounds(sel, strokes: false))
         guard dx != 0 || dy != 0 else { return }
         var changed = false
-        for i in session.strokes.indices
-        where session.strokes[i].page == sel.page && sel.strokeIDs.contains(session.strokes[i].id) {
-            session.strokes[i] = InkEdit.translated(session.strokes[i], dx: dx, dy: dy, xRange: xr)
-            changed = true
-        }
-        for i in session.textNotes.indices
-        where session.textNotes[i].page == sel.page && sel.noteIDs.contains(session.textNotes[i].id) {
-            session.textNotes[i] = InkEdit.translated(session.textNotes[i], dx: dx, dy: dy)
-            changed = true
+        session.inkEdit("Move", kind: .move) {   // 撤销记账（前后值一比就是一条增量）
+            for i in session.strokes.indices
+            where session.strokes[i].page == sel.page && sel.strokeIDs.contains(session.strokes[i].id) {
+                session.strokes[i] = InkEdit.translated(session.strokes[i], dx: dx, dy: dy, xRange: xr)
+                changed = true
+            }
+            for i in session.textNotes.indices
+            where session.textNotes[i].page == sel.page && sel.noteIDs.contains(session.textNotes[i].id) {
+                session.textNotes[i] = InkEdit.translated(session.textNotes[i], dx: dx, dy: dy)
+                changed = true
+            }
         }
         guard changed else { lassoSelection = nil; return }   // 选中项已被擦除/删除
         var s = sel
@@ -242,17 +244,19 @@ extension ReaderSurface {
         let a = SIMD2(Double((ac.x - pageX) / pageW),
                       Double((ac.y - layout.offsets[sel.page] * ds) / pageHDisp))
         var changed = false
-        for i in session.strokes.indices
-        where session.strokes[i].page == sel.page && sel.strokeIDs.contains(session.strokes[i].id) {
-            // xRange 同 commitLassoMove：画板模式用硬上限，别拿「还没长出来的软边界」把放大的笔迹削平
-            session.strokes[i] = InkEdit.scaled(session.strokes[i], anchor: a, sx: sx, sy: sy,
-                                                xRange: lassoEditXRange)
-            changed = true
-        }
-        for i in session.textNotes.indices
-        where session.textNotes[i].page == sel.page && sel.noteIDs.contains(session.textNotes[i].id) {
-            session.textNotes[i] = InkEdit.scaled(session.textNotes[i], anchor: a, sx: sx, sy: sy)
-            changed = true
+        session.inkEdit("Resize", kind: .scale) {   // 撤销记账（同 commitLassoMove）
+            for i in session.strokes.indices
+            where session.strokes[i].page == sel.page && sel.strokeIDs.contains(session.strokes[i].id) {
+                // xRange 同 commitLassoMove：画板模式用硬上限，别拿「还没长出来的软边界」把放大的笔迹削平
+                session.strokes[i] = InkEdit.scaled(session.strokes[i], anchor: a, sx: sx, sy: sy,
+                                                    xRange: lassoEditXRange)
+                changed = true
+            }
+            for i in session.textNotes.indices
+            where session.textNotes[i].page == sel.page && sel.noteIDs.contains(session.textNotes[i].id) {
+                session.textNotes[i] = InkEdit.scaled(session.textNotes[i], anchor: a, sx: sx, sy: sy)
+                changed = true
+            }
         }
         guard changed else { lassoSelection = nil; return }   // 选中项已被擦除/删除
         var s = sel
@@ -378,17 +382,27 @@ extension ReaderSurface {
         }
     }
 
-    // MARK: Esc 清除选中（NSEvent 本地监视器：纯 ScrollView 容器拿不到焦点链）
+    // MARK: Esc 清除选中 / ⌫ 删除选中（NSEvent 本地监视器：纯 ScrollView 容器拿不到焦点链）
 
-    /// 只在「本窗口激活 + 确有选中集 + 焦点不在文本编辑」时消费 Esc；其余原样放行（不影响系统 Esc 语义）。
+    /// 只在「本窗口激活 + 确有选中集 + 焦点不在文本编辑」时消费按键；其余原样放行
+    /// （不影响系统 Esc 语义，也不抢文本框的退格）。
     func installLassoEscMonitor() {
         guard scratch.lassoEscMonitor == nil else { return }
         scratch.lassoEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard scratch.isActiveWindow, event.keyCode == 53, lassoSelection != nil,
+            guard scratch.isActiveWindow, lassoSelection != nil,
                   !(NSApp.keyWindow?.firstResponder is NSText),
                   !aiWebInputHasFocus() else { return event }   // Esc 在内置面板里归网页（关弹窗等）
-            clearLassoSelection()
-            return nil
+            switch event.keyCode {
+            case 53:            // Esc：放弃选中
+                clearLassoSelection()
+                return nil
+            case 51, 117:       // ⌫ / ⌦：删掉选中的笔迹与注解（草稿纸开着时归纸自己的监视器）
+                guard session.openPadID == nil else { return event }
+                deleteLassoSelection()
+                return nil
+            default:
+                return event
+            }
         }
     }
 

@@ -195,6 +195,7 @@ extension ReaderSurface {
     // MARK: 文字注解（kind=0）——右键选区添加批注
 
     @ViewBuilder var readerContextMenu: some View {
+        inkClipMenuItems   // 框选选中集的剪切/复制/粘贴/删除（见 `ReaderSurface+InkClip`）
         if selection?.text.isEmpty == false {
             Button(L("Add Note")) { beginAddNote() }          // 注解选中文字（锚到选区）
             Menu(L("Highlight")) {                             // 一键高亮（选调色板颜色）
@@ -290,9 +291,11 @@ extension ReaderSurface {
         if draft.quote.isEmpty, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             clearSelection(); return
         }
-        session.textNotes.append(TextNote(page: draft.page, anchor: draft.anchor, quote: draft.quote,
-                                          text: text, rects: draft.rects, typeId: typeId,
-                                          display: display))
+        session.inkEdit("Note", kind: .note) {
+            session.textNotes.append(TextNote(page: draft.page, anchor: draft.anchor, quote: draft.quote,
+                                              text: text, rects: draft.rects, typeId: typeId,
+                                              display: display))
+        }
         clearSelection()
     }
 
@@ -304,14 +307,14 @@ extension ReaderSurface {
         n.typeId = typeId
         n.display = display
         n.updatedAt = .now
-        session.textNotes[idx] = n
+        session.inkEdit("Note", kind: .note) { session.textNotes[idx] = n }
     }
 
     /// 编辑器「删除」（仅 .edit 入口有按钮）：从内存移除 → ContentView 的 onChange 对账删库
     /// （与 InspectorView.deleteTextNote 同一条路径）。
     func deleteEditorNote(_ target: NoteEditorTarget) {
         guard let note = target.editedNote else { return }
-        session.textNotes.removeAll { $0.id == note.id }
+        session.inkEdit("Delete", kind: .delete) { session.textNotes.removeAll { $0.id == note.id } }
         editorTarget = nil
     }
 
@@ -436,7 +439,9 @@ extension ReaderSurface {
         let dx = Double(t.width / pageW), dy = Double(t.height / pageHDisp)
         guard dx != 0 || dy != 0,
               let i = session.textNotes.firstIndex(where: { $0.id == note.id }) else { return }
-        session.textNotes[i] = InkEdit.translated(session.textNotes[i], dx: dx, dy: dy)
+        session.inkEdit("Move", kind: .move) {
+            session.textNotes[i] = InkEdit.translated(session.textNotes[i], dx: dx, dy: dy)
+        }
         // 镜像平板：仅当本窗口恰是 padSession（同 commitLassoMove 语义；否则 broadcast 的是 padSession 的旧数据）
         if session.id == app.padSession?.id { app.broadcastNotes() }
     }
@@ -499,6 +504,7 @@ extension ReaderSurface {
             .onEnded { _ in
                 guard scratch.localInkStart != nil else { return }
                 if app.padMode != "erase" { app.inkEnd(in: session) }   // 擦除每批已即时生效，无需收尾
+                session.inkUndo.seal()   // 抬笔 = 这一组擦除封口（一次拖动 = 一步撤销）
                 scratch.localInkStart = nil
             }
     }

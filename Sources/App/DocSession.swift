@@ -193,6 +193,12 @@ final class DocSession: ObservableObject, Identifiable {
     /// 值快照而非纯 id 集合：框选移动后 id 不变、点集变，纯 id 对账会漏写（仿 `persistedTextNotes`）。
     var persistedStrokes: [UUID: InkStroke] = [:]
 
+    /// 编辑撤销栈（页内笔迹 + 文字注解 / 草稿纸笔迹各一条，见 `InkUndo.swift`）。
+    /// **瞬态、非 @Published**：换文档由 `DocTabModel` 清空；菜单可用性在 `validateMenuItem`
+    /// 里现问现答，不必让它每记一笔就把整窗视图树重算一遍。
+    let inkUndo = InkUndoStack()
+    let scratchUndo = InkUndoStack()
+
     /// 上一次收笔的时刻（`AppModel.inkEnd` 写，`ContentView.persistInk` 读）。**非 @Published**——
     /// 纯诊断用：它与 `persistInk` 开跑那一刻的差 = 「SwiftUI 从 `strokes` 变到把 onChange 派下来」
     /// 花了多久（含它对整个 `[InkStroke]` 数组做的相等性比较，那是 O(笔迹数 × 点数)）。

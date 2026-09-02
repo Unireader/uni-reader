@@ -340,6 +340,9 @@ final class DocTabModel: ObservableObject, Identifiable {
     private func load(_ id: String?) {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
         session.clearJumps()    // 跳转历史按文档分（`JumpHistory`）：换文档 = 换一条新轨迹
+        // 换文档 = 撤销链作废：栈里存的是**上一篇**那些条目的增量，套到新文档上就是凭空造笔迹。
+        session.inkUndo.reset()
+        session.scratchUndo.reset()
         // 换文档 → 本标签发起的那条 AI 绑定上下文作废，否则面板的上下文条会一直显示上一本书。
         AIPanelModel.shared.noteDocumentChanged(sessionID: session.id, documentId: id)
         session.store = workspace.store   // OCR 缓存读写用（仅主线程）

@@ -431,7 +431,7 @@ struct InspectorView: View {
 
     /// 删除某页全部手写笔迹：从内存移除 → ContentView 的 onChange 增量对账把对应 note 删库。
     private func deleteInk(page: Int) {
-        session.strokes.removeAll { $0.page == page }
+        session.inkEdit("Delete", kind: .delete) { session.strokes.removeAll { $0.page == page } }
     }
 
     /// 当前筛选下的笔记列表：.all 全部 / .only(nil) 通用 / .only(id) 指定类型。
@@ -550,7 +550,7 @@ struct InspectorView: View {
 
     /// 删除一条文字注解：从内存移除 → ContentView 的 onChange 增量对账把对应 note 删库。
     private func deleteTextNote(_ n: TextNote) {
-        session.textNotes.removeAll { $0.id == n.id }
+        session.inkEdit("Delete", kind: .delete) { session.textNotes.removeAll { $0.id == n.id } }
     }
 
     private var highlightBlock: some View {

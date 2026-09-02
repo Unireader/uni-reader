@@ -101,6 +101,12 @@ enum MainMenu {
     /// 没人接才发通知给阅读区（`sendAction` 的返回值正好当分流开关，2026-08-26 那笔账）。
     private static func editMenu() -> NSMenuItem {
         let (item0, m) = container(L("Edit"))
+        // 撤销/重做同样是「先响应者链、没人接才给阅读区」，只是判据反过来：焦点确实在文本框/网页里
+        // 才让给系统（它们各有各的 undoManager），否则一律归阅读区的编辑撤销栈（`InkUndoStack`）。
+        m.addItem(item(L("Undo"), #selector(MenuActions.undo(_:)), key: "z", target: MenuActions.shared))
+        m.addItem(item(L("Redo"), #selector(MenuActions.redo(_:)), key: "z",
+                       mods: [.command, .shift], target: MenuActions.shared))
+        m.addItem(.separator())
         m.addItem(item(L("Cut"), #selector(MenuActions.cut(_:)), key: "x", target: MenuActions.shared))
         m.addItem(item(L("Copy"), #selector(MenuActions.copy(_:)), key: "c", target: MenuActions.shared))
         m.addItem(item(L("Paste"), #selector(MenuActions.paste(_:)), key: "v", target: MenuActions.shared))
@@ -206,15 +212,50 @@ final class MenuActions: NSObject {
     }
 
     // MARK: 剪贴板五项（先响应者链，没人接才给阅读区）
+    //
+    // 五项的对象在阅读区里都是**框选选中集**（笔迹 + 文字注解），见 `ReaderSurface+InkClip`；
+    // ⌘C 例外，它先给选中集、没有选中集才退回「复制选中的文字」。
 
-    @objc func cut(_ sender: Any?) { NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: sender) }
-    @objc func paste(_ sender: Any?) { NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: sender) }
-    @objc func delete(_ sender: Any?) { NSApp.sendAction(#selector(NSText.delete(_:)), to: nil, from: sender) }
+    @objc func cut(_ sender: Any?) { route(#selector(NSText.cut(_:)), to: .readerCut, sender: sender) }
+    @objc func paste(_ sender: Any?) { route(#selector(NSText.paste(_:)), to: .readerPaste, sender: sender) }
+    @objc func delete(_ sender: Any?) { route(#selector(NSText.delete(_:)), to: .readerDelete, sender: sender) }
+    @objc func copy(_ sender: Any?) { route(#selector(NSText.copy(_:)), to: .readerCopy, sender: sender) }
 
-    @objc func copy(_ sender: Any?) {
-        if !NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: sender) {
-            NotificationCenter.default.post(name: .readerCopy, object: nil)
+    /// 先响应者链，没人接才把动作发给阅读区。
+    /// 那行打点是给「⌘V 一点反应都没有」这种**静默失效**留的：第一眼要看的就是这次动作到底被谁吃了
+    /// （默认关，`touch ~/Library/Logs/UniReader-pad.log` 开）。
+    private func route(_ sel: Selector, to fallback: Notification.Name, sender: Any?) {
+        let accepted = NSApp.sendAction(sel, to: nil, from: sender)
+        PadLog.log("Edit 菜单 \(NSStringFromSelector(sel)) → \(accepted ? "响应者链" : "阅读区")")
+        if !accepted { NotificationCenter.default.post(name: fallback, object: nil) }
+    }
+
+    // MARK: 撤销 / 重做
+
+    /// 🔴 与上面五项**反着来**：先判焦点，而不是先 `sendAction`。
+    /// `undo:` 会被响应者链上不少东西认领（文本框的字段编辑器、WKWebView），SwiftUI 还可能在窗口上
+    /// 挂一个自己的 `UndoManager` —— 先发出去就等于把阅读区的撤销永远交出去了。焦点确实在能编辑
+    /// 文本的地方才让给系统，其余一律路由给阅读区/草稿纸。
+    @objc func undo(_ sender: Any?) { dispatchUndo(redo: false, sender: sender) }
+    @objc func redo(_ sender: Any?) { dispatchUndo(redo: true, sender: sender) }
+
+    private func dispatchUndo(redo: Bool, sender: Any?) {
+        PadLog.log("Edit 菜单 \(redo ? "重做" : "撤销") → \(MenuActions.textEditingHasFocus ? "响应者链" : "阅读区")")
+        if MenuActions.textEditingHasFocus {
+            NSApp.sendAction(Selector(redo ? "redo:" : "undo:"), to: nil, from: sender)
+            return
         }
+        NotificationCenter.default.post(name: redo ? .readerRedo : .readerUndo, object: nil)
+    }
+
+    /// 焦点是不是落在「自己能撤销」的东西上：文本框的字段编辑器 / 内置 AI 面板的网页。
+    static var textEditingHasFocus: Bool {
+        NSApp.keyWindow?.firstResponder is NSText || aiWebInputHasFocus()
+    }
+
+    /// 当前 key 窗口那个标签的会话（撤销菜单项的可用性/标题要问它）。
+    private var activeSession: DocSession? {
+        app.sessions.first { $0.id == app.activeSessionID }
     }
 
     @objc func selectAll(_ sender: Any?) {
@@ -229,6 +270,28 @@ final class MenuActions: NSObject {
     }
 
     @objc func clearRecents(_ sender: Any?) { WorkspaceRegistry.shared.clearRecents() }
+}
+
+/// 撤销/重做两项的可用性与标题（系统在菜单展开、以及按下快捷键前会调）。其余项一律放行。
+/// 标题跟着栈顶那一步走（「撤销 移动」/「撤销 擦除」），与系统 App 的惯例一致。
+extension MenuActions: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(undo(_:)): return validateUndoItem(menuItem, redo: false)
+        case #selector(redo(_:)): return validateUndoItem(menuItem, redo: true)
+        default: return true
+        }
+    }
+
+    private func validateUndoItem(_ item: NSMenuItem, redo: Bool) -> Bool {
+        let base = redo ? L("Redo") : L("Undo")
+        // 焦点在文本框/网页里：标题回到中性的那两个字，可用性交给系统（它自己知道有没有得撤）。
+        guard !MenuActions.textEditingHasFocus else { item.title = base; return true }
+        let stack = activeSession?.activeUndo
+        let label = redo ? stack?.redoLabel : stack?.undoLabel
+        item.title = label.map { "\(base) \(L($0))" } ?? base
+        return label != nil
+    }
 }
 
 /// 「最近打开」子菜单：**展开前重建**。

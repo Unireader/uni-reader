@@ -83,6 +83,7 @@ extension AppModel {
         s.scratchLive = nil
         guard st.points.count >= 1 else { return }
         s.scratchStrokes.append(st)   // @Published → ContentView 对账落库 + 广播
+        s.scratchUndo.recordAdded(label: "Draw", kind: .draw, strokes: [st])   // 同 `inkEnd`：纯追加免 diff
     }
 
     /// 抬笔前放弃这一笔（关草稿纸/切纸时用）。
@@ -94,6 +95,14 @@ extension AppModel {
     /// 草稿纸擦除。半径按 `ScratchPad.eraserRefWidth` 从「页宽归一化」折成画布点（三端同一个数）。
     /// 整笔/局部两种模式与页内完全一致——`InkEdit.splitStroke` 不认坐标系，只认距离。
     func scratchErase(_ pts: [SIMD3<Double>], in s: DocSession) {
+        let before = s.scratchStrokes    // COW 快照，O(1)
+        eraseScratchNear(pts, in: s)
+        // 撤销记账（同页内擦除：一次拖动里的多批并成一步，抬笔封口）。没擦到时 diff 为空、不入栈。
+        s.scratchUndo.record(label: "Erase", kind: .erase,
+                             strokesBefore: before, strokesAfter: s.scratchStrokes)
+    }
+
+    private func eraseScratchNear(_ pts: [SIMD3<Double>], in s: DocSession) {
         guard let padId = s.openPadID, !pts.isEmpty else { return }
         let r = eraserRadius * ScratchPad.eraserRefWidth
         let r2 = r * r

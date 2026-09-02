@@ -525,7 +525,7 @@ final class AppModel: ObservableObject {
         let rawDx = (obj["dx"] as? NSNumber)?.doubleValue ?? 0
         let rawDy = (obj["dy"] as? NSNumber)?.doubleValue ?? 0
         guard rawDx != 0 || rawDy != 0 else { return }
-        lassoApply(obj, to: s, page: page) { changed in
+        lassoApply(obj, to: s, page: page, label: "Move", kind: .move) { changed in
             // 🔴 两处都不能省（用户 2026-08-30 报「平板上框选移动把笔迹压缩了」）：
             //  ① `xRange` 要按画板模式放宽——不传就是默认页内 `0...1`，页边笔迹一移动就被
             //     逐点摁回页边（平板这条路径比 Mac 本机那条更糟：那边至少还是当前那档软边界）；
@@ -561,7 +561,7 @@ final class AppModel: ObservableObject {
         let sx = (obj["sx"] as? NSNumber)?.doubleValue ?? 1
         let sy = (obj["sy"] as? NSNumber)?.doubleValue ?? 1
         guard sx > 0, sy > 0, sx != 1 || sy != 1 else { return }
-        lassoApply(obj, to: s, page: page) { changed in
+        lassoApply(obj, to: s, page: page, label: "Resize", kind: .scale) { changed in
             // xRange 同 applyLassoMove：不放宽的话画板模式下页边笔迹一缩放就被摁回页内
             let xr = CanvasMargin.xRange(margin: s.canvasMode ? CanvasMargin.limit : 0)
             for i in s.strokes.indices where s.strokes[i].page == page && changed.strokes.contains(i) {
@@ -577,6 +577,7 @@ final class AppModel: ObservableObject {
     /// （只过滤可见图层；规则与 `ReaderSurface+Lasso.finishLassoSelect` 严格一致），命中下标交给
     /// `mutate` 做平移/缩放；有实际变更才广播镜像（落库由 ContentView 值快照对账自动做）。
     private func lassoApply(_ obj: [String: Any], to s: DocSession, page: Int,
+                            label: String, kind: InkPatch.Kind,
                             mutate: (_ changed: (strokes: Set<Int>, notes: Set<Int>)) -> Void) {
         // 选区：多边形尾部（≥3 点）优先；否则矩形（老客户端）
         var poly: [SIMD2<Double>]?
@@ -611,7 +612,7 @@ final class AppModel: ObservableObject {
             if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
             return
         }
-        mutate((hitS, hitN))
+        s.inkEdit(label, kind: kind) { mutate((hitS, hitN)) }   // 撤销记账（平板发起的这条路径同样可撤）
         // 页边软边界得跟上：笔画**数**没变，阅读区那个 `onChange(of: strokes.count)` 不会触发
         // （Mac 本机框选是在 commitLassoMove 里显式补的一次，平板这条路径当初漏了）。
         // 不补的后果不是「压缩」而是「看不见」：笔迹被挪到当前内容宽之外，两端都画在可视区外面。
@@ -629,7 +630,7 @@ final class AppModel: ObservableObject {
         let text = obj["text"] as? String ?? ""
         let isDelete = (obj["op"] as? String) == "delete" || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if isDelete {
-            s.textNotes.removeAll { $0.id == uuid }
+            s.inkEdit("Delete", kind: .delete) { s.textNotes.removeAll { $0.id == uuid } }
             return
         }
         let maxPage = max(0, (s.pdf?.pageCount ?? 1) - 1)
@@ -638,14 +639,16 @@ final class AppModel: ObservableObject {
         let ny = (obj["ny"] as? NSNumber)?.doubleValue ?? 0
         // 展开方式随正文一起改（平板编辑器里也能选）：线上没带这个字节的老客户端解码出 0 = tap。
         let display = NoteDisplay.fromWire(UInt8(clamping: (obj["display"] as? NSNumber)?.intValue ?? 0))
-        if let i = s.textNotes.firstIndex(where: { $0.id == uuid }) {
-            s.textNotes[i].text = text
-            s.textNotes[i].display = display
-            s.textNotes[i].updatedAt = .now
-        } else {
-            s.textNotes.append(TextNote(id: uuid, page: page,
-                                        anchor: CGRect(x: nx, y: ny, width: 0, height: 0),
-                                        quote: "", text: text, rects: [], display: display))
+        s.inkEdit("Note", kind: .note) {
+            if let i = s.textNotes.firstIndex(where: { $0.id == uuid }) {
+                s.textNotes[i].text = text
+                s.textNotes[i].display = display
+                s.textNotes[i].updatedAt = .now
+            } else {
+                s.textNotes.append(TextNote(id: uuid, page: page,
+                                            anchor: CGRect(x: nx, y: ny, width: 0, height: 0),
+                                            quote: "", text: text, rects: [], display: display))
+            }
         }
     }
 
@@ -785,6 +788,10 @@ final class AppModel: ObservableObject {
         } else {
             inkEnd()
         }
+        // 抬笔 = 撤销栈上这一组擦除封口（下一批擦除另起一步；擦除模式下走的是并行的 probe 流，
+        // 它的 end 也落到这里）。落墨本来就一笔一步，封不封口都一样。
+        padSession?.inkUndo.seal()
+        padSession?.scratchUndo.seal()
         inRadial = false; inkStart = nil
     }
 
@@ -928,6 +935,9 @@ final class AppModel: ObservableObject {
         guard let s = session ?? padSession, let st = s.liveStroke else { return }
         let t0 = CFAbsoluteTimeGetCurrent()
         s.strokes.append(st); s.liveStroke = nil
+        // 撤销记账。**刻意不走 `s.inkEdit {}`**：那个要把前后两份数组整表 diff 一遍，而收笔是
+        // 最热的那条路径（每一笔都跑，见下面那几行的收笔计时）；纯追加自己就知道差在哪，直接记。
+        s.inkUndo.recordAdded(label: "Draw", kind: .draw, strokes: [st])
         // 纯追加：只发这一条（非平板会话只落库，不做无谓广播）。**唯一用追加帧的地方**，理由见那里。
         broadcastStrokeAppended(st, in: s)
         // 收笔那一刻记时（诊断用，见 `DocSession.lastInkEndAt` / `ContentView.persistInk`）
@@ -936,7 +946,13 @@ final class AppModel: ObservableObject {
     }
     func inkErase(_ pts: [SIMD3<Double>], page: Int, in session: DocSession? = nil) {
         guard let s = session ?? padSession else { return }
+        let before = s.strokes            // COW 快照，O(1)；只有真擦到了才拿它去比差异
         let changed = eraseNear(s, pts, page: page)
+        // 撤销记账：一次拖动里每 8ms 就来一批，靠 `InkPatch` 的合并把整条拖动并成**一步**
+        // （封口在抬笔处 `endInkOrRadial` / 本机手势的 onEnded）。
+        if changed {
+            s.inkUndo.record(label: "Erase", kind: .erase, strokesBefore: before, strokesAfter: s.strokes)
+        }
         // 擦除中笔尖圆环同样跟随
         if let last = pts.last { s.hover = HoverPoint(page: page, nx: last.x, ny: last.y) }
         // 🔴 **没擦到东西就什么都不做**（2026-09-02）。橡皮压在纸上不动、或从空白处划过时，平板照样
@@ -947,6 +963,24 @@ final class AppModel: ObservableObject {
         //    合帧那段注释与 `TODO.md` 已知 Bug）。擦除模式下长按呼盘时，橡皮恰恰是**停着不动**的，
         //    也就是每一批都擦不到东西 —— 这条路径于是从「必然堵」变成「一帧不发」。
         if changed, s.id == padSession?.id { broadcastStrokes() }
+    }
+
+    // MARK: - 撤销 / 重做（页内笔迹 + 文字注解 / 草稿纸笔迹）
+
+    /// 撤销或重做一步**页内**编辑。落库仍由 `DocTabModel` 的值快照对账自动完成，这里只补两件
+    /// 数组变更本身表达不了的事：给阅读区一个「有笔迹原地动过」的信号（页边软边界要跟上，
+    /// 笔画数不变时那个 `onChange(of: strokes.count)` 不会响），以及恰是 padSession 时补发镜像
+    /// （与框选提交同一条口径——擦除/改动改不出追加帧，只能发全量）。
+    func undoInk(in s: DocSession, redo: Bool) {
+        guard s.applyInkUndo(redo: redo) else { return }
+        s.inkMovedRev &+= 1
+        if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
+    }
+
+    /// 撤销或重做一步**草稿纸**编辑（同上，镜像走草稿纸那条）。
+    func undoScratch(in s: DocSession, redo: Bool) {
+        guard s.applyScratchUndo(redo: redo) else { return }
+        if s.id == padSession?.id { broadcastScratchStrokes() }
     }
 
     /// 把平板当前会话的**全部笔迹**推给平板（平板据此显示 + 刷新/重连后恢复）。
