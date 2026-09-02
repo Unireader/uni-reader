@@ -241,10 +241,20 @@
 实现顺序：**Mac 先行**（数据层 + 目录页合并显示 + 三个入口）→ 网页采集页 →
 安卓两模式（模式1 直接读库，模式2 走协议）。
 
-**Mac 端 2026-09-02 已落地**（`BookmarkModel` / `TOCMerge` / `TOCListView` / 三个入口 +
-`BookmarkNameSheet`；`WorkspaceManager` 三个 DAO + `DocTabModel` 增量对账）。协议那两条
-（`bookmarks` 0x4D / `bookmarkEdit` 0x4E）**还没做**——做 web 或模式2 时再搬进 `PROTOCOL.md`
-并补跨端向量。
+**四端 2026-09-02 全部落地**（同日，待真机验证）：
+
+| 端 | 显示 | 加 / 改名 / 删 | 真源 |
+|---|---|---|---|
+| Mac | 目录页合并树 + 工具栏目录弹窗 + 页右缘红缎带 | 右键「在此添加书签」/ ⌘D / Inspector 笔记页书签分区 | 自己（`note kind=5`）|
+| 网页采集页 | 抽屉目录合并树 | 抽屉顶「添加书签」+ 行尾两枚键 | Mac（`bookmarkEdit` → `bookmarks` 回推）|
+| 安卓模式2 | 同上（`shared/ReaderDrawer`）| 同上 | Mac（同网页）|
+| 安卓模式1 | 同上（同一份抽屉）| 同上 | 本机库（写完读回来再喂抽屉）|
+
+- 协议：`bookmarks`(0x4D) / `bookmarkEdit`(0x4E) 已在 `PROTOCOL.md`，跨端向量 #86~#90。
+- 合并规则四份实现同源：`TOCMerge.swift`（**参照实现** + `spike/toc-merge-test.swift` 19 项）
+  ↔ `web/src/lib/tocMerge.ts` ↔ `android/shared/TocMerge.kt`（`TocMergeTest` 7 项逐条对应）。
+- **平板端只有目录里那棵树，没有页面上的缎带**——页面标记是 Mac 端独有的（平板的页面是写字的
+  地方，再挂一枚可点的标记会跟笔打架）。要不要补，等真机用过再说。
 
 > 🔴 **分期唯一的真风险**：安卓模式1 读的是**同一个库**。在它实现之前，它就会 `SELECT` 到 `kind=5`
 > 的行——落地第一步必须先核实安卓侧按 kind 分流、不会把书签当笔迹画出来（`LibraryStore` 的
