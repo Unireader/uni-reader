@@ -1,5 +1,22 @@
 import SwiftUI
 
+/// 书签缎带：贴页右缘的一面小旗，右端切一个 V 口（真书里夹出来的那条丝带的样子）。
+/// 扁平纯色 + 0.5 描边，无渐变/高光/投影（红线）。形状本身就是"这是书签"的信号，
+/// 于是与另外两种**圆形**图钉（文字注解 / 草稿纸）一眼分得开——不必靠颜色去记。
+struct BookmarkRibbon: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        let notch: CGFloat = 5
+        p.move(to: CGPoint(x: r.minX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX - notch, y: r.midY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
 // MARK: - 页元胞（白纸底 + 基图 + 贴片 + 墨迹 + hover）
 
 struct PageCellView: View {
@@ -204,12 +221,11 @@ struct PageCellView: View {
             // Button + 原生 popover —— 与两种图钉同一种控件，渲染路径也就同一条。
             ForEach(bookmarks) { b in
                 Button { openBookmark = (openBookmark == b.id ? nil : b.id) } label: {
-                    Image(systemName: "bookmark.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.black.opacity(0.75))
-                        .padding(3)
-                        .background(Self.bookmarkMarker, in: Circle())
-                        .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
+                    BookmarkRibbon()
+                        .fill(Self.bookmarkMarker)
+                        .overlay(BookmarkRibbon().stroke(.black.opacity(0.18), lineWidth: 0.5))
+                        .frame(width: Self.ribbonW, height: Self.ribbonH)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(b.title)
@@ -228,8 +244,8 @@ struct PageCellView: View {
                     .padding(12)
                     .frame(minWidth: 160, alignment: .leading)
                 }
-                .position(x: size.width - 12,
-                          y: min(max(b.frac * size.height, 10), size.height - 10))
+                .position(x: size.width - Self.ribbonW / 2,
+                          y: min(max(b.frac * size.height, Self.ribbonH), size.height - Self.ribbonH))
             }
             // 平板笔尖光标（页锚定，纯位置指示）：压在墨迹/图钉之上、随页滚动。仅显示、不挡点击。
             // erase 模式且尺寸圆环开时直径 = 橡皮直径（hoverD 由调用方按 eraserRadius × 页宽换算传入）。
@@ -284,7 +300,12 @@ struct PageCellView: View {
     private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)
     private static let noteMarker = Color(red: 1, green: 0.80, blue: 0.15)
     private static let scratchMarker = Color(red: 0.62, green: 0.83, blue: 0.98)
-    private static let bookmarkMarker = Color(red: 0.98, green: 0.72, blue: 0.55)   // 暖橘，与另两枚一眼分得开
+    /// 书签缎带的红与尺寸。**红色是书签的通用色**——2026-09-02 第一版用的暖橘，用户实测
+    /// 「颜色还是橘色的说实话没有反应过来」；配上缎带这个形状，与两种圆图钉也就一眼分得开了
+    /// （样张 `spike/bookmark-flag-look.swift`）。
+    private static let bookmarkMarker = Color(red: 0.84, green: 0.23, blue: 0.24)
+    private static let ribbonW: CGFloat = 26
+    private static let ribbonH: CGFloat = 15
 
     /// 图钉半径（`notePin` 的实际外圆：11pt 图标 + 3pt 内边距），气泡避让用。
     static let pinRadius: CGFloat = 9
