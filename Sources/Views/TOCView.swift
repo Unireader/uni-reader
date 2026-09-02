@@ -183,9 +183,23 @@ struct TOCListView: View {
                     }
                     .padding(.horizontal, 8).padding(.vertical, 6)
                 }
-                .onAppear { reveal(currentId, proxy: proxy) }
+                .onAppear { revealBookmarks(); reveal(currentId, proxy: proxy) }
                 .onChange(of: currentId) { _, id in reveal(id, proxy: proxy) }
+                .onChange(of: bookmarks.count) { _, _ in revealBookmarks() }
             }
+        }
+    }
+
+    /// 🔴 **把带书签的那些组展开**（只增展开，不折叠任何分支）。
+    ///
+    /// 书签是按页号挂进一级组的，而一级组默认收着——不展开的话「加完书签在目录里找不到」。
+    /// 2026-09-02 用户在安卓上实测撞到：485 条目录的书，加了一枚死活看不见，日志里
+    /// `收到书签 1 枚` 且 docId 对得上，纯粹是被折叠挡住了。三端同一处理。
+    ///
+    /// 只在**出现/进入**与**书签数变化**时跑（不是每次重建都跑），于是用户手动折叠仍然收得住。
+    private func revealBookmarks() {
+        for f in flat where f.bookmark != nil {
+            expanded.formUnion(f.parents)
         }
     }
 

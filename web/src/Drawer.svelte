@@ -108,6 +108,21 @@
     expanded = s;
   });
 
+  // 🔴 带书签的那些组自动展开一次：书签按页号挂进一级组，而一级组默认收着——不展开的话
+  // 「加完书签在目录里找不到」（2026-09-02 用户在安卓上实测撞到，485 条目录的书，日志里
+  // 收到了、docId 也对得上，纯粹是被折叠挡住）。三端同一处理。
+  // 只在**书签集变了**时跑（依赖 bookmarks.length），之后用户手动折叠仍然收得住。
+  $effect(() => {
+    void S.bookmarks.length;
+    const cur = untrack(() => expanded);
+    const want: number[] = [];
+    for (const r of untrack(() => rows)) if (r.kind === "bm") for (const p of r.parents) if (!cur.has(p)) want.push(p);
+    if (!want.length) return;
+    const s = new Set(cur);
+    for (const p of want) s.add(p);
+    expanded = s;
+  });
+
   // 展开后把当前章节滚到视野中间（抽屉刚拉开时也滚一次）。
   $effect(() => {
     if (!S.drawer || S.drawerTab !== "toc" || curIdx < 0) return;
