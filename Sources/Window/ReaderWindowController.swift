@@ -94,10 +94,58 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         observeMenuCommands()
         decideInitialContent(launchDocId: launchDocId)
 
-        // 先摆位再挂 autosave：autosave 会把上次记下的 frame 应用上来（第一扇窗因此回到原处），
-        // 多开的那几扇由 `AppDelegate` 再 cascade 错开，否则会精确叠在一起。
+        // ⚠️ `NSWindowController.shouldCascadeWindows` 默认 true，`showWindow` 时会**覆盖**
+        // 我们刚恢复的位置（AppKit 文档原话：设了 frame 记忆就该把它关掉）。多开时的错位由
+        // `AppDelegate.openReaderWindow` 自己做。
+        shouldCascadeWindows = false
+        restoreFrame(win)
+        frameRestored = true
+        logFrame("init 末")
+    }
+
+    /// 所有阅读窗共用一个 frame 记忆名（多开时靠 `AppDelegate` 错开摆位）。
+    static let frameAutosaveName = "UniReaderReaderWindow"
+    /// 初始 frame 已经定好了 —— 在此之前不许存（见 `saveFrame`）。
+    private var frameRestored = false
+
+    /// 恢复上次的窗口尺寸与位置。
+    ///
+    /// 🔴 **不能用 `setFrameAutosaveName`**（2026-09-02 用户报「关掉窗口再开就变成中小尺寸」，
+    /// 日志实证）：那个名字要求**整个 app 内唯一**，而「关掉再开一扇」时旧 `NSWindow` 往往还没
+    /// 析构、名字仍被它占着 —— 第二扇拿到 `false`，于是**既不恢复、以后也不自动存**，窗口就停在
+    /// `contentViewController` 把它压下去的 `minSize`（720×500）。日志原文：第一扇
+    /// `autosave=true` frame 1442×854，第二扇 `autosave=false` frame 720×500。
+    ///
+    /// 改成两头自己管：这里显式 `setFrameUsingName`（不看名字归谁，任何时候都生效），
+    /// 存挂在 `windowDidResize`/`windowDidMove`/`shutdown` 上。键与 AppKit 那套完全一样
+    /// （`NSWindow Frame <名字>`），老用户存下的尺寸原样接着用。
+    private func restoreFrame(_ win: NSWindow) {
+        guard !win.setFrameUsingName(Self.frameAutosaveName) else { return }
+        // 从没记过（首次运行）→ 给个像样的初始尺寸再居中。**不能就这么让它去**：
+        // `contentViewController` 已经把窗口压到 minSize 了，不管就是一扇 720×500 的小窗。
+        win.setContentSize(NSSize(width: 1280, height: 860))
         win.center()
-        win.setFrameAutosaveName("UniReaderReaderWindow")
+    }
+
+    /// 记住窗口尺寸与位置。理由见 `restoreFrame` 的红线——AppKit 那套在名字被占用时不替我们存。
+    private func saveFrame() {
+        guard frameRestored, let w = window,
+              !w.styleMask.contains(.fullScreen)   // 全屏时 frame = 整块屏，记下来下次会开出一扇巨窗
+        else { return }
+        w.saveFrame(usingName: Self.frameAutosaveName)
+    }
+
+    func windowDidResize(_ notification: Notification) { saveFrame() }
+    func windowDidMove(_ notification: Notification) { saveFrame() }
+
+    /// 窗口尺寸这条链路的打点（`~/Library/Logs/UniReader-ws.log` 存在时才写）。
+    /// 「关掉窗口再开就变小」这类问题只能靠它定位：是恢复没生效，还是恢复完又被谁改了。
+    private func logFrame(_ tag: String) {
+        guard let w = window else { return }
+        let saved = UserDefaults.standard.string(forKey: "NSWindow Frame \(Self.frameAutosaveName)") ?? "无"
+        wsLog(String(format: "窗口 %@：frame=%.0f,%.0f %.0fx%.0f 屏=%.0fx%.0f 存档=[%@]",
+                     tag, w.frame.minX, w.frame.minY, w.frame.width, w.frame.height,
+                     w.screen?.frame.width ?? 0, w.screen?.frame.height ?? 0, saved))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持——窗口一律由代码建") }
@@ -298,6 +346,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     func shutdown() {
         guard !didShutdown else { return }
         didShutdown = true
+        logFrame("结清（关窗/退出）")
+        saveFrame()          // ⌘Q 不发 `windowWillClose`，最后这一下尺寸靠这里落下来
         refWindow.close()
         AIPanelModel.shared.releaseHost(.inline(session.windowID))
         AIPanelModel.shared.forgetInline(session.windowID)

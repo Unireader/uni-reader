@@ -133,6 +133,7 @@ M3 顺带删掉的（迁移让它们变成死代码）：`WindowCloser`、`Toolb
 
 | 症状 | 根因 | 修法 |
 |---|---|---|
+| **关掉窗口（交通灯）再开一扇，尺寸永远回不来**（停在 720×500 的最小尺寸） | `NSWindow.setFrameAutosaveName` 要求名字**整个 app 内唯一**，而旧 `NSWindow` 关闭后往往还没析构、名字仍被它占着 → 第二扇拿到 `false`，于是**既不恢复、以后也不自动存**。窗口就停在 `contentViewController` 把它压下去的 `minSize`。日志实证：第一扇 `autosave=true` frame 1442×854，第二扇 `autosave=false` frame 720×500 | 两头自己管：`setFrameUsingName`（不看名字归谁）恢复，`windowDidResize`/`windowDidMove`/`shutdown` 里 `saveFrame(usingName:)` 存。键与 AppKit 那套一样，老存档接着用。顺带：`shouldCascadeWindows = false`（默认 true，`showWindow` 会覆盖刚恢复的位置），首次运行没存档时显式给 1280×860 再居中 |
 | **⌘Q 退出后，最后那段阅读进度 / 最后一笔笔迹没存上** | 🔴 **AppKit 退出根本不关窗**：`NSApp.terminate:` 问完 `applicationShouldTerminate` 就发 `willTerminate` 并结束进程，**一扇窗的 `windowWillClose` 都不发**；而全部结清（`flushPersist` → `saveProgress` → 退出打开集 → 放引用）只挂在那个回调上。迁移前这条是 SwiftUI 的 `onDisappear` 兜着的——它在 ⌘Q 时**会**触发（代码里为此才有 `isTerminating` 守卫去区分「退出关窗」和「⌘W 关窗」），换成自建窗口后这条链路就断了 | `applicationShouldTerminate` 里置好 `isTerminating` 后，**逐扇窗显式调 `ReaderWindowController.shutdown()`**（从 `windowWillClose` 抽出来的同一份次序，幂等）。遍历前先拷一份数组：结清里会 `forget(self)` 改它 |
 
 ⚠️ 这条是**整类问题的代表**：凡是迁移前挂在 SwiftUI 生命周期（`onDisappear`/`onAppear`/`.toolbar`）
