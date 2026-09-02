@@ -31,6 +31,9 @@ struct PageCellView: View {
     var noteDrag: (id: UUID, off: CGSize)? = nil   // 点注解拖拽 ghost（非空且 id 匹配时该图钉按 off 挪显示位）
     var scratchPins: [(id: UUID, nx: Double, ny: Double, name: String)] = []   // 本页的草稿纸图钉（点开那张纸）
     var onOpenScratchPad: (UUID) -> Void = { _ in }
+    var bookmarks: [Bookmark] = []                         // 本页的书签（页右缘小旗标，点开改名/删除）
+    var onRenameBookmark: (Bookmark) -> Void = { _ in }
+    var onDeleteBookmark: (Bookmark) -> Void = { _ in }
     /// 画板模式（v12）的每侧页边宽度（像素，0 = 关）。纸面与墨迹层按它向两侧铺开，
     /// 其余各层（页图/高亮/选择/图钉/光标）一律还是页内坐标——页边只是「同一页的横向延伸」。
     var inkMargin: CGFloat = 0
@@ -189,6 +192,29 @@ struct PageCellView: View {
                 .position(x: min(max(pin.nx * size.width, 12), size.width - 12),
                           y: min(max(pin.ny * size.height, 10), size.height - 10))
             }
+            // 书签旗标：贴**页右缘**、纵向落在书签自己的页内位置上（一页可多枚，所以不是页角）。
+            // 与两种图钉同一套形制（扁平圆底 + SF Symbol + 0.5 描边，无渐变高光），只换图标与配色。
+            // 点它出菜单：书签点开没有内容可展示（跳转从目录去），页面上这一枚的用处是
+            // 「一眼看出这一处标过」+ 就地改名/取消。
+            ForEach(bookmarks) { b in
+                Menu {
+                    Button(L("Rename…")) { onRenameBookmark(b) }
+                    Button(L("Delete"), role: .destructive) { onDeleteBookmark(b) }
+                } label: {
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.black.opacity(0.75))
+                        .padding(3)
+                        .background(Self.bookmarkMarker, in: Circle())
+                        .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)     // 不要那个下三角：这是一枚标记，不是下拉框
+                .fixedSize()
+                .help(b.title)
+                .position(x: size.width - 12,
+                          y: min(max(b.frac * size.height, 10), size.height - 10))
+            }
             // 平板笔尖光标（页锚定，纯位置指示）：压在墨迹/图钉之上、随页滚动。仅显示、不挡点击。
             // erase 模式且尺寸圆环开时直径 = 橡皮直径（hoverD 由调用方按 eraserRadius × 页宽换算传入）。
             if let hover {
@@ -242,6 +268,7 @@ struct PageCellView: View {
     private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)
     private static let noteMarker = Color(red: 1, green: 0.80, blue: 0.15)
     private static let scratchMarker = Color(red: 0.62, green: 0.83, blue: 0.98)
+    private static let bookmarkMarker = Color(red: 0.98, green: 0.72, blue: 0.55)   // 暖橘，与另两枚一眼分得开
 
     /// 图钉半径（`notePin` 的实际外圆：11pt 图标 + 3pt 内边距），气泡避让用。
     static let pinRadius: CGFloat = 9
