@@ -38,6 +38,10 @@ final class RefWindowModel: ObservableObject {
     @Published private(set) var layout: PageLayout?
     /// 页图缓存键的 doc 段 = 内容哈希，与阅读区同口径 —— 参考的若正是当前这本，**缓存直接共用**。
     @Published private(set) var docKey = ""
+    /// 这本书的目录（`TOCEntry.build` 是纯函数，与阅读区同一份解析，含坏书签的处置）。
+    /// 用户 2026-09-02：「参考小窗支持 toc 跳转」——对照习题/答案时按章节翻比拖滚动条实在。
+    /// 仍不违反「只读」：跳转只动小窗自己的视口，**不写回那本书的阅读进度**（方案 §3 红线）。
+    @Published private(set) var toc: [TOCEntry] = []
 
     /// 打开时的定位：那本书在库里的阅读进度（用户 2026-08-30：「默认是从 pdf 的进度打开」）。
     private(set) var seedPage = 0
@@ -111,6 +115,7 @@ final class RefWindowModel: ObservableObject {
         docID = documentId
         pdf = doc
         layout = PageLayout(doc: doc)
+        toc = TOCEntry.build(from: doc)
         docKey = target.hash.isEmpty ? documentId : target.hash
         title = workspace.document(id: documentId)?.title ?? ""
         let p = workspace.progress(documentId: documentId)
@@ -120,6 +125,15 @@ final class RefWindowModel: ObservableObject {
         viewDocY = nil          // 换书 = 全新一份视口
         viewZoom = 1
         UserDefaults.standard.set(documentId, forKey: K.doc)
+    }
+
+    /// 跳到某页（目录点选）。**复用「定位」那条既有通路**：`seedRev` 一涨，页流的 `seedIfReady`
+    /// 下一拍就把视口挪过去——不必再写第二套 scrollTo，也就不会有第二套「几何还没就位」的时序坑。
+    func goto(page: Int, frac: Double = 0) {
+        guard let pdf else { return }
+        seedPage = min(max(0, page), max(0, pdf.pageCount - 1))
+        seedFrac = min(max(0, frac), 1)
+        seedRev &+= 1
     }
 
     /// 重新定位到那本书的进度（顶栏「回到进度」）。
@@ -140,6 +154,7 @@ final class RefWindowModel: ObservableObject {
         releaseRenderClaim()
         pdf = nil
         layout = nil
+        toc = []            // 下次打开走 `load` 重建（`pdf == nil` 时 `open` 必定重载）
         // 关闭→重开要回到进度（对比折叠→展开保持位置），所以这里才清视口记忆。
         viewDocY = nil
         viewZoom = 1
