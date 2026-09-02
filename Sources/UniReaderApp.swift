@@ -521,6 +521,13 @@ extension Notification.Name {
     static let toggleSidebar = Notification.Name("com.xvan.UniReader.toggleSidebar")
     static let toggleInspector = Notification.Name("com.xvan.UniReader.toggleInspector")
     static let toggleSnipTool = Notification.Name("com.xvan.UniReader.toggleSnipTool")
+    /// 工作区菜单里那几项**要弹 SwiftUI sheet/alert** 的动作。菜单本身在 AppKit 工具栏里
+    /// （`ReaderWindowController`），而 sheet 的开关是 `SidebarView` 自己的 `@State`——
+    /// 用通知把这一下转过去，比把那堆状态外露给窗口层干净。
+    static let workspaceRenameRequested = Notification.Name("com.xvan.UniReader.workspaceRename")
+    static let workspaceMakeMirrorRequested = Notification.Name("com.xvan.UniReader.workspaceMakeMirror")
+    static let workspaceDropMirrorRequested = Notification.Name("com.xvan.UniReader.workspaceDropMirror")
+    static let workspaceSyncToSourceRequested = Notification.Name("com.xvan.UniReader.workspaceSyncToSource")
     /// 跳转历史：后退 / 前进 / 开关浮窗（由 key 窗口的 `ContentView` 响应）
     static let jumpBackRequested = Notification.Name("com.xvan.UniReader.jumpBackRequested")
     static let jumpForwardRequested = Notification.Name("com.xvan.UniReader.jumpForwardRequested")

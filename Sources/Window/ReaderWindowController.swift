@@ -46,6 +46,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var popover: NSPopover?
     /// 搜索项（⌘F 要让它进入编辑态，校验时也要同步文本）。
     private var searchItem: NSSearchToolbarItem?
+    /// 工作区菜单项（标题要跟着工作区名走）。
+    private var workspaceItem: NSMenuToolbarItem?
     private var sidebarItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
 
@@ -79,6 +81,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         win.delegate = self
         win.toolbarStyle = .unified
         win.toolbar = makeToolbar()
+        adoptNewToolbarItems()
 
         WorkspaceRegistry.shared.noteRootWindow(windowId)
         WorkspaceRegistry.shared.bindRootWindow(windowId, workspace)
@@ -421,6 +424,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     // 已随 M3 删除——`allowsUserCustomization` 现在没人会把它拍回 false。
 
     private enum ToolID {
+        static let addPDF = NSToolbarItem.Identifier("sidebar.addPDF")
+        static let workspace = NSToolbarItem.Identifier("sidebar.workspace")
         static let zoomOut = NSToolbarItem.Identifier("zoom.out")
         static let zoomActual = NSToolbarItem.Identifier("zoom.actual")
         static let zoomIn = NSToolbarItem.Identifier("zoom.in")
@@ -445,11 +450,31 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         return tb
     }
 
+    /// 🔴 **补插后加的 item**：`autosavesConfiguration` 存下来的是**用户当时**那份清单，后来新增的
+    /// default item 不会自己冒出来——用户得先去「自定工具栏…」点恢复默认才看得见（2026-09-01
+    /// 加回「加书 / 工作区菜单」两枚时踩到：它们在 default 清单里，屏幕上却没有）。
+    /// 这里只补「配置里确实没有」的那几枚，用户主动拖走的不会被硬塞回来（拖走 = 配置里也没有，
+    /// 但那是用户的选择——所以只在**第一次**引入某枚时补，靠 UserDefaults 记一笔）。
+    private func adoptNewToolbarItems() {
+        guard let tb = window?.toolbar else { return }
+        let key = "toolbarAdopted.reader"
+        var adopted = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        var index = 1   // 紧跟在 toggleSidebar 之后
+        for id in [ToolID.addPDF, ToolID.workspace] where !adopted.contains(id.rawValue) {
+            adopted.insert(id.rawValue)
+            if !tb.items.contains(where: { $0.itemIdentifier == id }) {
+                tb.insertItem(withItemIdentifier: id, at: min(index, tb.items.count))
+            }
+            index += 1
+        }
+        UserDefaults.standard.set(Array(adopted), forKey: key)
+    }
+
     /// 🔴 **`.sidebarTrackingSeparator` 不能省**：它是「侧栏区 ↔ 内容区」的分界，工具栏靠它知道
     /// 哪些 item 属于侧栏那一侧。少了它，侧栏开关会被当成普通 item 排到内容区里去
     /// （2026-09-01 用户实测：「左侧边栏按钮跑右边去了」）。
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator,
+        [.toggleSidebar, ToolID.addPDF, ToolID.workspace, .sidebarTrackingSeparator,
          ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn, .space,
          ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory, .space,
          ToolID.ocr, ToolID.canvas, ToolID.night, .space,
@@ -458,7 +483,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .space, .flexibleSpace,
+        [.toggleSidebar, ToolID.addPDF, ToolID.workspace, .sidebarTrackingSeparator,
+         .space, .flexibleSpace,
          ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn,
          ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory,
          ToolID.ocr, ToolID.canvas, ToolID.night,
@@ -473,6 +499,16 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch id {
+        case ToolID.addPDF:
+            return button(id, L("Open PDF…"), "plus", #selector(addPDF))
+        case ToolID.workspace:
+            let it = NSMenuToolbarItem(itemIdentifier: id)
+            it.label = L("Workspace")
+            it.paletteLabel = L("Workspace")
+            it.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+            it.menu = workspaceMenu()
+            workspaceItem = it
+            return it
         case ToolID.zoomOut:
             return button(id, L("Zoom Out"), "minus.magnifyingglass", #selector(zoomOut))
         case ToolID.zoomActual:
@@ -567,6 +603,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             default: break
             }
         }
+        // 工作区菜单那枚：标题/图标跟着当前工作区走（镜像换个图标就够了——用户要的是
+        // 「一眼认出这不是硬盘上那份」，不是一段说明）。
+        workspaceItem?.toolTip = workspace.name.isEmpty ? L("Workspace") : workspace.name
+        workspaceItem?.image = NSImage(
+            systemSymbolName: workspace.isMirror ? "externaldrive.badge.timemachine" : "folder",
+            accessibilityDescription: nil)
     }
 
     /// 要弹面板的三枚（目录 / OCR / 平板）得自带一个 `NSButton` 当 view —— `NSPopover` 必须锚在
@@ -613,6 +655,97 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func searchChanged(_ sender: NSSearchField) {
         session.searchQuery = sender.stringValue
         session.scheduleSearch()
+    }
+
+    // MARK: 工作区菜单
+    //
+    // 迁移前这是 `SidebarView` 里一条 SwiftUI `.toolbar`（装进 hosting controller 后整块失效）。
+    // 「打开 / 新建 / 最近」窗口层自己就能做；「重命名 / 离线副本 / 同步」要弹的是侧栏那边的
+    // sheet，发通知过去（见 `SidebarView` 里接住的那四条）。
+
+    private func workspaceMenu() -> NSMenu {
+        let m = NSMenu()
+        m.delegate = self
+        m.identifier = NSUserInterfaceItemIdentifier("workspace")
+        buildWorkspaceMenu(m)
+        return m
+    }
+
+    private func buildWorkspaceMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        add(menu, L("Open Workspace…"), #selector(menuOpenWorkspace), symbol: "folder")
+        add(menu, L("New Workspace…"), #selector(menuNewWorkspace), symbol: "folder.badge.plus")
+        add(menu, L("Rename Workspace…"), #selector(menuRenameWorkspace), symbol: "pencil")
+        menu.addItem(.separator())
+        // 镜像与源盘互斥：镜像不能再做镜像，源盘也没有「同步回去」这回事——
+        // 两个入口只出现一个，不给用户做无效选择的机会（沿用迁移前的判断）。
+        if workspace.isMirror {
+            add(menu, L("Sync to Source…"), #selector(menuSyncToSource),
+                symbol: "arrow.triangle.2.circlepath")
+        } else {
+            // 「保留离线副本」是**状态**不是动作：勾上 = 这个工作区我要能离线用。
+            let keep = add(menu, L("Keep Offline Copy"), #selector(menuToggleOfflineCopy),
+                           symbol: "externaldrive.badge.timemachine")
+            keep.state = keptOffline ? .on : .off
+            if keptOffline { menu.addItem(.sectionHeader(title: lastSyncedLine)) }
+        }
+        let recents = WorkspaceRegistry.shared.recents
+        if !recents.isEmpty {
+            menu.addItem(.separator())
+            // 侧栏只留「快速切过去」；移除/清空统一在「文件 → 最近打开」。
+            menu.addItem(.sectionHeader(title: L("Recent Workspaces")))
+            for r in recents {
+                let it = NSMenuItem(title: r.name, action: #selector(menuOpenRecent(_:)), keyEquivalent: "")
+                it.target = self
+                it.representedObject = WorkspaceRegistry.resolveOrSource(r).path
+                // 换图标就够了，不加字：一眼看出「点它现在是离线读」
+                it.image = NSImage(systemSymbolName: WorkspaceRegistry.opensOffline(r)
+                                   ? "externaldrive.badge.timemachine" : "folder",
+                                   accessibilityDescription: nil)
+                menu.addItem(it)
+            }
+        }
+    }
+
+    @discardableResult
+    private func add(_ menu: NSMenu, _ title: String, _ sel: Selector, symbol: String? = nil) -> NSMenuItem {
+        let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+        it.target = self
+        if let symbol { it.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+        menu.addItem(it)
+        return it
+    }
+
+    /// 这个工作区当下**确实**有一份可用的离线副本（记录挂着、文件也还在）。
+    private var keptOffline: Bool {
+        guard let folder = workspace.folder else { return false }
+        return WorkspaceRegistry.shared.mirrorPath(forSource: folder, id: workspace.workspaceId) != nil
+    }
+
+    /// 借出记录就在源库自己的 meta 里，读它不额外开连接。
+    private var lastSyncedLine: String {
+        guard let at = workspace.checkouts.first?.lastSyncedAt, let d = ISO.date(at) else {
+            return L("Never synced back")
+        }
+        return String(format: L("Last synced %@"), d.formatted(date: .abbreviated, time: .shortened))
+    }
+
+    @objc private func addPDF() { openPDF() }
+    @objc private func menuOpenWorkspace() { chooseWorkspace() }
+    @objc private func menuNewWorkspace() { createNewWorkspace() }
+    @objc private func menuRenameWorkspace() {
+        NotificationCenter.default.post(name: .workspaceRenameRequested, object: nil)
+    }
+    @objc private func menuSyncToSource() {
+        NotificationCenter.default.post(name: .workspaceSyncToSourceRequested, object: nil)
+    }
+    @objc private func menuToggleOfflineCopy() {
+        NotificationCenter.default.post(name: keptOffline ? .workspaceDropMirrorRequested
+                                                          : .workspaceMakeMirrorRequested, object: nil)
+    }
+    @objc private func menuOpenRecent(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        openRecentWorkspace(URL(fileURLWithPath: path))
     }
 
     // MARK: 弹出面板
@@ -686,5 +819,13 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         default:
             return true
         }
+    }
+}
+
+extension ReaderWindowController: NSMenuDelegate {
+    /// 工作区菜单**展开前**重建：离线副本的开关状态、最近列表都可能在两次点击之间变了。
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.identifier?.rawValue == "workspace" else { return }
+        buildWorkspaceMenu(menu)
     }
 }

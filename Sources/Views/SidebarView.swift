@@ -271,78 +271,45 @@ struct SidebarView: View {
         }
         .onChange(of: selection) { _, id in
             // 外部改打开文档（恢复会话/新窗口打开/删除回落）→ 选中集跟随
-            let s: Set<String> = id.map { [$0] } ?? []
-            if s != multiSel { multiSel = s }
+            syncSelection(id)
         }
+        // 🔴 **首帧也要同步一次**：`onChange` 只认「变化」，而 2026-09-01 窗口层迁到 AppKit 后
+        // `restoreTabs()` 是在 `ReaderWindowController.init` 里跑的（**视图创建之前**），
+        // 首帧 `selection` 就已经是最终值 → 那条 onChange 永远不触发，表现是
+        // 「PDF 开着，侧栏里却没有一行是选中的」。迁移前它在 `onAppear` 之后跑，靠 nil→X 那一次
+        // 变化把选中集带起来，是**碰巧**成立的。
+        .onAppear { syncSelection(selection) }
         .dropDestination(for: URL.self) { urls, _ in onDropFiles(urls); return true }
         .navigationTitle(L("Library"))
-        .toolbar {
-            ToolbarItemGroup {
-                Button(action: onOpenPDF) {
-                    Label(L("Open PDF…"), systemImage: "plus")
-                }
-                Menu {
-                    Button(action: onChooseWorkspace) {
-                        Label(L("Open Workspace…"), systemImage: "folder")
-                    }
-                    Button(action: onCreateWorkspace) {
-                        Label(L("New Workspace…"), systemImage: "folder.badge.plus")
-                    }
-                    Button { nameField = workspace.name; renameShown = true } label: {
-                        Label(L("Rename Workspace…"), systemImage: "pencil")
-                    }
-                    Divider()
-                    // 镜像与源盘互斥：镜像不能再做镜像（`MirrorBuilder` 也会拦），
-                    // 源盘也没有"同步回去"这回事 —— 两个入口只出现一个，不给用户做无效选择的机会。
-                    if workspace.isMirror {
-                        Button {
-                            syncTarget = SyncTarget(side: .fromMirror, switchTo: nil)
-                        } label: {
-                            Label(L("Sync to Source…"), systemImage: "arrow.triangle.2.circlepath")
-                        }
-                    } else {
-                        // 「保留离线副本」是**状态**不是动作：勾上 = 这个工作区我要能离线用，
-                        // 之后由打开链路在源盘不在时自动选用它；取消 = 连副本一起删掉。
-                        // 做成一次性的「制作镜像…」就退回「你自己拷了一份」，用户还得自己管它。
-                        Toggle(isOn: Binding(
-                            get: { keptOffline },
-                            set: { on in if on { makeMirrorShown = true } else { dropMirrorShown = true } }
-                        )) {
-                            Label(L("Keep Offline Copy"), systemImage: "externaldrive.badge.timemachine")
-                        }
-                        if keptOffline {
-                            Text(lastSyncedLine)
-                        }
-                    }
-                    if !registry.recents.isEmpty {
-                        Divider()
-                        // 侧栏只留「快速切过去」。移除/清空统一在「文件 → 最近打开 → 清空最近打开」
-                        // （见 `OpenRecentMenu`）：这里原先还挂着一个「从最近列表移除」的三级嵌套
-                        // 子菜单，既不是 macOS 的排法，也与菜单栏两处维护同一件事。
-                        Section(L("Recent Workspaces")) {
-                            ForEach(registry.recents) { r in
-                                // 点的是「工作区」，开哪一份副本由 registry 当场定（源盘不在就开本机那份）
-                                Button {
-                                    onOpenRecent(WorkspaceRegistry.resolveOrSource(r))
-                                } label: {
-                                    // 换图标就够了，不加字：一眼看出「点它现在是离线读」
-                                    Label(r.name, systemImage: WorkspaceRegistry.opensOffline(r)
-                                          ? "externaldrive.badge.timemachine" : "folder")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    // 镜像换一个图标就够了：用户要的是"一眼认出这不是硬盘上那份"，
-                    // 不是一段说明。真要看来历，菜单里「同步到源盘…」那条会讲。
-                    Label(workspace.name.isEmpty ? L("Workspace") : workspace.name,
-                          systemImage: workspace.isMirror ? "externaldrive.badge.timemachine" : "folder")
-                }
-            }
+        // 🔴 这里原先是一条 SwiftUI `.toolbar { }`（加书 + 工作区菜单）。2026-09-01 窗口层迁到
+        // AppKit 之后**它整块失效**——SwiftUI 的 toolbar 只作用于它自己创建的窗口，装进
+        // `NSHostingController` 对 AppKit 窗口无效（与 AI 浮窗同一个坑）。那两枚现在由
+        // `ReaderWindowController` 的 `NSToolbar` 提供，落在侧栏那一侧。
+        //
+        // 需要弹 sheet/alert 的几项（重命名 / 离线副本 / 同步）没法在窗口层做——开关是下面这些
+        // `@State`。菜单点了发通知，这里接住、翻自己的状态，sheet 照旧由 `sheetsAndAlerts` 弹。
+        .onReceive(NotificationCenter.default.publisher(for: .workspaceRenameRequested)) { _ in
+            nameField = workspace.name
+            renameShown = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .workspaceMakeMirrorRequested)) { _ in
+            makeMirrorShown = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .workspaceDropMirrorRequested)) { _ in
+            dropMirrorShown = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .workspaceSyncToSourceRequested)) { _ in
+            syncTarget = SyncTarget(side: .fromMirror, switchTo: nil)
         }
     }
 
     /// 侧栏挂着的全部面板/弹窗，外加离线副本提示条的重算时机（见 `mainList` 的注释）。
+    /// 打开的文档 → List 的选中集。两处调用（首帧 + 之后每次变化），保持一份实现。
+    private func syncSelection(_ id: String?) {
+        let s: Set<String> = id.map { [$0] } ?? []
+        if s != multiSel { multiSel = s }
+    }
+
     private func sheetsAndAlerts<V: View>(_ base: V) -> some View {
         base
         .sheet(isPresented: $makeMirrorShown, onDismiss: refreshNotice) { MakeMirrorSheet() }
