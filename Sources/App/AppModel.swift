@@ -158,6 +158,7 @@ final class AppModel: ObservableObject {
                 if running {
                     self?.push(); self?.broadcastDocs(); self?.broadcastPens(); self?.broadcastEraser()
                     self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)
+                    self?.broadcastBookmarks()
                     self?.broadcastScratchPads(); self?.broadcastScratchStrokes()
                     self?.broadcastCanvas()   // 画板模式：新起的服务也要把当前状态交代一遍
                 }
@@ -175,6 +176,7 @@ final class AppModel: ObservableObject {
             .sink { [weak self] _ in
                 self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastStrokes(); self?.broadcastNotes(); self?.broadcastLayers()
                 self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)   // 新客户端要补书库 + 目录
+                self?.broadcastBookmarks()                                             // 书签与目录合并显示，一起补
                 self?.broadcastScratchPads(); self?.broadcastScratchStrokes()          // 草稿纸列表 + 开着那张的笔迹
                 // 画板模式（PROTOCOL.md `canvas`）：Mac 是唯一真源，但只在切开关/跳档时广播 ——
                 // 新客户端不补这一发就永远收不到（`pushStrokesIfDocChanged` 那处被 pushedStrokesKey
@@ -485,6 +487,8 @@ final class AppModel: ObservableObject {
             s.activeLayerID = layer.id
         case "textNote":
             applyTextNote(obj, to: s)
+        case "bookmarkEdit":
+            applyBookmarkEdit(obj, to: s)
         case "lassoMove":
             applyLassoMove(obj, to: s)
         case "lassoScale":
@@ -1090,7 +1094,7 @@ final class AppModel: ObservableObject {
         // 一旦用户在平板上滑动还会把这个假位置写回数据库覆盖真实进度（同 setActive 的时序坑）。
         if followedClosed { pushCurrentViewport() }
         broadcastDocs()
-        broadcastLibrary(); broadcastTOC()   // 接班会话可能属于另一个工作区、装着另一本书
+        broadcastLibrary(); broadcastTOC(); broadcastBookmarks()   // 接班会话可能属于另一个工作区、装着另一本书
         broadcastScratchPads(); broadcastScratchStrokes()   // 草稿纸挂文档，换会话即换一整套
         releasePadRenderIfUnused()           // 被关掉的那本若已无人在看 → 放掉平板那份 PDF 副本
     }
@@ -1105,7 +1109,7 @@ final class AppModel: ObservableObject {
         if followedSwitched { pushCurrentViewport() }
         broadcastDocs()
         if followedSwitched {
-            broadcastLibrary(); broadcastTOC()                   // 跟随模式换窗口 = 可能换工作区/换书
+            broadcastLibrary(); broadcastTOC(); broadcastBookmarks()                   // 跟随模式换窗口 = 可能换工作区/换书
             broadcastScratchPads(); broadcastScratchStrokes()    // …连草稿纸也是另一篇文档的那套
         }
     }
@@ -1121,7 +1125,7 @@ final class AppModel: ObservableObject {
         padSelectedSessionID = idString.isEmpty ? nil : UUID(uuidString: idString)
         push()
         broadcastDocs()
-        broadcastLibrary(); broadcastTOC()   // 换会话 = 可能换工作区、必然可能换书
+        broadcastLibrary(); broadcastTOC(); broadcastBookmarks()   // 换会话 = 可能换工作区、必然可能换书
         pushCurrentViewport()   // 平板切文档后落到该文档在 Mac 端的当前进度
     }
 
@@ -1153,6 +1157,7 @@ final class AppModel: ObservableObject {
         broadcastDocs()
         broadcastLibrary()
         broadcastTOC()
+        broadcastBookmarks()   // 换文档 = 换一套书签
     }
 
     /// 广播「平板跟随的那个窗口所属工作区」的书库给平板（平板据此打开尚未打开的文档）。
@@ -1189,6 +1194,44 @@ final class AppModel: ObservableObject {
         if !force && key == pushedTOCKey { return }
         pushedTOCKey = key
         server.broadcast(["type": "toc", "docId": s.contentHash, "list": list])
+    }
+
+    /// 把当前文档的书签全量镜像推给平板（`PROTOCOL.md` 的 `bookmarks`，规格 `REQUIREMENTS.md §1.9`）。
+    ///
+    /// 与 `broadcastTOC` 同一套惯例：`docId` = 内容哈希（客户端必须核对，否则切档瞬间会把上一本的
+    /// 书签挂到新书上），列表**已按 `Bookmark.before` 有序**（客户端直接用，不要再排）。
+    /// 不做「内容没变就不发」的去重——书签表本来就小，而增删改后必须立刻回推（客户端不做乐观更新）。
+    func broadcastBookmarks() {
+        guard server.isRunning, let s = padSession else { return }
+        let list: [[String: Any]] = s.bookmarks.map {
+            ["id": $0.id.uuidString, "page": $0.page, "frac": $0.frac, "title": $0.title]
+        }
+        server.broadcast(["type": "bookmarks", "docId": s.contentHash, "list": list])
+    }
+
+    /// 平板/网页请求加/改名/删一枚书签（`bookmarkEdit` 上行）。**Mac 是唯一真源**：这里落进
+    /// `session.bookmarks`（`DocTabModel` 的增量对账负责落库），再以 `bookmarks` 全量回推。
+    private func applyBookmarkEdit(_ obj: [String: Any], to s: DocSession) {
+        let op = (obj["op"] as? NSNumber)?.intValue ?? 0
+        let idStr = obj["id"] as? String ?? ""
+        guard let uuid = UUID(uuidString: idStr) else { return }
+        let title = (obj["title"] as? String ?? "")
+        switch op {
+        case 0:   // add：id 由客户端生成；名字必填这条判据在 Mac 侧也守一遍（不能只靠 UI 禁用）
+            guard Bookmark.validTitle(title) else { return }
+            let maxPage = max(0, (s.pdf?.pageCount ?? 1) - 1)
+            let page = min(max(0, (obj["page"] as? NSNumber)?.intValue ?? 0), maxPage)
+            let frac = min(max(0, (obj["frac"] as? NSNumber)?.doubleValue ?? 0), 1)
+            guard !s.bookmarks.contains(where: { $0.id == uuid }) else { return }   // 重发的同一帧
+            s.bookmarks.append(Bookmark(id: uuid, page: page, frac: frac,
+                                        title: title.trimmingCharacters(in: .whitespacesAndNewlines)))
+            s.bookmarks.sort(by: Bookmark.before)
+        case 1:   // rename：找不到 id 就静默丢（客户端可能拿着过期镜像）
+            s.renameBookmark(id: uuid, to: title)
+        default:  // delete
+            s.deleteBookmark(id: uuid)
+        }
+        broadcastBookmarks()
     }
 
     /// 广播打开中的文档列表给平板。

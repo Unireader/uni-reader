@@ -20,6 +20,7 @@
     scroll: 0x40, hover: 0x41, ink: 0x42, erase: 0x43, probe: 0x44, padGeom: 0x45, eraser: 0x46,
     lassoMove: 0x47, scratchDelete: 0x48, scratchRename: 0x49, lassoScale: 0x4A, canvas: 0x4B,
     strokesAppend: 0x4C,   // 与 strokes 逐字节相同，语义是「追加」（PROTOCOL.md §4.2）
+    bookmarks: 0x4D, bookmarkEdit: 0x4E,   // 书签（REQUIREMENTS.md §1.9）
     nack: 0x50
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
@@ -213,6 +214,22 @@
           w.u8(te2.depth || 0); w.u8(tp >= 0 ? 1 : 0);
           w.u32(tp >= 0 ? tp : 0); w.f32(te2.frac || 0); w.str(te2.label || "");
         }
+        break;
+      }
+      // 书签（REQUIREMENTS.md §1.9）。docId 与 toc 同一口径（内容哈希），客户端必须核对。
+      case "bookmarks": {
+        w.u8(OP.bookmarks); w.str(o.docId || "");
+        var BM = o.list || []; w.u16(BM.length);
+        for (var bmi = 0; bmi < BM.length; bmi++) {
+          var bm = BM[bmi];
+          w.str(bm.id || ""); w.u32(bm.page || 0); w.f32(bm.frac || 0); w.str(bm.title || "");
+        }
+        break;
+      }
+      case "bookmarkEdit": {
+        w.u8(OP.bookmarkEdit);
+        w.u8(o.op || 0); w.str(o.id || ""); w.u32(o.page || 0);
+        w.f32(o.frac || 0); w.str(o.title || "");
         break;
       }
       // 草稿纸（v8）。open = 当前打开 list 里第几张，0xFFFF = 没开（对象里 -1，同 radial.highlight 惯例）。
@@ -430,6 +447,17 @@
           tlist[ti] = { depth: tdep, page: thas ? tpg : -1, frac: tfr, label: tlb };
         }
         return { type: "toc", docId: tdoc, list: tlist };
+      }
+      case OP.bookmarks: {
+        var bdoc = r.str(), bn = r.u16(), blist = new Array(bn);
+        for (var bi = 0; bi < bn; bi++) {
+          blist[bi] = { id: r.str(), page: r.u32(), frac: r.f32(), title: r.str() };
+        }
+        return { type: "bookmarks", docId: bdoc, list: blist };
+      }
+      case OP.bookmarkEdit: {
+        var beOp = r.u8(), beId = r.str(), bePg = r.u32(), beFr = r.f32(), beTi = r.str();
+        return { type: "bookmarkEdit", op: beOp, id: beId, page: bePg, frac: beFr, title: beTi };
       }
       case OP.scratchPads: {
         var spOpen = r.u16(), spn = r.u16(), splist = new Array(spn);

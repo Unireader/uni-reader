@@ -30,6 +30,7 @@ enum WireCodec {
         static let docs: UInt8 = 0x33, pens: UInt8 = 0x34, inkCancel: UInt8 = 0x35, strokes: UInt8 = 0x36
         static let radial: UInt8 = 0x37, pressRing: UInt8 = 0x38, notes: UInt8 = 0x39
         static let layers: UInt8 = 0x3A, library: UInt8 = 0x3B, toc: UInt8 = 0x3C
+        static let bookmarks: UInt8 = 0x4D, bookmarkEdit: UInt8 = 0x4E
         static let scratchPads: UInt8 = 0x3D, scratchStrokes: UInt8 = 0x3E
         static let noteNew: UInt8 = 0x3F
         static let canvas: UInt8 = 0x4B
@@ -254,6 +255,21 @@ enum WireCodec {
                 w.u8(page >= 0 ? 1 : 0)
                 w.u32(max(0, page)); w.f32(num(e["frac"])); w.str(strOf(e["label"]))
             }
+        // 书签（`REQUIREMENTS.md §1.9`）。`docId` 与 toc 同一口径（内容哈希），客户端必须核对。
+        // 列表恒按「页 → 页内位置 → 建立时刻」有序，客户端直接用、不要再排。
+        case "bookmarks":
+            w.u8(Op.bookmarks); w.str(strOf(o["docId"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for b in list {
+                w.str(strOf(b["id"])); w.u32(intOf(b["page"]))
+                w.f32(num(b["frac"])); w.str(strOf(b["title"]))
+            }
+        case "bookmarkEdit":
+            w.u8(Op.bookmarkEdit)
+            w.u8(UInt8(clamping: intOf(o["op"])))
+            w.str(strOf(o["id"])); w.u32(intOf(o["page"]))
+            w.f32(num(o["frac"])); w.str(strOf(o["title"]))
         // 草稿纸（v8）。`open` = 当前打开的是 list 里第几张，`0xFFFF` = 没开（对象模型里 -1，
         // 与 radial 的 highlight 同惯例）。`bg` 走 pen 同款 r/g/b/a 拆包，线上不传 CSS 串。
         case "scratchpads":
@@ -543,6 +559,19 @@ enum WireCodec {
                              "frac": NSNumber(value: frac), "label": label])
             }
             out = ["type": "toc", "docId": docId, "list": list]
+        case Op.bookmarks:
+            let docId = r.str(), n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n {
+                let id = r.str(), page = r.u32(), frac = r.f32(), title = r.str()
+                list.append(["id": id, "page": NSNumber(value: page),
+                             "frac": NSNumber(value: frac), "title": title])
+            }
+            out = ["type": "bookmarks", "docId": docId, "list": list]
+        case Op.bookmarkEdit:
+            let op0 = r.u8(), id = r.str(), page = r.u32(), frac = r.f32(), title = r.str()
+            out = ["type": "bookmarkEdit", "op": NSNumber(value: op0), "id": id,
+                   "page": NSNumber(value: page), "frac": NSNumber(value: frac), "title": title]
         case Op.inkCancel: out = ["type": "inkCancel"]
         case Op.strokes, Op.strokesAppend:
             let ackRel = r.u32()

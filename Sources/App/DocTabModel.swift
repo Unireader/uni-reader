@@ -168,6 +168,9 @@ final class DocTabModel: ObservableObject, Identifiable {
         }
         on(session.$bookmarks) { s in
             s.persistBookmarks()         // 书签新建/改名/删除时增量落库
+            // 镜像给平板（非 padSession 时 broadcastBookmarks 内部会挑真正跟随的那个会话，
+            // 本标签不是它就等于重发同值——同 broadcastNotes 的惯例）
+            s.app.broadcastBookmarks()
         }
         on(session.$aiThreads) { s in
             s.persistAIThreads()         // 新建/改标题/改失效状态/解绑时增量落库

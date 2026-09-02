@@ -161,6 +161,15 @@ let canonical: [[String: Any]] = [
     ["type": "strokesAppend", "ackRel": 305419896,
      "list": [["page": 1, "pen": ["color": "rgba(20,20,20,1)", "w": 10, "t": "pencil"],
                "pts": [[0.5, 0.25, 0.5], [0.75, 0.125, 1.0]]]]],
+    // —— 书签（2026-09-02，`REQUIREMENTS.md §1.9`）：bookmarks(0x4D, S→C) / bookmarkEdit(0x4E, C→S) ——
+    // docId 与 toc 同口径（内容哈希）；列表恒按「页 → 页内位置 → 建立时刻」有序，客户端不再排。
+    ["type": "bookmarks", "docId": "H1", "list": [[String: Any]]()],
+    ["type": "bookmarks", "docId": "H1",
+     "list": [["id": "B1", "page": 0, "frac": 0, "title": "开头"],
+              ["id": "B2", "page": 41, "frac": 0.5, "title": "证明这一步"]]],
+    ["type": "bookmarkEdit", "op": 0, "id": "B3", "page": 7, "frac": 0.25, "title": "定理 3.2"],
+    ["type": "bookmarkEdit", "op": 1, "id": "B3", "page": 0, "frac": 0, "title": "改了名"],
+    ["type": "bookmarkEdit", "op": 2, "id": "B3", "page": 0, "frac": 0, "title": ""],
 ]
 
 var pass = 0, fail = 0

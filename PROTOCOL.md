@@ -106,6 +106,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x4A` | lassoScale | C→S | 可靠 |
 | `0x4B` | canvas | 双向 | 可靠 |
 | `0x4C` | strokesAppend | S→C | 可靠 |
+| `0x4D` | bookmarks | S→C | 可靠 |
+| `0x4E` | bookmarkEdit | C→S | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
@@ -138,6 +140,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|
 | `eraser` | `f32 size` · `u8 mode` · `u8 ring` | `{type:"eraser", size, mode, ring}` |
 | `textNote` | `str id` · `u8 op` · `u32 page` · `f32 nx` · `f32 ny` · `str text` · `u8 display` | `{type:"textNote", id, op, page, nx, ny, text, display}` |
+| `bookmarkEdit` | `u8 op` · `str id` · `u32 page` · `f32 frac` · `str title` | `{type:"bookmarkEdit", op, id, page, frac, title}`（`op` 0=add 1=rename 2=delete；见 `bookmarks`）|
 | `padGeom` | `f32 pageW` | `{type:"padGeom", pageW}` |
 | `layerSelect` | `u16 index` | `{type:"layerSelect", index}` |
 | `layerVisible` | `u16 index` · `u8 visible` | `{type:"layerVisible", index, visible}` |
@@ -241,6 +244,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `layers` | `u16 active` · `u16 n` · `n ×( u8 r, u8 g, u8 b, u8 visible, str name )` |
 | `library` | `str wsName` · `u16 n` · `n ×( str id, str title, u8 open )` |
 | `toc` | `str docId` · `u16 n` · `n ×( u8 depth, u8 hasPage, u32 page, f32 frac, str label )` |
+| `bookmarks` | `str docId` · `u16 n` · `n ×( str id, u32 page, f32 frac, str title )` |
 | `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a, u8 pattern, u8 showPage )` |
 | `scratchStrokes` | `u32 ackRel` · `u32 n` · `n ×( pen, u16 m, m × pt3 )` |
 | `noteNew` | `u32 page` · `f32 nx` · `f32 ny` |
@@ -365,6 +369,24 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   （Mac 端 `TOCListView` 同款语义：不显示页码、disabled、不参与当前章节追踪）。
   没有目录的 PDF 发 `n=0`（平板显示「无目录」空态）。**发送时机**：文档载入完成、客户端接入、
   平板跟随的会话变化）
+- `bookmarks` → `{type:"bookmarks", docId, list:[{id, page, frac, title},…]}`（**当前文档的书签全量镜像**，
+  规格 `REQUIREMENTS.md §1.9`）。书签是**用户自己加的**定位记录（`note` 表 `kind=5`），与 PDF 自带的
+  `toc` 是两回事，但客户端要把它俩**合并成同一棵树**显示：按页号挂进所在的一级目录组，没组可挂就
+  平铺在树顶。合并规则的参照实现是 Mac 的 `Sources/App/TOCMerge.swift`（纯函数，有 spike 覆盖），
+  **三端照它实现，别各自照文字再推一遍**。
+  - `docId` = 内容哈希，与 `toc`/`layout` 同一口径 —— **客户端必须核对**才敢渲染（同 `toc` 那笔账：
+    切档时两条广播的先后没有保证，不核对就会把上一本的书签挂到新书上）。
+  - `list` **恒按 页 → 页内位置 → 建立时刻 有序**（Mac 侧 `Bookmark.before`），客户端可以直接用，
+    不要再自己排——排序口径不一致，「第 2 个书签」在两端就不是同一个。
+  - `id` 是 UUID 串，与 `bookmarkEdit` 的 `id` 同一空间（**不是**文档 id，也不是会话 id）。
+  - 没有书签发 `n=0`。**发送时机**：文档载入完成、客户端接入、平板跟随的会话变化、书签增删改之后。
+- `bookmarkEdit`（C→S，布局见 §4.1）：客户端**请求**加/改名/删一枚书签，**Mac 是唯一真源**——
+  它落库后以 `bookmarks` 全量回推为准（同 `scratchDelete`/`scratchRename` 的惯例，客户端不要乐观改本地表）。
+  - `op=0 add`：`id` 由**客户端生成** UUID 串（同 `textNote` 先例），`page`/`frac` 是落点，`title` 必填；
+    **`title` 去掉首尾空白后为空 = Mac 直接忽略这一帧**（「名字必填」是产品规格，不是 UI 的事）。
+  - `op=1 rename`：只认 `id` 与 `title`，`page`/`frac` 填 0 即可（Mac 不读）。
+  - `op=2 delete`：只认 `id`，其余字段填 0。
+  - 找不到 `id` 的 rename/delete 一律静默丢弃（客户端可能拿着一份过期镜像）。
 - `scratchpads` → `{type:"scratchpads", open, list:[{id, title, page, nx, ny, bg, pattern, showPage},…]}`（**草稿纸列表全量镜像**）
 - `scratchStrokes` → `{type:"scratchStrokes", ackRel, list:[{pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
 
