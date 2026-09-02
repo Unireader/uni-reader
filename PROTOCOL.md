@@ -108,7 +108,9 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x4C` | strokesAppend | S→C | 可靠 |
 | `0x4D` | bookmarks | S→C | 可靠 |
 | `0x4E` | bookmarkEdit | C→S | 可靠 |
+| `0x4F` | undo | C→S | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
+| `0x51` | clip | C→S | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
 
@@ -147,6 +149,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `layerAdd` | 空 | `{type:"layerAdd"}` |
 | `lassoMove` | `u32 page` · `f32 x0` · `f32 y0` · `f32 x1` · `f32 y1` · `f32 dx` · `f32 dy` · 〔可选〕`u16 n` · n×(`f32 x` `f32 y`) | `{type:"lassoMove", page, x0, y0, x1, y1, dx, dy, poly?}` |
 | `lassoScale` | `u32 page` · `f32 x0` · `f32 y0` · `f32 x1` · `f32 y1` · `f32 ax` · `f32 ay` · `f32 sx` · `f32 sy` · 〔可选〕`u16 n` · n×(`f32 x` `f32 y`) | `{type:"lassoScale", page, x0, y0, x1, y1, ax, ay, sx, sy, poly?}` |
+| `undo` | `u8 redo` | `{type:"undo", redo}`（`0` 撤销 / `1` 重做）|
+| `clip` | `u8 op` · `u32 page` · `f32 nx` · `f32 ny` · 〔可选〕`u16 n` · n×(`f32 x` `f32 y`) | `{type:"clip", op, page, nx, ny, poly?}`（`op`：`0=copy 1=cut 2=paste`）|
 
 `textNote`（平板自由文字笔记，C→S）：`op` u8 `0=upsert 1=delete`。`id` 由平板生成（UUID 串），
 Mac 按 id upsert/删除文档的文字注解（kind=0 点注解：零尺寸 anchor=落点、无 quote/rects）；
@@ -207,6 +211,23 @@ C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补
 `sx,sy`，线上不体现），`sx,sy` = 按轴缩放比（正数，客户端 clamp 0.05...20）。Mac 复判命中后
 `InkEdit.scaled`（点集绕锚点按轴缩放 + clamp 0...1、线宽 ×√(sx·sy)、注解 anchor/rects 同缩放）、
 持久化、镜像回所有客户端。多边形尾部语义与 `lassoMove` 完全相同。
+
+`undo`（撤销/重做，平板发起，C→S，2026-09-02 新增）：`redo=0` 撤销、`1` 重做。**撤销栈只有 Mac 一份**
+（`InkUndoStack`，页内笔迹一条、草稿纸一条，按「此刻开着哪张画布」自动选），平板只是一个按钮：
+发这一帧 → Mac 撤/重做一步 → 照常 `strokes`/`notes`/`scratchStrokes` 全量镜像回来。
+平板本地不留栈、不做乐观预览——撤销要么整步成立要么不动，没有中间态可预览，而抢先撤了再被真源纠正
+是最难看的一种闪烁。栈是**瞬态**的：Mac 换文档即清，平板刷新/重连不影响它。
+
+`clip`（剪切/复制/粘贴，平板发起，C→S，2026-09-02 新增）：`op` u8 `0=copy 1=cut 2=paste`。
+剪贴板是 **Mac 的系统剪贴板**（`NSPasteboard` 自有类型），不在线上传数据——于是平板复制的东西
+可以在 Mac 上粘、也可以粘进另一篇文档，跨端共用同一份剪贴板。
+ · `copy`/`cut`：`page` + **尾部多边形** = 要复制的选区（语义与 `lassoMove` 逐字相同，Mac 同样
+   **不信任平板的本地判定**，用真源复判命中）；`nx,ny` 无意义，编 0。`cut` 复判后连带删除并入撤销栈。
+ · `paste`：`page` + `nx,ny` = 落点（页内归一化，剪贴板内容的包围盒**中心**对齐到这一点），无多边形尾部。
+   Mac 按目标页夹取位移（刚性平移，撞页边只停住不压扁）、写进真源、镜像回来。
+   剪贴板为空或装的不是笔迹时**什么都不做**（不回帧；平板那个按钮本就是常亮的，见下）。
+**平板不知道 Mac 剪贴板里有没有东西**——为此再加一条 S→C 广播不值当（系统剪贴板随时可能被别的 app
+改掉，同步了也会立刻过期），所以平板的「粘贴」按钮常亮，点了没内容就是个空操作。
 
 `gotoPage` 的 `frac`（**尾部可选 f32**，同 `ink begin` 的 `flags` 先例）：目标页内的纵向归一化位置，
 语义与 `viewport.frac`/`scroll.frac` 完全一致（0=页顶）。**缺省或 0 时编码端一律省略这 4 字节**——

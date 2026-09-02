@@ -3,7 +3,7 @@
 import { G, BAR, GAP, MINZ, MAXZ, PALM, DEAD, clamp, pw, contentLeft, contentW, cmargin,
          inkXMin, inkXMax, curMode, curPen, rulerSnap } from "./shared.js";
 import type { CaptureRefs, TextNote } from "./shared.js";
-import { S, updatePageLabel, updateHud } from "./hud.svelte.js";
+import { S, updatePageLabel, updateHud, updateLassoStat } from "./hud.svelte.js";
 
 export function initInput(refs: CaptureRefs): void {
   const { ink } = refs;
@@ -379,7 +379,7 @@ export function initInput(refs: CaptureRefs): void {
       }
       G.lassoDragMode = mode;
       if (mode === "select") {
-        G.lassoSelection = null;
+        G.lassoSelection = null; updateLassoStat();
         G.lassoPath = [{ nx: a.nx, ny: a.ny }];
       } else if (mode === "scale") {
         // 缩放锚点 = 对侧手柄（页内归一化）：屏显 → norm 折算一次，整个拖动期间不变
@@ -452,11 +452,12 @@ export function initInput(refs: CaptureRefs): void {
     const a = G.lassoAnchor, mode = G.lassoDragMode, moved = G.lassoMoved, path = G.lassoPath;
     G.lassoDragMode = null; G.lassoMoved = false; G.lassoPath = null; G.lassoAnchor = null; G.lassoHandle = null;
     if (!moved || !mode) {
-      if (G.lassoSelection) { G.lassoSelection = null; G.drawNotes(); }
+      if (G.lassoSelection) { G.lassoSelection = null; updateLassoStat(); G.drawNotes(); }
     } else if (mode === "select" && a && path && path.length >= 3) {
       const poly: number[] = [];
       for (let i = 0; i < path.length; i++) poly.push(path[i].nx, path[i].ny);
       G.lassoSelection = G.lassoHitTest(a.page, poly);
+      updateLassoStat();
       G.drawNotes();
     } else if (mode === "move" && G.lassoSelection) {
       const { dx, dy } = G.lassoTranslate;

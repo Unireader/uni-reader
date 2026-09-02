@@ -70,6 +70,7 @@ export const S = $state({
   night: false,            // 夜间模式（按钮图标回显）
   noteMode: false,         // 文字笔记模式（顶栏按钮激活态回显）
   rulerOn: false,          // 尺子模式（顶栏按钮激活态回显）
+  hasSel: false,           // 框选此刻有没有选中集（剪切/复制按钮的可用性）
   noteEditor: null as NoteEditorState | null,   // 文字笔记编辑器（非 null = 打开中）
   showPage: true,          // 页面图显示（眼睛按钮回显）
   canvasOn: false,         // 画板模式（Mac 下发，顶栏按钮回显）
@@ -128,6 +129,12 @@ export function updatePenStat(): void {
   S.modeKey = curMode();
   const p = curPen();
   S.pen = p ? { color: p.color, w: p.w, t: p.t } : null;
+}
+
+// 框选选中集有无：G.lassoSelection 是命令式袋里的字段，这里镜像进 $state 让顶栏那几个
+// 剪贴板按钮能响应式地灰掉/亮起（同 updatePenStat 的 G→S 拷贝惯例）。
+export function updateLassoStat(): void {
+  S.hasSel = !!G.lassoSelection;
 }
 
 // 图层胶囊/面板：G.LAYERS 是非响应式的命令式袋（Mac layers 广播落地处），这里镜像进 $state

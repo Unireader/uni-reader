@@ -15,6 +15,13 @@ export interface Actions {
   bookmarkAdd(title: string): void;
   bookmarkRename(id: string, title: string): void;
   bookmarkDelete(id: string): void;
+  // ---- 编辑（撤销/重做 + 剪贴板；两者的真源都在 Mac，见 PROTOCOL.md `undo`/`clip`）----
+  /// 撤销（redo=false）/ 重做。平板只发意图，不做乐观预览——等 Mac 把结果镜像回来。
+  undo(redo: boolean): void;
+  /// 剪切/复制：把当前框选选中集发给 Mac（它用真源复判命中），剪贴板落在 Mac 的系统剪贴板上。
+  clipCopy(cut: boolean): void;
+  /// 粘贴：落点 = 当前视口正中那一页那一处（平板没有鼠标指针可用）。
+  clipPaste(): void;
   toggleDrawer(): void;
   toggleStats(): void;
   toggleNight(): void;

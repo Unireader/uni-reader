@@ -168,6 +168,23 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     bookmarkDelete(id: string) {
       G.send({ type: "bookmarkEdit", op: 2, id: id, page: 0, frac: 0, title: "" });
     },
+    // ---- 编辑：撤销/重做 + 剪贴板（真源全在 Mac，见 PROTOCOL.md `undo`/`clip`）----
+    // 撤销**不做乐观预览**：整步成立或不动，没有中间态可预览，抢先撤了再被真源纠正是最难看的闪烁。
+    undo(redo: boolean) { G.send({ type: "undo", redo: redo }); },
+    // 复制/剪切：把选中集的多边形交给 Mac 复判（同 lassoMove 的「客户端预览 + 服务端复判」惯例）。
+    // 剪切后本地直接清选中——被剪掉的笔迹等 Mac 的 strokes 镜像回来才真正消失（几十毫秒，同擦除）。
+    clipCopy(cut: boolean) {
+      const sel = G.lassoSelection;
+      if (!sel) return;
+      G.send({ type: "clip", op: cut ? "cut" : "copy", page: sel.page, nx: 0, ny: 0, poly: sel.poly });
+      if (cut) G.clearLasso();
+    },
+    // 粘贴落点：**当前视口正中**那一页那一处（平板没有鼠标指针，Mac 那边用的是光标位）。
+    clipPaste() {
+      const p = G.topVisiblePage();
+      const loc = G.pageLocClamped(window.innerWidth / 2, window.innerHeight / 2, p, true);
+      G.send({ type: "clip", op: "paste", page: p, nx: loc.nx, ny: loc.ny });
+    },
     toggleDrawer() { S.drawer = !S.drawer; },   // 开着就关（不管停在哪一页），关着就开回上次那页
     toggleStats() { S.statsOn = !S.statsOn; },
     // 夜间模式：仅反转背景页图 canvas（invert 反亮度、hue-rotate 复原彩色）；墨迹/圆环不反。

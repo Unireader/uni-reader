@@ -21,10 +21,14 @@
     lassoMove: 0x47, scratchDelete: 0x48, scratchRename: 0x49, lassoScale: 0x4A, canvas: 0x4B,
     strokesAppend: 0x4C,   // 与 strokes 逐字节相同，语义是「追加」（PROTOCOL.md §4.2）
     bookmarks: 0x4D, bookmarkEdit: 0x4E,   // 书签（REQUIREMENTS.md §1.9）
-    nack: 0x50
+    undo: 0x4F,                            // 撤销/重做（栈在 Mac，PROTOCOL.md §4.1）
+    nack: 0x50,
+    clip: 0x51                             // 剪切/复制/粘贴（剪贴板在 Mac）
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
+  // 剪贴板动作：0=copy 1=cut 2=paste（只许尾部追加，越界回退 copy）
+  var CLIPOP = ["copy", "cut", "paste"];
   // 环形盘扇区类型。**只许尾部追加**（kind≠0 的项 pen 字段是占位 0，照旧按定长读掉）。
   var RKIND = ["pen", "erase", "page", "scratchAdd", "textNote"];
   var NO_HL = 0xFFFF;                        // highlight 线上哨兵：无高亮（中心取消区）→ 对象里 -1
@@ -336,6 +340,14 @@
         w.f32(o.ax || 0); w.f32(o.ay || 0); w.f32(o.sx || 1); w.f32(o.sy || 1);
         w.polyTail(o.poly);
         break;
+      // 撤销/重做：只发意图，栈在 Mac
+      case "undo": w.u8(OP.undo); w.u8(o.redo ? 1 : 0); break;
+      // 剪贴板：copy/cut 带选区多边形（同 lassoMove），paste 带落点
+      case "clip":
+        w.u8(OP.clip); w.u8(Math.max(0, CLIPOP.indexOf(o.op)));
+        w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
+        w.polyTail(o.poly);
+        break;
       case "layerSelect": w.u8(OP.layerSelect); w.u16(o.index || 0); break;
       case "layerVisible": w.u8(OP.layerVisible); w.u16(o.index || 0); w.u8(o.visible ? 1 : 0); break;
       case "layerAdd": w.u8(OP.layerAdd); break;
@@ -532,6 +544,12 @@
             lsAx = r.f32(), lsAy = r.f32(), lsSx = r.f32(), lsSy = r.f32();
         return { type: "lassoScale", page: lsPage, x0: lsX0, y0: lsY0, x1: lsX1, y1: lsY1,
                  ax: lsAx, ay: lsAy, sx: lsSx, sy: lsSy, poly: r.polyTail() };
+      }
+      case OP.undo: return { type: "undo", redo: r.u8() === 1 };
+      case OP.clip: {
+        var clOp = CLIPOP[r.u8()] || "copy";
+        var clPage = r.u32(), clNx = r.f32(), clNy = r.f32();
+        return { type: "clip", op: clOp, page: clPage, nx: clNx, ny: clNy, poly: r.polyTail() };
       }
       case OP.layerSelect: return { type: "layerSelect", index: r.u16() };
       case OP.layerVisible: { var lvi = r.u16(), lvv = r.u8() === 1; return { type: "layerVisible", index: lvi, visible: lvv }; }

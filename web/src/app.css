@@ -47,6 +47,8 @@ canvas { position:fixed; inset:0; }
   background:#21262d; color:#e6edf3; }
 #topbar button:active { background:#30363d; }
 #topbar button.on { background:#1f6feb; border-color:#1f6feb; color:#fff; }   /* 独立开关的激活态（文字笔记） */
+/* 没有选中集时的剪切/复制：灰掉且点不动（同 Mac 端菜单项灰掉的语义） */
+#topbar button:disabled { opacity:.4; }
 #topbar button svg { width:18px; height:18px; vertical-align:-4px; }
 #showBar { position:fixed; right:10px; top:10px; z-index:10; padding:6px; border:1px solid #30363d;
   border-radius:8px; background:rgba(33,38,45,.85); color:#e6edf3;

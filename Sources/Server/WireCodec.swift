@@ -40,11 +40,17 @@ enum WireCodec {
         static let padGeom: UInt8 = 0x45
         static let eraser: UInt8 = 0x46
         static let lassoMove: UInt8 = 0x47
+        static let undo: UInt8 = 0x4F
         static let nack: UInt8 = 0x50
+        static let clip: UInt8 = 0x51
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
     private static let modes = ["note", "erase", "page", "lasso"]
+    /// 剪贴板动作：`0=copy 1=cut 2=paste`（只许尾部追加，越界回退 copy）。
+    private static let clipOps = ["copy", "cut", "paste"]
+    static func clipOpCode(_ o: String) -> UInt8 { UInt8(clipOps.firstIndex(of: o) ?? 0) }
+    static func clipOpName(_ c: UInt8) -> String { Int(c) < clipOps.count ? clipOps[Int(c)] : "copy" }
     /// 草稿纸底纹：`0=plain 1=dots 2=grid`（同 brush/mode 的编码惯例，越界回退 dots）。
     private static let patterns = ["plain", "dots", "grid"]
     static func patternCode(_ p: String) -> UInt8 { UInt8(patterns.firstIndex(of: p) ?? 1) }
@@ -366,6 +372,13 @@ enum WireCodec {
             w.f32(num(o["x0"])); w.f32(num(o["y0"])); w.f32(num(o["x1"])); w.f32(num(o["y1"]))
             w.f32(num(o["ax"])); w.f32(num(o["ay"])); w.f32(num(o["sx"])); w.f32(num(o["sy"]))
             w.polyTail(floatsOf(o["poly"]))
+        // 撤销/重做：平板只发一个意图，栈在 Mac（`PROTOCOL.md §4.1`）
+        case "undo": w.u8(Op.undo); w.u8(boolOf(o["redo"]) ? 1 : 0)
+        // 剪贴板：copy/cut 带选区多边形（同 lassoMove），paste 带落点
+        case "clip":
+            w.u8(Op.clip); w.u8(clipOpCode(strOf(o["op"])))
+            w.u32(intOf(o["page"])); w.f32(num(o["nx"])); w.f32(num(o["ny"]))
+            w.polyTail(floatsOf(o["poly"]))
         case "layerSelect": w.u8(Op.layerSelect); w.u16(intOf(o["index"]))
         case "layerVisible": w.u8(Op.layerVisible); w.u16(intOf(o["index"])); w.u8(boolOf(o["visible"]) ? 1 : 0)
         case "layerAdd": w.u8(Op.layerAdd)
@@ -672,6 +685,13 @@ enum WireCodec {
                    "x1": NSNumber(value: lsX1), "y1": NSNumber(value: lsY1),
                    "ax": NSNumber(value: lsAx), "ay": NSNumber(value: lsAy),
                    "sx": NSNumber(value: lsSx), "sy": NSNumber(value: lsSy)]
+            if let poly = r.polyTail() { out?["poly"] = poly }
+        case Op.undo: out = ["type": "undo", "redo": r.u8() == 1]
+        case Op.clip:
+            let clOp = clipOpName(r.u8())
+            let clPage = r.u32(), clNx = r.f32(), clNy = r.f32()
+            out = ["type": "clip", "op": clOp, "page": NSNumber(value: clPage),
+                   "nx": NSNumber(value: clNx), "ny": NSNumber(value: clNy)]
             if let poly = r.polyTail() { out?["poly"] = poly }
         case Op.layerSelect: out = ["type": "layerSelect", "index": NSNumber(value: r.u16())]
         case Op.layerVisible:

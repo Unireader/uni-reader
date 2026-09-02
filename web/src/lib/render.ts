@@ -5,7 +5,7 @@
 import { G, BAR, GAP, RD, PR, BRUSH_LABELS, clamp, pw, contentLeft, canvasLeft, contentW, cmargin,
          inkXMin, inkXMax, canvasMarginFor, curMode, strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
 import type { CaptureRefs, LassoSelection, RadialItem, RadialState, Stroke, TextNote, WireMsg } from "./shared.js";
-import { updateHud } from "./hud.svelte.js";
+import { updateHud, updateLassoStat } from "./hud.svelte.js";
 
 export function initRender(refs: CaptureRefs): void {
   const { bg, ink, live, hover, radial: radialCv, radialGlass } = refs;
@@ -186,6 +186,7 @@ export function initRender(refs: CaptureRefs): void {
   function clearLasso(): void {
     if (G.lassoPendingTimer) { clearTimeout(G.lassoPendingTimer); G.lassoPendingTimer = null; }
     G.lassoSelection = null; G.lassoDragMode = null; G.lassoMoved = false;
+    updateLassoStat();   // 顶栏剪切/复制按钮跟着灰掉
     G.lassoPath = null; G.lassoAnchor = null; G.lassoCommitted = false;
     G.lassoSyncStrokes = false; G.lassoSyncNotes = false;
     G.lassoHandle = null; G.lassoScale = null;

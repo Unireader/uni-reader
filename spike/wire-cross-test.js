@@ -165,6 +165,11 @@ const canonical = [
   { type: "bookmarkEdit", op: 0, id: "B3", page: 7, frac: 0.25, title: "定理 3.2" },
   { type: "bookmarkEdit", op: 1, id: "B3", page: 0, frac: 0, title: "改了名" },
   { type: "bookmarkEdit", op: 2, id: "B3", page: 0, frac: 0, title: "" },
+  { type: "undo", redo: false },
+  { type: "undo", redo: true },
+  { type: "clip", op: "copy", page: 3, nx: 0, ny: 0, poly: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6] },
+  { type: "clip", op: "cut", page: 0, nx: 0, ny: 0 },
+  { type: "clip", op: "paste", page: 41, nx: 0.25, ny: 0.75 },
 ];
 
 let pass = 0, fail = 0;

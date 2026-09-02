@@ -59,59 +59,33 @@ extension ReaderSurface {
         PadLog.log("粘贴笔迹：剪贴板有料=\(InkClipboard.hasInk()) 纸开着=\(session.openPadID != nil)")
         guard session.openPadID == nil, session.pdf != nil,
               let clip = InkClipboard.read() else { return }
-
         // 落点：指针在某页上 → 以指针为中心；否则当前页原位错开一点（同页粘贴不完全压住源）。
         var page = session.currentPageIndex
+        var center: CGPoint?
         if let p = scratch.cursorP, let n = containerPointToPageNorm(p, xRange: lassoEditXRange) {
             page = n.page
+            center = CGPoint(x: n.nx, y: n.ny)
         }
-        // 从草稿纸抄来的是**画布点**：先按目标页的纵横比折成页内归一化，再照常走下面的定位。
-        let srcStrokes = clip.space == .canvas
-            ? InkClipboard.scaled(clip.strokes, toCanvas: false, aspect: pageAspect(page: page))
-            : clip.strokes
-        let box = InkEdit.bounds(srcStrokes)
-            .union(clip.notes.reduce(CGRect.null) { $0.union($1.anchor) })
-        guard !box.isNull else { return }
+        // 摆放数学全在 `InkPaste.place`（纯函数，与平板那条路径共用一份，spike 覆盖）。
+        let out = InkPaste.place(
+            strokes: clip.strokes, notes: clip.notes, space: clip.space, sourceAspect: clip.aspect,
+            page: page, center: center, targetAspect: pageAspect(page: page),
+            xRange: lassoEditXRange,
+            layers: Set(session.inkLayers.map(\.id)),
+            fallbackLayer: session.activeLayerID ?? InkLayer.defaultID,
+            types: Set(session.noteTypes.map(\.id)))
+        guard !out.strokes.isEmpty || !out.notes.isEmpty else { return }
 
-        var dx = 0.02, dy = 0.02
-        if let p = scratch.cursorP, let n = containerPointToPageNorm(p, xRange: lassoEditXRange) {
-            dx = Double(n.nx) - Double(box.midX)
-            dy = Double(n.ny) - Double(box.midY)
-        }
-        // 与框选移动同一条纪律：**先夹位移再整体平移** = 刚性，撞上页边只是停住、不会被逐点摁扁。
-        let xr = lassoEditXRange
-        (dx, dy) = InkEdit.fitTranslation(
-            dx: dx, dy: dy, inkBounds: InkEdit.bounds(srcStrokes), xRange: xr,
-            noteBounds: clip.notes.reduce(CGRect.null) { $0.union($1.anchor) })
-
-        let fallbackLayer = session.activeLayerID ?? InkLayer.defaultID
-        let knownLayers = Set(session.inkLayers.map(\.id))
-        let knownTypes = Set(session.noteTypes.map(\.id))
-        var strokeIDs = Set<UUID>(), noteIDs = Set<UUID>()
         session.inkEdit("Paste", kind: .paste) {
-            for src in srcStrokes {
-                var st = InkEdit.translated(src, dx: dx, dy: dy, xRange: xr)
-                st.page = page
-                // 跨文档粘贴时源图层多半不存在于这一篇：落到当前作画图层，别造出无处可归的孤儿笔迹。
-                if !knownLayers.contains(st.layerId) { st.layerId = fallbackLayer }
-                session.strokes.append(st)
-                strokeIDs.insert(st.id)
-            }
-            for src in clip.notes {
-                var n = InkEdit.translated(src, dx: dx, dy: dy)
-                n.page = page
-                if let t = n.typeId, !knownTypes.contains(t) { n.typeId = nil }   // 同上：类型属工作区
-                n.createdAt = .now
-                session.textNotes.append(n)
-                noteIDs.insert(n.id)
-            }
+            session.strokes.append(contentsOf: out.strokes)
+            session.textNotes.append(contentsOf: out.notes)
         }
-        guard !strokeIDs.isEmpty || !noteIDs.isEmpty else { return }
-
         // 粘完即选中：接着拖就能摆位置。工具切到框选，否则选中框画得出来却拖不动（手势按工具门控）。
         app.pointerTool = .lasso
-        var sel = LassoSelection(page: page, strokeIDs: strokeIDs, noteIDs: noteIDs,
-                                 bounds: box.offsetBy(dx: dx, dy: dy))
+        var sel = LassoSelection(page: page,
+                                 strokeIDs: Set(out.strokes.map(\.id)),
+                                 noteIDs: Set(out.notes.map(\.id)),
+                                 bounds: InkEdit.bounds(out.strokes))
         let real = lassoSelectionBounds(sel)
         if !real.isNull { sel.bounds = real }
         lassoSelection = sel

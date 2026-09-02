@@ -61,6 +61,19 @@
   <button id="refWin" class:on={S.ref} title="参考窗（另开一本书对照）"
     onclick={() => { S.ref = !S.ref; if (S.ref) S.refCollapsed = false; }}><Icon name="doc" /></button>
   <button id="ruler" class:on={S.rulerOn} title="尺子（45° 吸附直线）" onclick={() => actions.toggleRuler()}><Icon name="ruler" /></button>
+  <!-- 撤销/重做：栈在 Mac，这里只是两个按钮（PROTOCOL.md `undo`）。常亮——平板不知道 Mac 那边
+       还有没有得撤，为此再加一条 S→C 广播不值当，点了没得撤就是个空操作。 -->
+  <button id="undo" title="撤销" onclick={() => actions.undo(false)}><Icon name="undo" /></button>
+  <button id="redo" title="重做" onclick={() => actions.undo(true)}><Icon name="redo" /></button>
+  <!-- 剪贴板三件：只在框选模式下出现（对象就是选中集）。剪切/复制没选中就灰掉；
+       粘贴常亮（同上：Mac 剪贴板里有没有东西平板不知道）。 -->
+  {#if S.modeKey === "lasso"}
+    <button id="clipCut" title="剪切选中笔迹" disabled={!S.hasSel}
+      onclick={() => actions.clipCopy(true)}><Icon name="scissors" /></button>
+    <button id="clipCopy" title="复制选中笔迹" disabled={!S.hasSel}
+      onclick={() => actions.clipCopy(false)}><Icon name="copy" /></button>
+    <button id="clipPaste" title="粘贴到视口中央" onclick={() => actions.clipPaste()}><Icon name="paste" /></button>
+  {/if}
   <button id="padBtn" class:on={S.padOpen >= 0 || S.padList} title="草稿纸" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
   <button id="canvasBtn" class:on={S.canvasOn} title="画板模式（页面两侧的空白也能写）"
     onclick={() => actions.toggleCanvas()}><Icon name="canvas" /></button>

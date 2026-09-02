@@ -493,6 +493,10 @@ final class AppModel: ObservableObject {
             applyLassoMove(obj, to: s)
         case "lassoScale":
             applyLassoScale(obj, to: s)
+        case "undo":
+            applyUndo(obj, to: s)
+        case "clip":
+            applyClip(obj, to: s)
         // 草稿纸：平板只发「请求」，开哪张/新建全部由 Mac 判定（同多层笔迹的 layerSelect 一族）。
         case "scratchOpen":
             applyScratchOpen(obj, to: s)
@@ -576,10 +580,12 @@ final class AppModel: ObservableObject {
     /// lassoMove/lassoScale 共用：按消息里的选区（多边形尾部优先，否则 x0..y1 矩形）在真源上复判命中
     /// （只过滤可见图层；规则与 `ReaderSurface+Lasso.finishLassoSelect` 严格一致），命中下标交给
     /// `mutate` 做平移/缩放；有实际变更才广播镜像（落库由 ContentView 值快照对账自动做）。
-    private func lassoApply(_ obj: [String: Any], to s: DocSession, page: Int,
-                            label: String, kind: InkPatch.Kind,
-                            mutate: (_ changed: (strokes: Set<Int>, notes: Set<Int>)) -> Void) {
-        // 选区：多边形尾部（≥3 点）优先；否则矩形（老客户端）
+    /// 按消息里的选区在**真源**上复判命中，返回命中的下标集（`lassoApply` 与剪贴板 copy/cut 共用）。
+    /// 选区：多边形尾部（≥3 点）优先；否则 `x0..y1` 矩形（兼容老客户端）。
+    /// 规则与 Mac 本机 `ReaderSurface+Lasso.finishLassoSelect` 严格一致——笔迹任一点落多边形内、
+    /// 注解 anchor 中心落多边形内，且只认可见图层。
+    private func lassoHits(_ obj: [String: Any], in s: DocSession, page: Int)
+    -> (strokes: Set<Int>, notes: Set<Int>) {
         var poly: [SIMD2<Double>]?
         if let flat = obj["poly"] as? [Any], flat.count >= 6 {
             let vals = flat.map { ($0 as? NSNumber)?.doubleValue ?? 0 }
@@ -606,6 +612,13 @@ final class AppModel: ObservableObject {
         for i in s.textNotes.indices where s.textNotes[i].page == page {
             if noteHit(s.textNotes[i]) { hitN.insert(i) }
         }
+        return (hitS, hitN)
+    }
+
+    private func lassoApply(_ obj: [String: Any], to s: DocSession, page: Int,
+                            label: String, kind: InkPatch.Kind,
+                            mutate: (_ changed: (strokes: Set<Int>, notes: Set<Int>)) -> Void) {
+        let (hitS, hitN) = lassoHits(obj, in: s, page: page)
         guard !hitS.isEmpty || !hitN.isEmpty else {
             // 零命中也要回传未变镜像：客户端提交后进入乐观预览并等回传（web/安卓都是「两条镜像
             // 到齐才清预览」），不回传它只能等 1s 超时弹回——慢网络下肉眼可见闪烁（2026-08-18 用户报）。
@@ -618,6 +631,86 @@ final class AppModel: ObservableObject {
         // 不补的后果不是「压缩」而是「看不见」：笔迹被挪到当前内容宽之外，两端都画在可视区外面。
         s.inkMovedRev &+= 1
         if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
+    }
+
+    // MARK: - 平板发起的撤销/重做（0x4F undo）与剪贴板（0x51 clip）
+
+    /// 平板按了撤销/重做。**栈只有 Mac 一份**，平板不做乐观预览（`PROTOCOL.md §4.1`）：
+    /// 撤/重做哪一条栈按「此刻开着哪张画布」选，与 Mac 上 ⌘Z 的语义逐字一致。
+    private func applyUndo(_ obj: [String: Any], to s: DocSession) {
+        let redo = (obj["redo"] as? Bool) ?? ((obj["redo"] as? NSNumber)?.boolValue ?? false)
+        if s.openPadID != nil { undoScratch(in: s, redo: redo) } else { undoInk(in: s, redo: redo) }
+        PadLog.log("平板\(redo ? "重做" : "撤销")：\(s.openPadID != nil ? "草稿纸" : "页内")")
+    }
+
+    /// 平板发起的剪切/复制/粘贴。剪贴板是 **Mac 的系统剪贴板**，线上不传数据（`PROTOCOL.md §4.1`）
+    /// —— 于是平板复制的东西能在 Mac 上粘、也能粘进另一篇文档。
+    ///
+    /// copy/cut 的命中同样**用真源复判**（`lassoHits`，与 `lassoMove` 同一套），不信任平板的本地判定。
+    private func applyClip(_ obj: [String: Any], to s: DocSession) {
+        let op = obj["op"] as? String ?? "copy"
+        let page = (obj["page"] as? NSNumber)?.intValue ?? s.currentPageIndex
+        if op == "paste" { applyClipPaste(obj, to: s, page: page); return }
+
+        // 草稿纸开着时，选区/坐标都是画布坐标，跟页内这套命中对不上 —— 直接不理（平板那边也不会给入口）。
+        guard s.openPadID == nil else { PadLog.log("平板 clip \(op)：草稿纸开着，忽略"); return }
+        let (hitS, hitN) = lassoHits(obj, in: s, page: page)
+        guard !hitS.isEmpty || !hitN.isEmpty else { PadLog.log("平板 clip \(op)：零命中"); return }
+        let strokes = hitS.map { s.strokes[$0] }
+        let notes = hitN.map { s.textNotes[$0] }
+        InkClipboard.write(strokes: strokes, notes: notes, space: .page,
+                           aspect: pageAspect(of: s, page: page))
+        PadLog.log("平板 clip \(op)：笔迹 \(strokes.count) 注解 \(notes.count)")
+        guard op == "cut" else { return }
+        let goneS = Set(strokes.map(\.id)), goneN = Set(notes.map(\.id))
+        s.inkEdit("Delete", kind: .delete) {
+            s.strokes.removeAll { goneS.contains($0.id) }
+            s.textNotes.removeAll { goneN.contains($0.id) }
+        }
+        s.inkMovedRev &+= 1
+        if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
+    }
+
+    /// 粘贴：落点 = 平板给的页内归一化点（内容包围盒中心对齐到它）。摆放数学走 `InkPaste`
+    /// （与 Mac 本机 ⌘V 同一份纯函数）。草稿纸开着时粘到纸上（画布坐标，另一条）。
+    private func applyClipPaste(_ obj: [String: Any], to s: DocSession, page: Int) {
+        guard let clip = InkClipboard.read() else { PadLog.log("平板 clip paste：剪贴板空"); return }
+        let nx = (obj["nx"] as? NSNumber)?.doubleValue ?? 0.5
+        let ny = (obj["ny"] as? NSNumber)?.doubleValue ?? 0.5
+        if let padID = s.openPadID {
+            // 纸上：落点是**画布坐标**——平板发的是页内归一化，这里没有它的视口可换算，
+            // 故一律落在画布原点附近（纸打开时视口就居中在原点）。够用：粘完就能拖着摆。
+            let out = InkPaste.placeOnCanvas(strokes: clip.strokes, space: clip.space,
+                                             sourceAspect: clip.aspect, pad: padID, center: nil)
+            guard !out.isEmpty else { return }
+            s.scratchEdit("Paste", kind: .paste) { s.scratchStrokes.append(contentsOf: out) }
+            PadLog.log("平板 clip paste：纸上 \(out.count) 条")
+            if s.id == padSession?.id { broadcastScratchStrokes() }
+            return
+        }
+        let xr = CanvasMargin.xRange(margin: s.canvasMode ? CanvasMargin.limit : 0)
+        let out = InkPaste.place(
+            strokes: clip.strokes, notes: clip.notes, space: clip.space, sourceAspect: clip.aspect,
+            page: page, center: CGPoint(x: nx, y: ny), targetAspect: pageAspect(of: s, page: page),
+            xRange: xr, layers: Set(s.inkLayers.map(\.id)),
+            fallbackLayer: s.activeLayerID ?? InkLayer.defaultID,
+            types: Set(s.noteTypes.map(\.id)))
+        guard !out.strokes.isEmpty || !out.notes.isEmpty else { return }
+        s.inkEdit("Paste", kind: .paste) {
+            s.strokes.append(contentsOf: out.strokes)
+            s.textNotes.append(contentsOf: out.notes)
+        }
+        PadLog.log("平板 clip paste：页 \(page) 落 \(out.strokes.count) 笔 \(out.notes.count) 注解")
+        s.inkMovedRev &+= 1   // 可能粘到了页边更远处，软边界要跟上（同 lassoApply）
+        if s.id == padSession?.id { broadcastStrokes(); broadcastNotes() }
+    }
+
+    /// 某页的显示纵横比（页高/页宽，CropBox 优先 + rotation，与页内笔迹同一个口径）。
+    /// 阅读区那份在视图里（`ReaderSurface.pageAspect`），这里是模型侧的同款——平板路径够不着视图。
+    private func pageAspect(of s: DocSession, page: Int) -> Double {
+        guard let p = s.pdf?.page(at: page) else { return 1.4142 }
+        let size = PageBitmap.displaySize(p)
+        return size.width > 0 ? Double(size.height / size.width) : 1.4142
     }
 
     // MARK: - 平板自由文字笔记（kind=0 点注解）
