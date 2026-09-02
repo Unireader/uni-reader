@@ -2,6 +2,37 @@ import SwiftUI
 
 enum InspectorTab: Hashable { case info, thumbnails, contents, notes }
 
+/// 「笔记」页的**二级分区**（2026-09-02 用户：文字/高亮/笔迹/草稿纸/AI 全堆一页「太多了看不过来」）。
+/// 一次只显示一类，各自带自己的计数与空态；选中项记在 `@AppStorage` 里，换文档/重开都还在原处。
+enum NotesSection: String, CaseIterable, Identifiable {
+    case text, highlight, bookmark, ink, scratch, ai
+
+    var id: String { rawValue }
+
+    /// 二级分区栏是**图标分段**（面板窄，六个字标签排不下）。文字标签仍给辅助功能与块标题用。
+    var icon: String {
+        switch self {
+        case .text: return "note.text"
+        case .highlight: return "highlighter"
+        case .bookmark: return "bookmark"
+        case .ink: return "scribble"
+        case .scratch: return "square.and.pencil"
+        case .ai: return "bubble.left.and.bubble.right"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .text: return L("Text Notes")
+        case .highlight: return L("Highlights")
+        case .bookmark: return L("Bookmarks")
+        case .ink: return L("Ink")
+        case .scratch: return L("Scratchpads")
+        case .ai: return L("AI Chats")
+        }
+    }
+}
+
 /// 右侧 inspector（仿 Xcode）：顶部**图标分段**切「信息 / 目录 / 笔记」，默认就在这里，无固定/取消操作。
 /// **无横线分割**——信息/笔记页用 ScrollView + 区块（小标题 + 行），文件项用淡色圆角卡片区隔，目录页用无分隔列表。
 struct InspectorView: View {
@@ -16,7 +47,11 @@ struct InspectorView: View {
 
     @State private var variants: [LibVariant] = []
     @State private var locations: [LibLocation] = []
-    @State private var inkExpanded = false   // 笔迹区块默认折叠
+    /// 笔迹区块的折叠态。**默认展开**——从前它与另外四类挤在同一页、条目又最多，只好默认折起来；
+    /// 现在它自己一个分区，再折起来就是一页空白。
+    @State private var inkExpanded = true
+    /// 「笔记」页停在哪个二级分区（记住，换文档/重开都回到这里）。
+    @AppStorage("inspectorNotesSection") private var notesSectionRaw = NotesSection.text.rawValue
 
     private let tabs: [(tab: InspectorTab, icon: String)] = [
         (.info, "info.circle"),
@@ -85,25 +120,60 @@ struct InspectorView: View {
                 onJumpTo(page, 0)
             }
         } else if let id = documentId, let doc = workspace.document(id: id) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    if tab == .info {
+            if tab == .info {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
                         infoBlock(doc)
                         filesBlock
-                    } else {
-                        aiBlock
-                        scratchBlock
-                        textBlock
-                        highlightBlock
-                        inkBlock       // 手写笔迹条目最多最杂 → 沉到最底、默认折叠
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                // 笔记页 = 二级分区栏 + 当前那一类。分区栏用**系统 segmented Picker**——
+                // 红线：系统观感只能用系统标准 API，不自绘（顶上那条一级栏是既有的自绘胶囊，
+                // 两级长得不一样反而正好分得清层级）。
+                VStack(spacing: 0) {
+                    notesSectionPicker
+                    ScrollView {
+                        notesSectionBody
+                            .padding(16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
             ContentUnavailableView(L("No Document"), systemImage: "sidebar.right",
                                    description: Text(L("Select a document to see its info and notes.")))
+        }
+    }
+
+    // MARK: - 笔记页的二级分区
+
+    private var notesSection: NotesSection { NotesSection(rawValue: notesSectionRaw) ?? .text }
+
+    private var notesSectionPicker: some View {
+        Picker("", selection: Binding(get: { notesSection },
+                                      set: { notesSectionRaw = $0.rawValue })) {
+            ForEach(NotesSection.allCases) { s in
+                // 只画图标（面板窄，六个中文标签排不下），文字仍留给辅助功能与悬停提示
+                Label(s.title, systemImage: s.icon).labelStyle(.iconOnly).tag(s)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 12).padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var notesSectionBody: some View {
+        switch notesSection {
+        case .text: textBlock
+        case .highlight: highlightBlock
+        case .bookmark: bookmarkBlock
+        case .ink: inkBlock
+        case .scratch: scratchBlock
+        case .ai: aiBlock
         }
     }
 
@@ -532,6 +602,58 @@ struct InspectorView: View {
     /// 删除一条高亮：从内存移除 → ContentView 的 onChange 增量对账把对应 note 删库。
     private func deleteHighlight(_ h: Highlight) {
         session.highlights.removeAll { $0.id == h.id }
+    }
+
+    // MARK: - 书签（`REQUIREMENTS.md §1.9`）
+
+    /// 书签的**管理**页：目录页那棵树管「看和跳」，这里管「加、改名、删」。
+    /// 列表是平铺的、按页序（`Bookmark.before`），不做分组——管理时要的是一眼看全，不是层级。
+    private var bookmarkBlock: some View {
+        block("\(L("Bookmarks")) · \(session.bookmarks.count)") {
+            Button { session.beginBookmarkAtCurrent() } label: {
+                Label(L("Add Bookmark"), systemImage: "bookmark")
+                    .font(.callout)
+                    .foregroundStyle(.primary)   // 红线：别用 .secondary，系统会画得几乎看不见
+            }
+            .buttonStyle(.plain)
+
+            if session.bookmarks.isEmpty {
+                Text(L("No bookmarks yet.")).foregroundStyle(.secondary).font(.callout)
+            } else {
+                ForEach(session.bookmarks) { b in
+                    HStack(alignment: .top, spacing: 6) {
+                        Button {
+                            session.jump(page: b.page, frac: b.frac, kind: .toc, label: b.title)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(b.title, systemImage: "bookmark.fill")
+                                    .font(.callout).lineLimit(1)
+                                Text(String(format: L("Page %d"), b.page + 1))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button { session.beginBookmarkRename(b) } label: {
+                            Image(systemName: "pencil").font(.body).foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("Rename this bookmark"))
+
+                        Button { session.deleteBookmark(id: b.id) } label: {
+                            Image(systemName: "xmark.circle.fill").font(.body).foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("Delete this bookmark"))
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
+                }
+            }
+        }
     }
 
     /// 🔴 `lineLimit(1) + fixedSize()` 一个都不能少：面板窄下来时这行文字会换行，胶囊跟着变高、
