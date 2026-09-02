@@ -16,6 +16,14 @@ final class PageRenderEngine {
         var tileRect: CGRect?         // 贴片：页显示坐标（pt，左上原点）
         var tileScale: CGFloat = 1    // 贴片：像素/pt
         var night: Bool
+        /// 这张图值不值得落磁盘缓存（见 `PageDiskCache.reader`）。
+        ///
+        /// **读**永远试一次（一次失败的 open 只要几十微秒），**写**要挑：
+        /// - 贴片一律不写（键把归一化矩形量化到 1/64，平移一格就是新键，跨启动复用率≈0）；
+        /// - 缩放**过程中**的那些中间宽度不写（`currentBaseWidth` 不分档，每停一下就是一整套新键，
+        ///   全落盘就是拿磁盘换一堆再也不会被问到的图）。
+        /// 调用方只在「稳定态的整页基图」上打开它 —— 那正是下次开这本书要的那一套。
+        var diskCache = false
     }
 
     /// 一张页图在进程里的**真实份数**（2026-08-29 vmmap 实测）。原本是 **3**：同一张图同时存在于
@@ -133,6 +141,11 @@ final class PageRenderEngine {
         key.dropLast() + (key.hasSuffix("0") ? "1" : "0")
     }
 
+    /// 亮色版的键（磁盘缓存只按它存，见 `request` 里那条红线）。
+    static func lightKey(_ key: String) -> String {
+        key.hasSuffix("1") ? flippedNightKey(key) : key
+    }
+
     /// 贴片键判别：`baseKey` 形如 `<doc>#<page>#w…`、`tileKey` 形如 `<doc>#<page>#t…`，
     /// 而 doc 是内容哈希（十六进制，不含 `#`）→ 键里出现 `#t` 只可能来自贴片标记。
     static func isTileKey(_ key: String) -> Bool { key.contains("#t") }
@@ -244,11 +257,30 @@ final class PageRenderEngine {
                 if ci == nil { ci = CIContext() }
                 out = PageBitmap.invert(src, ci: ci!)
             }
+            // 磁盘快路（`PageDiskCache.reader`）：**上次运行渲过的那张**。
+            // 冷启动第一屏走的就是这里——同一页第一次栅格化 87~168ms，而解码 + 重绘进 mmap 只要 5~13ms。
+            // 🔴 盘上**只存亮色那一版**（键尾 `#n0`）：夜间反色是纯像素且自逆，读回来当场反一次即可，
+            // 省掉一半磁盘，也免得「白天读过的书，夜里第一次开还是要重渲」。
+            if out == nil, !Self.isTileKey(r.key),
+               let data = PageDiskCache.reader.data(for: Self.lightKey(r.key)),
+               let img = PageBitmap.decode(data) {
+                if r.night {
+                    if ci == nil { ci = CIContext() }
+                    out = PageBitmap.invert(img, ci: ci!)
+                } else {
+                    out = img
+                }
+            }
             if out == nil {
                 if let rect = r.tileRect {
                     out = PageBitmap.renderTile(page: r.page, subRect: rect, scale: r.tileScale)
                 } else if let pw = r.pixelWidth {
                     out = PageBitmap.render(page: r.page, pixelWidth: pw)
+                }
+                // 落盘的是**反色之前**那张（亮色版，见上面的红线）。编码在磁盘缓存自己的队列上做，
+                // 不占这条渲染队列。
+                if r.diskCache, !Self.isTileKey(r.key), let raw = out {
+                    PageDiskCache.reader.storeImage(raw, for: Self.lightKey(r.key))
                 }
                 if r.night, let raw = out {
                     if ci == nil { ci = CIContext() }

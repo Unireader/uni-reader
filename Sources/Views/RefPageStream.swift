@@ -221,7 +221,9 @@ struct RefPageStream: View {
             }
             guard let page = pdf.page(at: i) else { continue }
             PageRenderEngine.shared.request(
-                .init(key: k, page: page, pixelWidth: w, tileRect: nil, tileScale: 1, night: nightMode)
+                // 落盘：小窗的宽度本来就走档位阶梯（`snapWidth`），键稳定、复用率高。
+                .init(key: k, page: page, pixelWidth: w, tileRect: nil, tileScale: 1, night: nightMode,
+                      diskCache: true)
             ) { doneKey, img in
                 // 仍是当前期望的那一版（宽度/夜间都没变过）才写；否则只在这页空着时先顶上。
                 let fresh = doneKey == key(i, width: scratch.basePixelW) && scratch.night == nightMode

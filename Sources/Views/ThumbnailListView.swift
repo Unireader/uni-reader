@@ -111,8 +111,10 @@ private struct ThumbnailCell: View {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
         }
+        // 落盘：160px 一张才十几 KB，而侧栏一拉就是几百页 —— 换本书回来、下次开 app 都不用再渲。
         PageRenderEngine.shared.request(.init(key: key, page: p, pixelWidth: pixelWidth,
-                                              tileRect: nil, tileScale: 1, night: false)) { doneKey, img in
+                                              tileRect: nil, tileScale: 1, night: false,
+                                              diskCache: true)) { doneKey, img in
             if doneKey == key { onRendered(img) }
         }
     }

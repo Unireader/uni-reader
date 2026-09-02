@@ -205,7 +205,8 @@ extension ReaderSurface {
             keys.insert(key)
             guard PageRenderEngine.shared.cached(key) == nil else { continue }
             PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
-                                                  tileRect: nil, tileScale: 1, night: scratch.nightLive)) { _, _ in }
+                                                  tileRect: nil, tileScale: 1, night: scratch.nightLive,
+                                                  diskCache: !isZooming)) { _, _ in }
         }
         return keys
     }
@@ -235,8 +236,11 @@ extension ReaderSurface {
 
     func requestBase(key: String, page: PDFPage, index: Int, width: Int) {
         let night = scratch.nightLive
+        // 🔴 缩放**过程中**的中间宽度不落盘：`currentBaseWidth()` 不分档，每停一下就是一整套新键，
+        // 全写进去就是拿磁盘换一堆再也不会被问到的图（同 `recentBaseWidths` 只留 4 档的账）。
         PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
-                                              tileRect: nil, tileScale: 1, night: night)) { doneKey, img in
+                                              tileRect: nil, tileScale: 1, night: night,
+                                              diskCache: !isZooming)) { doneKey, img in
             ZoomProbe.measure("图落地") {
             // 「仍是当前期望键」（键含夜间标志与宽度）= 正解，直接写入。
             if doneKey == baseKey(index, width: scratch.basePixelW) {

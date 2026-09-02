@@ -1,3 +1,4 @@
+import CoreGraphics
 import CryptoKit
 import Foundation
 
@@ -21,7 +22,18 @@ import Foundation
 ///   写与整理一律甩到自己的 utility 队列，不占服务 queue。
 final class PageDiskCache {
 
+    /// 平板 `/page.png` 那份（键 = `内容哈希#页@档位/格式`）。
     static let shared = PageDiskCache()
+
+    /// **Mac 阅读区那份**（2026-09-02 加）。键就是 `PageRenderEngine.baseKey`，
+    /// 与平板那份分目录、分预算：Mac 的页图宽得多（一页 340KB~1.1MB vs 平板 200~600KB），
+    /// 混在一个池子里互相挤兑，谁也说不清是被谁淘汰的。
+    ///
+    /// 它省的那一段与平板不同：Mac 是**冷启动第一屏**。同一页第一次栅格化 87~168ms
+    /// （PDF 内容流要现解析），之后同进程内再渲只要 ~41ms——而进程一退全没了，
+    /// 内存那层 LRU 救不了下一次启动。落盘之后，重开一本书 = 解码 + 重绘进 mmap 缓冲，
+    /// 实测 5~13ms，**便宜一个数量级**。
+    static let reader = PageDiskCache(dirName: "readerpage")
 
     /// 上限。一页 200~600KB，1GB ≈ 两三千页。
     private let maxBytes: Int
@@ -29,14 +41,18 @@ final class PageDiskCache {
     private let io = DispatchQueue(label: "tech.xvanturing.unireader.pagedisk", qos: .utility)
     /// 只在 [io] 上碰
     private var total = 0
+    /// 等着编码的图有几张（见 `storeImage`）。
+    private static let maxPendingEncodes = 8
+    private let pendingLock = NSLock()
+    private var pending = 0
 
-    init(maxBytes: Int = 1024 * 1024 * 1024) {
+    init(dirName: String = "padpage", maxBytes: Int = 1024 * 1024 * 1024) {
         self.maxBytes = maxBytes
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let bundle = Bundle.main.bundleIdentifier ?? "UniReader"
         dir = base.appendingPathComponent(bundle, isDirectory: true)
-            .appendingPathComponent("padpage", isDirectory: true)
+            .appendingPathComponent(dirName, isDirectory: true)
         io.async { [weak self] in self?.scan() }
     }
 
@@ -64,6 +80,33 @@ final class PageDiskCache {
             } catch {
                 try? FileManager.default.removeItem(at: tmp)
             }
+        }
+    }
+
+    /// 收一张还没编码的图（Mac 阅读区用）。
+    ///
+    /// 🔴 **编码也甩到 [io] 上**：JPEG 一页 6~19ms（PNG 是 86~228ms，见 `PageRenderer.Format` 那张表），
+    /// 占的可是渲染队列——那条队列正忙着出下一页，不能替磁盘缓存打工。
+    /// 已经有同名文件就直接跳过，连编码都省了。
+    ///
+    /// 排队里最多压 [maxPendingEncodes] 张：闭包捕获着那张 `CGImage`，而它的像素是 `PageBitmap`
+    /// 自持的 mmap 缓冲（一张十几到几十 MB）。正常情况下那张图本来就还在渲染引擎的 LRU 里、
+    /// 这个引用不额外占内存；但快滚时 LRU 淘汰得比这条队列排干还快，压太多就等于替它续命。
+    /// 超了就直接丢——磁盘缓存丢一张只是下次慢一次。
+    func storeImage(_ image: CGImage, for key: String) {
+        pendingLock.lock()
+        guard pending < Self.maxPendingEncodes else { pendingLock.unlock(); return }
+        pending += 1
+        pendingLock.unlock()
+        io.async { [weak self] in
+            guard let self else { return }
+            defer { self.pendingLock.lock(); self.pending -= 1; self.pendingLock.unlock() }
+            guard !FileManager.default.fileExists(atPath: self.dir.appendingPathComponent(self.name(key)).path)
+            else { return }
+            guard let data = PageRenderer.encode(image,
+                                                 format: .jpeg(quality: PageRenderer.defaultJPEGQuality))
+            else { return }
+            self.store(data, for: key)
         }
     }
 

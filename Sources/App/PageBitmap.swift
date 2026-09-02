@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreImage
+import ImageIO
 import PDFKit
 
 /// PDF 页位图渲染原语（纯 CoreGraphics，不碰 AppKit → 任意线程可用）。
@@ -53,6 +54,37 @@ enum PageBitmap {
                     subOrigin: CGPoint(x: subRect.minX, y: disp.height - subRect.maxY))  // 左上原点 → CG 底左原点
     }
 
+    /// 整页/贴片的实际绘制（几何在调用方算好）。内存与像素格式的全部纪律在 `makeImage`。
+    private static func draw(page: PDFPage, pixelSize: CGSize, scale: CGFloat, subOrigin: CGPoint) -> CGImage? {
+        makeImage(pixelWidth: Int(pixelSize.width), pixelHeight: Int(pixelSize.height)) { ctx in
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(origin: .zero, size: pixelSize))
+            ctx.interpolationQuality = .high
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -subOrigin.x, y: -subOrigin.y)
+            page.draw(with: effectiveBox(page), to: ctx)
+        }
+    }
+
+    /// 把磁盘缓存里那张**已编码**的页图读回来。
+    ///
+    /// 🔴 **必须重绘进我们自己的 mmap 缓冲，不能直接把 ImageIO 给的 `CGImage` 塞进 LRU**：
+    /// 那张图的像素归 CoreGraphics 管，释放不还给系统，正是下面那条红线说的病根；
+    /// 而且它不进 `liveImages` 的账，「缓存淘汰了内存却不降」就又查不出来了。
+    /// 重绘一次约 5~13ms（实测 1600~2400px），相比重渲 PDF 的 87~168ms 仍便宜一个数量级。
+    ///
+    /// 顺带说明为什么解码看着「几乎不要钱」：`CGImageSourceCreateImageAtIndex` 是惰性的，
+    /// 真正的解码发生在 `ctx.draw` 那一下——这两步的账要合起来看。
+    static func decode(_ data: Data) -> CGImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let img = CGImageSourceCreateImageAtIndex(src, 0,
+                                                        [kCGImageSourceShouldCache: false] as CFDictionary)
+        else { return nil }
+        return makeImage(pixelWidth: img.width, pixelHeight: img.height) { ctx in
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: img.width, height: img.height))
+        }
+    }
+
     /// 🔴 **像素缓冲必须自己 `mmap` + 用 `CGDataProvider` 的释放回调 `munmap`**，别用
     /// `CGContext(data: nil…)` + `ctx.makeImage()`（2026-08-29 实测定位的内存主项）：
     /// 那条路里 `makeImage` 与 context 共享同一块 COW 缓冲，缓冲本身归 CoreGraphics 的
@@ -71,8 +103,12 @@ enum PageBitmap {
     /// 淘汰才真的等于还内存。
     ///
     /// 行宽显式对齐 64 字节（CG 快路径要求；原来传 `bytesPerRow: 0` 是让 CG 自己挑）。
-    private static func draw(page: PDFPage, pixelSize: CGSize, scale: CGFloat, subOrigin: CGPoint) -> CGImage? {
-        let pw = Int(pixelSize.width), ph = Int(pixelSize.height)
+    ///
+    /// 自持缓冲的图像工厂：`mmap` 一块 BGRX 缓冲 → 交给 `paint` 画 → 包成 `CGImage`，
+    /// 缓冲的所有权移交 `CGDataProvider`，最后一个引用消失时 `munmap`。
+    /// 格式与内存策略的全部理由见上面那两条红线。
+    private static func makeImage(pixelWidth pw: Int, pixelHeight ph: Int,
+                                  _ paint: (CGContext) -> Void) -> CGImage? {
         guard pw > 0, ph > 0, let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
         // 🔴 像素格式必须是 **BGRX（`noneSkipFirst` + 小端）**，别用 RGBA(`premultipliedLast`)：
         // 后者不是 Apple Silicon 上 CoreAnimation 的原生格式，CG 每次合成都要转换，转换结果还被它
@@ -88,12 +124,7 @@ enum PageBitmap {
         guard let ctx = CGContext(data: buf, width: pw, height: ph, bitsPerComponent: 8,
                                   bytesPerRow: bytesPerRow, space: space, bitmapInfo: alphaInfo)
         else { munmap(buf, byteCount); return nil }
-        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-        ctx.fill(CGRect(origin: .zero, size: pixelSize))
-        ctx.interpolationQuality = .high
-        ctx.scaleBy(x: scale, y: scale)
-        ctx.translateBy(x: -subOrigin.x, y: -subOrigin.y)
-        page.draw(with: effectiveBox(page), to: ctx)
+        paint(ctx)
         // 缓冲的所有权在这里移交给 provider：它是唯一的持有者，回调在最后一个引用消失时跑。
         guard let provider = CGDataProvider(dataInfo: nil, data: buf, size: byteCount,
                                             releaseData: { _, ptr, size in
