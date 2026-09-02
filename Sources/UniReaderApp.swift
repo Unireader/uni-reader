@@ -459,6 +459,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Self.isTerminating = true
+        // 🔴 **退出时必须自己把每扇窗结清**：AppKit 的 `terminate:` 不关窗，
+        // `windowWillClose` 一扇都不发（详见 `ReaderWindowController.shutdown()` 的红线）。
+        // 迁移前这条是 SwiftUI `onDisappear` 兜的，改 AppKit 窗口后断了 → ⌘Q 丢进度。
+        // 在这里而不是 `applicationWillTerminate`：那条通知发出时 runloop 已在收尾，
+        // 而结清里有写库，越早越稳；此刻 `isTerminating` 已置位，「打开集」照旧原样保留。
+        let windows = readerWindows          // 结清里会 `forget(self)` 改这个数组，先取一份快照
+        for c in windows { c.shutdown() }
         return .terminateNow
     }
 

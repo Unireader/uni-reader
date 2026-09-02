@@ -40,6 +40,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private let windowId = UUID()
     private var bag = Set<AnyCancellable>()
     private var didChooseInitialDoc = false
+    /// 已结清过（见 `shutdown()`）。
+    private var didShutdown = false
 
     private let splitVC = NSSplitViewController()
     /// 当前弹着的面板（目录/OCR/平板共用一个，一次只开一个）。
@@ -280,7 +282,22 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// 关窗结清。次序与迁移前的 `ContentView.onDisappear` **完全一致**（那套次序有讲究，
     /// 全在 `DocTabModel.close()` 里写着）——只是触发点从 SwiftUI 的生命周期换成了
     /// AppKit 的 `windowWillClose`，而后者每扇窗口只发一次、就是关闭那一刻。
-    func windowWillClose(_ notification: Notification) {
+    func windowWillClose(_ notification: Notification) { shutdown() }
+
+    /// 本窗口的全部结清动作。**两个触发点共用同一份次序**：正常关窗（`windowWillClose`）
+    /// 与 ⌘Q 退出（`AppDelegate.applicationShouldTerminate` 逐扇调）。
+    ///
+    /// 🔴 **AppKit 退出根本不关窗**：`NSApp.terminate:` 问完 `applicationShouldTerminate`
+    /// 就直接发 `willTerminate` 并结束进程，**一扇窗的 `windowWillClose` 都不发**。
+    /// 迁移前这条链路是 SwiftUI 的 `onDisappear` 兜着的（它在 ⌘Q 时**会**触发——代码里为此
+    /// 还专门有 `AppDelegate.isTerminating` 守卫去区分「退出关窗」和「⌘W 关窗」），
+    /// 换成 AppKit 自建窗口后就断了：表现是 **⌘Q 退出后进度、最后一笔笔迹/注解没落库**
+    /// （用户 2026-09-02 报）。所以退出时必须由 delegate 显式把每扇窗都结清一遍。
+    ///
+    /// 幂等（`didShutdown`）：万一将来某条路径两边都走到，第二次是空操作。
+    func shutdown() {
+        guard !didShutdown else { return }
+        didShutdown = true
         refWindow.close()
         AIPanelModel.shared.releaseHost(.inline(session.windowID))
         AIPanelModel.shared.forgetInline(session.windowID)

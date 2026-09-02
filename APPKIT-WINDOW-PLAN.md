@@ -129,6 +129,16 @@ M3 顺带删掉的（迁移让它们变成死代码）：`WindowCloser`、`Toolb
 `WindowLifecycle`/`WindowAccessor`/`WindowLevelAccessor` **保留**——AI 浮窗那个 SwiftUI 视图还在用，
 等 M4 把它也收进 `AIPanelWindowController` 再说。
 
+### M5 回归发现（2026-09-02）
+
+| 症状 | 根因 | 修法 |
+|---|---|---|
+| **⌘Q 退出后，最后那段阅读进度 / 最后一笔笔迹没存上** | 🔴 **AppKit 退出根本不关窗**：`NSApp.terminate:` 问完 `applicationShouldTerminate` 就发 `willTerminate` 并结束进程，**一扇窗的 `windowWillClose` 都不发**；而全部结清（`flushPersist` → `saveProgress` → 退出打开集 → 放引用）只挂在那个回调上。迁移前这条是 SwiftUI 的 `onDisappear` 兜着的——它在 ⌘Q 时**会**触发（代码里为此才有 `isTerminating` 守卫去区分「退出关窗」和「⌘W 关窗」），换成自建窗口后这条链路就断了 | `applicationShouldTerminate` 里置好 `isTerminating` 后，**逐扇窗显式调 `ReaderWindowController.shutdown()`**（从 `windowWillClose` 抽出来的同一份次序，幂等）。遍历前先拷一份数组：结清里会 `forget(self)` 改它 |
+
+⚠️ 这条是**整类问题的代表**：凡是迁移前挂在 SwiftUI 生命周期（`onDisappear`/`onAppear`/`.toolbar`）
+上的东西，AppKit 那边的"对应回调"**语义未必一样**——`onDisappear` 覆盖「关窗 + 退出」两种情形，
+而 `windowWillClose` **只覆盖前一种**。排查同类问题时先问一句：**这个回调在退出时到底发不发？**
+
 ## 6. 红线
 
 - **阅读区纯 SwiftUI 不变**：内容层一行不改，只是外面套 `NSHostingController`。
