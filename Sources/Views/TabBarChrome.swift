@@ -97,7 +97,13 @@ struct TabStrip: View {
     private var strip: some View {
         ViewThatFits(in: .horizontal) {
             row
-            ScrollView(.horizontal) { row }.scrollIndicators(.never)
+            // 🔴 `scrollClipDisabled()`：`ScrollView` 自带一层**矩形**裁剪，且发生在外层那层
+            // `clipShape(Capsule())` **之前**——内容因此先被直角切一刀，胶囊的圆弧根本没机会
+            // 起作用，滚到两端时切口生硬（2026-09-01 用户报）。关掉它，裁剪就只由外层的胶囊做，
+            // 切口跟着圆弧走。溢出不必担心：外层那层裁剪兜着。
+            ScrollView(.horizontal) { row }
+                .scrollIndicators(.never)
+                .scrollClipDisabled()
         }
         .frame(height: TabBarMetrics.rowHeight)
     }
