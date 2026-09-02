@@ -977,7 +977,64 @@
    ⑪ 开十几个标签时的横向滚动（样张里 ScrollView 渲染是空白，只能真机看）；
    ⑫ **开着 AI 内置面板切标签不崩**（宿主改按窗口分就是为这条），切回来对话还在。
 
+17. **书签（2026-09-02 定需求，未实现）**。**规格在 `REQUIREMENTS.md §1.9`（权威，动手前读它）**，
+    这里只留一句：书签 = 挂在「某页某处」的带名字定位记录，复用 `note` 表 `kind=5`（不新建表、
+    不升 schema），与 PDF 目录**合并在同一棵树**里显示——按页号挂进所在的**一级目录组**，
+    没组可挂就平铺在树顶。三处拍板已定：**一页可多枚**（带页内 frac）、**名字添加时必填**、
+    **三端都做但实现分期（Mac 先行 → 网页 → 安卓两模式）**。
+    - 第一步（Mac）：`note kind=5` 的读写 + `DocSession.bookmarks` + `DocTabModel.persistBookmarks`
+      → `TOCListView` 合并渲染 → 三个入口（右键「在此添加书签」/ ⌘D / Inspector 目录页 `+`）。
+    - 动协议之前先把 `bookmarks`(0x4D)/`bookmarkEdit`(0x4E) 的拟案搬进 `PROTOCOL.md` 并补跨端向量。
+    - 🔴 落地第一步先核**安卓模式1 读同一个库**时是否按 kind 分流（它会先看到不认识的 `kind=5`）。
+
 ## 🐞 已知 Bug（待修）
+
+- 🔴 **安卓模式2 的环形选笔盘现在是坏的**（2026-09-02 用户报，三个症状一起出现）：
+  ① **动不动突然冒出「进度条」**（= 长按进度环 `PadOverlays.drawPressRing`）；
+  ② **圆圈位置不对，不在笔尖**；
+  ③ **正常长按反而唤不出盘**。
+
+  **改之前先记住这套架构**（不然会在平板上改画的那一半）：模式2 的**判定全部在 Mac**——
+  `AppModel.beginLongPressWatch` / `checkLongPressMovement` / `fireLongPress` / `updateRadial`；
+  平板只照着下发状态画（`PageCanvasView` + `PadOverlays`）。下行三条：`pressRing`(0x38)、
+  `radial`(0x37)、`inkCancel`(0x35)；上行是 `ink`/`probe` 两条 RT 流（UDP）。所有距离阈值靠平板
+  上报的 `padGeom.pageW`（**dp**）换算（`AppModel.exceedsPad`）。
+  **模式1 是同一套判定的 Kotlin 复刻**（`local/RadialController.kt`，用本机时钟与本机页宽）
+  → **第一步就在模式1 上做同样的动作**：两模式表现是否一致，一步就能把嫌疑劈成
+  「判定逻辑本身错」还是「模式2 这条链路错」。
+
+  按性价比排的排查口（**别一上来调 `PadConst.LP` 的常量**——三个症状同时出现不像是阈值偏了）：
+  1. **`padGeom.pageW` 是不是压根没到 Mac / 值不对**。`PageCanvasView.emitGeom` 只在页宽变化
+     ≥0.5dp 时发一次（静止零流量），连接后靠 `PadActivity.syncToolState()` 补发。Mac 侧
+     `padPageWidth == 0` 时全部阈值退回**归一化兜底**（`moveCancelNorm 0.02` / `holdSpeedNorm 0.043` /
+     `radialDeadzoneNorm 0.045`），那口径随缩放漂移——**它一条就能同时解释三个症状**
+     （环容易冒、盘难呼出、取消区大小不对）。先在 Mac 上把这个数打出来看。
+  2. **速度闸的分母用的是「Mac 收包时刻」而不是笔的时间戳**（`checkLongPressMovement` 里的
+     `Date()`）。UDP + WiFi 成批投递时一批点的收包时刻几乎相同 → 要么 `dt < 0.04` 整段速度判定
+     被跳过（该撤的没撤 = 环乱冒），要么 dt 极小算出假速度（不该撤的撤了 = 盘呼不出）。
+     模式1 用本机 `SystemClock` 天然没这问题——**这正是「两模式表现不同」最可能的来源**。
+     RT 帧里有序号可用（`PROTOCOL.md §6`），要么用它，要么在收包侧做时基平滑。
+  3. **位置**：环画在 `viewX(pr.page, pr.nx)`，而 nx/ny 就是平板自己上报的落笔点原样回发，
+     理论上应当**正好压在笔尖底下**。偏了只可能是：① `page` 对不上（`handleInk` 里几处
+     `?? s.currentPageIndex` 兜底，换文档/跨页那一瞬会兜到别的页）；② 平板收到时视口已经滚了
+     （上行到回发隔着一个 RTT，`MODE_PAGE` 下手指正在平移）；③ **草稿纸开着**——Mac 把 ink 整条
+     改走画布坐标（`handleScratchInput`），而 pressRing 仍按页内归一化画。
+     **先问清是「偏一点」还是「完全在另一处」**：偏一点是 ①/②，另一处是 ③。
+  4. **「该消失没消失」的时序**：Mac 是**每次落笔**都发 `pressRing on=true`，撤销全靠随后那条
+     `on=false`；它与 `strokes` 全量镜像走**同一条有序 WS 通道**，被大帧顶在后面就是「环赖着不走」。
+     `strokesAppend`(0x4C) 已经压掉了收笔那条 O(n²)，但**擦除/框选/切档仍发全量**。
+     两边抓时刻对：Mac `log stream --predicate 'process=="UniReader"' | grep 环形盘`、
+     安卓 `adb logcat -s UniReader/Canvas`。
+  5. **两端计时起点不同**：平板收到 `on=true` 用**本机时钟**起计（`pressT0`，300ms 起显示、
+     700ms 填满），Mac 那边的 1s 定时是从**它收到 ink begin** 起计。链路一抖就会出现
+     「环刚填满盘没来」或「环还没满盘就来了」。
+
+  **判据**：一次修完应当**同时**消掉三个症状；只消掉一个 = 还有第二个根因，别收工。
+  **验收（真机，两模式都要过）**：① 正常写小字 / 写得慢 / 笔尖在小范围绕——都不该出环、不该出盘；
+  ② 落笔不动 1s——环从 300ms 起显示、平滑填满，**盘紧接着在同一处展开**；
+  ③ 环与盘的圆心都压在笔尖底下（换页、缩放、画板模式页边、横竖屏各试一次）；
+  ④ 模式1 与模式2 同一动作表现一致；⑤ 草稿纸开着时不出环也不出盘（现规格：盘在纸上不生效）。
+  相关既有条目：「接下来」第 13 条的「长按呼盘」与第 14 条 ⑧（盘偶发不显示）。
 
 - ~~`broadcastStrokes` 是 O(n²)~~ **2026-08-28 已修（待真机确认）**：加了增量 opcode
   `strokesAppend`(0x4C)，收笔那一处只发新增的这一条（体积与文档大小无关），擦除/框选/图层/切档
