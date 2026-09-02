@@ -151,10 +151,16 @@ extension ReaderSurface {
 
     // MARK: 命令式缩放动画（逐帧插值；每帧 = pinch 同款原子 commit，平滑且零闪烁）
 
-    /// 指数趋近的时间常数（秒）——**手感旋钮**：越大越慢越柔。
-    /// 0.13 ≈ 起步后 130ms 走完 63%、约 0.4s 收敛到位（旧实现是定长 0.22s smoothstep）。
-    /// 觉得慢/快就只改这一个数，别回去改成定时长缓动（连点会跳，理由见 `ZoomAnim`）。
-    var zoomAnimTau: CFTimeInterval { 0.13 }   // 计算属性：扩展里不能放存储属性
+    /// **手感旋钮**：临界阻尼弹簧的响应时间（秒）。越小越快越干脆，**只改这一个数**。
+    ///
+    /// 演进：定长 0.22s smoothstep（**有缓动**，连点会跳）→ 指数趋近 tau=0.13（起步最快、
+    /// 尾巴无限长，一步 1.25× 要 750ms 才收敛，用户 2026-09-02 报「动画让人感觉不好」）→
+    /// 临界阻尼弹簧（S 形、零过冲）→ **匀速直线**（用户同日定：「就线性的就好了，不要弹性」）。
+    ///
+    /// 🔴 所以：**不要再往回加任何缓动**（smoothstep / spring / ease-*）。匀速的好处正在于
+    /// 连点不会跳——线性没有「起步阶段」，改目标时只换斜率，位置与观感都是连续的；
+    /// 当年 smoothstep 那版一跳一跳，就是因为重启缓动等于把速度归零再来一次。
+    var zoomAnimDuration: CFTimeInterval { 0.18 }   // 计算属性：扩展里不能放存储属性
 
     /// 启动/续接一次缩放动画：锚点 P 不动，zoom 指数趋近 z1。
     /// **已有动画在飞时只更新目标**（速度、锚点都不重置）——这就是连点不再一跳一跳的原因。
@@ -164,7 +170,9 @@ extension ReaderSurface {
         follower.reset()
         scratch.zoomFromRestore = false   // 用户接管缩放（⌘±/⌘0/工具栏），同 commitZoom
         let z1 = clampZoom(z1raw)
-        if var a = scratch.zoomAnim {     // 续接：连点/连按只改目标，速度连续
+        if var a = scratch.zoomAnim {     // 续接：连点/连按从**当前位置**重新起一段匀速
+            a.from = zoom
+            a.progress = 0
             a.target = z1
             // ⚠️ `fitAfter` 必须**整个换成新命令的**（含 nil）：新命令完全接管旧的。
             // 只在非 nil 时覆盖的话，「⌘0 动画途中按 1:1」会留着 ⌘0 的 fitAfter，
@@ -181,7 +189,7 @@ extension ReaderSurface {
         let o = anchorOffset
         scratch.zoomAnim = ZoomAnim(target: z1, anchorP: P,
                                     cCur: CGPoint(x: o.x + P.x, y: o.y + P.y),
-                                    lastT: CACurrentMediaTime(), fitAfter: fitAfter)
+                                    lastT: CACurrentMediaTime(), from: zoom, fitAfter: fitAfter)
         zoomAnimOn = true
     }
 
@@ -196,17 +204,19 @@ extension ReaderSurface {
         guard now - a.lastT >= 1.0 / 62 else { return }
         let dt = min(0.05, max(0, now - a.lastT))   // 掉帧/后台回来时钳住，别一步跨过头
         a.lastT = now
-        let remain = a.target - zoom
-        // 收敛：一次精确落到目标（指数趋近永远到不了，末尾必须显式对齐），然后收尾
-        if abs(remain) < 0.0008 || dt <= 0 {
-            zoomAnimFrame(z: a.target, &a)
+        a.progress = min(1, a.progress + CGFloat(dt / zoomAnimDuration))
+        if a.progress >= 1 || dt <= 0 {
+            zoomAnimFrame(z: a.target, &a)   // 末帧显式对齐到目标（浮点推进不保证正好落上）
             scratch.zoomAnim = nil
             zoomAnimOn = false
             if let nb = a.fitAfter { fitBasis = nb; zoom = 1; userZoomed = false }
             scheduleSettleRender()
             return
         }
-        zoomAnimFrame(z: zoom + remain * (1 - exp(-dt / zoomAnimTau)), &a)
+        // 🔴 **在 log 空间匀速**：缩放是乘性量，倍率上做算术插值看着是「先快后慢」
+        //（1→2 的前半程涨 50%、后半程只涨 33%），那恰恰是这次要去掉的那种「不匀」。
+        // 每帧乘同一个系数才是眼睛看到的匀速；而且它对起点/终点都不敏感，⌘0 那种大跨度同样干净。
+        zoomAnimFrame(z: a.from * pow(a.target / a.from, a.progress), &a)
         scratch.zoomAnim = a
     }
 
