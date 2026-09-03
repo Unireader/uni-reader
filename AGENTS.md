@@ -6,8 +6,28 @@ macOS 26+ PDF 阅读器（非沙盒，Tahoe 专属，不做低版本兼容）。
 
 ```bash
 xcodegen generate   # 新增/删除源文件后必做；UniReader.xcodeproj 是生成物，勿手改
-xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO
+xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform=macOS' \
+  -configuration Debug -derivedDataPath build/dev build CODE_SIGNING_ALLOWED=NO
+# → 产物 build/dev/Build/Products/Debug/UniReader.app（open 它就能测）
 ```
+
+### 🔴 产物只许落在这两个地方（2026-09-03 定，起因是同一份 app 在 build/ 和 DerivedData 各躺了一个）
+
+| 用途 | 路径 | 怎么出 |
+|---|---|---|
+| **开发/测试包**（含只为验证编译） | `build/dev/` | 上面那条 `-derivedDataPath build/dev` |
+| **正式分发包** | `build/UniReader-<版本>.zip` | `scripts/package.sh` |
+
+- **`-derivedDataPath build/dev` 不是可选项**——省掉它，xcodebuild 就写进
+  `~/Library/Developer/Xcode/DerivedData/UniReader-<一长串随机码>/`：路径随机、用户找不到、
+  也不知道该清哪个，于是同一份 app 到处都是。编译验证也走这条，别为「反正不要产物」而省。
+- 给用户实测**别跑 `package.sh`**：那是 Release + Developer ID + 公证（要等几分钟）且会自动
+  bump 版本号。Debug 包够用。（同款规矩：安卓是 `android/pack.sh --debug`，产物在 gradle
+  标准位 `android/app/build/outputs/apk/debug/`。）
+- `package.sh` 只清自己的 archive/export/zip，**不碰 `build/dev`**，两者可以长期共存。
+- 整个 `build/` 已在 `.gitignore` 里；要清干净就 `rm -rf build`。
+- 例外只有一个：**用 Xcode GUI 打开项目时它仍写自己的 DerivedData**，那份不归本约定管、也别拿它
+  当交付物；命令行一律按上表来。
 
 - 无测试 target；验证走 spike 脚本：`swift spike/<name>.swift`（如 `store-test.swift` 32 项 DAO、`ink-store-test.swift` 21 项）。
 - 采集页前端（`web/`，Svelte + Vite）：改动后跑 `scripts/build-web.sh`（npm install + 单文件构建 + 占位符自检 + 覆盖 `Sources/Resources/capture.html`），再重新编译 App。`capture.html` 是构建产物、**不入 git**——新克隆先跑一次 `build-web.sh`；`scripts/package.sh` 打包时会自动重建。

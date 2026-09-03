@@ -110,7 +110,10 @@ VERSION=$(grep -m1 'MARKETING_VERSION' "$PROJECT_YML" | sed -E 's/.*"([^"]*)".*/
 BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' "$PROJECT_YML" | sed -E 's/.*"([^"]*)".*/\1/')
 echo "-> 打包版本: $VERSION (build $BUILD)"
 
-rm -rf "$BUILD_DIR"
+# 只清本脚本自己的产物。**别 rm -rf 整个 build/**：`build/dev` 是开发测试包的固定家
+# （见 AGENTS.md「构建与验证」），连着 xcodebuild 的派生数据，删了下次编译要全量重来。
+rm -rf "$ARCHIVE_PATH" "$EXPORT_DIR"
+rm -f "$BUILD_DIR/$SCHEME"-*.zip
 mkdir -p "$BUILD_DIR"
 
 echo "-> archive (Release)"
