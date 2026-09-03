@@ -8,11 +8,17 @@ import UniformTypeIdentifiers
 /// PP-OCRv6 的结果里逐行文本在 `result.ocrResults[].prunedResult.rec_texts`、行框在 `rec_boxes`
 /// （输入图**像素坐标、左上原点**）——正好和页图（`PageBitmap.render` 出的显示朝向图，top-origin）同坐标系，
 /// 直接按图宽高归一化成 `TextRun`（0~1 左上原点），无需 rotation 变换。
+///
+/// 提交时带 `returnWordBox: true`（**文档没列这个字段，2026-09-03 实测云端认**），结果多出
+/// `text_word` + `text_word_boxes` 两列单字框——`TextRun.chars` 就是它换算来的，文字选择靠它才不切半个字。
 /// 引擎选择存 UserDefaults；API key 存 **Keychain**（本机密钥，不进工作区共享文件夹、不落 plist 明文）。
 enum PaddleOCR {
     static let jobURL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
     static let model = "PP-OCRv6"
-    static let providerID = "paddle-ppocrv6"
+    /// ⚠️ 缓存键的一部分（`ocr_page.provider`）。**改了它 = 旧 OCR 缓存全部失效、按需重跑**。
+    /// `-w` 这一版起 payload 里带单字框（`TextRun.chars`）；老缓存没有，靠 bump 让它重跑一遍，
+    /// 免得同一本书一半行能精确选、一半行还在按权重猜（旧行还留在表里，不占逻辑、只占点空间）。
+    static let providerID = "paddle-ppocrv6-w"
 
     /// UserDefaults 键（引擎选择；与 `SettingsView` / `ContentView` 共用）。
     static let engineKey = "ocrEngine"        // "off" | "paddle"
@@ -81,7 +87,7 @@ enum PaddleOCR {
         req.setValue("bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         // optionalPayload 作为一个 form 字段（JSON 字符串），与 SKILL 的 Local File Mode 一致。
-        let optional = #"{"useDocOrientationClassify":false,"useDocUnwarping":false,"useTextlineOrientation":false}"#
+        let optional = #"{"useDocOrientationClassify":false,"useDocUnwarping":false,"useTextlineOrientation":false,"returnWordBox":true}"#
         var body = Data()
         body.appendStr("--\(boundary)\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n\(model)\r\n")
         body.appendStr("--\(boundary)\r\nContent-Disposition: form-data; name=\"optionalPayload\"\r\n\r\n\(optional)\r\n")
@@ -129,6 +135,10 @@ enum PaddleOCR {
 
     /// PP-OCRv6 JSONL → `[TextRun]`。逐行文本 `rec_texts` + 行框 `rec_boxes`（像素坐标，左上原点），
     /// 按 `prunedResult.width/height`（缺省用上传图尺寸）归一化。结果按 y→x 排好序（阅读顺序）。
+    ///
+    /// 同时消化 `returnWordBox` 的产物：`text_word`（每行的字/词，拼起来 == `rec_texts[i]`）与
+    /// `text_word_boxes`（同序的框），换成 `TextRun.chars`。这两列缺失或对不上都只是没有单字框，
+    /// 不影响行本身——选择会回落权重近似。
     static func parse(jsonl: Data, imageSize: CGSize) -> [TextRun] {
         guard let text = String(data: jsonl, encoding: .utf8) else { return [] }
         var runs: [TextRun] = []
@@ -141,6 +151,8 @@ enum PaddleOCR {
                 guard let pr = page["prunedResult"] as? [String: Any] else { continue }
                 let texts = (pr["rec_texts"] as? [String]) ?? []
                 let boxes = (pr["rec_boxes"] as? [[Any]]) ?? []
+                let words = (pr["text_word"] as? [[String]]) ?? []
+                let wordBoxes = (pr["text_word_boxes"] as? [[[Any]]]) ?? []
                 let w = (pr["width"] as? NSNumber)?.doubleValue ?? Double(imageSize.width)
                 let h = (pr["height"] as? NSNumber)?.doubleValue ?? Double(imageSize.height)
                 guard w > 0, h > 0 else { continue }
@@ -149,12 +161,25 @@ enum PaddleOCR {
                     guard !t.isEmpty, let bb = boundingBox(boxes[i]) else { continue }
                     let nx = bb.minX / w, ny = bb.minY / h, nw = bb.width / w, nh = bb.height / h
                     guard nw > 0, nh > 0 else { continue }
-                    runs.append(TextRun(text: texts[i], x: nx, y: ny, w: nw, h: nh))
+                    let cb = charBounds(line: i, text: texts[i], lineBox: bb,
+                                        words: words, wordBoxes: wordBoxes)
+                    runs.append(TextRun(text: texts[i], x: nx, y: ny, w: nw, h: nh, chars: cb))
                 }
             }
         }
         runs.sort { $0.y != $1.y ? $0.y < $1.y : $0.x < $1.x }   // 阅读顺序：上→下、左→右
         return runs
+    }
+
+    /// 第 `line` 行的单字框 → 字符边界（`TextRun.chars` 的口径）。两列任一缺失/长度对不上就返回 nil。
+    private static func charBounds(line: Int, text: String, lineBox: CGRect,
+                                   words: [[String]], wordBoxes: [[[Any]]]) -> [Double]? {
+        guard line < words.count, line < wordBoxes.count else { return nil }
+        let raw = wordBoxes[line]
+        let boxes = raw.compactMap { boundingBox($0) }
+        guard boxes.count == raw.count else { return nil }   // 有框解析不出来就整行不要，别错位
+        return OCRTextSelect.boundsFromWordBoxes(lineText: text, words: words[line],
+                                                 boxes: boxes, lineBox: lineBox)
     }
 
     /// 一个框可能是 `[x1,y1,x2,y2]`（轴对齐）或多边形 `[[x,y],...]`——都归成轴对齐包围盒。

@@ -7,7 +7,16 @@ import PDFKit
 struct TextRun: Equatable, Codable {
     var text: String
     var x: Double, y: Double, w: Double, h: Double   // 归一化 0~1，左上原点
+    /// 行内**字符边界**：行框内比例 0~1，单调不减，`count == text.count + 1`，首 0 末 1。
+    /// 来源是 OCR 的单字框（PP-OCRv6 `returnWordBox`，见 `OCRTextSelect.boundsFromWordBoxes`）。
+    /// `nil` = 这一行没有实测字位（老缓存/原生文本层），选择回落 `OCRTextSelect` 的等宽权重近似。
+    /// 可选字段，老 payload 缺这个键即解成 nil，无需迁移。
+    var chars: [Double]?
     var rect: CGRect { CGRect(x: x, y: y, width: w, height: h) }
+
+    init(text: String, x: Double, y: Double, w: Double, h: Double, chars: [Double]? = nil) {
+        self.text = text; self.x = x; self.y = y; self.w = w; self.h = h; self.chars = chars
+    }
 }
 
 /// 一页的文本层 + 来源。
