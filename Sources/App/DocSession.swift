@@ -395,10 +395,12 @@ final class DocSession: ObservableObject, Identifiable {
     }
 
     /// OCR 文本搜索：逐行匹配（大小写不敏感），命中行整框高亮。只覆盖已识别页。
+    /// 走**可见行**——不然搜书名里的字（扫描件水印常就是出版方名字）会命中满屏水印碎片。
     private func searchOCR(_ q: String) -> [TextMatch] {
         let ql = q.lowercased()
         var out: [TextMatch] = []
-        for (page, runs) in ocrRuns {
+        for page in ocrRuns.keys {
+            guard let runs = ocrVisibleRuns(page: page) else { continue }
             for r in runs where r.text.lowercased().contains(ql) {
                 out.append(TextMatch(page: page, rects: [r.rect], frac: r.y))
             }
@@ -438,17 +440,90 @@ final class DocSession: ObservableObject, Identifiable {
     // 缓存键 = (内容 hash, 页, provider)，随内容走、换机复用；网络任务并发上限 3。
 
     @Published var ocrEnabled = false                     // 本文档启用 OCR 文本层
-    @Published var ocrRuns: [Int: [TextRun]] = [:] {      // 页 → 已识别的行级文本框（阅读顺序）
-        didSet { ocrGroupCache = [:] }                    // 行变了 → 分组缓存作废（懒重算）
+    /// 页 → 已识别的行级文本框（阅读顺序）。**这是真源**（落库、建水印指纹都用它）；
+    /// 选择/分组/上色一律走 `ocrVisibleRuns(page:)`（滤掉水印块），别直接消费这个字典。
+    @Published var ocrRuns: [Int: [TextRun]] = [:] {
+        didSet { invalidateOCRDerived() }                  // 行变了 → 分组/水印/可见行缓存全作废（懒重算）
     }
-    private var ocrGroupCache: [Int: [Int]] = [:]         // 页 → 分组 id（列/块聚类，与 runs 同序）
+    private var ocrGroupCache: [Int: [Int]] = [:]         // 页 → 分组 id（列/块聚类，与**可见**行同序）
     /// 某页 OCR 行的列/块分组（`OCRFlow.columnGroups`），带缓存——拖选/渲染多次访问不重复跑并查集。
+    /// ⚠️ 基于**可见行**（已滤水印）算，下标与 `ocrVisibleRuns(page:)` 一一对应。
     func ocrGroups(page: Int) -> [Int] {
         if let c = ocrGroupCache[page] { return c }
-        guard let runs = ocrRuns[page] else { return [] }
+        guard let runs = ocrVisibleRuns(page: page) else { return [] }
         let g = OCRFlow.columnGroups(runs)
         ocrGroupCache[page] = g
         return g
+    }
+
+    // MARK: 水印块忽略（`OCRWatermark`）——扫描件的平铺水印会被 OCR 认成一堆大字块，混进正文选择
+
+    /// 忽略平铺水印块（默认开，OCR 面板可关）。关掉 = 拿到全部识别行（含水印）。
+    @Published var ocrIgnoreWatermark = true {
+        didSet { invalidateOCRDerived() }
+    }
+    private var ocrMaskCache: [Int: [Bool]] = [:]         // 页 → 水印掩码（与该页原始行同序）
+    private var ocrVisibleCache: [Int: [TextRun]] = [:]   // 页 → 已滤水印的行（拖选每个事件都要，别重复过滤）
+    private var wmProfile = OCRWatermark.Profile()        // 全书水印指纹（跨页统计）
+    private var wmProfilePages = 0                        // 建指纹时的样本页数（用于决定何时重建）
+
+    /// 该页**可见**的 OCR 行：滤掉被判为水印的块。选择/复制/分组/调试上色都用它。
+    /// 返回 nil = 该页没有可用文本层（与老的 `ocrRuns[page]` 空判语义一致）。
+    func ocrVisibleRuns(page: Int) -> [TextRun]? {
+        guard let runs = ocrRuns[page], !runs.isEmpty else { return nil }
+        guard ocrIgnoreWatermark else { return runs }
+        if let c = ocrVisibleCache[page] { return c.isEmpty ? nil : c }
+        let m = ocrMask(page: page, runs: runs)
+        let kept = zip(runs, m).compactMap { $1 ? nil : $0 }
+        ocrVisibleCache[page] = kept
+        return kept.isEmpty ? nil : kept
+    }
+
+    /// 清掉一切由 `ocrRuns` + 指纹派生的缓存（可见行 / 掩码 / 分组）。三者必须一起清——
+    /// 分组下标是按可见行算的，只清一半就会出现「分组指到别的行」。
+    private func invalidateOCRDerived() {
+        ocrVisibleCache = [:]; ocrMaskCache = [:]; ocrGroupCache = [:]
+    }
+
+    /// 该页被判为水印的行（只给调试上色看；正常路径不消费）。
+    func ocrWatermarkRuns(page: Int) -> [TextRun] {
+        guard ocrIgnoreWatermark, let runs = ocrRuns[page], !runs.isEmpty else { return [] }
+        let m = ocrMask(page: page, runs: runs)
+        return zip(runs, m).compactMap { $1 ? $0 : nil }
+    }
+
+    private func ocrMask(page: Int, runs: [TextRun]) -> [Bool] {
+        if let c = ocrMaskCache[page] { return c }
+        let m = OCRWatermark.mask(runs: runs, profile: wmProfile)
+        ocrMaskCache[page] = m
+        return m
+    }
+
+    /// 重建水印指纹：**一次性把库里这本书已缓存的全部 OCR 页读出来**做跨页统计。
+    /// 为什么不用 `ocrRuns`：阅读区是逐页懒加载的，翻开第一页时手上只有 1 页，跨页重复根本无从谈起；
+    /// 而库里往往整本都已经跑完（本文档打开时自动启用 OCR 就是凭这个）。
+    /// 解码 JSON 放后台（一本 340 页的书约 3MB），回主线程才落 `wmProfile`。
+    private func rebuildWatermarkProfile() {
+        guard let store, !contentHash.isEmpty else { return }
+        let hash = contentHash
+        guard let raw = try? store.allOCRPayloads(contentHash: hash, provider: PaddleOCR.providerID),
+              !raw.isEmpty else { return }
+        wmProfilePages = raw.count
+        Task.detached(priority: .utility) { [weak self] in
+            let dec = JSONDecoder()
+            var pages: [Int: [TextRun]] = [:]
+            for (page, data) in raw {
+                if let payload = try? dec.decode(OCRPagePayload.self, from: data) { pages[page] = payload.runs }
+            }
+            let profile = OCRWatermark.buildProfile(pages)
+            await MainActor.run {
+                // 换文档后旧任务回来：内容 hash 变了就整个丢弃（同 startNetworkOCR 的守卫）。
+                guard let self, self.contentHash == hash else { return }
+                self.wmProfile = profile
+                self.invalidateOCRDerived()
+                self.objectWillChange.send()   // 掩码变了 → 选择/上色要按新的可见行重画
+            }
+        }
     }
     @Published var showOCRBlocks = false                  // 调试/demo：把 OCR 识别块按块上色画出来（量化排版/选择）
     @Published var ocrBlockGrouped = false                // 调试上色模式：false=每块独立色 / true=可选分组同色（列/块聚类）
@@ -491,9 +566,11 @@ final class DocSession: ObservableObject, Identifiable {
         ocrQueue = []; ocrInFlight = 0; ocrActivePages = []; ocrRuns = [:]; ocrLastError = nil
         ocrEnabled = false
         ocrRenderPDF = nil   // 换文档 → 丢弃旧的 OCR 渲染副本，下次用时按新 pdf 懒建
+        invalidateOCRDerived(); wmProfile = OCRWatermark.Profile(); wmProfilePages = 0
         guard let store, !contentHash.isEmpty else { return }
         if let c = try? store.ocrPageCount(contentHash: contentHash, provider: PaddleOCR.providerID), c > 0 {
             ocrEnabled = true
+            rebuildWatermarkProfile()   // 库里已有整本的识别结果 → 第一页就能按跨页统计滤水印
         }
     }
 
@@ -582,6 +659,9 @@ final class DocSession: ObservableObject, Identifiable {
         try? store.upsertOCRPage(OCRPage(contentHash: contentHash, page: page,
                                          provider: PaddleOCR.providerID, payload: data,
                                          lang: nil, createdAt: Date()))
+        // 边跑边识别的新书：每多攒够一批页就重建一次水印指纹（样本越多越准；
+        // 样本不足时 `OCRWatermark.mask` 只靠同页伙伴那条判据兜着）。
+        if ocrRuns.count >= wmProfilePages + OCRWatermark.minRepeatPages { rebuildWatermarkProfile() }
     }
 
     // MARK: - 关窗收尾

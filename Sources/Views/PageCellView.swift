@@ -36,6 +36,7 @@ struct PageCellView: View {
     var noteTypes: [NoteType] = []         // 工作区笔记类型：图钉/高亮配色（通用保持既有黄色样式）
     var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
     var ocrGroups: [Int] = []              // 调试上色：非空=按分组同色(与 ocrBlocks 同序的分组 id) / 空=每块独立色
+    var ocrWatermarks: [TextRun] = []      // 调试上色：被判为水印、已从选择里剔除的块（画成灰虚框）
     var radial: RadialState? = nil         // 环形选笔盘（非空且属本页时在笔尖处画环）
     var pens: [PenPreset] = []             // 环形盘要显示的收藏笔列表
     var pressRing: PressRing? = nil        // 长按进度环（非空且属本页时在笔尖处画填充进度）
@@ -108,6 +109,20 @@ struct PageCellView: View {
                         ctx.stroke(path, with: .color(c), lineWidth: 1)
                         ctx.draw(Text("\(key)").font(.system(size: 9, weight: .bold)).foregroundColor(c),
                                  at: CGPoint(x: px.minX + 2, y: px.minY + 1), anchor: .topLeading)
+                    }
+                }
+                .allowsHitTesting(false)
+            }
+            // 调试/demo：被 `OCRWatermark` 判为水印而剔除的块——灰色虚框、不填色、不编号，
+            // 一眼看出「哪些没进选择」。正常阅读时 showOCRBlocks 关着，这层不存在。
+            if !ocrWatermarks.isEmpty {
+                Canvas { ctx, sz in
+                    for run in ocrWatermarks {
+                        let px = CGRect(x: run.x * sz.width, y: run.y * sz.height,
+                                        width: run.w * sz.width, height: run.h * sz.height)
+                        ctx.stroke(Path(roundedRect: px, cornerRadius: 2),
+                                   with: .color(.gray.opacity(0.75)),
+                                   style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                     }
                 }
                 .allowsHitTesting(false)

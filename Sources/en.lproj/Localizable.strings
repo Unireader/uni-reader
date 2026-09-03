@@ -145,7 +145,9 @@
 "Not recognized yet." = "Not recognized yet.";
 "%d of %d pages recognized" = "%d of %d pages recognized";
 "Show recognition blocks (debug)" = "Show recognition blocks (debug)";
-"Colors each recognized text block to inspect layout/selection accuracy." = "Colors each recognized text block to inspect layout/selection accuracy.";
+"Colors each recognized text block to inspect layout/selection accuracy; ignored watermark blocks show as grey dashed outlines." = "Colors each recognized text block to inspect layout/selection accuracy; ignored watermark blocks show as grey dashed outlines.";
+"Ignore tiled watermark blocks" = "Ignore tiled watermark blocks";
+"Scanned books often carry a tiled diagonal watermark; OCR turns it into big blocks that break text selection. Detected by geometry and cross-page repetition, not by wording." = "Scanned books often carry a tiled diagonal watermark; OCR turns it into big blocks that break text selection. Detected by geometry and cross-page repetition, not by wording.";
 "Per block" = "Per block";
 "Selectable groups" = "Selectable groups";
 "Rendering" = "Rendering";

@@ -62,8 +62,12 @@ struct OCRPopoverContent: View {
                 Button(L("Recognize all pages")) { session.ocrAllPages() }
                     .disabled(session.pdf == nil)
                 Divider()
+                Toggle(L("Ignore tiled watermark blocks"), isOn: bind(\.ocrIgnoreWatermark))
+                Text(L("Scanned books often carry a tiled diagonal watermark; OCR turns it into big blocks that break text selection. Detected by geometry and cross-page repetition, not by wording."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Divider()
                 Toggle(L("Show recognition blocks (debug)"), isOn: bind(\.showOCRBlocks))
-                Text(L("Colors each recognized text block to inspect layout/selection accuracy."))
+                Text(L("Colors each recognized text block to inspect layout/selection accuracy; ignored watermark blocks show as grey dashed outlines."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if session.showOCRBlocks {
                     Picker("", selection: bind(\.ocrBlockGrouped)) {

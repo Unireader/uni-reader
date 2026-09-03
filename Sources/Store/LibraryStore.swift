@@ -512,6 +512,20 @@ final class LibraryStore {
     func deleteOCRPages(contentHash: String) throws {
         try db.run("DELETE FROM ocr_page WHERE content_hash=?", [.text(contentHash)])
     }
+    /// 某内容(hash) 某引擎已缓存的**全部**页 payload（页 → JSON）。
+    /// 用途：一次性建水印指纹（`OCRWatermark.Profile`）——它要的是**跨页**统计，
+    /// 而阅读区是逐页懒加载的，攒不出样本；库里往往整本都跑完了，一次读出来即可。
+    func allOCRPayloads(contentHash: String, provider: String) throws -> [Int: Data] {
+        let rows = try db.query("SELECT page,payload FROM ocr_page WHERE content_hash=? AND provider=?",
+                                [.text(contentHash), .text(provider)])
+        var out: [Int: Data] = [:]
+        for r in rows {
+            guard let page = r["page"] as? Int64, let payload = r["payload"] as? Data else { continue }
+            out[Int(page)] = payload
+        }
+        return out
+    }
+
     /// 某内容(hash) 某引擎已缓存的 OCR 页数（>0 → 打开文档时自动启用 OCR 文本层，缓存直接复用）。
     func ocrPageCount(contentHash: String, provider: String) throws -> Int {
         let rows = try db.query("SELECT COUNT(*) AS c FROM ocr_page WHERE content_hash=? AND provider=?",

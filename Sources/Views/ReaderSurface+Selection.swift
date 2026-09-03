@@ -43,10 +43,9 @@ extension ReaderSurface {
     }
 
     /// 该页可用的 OCR 行文本层（非空才返回）；有它就覆盖不准的原生文本。
-    func ocrRuns(page: Int) -> [TextRun]? {
-        let r = session.ocrRuns[page]
-        return (r?.isEmpty == false) ? r : nil
-    }
+    /// ⚠️ 走 `ocrVisibleRuns`：扫描件的平铺水印块已被 `OCRWatermark` 剔除，
+    /// 于是拖选正文不会再带出一串「王道计」之类的水印碎片。下标与 `session.ocrGroups(page:)` 对齐。
+    func ocrRuns(page: Int) -> [TextRun]? { session.ocrVisibleRuns(page: page) }
 
     /// 由 PDFKit 原生选区（可跨页）落成 `selection`：空/无字则清空。可视顺序/跨行跨页/CJK 都交给 PDFKit。
     func setSelection(_ sel: PDFSelection?) {

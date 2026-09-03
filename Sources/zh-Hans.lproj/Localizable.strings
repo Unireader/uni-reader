@@ -147,7 +147,9 @@
 "Not recognized yet." = "尚未识别。";
 "%d of %d pages recognized" = "已识别 %d / %d 页";
 "Show recognition blocks (debug)" = "显示识别块（调试）";
-"Colors each recognized text block to inspect layout/selection accuracy." = "给每个识别块上色，量化排版与选择落点是否准。";
+"Colors each recognized text block to inspect layout/selection accuracy; ignored watermark blocks show as grey dashed outlines." = "给每个识别块上色，量化排版与选择落点是否准；被忽略的水印块画成灰色虚线框。";
+"Ignore tiled watermark blocks" = "忽略平铺水印块";
+"Scanned books often carry a tiled diagonal watermark; OCR turns it into big blocks that break text selection. Detected by geometry and cross-page repetition, not by wording." = "扫描件常带整页斜排水印，OCR 会把它认成一堆大字块，混进正文里干扰选择。判定只看几何形状与跨页重复，不认具体文字。";
 "Per block" = "每块独立";
 "Selectable groups" = "可选分组";
 "Rendering" = "渲染";
