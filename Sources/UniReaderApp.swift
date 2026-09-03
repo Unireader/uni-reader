@@ -24,6 +24,19 @@ func wsLog(_ msg: String) {
     try? h.write(contentsOf: data)
 }
 
+/// 启动分段计时，写 [wsLog] 那条通道（`touch ~/Library/Logs/UniReader-ws.log` 开）。
+///
+/// 冷启动「卡一下、第二次就不卡」的排查全指望它：先分清慢在**我们自己的主线程 IO**
+/// （开库/读书库/加载 PDF——工作区常在移动硬盘上，首次没有 page cache）还是 **exec 之前**
+/// （Gatekeeper 首次扫描新构建的二进制、dyld 冷绑定，与代码无关）。
+/// 后者的判据：下面这些分段加起来很短，而人感觉卡了好几秒。
+@discardableResult
+func wsTime<T>(_ tag: String, _ body: () throws -> T) rethrows -> T {
+    let t0 = CFAbsoluteTimeGetCurrent()
+    defer { wsLog(String(format: "耗时 %@ %.0fms", tag, (CFAbsoluteTimeGetCurrent() - t0) * 1000)) }
+    return try body()
+}
+
 /// 平板链路的耗时日志（`[PAD]` 前缀）：页图渲染 + **每收一笔的主线程账**（对账/落库/广播）。
 /// 开关口径同 [wsLog]——**文件在不在就是开关**：
 /// ```
@@ -324,6 +337,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 必然已经就位（若确实是双击启动）。
     func applicationDidFinishLaunching(_ notification: Notification) {
         wsLog("didFinishLaunching：pendingWorkspacePath=\(Self.pendingWorkspacePath ?? "nil")")
+        // 进程创建到这一刻 = dyld 加载 + 静态初始化（Gatekeeper 扫描在进程创建之前，不计在内）。
+        if let launched = NSRunningApplication.current.launchDate {
+            wsLog(String(format: "耗时 进程启动→didFinishLaunching %.0fms",
+                         Date().timeIntervalSince(launched) * 1000))
+        }
         Self.didFinishLaunching = true
         MainMenu.install(app: appModel)
         // app 级初始化（迁移前挂在 ContentView.onAppear，那是「每开一扇窗跑一遍」的将就做法）。
@@ -356,15 +374,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             if strict { try WorkspaceManager.validate(folder) }
-            let ws = try WorkspaceRegistry.shared.acquire(folder: folder)
-            let c = ReaderWindowController(app: appModel, workspace: ws, launchDocId: docId)
+            let ws = try wsTime("开工作区(SQLite)") { try WorkspaceRegistry.shared.acquire(folder: folder) }
+            let c = wsTime("建窗(含恢复标签/开 PDF)") {
+                ReaderWindowController(app: appModel, workspace: ws, launchDocId: docId)
+            }
             // 第二扇起往右下错开：所有窗口共用一个 autosave frame，不错开就精确叠在一起、
             // 看着像「只开了一扇」。
             if let prev = readerWindows.last?.window, let w = c.window {
                 w.setFrameTopLeftPoint(NSPoint(x: prev.frame.minX + 26, y: prev.frame.maxY - 26))
             }
             readerWindows.append(c)
-            c.showWindow(nil)
+            wsTime("上屏(showWindow)") { c.showWindow(nil) }
             NSApp.activate(ignoringOtherApps: true)
             wsLog("开窗：\(folder.lastPathComponent) doc=\(docId ?? "nil")")
             return c

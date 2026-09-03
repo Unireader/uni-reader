@@ -103,6 +103,19 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         logFrame("init 末")
     }
 
+    /// 两侧栏的最小宽度（pt）。用户 2026-09-03 定：原来的 200/240 太窄，信息页里
+    /// 「Title / Last Opened」这类左键右值的行挤成两截。
+    ///
+    /// 用 `minimumThickness` 而不是给 SwiftUI 内容加 `.frame(minWidth:)`：这一处同时管住
+    /// **初始宽度**（AppKit 展开一栏至少给到最小厚度）和**拖动下限**，而且四个页签
+    /// （信息/目录/笔记/AI）一视同仁——挂在某个页签的内容上就只有那一页撑得开。
+    ///
+    /// 🔴 **不做跨重启的宽度记忆**（2026-09-03 用户明确否决）：`setPosition`（要等布局稳定，
+    /// 早于上屏调就被抹掉）、`preferredThicknessFraction`（初始布局吃、**展开时不吃**）、
+    /// 宽度约束（priority 压在 `holdingPriority` 之下）三条路都试过，
+    /// 「先动画展到默认宽、再瞬间跳到记忆宽」那下补偿始终甩不掉，观感不合格。想再做先解决这个。
+    private static let paneMinWidth: CGFloat = 300
+
     /// 所有阅读窗共用一个 frame 记忆名（多开时靠 `AppDelegate` 错开摆位）。
     static let frameAutosaveName = "UniReaderReaderWindow"
     /// 初始 frame 已经定好了 —— 在此之前不许存（见 `saveFrame`）。
@@ -195,7 +208,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.allowsFullHeightLayout = true   // 侧栏一路铺到标题栏后面（默认就是 true，写明意图）
-        sidebarItem.minimumThickness = 200
+        sidebarItem.minimumThickness = Self.paneMinWidth
         sidebarItem.maximumThickness = 420
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = 400
@@ -203,7 +216,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // 这一行是**唯一**的改动——先看 AppKit + 现有阅读区代码的原生默认表现，再决定要不要动几何。
         contentItem.automaticallyAdjustsSafeAreaInsets = true
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
-        inspectorItem.minimumThickness = 240
+        inspectorItem.minimumThickness = Self.paneMinWidth
         inspectorItem.maximumThickness = 400
         inspectorItem.isCollapsed = true
 
@@ -369,7 +382,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             wsLog("decideInitialContent：本工作区已恢复过，留空窗口")
             return
         }
-        tabs.restoreTabs()
+        wsTime("恢复标签(读库+开 PDF)") { tabs.restoreTabs() }
     }
 
     // MARK: - 窗口级动作（原先散在 ContentView 里）

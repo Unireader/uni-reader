@@ -470,7 +470,7 @@ struct InspectorView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 if !n.quote.isEmpty {
-                                    Text(n.quote).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                    Text(n.quote.flattenedQuote).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             }
@@ -572,7 +572,7 @@ struct InspectorView: View {
                                     Label(String(format: L("Page %d"), h.page + 1), systemImage: "highlighter")
                                         .font(.callout)
                                     if !h.quote.isEmpty {
-                                        Text(h.quote).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        Text(h.quote.flattenedQuote).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                     }
                                 }

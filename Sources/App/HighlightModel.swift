@@ -18,6 +18,38 @@ struct Highlight: Identifiable, Equatable {
     var updatedAt: Date = .now
 }
 
+extension String {
+    /// 把多行引文折成一行，给 Inspector 那种**紧凑列表**用（高亮条目 / 文字笔记条目共用）。
+    ///
+    /// 为什么要它：跨行选区的 `quote` 是按行 `\n` 拼出来的（见 `ReaderSurface+Selection`），
+    /// 直接塞进 `Text(...).lineLimit(2)` 会在**原文的换行处**断行——一条五行的引文只看得见
+    /// 头两行的头两截，读起来莫名其妙（用户 2026-09-03 报）。抹平后交给 SwiftUI 按列宽自己折行，
+    /// `lineLimit` 才是「显示两行」的意思。
+    ///
+    /// 接缝处补不补空格看两边字符：CJK 之间直接接上（原文本来就是连排的，补空格反而多一个洞），
+    /// 有一侧是西文就补一个（否则 "the" + "quick" 粘成 "thequick"）。行首尾的空白一律先剪掉。
+    var flattenedQuote: String {
+        let lines = split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard var out = lines.first else { return "" }
+        for line in lines.dropFirst() {
+            if let a = out.last, let b = line.first, a.isCJKLike, b.isCJKLike {
+                out += line
+            } else {
+                out += " " + line
+            }
+        }
+        return out
+    }
+}
+
+extension Character {
+    /// 是否 CJK/全宽字符（0x2E80 起为 CJK 部首/假名/汉字/全宽标点区）。
+    /// 这条界与 `OCRTextSelect.charWeights` 是同一条，改一处记得看另一处。
+    var isCJKLike: Bool { (unicodeScalars.first?.value ?? 0) >= 0x2E80 }
+}
+
 extension Highlight {
     /// 高亮的笔记类型（对齐 `LibNote.kind`：0 text / 1 chat / 2 ink / 3 highlight）。
     static let noteKind = 3
