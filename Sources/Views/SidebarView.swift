@@ -2,14 +2,16 @@ import SwiftUI
 
 /// 侧栏：当前工作区的文档列表 + 工作区切换/重命名。原生单列表，保持 sidebar 样式。
 /// 文档可设一级分组（v11）：有分组时按分组分段（未分组在前），右键「Move to Group」移动，
-/// 分组段头右键改名/删除（删除 = 文档回未分组）；文档行可**拖到段头**换分组（多选时整批移动）。
+/// 分组段头右键改名/删除（删除 = 文档回未分组）。**行级拖拽一概没有**（2026-09-03 用户要求移除
+/// 「拖到段头换分组」）：换分组走右键菜单，排序走右键上移/下移。侧栏只剩「从 Finder 拖 PDF 进来」
+/// 这一个落点（整表的 `dropDestination(for: URL.self)`）。
 /// **手动排序**（2026-09-03）：右键「上移 / 下移」，**只在同一分组段内**换位（多选时整批一起动）。
 /// 落库写 `document.sort_order`（见 `WorkspaceManager.reorderDocuments`）；没排过的书 `sort_order=0`
 /// 仍排在最前，于是「新加的书出现在顶上」这条老观感不变。
 /// 🔴 **拖拽排序做过三版、全部撤销，勿再尝试**（用户 2026-09-03 明确否决：「你没这个能力做好这个
 /// 功能」）。三版分别是：命中行整行铺色（「UI 不好看」——那在 Finder 里是「放进这个容器」的意思）、
 /// 行间插入线（「交互太垃圾」）、实时让位（观感一路修到「拖起即离列 + 让位动画防抖」仍不达标）。
-/// 记下踩到的坑，将来真要再做时**从这里起步、别重走**：
+/// 记下踩到的坑，**将来真要再做（含把「拖到段头换分组」加回来）从这里起步、别重走**：
 ///  · 起手只能用 `.draggable`——`List(selection:)` 里 `.onDrag` 对**未选中**的行根本不触发；
 ///  · 但 `.draggable` 没有「拖起」回调，「拖的是谁」只能在 drop 侧从 item provider 异步读回；
 ///  · 被拖那行不能在拖拽图像拍好之前隐藏，否则跟着鼠标的那张图是空的；
@@ -394,7 +396,6 @@ struct SidebarView: View {
             .foregroundStyle(local ? .primary : .secondary)
             .help(local ? "" : L("Not available offline — reconnect the source drive to read it."))
             .tag(doc.id)
-            .draggable(doc.id)   // 拖到分组段头换分组（多选时整批，见 moveDropped）
             .contextMenu { menu(for: doc) }
     }
 
@@ -439,18 +440,13 @@ struct SidebarView: View {
         return groups.count == 1 ? groups.first : nil
     }
 
-    /// 分组段头：右键菜单 + 接受文档拖放（整行宽都是落点，不只是文字那一小段）。
+    /// 分组段头：右键改名/删除。**不接受文档拖放**（2026-09-03 用户要求移除）——
+    /// 换分组一律走右键「Move to Group」，侧栏里从此没有任何行级拖拽。
     private func groupHeader(_ title: String, group: String) -> some View {
         Text(title)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .contextMenu { if !group.isEmpty { groupMenu(group) } }
-            .dropDestination(for: String.self) { ids, _ in moveDropped(ids, to: group); return true }
-    }
-
-    /// 拖文档行到段头：被拖者在选中集内 → 整批移动；否则只动被拖那篇（Finder 同款语义）。
-    private func moveDropped(_ ids: [String], to group: String) {
-        workspace.setGroup(ids: Set(ids.flatMap { targets(forId: $0) }), group: group)
     }
 
     @ViewBuilder
