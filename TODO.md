@@ -550,15 +550,16 @@
     **增量**（只存受影响的条目）且**瞬态不落库**，页内一条、草稿纸一条；剪贴板走系统 `NSPasteboard`
     自有类型，粘贴落点 = 指针所在那一页。改这块前先读 `Sources/App/InkUndo.swift` 的头注释。
 
-  - **2026-09-03：Inspector 两处小改（待真机验）**。
+  - **2026-09-03：Inspector 三处小改**（②③ 用户当场实测通过，① 待验）。
     ① **引文在列表里折成一行**（`String.flattenedQuote`，放 `HighlightModel.swift`）：跨行选区的
     `quote` 是按行 `\n` 拼的，直接进 `Text(...).lineLimit(2)` 会在**原文换行处**断行，一条五行的
     引文只看得见头两行的头两截。抹平后交给 SwiftUI 按列宽折行，`lineLimit(2)` 才是「显示两行」。
     接缝补不补空格看两边字符（CJK 之间直接接，一侧是西文/数字补一个）。高亮条目与文字笔记条目共用；
     **落库的 `quote` 一个字没动**（复制、笔记编辑器的引文块、AI 引用都保持原样）。
-    ② **侧栏默认宽度 300**（`ReaderWindowController.defaultSidebarWidth`）：200 那个起始宽太窄。
-    `NSSplitViewItem` 只认比例，所以按最终窗宽折成 `preferredThicknessFraction`——必须在
-    `restoreFrame` 之后设，那之前窗宽还是初始的 1280，比例套到真实窗宽上就不是 300 了。
+    ② **两侧栏最小宽度 300**（`ReaderWindowController.paneMinWidth`，原来左 200 / 右 240）：
+    信息页里「Title / Last Opened」这类左键右值的行挤成两截。用 `minimumThickness` 而不是给
+    SwiftUI 内容加 `.frame(minWidth:)`——一处同时管住**初始宽度**（AppKit 展开一栏至少给到最小
+    厚度）和**拖动下限**，且四个页签一视同仁；挂在某页签的内容上就只有那一页撑得开。
     🔴 **跨重启的宽度记忆做过又撤了**（2026-09-03 用户否决观感，代码已全部删除，勿再恢复）。
     三条路都试过，都栽在**展开动画**上：`setPosition` 要等布局稳定，早于上屏调就被下一次布局抹掉；
     `preferredThicknessFraction` 初始布局吃、**展开时不吃**；宽度约束（priority 压在
@@ -570,6 +571,13 @@
     实测冷启动 ~2.1s / 热启动 ~0.7s：dyld+静态初始化 170~640ms、开库 14~68ms、
     恢复标签(读库+开 PDF) 350~620ms、首次布局约 390ms，建三棵 SwiftUI 树只要 1ms。
     真要提速得把开 PDF 挪出主线程——那是动加载链路，**先跟用户过方案**。
+    ③ **缩略图渲染像素宽 160 → 480**（`ThumbnailListView.pixelWidth`）：栏宽 300pt 减内边距
+    ≈276pt，Retina 下 552 物理像素，160 要放大 3.4 倍 → 用户报「糊得几乎认不出任何文字」。
+    480 只放大 1.15 倍；插值给到 `.high`（缩略图静态，不像阅读区每帧重画）。
+    ⚠️ **改大它必须连带管内存**：View 层 `images` 字典原来**没有上限**，160px 一张 0.14MB 攒
+    几百页还行，480px 一张约 1.3MB、340 页就是 440MB。已加 `maxKeptImages = 48`，超额丢离当前页
+    最远的（丢掉的在 `PageRenderEngine` LRU 与磁盘缓存里都还在）。磁盘那头 `PageDiskCache`
+    自带 1GB 上限 + trim。阅读区的 `fallbackBase` 读同一套键，占位图跟着变清楚。
 
 ## 🔧 整体优化路线图（2026-07-25 起，用户需求「整体优化」）
 

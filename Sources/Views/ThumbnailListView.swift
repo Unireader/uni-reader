@@ -11,7 +11,18 @@ struct ThumbnailListView: View {
 
     /// 缩略图渲染像素宽。阅读区也会读它：目标宽度的页图还没渲出来时，拿这份小图当最后兜底
     /// （同 doc/page 键空间，见 `ReaderSurface.fallbackBase`）。
-    static let pixelWidth = 160
+    ///
+    /// 🔴 **必须跟得上侧栏的物理像素**：栏最小宽 300pt（`ReaderWindowController.paneMinWidth`）
+    /// 减去两边 12pt 内边距 ≈ 276pt，Retina 下就是 552 物理像素。原来的 160 要放大 3.4 倍，
+    /// 用户 2026-09-03 报「糊得几乎认不出任何文字」。480 只放大 1.15 倍，肉眼基本无损。
+    /// 改大它要连带看两处开销：View 层的 `images` 字典（见 `maxKeptImages`）和
+    /// `PageRenderEngine` 那个与阅读区共享的 LRU——一张从 0.14MB 涨到约 1.3MB。
+    static let pixelWidth = 480
+
+    /// View 层最多留几张图。480px 一张约 1.3MB，几百页无上限地攒就是几百 MB
+    /// （160px 时代一张才 0.14MB，所以原来不限也没出事）。丢掉的图在 `PageRenderEngine` 的
+    /// LRU 与磁盘缓存里都还在，滚回去重取很快。
+    private static let maxKeptImages = 48
     /// 缩略图圆角（图、底、选中描边共用一个值，三者必须一致，否则方角图会盖住圆角底）。
     static let corner: CGFloat = 5
 
@@ -28,7 +39,7 @@ struct ThumbnailListView: View {
                             ThumbnailCell(pdf: pdf, documentId: documentId, page: i,
                                           pixelWidth: Self.pixelWidth, isCurrent: i == currentPage,
                                           image: images[i], onTap: { onSelect(i) },
-                                          onRendered: { images[i] = $0 })
+                                          onRendered: { keep(page: i, image: $0) })
                                 .id(i)
                         }
                     }
@@ -45,6 +56,16 @@ struct ThumbnailListView: View {
                 Text(L("No pages to show.")).font(.callout).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// 收下一张渲好的图，顺手把超额的丢掉（离当前页最远的先丢——那是最不可能马上又要看的）。
+    private func keep(page: Int, image: CGImage) {
+        images[page] = image
+        let excess = images.count - Self.maxKeptImages
+        guard excess > 0 else { return }
+        for p in images.keys.sorted(by: { abs($0 - currentPage) > abs($1 - currentPage) }).prefix(excess) {
+            images.removeValue(forKey: p)
         }
     }
 }
@@ -91,7 +112,8 @@ private struct ThumbnailCell: View {
 
     @ViewBuilder private var thumbnail: some View {
         if let image {
-            Image(decorative: image, scale: 2, orientation: .up).resizable()
+            // `.high`：缩略图是静态的（不像阅读区那样每帧重画），插值质量给满不心疼。
+            Image(decorative: image, scale: 2, orientation: .up).resizable().interpolation(.high)
         } else {
             Color.clear
         }
@@ -111,7 +133,8 @@ private struct ThumbnailCell: View {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
         }
-        // 落盘：160px 一张才十几 KB，而侧栏一拉就是几百页 —— 换本书回来、下次开 app 都不用再渲。
+        // 落盘：一张百来 KB，而侧栏一拉就是几百页 —— 换本书回来、下次开 app 都不用再渲。
+        // （`PageDiskCache` 自带 1GB 上限 + trim，攒不炸。）
         PageRenderEngine.shared.request(.init(key: key, page: p, pixelWidth: pixelWidth,
                                               tileRect: nil, tileScale: 1, night: false,
                                               diskCache: true)) { doneKey, img in
