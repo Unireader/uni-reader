@@ -99,6 +99,11 @@
 "Highlight" = "高亮";
 "No highlights yet." = "暂无高亮。";
 "Delete this highlight" = "删除此高亮";
+"Delete Highlight" = "删除高亮";
+
+/* 侧栏手动排序（右键） */
+"Move Up" = "上移";
+"Move Down" = "下移";
 "Yellow" = "黄色";
 "Green" = "绿色";
 "Blue" = "蓝色";

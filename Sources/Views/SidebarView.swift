@@ -3,6 +3,20 @@ import SwiftUI
 /// 侧栏：当前工作区的文档列表 + 工作区切换/重命名。原生单列表，保持 sidebar 样式。
 /// 文档可设一级分组（v11）：有分组时按分组分段（未分组在前），右键「Move to Group」移动，
 /// 分组段头右键改名/删除（删除 = 文档回未分组）；文档行可**拖到段头**换分组（多选时整批移动）。
+/// **手动排序**（2026-09-03）：右键「上移 / 下移」，**只在同一分组段内**换位（多选时整批一起动）。
+/// 落库写 `document.sort_order`（见 `WorkspaceManager.reorderDocuments`）；没排过的书 `sort_order=0`
+/// 仍排在最前，于是「新加的书出现在顶上」这条老观感不变。
+/// 🔴 **拖拽排序做过三版、全部撤销，勿再尝试**（用户 2026-09-03 明确否决：「你没这个能力做好这个
+/// 功能」）。三版分别是：命中行整行铺色（「UI 不好看」——那在 Finder 里是「放进这个容器」的意思）、
+/// 行间插入线（「交互太垃圾」）、实时让位（观感一路修到「拖起即离列 + 让位动画防抖」仍不达标）。
+/// 记下踩到的坑，将来真要再做时**从这里起步、别重走**：
+///  · 起手只能用 `.draggable`——`List(selection:)` 里 `.onDrag` 对**未选中**的行根本不触发；
+///  · 但 `.draggable` 没有「拖起」回调，「拖的是谁」只能在 drop 侧从 item provider 异步读回；
+///  · 被拖那行不能在拖拽图像拍好之前隐藏，否则跟着鼠标的那张图是空的；
+///  · 拖拽图像不继承侧栏外观（深色下语义色被解析成黑字），要给 `preview` 显式配色；
+///  · 行/段头的 drop 不能拿 `hasItemsConforming(to: [.text])` 当门——`public.file-url` conform 到
+///    `public.text`，会把「从 Finder 拖 PDF 进书库」整条吃掉；
+///  · SwiftUI 没有 dragEnd 回调，拖到列表外松手要靠别的信号兜底收场。
 /// **多选**（⌘/⇧ 点）：`multiSel` 是 List 的选中集，仅当恰选一篇时同步给 `selection`（= 打开文档）；
 /// 右键菜单按 macOS 惯例作用于「被点者在选中集内 → 整个选中集，否则仅被点者」。
 /// 目录（TOC）不放这里——固定模式放右侧 Inspector 的「目录」分段页，避免破坏侧栏原生外观。
@@ -384,6 +398,47 @@ struct SidebarView: View {
             .contextMenu { menu(for: doc) }
     }
 
+    // MARK: - 手动排序（右键上移/下移）
+
+    /// 排序**只在同一分组段内**进行（列表就是按分组分段显示的，跨段移动没有意义）。
+    /// 多选时整批一起动、保持彼此相对顺序：与这批相邻的那一项跨过整批到另一头去。
+    private func canMove(_ ids: Set<String>, up: Bool) -> Bool {
+        guard let g = sameGroup(ids) else { return false }
+        let section = workspace.documents.filter { $0.group == g }
+        let idxs = section.indices.filter { ids.contains(section[$0].id) }
+        guard let first = idxs.first, let last = idxs.last else { return false }
+        return up ? first > 0 : last < section.count - 1
+    }
+
+    private func moveSelection(_ ids: Set<String>, up: Bool) {
+        guard let g = sameGroup(ids) else { return }
+        var section = workspace.documents.filter { $0.group == g }
+        let idxs = section.indices.filter { ids.contains(section[$0].id) }
+        guard let first = idxs.first, let last = idxs.last else { return }
+        if up {
+            guard first > 0 else { return }
+            let neighbor = section.remove(at: first - 1)   // 移走它之后，last 就是「整批之后」那一位
+            section.insert(neighbor, at: last)
+        } else {
+            guard last < section.count - 1 else { return }
+            let neighbor = section.remove(at: last + 1)
+            section.insert(neighbor, at: first)
+        }
+        // 段内新顺序填回全局：**只动这一段占的那些位置**，别的分组一位不挪。
+        var all = workspace.documents
+        var it = section.makeIterator()
+        for i in all.indices where all[i].group == g {
+            if let d = it.next() { all[i] = d }
+        }
+        workspace.reorderDocuments(all.map(\.id))
+    }
+
+    /// 这批文档是否同属一个分组（是则返回分组名；混着来就不给排——跨段移动没有意义）。
+    private func sameGroup(_ ids: Set<String>) -> String? {
+        let groups = Set(ids.compactMap { workspace.document(id: $0)?.group })
+        return groups.count == 1 ? groups.first : nil
+    }
+
     /// 分组段头：右键菜单 + 接受文档拖放（整行宽都是落点，不只是文字那一小段）。
     private func groupHeader(_ title: String, group: String) -> some View {
         Text(title)
@@ -406,6 +461,17 @@ struct SidebarView: View {
                 Label(L("Open in New Window"), systemImage: "macwindow.badge.plus")
             }
         }
+        // 手动排序：同一分组段内上移/下移（多选时整批）。边界上或跨分组混选时禁用，
+        // **不隐藏**——菜单项忽隐忽现比灰着更难用。
+        Button { moveSelection(targets, up: true) } label: {
+            Label(L("Move Up"), systemImage: "arrow.up")
+        }
+        .disabled(!canMove(targets, up: true))
+        Button { moveSelection(targets, up: false) } label: {
+            Label(L("Move Down"), systemImage: "arrow.down")
+        }
+        .disabled(!canMove(targets, up: false))
+        Divider()
         Menu {
             if targets.contains(where: { workspace.document(id: $0)?.group.isEmpty == false }) {
                 Button { workspace.setGroup(ids: targets, group: "") } label: {

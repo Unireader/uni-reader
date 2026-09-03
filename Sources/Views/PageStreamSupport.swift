@@ -1,4 +1,11 @@
 import SwiftUI
+
+/// 被点开的那条文字高亮 + **被点中的那一行**（页内归一化框）。
+/// 存行框而不是整条高亮的包围盒：跨行高亮的包围盒可能有半页高，从它底下弹删除气泡离手指老远。
+struct HighlightTap: Equatable {
+    let id: UUID
+    let rect: CGRect
+}
 import PDFKit
 import QuartzCore
 import AppKit

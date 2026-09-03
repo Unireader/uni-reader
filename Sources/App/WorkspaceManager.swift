@@ -280,6 +280,16 @@ final class WorkspaceManager: ObservableObject {
         for id in ids { try? store?.setGroup(documentId: id, group: g) }
         refresh()
     }
+    // MARK: - 手动排序（侧栏拖拽，2026-09-03）
+
+    /// 把整份书库按给定顺序落位（`orderedIds` = 侧栏当前**全部**文档的目标顺序）。
+    /// 一次写全表而不是只写挪动的那几行：`sort_order` 是全局位次，只改一行会与别人撞号；
+    /// 顺带把没排过（0）的也钉住，免得它以后再被 `last_opened_at` 那半条排序规则甩到别处。
+    func reorderDocuments(_ orderedIds: [String]) {
+        for (i, id) in orderedIds.enumerated() { try? store?.setSortOrder(documentId: id, order: i + 1) }
+        refresh()
+    }
+
     /// 整组改名；空串 = 解散该组（文档回未分组）。
     func renameGroup(from: String, to: String) {
         let t = to.trimmingCharacters(in: .whitespacesAndNewlines)

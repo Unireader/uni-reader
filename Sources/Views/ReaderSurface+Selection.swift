@@ -258,6 +258,45 @@ extension ReaderSurface {
         clearSelection()
     }
 
+    /// 单击阅读区：收起文字选择与框选；**命中一条文字高亮就把它的操作气泡打开**（删除入口，
+    /// 用户 2026-09-03 要的「点高亮要能删」），没命中则收起气泡。
+    ///
+    /// 命中判定放在容器这一层（而不是给铺色层加 Button）：铺色的 Canvas 一旦吃命中，
+    /// 高亮盖住的那块文字就选不了、框选不到了——高亮是**铺在正文上的**，不能挡住正文的交互。
+    func tapReader() {
+        clearSelection()
+        clearLassoSelection()
+        let hit = (app.pointerTool == .textSelect && session.openPadID == nil)
+            ? scratch.cursorP.flatMap { highlightHit($0) } : nil
+        let mark = hit.map { HighlightTap(id: $0.highlight.id, rect: $0.rect) }
+        if activeHighlight != mark { activeHighlight = mark }
+    }
+
+    /// 文字高亮命中测试（容器/视口坐标 P，与双击选词同 `.local` 空间）→ 命中的高亮**与被点中的那一行**。
+    /// 逐行框判定（不是整块包围盒——跨行选区的包围盒会把行间空白也算进去），
+    /// 上下各放宽 2pt 便于点中细行；重叠时取**最后铺的那条**（＝画在最上面的那条）。
+    func highlightHit(_ P: CGPoint) -> (highlight: Highlight, rect: CGRect)? {
+        guard let n = containerPointToPageNorm(P), let layout,
+              layout.heights.indices.contains(n.page), pageW > 0 else { return nil }
+        let pageHDisp = layout.heights[n.page] * max(0.0001, dispScale)
+        guard pageHDisp > 0 else { return nil }
+        let tx = 2 / pageW, ty = 2 / pageHDisp     // 2pt 容差换算成归一化单位（x/y 尺度不同）
+        let p = CGPoint(x: n.nx, y: n.ny)
+        for h in session.highlights.reversed() where h.page == n.page {
+            if let r = h.rects.first(where: { $0.insetBy(dx: -tx, dy: -ty).contains(p) }) {
+                return (h, r)
+            }
+        }
+        return nil
+    }
+
+    /// 删除一条高亮：从内存移除 → `DocTabModel` 的增量对账把对应 note 行删库
+    /// （与 `InspectorView.deleteHighlight` 同一条路径；高亮不进笔迹撤销栈，两处一致）。
+    func deleteHighlight(_ h: Highlight) {
+        activeHighlight = nil
+        session.highlights.removeAll { $0.id == h.id }
+    }
+
     /// 由当前选区起一条批注草稿：锚到选区起始页，取该页逐行框归一化 + 包围盒；原文完整保留（可能跨页）。
     func beginAddNote() {
         guard let sel = selection, !sel.text.isEmpty, let page = sel.rects.keys.min() else { return }

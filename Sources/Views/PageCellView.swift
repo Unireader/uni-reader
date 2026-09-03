@@ -32,6 +32,9 @@ struct PageCellView: View {
     var matchRects: [CGRect] = []          // 搜索命中高亮，归一化 0~1 左上原点（T2，全部命中，淡黄）
     var activeMatchRects: [CGRect] = []    // 当前命中（同上坐标，橙色强调）
     var highlights: [Highlight] = []       // 本页文字高亮（kind=3）：按各自颜色铺色，最底层
+    var activeHighlight: HighlightTap? = nil   // 被点开的那条高亮 + 被点中的那一行：在那一行上挂删除气泡
+    var onDismissHighlight: () -> Void = {}
+    var onDeleteHighlight: (Highlight) -> Void = { _ in }
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
     var noteTypes: [NoteType] = []         // 工作区笔记类型：图钉/高亮配色（通用保持既有黄色样式）
     var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
@@ -136,6 +139,34 @@ struct PageCellView: View {
                     }
                 }
                 .allowsHitTesting(false)
+            }
+            // 被点开的高亮：在**被点中的那一行**上挂一枚看不见、也不吃点击的锚，用来挂原生 popover
+            // （删除入口）。命中判定在容器那一层做（`ReaderSurface.highlightHit`）——铺色的 Canvas
+            // 一旦吃命中，这块地方就选不了字、框选不到了，所以不能靠给高亮加 Button 来做。
+            if let tap = activeHighlight, let h = highlights.first(where: { $0.id == tap.id }) {
+                let r = anchorPx(tap.rect, in: size)
+                Color.clear
+                    .frame(width: r.width, height: r.height)
+                    .allowsHitTesting(false)
+                    // 🔴 `.popover` 必须排在 `.position` **之前**（同书签旗标那条）：`.position` 之后
+                    // 视图的布局尺寸会撑满整个父容器，popover 的附着矩形于是变成「整页」——页高在
+                    // 内容坐标里上万点，气泡就弹到窗口外面去了（2026-09-03 用户报）。
+                    .popover(isPresented: Binding(get: { activeHighlight?.id == h.id },
+                                                  set: { if !$0 { onDismissHighlight() } }),
+                             arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            // 红线：popover 是 material 底，文字一律显式 .primary，层级差异只用字号表达
+                            Text(h.quote.flattenedQuote)
+                                .font(.callout).foregroundStyle(.primary).lineLimit(3)
+                            Text(String(format: L("Page %d"), h.page + 1))
+                                .font(.caption).foregroundStyle(.primary)
+                            Divider()
+                            Button(L("Delete Highlight"), role: .destructive) { onDeleteHighlight(h) }
+                        }
+                        .padding(12)
+                        .frame(minWidth: 200, maxWidth: 280, alignment: .leading)
+                    }
+                    .position(x: r.midX, y: r.midY)
             }
             // 文字注解荧光高亮（持久层，居搜索/选择高亮之下）：通用铺暖黄，自定义类型铺类型色。
             if !notes.isEmpty {
@@ -354,6 +385,14 @@ struct PageCellView: View {
             .padding(3)
             .background(typed ? t.uiColor : Self.noteMarker, in: Circle())
             .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
+    }
+
+    /// 归一化包围盒 → 页内像素矩形（popover 的挂点）。零尺寸锚（理论上不该有）给个最小可挂的方块，
+    /// 否则 popover 会挂到页左上角去。
+    private func anchorPx(_ r: CGRect, in size: CGSize) -> CGRect {
+        let px = CGRect(x: r.minX * size.width, y: r.minY * size.height,
+                        width: max(1, r.width * size.width), height: max(1, r.height * size.height))
+        return px
     }
 
     /// 归一化矩形（0~1，左上原点）→ 页内像素矩形并填充（文字选择/搜索命中高亮共用）。

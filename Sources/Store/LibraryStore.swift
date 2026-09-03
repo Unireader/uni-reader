@@ -280,6 +280,12 @@ final class LibraryStore {
     func setGroup(documentId: String, group: String) throws {
         try db.run("UPDATE document SET group_name=? WHERE id=?", [.text(group), .text(documentId)])
     }
+    /// 设置文档在侧栏里的手动位次（侧栏拖拽排序，2026-09-03）。
+    /// ⚠️ 与 `allDocuments` 的 `ORDER BY sort_order ASC, last_opened_at DESC` 配套：
+    /// 手动排过的一律 ≥1，**没排过的仍是 0 → 排在最前**（新加的书还是出现在顶上，与拖拽之前的观感一致）。
+    func setSortOrder(documentId: String, order: Int) throws {
+        try db.run("UPDATE document SET sort_order=? WHERE id=?", [.int(Int64(order)), .text(documentId)])
+    }
     /// 整组改名（to 为空串 = 解散该组，文档回未分组）。
     func renameGroup(from: String, to: String) throws {
         try db.run("UPDATE document SET group_name=? WHERE group_name=?", [.text(to), .text(from)])

@@ -142,6 +142,21 @@ try store.renameGroup(from: "数学", to: "物理")
 check(try store.document(id: d1.id)?.group == "物理" && store.document(id: d4.id)?.group == "物理", "整组改名")
 try store.renameGroup(from: "物理", to: "")
 check(try store.document(id: d1.id)?.group.isEmpty == true, "解散分组 → 未分组")
+
+// 7g) 手动排序（侧栏拖拽，2026-09-03）：sort_order 写入 → allDocuments 按它排；0 = 没排过，排在最前
+let (d5, _) = try store.findOrCreate(hash: "h11", title: "DocE", pageCount: 7, path: "/tmp/f.pdf")
+check(d4.sortOrder == 0 && d5.sortOrder == 0, "新文档 sort_order 默认 0（= 没排过）")
+try store.setSortOrder(documentId: d4.id, order: 1)
+try store.setSortOrder(documentId: d5.id, order: 2)
+try store.setSortOrder(documentId: d1.id, order: 3)
+check(try store.allDocuments().map(\.id) == [d4.id, d5.id, d1.id], "allDocuments 按 sort_order 升序")
+try store.setSortOrder(documentId: d1.id, order: 1)
+try store.setSortOrder(documentId: d4.id, order: 3)
+check(try store.allDocuments().map(\.id) == [d1.id, d5.id, d4.id], "重排后顺序跟着变")
+try store.setSortOrder(documentId: d5.id, order: 0)
+check(try store.allDocuments().first?.id == d5.id, "sort_order=0（没排过）排在最前")
+try store.setSortOrder(documentId: d5.id, order: 2)
+try store.deleteDocument(id: d5.id)
 try store.deleteDocument(id: d4.id)
 
 // 8) 级联删除：删 document → variant/location/note 全清

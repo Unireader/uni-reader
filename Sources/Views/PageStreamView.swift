@@ -213,6 +213,8 @@ struct ReaderSurface: View {
     @State var notePinDrag: (id: UUID, off: CGSize)?
     /// 点开着的 `tap` 模式笔记气泡（**瞬态、不落库**：换文档/关窗即忘，同选区高亮的口径）。
     @State var expandedNotes: Set<UUID> = []
+    /// 被点开的那条文字高亮 + 被点中的那一行（同样瞬态、不落库）：页元胞在那一行上挂删除气泡，见 `tapReader`。
+    @State var activeHighlight: HighlightTap?
     /// 指针悬停在哪枚图钉上（`hover` 模式的展开条件；离开即 nil）。
     @State var hoveredNote: UUID?
 
@@ -455,7 +457,7 @@ struct ReaderSurface: View {
         // 双击选词 / 单击取消选择。用 `.onTapGesture` 的单双击分级（单击等一拍确认非双击，同 macOS 原生手感）；
         // 双击定位取光标最近位置（`.onContinuousHover` 维护），避免 SpatialTapGesture 与拖选/缩放争手势。
         .onTapGesture(count: 2) { if let p = scratch.cursorP { selectWord(atContainer: p) } }
-        .onTapGesture(count: 1) { clearSelection(); clearLassoSelection() }
+        .onTapGesture(count: 1) { tapReader() }
         // 右键选区 → 「添加批注 / 复制」（原生上下文菜单，非浮层 hack）。菜单项常驻、无选区时禁用，
         // 避免按选区有无条件包裹 ScrollView 改变其身份而重置滚动位置。
         .contextMenu { readerContextMenu }
@@ -487,6 +489,7 @@ struct ReaderSurface: View {
         .onChange(of: app.pointerTool) { _, t in
             if t != .lasso { clearLassoSelection() }   // 切走框选工具即放弃选中（手势已门控，残留高亮框会误导）
             if t != .ink { eraseCursor = nil }         // 切走本机笔即撤擦除圆环
+            if t != .textSelect { activeHighlight = nil }   // 高亮气泡是文字工具下的东西，切走就收
         }
         .onChange(of: app.padMode) { _, m in
             if m != "erase" { eraseCursor = nil }      // 离开擦除模式同上
@@ -588,6 +591,9 @@ struct ReaderSurface: View {
                      matchRects: buckets.matchRects[i] ?? [],
                      activeMatchRects: buckets.activeMatch?.page == i ? (buckets.activeMatch?.rects ?? []) : [],
                      highlights: buckets.highlights[i] ?? [],
+                     activeHighlight: session.openPadID == nil ? activeHighlight : nil,   // 草稿纸盖着时不弹（纸归纸）
+                     onDismissHighlight: { activeHighlight = nil },
+                     onDeleteHighlight: { deleteHighlight($0) },
                      notes: buckets.notes[i] ?? [],
                      noteTypes: session.noteTypes,
                      ocrBlocks: session.showOCRBlocks ? (session.ocrVisibleRuns(page: i) ?? []) : [],
