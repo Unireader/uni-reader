@@ -116,6 +116,40 @@ CREATE TABLE sync_base (
 | `meta.workspace_id` / `mirror_*` / `offline_checkouts` | ❌ | 血缘元数据，见 §5 |
 | `sync_base` | ❌ | 镜像私有 |
 
+### 4.1 `ocr_page` 那条另开一条通道（2026-09-04 补实现）
+
+这一行**写在方案里两个多星期、代码里一行都没有**（`MirrorFp.specs` 里没它，`MirrorDiff`/
+`MirrorApply` 自然也看不见它），直到用户报「OCR 的结果没能在 mirror 同步」。表现是：建镜像那一刻
+的识别结果靠 `VACUUM INTO` 整库复制带过去了，**之后两边各自跑的永远互不相见** —— 离线在副本上
+识别完一整本，接回硬盘同步，一页都不回去，Mac 上再打开还得重跑（再花一次 API 的钱）。
+连带「这本书开着 OCR」也跟着不对：那个开关不落库，是 `reloadOCRState()` 数
+`ocrPageCount(contentHash:provider:) > 0` 推出来的。
+
+它**不能塞进 `MirrorFp.specs`**：那套机制从头到尾假设「单列 TEXT 主键」（`spec.key` 要用于
+`DELETE WHERE key=?`、`ON CONFLICT(key)`、`sync_base.row_id`），而 `ocr_page` 是三列复合主键
+`(content_hash,page,provider)`、也没有 `document_id`。所以照方案原话另开一条通道：
+
+- **只带键不带 payload 进 `Plan`**（`Plan.ocrToSource` / `ocrToMirror`）。干跑要在"一个字都不写"
+  的前提下跑完，而整库 OCR JSON 是几百 MB 级的，读进内存只为数个数就是把预览做成卡顿源。
+- **写在事务外**（`MirrorApply.fillOCR`，紧挨着文件补齐）。additive 且幂等，跑一半再来一次结果
+  一样；也不该让几千页缓存撑大那个"会大批量改用户数据"的事务 —— 这批数据丢了最多是下次重跑一遍
+  OCR，跟丢笔迹不是一个量级。
+- **删除不传播**：一边清了缓存，下一轮会被另一边补回来。刻意如此 —— 删它的语义是"腾空间/想重跑"，
+  不是"这份内容作废了"。
+- **不参与「副本→源必须人工确认」那条不对称**（§13）：`isCleanPushToMirror` 不看它，
+  `pendingToSource` 也不计它。理由是 §3.2 那条「只应用一半就重算基线会抹掉证据」的危险对它
+  根本不成立 —— 它不进 `sync_base`，每轮都是按两侧当前的键集合现算的；而 `INSERT OR IGNORE`
+  既不覆盖也不删除任何东西。挡住它的唯一效果就是让人白花一次 API 的钱。
+- 干跑报告单列一条「补齐文字识别结果：写入硬盘 N 页、拉回本机 M 页」，明细按书展开 ——
+  `ocr_page` 只认 `content_hash`，书名要经 `variant.content_hash → document_id → title`
+  绕一圈（`MirrorStore.ocrTitles`）。
+
+用例：Mac `spike/mirror-apply-test.swift` ⑦ 段 + `spike/mirror-autopush-test.swift` ②.5 段；
+安卓 `MirrorDiffTest.ocrCacheIsAdditiveBothWays`（JVM）+ `MirrorApplyTest`（插桩）。
+
+⚠️ **OCR 的「引擎选择」与 API key 仍然是设备本地事实，不进工作区**：引擎在 UserDefaults、
+key 在 Keychain（密钥不进共享文件夹）。换台机器打开同一个工作区要自己填一次 key。
+
 ---
 
 ## 5. 身份与血缘

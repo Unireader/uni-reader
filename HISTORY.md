@@ -3,6 +3,33 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 修复（2026-09-04，Mac + 安卓：离线镜像终于同步 OCR 识别结果）
+
+用户报「OCR 相关的东西好像没能在 mirror 同步，包括设置以及 OCR 的结果」。
+
+**根因是方案与实现不符**：`OFFLINE-MIRROR-PLAN.md §4` 那张表里 `ocr_page` 一直写着
+「✅ 双向 `INSERT OR IGNORE`」，但两端代码里一行都没有 —— `MirrorFp.specs` 没收它，
+只在旁边留了句「纯 additive 不需要 base」的注释就没有下文，于是 `MirrorDiff` / `MirrorApply` /
+`MirrorStore.snapshot` 从头到尾看不见这张表。建镜像那一刻的结果靠 `VACUUM INTO` 整库复制带过去
+了，所以初看像是"同步了"；之后两边各自跑的**永远互不相见**。用户说的「书本开启 OCR 没同步」
+是同一个 bug 的表现：那个开关不落库，`DocSession.reloadOCRState()` 数 `ocrPageCount > 0` 推出来，
+缓存没过去它自然就是关的。
+
+改法（细节与取舍见方案新增的 §4.1）：`MirrorDiff.OCRKey` + `Plan.ocrToSource/ocrToMirror`
+（只带键不带 payload，干跑不许读几百 MB 的 JSON）→ `MirrorApply.fillOCR` 在事务外双向补齐
+（additive、幂等、`INSERT OR IGNORE` 覆盖不掉对面已有的那份）→ 干跑报告多一条「补齐文字识别
+结果」并按书展开。三个刻意的取舍：**删除不传播**（清缓存＝腾空间，不是作废）、**不参与
+「副本→源必须人工确认」那条不对称**（它不进 `sync_base`，没有可被抹掉的证据，挡住只会让人白花
+一次 API 钱）、**不计进 `pendingToSource`**（它不是用户产出）。
+
+**OCR 的引擎选择与 API key 不在此列**：引擎在 UserDefaults、key 在 Keychain，都是设备本地事实，
+按原设计不进工作区（密钥尤其不该进共享文件夹）。换台机器仍要自己填一次 key。
+
+验证：Mac 五个镜像 spike 全绿（`mirror-apply` 50 项含新增 ⑦ 段 13 项、`mirror-autopush` 17 项
+含新增 ②.5 段 5 项、`mirror-diff` 58／`mirror-build` 50／`mirror-multi` 27／`mirror-fp` 50）；
+安卓 `./gradlew test` 的 `MirrorDiffTest` 10 项通过，插桩的 `MirrorApplyTest` 新增一例
+**已编译未运行**（手上没有设备）。
+
 ## 改动（2026-09-03，Mac：OCR 页的文字选择改用「单字框」，不再按权重猜字宽）
 
 用户报「现在的算法总是选半个字很难受」。

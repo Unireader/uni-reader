@@ -43,8 +43,13 @@ enum MirrorReport {
         c.table == "note" ? noteKindName(c.kind) : tableName(c.table)
     }
 
-    /// 干跑摘要。`titles` = `documentId → 书名`（两侧合并后的，源盘新增的书也要能查到名字）。
-    static func summary(_ plan: MirrorDiff.Plan, titles: [String: String]) -> [Line] {
+    /// 干跑摘要。
+    /// - Parameters:
+    ///   - titles: `documentId → 书名`（两侧合并后的，源盘新增的书也要能查到名字）
+    ///   - hashTitles: `content_hash → 书名`，只给 OCR 那条明细用 —— `ocr_page` 按内容 hash
+    ///     缓存，它压根不知道自己属于哪篇「文档」（见 `MirrorStore.ocrTitles`）
+    static func summary(_ plan: MirrorDiff.Plan, titles: [String: String],
+                        hashTitles: [String: String] = [:]) -> [Line] {
         var out: [Line] = []
         for (side, heading) in [(MirrorDiff.Side.source, "写入硬盘"), (.mirror, "拉回本机")] {
             // 只差阅读进度的那些**不进明细**：底下「阅读进度取最近读的那次」已经把它说完整了，
@@ -75,6 +80,14 @@ enum MirrorReport {
         // 「上次打开」是纯记账（进度那条已经涵盖了用户真正关心的），只在没有进度合并时单独说一句
         if !plan.lastOpenedMerges.isEmpty, plan.progressMerges.isEmpty {
             out.append(Line(text: also("\(plan.lastOpenedMerges.count) 篇文档的「上次打开」两端取较晚的那个")))
+        }
+        // OCR 缓存：只补不删，两个方向分开说 —— 用户关心的是"这次同步之后哪边不用再花钱重跑"
+        if !plan.ocrToSource.isEmpty || !plan.ocrToMirror.isEmpty {
+            var bits: [String] = []
+            if !plan.ocrToSource.isEmpty { bits.append("写入硬盘 \(plan.ocrToSource.count) 页") }
+            if !plan.ocrToMirror.isEmpty { bits.append("拉回本机 \(plan.ocrToMirror.count) 页") }
+            out.append(Line(text: also("补齐文字识别结果：" + bits.joined(separator: "、")),
+                            detail: ocrBreakdown(plan, hashTitles: hashTitles)))
         }
         if !plan.conflicts.isEmpty {
             out.append(Line(text: "冲突 \(plan.conflicts.count) 条", detail: conflictLines(plan, titles: titles)))
@@ -124,6 +137,23 @@ enum MirrorReport {
         return out
     }
 
+    /// OCR 补齐的按书明细：「《高等数学》：写入硬盘 132 页」。
+    ///
+    /// 查不到书名的照样要出现（只是显示成内容指纹的前 8 位）：这批页多半是"两边各自加过、
+    /// 但那本书还没同步过来"的情况，静默不提等于让用户对着一个总数猜。
+    static func ocrBreakdown(_ plan: MirrorDiff.Plan, hashTitles: [String: String]) -> [String] {
+        var byHash: [String: (toSource: Int, toMirror: Int)] = [:]
+        for k in plan.ocrToSource { byHash[k.contentHash, default: (0, 0)].toSource += 1 }
+        for k in plan.ocrToMirror { byHash[k.contentHash, default: (0, 0)].toMirror += 1 }
+        return byHash.map { hash, n -> String in
+            let name = hashTitles[hash].map { "《\($0)》" } ?? "（\(hash.prefix(8))…）"
+            var bits: [String] = []
+            if n.toSource > 0 { bits.append("写入硬盘 \(n.toSource) 页") }
+            if n.toMirror > 0 { bits.append("拉回本机 \(n.toMirror) 页") }
+            return "\(name)：\(bits.joined(separator: "，"))"
+        }.sorted()
+    }
+
     /// 冲突明细。**每条都要说清「保留了哪份」**——用户同意的是一个具体结果，不是一个数字。
     static func conflictLines(_ plan: MirrorDiff.Plan, titles: [String: String]) -> [String] {
         // 冲突里没有 docId（Conflict 只带表与 id），从 changes 里回查同一行拿标签
@@ -157,6 +187,8 @@ enum MirrorReport {
         if toSource > 0 { bits.append("写入硬盘 \(toSource)") }
         if toMirror > 0 { bits.append("拉回本机 \(toMirror)") }
         if plan.conflicts.count > 0 { bits.append("冲突 \(plan.conflicts.count)") }
+        let ocr = plan.ocrToSource.count + plan.ocrToMirror.count
+        if ocr > 0 { bits.append("识别结果 \(ocr) 页") }
         if !bits.isEmpty { return bits.joined(separator: " · ") }
         return plan.progressMerges.isEmpty ? "只更新「上次打开」" : "只更新阅读进度"
     }

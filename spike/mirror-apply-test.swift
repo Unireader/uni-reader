@@ -51,7 +51,14 @@ func makePair(_ name: String, notes: Int = 4) -> (URL, LibraryStore, URL, Librar
 func planOf(_ mirror: LibraryStore, _ source: LibraryStore) -> MirrorDiff.Plan {
     MirrorDiff.compute(base: try! mirror.syncBase(),
                        mine: try! mirror.mirrorSnapshot(),
-                       theirs: try! source.mirrorSnapshot())
+                       theirs: try! source.mirrorSnapshot(),
+                       mineOCR: try! mirror.mirrorOCRKeys(),
+                       theirsOCR: try! source.mirrorOCRKeys())
+}
+
+func ocrPage(_ hash: String, _ page: Int, _ text: String) -> OCRPage {
+    OCRPage(contentHash: hash, page: page, provider: "paddle-http",
+            payload: Data("{\"runs\":[{\"text\":\"\(text)\"}]}".utf8), lang: "ch", createdAt: .now)
 }
 
 /// 两端白名单表逐行一致 —— 「同步成功」的唯一硬定义
@@ -241,6 +248,60 @@ let kept = ((try? fm.contentsOfDirectory(atPath: src4.appendingPathComponent("Un
     .filter { $0.hasPrefix("library-") }.sorted()
 check(kept.count == 3, "只留最近 3 份（\(kept.count)）")
 
-for s in [store, mirror, store2, mirror2, store3, mirror3, store4, mirror4] { s.close() }
+// ============================================================
+print("⑦ OCR 缓存双向补齐（方案 §4：纯 additive，只补不删不覆盖）")
+// ============================================================
+let (src5, store5, dst5, mirror5, doc5, _) = makePair("E")
+let hash5 = try! store5.variants(documentId: doc5)[0].contentHash
+// 建镜像那一刻就有的一页（VACUUM INTO 已经带过去了）：两边都有 → 不该出现在计划里
+try! store5.upsertOCRPage(ocrPage(hash5, 0, "建镜像前就识别过的第 1 页"))
+_ = try! MirrorApply.fillOCR(from: store5, to: mirror5, keys: [.init(contentHash: hash5, page: 0, provider: "paddle-http")])
+// 离线期间：镜像上识别了 1、2 页；源盘上识别了 3 页
+try! mirror5.upsertOCRPage(ocrPage(hash5, 1, "在副本上识别的"))
+try! mirror5.upsertOCRPage(ocrPage(hash5, 2, "在副本上识别的"))
+try! store5.upsertOCRPage(ocrPage(hash5, 3, "在硬盘上识别的"))
+
+let plan5 = planOf(mirror5, store5)
+check(plan5.ocrToSource.count == 2 && plan5.ocrToMirror.count == 1,
+      "干跑算出「写入硬盘 2 页 / 拉回本机 1 页」（\(plan5.ocrToSource.count)/\(plan5.ocrToMirror.count)）")
+check(plan5.changes.isEmpty, "🔴 OCR 缓存不走 Change 那条通道（它不进指纹、不进基线）")
+check(!plan5.isEmpty, "只差 OCR 也算「有东西要同步」——否则界面会说「两端一致」然后什么都不干")
+check(MirrorReport.headline(plan5).contains("识别结果 3 页"), "一行式结论说得出来：\(MirrorReport.headline(plan5))")
+let ocrLines = MirrorReport.summary(plan5, titles: [doc5: "高等数学"], hashTitles: [hash5: "高等数学"])
+check(ocrLines.contains { $0.text.contains("补齐文字识别结果") && $0.detail.contains { $0.contains("《高等数学》") } },
+      "报告按书说人话：\(ocrLines.map(\.detail).flatMap { $0 })")
+
+let res5 = try! MirrorApply.apply(plan: plan5, mirrorFolder: dst5, mirrorStore: mirror5,
+                                  sourceFolder: src5, sourceStore: store5,
+                                  resolveMirror: resolver(dst5), resolveSource: resolver(src5))
+check(res5.ocrFilledToSource == 2 && res5.ocrFilledToMirror == 1,
+      "真补了 2/1 页（\(res5.ocrFilledToSource)/\(res5.ocrFilledToMirror)）")
+check(try! mirror5.mirrorOCRKeys() == store5.mirrorOCRKeys(), "🔴 合并后两端的 OCR 缓存键集合完全一致")
+check(try! store5.ocrPageCount(contentHash: hash5, provider: "paddle-http") == 4,
+      "源盘上这本书 4 页都有了 —— 「书本开启 OCR」是靠这个数 >0 推出来的")
+check(planOf(mirror5, store5).ocrToSource.isEmpty && planOf(mirror5, store5).ocrToMirror.isEmpty,
+      "再跑一次干跑没有剩活（收敛）")
+
+// 内容真的搬过去了，而不是只搬了个键
+let pulled = try! mirror5.ocrPage(contentHash: hash5, page: 3, provider: "paddle-http")
+check(String(decoding: pulled?.payload ?? Data(), as: UTF8.self).contains("在硬盘上识别的"), "拉回来的是 payload 本身")
+
+// **不覆盖**：两边同一页各自识别过（内容不同）→ 一个字都不许动
+try! store5.upsertOCRPage(ocrPage(hash5, 9, "硬盘版"))
+try! mirror5.upsertOCRPage(ocrPage(hash5, 9, "副本版"))
+let plan5b = planOf(mirror5, store5)
+check(plan5b.ocrToSource.isEmpty && plan5b.ocrToMirror.isEmpty, "同一个键两边都有 → 不产生任何补齐动作")
+_ = try! MirrorApply.fillOCR(from: mirror5, to: store5, keys: [.init(contentHash: hash5, page: 9, provider: "paddle-http")])
+let kept9 = try! store5.ocrPage(contentHash: hash5, page: 9, provider: "paddle-http")
+check(String(decoding: kept9?.payload ?? Data(), as: UTF8.self).contains("硬盘版"),
+      "🔴 `INSERT OR IGNORE`：硬写一次也覆盖不掉对面已有的那份")
+
+// **删除不传播**（这是刻意的取舍：缓存删了就该由另一边补回来，重跑一次要真花 API 的钱）
+try! mirror5.deleteOCRPages(contentHash: hash5)
+let plan5c = planOf(mirror5, store5)
+check(plan5c.ocrToSource.isEmpty && plan5c.ocrToMirror.count == 5,
+      "副本上清空缓存 → 不是「让源盘也删」，而是「从源盘补回来 5 页」（\(plan5c.ocrToMirror.count)）")
+
+for s in [store, mirror, store2, mirror2, store3, mirror3, store4, mirror4, store5, mirror5] { s.close() }
 print("\n通过 \(pass) / 失败 \(fail)")
 exit(fail == 0 ? 0 : 1)

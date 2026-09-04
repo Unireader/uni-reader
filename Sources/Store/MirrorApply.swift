@@ -27,6 +27,9 @@ enum MirrorApply {
         var hashClashesSkipped = 0
         var lastOpenedTouched = 0
         var filesCopiedToSource = 0
+        /// 双向补齐的 OCR 缓存页数（见 `fillOCR`）。
+        var ocrFilledToSource = 0
+        var ocrFilledToMirror = 0
         var backup: URL?
     }
 
@@ -203,6 +206,28 @@ enum MirrorApply {
         return copied
     }
 
+    // MARK: - OCR 缓存补齐
+
+    /// 把 [keys] 这些页的 OCR 结果从 [from] 补到 [to]（方案 §4：纯 additive，`INSERT OR IGNORE`）。
+    ///
+    /// **刻意放在事务外**，和文件补齐一个道理：
+    /// - 它只增不改不删，跑一半再来一次结果完全一样（下一轮干跑会重新算出还差哪些页）；
+    /// - 一本扫描书就是几百页 JSON，塞进那个"会大批量改用户数据"的事务只会拉长它被中断的窗口，
+    ///   而这批数据丢了最多是**下次重跑一遍 OCR**，跟丢笔迹不是一个量级的事。
+    ///
+    /// 逐页取而不是一把捞：整库 OCR JSON 是几百 MB 级的，攒在内存里只为写出去没有意义。
+    @discardableResult
+    static func fillOCR(from: LibraryStore, to: LibraryStore, keys: [MirrorDiff.OCRKey]) throws -> Int {
+        var n = 0
+        for k in keys {
+            guard let page = try from.ocrPage(contentHash: k.contentHash, page: k.page,
+                                              provider: k.provider) else { continue }
+            try to.insertOCRPageIfAbsent(page)
+            n += 1
+        }
+        return n
+    }
+
     // MARK: - 主流程
 
     /// 应用一次合并。**在后台线程调用。**
@@ -248,6 +273,11 @@ enum MirrorApply {
             mirrorFolder: mirrorFolder, mirrorStore: mirrorStore,
             sourceFolder: sourceFolder, sourceStore: sourceStore,
             resolveMirror: resolveMirror, resolveSource: resolveSource)
+
+        // ④.5 OCR 缓存双向补齐（同样在事务外、幂等可重入，见 `fillOCR`）
+        progress?("正在补齐识别结果…", 0.85)
+        r.ocrFilledToSource = try fillOCR(from: mirrorStore, to: sourceStore, keys: plan.ocrToSource)
+        r.ocrFilledToMirror = try fillOCR(from: sourceStore, to: mirrorStore, keys: plan.ocrToMirror)
 
         // ⑤ 两侧都成功了才重算基线 —— 这一步之前任何失败都靠"下次再跑一遍"自愈（见类型注释）
         progress?("正在重置基线…", 0.9)

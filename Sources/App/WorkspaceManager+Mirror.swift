@@ -170,10 +170,19 @@ extension WorkspaceManager {
 
     // MARK: - 干跑
 
+    /// 干跑的产物：计划 + 报告要用的两张名字表。
+    /// `titles` 是 `documentId → 书名`；`hashTitles` 是 `content_hash → 书名`，只有 OCR
+    /// 那条明细用得上（`ocr_page` 按内容 hash 缓存，不知道自己属于哪篇文档）。
+    struct DryRun {
+        var plan: MirrorDiff.Plan
+        var titles: [String: String]
+        var hashTitles: [String: String]
+    }
+
     /// 干跑：算出「按下同步会发生什么」。**一个字都不写**（方案 §8.3 第 3 步）。
     ///
     /// 本工作区必须是镜像；`sourceFolder` 是找回来的源盘。在后台线程调用。
-    func mirrorDryRun(sourceFolder: URL) throws -> (plan: MirrorDiff.Plan, titles: [String: String]) {
+    func mirrorDryRun(sourceFolder: URL) throws -> DryRun {
         guard let store, isMirror else { throw MirrorBuilder.Failure.sourceIsMirror }
         // 源库这里是**另一个工作区**的库，本进程未必开着它；用完即关的短连接即可。
         // （若它恰好也开着，那边有自己的实例——我们只读，不写，不违反「同一路径同一实例」。）
@@ -183,8 +192,12 @@ extension WorkspaceManager {
         let theirs = try MirrorStore.snapshot(srcDB)
         // 基线走本工作区**已有的那个 store**，不另开连接：镜像库正被本窗口开着，
         // 为读一张表再开一条连接就是在自找「硬盘弹不出去」那类问题（§8「关掉工作区 = 当场放掉引用」）。
-        let plan = MirrorDiff.compute(base: try store.syncBase(), mine: mine, theirs: theirs)
-        return (plan, MirrorStore.titles(mine: mine, theirs: theirs))
+        let plan = MirrorDiff.compute(base: try store.syncBase(), mine: mine, theirs: theirs,
+                                      mineOCR: try store.mirrorOCRKeys(),
+                                      theirsOCR: try MirrorStore.ocrKeys(srcDB))
+        return DryRun(plan: plan,
+                      titles: MirrorStore.titles(mine: mine, theirs: theirs),
+                      hashTitles: MirrorStore.ocrTitles(mine: mine, theirs: theirs))
     }
 
     // MARK: - 从源盘这一侧发起（副本插回来之后的「收口」）
@@ -194,7 +207,7 @@ extension WorkspaceManager {
     /// 因此 `Plan.side` 的语义不变，界面与 `MirrorApply` 都不必知道是谁发起的。
     ///
     /// 🔴 副本若**此刻正被别的窗口开着**，必须写它那条连接（同 `mirrorApply` 的理由）。
-    func mirrorDryRunFromSource(mirrorFolder: URL) throws -> (plan: MirrorDiff.Plan, titles: [String: String]) {
+    func mirrorDryRunFromSource(mirrorFolder: URL) throws -> DryRun {
         guard let store, !isMirror else { throw MirrorBuilder.Failure.sourceIsMirror }
         let opened = WorkspaceRegistry.shared.openManager(at: mirrorFolder)
         let temp: LibraryStore? = opened == nil ? try LibraryStore(workspaceFolder: mirrorFolder) : nil
@@ -202,8 +215,12 @@ extension WorkspaceManager {
         guard let mirrorStore = opened?.store ?? temp else { throw MirrorBuilder.Failure.sourceIsMirror }
         let mine = try mirrorStore.mirrorSnapshot()
         let theirs = try store.mirrorSnapshot()
-        let plan = MirrorDiff.compute(base: try mirrorStore.syncBase(), mine: mine, theirs: theirs)
-        return (plan, MirrorStore.titles(mine: mine, theirs: theirs))
+        let plan = MirrorDiff.compute(base: try mirrorStore.syncBase(), mine: mine, theirs: theirs,
+                                      mineOCR: try mirrorStore.mirrorOCRKeys(),
+                                      theirsOCR: try store.mirrorOCRKeys())
+        return DryRun(plan: plan,
+                      titles: MirrorStore.titles(mine: mine, theirs: theirs),
+                      hashTitles: MirrorStore.ocrTitles(mine: mine, theirs: theirs))
     }
 
     /// 从源盘这一侧应用合并。同样是角色对调，**合并逻辑一份都不重写**。
@@ -243,7 +260,7 @@ extension WorkspaceManager {
     @discardableResult
     func autoPushToMirror(mirrorFolder: URL) -> Int? {
         guard !isMirror else { return nil }
-        guard let (plan, _) = try? mirrorDryRunFromSource(mirrorFolder: mirrorFolder) else { return nil }
+        guard let plan = (try? mirrorDryRunFromSource(mirrorFolder: mirrorFolder))?.plan else { return nil }
         guard plan.isCleanPushToMirror else { return plan.pendingToSource }
         // 静默：不弹进度、不弹结果。失败也不打扰用户——下次再跑一遍即可（合并本身可重入），
         // 真有东西没过去，副本那侧打开时的提示条会兜住。

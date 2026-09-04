@@ -47,7 +47,8 @@ let M = try! LibraryStore(workspaceFolder: dst)
 
 /// 干跑：base/mine 永远取**副本**那一侧（角色对调也不变，见 `mirrorDryRunFromSource`）
 func planNow() -> MirrorDiff.Plan {
-    MirrorDiff.compute(base: try! M.syncBase(), mine: try! M.mirrorSnapshot(), theirs: try! S.mirrorSnapshot())
+    MirrorDiff.compute(base: try! M.syncBase(), mine: try! M.mirrorSnapshot(), theirs: try! S.mirrorSnapshot(),
+                       mineOCR: try! M.mirrorOCRKeys(), theirsOCR: try! S.mirrorOCRKeys())
 }
 @discardableResult
 func applyNow(_ p: MirrorDiff.Plan) -> MirrorApply.Result {
@@ -80,6 +81,25 @@ check(p.pendingToSource == 0, "没有要人工确认的（\(p.pendingToSource)�
 applyNow(p)
 check(identical() == nil, "推完两端一致：\(identical() ?? "是")")
 check(noteIds(M).contains("s1") && noteIds(M).contains("s2"), "源盘新加的两条到了副本")
+
+print("②.5 只差 OCR 缓存 → 照样放行（两个方向都放）")
+// OCR 缓存**刻意不参与**这道门槛：它是 `INSERT OR IGNORE` 的派生缓存，不覆盖也不删除任何东西，
+// 更不进 `sync_base` —— ④ 段那条「半份应用会抹掉基线证据」的危险对它根本不成立。
+// 挡住它的唯一效果是让「算过一次的页还要再花一次 API 的钱」。
+func mkOCR(_ page: Int, _ text: String) -> OCRPage {
+    OCRPage(contentHash: "h0", page: page, provider: "paddle-http",
+            payload: Data("{\"t\":\"\(text)\"}".utf8), lang: "ch", createdAt: .now)
+}
+try! S.upsertOCRPage(mkOCR(1, "硬盘上识别的"))
+try! M.upsertOCRPage(mkOCR(2, "副本上识别的"))
+p = planNow()
+check(p.changes.isEmpty, "没有任何行级改动，只差 OCR 缓存")
+check(p.ocrToSource.count == 1 && p.ocrToMirror.count == 1, "两个方向各差一页")
+check(p.isCleanPushToMirror, "🔴 只差 OCR 也放行 —— 它只增不改不删，没有可被静默抹掉的东西")
+check(p.pendingToSource == 0,
+      "OCR 不计进「要人工确认」的条数（\(p.pendingToSource)）—— 它不是用户产出，是可重算的缓存")
+applyNow(p)
+check(try! M.mirrorOCRKeys() == S.mirrorOCRKeys(), "推完两端 OCR 缓存一致")
 
 print("③ 副本上有自己的改动 → 一律停手，交给人工")
 try! M.upsertNote(mkNote("m1", 99, "2026-09-01T10:00:00.000Z"))   // 副本自己加的，待推回源盘

@@ -65,9 +65,32 @@ enum MirrorDiff {
         var note: String
     }
 
+    /// `ocr_page` 的一行的键。**这张表不走上面那套 `Change`**：它是三列复合主键
+    /// （`content_hash,page,provider`）、没有 `document_id`，而 `Change`/`sync_base` 那套
+    /// 从头到尾假设「单列 TEXT 主键」。方案 §4 给它定的是另一条通道：纯 additive、
+    /// 双向 `INSERT OR IGNORE`、不进基线。
+    ///
+    /// 🔴 跨端契约：与安卓 `local/mirror/MirrorDiff.kt` 的 `OcrKey` 是同一个东西。
+    struct OCRKey: Hashable, Comparable {
+        var contentHash: String
+        var page: Int
+        var provider: String
+
+        static func < (a: OCRKey, b: OCRKey) -> Bool {
+            (a.contentHash, a.page, a.provider) < (b.contentHash, b.page, b.provider)
+        }
+    }
+
     struct Plan {
         var changes: [Change] = []
         var conflicts: [Conflict] = []
+        /// OCR 缓存里**对面缺的那些页**（方案 §4：纯 additive，只补不删、不覆盖）。
+        ///
+        /// 只带键不带 payload：干跑要在「一个字都不写」的前提下跑完，而整库的 OCR JSON 是几百 MB
+        /// 级的——把它们读进内存只为数个数，预览本身就成了卡顿源。payload 到 `MirrorApply` 那一步
+        /// 再按键逐页取。
+        var ocrToSource: [OCRKey] = []
+        var ocrToMirror: [OCRKey] = []
         /// `document.last_opened_at` **不在指纹里**（方案 §4：进了指纹「翻开过」就把整行标记成改过），
         /// 所以 diff 看不见它 —— 这里单独算出「两边取较大的那个」，`docId → ISO`。
         ///
@@ -78,7 +101,9 @@ enum MirrorDiff {
         /// 那次），但**不进 `conflicts`** —— 那不是要用户裁决的事，报出去只是噪音。
         var progressMerges: Set<String> = []
 
-        var isEmpty: Bool { changes.isEmpty && lastOpenedMerges.isEmpty }
+        var isEmpty: Bool {
+            changes.isEmpty && lastOpenedMerges.isEmpty && ocrToSource.isEmpty && ocrToMirror.isEmpty
+        }
 
         /// 这份 plan 能不能**自动静默地**从源盘推给副本（用户 2026-09-01 拍板的方向不对称：
         /// 源→副本自动，副本→源必须人工确认）。
@@ -88,8 +113,14 @@ enum MirrorDiff {
         /// 只应用一半就重算，等于把没应用的那半的证据抹掉 —— 副本上你自己加的那条
         /// （本来等着推给源盘）会在下一轮被判成「源盘删了它」，然后**静默从副本删掉**。
         /// 所以副本只要有任何自己的改动、或有任何冲突，就一律不自动动手。
+        ///
+        /// ⚠️ **OCR 缓存刻意不参与这道门槛**（既不挡自动推送，也算进"有东西可推"）：它是
+        /// `INSERT OR IGNORE` 的派生缓存 —— 不覆盖、不删除任何东西，也不进 `sync_base`，
+        /// 所以上面那条「只应用一半就重算基线会抹掉证据」对它根本不成立。挡住它的唯一效果
+        /// 是让"算过一次的页还要再花一次 API 钱"，那正是这张表存在的理由。
         var isCleanPushToMirror: Bool {
-            !changes.isEmpty && conflicts.isEmpty && changes.allSatisfy { $0.side == .mirror }
+            !(changes.isEmpty && ocrToSource.isEmpty && ocrToMirror.isEmpty)
+                && conflicts.isEmpty && changes.allSatisfy { $0.side == .mirror }
         }
 
         /// 待人工确认的条数（副本 → 源盘那个方向）。提示条报的就是它。
@@ -122,8 +153,15 @@ enum MirrorDiff {
     ///   - base: 建镜像那一刻的指纹（镜像库的 `sync_base`）
     ///   - mine: 镜像库现在的全部行
     ///   - theirs: 源库现在的全部行
-    static func compute(base: Base, mine: Snapshot, theirs: Snapshot) -> Plan {
+    ///   - mineOCR / theirsOCR: 两侧 `ocr_page` 的键集合（不含 payload，见 `Plan.ocrToSource`）
+    static func compute(base: Base, mine: Snapshot, theirs: Snapshot,
+                        mineOCR: Set<OCRKey> = [], theirsOCR: Set<OCRKey> = []) -> Plan {
         var plan = Plan()
+        // OCR 缓存：**只补对面缺的、不判改删**（方案 §4）。
+        // 「一边清了缓存」于是会被另一边补回来 —— 这是刻意的：这张表是派生数据，
+        // 删它的语义是"腾空间/想重跑"，不是"这份内容作废了"，而重跑一次要真花 API 的钱。
+        plan.ocrToSource = mineOCR.subtracting(theirsOCR).sorted()
+        plan.ocrToMirror = theirsOCR.subtracting(mineOCR).sorted()
         for spec in MirrorFp.specs {
             let t = spec.table
             let baseFps = base[t] ?? [:]

@@ -42,6 +42,9 @@ final class LibraryStore {
     /// 为一个功能破例交出连接，下一个功能就会照着做。
     func mirrorSnapshot() throws -> MirrorDiff.Snapshot { try MirrorStore.snapshot(db) }
 
+    /// 本库 `ocr_page` 的全部键（纯 additive 表，不进基线，见 `MirrorStore.ocrKeys`）。
+    func mirrorOCRKeys() throws -> Set<MirrorDiff.OCRKey> { try MirrorStore.ocrKeys(db) }
+
     /// 镜像基线（`sync_base`）。不是镜像时返回空 —— 那张表只在镜像库里存在。
     func syncBase() throws -> [String: [String: String]] { try MirrorStore.syncBase(db) }
 
@@ -511,6 +514,17 @@ final class LibraryStore {
         INSERT INTO ocr_page(content_hash,page,provider,payload,lang,created_at) VALUES(?,?,?,?,?,?)
         ON CONFLICT(content_hash,page,provider) DO UPDATE SET
           payload=excluded.payload, lang=excluded.lang, created_at=excluded.created_at
+        """, [.text(p.contentHash), .int(Int64(p.page)), .text(p.provider),
+              .blob(p.payload), p.lang.map { .text($0) } ?? .null, .text(ISO.string(p.createdAt))])
+    }
+    /// **只补不覆盖**地写一页（`INSERT OR IGNORE`）：目标库已经有这个键就一个字都不动。
+    ///
+    /// 离线镜像合并专用（方案 §4）。与 `upsertOCRPage` 的差别正是那里要的语义：合并只负责把
+    /// 对面缺的页补上，不替用户判断「同一页的两份识别结果哪份更好」——同内容同引擎，本就等价。
+    func insertOCRPageIfAbsent(_ p: OCRPage) throws {
+        try db.run("""
+        INSERT OR IGNORE INTO ocr_page(content_hash,page,provider,payload,lang,created_at)
+        VALUES(?,?,?,?,?,?)
         """, [.text(p.contentHash), .int(Int64(p.page)), .text(p.provider),
               .blob(p.payload), p.lang.map { .text($0) } ?? .null, .text(ISO.string(p.createdAt))])
     }

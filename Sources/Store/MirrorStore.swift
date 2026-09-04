@@ -169,6 +169,22 @@ enum MirrorStore {
         return out
     }
 
+    /// 一个库里 `ocr_page` 的**全部键**（不含 payload）。
+    ///
+    /// 这张表不在 `MirrorFp.specs` 里、也不进 `sync_base` —— 它是纯 additive 的派生缓存
+    /// （方案 §4），合并规则只有一条「对面缺哪页就补哪页」，用不上基线也用不上指纹。
+    /// 只取键不取 payload：整库的 OCR JSON 是几百 MB 级的，而干跑只需要知道差了哪些页。
+    static func ocrKeys(_ db: SQLiteDB) throws -> Set<MirrorDiff.OCRKey> {
+        var out: Set<MirrorDiff.OCRKey> = []
+        for row in try db.query("SELECT content_hash,page,provider FROM ocr_page") {
+            guard let hash = row["content_hash"] as? String,
+                  let page = row["page"] as? Int64,
+                  let provider = row["provider"] as? String else { continue }
+            out.insert(MirrorDiff.OCRKey(contentHash: hash, page: Int(page), provider: provider))
+        }
+        return out
+    }
+
     /// **干跑**：算出这次同步会做什么，一个字都不写。
     ///
     /// 源库走调用方传进来的 `LibraryStore` 实例（§8.1「同一路径同一实例」红线）；
@@ -176,7 +192,9 @@ enum MirrorStore {
     static func plan(mirror: SQLiteDB, source: LibraryStore) throws -> MirrorDiff.Plan {
         MirrorDiff.compute(base: try syncBase(mirror),
                            mine: try snapshot(mirror),
-                           theirs: try source.mirrorSnapshot())
+                           theirs: try source.mirrorSnapshot(),
+                           mineOCR: try ocrKeys(mirror),
+                           theirsOCR: try source.mirrorOCRKeys())
     }
 
     /// 两侧合起来的 `documentId → 书名`，给报告用。
@@ -186,6 +204,23 @@ enum MirrorStore {
         for snap in [theirs, mine] {          // mine 后放：同 id 时以镜像那份为准（顺手，无所谓）
             for (id, row) in snap["document"] ?? [:] {
                 if let t = row["title"] as? String { out[id] = t }
+            }
+        }
+        return out
+    }
+
+    /// 两侧合起来的 `content_hash → 书名`，给 OCR 补齐那条明细用。
+    ///
+    /// `ocr_page` 按**内容 hash** 缓存（随文件走、换机复用），所以它不知道自己属于哪篇文档；
+    /// 要说人话就得经 `variant.content_hash → document_id → title` 绕一圈。
+    static func ocrTitles(mine: MirrorDiff.Snapshot, theirs: MirrorDiff.Snapshot) -> [String: String] {
+        let names = titles(mine: mine, theirs: theirs)
+        var out: [String: String] = [:]
+        for snap in [theirs, mine] {
+            for (_, row) in snap["variant"] ?? [:] {
+                guard let hash = row["content_hash"] as? String,
+                      let doc = row["document_id"] as? String, let name = names[doc] else { continue }
+                out[hash] = name
             }
         }
         return out

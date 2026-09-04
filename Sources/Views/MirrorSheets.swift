@@ -315,11 +315,11 @@ struct MirrorSyncSheet: View {
     private func dryRun(_ other: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let (dry, titles) = try computePlan(against: other)
-                let ls = MirrorReport.summary(dry, titles: titles)
-                let hl = MirrorReport.headline(dry)
+                let dry = try computePlan(against: other)
+                let ls = MirrorReport.summary(dry.plan, titles: dry.titles, hashTitles: dry.hashTitles)
+                let hl = MirrorReport.headline(dry.plan)
                 DispatchQueue.main.async {
-                    plan = dry; lines = ls; headline = hl; searching = false
+                    plan = dry.plan; lines = ls; headline = hl; searching = false
                 }
             } catch {
                 DispatchQueue.main.async { searching = false; self.error = error.localizedDescription }
@@ -327,7 +327,7 @@ struct MirrorSyncSheet: View {
         }
     }
 
-    private func computePlan(against other: URL) throws -> (plan: MirrorDiff.Plan, titles: [String: String]) {
+    private func computePlan(against other: URL) throws -> WorkspaceManager.DryRun {
         switch side {
         case .fromMirror: return try workspace.mirrorDryRun(sourceFolder: other)
         case .fromSource: return try workspace.mirrorDryRunFromSource(mirrorFolder: other)
