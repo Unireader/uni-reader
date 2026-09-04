@@ -44,6 +44,10 @@ struct SidebarView: View {
     @State private var noticeBusy = false
     /// 跑的期间又来了请求（比如插盘）→ 记一笔，跑完补一轮。**不能直接丢**，见 `refreshNotice`
     @State private var noticePending = false
+    /// 「卷变了」的纪元号。后台那趟算完时对不上号就**把结果丢掉**——它是在盘还插着的时候
+    /// 算出来的，此刻已经不作数了。没有它的话，拔盘时正好在飞的那一趟回来会把
+    /// 「源盘已连接」原样写回去（用户 2026-09-04 报的那条：断盘后横幅还挂着）。
+    @State private var noticeEpoch = 0
 
     /// 同步面板要开成哪一侧；`switchTo` 非 nil = 同步成功后切到那个工作区（「同步并切回」）。
     private struct SyncTarget: Identifiable {
@@ -144,6 +148,9 @@ struct SidebarView: View {
         //    「插了盘再也不提示」（用户 2026-09-01 实测的一半原因）。
         guard !noticeBusy else { noticePending = true; return }
         guard let folder = workspace.folder else { notice = nil; return }
+        // 这一趟的纪元号。回来时对不上就丢结果（见 `noticeEpoch`）——但 `finishNotice()` 照常要走，
+        // 不然 `noticeBusy` 永远放不掉，之后一次提示都不再刷新。
+        let epoch = noticeEpoch
         if workspace.isMirror {
             guard let id = workspace.mirrorSourceId else { notice = nil; return }
             noticeBusy = true
@@ -151,12 +158,17 @@ struct SidebarView: View {
             DispatchQueue.global(qos: .utility).async {
                 // ① 找盘只要几毫秒 —— 先把「盘回来了」说出去
                 let src = WorkspaceManager.findMirrorSource(id: id, recents: recents)
-                DispatchQueue.main.async { notice = src.map { .sourceBack($0, nil) } }
+                DispatchQueue.main.async {
+                    if epoch == noticeEpoch { notice = src.map { .sourceBack($0, nil) } }
+                }
                 guard let src else { DispatchQueue.main.async { finishNotice() }; return }
                 // ② 再慢慢算「有多少要同步」：完整三方 diff，两个库整个快照 + 逐行指纹，
                 //    盘还在 USB 上，几十秒都可能。算完把那行小字换掉。
                 let n = (try? workspace.mirrorDryRun(sourceFolder: src))?.plan.changes.count ?? 0
-                DispatchQueue.main.async { notice = .sourceBack(src, n); finishNotice() }
+                DispatchQueue.main.async {
+                    if epoch == noticeEpoch { notice = .sourceBack(src, n) }
+                    finishNotice()
+                }
             }
         } else if let p = registry.mirrorPath(forSource: folder, id: workspace.workspaceId) {
             noticeBusy = true
@@ -165,13 +177,45 @@ struct SidebarView: View {
                 // 该静默推的推掉，返回还剩多少要人工确认（副本→源盘那个方向）
                 let pending = workspace.autoPushToMirror(mirrorFolder: mirror) ?? 0
                 DispatchQueue.main.async {
-                    notice = pending > 0 ? .unsynced(mirror, pending) : nil
+                    if epoch == noticeEpoch { notice = pending > 0 ? .unsynced(mirror, pending) : nil }
                     finishNotice()
                 }
             }
         } else {
             notice = nil
         }
+    }
+
+    /// 有卷要走 / 已经走了。
+    ///
+    /// 这条路径存在的理由：`AppDelegate.handleUnmount` 只管**开在那个卷上的工作区**，
+    /// 而副本窗口的工作区在内置盘上 —— 它压根不在受影响之列，于是拔掉源盘之后
+    /// 「源盘已连接」那条横幅就一直挂着，要等下次切窗口/加书才被顺带刷掉
+    ///（用户 2026-09-04 报的就是这个）。
+    ///
+    /// - Parameter settled: 卷是否**已经**卸载完。`false`（`willUnmount`）时**一次 I/O 都不许做**：
+    ///   `findMirrorSource` 会挨个打开候选工作区的库、包括正要走的那个卷上的，
+    ///   多一个 fd 就是 Finder 那句「磁盘正在使用中」。所以那一段只撤横幅，重算留给 `didUnmount`。
+    private func volumeWentAway(_ vol: URL?, settled: Bool) {
+        // 纪元号先加：在飞的那一趟是"盘还在"时算的，回来一律作废
+        noticeEpoch += 1
+        if noticeOn(vol) { notice = nil }
+        if settled { refreshNotice() }
+    }
+
+    /// 当前这条提示是不是指着 [vol] 这个卷上的东西。`vol` 为 nil（拿不到卷 URL）时一律算是 ——
+    /// 宁可多撤一条（下一轮几毫秒就重新算出来），也不要挂着一条骗人的。
+    private func noticeOn(_ vol: URL?) -> Bool {
+        let target: URL?
+        switch notice {
+        case .sourceBack(let src, _): target = src
+        case .unsynced(let mirror, _): target = mirror
+        case .none: return false
+        }
+        guard let vol, let target else { return true }
+        let prefix = vol.standardizedFileURL.path
+        return target.standardizedFileURL.path == prefix
+            || target.standardizedFileURL.path.hasPrefix(prefix + "/")
     }
 
     /// 一轮跑完：期间来过请求就再跑一轮（合并成一次，不排队）。
@@ -344,6 +388,13 @@ struct SidebarView: View {
             for: NSApplication.willResignActiveNotification)) { _ in refreshNotice() }
         // 源盘插回来了 → 当场重算，不用等用户切窗口才发现「哦原来能同步了」
         .onReceive(NotificationCenter.default.publisher(for: .volumeDidMount)) { _ in refreshNotice() }
+        // 源盘走了 → 当场把「源盘已连接」撤掉。两段各管一段，见 `volumeWentAway`
+        .onReceive(NotificationCenter.default.publisher(for: .volumeWillUnmount)) { n in
+            volumeWentAway(n.object as? URL, settled: false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .volumeDidUnmount)) { n in
+            volumeWentAway(n.object as? URL, settled: true)
+        }
         // 删的是 GB 级数据、还可能带着没同步回来的笔迹 —— 必须确认一次，且把后果说清楚
         .confirmationDialog(L("Delete the offline copy?"), isPresented: $dropMirrorShown) {
             Button(L("Delete"), role: .destructive) { dropMirror() }

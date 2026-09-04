@@ -3,6 +3,31 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 修复（2026-09-04，Mac：拔盘后副本窗口还挂着「源盘已连接」）
+
+用户报「SSD 断开后，打开的 mirror 窗口也会出现显示 source is connected（过一会 UI 刷新没了）」。
+
+**根因两条，缺一条都还会漏：**
+
+① **压根没人通知副本窗口。** `AppDelegate.handleUnmount` 只处理 `openWorkspaces(onVolume:)`
+——**开在那个卷上的**工作区；而副本的工作区在内置盘上，不在受影响之列。侧栏那条提示只接了
+`.volumeDidMount`（插盘），**卸载一侧一个观察者都没有**。于是横幅要等到下次切窗口 / 加书 /
+`willResignActive` 才被顺带刷掉，就是用户说的"过一会"。
+
+② **在飞的那一趟会把横幅原样写回去。** 弹出 SSD 时 `handleUnmount` 会当场把副本窗口开出来，
+这扇新窗 `onAppear` 立刻跑一次 `refreshNotice()` —— 那一刻卷还没卸载，`findMirrorSource` 当然
+找得到源盘，于是「源盘已连接」被写上去。哪怕补了卸载观察者，这趟回来还是会覆盖掉刚撤下的横幅。
+所以加了纪元号 `noticeEpoch`：卷一变就自增，后台那趟回来对不上号就**丢结果**
+（但 `finishNotice()` 照走，否则 `noticeBusy` 永远放不掉，之后再也不刷新）。
+
+**两段分开发，不能合成一条**（`.volumeWillUnmount` / `.volumeDidUnmount`，`object` = 卷 URL）：
+`willUnmount` 那段**一次 I/O 都不许做**，只撤掉指向该卷的横幅 —— `findMirrorSource` 会挨个打开
+候选工作区的 `library.sqlite`（包括正要走的那个卷上的），在弹出的窗口期多开一个 fd 就是 Finder
+那句「磁盘正在使用中」，正是 `REQUIREMENTS.md §8.1` 那条红线。真正的重算只在 `didUnmount` 之后跑；
+硬拔只发 `didUnmount`，那一条也就把两种拔法都盖住了。
+
+**待用户在真移动硬盘上验证**（弹出 + 硬拔各一次）。
+
 ## 修复（2026-09-04，Mac + 安卓：离线镜像终于同步 OCR 识别结果）
 
 用户报「OCR 相关的东西好像没能在 mirror 同步，包括设置以及 OCR 的结果」。

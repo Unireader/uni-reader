@@ -439,6 +439,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for name in [NSWorkspace.willUnmountNotification, NSWorkspace.didUnmountNotification] {
             nc.addObserver(forName: name, object: nil, queue: .main) { note in
                 MainActor.assumeIsolated { Self.handleUnmount(note) }
+                // 盘走了 → 还开着的**副本**窗口也得知道（它自己不在这个卷上，`handleUnmount`
+                // 管不着它，见那个方法：它只处理"开在这个卷上的工作区"）。
+                // 🔴 **两段分开发，不能合成一条**：`willUnmount` 那段只许撤提示条、一次 I/O 都不做
+                //（此刻正是弹出的窗口期，多开一个 fd 就是 Finder 那句「磁盘正在使用中」），
+                // 真正的重算只在 `didUnmount` 之后跑。
+                let n: Notification.Name = name == NSWorkspace.willUnmountNotification
+                    ? .volumeWillUnmount : .volumeDidUnmount
+                NotificationCenter.default.post(
+                    name: n, object: note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL)
             }
         }
         nc.addObserver(forName: NSWorkspace.didMountNotification, object: nil, queue: .main) { _ in
@@ -535,6 +544,11 @@ extension Notification.Name {
     static let openWorkspaceRequested = Notification.Name("com.xvan.UniReader.openWorkspaceRequested")
     /// 有卷挂上了 —— 可能就是那块源盘插回来了，提示条该重算一次
     static let volumeDidMount = Notification.Name("com.xvan.UniReader.volumeDidMount")
+    /// 某个卷**就要**卸载（点了弹出）。`object` = 卷的 URL。
+    /// 收到它只许做**不碰盘**的事（撤掉指向那个卷的提示条）——此刻多开一个 fd 就是弹不出去。
+    static let volumeWillUnmount = Notification.Name("com.xvan.UniReader.volumeWillUnmount")
+    /// 某个卷**已经**卸载（点弹出之后 / 硬拔）。`object` = 卷的 URL。这时候才可以重算。
+    static let volumeDidUnmount = Notification.Name("com.xvan.UniReader.volumeDidUnmount")
     static let appDidFinishLaunching = Notification.Name("com.xvan.UniReader.appDidFinishLaunching")
     static let newWindowRequested = Notification.Name("com.xvan.UniReader.newWindowRequested")
     static let newTabRequested = Notification.Name("com.xvan.UniReader.newTabRequested")
