@@ -49,7 +49,7 @@ struct MakeMirrorSheet: View {
                     HStack {
                         Text(doc.title)
                         Spacer()
-                        if !workspace.hasLocalFile(doc.id) {
+                        if !workspace.hasLocalFileCached(doc.id) {   // 同上：body 里不查库
                             Text(L("file missing")).font(.caption).foregroundStyle(.secondary)
                         }
                     }

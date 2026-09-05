@@ -3,6 +3,43 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 性能（2026-09-05，Mac：触控板滚动帧率不够高）
+
+起因是用户拿《王道2027计算机组成原理》（199MB / 340 页）报滚动掉帧。**结论：跟这个 PDF 基本无关，
+是整扇窗每帧重建。**
+
+**先排除掉的（都有实测，别再重走）：**
+- 该 PDF 每页是一整张 1443×2011 的 24-bit RGB 位图、FlateDecode，解压后 8.5MB/页；单页渲染
+  17~19ms（inflate 约 11ms + 缩放绘制约 7ms），与输出尺寸基本无关。工作区里另外三本王道扫描件
+  同一模子（18~22ms/页），纯矢量的 A4 做题本只要 7ms。**这是物理下限。**
+- **重压成 JPEG 没用**：同样 12 页转 JPEG(q0.82) 后解码+绘制 21.3ms，比走 Flate 原路的 17.2ms
+  还慢，体积还涨（717KB vs 613KB/页）。这种黑白扫描件 zlib 解得比 JPEG 快。
+- **降分辨率会真的变糊**：192 DPI 的源在用户常用页宽下已经要被放大 1.16×。
+- `PageBuckets` 全量扫 2762 笔：Debug 0.55ms / Release 0.14ms；墨迹深比较 ≈ 0。都不是那 50ms。
+
+**真凶（`sample <pid> 8` 一次定位）：** 主线程 8 秒里 `CA::Transaction::commit` 占 2571ms
+（= 忙碌时间的 80%），同期页图渲染队列只有 85ms。每个显示周期整扇窗的 NSView 树重新布局，
+三个 `NSHostingView` 各把 SwiftUI 图重算一遍：阅读区 1245ms / 侧栏 638ms / 工具栏 140ms + 约束
+求解 229ms。链路是 `maybeEmit` 每帧写 `@Published scrollAnchor` → `DocTabModel` 转发
+`objectWillChange` → `TabsModel` 再转发 → `SidebarPane(@ObservedObject tabs)` → 重建
+`SidebarView`（6 个闭包属性，永远不相等）→ `List`/`ForEach` 全重建 → 每行 `hasLocalFile`
+查一次 SQLite JOIN + 对 /Volumes/SSD 做一次 stat + 重建 `contextMenu`。
+
+**改动：**
+1. `DocSession.scrollAnchor` 降为普通属性（真相源），新增 `@Published foreignAnchor` 只在
+   `origin != "mac"` 时写；阅读区改观察它。副作用（平板广播 + 进度落库）改走
+   `onAnchorChanged` 回调。**根因修复**，红线注释在 `scrollAnchor` 上。
+2. `WorkspaceManager.localFileFlags` 缓存 + `hasLocalFileCached`，视图不再在 body 里查库/stat；
+   库变化（`refresh()`）与卷挂载/卸载时重算（`willUnmount` 那段仍然一次 I/O 都不做）。
+3. `visibleStrokesByPage` 记忆化（键 = 新增的 `inkRev` + range）；`inkSnapshots` 不再逐页拿
+   `i...i` 去调批量版。
+4. `saveProgressThrottled` 不再每帧 cancel + 新建 `Task`（截止点本来就不随新事件后移）。
+
+**方法论教训**（已进记忆）：`ZoomProbe` 数的是「contentBody 被重算了几次」，「长帧 100ms」
+分不清「主线程被卡住」和「那段没东西要重画」，而且 `measure` 只包了我们自己那几段，
+SwiftUI diff/layout/CA commit 全在打点之外——恰好就是钱花掉的地方。这类问题别再加打点，
+直接 `sample`。
+
 ## 修复（2026-09-04，Mac：拔盘后副本窗口还挂着「源盘已连接」）
 
 用户报「SSD 断开后，打开的 mirror 窗口也会出现显示 source is connected（过一会 UI 刷新没了）」。

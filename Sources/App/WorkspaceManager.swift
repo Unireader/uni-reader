@@ -246,7 +246,29 @@ final class WorkspaceManager: ObservableObject {
         } catch { lastError = "\(error)" }
     }
 
-    func refresh() { documents = (try? store?.allDocuments()) ?? [] }
+    func refresh() {
+        documents = (try? store?.allDocuments()) ?? []
+        refreshLocalFileFlags()
+    }
+
+    /// 「这篇文档在本机有没有可打开的文件」的**缓存**（见 [hasLocalFile]）。
+    ///
+    /// 🔴 算它要**查一次库 + 对每个候选路径 stat 一次**，所以绝不能在 view body 里现算
+    /// （2026-09-05 采样：`SidebarView.row` 每帧各跑一遍，连带 SQLite 89ms/8s）。
+    /// 这里存结果，视图只读字典。
+    @Published private(set) var localFileFlags: [String: Bool] = [:]
+
+    /// 重算全部标志。命中时机：库变了（[refresh]）、卷挂载/卸载（`SidebarView` 的三条 `onReceive`）。
+    /// 这两类事件都是低频的，与「每帧」不在一个量级。
+    func refreshLocalFileFlags() {
+        var out: [String: Bool] = [:]
+        for d in documents { out[d.id] = currentFilePath(documentId: d.id) != nil }
+        if out != localFileFlags { localFileFlags = out }
+    }
+
+    /// 缓存版（**视图一律用这个**）。还没算过的按「有」处理：宁可乐观一下，也别为了一个图标
+    /// 在 body 里查库；真实值下一次 [refreshLocalFileFlags] 就补上。
+    func hasLocalFileCached(_ documentId: String) -> Bool { localFileFlags[documentId] ?? true }
 
     // MARK: - 文档
 

@@ -138,9 +138,14 @@ final class DocTabModel: ObservableObject, Identifiable {
             s.app.sessionChanged(s.session)
             s.saveProgress()             // 翻页即存，避免只靠节流/关窗丢进度
         }
-        on(session.$scrollAnchor) { s in
-            s.app.macScrolled(s.session)
-            s.saveProgressThrottled(s.session.scrollAnchor)
+        // 锚点走**回调**而不是 `@Published`（红线在 `DocSession.scrollAnchor` 上）：本机滚动每帧
+        // 发一次，挂在 `objectWillChange` 上就是每帧把整扇窗标脏。这两件事都不刷新视图，所以
+        // 同步调即可 —— `emitAnchor` 是**先赋值后回调**，此刻 `session.scrollAnchor` 已是新值，
+        // 不存在 `on(...)` 当年非要 `receive(on:)` 才能绕开的那个「willSet 里读到旧值」问题。
+        session.onAnchorChanged = { [weak self] _ in
+            guard let self, !self.closed else { return }
+            self.app.macScrolled(self.session)
+            self.saveProgressThrottled(self.session.scrollAnchor)
         }
         on(session.$readZoom) { s in
             s.saveProgressThrottled(s.session.scrollAnchor)   // 缩放变化也存（含 restore 后手动缩放）
@@ -485,10 +490,17 @@ final class DocTabModel: ObservableObject, Identifiable {
         }
         // 尾随补存：节流窗内被丢的变化（缩放/滚动尾帧）延迟落库一次。Xcode 重跑(⌘R)是被 lldb
         // 直接杀进程，走不到关窗的兜底保存，没有尾随补存最后一次缩放就永久丢失。
-        progressSaveTask?.cancel()
+        //
+        // ⚠️ **已经排着一个就别重排**：截止点恒为 `lastProgressSave + 0.7`（不随新事件后移），
+        // 重排出来的是同一个时刻，纯属白扔 —— 而本机滚动**每帧**都会走到这儿，等于每秒
+        // cancel + 新建上百个 `Task`。到点时它自己去读最新的 `session.scrollAnchor`
+        // （`saveProgress()` 不带参，见下面那个重载），所以期间的变化一样存得到。
+        guard progressSaveTask == nil else { return }
         progressSaveTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64((0.7 - elapsed) * 1_000_000_000))
-            guard !Task.isCancelled, let self, !self.closed else { return }
+            guard let self else { return }
+            self.progressSaveTask = nil        // 先腾出槽位，否则被取消那次会把后续补存永久挡住
+            guard !Task.isCancelled, !self.closed else { return }
             self.lastProgressSave = .now
             self.saveProgress()
         }

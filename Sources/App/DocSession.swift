@@ -211,11 +211,19 @@ final class DocSession: ObservableObject, Identifiable {
     @Published var inkMovedRev: Int = 0
 
     // 实时手写：已完成笔画 + 正在书写的一笔。
-    @Published var strokes: [InkStroke] = []
+    @Published var strokes: [InkStroke] = [] { didSet { inkRev &+= 1 } }
     @Published var liveStroke: InkStroke?
 
     // 笔迹图层（挂逻辑文档，全版本共用）：按 sortOrder 升序维护。
-    @Published var inkLayers: [InkLayer] = []
+    @Published var inkLayers: [InkLayer] = [] { didSet { inkRev &+= 1 } }
+
+    /// 笔迹/图层的修改序号：[strokes] 或 [inkLayers] 每被写一次就 +1，给
+    /// [visibleStrokesByPage] 的记忆化当键。**只数次数、不比内容**——比数组内容正是那条
+    /// 「每帧 O(总点数)」的红线（同 `inkMovedRev` 存在的理由）。改笔色/改线宽/切图层可见性
+    /// 都是对数组本身赋值，一样会命中 `didSet`，所以这个键是完备的。
+    private(set) var inkRev: UInt64 = 0
+    /// [visibleStrokesByPage] 的单槽记忆（同一 `inkRev` + 同一 `range` 直接复用）。
+    private var strokeBuckets: (rev: UInt64, range: ClosedRange<Int>, out: [Int: [InkStroke]])?
     /// 已落库的图层快照（id → 值），用于增量对账，非 @Published。
     var persistedInkLayers: [UUID: InkLayer] = [:]
     /// 新笔画落在哪一层；不持久化，每次开文档默认第一层（`loadInkLayers` 设置）。
@@ -230,16 +238,22 @@ final class DocSession: ObservableObject, Identifiable {
     /// （2026-07-29 按钮缩放掉帧的成因之一）。批量版把它压回一次 O(笔迹数)。
     func visibleStrokesByPage(in range: ClosedRange<Int>) -> [Int: [InkStroke]] {
         guard !strokes.isEmpty else { return [:] }
+        // 记忆化（键 = `inkRev` + `range`，见 [inkRev]）：本函数在**每次 body 求值**时都被
+        // `PageBuckets.init` 调一遍，而滚动/缩放期间 body 一秒要跑几十次、笔迹却基本不动。
+        // 2026-09-05 采样实测它占主线程 126ms/8s（全窗每帧重建那条链修好后仍是白扫）。
+        if let c = strokeBuckets, c.rev == inkRev, c.range == range { return c.out }
         let order = Dictionary(uniqueKeysWithValues: inkLayers.enumerated().map { ($1.id, $0) })
         let vis = visibleLayerIDs
-        var out: [Int: [(seq: Int, stroke: InkStroke)]] = [:]
+        var acc: [Int: [(seq: Int, stroke: InkStroke)]] = [:]
         for (seq, s) in strokes.enumerated() where range.contains(s.page) && vis.contains(s.layerId) {
-            out[s.page, default: []].append((seq, s))
+            acc[s.page, default: []].append((seq, s))
         }
-        return out.mapValues { items in
+        let out = acc.mapValues { items in
             items.sorted { (order[$0.stroke.layerId] ?? 0, $0.seq) < (order[$1.stroke.layerId] ?? 0, $1.seq) }
                  .map(\.stroke)
         }
+        strokeBuckets = (inkRev, range, out)
+        return out
     }
 
     // MARK: 草稿纸（scratch_pad 表 + note kind=4，v8）
@@ -310,11 +324,36 @@ final class DocSession: ObservableObject, Identifiable {
     @Published var pressRing: PressRing?
 
     // 滚动锚点（跨视口同步）。
-    @Published var scrollAnchor: ScrollAnchor?
+    //
+    // 🔴 **这条绝不能是 `@Published`**（2026-09-05 `sample` 实测定位，触控板滚动掉帧的根因）。
+    // 本机滚动时 `ReaderSurface.maybeEmit` 每帧（120Hz 节流）写它一次，而 `DocTabModel.bind`
+    // 把本会话的 `objectWillChange` 转发给自己、`TabsModel` 再转发一层 → **每帧把整扇窗标脏**：
+    // 侧栏 `List` 全量重建（每行还各查一次 SQLite + stat，见 `SidebarView.row`）、
+    // 工具栏重跑一遍 AutoLayout、窗口标题重刷。8 秒采样里 `CA::Transaction::commit` 独占主线程
+    // 2571ms（= 忙碌时间的 80%），而同期页图渲染队列只有 85ms —— 卡的从来不是渲染。
+    // 与 `readZoom` 上那条注释是同一个病，这里是**滚动路径**上没修的那一半。
+    //
+    // 于是拆成两条：本条是**真相源**（普通属性，谁要谁读，不触发任何刷新），可观察的那条是
+    // [foreignAnchor] —— 需要「被通知」的只有别处发来的锚点，本机自己滚出来的没人需要观察。
+    private(set) var scrollAnchor: ScrollAnchor?
+
+    /// **非本机**滚动产生的锚点（平板 `"pad"` / 恢复 `"restore"` / 跳转 `"toc"` …）。
+    /// 阅读区只观察这一条（`PageStreamView` 的 `onChange`）；`origin == "mac"` 不写这里，
+    /// 所以本机滚动一帧都不会惊动视图树。理由见上面 [scrollAnchor] 的红线。
+    @Published private(set) var foreignAnchor: ScrollAnchor?
+
+    /// 锚点变化的**非观察式**回调（由 `DocTabModel.bind` 装上：平板广播 + 进度节流落库）。
+    /// 这两件事本来就不刷新任何视图，走回调而不是 `@Published`，理由同上。
+    var onAnchorChanged: ((ScrollAnchor) -> Void)?
+
     private var anchorSeq = 0
     func emitAnchor(page: Int, frac: Double, origin: String, senderT: Double = 0) {
         anchorSeq += 1
-        scrollAnchor = ScrollAnchor(page: page, frac: min(max(0, frac), 1), seq: anchorSeq, origin: origin, senderT: senderT)
+        let a = ScrollAnchor(page: page, frac: min(max(0, frac), 1), seq: anchorSeq,
+                             origin: origin, senderT: senderT)
+        scrollAnchor = a                          // 真相源先落定
+        if origin != "mac" { foreignAnchor = a }   // 只有别处来的才惊动视图
+        onAnchorChanged?(a)
     }
 
     // MARK: 跳转历史（每文档一份，纯内存不落库；见 `JumpHistory`）

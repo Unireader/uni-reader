@@ -293,10 +293,16 @@ struct ReaderSurface: View {
     @MainActor
     func inkSnapshots(for pages: some Sequence<Int>, layout: PageLayout) -> [Int: CGImage] {
         guard !session.strokes.isEmpty, pageW > 1 else { return [:] }
+        // 分桶**一次算完**：`visibleStrokesByPage` 是批量版，逐页拿 `i...i` 去调等于每页重扫一遍
+        // 全部笔迹（正是它自己注释里那条「按页取用一律走批量版」禁止的用法），也会把它的单槽
+        // 记忆一路冲掉。
+        let list = Array(pages)
+        guard let lo = list.min(), let hi = list.max() else { return [:] }
+        let byPage = session.visibleStrokesByPage(in: lo...hi)
         var out: [Int: CGImage] = [:]
-        for i in pages {
+        for i in list {
             guard inkWanted(i, layout: layout) else { continue }
-            let strokes = session.visibleStrokesByPage(in: i...i)[i] ?? []
+            let strokes = byPage[i] ?? []
             guard !strokes.isEmpty else { continue }
             let h = layout.heights[i] * dispScale
             guard h > 1 else { continue }
@@ -485,7 +491,10 @@ struct ReaderSurface: View {
         .overlay { scratchPadLayer }
         // 笔架悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
         .overlay { GeometryReader { proxy in PenRackView(session: session, viewportSize: proxy.size, topInset: indicatorTopInset, bottomInset: bottomInset, isActiveWindow: isActiveWindow) } }
-        .onChange(of: session.scrollAnchor) { _, a in incomingAnchor(a) }
+        // 只观察**别处**发来的锚点：本机滚动每帧发的 `"mac"` 锚点不写 `foreignAnchor`，
+        // 于是滚动不再把整扇窗标脏（红线见 `DocSession.scrollAnchor`）。`incomingAnchor`
+        // 本来就要 `origin != "mac"`，语义完全一致。
+        .onChange(of: session.foreignAnchor) { _, a in incomingAnchor(a) }
         .onChange(of: app.pointerTool) { _, t in
             if t != .lasso { clearLassoSelection() }   // 切走框选工具即放弃选中（手势已门控，残留高亮框会误导）
             if t != .ink { eraseCursor = nil }         // 切走本机笔即撤擦除圆环

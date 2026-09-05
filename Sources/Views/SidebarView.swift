@@ -387,13 +387,18 @@ struct SidebarView: View {
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.willResignActiveNotification)) { _ in refreshNotice() }
         // 源盘插回来了 → 当场重算，不用等用户切窗口才发现「哦原来能同步了」
-        .onReceive(NotificationCenter.default.publisher(for: .volumeDidMount)) { _ in refreshNotice() }
+        .onReceive(NotificationCenter.default.publisher(for: .volumeDidMount)) { _ in
+            refreshNotice()
+            workspace.refreshLocalFileFlags()   // 盘回来了，原本灰着的书要恢复成可打开
+        }
         // 源盘走了 → 当场把「源盘已连接」撤掉。两段各管一段，见 `volumeWentAway`
         .onReceive(NotificationCenter.default.publisher(for: .volumeWillUnmount)) { n in
             volumeWentAway(n.object as? URL, settled: false)
         }
         .onReceive(NotificationCenter.default.publisher(for: .volumeDidUnmount)) { n in
             volumeWentAway(n.object as? URL, settled: true)
+            // 只在 `did` 这段重算：`willUnmount` 那段一次 I/O 都不许做（见上面那条注释）
+            workspace.refreshLocalFileFlags()
         }
         // 删的是 GB 级数据、还可能带着没同步回来的笔迹 —— 必须确认一次，且把后果说清楚
         .confirmationDialog(L("Delete the offline copy?"), isPresented: $dropMirrorShown) {
@@ -442,7 +447,9 @@ struct SidebarView: View {
     private func row(_ doc: LibDocument) -> some View {
         // 镜像里没带 PDF 的书：元数据与笔记都在，只是打不开正文 —— 灰一档 + 换个图标，
         // **不隐藏**（隐藏了用户会以为笔记也没了）。
-        let local = workspace.hasLocalFile(doc.id)
+        // 🔴 **读缓存，别在 body 里现算**：`hasLocalFile` 要查库 + stat，而这个 body 在滚动时
+        // 一秒要跑几十遍（见 `WorkspaceManager.localFileFlags` 的红线）。
+        let local = workspace.hasLocalFileCached(doc.id)
         return Label(doc.title, systemImage: local ? "doc.richtext" : "doc.badge.ellipsis")
             .foregroundStyle(local ? .primary : .secondary)
             .help(local ? "" : L("Not available offline — reconnect the source drive to read it."))
