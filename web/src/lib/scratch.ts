@@ -385,6 +385,7 @@ export function initScratch(refs: CaptureRefs): void {
     if (G.penMode === "padink") {
       const pen = curPen();
       G.lineStroke = G.rulerOn;
+      G.linePress = e.pressure;   // 尺子笔的峰值压感，见 padPointerMove 的尺子分支
       G.padCur = { page: 0, pen: { color: pen.color, w: pen.w, t: pen.t }, pts: [[x, y, e.pressure]] };
       drawScratch();
       // page 字段在草稿纸上作废（PROTOCOL.md §4.4），仍编码 0 保持定长。
@@ -437,10 +438,14 @@ export function initScratch(refs: CaptureRefs): void {
       if (G.penMode === "padink" && G.padCur) {
         if (G.lineStroke && G.padCur.pts.length) {
           // 尺子：画布是等比坐标系 → aspect=1（页内那套要传页纵横比，因为两轴尺度不同）。
+          // 压感取这一笔的峰值、两端同值（理由见 input.ts 的同款分支：终点每帧被替换，
+          // 抬笔前最后一个采样几乎没压力，整条线会缩成头发丝）。
           const a = G.padCur.pts[0];
           const sn = rulerSnap(a[0], a[1], x, y, 1);
-          G.padCur.pts = [a, [sn[0], sn[1], ev.pressure]];
-          G.batch = [[sn[0], sn[1], ev.pressure]];   // 只留最新终点，同页内 lineStroke 分支
+          if (ev.pressure > G.linePress) G.linePress = ev.pressure;
+          const lp = G.linePress;
+          G.padCur.pts = [[a[0], a[1], lp], [sn[0], sn[1], lp]];
+          G.batch = [[sn[0], sn[1], lp]];   // 只留最新终点，同页内 lineStroke 分支
         } else {
           G.padCur.pts.push([x, y, ev.pressure]);
           G.batch.push([x, y, ev.pressure]);

@@ -71,10 +71,12 @@ extension AppModel {
         s.scratchLive = st
     }
 
-    /// 直线（尺子）笔：整笔恒为「起点 → 当前终点」两点，新点替换终点（同 `inkLineTo`）。
+    /// 直线（尺子）笔：整笔恒为「起点 → 当前终点」两点，新点替换终点（同 `inkLineTo`，
+    /// 压感同样取这一笔的峰值、两端同值——理由见那里）。
     func scratchInkLineTo(_ p: SIMD3<Double>?, in s: DocSession) {
         guard let p, var st = s.scratchLive, let a = st.points.first else { return }
-        st.points = [a, p]
+        let z = AppModel.linePressure(st.points, p)
+        st.points = [SIMD3(a.x, a.y, z), SIMD3(p.x, p.y, z)]
         s.scratchLive = st
     }
 

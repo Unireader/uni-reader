@@ -157,9 +157,11 @@ export interface GState {
   /// 笔正悬停在哪条笔记的标记上（`hover` 模式的展开条件）；null = 没有。
   noteHover: string | null;
   // 尺子模式：独立本地开关，note 模式下笔迹吸附 45° 倍数直线（吸附在上行点生成处做）；
-  // lineStroke = 落笔那一刻锁进当前这一笔的尺子状态（随 ink begin 的 line 标记上报 Mac）
+  // lineStroke = 落笔那一刻锁进当前这一笔的尺子状态（随 ink begin 的 line 标记上报 Mac）；
+  // linePress = 这一笔见过的**峰值压感**（两点直线恒宽，见 input.ts 的尺子分支）
   rulerOn: boolean;
   lineStroke: boolean;
+  linePress: number;
   // 橡皮：归一化半径（页宽比，默认 0.02）；eraserMode 0=整笔 1=局部（默认局部）；
   // eraserRing = 尺寸圆环开关（默认开）；eraserRingAt = 圆环位置（视口 CSS px，null=不画）。
   // 三者随 eraser 消息双向同步，PenStat 弹层改动后防抖上行。

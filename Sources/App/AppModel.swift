@@ -1018,11 +1018,24 @@ final class AppModel: ObservableObject {
     /// 直线（尺子）笔的落点：整笔恒为「起点 → 当前终点」两点，新点**替换**终点而不是追加
     /// （平板已按 45° 吸附算好终点；一批里只有最后一个点是当前终点，中间的是过程点，丢弃）。
     /// 与 `localInkDragGesture` 的 ⇧ 尺子分支同语义。
+    ///
+    /// 压感取**这一笔的峰值**、两端同值（`linePressure`）：两点直线的线宽只由终点压感决定，
+    /// 而终点每帧被整个替换掉——抬笔前最后一个采样的压感几乎为 0，整条线于是在抬笔那一刻
+    /// 缩成头发丝（用户报）。平板侧同规则先算一遍（本地即时回显要对得上），这里再取一次
+    /// max 是幂等的，顺带兜住不带这条规则的旧采集页。
     func inkLineTo(_ p: SIMD3<Double>?, in session: DocSession? = nil) {
         guard let p, let s = session ?? padSession, var st = s.liveStroke,
               let a = st.points.first else { return }
-        st.points = [a, p]; s.liveStroke = st
+        let z = AppModel.linePressure(st.points, p)
+        st.points = [SIMD3(a.x, a.y, z), SIMD3(p.x, p.y, z)]; s.liveStroke = st
         s.hover = HoverPoint(page: st.page, nx: p.x, ny: p.y)
+    }
+    /// 尺子笔的恒定压感 = 起点、上一个终点、这个新终点里的最大值（见 `inkLineTo`）。
+    /// 页内与草稿纸两条链路共用一份，别各写各的。
+    static func linePressure(_ points: [SIMD3<Double>], _ p: SIMD3<Double>) -> Double {
+        var z = p.z
+        for q in points.prefix(2) { z = max(z, q.z) }
+        return z
     }
     func inkEnd(in session: DocSession? = nil) {
         guard let s = session ?? padSession, let st = s.liveStroke else { return }
