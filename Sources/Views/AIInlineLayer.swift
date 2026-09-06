@@ -127,6 +127,7 @@ struct AIInlineLayer: View {
                     .fixedSize()          // 页码断不得，一断整条都白看
             }
             Spacer(minLength: 4)
+            modeMenu
             headerButton("house", L("New Chat")) { panel.goHome() }
             headerButton("macwindow", L("Open as Separate Window")) {
                 panel.setMode(.window)
@@ -136,6 +137,38 @@ struct AIInlineLayer: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
+    }
+
+    /// 发送时用哪档模式（DeepSeek 的「快速 / 专家 / 识图」）。默认「跟内容走」＝
+    /// 有图 → 识图、无图 → 专家（用户 2026-09-06 定）；钉住某一档就一直用那档。
+    /// **只在新对话页切得动**——那条分段控件聊起来之后站点自己就收走了（见 `AIPanelModel.applyMode`）。
+    @ViewBuilder private var modeMenu: some View {
+        if let modes = panel.currentProvider?.modes, !modes.isEmpty {
+            Menu {
+                Button { panel.setChatMode("auto") } label: {
+                    if panel.chatMode == "auto" { Label(L("Follow Content"), systemImage: "checkmark") }
+                    else { Text(L("Follow Content")) }
+                }
+                Divider()
+                ForEach(modes) { m in
+                    Button { panel.setChatMode(m.id) } label: {
+                        if panel.chatMode == m.id { Label(m.name, systemImage: "checkmark") }
+                        else { Text(m.name) }
+                    }
+                }
+            } label: {
+                // material 底上一律显式 `.primary`（红线：`.secondary` 会被画得几乎看不见）
+                Image(systemName: "slider.horizontal.3")
+                    .imageScale(.medium)
+                    .foregroundStyle(.primary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(L("Mode for new chats"))
+        }
     }
 
     /// `.plain` 在 material 底上会把图标画得极淡（2026-08-07 草稿纸工具条踩过一次），

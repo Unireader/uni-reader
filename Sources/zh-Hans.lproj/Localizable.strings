@@ -296,6 +296,11 @@
 "Added to %@" = "已加到 %@";
 "Could not capture that area." = "这块区域截不出来。";
 "Couldn't put it in the chat box." = "没能放进输入框，去 AI 面板看看。";
+"%@ isn't ready yet (still loading, or not signed in)." = "%@ 还没就绪（没加载完，或者没登录）。";
+"Waiting for %@ to load…" = "正在等 %@ 加载…";
+"Ask %@ About This" = "问 %@（选中文字）";
+"Mode for new chats" = "新对话用哪档模式";
+"Follow Content" = "跟内容走（有图识图 / 无图专家）";
 
 /* 选区回填笔记（S5） */
 "Add to Text Notes" = "添加到文字笔记";

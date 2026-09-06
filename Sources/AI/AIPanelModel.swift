@@ -489,8 +489,13 @@ final class AIPanelModel: ObservableObject {
         bindContext = ctx
         boundThread = nil
         openingThreadID = nil
+        pendingContexts.removeAll()   // 新绑定不继承上一条还没 commit 的上下文
         goHome()
     }
+
+    /// 还没 commit 成 `AIThread` 的上下文（新对话在发出第一条消息前没有 URL）。
+    /// `syncFromPage` 捕到会话 URL 那一刻一并补记进去。
+    private var pendingContexts: [AIContext] = []
 
     /// 从 Inspector 列表打开一条已存会话。
     func openThread(_ t: AIThread, in ctx: AIBindContext) {
@@ -500,6 +505,7 @@ final class AIPanelModel: ObservableObject {
         opened.lastOpenedAt = .now
         boundThread = opened
         openingThreadID = t.id
+        pendingContexts.removeAll()   // 打开的是另一条会话，别把上一条没 commit 的记到它头上
         publish(opened)
         if let url = URL(string: t.url) { current?.load(url) }
     }
@@ -509,6 +515,7 @@ final class AIPanelModel: ObservableObject {
         bindContext = nil
         boundThread = nil
         openingThreadID = nil
+        pendingContexts.removeAll()
     }
 
     /// 阅读窗口换了文档 → 属于它的绑定上下文作废（否则上下文条会一直显示上一本书）。
@@ -542,8 +549,12 @@ final class AIPanelModel: ObservableObject {
             boundThread = t
             publish(t)
         } else if let ctx = bindContext {
-            let t = AIThread(page: ctx.page, anchor: ctx.anchor, provider: p.id,
+            var t = AIThread(page: ctx.page, anchor: ctx.anchor, provider: p.id,
                              url: urlStr, title: title, lastOpenedAt: .now)
+            // commit 之前发过的东西补记进来（第一条同时把 page/anchor 定到它头上——
+            // 正是「多张图用第一张」那条规则，见 `AIThread.addContext`）。
+            for c in pendingContexts { t.addContext(c) }
+            pendingContexts.removeAll()
             boundThread = t
             publish(t)
         }
@@ -571,11 +582,90 @@ final class AIPanelModel: ObservableObject {
     // MARK: - 发送（S3）
 
     /// 一次投递的结果。`method` = 最终走通的那一级（input / drop / paste），三级全哑则 nil。
+    /// `notReady` = 等到超时页面也没就绪（还在加载 / 没登录 / 这个页面上根本没有输入框），
+    /// 与「找到了输入框但三级全被站点吃掉」是两回事，提示语也该不一样。
     struct AttachOutcome {
         var ok: Bool
         var method: String?
         var tried: String
         var textOK: Bool
+        var notReady = false
+    }
+
+    /// 🔴 **等这份网页真的能收东西了再投递**（用户 2026-09-06 报「首次打开 AI 窗口，填充扑空」）。
+    ///
+    /// 首次打开时三件事一件都还没发生：① `present()` 只是把宿主亮出来，`AIPageBox` 是宿主视图
+    /// `onAppear` 里才现建的（所以这一刻 `current` 往往还是 nil）；② webview 建好还要拉首屏；
+    /// ③ 首屏拉完，主输入框还要等前端框架挂上来。此刻 `callJS` 过去要么没页面、要么
+    /// `window.__unireader` 还没注入、要么 `findEditor()` 空手而归——**三种都是静默失败**。
+    ///
+    /// 判据只用适配器的 `ready()`（＝脚本已注入 + 找得到输入框），**刻意不等 `isLoading` 转 false**：
+    /// 聊天站点首屏之后常年挂着长连接与懒加载，输入框早就能用了，等它反而白等。
+    /// 超时返回 nil，调用方仍可 best-effort 试一次（宁可试了失败，也别把用户的图丢掉）。
+    func waitUntilReady(timeout: TimeInterval = 20) async -> AIPageBox? {
+        let started = Date()
+        var warned = false
+        while Date().timeIntervalSince(started) < timeout {
+            if let box = current, await adapterReady(box) { return box }
+            // 等超过一拍就说一声——否则用户面对的是「点了没反应」。
+            if !warned, Date().timeIntervalSince(started) > 1.2 {
+                warned = true
+                showFlash(String(format: L("Waiting for %@ to load…"),
+                                 currentProvider?.name ?? L("AI")))
+            }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        return nil
+    }
+
+    /// 适配器在不在、输入框有没有。**不用 `probe()`**：那个是排障用的，做的 DOM 查询多得多，
+    /// 而这里是 150ms 一次的轮询。
+    private func adapterReady(_ box: AIPageBox) async -> Bool {
+        let r = await box.callJS("return !!(window.__unireader && window.__unireader.ready());")
+        return (r as? Bool) ?? false
+    }
+
+    // MARK: - 站点模式（DeepSeek 的「快速 / 专家 / 识图」分段控件）
+    //
+    // ⚠️ 与本类的 `mode`（浮窗 / 内置，那是**面板形态**）是两回事，故一律带 `chat` 前缀，别混。
+
+    static let chatModeKey = "aiChatMode"
+    /// 用户钉住的模式（`AIMode.id`）；`auto` = 跟内容走（用户定：**有图 → 识图，无图 → 专家**）。
+    @Published var chatMode: String = UserDefaults.standard.string(forKey: AIPanelModel.chatModeKey) ?? "auto"
+
+    func setChatMode(_ id: String) {
+        chatMode = id
+        UserDefaults.standard.set(id, forKey: Self.chatModeKey)
+    }
+
+    /// 这一次该用哪档：手动钉住的优先，否则按有没有图取平台的默认档。
+    func wantedChatMode(hasImage: Bool) -> AIMode? {
+        guard let p = currentProvider, let modes = p.modes, !modes.isEmpty else { return nil }
+        if chatMode != "auto", let pinned = modes.first(where: { $0.id == chatMode }) { return pinned }
+        return p.mode(hasImage ? (p.modeForImage ?? "") : (p.modeForText ?? ""))
+    }
+
+    /// 投递前切一次模式。
+    ///
+    /// 🔴 **「只在新建对话时切一次」不靠我们记状态**（用户 2026-09-06 拍板的时机）：那条分段控件
+    /// **只长在新对话页上**，一旦聊起来站点自己就把它收走了 —— 适配器找不到就什么都不做，
+    /// 语义天然等价。这也正好避开「站点可能不允许对话中途换模型」那个风险。
+    ///
+    /// 找不到不算失败（返回 false 只用于打点）：模式切不动也**不能挡住投递**，
+    /// 用户要的是那段文字/那张图先进输入框。
+    @discardableResult
+    func applyMode(hasImage: Bool) async -> Bool {
+        guard let box = current, let m = wantedChatMode(hasImage: hasImage) else { return false }
+        let r = await box.callJS("""
+        if (!window.__unireader || !window.__unireader.setMode) return null;
+        return await window.__unireader.setMode(labels);
+        """, arguments: ["labels": m.labels])
+        guard let d = r as? [String: Any] else { return false }
+        let found = d["found"] as? Bool ?? false
+        // 静默失效是这条链路最难查的形态（适配器腐坏 = 站点改了文案），照旧留一行日志。
+        wsLog("[AI] 模式 \(m.id)(\(m.name)) found=\(found) clicked=\(d["clicked"] as? Bool ?? false) "
+              + "selected=\(String(describing: d["selected"] ?? "nil"))")
+        return found
     }
 
     /// 把一张 JPEG 塞进当前对话的输入框，并填一行上下文（书名 + 页码）。
@@ -583,9 +673,11 @@ final class AIPanelModel: ObservableObject {
     /// **不自动按发送**（`AI-PLAN.md §3`）：填好让用户自己发——对 ToS 友好，也避免被判成 bot。
     /// 适配器里的 `editor.focus()` 只在页面内生效，**不抢窗口焦点**（用户还在读书）。
     func attach(imageJPEG: Data, fileName: String, prompt: String) async -> AttachOutcome {
-        guard let box = current else {
-            return AttachOutcome(ok: false, method: nil, tried: "no page", textOK: false)
+        let ready = await waitUntilReady()
+        guard let box = ready ?? current else {
+            return AttachOutcome(ok: false, method: nil, tried: "no page", textOK: false, notReady: true)
         }
+        await applyMode(hasImage: true)   // 有图 → 识图模式（新对话页才切得动，见 applyMode）
         let body = """
         if (!window.__unireader) return null;
         return await window.__unireader.attach(b64, name, mime, text);
@@ -600,18 +692,54 @@ final class AIPanelModel: ObservableObject {
         ]
         let raw = await box.callJS(body, arguments: args)
         guard let d = raw as? [String: Any] else {
-            return AttachOutcome(ok: false, method: nil, tried: "adapter missing", textOK: false)
+            return AttachOutcome(ok: false, method: nil, tried: "adapter missing", textOK: false,
+                                 notReady: ready == nil)
         }
         return AttachOutcome(ok: d["ok"] as? Bool ?? false,
                              method: d["method"] as? String,
                              tried: d["tried"] as? String ?? "",
-                             textOK: d["textOK"] as? Bool ?? false)
+                             textOK: d["textOK"] as? Bool ?? false,
+                             notReady: ready == nil)
+    }
+
+    /// **划字发送**：只把一段文字填进输入框，不带附件（用户 2026-09-06 要的那条）。
+    ///
+    /// 与 `attach` 共用同一套纪律：等页面就绪、走 page world 的适配器、**不自动按发送**。
+    /// 页面有文本层时这条比截图强一个档次（省 token、模型识别率高，`AI-PLAN.md §4` 的「文本优先」）。
+    func attachText(_ text: String) async -> AttachOutcome {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return AttachOutcome(ok: false, method: nil, tried: "empty", textOK: false)
+        }
+        let ready = await waitUntilReady()
+        guard let box = ready ?? current else {
+            return AttachOutcome(ok: false, method: nil, tried: "no page", textOK: false, notReady: true)
+        }
+        await applyMode(hasImage: false)   // 无图 → 专家模式
+        let raw = await box.callJS("""
+        if (!window.__unireader) return null;
+        return window.__unireader.insert(text);
+        """, arguments: ["text": trimmed])
+        guard let ok = raw as? Bool else {
+            return AttachOutcome(ok: false, method: nil, tried: "adapter missing", textOK: false,
+                                 notReady: ready == nil)
+        }
+        return AttachOutcome(ok: ok, method: ok ? "text" : nil, tried: "text",
+                             textOK: ok, notReady: ready == nil)
     }
 
     /// 记一条「发过去的东西」到当前绑定的会话（`contexts`）。还没 commit（新对话尚无 URL）时
-    /// 只留在内存里，等 URL 出来那一刻一并落库。
+    /// 只留在内存里，等 URL 出来那一刻一并落库（`syncFromPage` 里补记）。
+    ///
+    /// 🔴 那句「留在内存里」从前是句空话：`boundThread == nil` 时直接 return，**这条上下文就丢了**。
+    /// 而新对话的第一条恰恰必然落在这个窗口里——框选发的第一张图、划字发的第一段引文，
+    /// 全都赶在 URL 出来之前。丢了的后果是「多张图用第一张」的锚点规则失去依据，
+    /// 选区回填笔记也拿不到 quote。改为攒进 `pendingContexts`。
     func noteSentContext(_ c: AIContext) {
-        guard var t = boundThread else { return }
+        guard var t = boundThread else {
+            pendingContexts.append(c)
+            return
+        }
         t.addContext(c)
         boundThread = t
         publish(t)

@@ -294,6 +294,11 @@
 "Added to %@" = "Added to %@";
 "Could not capture that area." = "Could not capture that area.";
 "Couldn't put it in the chat box." = "Couldn't put it in the chat box.";
+"%@ isn't ready yet (still loading, or not signed in)." = "%@ isn't ready yet (still loading, or not signed in).";
+"Waiting for %@ to load…" = "Waiting for %@ to load…";
+"Ask %@ About This" = "Ask %@ About This";
+"Mode for new chats" = "Mode for new chats";
+"Follow Content" = "Follow Content";
 
 /* 选区回填笔记（S5） */
 "Add to Text Notes" = "Add to Text Notes";

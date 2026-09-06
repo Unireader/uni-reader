@@ -24,6 +24,11 @@
   #log { white-space: pre-wrap; font: 12px/1.5 ui-monospace, Menlo, monospace;
          background: #f6f6f6; border-radius: 8px; padding: 12px; margin-top: 12px; }
   .pass { color: #1a7f37; } .fail { color: #b3261e; font-weight: 600; }
+  /* 模式条：结构照 DeepSeek 那条（外层一段、里面图标 + 文字各一个 span），
+     好让 modeNode 的「取最深那层」走到与真站点同一条路径上 */
+  #modebar { display: inline-flex; border: 1px solid #bbb; border-radius: 999px; padding: 3px; gap: 2px; }
+  .seg { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; cursor: pointer; }
+  .seg[aria-selected="true"] { background: #dde6ff; }
   button { font: inherit; padding: 6px 14px; border-radius: 8px; margin-top: 12px; }
 </style>
 
@@ -35,6 +40,13 @@
   <textarea id="editor" placeholder="这里扮演主输入框"></textarea>
   <input type="file" id="picker" accept="image/*" hidden>
   <div id="previews"></div>
+</div>
+
+<h2>模拟模式条（扮演 DeepSeek 新对话页输入框上方那条分段控件）</h2>
+<div id="modebar">
+  <div class="seg" data-mode="fast" aria-selected="true"><span class="ico">⚡</span><span>快速模式</span></div>
+  <div class="seg" data-mode="pro" aria-selected="false"><span class="ico">◇</span><span>专家模式</span></div>
+  <div class="seg" data-mode="vision" aria-selected="false"><span class="ico">▣</span><span>识图模式</span></div>
 </div>
 
 <button id="run">重新跑一遍</button>
@@ -105,6 +117,17 @@ function reset() {
   enabled = { input: true, drop: true, paste: true };
 }
 
+// ── 模式条：点哪段哪段选中（扮演站点自己的行为）
+const segs = [...document.querySelectorAll('#modebar .seg')];
+segs.forEach((s) => s.addEventListener('click', () => setSeg(s.dataset.mode)));
+function setSeg(id) {
+  segs.forEach((s) => s.setAttribute('aria-selected', s.dataset.mode === id ? 'true' : 'false'));
+}
+function selectedSeg() {
+  const s = segs.find((x) => x.getAttribute('aria-selected') === 'true');
+  return s ? s.dataset.mode : null;
+}
+
 async function run() {
   pass = 0; fail = 0;
   log.innerHTML = '';
@@ -153,6 +176,26 @@ async function run() {
   const rD = await window.__unireader.attach(b64, `unireader-text-${Date.now()}.jpg`, 'image/jpeg', prompt);
   line(rD.textOK && editor.value.includes(prompt), '提示词写进了输入框');
   line(document.activeElement === editor, '结束时焦点落在输入框上');
+
+  // ⑤ 划字发送那条：ready() 认输入框 + insert() 只填字不带附件
+  reset();
+  line(window.__unireader.ready() === true, 'ready() 认出了输入框（原生侧「等页面就绪」的判据）');
+  const quote = '《测试书》 · 第 12 页\n这是划过去的一段原文。';
+  const rE = window.__unireader.insert(quote);
+  line(rE && editor.value.includes('这是划过去的一段原文。'), 'insert() 把选中的原文填进了输入框');
+
+  // ⑥ 模式条：按**可见文字**切档；已经在那一档就不重复点
+  setSeg('fast');
+  const rF = await window.__unireader.setMode(['识图模式']);
+  line(rF.found && rF.clicked && selectedSeg() === 'vision', `setMode 切到了识图模式（selected=${rF.selected}）`);
+  const rG = await window.__unireader.setMode(['识图模式']);
+  line(rG.found && !rG.clicked, '已经在那一档 → 不重复点');
+
+  // ⑦ 🔴 认不出就什么都不做。聊到一半那条控件本来就不在了（站点自己收走），
+  //    此时必须老实返回 found:false，**绝不能在页面上乱点一气**。
+  setSeg('pro');
+  const rH = await window.__unireader.setMode(['这个标签页面上没有']);
+  line(!rH.found && !rH.clicked && selectedSeg() === 'pro', '认不出的标签 → 不点、当前档一动不动');
 
   note('');
   note(`${pass} 通过，${fail} 失败`);

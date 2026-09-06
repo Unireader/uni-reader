@@ -278,6 +278,11 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
         NSPasteboard.general.setString(url.absoluteString, forType: .string)
     }
 
+    @objc private func selectMode(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        panel.setChatMode(id)
+    }
+
     @objc private func toggleDock(_ sender: NSMenuItem) { panel.setDocked(!panel.docked) }
     @objc private func showInline() { panel.setMode(.inline) }
     @objc private func reloadConfig() { panel.reloadConfig() }
@@ -321,6 +326,20 @@ extension AIPanelWindowController: NSMenuDelegate {
                 menu.addItem(.sectionHeader(title: L(note)))
             }
         case "more":
+            // 发送时用哪档模式（DeepSeek 的「快速 / 专家 / 识图」）。默认跟内容走：
+            // 有图 → 识图、无图 → 专家（用户 2026-09-06 定）。**只在新对话页切得动**。
+            if let modes = panel.currentProvider?.modes, !modes.isEmpty {
+                menu.addItem(.sectionHeader(title: L("Mode for new chats")))
+                let auto = add(menu, L("Follow Content"), #selector(selectMode(_:)))
+                auto.representedObject = "auto"
+                auto.state = panel.chatMode == "auto" ? .on : .off
+                for m in modes {
+                    let it = add(menu, m.name, #selector(selectMode(_:)))
+                    it.representedObject = m.id
+                    it.state = panel.chatMode == m.id ? .on : .off
+                }
+                menu.addItem(.separator())
+            }
             add(menu, L("Open in Browser"), #selector(openInBrowser), enabled: panel.currentURL != nil)
             add(menu, L("Copy Link"), #selector(copyLink), enabled: panel.currentURL != nil)
             menu.addItem(.separator())

@@ -161,7 +161,7 @@ extension ReaderSurface {
 
         showSnipToast(SnipToast(kind: .working, text: L("Capturing…")))
 
-        let prompt = snipPrompt(page: first.page)
+        let prompt = aiContextPrefix(page: first.page)
         let name = snipFileName(page: first.page)
         let provider = AIPanelModel.shared.currentProvider?.name ?? L("AI")
 
@@ -184,16 +184,23 @@ extension ReaderSurface {
                                             text: String(format: L("Added to %@"), provider)))
                 } else {
                     // 静默失败是这条链路最难查的形态 → 把走过的三级都打进日志。
-                    wsLog("[SNIP] 投递失败 tried=\(out.tried) text=\(out.textOK)")
-                    showSnipToast(SnipToast(kind: .fail, text: L("Couldn't put it in the chat box.")))
+                    wsLog("[SNIP] 投递失败 tried=\(out.tried) text=\(out.textOK) notReady=\(out.notReady)")
+                    // 「页面压根没就绪」与「找到输入框但站点不收」是两回事，别用同一句话打发
+                    // ——前者多半是没登录或首屏太慢，用户该去面板看一眼。
+                    showSnipToast(SnipToast(
+                        kind: .fail,
+                        text: out.notReady
+                            ? String(format: L("%@ isn't ready yet (still loading, or not signed in)."), provider)
+                            : L("Couldn't put it in the chat box.")))
                 }
             }
         }
     }
 
-    /// 提示词：书名 + 页码 + 章节。**成本几乎为零、收益明显**——没有书名页码的裸截图，
+    /// 上下文前缀：书名 + 页码 + 章节。**成本几乎为零、收益明显**——没有书名页码的裸截图，
     /// 模型答得明显差（`AI-PLAN.md §4`）。用户可编辑的模板留作后续。
-    private func snipPrompt(page: Int) -> String {
+    /// 框选发送与划字发送（`ReaderSurface+Selection.askAIAboutSelection`）共用这一份。
+    func aiContextPrefix(page: Int) -> String {
         var parts: [String] = []
         if !session.title.isEmpty { parts.append("《\(session.title)》") }
         parts.append(String(format: L("p.%d"), page + 1))
@@ -234,7 +241,8 @@ extension ReaderSurface {
     }
 
     /// 显示一条反馈并定时收起。`working` 给长一点的兜底超时（正常会被结果那条顶掉）。
-    private func showSnipToast(_ t: SnipToast) {
+    /// 非 private：划字发送（`ReaderSurface+Selection`）复用同一个 toast，两条投递路径的反馈得一致。
+    func showSnipToast(_ t: SnipToast) {
         snipToast = t
         let id = t.id
         let delay: TimeInterval = t.kind == .working ? 12 : (t.kind == .fail ? 4.5 : 2.4)

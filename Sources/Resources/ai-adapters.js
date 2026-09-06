@@ -148,6 +148,40 @@
     return true;
   }
 
+  // ── 「模式」分段控件（DeepSeek 新对话页：快速模式 / 专家模式 / 识图模式）
+  //
+  // 🔴 **只按可见文字整段相等来认**，不猜 class 名（class 每周都在变；可见文字变了用户一眼看得出来，
+  // 改外部配置即可）。认不出就什么都不做 —— 这条控件**只在新对话页存在**，聊起来之后它就没了，
+  // 那时找不到是正常的，正好等于「只在新建对话时切一次」这条规则，不必另记状态。
+  function modeNode(labels) {
+    const want = (labels || []).map((s) => String(s).trim()).filter(Boolean);
+    if (!want.length) return null;
+    let best = null;
+    for (const el of document.querySelectorAll(
+      'button, a, li, span, div, [role="button"], [role="tab"], [role="radio"]')) {
+      if (!isVisible(el)) continue;
+      const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+      if (want.indexOf(t) < 0) continue;
+      // 取**最深**的那个（文字所在的那一层）：点它，事件照样冒泡到挂着 onClick 的祖先，
+      // 而点祖先有可能命中整条控件的空白处。
+      if (!best || best.contains(el)) best = el;
+    }
+    return best;
+  }
+
+  // 选没选中：各家没有统一写法，这里只是**尽力判断**（aria 优先，再看 class 里的常见词）。
+  // 判不出就返回 null —— 报给原生侧当诊断信息，**不拿它当失败依据**。
+  function selectedish(el) {
+    for (let e = el, i = 0; e && i < 4; e = e.parentElement, i++) {
+      const sel = e.getAttribute && (e.getAttribute('aria-selected') || e.getAttribute('aria-checked'));
+      if (sel === 'true') return true;
+      if (sel === 'false') return false;
+      const cls = (e.className && e.className.baseVal !== undefined ? e.className.baseVal : e.className) || '';
+      if (typeof cls === 'string' && /(^|[-_ ])(active|selected|checked|current)([-_ ]|$)/i.test(cls)) return true;
+    }
+    return null;
+  }
+
   // ── 选区回传
   //
   // 为什么必须自己推：SwiftUI 的 `.webViewContextMenu` 给的 `ActivatedElementInfo` **只有 linkURL**，
@@ -219,6 +253,34 @@
         textOK: textOK,
         editor: editor ? (editor.tagName + (editor.id ? '#' + editor.id : '')) : null,
       };
+    },
+
+    /// 这个页面**能不能收东西**了：适配器已注入（能调到这个函数就说明已注入）+ 主输入框已经在 DOM 里。
+    /// 原生侧「等页面就绪再投递」的唯一判据（`AIPanelModel.waitUntilReady`）——首次打开面板时
+    /// webview 还在拉首屏，此刻注入必然扑空；登录页上也永远返回 false（那儿没有输入框）。
+    ready() {
+        return !!findEditor();
+    },
+
+    /// 切「模式」。`labels` = 原生侧给的可见文字候选（见 `AIMode.labels`）。
+    /// 返回 `{found}`：**没找到不算错**——聊到一半那条控件本来就不在了（见 `modeNode` 的注释）。
+    /// `selected` 只是尽力而为的诊断信息，判不出为 null。
+    async setMode(labels) {
+        const el = modeNode(labels);
+        if (!el) return { found: false, clicked: false, selected: null };
+        if (selectedish(el) === true) return { found: true, clicked: false, selected: true };
+        el.click();
+        await sleep(200);
+        const after = modeNode(labels);
+        return { found: true, clicked: true, selected: after ? selectedish(after) : null };
+    },
+
+    /// 只填一段文字、不带附件（划字发送）。同样**不自动发送**——填好让用户自己按发送键。
+    insert(text) {
+        const ok = insertText(text);
+        const el = findEditor();
+        if (el && el.focus) el.focus();   // 只在页面内聚焦，不抢窗口焦点（用户还在读书）
+        return ok;
     },
 
     /// 让原生侧主动问一次当前选区（右键菜单弹出前兜底：万一某次事件没捕到）。

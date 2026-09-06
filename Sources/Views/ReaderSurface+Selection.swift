@@ -203,6 +203,8 @@ extension ReaderSurface {
                 }
             }
             Button(L("Copy")) { copySelectionToPasteboard() }
+            Button(String(format: L("Ask %@ About This"), aiProviderName)) { askAIAboutSelection() }
+                .disabled(session.documentId == nil)
         } else {
             Button(L("Add Note Here")) { beginAddNoteAtCursor() }   // 点注解（锚到右键处页面坐标）
         }
@@ -229,6 +231,49 @@ extension ReaderSurface {
         AIPanelModel.shared.present(window: session.windowID)   // 内置模式展开侧面板，浮窗模式开窗口
         AIPanelModel.shared.beginBind(AIBindContext(sessionID: session.id, documentId: docId,
                                                     docTitle: session.title, page: page))
+    }
+
+    /// **划字发送**（用户 2026-09-06）：把选中的原文 + 一行上下文（书名·页码·章节）填进 AI 输入框。
+    ///
+    /// 与框选截图是同一条投递链路的两半，只是这半边发的是**文字**：页面有文本层（含 OCR 层）时
+    /// 直接发字比发图强一个档次——省 token、模型识别率高（`AI-PLAN.md §4` 的「文本优先」）。
+    /// 同样**不自动按发送**：填好让用户自己补一句要问什么再发。
+    ///
+    /// 锚点取选区所在的**最小页**及其行框并集：与「多张图用第一张」同一条规则——
+    /// 这条上下文若是本次对话的第一条，它就决定这次绑定钉在哪一页哪一处（`AIThread.addContext`）。
+    func askAIAboutSelection() {
+        guard let docId = session.documentId, let sel = selection else { return }
+        let text = sel.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let page = sel.rects.keys.min() ?? session.currentPageIndex
+        let union = (sel.rects[page] ?? []).reduce(CGRect.null) { $0.union($1) }
+        let rect = union.isNull ? CGRect.zero : union
+        let prompt = aiContextPrefix(page: page) + "\n" + text
+        let provider = AIPanelModel.shared.currentProvider?.name ?? L("AI")
+
+        clearSelection()
+        AIPanelModel.shared.present(window: session.windowID)   // 内置模式展开侧面板，浮窗模式开窗口
+        // **不强制新对话**（同框选发送）：连着划第二段多半是想接着刚才那个对话问。
+        AIPanelModel.shared.prepareForSend(
+            AIBindContext(sessionID: session.id, documentId: docId, docTitle: session.title,
+                          page: page, anchor: rect))
+        showSnipToast(SnipToast(kind: .working, text: L("Capturing…")))
+
+        Task { @MainActor in
+            let out = await AIPanelModel.shared.attachText(prompt)
+            if out.ok {
+                AIPanelModel.shared.noteSentContext(
+                    AIContext(kind: .quote, page: page, rect: rect == .zero ? nil : rect, text: text))
+                showSnipToast(SnipToast(kind: .ok, text: String(format: L("Added to %@"), provider)))
+            } else {
+                wsLog("[ASK] 划字发送失败 tried=\(out.tried) notReady=\(out.notReady)")
+                showSnipToast(SnipToast(
+                    kind: .fail,
+                    text: out.notReady
+                        ? String(format: L("%@ isn't ready yet (still loading, or not signed in)."), provider)
+                        : L("Couldn't put it in the chat box.")))
+            }
+        }
     }
 
     /// 在右键处加一枚书签：落点取 `.onContinuousHover` 维护的光标位（与「在此添加批注」同源），
