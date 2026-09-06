@@ -269,6 +269,16 @@ wantPx = 小窗内容区宽度(px) × 当前缩放
 **必须 `withTransaction(animation = nil)` 原子提交，且锚点只信自己刚提交的目标**。
 主阅读区 `ReaderSurface+Zoom.commitZoom` 是这条的参考实现，新写滚动容器时照抄它，别重新发明。
 
+### 11.2 摆位越界与 ⌘+滚轮缩放（2026-09-06，Mac）
+
+| 反馈 | 根因 | 修法 |
+|---|---|---|
+| 小窗标题栏跑到系统标题栏底下，**拖不动了** | 摆位/尺寸是本端记忆（`UserDefaults`），而**夹取只发生在拖动/改尺寸的手势里**：容器一变小（缩窗口、开侧栏/Inspector、退出全屏、上次那扇窗更大）就再没人夹。`.offset` 又**不裁剪**，越界那截正好画在工具栏玻璃底下——鼠标点不到（事件归工具栏），于是「拖不动」 | `RefWindowView` 新增 `fitSize`/`fitOffset`（纯函数，**在 body 里算**，第一帧就是夹过的）+ `fitIntoContainer`（`onAppear` / 容器变化 / 打开那一刻写回状态与记忆）。面板、气泡、拖动手势一律走夹过的那份 |
+| 小窗缺 ⌘+滚轮缩放（方案 §7 本来就写了「捏合/滚轮缩放」） | 只做了 `MagnifyGesture` | `RefPageStream` 装 `NSEvent` 本地滚轮监视器（**纯事件管道，不引 AppKit 视图**），照抄主阅读区 `ReaderSurface+Zoom` 那套：`exp(-delta*0.008)` 夹在 0.5~2、光标为锚、有级滚轮 ×10。锚点走 `onContinuousHover` 记的 `scratch.cursorP`——**它同时是「这一下归不归我」的判据**：光标不在小窗里就 `return event` 原样放行，主阅读区那个监视器照旧拿得到 |
+
+复用而非另写：一次滚轮 = 一次性的 `RefPinch` 账本 → 仍走 `commitZoom`，
+于是「锚点不动 / 禁隐式动画 / 记忆同步」与捏合完全同一条路径（同主阅读区 `zoomCommit` 的做法）。
+
 ## 12. 实现记录 — web 采集页与安卓两模式（2026-08-30 落地，待真机验证）
 
 ### web（`web/src/RefWindow.svelte`）

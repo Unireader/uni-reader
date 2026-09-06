@@ -44,12 +44,42 @@ struct RefWindowView: View {
     private var liveOffset: CGSize { localOffset ?? model.offset }
     private var liveSize: CGSize { localSize ?? model.size }
 
+    /// 🔴 **摆位与尺寸每次布局都按当前容器夹一遍**（用户 2026-09-06 报「小窗标题栏跑到窗口
+    /// 标题栏底下，拖不动了」）。
+    ///
+    /// 摆位/尺寸是本端记忆（`UserDefaults`），而容器随时会**变小**：缩窗口、开侧栏/Inspector、
+    /// 退出全屏、换一块小屏、甚至上次那扇窗本来就更大。夹取从前**只在拖动/改尺寸的手势里**做，
+    /// 容器一变就再没人夹——那份为大容器存下的偏移把小窗顶到容器上沿之外。
+    /// 而 `.offset` **不裁剪**：跑出去的那截正好画在工具栏玻璃底下，小窗的标题栏落在系统标题栏
+    /// 那一片里，鼠标点不到（事件被工具栏吃掉）＝「拖不动了」。
+    ///
+    /// 夹取是纯函数、在 body 里算（不写 `@Published`，写状态的事交给 `fitIntoContainer`）——
+    /// 这样**第一帧**就已经是夹过的，不必等 `onChange` 补一拍。
+    private func fitSize(_ container: CGSize) -> CGSize {
+        RefWindowModel.clampSize(liveSize, in: container)
+    }
+    private func fitOffset(_ container: CGSize) -> CGSize {
+        RefWindowModel.clampOffset(liveOffset, size: fitSize(container), in: container)
+    }
+
+    /// 容器变了 → 把夹取结果写回状态与记忆，否则下次容器变大时又会从那份越界的旧值起算。
+    private func fitIntoContainer(_ container: CGSize) {
+        guard container.width > 0, container.height > 0 else { return }
+        let s = fitSize(container), o = fitOffset(container)
+        guard s != liveSize || o != liveOffset else { return }
+        localSize = s
+        localOffset = o
+        model.size = s
+        model.offset = o
+        model.persistGeometry()
+    }
+
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .bottomTrailing) {
                 if model.isOpen {
                     if model.collapsed {
-                        bubble.transition(.scale.combined(with: .opacity))
+                        bubble(container: g.size).transition(.scale.combined(with: .opacity))
                     } else {
                         panel(container: g.size).transition(.opacity)
                     }
@@ -59,25 +89,30 @@ struct RefWindowView: View {
             .frame(width: g.size.width, height: g.size.height, alignment: .bottomTrailing)
             .animation(.easeOut(duration: 0.16), value: model.isOpen)
             .animation(.easeOut(duration: 0.16), value: model.collapsed)
+            .onAppear { fitIntoContainer(g.size) }
+            .onChange(of: g.size) { _, s in fitIntoContainer(s) }
+            // 打开那一刻也夹一遍：关着的时候容器变过（开侧栏/缩窗口），再打开就是越界的旧值。
+            .onChange(of: model.isOpen) { _, open in if open { fitIntoContainer(g.size) } }
         }
     }
 
     // MARK: - 面板
 
     private func panel(container: CGSize) -> some View {
-        VStack(spacing: 0) {
-            header(container: container)
+        let size = fitSize(container)
+        return VStack(spacing: 0) {
+            header(container: container, size: size)
             Divider()
             RefPageStream(model: model, nightMode: nightMode, currentPage: $currentPage)
         }
-        .frame(width: liveSize.width, height: liveSize.height)
+        .frame(width: size.width, height: size.height)
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Self.corner))
         .overlay { RoundedRectangle(cornerRadius: Self.corner).strokeBorder(.separator, lineWidth: 0.5) }
         .overlay { resizeEdges(container: container) }
         .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
         .padding(14)
-        .offset(liveOffset)
+        .offset(fitOffset(container))
     }
 
     /// 🔴 **高度锁死 + 按宽度分档降级**：HStack 里只要有一个 `Text` 没被限成单行，窄到放不下时
@@ -88,13 +123,13 @@ struct RefWindowView: View {
     /// 🔴 **文档名是拖拽区，不是控件**（用户 2026-09-02）：它原先整块是「换书」菜单的 label，
     /// 于是标题栏最顺手的那一片全被菜单吃掉、拖不动窗口（系统窗口的标题从来都是拖拽把手）。
     /// 现在换书收进左边那枚书本图标，标题退回纯 `Text` —— 不吃点击 = 落到下面的 `moveGesture`。
-    private func header(container: CGSize) -> some View {
+    private func header(container: CGSize, size: CGSize) -> some View {
         HStack(spacing: 4) {
             docPicker
             if !model.toc.isEmpty { tocButton }
             title
             Spacer(minLength: 2)
-            if liveSize.width >= Self.pageNumMinWidth, let n = model.pdf?.pageCount, n > 0 {
+            if size.width >= Self.pageNumMinWidth, let n = model.pdf?.pageCount, n > 0 {
                 Text("\(currentPage + 1) / \(n)")
                     .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize()
@@ -206,9 +241,11 @@ struct RefWindowView: View {
     private func moveGesture(container: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { v in
+                // 基准取 `model.offset`（手势期间不变）；夹取的尺寸用**夹过的**那份，
+                // 否则容器刚变小、`fitIntoContainer` 还没写回时会按旧尺寸放宽边界。
                 let want = CGSize(width: model.offset.width + v.translation.width,
                                   height: model.offset.height + v.translation.height)
-                localOffset = RefWindowModel.clampOffset(want, size: liveSize, in: container)
+                localOffset = RefWindowModel.clampOffset(want, size: fitSize(container), in: container)
             }
             .onEnded { _ in
                 model.setOffset(liveOffset, in: container)
@@ -267,7 +304,7 @@ struct RefWindowView: View {
 
     // MARK: - 折叠气泡
 
-    private var bubble: some View {
+    private func bubble(container: CGSize) -> some View {
         Button { model.collapsed = false } label: {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 17, weight: .medium))
@@ -279,7 +316,7 @@ struct RefWindowView: View {
         }
         .buttonStyle(.plain)
         .padding(16)
-        .offset(liveOffset)
+        .offset(fitOffset(container))   // 气泡与面板同一份摆位（同样夹在容器内）
         .help(L("Reference Window"))
     }
 }

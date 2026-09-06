@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import PDFKit
 import QuartzCore
@@ -59,6 +60,15 @@ struct RefPageStream: View {
             geometryChanged(new)
         }
         .gesture(magnify)
+        // ⌘+滚轮缩放的锚点（容器坐标，与 `magnify` 的 startLocation 同一空间）。
+        // 光标不在小窗里时置 nil —— 监视器据此放行事件，主阅读区那个才拿得到。
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            switch phase {
+            case .active(let p): scratch.cursorP = p
+            case .ended: scratch.cursorP = nil
+            }
+        }
+        .onAppear { installWheelMonitor() }
         .onChange(of: model.seedRev) { _, _ in seedIfReady() }
         .onChange(of: model.docKey) { _, _ in
             // 换书 = 全新一份状态（旧书的图留在引擎缓存里由 LRU 处置，别在这儿 purge：
@@ -69,7 +79,10 @@ struct RefPageStream: View {
             scratch.positioned = false
         }
         .onChange(of: nightMode) { _, _ in nightChanged() }
-        .onDisappear { PageRenderEngine.shared.setWanted([], client: model.clientID) }
+        .onDisappear {
+            PageRenderEngine.shared.setWanted([], client: model.clientID)
+            removeWheelMonitor()   // 折叠成气泡 / 关小窗 = 这个页流没了，监视器不能留着
+        }
     }
 
     /// 🔴 **视口尺寸只认外层 `GeometryReader`，绝不用 `ScrollGeometry.containerSize`。**
@@ -332,6 +345,45 @@ struct RefPageStream: View {
         scratch.pendingTarget ?? CGPoint(x: geo.offsetX, y: geo.offsetY)
     }
 
+    // MARK: ⌘+滚轮缩放（光标为锚，与主阅读区 `ReaderSurface+Zoom` 同一套做法与手感旋钮）
+    //
+    // SwiftUI 没有滚轮 API → `NSEvent` 本地监视器（**纯事件管道，不引 AppKit 视图**，
+    // 与阅读区那条红线的分寸一致）。只在「⌘按住 + 光标在小窗页流里 + 非动量惯性 + 无进行中捏合」
+    // 时消费，其余原样 `return event` 放行——光标在主阅读区时 `cursorP` 为 nil，
+    // 事件照旧落到阅读区自己的监视器上，两者互不抢。
+
+    private func installWheelMonitor() {
+        guard scratch.wheelMonitor == nil else { return }
+        scratch.wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard event.modifierFlags.contains(.command),
+                  event.momentumPhase == [],
+                  let p = scratch.cursorP,
+                  model.layout != nil, viewport.width > 0, scratch.pinch == nil else { return event }
+            var delta = event.scrollingDeltaY
+            if !event.hasPreciseScrollingDeltas { delta *= 10 }   // 有级滚轮（行单位）放大到像素量级
+            guard delta != 0 else { return nil }
+            let factor = min(max(exp(-delta * 0.008), 0.5), 2)    // 手感旋钮 0.008；负号 = 系统缩放方向约定
+            wheelZoom(factor: factor, anchorP: p)
+            return nil   // 消费：⌘滚轮不再触发小窗滚动
+        }
+    }
+
+    private func removeWheelMonitor() {
+        if let m = scratch.wheelMonitor {
+            NSEvent.removeMonitor(m)
+            scratch.wheelMonitor = nil
+        }
+    }
+
+    /// 一次滚轮缩放 = 一次性的捏合账本（同主阅读区 `zoomCommit`）：走 `commitZoom` 那条原子提交，
+    /// 于是「锚点不动 / 禁隐式动画 / 记忆同步」三件事与捏合完全一致，不必再写第二套。
+    private func wheelZoom(factor: CGFloat, anchorP P: CGPoint) {
+        guard model.layout != nil, viewport.width > 0 else { return }
+        let o = anchorOffset
+        var p = RefPinch(startZoom: zoom, viewportP: P, cCur: CGPoint(x: o.x + P.x, y: o.y + P.y))
+        commitZoom(to: clampZoom(zoom * factor), pinch: &p)
+    }
+
     private func clampZoom(_ z: CGFloat) -> CGFloat { min(max(z, 1), 6) }
 
     /// 原子缩放提交：布局（`zoom`）与偏移（`scrollTo`）写在同一个 runloop = 同一次 CA commit。
@@ -391,6 +443,10 @@ final class RefScratch {
     var pendingTarget: CGPoint?
     var pendingSince: CFTimeInterval = 0
     var lastCommitAt: CFTimeInterval = 0
+    /// 光标在小窗页流里的位置（容器坐标；域外为 nil）。⌘+滚轮缩放的锚点，也是「这一下归不归我」的判据。
+    var cursorP: CGPoint?
+    /// ⌘+滚轮监视器的登记凭据（`NSEvent.addLocalMonitorForEvents` 的返回值）。
+    var wheelMonitor: Any?
 }
 
 /// 一次捏合的锚点账本：屏幕上的不动点 `viewportP`，以及它当前对应的**内容坐标** `cCur`。
