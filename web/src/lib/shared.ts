@@ -417,6 +417,39 @@ export function fountainTaper(t: string, i: number, n: number): number {
   const a = Math.min(p, 1 - p) / edge;
   return a >= 1 ? 1 : (a * a * (3 - 2 * a)) * 0.82 + 0.18;
 }
+
+// ---- 铅笔「多道微波动叠加」：与 Mac `PenBrushType.pencilPasses` / 安卓 `PadConst.PENCIL_*` 同一套 ----
+//
+// 2026-09-07 补：此前 web 与安卓的铅笔是**一条光溜的粗实线**，只有 Mac 有石墨纹理，
+// 墨量差 65%（`spike/ink-cross/` 的 pencil-texture 向量照出来的）。
+
+/** 每道 (垂向波幅×线宽, 该道 alpha, 线宽比例, 相位)。首道波幅 0 作居中核心，其余低频垂向波动。 */
+export const PENCIL_PASSES: { amp: number; alpha: number; wScale: number; phase: number }[] = [
+  { amp: 0.0, alpha: 0.34, wScale: 0.55, phase: 0.0 },
+  { amp: 0.34, alpha: 0.16, wScale: 0.45, phase: 2.3 },
+  { amp: 0.34, alpha: 0.16, wScale: 0.45, phase: 4.6 },
+];
+/** 波幅公式里线宽项的上限：不封顶的话调粗画笔时波幅线性变大，显成锯齿尖刺而不是石墨纹理。 */
+export const PENCIL_WOBBLE_REF_W = 9.0;
+/** 波动相位推进速率（弧度/像素，按累计弧长走**不按点序号**）。觉得纹理太碎/太稀就改这一个数。 */
+export const PENCIL_WOBBLE_FREQ = 0.025;
+
+/**
+ * GLSL 风 hash → [-1,1]，种子用**归一化**坐标（缩放无关；铅笔纹理重绘不抖）。
+ * 与 Mac `InkRender.jitter` 同式。
+ */
+export function inkJitter(x: number, y: number): number {
+  const v = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return (v - Math.floor(v)) * 2 - 1;
+}
+
+/** 点 i 处的路径垂线单位向量（用前后邻点估切线）。与 Mac `InkRender.perp` 同式。 */
+export function inkPerp(xs: number[], ys: number[], i: number): [number, number] {
+  const a = Math.max(0, i - 1), b = Math.min(xs.length - 1, i + 1);
+  const dx = xs[b] - xs[a], dy = ys[b] - ys[a];
+  const len = Math.max(0.0001, Math.sqrt(dx * dx + dy * dy));
+  return [-dy / len, dx / len];
+}
 export function scaledColor(css: string, mult: number): string {
   if (mult === 1) return css;
   const m = /rgba?\(([^)]+)\)/.exec(css);
