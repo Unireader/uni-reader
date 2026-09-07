@@ -25,7 +25,9 @@ let canonical: [[String: Any]] = [
     ["type": "layout", "docId": "H", "v": "H", "count": 2, "pages": [[612.0, 792.0], [595.0, 842.0]]],
     ["type": "viewport", "page": 3, "frac": 0.5, "seq": 7],
     ["type": "viewport", "page": 3, "frac": 0.25, "force": true],
-    ["type": "docs", "list": [["id": "a", "title": "T1"], ["id": "b", "title": "标题"]], "selected": "a", "following": false],
+    // 两项刻意落在**不同工作区**（`ws`）：docs 是跨工作区的混排，客户端按它分组（PROTOCOL §4.2）
+    ["type": "docs", "list": [["id": "a", "title": "T1", "ws": "W1"], ["id": "b", "title": "标题", "ws": "内覆盖"]],
+     "selected": "a", "following": false],
     ["type": "pens", "list": [["color": "rgba(24,90,210,0.5)", "w": 8, "t": "ballpoint"],
                               ["color": "rgba(255,214,40,0.25)", "w": 22, "t": "marker"]], "active": 1],
     ["type": "inkCancel"],

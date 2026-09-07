@@ -310,6 +310,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                 self.tabs.pruneMissing(docs)
                 self.tabs.syncWorkspaceSnapshot()
                 self.app.broadcastLibrary()
+                // `docs` 每项带工作区名（客户端按它分组），而那个名字就是刚 sync 进去的快照
+                self.app.broadcastDocs()
             }
             .store(in: &bag)
     }

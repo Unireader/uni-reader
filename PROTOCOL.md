@@ -254,7 +254,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `page` | `u32 v` · `u32 index` · `u32 count` · `f32 w` · `f32 h` |
 | `layout` | `str docId` · `str v` · `u32 count` · `count ×(f32 w, f32 h)` |
 | `viewport` | `u32 page` · `f32 frac` · `u32 seq` · `u8 force` |
-| `docs` | `u8 following` · `str selected` · `u16 n` · `n ×(str id, str title)` |
+| `docs` | `u8 following` · `str selected` · `u16 n` · `n ×(str id, str title, str ws)` |
 | `pens` | `u16 active` · `u16 n` · `n × pen` |
 | `inkCancel` | 空 |
 | `strokes` | `u32 ackRel` · `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
@@ -303,7 +303,14 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 - `page` → `{type:"page", v, index, count, w, h}`（方案 B 下平板忽略，仍编码）
 - `layout` → `{type:"layout", docId, v, count, pages:[[w,h],…]}`
 - `viewport` → `{type:"viewport", page, frac, seq, force}`（`force` 布尔；`macScrolled` 走 seq、`pushCurrentViewport` 走 force=true）
-- `docs` → `{type:"docs", list:[{id,title},…], selected, following}`
+- `docs` → `{type:"docs", list:[{id,title,ws},…], selected, following}`
+
+  **`ws` = 那个窗口所属工作区的名字**（`DocSession.workspaceName`）。Mac 是**窗口级工作区、多工作区并存**
+  （`REQUIREMENTS.md §8.1`），故这份列表天生就是跨工作区的混排——不带 `ws` 的话客户端根本分不出
+  「这几个标签属于哪个工作区」，点过去工作区会凭空换掉（安卓模式2 的标签页栏 2026-09-06 之前就是这样）。
+  客户端据此**按工作区分组**：只显示当前工作区那几篇，切工作区 = 对目标工作区的某一篇发 `selectDoc`。
+  当前工作区 = `selected` 那一项的 `ws`（**别用 `library` 的 `wsName` 来分组**：两条广播的先后没有保证，
+  同 `layout`/`toc` 那个坑）。窗口还没装上工作区时是空串。
 - `pens` → `{type:"pens", list:[{color,w,t},…], active}`
 - `strokes` → `{type:"strokes", ackRel, list:[{page, pen:{color,w,t}, pts:[[x,y,pressure],…]},…]}`
 

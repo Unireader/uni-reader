@@ -1375,10 +1375,14 @@ final class AppModel: ObservableObject {
     }
 
     /// 广播打开中的文档列表给平板。
+    ///
+    /// ⚠️ 这份列表是**跨工作区**的（`sessions` = 全部窗口，而工作区是窗口级的，`REQUIREMENTS.md §8.1`），
+    /// 所以每项必须带上 `ws` = 那个窗口的工作区名——客户端拿它分组，否则标签页栏会把几个工作区的
+    /// 文档混成一排、点过去工作区凭空换掉（`PROTOCOL.md §4.2` 的 `docs`）。
     func broadcastDocs() {
         guard server.isRunning else { return }
         let list: [[String: Any]] = sessions.map {
-            ["id": $0.id.uuidString, "title": $0.title.isEmpty ? "未命名" : $0.title]
+            ["id": $0.id.uuidString, "title": $0.title.isEmpty ? "未命名" : $0.title, "ws": $0.workspaceName]
         }
         server.broadcast([
             "type": "docs",

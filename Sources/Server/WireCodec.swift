@@ -231,7 +231,7 @@ enum WireCodec {
             w.u8(Op.docs); w.u8(boolOf(o["following"]) ? 1 : 0); w.str(strOf(o["selected"]))
             let list = o["list"] as? [[String: Any]] ?? []
             w.u16(list.count)
-            for d in list { w.str(strOf(d["id"])); w.str(strOf(d["title"])) }
+            for d in list { w.str(strOf(d["id"])); w.str(strOf(d["title"])); w.str(strOf(d["ws"])) }
         case "pens":
             w.u8(Op.pens); w.u16(intOf(o["active"]))
             let list = o["list"] as? [[String: Any]] ?? []
@@ -541,7 +541,7 @@ enum WireCodec {
         case Op.docs:
             let following = r.u8() == 1, selected = r.str(), n = r.u16()
             var list = [[String: Any]](); list.reserveCapacity(n)
-            for _ in 0..<n { list.append(["id": r.str(), "title": r.str()]) }
+            for _ in 0..<n { list.append(["id": r.str(), "title": r.str(), "ws": r.str()]) }
             out = ["type": "docs", "list": list, "selected": selected, "following": following]
         case Op.pens:
             let active = r.u16(), n = r.u16()

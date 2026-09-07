@@ -185,7 +185,7 @@
       case "docs": {
         w.u8(OP.docs); w.u8(o.following ? 1 : 0); w.str(o.selected || "");
         var L = o.list || []; w.u16(L.length);
-        for (var j = 0; j < L.length; j++) { w.str(L[j].id); w.str(L[j].title); }
+        for (var j = 0; j < L.length; j++) { w.str(L[j].id); w.str(L[j].title); w.str(L[j].ws || ""); }
         break;
       }
       case "pens": {
@@ -431,7 +431,7 @@
       case OP.viewport: return { type: "viewport", page: r.u32(), frac: r.f32(), seq: r.u32(), force: r.u8() === 1 };
       case OP.docs: {
         var following = r.u8() === 1, selected = r.str(), n = r.u16(), list = new Array(n);
-        for (var j = 0; j < n; j++) list[j] = { id: r.str(), title: r.str() };
+        for (var j = 0; j < n; j++) list[j] = { id: r.str(), title: r.str(), ws: r.str() };
         return { type: "docs", list: list, selected: selected, following: following };
       }
       case OP.pens: {
