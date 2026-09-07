@@ -26,3 +26,8 @@ reference
 
 
 android
+
+# 三端笔迹绘制对比工具（spike/ink-cross/）的产物与拷贝件。
+# 唯一真源是 spike/ink-cross/vectors.json，另两处是 run.sh 拷过去给 vite / gradle 用的。
+spike/ink-cross/out/
+web/ink-cross-vectors.json

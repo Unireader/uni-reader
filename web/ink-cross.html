@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>UniReader 三端笔迹对比 · web 出图端</title>
+<!--
+  三端笔迹绘制对比工具（`spike/ink-cross/`）的 **web 出图端**。不是产品页面，也不进产品构建
+  ——`vite.config.ts` 的 input 只有 `index.html`，这个文件只被 `spike/ink-cross/run.sh` 起的
+  dev server 用到。放在 `web/` 根下是为了让 vite 能直接转译 `src/lib/*.ts`（放 spike/ 下的话
+  node_modules 解析不到）。
+
+  🔴 **绝不在这里复刻渲染算法**——它 import 的 `buildGeomWith`/`paintGeomAt` 就是产品代码本身。
+  复刻一份等于自己跟自己比，三端分叉照样藏着。
+
+  用法：`?i=<下标>` 只画第几条笔画（截图逐条来，一张图一条笔画差异才看得清）。
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #fff; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<script type="module">
+import { buildGeomWith, paintGeomAt } from "./src/lib/inkGeom.ts";
+
+const params = new URLSearchParams(location.search);
+const idx = parseInt(params.get("i") ?? "0", 10);
+
+const doc = await (await fetch("./ink-cross-vectors.json")).json();
+const { w, h, scale } = doc.canvas;
+const v = doc.strokes[idx];
+if (!v) { document.title = "ERR-no-stroke"; throw new Error("没有第 " + idx + " 条笔画"); }
+
+const cv = document.getElementById("cv");
+// 🔴 CSS 尺寸 = 像素尺寸，且截图窗口也用这个尺寸：chromium 因此**完全不参与重采样**，
+// 比出来的差异全是笔迹算法的。让浏览器缩放一次，比的就成了它的重采样质量。
+cv.width = w * scale;
+cv.height = h * scale;
+cv.style.width = (w * scale) + "px";
+cv.style.height = (h * scale) + "px";
+const cx = cv.getContext("2d");
+cx.fillStyle = "#fff";
+cx.fillRect(0, 0, cv.width, cv.height);
+// 🔴 HiDPI 用 canvas 的**像素尺寸**乘进坐标映射，而不是 ctx.scale()：ctx.scale 会连线宽一起放大，
+// 与 Mac 端 `ImageRenderer.scale` 的语义一致；但这里必须让**几何**按物理像素算，
+// 所以映射里直接乘 `w*scale`，线宽也乘 `scale`（= buildGeomWith 的 wScale）。
+const px = (i) => v.points[i][0] * w * scale;
+const py = (i) => v.points[i][1] * h * scale;
+
+// 产品里的 `Stroke` 形状：pen.color 是 CSS 串、pen.w 是笔宽、pen.t 是笔型。
+const stroke = {
+  page: 0,
+  pen: {
+    color: `rgba(${v.color.r},${v.color.g},${v.color.b},${v.color.a})`,
+    w: v.width,
+    t: v.type,
+  },
+  pts: v.points,
+};
+
+const geom = buildGeomWith(stroke, px, py, scale, w * scale);
+paintGeomAt(cx, geom, 0, 0);
+
+// 截图脚本靠标题判断"画完了"——canvas 是同步画的，但模块加载与 fetch 是异步的。
+document.title = "OK-" + v.name;
+</script>
+</body>
+</html>
