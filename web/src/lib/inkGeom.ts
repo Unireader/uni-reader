@@ -10,7 +10,7 @@
 // 安卓 `android/…/shared/InkRenderer.kt` 的 `build`。三份实现同算法，改一边不改另两边就是分叉
 // ——`spike/ink-cross/` 就是用来把这种分叉照出来的，改完顺手跑一次。
 
-import { strokeWidthFor, opacityMultFor, scaledColor } from "./shared.js";
+import { strokeWidthFor, opacityMultFor, scaledColor, fountainTaper } from "./shared.js";
 import type { Stroke } from "./shared.js";
 
 /// 一条笔迹已构建好的几何。路径建在**页局部坐标**（原点＝该页左上角，单位 CSS px，随缩放变），
@@ -59,9 +59,11 @@ export function buildGeomWith(s: Stroke, px: (i: number) => number, py: (i: numb
   // 合并顺带修掉一个观感 bug：逐段各自半透明合成会让相邻段共享的圆头越叠越黑（Mac 端记的
   // 「黑点瑕疵」根因，那边已改成整条一次 fill），攒进同一条路径后不再重复合成。
   // 断开用**迟滞**而不是绝对分桶：压感几乎每点都在抖，按固定档位会断得比不合并还碎。
+  // 起笔圆点。钢笔在这里要吃 taper（i=0 是最细的那一端），否则起笔处凭空鼓出一个圆头。
+  const n = pts.length;
   const dot = new Path2D();
-  dot.arc(lx, ly, strokeWidthFor(t, pts[0][2], s.pen.w) * wScale / 2, 0, Math.PI * 2);
-  segs.push({ w: 0, path: dot, fill: true });   // 起笔圆点
+  dot.arc(lx, ly, strokeWidthFor(t, pts[0][2], s.pen.w) * fountainTaper(t, 0, n) * wScale / 2, 0, Math.PI * 2);
+  segs.push({ w: 0, path: dot, fill: true });
 
   let lastMidX = lx, lastMidY = ly, curW = -1;
   let cur: Path2D | null = null;
@@ -72,9 +74,11 @@ export function buildGeomWith(s: Stroke, px: (i: number) => number, py: (i: numb
     segs.push({ w, path: cur });
   };
   const needsBreak = (w: number): boolean => cur === null || Math.abs(w - curW) > Math.max(0.35, curW * 0.08);
-  for (let i = 1; i < pts.length; i++) {
+  for (let i = 1; i < n; i++) {
     const qx = px(i), qy = py(i);
-    const w = strokeWidthFor(t, pts[i][2], s.pen.w) * wScale;
+    // 🔴 `fountainTaper` 是 2026-09-07 补的：此前 web 端一行都没有，同一支钢笔在 Mac 上两头尖、
+    // 在平板上齐头齐尾（`spike/ink-cross/` 的 fountain-taper 向量照出来的）。
+    const w = strokeWidthFor(t, pts[i][2], s.pen.w) * fountainTaper(t, i, n) * wScale;
     if (needsBreak(w)) openAt(w);
     const mx = (lx + qx) / 2, my = (ly + qy) / 2;
     cur!.quadraticCurveTo(lx, ly, mx, my);
@@ -82,7 +86,7 @@ export function buildGeomWith(s: Stroke, px: (i: number) => number, py: (i: numb
   }
   // 补末段：上面每步只画到「相邻两点的中点」，末点从来没被连上——长笔画差这半段看不出来，
   // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。补一段 lastMid → 末点才落到笔尖。
-  const lastW = strokeWidthFor(t, pts[pts.length - 1][2], s.pen.w) * wScale;
+  const lastW = strokeWidthFor(t, pts[n - 1][2], s.pen.w) * fountainTaper(t, n - 1, n) * wScale;
   if (needsBreak(lastW)) openAt(lastW);
   cur!.lineTo(lx, ly);
   return { pw: p, color, multiply: false, segs };

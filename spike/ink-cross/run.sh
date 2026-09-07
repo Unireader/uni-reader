@@ -43,7 +43,10 @@ fi
 if want mac; then
   echo "▸ macOS 出图"
   mkdir -p "$OUT/mac"
-  cp "$HERE/mac.swift" /tmp/inkcross-main.swift
+  # 🔴 文件名**必须**是 `main.swift`：swiftc 只允许这一个文件名带顶层表达式，叫别的名字
+  # 会报一串 "expressions are not allowed at the top level"（报的是结果不是原因，很容易去改代码）。
+  mkdir -p /tmp/inkcross-build
+  cp "$HERE/mac.swift" /tmp/inkcross-build/main.swift
   # 🔴 只编渲染那几个文件——`UniReaderApp.swift` 带 @main 且拖着整个 App 层，编不进 spike。
   swiftc \
     "$ROOT/Sources/Views/InkLayers.swift" \
@@ -54,7 +57,7 @@ if want mac; then
     "$ROOT/Sources/App/TextNoteModel.swift" \
     "$ROOT/Sources/Store/LibraryModels.swift" \
     "$ROOT/Sources/Support/L.swift" \
-    /tmp/inkcross-main.swift -o /tmp/inkcross-mac || { echo "✗ macOS 端编译失败"; exit 1; }
+    /tmp/inkcross-build/main.swift -o /tmp/inkcross-mac || { echo "✗ macOS 端编译失败"; exit 1; }
   /tmp/inkcross-mac "$VEC" "$OUT/mac" || exit 1
 fi
 

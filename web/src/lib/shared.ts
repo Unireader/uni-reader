@@ -400,6 +400,23 @@ export function strokeWidthFor(t: string, p: number, w: number): number {
   return 0.6 + p * w;   // ballpoint / 未知类型兜底
 }
 export function opacityMultFor(t: string): number { return t === "pencil" ? 0.85 : 1; }
+
+/**
+ * 钢笔起收笔锥度（0~1 乘线宽）：`i/(n-1)` 为点在笔画中的归一化位置，两端渐细、中段为 1；
+ * 非钢笔恒 1。与 Mac `PenBrushType.fountainTaper` / 安卓 `PadConst.fountainTaper` **逐字同式**。
+ *
+ * `n <= 2` 不锥：两点笔画 = 尺子直线或擦除切出的碎段，按 index 算的话整条都落在「两端」、
+ * 会整体细成 0.18 倍。
+ *
+ * 2026-09-07 补：此前 web 与安卓**一行都没有**，只有 Mac 有——同一支钢笔在 Mac 上两头尖、
+ * 在平板上齐头齐尾，`spike/ink-cross/` 的 `fountain-taper` 向量就是照出这条分叉的判据。
+ */
+export function fountainTaper(t: string, i: number, n: number): number {
+  if (t !== "fountain" || n <= 2) return 1;
+  const p = i / (n - 1), edge = 0.16;
+  const a = Math.min(p, 1 - p) / edge;
+  return a >= 1 ? 1 : (a * a * (3 - 2 * a)) * 0.82 + 0.18;
+}
 export function scaledColor(css: string, mult: number): string {
   if (mult === 1) return css;
   const m = /rgba?\(([^)]+)\)/.exec(css);
