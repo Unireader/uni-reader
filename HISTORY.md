@@ -3,6 +3,76 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 三端笔迹绘制对比工具 + 两条分叉修掉（2026-09-07，三端）
+
+用户拍板：路线图 ⑤（Rust 笔迹核心）正式放弃，改做**对比工具**——「将多端的绘制汇总起来对比，
+找到差异，然后修复」。
+
+### 工具（`spike/ink-cross/`）
+
+一份共同向量 → 三端各自用**产品代码本身**渲成 PNG → 并排 + 差值图 + 指标表。
+`spike/ink-cross/run.sh` 一条命令跑完，`out/report.html` 用浏览器打开。
+
+🔴 **工具里没有一行复刻的渲染算法**。复刻一份就等于自己跟自己比，分叉照样藏着：
+`mac.swift` 调 `inkDrawStroke`；`web/ink-cross.html` import `web/src/lib/inkGeom.ts`；
+安卓 `InkCrossProbeTest` 调 `shared/InkRenderer`。
+
+为此把 `buildGeomWith`/`paintGeomAt` 从 `render.ts` 的 `initRender` 闭包搬进新模块
+`web/src/lib/inkGeom.ts`（纯搬迁、零行为变化——它们本来就没用到任何闭包变量）。
+
+**三端出图的共同口径**（改一处必须同时改另两处，否则比的是口径不是算法）：
+位图 = `canvas.w × canvas.h × canvas.scale`（1800×1200）／笔宽 = `width × scale` 物理像素
+（mac `ImageRenderer.scale=2`、web `wScale=scale`、安卓 `InkRenderer(scale)`）／白色不透明底／无重采样。
+🔴 安卓那个参数名叫 density 但喂的是 **scale 不是设备真实 density**——用设备 density 的话，
+同一份向量在 3x 屏和 2x 屏上粗细不同，比的就成了设备。
+
+**指标不做逐像素 diff**（三端抗锯齿天生不同，那个数字没信息量），改用结构性指标：
+墨量 / 包围盒 / `taper`（端部÷中部墨量，锥度判据）/ `rough`（列墨量差分，纹理判据）。
+
+四个坑记在代码里：
+- 报告的墨判定用**「离白最远的通道」而不是亮度**：荧光笔 `rgba(250,204,21,0.4)` 压白纸后
+  亮度只比白低 0.09，按亮度算整条被滤成空白、bbox 直接是 None。
+- `run.sh` 的截图循环用 `while read` 而不是 `for in $NAMES`：**zsh 默认不做单词分割**，
+  会把整串名字当成一个（脚本常被人从 zsh 里拷去手跑）。
+- Mac 端源码要拷成 **`main.swift`**：swiftc 只允许这一个文件名带顶层表达式，叫别的名字会报
+  一串 `expressions are not allowed at the top level`（报的是结果不是原因）。
+- 安卓端必须带 **`leaveApksInstalledAfterRun`**：AGP 默认跑完卸载 app，而图写在 app 专属目录，
+  卸载连图一起没（第一次就栽在这儿：测试全绿、目录不存在）。
+
+浏览器用的是 playwright 已下载的 `chrome-headless-shell` 二进制——**没装它的 npm 包**
+（`npx playwright` 会触发安装，而这个项目的规矩是不代用户装依赖）。
+
+### 首轮结果与两条修复
+
+| 判读 | 条目 |
+|---|---|
+| 三端一致 | ballpoint 各形态、marker 单笔与叠笔、尺子两点线、单点、急转折返 |
+| ✅ 修掉 | **钢笔起收锥度**：Mac 有 `fountainTaper`，web 与安卓一行都没有（墨量差 13~20%）→ 1%/3% |
+| ✅ 修掉 | **铅笔三道石墨纹理**：Mac 三道半透明微波动叠加，web 与安卓是一条光溜实线（墨量差 65%）→ 0%/2% |
+| 🔍 证伪 | **marker 叠笔接缝三端差 0%** |
+
+**钢笔锥度**：三端补成逐字同式（`n<=2` 不锥／`t=i/(n-1)`／`edge=0.16`／
+`a>=1 ? 1 : smoothstep(a)*0.82+0.18`）。web 的起笔圆点也要吃 taper，否则起笔处凭空鼓一个圆头。
+
+**铅笔纹理**：比 TODO 里记的「pad 实时反馈阶段无纹理」严重——**静态显示也没有**，
+深浅也不对（Mac 三道叠加等效 alpha ≈0.53，平板是 `0.95×0.85=0.81`）。移植时三条一个都不能少：
+① 波动相位按**累计弧长**推进不按点序号（按序号走会把波形在减速的笔尾压成锯齿）；
+② 抖动种子用**归一化坐标**不是屏幕坐标（否则一缩放颗粒重新洗牌、滚动时纹理会爬）；
+③ 波幅里的线宽项要封顶（`PENCIL_WOBBLE_REF_W=9`）。
+🔴 铅笔从此**不吃 `opacityMultFor(0.85)`**：透明感由三道 alpha 叠出来，再乘 0.85 是叠两遍。
+🔴 安卓 `inkJitter` 的中间量必须用 **Double**：`sin(...)*43758.5453` 放到 1e4 量级，
+Float 只有 24 位尾数，取小数部分时低位全丢 → 与另两端出的「随机数」对不上，纹理就不一样。
+
+结构改动：web `InkSeg` 加可选 `color`；安卓 `Geom` 从「一条 path + 整条一个 alpha」
+改成 `layers: List<Layer>`（path + 该道 alpha 倍率），`render` 逐道上色。
+
+⚠️ **web 有一处做不到的残差**（写在注释里）：Mac 把每段描边转成填充轮廓攒起来一次 fill，
+Canvas2D **没有 stroke→outline 的 API**，只能把宽度相近的段攒进一条 Path2D 再 stroke，
+段接缝仍会轻微叠色。安卓有 `getFillPath`，照 Mac 那条路走。
+
+验证：三端出图 11/11（安卓在真机小米 Pad 6 上跑）；既有 `InkRendererTest` 6 项仍全过；
+`tsc` / `build-web.sh` / `gradlew test` 全绿。
+
 ## 真机验收批量结清（2026-09-07，用户统一裁决）
 
 **这不是逐条实测记录，是一次范围裁决**——用户原话「测试部分可以认为都正常了」。
