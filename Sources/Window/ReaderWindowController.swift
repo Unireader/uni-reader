@@ -50,6 +50,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var searchItem: NSSearchToolbarItem?
     /// 工作区菜单项（标题要跟着工作区名走）。
     private var workspaceItem: NSMenuToolbarItem?
+    private var zoomItem: NSToolbarItemGroup?
     private var sidebarItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
 
@@ -496,6 +497,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     // 「自定工具栏…」面板里是一整块、拆不开，而用户 2026-09-01 明确要的是一枚一枚能增删
     // （「一整个巨大的组！而不是一个一个（或者小组）」）。Tahoe 会把相邻的图标 item 自动粘成一个
     // 玻璃胶囊，正好用来表达四组：缩放 | 去哪儿 | 这一篇怎么读 | 另开一块。
+    // **唯一的例外是缩放那三枚**（2026-09-07 用户改主意：「调整为固定（不可拆分）组」），见 `zoomGroup`。
     //
     // 🔴 **item id 沿用 SwiftUI 时期那套**（`zoom.out`…`inspector`）：系统按 id 记住用户摆好的
     // 工具栏，改 id 等于那一枚变成「新按钮」弹回默认位，用户白摆。
@@ -508,9 +510,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private enum ToolID {
         static let addPDF = NSToolbarItem.Identifier("sidebar.addPDF")
         static let workspace = NSToolbarItem.Identifier("sidebar.workspace")
-        static let zoomOut = NSToolbarItem.Identifier("zoom.out")
-        static let zoomActual = NSToolbarItem.Identifier("zoom.actual")
-        static let zoomIn = NSToolbarItem.Identifier("zoom.in")
+        /// 缩放三枚合成的**固定组**，见 `zoomGroup(_:)` 上那段红线。
+        /// 🔴 raw value 仍是老的 `zoom.out`（**不是**笔误）：换 id 等于旧位置作废。
+        static let zoom = NSToolbarItem.Identifier("zoom.out")
         static let contents = NSToolbarItem.Identifier("nav.contents")
         static let jumpBack = NSToolbarItem.Identifier("nav.back")
         static let jumpHistory = NSToolbarItem.Identifier("nav.history")
@@ -557,7 +559,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// （2026-09-01 用户实测：「左侧边栏按钮跑右边去了」）。
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, ToolID.addPDF, ToolID.workspace, .sidebarTrackingSeparator,
-         ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn, .space,
+         ToolID.zoom, .space,
          ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory, .space,
          ToolID.ocr, ToolID.canvas, ToolID.night, .space,
          ToolID.reference, ToolID.tablet,
@@ -567,7 +569,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, ToolID.addPDF, ToolID.workspace, .sidebarTrackingSeparator,
          .space, .flexibleSpace,
-         ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn,
+         ToolID.zoom,
          ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory,
          ToolID.ocr, ToolID.canvas, ToolID.night,
          ToolID.reference, ToolID.tablet, ToolID.search, ToolID.inspector]
@@ -591,12 +593,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             it.menu = workspaceMenu()
             workspaceItem = it
             return it
-        case ToolID.zoomOut:
-            return button(id, L("Zoom Out"), "minus.magnifyingglass", #selector(zoomOut))
-        case ToolID.zoomActual:
-            return button(id, L("Actual Size"), "1.magnifyingglass", #selector(zoomActual))
-        case ToolID.zoomIn:
-            return button(id, L("Zoom In"), "plus.magnifyingglass", #selector(zoomIn))
+        case ToolID.zoom:
+            return zoomGroup(id)
         case ToolID.contents:
             return popoverButton(id, L("Contents"), "list.bullet.indent", #selector(showContents(_:)))
         case ToolID.jumpBack:
@@ -643,6 +641,37 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         return it
     }
 
+    /// 缩放三枚 = **一个不可拆分的 `NSToolbarItemGroup`**（2026-09-07 用户拍板）。
+    ///
+    /// 🔴 这是上面「每枚一个独立 item」那条原则**故意留的唯一例外**：缩小 / 实际大小 / 放大
+    /// 语义上是一件事的三档，没人会只留其中一枚。做成 group 后「自定工具栏…」面板里它就是
+    /// 一整块——只能整组拖走、整组拖回，拆不开。
+    /// 🔴 **group 的 id 复用旧的 `zoom.out`**：`autosavesConfiguration` 存的是 id 清单，换新 id
+    /// 等于这一枚变「新按钮」弹回默认位。沿用 `zoom.out` 后，老配置里的 `zoom.actual` / `zoom.in`
+    /// 因为不在 allowed 清单里被系统丢掉，group 正好落在原来那三枚的位置上。
+    /// 🔴 `controlRepresentation = .expanded`：`.automatic` 会在窄窗口里把整组塌成一枚下拉菜单，
+    /// 缩放是高频动作，不能藏进二级菜单。
+    /// ⚠️ 带 view 的 item 拿不到 `validateToolbarItem`（见 `toggleButton` 那条），group 走不走这条
+    /// 校验只能真机看——所以启禁两边都写：这里留 `validateToolbarItem` 的分支，
+    /// `refreshToolbarStates` 里再显式推一次 `isEnabled`。
+    private func zoomGroup(_ id: NSToolbarItem.Identifier) -> NSToolbarItemGroup {
+        let specs = [(L("Zoom Out"), "minus.magnifyingglass"),
+                     (L("Actual Size"), "1.magnifyingglass"),
+                     (L("Zoom In"), "plus.magnifyingglass")]
+        let images = specs.map {
+            NSImage(systemSymbolName: $0.1, accessibilityDescription: $0.0) ?? NSImage()
+        }
+        let g = NSToolbarItemGroup(itemIdentifier: id, images: images,
+                                  selectionMode: .momentary, labels: specs.map(\.0),
+                                  target: self, action: #selector(zoomSegment(_:)))
+        g.label = L("Zoom")
+        g.paletteLabel = L("Zoom")
+        g.controlRepresentation = .expanded
+        for (sub, spec) in zip(g.subitems, specs) { sub.toolTip = spec.0 }
+        zoomItem = g
+        return g
+    }
+
     /// 开关型按钮（画板 / 夜间 / 参考窗 / 跳转历史窗）。
     ///
     /// 🔴 **必须用 `pushOnPushOff` 让系统画选中背景**：只换 SF Symbol 的 fill 变体那点差别
@@ -672,6 +701,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func refreshToolbarStates() {
         guard let items = window?.toolbar?.items else { return }
         let night = UserDefaults.standard.bool(forKey: "nightMode")
+        // 缩放组：group 走不走 `validateToolbarItem` 不好赌，这里显式推一次（两边同一个条件）。
+        if let g = zoomItem {
+            let on = session.pdf != nil
+            g.isEnabled = on
+            for sub in g.subitems { sub.isEnabled = on }
+        }
         for it in items {
             guard let btn = it.view as? NSButton else { continue }
             switch it.itemIdentifier {
@@ -716,9 +751,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     // MARK: 工具栏动作
 
-    @objc private func zoomOut() { NotificationCenter.default.post(name: .readerZoomOut, object: nil) }
-    @objc private func zoomActual() { NotificationCenter.default.post(name: .readerZoomActual, object: nil) }
-    @objc private func zoomIn() { NotificationCenter.default.post(name: .readerZoomIn, object: nil) }
+    /// 整组共用一个 action，按 `selectedIndex` 分派（`.momentary` 下它就是刚点的那一格）。
+    @objc private func zoomSegment(_ sender: NSToolbarItemGroup) {
+        let names: [Notification.Name] = [.readerZoomOut, .readerZoomActual, .readerZoomIn]
+        guard names.indices.contains(sender.selectedIndex) else { return }
+        NotificationCenter.default.post(name: names[sender.selectedIndex], object: nil)
+    }
     @objc private func jumpBack() { session.jumpBack() }
     @objc private func toggleJumpHistory() { jumpPanel.toggle() }
     @objc private func toggleCanvas() { tabs.active.toggleCanvasMode() }
@@ -882,7 +920,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         let s = session
         switch item.itemIdentifier {
-        case ToolID.zoomOut, ToolID.zoomActual, ToolID.zoomIn, ToolID.contents, ToolID.ocr:
+        case ToolID.zoom, ToolID.contents, ToolID.ocr:
             return s.pdf != nil
         case ToolID.jumpBack:
             return s.jumps.canGoBack
