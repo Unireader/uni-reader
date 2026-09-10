@@ -15,6 +15,11 @@ struct ClientInfo: Identifiable, Equatable {
 final class LANServer: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var clientCount = 0
+    /// 有平板连着。**所有 `broadcast*` / `push*` 的守卫用它而不是 `isRunning`**（2026-09-10 定）：
+    /// 「开机自启服务」开着时服务常年在跑，没有一个客户端也照样为每次切标签/翻页把整篇笔迹
+    /// 装箱成 `[NSNumber]`、把整本目录/书库拼成字典再扔进空的连接列表——切标签那 150ms 里的
+    /// 「平板同步」就是它。新客户端接入时 `AppModel` 的 `clientCount` sink 会补发全量，跳过不丢状态。
+    var hasClients: Bool { isRunning && clientCount > 0 }
     /// 已连接的平板列表（地址 + 稳定 id），供面板显示与「踢除」。
     @Published private(set) var clientList: [ClientInfo] = []
     @Published private(set) var lastInbound = ""

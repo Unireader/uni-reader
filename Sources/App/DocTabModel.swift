@@ -294,7 +294,11 @@ final class DocTabModel: ObservableObject, Identifiable {
         // 换文档 = 标题/书库 open 标记/目录都变；平板发起的 openDoc 也在这里收尾（锁到新会话）。
         // 挂在这里而不是 load 内部：那个函数有三条早退路径（无文档/路径失效/正常），
         // 出口逐个补一遍迟早漏掉一条。
-        app.sessionDocumentChanged(session)
+        session.openTrace.phase("会话变更广播") { app.sessionDocumentChanged(session) }
+        if let trace = session.openTrace {
+            trace.mark("select 返回")
+            DispatchQueue.main.async { trace.mark("下一拍") }   // 本轮同步工作（含 SwiftUI 重建）都做完
+        }
     }
 
     /// 强制重新加载当前文档（重定位之后用；`select` 会因 id 没变而早退）。
@@ -328,8 +332,10 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.restoreZoom = session.readZoom
         session.restoreHFrac = CGFloat(session.readHFrac)
         let a = session.scrollAnchor
-        session.emitAnchor(page: a?.page ?? session.currentPageIndex,
-                           frac: a?.frac ?? 0, origin: "restore")
+        session.openTrace.phase("恢复锚点") {   // 含 `onAnchorChanged` → 平板 viewport 广播 + 进度节流存
+            session.emitAnchor(page: a?.page ?? session.currentPageIndex,
+                               frac: a?.frac ?? 0, origin: "restore")
+        }
     }
 
     // MARK: - 懒装载
@@ -560,20 +566,60 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.strokes = []
         session.liveStroke = nil
         session.persistedStrokes = [:]
+        session.inkLoadGeneration += 1   // 在途的后台解码作废
+        session.inkLoading = false
     }
 
     /// 恢复该文档已落库的手写笔迹到内存，并记录对账集（避免加载即被判为“新增”而重复落库）。
+    /// 🔴 **解码在后台**（2026-09-10 用户定：「先展示窗口和 PDF 内容，笔迹异步处理好后再显示」）：
+    /// 一篇 2616 笔的文档解码 360ms（Debug 包），同步做就是开文档卡这么久。读库仍在主线程
+    /// （库连接只在主线程用），解码丢给后台并行做，回主线程时按 `inkLoadGeneration` 核对——
+    /// 用户在这期间切走/关掉就丢弃。期间用户新画的笔迹保留（`applyLoadedInk` 合并）。
     private func loadInk(documentId id: String) {
         session.documentId = id
         session.liveStroke = nil
-        // 读库与解码分开记账：2026-09-10 一篇 2616 笔的文档这一段 506ms，得知道慢在哪一半。
+        session.strokes = []
+        session.persistedStrokes = [:]
+        session.inkLoadGeneration += 1
+        let gen = session.inkLoadGeneration
         let trace = session.openTrace
-        let notes = trace.phase("笔迹读库") { workspace.inkNotes(documentId: id) }
-        let loaded = trace.phase("笔迹解码", detail: "\(notes.count)条") { notes.compactMap(InkStroke.init(note:)) }
-        trace.phase("笔迹入账") {
-            session.persistedStrokes = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
-            session.strokes = loaded
+        var count = 0
+        let notes = trace.phase("笔迹读库", detail: "\(count)条") {
+            let n = workspace.inkNotes(documentId: id); count = n.count; return n
         }
+        guard !notes.isEmpty else { session.inkLoading = false; return }
+        session.inkLoading = true
+        trace?.inkPending = true
+        let t0 = CFAbsoluteTimeGetCurrent()
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let loaded = InkStroke.decodeAll(notes)
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            await MainActor.run { [weak self] in
+                guard let self, !self.closed,
+                      self.session.inkLoadGeneration == gen, self.session.documentId == id else { return }
+                self.applyLoadedInk(loaded, documentId: id, decodeMs: ms)
+            }
+        }
+    }
+
+    /// 后台解码完成 → 入账、补建缺失图层、回传平板。用户在解码期间画的笔迹排在库里那批后面（后画的在上）。
+    private func applyLoadedInk(_ loaded: [InkStroke], documentId id: String, decodeMs: Double) {
+        session.inkLoading = false
+        let drawnMeanwhile = session.strokes
+        var merged = loaded
+        if !drawnMeanwhile.isEmpty {
+            let ids = Set(loaded.map(\.id))
+            merged += drawnMeanwhile.filter { !ids.contains($0.id) }
+        }
+        // 已落库集 = 库里那批 + 期间已经写过库的新笔（后者的对账记录别丢，否则再 upsert 一遍）。
+        var persisted = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+        persisted.merge(session.persistedStrokes) { old, _ in old }
+        session.persistedStrokes = persisted
+        session.strokes = merged
+        ensureInkLayers(documentId: id)   // 自愈：笔迹引用了不存在的图层就补建（原来在 loadInkLayers 里同步做）
+        app.broadcastStrokes()            // 平板那份此前收到的是空集
+        // 账本的 `inkPending` 由阅读区下一次 body 求值放行（那时各页笔数才是新的，见 `traceOpenFrame`）。
+        session.openTrace?.mark("笔迹到位", "\(loaded.count)笔 后台解码 \(Int(decodeMs.rounded()))ms")
     }
 
     /// 内存笔画 ↔ 库对账：新增或内容变更的 → upsert；曾落库而现已无的（擦除）→ delete。
@@ -624,26 +670,36 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 为每个缺失 id 各补建一条图层并立即落库——否则那些笔迹在图层面板里无处可归、
     /// 也无法被可见性开关命中，页面上会“凭空”多出/少掉一批笔迹。
     private func loadInkLayers(documentId id: String) {
-        var loaded = workspace.inkLayers(documentId: id).sorted { $0.sortOrder < $1.sortOrder }
-        let knownIDs = Set(loaded.map(\.id))
-        var missing = Set(session.strokes.map(\.layerId)).subtracting(knownIDs)
-        if loaded.isEmpty { missing.insert(InkLayer.defaultID) }   // 全新/老文档兜底建第一层
-        if !missing.isEmpty {
-            var nextOrder = (loaded.map(\.sortOrder).max() ?? -1) + 1
-            for missingID in missing.sorted(by: { $0.uuidString < $1.uuidString }) {
-                let name = String(format: L("Layer %d"), nextOrder + 1)
-                let layer = InkLayer(id: missingID, name: name,
-                                     colorKey: InkLayer.rotatingColorKey(existingCount: loaded.count),
-                                     sortOrder: nextOrder, visible: true)
-                loaded.append(layer)
-                workspace.saveInkLayer(documentId: id, layer)
-                nextOrder += 1
-            }
-            loaded.sort { $0.sortOrder < $1.sortOrder }
-        }
+        let loaded = workspace.inkLayers(documentId: id).sorted { $0.sortOrder < $1.sortOrder }
         session.persistedInkLayers = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
         session.inkLayers = loaded
         session.activeLayerID = loaded.first?.id
+        ensureInkLayers(documentId: id)
+    }
+
+    /// 图层自愈：笔迹引用了不存在的图层 → 逐个补建并落库；一层都没有 → 建默认层。
+    /// 两处调：`loadInkLayers`（此时笔迹多半还在后台解码，只兜得住「一层都没有」）与
+    /// `applyLoadedInk`（笔迹到齐，缺失引用这时才看得见）。幂等：没缺的什么都不做。
+    private func ensureInkLayers(documentId id: String) {
+        var layers = session.inkLayers
+        let knownIDs = Set(layers.map(\.id))
+        var missing = Set(session.strokes.map(\.layerId)).subtracting(knownIDs)
+        if layers.isEmpty { missing.insert(InkLayer.defaultID) }   // 全新/老文档兜底建第一层
+        guard !missing.isEmpty else { return }
+        var nextOrder = (layers.map(\.sortOrder).max() ?? -1) + 1
+        for missingID in missing.sorted(by: { $0.uuidString < $1.uuidString }) {
+            let name = String(format: L("Layer %d"), nextOrder + 1)
+            let layer = InkLayer(id: missingID, name: name,
+                                 colorKey: InkLayer.rotatingColorKey(existingCount: layers.count),
+                                 sortOrder: nextOrder, visible: true)
+            layers.append(layer)
+            workspace.saveInkLayer(documentId: id, layer)
+            nextOrder += 1
+        }
+        layers.sort { $0.sortOrder < $1.sortOrder }
+        session.persistedInkLayers = Dictionary(uniqueKeysWithValues: layers.map { ($0.id, $0) })
+        session.inkLayers = layers
+        if session.activeLayerID == nil { session.activeLayerID = layers.first?.id }
     }
 
     /// 内存图层 ↔ 库对账：新增/改名/改色/改可见性/重排序 → upsert；已删除的 → delete。

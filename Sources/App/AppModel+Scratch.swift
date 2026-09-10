@@ -232,7 +232,7 @@ extension AppModel {
 
     /// 草稿纸列表 + 当前打开的是第几张（-1 = 没开）。平板据此显示列表与切换覆盖层。
     func broadcastScratchPads() {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         let open = s.scratchPads.firstIndex { $0.id == s.openPadID } ?? -1
         let list: [[String: Any]] = s.scratchPads.map { p in
             ["id": p.id.uuidString, "title": p.title, "page": p.anchorPage,
@@ -246,7 +246,7 @@ extension AppModel {
     /// 与 `broadcastStrokes` 同款全量镜像语义（Mac 唯一真源，平板不落库），`ackRel` 由
     /// `LANServer.rawSend` 按收件人补（平板靠它分辨中途快照，见 PROTOCOL.md §4.2）。
     func broadcastScratchStrokes() {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         let list: [[String: Any]] = (s.openPadID.map { s.strokes(pad: $0) } ?? []).map { st in
             ["pen": ["color": st.color.cssRGBA, "w": st.width, "t": st.type.rawValue],
              "pts": st.points.map { [$0.x, $0.y, $0.z] }]

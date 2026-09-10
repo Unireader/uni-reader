@@ -204,6 +204,11 @@ final class DocSession: ObservableObject, Identifiable {
     /// 已落库的笔画快照（id → 值），用于增量对账（新增/内容变更 upsert、擦除 delete），非 @Published。
     /// 值快照而非纯 id 集合：框选移动后 id 不变、点集变，纯 id 对账会漏写（仿 `persistedTextNotes`）。
     var persistedStrokes: [UUID: InkStroke] = [:]
+    /// 笔迹**异步装载**的代次（`DocTabModel.loadInk`）：每次开文档 +1，后台解码完成回主线程时
+    /// 对不上就丢弃——用户在解码期间已经切走/关掉了。非 @Published。
+    var inkLoadGeneration = 0
+    /// 笔迹还在后台解码（页图先出、笔迹随后补上）。视图不读它；打开耗时账本据此不提前结账。
+    var inkLoading = false
 
     /// 编辑撤销栈（页内笔迹 + 文字注解 / 草稿纸笔迹各一条，见 `InkUndo.swift`）。
     /// **瞬态、非 @Published**：换文档由 `DocTabModel` 清空；菜单可用性在 `validateMenuItem`

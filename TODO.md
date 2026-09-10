@@ -493,6 +493,18 @@
     剩下的在哪一半。**待用户验证**：同一篇文档再开一次，「笔迹解码」应从几百 ms 降到几十 ms。
     其余两项可看的：`目录 57~117ms`（`TOCEntry.build` 遍历 PDF 大纲）、`平板广播 55ms`（有平板连着时的笔迹回传）——
     都还没到要动的量级。
+    **第二轮（同日）**：Debug 包实测「笔迹解码 360ms」仍嫌久，用户定「先展示窗口和 PDF，笔迹异步处理好再显示」：
+    ① `loadInk` 改**后台并行解码**（`InkStroke.decodeAll`，`concurrentPerform` 分块、保序），读库仍在主线程；
+    回主线程按 `session.inkLoadGeneration` 核对，期间切走/关掉即丢弃，期间新画的笔迹合并保留
+    （`applyLoadedInk`）；图层自愈挪到笔迹到位后（`ensureInkLayers`）；账本 `inkPending` 挡住提前结账；
+    ② 数字解析从 `strtod` 换成 `Double(String)`：strtod 多线程**不伸缩**（300k 次 1 线程 10ms、8 线程 20ms），
+    换后单线程略慢（51→99ms）但 12 核并行 20ms（spike ⑤：与顺序解逐条相同、保序）；
+    ③ **切标签 150ms 的主项**：「开机自启平板服务」开着时，`AppModel` 所有 `broadcast*`/`push*` 只看
+    `server.isRunning`，没有一个客户端也照样把整篇笔迹装箱、目录/书库拼字典再扔进空连接列表——
+    守卫一律改 `server.hasClients`（新客户端接入时 `clientCount` sink 补发全量，跳过不丢状态）；
+    ④ 切标签的同步段也入账：`恢复锚点 / 切换登记 / 平板同步 / activate 返回 / 下一拍 / 首帧 body`。
+    ⚠️ Debug 包的纯 Swift 循环（解码、墨迹绘制）比 Release 慢 3~8 倍，量这类段落要看 Release：
+    `xcodebuild … -configuration Release -derivedDataPath build/dev`（产物仍在 `build/dev`，不走 package.sh）。
 
   - **2026-08-29：macOS 多标签页第 2 步「标签化」已落地，待真机验证**（方案 `MAC-TABS-PLAN.md §9`）。
     新增 `TabsModel`（窗口的标签集，不变式：永远至少一个标签，故 `active` 非可选）、

@@ -126,7 +126,26 @@ static func main() {
     check("点数一致", refPts == fastPts)
     print(String(format: "  payload 共 %.1f MB：JSONDecoder 整段 %.0fms → 快路 %.0fms（%.1f×）",
                  Double(bytes) / 1048576, slow, quick, slow / max(quick, 0.001)))
-    check("快路至少快 3 倍", quick * 3 < slow, String(format: "%.0f vs %.0f", quick, slow))
+    // 单线程只求明显更快；真正的收益在 ⑤ 的并行（strtod 版单线程更快但多线程不伸缩，见 InkPayloadFast 注释）。
+    check("快路单线程至少快 2 倍", quick * 2 < slow, String(format: "%.0f vs %.0f", quick, slow))
+
+    print("⑤ 并行解码（`InkStroke.decodeAll`）：结果与顺序解一致、顺序不乱")
+    let notes: [LibNote] = strokes.enumerated().map { i, d in
+        LibNote(id: UUID().uuidString, documentId: "doc", kind: InkStroke.noteKind, page: i / 10,
+                anchor: .zero, payload: d, createdAt: .now, updatedAt: .now)
+    }
+    t = CFAbsoluteTimeGetCurrent()
+    let seq = notes.compactMap(InkStroke.init(note:))
+    let seqMs = (CFAbsoluteTimeGetCurrent() - t) * 1000
+    t = CFAbsoluteTimeGetCurrent()
+    let par = InkStroke.decodeAll(notes)
+    let parMs = (CFAbsoluteTimeGetCurrent() - t) * 1000
+    check("条数一致", seq.count == par.count && par.count == notes.count)
+    check("逐条相同且顺序一致", seq == par)
+    print(String(format: "  顺序解 %.0fms → 并行 %.0fms（%d 核）", seqMs, parMs, ProcessInfo.processInfo.activeProcessorCount))
+    if ProcessInfo.processInfo.activeProcessorCount >= 4 {
+        check("并行比 JSONDecoder 整段至少快 5 倍", parMs * 5 < slow, String(format: "%.0f vs %.0f", parMs, slow))
+    }
 
     print("\n\(pass) 通过 / \(fail) 失败")
     exit(fail == 0 ? 0 : 1)

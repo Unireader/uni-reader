@@ -141,10 +141,19 @@ final class TabsModel: ObservableObject {
         if activeID != id {
             // 阅读区马上要为这个标签整体重建，先把它「停在哪儿」翻译成待恢复值（见那个方法的红线）。
             next.prepareForReactivation()
-            activeID = id
-            for t in tabs { t.isActive = (t.id == id) }
-            bindActive()
-            persist()
+            let trace = next.session.openTrace   // 打开耗时账本：切标签的同步段也记（用户报来回切要 150ms）
+            trace.phase("切换登记") {
+                activeID = id
+                for t in tabs { t.isActive = (t.id == id) }
+                bindActive()
+                persist()
+            }
+            // 每次都调（不只是切换时）：窗口重新成为 key window 也要把平板跟随拉回本标签。
+            trace.phase("平板同步") { app.setActive(active.session) }
+            trace?.mark("activate 返回")
+            // 下一轮 runloop：本轮同步工作（含 SwiftUI 重建两侧栏与阅读区的 body）都做完了才轮到它。
+            if let trace { DispatchQueue.main.async { trace.mark("下一拍") } }
+            return
         }
         // 每次都调（不只是切换时）：窗口重新成为 key window 也要把平板跟随拉回本标签。
         app.setActive(active.session)

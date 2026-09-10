@@ -799,7 +799,7 @@ final class AppModel: ObservableObject {
     private func setPressRing(_ r: PressRing?) {
         adoptOverlaySession()
         padSession?.pressRing = r
-        guard server.isRunning, sentPressRing != r else { return }
+        guard server.hasClients, sentPressRing != r else { return }
         sentPressRing = r
         if let r {
             server.broadcast(["type": "pressRing", "on": true, "page": r.page, "nx": r.nx, "ny": r.ny])
@@ -899,7 +899,7 @@ final class AppModel: ObservableObject {
     /// 把环形盘状态镜像给平板（平板照着画，不做任何判定）。盘一收就发 `open:false`。
     /// 只在 `radial` 真的变了时调用——`updateRadial` 已用 Equatable 去重，跨扇区才发一帧。
     private func broadcastRadial() {
-        guard server.isRunning else { return }
+        guard server.hasClients else { return }
         guard let r = padSession?.radial else {
             server.broadcast(["type": "radial", "open": false])
             return
@@ -948,7 +948,7 @@ final class AppModel: ObservableObject {
 
     /// 收藏笔列表变化（新增/删除/改颜色/改粗细/改类型）→ 整体推给 pad（同 layout/docs 的「变了就广播」套路）。
     func broadcastPens() {
-        guard server.isRunning else { return }
+        guard server.hasClients else { return }
         server.broadcast([
             "type": "pens",
             "list": pens.map { ["color": $0.color.cssRGBA, "w": $0.width, "t": $0.type.rawValue] },
@@ -974,7 +974,7 @@ final class AppModel: ObservableObject {
     /// 橡皮设置变更 → 推给 pad（服务启动/新客户端接入时也补发一次，双向同步的 Mac→pad 方向）。
     /// 平板上行应用期间（`applyingRemoteEraser`）抑制回播（值来自 pad，回声无意义还会三连发）。
     func broadcastEraser() {
-        guard !applyingRemoteEraser, server.isRunning else { return }
+        guard !applyingRemoteEraser, server.hasClients else { return }
         server.broadcast(["type": "eraser", "size": eraserRadius,
                           "mode": eraserMode == .partial ? 1 : 0,
                           "ring": eraserRing ? 1 : 0])
@@ -1092,7 +1092,7 @@ final class AppModel: ObservableObject {
     /// 把平板当前会话的**全部笔迹**推给平板（平板据此显示 + 刷新/重连后恢复）。
     /// 平板本地不落库、只即时回显正在写的这一笔；已成形/已存的笔迹以 Mac 为唯一真源，靠这里回传。
     func broadcastStrokes() {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         let t0 = CFAbsoluteTimeGetCurrent()
         let vis = s.visibleLayerIDs
         let list = strokeDicts(s.strokes.filter { vis.contains($0.layerId) })
@@ -1112,7 +1112,7 @@ final class AppModel: ObservableObject {
     /// **只许在纯追加处调用**（当前就 `inkEnd` 一处）：擦除、框选、图层显隐、切档一律照旧发全量——
     /// 它们会删改已有笔迹，追加表达不了。不可见图层的笔迹照 `broadcastStrokes` 的口径过滤掉。
     func broadcastStrokeAppended(_ st: InkStroke, in s: DocSession) {
-        guard server.isRunning, s.id == padSession?.id, s.visibleLayerIDs.contains(st.layerId) else { return }
+        guard server.hasClients, s.id == padSession?.id, s.visibleLayerIDs.contains(st.layerId) else { return }
         server.broadcast(["type": "strokesAppend", "list": strokeDicts([st])])
     }
 
@@ -1126,7 +1126,7 @@ final class AppModel: ObservableObject {
 
     /// 把平板当前会话的图层表（名字/颜色/可见性）+ 当前作画图层推给平板（同 `broadcastPens` 套路）。
     func broadcastLayers() {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         let active = s.inkLayers.firstIndex(where: { $0.id == s.activeLayerID }) ?? 0
         let list: [[String: Any]] = s.inkLayers.map { l in
             let rgb = NoteType.paletteRGB(l.colorKey)
@@ -1138,7 +1138,7 @@ final class AppModel: ObservableObject {
     /// 把平板当前会话的**全部文字笔记**推给平板（平板画圆形标记；Mac 为唯一真源，类比 strokes 镜像）。
     /// 对选区锚定的注解用 anchor 原点作标记位置。
     func broadcastNotes() {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         let list: [[String: Any]] = s.textNotes.map { n in
             ["id": n.id.uuidString, "page": n.page,
              "nx": n.anchor.minX, "ny": n.anchor.minY, "text": n.text,
@@ -1304,7 +1304,7 @@ final class AppModel: ObservableObject {
     /// 内容未变则不发（`force` 用于新客户端接入补发）——书库列表比 `docs` 大得多，且触发点很密
     /// （每次换文档/开关窗口 open 标记都可能变）。
     func broadcastLibrary(force: Bool = false) {
-        guard server.isRunning, let s = padSession, s.workspaceFolder != nil else { return }
+        guard server.hasClients, let s = padSession, s.workspaceFolder != nil else { return }
         // 参考窗的取图索引跟着书库一起更新。**放在这里而不是 `push()`**：那边要求当前标签已经
         // 打开了 PDF（空标签时不跑），而参考窗恰恰可以在空标签上看别的书。
         setRefIndex(s.libraryRefIndex)
@@ -1321,7 +1321,7 @@ final class AppModel: ObservableObject {
 
     /// 广播平板当前会话的 PDF 目录（先序拍平 + depth）。坏书签 `page = -1`（见 PROTOCOL.md §4.2）。
     func broadcastTOC(force: Bool = false) {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         var list: [[String: Any]] = []
         func walk(_ es: [TOCEntry], _ depth: Int) {
             for e in es {
@@ -1342,7 +1342,7 @@ final class AppModel: ObservableObject {
     /// 书签挂到新书上），列表**已按 `Bookmark.before` 有序**（客户端直接用，不要再排）。
     /// 不做「内容没变就不发」的去重——书签表本来就小，而增删改后必须立刻回推（客户端不做乐观更新）。
     func broadcastBookmarks() {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         let list: [[String: Any]] = s.bookmarks.map {
             ["id": $0.id.uuidString, "page": $0.page, "frac": $0.frac, "title": $0.title]
         }
@@ -1380,7 +1380,7 @@ final class AppModel: ObservableObject {
     /// 所以每项必须带上 `ws` = 那个窗口的工作区名——客户端拿它分组，否则标签页栏会把几个工作区的
     /// 文档混成一排、点过去工作区凭空换掉（`PROTOCOL.md §4.2` 的 `docs`）。
     func broadcastDocs() {
-        guard server.isRunning else { return }
+        guard server.hasClients else { return }
         let list: [[String: Any]] = sessions.map {
             ["id": $0.id.uuidString, "title": $0.title.isEmpty ? "未命名" : $0.title, "ws": $0.workspaceName]
         }
@@ -1403,7 +1403,7 @@ final class AppModel: ObservableObject {
     /// 安卓 `PageFetcher.kt`）一律走 `/page.png?i=N` → `pageProvider` → `renderPage`（服务 queue + NSCache）。
     /// 即：纯浪费。故整段删除，兜底路由改为同样走 `pageProvider`（见 `LANServer.route`）。
     func push() {
-        guard server.isRunning, let s = padSession, let pdf = s.pdf,
+        guard server.hasClients, let s = padSession, let pdf = s.pdf,
               let page = pdf.page(at: s.currentPageIndex) else { return }
         setPadRender(pdf: pdf, key: s.contentHash)   // 方案 B：更新按页渲染源
         let b = page.bounds(for: PageBitmap.effectiveBox(page))
@@ -1434,7 +1434,7 @@ final class AppModel: ObservableObject {
     /// 页边宽度由阅读区按笔迹越界量档位化（`CanvasMargin`），跳档时经 `session.canvasMarginLive` 落到
     /// 这里再广播。页边笔迹本身仍走既有的 `strokes`/`ink`（只是 x 越出 0…1），故不需要别的协议改动。
     func broadcastCanvas() {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         server.broadcast(["type": "canvas", "on": s.canvasMode,
                           "margin": s.canvasMode ? s.canvasMarginLive : 0])
     }
@@ -1445,7 +1445,7 @@ final class AppModel: ObservableObject {
     /// 推平板当前会话的文档布局（每页原始宽高）。仅文档变化时推；`force` 用于新平板连接时补发。
     /// 避免每次滚动/翻页重广播 layout，减少平板端无谓 relayout 与回环噪声。
     func pushLayout(force: Bool = false) {
-        guard server.isRunning, let s = padSession, let pdf = s.pdf else { return }
+        guard server.hasClients, let s = padSession, let pdf = s.pdf else { return }
         if !force && s.contentHash == pushedLayoutKey { return }
         pushedLayoutKey = s.contentHash
         var pages: [[Double]] = []
@@ -1466,7 +1466,7 @@ final class AppModel: ObservableObject {
     /// Mac 侧导航 → 广播视口锚点给平板。origin=pad 不回发（避免与平板回传成环）；
     /// 其余来源（mac 滚动 / toc 跳转 / search 命中 / restore 进度恢复 / sim）都是 Mac 侧位置变化，统一下发。
     func macScrolled(_ s: DocSession) {
-        guard server.isRunning, s.id == padSession?.id,
+        guard server.hasClients, s.id == padSession?.id,
               let a = s.scrollAnchor, a.origin != "pad" else { return }
         server.broadcast(["type": "viewport", "page": a.page, "frac": a.frac, "seq": a.seq])
     }
@@ -1474,7 +1474,7 @@ final class AppModel: ObservableObject {
     /// 把平板当前会话的阅读位置补发给平板（force 绕过平板端 seq 去重，seq 可能早已应用过）。
     /// 用于新平板连接、平板切换文档后，让平板立即落到 Mac 当前进度，而不是停在第 1 页。
     func pushCurrentViewport() {
-        guard server.isRunning, let s = padSession else { return }
+        guard server.hasClients, let s = padSession else { return }
         let page = s.scrollAnchor?.page ?? s.currentPageIndex
         let frac = s.scrollAnchor?.frac ?? 0
         guard page > 0 || frac > 0 else { return }   // 本来就在第 1 页顶部，无需下发

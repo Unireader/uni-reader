@@ -73,11 +73,14 @@ extension ReaderSurface {
     /// 目标页图宽度、各可见页的笔数。没开账（`nil` 或已结清）时只剩一次判空。
     func traceOpenFrame(layout: PageLayout, buckets: PageBuckets) {
         guard let tr = session.openTrace, !tr.finished, scratch.didInitialGeo else { return }
+        tr.markOnce("首帧 body", "实化 p\(realized.lowerBound + 1)–\(realized.upperBound + 1)")
         let g = scratch.geo
         let ds = max(0.0001, dispScale)
         let vis = layout.pageRange(fromDocY: g.offsetY / ds, toDocY: (g.offsetY + g.containerH) / ds)
         var strokes: [Int: Int] = [:]
         for p in vis { strokes[p] = buckets.strokes[p]?.count ?? 0 }
+        // 笔迹后台解码期间各页笔数是 0（假象），解码落地后这一帧的 buckets 才是真的——放行在这里做。
+        tr.inkPending = session.inkLoading
         tr.noteViewport(vis, width: scratch.basePixelW, strokes: strokes)
     }
 

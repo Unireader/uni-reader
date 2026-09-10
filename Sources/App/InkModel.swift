@@ -151,6 +151,27 @@ extension InkStroke {
     }
 }
 
+extension InkStroke {
+    /// 一批 note 行 → 笔迹，**多核并行**、保持原顺序（顺序 = 落库序 = 绘制叠放序）。
+    /// 开文档时在后台线程调（`DocTabModel.loadInk`）；行数少就直接顺序解，不值得起线程。
+    static func decodeAll(_ notes: [LibNote]) -> [InkStroke] {
+        let n = notes.count
+        let cores = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        let chunks = min(cores, max(1, n / 64))
+        guard chunks > 1 else { return notes.compactMap(InkStroke.init(note:)) }
+        var parts = [[InkStroke]](repeating: [], count: chunks)
+        let size = (n + chunks - 1) / chunks
+        parts.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: chunks) { k in
+                let lo = k * size, hi = min(n, lo + size)
+                guard lo < hi else { return }
+                buf[k] = notes[lo..<hi].compactMap(InkStroke.init(note:))   // 各写各的槽，不共享
+            }
+        }
+        return parts.flatMap { $0 }
+    }
+}
+
 // MARK: - points 快速解析
 
 /// 笔迹 payload 的 `points` 快速解析（2026-09-10 打开耗时账本量出来的：一篇 2616 笔的文档
@@ -167,53 +188,56 @@ extension InkStroke {
 enum InkPayloadFast {
     /// 返回 (去掉 points 的 payload, 点数组)；形态不认识时 nil。
     static func splitPoints(_ data: Data) -> (rest: Data, points: [SIMD3<Double>])? {
-        guard strtodUsesDot else { return nil }
-        // 拷一份带 NUL 结尾的缓冲：strtod 要它，扫描也可以少判一次越界。
-        var buf = [UInt8](data)
-        buf.append(0)
-        let n = data.count
-        guard let keyAt = find(buf, key: Array("\"points\"".utf8), count: n) else { return nil }
+        // 结构用裸字节扫（`[UInt8]` 下标是最快的），数字交给 Swift 自己的 `Double(String)`
+        // （正确舍入、locale 无关）。**别用 `strtod`**：2026-09-10 实测它在多线程下不伸缩
+        // （300k 次：1 线程 10ms、8 线程 20ms），而 `Double(String)` 同样的活 8 线程 2ms——
+        // `decodeAll` 的并行解码全靠这一点。也别用 String.Index 逐字符推进：一个 payload 十几 KB，
+        // `index(after:)` 每步十几 ns，比裸字节慢四倍。
+        let b = [UInt8](data)
+        let n = b.count
+        guard let keyAt = find(b, key: Array("\"points\"".utf8)) else { return nil }
         var i = keyAt + 8
-        skipWS(buf, &i)
-        guard i < n, buf[i] == UInt8(ascii: ":") else { return nil }
+        @inline(__always) func skipWS() {
+            while i < n, b[i] == 0x20 || b[i] == 0x0A || b[i] == 0x0D || b[i] == 0x09 { i += 1 }
+        }
+        @inline(__always) func isNum(_ c: UInt8) -> Bool {
+            (c >= 0x30 && c <= 0x39) || c == 0x2D || c == 0x2B || c == 0x2E || c == 0x65 || c == 0x45   // 0-9 - + . e E
+        }
+        skipWS()
+        guard i < n, b[i] == UInt8(ascii: ":") else { return nil }
         i += 1
-        skipWS(buf, &i)
-        guard i < n, buf[i] == UInt8(ascii: "[") else { return nil }
+        skipWS()
+        guard i < n, b[i] == UInt8(ascii: "[") else { return nil }
         let arrStart = i
         i += 1
         var pts: [SIMD3<Double>] = []
         pts.reserveCapacity(64)
-        let ok: Bool = buf.withUnsafeBufferPointer { raw -> Bool in
-            let base = UnsafeRawPointer(raw.baseAddress!).assumingMemoryBound(to: CChar.self)
+        while true {
+            skipWS()
+            guard i < n else { return nil }
+            if b[i] == UInt8(ascii: "]") { break }                  // 外层数组结束
+            guard b[i] == UInt8(ascii: "[") else { return nil }      // 每个点必须是内层数组
+            i += 1
+            var v: [Double] = []   // 一个点最多三个数；多的忽略，少的按老规矩补
             while true {
-                skipWS(buf, &i)
-                guard i < n else { return false }
-                if buf[i] == UInt8(ascii: "]") { return true }          // 外层数组结束
-                guard buf[i] == UInt8(ascii: "[") else { return false }  // 每个点必须是内层数组
-                i += 1
-                var v: [Double] = []   // 一个点最多三个数；多的忽略，少的按老规矩补
-                while true {
-                    skipWS(buf, &i)
-                    guard i < n else { return false }
-                    if buf[i] == UInt8(ascii: "]") { i += 1; break }
-                    var end: UnsafeMutablePointer<CChar>? = nil
-                    let d = strtod(base + i, &end)
-                    guard let end, UnsafePointer(end) > base + i else { return false }
-                    i = UnsafePointer(end) - base
-                    if v.count < 3 { v.append(d) }
-                    skipWS(buf, &i)
-                    guard i < n else { return false }
-                    if buf[i] == UInt8(ascii: ",") { i += 1; continue }
-                    guard buf[i] == UInt8(ascii: "]") else { return false }
-                }
-                pts.append(SIMD3<Double>(v.count > 0 ? v[0] : 0, v.count > 1 ? v[1] : 0, v.count > 2 ? v[2] : 0.5))
-                skipWS(buf, &i)
-                guard i < n else { return false }
-                if buf[i] == UInt8(ascii: ",") { i += 1; continue }
-                guard buf[i] == UInt8(ascii: "]") else { return false }
+                skipWS()
+                guard i < n else { return nil }
+                if b[i] == UInt8(ascii: "]") { i += 1; break }
+                let start = i
+                while i < n, isNum(b[i]) { i += 1 }
+                guard i > start, let d = Double(String(decoding: b[start..<i], as: UTF8.self)) else { return nil }
+                if v.count < 3 { v.append(d) }
+                skipWS()
+                guard i < n else { return nil }
+                if b[i] == UInt8(ascii: ",") { i += 1; continue }
+                guard b[i] == UInt8(ascii: "]") else { return nil }
             }
+            pts.append(SIMD3<Double>(v.count > 0 ? v[0] : 0, v.count > 1 ? v[1] : 0, v.count > 2 ? v[2] : 0.5))
+            skipWS()
+            guard i < n else { return nil }
+            if b[i] == UInt8(ascii: ",") { i += 1; continue }
+            guard b[i] == UInt8(ascii: "]") else { return nil }
         }
-        guard ok else { return nil }
         let arrEnd = i   // 指向外层 `]`
         var rest = Data(capacity: n - (arrEnd - arrStart) + 2)
         rest.append(data[0..<arrStart])
@@ -222,16 +246,9 @@ enum InkPayloadFast {
         return (rest, pts)
     }
 
-    /// `strtod` 认小数点还是逗号由 C 库 locale 决定（`strtod_l` 没导进 Swift）。进程默认是 "C"，
-    /// Cocoa 也不会替我们 `setlocale`，但别赌：启动时试一个数，不对就整条快路关掉（回落原路径）。
-    private static let strtodUsesDot: Bool = strtod("0.5", nil) == 0.5 && strtod("-1e-3", nil) == -0.001
-
-    private static func skipWS(_ b: [UInt8], _ i: inout Int) {
-        while i < b.count, b[i] == 0x20 || b[i] == 0x0A || b[i] == 0x0D || b[i] == 0x09 { i += 1 }
-    }
-
     /// 找键（含引号）第一次出现的位置。payload 里其它字符串值（笔型名、UUID）不可能含它。
-    private static func find(_ b: [UInt8], key: [UInt8], count n: Int) -> Int? {
+    private static func find(_ b: [UInt8], key: [UInt8]) -> Int? {
+        let n = b.count
         guard n >= key.count else { return nil }
         var i = 0
         let first = key[0]

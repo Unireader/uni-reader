@@ -125,8 +125,11 @@ final class OpenTrace {
         checkComplete()
     }
 
+    /// 笔迹还在后台解码（`DocSession.inkLoading`）：可见页此刻笔数为 0 是假象，别提前结账。
+    var inkPending = false
+
     private func checkComplete() {
-        guard let visible, targetWidth > 0 else { return }
+        guard let visible, targetWidth > 0, !inkPending else { return }
         for p in visible {
             guard let img = imageAt[p], img.width == targetWidth else { return }
             if (strokesByPage[p] ?? 0) > 0, inkAt[p] == nil { return }
