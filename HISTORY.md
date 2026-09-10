@@ -3,6 +3,26 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 打开耗时（2026-09-10，Mac：「有时候打开 tab 挺久才显示完整页面 + 笔迹」→ 30~60ms）
+
+先量再修。`OpenTrace`/`OpenStats`（设置 → 诊断 + `wsLog` 摘要行）把每次打开/切标签从点下去到
+「可见页的页图 + 笔迹都画出来」逐段记账，用户第一批日志就把病根钉出来了，三轮改完用户实测
+**打开 / 切标签 30~60ms**（此前 857ms / 150ms）。
+
+1. **笔迹解码 506ms（2616 笔）**：`JSONDecoder` 解 `[[Double]]` 是 Codable 逐元素走容器协议，一个数
+   1~2µs。`InkPayloadFast.splitPoints`（`InkModel.swift` 末尾）在原始字节里定位 `points` 数组自己扫，
+   其余百来字节照旧 JSONDecoder；形态不认识回落，结果逐位相同。payload 格式不动（三端契约）。
+2. **仍 360ms（Debug 包）→ 后台并行解码**（用户定「先展示窗口和 PDF，笔迹异步处理好再显示」）：
+   `loadInk` 读库在主线程，解码 `InkStroke.decodeAll` 多核分块保序，回主线程按 `inkLoadGeneration`
+   核对，期间新画的笔迹合并保留；图层自愈挪到笔迹到位后。顺带发现 **`strtod` 多线程不伸缩**
+   （300k 次：1 线程 10ms、8 线程 20ms），换 `Double(String)` 后 12 核并行 20ms。
+3. **切标签 150ms 的主项是空跑的平板广播**：「开机自启平板服务」开着时 `AppModel` 全部
+   `broadcast*`/`push*` 只看 `server.isRunning`，零客户端也在装箱整篇笔迹、拼目录/书库字典——守卫
+   改 `server.hasClients`，新客户端接入由 `clientCount` sink 补全量。
+
+验证：`spike/ink-payload-fast-test.swift` 25 项（逐位比对 / 各种写法 / 坏形态回落 / 并行保序 / 计时）、
+`ink-store-test` 21/0、`xcodebuild`；用户实测通过。教训写进 TODO 状态速览同日条目。
+
 ## 内存（2026-09-10，Mac：Release 开三个文档 2.34GB，设置页却只写「缓存 366MB」）
 
 用户报：Release 包开三个文档，活动监视器 2.34GB；设置页缓存上限 512、显示已用 366；

@@ -505,6 +505,8 @@
     ④ 切标签的同步段也入账：`恢复锚点 / 切换登记 / 平板同步 / activate 返回 / 下一拍 / 首帧 body`。
     ⚠️ Debug 包的纯 Swift 循环（解码、墨迹绘制）比 Release 慢 3~8 倍，量这类段落要看 Release：
     `xcodebuild … -configuration Release -derivedDataPath build/dev`（产物仍在 `build/dev`，不走 package.sh）。
+    **用户实测（同日）：打开 / 切标签的延迟降到 30~60ms，「好多了」。** 本项结清，归档见 `HISTORY.md` 同日
+    「打开耗时」条目；账本与诊断页保留，下次再有「有时候慢」直接看记录。
 
   - **2026-08-29：macOS 多标签页第 2 步「标签化」已落地，待真机验证**（方案 `MAC-TABS-PLAN.md §9`）。
     新增 `TabsModel`（窗口的标签集，不变式：永远至少一个标签，故 `active` 非可选）、
