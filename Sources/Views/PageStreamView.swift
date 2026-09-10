@@ -754,8 +754,9 @@ struct ReaderSurface: View {
         scratch.nightLive = nightMode     // 引用侧实时值（键计算唯一真源，见 baseKey 注释）
         scratch.imagesNight = nightMode   // 首批渲染直接用当前夜间键出图，与本地显示模式对齐
         scratch.appearAt = CACurrentMediaTime()
-        // 页边软边界的首值（首帧没有几何可补偿，直接置；笔迹后到由 strokes.count 的 onChange 兜底）
-        canvasMarginState = CanvasMargin.margin(overflow: CanvasMargin.overflow(session.strokes))
+        // 页边软边界的首值（首帧没有几何可补偿，直接置；笔迹后到由 strokes.count 的 onChange 兜底）。
+        // `inkOverflow()` = 库里算出的全篇首值 ∨ 窗口内实扫——内存里只有窗口内的笔迹（`InkWindow`）。
+        canvasMarginState = CanvasMargin.margin(overflow: session.inkOverflow())
         // 这条路径绕开了 `applyCanvasMargin`，得自己把广播用的那个数对齐（否则新客户端连上来
         // 收到的还是 `canvasMarginLive` 的初值 step，页边比 Mac 这边窄，远处的笔迹被裁掉）。
         session.canvasMarginLive = session.canvasMode ? canvasMarginState : 0

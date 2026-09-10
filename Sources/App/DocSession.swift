@@ -1,3 +1,4 @@
+import Combine
 import CoreGraphics
 import Foundation
 import PDFKit
@@ -204,11 +205,47 @@ final class DocSession: ObservableObject, Identifiable {
     /// 已落库的笔画快照（id → 值），用于增量对账（新增/内容变更 upsert、擦除 delete），非 @Published。
     /// 值快照而非纯 id 集合：框选移动后 id 不变、点集变，纯 id 对账会漏写（仿 `persistedTextNotes`）。
     var persistedStrokes: [UUID: InkStroke] = [:]
-    /// 笔迹**异步装载**的代次（`DocTabModel.loadInk`）：每次开文档 +1，后台解码完成回主线程时
+    /// 笔迹**异步装载**的代次（`DocTabModel.ensureInkWindow`）：每次开文档 +1，后台读库/解码完成回主线程时
     /// 对不上就丢弃——用户在解码期间已经切走/关掉了。非 @Published。
     var inkLoadGeneration = 0
-    /// 笔迹还在后台解码（页图先出、笔迹随后补上）。视图不读它；打开耗时账本据此不提前结账。
+    /// 笔迹还在后台装载（页图先出、笔迹随后补上）。视图不读它；打开耗时账本据此不提前结账。
     var inkLoading = false
+
+    // 笔迹按页窗口装载（`InkWindow` / `INK-PAGING-PLAN.md §4`）：`strokes` 只是**已装载页**的集合。全部非 @Published。
+    /// 已装载的页（这些页的笔迹在 `strokes` 里、对账集里）。
+    var inkLoadedPages = Set<Int>()
+    /// 正在后台读的页（别重复发请求）。
+    var inkLoadingPages = Set<Int>()
+    /// 阅读区在 settle 后报的实化范围 → `DocTabModel` 据此装载/淘汰。不是 @Published：每次 settle 一发，
+    /// 不走视图树。
+    let inkWindowRequests = PassthroughSubject<ClosedRange<Int>, Never>()
+    /// 「这一页现在就要在内存里」（平板对某页擦除/框选/粘贴前调）：不在窗口里就同步读那一页。
+    /// 由 `DocTabModel` 装上。
+    var inkEnsureLoaded: ((Int) -> Void)?
+    /// 画板模式页边溢出的**全篇**首值（开文档一条 SQL 从 anchor 列算出，`LibraryStore.inkXExtent`）：
+    /// 内存里只有窗口内的笔迹，光扫它们会把远处页边的笔迹裁掉。只增不减（同 `growCanvasMargin`）。
+    var inkOverflowSeed: Double = 0
+    /// 全篇的页边溢出量 = 首值 ∨ 窗口内实扫（新画的、平板发来的都在窗口里）。替代原来的 `CanvasMargin.overflow(strokes)`。
+    func inkOverflow() -> Double { max(inkOverflowSeed, CanvasMargin.overflow(strokes)) }
+
+    /// 某图层**全篇**笔数（窗口外的也算：一条 `json_extract` 的 GROUP BY，几千行几十毫秒——只在删层确认时问一次）。
+    /// 库不可用时退回内存计数。
+    func inkStrokeCount(layerId: UUID) -> Int {
+        guard let id = documentId, let store, let counts = try? store.inkLayerCounts(documentId: id) else {
+            return strokes.filter { $0.layerId == layerId }.count
+        }
+        var n = counts[layerId.uuidString.uppercased()] ?? 0
+        if layerId == InkLayer.defaultID { n += counts[""] ?? 0 }   // 老行没有 `layerId` 键 = 默认图层
+        return n
+    }
+
+    /// 删整层的笔迹：内存里的摘掉（对账把它们删库），窗口外的行直接一条 SQL 删——那些内存里没有、对账够不着。
+    func deleteInkStrokes(layerId: UUID) {
+        strokes.removeAll { $0.layerId == layerId }
+        guard let id = documentId, let store else { return }
+        try? store.deleteInkStrokes(documentId: id, layerId: layerId.uuidString,
+                                    isDefaultLayer: layerId == InkLayer.defaultID)
+    }
 
     /// 编辑撤销栈（页内笔迹 + 文字注解 / 草稿纸笔迹各一条，见 `InkUndo.swift`）。
     /// **瞬态、非 @Published**：换文档由 `DocTabModel` 清空；菜单可用性在 `validateMenuItem`

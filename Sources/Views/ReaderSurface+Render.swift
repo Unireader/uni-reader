@@ -241,7 +241,10 @@ extension ReaderSurface {
         // 就会先照旧宽度发一批注定作废的请求）。缩放期间**不驱逐**任何已出图的页（见 updateRealized），
         // 这里是缩放收尾的第一站，补跑一次把真正出界的那些驱逐掉。
         adoptBaseWidth(currentBaseWidth())
-        updateRealized(scratch.geo, layout: layout)
+        let settled = updateRealized(scratch.geo, layout: layout)
+        // 笔迹按页窗口装载（`InkWindow`）：settle 后把实化范围报给账房，缺的页后台补读、远的页卸掉。
+        // **只在这里发**——滚动/缩放进行中每帧变一次 `realized`，逐帧装卸就是逐帧写 `strokes`（@Published），红线。
+        session.inkWindowRequests.send(settled)
         // 缩放稳定了才回报倍率（供进度持久化）。这是缩放路径上**唯一**该写 `session.readZoom` 的地方
         // ——它是 @Published，逐帧写会每帧广播给整窗视图树，见 DocSession.readZoom 的告警注释。
         if session.readZoom != zoom { session.readZoom = zoom }

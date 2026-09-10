@@ -257,7 +257,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `docs` | `u8 following` · `str selected` · `u16 n` · `n ×(str id, str title, str ws)` |
 | `pens` | `u16 active` · `u16 n` · `n × pen` |
 | `inkCancel` | 空 |
-| `strokes` | `u32 ackRel` · `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )` |
+| `strokes` | `u32 ackRel` · `u32 n` · `n ×( u32 page, pen, u16 m, m × pt3 )`。整表替换；list 是 **Mac 当前装载窗口**（实化范围 ± 几页，`INK-PAGING-PLAN.md §4.5`）的可见图层笔迹，**不保证全篇**——窗口随 Mac 滚动变化时整替一次，客户端视口始终在窗口之内 |
 | `strokesAppend` | 与 `strokes` **逐字节相同**，只是语义是「追加」而非「整表替换」 |
 | `radial` | `u8 open` · open=1 时续 `u32 page` · `f32 cx` · `f32 cy` · `u16 highlight` · `u16 n` · `n ×( u8 kind, pen )` |
 | `pressRing` | `u8 on` · on=1 时续 `u32 page` · `f32 nx` · `f32 ny` |

@@ -1,6 +1,6 @@
 # 笔迹内存：点压缩 + 按页窗口加载 — 方案
 
-> 状态：**方案待用户确认，未动代码**（2026-09-10）。
+> 状态：**① ② 均已落地（2026-09-10，用户拍板 §8 四项照推荐），待用户实测 §6**。落地与方案的出入见 §9。
 > 起因：用户问「笔迹读库 158ms · 2616 条，是一次性读全部吗」→ 是。读库/解码已挪到后台（见 HISTORY
 > 「打开耗时」第 4 点），但**整篇笔迹常驻内存**这件事没变。用户定的线：「**1~10MB 以内可以全部加载，
 > 再多就很有问题**」。
@@ -163,9 +163,34 @@ Mac 的装载窗口（实化 ± pad）⊇ 平板可见页。做法：**窗口变
 5. ②-d 全集消费者逐个改（4.6 表）+ 平板整替 + `PROTOCOL.md` 一句话。
 6. Debug 包给用户实测 §6。
 
-## 8. 待用户拍板
+## 8. 用户拍板（2026-09-10，四项照推荐）
 
-1. 点类型 **SIMD3<Float>**（16 B）而非 12 B 手写结构体——同意？
-2. 窗口参数 `pad = 4` / `keep = 12` 起步——同意？
-3. 平板走「窗口变化 settle 时 `strokes` 整替」、不加新消息——同意？
-4. 整篇操作（删层 / 计数 / 页边）走 SQL（含 `json_extract`）而不是「先装满再操作」——同意？
+1. 点类型 **SIMD3<Float>**（16 B）而非 12 B 手写结构体。
+2. 窗口参数 `pad = 4` / `keep = 12` 起步。
+3. 平板走「窗口变化 settle 时 `strokes` 整替」、不加新消息。
+4. 整篇操作（删层 / 计数 / 页边）走 SQL（含 `json_extract`）而不是「先装满再操作」。
+
+## 9. 落地记录（与方案的出入，改代码前看这里）
+
+代码落点：`Sources/App/InkWindow.swift`（纯函数 + `InkPageSummary`）、`DocTabModel.ensureInkWindow / applyInkBatch /
+evictInk / ensureInkPageLoaded`、`DocSession` 的 `inkLoadedPages / inkLoadingPages / inkWindowRequests /
+inkEnsureLoaded / inkOverflowSeed / inkOverflow() / inkStrokeCount / deleteInkStrokes`、`LibraryStore` 的
+`inkRows(pages:) / inkPageSummaries / inkLayerCounts / deleteInkStrokes / inkCount / inkXExtent`、
+`InkUndoStack.referencedPages`；阅读区入口在 `ReaderSurface+Render.settleRender`（settle 后 `inkWindowRequests.send`）。
+spike：`spike/ink-window-test.swift` 29 项。
+
+- **点压缩**：`InkPoint = SIMD3<Float>`，配 `init(Double, Double, Double)`（`@_disfavoredOverload`，三个字面量时走标准
+  Float 版不报 ambiguous）与 `.dx/.dy/.dz`（取 Double）。约定「存 Float、算 Double」：变换在 Double 里算完存回；
+  距离命中在 Float 里比，半径 `Float(r)` 转一次。payload 写 `[[Float]]`（JSON 最短十进制，比 Double 短一半）、
+  读 `[[Double]]` 再 `Float(d)`，与 `InkPayloadFast` 同一种转换，两条路逐位相同。spike 容差从 1e-9 放到 1e-6。
+- **首窗**由 `load()` 在读到进度页后用 `progress ± pad` 装，不等首帧；阅读区首次 settle 再按真实实化范围补齐。
+- **检查器按页列表**改读库汇总（`InkPageSummary.load`，后台 + 0.3s 防抖）：色点从「前 6 笔的颜色」变成
+  「该页出现过的颜色去重取前 6」（`json_group_array(DISTINCT …)`）；跳转落点用 `anchor_y` 列的最小值。
+- **删整页**先 `inkEnsureLoaded` 再走内存删除（可撤销）；**删整层**内存 removeAll + `DELETE … json_extract(payload,'$.layerId')`
+  （`COLLATE NOCASE`；默认层连 `layerId IS NULL` 的老行一起）；层计数同样问库，老行归默认层。
+- **页边溢出**首值随第一批读库一起算（`inkXExtent`），**只增不减**：擦掉远处笔迹后边界要到重开文档才收回来。
+- **撤销栈**引用的页钉住不淘汰；但别的页被淘汰会让后面笔迹的数组下标前移，撤销「删除」时按原下标插回可能落到
+  同页更靠上的位置——只影响同页重叠笔迹的叠放序，接受。
+- **平板**：`applyInkBatch` 里 `added` 非空才整替一次；淘汰不通知平板（它那份多出来的远页笔迹只是陈旧，
+  下一次整替就没了）。`PROTOCOL.md` `strokes` 行补了一句语义。
+- `MirrorApply` 等直接写库的路径与内存窗口互不知情——与从前「开文档一次装满」一样，不属本次范围。

@@ -44,10 +44,11 @@ extension ReaderSurface {
     }
 
     /// 按当前笔迹重算页边宽度（笔画增删、框选移动/缩放提交、开画板、载入文档后各跑一次）。
-    /// 擦掉远处的笔迹边界也会收回来——收缩同样走原子补偿，页面不动。
+    /// 笔迹按页窗口装载后（`InkWindow`）内存里只有窗口内的，全篇那份由 `session.inkOverflow()` 的
+    /// 库算首值兜着——所以擦掉远处笔迹后边界要到**重开文档**才收回来（首值只增不减）。
     func refreshCanvasMargin() {
         guard session.canvasMode else { return }
-        applyCanvasMargin(CanvasMargin.margin(overflow: CanvasMargin.overflow(session.strokes)))
+        applyCanvasMargin(CanvasMargin.margin(overflow: session.inkOverflow()))
     }
 
     /// 落笔中的即时生长：这一笔写到离边界不足 `slack` 就往外跳一档，**只增不减**
@@ -71,7 +72,7 @@ extension ReaderSurface {
     /// 两个方向都**把 PDF 页面摆回视口正中**（用户 2026-08-28 要求）——切开关是个「换个看法」的动作，
     /// 落点该是页面本身，而不是切之前碰巧停在的那处页边空白。
     func canvasModeChanged(_ on: Bool) {
-        applyCanvasMargin(on ? CanvasMargin.margin(overflow: CanvasMargin.overflow(session.strokes))
+        applyCanvasMargin(on ? CanvasMargin.margin(overflow: session.inkOverflow())
                              : canvasMarginState,
                           recenter: true)
     }

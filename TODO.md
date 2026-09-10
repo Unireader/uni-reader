@@ -510,13 +510,21 @@
     **第四轮（同日，待用户验证）**：日志里还剩「笔迹读库 158ms · 2616 条」在主线程——读库也挪进解码那个
     后台任务，并改走窄查询 `LibraryStore.inkRows`（四列、免字典；细节见 HISTORY 同条第 4 点）。账本里
     「装载」段不再有「笔迹读库」，改看里程碑 `笔迹到位 N笔 后台读库 Xms + 解码 Yms`。
-    **由此引出的待办——笔迹内存**（用户 2026-09-10 定「1~10MB 以内可以全部加载，再多就很有问题」）：
-    现在开文档是整篇笔迹一次进内存，点是 `SIMD3<Double>` 每点 32B（8B 纯填充），2616 笔 ≈ 26 万点
-    ≈ 9~10MB 常驻、开文档瞬时峰值 25~30MB（`[LibInkRow]` 的 payload 13~15MB + 解码副本）；内存排查那轮
-    实测三篇共 11,335 个点数组 37MB 也对得上。两步走，**先写方案再动手**：① 点压到 12~16B（线格式
-    本来就是 f32，`PROTOCOL.md §2`）；② 按页窗口加载 + 淘汰（只装实化范围 ± 几页），要动所有假定
-    `session.strokes` 是全集的地方（对账 / 平板全量回传 / `CanvasMargin.overflow` / 图层与检查器计数 /
-    图层自愈 / 撤销栈）。方案文档：`INK-PAGING-PLAN.md`（待写）。
+
+  - **2026-09-10：笔迹内存——点压到 f32 + 按页窗口装载/淘汰，已落地，待用户实测**（方案与落地记录
+    `INK-PAGING-PLAN.md`，尤其 §9）。起因：用户定「1~10MB 以内可以全部加载，再多就很有问题」，而整篇笔迹
+    一次进内存、`SIMD3<Double>` 每点 32B，这篇 2616 笔 ≈ 9~10MB 常驻、开文档峰值 25~30MB，正卡在线上。
+    ① `InkPoint = SIMD3<Float>`（每点 16B；线格式本来就是 f32），「存 Float、算 Double」，payload 写 `[[Float]]`
+    读 `[[Double]]`；② **`session.strokes` 不再是全集**，只装阅读区实化范围 ± 4 页、± 12 页之外淘汰
+    （`InkWindow`，settle 时由 `ReaderSurface+Render` 报范围、`DocTabModel.ensureInkWindow` 装卸），
+    整篇操作改问库：检查器按页列表 `InkPageSummary`（GROUP BY + `json_extract`）、删层 `DELETE … json_extract`、
+    层计数、画板页边首值 `inkXExtent`；撤销栈引用的页钉住；平板对未装载页动手先 `inkEnsureLoaded` 同步补读。
+    🔴 **改笔迹相关代码前先看 §9**——凡是把 `session.strokes` 当全篇用的写法现在都是错的。
+    验证：`spike/ink-window-test.swift` 29/0、`ink-edit` 75/0、`ink-undo` 40/0、`canvas-margin` 24/0、
+    `scratch-store` 53/0、`ink-store` 25/0、`ink-payload-fast` 25/0、`wire-codec` 100/0、`xcodebuild` Debug。
+    **待用户实测**（`INK-PAGING-PLAN.md §6`）：① 同一篇 `footprint` 前后对比（预期 ~10MB → <1MB）；
+    ② 快滚 / 跳页 / 平板 gotoPage 时笔迹不闪不缺不重；③ 擦除→滚远→滚回→撤销仍正确；④ 删整层 / 删整页后
+    重开文档库里确实没了；⑤ 画板模式页边宽度开文档即正确；⑥ 检查器「笔迹」按页列表全篇都在、色点是去重后的颜色。
 
   - **2026-08-29：macOS 多标签页第 2 步「标签化」已落地，待真机验证**（方案 `MAC-TABS-PLAN.md §9`）。
     新增 `TabsModel`（窗口的标签集，不变式：永远至少一个标签，故 `active` 非可选）、

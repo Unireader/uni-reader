@@ -127,6 +127,19 @@ final class InkUndoStack {
     var undoLabel: String? { undos.last?.label }
     var redoLabel: String? { redos.last?.label }
 
+    /// 两条栈里所有增量涉及的页（before/after 任一侧）。笔迹按页窗口装载后（`InkWindow`），
+    /// 这些页**钉住不淘汰**：增量按下标插回原位，页不在内存里就无处可插。栈有上限，钉住的页有界。
+    var referencedPages: Set<Int> {
+        var out = Set<Int>()
+        for patch in undos + redos {
+            for c in patch.strokes.values {
+                if let b = c.before { out.insert(b.page) }
+                if let a = c.after { out.insert(a.page) }
+            }
+        }
+        return out
+    }
+
     func reset() {
         undos.removeAll(); redos.removeAll(); sealed = true
     }

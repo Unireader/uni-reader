@@ -65,6 +65,19 @@ struct LibInkRow {
     var payload: Data           // JSON
 }
 
+/// 某页页内笔迹的汇总（`LibraryStore.inkPageSummaries`，一条 GROUP BY 出全篇）：
+/// 笔迹按页窗口装载后（`INK-PAGING-PLAN.md §4.6`），检查器的「按页列表」不再能从内存数出来，
+/// 改看这个——库里怎么算都不读 payload 里的点。
+struct LibInkPageSummary {
+    var page: Int
+    var count: Int
+    /// 该页笔迹包围盒的最小归一化 y（跳转落点用；`note.anchor_y` 列）。
+    var minY: Double
+    /// 该页出现过的笔色（去重），JSON 数组文本 `[{"r":..,"g":..,"b":..,"a":..}, …]`——
+    /// 由 `json_group_array(DISTINCT json_extract(payload,'$.color'))` 直接给出，App 层解成 `InkColor`。
+    var colorsJSON: String
+}
+
 /// 一个笔迹图层（`ink_layer` 表，v7）。挂逻辑文档；`colorKey` 复用 `NoteType.palette`。
 struct LibInkLayer: Identifiable, Equatable {
     var id: String              // UUID

@@ -457,6 +457,69 @@ final class LibraryStore {
             LibInkRow(id: r.text(0), kind: Int(r.int64(1)), page: Int(r.int64(2)), payload: r.blob(3))
         }
     }
+
+    // MARK: 页内笔迹按页窗口装载（`INK-PAGING-PLAN.md §4`）——下面这几条都不读 payload 里的点
+
+    /// 某页区间的页内笔迹行（kind=2），排序同上。走 `idx_note_document_page`；`kind` 在几十行里过滤。
+    func inkRows(documentId: String, kind: Int, pages: ClosedRange<Int>) throws -> [LibInkRow] {
+        try db.query("""
+        SELECT id, kind, page, payload FROM note
+        WHERE document_id=? AND kind=? AND page BETWEEN ? AND ? ORDER BY page ASC, created_at ASC
+        """, [.text(documentId), .int(Int64(kind)), .int(Int64(pages.lowerBound)), .int(Int64(pages.upperBound))]) { r in
+            LibInkRow(id: r.text(0), kind: Int(r.int64(1)), page: Int(r.int64(2)), payload: r.blob(3))
+        }
+    }
+
+    /// 全篇按页汇总（笔数 / 最小 y / 出现过的笔色），给检查器的按页列表。一条 GROUP BY；
+    /// `json_extract` 要解每行 payload 的 JSON（几千行几十毫秒），调用方放后台。
+    func inkPageSummaries(documentId: String) throws -> [LibInkPageSummary] {
+        try db.query("""
+        SELECT page, COUNT(*), MIN(anchor_y), json_group_array(DISTINCT json_extract(payload, '$.color'))
+        FROM note WHERE document_id=? AND kind=? GROUP BY page ORDER BY page ASC
+        """, [.text(documentId), .int(Int64(2))]) { r in
+            LibInkPageSummary(page: Int(r.int64(0)), count: Int(r.int64(1)), minY: r.double(2), colorsJSON: r.text(3))
+        }
+    }
+
+    /// 各图层的笔数（图层面板的「删除会连带 N 笔」）。键是 payload 里的 `layerId`，统一成**大写**
+    /// （Swift 写的本来就是大写 UUID，别的端写小写也归到一起）；老数据没这个键 → 空串，调用方按默认图层算。
+    func inkLayerCounts(documentId: String) throws -> [String: Int] {
+        let rows = try db.query("""
+        SELECT UPPER(COALESCE(json_extract(payload, '$.layerId'), '')), COUNT(*)
+        FROM note WHERE document_id=? AND kind=? GROUP BY 1
+        """, [.text(documentId), .int(Int64(2))]) { r in (r.text(0), Int(r.int64(1))) }
+        return Dictionary(rows, uniquingKeysWith: +)
+    }
+
+    /// 删整层的笔迹（窗口外那些内存里没有、对账删不到的行）。`layerId` 传 UUID 字符串（大小写不论）；
+    /// 传默认图层 id 时把没有 `layerId` 键的老行一并算进去。返回删掉的行数。
+    @discardableResult
+    func deleteInkStrokes(documentId: String, layerId: String, isDefaultLayer: Bool) throws -> Int {
+        let cond = isDefaultLayer
+            ? "(json_extract(payload, '$.layerId') = ? COLLATE NOCASE OR json_extract(payload, '$.layerId') IS NULL)"
+            : "json_extract(payload, '$.layerId') = ? COLLATE NOCASE"
+        let before = try inkCount(documentId: documentId)
+        try db.run("DELETE FROM note WHERE document_id=? AND kind=? AND \(cond)",
+                   [.text(documentId), .int(Int64(2)), .text(layerId)])
+        return before - (try inkCount(documentId: documentId))
+    }
+
+    /// 页内笔迹总数。
+    func inkCount(documentId: String) throws -> Int {
+        let r = try db.query("SELECT COUNT(*) FROM note WHERE document_id=? AND kind=?",
+                             [.text(documentId), .int(Int64(2))]) { Int($0.int64(0)) }
+        return r.first ?? 0
+    }
+
+    /// 全篇页内笔迹的横向范围（归一化，anchor 列 = 包围盒）：画板模式页边宽度的首值
+    /// （`CanvasMargin`），不必把整篇点装进内存扫一遍。没有笔迹 → nil。
+    func inkXExtent(documentId: String) throws -> (minX: Double, maxX: Double)? {
+        let r = try db.query("""
+        SELECT COUNT(*), MIN(anchor_x), MAX(anchor_x + anchor_w) FROM note WHERE document_id=? AND kind=?
+        """, [.text(documentId), .int(Int64(2))]) { r in (Int(r.int64(0)), r.double(1), r.double(2)) }
+        guard let row = r.first, row.0 > 0 else { return nil }
+        return (row.1, row.2)
+    }
     func upsertNote(_ n: LibNote) throws {
         try db.run("""
         INSERT INTO note(id,document_id,kind,page,anchor_x,anchor_y,anchor_w,anchor_h,payload,created_at,updated_at)

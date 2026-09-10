@@ -49,7 +49,8 @@ struct LayerManagerView: View {
             }, onCancel: { draft = nil })
         }
         .alert(item: $deleting) { layer in
-            let n = session.strokes.filter { $0.layerId == layer.id }.count
+            // 全篇笔数问库：内存里只有当前窗口那几页（`InkWindow`），数它等于报少
+            let n = session.inkStrokeCount(layerId: layer.id)
             return Alert(title: Text(String(format: L("Delete layer “%@”?"), layer.name)),
                         message: n > 0 ? Text(String(format: L("%d stroke(s) on this layer will be deleted too."), n)) : nil,
                         primaryButton: .destructive(Text(L("Delete"))) { delete(layer) },
@@ -111,7 +112,7 @@ struct LayerManagerView: View {
     /// 删除图层：连同其笔迹一起清除（不同于 `NoteType` 删除后笔记回落「通用」——
     /// 图层删除更贴近「这一整层内容都不要了」的直觉），并保证至少留一层可画。
     private func delete(_ layer: InkLayer) {
-        session.strokes.removeAll { $0.layerId == layer.id }
+        session.deleteInkStrokes(layerId: layer.id)   // 内存 + 库（窗口外的行对账够不着，见 `InkWindow`）
         session.inkLayers.removeAll { $0.id == layer.id }
         if session.activeLayerID == layer.id { session.activeLayerID = session.inkLayers.first?.id }
     }

@@ -586,6 +586,7 @@ final class AppModel: ObservableObject {
     /// 注解 anchor 中心落多边形内，且只认可见图层。
     private func lassoHits(_ obj: [String: Any], in s: DocSession, page: Int)
     -> (strokes: Set<Int>, notes: Set<Int>) {
+        s.inkEnsureLoaded?(page)   // 笔迹按页窗口装载：这一页不在内存里就先同步补读，否则命中的是空集
         var poly: [SIMD2<Double>]?
         if let flat = obj["poly"] as? [Any], flat.count >= 6 {
             let vals = flat.map { ($0 as? NSNumber)?.doubleValue ?? 0 }
@@ -675,6 +676,7 @@ final class AppModel: ObservableObject {
     /// （与 Mac 本机 ⌘V 同一份纯函数）。草稿纸开着时粘到纸上（画布坐标，另一条）。
     private func applyClipPaste(_ obj: [String: Any], to s: DocSession, page: Int) {
         guard let clip = InkClipboard.read() else { PadLog.log("平板 clip paste：剪贴板空"); return }
+        s.inkEnsureLoaded?(page)   // 粘贴进未装载的页：先把那页读进来，新笔迹才按「后画在上」排在库批之后
         let nx = (obj["nx"] as? NSNumber)?.doubleValue ?? 0.5
         let ny = (obj["ny"] as? NSNumber)?.doubleValue ?? 0.5
         if let padID = s.openPadID {
@@ -1052,6 +1054,7 @@ final class AppModel: ObservableObject {
     }
     func inkErase(_ pts: [InkPoint], page: Int, in session: DocSession? = nil) {
         guard let s = session ?? padSession else { return }
+        s.inkEnsureLoaded?(page)          // 笔迹按页窗口装载：这一页不在内存里就先同步补读（否则擦的是空集）
         let before = s.strokes            // COW 快照，O(1)；只有真擦到了才拿它去比差异
         let changed = eraseNear(s, pts, page: page)
         // 撤销记账：一次拖动里每 8ms 就来一批，靠 `InkPatch` 的合并把整条拖动并成**一步**
@@ -1089,7 +1092,8 @@ final class AppModel: ObservableObject {
         if s.id == padSession?.id { broadcastScratchStrokes() }
     }
 
-    /// 把平板当前会话的**全部笔迹**推给平板（平板据此显示 + 刷新/重连后恢复）。
+    /// 把平板当前会话**内存里的笔迹**（= Mac 当前装载窗口，`InkWindow`；不保证全篇，PROTOCOL.md §4.2）
+    /// 推给平板（平板据此显示 + 刷新/重连后恢复）。窗口随滚动长了/变了，`DocTabModel.applyInkBatch` 再整替一次。
     /// 平板本地不落库、只即时回显正在写的这一笔；已成形/已存的笔迹以 Mac 为唯一真源，靠这里回传。
     func broadcastStrokes() {
         guard server.hasClients, let s = padSession else { return }

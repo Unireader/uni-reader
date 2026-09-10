@@ -50,6 +50,8 @@ struct InspectorView: View {
     /// 笔迹区块的折叠态。**默认展开**——从前它与另外四类挤在同一页、条目又最多，只好默认折起来；
     /// 现在它自己一个分区，再折起来就是一页空白。
     @State private var inkExpanded = true
+    /// 笔迹按页汇总（库里查的全篇，见 `inkBlock`）。
+    @State private var inkSummaries: [InkPageSummary] = []
     /// 「笔记」页停在哪个二级分区（记住，换文档/重开都回到这里）。
     @AppStorage("inspectorNotesSection") private var notesSectionRaw = NotesSection.text.rawValue
 
@@ -255,43 +257,52 @@ struct InspectorView: View {
     }
 
     /// 手写笔迹：默认折叠（系统 DisclosureGroup，不自绘），标题行保持与其他区块同款样式。
+    /// 按页列表来自库里的全篇汇总（`InkPageSummary.load`）：笔迹按页窗口装载后（`InkWindow`）内存里只有
+    /// 当前窗口那几页，从 `session.strokes` 分组就是只列一小截。`strokes` 每变一次（`inkRev`）后台重查一遍。
     private var inkBlock: some View {
-        let byPage = Dictionary(grouping: session.strokes, by: { $0.page })
-        return DisclosureGroup(isExpanded: $inkExpanded) {
-            inkRows(byPage)
+        DisclosureGroup(isExpanded: $inkExpanded) {
+            inkRows
                 .padding(.top, 8)
         } label: {
-            Text("\(L("Ink")) · \(session.strokes.count)")
+            Text("\(L("Ink")) · \(inkSummaries.reduce(0) { $0 + $1.count })")
                 .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+        }
+        .task(id: "\(documentId ?? "")#\(session.inkRev)") {
+            // 每写一笔 `inkRev` 都 +1；先歇 0.3s——连着写字时前面那些请求会被新 id 取消掉，
+            // 别让每一笔都去跑一遍全篇 GROUP BY（那条语句会把库锁住几十毫秒，主线程的落库要等它）。
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            let store = session.store, doc = documentId
+            let loaded = await Task.detached(priority: .utility) { InkPageSummary.load(store: store, documentId: doc) }.value
+            if !Task.isCancelled { inkSummaries = loaded }
         }
     }
 
     @ViewBuilder
-    private func inkRows(_ byPage: [Int: [InkStroke]]) -> some View {
+    private var inkRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if session.strokes.isEmpty {
+            if inkSummaries.isEmpty {
                 Text(L("No ink yet.")).foregroundStyle(.secondary).font(.callout)
             } else {
-                ForEach(byPage.keys.sorted(), id: \.self) { page in
-                    let strokes = byPage[page] ?? []
+                ForEach(inkSummaries) { s in
                     HStack(spacing: 6) {
                         Button {
-                            onJumpTo(page, inkTopFrac(strokes))   // 点击 → 跳到该页笔迹处
+                            onJumpTo(s.page, max(0, s.minY - 0.05))   // 点击 → 跳到该页笔迹处（最靠上的一笔略上移一点）
                         } label: {
                             HStack(spacing: 6) {
-                                Label(String(format: L("Page %d"), page + 1), systemImage: "pencil.tip").font(.callout)
+                                Label(String(format: L("Page %d"), s.page + 1), systemImage: "pencil.tip").font(.callout)
                                 Spacer()
-                                ForEach(Array(strokes.prefix(6).enumerated()), id: \.offset) { _, s in
-                                    Circle().fill(Color(nsColor: s.color.nsColor)).frame(width: 10, height: 10)
+                                ForEach(Array(s.colors.prefix(6).enumerated()), id: \.offset) { _, c in
+                                    Circle().fill(Color(nsColor: c.nsColor)).frame(width: 10, height: 10)
                                 }
-                                Text("\(strokes.count)").foregroundStyle(.secondary).font(.caption)
+                                Text("\(s.count)").foregroundStyle(.secondary).font(.caption)
                             }
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
 
                         Button {
-                            deleteInk(page: page)                 // × → 删该页全部笔迹（内存移除→onChange 落库删行）
+                            deleteInk(page: s.page)               // × → 删该页全部笔迹（内存移除→onChange 落库删行）
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.body).foregroundStyle(.tertiary)
@@ -426,14 +437,10 @@ struct InspectorView: View {
         session.scratchStrokes.removeAll { $0.padId == id }
     }
 
-    /// 该页笔迹最靠上的归一化 y（0 顶 1 底），略上移一点作跳转目标。
-    private func inkTopFrac(_ strokes: [InkStroke]) -> Double {
-        let ys = strokes.flatMap { $0.points.map(\.dy) }
-        return max(0, (ys.min() ?? 0) - 0.05)
-    }
-
     /// 删除某页全部手写笔迹：从内存移除 → ContentView 的 onChange 增量对账把对应 note 删库。
+    /// 那一页不在装载窗口里时先同步补读进来再删（`InkWindow`）——走内存这条路才可撤销。
     private func deleteInk(page: Int) {
+        session.inkEnsureLoaded?(page)
         session.inkEdit("Delete", kind: .delete) { session.strokes.removeAll { $0.page == page } }
     }
 
