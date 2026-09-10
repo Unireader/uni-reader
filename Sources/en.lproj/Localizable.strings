@@ -172,7 +172,9 @@
 "snap" = "snap";
 "Heap (malloc)" = "Heap (malloc)";
 "freed, not yet returned" = "freed, not yet returned";
+"Memory figures as text" = "Memory figures as text";
 "Diagnostics" = "Diagnostics";
+"All records as text (one line per open)" = "All records as text (one line per open)";
 "Open timings (recent)" = "Open timings (recent)";
 "No document opened yet in this session." = "No document opened yet in this session.";
 "Measured from the click until every visible page shows its image and ink. Phases are the synchronous load steps; marks are milestones since the click. The same summary lines go to ~/Library/Logs/UniReader-ws.log when that file exists." = "Measured from the click until every visible page shows its image and ink. Phases are the synchronous load steps; marks are milestones since the click. The same summary lines go to ~/Library/Logs/UniReader-ws.log when that file exists.";

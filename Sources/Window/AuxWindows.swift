@@ -17,21 +17,67 @@ final class SettingsWindowController: NSWindowController {
         guard let app = AppDelegate.shared?.appModel else { return }
         let c = SettingsWindowController(app: app)
         shared = c
-        c.window?.center()
+        // 上次的大小/位置有记录就用它，没有（首次）才居中。
+        if c.window?.setFrameUsingName(Self.frameName) != true { c.window?.center() }
         c.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private static let frameName = "SettingsWindow"
+
     init(app: AppModel) {
-        let host = NSHostingController(rootView: SettingsView().environmentObject(app))
-        let win = NSWindow(contentViewController: host)
-        win.title = L("Settings")
-        win.styleMask = [.titled, .closable, .miniaturizable]
+        let win = NSWindow(contentViewController: SettingsTabController(app: app))
+        win.title = L("Settings")   // 选中标签后换成标签名（系统设置窗的惯例），见 `SettingsTabController`
+        win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        win.toolbarStyle = .preference   // 设置窗那种：标题一行、图标 + 文字的标签一行
+        win.setContentSize(NSSize(width: 680, height: 560))
+        win.contentMinSize = NSSize(width: 560, height: 440)
+        win.setFrameAutosaveName(Self.frameName)
         win.isReleasedWhenClosed = false
         super.init(window: win)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+}
+
+/// 设置窗的分页壳：`NSTabViewController` 的 `.toolbar` 样式——标签（图标 + 文字）住在标题栏里，
+/// 与系统各 app 的设置窗同款；每页内容仍是 SwiftUI（`SettingsView(tab:)`）。
+/// 为什么不用 SwiftUI `TabView`：装进普通 `NSWindow` 后它把标签条画在标题栏**下面**、自带一层
+/// 更浅的底色 + 分隔线，跟标题栏两种灰叠在一起像错位（2026-09-10 用户截图）。
+@MainActor
+final class SettingsTabController: NSTabViewController {
+    init(app: AppModel) {
+        super.init(nibName: nil, bundle: nil)
+        tabStyle = .toolbar
+        for t in SettingsTab.allCases {
+            let host = NSHostingController(rootView: SettingsView(tab: t).environmentObject(app))
+            // 不让 SwiftUI 内容的尺寸变成约束：初始大小 / 最小值 / 可缩放全由窗口管。默认的
+            // `.standardBounds` 会把「理想尺寸」也做成约束——各页内容高矮不一，切一下标签窗口就跳一下。
+            host.sizingOptions = []
+            let item = NSTabViewItem(viewController: host)
+            item.label = t.title
+            item.image = NSImage(systemSymbolName: t.symbol, accessibilityDescription: t.title)
+            addTabViewItem(item)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        syncTitle()
+    }
+
+    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        super.tabView(tabView, didSelect: tabViewItem)
+        syncTitle()
+    }
+
+    /// 窗口标题跟着选中的标签走（`NSTabViewController` 不会自己改标题）。
+    private func syncTitle() {
+        guard tabViewItems.indices.contains(selectedTabViewItemIndex) else { return }
+        view.window?.title = tabViewItems[selectedTabViewItemIndex].label
+    }
 }
 
 /// AI 面板浮窗（⇧⌘A 的「浮窗模式」，`AIPanelModel.mode == .window`）。**全局唯一**——

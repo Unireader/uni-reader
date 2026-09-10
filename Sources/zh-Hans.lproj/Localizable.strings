@@ -174,7 +174,9 @@
 "snap" = "墨迹快照";
 "Heap (malloc)" = "堆（malloc）";
 "freed, not yet returned" = "已释放未归还";
+"Memory figures as text" = "内存数据（纯文本）";
 "Diagnostics" = "诊断";
+"All records as text (one line per open)" = "全部记录（纯文本，每次打开一行）";
 "Open timings (recent)" = "打开耗时（最近）";
 "No document opened yet in this session." = "本次运行还没有打开过文档。";
 "Measured from the click until every visible page shows its image and ink. Phases are the synchronous load steps; marks are milestones since the click. The same summary lines go to ~/Library/Logs/UniReader-ws.log when that file exists." = "从点下去那一刻起算，到可见的每一页都显示出页图和笔迹为止。分段是同步装载的各步；里程碑是相对点击时刻的时间点。同样的摘要行会写进 ~/Library/Logs/UniReader-ws.log（该文件存在时）。";

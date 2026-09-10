@@ -1,9 +1,39 @@
+import AppKit
 import SwiftUI
 
-/// 标准设置页（⌘,）：多 Tab 分类（通用 / 平板 / 阅读），持久化到 UserDefaults，全窗口共享。
+/// 设置窗的标签页；顺序即标题栏里的顺序。图标/文案放这里，窗口壳（`SettingsTabController`）直接取用。
+enum SettingsTab: CaseIterable {
+    case general, tablet, reading, diagnostics
+
+    var title: String {
+        switch self {
+        case .general: return L("General")
+        case .tablet: return L("Tablet")
+        case .reading: return L("Reading")
+        case .diagnostics: return L("Diagnostics")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gear"
+        case .tablet: return "ipad"
+        case .reading: return "book"
+        case .diagnostics: return "stopwatch"
+        }
+    }
+}
+
+/// 标准设置页（⌘,）的**一页**内容：持久化到 UserDefaults，全窗口共享。
 /// 例外：API key 这类密钥存 Keychain（见 `PaddleOCR.apiKey()`），不落 UserDefaults 明文。
-/// Tab 用系统标准 `Tab`（macOS 26 设置页样式：顶部图标标签页），布局/观感交给系统。
+///
+/// 标签条不在这里：分页由 AppKit 的 `NSTabViewController`（`.toolbar` 样式）管，标签住在标题栏里，
+/// 与系统各 app 的设置窗同款（见 `SettingsTabController`）。之前用 SwiftUI `TabView`：装进普通
+/// `NSWindow` 后它把标签条画在标题栏**下面**、自带一层更浅的底色和分隔线，两条灰叠着像错位。
+/// 尺寸也由窗口管（初始大小 / 最小值 / 可缩放 / 记住用户拖过的大小），这里不定 frame。
 struct SettingsView: View {
+    let tab: SettingsTab
+
     @EnvironmentObject private var app: AppModel
 
     @AppStorage("autoNightMode") private var autoNightMode = false
@@ -16,13 +46,12 @@ struct SettingsView: View {
     @AppStorage("renderCacheMB") private var renderCacheMB = 256
 
     var body: some View {
-        TabView {
-            Tab(L("General"), systemImage: "gear") { generalTab }
-            Tab(L("Tablet"), systemImage: "ipad") { tabletTab }
-            Tab(L("Reading"), systemImage: "book") { readingTab }
-            Tab(L("Diagnostics"), systemImage: "stopwatch") { diagnosticsTab }
+        switch tab {
+        case .general: generalTab
+        case .tablet: tabletTab
+        case .reading: readingTab
+        case .diagnostics: diagnosticsTab
         }
-        .frame(width: 480, height: 420)
     }
 
     /// 诊断：最近几次「打开 / 切标签」各花了多久、卡在哪一段（`OpenStats`，同一份也进 ws 日志）。
@@ -32,6 +61,13 @@ struct SettingsView: View {
                 // 每秒重算（同「渲染」区块的理由：设置窗不销毁，静态取值会一直是旧快照）。
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     let recs = OpenStats.records
+                    // 复制按钮放在同一个每秒重算的闭包里，「没记录就置灰」才会跟着刷新。
+                    LabeledContent {
+                        Button(L("Copy")) { copyToPasteboard(timingsText(recs)) }
+                            .disabled(recs.isEmpty)
+                    } label: {
+                        Text(L("All records as text (one line per open)"))
+                    }
                     if recs.isEmpty {
                         Text(L("No document opened yet in this session."))
                     } else {
@@ -45,6 +81,18 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// 复制用的文本：每条记录一行，= 写进 ws 日志的那句摘要（`Record.summary`）前面加上开始时刻；最新在前。
+    private func timingsText(_ recs: [OpenTrace.Record]) -> String {
+        recs.map { "\($0.startedAt.formatted(date: .numeric, time: .standard)) \($0.summary)" }
+            .joined(separator: "\n")
+    }
+
+    private func copyToPasteboard(_ s: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(s, forType: .string)
     }
 
     @ViewBuilder private func openRecordRow(_ r: OpenTrace.Record) -> some View {
@@ -141,6 +189,14 @@ struct SettingsView: View {
                 // 每秒重算：设置窗不销毁，静态取值会一直显示第一次打开时的快照（诊断时被这个骗过一次）。
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     memoryDiagRows(MemoryDiag.snapshot())
+                }
+                // 复制的是 `MemoryDiag.report()` 那份纯文本（同一份快照的多行版，排查时直接贴出来）。
+                LabeledContent {
+                    Button(L("Copy")) {
+                        copyToPasteboard("\(Date.now.formatted(date: .numeric, time: .standard))\n" + MemoryDiag.report())
+                    }
+                } label: {
+                    Text(L("Memory figures as text"))
                 }
             } header: {
                 Text(L("Rendering"))
