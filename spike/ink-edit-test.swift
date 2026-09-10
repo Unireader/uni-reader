@@ -8,8 +8,11 @@ import Foundation
 var pass = 0, fail = 0
 func check(_ c: Bool, _ m: String) { if c { pass += 1; print("  ✅ \(m)") } else { fail += 1; print("  ❌ \(m)") } }
 
-func near(_ a: Double, _ b: Double, _ eps: Double = 1e-9) -> Bool { abs(a - b) < eps }
-func ptNear(_ p: SIMD2<Double>, _ x: Double, _ y: Double, _ eps: Double = 1e-9) -> Bool { near(p.x, x, eps) && near(p.y, y, eps) }
+/// 笔迹点是 Float（`InkPoint`），包围盒/位移这些 Double 结果也都是从 Float 点算出来的：
+/// 容差一律 1e-6（Float 在 0~2 这段的分辨率 ~1e-7）。纯 Double 的 rulerSnap 那组另传更严的 eps。
+func near(_ a: Double, _ b: Double, _ eps: Double = 1e-6) -> Bool { abs(a - b) < eps }
+func near(_ a: Float, _ b: Double, _ eps: Double = 1e-6) -> Bool { abs(Double(a) - b) < eps }
+func ptNear(_ p: SIMD2<Double>, _ x: Double, _ y: Double, _ eps: Double = 1e-9) -> Bool { near(p.x, x, eps) && near(p.y, y, eps) }   // rulerSnap 纯 Double，仍按 1e-9
 
 let color = InkColor(r: 24, g: 90, b: 210, a: 0.95)
 
@@ -73,7 +76,7 @@ check(ptNear(InkEdit.rulerSnap(start: origin, current: out20, aspect: 0), out20.
 // ---- splitStroke ----
 print("splitStroke（局部擦除切段，擦除点 z 分量 = 页号）")
 // 基准笔画：页 1，x = 0.1...0.9 共 9 点（y=0.5）
-let basePts: [SIMD3<Double>] = (1...9).map { SIMD3(Double($0) * 0.1, 0.5, 0.5) }
+let basePts: [InkPoint] = (1...9).map { InkPoint(Double($0) * 0.1, 0.5, 0.5) }
 let baseLayerID = UUID()   // 非默认图层 id：验证切段不会把笔画悄悄归还给默认图层
 let base = InkStroke(page: 1, color: color, width: 8.5, type: .fountain, points: basePts, layerId: baseLayerID)
 
@@ -202,7 +205,7 @@ check(!InkEdit.pointInPolygon(SIMD2(0.3, 0.3), polygon: [SIMD2(0.1, 0.1), SIMD2(
 // 🔴 这一块钉的是用户 2026-08-30 报的「画板模式下框选移动把笔迹压缩了」：
 // 逐点 clamp 的 translated 单独用时，越界那一头会被摁成一条线；fitTranslation 先夹位移就不会。
 print("bounds / fitTranslation（框选整团平移不变形）")
-func stroke(_ pts: [SIMD3<Double>]) -> InkStroke {
+func stroke(_ pts: [InkPoint]) -> InkStroke {
     InkStroke(page: 1, color: color, width: 4, type: .ballpoint, points: pts)
 }
 check(InkEdit.bounds([]).isNull, "空集 → .null（union 时是中性元）")

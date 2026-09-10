@@ -9,7 +9,9 @@ import Foundation
 
 var pass = 0, fail = 0
 func check(_ c: Bool, _ m: String) { if c { pass += 1; print("  ✅ \(m)") } else { fail += 1; print("  ❌ \(m)") } }
-func near(_ a: Double, _ b: Double, _ eps: Double = 1e-9) -> Bool { abs(a - b) < eps }
+/// 笔迹点是 Float（`InkPoint`），`overflow` 这类 Double 结果也是从 Float 点算的：容差一律 1e-6
+func near(_ a: Double, _ b: Double, _ eps: Double = 1e-6) -> Bool { abs(a - b) < eps }
+func near(_ a: Float, _ b: Double, _ eps: Double = 1e-6) -> Bool { abs(Double(a) - b) < eps }
 
 let color = InkColor(r: 24, g: 90, b: 210, a: 0.95)
 func stroke(_ pts: [(Double, Double)], page: Int = 0) -> InkStroke {

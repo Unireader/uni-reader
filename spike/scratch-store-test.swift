@@ -80,7 +80,8 @@ check(store.scratchPadsRT("别的文档").isEmpty, "按文档隔离（别的文�
 print("② 草稿纸笔迹（note kind=4，画布坐标）")
 let ink = InkColor(r: 20, g: 20, b: 20, a: 1)
 // 画布坐标的关键性质：**可负、可远超 1**。页内归一化那套 clamp 到 0~1 的假设在这里全不成立。
-let canvasPts: [SIMD3<Double>] = [SIMD3(-120.5, 64.25, 0.5), SIMD3(512, -8.125, 1), SIMD3(2048.75, 900, 0.25)]
+// 值都选二进制可精确表示的（Float 也无损），往返比对才能按「逐位相同」检
+let canvasPts: [InkPoint] = [SIMD3(-120.5, 64.25, 0.5), SIMD3(512, -8.125, 1), SIMD3(2048.75, 900, 0.25)]
 let s1 = InkStroke(page: 0, color: ink, width: 10, type: .pencil, points: canvasPts, padId: padA.id)
 guard let n1 = s1.toNote(documentId: doc.id) else { fatalError("toNote nil") }
 check(n1.kind == 4, "草稿纸笔迹落 kind=4（页内是 2）")

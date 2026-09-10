@@ -22,6 +22,29 @@ struct InkColor: Equatable, Codable {
     }
 }
 
+/// 笔迹点：x、y、压感（页内笔迹 0~1 归一化；草稿纸笔迹是画布逻辑点）。
+///
+/// 🔴 **是 `Float` 不是 `Double`**（2026-09-10 定，`INK-PAGING-PLAN.md §3`）：`SIMD3<Double>` stride 32
+/// （8 B 纯填充），一篇 2616 笔 ≈ 26 万点就是 8 MB 常驻；平板上行线格式本来就是 f32（`PROTOCOL.md §2`），
+/// Double 在内存里没多装任何信息，本机落笔归一化后 f32 的分辨率（~6e-8）也远超显示需要。
+/// 约定：**存 Float、算 Double**——平移/缩放/包围盒这类变换在 Double 里算完再 `InkPoint(x, y, z)`
+/// 存回；距离命中（擦除/框选）直接在 Float 里比，半径 `Float(r)` 转一次即可。
+typealias InkPoint = SIMD3<Float>
+
+extension SIMD3 where Scalar == Float {
+    /// Double 算完存回 Float 的便利构造（变换代码里到处是 `Double` 中间量）。
+    /// `@_disfavoredOverload`：三个参数都是字面量（`InkPoint(1, 0, 0.5)`）时两个 init 都能接，
+    /// 标记后一律走标准的 Float 版，不报「ambiguous use」；传 Double 变量时只有这个能接，照常选中。
+    @_disfavoredOverload
+    @inline(__always) init(_ x: Double, _ y: Double, _ z: Double) {
+        self.init(Float(x), Float(y), Float(z))
+    }
+    /// 「算 Double」那半边的取值：`p.dx` = `Double(p.x)`。
+    @inline(__always) var dx: Double { Double(x) }
+    @inline(__always) var dy: Double { Double(y) }
+    @inline(__always) var dz: Double { Double(z) }
+}
+
 /// 一条手写笔画。points 为归一化页面坐标（0~1，左上原点）+ 压感。
 /// `id` 可指定：落库时用作 `note.id`，重开加载时按 `note.id` 复原，保证擦除能一一映射删除。
 ///
@@ -37,7 +60,7 @@ struct InkStroke: Identifiable, Equatable {
     var color: InkColor
     var width: Double
     var type: PenBrushType = .ballpoint
-    var points: [SIMD3<Double>]   // x, y, pressure
+    var points: [InkPoint]   // x, y, pressure（Float，见 `InkPoint`）
     /// 所属图层（`InkLayer.id`）。旧数据/未指定 → `InkLayer.defaultID`。
     var layerId: UUID = InkLayer.defaultID
     /// 所属草稿纸（`ScratchPad.id`）；nil = 画在 PDF 页面上。
@@ -48,18 +71,21 @@ struct InkStroke: Identifiable, Equatable {
 
 /// 落库到 `note.payload` 的 JSON 形态（页/锚点走 note 列，这里只存其余字段）。
 /// points 用显式 `[x, y, pressure]` 数组而非 SIMD，保证 Windows/Android 端易读。
+/// 写的时候是 `[[Float]]`（JSON 写 Float 的最短十进制，payload 比 Double 的 17 位短一半）；
+/// 读的时候按 `[[Double]]` 认（别的端 / 老数据写的是 Double），再 `Float(d)`——与
+/// `InkPayloadFast` 走同一种转换，两条路解出的 Float 逐位相同。
 private struct InkStrokePayload: Codable {
     var color: InkColor
     var width: Double
     var type: PenBrushType = .ballpoint
-    var points: [[Double]]
+    var points: [[Float]]
     var layerId: UUID = InkLayer.defaultID
     /// 草稿纸笔迹才有（kind=4）；页内笔迹不写这个键。
     var padId: UUID?
 
     enum CodingKeys: String, CodingKey { case color, width, type, points, layerId, padId }
 
-    init(color: InkColor, width: Double, type: PenBrushType, points: [[Double]], layerId: UUID, padId: UUID?) {
+    init(color: InkColor, width: Double, type: PenBrushType, points: [[Float]], layerId: UUID, padId: UUID?) {
         self.color = color; self.width = width; self.type = type; self.points = points
         self.layerId = layerId; self.padId = padId
     }
@@ -70,7 +96,7 @@ private struct InkStrokePayload: Codable {
         color = try c.decode(InkColor.self, forKey: .color)
         width = try c.decode(Double.self, forKey: .width)
         type = try c.decodeIfPresent(PenBrushType.self, forKey: .type) ?? .ballpoint
-        points = try c.decode([[Double]].self, forKey: .points)
+        points = try c.decode([[Double]].self, forKey: .points).map { $0.map(Float.init) }
         layerId = try c.decodeIfPresent(UUID.self, forKey: .layerId) ?? InkLayer.defaultID
         padId = try c.decodeIfPresent(UUID.self, forKey: .padId)
     }
@@ -102,7 +128,7 @@ extension InkStroke {
             minX = Swift.min(minX, p.x); maxX = Swift.max(maxX, p.x)
             minY = Swift.min(minY, p.y); maxY = Swift.max(maxY, p.y)
         }
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        return CGRect(x: CGFloat(minX), y: CGFloat(minY), width: CGFloat(maxX - minX), height: CGFloat(maxY - minY))
     }
 
     /// 序列化为一条 ink 笔记（挂逻辑文档，全版本共用）。空笔画返回 nil（不落库）。
@@ -140,7 +166,7 @@ extension InkStroke {
         // 快路：points 用字节扫描（`InkPayloadFast`），其余字段照旧 JSONDecoder——开文档时的
         // 「笔迹」段从半秒降到几十毫秒。形态不认识时回落到整段 JSONDecoder，结果逐位相同。
         let payload: InkStrokePayload
-        let pts: [SIMD3<Double>]
+        let pts: [InkPoint]
         if let fast = InkPayloadFast.splitPoints(data),
            let p = try? JSONDecoder().decode(InkStrokePayload.self, from: fast.rest) {
             payload = p
@@ -149,10 +175,10 @@ extension InkStroke {
             guard let p = try? JSONDecoder().decode(InkStrokePayload.self, from: data) else { return nil }
             payload = p
             pts = p.points.map { p in
-                let x: Double = p.count > 0 ? p[0] : 0
-                let y: Double = p.count > 1 ? p[1] : 0
-                let z: Double = p.count > 2 ? p[2] : 0.5
-                return SIMD3<Double>(x, y, z)
+                let x: Float = p.count > 0 ? p[0] : 0
+                let y: Float = p.count > 1 ? p[1] : 0
+                let z: Float = p.count > 2 ? p[2] : 0.5
+                return InkPoint(x, y, z)
             }
         }
         if kind == InkStroke.scratchNoteKind && payload.padId == nil { return nil }
@@ -188,16 +214,16 @@ extension InkStroke {
 /// 「笔迹」段 506ms，几乎全在 `JSONDecoder` 解 `[[Double]]`——Codable 逐元素走一遍容器协议，
 /// 一个数要 1~2µs，二十几万个点就是半秒）。
 ///
-/// 做法：在原始字节里找到 `"points"` 那个数组的起止，用 `strtod`（正确舍入；小数点形态启动时自检）
-/// 直接扫数字进 `SIMD3<Double>`；其余字段（color/width/type/layerId/padId，加起来百来字节）
-/// 把数组换成 `[]` 后照旧交给 `JSONDecoder`。**语义不变**：解出来的 Double 与 `JSONDecoder`
-/// 逐位相同（`spike/ink-payload-fast-test.swift` 逐点比对），任何看不懂的形态返回 nil、
-/// 调用方回落到原路径。
+/// 做法：在原始字节里找到 `"points"` 那个数组的起止，数字按 Double 解（正确舍入）再 `Float(d)`
+/// 存进 `InkPoint`；其余字段（color/width/type/layerId/padId，加起来百来字节）
+/// 把数组换成 `[]` 后照旧交给 `JSONDecoder`。**语义不变**：解出来的 Float 与「`JSONDecoder` 解
+/// `[[Double]]` 再 `Float(d)`」逐位相同（`spike/ink-payload-fast-test.swift` 逐点比对），
+/// 任何看不懂的形态返回 nil、调用方回落到原路径。
 ///
 /// 不改 payload 格式：`[x, y, pressure]` 显式数组是三端共用的落库契约（安卓/Windows 要能读）。
 enum InkPayloadFast {
     /// 返回 (去掉 points 的 payload, 点数组)；形态不认识时 nil。
-    static func splitPoints(_ data: Data) -> (rest: Data, points: [SIMD3<Double>])? {
+    static func splitPoints(_ data: Data) -> (rest: Data, points: [InkPoint])? {
         // 结构用裸字节扫（`[UInt8]` 下标是最快的），数字交给 Swift 自己的 `Double(String)`
         // （正确舍入、locale 无关）。**别用 `strtod`**：2026-09-10 实测它在多线程下不伸缩
         // （300k 次：1 线程 10ms、8 线程 20ms），而 `Double(String)` 同样的活 8 线程 2ms——
@@ -220,7 +246,7 @@ enum InkPayloadFast {
         guard i < n, b[i] == UInt8(ascii: "[") else { return nil }
         let arrStart = i
         i += 1
-        var pts: [SIMD3<Double>] = []
+        var pts: [InkPoint] = []
         pts.reserveCapacity(64)
         while true {
             skipWS()
@@ -242,7 +268,7 @@ enum InkPayloadFast {
                 if b[i] == UInt8(ascii: ",") { i += 1; continue }
                 guard b[i] == UInt8(ascii: "]") else { return nil }
             }
-            pts.append(SIMD3<Double>(v.count > 0 ? v[0] : 0, v.count > 1 ? v[1] : 0, v.count > 2 ? v[2] : 0.5))
+            pts.append(InkPoint(v.count > 0 ? v[0] : 0, v.count > 1 ? v[1] : 0, v.count > 2 ? v[2] : 0.5))
             skipWS()
             guard i < n else { return nil }
             if b[i] == UInt8(ascii: ",") { i += 1; continue }

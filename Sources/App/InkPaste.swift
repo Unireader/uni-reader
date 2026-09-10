@@ -70,7 +70,7 @@ enum InkPaste {
         var box = CGRect.null
         for st in src {
             for p in st.points {
-                let r = CGRect(x: p.x, y: p.y, width: 0, height: 0)
+                let r = CGRect(x: CGFloat(p.x), y: CGFloat(p.y), width: 0, height: 0)
                 box = box.isNull ? r : box.union(r)
             }
         }
@@ -79,7 +79,7 @@ enum InkPaste {
         let dy = center.map { Double($0.y - box.midY) } ?? 24
         return src.map { st in
             var t = st
-            t.points = st.points.map { SIMD3($0.x + dx, $0.y + dy, $0.z) }
+            t.points = st.points.map { InkPoint($0.dx + dx, $0.dy + dy, $0.dz) }
             t.padId = pad
             t.page = 0
             return t

@@ -117,7 +117,7 @@ enum InkClipboard {
         let sy = toCanvas ? w * a : 1 / (w * a)
         return strokes.map { st in
             var t = st
-            t.points = st.points.map { SIMD3($0.x * sx, $0.y * sy, $0.z) }
+            t.points = st.points.map { InkPoint($0.dx * sx, $0.dy * sy, $0.dz) }
             return t
         }
     }

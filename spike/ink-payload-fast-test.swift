@@ -1,5 +1,5 @@
 // `InkPayloadFast.splitPoints` 的正确性 + 耗时对比（2026-09-10，开文档「笔迹」段 506ms 的修法）。
-//   ① 逐位比对：快路解出的每个 Double 与 JSONDecoder 解 `[[Double]]` 的结果 bitPattern 相同；
+//   ① 逐位比对：快路解出的每个 Float（`InkPoint`）与「JSONDecoder 解 `[[Double]]` 再 `Float(d)`」bitPattern 相同；
 //   ② 形态：JSONEncoder 原样 / 带空格与换行（别的端写的）/ 两元素点 / 空数组 / 负数与指数 /
 //      points 排在最前或最后 / 整数写法；
 //   ③ 坏形态一律 nil（调用方回落）；
@@ -30,10 +30,11 @@ struct Payload: Codable {
     var padId: UUID?
 }
 
-func samePoints(_ a: [SIMD3<Double>], _ b: [[Double]]) -> Bool {
+func samePoints(_ a: [InkPoint], _ b: [[Double]]) -> Bool {
     guard a.count == b.count else { return false }
     for (p, q) in zip(a, b) {
-        let x = q.count > 0 ? q[0] : 0, y = q.count > 1 ? q[1] : 0, z = q.count > 2 ? q[2] : 0.5
+        // 参照值走与回落路径同一种转换：Double 解出再 Float(d)
+        let x = Float(q.count > 0 ? q[0] : 0), y = Float(q.count > 1 ? q[1] : 0), z = Float(q.count > 2 ? q[2] : 0.5)
         if p.x.bitPattern != x.bitPattern || p.y.bitPattern != y.bitPattern || p.z.bitPattern != z.bitPattern { return false }
     }
     return true

@@ -18,7 +18,7 @@ let (doc, _) = try store.findOrCreate(hash: "h1", title: "Doc", pageCount: 20, p
 
 // 1) InkStroke → note → 落库 → 读回 → InkStroke，字段一致
 let color = InkColor(r: 24, g: 90, b: 210, a: 0.95)
-let pts: [SIMD3<Double>] = [SIMD3(0.1, 0.2, 0.5), SIMD3(0.3, 0.42, 0.8), SIMD3(0.55, 0.6, 0.3)]
+let pts: [InkPoint] = [SIMD3(0.1, 0.2, 0.5), SIMD3(0.3, 0.42, 0.8), SIMD3(0.55, 0.6, 0.3)]
 let s1 = InkStroke(page: 3, color: color, width: 8.5, points: pts)
 guard let note = s1.toNote(documentId: doc.id) else { fatalError("toNote nil") }
 try store.upsertNote(note)
@@ -46,8 +46,9 @@ check((try store.inkRows(documentId: doc.id, kind: InkStroke.scratchNoteKind)).i
 // 2) note 列语义：kind=2、page 列、anchor=归一化包围盒
 check(note.kind == 2, "kind == 2 (ink)")
 check(note.page == 3, "note.page 列 = 笔画页")
-check(abs(note.anchor.minX - 0.1) < 1e-9 && abs(note.anchor.minY - 0.2) < 1e-9
-      && abs(note.anchor.width - 0.45) < 1e-9 && abs(note.anchor.height - 0.4) < 1e-9, "anchor = 点集归一化包围盒")
+// anchor 从 Float 点算出（`InkPoint`），0.1 这类十进制在 Float 里差 1.5e-9，容差按 1e-6
+check(abs(note.anchor.minX - 0.1) < 1e-6 && abs(note.anchor.minY - 0.2) < 1e-6
+      && abs(note.anchor.width - 0.45) < 1e-6 && abs(note.anchor.height - 0.4) < 1e-6, "anchor = 点集归一化包围盒")
 
 // 3) payload 是干净跨平台 JSON：{color:{r,g,b,a}, width, type, points:[[x,y,p]], layerId}
 let json = try JSONSerialization.jsonObject(with: note.payload) as! [String: Any]

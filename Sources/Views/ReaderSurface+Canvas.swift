@@ -64,7 +64,7 @@ extension ReaderSurface {
     /// 只看最后一个点——每帧扫全笔没必要，笔尖越界了就够判。
     func growCanvasForLive() {
         guard session.canvasMode, let p = session.liveStroke?.points.last else { return }
-        growCanvasMargin(towardX: p.x)
+        growCanvasMargin(towardX: p.dx)
     }
 
     /// 画板开关切换（`session.canvasMode` 的 onChange）：开 = 按现有笔迹定边界，关 = 收回页宽。

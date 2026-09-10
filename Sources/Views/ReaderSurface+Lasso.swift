@@ -140,7 +140,7 @@ extension ReaderSurface {
         var bbox = CGRect.null
         let vis = session.visibleLayerIDs
         for st in session.strokes where st.page == anchorPage && vis.contains(st.layerId) {
-            if st.points.contains(where: { InkEdit.pointInPolygon(SIMD2($0.x, $0.y), polygon: poly) }) {
+            if st.points.contains(where: { InkEdit.pointInPolygon(SIMD2($0.dx, $0.dy), polygon: poly) }) {
                 strokeIDs.insert(st.id)
                 bbox = bbox.union(strokeBounds(st))
             }
@@ -344,15 +344,15 @@ extension ReaderSurface {
             let strokes = session.strokes.filter { $0.page == sel.page && sel.strokeIDs.contains($0.id) }
             Canvas { ctx, _ in
                 for st in strokes {
-                    func mapPt(_ p: SIMD3<Double>) -> CGPoint {
-                        var pt = CGPoint(x: pageX + p.x * pageW, y: pageTop + p.y * pageH)
+                    func mapPt(_ p: InkPoint) -> CGPoint {
+                        var pt = CGPoint(x: pageX + CGFloat(p.x) * pageW, y: pageTop + CGFloat(p.y) * pageH)
                         if let box { pt = lassoGhostPoint(pt, in: box) }
                         return pt
                     }
                     let haloW = CGFloat(st.width) * zoom + 5   // 笔宽随缩放，光晕余量恒定 5pt
                     if st.points.count == 1 {
                         let p0 = mapPt(st.points[0])
-                        let r = CGFloat(st.type.strokeWidth(pressure: st.points[0].z, base: st.width)) * zoom / 2 + 2.5
+                        let r = CGFloat(st.type.strokeWidth(pressure: st.points[0].dz, base: st.width)) * zoom / 2 + 2.5
                         ctx.fill(Path(ellipseIn: CGRect(x: p0.x - r, y: p0.y - r, width: r * 2, height: r * 2)),
                                  with: .color(.accentColor.opacity(0.35)))
                     } else {

@@ -596,9 +596,9 @@ final class AppModel: ObservableObject {
         let x1 = (obj["x1"] as? NSNumber)?.doubleValue ?? 0
         let y1 = (obj["y1"] as? NSNumber)?.doubleValue ?? 0
         let rect = CGRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
-        func strokeHit(_ p: SIMD3<Double>) -> Bool {
-            if let poly { return InkEdit.pointInPolygon(SIMD2(p.x, p.y), polygon: poly) }
-            return rect.contains(CGPoint(x: p.x, y: p.y))
+        func strokeHit(_ p: InkPoint) -> Bool {
+            if let poly { return InkEdit.pointInPolygon(SIMD2(p.dx, p.dy), polygon: poly) }
+            return rect.contains(CGPoint(x: p.dx, y: p.dy))
         }
         func noteHit(_ n: TextNote) -> Bool {
             if let poly { return InkEdit.pointInPolygon(SIMD2(n.anchor.midX, n.anchor.midY), polygon: poly) }
@@ -748,12 +748,12 @@ final class AppModel: ObservableObject {
     // MARK: - 环形选笔盘 · 长按检测（Mac 端）
 
     /// 落笔即起 1s 定时：期间没大幅移动就呼出环形盘。同时挂进度环（笔尖处）。
-    private func beginLongPressWatch(page: Int, first: SIMD3<Double>?) {
+    private func beginLongPressWatch(page: Int, first: InkPoint?) {
         cancelRadial()
         guard let f = first else { return }
-        inkStart = (page, f.x, f.y); inkMovedFar = false; inRadial = false
-        holdSamples = [(SIMD2(f.x, f.y * currentPageAspect(page: page)), Date())]
-        setPressRing(PressRing(page: page, nx: f.x, ny: f.y, start: Date()))
+        inkStart = (page, f.dx, f.dy); inkMovedFar = false; inRadial = false
+        holdSamples = [(SIMD2(f.dx, f.dy * currentPageAspect(page: page)), Date())]
+        setPressRing(PressRing(page: page, nx: f.dx, ny: f.dy, start: Date()))
         let work = DispatchWorkItem { [weak self] in self?.fireLongPress() }
         longPressWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + longPressSeconds, execute: work)
@@ -762,15 +762,15 @@ final class AppModel: ObservableObject {
     /// 画的时候取消长按候选 + 撤掉进度环。**两道闸，任一条中即撤**：
     /// ① 离落笔点的总位移超 [moveCancelPx]（跑远了）；
     /// ② [holdSpeedWindow] 窗口内的平均速度超 [holdSpeedPx]（一直在动 = 在写字，见那里的注释）。
-    private func checkLongPressMovement(_ last: SIMD3<Double>?) {
+    private func checkLongPressMovement(_ last: InkPoint?) {
         guard !inkMovedFar, let s0 = inkStart, let p = last else { return }
         let aspect = currentPageAspect(page: s0.page)
-        let dx = p.x - s0.nx, dy = (p.y - s0.ny) * aspect
+        let dx = p.dx - s0.nx, dy = (p.dy - s0.ny) * aspect
         var moving = exceedsPad((dx * dx + dy * dy).squareRoot(), px: moveCancelPx, norm: moveCancelNorm)
 
         // 速度闸：只保留窗口内的采样（外加**窗口外最近的那一个**当参照点，否则刚落笔时无从比起）
         let now = Date()
-        let cur = SIMD2(p.x, p.y * aspect)
+        let cur = SIMD2(p.dx, p.dy * aspect)
         holdSamples.append((cur, now))
         while holdSamples.count > 1, now.timeIntervalSince(holdSamples[1].t) > holdSpeedWindow {
             holdSamples.removeFirst()
@@ -839,12 +839,12 @@ final class AppModel: ObservableObject {
     /// 环形盘打开时，笔移 → **只看角度**定扇区（`RadialLayout`：整圆均分，0 号正上方起顺时针）；
     /// 半径只用来判「有没有离开中心取消区」。角度天生与缩放无关（长宽比校正后即真实方向），
     /// 取消区半径按平板屏幕像素判 —— 两者合起来让选择手感不再随任一端缩放漂移。
-    private func updateRadial(_ last: SIMD3<Double>?) {
+    private func updateRadial(_ last: InkPoint?) {
         guard var r = padSession?.radial, let p = last else { return }
         let items = RadialLayout.items(penCount: pens.count)
         guard !items.isEmpty else { return }
-        let dx = p.x - r.cx
-        let dy = (p.y - r.cy) * currentPageAspect(page: r.page)   // 归一化 y → 与 x 同尺度，方向才是真实方向
+        let dx = p.dx - r.cx
+        let dy = (p.dy - r.cy) * currentPageAspect(page: r.page)   // 归一化 y → 与 x 同尺度，方向才是真实方向
         let dist = (dx * dx + dy * dy).squareRoot()
         if !exceedsPad(dist, px: Double(RadialLayout.hubRadius), norm: radialDeadzoneNorm) {
             r.highlight = -1
@@ -1004,16 +1004,16 @@ final class AppModel: ObservableObject {
     // 供 WS、模拟窗口与本机落墨共用的落墨 API。`in session` 缺省 = 平板当前会话（handleInk 既有调用点
     // 不传，行为不变）；本机落墨传当前窗口自己的 session——写进 session.strokes 后 ContentView 对账
     // 自动落库，若恰是 padSession 则广播自动镜像到平板，零额外工作。
-    func inkBegin(in session: DocSession? = nil, page: Int, color: InkColor, width: Double, type: PenBrushType = .ballpoint, points: [SIMD3<Double>]) {
+    func inkBegin(in session: DocSession? = nil, page: Int, color: InkColor, width: Double, type: PenBrushType = .ballpoint, points: [InkPoint]) {
         guard let s = session ?? padSession else { return }
         s.liveStroke = InkStroke(page: page, color: color, width: width, type: type, points: points,
                                  layerId: s.activeLayerID ?? InkLayer.defaultID)
     }
-    func inkAppend(_ pts: [SIMD3<Double>], in session: DocSession? = nil) {
+    func inkAppend(_ pts: [InkPoint], in session: DocSession? = nil) {
         guard let s = session ?? padSession, var st = s.liveStroke else { return }
         st.points.append(contentsOf: pts); s.liveStroke = st
         // 书写中笔尖圆环跟随（落笔后 hover 消息停发，不更新会残留死圆圈在落笔点）
-        if let last = pts.last { s.hover = HoverPoint(page: st.page, nx: last.x, ny: last.y) }
+        if let last = pts.last { s.hover = HoverPoint(page: st.page, nx: last.dx, ny: last.dy) }
     }
     /// 直线（尺子）笔的落点：整笔恒为「起点 → 当前终点」两点，新点**替换**终点而不是追加
     /// （平板已按 45° 吸附算好终点；一批里只有最后一个点是当前终点，中间的是过程点，丢弃）。
@@ -1023,16 +1023,16 @@ final class AppModel: ObservableObject {
     /// 而终点每帧被整个替换掉——抬笔前最后一个采样的压感几乎为 0，整条线于是在抬笔那一刻
     /// 缩成头发丝（用户报）。平板侧同规则先算一遍（本地即时回显要对得上），这里再取一次
     /// max 是幂等的，顺带兜住不带这条规则的旧采集页。
-    func inkLineTo(_ p: SIMD3<Double>?, in session: DocSession? = nil) {
+    func inkLineTo(_ p: InkPoint?, in session: DocSession? = nil) {
         guard let p, let s = session ?? padSession, var st = s.liveStroke,
               let a = st.points.first else { return }
         let z = AppModel.linePressure(st.points, p)
-        st.points = [SIMD3(a.x, a.y, z), SIMD3(p.x, p.y, z)]; s.liveStroke = st
-        s.hover = HoverPoint(page: st.page, nx: p.x, ny: p.y)
+        st.points = [InkPoint(a.x, a.y, z), InkPoint(p.x, p.y, z)]; s.liveStroke = st
+        s.hover = HoverPoint(page: st.page, nx: p.dx, ny: p.dy)
     }
     /// 尺子笔的恒定压感 = 起点、上一个终点、这个新终点里的最大值（见 `inkLineTo`）。
     /// 页内与草稿纸两条链路共用一份，别各写各的。
-    static func linePressure(_ points: [SIMD3<Double>], _ p: SIMD3<Double>) -> Double {
+    static func linePressure(_ points: [InkPoint], _ p: InkPoint) -> Float {
         var z = p.z
         for q in points.prefix(2) { z = max(z, q.z) }
         return z
@@ -1050,7 +1050,7 @@ final class AppModel: ObservableObject {
         s.lastInkEndAt = CFAbsoluteTimeGetCurrent()
         PadLog.log("收笔 广播 \(PadLog.ms(s.lastInkEndAt - t0))（本笔 \(st.points.count) 点）")
     }
-    func inkErase(_ pts: [SIMD3<Double>], page: Int, in session: DocSession? = nil) {
+    func inkErase(_ pts: [InkPoint], page: Int, in session: DocSession? = nil) {
         guard let s = session ?? padSession else { return }
         let before = s.strokes            // COW 快照，O(1)；只有真擦到了才拿它去比差异
         let changed = eraseNear(s, pts, page: page)
@@ -1060,7 +1060,7 @@ final class AppModel: ObservableObject {
             s.inkUndo.record(label: "Erase", kind: .erase, strokesBefore: before, strokesAfter: s.strokes)
         }
         // 擦除中笔尖圆环同样跟随
-        if let last = pts.last { s.hover = HoverPoint(page: page, nx: last.x, ny: last.y) }
+        if let last = pts.last { s.hover = HoverPoint(page: page, nx: last.dx, ny: last.dy) }
         // 🔴 **没擦到东西就什么都不做**（2026-09-02）。橡皮压在纸上不动、或从空白处划过时，平板照样
         // 每 8ms 送一批擦除点上来；从前每一批都无条件 `s.strokes = out` + 广播一份**全量镜像**，于是
         // ① 每批都把整个窗口的视图树重算一遍（`@Published` 扇出）+ 走一遍 `persistInk` 全表对账；
@@ -1147,12 +1147,12 @@ final class AppModel: ObservableObject {
         server.broadcast(["type": "notes", "list": list])
     }
 
-    private func points(_ any: Any?) -> [SIMD3<Double>] {
+    private func points(_ any: Any?) -> [InkPoint] {
         guard let raw = any as? [[NSNumber]] else { return [] }
         return raw.map { p in
-            SIMD3(p.count > 0 ? p[0].doubleValue : 0,
-                  p.count > 1 ? p[1].doubleValue : 0,
-                  p.count > 2 ? p[2].doubleValue : 0.5)
+            InkPoint(p.count > 0 ? p[0].floatValue : 0,
+                     p.count > 1 ? p[1].floatValue : 0,
+                     p.count > 2 ? p[2].floatValue : 0.5)
         }
     }
 
@@ -1163,9 +1163,9 @@ final class AppModel: ObservableObject {
     /// 返回**这一批到底擦掉了东西没有**。没擦到就一个字节都不写回 `s.strokes`——那次赋值本身
     /// （`@Published`）就是一次全窗视图树重算 + 一次全表对账，调用方还会据此决定发不发全量镜像。
     @discardableResult
-    private func eraseNear(_ s: DocSession, _ es: [SIMD3<Double>], page: Int) -> Bool {
+    private func eraseNear(_ s: DocSession, _ es: [InkPoint], page: Int) -> Bool {
         guard !es.isEmpty else { return false }
-        let r2 = eraserRadius * eraserRadius
+        let r2 = Float(eraserRadius * eraserRadius)
         let vis = s.visibleLayerIDs   // 橡皮只影响可见图层：隐藏的图层不该被误擦
         if eraserMode == .stroke {
             let before = s.strokes.count
@@ -1188,7 +1188,7 @@ final class AppModel: ObservableObject {
             return true
         }
         // 擦除点无压感，z 槽位按 `InkEdit.splitStroke` 约定改装页号（跨页不串）。
-        let eps = es.map { SIMD3($0.x, $0.y, Double(page)) }
+        let eps = es.map { InkPoint($0.x, $0.y, Float(page)) }
         var out: [InkStroke] = []
         out.reserveCapacity(s.strokes.count)
         var changed = false

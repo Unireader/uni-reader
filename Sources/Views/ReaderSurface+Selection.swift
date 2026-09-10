@@ -548,7 +548,7 @@ extension ReaderSurface {
                 if scratch.localInkStart == nil {
                     guard let n0 = containerPointToPageNorm(v.startLocation, xRange: inkXRange) else { return }
                     growCanvasMargin(towardX: Double(n0.nx))   // 起笔就在页边深处（滚过去写）也要先长够
-                    let p0 = SIMD3(Double(n0.nx), Double(n0.ny), 0.5)
+                    let p0 = InkPoint(Double(n0.nx), Double(n0.ny), 0.5)
                     if isErase {
                         app.inkErase([p0], page: n0.page, in: session)
                     } else {
@@ -564,7 +564,7 @@ extension ReaderSurface {
                       let n = containerPointToPageNorm(v.location, xRange: inkXRange) else { return }
                 // 写到离页边不足 slack 就把边界往外跳一档（同 runloop 补偿横向偏移，页面在笔下不动）
                 if !isErase { growCanvasMargin(towardX: Double(n.nx)) }
-                let pt = SIMD3(Double(n.nx), Double(n.ny), 0.5)
+                let pt = InkPoint(Double(n.nx), Double(n.ny), 0.5)
                 if isErase {
                     app.inkErase([pt], page: n.page, in: session)   // 擦除可跨页（按点所在页逐批）
                     return
@@ -574,10 +574,10 @@ extension ReaderSurface {
                     // ⇧ 尺子：整笔替换为两点直线（松开 Shift 后继续追加 = 从直线端点接着画）。
                     // aspect 传本页显示纵横比，吸附的才是**看上去**的 0/45/90°（见 InkEdit.rulerSnap）。
                     let snapped = InkEdit.rulerSnap(start: SIMD2(start.nx, start.ny),
-                                                    current: SIMD2(pt.x, pt.y),
+                                                    current: SIMD2(pt.dx, pt.dy),
                                                     aspect: pageAspect(page: start.page))
                     if var st = session.liveStroke {
-                        st.points = [SIMD3(start.nx, start.ny, 0.5), SIMD3(snapped.x, snapped.y, 0.5)]
+                        st.points = [InkPoint(start.nx, start.ny, 0.5), InkPoint(snapped.x, snapped.y, 0.5)]
                         session.liveStroke = st
                     }
                 } else {

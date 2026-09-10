@@ -34,9 +34,9 @@ enum InkEdit {
     /// - 坐标系无关：只认「距离 ≤ r」，页内归一化与草稿纸画布坐标都能用，调用方保证 r 与点同单位。
     /// - 一个点都没命中时原样返回 `[s]`（id 不变），调用方替换后持久化对账为零变化。
     /// - 新 id 正好被 persistInk 值快照对账识别为「旧 id 删 + 新 id 增」。
-    static func splitStroke(_ s: InkStroke, erasePts: [SIMD3<Double>], r: Double) -> [InkStroke] {
-        let r2 = r * r
-        func hit(_ p: SIMD3<Double>) -> Bool {
+    static func splitStroke(_ s: InkStroke, erasePts: [InkPoint], r: Double) -> [InkStroke] {
+        let r2 = Float(r * r)   // 命中判定在 Float 里比（点就是 Float），半径转一次
+        func hit(_ p: InkPoint) -> Bool {
             for e in erasePts where Int(e.z) == s.page {
                 let dx = p.x - e.x, dy = p.y - e.y
                 if dx * dx + dy * dy <= r2 { return true }
@@ -44,7 +44,7 @@ enum InkEdit {
             return false
         }
         var out: [InkStroke] = []
-        var seg: [SIMD3<Double>] = []
+        var seg: [InkPoint] = []
         var anyHit = false
         func flush() {
             guard !seg.isEmpty else { return }
@@ -68,8 +68,8 @@ enum InkEdit {
         var lo = SIMD2(Double.infinity, Double.infinity), hi = SIMD2(-Double.infinity, -Double.infinity)
         for st in strokes {
             for p in st.points {
-                lo = SIMD2(min(lo.x, p.x), min(lo.y, p.y))
-                hi = SIMD2(max(hi.x, p.x), max(hi.y, p.y))
+                lo = SIMD2(min(lo.x, p.dx), min(lo.y, p.dy))
+                hi = SIMD2(max(hi.x, p.dx), max(hi.y, p.dy))
             }
         }
         guard lo.x <= hi.x else { return .null }
@@ -109,8 +109,8 @@ enum InkEdit {
                            xRange: ClosedRange<Double> = 0...1) -> InkStroke {
         var t = s
         t.points = s.points.map { p in
-            SIMD3(min(xRange.upperBound, max(xRange.lowerBound, p.x + dx)),
-                  min(1, max(0, p.y + dy)), p.z)
+            InkPoint(min(xRange.upperBound, max(xRange.lowerBound, p.dx + dx)),
+                     min(1, max(0, p.dy + dy)), p.dz)
         }
         return t
     }
@@ -146,7 +146,7 @@ enum InkEdit {
         func clx(_ v: Double) -> Double { min(xRange.upperBound, max(xRange.lowerBound, v)) }
         var t = s
         t.points = s.points.map { p in
-            SIMD3(clx(a.x + (p.x - a.x) * sx), cl(a.y + (p.y - a.y) * sy), p.z)
+            InkPoint(clx(a.x + (p.dx - a.x) * sx), cl(a.y + (p.dy - a.y) * sy), p.dz)
         }
         t.width = min(40, max(0.5, s.width * (sx * sy).squareRoot()))
         return t

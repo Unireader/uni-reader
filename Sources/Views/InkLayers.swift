@@ -75,7 +75,7 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize,
     // 页内笔迹：归一化点 × 页显示尺寸。x/y 各乘各的（页内归一化两轴尺度不同）。
     let pw = size.width - margin * 2
     inkDrawStroke(st, in: &ctx, inkScale: inkScale, fast: fast) {
-        CGPoint(x: $0.x * pw + margin, y: $0.y * size.height)
+        CGPoint(x: CGFloat($0.x) * pw + margin, y: CGFloat($0.y) * size.height)
     }
 }
 
@@ -83,9 +83,9 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, size: CGSize,
 /// 一并返回全笔平均压感（快速态用恒宽，不逐点变宽）。
 /// 缩小时收益极大——zoom 0.31 时真实笔迹的点数只剩 16%（用「408学习区」9.2 万个点实测）。
 func thinnedScreenPoints(_ st: InkStroke, minStep: CGFloat = 1.5,
-                         map: (SIMD3<Double>) -> CGPoint) -> (pts: [CGPoint], avgZ: Double) {
+                         map: (InkPoint) -> CGPoint) -> (pts: [CGPoint], avgZ: Double) {
     var zSum = 0.0
-    for p in st.points { zSum += p.z }
+    for p in st.points { zSum += p.dz }
     let avgZ = st.points.isEmpty ? 0.5 : zSum / Double(st.points.count)
     guard st.points.count > 2 else { return (st.points.map(map), avgZ) }
     var out = [map(st.points[0])]
@@ -123,7 +123,7 @@ func inkDrawStrokesFast(_ strokes: [InkStroke], in ctx: inout GraphicsContext,
         // 阈值 3pt（比单笔快速路径的 1.5pt 更狠）：这是**整页几百条笔迹**的场合，光栅化段数
         // 才是剩下的成本。缩放中画面在动，3pt 以内的折角肉眼分不出；松手即按原始点重画。
         let (pts, avgZ) = thinnedScreenPoints(st, minStep: 3) {
-            CGPoint(x: $0.x * pw + margin, y: $0.y * size.height)
+            CGPoint(x: CGFloat($0.x) * pw + margin, y: CGFloat($0.y) * size.height)
         }
         let isMarker = st.type == .marker
         // marker 恒宽；其余用全笔平均压感折算的恒宽；pencil 的三道叠加在快速态合成一道
@@ -175,7 +175,7 @@ func inkDrawStrokesFast(_ strokes: [InkStroke], in ctx: inout GraphicsContext,
 /// 由 `ReaderSurface.inkFastDraw` 门控，`settleRender` 收尾即换回高质量重画一次。
 func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, inkScale: CGFloat,
                    fast: Bool = false,
-                   map: (SIMD3<Double>) -> CGPoint) {
+                   map: (InkPoint) -> CGPoint) {
     guard !st.points.isEmpty else { return }
     // `raw` = 原始采样点（压感、以及 pencil 的 jitter 种子都取自它），`pts` = 映射到屏幕后的点。
     // 快速态（缩放中）按**屏幕距离**抽稀两者：相邻点在屏幕上不足 `minStep` 的一律并掉。
@@ -206,7 +206,7 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, inkScale: CGF
 
     if pts.count == 1 {
         let a = type == .pencil ? st.color.a * 0.6 : st.color.a
-        let r = CGFloat(type.strokeWidth(pressure: raw[0].z, base: w)) * inkScale / 2
+        let r = CGFloat(type.strokeWidth(pressure: raw[0].dz, base: w)) * inkScale / 2
         ctx.fill(Path(ellipseIn: CGRect(x: pts[0].x - r, y: pts[0].y - r, width: r * 2, height: r * 2)),
                  with: .color(color(a)))
         return
@@ -248,7 +248,7 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, inkScale: CGF
             }
             path.addLine(to: last)
             var zSum = 0.0
-            for p in raw { zSum += p.z }
+            for p in raw { zSum += p.dz }
             let lw = CGFloat(type.strokeWidth(pressure: zSum / Double(raw.count), base: w)) * inkScale
             ctx.stroke(path, with: .color(color(st.color.a * 0.53)),
                        style: StrokeStyle(lineWidth: max(0.7, lw), lineCap: .round, lineJoin: .round))
@@ -264,9 +264,9 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, inkScale: CGF
                     let dx = Double(pts[i].x - pts[i - 1].x), dy = Double(pts[i].y - pts[i - 1].y)
                     dist += (dx * dx + dy * dy).squareRoot()
                 }
-                let lw = type.strokeWidth(pressure: raw[i].z, base: w)
+                let lw = type.strokeWidth(pressure: raw[i].dz, base: w)
                 let (nx, ny) = InkRender.perp(pts, i)
-                let rnd = InkRender.jitter(raw[i].x, raw[i].y + pass.phase)
+                let rnd = InkRender.jitter(raw[i].dx, raw[i].dy + pass.phase)
                 let wobW = min(lw, PenBrushType.pencilWobbleRefWidth)
                 let wob = (sin(dist * PenBrushType.pencilWobbleFreq + pass.phase) * pass.amp
                            + rnd * pass.amp * 0.7) * wobW * Double(inkScale)
@@ -303,7 +303,7 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, inkScale: CGF
             }
             path.addLine(to: last)   // 补末段，同下方高质量路径
             var zSum = 0.0
-            for p in raw { zSum += p.z }
+            for p in raw { zSum += p.dz }
             let lw = CGFloat(type.strokeWidth(pressure: zSum / Double(raw.count), base: w)) * inkScale
             ctx.stroke(path, with: .color(col),
                        style: StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round))
@@ -313,7 +313,7 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, inkScale: CGF
         var lastMid = pts[0], lastPt = pts[0]
         for i in 1..<pts.count {
             let mid = CGPoint(x: (lastPt.x + pts[i].x) / 2, y: (lastPt.y + pts[i].y) / 2)
-            let lw = CGFloat(type.strokeWidth(pressure: raw[i].z, base: w)
+            let lw = CGFloat(type.strokeWidth(pressure: raw[i].dz, base: w)
                              * type.fountainTaper(index: i, count: n)) * inkScale
             var p = Path(); p.move(to: lastMid); p.addQuadCurve(to: mid, control: lastPt)
             let style = StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round)
@@ -323,7 +323,7 @@ func inkDrawStroke(_ st: InkStroke, in ctx: inout GraphicsContext, inkScale: CGF
         }
         // 补末段：上面每步只画到「相邻两点的中点」，末点从来没被连上——长笔画差这半段看不出来，
         // 两点直线（尺子）就是整整少画一半（线尾追不上笔尖）。补一段 lastMid → 末点才落到笔尖。
-        let tailW = type.strokeWidth(pressure: raw[n - 1].z, base: w)
+        let tailW = type.strokeWidth(pressure: raw[n - 1].dz, base: w)
         let lw = CGFloat(tailW * type.fountainTaper(index: n - 1, count: n)) * inkScale
         var tail = Path(); tail.move(to: lastMid); tail.addLine(to: lastPt)
         let tailStyle = StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round)

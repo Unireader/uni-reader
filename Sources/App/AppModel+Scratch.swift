@@ -48,24 +48,24 @@ extension AppModel {
     }
 
     /// 线上点集 → 画布坐标点（与页内的 `points(_:)` 同结构，只是不再是 0~1）。
-    private func scratchPoints(_ any: Any?) -> [SIMD3<Double>] {
+    private func scratchPoints(_ any: Any?) -> [InkPoint] {
         guard let raw = any as? [[NSNumber]] else { return [] }
         return raw.map { p in
-            SIMD3(p.count > 0 ? p[0].doubleValue : 0,
-                  p.count > 1 ? p[1].doubleValue : 0,
-                  p.count > 2 ? p[2].doubleValue : 0.5)
+            InkPoint(p.count > 0 ? p[0].floatValue : 0,
+                     p.count > 1 ? p[1].floatValue : 0,
+                     p.count > 2 ? p[2].floatValue : 0.5)
         }
     }
 
     // MARK: - 落墨 API（平板上行与 Mac 本机落墨共用，同 `inkBegin` 一族的分工）
 
     func scratchInkBegin(in s: DocSession, pad: UUID, color: InkColor, width: Double,
-                         type: PenBrushType = .ballpoint, points: [SIMD3<Double>]) {
+                         type: PenBrushType = .ballpoint, points: [InkPoint]) {
         s.scratchLive = InkStroke(page: 0, color: color, width: width, type: type,
                                   points: points, padId: pad)
     }
 
-    func scratchInkAppend(_ pts: [SIMD3<Double>], in s: DocSession) {
+    func scratchInkAppend(_ pts: [InkPoint], in s: DocSession) {
         guard var st = s.scratchLive else { return }
         st.points.append(contentsOf: pts)
         s.scratchLive = st
@@ -73,10 +73,10 @@ extension AppModel {
 
     /// 直线（尺子）笔：整笔恒为「起点 → 当前终点」两点，新点替换终点（同 `inkLineTo`，
     /// 压感同样取这一笔的峰值、两端同值——理由见那里）。
-    func scratchInkLineTo(_ p: SIMD3<Double>?, in s: DocSession) {
+    func scratchInkLineTo(_ p: InkPoint?, in s: DocSession) {
         guard let p, var st = s.scratchLive, let a = st.points.first else { return }
         let z = AppModel.linePressure(st.points, p)
-        st.points = [SIMD3(a.x, a.y, z), SIMD3(p.x, p.y, z)]
+        st.points = [InkPoint(a.x, a.y, z), InkPoint(p.x, p.y, z)]
         s.scratchLive = st
     }
 
@@ -96,7 +96,7 @@ extension AppModel {
 
     /// 草稿纸擦除。半径按 `ScratchPad.eraserRefWidth` 从「页宽归一化」折成画布点（三端同一个数）。
     /// 整笔/局部两种模式与页内完全一致——`InkEdit.splitStroke` 不认坐标系，只认距离。
-    func scratchErase(_ pts: [SIMD3<Double>], in s: DocSession) {
+    func scratchErase(_ pts: [InkPoint], in s: DocSession) {
         let before = s.scratchStrokes    // COW 快照，O(1)
         eraseScratchNear(pts, in: s)
         // 撤销记账（同页内擦除：一次拖动里的多批并成一步，抬笔封口）。没擦到时 diff 为空、不入栈。
@@ -104,10 +104,10 @@ extension AppModel {
                              strokesBefore: before, strokesAfter: s.scratchStrokes)
     }
 
-    private func eraseScratchNear(_ pts: [SIMD3<Double>], in s: DocSession) {
+    private func eraseScratchNear(_ pts: [InkPoint], in s: DocSession) {
         guard let padId = s.openPadID, !pts.isEmpty else { return }
         let r = eraserRadius * ScratchPad.eraserRefWidth
-        let r2 = r * r
+        let r2 = Float(r * r)
         if eraserMode == .stroke {
             let before = s.scratchStrokes.count
             s.scratchStrokes.removeAll { st in
@@ -124,7 +124,7 @@ extension AppModel {
             return
         }
         // 局部擦除：`splitStroke` 用 z 槽位区分「不同页不串」，草稿纸只有一张画布 → 恒填 0。
-        let eps = pts.map { SIMD3($0.x, $0.y, 0.0) }
+        let eps = pts.map { InkPoint($0.x, $0.y, 0) }
         var out: [InkStroke] = []
         out.reserveCapacity(s.scratchStrokes.count)
         var changed = false

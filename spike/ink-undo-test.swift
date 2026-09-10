@@ -154,8 +154,9 @@ do {
     var st = mkStroke(0.25)
     st.points = [SIMD3(0.25, 0.4, 0.5)]
     let onCanvas = InkClipboard.scaled([st], toCanvas: true, aspect: a)[0]
-    check(abs(onCanvas.points[0].x - 0.25 * w) < 1e-9, "x 乘页宽基准")
-    check(abs(onCanvas.points[0].y - 0.4 * w * a) < 1e-9, "y 另乘纵横比（归一化 y 相对的是页高）")
+    // 点是 Float（`InkPoint`）：几百画布点这一档 Float 的分辨率约 3e-5，容差按 1e-3
+    check(abs(onCanvas.points[0].dx - 0.25 * w) < 1e-3, "x 乘页宽基准")
+    check(abs(onCanvas.points[0].dy - 0.4 * w * a) < 1e-3, "y 另乘纵横比（归一化 y 相对的是页高）")
     check(onCanvas.width == st.width, "线宽不换算（两边都是绝对显示点）")
     let backToPage = InkClipboard.scaled([onCanvas], toCanvas: false, aspect: a)[0]
     check(abs(backToPage.points[0].x - 0.25) < 1e-12 && abs(backToPage.points[0].y - 0.4) < 1e-12,

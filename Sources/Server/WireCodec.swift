@@ -105,8 +105,11 @@ enum WireCodec {
         return false
     }
     private static func strOf(_ v: Any?) -> String { v as? String ?? "" }
-    /// 把任意点集（`[[Double]]`/`[[NSNumber]]`/`[[Any]]`）规整为 `[[Double]]`。
+    /// 把任意点集（`[[Float]]`/`[[Double]]`/`[[NSNumber]]`/`[[Any]]`）规整为 `[[Double]]`。
+    /// `[[Float]]` 是笔迹镜像（`AppModel.strokeDicts`）的形态：`InkPoint` 本身就是 Float，线上也是 f32，
+    /// 中间这一趟 Double 只是 `[String: Any]` 对象模型的过路费，不丢精度。
     private static func pairsOf(_ v: Any?) -> [[Double]] {
+        if let a = v as? [[Float]] { return a.map { $0.map(Double.init) } }
         if let a = v as? [[Double]] { return a }
         if let a = v as? [[NSNumber]] { return a.map { $0.map { $0.doubleValue } } }
         if let a = v as? [[Any]] { return a.map { $0.map { num($0) } } }

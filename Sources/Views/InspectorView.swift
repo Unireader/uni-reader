@@ -428,7 +428,7 @@ struct InspectorView: View {
 
     /// 该页笔迹最靠上的归一化 y（0 顶 1 底），略上移一点作跳转目标。
     private func inkTopFrac(_ strokes: [InkStroke]) -> Double {
-        let ys = strokes.flatMap { $0.points.map(\.y) }
+        let ys = strokes.flatMap { $0.points.map(\.dy) }
         return max(0, (ys.min() ?? 0) - 0.05)
     }
 

@@ -319,11 +319,11 @@ struct ScratchPadOverlay: View {
 
     private func inkDrag(_ v: DragGesture.Value) {
         let p = vp.toCanvas(v.location)
-        let pt = SIMD3(Double(p.x), Double(p.y), 0.5)
+        let pt = InkPoint(Double(p.x), Double(p.y), 0.5)
         if !inking {
             inking = true
             let p0 = vp.toCanvas(v.startLocation)
-            let start = SIMD3(Double(p0.x), Double(p0.y), 0.5)
+            let start = InkPoint(Double(p0.x), Double(p0.y), 0.5)
             if isErasing {
                 app.scratchErase([start], in: session)
             } else {
@@ -340,8 +340,8 @@ struct ScratchPadOverlay: View {
             // ⇧ 尺子：整笔替换为「起点 → 45° 吸附终点」两点直线。画布是等比坐标系 → aspect=1
             // （页内那套要传页面纵横比，是因为页内归一化两轴尺度不同；这里没有这个问题）。
             guard let live = session.scratchLive, let a = live.points.first else { return }
-            let snapped = InkEdit.rulerSnap(start: SIMD2(a.x, a.y), current: SIMD2(pt.x, pt.y), aspect: 1)
-            app.scratchInkLineTo(SIMD3(snapped.x, snapped.y, 0.5), in: session)
+            let snapped = InkEdit.rulerSnap(start: SIMD2(a.dx, a.dy), current: SIMD2(pt.dx, pt.dy), aspect: 1)
+            app.scratchInkLineTo(InkPoint(snapped.x, snapped.y, 0.5), in: session)
         } else {
             app.scratchInkAppend([pt], in: session)
         }
@@ -603,8 +603,8 @@ extension ScratchPadOverlay {
     private func strokeBounds(_ st: InkStroke) -> CGRect {
         var lo = SIMD2<Double>(.infinity, .infinity), hi = SIMD2<Double>(-.infinity, -.infinity)
         for p in st.points {
-            lo = SIMD2(min(lo.x, p.x), min(lo.y, p.y))
-            hi = SIMD2(max(hi.x, p.x), max(hi.y, p.y))
+            lo = SIMD2(min(lo.x, p.dx), min(lo.y, p.dy))
+            hi = SIMD2(max(hi.x, p.dx), max(hi.y, p.dy))
         }
         return CGRect(x: lo.x, y: lo.y, width: hi.x - lo.x, height: hi.y - lo.y)
     }
@@ -727,7 +727,7 @@ extension ScratchPadOverlay {
         var ids = Set<UUID>()
         var bbox = CGRect.null
         for st in session.strokes(pad: pad.id)
-        where st.points.contains(where: { InkEdit.pointInPolygon(SIMD2($0.x, $0.y), polygon: poly) }) {
+        where st.points.contains(where: { InkEdit.pointInPolygon(SIMD2($0.dx, $0.dy), polygon: poly) }) {
             ids.insert(st.id)
             bbox = bbox.union(strokeBounds(st))
         }
@@ -738,14 +738,14 @@ extension ScratchPadOverlay {
     /// 无 clamp 的画布平移（`InkEdit.translated` 的 0...1 clamp 对无界画布是错的，见扩展头注释）。
     private func shifted(_ s: InkStroke, dx: Double, dy: Double) -> InkStroke {
         var t = s
-        t.points = s.points.map { SIMD3($0.x + dx, $0.y + dy, $0.z) }
+        t.points = s.points.map { InkPoint($0.dx + dx, $0.dy + dy, $0.dz) }
         return t
     }
 
     /// 无 clamp 的画布缩放：点绕 anchor 按轴缩放，线宽 ×√(sx·sy) clamp 0.5...40（同 `InkEdit.scaled`）。
     private func scaled(_ s: InkStroke, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> InkStroke {
         var t = s
-        t.points = s.points.map { SIMD3(a.x + ($0.x - a.x) * sx, a.y + ($0.y - a.y) * sy, $0.z) }
+        t.points = s.points.map { InkPoint(a.x + ($0.dx - a.x) * sx, a.y + ($0.dy - a.y) * sy, $0.dz) }
         t.width = min(40, max(0.5, s.width * (sx * sy).squareRoot()))
         return t
     }
@@ -893,12 +893,12 @@ extension ScratchPadOverlay {
             let strokes = session.strokes(pad: pad.id).filter { sel.ids.contains($0.id) }
             Canvas { ctx, _ in
                 for st in strokes {
-                    func mapPt(_ p: SIMD3<Double>) -> CGPoint {
-                        ghostPoint(CGPoint(x: (p.x - o.x) * z, y: (p.y - o.y) * z), in: box)
+                    func mapPt(_ p: InkPoint) -> CGPoint {
+                        ghostPoint(CGPoint(x: (CGFloat(p.x) - o.x) * z, y: (CGFloat(p.y) - o.y) * z), in: box)
                     }
                     if st.points.count == 1 {
                         let p0 = mapPt(st.points[0])
-                        let r = CGFloat(st.type.strokeWidth(pressure: st.points[0].z, base: st.width)) * z / 2 + 2.5
+                        let r = CGFloat(st.type.strokeWidth(pressure: st.points[0].dz, base: st.width)) * z / 2 + 2.5
                         ctx.fill(Path(ellipseIn: CGRect(x: p0.x - r, y: p0.y - r, width: r * 2, height: r * 2)),
                                  with: .color(.accentColor.opacity(0.35)))
                     } else {

@@ -29,14 +29,14 @@ enum CanvasMargin {
     /// 一批笔迹的最大**横向越界量**（0 = 全在页内）：`max(-minX, maxX - 1)`。
     /// 页内笔迹与页边笔迹在同一个数组里，不必分开——没越界的笔迹对 max 没有贡献。
     static func overflow(_ strokes: [InkStroke]) -> Double {
-        var o: Double = 0
+        var o: Float = 0
         for st in strokes {
             for p in st.points {
                 if p.x < 0 { o = Swift.max(o, -p.x) }
                 else if p.x > 1 { o = Swift.max(o, p.x - 1) }
             }
         }
-        return o
+        return Double(o)
     }
 
     /// 单笔的越界量（落笔中每帧算这一笔，点数少）。

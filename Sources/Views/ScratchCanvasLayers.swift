@@ -140,7 +140,7 @@ struct ScratchInkLayer: View, Equatable {
             for st in strokes {
                 // 线宽同样乘 zoom（`inkScale`）→ 与页内笔迹「放大即变粗」的语义一致。
                 inkDrawStroke(st, in: &ctx, inkScale: z) {
-                    CGPoint(x: ($0.x - o.x) * z, y: ($0.y - o.y) * z)
+                    CGPoint(x: (CGFloat($0.x) - o.x) * z, y: (CGFloat($0.y) - o.y) * z)
                 }
             }
         }
@@ -209,8 +209,8 @@ struct ScratchMinimap: View {
                     // 骨架线即可（minimap 不必还原笔型/压感，1px 折线最省也最清楚）
                     for st in strokes where st.points.count > 1 {
                         var path = Path()
-                        path.move(to: f.map(st.points[0].x, st.points[0].y))
-                        for p in st.points.dropFirst() { path.addLine(to: f.map(p.x, p.y)) }
+                        path.move(to: f.map(st.points[0].dx, st.points[0].dy))
+                        for p in st.points.dropFirst() { path.addLine(to: f.map(p.dx, p.dy)) }
                         ctx.stroke(path, with: .color(Color.primary.opacity(0.62)),
                                    style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
                     }

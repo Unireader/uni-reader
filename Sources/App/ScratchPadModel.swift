@@ -191,8 +191,8 @@ enum ScratchBounds {
         for st in strokes {
             for p in st.points {
                 any = true
-                minX = Swift.min(minX, p.x); maxX = Swift.max(maxX, p.x)
-                minY = Swift.min(minY, p.y); maxY = Swift.max(maxY, p.y)
+                minX = Swift.min(minX, p.dx); maxX = Swift.max(maxX, p.dx)
+                minY = Swift.min(minY, p.dy); maxY = Swift.max(maxY, p.dy)
             }
         }
         guard any else { return nil }
