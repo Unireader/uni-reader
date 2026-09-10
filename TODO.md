@@ -593,6 +593,18 @@
     同一根源。`page_geom` 命中（`布局 +75(库缓存)`、`布局读库 0`），冷开王道 345ms。
     **仍未归因**：冷开王道 `body#2 +91 → body#3 +227` 这 136ms（网络那本同一段 6ms）。打点已到头，等用户的 `sample`：
     `sample UniReader 3 1 -mayDie -file ~/Desktop/unireader-open.txt`，跑起来 3 秒内冷开王道，看主线程最深最密的子树。
+    **采样结果（同日 16:24，2398 次采样）：主线程 81% 在 `mach_msg2_trap` 等事件，剩下的几乎全是
+    `-[NSControl _mouseDown:] → NSButtonCell trackMouse … untilMouseUp` 里的 tracking runloop 等鼠标抬起（217 + 129 次）**，
+    真正的 SwiftUI/渲染工作只有几十毫秒。所以 `body#2 → body#3` 那段是**用户按着鼠标的时长**（每次 6~260ms 不等）：
+    `select()` 在 mouse-down 就跑了，之后主线程在 tracking 模式里等抬起，**主队列（`DispatchQueue.main.async`、
+    `MainActor.run`、Combine `receive(on: .main)`）的东西要等抬起才派发**——`下一拍`、`笔迹到位`、`目录到位`、
+    页图渲染完成回调全都挤在抬起那一刻（日志里它们的时刻永远相同）；`isActiveWindow` 翻真也是那一拍
+    （用户从设置窗口/终端点过来，这一下同时把阅读窗口变成 key）。SwiftUI 的 body 走 CA 事务观察者，
+    tracking 期间照跑，所以首帧不受影响。**结论：打开路径的主线程账已经清完；剩下的是鼠标和窗口激活，不是代码。**
+    要让渲染结果在按住鼠标期间就上屏，得把完成回调改走 `RunLoop.main.perform`（common modes）——观感收益是
+    「松手瞬间已在」变「按住时就在」，几十毫秒的事，没动。
+    顺手改了一处真的主线程 I/O：`kickBaseRenders` / `settleRender` 里 `pdf.page(at:)`（冷盘一页 ~20ms，
+    `实化 +63 → 首批页图 +127` 那 64ms）挪到渲染队列上取（`PageRenderEngine.PageSource.lazy`）。
 
   - **2026-08-29：macOS 多标签页第 2 步「标签化」已落地，待真机验证**（方案 `MAC-TABS-PLAN.md §9`）。
     新增 `TabsModel`（窗口的标签集，不变式：永远至少一个标签，故 `active` 非可选）、

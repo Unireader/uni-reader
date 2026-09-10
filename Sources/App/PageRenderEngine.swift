@@ -9,9 +9,23 @@ import PDFKit
 final class PageRenderEngine {
     static let shared = PageRenderEngine()
 
+    /// 要渲的页：现成的 `PDFPage`，或「文档 + 页号」到渲染队列上再取。
+    /// 后者是给阅读区的整页基图用的（`ReaderSurface.kickBaseRenders`）：`pdf.page(at:)` 第一次碰某页要解析
+    /// 页对象，PDF 在冷的外置盘上一页 ~20ms，三页就是账本里 `实化 +63 → 首批页图 +127` 那 64ms 主线程。
+    enum PageSource {
+        case page(PDFPage)
+        case lazy(PDFDocument, Int)
+        func resolve() -> PDFPage? {
+            switch self {
+            case .page(let p): return p
+            case .lazy(let doc, let i): return doc.page(at: i)
+            }
+        }
+    }
+
     struct Request {
         var key: String
-        var page: PDFPage
+        var pageSource: PageSource
         var pixelWidth: Int?          // 整页渲染
         var tileRect: CGRect?         // 贴片：页显示坐标（pt，左上原点）
         var tileScale: CGFloat = 1    // 贴片：像素/pt
@@ -24,6 +38,17 @@ final class PageRenderEngine {
         ///   全落盘就是拿磁盘换一堆再也不会被问到的图）。
         /// 调用方只在「稳定态的整页基图」上打开它 —— 那正是下次开这本书要的那一套。
         var diskCache = false
+
+        init(key: String, page: PDFPage, pixelWidth: Int? = nil, tileRect: CGRect? = nil, tileScale: CGFloat = 1,
+             night: Bool, diskCache: Bool = false) {
+            self.key = key; pageSource = .page(page); self.pixelWidth = pixelWidth
+            self.tileRect = tileRect; self.tileScale = tileScale; self.night = night; self.diskCache = diskCache
+        }
+        /// 页对象到渲染队列上再取（见 `PageSource.lazy`）。
+        init(key: String, doc: PDFDocument, index: Int, pixelWidth: Int?, night: Bool, diskCache: Bool = false) {
+            self.key = key; pageSource = .lazy(doc, index); self.pixelWidth = pixelWidth
+            tileRect = nil; tileScale = 1; self.night = night; self.diskCache = diskCache
+        }
     }
 
     /// 一张页图在进程里的**真实份数**（2026-08-29 vmmap 实测）。原本是 **3**：同一张图同时存在于
@@ -314,11 +339,11 @@ final class PageRenderEngine {
                 }
                 source = "磁盘"
             }
-            if out == nil {
+            if out == nil, let page = r.pageSource.resolve() {   // `.lazy` 在这里才取页对象（解析在渲染队列上）
                 if let rect = r.tileRect {
-                    out = PageBitmap.renderTile(page: r.page, subRect: rect, scale: r.tileScale)
+                    out = PageBitmap.renderTile(page: page, subRect: rect, scale: r.tileScale)
                 } else if let pw = r.pixelWidth {
-                    out = PageBitmap.render(page: r.page, pixelWidth: pw)
+                    out = PageBitmap.render(page: page, pixelWidth: pw)
                 }
                 // 落盘的是**反色之前**那张（亮色版，见上面的红线）。编码在磁盘缓存自己的队列上做，
                 // 不占这条渲染队列。

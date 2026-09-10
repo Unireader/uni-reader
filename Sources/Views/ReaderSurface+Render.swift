@@ -136,11 +136,12 @@ extension ReaderSurface {
                 traceImage(page: i, source: "缓存")
                 continue
             }
-            guard images[i] == nil, let page = pdf.page(at: i) else { continue }
+            guard images[i] == nil, i >= 0, i < pdf.pageCount else { continue }
             images[i] = fallbackBase(page: i)   // 先顶一张旧宽度的图（可能为 nil = 这页从没渲过，只能白纸）
             // 缩放进行中不入队：此刻的 `w` 是缩放前的宽度，缩放一停 settleRender 立刻换新宽重排，
             // 这批请求注定作废，却会先把唯一的串行渲染队列占满、把真正要看的那一版挤到后面。
-            if !zooming { requestBase(key: key, page: page, index: i, width: w); asks += 1 }
+            // 页对象不在这里取（`pdf.page(at:)` 冷盘一页 ~20ms 主线程），交给渲染队列（`PageSource.lazy`）。
+            if !zooming { requestBase(key: key, doc: pdf, index: i, width: w); asks += 1 }
         }
         session.openTrace?.markOnce("首批页图",
             "实化 p\(realized.lowerBound + 1)–\(realized.upperBound + 1) 宽\(w) 缓存\(hits) 需渲\(asks)")
@@ -258,7 +259,7 @@ extension ReaderSurface {
         wanted.formUnion(ZoomProbe.measure("贴片") { refreshTiles(layout: layout, pdf: pdf) })
         // 基图按「当前页 → 由近及远」入队：单串行队列按提交序出图，可视页插队先清晰。
         for i in Self.centerOutOrder(center: session.currentPageIndex, bounds: realized) {
-            guard let page = pdf.page(at: i) else { continue }
+            guard i >= 0, i < pdf.pageCount else { continue }   // 页对象到渲染队列上再取（同 kickBaseRenders）
             let key = baseKey(i, width: w)
             wanted.insert(key)
             if let hit = PageRenderEngine.shared.cached(key) {
@@ -269,7 +270,7 @@ extension ReaderSurface {
                 // 已有图的页保持旧图（只是分辨率不对，糊一点）——纪律 2「只替换不清空」；
                 // 空着的页先拿旧宽度的兜底图顶上，别让用户对着白纸等这一轮渲染。
                 if images[i] == nil { images[i] = fallbackBase(page: i) }
-                requestBase(key: key, page: page, index: i, width: w)
+                requestBase(key: key, doc: pdf, index: i, width: w)
             }
         }
         if nightRadius > 0 {
@@ -319,13 +320,12 @@ extension ReaderSurface {
         return order
     }
 
-    func requestBase(key: String, page: PDFPage, index: Int, width: Int) {
+    func requestBase(key: String, doc: PDFDocument, index: Int, width: Int) {
         let night = scratch.nightLive
         // 🔴 缩放**过程中**的中间宽度不落盘：`currentBaseWidth()` 不分档，每停一下就是一整套新键，
         // 全写进去就是拿磁盘换一堆再也不会被问到的图（同 `recentBaseWidths` 只留 4 档的账）。
-        PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
-                                              tileRect: nil, tileScale: 1, night: night,
-                                              diskCache: !isZooming)) { doneKey, img in
+        PageRenderEngine.shared.request(.init(key: key, doc: doc, index: index, pixelWidth: width,
+                                              night: night, diskCache: !isZooming)) { doneKey, img in
             ZoomProbe.measure("图落地") {
             // 页已经滚出留图范围：不写。图已在缓存里，滑回来照样命中；写进 `images` 就要等下一次
             // 窗口变动才被驱逐，空闲窗口里等于永久挂着。
