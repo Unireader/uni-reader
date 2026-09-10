@@ -191,6 +191,9 @@ final class DocSession: ObservableObject, Identifiable {
     /// 没有保证），自己的 wanted 还挂着就会把自己当成「别的窗口还在看」而跳过——2026-09-10 实测：
     /// 关掉全部工作区，缓存里 18 张页图一张没清；监视器不放，视图拷贝连着页图也永远活着。
     var renderClients: [String: () -> Void] = [:]
+    /// 本次打开/切标签的耗时账本（`DocTabModel.select` / `prepareForReactivation` 开账，
+    /// 阅读区与笔迹层往里记，齐了自动结账进 `OpenStats`）。非 @Published：纯记账，不驱动界面。
+    var openTrace: OpenTrace?
     /// 画板模式（v12，逐文档记）：页面两侧的空白也是可书写区，横向按笔迹软边界生长。
     /// 页边笔迹仍是**页内笔迹**（note kind=2、归属那一页），只是归一化 x 越出 0~1 —— 见 `CanvasMargin`。
     @Published var canvasMode = false

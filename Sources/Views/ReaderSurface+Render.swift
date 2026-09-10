@@ -69,6 +69,24 @@ extension ReaderSurface {
         PageHoldings.shared.report(h, client: scratch.clientID)
     }
 
+    /// 打开耗时账本（`session.openTrace`）的视图侧输入：每次 body 求值报一次此刻的可见页范围、
+    /// 目标页图宽度、各可见页的笔数。没开账（`nil` 或已结清）时只剩一次判空。
+    func traceOpenFrame(layout: PageLayout, buckets: PageBuckets) {
+        guard let tr = session.openTrace, !tr.finished, scratch.didInitialGeo else { return }
+        let g = scratch.geo
+        let ds = max(0.0001, dispScale)
+        let vis = layout.pageRange(fromDocY: g.offsetY / ds, toDocY: (g.offsetY + g.containerH) / ds)
+        var strokes: [Int: Int] = [:]
+        for p in vis { strokes[p] = buckets.strokes[p]?.count ?? 0 }
+        tr.noteViewport(vis, width: scratch.basePixelW, strokes: strokes)
+    }
+
+    /// 某页拿到了目标宽度的页图 → 记进打开耗时账本（来源：缓存 / 渲染）。
+    func traceImage(page: Int, source: String) {
+        guard let tr = session.openTrace, !tr.finished else { return }
+        tr.noteImage(page: page, width: scratch.basePixelW, source: source)
+    }
+
     /// 视图里这一页是否已经是**目标宽度、当前夜间模式**的图。是的话不必再问缓存、更不必重渲：
     /// 缓存那份引用被淘汰只说明预算紧，图本身好好地挂在屏幕上。
     /// 没这条守卫，多窗口把缓存挤满后**每次 settle 都把屏幕上的页重渲一遍**（2026-09-10 实测）。
@@ -102,19 +120,24 @@ extension ReaderSurface {
         let w = scratch.basePixelW
         let zooming = isZooming
         var wanted = Set<String>()
+        var hits = 0, asks = 0
         for i in Self.centerOutOrder(center: session.currentPageIndex, bounds: realized) {
             let key = baseKey(i, width: w)
             wanted.insert(key)
             if images[i] == nil, let hit = PageRenderEngine.shared.cached(key) {
                 images[i] = hit
+                hits += 1
+                traceImage(page: i, source: "缓存")
                 continue
             }
             guard images[i] == nil, let page = pdf.page(at: i) else { continue }
             images[i] = fallbackBase(page: i)   // 先顶一张旧宽度的图（可能为 nil = 这页从没渲过，只能白纸）
             // 缩放进行中不入队：此刻的 `w` 是缩放前的宽度，缩放一停 settleRender 立刻换新宽重排，
             // 这批请求注定作废，却会先把唯一的串行渲染队列占满、把真正要看的那一版挤到后面。
-            if !zooming { requestBase(key: key, page: page, index: i, width: w) }
+            if !zooming { requestBase(key: key, page: page, index: i, width: w); asks += 1 }
         }
+        session.openTrace?.markOnce("首批页图",
+            "实化 p\(realized.lowerBound + 1)–\(realized.upperBound + 1) 宽\(w) 缓存\(hits) 需渲\(asks)")
         for t in tiles { wanted.insert(tileKeyFor(page: t.key, normRect: t.value.normRect)) }
         PageRenderEngine.shared.setWanted(wanted, client: scratch.clientID)
     }
@@ -230,7 +253,7 @@ extension ReaderSurface {
             let key = baseKey(i, width: w)
             wanted.insert(key)
             if let hit = PageRenderEngine.shared.cached(key) {
-                if images[i] !== hit { images[i] = hit }
+                if images[i] !== hit { images[i] = hit; traceImage(page: i, source: "缓存") }
             } else if hasTargetImage(i, width: w) {
                 // 屏幕上已经是这张图，只是缓存那份引用被淘汰了（预算让给了视图持有量）——不重渲。
             } else {
@@ -301,6 +324,7 @@ extension ReaderSurface {
             // 「仍是当前期望键」（键含夜间标志与宽度）= 正解，直接写入。
             if doneKey == baseKey(index, width: scratch.basePixelW) {
                 images[index] = img
+                traceImage(page: index, source: PageRenderEngine.shared.source(forKey: doneKey) ?? "渲染")
                 return
             }
             // 宽度已经变了（连续缩放时 settle 每 0.15s 就换一次目标宽，前一轮的完成必然全部落到这里）。

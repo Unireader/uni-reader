@@ -109,6 +109,7 @@ struct ReaderSurface: View {
                 let why = s == nil ? "无快照" : (lay == nil ? "无布局缓存"
                         : (anchor == nil ? "无锚点" : "宽度变了 \(Int(s?.layoutW ?? -1))→\(Int(lw))"))
                 ZoomProbe.mark("标签种子：跳过（\(why)）")
+                session.openTrace?.markOnce("种子", "跳过：\(why)")
             }
             seededFromSnapshot = false
             return
@@ -136,6 +137,7 @@ struct ReaderSurface: View {
         let seeded = Self.seedImages(docKey: docKey, pages: realizedNow,
                                      width: s.basePixelW, night: nightMode)
         _images = State(initialValue: seeded)
+        session.openTrace?.markOnce("种子", "\(seeded.count)/\(realizedNow.count) 张页图")
         let sc = Scratch()
         sc.didInitialGeo = true                       // 首帧就当作「基准已定」，别再等几何回调
         sc.nightLive = nightMode
@@ -587,6 +589,7 @@ struct ReaderSurface: View {
             let buckets = PageBuckets(session: session, range: realized)
             let _ = ZoomProbe.frame(realized: realized)   // 探针：这一帧阅读区内容重算了（默认关，零开销）
             let _ = reportHoldings()                       // 台账：本窗口此刻攥着几张页图（设置页诊断 + 缓存让额度）
+            let _ = traceOpenFrame(layout: layout, buckets: buckets)   // 打开耗时：可见页范围 + 各页笔数（有账才记）
             ZStack(alignment: .topLeading) {
                 ForEach(Array(realized), id: \.self) { i in
                     pageCell(i, layout: layout, buckets: buckets)
@@ -646,6 +649,7 @@ struct ReaderSurface: View {
                      inkMargin: marginPx,
                      inkFast: inkFastDraw,
                      pageIndex: i,
+                     docKey: docKey,
                      inkSnapshot: inkFastDraw ? inkSnaps[i] : nil)
             .offset(x: pageX, y: layout.offsets[i] * dispScale)
     }
@@ -729,8 +733,21 @@ struct ReaderSurface: View {
     func setup() {
         guard let pdf = session.pdf else { return }
         // 布局缓存在会话上：切标签重建时不必再遍历全部页取尺寸（`init` 的种子也读它）。
-        let lay = session.cachedLayout ?? PageLayout(doc: pdf)
+        let lay: PageLayout
+        if let cached = session.cachedLayout {
+            lay = cached
+            session.openTrace?.markOnce("布局", "缓存命中")
+        } else {
+            lay = session.openTrace.phase("布局计算", detail: "\(pdf.pageCount)页") { PageLayout(doc: pdf) }
+            session.openTrace?.markOnce("布局", "算完")
+        }
         session.cachedLayout = lay
+        // 种子种下的页图也入账（它们在 init 里就到位了，是「切回来零加载」的那一份）。
+        if seededFromSnapshot, let tr = session.openTrace {
+            for (p, img) in images where img.width == scratch.basePixelW {
+                tr.noteImage(page: p, width: scratch.basePixelW, source: "种子")
+            }
+        }
         layout = lay
         follower.pageCount = lay.pageCount
         follower.interpEnabled = interpEnabled

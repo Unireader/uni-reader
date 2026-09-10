@@ -54,6 +54,7 @@ extension ReaderSurface {
             // `zoomFromRestore` —— 启动瞬态宽度落位时 refit 要按新基准重算倍率而不是锁死绝对页宽。
             if abs(rz - 1) > 0.001 { zoom = rz; userZoomed = true; scratch.zoomFromRestore = true }
             scratch.lastRefitFullW = fullWidth
+            session.openTrace?.markOnce("定基准", String(format: "fit %.0fpt zoom %.2f", fitAvail, rz))
         }
         verifyPendingTarget(n)
         scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)

@@ -224,6 +224,8 @@ final class DocTabModel: ObservableObject, Identifiable {
     func close() {
         guard !closed else { return }
         closed = true
+        session.openTrace?.finish("中断：关闭")
+        session.openTrace = nil
         progressSaveTask?.cancel()
         progressSaveTask = nil
         bag.removeAll()          // 先断订阅，避免下面这几步自己又触发一轮
@@ -273,6 +275,9 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 切到另一篇文档（原 `ContentView.onChange(of: selectedDocID)` 那一整块）。
     func select(_ id: String?) {
         guard id != docID else { return }
+        // 打开耗时账本从这一刻起算（用户点下去 = 这里）。上一本还没齐的按中断结账。
+        session.openTrace?.finish("中断：换文档")
+        session.openTrace = id.map { OpenTrace(title: workspace.document(id: $0)?.title ?? $0, reason: "打开") }
         staged = false          // 从这一刻起这个标签是"装过的"（哪怕装成空态），进度可以存了
         let old = docID
         // 🔴 **先把旧文档还排在异步队列里的落库同步结清**（同 `close()` 的理由）：`on()` 把落库
@@ -307,6 +312,14 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 没装文档的空标签直接跳过（没有位置可言）。
     func prepareForReactivation() {
         guard session.pdf != nil else { return }
+        // 切标签也开一本账（没有装载段，只有视图侧的里程碑）：「切回来要等多久才齐」正是用户报的那种慢。
+        // `activate` 同一轮里先 `realize()` 开的「打开」账（视图还没上过一笔）沿用，别作废。
+        if !(session.openTrace?.isFreshWithoutView ?? false) {
+            session.openTrace?.finish("中断：再次切换")
+            let trace = OpenTrace(title: tabTitle, reason: "切标签")
+            session.openTrace = trace
+            OpenStats.bind(trace, docKey: session.contentHash)
+        }
         // 有快照就叫阅读区**在重建的首次求值里**用它种状态（一帧都不空；细节见 `ReaderSurface.init`）。
         // 下面那条 restore 锚点是兜底：窗口尺寸变过导致快照作废时，靠它把位置恢复回来（慢一拍但不丢）。
         session.readerSeedPending = (session.readerSnapshot != nil)
@@ -366,8 +379,11 @@ final class DocTabModel: ObservableObject, Identifiable {
             clearAIThreads()
             session.reloadOCRState(); return
         }
-        guard let target = workspace.openTarget(documentId: id),
-              let pdf = PDFDocument(url: URL(fileURLWithPath: target.path)) else {
+        let trace = session.openTrace
+        let target = workspace.openTarget(documentId: id)
+        let opened = target.flatMap { t in trace.phase("开PDF") { PDFDocument(url: URL(fileURLWithPath: t.path)) } }
+        guard let target, let pdf = opened else {
+            trace?.finish(target == nil ? "中断：文件路径失效" : "中断：PDF 打不开")
             session.pdf = nil
             session.title = ""
             missingDoc = doc                       // 所有路径失效 → 显示重定位提示
@@ -383,21 +399,22 @@ final class DocTabModel: ObservableObject, Identifiable {
         }
         missingDoc = nil
         session.pdf = pdf
-        session.toc = TOCEntry.build(from: pdf)
+        session.toc = trace.phase("目录") { TOCEntry.build(from: pdf) }
         session.title = doc.title
         session.contentHash = target.hash
-        session.reloadOCRState()                   // 换文档重置 OCR；该内容已有缓存则自动启用
-        loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹
-        loadInkLayers(documentId: id)              // 恢复该文档的图层注册表（含自愈补建）
+        if let trace { OpenStats.bind(trace, docKey: target.hash) }   // 从此视图层/笔迹层按 docKey 找得到账本
+        trace.phase("OCR") { session.reloadOCRState() }   // 换文档重置 OCR；该内容已有缓存则自动启用
+        trace.phase("笔迹", detail: "\(session.strokes.count)笔") { loadInk(documentId: id) }   // 恢复该文档已落库的手写笔迹
+        trace.phase("图层") { loadInkLayers(documentId: id) }   // 恢复该文档的图层注册表（含自愈补建）
         session.noteTypes = workspace.noteTypes()  // 工作区笔记类型（通用内置兜底，不在列）
         session.noteTypeFilter = .all              // 筛选仅内存，开文档复位
-        loadTextNotes(documentId: id)              // 恢复该文档已落库的文字注解
-        loadHighlights(documentId: id)             // 恢复该文档已落库的高亮
-        loadBookmarks(documentId: id)              // 恢复该文档已落库的书签（与目录合并显示）
-        loadAIThreads(documentId: id)              // 恢复该文档已落库的 AI 会话绑定
-        loadScratch(documentId: id)                // 恢复该文档的草稿纸与纸上笔迹（默认不打开任何一张）
+        trace.phase("注解") { loadTextNotes(documentId: id) }    // 恢复该文档已落库的文字注解
+        trace.phase("高亮") { loadHighlights(documentId: id) }   // 恢复该文档已落库的高亮
+        trace.phase("书签") { loadBookmarks(documentId: id) }    // 恢复该文档已落库的书签（与目录合并显示）
+        trace.phase("AI") { loadAIThreads(documentId: id) }      // 恢复该文档已落库的 AI 会话绑定
+        trace.phase("草稿纸") { loadScratch(documentId: id) }    // 恢复该文档的草稿纸与纸上笔迹（默认不打开任何一张）
         // 恢复阅读进度：缩放倍率 + 定页 + 精确滚到页内比例（restore 锚点，阅读区会跟随）。
-        let p = workspace.progress(documentId: id)
+        let p = trace.phase("进度") { workspace.progress(documentId: id) }
         session.restoreZoom = CGFloat(p.zoom)      // 首帧定基准后由 PageStreamView 套用
         session.readZoom = CGFloat(p.zoom)
         session.restoreHFrac = CGFloat(p.hfrac)    // 横向滚动比例（缩放态/画板模式才非 0）
@@ -410,9 +427,12 @@ final class DocTabModel: ObservableObject, Identifiable {
             session.emitAnchor(page: page, frac: p.frac, origin: "restore")
         }
         // 只有活动标签才抢平板跟随（后台标签装载时不许动，见 `isActive` 注释）。
-        if isActive { app.setActive(session) }
-        app.sessionChanged(session)
-        app.broadcastStrokes()   // 新文档的已存笔迹回传平板（平板本地不落库，靠 Mac 回显）
+        trace.phase("平板广播") {
+            if isActive { app.setActive(session) }
+            app.sessionChanged(session)
+            app.broadcastStrokes()   // 新文档的已存笔迹回传平板（平板本地不落库，靠 Mac 回显）
+        }
+        trace?.mark("装载完成", "\(pdf.pageCount)页 → p\(page + 1)")
         verifyContentHash(documentId: id, openedPath: target.path, storedHash: target.hash)
     }
 

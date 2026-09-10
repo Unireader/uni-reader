@@ -63,6 +63,8 @@ struct PageCellView: View {
     var inkFast: Bool = false
     /// 页号（仅 `ZoomProbe` 报"这一帧重绘了哪几页"用）。
     var pageIndex: Int = -1
+    /// 文档键（打开耗时账本按它找账，见 `InkStaticLayer.docKey`）。
+    var docKey: String = ""
     /// 缩放期间的墨迹位图快照（非 nil 即用它顶替墨迹 Canvas）。见 `ReaderSurface.makeInkSnapshots`。
     var inkSnapshot: CGImage? = nil
 
@@ -203,7 +205,7 @@ struct PageCellView: View {
                 }
             } else if !strokes.isEmpty {
                 wide { InkStaticLayer(strokes: strokes, inkScale: inkScale, margin: inkMargin,
-                                      fast: inkFast, pageIndex: pageIndex) }
+                                      fast: inkFast, pageIndex: pageIndex, docKey: docKey) }
             }
             if let live {
                 wide { InkLiveLayer(live: live, inkScale: inkScale, margin: inkMargin, fast: inkFast) }

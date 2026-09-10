@@ -15,6 +15,9 @@ struct InkStaticLayer: View, Equatable {
     var fast: Bool = false
     /// 仅供 `ZoomProbe` 报"这一帧重绘了哪几页"（不参与 Equatable——它随页固定，本就不会变）。
     var pageIndex: Int = -1
+    /// 文档键（`contentHash`），打开耗时账本按它找到进行中的那本（`OpenStats.trace(docKey:)`）。
+    /// 同 `pageIndex`：不参与 Equatable。
+    var docKey: String = ""
 
     static func == (l: Self, r: Self) -> Bool {
         // 先比标量再比点集：缩放中 `fast`/`inkScale` 必变，把 O(总点数) 的深比较短路掉。
@@ -23,7 +26,9 @@ struct InkStaticLayer: View, Equatable {
 
     var body: some View {
         Canvas { ctx, sz in
-            let t0 = ZoomProbe.enabled ? CFAbsoluteTimeGetCurrent() : 0
+            // 打开耗时账本：只在这份文档正有一本账在记时才计时（一次字典查找，其余时候零开销）。
+            let trace = docKey.isEmpty ? nil : MainActor.assumeIsolated { OpenStats.trace(docKey: docKey) }
+            let t0 = (ZoomProbe.enabled || trace != nil) ? CFAbsoluteTimeGetCurrent() : 0
             if fast {
                 // 缩放中整层一次分组绘制（见 `inkDrawStrokesFast`）——逐笔调用是缩放期的主成本
                 inkDrawStrokesFast(strokes, in: &ctx, size: sz, inkScale: inkScale, margin: margin)
@@ -33,8 +38,13 @@ struct InkStaticLayer: View, Equatable {
                 }
             }
             if t0 > 0 {
-                ZoomProbe.inkDraw(page: pageIndex, strokes: strokes.count, fast: fast,
-                                  ms: (CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                if ZoomProbe.enabled {
+                    ZoomProbe.inkDraw(page: pageIndex, strokes: strokes.count, fast: fast, ms: ms)
+                }
+                if let trace {
+                    MainActor.assumeIsolated { trace.noteInkDraw(page: pageIndex, strokes: strokes.count, ms: ms) }
+                }
             }
         }
         .allowsHitTesting(false)

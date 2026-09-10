@@ -233,6 +233,22 @@ final class PageRenderEngine {
         return wantedByClient.values.contains { $0.contains(key) }
     }
 
+    /// 最近出的图各自「怎么来的 + 花了多久」（`磁盘12ms` / `渲染163ms` / `反色4ms`），打开耗时账本
+    /// 在完成回调里按键查一次。只留最近 64 条，够一屏页图用；不是缓存，纯诊断。
+    private var recentSources: [String: String] = [:]
+    private var recentSourceOrder: [String] = []
+    private func noteSource(_ key: String, _ desc: String) {
+        lock.lock(); defer { lock.unlock() }
+        if recentSources.updateValue(desc, forKey: key) == nil {
+            recentSourceOrder.append(key)
+            if recentSourceOrder.count > 64 { recentSources.removeValue(forKey: recentSourceOrder.removeFirst()) }
+        }
+    }
+    func source(forKey key: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return recentSources[key]
+    }
+
     /// 外部已算好的图直接写入缓存（夜间切换「原地反转」的结果喂回：收尾 settle 直接命中，
     /// 不会对同一批图二次反转/重渲）。
     func seed(_ image: CGImage, forKey key: String) {
@@ -274,11 +290,14 @@ final class PageRenderEngine {
                 return
             }
             var out: CGImage?
+            var source = "渲染"   // 这张图怎么来的（打开耗时账本按它分「磁盘解码」与「PDF 渲染」）
+            let t0 = CFAbsoluteTimeGetCurrent()
             // 夜间快路：异色同参图已在缓存 → 直接反转（纯像素、自逆），跳过 PDF 重渲——
             // 夜间切换从「整窗 + 预热页全部重渲 PDF」变「整窗反转缓存图」，毫秒级。
             if let src = cached(Self.flippedNightKey(r.key)) {
                 if ci == nil { ci = CIContext() }
                 out = PageBitmap.invert(src, ci: ci!)
+                source = "反色"
             }
             // 磁盘快路（`PageDiskCache.reader`）：**上次运行渲过的那张**。
             // 冷启动第一屏走的就是这里——同一页第一次栅格化 87~168ms，而解码 + 重绘进 mmap 只要 5~13ms。
@@ -293,6 +312,7 @@ final class PageRenderEngine {
                 } else {
                     out = img
                 }
+                source = "磁盘"
             }
             if out == nil {
                 if let rect = r.tileRect {
@@ -311,6 +331,7 @@ final class PageRenderEngine {
                 }
             }
             guard let out else { return }
+            noteSource(r.key, "\(source)\(Int(((CFAbsoluteTimeGetCurrent() - t0) * 1000).rounded()))ms")
             store(r.key).setObject(out, forKey: r.key, cost: Self.cost(of: out))
             // 刚才这次写入很可能顺带淘汰了旧图；淘汰只是 free，不催 malloc 不会还给系统（见该方法注释）。
             relieveMallocPressure()

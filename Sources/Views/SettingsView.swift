@@ -20,8 +20,61 @@ struct SettingsView: View {
             Tab(L("General"), systemImage: "gear") { generalTab }
             Tab(L("Tablet"), systemImage: "ipad") { tabletTab }
             Tab(L("Reading"), systemImage: "book") { readingTab }
+            Tab(L("Diagnostics"), systemImage: "stopwatch") { diagnosticsTab }
         }
         .frame(width: 480, height: 420)
+    }
+
+    /// 诊断：最近几次「打开 / 切标签」各花了多久、卡在哪一段（`OpenStats`，同一份也进 ws 日志）。
+    private var diagnosticsTab: some View {
+        Form {
+            Section {
+                // 每秒重算（同「渲染」区块的理由：设置窗不销毁，静态取值会一直是旧快照）。
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    let recs = OpenStats.records
+                    if recs.isEmpty {
+                        Text(L("No document opened yet in this session."))
+                    } else {
+                        ForEach(recs) { r in openRecordRow(r) }
+                    }
+                }
+            } header: {
+                Text(L("Open timings (recent)"))
+            } footer: {
+                Text(L("Measured from the click until every visible page shows its image and ink. Phases are the synchronous load steps; marks are milestones since the click. The same summary lines go to ~/Library/Logs/UniReader-ws.log when that file exists."))
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder private func openRecordRow(_ r: OpenTrace.Record) -> some View {
+        DisclosureGroup {
+            LabeledContent(L("Outcome"), value: r.outcome)
+            LabeledContent(L("Load"), value: "\(Int(r.loadMs.rounded())) ms")
+            ForEach(Array(r.phases.enumerated()), id: \.offset) { _, p in
+                LabeledContent {
+                    Text("\(Int(p.ms.rounded())) ms" + (p.detail.isEmpty ? "" : " · \(p.detail)"))
+                } label: {
+                    Text("　" + p.name)
+                }
+            }
+            ForEach(Array(r.marks.enumerated()), id: \.offset) { _, m in
+                LabeledContent {
+                    Text("+\(Int(m.atMs.rounded())) ms" + (m.detail.isEmpty ? "" : " · \(m.detail)"))
+                } label: {
+                    Text(m.name)
+                }
+            }
+            LabeledContent(L("Pages"), value: r.imagesLine)
+            LabeledContent(L("Ink"), value: r.inkLine)
+        } label: {
+            LabeledContent {
+                Text("\(Int(r.totalMs.rounded())) ms")
+            } label: {
+                Text("\(r.startedAt.formatted(date: .omitted, time: .standard)) · \(r.title) · \(r.reason)")
+                    .lineLimit(1)
+            }
+        }
     }
 
     /// 通用：外观（夜间模式自动化）+ 工具栏按钮显隐。
