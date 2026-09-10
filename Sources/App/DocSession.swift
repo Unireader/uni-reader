@@ -88,6 +88,8 @@ struct RefDocInfo: Equatable {
 
 /// 一个打开中的 PDF 窗口的运行时状态。每个 reader 窗口一个。
 final class DocSession: ObservableObject, Identifiable {
+    /// 关标签/关窗后会话是否真的释放（笔迹字典、OCR 文本层、撤销栈都跟它走）：看这一行来不来。
+    deinit { wsLog("会话释放 \(title)") }
     let id = UUID()
 
     /// **本会话所在窗口的身份**（由 `DocTabModel` 在建标签时写入，之后不变）。
@@ -182,6 +184,13 @@ final class DocSession: ObservableObject, Identifiable {
     /// 页面布局缓存（`PageLayout(doc:)` 要遍历全部页取尺寸，切标签重建时不该重算）。
     /// 换文档时由 `DocTabModel.load` 清空。
     var cachedLayout: PageLayout?
+    /// 正在替本会话向 `PageRenderEngine` 声明 wanted 的阅读区（键 = `Scratch.clientID`，值 = 它的
+    /// 收尾闭包，**只捕获 `Scratch`、不捕获视图**）。`teardown` 要先替它们把 wanted 清空、放掉
+    /// NSEvent 监视器与防抖闭包，再 `purge`——引擎靠「还有没有窗口声明要这份文档的键」判断能不能清，
+    /// 而关窗时 `teardown` 跑在阅读区 `onDisappear` **之前**（AppKit 直接销毁 hosting 视图，后者来不来
+    /// 没有保证），自己的 wanted 还挂着就会把自己当成「别的窗口还在看」而跳过——2026-09-10 实测：
+    /// 关掉全部工作区，缓存里 18 张页图一张没清；监视器不放，视图拷贝连着页图也永远活着。
+    var renderClients: [String: () -> Void] = [:]
     /// 画板模式（v12，逐文档记）：页面两侧的空白也是可书写区，横向按笔迹软边界生长。
     /// 页边笔迹仍是**页内笔迹**（note kind=2、归属那一页），只是归一化 x 越出 0~1 —— 见 `CanvasMargin`。
     @Published var canvasMode = false
@@ -724,6 +733,13 @@ final class DocSession: ObservableObject, Identifiable {
         // 这份文档的页图缓存整批清掉（`docKey` 就是 contentHash，见 `ContentView` 传给阅读区那处）。
         // 不清的话关窗/换文档后那几百 MB 会一直挂到被别的文档慢慢挤掉——引擎内部会先确认
         // 没有别的窗口还在看同一份文档，多窗口场景不会误伤。**必须赶在 contentHash 清空之前。**
+        // 先把本会话自己的阅读区从「还在看」的名单里摘掉（理由见 `renderClients`），否则清不动。
+        for (c, cleanup) in renderClients {
+            PageRenderEngine.shared.setWanted([], client: c)
+            PageHoldings.shared.remove(client: c)
+            cleanup()
+        }
+        renderClients.removeAll()
         PageRenderEngine.shared.purge(doc: contentHash)
         contentHash = ""     // 在途 OCR 任务回主线程时按 hash 自弃（既有机制），不会再动已清空的状态
         store = nil

@@ -87,13 +87,12 @@ struct SettingsView: View {
                 .onChange(of: renderCacheMB) { _, mb in PageRenderEngine.shared.setCacheLimitMB(mb) }
                 // 每秒重算：设置窗不销毁，静态取值会一直显示第一次打开时的快照（诊断时被这个骗过一次）。
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    LabeledContent(L("In use now"),
-                                   value: "\(PageRenderEngine.shared.cacheUsageMB) MB · \(PageRenderEngine.shared.debugSummary)")
+                    memoryDiagRows(MemoryDiag.snapshot())
                 }
             } header: {
                 Text(L("Rendering"))
             } footer: {
-                Text(L("A larger cache re-renders less when scrolling back or switching documents, at the cost of more RAM. This figure is actual memory used."))
+                Text(L("The limit covers all page bitmaps in memory: those shown in windows plus the cache; the cache yields room to what windows hold. Every bitmap also has a CoreAnimation copy of the same size, already counted here."))
             }
 
             Section {
@@ -114,5 +113,45 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// 真实内存台账（`MemoryDiag`）：进程总量 → 页位图（存活 / 缓存 / 各窗口持有）→ 堆。
+    /// 每一行都是进程里量出来的数，不是估算；页位图的 CA 副本按 ×2 记（见 `PageRenderEngine.copiesPerImage`）。
+    @ViewBuilder private func memoryDiagRows(_ s: MemoryDiag.Snapshot) -> some View {
+        let mb = MemoryDiag.mb
+        LabeledContent(L("App memory (Activity Monitor)"), value: mb(s.footprint))
+        LabeledContent(L("Page bitmaps alive"),
+                       value: "\(s.liveCount) · \(mb(s.liveBytes)) + CA \(mb(s.liveBytes)) = \(mb(s.bitmapFootprint))")
+        LabeledContent(L("In cache"),
+                       value: "\(s.cacheBaseCount)+\(s.cacheTileCount) · \(mb(s.cacheBaseBytes + s.cacheTileBytes))"
+                       + " · \(L("room")) \(mb(s.cacheEffectiveBytes / PageRenderEngine.copiesPerImage))")
+        LabeledContent(L("Held by windows"), value: "\(s.heldCount) · \(mb(s.heldBytes))")
+        ForEach(Array(s.holdings.enumerated()), id: \.offset) { _, h in
+            LabeledContent {
+                Text(holdingValue(h))
+            } label: {
+                Text((h.active ? "● " : "○ ") + holdingLabel(h))
+            }
+        }
+        LabeledContent(L("Heap (malloc)"),
+                       value: "\(mb(s.mallocUsed)) · \(L("freed, not yet returned")) \(mb(s.mallocRetained))")
+    }
+
+    private func holdingLabel(_ h: PageHolding) -> String {
+        switch h.kind {
+        case .reader: return h.label
+        case .ref: return L("Reference window") + " · " + h.label
+        case .thumbs: return L("Thumbnails") + " · " + h.label
+        }
+    }
+
+    private func holdingValue(_ h: PageHolding) -> String {
+        let mb = MemoryDiag.mb
+        var parts: [String] = []
+        if let r = h.realized { parts.append("p\(r.lowerBound + 1)–\(r.upperBound + 1)") }
+        parts.append("\(h.imageCount) \(L("img")) \(mb(h.imageBytes))")
+        if h.tileCount > 0 { parts.append("\(h.tileCount) \(L("tile")) \(mb(h.tileBytes))") }
+        if h.snapCount > 0 { parts.append("\(h.snapCount) \(L("snap")) \(mb(h.snapBytes))") }
+        return parts.joined(separator: " · ")
     }
 }

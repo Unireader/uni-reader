@@ -34,6 +34,49 @@ extension ReaderSurface {
     /// 它比目标宽度糊（或过清），但绝不是白纸——真图渲好后由完成回调原位替换，用户只见"由糊变清"。
     /// 连续缩放时 settle 每 0.15s 就换一次目标宽，旧宽度的图必然大量 miss，没有这条回退就会一路白屏。
     /// 最后再兜一层 Inspector 缩略图那份 160px 图（同 doc/page 键空间，仅亮色）——很糊，但仍胜过白纸。
+    /// 视图放手一张页图：**先交回缓存再丢**。视图持有的图往往已经不在缓存里（缓存额度按视图持有量
+    /// 让位，见 `PageRenderEngine.setExternalHoldings`；`settleRender` 也不再为它重渲）——直接丢就是
+    /// 真丢，滑回来 / 切标签回来都得重出。交回去这份引用就顺着 LRU 走，预算之内能留多久留多久。
+    /// 只交**当前宽度、当前夜间模式**那张：键要对得上，别的宽度的兜底图本来就是从缓存拿的。
+    func releaseImage(page: Int) {
+        guard let img = images.removeValue(forKey: page) else { return }
+        seedToCache(page: page, image: img)
+    }
+
+    /// 整批交回缓存但**不**动 `images`（视图正在消失时用：切标签走的 `onDisappear`）。
+    /// 🔴 调用前先 `PageHoldings.shared.remove` 把本视图的持有量销账，否则缓存额度还被自己占着，
+    /// 交回去的图当场就被 trim 掉。
+    func handOffImagesToCache() {
+        for (p, img) in images { seedToCache(page: p, image: img) }
+    }
+
+    private func seedToCache(page: Int, image: CGImage) {
+        let w = scratch.basePixelW
+        guard w > 0, image.width == w else { return }
+        PageRenderEngine.shared.seed(image, forKey: PageRenderEngine.baseKey(
+            doc: docKey, page: page, pixelWidth: w, night: scratch.imagesNight))
+    }
+
+    /// 向 `PageHoldings` 回报本阅读区此刻攥着的页位图（每次 `contentBody` 求值一次；
+    /// 十几张图求个和，微秒级）。总量变了缓存那边才会动，见 `PageHoldings.report`。
+    func reportHoldings() {
+        var h = PageHolding(kind: .reader,
+                            label: session.title.isEmpty ? String(docKey.prefix(8)) : session.title,
+                            active: scratch.isActiveWindow, realized: realized)
+        for img in images.values { h.imageCount += 1; h.imageBytes += PageHolding.bytes(of: img) }
+        for t in tiles.values { h.tileCount += 1; h.tileBytes += PageHolding.bytes(of: t.image) }
+        for s in inkSnaps.values { h.snapCount += 1; h.snapBytes += PageHolding.bytes(of: s) }
+        PageHoldings.shared.report(h, client: scratch.clientID)
+    }
+
+    /// 视图里这一页是否已经是**目标宽度、当前夜间模式**的图。是的话不必再问缓存、更不必重渲：
+    /// 缓存那份引用被淘汰只说明预算紧，图本身好好地挂在屏幕上。
+    /// 没这条守卫，多窗口把缓存挤满后**每次 settle 都把屏幕上的页重渲一遍**（2026-09-10 实测）。
+    func hasTargetImage(_ page: Int, width: Int) -> Bool {
+        guard let cur = images[page] else { return false }
+        return cur.width == width && scratch.imagesNight == scratch.nightLive
+    }
+
     func fallbackBase(page: Int) -> CGImage? {
         for w in scratch.recentBaseWidths where w != scratch.basePixelW {
             if let hit = PageRenderEngine.shared.cached(baseKey(page, width: w)) { return hit }
@@ -83,7 +126,15 @@ extension ReaderSurface {
         // 缩放收尾处（pinchEnded / zoomAnimStep 到位分支）都会显式再排一次，不会漏。
         guard !isZooming else { scratch.settleWork?.cancel(); return }
         scratch.settleWork?.cancel()
-        let work = DispatchWorkItem { ZoomProbe.measure("settle") { settleRender() } }
+        // 🔴 跑完必须把 `scratch.settleWork` 置空（2026-09-10 实测定位的泄漏环）：这个闭包捕获的 `self`
+        // 是整个 `ReaderSurface` 的拷贝——连同 `@State` 的存储盒（`images`/`tiles`/`scratch` 全在里面）
+        // 和 `@ObservedObject session`。`scratch → settleWork → 闭包 → self 拷贝 → scratch 的存储盒 →
+        // scratch` 是个环，视图拆掉后没人再动它，整套页图就永久挂着（关掉全部窗口后 9 个 `Scratch`
+        // 仍活着，596MB 页图跟着不放）。同款：`scheduleRefit` 的 `resizeWork`。
+        let work = DispatchWorkItem {
+            scratch.settleWork = nil
+            ZoomProbe.measure("settle") { settleRender() }
+        }
         scratch.settleWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
@@ -180,6 +231,8 @@ extension ReaderSurface {
             wanted.insert(key)
             if let hit = PageRenderEngine.shared.cached(key) {
                 if images[i] !== hit { images[i] = hit }
+            } else if hasTargetImage(i, width: w) {
+                // 屏幕上已经是这张图，只是缓存那份引用被淘汰了（预算让给了视图持有量）——不重渲。
             } else {
                 // 已有图的页保持旧图（只是分辨率不对，糊一点）——纪律 2「只替换不清空」；
                 // 空着的页先拿旧宽度的兜底图顶上，别让用户对着白纸等这一轮渲染。
@@ -242,6 +295,9 @@ extension ReaderSurface {
                                               tileRect: nil, tileScale: 1, night: night,
                                               diskCache: !isZooming)) { doneKey, img in
             ZoomProbe.measure("图落地") {
+            // 页已经滚出留图范围：不写。图已在缓存里，滑回来照样命中；写进 `images` 就要等下一次
+            // 窗口变动才被驱逐，空闲窗口里等于永久挂着。
+            guard scratch.keepRange.contains(index) else { return }
             // 「仍是当前期望键」（键含夜间标志与宽度）= 正解，直接写入。
             if doneKey == baseKey(index, width: scratch.basePixelW) {
                 images[index] = img
@@ -294,8 +350,11 @@ extension ReaderSurface {
             guard norm.width > 0, norm.height > 0 else { continue }
             let key = tileKeyFor(page: i, normRect: norm)
             wanted.insert(key)
-            if tiles[i]?.normRect == norm,
-               let hit = PageRenderEngine.shared.cached(key), tiles[i]?.image === hit { continue }
+            // 已挂着同一矩形、同一像素尺寸、同一夜间模式的贴片 → 什么都不用做（不管缓存里那份引用
+            // 还在不在，同 `hasTargetImage` 的道理：别为预算紧就把屏幕上的贴片重渲一遍）。
+            let wantPx = Int((norm.width * pageW * displayScale).rounded())
+            if let t = tiles[i], t.normRect == norm, abs(t.image.width - wantPx) <= 2,
+               scratch.imagesNight == scratch.nightLive { continue }
             if let hit = PageRenderEngine.shared.cached(key) {
                 tiles[i] = PageTile(normRect: norm, image: hit)
                 continue
@@ -308,6 +367,8 @@ extension ReaderSurface {
             let idx = i
             PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: nil,
                                                   tileRect: sub, tileScale: scale, night: scratch.nightLive)) { doneKey, img in
+                // 页已滚出留图范围的迟到贴片不写（同 `requestBase` 那条守门）。
+                guard scratch.keepRange.contains(idx) else { return }
                 if doneKey == tileKeyFor(page: idx, normRect: norm) {
                     tiles[idx] = PageTile(normRect: norm, image: img)
                 }

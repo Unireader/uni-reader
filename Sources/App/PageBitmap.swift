@@ -109,22 +109,35 @@ enum PageBitmap {
     /// 格式与内存策略的全部理由见上面那两条红线。
     private static func makeImage(pixelWidth pw: Int, pixelHeight ph: Int,
                                   _ paint: (CGContext) -> Void) -> CGImage? {
+        makeImageRaw(pixelWidth: pw, pixelHeight: ph) { buf, bytesPerRow, space in
+            guard let ctx = CGContext(data: buf, width: pw, height: ph, bitsPerComponent: 8,
+                                      bytesPerRow: bytesPerRow, space: space, bitmapInfo: alphaInfo)
+            else { return false }
+            paint(ctx)
+            return true
+        }
+    }
+
+    /// 🔴 像素格式必须是 **BGRX（`noneSkipFirst` + 小端）**，别用 RGBA(`premultipliedLast`)：
+    /// 后者不是 Apple Silicon 上 CoreAnimation 的原生格式，CG 每次合成都要转换，转换结果还被它
+    /// 按固定条数缓存住——实测表现为 `MALLOC_LARGE` 一路涨到 **31 块就不涨了**（31×16.6MB≈515MB），
+    /// 静置不降、Reclaimable=0，改缓存上限也没用，因为那是 CG 的副本不是我们的图。
+    /// 页图是**不透明**的（整张填白后才画 PDF），所以连 alpha 通道都不需要，`noneSkipFirst`
+    /// 比 `premultipliedFirst` 还省一步混合。
+    private static let alphaInfo = CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+
+    /// 裸缓冲版工厂：`fill` 直接拿到 `mmap` 出来的 BGRX 缓冲（行宽 64 字节对齐）自己填像素，
+    /// 返回 false 表示没填成（缓冲当场 munmap，不出图）。`makeImage`（CGContext 画）与
+    /// `invert`（Core Image 直接渲进缓冲）都走这里——**所有页位图只此一个出口**，
+    /// `liveImages` 的账才数得全。
+    private static func makeImageRaw(pixelWidth pw: Int, pixelHeight ph: Int,
+                                     _ fill: (UnsafeMutableRawPointer, Int, CGColorSpace) -> Bool) -> CGImage? {
         guard pw > 0, ph > 0, let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        // 🔴 像素格式必须是 **BGRX（`noneSkipFirst` + 小端）**，别用 RGBA(`premultipliedLast`)：
-        // 后者不是 Apple Silicon 上 CoreAnimation 的原生格式，CG 每次合成都要转换，转换结果还被它
-        // 按固定条数缓存住——实测表现为 `MALLOC_LARGE` 一路涨到 **31 块就不涨了**（31×16.6MB≈515MB），
-        // 静置不降、Reclaimable=0，改缓存上限也没用，因为那是 CG 的副本不是我们的图。
-        // 页图是**不透明**的（下面整张填白后才画 PDF），所以连 alpha 通道都不需要，`noneSkipFirst`
-        // 比 `premultipliedFirst` 还省一步混合。
-        let alphaInfo = CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         let bytesPerRow = (pw * 4 + 63) & ~63
         let byteCount = bytesPerRow * ph
         let mapped = mmap(nil, byteCount, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
         guard let buf = mapped, buf != MAP_FAILED else { return nil }
-        guard let ctx = CGContext(data: buf, width: pw, height: ph, bitsPerComponent: 8,
-                                  bytesPerRow: bytesPerRow, space: space, bitmapInfo: alphaInfo)
-        else { munmap(buf, byteCount); return nil }
-        paint(ctx)
+        guard fill(buf, bytesPerRow, space) else { munmap(buf, byteCount); return nil }
         // 缓冲的所有权在这里移交给 provider：它是唯一的持有者，回调在最后一个引用消失时跑。
         guard let provider = CGDataProvider(dataInfo: nil, data: buf, size: byteCount,
                                             releaseData: { _, ptr, size in
@@ -160,6 +173,13 @@ enum PageBitmap {
     }
 
     /// 夜间反色：CIColorInvert + CIHueAdjust(π)（色相复原：白底变黑，彩色不变怪）。
+    ///
+    /// 🔴 **结果必须渲进我们自己的 mmap 缓冲**（`ci.render(_:toBitmap:)`），别用
+    /// `ci.createCGImage`：那条路出的图像素归 Core Image / CoreGraphics 管（落在
+    /// `DefaultPurgeableMallocZone`，vmmap 里是 `MALLOC_LARGE`），既不进 `liveImages` 的账、
+    /// 释放了分配器也不还——2026-09-10 三窗口实测 11 张 237MB 就是这批「账外」的夜间图，
+    /// 设置页的诊断行对它一无所知。走 `makeImageRaw` 之后与亮色图同一套记账、同一套释放。
+    /// 输出格式 `BGRA8` = 与我们 BGRX 缓冲同一字节序（B,G,R,X），alpha 位置写 255，`noneSkipFirst` 不读它。
     static func invert(_ image: CGImage, ci: CIContext) -> CGImage? {
         let src = CIImage(cgImage: image)
         guard let inv = CIFilter(name: "CIColorInvert") else { return nil }
@@ -169,6 +189,12 @@ enum PageBitmap {
         hue.setValue(inverted, forKey: kCIInputImageKey)
         hue.setValue(Double.pi, forKey: kCIInputAngleKey)
         let out = hue.outputImage ?? inverted
-        return ci.createCGImage(out, from: out.extent)
+        let w = image.width, h = image.height
+        return makeImageRaw(pixelWidth: w, pixelHeight: h) { buf, bytesPerRow, space in
+            ci.render(out, toBitmap: buf, rowBytes: bytesPerRow,
+                      bounds: CGRect(x: 0, y: 0, width: w, height: h),
+                      format: .BGRA8, colorSpace: space)
+            return true
+        }
     }
 }

@@ -38,7 +38,16 @@ final class TabsModel: ObservableObject {
     /// 本窗口的 NSWindow（`WindowAccessor` 拿到就交过来）。**新建标签时要立刻替它登记**——
     /// 各处按会话 id 反查窗口（AI 浮窗吸附、⌘W 兜底关窗、「双击已打开的工作区 → 激活那扇窗」），
     /// 只在 `onWindow` 那一下登记的话，之后新开的标签一律查不到。
-    private var window: NSWindow?
+    ///
+    /// 🔴 **必须是 `weak`**（2026-09-10 实测定位，「关掉全部工作区内存仍 1GB」的根因）：
+    /// NSWindow → contentViewController → 三个 `NSHostingController` → 根视图 `ReaderPane(tabs:)`
+    /// 强持有本对象，这里再强持有窗口就是一个环。窗口关了、controller 也放手了，整扇窗的对象图
+    /// （NSWindow / 分栏 / 116 个 hosting 视图 / 阅读区 `@State` 里的页图字典 / 会话 / PDF 文档）
+    /// 一个都不释放——`heap` 数出 4 扇早已关闭的窗口原封不动地活着。
+    private weak var window: NSWindow?
+
+    /// 关窗后整扇窗的对象图是否真的释放了，看这一行有没有来（`touch ~/Library/Logs/UniReader-ws.log`）。
+    deinit { wsLog("TabsModel 释放（窗口对象图已回收）") }
 
     init(app: AppModel, workspace: WorkspaceManager) {
         self.app = app

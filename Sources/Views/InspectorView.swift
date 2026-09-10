@@ -119,6 +119,9 @@ struct InspectorView: View {
                               currentPage: session.currentPageIndex) { page in
                 onJumpTo(page, 0)
             }
+            // 换文档/切标签 = 全新一份列表：它的 `images` 字典按页号存，不重建的话上一本书的
+            // 缩略图（最多 48 张、连 CA 副本上百 MB）会留在字典里，还会先顶在新书的同页号格子上。
+            .id(session.contentHash)
         } else if let id = documentId, let doc = workspace.document(id: id) {
             if tab == .info {
                 ScrollView {

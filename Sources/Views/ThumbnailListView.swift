@@ -29,6 +29,8 @@ struct ThumbnailListView: View {
     /// 图存在列表层而非单元格 `@State`：单元格随 LazyVStack 滚出即被销毁，若图存在单元格上，
     /// 渲染完成回调可能落到一个已经不存在的实例上而丢失；存这里则只认页号，谁来问都拿得到。
     @State private var images: [Int: CGImage] = [:]
+    /// `PageHoldings` 台账的键（同一文档可能开在两个窗口，各自一份）。
+    @State private var clientID = "thumbs-" + UUID().uuidString
 
     var body: some View {
         if let pdf, pdf.pageCount > 0 {
@@ -49,6 +51,7 @@ struct ThumbnailListView: View {
                 .onChange(of: currentPage) { _, p in
                     withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(p, anchor: .center) }
                 }
+                .onDisappear { PageHoldings.shared.remove(client: clientID) }
             }
         } else {
             VStack(spacing: 8) {
@@ -63,10 +66,15 @@ struct ThumbnailListView: View {
     private func keep(page: Int, image: CGImage) {
         images[page] = image
         let excess = images.count - Self.maxKeptImages
-        guard excess > 0 else { return }
-        for p in images.keys.sorted(by: { abs($0 - currentPage) > abs($1 - currentPage) }).prefix(excess) {
-            images.removeValue(forKey: p)
+        if excess > 0 {
+            for p in images.keys.sorted(by: { abs($0 - currentPage) > abs($1 - currentPage) }).prefix(excess) {
+                images.removeValue(forKey: p)
+            }
         }
+        // 台账：缩略图一张 ~1MB、最多 48 张，也是页位图预算的一部分（见 `PageHoldings`）。
+        var h = PageHolding(kind: .thumbs, label: String(documentId.prefix(8)), active: false, realized: nil)
+        for img in images.values { h.imageCount += 1; h.imageBytes += PageHolding.bytes(of: img) }
+        PageHoldings.shared.report(h, client: clientID)
     }
 }
 

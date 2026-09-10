@@ -523,10 +523,17 @@ struct ReaderSurface: View {
             scheduleRefit()
         }
         .onChange(of: interpEnabled) { _, v in follower.interpEnabled = v }
-        .onChange(of: isActiveWindow) { _, v in scratch.isActiveWindow = v }
+        .onChange(of: isActiveWindow) { _, v in
+            scratch.isActiveWindow = v
+            // 活跃与否决定实化范围（后台窗口只留可见页，见 `updateRealized`），换了就重算一次。
+            if let layout, scratch.didInitialGeo, !isZooming { updateRealized(scratch.geo, layout: layout) }
+        }
         .onChange(of: session.ocrEnabled) { _, on in if on { session.enqueueOCR(Array(realized)) } }
         .onAppear {
             scratch.isActiveWindow = isActiveWindow
+            // 关窗 teardown 要替本阅读区清 wanted、放监视器（见 `DocSession.renderClients`）。
+            // 🔴 闭包只捕获 `scratch`（类），不能捕获 self——否则会话又攥住一份视图拷贝。
+            session.renderClients[scratch.clientID] = { [scratch] in scratch.releaseRetainers() }
             setup()
             installWheelMonitor()
             installLassoEscMonitor()
@@ -537,9 +544,16 @@ struct ReaderSurface: View {
         }
         .onDisappear {
             follower.reset()
-            removeWheelMonitor()
-            removeLassoEscMonitor()
-            removeToolKeyMonitor()
+            // 三个监视器 + 两个防抖闭包一起放（它们都攥着视图拷贝，见 `Scratch.releaseRetainers`）。
+            scratch.releaseRetainers()
+            // 先销账再交图：本视图的持有量一销，缓存额度才腾得出来接住交回去的图（顺序见 `handOffImagesToCache`）。
+            PageHoldings.shared.remove(client: scratch.clientID)
+            // 本阅读区不再声明任何 wanted。**必须排在 `releaseRenderCache` 之前**：引擎的 `purge(doc:)`
+            // 靠「还有没有窗口声明要这份文档的键」判断，自己的还挂着就会把自己当成「别的窗口」而跳过。
+            // （这一句 2026-09-10 前根本不存在——上面那段注释写着「必须排在 setWanted([]) 之后」，
+            // 调用本身却在窗口层迁移时丢了；关窗后缓存里的页图从此一张都清不掉。）
+            PageRenderEngine.shared.setWanted([], client: scratch.clientID)
+            session.renderClients.removeValue(forKey: scratch.clientID)
             releaseRenderCache()
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerZoomIn)) { _ in
@@ -572,6 +586,7 @@ struct ReaderSurface: View {
             // 逐页数据整帧算一次（见 PageBuckets 注释）：旧写法每页各跑一遍全数组过滤，缩放每帧重算 body 时是掉帧大头。
             let buckets = PageBuckets(session: session, range: realized)
             let _ = ZoomProbe.frame(realized: realized)   // 探针：这一帧阅读区内容重算了（默认关，零开销）
+            let _ = reportHoldings()                       // 台账：本窗口此刻攥着几张页图（设置页诊断 + 缓存让额度）
             ZStack(alignment: .topLeading) {
                 ForEach(Array(realized), id: \.self) { i in
                     pageCell(i, layout: layout, buckets: buckets)
@@ -702,6 +717,9 @@ struct ReaderSurface: View {
             // 缩放每停一档就攒下一整套页图，几个标签各攒几档就是几百 MB。而且原来那句 `purge`
             // 顺带干的第二件事**同样重要**：`relieveMallocPressure` 催 malloc 把释放的大块真正还给
             // 系统，去掉它 `MALLOC_LARGE` 就一路挂着不降（见 `PageRenderEngine` 那段注释）。
+            // 屏幕上这套图先交回缓存：它们多半已不在缓存里（额度让给了视图持有量），不交就是真丢，
+            // 切回来 `seedImages` 一张都取不到 = 重渲一整屏。
+            handOffImagesToCache()
             PageRenderEngine.shared.purgeBase(doc: docKey, keeping: scratch.basePixelW)
             return
         }

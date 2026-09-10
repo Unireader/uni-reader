@@ -68,7 +68,13 @@ struct RefPageStream: View {
             case .ended: scratch.cursorP = nil
             }
         }
-        .onAppear { installWheelMonitor() }
+        .onAppear {
+            installWheelMonitor()
+            // 关窗兜底（`RefWindowModel.close` 会调）：只捕获 `scratch`，不捕获视图。
+            model.viewCleanup = { [scratch] in
+                if let m = scratch.wheelMonitor { NSEvent.removeMonitor(m); scratch.wheelMonitor = nil }
+            }
+        }
         .onChange(of: model.seedRev) { _, _ in seedIfReady() }
         .onChange(of: model.docKey) { _, _ in
             // 换书 = 全新一份状态（旧书的图留在引擎缓存里由 LRU 处置，别在这儿 purge：
@@ -81,8 +87,16 @@ struct RefPageStream: View {
         .onChange(of: nightMode) { _, _ in nightChanged() }
         .onDisappear {
             PageRenderEngine.shared.setWanted([], client: model.clientID)
+            PageHoldings.shared.remove(client: model.clientID)
             removeWheelMonitor()   // 折叠成气泡 / 关小窗 = 这个页流没了，监视器不能留着
+            model.viewCleanup = nil
         }
+    }
+
+    private func reportHoldings() {
+        var h = PageHolding(kind: .ref, label: model.title, active: false, realized: realized)
+        for img in images.values { h.imageCount += 1; h.imageBytes += PageHolding.bytes(of: img) }
+        PageHoldings.shared.report(h, client: model.clientID)
     }
 
     /// 🔴 **视口尺寸只认外层 `GeometryReader`，绝不用 `ScrollGeometry.containerSize`。**
@@ -150,6 +164,7 @@ struct RefPageStream: View {
 
     @ViewBuilder private var content: some View {
         if let layout = model.layout, viewport.width > 0, layout.pageCount > 0 {
+            let _ = reportHoldings()   // 台账：小窗此刻攥着几张页图（同主阅读区，见 `PageHoldings`）
             ZStack(alignment: .topLeading) {
                 // 🔴 **必须夹一道**：换书时 `layout` 当帧就是新书的，而 `realized` 要等
                 // `onChange(of: docKey)` 才归零——两者不同步的那一帧里，旧书的页号会拿去索引
@@ -196,7 +211,13 @@ struct RefPageStream: View {
         lo = max(0, lo)
         hi = min(layout.pageCount - 1, max(hi, lo))
         let r = lo...hi
-        if r != realized { realized = r }
+        scratch.keepRange = r
+        guard r != realized else { return }
+        realized = r
+        // 🔴 滚出窗口的页图**必须丢**（2026-09-10 实测定位）：原来这里只改 `realized`、从不动 `images`，
+        // 小窗滚过的每一页都留在字典里，缩放换档后旧宽度的也留——参考窗开着看一阵子就攒下十几张
+        // 整页位图（每张 13MB，还各有一份 CA 副本）。丢掉的在引擎 LRU 与磁盘缓存里都还在，滑回来很快。
+        for k in images.keys where !r.contains(k) { images.removeValue(forKey: k) }
     }
 
     private func reportPage() {
@@ -238,6 +259,7 @@ struct RefPageStream: View {
                 .init(key: k, page: page, pixelWidth: w, tileRect: nil, tileScale: 1, night: nightMode,
                       diskCache: true)
             ) { doneKey, img in
+                guard scratch.keepRange.contains(i) else { return }   // 页已滚出窗口的迟到完成不写
                 // 仍是当前期望的那一版（宽度/夜间都没变过）才写；否则只在这页空着时先顶上。
                 let fresh = doneKey == key(i, width: scratch.basePixelW) && scratch.night == nightMode
                 if fresh || images[i] == nil { images[i] = img }
@@ -429,6 +451,9 @@ struct RefPageStream: View {
 final class RefScratch {
     var basePixelW = 0
     var night = false
+    /// 允许留图的页范围（= 实化窗口，`updateRealized` 维护）。渲染完成回调按它守门，同主阅读区
+    /// `Scratch.keepRange`：迟到的完成不能把早已滚出窗口的页写回 `images`。
+    var keepRange: ClosedRange<Int> = 0...Int.max
     /// 本次视图生命周期内是否已经恢复过视口（折叠→展开只恢复一次，之后照常滚动）。
     var restored = false
     /// 初始定位是否已完成。🔴 **完成之前绝不让几何回报改写视口记忆**：ScrollView 重建后的

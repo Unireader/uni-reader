@@ -232,6 +232,10 @@ struct ZoomAnim {
 
 /// 每帧变化但不应触发 body 重算的暂存（引用类型，@State 持有其身份）。
 final class Scratch {
+    /// 阅读区的 `@State` 存储盒是否真的放了（页图字典跟它同生死）：关窗/切标签后看这一行来不来
+    /// （`touch ~/Library/Logs/UniReader-ws.log`）。没来 = 又有谁攥着视图拷贝，见 `releaseRetainers`。
+    deinit { wsLog("阅读区状态释放（页图已放）") }
+
     var geo = GeoSnap()
     var topDocY: CGFloat = 0
     var basePixelW = 0
@@ -262,6 +266,11 @@ final class Scratch {
     /// 切标签种子算出的滚动偏移（`ReaderSurface.init` 写、`setup` 读着提交一次）。
     var seedOffset: CGPoint?
     var didFirstKick = false
+    /// 视图层**允许留图**的页范围（实化窗口 ± 余量，`updateRealized` 维护）。渲染完成回调按它守门：
+    /// 快滚时发出去的请求会在页早已滚出窗口之后才完成，不守门就写进 `images`，要等下一次窗口变动
+    /// 才被驱逐——空闲窗口里就一直挂着（2026-09-10 三窗口实测的「账外」页图来源之一）。
+    /// 放 `Scratch` 而不是读 `realized`：逃逸闭包捕获的是 struct 拷贝，@State 读出来可能是旧值。
+    var keepRange: ClosedRange<Int> = 0...Int.max
     var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点 / 双击选词定位；域外为 nil）
     var selDragAnchor: (page: Int, nx: CGFloat, ny: CGFloat)?   // 进行中拖选的锚点（页号 + 页内归一化坐标）
     var localInkStart: (page: Int, nx: Double, ny: Double)?     // 进行中本机落墨的起点（⇧ 尺子锚点；非 nil = 有一笔/一次擦除在画）

@@ -167,7 +167,14 @@ final class RefWindowModel: ObservableObject {
     /// 让 LRU 自然淘汰即可——反复开关小窗时还能直接命中。
     private func releaseRenderClaim() {
         PageRenderEngine.shared.setWanted([], client: clientID)
+        PageHoldings.shared.remove(client: clientID)
+        viewCleanup?()      // 页流的 NSEvent 监视器（关窗时 `onDisappear` 来不来没保证，这里兜底）
+        viewCleanup = nil
     }
+
+    /// 页流视图登记的收尾闭包（放 NSEvent 监视器）。**只许捕获它自己的 `RefScratch`**，
+    /// 不能捕获视图——同 `DocSession.renderClients` 的规矩。
+    var viewCleanup: (() -> Void)?
 
     // MARK: - 几何（本端记忆）
 

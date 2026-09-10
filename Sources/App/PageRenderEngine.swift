@@ -32,10 +32,13 @@ final class PageRenderEngine {
     ///   `CG raster data`                 (SM=COW)  17,383,424 B  CoreGraphics 栅格副本
     ///   `CoreAnimation`                  (SM=SHM)  17,498,112 B  与 WindowServer 共享的合成副本
     /// `PageBitmap.draw` 改成自持缓冲 + `CGDataProvider` 之后，中间那份**整类消失**（vmmap 里
-    /// `CG raster data` 归零），只剩「我们自己的缓冲」+「正在显示的那几张的 CA 合成副本」。
+    /// `CG raster data` 归零），只剩「我们自己的缓冲」+「CA 合成副本」。
     /// 实测同一时刻：存活位图 66MB ↔ CoreAnimation 68MB，故取 **2**。
+    /// 🔴 2026-09-10 复测（三窗口）：49 张存活 ↔ 46 块 CoreAnimation、字节逐一相等——CA 的副本
+    /// **跟着 `CGImage` 的生命周期走**（显示过一次、只要图还活着副本就在），不是「只有正在显示的才有」。
+    /// 所以这个 ×2 对**每一张活着的图**都成立，视图层攥着的、缓存里躺着的一律照此计。
     /// 改这个数前先复测：`vmmap <pid> | grep -E '^(CG raster data|CoreAnimation|MALLOC_LARGE)'`。
-    private static let copiesPerImage = 2
+    static let copiesPerImage = 2
 
     /// 一张图的真实内存代价（字节）。所有写缓存的地方一律走它，别再各写一遍 `bytesPerRow * height`。
     static func cost(of image: CGImage) -> Int { image.bytesPerRow * image.height * copiesPerImage }
@@ -68,12 +71,32 @@ final class PageRenderEngine {
         cache.totalCostLimit = base
         tileCache.totalCostLimit = total - base
     }
-    /// 当前缓存已用（MB），供设置页/调试显示。
+    /// 当前缓存已用（MB，成本口径 = 已含 CA 副本），供设置页/调试显示。
     var cacheUsageMB: Int { (cache.currentCost + tileCache.currentCost) >> 20 }
 
+    /// 缓存台账（`MemoryDiag` 用）。`baseBytes`/`tileBytes` 是**真实字节**（成本 ÷ 份数）；
+    /// `limit`/`effectiveLimit` 是成本口径——后者已扣掉视图层的持有量，是缓存此刻真正能用的额度。
+    var cacheStats: (baseCount: Int, baseBytes: Int, tileCount: Int, tileBytes: Int,
+                     limit: Int, effectiveLimit: Int) {
+        (cache.count, cache.currentCost / Self.copiesPerImage,
+         tileCache.count, tileCache.currentCost / Self.copiesPerImage,
+         cache.totalCostLimit + tileCache.totalCostLimit,
+         cache.effectiveLimit + tileCache.effectiveLimit)
+    }
+
+    /// 视图层的持有量（真实字节，由 `PageHoldings` 在总量变化时回报）。
+    ///
+    /// 🔴 **缓存上限约束的是页位图总量，不只是缓存**（2026-09-10 定）：视图攥着的图 LRU 管不到，
+    /// 它们照样占内存、照样有 CA 副本——不从缓存额度里扣掉，「设置页写 512MB」就永远对不上活动监视器。
+    /// 扣法见 `RenderImageCache.reservedCost`：缓存至少保住上限的 1/4，别被挤成零。
+    func setExternalHoldings(baseBytes: Int, tileBytes: Int) {
+        cache.reservedCost = baseBytes * Self.copiesPerImage
+        tileCache.reservedCost = tileBytes * Self.copiesPerImage
+    }
+
     /// 诊断串：缓存里各有几张 + 进程里总共活着几张页位图。
-    /// 后者由 `PageBitmap` 数（缓冲是它自己 malloc/free 的，见 `PageBitmap.liveImages`）——
-    /// **两者差得多 = 缓存之外还有人在持有**，那才是「缓存淘汰了内存也不降」的根因所在。
+    /// 后者由 `PageBitmap` 数（缓冲是它自己 mmap/munmap 的，见 `PageBitmap.liveImages`）——
+    /// **两者差得多 = 缓存之外还有人在持有**，具体是谁看 `MemoryDiag.report()` 的逐窗口明细。
     var debugSummary: String {
         let live = PageBitmap.liveImages
         return "cache \(cache.count)+\(tileCache.count) / live \(live.count) (\(live.bytes >> 20) MB)"
@@ -314,6 +337,7 @@ private final class RenderImageCache {
     private var tail: Node?          // 最久未用
     private var totalCost = 0
     private var limit: Int
+    private var reserved = 0         // 视图层持有量（成本口径），从 limit 里扣
     private let lock = NSLock()
 
     init(limitBytes: Int) { limit = max(1, limitBytes) }
@@ -322,6 +346,17 @@ private final class RenderImageCache {
         get { lock.lock(); defer { lock.unlock() }; return limit }
         set { lock.lock(); limit = max(1, newValue); trim(); lock.unlock() }
     }
+    /// 视图层此刻攥着多少（成本口径）。它们不在本缓存里却同样占着「页位图预算」，
+    /// 所以从上限里扣掉；一变就顺手 trim，多出来的立刻淘汰（淘汰的只是缓存这份引用，
+    /// 视图还在用的图不受影响——它们本来就不靠缓存活着）。
+    var reservedCost: Int {
+        get { lock.lock(); defer { lock.unlock() }; return reserved }
+        set { lock.lock(); reserved = max(0, newValue); trim(); lock.unlock() }
+    }
+    /// 扣掉视图持有量后真正可用的额度。**至少保住 1/4**：缓存被挤成零的话，回看/换标签/夜间快路
+    /// 全部失效，每一步都重渲——那比多占一点内存糟得多。
+    var effectiveLimit: Int { lock.lock(); defer { lock.unlock() }; return effectiveLimitLocked }
+    private var effectiveLimitLocked: Int { max(limit / 4, limit - reserved) }
     var currentCost: Int { lock.lock(); defer { lock.unlock() }; return totalCost }
     var count: Int { lock.lock(); defer { lock.unlock() }; return map.count }
 
@@ -341,7 +376,7 @@ private final class RenderImageCache {
     /// `PageRenderEngine.installMemoryPressureHandler`）。
     func trim(toFraction f: Double) {
         lock.lock(); defer { lock.unlock() }
-        let target = Int(Double(limit) * max(0, min(1, f)))
+        let target = Int(Double(effectiveLimitLocked) * max(0, min(1, f)))
         while totalCost > target, let t = tail {
             removeNode(t)
             map[t.key] = nil
@@ -396,7 +431,8 @@ private final class RenderImageCache {
     /// （大窗口高倍缩放下一张贴片能到上百 MB）不留这一条的话，它会在写入后立刻自我淘汰、缓存恒空
     /// → 每次 settle 都重渲同一张图。
     private func trim() {
-        while totalCost > limit, let t = tail, t !== head {
+        let cap = effectiveLimitLocked
+        while totalCost > cap, let t = tail, t !== head {
             removeNode(t)
             map[t.key] = nil
             totalCost -= t.cost

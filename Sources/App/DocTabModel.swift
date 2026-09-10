@@ -72,6 +72,8 @@ final class DocTabModel: ObservableObject, Identifiable {
     private var progressSaveTask: Task<Void, Never>?   // 节流窗内被丢变化的尾随补存
     private var closed = false
 
+    deinit { wsLog("标签释放") }
+
     init(app: AppModel, workspace: WorkspaceManager, windowID: UUID) {
         let s = DocSession()
         s.windowID = windowID   // 窗口级的东西（内置 AI 面板宿主）按它分，不按标签分

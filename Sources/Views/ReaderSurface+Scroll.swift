@@ -119,7 +119,13 @@ extension ReaderSurface {
     @discardableResult
     func updateRealized(_ n: GeoSnap, layout: PageLayout) -> ClosedRange<Int> {
         let ds = max(0.0001, dispScale)
-        let buffer = n.containerH / ds                    // 上下各约一屏预实化
+        // 🔴 **非活跃窗口只实化可见页、图也只留可见页**（2026-09-10 定）。上下各一屏的预实化 +
+        // 图再多留 ±2 页，是给正在滚动的那个窗口准备的；后台窗口没人滚，却照样各攥一套——
+        // 三个窗口开着就是三套，活动监视器 2.3GB 的主项就是它（每张图还有 CA 副本，×2）。
+        // 代价：在非活跃窗口里滚动时，滑入的页要等渲染/磁盘解码（5~13ms/页）才出图，没有预热。
+        let active = scratch.isActiveWindow
+        let buffer = active ? n.containerH / ds : 0       // 活跃窗口上下各约一屏预实化
+        let keepMargin = active ? 2 : 0                   // 图比实化窗口多留几页（滑回来立刻有图）
         let top = n.offsetY / ds - buffer
         let bottom = (n.offsetY + n.containerH) / ds + buffer
         var range = layout.pageRange(fromDocY: top, toDocY: bottom)
@@ -146,6 +152,8 @@ extension ReaderSurface {
         if zooming {
             let merged = min(range.lowerBound, realized.lowerBound)...max(range.upperBound, realized.upperBound)
             if merged.count <= range.count + 8 { range = merged }
+        } else {
+            scratch.keepRange = max(0, range.lowerBound - keepMargin)...(range.upperBound + keepMargin)
         }
         if range != realized || !scratch.didFirstKick {
             scratch.didFirstKick = true
@@ -155,9 +163,9 @@ extension ReaderSurface {
             }
             realized = range
             if !zooming {
-                var evict = [Int]()
-                for k in images.keys where k < range.lowerBound - 2 || k > range.upperBound + 2 { evict.append(k) }
-                for k in evict { images.removeValue(forKey: k) }
+                let keep = scratch.keepRange
+                let evict = images.keys.filter { !keep.contains($0) }
+                for k in evict { releaseImage(page: k) }
                 for k in tiles.keys where !(range ~= k) { tiles.removeValue(forKey: k) }
             }
             ZoomProbe.measure("页图调度") { kickBaseRenders() }
@@ -202,7 +210,11 @@ extension ReaderSurface {
         // 边框」准备的，落位期没有什么好等的，每多等一帧就是「先按旧基准显示一下再跳」的可见闪动。
         // 首帧定基准已挡掉占位宽（见 geometryChanged），这里是宽度分两步到位时的第二道防线。
         if CACurrentMediaTime() - scratch.appearAt < 1.5 { refitToViewport(); return }
-        let work = DispatchWorkItem { refitToViewport() }
+        // 跑完置空——否则 `scratch → resizeWork → 闭包 → self 拷贝 → scratch` 成环，见 `scheduleSettleRender`。
+        let work = DispatchWorkItem {
+            scratch.resizeWork = nil
+            refitToViewport()
+        }
         scratch.resizeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }

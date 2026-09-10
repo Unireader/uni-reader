@@ -321,3 +321,20 @@ extension ReaderSurface {
     }
 
 }
+
+extension Scratch {
+    /// 放掉所有会**长期持有 `ReaderSurface` 拷贝**的东西：三个 NSEvent 监视器（AppKit 攥着闭包）
+    /// 与两个防抖 DispatchWorkItem。这些闭包捕获的 `self` 拷贝连着 `@State` 存储盒（页图字典就在里面）
+    /// 与会话，不放掉阅读区就永远活着。
+    ///
+    /// 两个入口：`onDisappear`（正常拆视图）与 `DocSession.teardown`（关窗——AppKit 直接销毁 hosting
+    /// 视图，`onDisappear` 来不来没有保证；`teardown` 是关窗必经之路，由它兜底）。幂等。
+    /// 只挂在 `Scratch` 上、不捕获视图：会话里存的清理闭包只捕获这个对象，不能再把视图拷贝带进去。
+    func releaseRetainers() {
+        if let m = wheelMonitor { NSEvent.removeMonitor(m); wheelMonitor = nil }
+        if let m = lassoEscMonitor { NSEvent.removeMonitor(m); lassoEscMonitor = nil }
+        if let m = toolKeyMonitor { NSEvent.removeMonitor(m); toolKeyMonitor = nil }
+        settleWork?.cancel(); settleWork = nil
+        resizeWork?.cancel(); resizeWork = nil
+    }
+}

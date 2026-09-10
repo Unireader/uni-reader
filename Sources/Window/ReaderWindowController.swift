@@ -164,6 +164,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持——窗口一律由代码建") }
 
+    /// 关窗结清后 controller 本身应当立刻释放（`AppDelegate.forget` 放掉最后一个强引用）。
+    /// 没来这一行 = 又有谁攥着它；来了但 `TabsModel 释放` 没来 = 窗口对象图里还有环（见 `TabsModel.window`）。
+    deinit { wsLog("ReaderWindowController 释放") }
+
     /// 三段分栏：侧栏 / 阅读区 / Inspector，各装一个 `NSHostingController`。
     ///
     /// 🔴 用 `NSSplitViewController` 而不是继续套 `NavigationSplitView`：后者会往
