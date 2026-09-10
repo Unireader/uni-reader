@@ -436,6 +436,38 @@
     只按 `bytesPerRow*height` 计费就是「设置页写 512MB、实际吃 1.5GB」。改这个系数前先 `vmmap` 复测。
     ④ **排查这类问题别信 `vmmap` 的「已分配」**：free 掉但被分配器缓存的大块照样列成已分配，
     以 `PageBitmap.liveImages`（我们自己数的存活位图）为准——我为此绕了一整轮。
+    ⑤ **（2026-09-10 补）CA 副本跟着 `CGImage` 的生命周期走，不只是「正在显示的」才有**：三窗口实测
+    49 张存活 ↔ 46 块 CoreAnimation、字节逐一相等。所以每一张活着的页图都是 ×2，视图攥着的也一样。
+    ⑥ **（2026-09-10 补）缓存那一行不是全部**：视图层（各窗口 `images`/`tiles`、参考窗、缩略图栏）是
+    第二个持有者，LRU 管不到它。设置页现在按 `MemoryDiag` 分项列出，看「窗口持有」那几行。
+
+  - **2026-09-10：三窗口 2.34GB 内存排查 + 五处修复**（分析全文与实测数字见 `HISTORY.md` 同日条目）。
+    根因三笔：视图层持有 41 张页图（缓存只记了 8 张）／每张都有 CA 副本（×2）／夜间反色出的 11 张
+    237MB 走 `createCGImage`、完全账外。改动：① 夜间反色渲进 mmap 缓冲（`PageBitmap.invert`，
+    `spike/night-invert-test.swift` 14 项与老路径逐通道一致）；② 参考窗 `images` 从不驱逐——修；
+    ③ 渲染完成回调按 `keepRange` 守门（迟到的图不再写进空闲窗口）；④ 屏幕上已是目标宽度的页不再因
+    「缓存那份引用被淘汰」而重渲（`hasTargetImage`）；⑤ **非活跃窗口只实化可见页、图也只留可见页**；
+    ⑥ 缓存上限改为**页位图总预算**：视图持有量经 `PageHoldings` 回报，缓存让出额度（至少保 1/4）。
+    **待用户实测**：夜间模式颜色（字节级已对过，看一眼即可）／切窗口、切 app 回来时阅读区不闪
+    （非活跃窗口收缩只动看不见的页）／在**非活跃**窗口里滚动会看到白纸等出图（这是 ⑤ 的代价，
+    不接受就把 `updateRealized` 里 `buffer`/`keepMargin` 的非活跃分支改回去）／设置页「渲染」区块的
+    数字与活动监视器对得上。
+    **续（同日）：关掉全部工作区仍 1.1GB** —— `heap` 数出 4 扇已关窗口原封不动活着：`TabsModel.window`
+    强引用 ↔ NSWindow → hosting 根视图 → `TabsModel` 是个环（改 `weak`）；`purge(doc:)` 被自己的
+    wanted 挡住（阅读区 `onDisappear` 从没调过 `setWanted([])`，现补上 + `DocSession.renderClients`
+    在 `teardown` 里先清）。第二轮：窗口放了但 9 个阅读区 `@State` 盒还活着——`settleWork`/`resizeWork`
+    DispatchWorkItem 与三个 NSEvent 监视器的闭包攥着 `ReaderSurface` 拷贝（拷贝连着 `@State` 盒与会话）：
+    work item 跑完置空；`Scratch.releaseRetainers()` 由 `onDisappear` 与 `teardown`（经 `renderClients`
+    闭包，只捕获 `scratch`）两路兜底。**验证法**：`touch ~/Library/Logs/UniReader-ws.log`，关一扇窗应见
+    `ReaderWindowController 释放`、`TabsModel 释放`、`阅读区状态释放（页图已放）` 三行；关完全部窗口后
+    `footprint -p <pid>` 的 `VM_ALLOCATE`/`CoreAnimation` 应只剩零头（缓存已 purge，页图为 0）。
+    🔴 **写阅读区代码的新规矩：任何会被长期保存的闭包（DispatchWorkItem、NSEvent 监视器、存进模型的回调）
+    都不能捕获 `self`（ReaderSurface 拷贝 = 整套 `@State` + 会话），只许捕获 `scratch` 这类引用对象，
+    且要有一条不依赖 `onDisappear` 的释放路径。**
+    第三轮：关完文档剩的几百 MB 是**分配器攥着的空闲内存**（`MALLOC_LARGE (empty)` 3 块 34MB 解码缓冲 +
+    小块区 72% 碎片），真在用的堆只有 ~27MB；设置页「堆（malloc）」现在分「在用 / 已释放未归还」两个数。
+    关标签路径核过没找到持有点；修了缩略图栏不按文档重建的漏（`.id(session.contentHash)`）。
+    `会话释放` / `标签释放` 两行日志：关标签后不来才是真漏。
 
   - **2026-08-29：macOS 多标签页第 2 步「标签化」已落地，待真机验证**（方案 `MAC-TABS-PLAN.md §9`）。
     新增 `TabsModel`（窗口的标签集，不变式：永远至少一个标签，故 `active` 非可选）、
@@ -819,6 +851,11 @@
 > 这一节**不在 2026-09-07 那次验收结清的范围内**——它们是已知没做，不是待验。
 
 ### 真 Bug（未修）
+
+- **草稿纸开着时关窗会漏一套视图状态**（2026-09-10 查阅读区泄漏时顺带发现，未修）：`ScratchPadView`
+  的两个 NSEvent 监视器令牌存在 `@State` 里、闭包捕获视图拷贝，只在 `onDisappear` 移除——关窗时 AppKit
+  直接销毁 hosting 视图，`onDisappear` 来不来没保证，纸开着关窗就漏一张页图 + CA 副本 + 会话。修法同阅读区：
+  令牌挪进引用对象、加一条经 `DocSession.renderClients`（或 `openPadID` 归零）的兜底释放路径。
 
 - **一个工作区里只有第一篇文档能有默认图层**（2026-08-05 做安卓多标签页时撞见，**Mac 与安卓同病**）：
   `ink_layer.id` 是全局主键而默认图层用固定 UUID，`ensureDefaultLayer` 的 `ON CONFLICT(id) DO UPDATE`

@@ -3,6 +3,125 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 内存（2026-09-10，Mac：Release 开三个文档 2.34GB，设置页却只写「缓存 366MB」）
+
+用户报：Release 包开三个文档，活动监视器 2.34GB；设置页缓存上限 512、显示已用 366；
+「Preview 开三个也不到 2GB」。对正在跑的进程 71350 直接量（`footprint` / `vmmap` / `heap`）。
+
+### 实测拆分（`footprint` 2384 MB = 活动监视器那 2.34 GB，同一口径）
+
+| 类别 | 大小 | 内容 |
+|---|---|---|
+| `VM_ALLOCATE` | 975 MB | **49 张整页位图**（`PageBitmap` 自己 mmap 的 BGRX 缓冲，11.2~27.6 MB/张，精确合计 963.7 MB） |
+| `CoreAnimation` | 931 MB | **46 块，字节数与上面逐一相等**（28,901,376 B ×5、24,788,992 B ×5 …）——CA 的合成副本 |
+| `MALLOC_LARGE` | 231 MB | **11 张页尺寸的图归 CoreGraphics 管**（`DefaultPurgeableMallocZone`，24,805,376 B ×5 …），字节数与 mmap 那批都对不上 |
+| `MALLOC_SMALL` | 218 MB | 普通堆：`heap` 63 万对象共 368 MB，扣掉上面 237 MB 剩 ~131 MB 真对象（37 MB 是 11,335 个笔迹点数组 `[SIMD3<Double>]`），其余 ~110 MB 碎片（分配器自报 51%） |
+| 其它 | ~29 MB | IOSurface、`__DATA`、页表等 |
+
+其中 2.2 GB 已被系统压缩/换出，常驻只有 685 MB（三个窗口都不在前台）；活动监视器把压缩掉的照算。
+
+### 三条根因（都能对上数）
+
+1. **366 MB 只是 LRU 里的那部分**（计费含 ×2 → 真位图约 183 MB ≈ 8 张）。进程里活着 49 张，
+   另外 41 张（~780 MB）是三个窗口各自的 `images`/`tiles` 攥着的——LRU 淘汰只放掉缓存这份引用，
+   视图还持有就不释放；缓存上限根本管不到视图层，开几个窗口乘几倍。
+2. **CA 副本对每一张活着的图都存在**（49 ↔ 46，字节相等）。2026-08-29 那轮以为「只有正在显示的
+   才有副本」，其实是副本跟着 `CGImage` 生命周期走——显示过一次、只要图还活着副本就在。
+   所以 `copiesPerImage = 2` 对视图持有的图同样成立，之前只给缓存那 8 张计过。
+3. **231 MB 完全账外**：夜间反色 `PageBitmap.invert` 走 `CIContext.createCGImage`，像素归 CI/CG 管
+   （purgeable zone），不进 `mmap`、不进 `liveImages`。一个窗口开着夜间模式就是这 11 张。
+
+顺带查出两个漏：**参考窗 `RefPageStream.images` 从不驱逐**（只在换书时 `removeAll`，滚过的页与
+缩放换档前的旧宽度图全留着）；**渲染完成回调不看页还在不在窗口里**（快滚时发出去的请求在页
+滚出窗口后才完成，照样写进 `images`，要等下一次窗口变动才驱逐——空闲窗口里就一直挂着）。
+另一处浪费：多窗口把缓存挤满后，`settleRender` 发现屏幕上的页「缓存里没有」就**重渲一遍**，
+渲完替换同一张图——纯 CPU 白烧 + 瞬时双份。
+
+### 改动
+
+- **诊断**：新文件 `Sources/App/MemoryDiag.swift`——`footprintBytes()`（`task_info` 的
+  `phys_footprint`，活动监视器口径）、`mstats()` 堆用量、`Snapshot`/`report()`；`PageHoldings`
+  台账：每个持有者（阅读区 / 参考窗 / 缩略图栏）在自己 body 求值里回报 `images`/`tiles`/`inkSnaps`
+  的张数与字节，消失时销账。设置页「渲染」区块改为分项列出：App 内存 / 存活页图（+CA 副本）/
+  缓存里（含可用额度）/ 窗口持有 / 逐窗口一行（● 活跃 ○ 非活跃，实化范围、张数、字节）/ 堆。
+- **夜间反色渲进 mmap 缓冲**（`PageBitmap.invert` → `ci.render(_:toBitmap:)` 到 `makeImageRaw`）：
+  与亮色图同一出口、同一套记账与释放。`makeImage` 拆成 `makeImageRaw`（裸缓冲）+ CGContext 壳。
+  `spike/night-invert-test.swift` 14 项：方向没翻、通道没串（BGRX）、与老路径逐通道一致（±3）、
+  进出 `liveImages` 的账。
+- **参考窗驱逐**：`RefPageStream.updateRealized` 丢掉窗口外的图；回调按 `RefScratch.keepRange` 守门。
+- **阅读区回调守门**：`Scratch.keepRange`（实化窗口 ± 余量，`updateRealized` 维护），
+  `requestBase` / 贴片回调页不在范围内就不写。
+- **不重渲屏幕上已是目标宽度的页**（`hasTargetImage`；贴片同款按像素宽判）。
+- **视图放手的图先交回缓存**（`releaseImage` / `handOffImagesToCache`）：视图持有的图多半已不在
+  缓存里（额度让出去了），直接丢就是真丢，切标签回来 `seedImages` 一张都取不到。切标签的
+  `onDisappear` 里**先 `PageHoldings.remove` 销账再交图**，否则额度还被自己占着、交回去当场被 trim。
+- **非活跃窗口只实化可见页、图也只留可见页**（`updateRealized` 的 `buffer`/`keepMargin` 按
+  `scratch.isActiveWindow` 分支；`onChange(of: isActiveWindow)` 补跑一次）。上下各一屏预实化 +
+  ±2 页余量是给正在滚的窗口准备的，后台窗口没人滚却各攥一套。**代价**：在非活跃窗口里滚动，
+  滑入的页要等渲染/磁盘解码才出图。
+- **缓存上限 = 页位图总预算**：`RenderImageCache.reservedCost`（视图持有量 × 份数）从 `limit`
+  里扣，`effectiveLimit = max(limit/4, limit − reserved)`；`PageHoldings` 总量一变就回报
+  `PageRenderEngine.setExternalHoldings`。缓存至少保住 1/4，别被挤成零（回看/换标签/夜间快路全靠它）。
+
+验证：`xcodebuild` 通过；`night-invert-test` 14/0、`page-layout-test` 25/0、`render-rotation-test`
+9/0、`page-disk-cache-test` 5/0。**内存数字与观感待用户实测**（见 TODO 状态速览同日条目）。
+
+### 续：关掉全部工作区仍 1.1GB —— 整扇窗的对象图根本没释放（同日，用户实测新包后报）
+
+用户装上面那版后报「关闭工作区后内存没有释放，0 个工作区 1G」。对进程再量：`footprint` 1105 MB，
+`VM_ALLOCATE` 18 张页图 367 MB、`CoreAnimation` 16 块 318 MB、`MALLOC_LARGE` 12 块 248 MB
+（CG purgeable zone，5 块常驻 108 MB）、`MALLOC_SMALL` 205 MB。`heap` 一数就清楚了：
+**0 个工作区开着，进程里还活着 5 个 NSWindow、4 个 `WorkspaceManager`/`TabsModel`/`RefWindowModel`/
+`WindowChrome`/`NSSplitViewController`/`NSToolbar`、116 个 `NSHostingViewBase`、9 个 `DocSession`、
+7 个 `Scratch`（= 7 个阅读区的 `@State`，页图字典就挂在那）、5 个 `CGPDFDocument`。**
+四扇早已关闭的窗口原封不动。
+
+两条根因：
+
+1. **retain 环**：`TabsModel.window` 是强引用，而 NSWindow → `contentViewController` → 三个
+   `NSHostingController` → 根视图 `ReaderPane(tabs:)` 强持有 `TabsModel`。controller 被
+   `AppDelegate.forget` 放掉之后，这个环让整扇窗（含阅读区 `@State` 里的页图、会话、PDF 文档及其
+   CG 解码缓存）永远活着。改 `weak`。
+2. **`purge(doc:)` 被自己挡住**：引擎按「还有没有窗口声明要这份文档的键」决定能不能清，而阅读区
+   `onDisappear` 里**从来没有** `setWanted([])`（注释写着「必须排在 setWanted([]) 之后」，调用本身
+   在窗口层迁移时丢了）；且关窗时 `DocSession.teardown` 跑在 `onDisappear` 之前。于是关窗后
+   缓存里的页图一张都清不掉，只能等别的文档慢慢挤。改：`DocSession.renderClients` 登记阅读区的
+   `clientID`，`teardown` 先替它们 `setWanted([])` + `PageHoldings.remove` 再 `purge`；
+   `onDisappear` 也补上 `setWanted([])`（排在 `releaseRenderCache` 之前）。
+
+顺手加了两行释放日志（`ReaderWindowController 释放` / `TabsModel 释放（窗口对象图已回收）`，
+`touch ~/Library/Logs/UniReader-ws.log` 开）：关一扇窗两行都该来；来了第一行没第二行 = 对象图里又有环。
+
+**第二轮（用户装上后报仍 1.5GB）**：两行释放日志都来了，窗口对象图确实放了，但 `heap` 里
+**9 个 `Scratch` + 9 个 `ScrollFollower`** 还活着 = 9 个阅读区的 `@State` 存储盒没放（页图字典就在盒里，
+596MB `VM_ALLOCATE` + 595MB CA 副本）。谁攥着？**捕获了 `ReaderSurface` 拷贝的闭包**——struct 拷贝连着
+`@State` 的存储盒（`_images`/`_scratch` 的 location 是类）和 `@ObservedObject session`：
+3. **`scratch.settleWork` / `resizeWork`（DispatchWorkItem）成环**：闭包捕获 self 拷贝 → 拷贝持有
+   `scratch` 的存储盒 → `scratch` 持有 work item。跑完没人置空，视图拆了也永远在。改：闭包体第一句
+   `scratch.settleWork = nil` / `resizeWork = nil`。
+4. **三个 NSEvent 监视器**（⌘滚轮 / Esc / 单键工具）只在 `onDisappear` 移除，而关窗时 AppKit 直接销毁
+   hosting 视图，`onDisappear` 来不来没有保证。改：`Scratch.releaseRetainers()`（三监视器 + 两 work item
+   一起放，幂等），`onDisappear` 与 `DocSession.teardown` 两个入口都调——后者经 `renderClients`
+   登记的闭包，**闭包只捕获 `scratch`（类），不捕获视图**，否则会话又攥住一份拷贝。参考窗同款
+   （`RefWindowModel.viewCleanup`）。
+5. `Scratch.deinit` 加日志「阅读区状态释放（页图已放）」：切标签/关窗后不来这一行 = 又有谁攥着视图拷贝。
+
+**未处理**：草稿纸 `ScratchPadView` 的两个监视器令牌存在 `@State` 里、闭包捕获视图，关窗时纸若开着
+同样会漏（一张页图 + CA 副本）。纸开着关窗少见，先记在 TODO 已知欠账。
+
+**第三轮（用户报关窗后回收了、但仍 ~400MB，怀疑关标签漏）**：对当时进程（一扇窗开着、无页图）量到
+219 MB，构成是：`MALLOC_LARGE (empty)` 100 MB —— 3 块 31.7/34.3/34.3 MB **已 free 但分配器攥着**的
+大块（尺寸 = 2800px 宽整页解码缓冲，ImageIO 解 JPEG / CG 解扫描页图用的临时缓冲）；
+`DefaultMallocZone` 174 MB 虚拟、只有 **27 MB 真在用**、68 MB 碎片（72%）；其余是框架基线。
+也就是说关完文档后剩下的几百 MB 基本是**分配器没还给内核的空闲内存**（活动监视器照算，内核缺内存时
+才回收），不是谁还攥着对象。关标签这条路（`TabsModel.close` → `DocTabModel.close` → `teardown`）
+逐项核过：`app.sessions` 注销、订阅全 `[weak self]`、`bag` 清空、阅读区拷贝的持有者已在第二轮堵上，
+没找到新的持有点。顺手修一处真漏：**缩略图栏不按文档重建**（`InspectorView` 里 `ThumbnailListView`
+没有 `.id`），切标签后上一本书的缩略图（最多 48 张 + CA 副本）留在字典里、还会先顶在新书同页号的
+格子上——加 `.id(session.contentHash)`。诊断行「堆（malloc）」拆成「在用 / 已释放未归还」两个数，
+设置页上就能分清「泄漏」和「分配器缓存」；`DocSession`/`DocTabModel` 加释放日志（`会话释放` / `标签释放`），
+关标签后不来这两行才是真漏。
+
 ## 三端笔迹绘制对比工具 + 两条分叉修掉（2026-09-07，三端）
 
 用户拍板：路线图 ⑤（Rust 笔迹核心）正式放弃，改做**对比工具**——「将多端的绘制汇总起来对比，
