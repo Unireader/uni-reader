@@ -565,6 +565,19 @@
     另一条线索：冷开王道 `实化 +244(p284–285 → p283–285)`——`isActiveWindow` 在首帧后 ~150ms 才翻真（buffer 从 0 变一屏），
     多实化一页；`+123 → +244 → +342` 那两段各 ~100ms 还没归因，加了 `body#k`（阅读区前 12 次 body 的时刻）与
     `页元胞 pN（图/笔/高亮/注解）` 两种打点，下一批日志对照看。`检查器 body` 这批没出现 = 检查器没开，排除。
+    **第四批日志（同日 15:47，这次盘是冷的）**：
+    - 上一条 `pendingTarget` 修法**没生效**：切标签仍 `实化 +28(offY 0 … → p1–1)`——首拍几何在 `setup`（+30 `布局`）
+      **之前**就来了，而 `pendingTarget` 是 `setup` 才登记的。改成 `PageStreamView.init` 种子路径里就登记。
+    - 冷开王道 606ms，全是**外置盘冷缓存**：`装载 101ms[图层 54 · 注解 13 · 进度 9]` 都是第一次碰那几张表页的寻道；
+      `装载完成 +92 → select 返回 +242` 这 150ms 是 `setOpenDocuments` 一次写的 WAL fsync。
+      **改**：进度 / 打开集 / 最近打开 / 路径有效性这四类「最后一次为准」的小写走 `WorkspaceManager.bookkeeping`
+      串行后台队列（同键 FIFO；`progress()` 读之前同一文档还有写在排队就先排空；`teardown()` 与退出前
+      `flushAllBookkeeping()` 排空再关连接）。笔迹/注解对账写**不走**它。
+    - 首帧后 `body#2 +337 → body#3 +490 → … body#7 +597`：有 OCR 缓存的那本冷开后阅读区 body 跑了 7 次、主线程连忙 350ms，
+      没缓存的那本 50ms——`enqueueOCR` 在 `updateRealized` 里**同步**读每页几十 KB 的 OCR blob（冷盘）再逐页写
+      `ocrRuns`（@Published，一页一次整窗重算）。**改**：缓存读放后台，一批合并成一次写；账本记 `OCR缓存到位 N页`。
+    - 可选再往前一步（**用户定**）：`PRAGMA synchronous=NORMAL`（WAL 下只在 checkpoint 时 fsync）——app 崩溃不丢，
+      掉电/直接拔盘可能丢最近几笔；现在外置盘本来就得先退出 app 才能弹出，风险窗口不大，但这是耐久性取舍，不擅自改。
 
   - **2026-08-29：macOS 多标签页第 2 步「标签化」已落地，待真机验证**（方案 `MAC-TABS-PLAN.md §9`）。
     新增 `TabsModel`（窗口的标签集，不变式：永远至少一个标签，故 `active` 非可选）、

@@ -145,6 +145,11 @@ struct ReaderSurface: View {
         sc.basePixelW = s.basePixelW
         sc.recentBaseWidths = s.recentBaseWidths
         sc.seedOffset = off                           // `setup` 拿它显式提交一次滚动
+        // 🔴 目标**在这里就登记**，不等 `setup`（2026-09-10 第三批账本：首帧 body 之后、`setup` 之前，
+        // ScrollView 先报了一拍 offset 0 的几何——`实化 +28(offY 0 … p283–285 → p1–1)`——实化窗口塌到 p1、
+        // 刚种好的页元胞销毁重建、白渲一张 p1）。登记了它，`geometryChanged` 就按目标算实化，陈旧几何不作数。
+        sc.pendingTarget = off
+        sc.pendingTries = 0
         sc.geo = GeoSnap(offsetX: off.x, offsetY: off.y,
                          containerW: unobSize.width, containerH: unobSize.height,
                          contentW: max(avail, pw), contentH: lay.totalHeight * ds)

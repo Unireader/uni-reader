@@ -144,6 +144,12 @@ final class WorkspaceRegistry: ObservableObject {
     /// 窗口放手：最后一个窗口关掉后（且该窗口的写库已落地），`maybeTeardown` 显式关掉 SQLite 连接
     /// 并摘掉池条目 —— **不等 manager 自己析构**：那个时机挂在 SwiftUI 的 `@State` 上，没有保证，
     /// 而连接一天不关，工作区所在的可移动硬盘就一天弹不出去。
+    /// 退出前把每个工作区排队中的元数据小写（进度/打开集，`WorkspaceManager.bookkeeping`）同步落地。
+    /// `teardown()` 自己也会排空，但退出路径不保证每个 manager 都走到 teardown，这里兜底。
+    func flushAllBookkeeping() {
+        for e in byPath.values { e.manager?.flushBookkeeping() }
+    }
+
     func release(_ manager: WorkspaceManager) {
         guard let k = byPath.first(where: { $0.value.manager === manager })?.key else {
             wsLog("release：⚠️ 实例不在池中，什么都没做（\(manager.folder?.lastPathComponent ?? "nil")）")

@@ -175,9 +175,32 @@ final class WorkspaceManager: ObservableObject {
     /// （用户 2026-08-05 报：必须退出整个 app 才能弹）。所以关闭必须是一个显式动作，而不是 ARC 的副产品。
     func teardown() {
         guard store != nil else { return }
+        flushBookkeeping()   // 排队里的进度/打开集先落地，再关连接（否则那几条写就丢了）
         store?.close()
         store = nil
         wsLog("teardown：已关闭库连接 \(folder?.lastPathComponent ?? "?")")
+    }
+
+    // MARK: - 元数据小写走后台（进度 / 打开集 / 最近打开 / 路径有效性）
+
+    /// 🔴 这四类写各自是一次事务 = 一次 WAL fsync；库在外置硬盘、缓存冷的时候一次几十到一百多毫秒
+    /// （2026-09-10 账本：冷开「王道计组」`装载完成 +92 → select 返回 +242`，中间只有 `setOpenDocuments`
+    /// 那一次写）。它们的语义都是「最后一次为准」，不必卡着主线程等盘：排进这条**串行**队列，
+    /// FIFO 保证同一个键的先后不乱。读进度前若同一文档还有写在排队，`progress()` 先 `sync` 排空。
+    /// `teardown()`（关窗/退出）先排空再关连接。**别把笔迹/注解落库也塞进来**：那些是对账写、
+    /// 与内存快照有先后契约，走自己的路。
+    private let bookkeeping = DispatchQueue(label: "tech.xvanturing.unireader.bookkeeping", qos: .utility)
+    /// 排队中的进度写涉及哪些文档（主线程维护；`progress(documentId:)` 据此决定要不要先排空）。
+    private var pendingProgressDocs: [String: Int] = [:]
+
+    private func bookkeep(_ work: @escaping (LibraryStore) -> Void) {
+        guard let store else { return }
+        bookkeeping.async { work(store) }
+    }
+
+    /// 排空后台元数据写（同步等它们落盘）。
+    func flushBookkeeping() {
+        bookkeeping.sync {}
     }
 
     /// 某窗口当前文档变化（nil = 该窗口清空选择）。把「打开集」重同步为「所有窗口当前文档」并持久化。
@@ -223,7 +246,8 @@ final class WorkspaceManager: ObservableObject {
 
     private func persistOpenDocs() {
         restoreDocIds = openDocs
-        try? store?.setOpenDocuments(openDocs)
+        let ids = openDocs
+        bookkeep { try? $0.setOpenDocuments(ids) }
     }
 
     func rename(_ newName: String) {
@@ -368,12 +392,13 @@ final class WorkspaceManager: ObservableObject {
         for l in locs {
             let abs = resolvedPath(l)
             if FileManager.default.fileExists(atPath: abs) {
-                try? store.setLocationValidity(id: l.id, isValid: true)
-                try? store.updateLastOpened(documentId: documentId)
+                let lid = l.id
+                bookkeep { try? $0.setLocationValidity(id: lid, isValid: true); try? $0.updateLastOpened(documentId: documentId) }
                 let hash = (try? store.variant(id: l.variantId))?.contentHash ?? ""
                 return (abs, hash)
             }
-            try? store.setLocationValidity(id: l.id, isValid: false)
+            let lid = l.id
+            bookkeep { try? $0.setLocationValidity(id: lid, isValid: false) }
         }
         return nil
     }
@@ -403,11 +428,23 @@ final class WorkspaceManager: ObservableObject {
     // MARK: - 阅读进度
 
     /// 保存进度（不 refresh，避免列表抖动；下次打开从 store 读最新）。含缩放倍率 + 横向比例。
+    /// 后台写（见 `bookkeeping`）；同一文档的写 FIFO，后写的赢。
     func saveProgress(documentId: String, page: Int, frac: Double, zoom: Double, hfrac: Double) {
-        try? store?.updateProgress(documentId: documentId, page: page, frac: frac, zoom: zoom, hfrac: hfrac)
+        guard store != nil else { return }
+        pendingProgressDocs[documentId, default: 0] += 1
+        bookkeep { try? $0.updateProgress(documentId: documentId, page: page, frac: frac, zoom: zoom, hfrac: hfrac) }
+        bookkeeping.async { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let n = self.pendingProgressDocs[documentId], n > 1 { self.pendingProgressDocs[documentId] = n - 1 }
+                else { self.pendingProgressDocs.removeValue(forKey: documentId) }
+            }
+        }
     }
     /// 读取最新进度（直接查库，绕过可能过时的 documents 缓存）。含缩放倍率 + 横向比例 + 画板模式。
+    /// 这篇还有进度写在后台排队（关标签又立刻重开）就先排空，别读到旧值。
     func progress(documentId: String) -> (page: Int, frac: Double, zoom: Double, hfrac: Double, canvas: Bool) {
+        if pendingProgressDocs[documentId] != nil { flushBookkeeping() }
         if let d = try? store?.document(id: documentId) {
             return (d.readPage, d.readFrac, d.readZoom, d.readHFrac, d.canvasMode)
         }

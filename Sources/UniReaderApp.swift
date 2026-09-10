@@ -495,6 +495,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 而结清里有写库，越早越稳；此刻 `isTerminating` 已置位，「打开集」照旧原样保留。
         let windows = readerWindows          // 结清里会 `forget(self)` 改这个数组，先取一份快照
         for c in windows { c.shutdown() }
+        // 进度/打开集这类小写在后台队列里排着（`WorkspaceManager.bookkeeping`），进程退出前同步落地。
+        WorkspaceRegistry.shared.flushAllBookkeeping()
         return .terminateNow
     }
 
