@@ -538,8 +538,12 @@ final class WorkspaceManager: ObservableObject {
 
     /// 读取某文档已落库的全部手写笔画（按页/时间序），用于重开恢复。
     func inkStrokes(documentId: String) -> [InkStroke] {
-        ((try? store?.notes(documentId: documentId, kind: InkStroke.noteKind)) ?? [])
-            .compactMap(InkStroke.init(note:))
+        inkNotes(documentId: documentId).compactMap(InkStroke.init(note:))
+    }
+
+    /// 只读行、不解码（打开耗时账本把「读库」与「解码」分开记，见 `DocTabModel.loadInk`）。
+    func inkNotes(documentId: String) -> [LibNote] {
+        (try? store?.notes(documentId: documentId, kind: InkStroke.noteKind)) ?? []
     }
 
     /// 落库/更新一条手写笔画（笔画完成时调用）。空笔画自动跳过。

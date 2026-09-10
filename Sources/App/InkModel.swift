@@ -126,17 +126,123 @@ extension InkStroke {
     /// 缺 `padId` 的 kind=4 行是坏数据（无处可归的孤儿笔迹），当损坏丢弃。
     init?(note: LibNote) {
         guard note.kind == InkStroke.noteKind || note.kind == InkStroke.scratchNoteKind,
-              let uuid = UUID(uuidString: note.id),
-              let payload = try? JSONDecoder().decode(InkStrokePayload.self, from: note.payload)
-        else { return nil }
-        if note.kind == InkStroke.scratchNoteKind && payload.padId == nil { return nil }
-        let pts: [SIMD3<Double>] = payload.points.map { p in
-            let x: Double = p.count > 0 ? p[0] : 0
-            let y: Double = p.count > 1 ? p[1] : 0
-            let z: Double = p.count > 2 ? p[2] : 0.5
-            return SIMD3<Double>(x, y, z)
+              let uuid = UUID(uuidString: note.id) else { return nil }
+        // 快路：points 用字节扫描（`InkPayloadFast`），其余字段照旧 JSONDecoder——开文档时的
+        // 「笔迹」段从半秒降到几十毫秒。形态不认识时回落到整段 JSONDecoder，结果逐位相同。
+        let payload: InkStrokePayload
+        let pts: [SIMD3<Double>]
+        if let fast = InkPayloadFast.splitPoints(note.payload),
+           let p = try? JSONDecoder().decode(InkStrokePayload.self, from: fast.rest) {
+            payload = p
+            pts = fast.points
+        } else {
+            guard let p = try? JSONDecoder().decode(InkStrokePayload.self, from: note.payload) else { return nil }
+            payload = p
+            pts = p.points.map { p in
+                let x: Double = p.count > 0 ? p[0] : 0
+                let y: Double = p.count > 1 ? p[1] : 0
+                let z: Double = p.count > 2 ? p[2] : 0.5
+                return SIMD3<Double>(x, y, z)
+            }
         }
+        if note.kind == InkStroke.scratchNoteKind && payload.padId == nil { return nil }
         self.init(id: uuid, page: note.page, color: payload.color, width: payload.width, type: payload.type,
                   points: pts, layerId: payload.layerId, padId: payload.padId)
+    }
+}
+
+// MARK: - points 快速解析
+
+/// 笔迹 payload 的 `points` 快速解析（2026-09-10 打开耗时账本量出来的：一篇 2616 笔的文档
+/// 「笔迹」段 506ms，几乎全在 `JSONDecoder` 解 `[[Double]]`——Codable 逐元素走一遍容器协议，
+/// 一个数要 1~2µs，二十几万个点就是半秒）。
+///
+/// 做法：在原始字节里找到 `"points"` 那个数组的起止，用 `strtod`（正确舍入；小数点形态启动时自检）
+/// 直接扫数字进 `SIMD3<Double>`；其余字段（color/width/type/layerId/padId，加起来百来字节）
+/// 把数组换成 `[]` 后照旧交给 `JSONDecoder`。**语义不变**：解出来的 Double 与 `JSONDecoder`
+/// 逐位相同（`spike/ink-payload-fast-test.swift` 逐点比对），任何看不懂的形态返回 nil、
+/// 调用方回落到原路径。
+///
+/// 不改 payload 格式：`[x, y, pressure]` 显式数组是三端共用的落库契约（安卓/Windows 要能读）。
+enum InkPayloadFast {
+    /// 返回 (去掉 points 的 payload, 点数组)；形态不认识时 nil。
+    static func splitPoints(_ data: Data) -> (rest: Data, points: [SIMD3<Double>])? {
+        guard strtodUsesDot else { return nil }
+        // 拷一份带 NUL 结尾的缓冲：strtod 要它，扫描也可以少判一次越界。
+        var buf = [UInt8](data)
+        buf.append(0)
+        let n = data.count
+        guard let keyAt = find(buf, key: Array("\"points\"".utf8), count: n) else { return nil }
+        var i = keyAt + 8
+        skipWS(buf, &i)
+        guard i < n, buf[i] == UInt8(ascii: ":") else { return nil }
+        i += 1
+        skipWS(buf, &i)
+        guard i < n, buf[i] == UInt8(ascii: "[") else { return nil }
+        let arrStart = i
+        i += 1
+        var pts: [SIMD3<Double>] = []
+        pts.reserveCapacity(64)
+        let ok: Bool = buf.withUnsafeBufferPointer { raw -> Bool in
+            let base = UnsafeRawPointer(raw.baseAddress!).assumingMemoryBound(to: CChar.self)
+            while true {
+                skipWS(buf, &i)
+                guard i < n else { return false }
+                if buf[i] == UInt8(ascii: "]") { return true }          // 外层数组结束
+                guard buf[i] == UInt8(ascii: "[") else { return false }  // 每个点必须是内层数组
+                i += 1
+                var v: [Double] = []   // 一个点最多三个数；多的忽略，少的按老规矩补
+                while true {
+                    skipWS(buf, &i)
+                    guard i < n else { return false }
+                    if buf[i] == UInt8(ascii: "]") { i += 1; break }
+                    var end: UnsafeMutablePointer<CChar>? = nil
+                    let d = strtod(base + i, &end)
+                    guard let end, UnsafePointer(end) > base + i else { return false }
+                    i = UnsafePointer(end) - base
+                    if v.count < 3 { v.append(d) }
+                    skipWS(buf, &i)
+                    guard i < n else { return false }
+                    if buf[i] == UInt8(ascii: ",") { i += 1; continue }
+                    guard buf[i] == UInt8(ascii: "]") else { return false }
+                }
+                pts.append(SIMD3<Double>(v.count > 0 ? v[0] : 0, v.count > 1 ? v[1] : 0, v.count > 2 ? v[2] : 0.5))
+                skipWS(buf, &i)
+                guard i < n else { return false }
+                if buf[i] == UInt8(ascii: ",") { i += 1; continue }
+                guard buf[i] == UInt8(ascii: "]") else { return false }
+            }
+        }
+        guard ok else { return nil }
+        let arrEnd = i   // 指向外层 `]`
+        var rest = Data(capacity: n - (arrEnd - arrStart) + 2)
+        rest.append(data[0..<arrStart])
+        rest.append(contentsOf: [UInt8(ascii: "["), UInt8(ascii: "]")])
+        rest.append(data[(arrEnd + 1)..<n])
+        return (rest, pts)
+    }
+
+    /// `strtod` 认小数点还是逗号由 C 库 locale 决定（`strtod_l` 没导进 Swift）。进程默认是 "C"，
+    /// Cocoa 也不会替我们 `setlocale`，但别赌：启动时试一个数，不对就整条快路关掉（回落原路径）。
+    private static let strtodUsesDot: Bool = strtod("0.5", nil) == 0.5 && strtod("-1e-3", nil) == -0.001
+
+    private static func skipWS(_ b: [UInt8], _ i: inout Int) {
+        while i < b.count, b[i] == 0x20 || b[i] == 0x0A || b[i] == 0x0D || b[i] == 0x09 { i += 1 }
+    }
+
+    /// 找键（含引号）第一次出现的位置。payload 里其它字符串值（笔型名、UUID）不可能含它。
+    private static func find(_ b: [UInt8], key: [UInt8], count n: Int) -> Int? {
+        guard n >= key.count else { return nil }
+        var i = 0
+        let first = key[0]
+        while i <= n - key.count {
+            if b[i] == first {
+                var j = 1
+                while j < key.count, b[i + j] == key[j] { j += 1 }
+                if j == key.count { return i }
+            }
+            i += 1
+        }
+        return nil
     }
 }

@@ -404,7 +404,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.contentHash = target.hash
         if let trace { OpenStats.bind(trace, docKey: target.hash) }   // 从此视图层/笔迹层按 docKey 找得到账本
         trace.phase("OCR") { session.reloadOCRState() }   // 换文档重置 OCR；该内容已有缓存则自动启用
-        trace.phase("笔迹", detail: "\(session.strokes.count)笔") { loadInk(documentId: id) }   // 恢复该文档已落库的手写笔迹
+        loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹（内部分三段记账）
         trace.phase("图层") { loadInkLayers(documentId: id) }   // 恢复该文档的图层注册表（含自愈补建）
         session.noteTypes = workspace.noteTypes()  // 工作区笔记类型（通用内置兜底，不在列）
         session.noteTypeFilter = .all              // 筛选仅内存，开文档复位
@@ -566,9 +566,14 @@ final class DocTabModel: ObservableObject, Identifiable {
     private func loadInk(documentId id: String) {
         session.documentId = id
         session.liveStroke = nil
-        let loaded = workspace.inkStrokes(documentId: id)
-        session.persistedStrokes = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
-        session.strokes = loaded
+        // 读库与解码分开记账：2026-09-10 一篇 2616 笔的文档这一段 506ms，得知道慢在哪一半。
+        let trace = session.openTrace
+        let notes = trace.phase("笔迹读库") { workspace.inkNotes(documentId: id) }
+        let loaded = trace.phase("笔迹解码", detail: "\(notes.count)条") { notes.compactMap(InkStroke.init(note:)) }
+        trace.phase("笔迹入账") {
+            session.persistedStrokes = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+            session.strokes = loaded
+        }
     }
 
     /// 内存笔画 ↔ 库对账：新增或内容变更的 → upsert；曾落库而现已无的（擦除）→ delete。
