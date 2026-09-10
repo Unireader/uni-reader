@@ -448,6 +448,15 @@ final class LibraryStore {
         try db.query("SELECT * FROM note WHERE document_id=? AND page=? ORDER BY created_at ASC",
                      [.text(documentId), .int(Int64(page))]).map(Self.note)
     }
+    /// 笔迹专用窄查询（kind=2 页内 / kind=4 草稿纸）：只取四列、按位置读、不走 `[String: Any]`。
+    /// 排序与 `notes(documentId:kind:)` 一致（页 → 落库时间 = 绘制叠放序）。
+    /// 开文档最热的一条读（`DocTabModel.loadInk`），在后台线程调；一条语句一把锁，与主线程互不干扰。
+    func inkRows(documentId: String, kind: Int) throws -> [LibInkRow] {
+        try db.query("SELECT id, kind, page, payload FROM note WHERE document_id=? AND kind=? ORDER BY page ASC, created_at ASC",
+                     [.text(documentId), .int(Int64(kind))]) { r in
+            LibInkRow(id: r.text(0), kind: Int(r.int64(1)), page: Int(r.int64(2)), payload: r.blob(3))
+        }
+    }
     func upsertNote(_ n: LibNote) throws {
         try db.run("""
         INSERT INTO note(id,document_id,kind,page,anchor_x,anchor_y,anchor_w,anchor_h,payload,created_at,updated_at)

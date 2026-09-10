@@ -410,7 +410,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.contentHash = target.hash
         if let trace { OpenStats.bind(trace, docKey: target.hash) }   // 从此视图层/笔迹层按 docKey 找得到账本
         trace.phase("OCR") { session.reloadOCRState() }   // 换文档重置 OCR；该内容已有缓存则自动启用
-        loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹（内部分三段记账）
+        loadInk(documentId: id)                    // 恢复该文档已落库的手写笔迹（读库+解码全在后台，账本记里程碑「笔迹到位」）
         trace.phase("图层") { loadInkLayers(documentId: id) }   // 恢复该文档的图层注册表（含自愈补建）
         session.noteTypes = workspace.noteTypes()  // 工作区笔记类型（通用内置兜底，不在列）
         session.noteTypeFilter = .all              // 筛选仅内存，开文档复位
@@ -571,10 +571,12 @@ final class DocTabModel: ObservableObject, Identifiable {
     }
 
     /// 恢复该文档已落库的手写笔迹到内存，并记录对账集（避免加载即被判为“新增”而重复落库）。
-    /// 🔴 **解码在后台**（2026-09-10 用户定：「先展示窗口和 PDF 内容，笔迹异步处理好后再显示」）：
-    /// 一篇 2616 笔的文档解码 360ms（Debug 包），同步做就是开文档卡这么久。读库仍在主线程
-    /// （库连接只在主线程用），解码丢给后台并行做，回主线程时按 `inkLoadGeneration` 核对——
-    /// 用户在这期间切走/关掉就丢弃。期间用户新画的笔迹保留（`applyLoadedInk` 合并）。
+    /// 🔴 **读库 + 解码都在后台**（2026-09-10 用户定：「先展示窗口和 PDF 内容，笔迹异步处理好后再显示」）：
+    /// 一篇 2616 笔的文档，Debug 包读库 158ms + 解码 360ms，同步做就是开文档卡这么久。
+    /// 读库走 `LibraryStore.inkRows`（窄查询、免字典），`SQLiteDB` 一条语句一把锁，后台线程用主线程
+    /// 那条连接是既有做法（离线镜像早就这么干）；解码 `InkStroke.decodeAll` 多核分块。回主线程时按
+    /// `inkLoadGeneration` 核对——用户在这期间切走/关掉就丢弃。期间用户新画的笔迹保留（`applyLoadedInk` 合并）。
+    /// 主线程在这里只剩置位；账本从「装载」同步段挪到里程碑 `笔迹到位`（读库 / 解码各记各的毫秒）。
     private func loadInk(documentId id: String) {
         session.documentId = id
         session.liveStroke = nil
@@ -582,28 +584,26 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.persistedStrokes = [:]
         session.inkLoadGeneration += 1
         let gen = session.inkLoadGeneration
-        let trace = session.openTrace
-        var count = 0
-        let notes = trace.phase("笔迹读库", detail: "\(count)条") {
-            let n = workspace.inkNotes(documentId: id); count = n.count; return n
-        }
-        guard !notes.isEmpty else { session.inkLoading = false; return }
+        guard let store = workspace.store else { session.inkLoading = false; return }
         session.inkLoading = true
-        trace?.inkPending = true
+        session.openTrace?.inkPending = true
         let t0 = CFAbsoluteTimeGetCurrent()
         Task.detached(priority: .userInitiated) { [weak self] in
-            let loaded = InkStroke.decodeAll(notes)
-            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            let rows = (try? store.inkRows(documentId: id, kind: InkStroke.noteKind)) ?? []
+            let t1 = CFAbsoluteTimeGetCurrent()
+            let loaded = InkStroke.decodeAll(rows)
+            let t2 = CFAbsoluteTimeGetCurrent()
             await MainActor.run { [weak self] in
                 guard let self, !self.closed,
                       self.session.inkLoadGeneration == gen, self.session.documentId == id else { return }
-                self.applyLoadedInk(loaded, documentId: id, decodeMs: ms)
+                self.applyLoadedInk(loaded, documentId: id, readMs: (t1 - t0) * 1000, decodeMs: (t2 - t1) * 1000)
             }
         }
     }
 
-    /// 后台解码完成 → 入账、补建缺失图层、回传平板。用户在解码期间画的笔迹排在库里那批后面（后画的在上）。
-    private func applyLoadedInk(_ loaded: [InkStroke], documentId id: String, decodeMs: Double) {
+    /// 后台读库 + 解码完成 → 入账、补建缺失图层、回传平板。用户在此期间画的笔迹排在库里那批后面（后画的在上）。
+    /// 库里一笔没有也走到这里（`inkLoading` 要在这儿归零、账本才放行），只是不必再向平板推一遍空集。
+    private func applyLoadedInk(_ loaded: [InkStroke], documentId id: String, readMs: Double, decodeMs: Double) {
         session.inkLoading = false
         let drawnMeanwhile = session.strokes
         var merged = loaded
@@ -615,11 +615,11 @@ final class DocTabModel: ObservableObject, Identifiable {
         var persisted = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
         persisted.merge(session.persistedStrokes) { old, _ in old }
         session.persistedStrokes = persisted
-        session.strokes = merged
+        session.strokes = merged                 // 空对空也照样赋值：@Published 触发下一次 body，账本在那里放行
         ensureInkLayers(documentId: id)   // 自愈：笔迹引用了不存在的图层就补建（原来在 loadInkLayers 里同步做）
-        app.broadcastStrokes()            // 平板那份此前收到的是空集
+        if !loaded.isEmpty { app.broadcastStrokes() }   // 平板那份此前收到的是空集（`load()` 的「平板广播」段）
         // 账本的 `inkPending` 由阅读区下一次 body 求值放行（那时各页笔数才是新的，见 `traceOpenFrame`）。
-        session.openTrace?.mark("笔迹到位", "\(loaded.count)笔 后台解码 \(Int(decodeMs.rounded()))ms")
+        session.openTrace?.mark("笔迹到位", "\(loaded.count)笔 后台读库 \(Int(readMs.rounded()))ms + 解码 \(Int(decodeMs.rounded()))ms")
     }
 
     /// 内存笔画 ↔ 库对账：新增或内容变更的 → upsert；曾落库而现已无的（擦除）→ delete。

@@ -55,6 +55,16 @@ struct LibNote: Identifiable, Equatable {
     var updatedAt: Date
 }
 
+/// 笔迹行的窄读法（`note` 表 kind=2 / 4）：只取 `InkStroke(row:)` 真正要用的四列，
+/// 不读 anchor 与两个时间戳（`LibraryStore.inkRows`）。开文档读几千行时，整行 `LibNote`
+/// 那条路每行多七列的装箱 + 两次时间戳解析，全是白做的。
+struct LibInkRow {
+    var id: String              // UUID
+    var kind: Int               // 2 页内 / 4 草稿纸
+    var page: Int
+    var payload: Data           // JSON
+}
+
 /// 一个笔迹图层（`ink_layer` 表，v7）。挂逻辑文档；`colorKey` 复用 `NoteType.palette`。
 struct LibInkLayer: Identifiable, Equatable {
     var id: String              // UUID

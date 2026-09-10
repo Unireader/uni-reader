@@ -19,9 +19,18 @@
 3. **切标签 150ms 的主项是空跑的平板广播**：「开机自启平板服务」开着时 `AppModel` 全部
    `broadcast*`/`push*` 只看 `server.isRunning`，零客户端也在装箱整篇笔迹、拼目录/书库字典——守卫
    改 `server.hasClients`，新客户端接入由 `clientCount` sink 补全量。
+4. **第四轮：「笔迹读库 158ms · 2616 条」也离开主线程 + 窄查询**（用户问「是一次性读全部吗」——是）。
+   `loadInk` 现在只剩置位，读库与解码同在一个 `Task.detached` 里（`SQLiteDB` 一条语句一把锁，后台用
+   主线程那条连接是离线镜像的既有做法）；账本从「装载」同步段挪到里程碑 `笔迹到位`（读库 / 解码各记）。
+   读库改 `LibraryStore.inkRows`：只取 `id, kind, page, payload` 四列、`SQLiteDB.query(_:_:row:)` 按列位置
+   读、不建 `[String: Any]`——整行版每行为 11 列造列名字符串 + 装箱 + 插字典，还解两个不用的时间戳。
+   合成库（2616 行 / 15MB）实测：Debug 32 → 9.5ms，Release 13.8 → 9.0ms；真机那 158ms 里剩下的部分
+   多半是外置盘 I/O，正好也不在主线程了。草稿纸笔迹（kind=4）同走窄查询。
+   `InkStroke(note:)` / `InkStroke(row:)` 共用一个私有解码本体；`decodeAll` 改吃 `[LibInkRow]`。
 
 验证：`spike/ink-payload-fast-test.swift` 25 项（逐位比对 / 各种写法 / 坏形态回落 / 并行保序 / 计时）、
-`ink-store-test` 21/0、`xcodebuild`；用户实测通过。教训写进 TODO 状态速览同日条目。
+`ink-store-test` 25/0（第四轮加 4 项：窄查询四列一致 / 两条解码入口同结果 / kind 筛净 / 排序）、
+`xcodebuild`；用户实测通过（前三轮）。教训写进 TODO 状态速览同日条目。
 
 ## 内存（2026-09-10，Mac：Release 开三个文档 2.34GB，设置页却只写「缓存 366MB」）
 

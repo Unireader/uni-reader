@@ -130,12 +130,11 @@ static func main() {
     check("快路单线程至少快 2 倍", quick * 2 < slow, String(format: "%.0f vs %.0f", quick, slow))
 
     print("⑤ 并行解码（`InkStroke.decodeAll`）：结果与顺序解一致、顺序不乱")
-    let notes: [LibNote] = strokes.enumerated().map { i, d in
-        LibNote(id: UUID().uuidString, documentId: "doc", kind: InkStroke.noteKind, page: i / 10,
-                anchor: .zero, payload: d, createdAt: .now, updatedAt: .now)
+    let notes: [LibInkRow] = strokes.enumerated().map { i, d in
+        LibInkRow(id: UUID().uuidString, kind: InkStroke.noteKind, page: i / 10, payload: d)
     }
     t = CFAbsoluteTimeGetCurrent()
-    let seq = notes.compactMap(InkStroke.init(note:))
+    let seq = notes.compactMap(InkStroke.init(row:))
     let seqMs = (CFAbsoluteTimeGetCurrent() - t) * 1000
     t = CFAbsoluteTimeGetCurrent()
     let par = InkStroke.decodeAll(notes)

@@ -125,18 +125,28 @@ extension InkStroke {
     /// kind=2（页内）与 kind=4（草稿纸）都接：草稿纸笔迹的 `padId` 在 payload 里，
     /// 缺 `padId` 的 kind=4 行是坏数据（无处可归的孤儿笔迹），当损坏丢弃。
     init?(note: LibNote) {
-        guard note.kind == InkStroke.noteKind || note.kind == InkStroke.scratchNoteKind,
-              let uuid = UUID(uuidString: note.id) else { return nil }
+        self.init(id: note.id, kind: note.kind, page: note.page, payload: note.payload)
+    }
+
+    /// 同上，吃窄查询的行（`LibraryStore.inkRows`）——开文档走这条，整行 `LibNote` 那条留给零星读。
+    init?(row: LibInkRow) {
+        self.init(id: row.id, kind: row.kind, page: row.page, payload: row.payload)
+    }
+
+    /// 两个入口共用的解码本体：一条笔迹真正要用的就这四样。
+    private init?(id: String, kind: Int, page: Int, payload data: Data) {
+        guard kind == InkStroke.noteKind || kind == InkStroke.scratchNoteKind,
+              let uuid = UUID(uuidString: id) else { return nil }
         // 快路：points 用字节扫描（`InkPayloadFast`），其余字段照旧 JSONDecoder——开文档时的
         // 「笔迹」段从半秒降到几十毫秒。形态不认识时回落到整段 JSONDecoder，结果逐位相同。
         let payload: InkStrokePayload
         let pts: [SIMD3<Double>]
-        if let fast = InkPayloadFast.splitPoints(note.payload),
+        if let fast = InkPayloadFast.splitPoints(data),
            let p = try? JSONDecoder().decode(InkStrokePayload.self, from: fast.rest) {
             payload = p
             pts = fast.points
         } else {
-            guard let p = try? JSONDecoder().decode(InkStrokePayload.self, from: note.payload) else { return nil }
+            guard let p = try? JSONDecoder().decode(InkStrokePayload.self, from: data) else { return nil }
             payload = p
             pts = p.points.map { p in
                 let x: Double = p.count > 0 ? p[0] : 0
@@ -145,27 +155,27 @@ extension InkStroke {
                 return SIMD3<Double>(x, y, z)
             }
         }
-        if note.kind == InkStroke.scratchNoteKind && payload.padId == nil { return nil }
-        self.init(id: uuid, page: note.page, color: payload.color, width: payload.width, type: payload.type,
+        if kind == InkStroke.scratchNoteKind && payload.padId == nil { return nil }
+        self.init(id: uuid, page: page, color: payload.color, width: payload.width, type: payload.type,
                   points: pts, layerId: payload.layerId, padId: payload.padId)
     }
 }
 
 extension InkStroke {
-    /// 一批 note 行 → 笔迹，**多核并行**、保持原顺序（顺序 = 落库序 = 绘制叠放序）。
+    /// 一批笔迹行 → 笔迹，**多核并行**、保持原顺序（顺序 = 落库序 = 绘制叠放序）。
     /// 开文档时在后台线程调（`DocTabModel.loadInk`）；行数少就直接顺序解，不值得起线程。
-    static func decodeAll(_ notes: [LibNote]) -> [InkStroke] {
-        let n = notes.count
+    static func decodeAll(_ rows: [LibInkRow]) -> [InkStroke] {
+        let n = rows.count
         let cores = max(1, ProcessInfo.processInfo.activeProcessorCount)
         let chunks = min(cores, max(1, n / 64))
-        guard chunks > 1 else { return notes.compactMap(InkStroke.init(note:)) }
+        guard chunks > 1 else { return rows.compactMap(InkStroke.init(row:)) }
         var parts = [[InkStroke]](repeating: [], count: chunks)
         let size = (n + chunks - 1) / chunks
         parts.withUnsafeMutableBufferPointer { buf in
             DispatchQueue.concurrentPerform(iterations: chunks) { k in
                 let lo = k * size, hi = min(n, lo + size)
                 guard lo < hi else { return }
-                buf[k] = notes[lo..<hi].compactMap(InkStroke.init(note:))   // 各写各的槽，不共享
+                buf[k] = rows[lo..<hi].compactMap(InkStroke.init(row:))   // 各写各的槽，不共享
             }
         }
         return parts.flatMap { $0 }

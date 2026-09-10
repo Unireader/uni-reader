@@ -125,6 +125,34 @@ final class SQLiteDB {
         return rows
     }
 
+    /// 按列位置读的一行（只在 `query(_:_:row:)` 的闭包里有效，别把它存起来）。
+    /// 列序 = SELECT 里写的顺序；NULL 读出来是 0 / "" / 空 Data。
+    struct Row {
+        fileprivate let stmt: OpaquePointer?
+        func int64(_ i: Int32) -> Int64 { sqlite3_column_int64(stmt, i) }
+        func double(_ i: Int32) -> Double { sqlite3_column_double(stmt, i) }
+        func text(_ i: Int32) -> String {
+            guard let p = sqlite3_column_text(stmt, i) else { return "" }
+            return String(cString: p)
+        }
+        func blob(_ i: Int32) -> Data {
+            guard let p = sqlite3_column_blob(stmt, i) else { return Data() }
+            return Data(bytes: p, count: Int(sqlite3_column_bytes(stmt, i)))
+        }
+    }
+
+    /// 查询（免字典版）：每行交给 `row` 闭包按列位置直接取值。**热路径用这个**——上面那个
+    /// `[String: Any]` 版每行要为每一列造列名字符串、装箱、插字典，几千行乘十几列就是几万次
+    /// 小分配（2026-09-10 开文档「笔迹读库」2616 行 158ms 的大头）。
+    func query<T>(_ sql: String, _ params: [Value] = [], row: (Row) throws -> T) throws -> [T] {
+        lock.lock(); defer { lock.unlock() }
+        let stmt = try prepare(sql, params)
+        defer { sqlite3_finalize(stmt) }
+        var out: [T] = []
+        while sqlite3_step(stmt) == SQLITE_ROW { out.append(try row(Row(stmt: stmt))) }
+        return out
+    }
+
     /// 事务包裹；body 抛错则回滚。
     func transaction(_ body: () throws -> Void) throws {
         try exec("BEGIN;")

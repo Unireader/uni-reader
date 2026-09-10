@@ -536,15 +536,8 @@ final class WorkspaceManager: ObservableObject {
 
     // MARK: - 手写笔迹持久化（note kind=2；挂逻辑文档，全版本共用）
 
-    /// 读取某文档已落库的全部手写笔画（按页/时间序），用于重开恢复。
-    func inkStrokes(documentId: String) -> [InkStroke] {
-        inkNotes(documentId: documentId).compactMap(InkStroke.init(note:))
-    }
-
-    /// 只读行、不解码（打开耗时账本把「读库」与「解码」分开记，见 `DocTabModel.loadInk`）。
-    func inkNotes(documentId: String) -> [LibNote] {
-        (try? store?.notes(documentId: documentId, kind: InkStroke.noteKind)) ?? []
-    }
+    // 开文档读笔迹**不经这里**：`DocTabModel.loadInk` 直接拿 `store` 到后台线程调
+    // `LibraryStore.inkRows` + `InkStroke.decodeAll`（本类是 @MainActor，读几千行不该占主线程）。
 
     /// 落库/更新一条手写笔画（笔画完成时调用）。空笔画自动跳过。
     func saveInkStroke(documentId: String, _ stroke: InkStroke) {
@@ -576,8 +569,8 @@ final class WorkspaceManager: ObservableObject {
 
     /// 读取某文档全部草稿纸上的笔迹（含所有纸；点集是画布坐标）。用 `saveInkStroke`/`deleteInkStroke` 写。
     func scratchStrokes(documentId: String) -> [InkStroke] {
-        ((try? store?.notes(documentId: documentId, kind: InkStroke.scratchNoteKind)) ?? [])
-            .compactMap(InkStroke.init(note:))
+        ((try? store?.inkRows(documentId: documentId, kind: InkStroke.scratchNoteKind)) ?? [])
+            .compactMap(InkStroke.init(row:))
     }
 
     // MARK: - 笔迹图层持久化（ink_layer 表，v7；挂逻辑文档，全版本共用）

@@ -36,6 +36,13 @@ for (a, b) in zip(r.points, pts) where abs(a.x-b.x) > 1e-9 || abs(a.y-b.y) > 1e-
 check(ptsOK, "各点 x/y/pressure 精确 round-trip")
 check(r == s1, "整体 InkStroke 相等")
 
+// 1b) 窄查询 inkRows（开文档走这条）：与整行读回解出来的一样；kind 筛得干净
+let rows = try store.inkRows(documentId: doc.id, kind: InkStroke.noteKind)
+check(rows.count == 1 && rows[0].id == s1.id.uuidString && rows[0].kind == 2 && rows[0].page == 3
+      && rows[0].payload == note.payload, "inkRows：id/kind/page/payload 四列与落库一致")
+check(rows.compactMap(InkStroke.init(row:)) == loaded, "inkRows → InkStroke(row:) 与 InkStroke(note:) 结果相同")
+check((try store.inkRows(documentId: doc.id, kind: InkStroke.scratchNoteKind)).isEmpty, "inkRows 按 kind 筛：kind=4 为空")
+
 // 2) note 列语义：kind=2、page 列、anchor=归一化包围盒
 check(note.kind == 2, "kind == 2 (ink)")
 check(note.page == 3, "note.page 列 = 笔画页")
@@ -77,6 +84,8 @@ check((try store.notes(documentId: doc.id)).count == 3, "三笔全部落库")
 try store.deleteNote(id: b.id.uuidString)  // 擦掉 b
 let after = (try store.notes(documentId: doc.id)).compactMap { InkStroke(note: $0) }.map(\.id)
 check(after.count == 2 && after.contains(a.id) && after.contains(c.id) && !after.contains(b.id), "擦除 b 后仅剩 a,c")
+let afterRows = InkStroke.decodeAll(try store.inkRows(documentId: doc.id, kind: InkStroke.noteKind))
+check(afterRows.map(\.id) == [a.id, c.id], "inkRows 排序 = 页 → 落库时间（a 页0 在前，c 页1 在后）")
 
 print("\n\(pass) passed, \(fail) failed")
 exit(fail == 0 ? 0 : 1)
