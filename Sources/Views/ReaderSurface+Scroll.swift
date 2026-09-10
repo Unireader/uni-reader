@@ -81,6 +81,11 @@ extension ReaderSurface {
         if let t = scratch.pendingTarget, !isZooming {
             n.offsetX = t.x
             n.offsetY = t.y
+            // `scratch.geo` 也换成按目标算的那份：读它的人（账本的可见页、`refitToViewport` 的锚定、
+            // `followStep` 的 x）都不该看到那一拍陈旧的 0。2026-09-10 第六批账本：切标签「总 703ms」
+            // 其实是账本按 `scratch.geo.offsetY == 0` 把可见页算成 p1–1、等一张永远不会来的 p1 页图，
+            // 直到 0.7s 后进度节流存那一拍才重算——页图 +27、墨迹 +37 早就齐了。
+            scratch.geo = n
         }
         scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)
         let liveRealized = updateRealized(n, layout: layout)

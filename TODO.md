@@ -586,6 +586,13 @@
     （按内容 hash 存每页高度，additive 缓存表同 `ocr_page` 性质，镜像的显式列表不认它、不升 schema_version；
     命中记 `布局 库缓存`，未命中算完后台回填）；② `body#2 +180 → body#3 +356` 176ms 没有任何里程碑，
     +356 是 `isActiveWindow` 翻真触发的 onChange——**这一段打点看不出来了，要用 `sample` 采主线程栈**（见下）。
+    **第六批日志（同日 16:03）**：切标签王道「总 703 / 709 / 1176ms」是**账本的假象**——页图 +27、墨迹 +37 早齐了，
+    但账本按 `scratch.geo.offsetY == 0`（首拍陈旧几何，`scratch.geo = n` 赋在替换之前）把可见页算成 p1–1、
+    等一张永远不会来的 p1 页图，直到 0.7s 后进度节流存那一拍才有下一次 body 重算。修：替换后 `scratch.geo` 也换成
+    按目标算的那份（`refitToViewport` 的锚定、`followStep` 也读它，本来就不该看到那个 0）。冷开的 `可见页 +83(p1–1)`
+    同一根源。`page_geom` 命中（`布局 +75(库缓存)`、`布局读库 0`），冷开王道 345ms。
+    **仍未归因**：冷开王道 `body#2 +91 → body#3 +227` 这 136ms（网络那本同一段 6ms）。打点已到头，等用户的 `sample`：
+    `sample UniReader 3 1 -mayDie -file ~/Desktop/unireader-open.txt`，跑起来 3 秒内冷开王道，看主线程最深最密的子树。
 
   - **2026-08-29：macOS 多标签页第 2 步「标签化」已落地，待真机验证**（方案 `MAC-TABS-PLAN.md §9`）。
     新增 `TabsModel`（窗口的标签集，不变式：永远至少一个标签，故 `active` 非可选）、
