@@ -420,20 +420,22 @@ final class DocTabModel: ObservableObject, Identifiable {
         }
         missingDoc = nil
         session.pdf = pdf
-        session.toc = trace.phase("目录") { TOCEntry.build(from: pdf) }
         session.title = doc.title
         session.contentHash = target.hash
         if let trace { OpenStats.bind(trace, docKey: target.hash) }   // 从此视图层/笔迹层按 docKey 找得到账本
+        session.toc = []
+        buildTOC(documentId: id, path: target.path)   // 目录在后台建（账本记里程碑「目录到位」），先空着
         trace.phase("OCR") { session.reloadOCRState() }   // 换文档重置 OCR；该内容已有缓存则自动启用
         resetInk(documentId: id)                   // 笔迹归零；首窗在下面读到进度页之后装（读库+解码全在后台，账本记里程碑「笔迹到位」）
-        trace.phase("图层") { loadInkLayers(documentId: id) }   // 恢复该文档的图层注册表（含自愈补建）
+        trace.phase("图层", detail: "\(session.inkLayers.count)层") { loadInkLayers(documentId: id) }   // 恢复该文档的图层注册表（含自愈补建）
         session.noteTypes = workspace.noteTypes()  // 工作区笔记类型（通用内置兜底，不在列）
         session.noteTypeFilter = .all              // 筛选仅内存，开文档复位
-        trace.phase("注解") { loadTextNotes(documentId: id) }    // 恢复该文档已落库的文字注解
-        trace.phase("高亮") { loadHighlights(documentId: id) }   // 恢复该文档已落库的高亮
-        trace.phase("书签") { loadBookmarks(documentId: id) }    // 恢复该文档已落库的书签（与目录合并显示）
-        trace.phase("AI") { loadAIThreads(documentId: id) }      // 恢复该文档已落库的 AI 会话绑定
-        trace.phase("草稿纸") { loadScratch(documentId: id) }    // 恢复该文档的草稿纸与纸上笔迹（默认不打开任何一张）
+        // 各段 detail 记条数：账本上「注解 154ms」这种数字没有条数就分不清是量大还是单价贵。
+        trace.phase("注解", detail: "\(session.textNotes.count)条") { loadTextNotes(documentId: id) }    // 恢复该文档已落库的文字注解
+        trace.phase("高亮", detail: "\(session.highlights.count)条") { loadHighlights(documentId: id) }   // 恢复该文档已落库的高亮
+        trace.phase("书签", detail: "\(session.bookmarks.count)条") { loadBookmarks(documentId: id) }    // 恢复该文档已落库的书签（与目录合并显示）
+        trace.phase("AI", detail: "\(session.aiThreads.count)条") { loadAIThreads(documentId: id) }      // 恢复该文档已落库的 AI 会话绑定
+        trace.phase("草稿纸", detail: "\(session.scratchPads.count)张") { loadScratch(documentId: id) }  // 恢复该文档的草稿纸（纸上笔迹后台读，默认不打开任何一张）
         // 恢复阅读进度：缩放倍率 + 定页 + 精确滚到页内比例（restore 锚点，阅读区会跟随）。
         let p = trace.phase("进度") { workspace.progress(documentId: id) }
         session.restoreZoom = CGFloat(p.zoom)      // 首帧定基准后由 PageStreamView 套用
@@ -456,6 +458,29 @@ final class DocTabModel: ObservableObject, Identifiable {
         }
         trace?.mark("装载完成", "\(pdf.pageCount)页 → p\(page + 1)")
         verifyContentHash(documentId: id, openedPath: target.path, storedHash: target.hash)
+    }
+
+    /// 目录在**后台**建（2026-09-10 账本：`目录 128~143ms`，是装载段里最大的项之一，全在遍历 PDF 大纲——
+    /// 每个条目解 destination、取页对象）。另开一份 `PDFDocument` 专供遍历：主线程那份不能被并发碰
+    /// （`PageRenderEngine` 的规矩），开一份只要几毫秒，建完即弃。回主线程按 documentId + contentHash 核对，
+    /// 换了文档就丢弃；到位后补一次平板广播（`load()` 里那次广播出去的是空目录）。
+    private func buildTOC(documentId id: String, path: String) {
+        let hash = session.contentHash
+        let t0 = CFAbsoluteTimeGetCurrent()
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let doc = PDFDocument(url: URL(fileURLWithPath: path)) else { return }
+            let toc = TOCEntry.build(from: doc)
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            await MainActor.run { [weak self] in
+                guard let self, !self.closed, self.session.documentId == id, self.session.contentHash == hash else { return }
+                self.session.toc = toc
+                self.app.broadcastTOC()
+                var n = 0
+                func count(_ es: [TOCEntry]) { for e in es { n += 1; count(e.children) } }
+                count(toc)
+                self.session.openTrace?.mark("目录到位", "\(n)项 后台 \(Int(ms.rounded()))ms")
+            }
+        }
     }
 
     /// 同路径内容校验：文件仍在但可能已被原地替换。后台重算 hash（FileHasher 缓存键含 mtime，
@@ -943,11 +968,30 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.openPadID = nil
         session.scratchLive = nil
         let pads = workspace.scratchPads(documentId: id)
-        let strokes = workspace.scratchStrokes(documentId: id)
         session.persistedScratchPads = Dictionary(uniqueKeysWithValues: pads.map { ($0.id, $0) })
-        session.persistedScratchStrokes = Dictionary(uniqueKeysWithValues: strokes.map { ($0.id, $0) })
+        session.persistedScratchStrokes = [:]
         session.scratchPads = pads
-        session.scratchStrokes = strokes
+        session.scratchStrokes = []
+        // 纸上笔迹（kind=4）在后台读 + 解码（账本 `草稿纸 29ms` 全是它）：同页内笔迹一个套路——
+        // 代次核对、期间新画的排在库批之后、库批入对账集。开文档时纸默认不开，几乎不会撞上。
+        guard let store = workspace.store else { return }
+        let gen = session.inkLoadGeneration
+        let t0 = CFAbsoluteTimeGetCurrent()
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let rows = (try? store.inkRows(documentId: id, kind: InkStroke.scratchNoteKind)) ?? []
+            let loaded = InkStroke.decodeAll(rows)
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            await MainActor.run { [weak self] in
+                guard let self, !self.closed,
+                      self.session.inkLoadGeneration == gen, self.session.documentId == id else { return }
+                let existing = self.session.scratchStrokes
+                let existingIDs = Set(existing.map(\.id))
+                let added = loaded.filter { !existingIDs.contains($0.id) }
+                for s in added { self.session.persistedScratchStrokes[s.id] = s }
+                if !added.isEmpty { self.session.scratchStrokes = added + existing }   // @Published → 对账 + 平板广播
+                self.session.openTrace?.mark("草稿纸笔迹到位", "\(added.count)笔 后台 \(Int(ms.rounded()))ms")
+            }
+        }
     }
 
     /// 内存草稿纸 ↔ 库对账：新增/改名/改底色 upsert；已删除的 delete（纸上笔迹由下面那个函数

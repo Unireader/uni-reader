@@ -57,13 +57,19 @@ extension ReaderSurface {
             session.openTrace?.markOnce("定基准", String(format: "fit %.0fpt zoom %.2f", fitAvail, rz))
         }
         verifyPendingTarget(n)
-        scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)
-        let liveRealized = updateRealized(n, layout: layout)
         if let a = scratch.pendingRestore {
             scratch.pendingRestore = nil
             follower.pageCount = layout.pageCount
             follower.apply(a)
+            // 🔴 **实化窗口按恢复位置算，别按此刻的 offset 0**（2026-09-10 账本：冷开「王道计组」进度在 p285，
+            // 首帧却 `实化 p1–1 需渲1`，p1 那张渲了 200ms 白做，还排在 p285 前面挡着；切标签路径没这问题，
+            // 它的种子直接是快照里的实化范围）。跟随器下一帧就会滚到 a，这一帧先把窗口对准它，
+            // 渲染请求从一开始就是对的页。只改本帧的实化输入，滚动本身照旧交给 `followStep`。
+            let y = layout.docY(page: a.page, frac: a.frac) * dispScale - n.insetTop
+            n.offsetY = clampOffset(CGPoint(x: n.offsetX, y: y), pageWidth: pageW).y
         }
+        scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)
+        let liveRealized = updateRealized(n, layout: layout)
         // 横向恢复（一次性）：缩放态**或画板模式**才有横向可滚（后者 fit 下也有页边）。
         // 定位到上次的页宽比例，跟随器只驱动 y、保持 x。
         if let hf = scratch.pendingHFrac {

@@ -595,23 +595,25 @@ final class DocSession: ObservableObject, Identifiable {
     /// 重建水印指纹：**一次性把库里这本书已缓存的全部 OCR 页读出来**做跨页统计。
     /// 为什么不用 `ocrRuns`：阅读区是逐页懒加载的，翻开第一页时手上只有 1 页，跨页重复根本无从谈起；
     /// 而库里往往整本都已经跑完（本文档打开时自动启用 OCR 就是凭这个）。
-    /// 解码 JSON 放后台（一本 340 页的书约 3MB），回主线程才落 `wmProfile`。
+    /// 读库 + 解码 JSON 都放后台（一本 340 页的书约 3MB；2026-09-10 账本 `OCR 28ms` 全是主线程读这几 MB blob），
+    /// 回主线程才落 `wmProfile`。`SQLiteDB` 一条语句一把锁，后台用主线程那条连接是既有做法。
     private func rebuildWatermarkProfile() {
         guard let store, !contentHash.isEmpty else { return }
         let hash = contentHash
-        guard let raw = try? store.allOCRPayloads(contentHash: hash, provider: PaddleOCR.providerID),
-              !raw.isEmpty else { return }
-        wmProfilePages = raw.count
         Task.detached(priority: .utility) { [weak self] in
+            guard let raw = try? store.allOCRPayloads(contentHash: hash, provider: PaddleOCR.providerID),
+                  !raw.isEmpty else { return }
             let dec = JSONDecoder()
             var pages: [Int: [TextRun]] = [:]
             for (page, data) in raw {
                 if let payload = try? dec.decode(OCRPagePayload.self, from: data) { pages[page] = payload.runs }
             }
             let profile = OCRWatermark.buildProfile(pages)
+            let sampled = raw.count
             await MainActor.run {
                 // 换文档后旧任务回来：内容 hash 变了就整个丢弃（同 startNetworkOCR 的守卫）。
                 guard let self, self.contentHash == hash else { return }
+                self.wmProfilePages = sampled
                 self.wmProfile = profile
                 self.invalidateOCRDerived()
                 self.objectWillChange.send()   // 掩码变了 → 选择/上色要按新的可见行重画

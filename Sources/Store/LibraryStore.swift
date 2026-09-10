@@ -95,6 +95,12 @@ final class LibraryStore {
           payload BLOB NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_note_document_page ON note(document_id, page);
+        -- 2026-09-10：按类读（`notes(documentId:kind:)` / 笔迹按页窗口 `inkRows(pages:)`）走这条。
+        -- 只有上面那条索引时，`document_id=? AND kind=?` 要把这篇文档**每一行**的表页都翻一遍再筛 kind——
+        -- 一篇 2616 笔的文档就是三百多个表页；库在外置盘、页缓存冷的时候，开文档第一条碰 note 表的查询
+        -- 要为此等上百毫秒（账本上先是「笔迹读库 158ms」，笔迹挪到后台后变成「注解 154ms」，同一笔账换了个名字）。
+        -- 索引不是数据契约（安卓 `Schema.kt` 只管建新库，老库由这里补），故不升 schema_version。
+        CREATE INDEX IF NOT EXISTS idx_note_document_kind_page ON note(document_id, kind, page);
         -- v3：扫描页 OCR 结果缓存（跨平台契约）。按内容 hash（= variant 物理内容）+ 页 + 引擎 缓存，
         -- 随文件移动/换机复用；payload = JSON {w,h,runs:[{text,x,y,w,h}]}（归一化 0~1，左上原点）。
         CREATE TABLE IF NOT EXISTS ocr_page (
