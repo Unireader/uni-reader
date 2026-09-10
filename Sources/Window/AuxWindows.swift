@@ -54,6 +54,11 @@ final class SettingsTabController: NSTabViewController {
             // 不让 SwiftUI 内容的尺寸变成约束：初始大小 / 最小值 / 可缩放全由窗口管。默认的
             // `.standardBounds` 会把「理想尺寸」也做成约束——各页内容高矮不一，切一下标签窗口就跳一下。
             host.sizingOptions = []
+            // 🔴 **必须给子控制器设 `title`**：`.toolbar` 样式下切标签后 AppKit 会（晚一拍、异步地）
+            // 把窗口标题改成选中子控制器的 `title`——`NSHostingController` 的是 nil，就显示成
+            // 「Untitled」，在 `didSelect` 里手动写标题也会被这一拍盖掉（2026-09-10 用户报，
+            // spike 实测）。`navigationTitle` 不会传到 `NSHostingController.title`，只能在这里设。
+            host.title = t.title
             let item = NSTabViewItem(viewController: host)
             item.label = t.title
             item.image = NSImage(systemSymbolName: t.symbol, accessibilityDescription: t.title)
@@ -63,18 +68,10 @@ final class SettingsTabController: NSTabViewController {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
+    /// 首次显示时 AppKit 不会主动同步标题（只在切标签时改），所以初始那一下要自己写；
+    /// 之后切标签由 AppKit 按子控制器的 `title` 更新。
     override func viewWillAppear() {
         super.viewWillAppear()
-        syncTitle()
-    }
-
-    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
-        super.tabView(tabView, didSelect: tabViewItem)
-        syncTitle()
-    }
-
-    /// 窗口标题跟着选中的标签走（`NSTabViewController` 不会自己改标题）。
-    private func syncTitle() {
         guard tabViewItems.indices.contains(selectedTabViewItemIndex) else { return }
         view.window?.title = tabViewItems[selectedTabViewItemIndex].label
     }
