@@ -266,6 +266,8 @@ final class Scratch {
     /// 切标签种子算出的滚动偏移（`ReaderSurface.init` 写、`setup` 读着提交一次）。
     var seedOffset: CGPoint?
     var didFirstKick = false
+    /// 打开耗时账本：本次打开里阅读区 body 跑了几次（`traceOpenFrame` 记前 12 次）。
+    var traceBodies = 0
     /// 视图层**允许留图**的页范围（实化窗口 ± 余量，`updateRealized` 维护）。渲染完成回调按它守门：
     /// 快滚时发出去的请求会在页早已滚出窗口之后才完成，不守门就写进 `images`，要等下一次窗口变动
     /// 才被驱逐——空闲窗口里就一直挂着（2026-09-10 三窗口实测的「账外」页图来源之一）。

@@ -57,16 +57,30 @@ extension ReaderSurface {
             session.openTrace?.markOnce("定基准", String(format: "fit %.0fpt zoom %.2f", fitAvail, rz))
         }
         verifyPendingTarget(n)
+        // 🔴 **刚提交的 scrollTo 慢半拍时，实化按目标算，别按这一拍陈旧的几何**（2026-09-10 账本坐实：
+        // 每次切标签都有 `实化 offY 0 … p283–285 → p1–1`，下一拍才 `offY 400327 … → p283–285`——
+        // 种子在 `setup` 里提交的 `scrollTo(off)` 还没被 ScrollView 采纳，先来了一拍 offset 0 的几何，
+        // 实化窗口于是塌到 p1、刚种好的三个页元胞当场销毁又重建，还白渲一张 p1 占着渲染队列）。
+        // `pendingTarget` 非空 = 目标还没达成（`verifyPendingTarget` 达成即清空、5 次未达也清空），
+        // 这期间报上来的几何就是过期的。缩放中不这么做：那条路每帧一个新目标，本来就靠「只扩不缩」兜着。
         if let a = scratch.pendingRestore {
             scratch.pendingRestore = nil
             follower.pageCount = layout.pageCount
             follower.apply(a)
-            // 🔴 **实化窗口按恢复位置算，别按此刻的 offset 0**（2026-09-10 账本：冷开「王道计组」进度在 p285，
-            // 首帧却 `实化 p1–1 需渲1`，p1 那张渲了 200ms 白做，还排在 p285 前面挡着；切标签路径没这问题，
-            // 它的种子直接是快照里的实化范围）。跟随器下一帧就会滚到 a，这一帧先把窗口对准它，
-            // 渲染请求从一开始就是对的页。只改本帧的实化输入，滚动本身照旧交给 `followStep`。
-            let y = layout.docY(page: a.page, frac: a.frac) * dispScale - n.insetTop
-            n.offsetY = clampOffset(CGPoint(x: n.offsetX, y: y), pageWidth: pageW).y
+            // 🔴 **恢复锚点也登记成 pendingTarget**（2026-09-10 账本：冷开「王道计组」进度在 p285，首帧
+            // 曾 `实化 p1–1 需渲1`，p1 那张渲了 200ms 白做、还排在 p285 前面挡着；改成按锚点算之后，
+            // **下一拍**仍会来一帧 offset 0 的陈旧几何把窗口塌回 p1——跟随器的 scrollTo 同样慢半拍）。
+            // 登记之后直到 ScrollView 真报出目标位置为止，实化输入一律按目标算（下面那段），
+            // 滚动本身照旧交给 `followStep`；`verifyPendingTarget` 的兜底重试与它同一个目标，幂等。
+            if scratch.pendingTarget == nil {
+                let y = layout.docY(page: a.page, frac: a.frac) * dispScale - n.insetTop
+                scratch.pendingTarget = clampOffset(CGPoint(x: n.offsetX, y: y), pageWidth: pageW)
+                scratch.pendingTries = 0
+            }
+        }
+        if let t = scratch.pendingTarget, !isZooming {
+            n.offsetX = t.x
+            n.offsetY = t.y
         }
         scratch.topDocY = (n.offsetY + n.insetTop) / max(0.0001, dispScale)
         let liveRealized = updateRealized(n, layout: layout)
@@ -77,6 +91,8 @@ extension ReaderSurface {
             if contentW > fitAvail + 0.5 {
                 let target = clampOffset(CGPoint(x: hf * pageW, y: n.offsetY), pageWidth: pageW)
                 pos.scrollTo(point: target)
+                // 恢复锚点登记的 pendingTarget 是 x=0 的：横向也滚了就把目标换成带 x 的，否则校验环会把 x 拉回 0
+                if scratch.pendingTarget != nil { scratch.pendingTarget = target; scratch.pendingTries = 0 }
             }
         }
         // 上报当前横向比例（非 @Published，不触发重渲；存进度时读）。

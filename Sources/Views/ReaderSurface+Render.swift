@@ -74,6 +74,9 @@ extension ReaderSurface {
     func traceOpenFrame(layout: PageLayout, buckets: PageBuckets) {
         guard let tr = session.openTrace, !tr.finished, scratch.didInitialGeo else { return }
         tr.markOnce("首帧 body", "实化 p\(realized.lowerBound + 1)–\(realized.upperBound + 1)")
+        // 首帧之后每次 body 也记一笔（最多 12 笔）：整窗重算的次数本身就是线索——@Published 写一次 = 重算一次。
+        scratch.traceBodies += 1
+        if scratch.traceBodies > 1, scratch.traceBodies <= 12 { tr.mark("body#\(scratch.traceBodies)") }
         let g = scratch.geo
         let ds = max(0.0001, dispScale)
         let vis = layout.pageRange(fromDocY: g.offsetY / ds, toDocY: (g.offsetY + g.containerH) / ds)

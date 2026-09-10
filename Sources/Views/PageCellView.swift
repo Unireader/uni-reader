@@ -72,6 +72,9 @@ struct PageCellView: View {
     @State private var openBookmark: UUID?
 
     var body: some View {
+        // 打开耗时账本：每页第一次进 body 的时刻（找首帧后主线程忙在哪；账结清后 `trace` 为 nil，零成本）
+        let _ = docKey.isEmpty ? nil : OpenStats.trace(docKey: docKey)?.markOnce("页元胞 p\(pageIndex + 1)",
+            "图\(image == nil ? "无" : "有") 笔\(strokes.count) 高亮\(highlights.count) 注解\(notes.count)")
         ZStack(alignment: .topLeading) {
             // 纪律 1：未出图 = 一张白纸，永不闪灰/黑。画板模式下这张纸连同页边一起铺
             //（内层 frame 比页宽 2×margin，外层 frame 钳回页尺寸 → 居中溢出，不撑大 ZStack）。
