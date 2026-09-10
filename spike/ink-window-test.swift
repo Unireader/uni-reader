@@ -105,5 +105,16 @@ let gone2 = try store.deleteInkStrokes(documentId: doc.id, layerId: InkLayer.def
 let left2 = try store.inkCount(documentId: doc.id)
 check(gone2 == 6 && left2 == 0, "删默认层：连老行一起 6 行")
 
+print("page_geom（页面几何缓存）")
+try store.savePageHeights(contentHash: "h1", heights: [1414.2, 1000, 707.1])
+let ph = try store.pageHeights(contentHash: "h1", pageCount: 3)
+check(ph == [1414.2, 1000, 707.1], "存三页高度、按 hash + 页数读回")
+let phMismatch = try store.pageHeights(contentHash: "h1", pageCount: 4)
+let phMissing = try store.pageHeights(contentHash: "nope", pageCount: 3)
+check(phMismatch == nil && phMissing == nil, "页数对不上 / 没缓存 → nil（回落到按 PDF 算）")
+try store.savePageHeights(contentHash: "h1", heights: [500, 500])
+let ph2 = try store.pageHeights(contentHash: "h1", pageCount: 2)
+check(ph2 == [500, 500], "同 hash 重存覆盖")
+
 print("\n\(pass) passed, \(fail) failed")
 exit(fail == 0 ? 0 : 1)

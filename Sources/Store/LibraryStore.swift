@@ -134,6 +134,14 @@ final class LibraryStore {
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_scratch_pad_document ON scratch_pad(document_id);
+        -- 2026-09-10：页面几何缓存（本端私有的纯 additive 缓存表，同 ocr_page 的性质：按内容 hash、
+        -- 不进镜像基线、不升 schema_version、别的端不必认识）。`PageLayout` 只要每页「高/宽 × 参考宽」
+        -- 一个数，开文档遍历 340 页 `page.bounds` 在冷的外置盘上要 ~100ms（账本 `布局计算 96(316页)`），
+        -- 有这张表就一行 5KB 读完开画。heights = JSON 数组（文档单位，见 PageLayout.refWidth）。
+        CREATE TABLE IF NOT EXISTS page_geom (
+          content_hash TEXT PRIMARY KEY, page_count INTEGER NOT NULL,
+          heights BLOB NOT NULL, created_at TEXT NOT NULL
+        );
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -577,6 +585,24 @@ final class LibraryStore {
     /// 对账机制按 id 删除（与擦除同一条路径）。这里多删一次只会和对账重复。
     func deleteScratchPad(id: String) throws {
         try db.run("DELETE FROM scratch_pad WHERE id=?", [.text(id)])
+    }
+
+    // MARK: - 页面几何缓存（page_geom）
+
+    /// 某内容的每页高度（文档单位）；没缓存或页数对不上 → nil（上层按 PDF 现算并回填）。
+    func pageHeights(contentHash: String, pageCount: Int) throws -> [Double]? {
+        let rows = try db.query("SELECT page_count, heights FROM page_geom WHERE content_hash=?",
+                                [.text(contentHash)]) { r in (Int(r.int64(0)), r.blob(1)) }
+        guard let row = rows.first, row.0 == pageCount,
+              let hs = try? JSONDecoder().decode([Double].self, from: row.1), hs.count == pageCount else { return nil }
+        return hs
+    }
+    func savePageHeights(contentHash: String, heights: [Double]) throws {
+        let data = try JSONEncoder().encode(heights)
+        try db.run("""
+        INSERT INTO page_geom(content_hash,page_count,heights,created_at) VALUES(?,?,?,?)
+        ON CONFLICT(content_hash) DO UPDATE SET page_count=excluded.page_count, heights=excluded.heights, created_at=excluded.created_at
+        """, [.text(contentHash), .int(Int64(heights.count)), .blob(data), .text(ISO.string(.now))])
     }
 
     // MARK: - OCR 缓存（ocr_page，v3）

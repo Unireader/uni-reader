@@ -140,6 +140,9 @@ struct ReaderSurface: View {
         session.openTrace?.markOnce("种子", "\(seeded.count)/\(realizedNow.count) 张页图")
         let sc = Scratch()
         sc.didInitialGeo = true                       // 首帧就当作「基准已定」，别再等几何回调
+        // 首拍几何比 `onAppear` 还早（2026-09-10 第五批账本：`实化 +25(… p283–285 → p284–285)` 再 `+40` 长回来），
+        // 这里不种的话 `updateRealized` 按「非活跃窗口 = 不预实化」把种子里多出的那一页先拆再建。
+        sc.isActiveWindow = isActiveWindow
         sc.nightLive = nightMode
         sc.imagesNight = nightMode
         sc.basePixelW = s.basePixelW
@@ -739,12 +742,27 @@ struct ReaderSurface: View {
         guard let pdf = session.pdf else { return }
         // 布局缓存在会话上：切标签重建时不必再遍历全部页取尺寸（`init` 的种子也读它）。
         let lay: PageLayout
+        // 库里有这份内容的每页高度（`page_geom`）就一行读完，不用遍历 340 页 `page.bounds`
+        //（冷的外置盘上那是 ~100ms，账本 `布局计算 96(316页)`）。
+        var fromStore: [Double]?
+        if session.cachedLayout == nil, let store = session.store, !session.contentHash.isEmpty {
+            let hash = session.contentHash, n = pdf.pageCount
+            fromStore = session.openTrace.phase("布局读库") { try? store.pageHeights(contentHash: hash, pageCount: n) }
+        }
         if let cached = session.cachedLayout {
             lay = cached
             session.openTrace?.markOnce("布局", "缓存命中")
+        } else if let hs = fromStore {
+            lay = PageLayout(heights: hs.map { CGFloat($0) })
+            session.openTrace?.markOnce("布局", "库缓存")
         } else {
             lay = session.openTrace.phase("布局计算", detail: "\(pdf.pageCount)页") { PageLayout(doc: pdf) }
             session.openTrace?.markOnce("布局", "算完")
+            // 回填缓存（后台写：一次事务一次 fsync，冷盘几十毫秒，别卡这里）
+            if let store = session.store, !session.contentHash.isEmpty {
+                let hash = session.contentHash, hs = lay.heights.map { Double($0) }
+                Task.detached(priority: .utility) { try? store.savePageHeights(contentHash: hash, heights: hs) }
+            }
         }
         session.cachedLayout = lay
         // 种子种下的页图也入账（它们在 init 里就到位了，是「切回来零加载」的那一份）。

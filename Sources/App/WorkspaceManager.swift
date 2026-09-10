@@ -193,9 +193,13 @@ final class WorkspaceManager: ObservableObject {
     /// 排队中的进度写涉及哪些文档（主线程维护；`progress(documentId:)` 据此决定要不要先排空）。
     private var pendingProgressDocs: [String: Int] = [:]
 
+    /// `DispatchQueue.async` 的闭包是 `@Sendable`，`LibraryStore` 没标 Sendable（它靠 `SQLiteDB` 的语句级锁跨线程）——
+    /// 装个盒子过编译器，语义不变。
+    private struct StoreBox: @unchecked Sendable { let store: LibraryStore }
     private func bookkeep(_ work: @escaping (LibraryStore) -> Void) {
         guard let store else { return }
-        bookkeeping.async { work(store) }
+        let box = StoreBox(store: store)
+        bookkeeping.async { work(box.store) }
     }
 
     /// 排空后台元数据写（同步等它们落盘）。

@@ -14,14 +14,22 @@ struct PageLayout {
     var pageCount: Int { heights.count }
 
     init(doc: PDFDocument) {
-        heights.reserveCapacity(doc.pageCount)
-        offsets.reserveCapacity(doc.pageCount)
-        var y: CGFloat = 0
+        var hs: [CGFloat] = []
+        hs.reserveCapacity(doc.pageCount)
         for i in 0..<doc.pageCount {
             let s = doc.page(at: i).map { PageBitmap.displaySize($0) } ?? CGSize(width: 1, height: 1.4)
-            let h = s.width > 0 ? s.height / s.width * Self.refWidth : Self.refWidth * 1.4
+            hs.append(s.width > 0 ? s.height / s.width * Self.refWidth : Self.refWidth * 1.4)
+        }
+        self.init(heights: hs)
+    }
+
+    /// 从缓存的每页高度直接建（`LibraryStore.pageHeights`，不碰 PDF）。
+    init(heights hs: [CGFloat]) {
+        heights = hs
+        offsets.reserveCapacity(hs.count)
+        var y: CGFloat = 0
+        for h in hs {
             offsets.append(y)
-            heights.append(h)
             y += h + Self.gap
         }
         totalHeight = max(1, y - Self.gap)
