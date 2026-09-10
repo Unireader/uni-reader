@@ -43,6 +43,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `REF-WINDOW-PLAN.md` — 参考窗（只读浮窗，各端）：一句话定义 + 被砍清单 + 三端落地要点
 - `OFFLINE-MIRROR-PLAN.md` — 工作区离线镜像（Mac + 安卓模式1）：整份复制到本机、离线写笔迹、接回硬盘三方合并
 - `APPKIT-WINDOW-PLAN.md` — 窗口层迁到 AppKit（壳归 AppKit / 内容仍 SwiftUI，2026-09-01 拍板，进行中）
+- `INK-PAGING-PLAN.md` — 笔迹内存：点压到 f32 + 按页窗口加载/淘汰（`session.strokes` 不再是全集；2026-09-10 方案待拍板）
 - `PROTOCOL.md` — 二进制线格式**唯一契约**（Mac / web / 安卓三端字节级一致），改协议先改它
 - **`android/AGENTS.md`** — 安卓端（两种模式）的构建、结构、红线与坑；**动安卓代码只需读它 + 上面的跨端契约**
 
