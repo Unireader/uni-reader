@@ -87,6 +87,7 @@ struct ReaderPane: View {
     }
 
     var body: some View {
+        let _ = session.openTrace?.markOnce("阅读区段 body")   // 打开耗时账本：各段 body 的先后（找首帧后主线程忙在哪）
         readerColumn
             .dropDestination(for: URL.self) { urls, _ in onIngest(urls); return true }
             .overlay(alignment: .top) { findBanner }

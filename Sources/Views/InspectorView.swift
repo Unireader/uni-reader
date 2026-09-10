@@ -63,6 +63,10 @@ struct InspectorView: View {
     ]
 
     var body: some View {
+        // 打开耗时账本：冷开「王道计组」首帧后主线程还连着忙 230ms（2026-09-10 日志 `首张页图 +118 → 下一拍 +351`），
+        // 先把各块 body 的时刻记下来看是谁——检查器一页几百行注解/高亮是嫌疑之一。
+        let _ = session.openTrace?.markOnce("检查器 body",
+            "\(tab) 注解\(session.textNotes.count) 高亮\(session.highlights.count) AI\(session.aiThreads.count)")
         VStack(spacing: 0) {
             tabBar
             content

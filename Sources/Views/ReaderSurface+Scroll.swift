@@ -168,6 +168,10 @@ extension ReaderSurface {
             if zooming, inkFastDraw {
                 addInkSnapshots(for: Set(range).subtracting(Set(realized)))
             }
+            // 打开耗时账本：切标签的日志里 `首批页图` 一律是 `实化 p1–1 需渲1`，而首帧 body 已是正确的页
+            // ——某一拍几何的 offset 是 0。把每次实化变更的输入记下来（账结清后 `mark` 自动不记）。
+            session.openTrace?.mark("实化", "offY \(Int(n.offsetY)) H \(Int(n.containerH)) ds \(String(format: "%.2f", ds))"
+                + " p\(realized.lowerBound + 1)–\(realized.upperBound + 1) → p\(range.lowerBound + 1)–\(range.upperBound + 1)")
             realized = range
             if !zooming {
                 let keep = scratch.keepRange
