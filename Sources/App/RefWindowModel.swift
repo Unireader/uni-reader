@@ -14,6 +14,11 @@ import PDFKit
 ///
 /// 🔴 **一份也不落库、一个字节不上线**：开着没有 / 摆在哪 / 多大 / 开的哪本 / 滚到哪，
 /// 全是本端私有视口状态。因此这个功能不碰 `PROTOCOL.md` 也不碰 schema。
+///
+/// **两种形态**（用户 2026-09-11「参考小窗支持独立小窗口（类似 AI 窗口那样）」）：
+/// 浮在阅读区上的覆盖层（`overlay`），或一扇独立的小窗口（`window`，由 `RefWindowController` 建，
+/// 作为阅读窗的子窗口跟着它走）。两种形态共用这一份 model——开的哪本、滚到哪、缩放多少，
+/// 切换形态时原样带过去。
 @MainActor
 final class RefWindowModel: ObservableObject {
 
@@ -22,6 +27,7 @@ final class RefWindowModel: ObservableObject {
         static let doc = "refWindowDocID"
         static let w = "refWindowW", h = "refWindowH"
         static let dx = "refWindowDX", dy = "refWindowDY"
+        static let mode = "refWindowMode"
     }
 
     static let minSize = CGSize(width: 260, height: 220)
@@ -31,6 +37,33 @@ final class RefWindowModel: ObservableObject {
     /// 折叠成一枚气泡（不丢上下文，也不占版面）。折叠→展开**保持**滚动位置，
     /// 关闭→重开**回到进度**（视口记忆刻意分两级，见方案 §6）。
     @Published var collapsed = false
+
+    /// 当前形态（覆盖层 / 独立窗口）。偏好是**全 app 一份**（`UserDefaults`，同 AI 面板的
+    /// `aiPanelMode`），但每扇阅读窗的 model 各持一份内存值：在这扇窗口弹成独立窗口，
+    /// 不会把另一扇窗口正开着的覆盖层也拽出去——它下次**从关闭状态打开**时才沿用最新偏好（见 `open`）。
+    @Published private(set) var mode: RefWindowMode = RefWindowModel.storedMode()
+
+    private static func storedMode() -> RefWindowMode {
+        RefWindowMode(rawValue: UserDefaults.standard.string(forKey: K.mode) ?? "") ?? .overlay
+    }
+
+    /// 换形态（覆盖层顶栏的「弹出为独立窗口」/ 独立窗口工具栏的「改为窗口内置」）。
+    /// 只改这一个值：覆盖层由 `ReaderPane` 按它显隐，独立窗口由 `ReaderWindowController` 按它开合，
+    /// model 是唯一真源，两边都不各自记一份。
+    func setMode(_ m: RefWindowMode) {
+        guard m != mode else { return }
+        mode = m
+        UserDefaults.standard.set(m.rawValue, forKey: K.mode)
+    }
+
+    /// 页流回报的「当前页」（视口上三分之一处那一页，同主阅读区口径）。
+    /// 放 model 而不是壳视图的 `@State`：独立窗口的标题栏（AppKit）也要显示它。
+    /// 只在页号真变了才写——滚动每帧都回报，但不是每帧都翻页，不会变成逐帧发布。
+    @Published private(set) var currentPage = 0
+
+    func reportCurrentPage(_ p: Int) {
+        if p != currentPage { currentPage = p }
+    }
 
     @Published private(set) var docID: String?
     @Published private(set) var title = ""
@@ -64,22 +97,21 @@ final class RefWindowModel: ObservableObject {
     /// 已经按第几版 `seedRev` 定位过了。`-1` = 还没定位（下次一定回到进度）。
     var seededRev = -1
 
-    /// 渲染引擎的认领 id（一扇窗口一个）。
-    /// 🔴 不声明 `setWanted` 的话，`PageRenderEngine` 会把入队超 1s 无人认领的请求直接丢弃，
-    /// 结果是「完成回调永不触发、小窗永远停在占位图」。
-    let clientID: String
+    /// 正在替本 model 向 `PageRenderEngine` 声明 wanted 的页流（键 = `RefScratch.clientID`，
+    /// 值 = 它挂在哪种形态下 + 收尾闭包，**闭包只捕获 `RefScratch`、不捕获视图**，同 `DocSession.renderClients`）。
+    ///
+    /// 🔴 **认领 id 按页流实例分，不按 model 分**：切换形态那一拍，旧页流的 `onDisappear` 与新页流的
+    /// `onAppear` 谁先谁后没有保证（一个由 SwiftUI 提交，一个由 AppKit 上屏）。共用一个 id 的话，
+    /// 旧的收尾会把新的认领一并清空——引擎把入队超 1s 无人认领的请求直接丢弃，表现就是
+    /// 新窗口停在占位图，滚一下才出图。
+    var renderClients: [String: (host: RefViewHost, cleanup: () -> Void)] = [:]
 
     // 浮窗几何（本端记忆）。`offset` 是相对**右下角**的偏移（≤0 往左上）——
     // 这样改尺寸时右下角不动、只有左上角伸缩，缩放手柄放左上角即可。
     @Published var size: CGSize
     @Published var offset: CGSize
 
-    /// ⚠️ 身份靠 `@StateObject` 保证：`ContentView` 每窗口一个实例、`@StateObject` 只建一次，
-    /// 所以这里自己生成的 id 天然就是「一扇窗口一个」。**刻意不从外面传 `windowID` 进来**——
-    /// 那会逼 `ContentView.init` 在 `StateObject(wrappedValue:)` 的 autoclosure 之外先建一个
-    /// `TabsModel` 取它的 id，等于每次结构体重建都白建一个（那个类的构造是有副作用的）。
     init() {
-        clientID = "ref-\(UUID().uuidString)"
         let d = UserDefaults.standard
         let w = d.double(forKey: K.w), h = d.double(forKey: K.h)
         size = (w >= Self.minSize.width && h >= Self.minSize.height)
@@ -97,6 +129,8 @@ final class RefWindowModel: ObservableObject {
 
     /// 打开小窗。没指定看哪本就沿用上次那本，再没有就看当前这本。
     func open(preferring current: String?, workspace: WorkspaceManager) {
+        // 从关闭状态打开才对齐一次全 app 的形态偏好（见 `mode` 的说明）；开着时不动。
+        if !isOpen { mode = Self.storedMode() }
         isOpen = true
         collapsed = false
         let want = docID ?? rememberedDocID ?? current
@@ -162,19 +196,24 @@ final class RefWindowModel: ObservableObject {
         // `docID`/`title` 留着：下次打开还是这本（本端记忆）。
     }
 
-    /// 交还渲染认领。
+    /// 交还全部页流的渲染认领（关小窗 / 换书）。
     /// ⚠️ **刻意不 `purge(doc:)`**：参考的若正是主视图那本书，purge 会把阅读区的页图一并清掉。
     /// 让 LRU 自然淘汰即可——反复开关小窗时还能直接命中。
-    private func releaseRenderClaim() {
-        PageRenderEngine.shared.setWanted([], client: clientID)
-        PageHoldings.shared.remove(client: clientID)
-        viewCleanup?()      // 页流的 NSEvent 监视器（关窗时 `onDisappear` 来不来没保证，这里兜底）
-        viewCleanup = nil
-    }
+    private func releaseRenderClaim() { releaseViews { _ in true } }
 
-    /// 页流视图登记的收尾闭包（放 NSEvent 监视器）。**只许捕获它自己的 `RefScratch`**，
-    /// 不能捕获视图——同 `DocSession.renderClients` 的规矩。
-    var viewCleanup: (() -> Void)?
+    /// 只交还某一种形态下的页流认领。独立窗口关掉时由 `RefWindowController` 调（AppKit 直接销毁
+    /// hosting 视图，页流的 `onDisappear` 来不来没保证）；**不能一锅端**——切回覆盖层那一刻
+    /// 覆盖层的页流多半已经登记进来了，清掉它等于把它的滚轮监视器与 wanted 一起没收。
+    func releaseViews(host: RefViewHost) { releaseViews { $0 == host } }
+
+    private func releaseViews(where keep: (RefViewHost) -> Bool) {
+        for (id, entry) in renderClients where keep(entry.host) {
+            PageRenderEngine.shared.setWanted([], client: id)
+            PageHoldings.shared.remove(client: id)
+            entry.cleanup()     // 页流的 NSEvent 监视器
+            renderClients.removeValue(forKey: id)
+        }
+    }
 
     // MARK: - 几何（本端记忆）
 
@@ -207,4 +246,18 @@ final class RefWindowModel: ObservableObject {
         d.set(size.width, forKey: K.w); d.set(size.height, forKey: K.h)
         d.set(offset.width, forKey: K.dx); d.set(offset.height, forKey: K.dy)
     }
+}
+
+/// 参考窗的两种形态（同 `AIPanelMode` 的分法）。
+enum RefWindowMode: String {
+    /// 浮在阅读区上的覆盖层（可折叠成气泡）。
+    case overlay
+    /// 独立的小窗口：阅读窗的子窗口，恒在它之上、跟着它走（`RefWindowController`）。
+    case window
+}
+
+/// 页流挂在哪种形态下（`RefWindowModel.renderClients` 按它分组交还认领）。
+enum RefViewHost {
+    case overlay
+    case window
 }

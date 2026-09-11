@@ -17,7 +17,9 @@ import QuartzCore
 struct RefPageStream: View {
     @ObservedObject var model: RefWindowModel
     let nightMode: Bool
-    @Binding var currentPage: Int
+    /// 挂在覆盖层里还是独立窗口里。只用来给 model 的认领登记分组（见 `RefWindowModel.renderClients`），
+    /// 页流本身两种形态下一行都不差。
+    let host: RefViewHost
 
     @Environment(\.displayScale) private var displayScale
 
@@ -70,10 +72,10 @@ struct RefPageStream: View {
         }
         .onAppear {
             installWheelMonitor()
-            // 关窗兜底（`RefWindowModel.close` 会调）：只捕获 `scratch`，不捕获视图。
-            model.viewCleanup = { [scratch] in
+            // 关窗兜底（`RefWindowModel.close` / `releaseViews(host:)` 会调）：只捕获 `scratch`，不捕获视图。
+            model.renderClients[scratch.clientID] = (host, { [scratch] in
                 if let m = scratch.wheelMonitor { NSEvent.removeMonitor(m); scratch.wheelMonitor = nil }
-            }
+            })
         }
         .onChange(of: model.seedRev) { _, _ in seedIfReady() }
         .onChange(of: model.docKey) { _, _ in
@@ -86,17 +88,18 @@ struct RefPageStream: View {
         }
         .onChange(of: nightMode) { _, _ in nightChanged() }
         .onDisappear {
-            PageRenderEngine.shared.setWanted([], client: model.clientID)
-            PageHoldings.shared.remove(client: model.clientID)
-            removeWheelMonitor()   // 折叠成气泡 / 关小窗 = 这个页流没了，监视器不能留着
-            model.viewCleanup = nil
+            // 全部按**本实例**的 id 清：形态切换时新旧两个页流可能短暂并存，别动对方的（见 `renderClients`）。
+            PageRenderEngine.shared.setWanted([], client: scratch.clientID)
+            PageHoldings.shared.remove(client: scratch.clientID)
+            removeWheelMonitor()   // 折叠成气泡 / 关小窗 / 换形态 = 这个页流没了，监视器不能留着
+            model.renderClients.removeValue(forKey: scratch.clientID)
         }
     }
 
     private func reportHoldings() {
         var h = PageHolding(kind: .ref, label: model.title, active: false, realized: realized)
         for img in images.values { h.imageCount += 1; h.imageBytes += PageHolding.bytes(of: img) }
-        PageHoldings.shared.report(h, client: model.clientID)
+        PageHoldings.shared.report(h, client: scratch.clientID)
     }
 
     /// 🔴 **视口尺寸只认外层 `GeometryReader`，绝不用 `ScrollGeometry.containerSize`。**
@@ -224,7 +227,7 @@ struct RefPageStream: View {
         guard let layout = model.layout, dispScale > 0 else { return }
         // 取视口上三分之一处那一页当「当前页」（同主阅读区口径：顶部那页才是在读的那页）。
         let p = layout.locate(docY: (geo.offsetY + viewport.height * 0.3) / dispScale).page
-        if p != currentPage { currentPage = p }
+        model.reportCurrentPage(p)   // 页号没变时是空操作，不会逐帧发布
     }
 
     // MARK: - 出图
@@ -266,7 +269,7 @@ struct RefPageStream: View {
             }
         }
         // 🔴 不声明就会被引擎当「无人认领的滞留请求」丢弃 → 完成回调永不触发、小窗永远停在占位。
-        PageRenderEngine.shared.setWanted(wanted, client: model.clientID)
+        PageRenderEngine.shared.setWanted(wanted, client: scratch.clientID)
     }
 
     /// 夜间切换：先用缓存里的同参异色图**同步顶上**（引擎的夜间快路会把反转结果写回缓存，多数命中），
@@ -449,6 +452,10 @@ struct RefPageStream: View {
 
 /// 页流里那些「必须逃过 View 值拷贝」的可变量（见 `RefPageStream.scratch`）。
 final class RefScratch {
+    /// 渲染引擎的认领 id（**一个页流实例一个**，理由见 `RefWindowModel.renderClients`）。
+    /// 🔴 不声明 `setWanted` 的话，`PageRenderEngine` 会把入队超 1s 无人认领的请求直接丢弃，
+    /// 结果是「完成回调永不触发、小窗永远停在占位图」。
+    let clientID = "ref-" + UUID().uuidString
     var basePixelW = 0
     var night = false
     /// 允许留图的页范围（= 实化窗口，`updateRealized` 维护）。渲染完成回调按它守门，同主阅读区

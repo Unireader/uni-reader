@@ -35,6 +35,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// 两个浮窗的窗口级状态（切标签不重建，正是它们要的）。
     private let refWindow = RefWindowModel()
     private let jumpPanel = JumpHistoryPanel()
+    /// 参考窗的独立窗口形态（`refWindow.mode == .window` 且开着时才存在，关掉即销毁——
+    /// 位置/尺寸靠 frame autosave 记，下次重建照旧）。
+    private var refWindowController: RefWindowController?
 
     /// 在 `WorkspaceRegistry` 的登记号（关窗时按它归还工作区实例）。
     private let windowId = UUID()
@@ -248,6 +251,13 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshToolbarStates() }
             .store(in: &bag)
+        // 参考窗的独立窗口按 model 开合：开着且是窗口形态 → 有这扇窗；否则没有。
+        // model 是唯一真源——覆盖层顶栏的「弹出」、独立窗口工具栏的「改回内置」、工具栏开关、
+        // 红色关闭钮，全都只改 model，窗口的存在与否由这一条订阅统一推。
+        Publishers.CombineLatest(refWindow.$isOpen, refWindow.$mode)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] open, mode in self?.syncRefWindow(open: open, mode: mode) }
+            .store(in: &bag)
         jumpPanel.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshToolbarStates() }
@@ -369,6 +379,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         logFrame("结清（关窗/退出）")
         saveFrame()          // ⌘Q 不发 `windowWillClose`，最后这一下尺寸靠这里落下来
         refWindow.close()
+        dismissRefWindow()   // 订阅要下一拍才跑，关窗/退出等不起，这里直接关
         AIPanelModel.shared.releaseHost(.inline(session.windowID))
         AIPanelModel.shared.forgetInline(session.windowID)
         tabs.closeWindow()
@@ -774,6 +785,24 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func toggleReference() {
         if refWindow.isOpen { refWindow.close() }
         else { refWindow.open(preferring: tabs.active.docID, workspace: workspace) }
+    }
+
+    /// 参考窗独立窗口的开合（见 `observeToolbarStates` 里那条订阅）。
+    private func syncRefWindow(open: Bool, mode: RefWindowMode) {
+        guard open, mode == .window else { dismissRefWindow(); return }
+        if refWindowController == nil {
+            refWindowController = RefWindowController(
+                model: refWindow, workspace: workspace, app: app,
+                currentDocID: { [weak self] in self?.tabs.active.docID },
+                onGotoMain: { [weak self] page in self?.session.jump(page: page, frac: 0, kind: .list) })
+        }
+        refWindowController?.show(attachedTo: window)
+    }
+
+    private func dismissRefWindow() {
+        guard let c = refWindowController else { return }
+        refWindowController = nil
+        c.dismiss()
     }
 
     @objc private func searchChanged(_ sender: NSSearchField) {

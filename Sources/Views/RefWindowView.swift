@@ -1,6 +1,8 @@
 import SwiftUI
 
-/// 参考窗：浮在阅读区上的**只读** PDF 小窗（方案 `REF-WINDOW-PLAN.md`）。
+/// 参考窗的**覆盖层形态**：浮在阅读区上的**只读** PDF 小窗（方案 `REF-WINDOW-PLAN.md`）。
+/// 另一种形态是独立窗口（`RefWindowController`），两者共用同一份 `RefWindowModel`；
+/// `model.mode` 不是 `.overlay` 时本视图什么都不画。
 ///
 /// 🔴 **挂载点必须是 `ContentView.readerColumn`**（与 `tabBar`、`AIInlineLayer` 同层），
 /// 与那两位完全同样的两条理由：
@@ -17,7 +19,6 @@ struct RefWindowView: View {
     let currentDocID: String?
     let onGotoMain: (Int) -> Void
 
-    @State private var currentPage = 0
     /// 🔴 拖动 / 改尺寸**期间**只动这两个本地量，松手才写回 model。
     /// 每帧写 `@Published` 的话，页流（`@ObservedObject model`）会跟着每帧整体重算——
     /// 用户 2026-08-30 报的「拖拽小窗时内容上下抖动」就是这么来的。
@@ -77,7 +78,7 @@ struct RefWindowView: View {
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .bottomTrailing) {
-                if model.isOpen {
+                if model.isOpen, model.mode == .overlay {
                     if model.collapsed {
                         bubble(container: g.size).transition(.scale.combined(with: .opacity))
                     } else {
@@ -92,7 +93,9 @@ struct RefWindowView: View {
             .onAppear { fitIntoContainer(g.size) }
             .onChange(of: g.size) { _, s in fitIntoContainer(s) }
             // 打开那一刻也夹一遍：关着的时候容器变过（开侧栏/缩窗口），再打开就是越界的旧值。
+            // 从独立窗口切回来同理（那段时间容器同样可能变过）。
             .onChange(of: model.isOpen) { _, open in if open { fitIntoContainer(g.size) } }
+            .onChange(of: model.mode) { _, m in if m == .overlay { fitIntoContainer(g.size) } }
         }
     }
 
@@ -103,7 +106,7 @@ struct RefWindowView: View {
         return VStack(spacing: 0) {
             header(container: container, size: size)
             Divider()
-            RefPageStream(model: model, nightMode: nightMode, currentPage: $currentPage)
+            RefPageStream(model: model, nightMode: nightMode, host: .overlay)
         }
         .frame(width: size.width, height: size.height)
         .background(.regularMaterial)
@@ -130,7 +133,7 @@ struct RefWindowView: View {
             title
             Spacer(minLength: 2)
             if size.width >= Self.pageNumMinWidth, let n = model.pdf?.pageCount, n > 0 {
-                Text("\(currentPage + 1) / \(n)")
+                Text("\(model.currentPage + 1) / \(n)")
                     .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize()
                     .padding(.trailing, 2)
@@ -139,8 +142,11 @@ struct RefWindowView: View {
                 model.rewindToProgress(workspace: workspace)
             }
             if model.docID != nil, model.docID == currentDocID {
-                btn("arrow.up.forward.app", L("Show This Page in Main View")) { onGotoMain(currentPage) }
+                btn("arrow.up.forward.app", L("Show This Page in Main View")) { onGotoMain(model.currentPage) }
             }
+            // 弹成独立窗口（同 AI 内置面板 header 那枚）：只改 model 的形态，窗口由
+            // `ReaderWindowController` 按它开出来，滚动位置与缩放原样带过去。
+            btn("macwindow", L("Open as Separate Window")) { model.setMode(.window) }
             btn("minus", L("Collapse")) { model.collapsed = true }
             btn("xmark", L("Close")) { model.close() }
         }
@@ -204,18 +210,7 @@ struct RefWindowView: View {
         .layoutPriority(1)
         .help(L("Contents"))
         .popover(isPresented: $tocOpen, arrowEdge: .bottom) {
-            VStack(spacing: 0) {
-                Text(L("Contents"))
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
-                TOCListView(entries: model.toc, currentPage: currentPage) { e in
-                    guard let page = e.pageIndex else { return }   // 坏书签：跳不过去
-                    model.goto(page: page, frac: e.frac)
-                    tocOpen = false
-                }
-                .frame(width: 300, height: 380)
-            }
+            RefTOCPopoverContent(model: model, onPicked: { tocOpen = false })
         }
     }
 
@@ -318,5 +313,17 @@ struct RefWindowView: View {
         .padding(16)
         .offset(fitOffset(container))   // 气泡与面板同一份摆位（同样夹在容器内）
         .help(L("Reference Window"))
+    }
+}
+
+/// 参考窗**独立窗口形态**的内容：只有页流。顶栏那一排（选书 / 目录 / 回到进度 / 主视图 / 改回内置）
+/// 归 `RefWindowController` 的 `NSToolbar`——SwiftUI 的 `.toolbar` 对 AppKit 窗口不生效。
+/// 夜间模式跟覆盖层同一个键（阅读区的 `@AppStorage("nightMode")`）。
+struct RefDetachedContent: View {
+    @ObservedObject var model: RefWindowModel
+    @AppStorage("nightMode") private var nightMode = false
+
+    var body: some View {
+        RefPageStream(model: model, nightMode: nightMode, host: .window)
     }
 }

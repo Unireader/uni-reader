@@ -34,6 +34,29 @@ struct TOCPopoverContent: View {
     }
 }
 
+/// 参考窗的目录弹窗：覆盖层形态里挂在 SwiftUI `.popover` 上，独立窗口形态里由
+/// `RefWindowController` 用 `NSPopover` 锚到工具栏按钮上弹——**同一份内容两处用**。
+/// 跳转只动小窗自己的视口，不写回那本书的阅读进度（`REF-WINDOW-PLAN.md §3` 红线）。
+struct RefTOCPopoverContent: View {
+    @ObservedObject var model: RefWindowModel
+    var onPicked: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(L("Contents"))
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+            TOCListView(entries: model.toc, currentPage: model.currentPage) { e in
+                guard let page = e.pageIndex else { return }   // 坏书签：跳不过去
+                model.goto(page: page, frac: e.frac)
+                onPicked()
+            }
+            .frame(width: 300, height: 380)
+        }
+    }
+}
+
 /// OCR 面板：开关「用 OCR 文本」+ 进度 + 手动「识别全部页」。未配置 key 时引导去设置。
 struct OCRPopoverContent: View {
     @ObservedObject var tabs: TabsModel
