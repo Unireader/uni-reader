@@ -100,6 +100,7 @@
 "No highlights yet." = "暂无高亮。";
 "Delete this highlight" = "删除此高亮";
 "Delete Highlight" = "删除高亮";
+"Highlight Color" = "高亮颜色";
 
 /* 侧栏手动排序（右键） */
 "Move Up" = "上移";

@@ -293,6 +293,7 @@ extension ReaderSurface {
     }
 
     /// 高亮当前选区：逐页各落一条高亮（每页自己的行框），跨页选区各页都铺色。无正文、无图钉、无编辑器。
+    /// 用过的颜色记成下次 `h` 快速高亮的颜色（`AppModel.quickHighlightColor`）。
     func addHighlight(color: InkColor) {
         guard let sel = selection, !sel.text.isEmpty else { return }
         for (page, rects) in sel.rects where !rects.isEmpty {
@@ -300,21 +301,53 @@ extension ReaderSurface {
             session.highlights.append(Highlight(page: page, anchor: bbox.isNull ? .zero : bbox,
                                                 quote: sel.text, rects: rects, color: color))
         }
+        rememberHighlightColor(color)
         clearSelection()
     }
 
-    /// 单击阅读区：收起文字选择与框选；**命中一条文字高亮就把它的操作气泡打开**（删除入口，
-    /// 用户 2026-09-03 要的「点高亮要能删」），没命中则收起气泡。
-    ///
-    /// 命中判定放在容器这一层（而不是给铺色层加 Button）：铺色的 Canvas 一旦吃命中，
-    /// 高亮盖住的那块文字就选不了、框选不到了——高亮是**铺在正文上的**，不能挡住正文的交互。
+    /// 选中文字后按 `h`：用最近一次选过的颜色直接高亮，不弹菜单（`installToolKeyMonitor` 分派）。
+    func quickHighlight() { addHighlight(color: app.quickHighlightColor) }
+
+    /// 给一条已有高亮换色（气泡里的色点 / Inspector 列表）：就地改色 + bump updatedAt →
+    /// `DocTabModel.persistHighlights` 对账识别为「变更」并 upsert。换过的颜色同样记成下次 `h` 的颜色。
+    func recolorHighlight(_ h: Highlight, color: InkColor) {
+        guard let i = session.highlights.firstIndex(where: { $0.id == h.id }),
+              session.highlights[i].color != color else { return }
+        session.highlights[i].color = color
+        session.highlights[i].updatedAt = .now
+        rememberHighlightColor(color)
+    }
+
+    func rememberHighlightColor(_ color: InkColor) {
+        if app.quickHighlightColor != color { app.quickHighlightColor = color }
+    }
+
+    /// 单击阅读区（`.onTapGesture(count: 1)`，为区分双击**要等一拍**）：收起文字选择与框选。
+    /// 高亮气泡的开合**不在这里**——它走 `highlightClickGesture`，抬起鼠标就响应，不等这一拍
+    /// （用户 2026-09-12 报「点高亮很慢才出弹窗」，慢的正是这一拍＝系统双击间隔）。
     func tapReader() {
         clearSelection()
         clearLassoSelection()
-        let hit = (app.pointerTool == .textSelect && session.openPadID == nil)
-            ? scratch.cursorP.flatMap { highlightHit($0) } : nil
-        let mark = hit.map { HighlightTap(id: $0.highlight.id, rect: $0.rect) }
-        if activeHighlight != mark { activeHighlight = mark }
+    }
+
+    /// 单击即时响应（按下→抬起位移 ≤3pt 才算单击）：**命中一条文字高亮就把它的操作气泡打开**
+    /// （删除/换色入口，用户 2026-09-03 要的「点高亮要能删」），没命中则收起气泡。
+    /// 挂成 `minimumDistance: 0` 的拖拽手势而不是 tap：tap 要等系统双击间隔确认「不是双击」才回调，
+    /// 气泡于是总慢半秒出来；这里抬手即回调。真拖动（拖选/拖图钉）位移大于阈值，不会误判成单击。
+    ///
+    /// 命中判定放在容器这一层（而不是给铺色层加 Button）：铺色的 Canvas 一旦吃命中，
+    /// 高亮盖住的那块文字就选不了、框选不到了——高亮是**铺在正文上的**，不能挡住正文的交互。
+    /// 起点落在点注解图钉上的让位给图钉（同拖选的让位规则），免得点图钉时顺带弹出底下高亮的气泡。
+    var highlightClickGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onEnded { v in
+                guard app.pointerTool == .textSelect, scratch.pinch == nil,
+                      session.openPadID == nil,
+                      abs(v.translation.width) <= 3, abs(v.translation.height) <= 3,
+                      pointNotePinHit(v.startLocation) == nil else { return }
+                let mark = highlightHit(v.startLocation).map { HighlightTap(id: $0.highlight.id, rect: $0.rect) }
+                if activeHighlight != mark { activeHighlight = mark }
+            }
     }
 
     /// 文字高亮命中测试（容器/视口坐标 P，与双击选词同 `.local` 空间）→ 命中的高亮**与被点中的那一行**。

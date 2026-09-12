@@ -275,10 +275,13 @@ extension ReaderSurface {
         }
     }
 
-    // MARK: 单键工具快捷键（e 橡皮 / 1-9 选笔 / b 书写 / v 翻页 / l 框选 / i 本机笔 / t 文字选择）
+    // MARK: 单键工具快捷键（e 橡皮 / 1-9 选笔 / b 书写 / v 翻页 / l 框选 / i 本机笔 / t 文字选择；
+    //       **有选中文字时** h 快速高亮 / n 文字笔记）
     // 与 ⌥ 菜单快捷键（UniReaderApp .commands）同一套 apply 路径，广播到平板天然生效。
     // **只认无修饰键的单字母**：带 ⌘/⌥/⌃ 的组合键、文本框焦点（查找/笔记编辑/重命名）、
     // 以及**内置 AI 面板里的 webview 焦点**一律放行（后者见 `aiWebInputHasFocus`）。
+    // 输入法：没有文本输入焦点时输入法根本不介入（它只挂在 NSTextInputClient 上），按键原样到这里；
+    // 有文本焦点（含正在组字）则 firstResponder 是 NSText / WKWebView，上面两条守卫已放行。
     // 笔架里的 eraser/钢笔图标 Button 不能挂 `.keyboardShortcut("e")`——那在文本框焦点时也会抢键。
 
     func installToolKeyMonitor() {
@@ -289,7 +292,12 @@ extension ReaderSurface {
                   !(NSApp.keyWindow?.firstResponder is NSText),
                   !aiWebInputHasFocus(),          // 内置 AI 面板在打字 → 键归它（WKWebView 不是 NSText）
                   let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
+            // 选中了文字：h / n 归选区（高亮 / 笔记），只在这两个键上盖过下面的工具切换；
+            // 草稿纸盖着时阅读区没有选区可言，自然落到下面的分支。
+            let hasSelection = selection?.text.isEmpty == false && session.openPadID == nil
             switch key {
+            case "h" where hasSelection: quickHighlight()
+            case "n" where hasSelection: beginAddNote()
             case "e": app.setPadMode(app.padMode == "erase" ? "note" : "erase")
             case "b", "n": app.setPadMode("note")
             case "v": app.setPadMode(app.padMode == "page" ? "note" : "page")

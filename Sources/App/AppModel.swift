@@ -93,6 +93,23 @@ final class AppModel: ObservableObject {
     /// 应用平板上行 `eraser` 时置真：抑制 didSet 的回播（值来自 pad，回声无意义还会三连发）。
     private var applyingRemoteEraser = false
 
+    /// 快速高亮（选中文字后按 `h`）用的荧光色 = **最近一次选过的**颜色：右键菜单里点的、
+    /// 高亮气泡里换的都算（用户 2026-09-12 要「按 h 快速高亮」+「能调高亮颜色」）。
+    /// 本机持久化（与 eraserRadius 同款 UserDefaults），首次默认调色板第一项（黄）；不广播给平板。
+    @Published var quickHighlightColor: InkColor = AppModel.loadQuickHighlightColor() {
+        didSet {
+            if let data = try? JSONEncoder().encode(quickHighlightColor) {
+                UserDefaults.standard.set(data, forKey: AppModel.quickHighlightColorKey)
+            }
+        }
+    }
+    private static let quickHighlightColorKey = "quickHighlightColor"
+    private static func loadQuickHighlightColor() -> InkColor {
+        guard let data = UserDefaults.standard.data(forKey: quickHighlightColorKey),
+              let c = try? JSONDecoder().decode(InkColor.self, from: data) else { return Highlight.defaultColor }
+        return c
+    }
+
     private var cancellables = Set<AnyCancellable>()
 
     // 环形选笔盘 · 长按检测（全部在 Mac 端）。平板只发笔事件；这里判「落笔停住 1s」呼出、笔移选中、抬笔提交。

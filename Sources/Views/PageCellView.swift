@@ -35,6 +35,7 @@ struct PageCellView: View {
     var activeHighlight: HighlightTap? = nil   // 被点开的那条高亮 + 被点中的那一行：在那一行上挂删除气泡
     var onDismissHighlight: () -> Void = {}
     var onDeleteHighlight: (Highlight) -> Void = { _ in }
+    var onRecolorHighlight: (Highlight, InkColor) -> Void = { _, _ in }   // 气泡里点色点换色
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
     var noteTypes: [NoteType] = []         // 工作区笔记类型：图钉/高亮配色（通用保持既有黄色样式）
     var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
@@ -165,6 +166,20 @@ struct PageCellView: View {
                                 .font(.callout).foregroundStyle(.primary).lineLimit(3)
                             Text(String(format: L("Page %d"), h.page + 1))
                                 .font(.caption).foregroundStyle(.primary)
+                            Divider()
+                            // 换色：调色板色点一排（与笔记类型编辑器同款扁平色点），当前色描一圈。
+                            HStack(spacing: 8) {
+                                ForEach(Array(Highlight.palette.enumerated()), id: \.offset) { _, item in
+                                    Circle()
+                                        .fill(Color(nsColor: item.color.nsColor))
+                                        .frame(width: 18, height: 18)
+                                        .overlay(Circle().stroke(Color.primary.opacity(0.6),
+                                                                 lineWidth: h.color == item.color ? 2 : 0))
+                                        .contentShape(Circle())
+                                        .onTapGesture { onRecolorHighlight(h, item.color) }
+                                        .help(L(item.name))
+                                }
+                            }
                             Divider()
                             Button(L("Delete Highlight"), role: .destructive) { onDeleteHighlight(h) }
                         }

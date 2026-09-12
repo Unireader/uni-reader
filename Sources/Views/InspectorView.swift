@@ -608,6 +608,15 @@ struct InspectorView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
+                    // 右键：换色（调色板）/ 删除——与页面上高亮气泡里的两项对应。
+                    .contextMenu {
+                        Menu(L("Highlight Color")) {
+                            ForEach(Array(Highlight.palette.enumerated()), id: \.offset) { _, item in
+                                Button(L(item.name)) { recolorHighlight(h, color: item.color) }
+                            }
+                        }
+                        Button(L("Delete Highlight"), role: .destructive) { deleteHighlight(h) }
+                    }
                 }
             }
         }
@@ -616,6 +625,14 @@ struct InspectorView: View {
     /// 删除一条高亮：从内存移除 → ContentView 的 onChange 增量对账把对应 note 删库。
     private func deleteHighlight(_ h: Highlight) {
         session.highlights.removeAll { $0.id == h.id }
+    }
+
+    /// 给一条高亮换色：就地改 + bump updatedAt → 对账识别为变更并 upsert（与 `ReaderSurface.recolorHighlight` 同款）。
+    private func recolorHighlight(_ h: Highlight, color: InkColor) {
+        guard let i = session.highlights.firstIndex(where: { $0.id == h.id }),
+              session.highlights[i].color != color else { return }
+        session.highlights[i].color = color
+        session.highlights[i].updatedAt = .now
     }
 
     // MARK: - 书签（`REQUIREMENTS.md §1.9`）

@@ -470,9 +470,15 @@ struct ReaderSurface: View {
         .simultaneousGesture(lassoGesture)
         // 点注解图钉拖拽（textSelect 模式、起点命中图钉才激活，与拖选互斥让位）：页内调整注解位置。
         .simultaneousGesture(notePinDragGesture)
+        // 点高亮开/收操作气泡：抬手即响应（不等下面单击那一拍——那一拍是系统双击间隔，气泡会慢半秒）。
+        .simultaneousGesture(highlightClickGesture)
         // 双击选词 / 单击取消选择。用 `.onTapGesture` 的单双击分级（单击等一拍确认非双击，同 macOS 原生手感）；
         // 双击定位取光标最近位置（`.onContinuousHover` 维护），避免 SpatialTapGesture 与拖选/缩放争手势。
-        .onTapGesture(count: 2) { if let p = scratch.cursorP { selectWord(atContainer: p) } }
+        // 双击落在高亮上：第一下已把气泡弹出来了，选词时顺手收掉（气泡与选区不该同时在）。
+        .onTapGesture(count: 2) {
+            activeHighlight = nil
+            if let p = scratch.cursorP { selectWord(atContainer: p) }
+        }
         .onTapGesture(count: 1) { tapReader() }
         // 右键选区 → 「添加批注 / 复制」（原生上下文菜单，非浮层 hack）。菜单项常驻、无选区时禁用，
         // 避免按选区有无条件包裹 ScrollView 改变其身份而重置滚动位置。
@@ -629,6 +635,7 @@ struct ReaderSurface: View {
                      activeHighlight: session.openPadID == nil ? activeHighlight : nil,   // 草稿纸盖着时不弹（纸归纸）
                      onDismissHighlight: { activeHighlight = nil },
                      onDeleteHighlight: { deleteHighlight($0) },
+                     onRecolorHighlight: { recolorHighlight($0, color: $1) },
                      notes: buckets.notes[i] ?? [],
                      noteTypes: session.noteTypes,
                      ocrBlocks: session.showOCRBlocks ? (session.ocrVisibleRuns(page: i) ?? []) : [],
