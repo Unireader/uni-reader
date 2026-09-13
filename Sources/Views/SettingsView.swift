@@ -43,7 +43,7 @@ struct SettingsView: View {
     @AppStorage("autoStartServer") private var autoStartServer = false
     @AppStorage("ocrEngine") private var ocrEngine = "off"          // "off" | "paddle"
     @State private var ocrPaddleKey = ""   // Paddle API key：存 Keychain（不进 UserDefaults），见 PaddleOCR.apiKey()
-    /// 页图缓存上限（MB，= 真实占用；引擎按「一张图三份」计费，见 `PageRenderEngine.copiesPerImage`）。
+    /// 页图缓存上限（MB，= 真实占用；计费系数见 `PageRenderEngine.copiesPerImage`）。
     /// ⚠️ 默认值与 `ContentView` 启动时那句 `?? 256` **必须一致**，改一处要改两处。
     @AppStorage("renderCacheMB") private var renderCacheMB = 256
     /// 笔记气泡跟不跟页缩放（默认关 = 固定尺寸；阅读区 `ReaderSurface` 读同一个键）。
@@ -290,12 +290,12 @@ struct SettingsView: View {
     }
 
     /// 真实内存台账（`MemoryDiag`）：进程总量 → 页位图（存活 / 缓存 / 各窗口持有）→ 堆。
-    /// 每一行都是进程里量出来的数，不是估算；页位图的 CA 副本按 ×2 记（见 `PageRenderEngine.copiesPerImage`）。
+    /// 每一行都是进程里量出来的数，不是估算（计费系数见 `PageRenderEngine.copiesPerImage`）。
     @ViewBuilder private func memoryDiagRows(_ s: MemoryDiag.Snapshot) -> some View {
         let mb = MemoryDiag.mb
         LabeledContent(L("App memory (Activity Monitor)"), value: mb(s.footprint))
         LabeledContent(L("Page bitmaps alive"),
-                       value: "\(s.liveCount) · \(mb(s.liveBytes)) + CA \(mb(s.liveBytes)) = \(mb(s.bitmapFootprint))")
+                       value: "\(s.liveCount) · \(mb(s.bitmapFootprint))")
         LabeledContent(L("In cache"),
                        value: "\(s.cacheBaseCount)+\(s.cacheTileCount) · \(mb(s.cacheBaseBytes + s.cacheTileBytes))"
                        + " · \(L("room")) \(mb(s.cacheEffectiveBytes / PageRenderEngine.copiesPerImage))")

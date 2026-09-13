@@ -463,6 +463,14 @@
     气泡里能选中/复制文字、点链接；缩放（两种口径）时气泡不闪；⌘↩ 保存 / Esc 取消；旧笔记（纯文本）显示不变。
     **欠着**：网页/安卓端气泡画的是 Markdown 原样源码（会露出 `**`），要对齐得把 `NoteMarkdown` 的折算规则移植过去。
 
+  - **2026-09-13：「连接设备后 macOS 内存飙升」已结清**（根因 = 页图 sRGB ≠ 窗口后备存储的显示器 ICC，
+    SwiftUI 显示每张页图都要 CG 重画转色 → 每张三份；修法 = 阅读窗/参考窗 `win.colorSpace = .sRGB`；
+    用户实测「暴降」：1.0–1.7 GB → 185 MB。全文与时间线见 `HISTORY.md` 同日「内存」条目）。
+    **还剩一条待验**：`PageRenderEngine.copiesPerImage` 已由 2 改 1（CA 副本没了），设置页「存活页图」行不再拼
+    「+ CA」——看一眼设置 → 渲染 区块的数字与活动监视器对得上、同样的缓存上限下回看/换标签命中率没变差即可。
+    🔴 **新规矩**：页图色彩空间（`PageBitmap`：sRGB）与所有显示页图的窗口的 `colorSpace` 必须一致；
+    新开一种带页图的窗口记得也设 `.sRGB`，否则那扇窗每张图又是三份。
+
   - **2026-09-10：三窗口 2.34GB 内存排查 + 五处修复**（分析全文与实测数字见 `HISTORY.md` 同日条目）。
     根因三笔：视图层持有 41 张页图（缓存只记了 8 张）／每张都有 CA 副本（×2）／夜间反色出的 11 张
     237MB 走 `createCGImage`、完全账外。改动：① 夜间反色渲进 mmap 缓冲（`PageBitmap.invert`，
@@ -1017,6 +1025,11 @@
 
 ### 真 Bug（未修）
 
+- **平板滚动时整窗视图树每秒重算 40~56 次**（2026-09-13 查内存时量到，未修）：平板每个 `scroll` 事件 →
+  `DocSession.emitAnchor(origin:"pad")` → `foreignAnchor`（`@Published`）→ `PageStreamView` 整体重算 →
+  `ReaderSurface.init` 跑一遍种子逻辑（`seedImages` 查缓存 + 扔掉一个临时 `Scratch`，ws 日志里那串
+  「阅读区状态释放」就是它）。同「阅读区卡顿先查每帧 @Published」那条老账，只是这次在平板那条路上。
+  修法方向：`foreignAnchor` 别每个事件都发，按帧合并（TimelineView 一拍一次）或改走回调进 `ScrollFollower`。
 - **草稿纸开着时关窗会漏一套视图状态**（2026-09-10 查阅读区泄漏时顺带发现，未修）：`ScratchPadView`
   的两个 NSEvent 监视器令牌存在 `@State` 里、闭包捕获视图拷贝，只在 `onDisappear` 移除——关窗时 AppKit
   直接销毁 hosting 视图，`onDisappear` 来不来没保证，纸开着关窗就漏一张页图 + CA 副本 + 会话。修法同阅读区：

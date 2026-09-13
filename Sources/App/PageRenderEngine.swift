@@ -63,7 +63,12 @@ final class PageRenderEngine {
     /// **跟着 `CGImage` 的生命周期走**（显示过一次、只要图还活着副本就在），不是「只有正在显示的才有」。
     /// 所以这个 ×2 对**每一张活着的图**都成立，视图层攥着的、缓存里躺着的一律照此计。
     /// 改这个数前先复测：`vmmap <pid> | grep -E '^(CG raster data|CoreAnimation|MALLOC_LARGE)'`。
-    static let copiesPerImage = 2
+    /// 🔴 2026-09-13 再复测：那份 CA 副本**不是 CA 的必然开销，是色彩空间转换的产物**——窗口后备存储
+    /// 默认用显示器 ICC、页图是 sRGB，两者不等 CA 就用 CG 整张重画一遍（还顺带给源图挂一块转换缓存）。
+    /// `ReaderWindowController` 把窗口 `colorSpace` 设成 sRGB 之后 CA 直接引用我们的缓冲：连平板滚 15 秒
+    /// `footprint` 里 `CoreAnimation` 3.5MB、页图尺寸的 purgeable 块 0 个。故改回 **1**——按 2 计的话
+    /// 同一个上限只装得下一半的页，回看/换标签白白重渲。
+    static let copiesPerImage = 1
 
     /// 一张图的真实内存代价（字节）。所有写缓存的地方一律走它，别再各写一遍 `bytesPerRow * height`。
     static func cost(of image: CGImage) -> Int { image.bytesPerRow * image.height * copiesPerImage }
@@ -88,7 +93,7 @@ final class PageRenderEngine {
 
     private init() { installMemoryPressureHandler() }
 
-    /// 设置缓存总上限（MB，= **真实**占用，已含三份系数）。基图 : 贴片 = 3 : 1。
+    /// 设置缓存总上限（MB，= **真实**占用，含 `copiesPerImage` 系数）。基图 : 贴片 = 3 : 1。
     /// 设置页写入、启动时套用。下限 64MB 防误设过小反而频繁重渲。
     func setCacheLimitMB(_ mb: Int) {
         let total = max(64, mb) << 20
@@ -96,7 +101,7 @@ final class PageRenderEngine {
         cache.totalCostLimit = base
         tileCache.totalCostLimit = total - base
     }
-    /// 当前缓存已用（MB，成本口径 = 已含 CA 副本），供设置页/调试显示。
+    /// 当前缓存已用（MB，成本口径），供设置页/调试显示。
     var cacheUsageMB: Int { (cache.currentCost + tileCache.currentCost) >> 20 }
 
     /// 缓存台账（`MemoryDiag` 用）。`baseBytes`/`tileBytes` 是**真实字节**（成本 ÷ 份数）；
@@ -112,7 +117,7 @@ final class PageRenderEngine {
     /// 视图层的持有量（真实字节，由 `PageHoldings` 在总量变化时回报）。
     ///
     /// 🔴 **缓存上限约束的是页位图总量，不只是缓存**（2026-09-10 定）：视图攥着的图 LRU 管不到，
-    /// 它们照样占内存、照样有 CA 副本——不从缓存额度里扣掉，「设置页写 512MB」就永远对不上活动监视器。
+    /// 它们照样占内存——不从缓存额度里扣掉，「设置页写 512MB」就永远对不上活动监视器。
     /// 扣法见 `RenderImageCache.reservedCost`：缓存至少保住上限的 1/4，别被挤成零。
     func setExternalHoldings(baseBytes: Int, tileBytes: Int) {
         cache.reservedCost = baseBytes * Self.copiesPerImage

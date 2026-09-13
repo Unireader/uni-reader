@@ -54,6 +54,8 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         win.isReleasedWhenClosed = false
         win.isRestorable = false
         win.tabbingMode = .disallowed
+        // 同阅读窗：后备存储 sRGB = 页图色彩空间，CA 才能直接引用页图缓冲（理由见 `ReaderWindowController`）。
+        win.colorSpace = .sRGB
         // 阅读窗全屏时它得能进那个 space，否则一开小窗系统就切回桌面去显示它。
         win.collectionBehavior.insert(.fullScreenAuxiliary)
         win.setFrameAutosaveName(Self.frameName)

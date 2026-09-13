@@ -29,7 +29,7 @@ enum MemoryDiag {
 
     /// malloc 堆：`used` = 真在用的字节；`retained` = 已 free 但分配器攥着没还给内核的
     /// （大块解码缓冲、碎片化的小块区）。后者照样算在活动监视器里，关掉全部文档后剩下的
-    /// 几百 MB 主要就是它，不是谁还持有着对象。都不含 `mmap` 的页位图与 CA 副本。
+    /// 几百 MB 主要就是它，不是谁还持有着对象。都不含 `mmap` 的页位图。
     static func mallocStats() -> (used: Int, retained: Int) {
         let s = mstats()
         return (Int(s.bytes_used), Int(s.bytes_free))
@@ -37,7 +37,7 @@ enum MemoryDiag {
 
     static func mb(_ bytes: Int) -> String { "\(bytes >> 20) MB" }
 
-    /// 一份完整的占用快照（各项都是真实字节；页位图与 CA 副本分开列）。
+    /// 一份完整的占用快照（各项都是真实字节）。
     struct Snapshot {
         var footprint: Int
         var liveCount: Int
@@ -46,7 +46,7 @@ enum MemoryDiag {
         var cacheBaseBytes: Int     // 真实字节（已除去 copiesPerImage）
         var cacheTileCount: Int
         var cacheTileBytes: Int
-        var cacheLimitBytes: Int    // 用户设的总上限（成本口径 = 已含 CA 副本）
+        var cacheLimitBytes: Int    // 用户设的总上限（成本口径，见 `PageRenderEngine.copiesPerImage`）
         var cacheEffectiveBytes: Int // 扣掉视图持有量后缓存实际还能用的额度（成本口径）
         var holdings: [PageHolding]
         var mallocUsed: Int
@@ -54,8 +54,9 @@ enum MemoryDiag {
 
         var heldBytes: Int { holdings.reduce(0) { $0 + $1.bytes } }
         var heldCount: Int { holdings.reduce(0) { $0 + $1.count } }
-        /// 页位图这一项在活动监视器里的真实体积 ≈ 我们的缓冲 + CA 副本。
-        var bitmapFootprint: Int { liveBytes * 2 }
+        /// 页位图这一项在活动监视器里的真实体积。窗口 `colorSpace` 与页图同为 sRGB 之后 CA 直接引用
+        /// 我们的缓冲，没有副本（2026-09-13 实测 `CoreAnimation` 3.5MB）；系数跟着引擎的计费口径走。
+        var bitmapFootprint: Int { liveBytes * PageRenderEngine.copiesPerImage }
     }
 
     static func snapshot() -> Snapshot {
@@ -76,7 +77,7 @@ enum MemoryDiag {
         let s = snapshot()
         var lines: [String] = []
         lines.append("footprint \(mb(s.footprint))")
-        lines.append("page bitmaps alive \(s.liveCount) × \(mb(s.liveBytes)) (+CA copies ≈ \(mb(s.liveBytes)))")
+        lines.append("page bitmaps alive \(s.liveCount) × \(mb(s.liveBytes))")
         lines.append("  cache \(s.cacheBaseCount)+\(s.cacheTileCount) \(mb(s.cacheBaseBytes + s.cacheTileBytes))"
                      + " · limit \(mb(s.cacheLimitBytes)) effective \(mb(s.cacheEffectiveBytes))")
         lines.append("  held by views \(s.heldCount) \(mb(s.heldBytes))")

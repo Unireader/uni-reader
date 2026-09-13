@@ -3,6 +3,64 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 内存（2026-09-13，Mac：「连接设备后 macOS 内存飙升」→ 窗口色彩空间改 sRGB，用户实测「暴降」）
+
+用户报连平板后内存飙升。对正在跑的进程 1 秒一采（`footprint` 分类 + 平板日志增量 + 阅读区 body 重算次数），
+两轮重连平板实测，最后一轮带 `MallocStackLogging=1` 抓分配栈。
+
+### 实测时间线（第一轮，Debug 包，窗口在外接 LG 1x 屏）
+
+| 时刻 | 发生什么 | footprint | 我们的页图 (VM_ALLOCATE) | CoreAnimation | MALLOC_LARGE |
+|---|---|---|---|---|---|
+| 平板连上（补发全量） | | 990 → 921 MB | 254 | 245 | 194 |
+| 平板滚动、Mac 跟随（视图树每秒重算 40~56 次） | | ~1.0–1.1 GB | 254→329 | 245→320 | 129~170 |
+| **平板持续滚动、没取页图**（pad 日志 +0）| 10 秒 | 1353 → **1605 MB** | 350↔392（稳定） | 341↔383（稳定） | **314 → 598，每秒 +42 MB** |
+| 平板取了一批页图 | | 1191 | 504 | 403 | **152（一下全放了）** |
+
+峰值 1678 MB。平板取页图那条路（渲 2160px → JPEG → NSCache）不是主项——涨得最凶的 10 秒里一张都没取。
+
+### 根因：页图 sRGB ≠ 窗口后备存储的色彩空间 → SwiftUI 显示每张页图都要 CG 整张重画转色
+
+`vmmap`：`DefaultPurgeableMallocZone` 里一块块 43,728,896 B（= 2800×3902×4 页图尺寸）、非 volatile、
+不随页图释放。`malloc_history` 栈（4 块全同）：
+
+```
+-[_SwiftUIProxyImage prepare]（com.apple.SwiftUI.prepare-image 队列）
+→ CA::Render::copy_image → CA::Render::create_image_by_rendering
+→ CGContextDrawImage → ripc_AcquireRIPImageData → CGSImageDataLock → img_data_lock → create_image_data_handle
+```
+
+`sample` 看到 `img_data_lock` 下面是 `img_raw_read → provider_for_destination_get_bytes_at_position
+→ memmove / CGColorTransformConvertUsingCMSConverter → vImage`：**CG 在给整张页图做色彩空间转换**，
+转换结果挂在源图上当缓存（攒到 CG 自己的上限才丢），这条线程在 3 秒采样里几乎满载。
+窗口 `colorSpace` 默认 = 所在显示器的 ICC（Color LCD / LG HDR WFHD），页图是 sRGB，两者不等，
+CA 就不能直接引用我们的缓冲，改用 CG 重画（产生 CA 副本）+ 挂转换缓存。**每张页图三份**。
+
+对照探针 `spike/window-colorspace-probe.swift`（SwiftUI 离屏、阅读区同构：ScrollView + scrollPosition 50Hz
+推滚 + 每秒换页；两块屏都跑）：窗口 `colorSpace = .sRGB` → 只剩我们的 mmap，**CA 副本消失**；
+默认 / Display P3 / Generic RGB → 每张多一份 CA 副本（栈同上）。探针里复现不出 app 那块转换缓存，
+但同为 sRGB 之后根本不走重画，两笔一起没了。
+
+### 改动
+
+- `ReaderWindowController` / `RefWindowController`：建窗时 `win.colorSpace = .sRGB`。显示器色彩匹配改由
+  窗口服务器合成时做（GPU），观感不变；代价是窗口画不出 sRGB 之外的广色域（本 app 用不到）。
+- **用户实测（同日）：「内存暴降」。** 新包连平板滚 15 秒后 `footprint` 185 MB（峰值 344 MB，改前 1.0–1.7 GB）、
+  `CoreAnimation` 3.5 MB（改前 ≈ 页图总量）、页图尺寸的 purgeable 块 0 个。
+- `PageRenderEngine.copiesPerImage` 2 → **1**（CA 副本没了；按 2 计同一个上限只装得下一半的页），
+  `MemoryDiag.bitmapFootprint` 与设置页「存活页图」行跟着去掉「+ CA」那一截。
+  🔴 **2026-09-10 那条「CA 副本跟着 CGImage 走」的结论其实就是这个转换副本**，不是 CA 的必然开销。
+
+### 教训（进 memory：`unireader-memory-profiling` 第 6、7 条）
+
+「谁分配的」这种问题直接 `MallocStackLogging` + `malloc_history`（终端起 app，`open -a` 起的附不上），
+别再拿离线探针猜——这次探针试了六轮都复现不出，一轮 `malloc_history` + `sample` 就定了。
+
+### 顺带看到、没动
+
+平板滚动时 `foreignAnchor`（`@Published`）每个 scroll 事件写一次 → 整窗视图树每秒重算 40~56 次
+（ws 日志里那串「阅读区状态释放」= 每次重算扔掉的临时 `Scratch`）。CPU 账，记在 TODO 已知欠账。
+
 ## 快捷键映射 + ⌘⇧A/参考窗开关（2026-09-13，用户四条，第四条撤回）
 
 1. **快捷键可改**（`Sources/App/Shortcuts.swift`）：`KeyCombo`（键 + ⌘⇧⌥⌃；存储串 `"shift+cmd+a"`，显示 `⇧⌘A`）、

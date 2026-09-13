@@ -77,6 +77,15 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                            backing: .buffered, defer: false)
         win.tabbingMode = .disallowed   // 我们自己有标签栏（`MAC-TABS-PLAN.md`），别再叠一层系统标签
         win.minSize = NSSize(width: 720, height: 480)
+        // 🔴 **窗口后备存储用 sRGB，与页图（`PageBitmap`：sRGB + BGRX）同一个色彩空间**（2026-09-13 实测定）。
+        // 默认值是所在显示器的 ICC（Color LCD / 外接屏各自一套）：一不相等，SwiftUI 显示每张页图都要经
+        // `_SwiftUIProxyImage prepare → CA::Render::create_image_by_rendering` 用 CG 整张**重画一遍做色彩转换**——
+        // 一张 2800px 页图除了我们的 mmap 缓冲，还多出 CA 副本 41.7MB + CG 给源图挂的转换缓存 43.7MB
+        //（purgeable zone、非 volatile、不随页图释放，攒到 CG 自己的上限才丢）。平板驱动阅读区跟随时
+        // 页图进出频繁，10 秒就攒出 600MB（用户报「连接设备后内存飙升」，`malloc_history` 抓到的栈）。
+        // 两边同为 sRGB，CA 直接引用我们的缓冲：零副本、零转换、prepare-image 线程也不再烧 CPU；
+        // 显示器色彩匹配由窗口服务器在合成时做（GPU），观感不变。对照实验：`spike/window-colorspace-probe.swift`。
+        win.colorSpace = .sRGB
         // 系统的窗口状态恢复照旧关掉：本 app 自己管着「上次开了哪些文档」（每个工作区的打开集 →
         // restoreTabs），系统再恢复一遍是重复的。迁移前这是 `.restorationBehavior(.disabled)`。
         win.isRestorable = false
