@@ -303,6 +303,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         on(.prevTabRequested) { $0.tabs.activate(offset: -1) }
         on(.toggleSidebar) { $0.sidebarItem.animator().isCollapsed.toggle() }
         on(.toggleInspector) { $0.toggleInspector() }
+        on(.toggleRefWindow) { $0.toggleReference() }
         // ⌘F：让工具栏的搜索框进入编辑态（迁移前是 `.searchable` 的 isPresented）
         on(.readerFind) { $0.searchItem?.beginSearchInteraction() }
 

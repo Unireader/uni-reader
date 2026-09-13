@@ -484,3 +484,30 @@
 "Note bubble min width" = "Note bubble min width";
 "Note bubble max width" = "Note bubble max width";
 "Text size and widths apply to expanded text and image notes on the page; a short note shrinks to its content between the min and max width. Editor size applies to the note editor. Follow page zoom off: bubbles keep a fixed size on screen; on: they scale with the page, like on the tablet." = "Text size and widths apply to expanded text and image notes on the page; a short note shrinks to its content between the min and max width. Editor size applies to the note editor. Follow page zoom off: bubbles keep a fixed size on screen; on: they scale with the page, like on the tablet.";
+
+// 快捷键映射（2026-09-13）
+"Shortcuts" = "Shortcuts";
+"Pens & Modes" = "Pens & Modes";
+"Reader Keys" = "Reader Keys";
+"View" = "View";
+"Highlight Selection" = "Highlight Selection";
+"Note from Selection" = "Note from Selection";
+"Eraser ⇄ Write" = "Eraser ⇄ Write";
+"Page Turn ⇄ Write" = "Page Turn ⇄ Write";
+"Lasso Select ⇄ Text Selection" = "Lasso Select ⇄ Text Selection";
+"Local Pen ⇄ Text Selection" = "Local Pen ⇄ Text Selection";
+"Text Selection" = "Text Selection";
+"Settings…" = "Settings…";
+"Hide UniReader" = "Hide UniReader";
+"Hide Others" = "Hide Others";
+"Quit UniReader" = "Quit UniReader";
+"Minimize" = "Minimize";
+"Reset All Shortcuts" = "Reset All Shortcuts";
+"Defaults" = "Defaults";
+"Reset to default" = "Reset to default";
+"Press keys…" = "Press keys…";
+"None" = "None";
+"Menu shortcuts need ⌘, ⌥ or ⌃ (or a function key)." = "Menu shortcuts need ⌘, ⌥ or ⌃ (or a function key).";
+"Already used by “%@”." = "Already used by “%@”.";
+"Reader keys work while reading; they are ignored while typing in a text field or the AI panel. Keys 1–9 pick a pen and are fixed." = "Reader keys work while reading; they are ignored while typing in a text field or the AI panel. Keys 1–9 pick a pen and are fixed.";
+"Click a shortcut to change it, then press the new keys. Esc cancels; Delete removes the shortcut. Basic commands (New, Open, Close, Undo, Copy, Paste, Find, Quit…) are fixed." = "Click a shortcut to change it, then press the new keys. Esc cancels; Delete removes the shortcut. Basic commands (New, Open, Close, Undo, Copy, Paste, Find, Quit…) are fixed.";

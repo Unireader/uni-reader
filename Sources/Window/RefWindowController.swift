@@ -79,6 +79,14 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
                 }
                 .store(in: &bag)
         }
+        // 参考窗开关的快捷键：这扇窗是 key 时阅读窗认领不到（key 只有一扇），由这里关掉——
+        // 只改 model，窗口本身由 `ReaderWindowController` 那条订阅收（同红色关闭钮的路）。
+        NotificationCenter.default.publisher(for: .toggleRefWindow)
+            .sink { [weak self] _ in
+                guard let self, self.window?.isKeyWindow == true, self.model.isOpen else { return }
+                self.model.close()
+            }
+            .store(in: &bag)
         refresh()
     }
 

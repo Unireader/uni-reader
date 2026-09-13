@@ -20,6 +20,31 @@ enum MainMenu {
         main.addItem(aiMenu())
         main.addItem(windowMenu())
         NSApp.mainMenu = main
+        applyShortcuts()
+        if shortcutsObserver == nil {
+            shortcutsObserver = NotificationCenter.default.addObserver(
+                forName: .shortcutsChanged, object: nil, queue: .main
+            ) { _ in MainActor.assumeIsolated { applyShortcuts() } }
+        }
+    }
+
+    // MARK: 可改的快捷键
+
+    /// 可改快捷键的菜单项，按动作登记；设置页改了就地重设 key equivalent，菜单不重建。
+    private static var bound: [ShortcutAction: NSMenuItem] = [:]
+    private static var shortcutsObserver: Any?
+
+    /// 把映射表里的当前值写到各菜单项上（用户清掉的 → 没有快捷键）。
+    static func applyShortcuts() {
+        for (action, it) in bound {
+            if let c = Shortcuts.shared.combo(for: action) {
+                it.keyEquivalent = c.menuKeyEquivalent
+                it.keyEquivalentModifierMask = c.mods
+            } else {
+                it.keyEquivalent = ""
+                it.keyEquivalentModifierMask = []
+            }
+        }
     }
 
     // MARK: 构件
@@ -33,23 +58,26 @@ enum MainMenu {
     }
 
     /// 普通项。`sel` 为 nil = 灰项；`target` 为 nil 时走响应者链（系统动作就靠这个）。
+    /// `key`/`mods` 是**固定**快捷键（基础命令）；可改的传 `shortcut:`，值由 `applyShortcuts` 按映射表填。
     private static func item(_ title: String, _ sel: Selector?, key: String = "",
                              mods: NSEvent.ModifierFlags = .command,
                              target: AnyObject? = nil, tag: Int = 0,
-                             represented: Any? = nil) -> NSMenuItem {
+                             represented: Any? = nil, shortcut: ShortcutAction? = nil) -> NSMenuItem {
         let it = NSMenuItem(title: title, action: sel, keyEquivalent: key)
         it.keyEquivalentModifierMask = mods
         it.target = target
         it.tag = tag
         it.representedObject = represented
+        if let shortcut { bound[shortcut] = it }
         return it
     }
 
     /// 发通知的项——菜单里绝大多数都是这种。
     private static func post(_ title: String, _ name: Notification.Name,
-                             key: String = "", mods: NSEvent.ModifierFlags = .command) -> NSMenuItem {
+                             key: String = "", mods: NSEvent.ModifierFlags = .command,
+                             shortcut: ShortcutAction? = nil) -> NSMenuItem {
         item(title, #selector(MenuActions.postNotification(_:)), key: key, mods: mods,
-             target: MenuActions.shared, represented: name.rawValue)
+             target: MenuActions.shared, represented: name.rawValue, shortcut: shortcut)
     }
 
     // MARK: 各菜单
@@ -120,21 +148,24 @@ enum MainMenu {
 
     private static func viewMenu() -> NSMenuItem {
         let (item0, m) = container(L("View"))
-        m.addItem(post(L("Toggle Sidebar"), .toggleSidebar, key: "b"))
-        m.addItem(post(L("Toggle Inspector"), .toggleInspector, key: "i"))
+        // 这一整个菜单的快捷键都可改（默认值见 `ShortcutAction.defaultCombo`，设置 › 快捷键）。
+        m.addItem(post(L("Toggle Sidebar"), .toggleSidebar, shortcut: .toggleSidebar))
+        m.addItem(post(L("Toggle Inspector"), .toggleInspector, shortcut: .toggleInspector))
+        // 参考窗开关：与工具栏那枚同一条路（key 窗口认领；独立窗口形态下它自己是 key 时由它关自己）。
+        m.addItem(post(L("Reference Window"), .toggleRefWindow, shortcut: .refWindow))
         m.addItem(.separator())
-        m.addItem(post(L("Zoom In"), .readerZoomIn, key: "="))
-        m.addItem(post(L("Zoom Out"), .readerZoomOut, key: "-"))
-        m.addItem(post(L("Zoom to Fit Width"), .readerZoomFit, key: "0"))
+        m.addItem(post(L("Zoom In"), .readerZoomIn, shortcut: .zoomIn))
+        m.addItem(post(L("Zoom Out"), .readerZoomOut, shortcut: .zoomOut))
+        m.addItem(post(L("Zoom to Fit Width"), .readerZoomFit, shortcut: .zoomFit))
         m.addItem(.separator())
-        // 跳转历史（`JumpHistory`）：⌘[ / ⌘] 是浏览器/Xcode 的通用口径；
-        // 浮窗开关用 ⌥⌘J —— ⌥⌘H 是系统的「隐藏其他」，抢不得。
-        // 书签：⌘D 在**当前阅读位置**加一枚（落点更精确的那条入口是阅读区右键「在此添加书签」）。
-        m.addItem(post(L("Add Bookmark"), .addBookmarkRequested, key: "d"))
+        // 跳转历史（`JumpHistory`）：默认 ⌘[ / ⌘] 是浏览器/Xcode 的通用口径；
+        // 浮窗开关默认 ⌥⌘J —— ⌥⌘H 是系统的「隐藏其他」，抢不得。
+        // 书签：默认 ⌘D 在**当前阅读位置**加一枚（落点更精确的那条入口是阅读区右键「在此添加书签」）。
+        m.addItem(post(L("Add Bookmark"), .addBookmarkRequested, shortcut: .addBookmark))
         m.addItem(.separator())
-        m.addItem(post(L("Back to Previous Position"), .jumpBackRequested, key: "["))
-        m.addItem(post(L("Forward to Next Position"), .jumpForwardRequested, key: "]"))
-        m.addItem(post(L("Jump History"), .toggleJumpHistory, key: "j", mods: [.command, .option]))
+        m.addItem(post(L("Back to Previous Position"), .jumpBackRequested, shortcut: .jumpBack))
+        m.addItem(post(L("Forward to Next Position"), .jumpForwardRequested, shortcut: .jumpForward))
+        m.addItem(post(L("Jump History"), .toggleJumpHistory, shortcut: .jumpHistory))
         m.addItem(.separator())
         m.addItem(item(L("Customize Toolbar…"), #selector(MenuActions.customizeToolbar(_:)),
                        key: "", mods: [], target: MenuActions.shared))
@@ -142,27 +173,27 @@ enum MainMenu {
         // 笔架/模式（设备级全局状态，直接调 AppModel——与画布笔架、平板环形盘同一套 apply 路径）
         for i in 0..<4 {
             m.addItem(item(String(format: L("Pen Slot %d"), i + 1),
-                           #selector(MenuActions.penSlot(_:)), key: "\(i + 1)", mods: .option,
-                           target: MenuActions.shared, tag: i))
+                           #selector(MenuActions.penSlot(_:)),
+                           target: MenuActions.shared, tag: i, shortcut: .penSlot(i)))
         }
-        m.addItem(item(L("Eraser"), #selector(MenuActions.padMode(_:)), key: "e", mods: .option,
-                       target: MenuActions.shared, represented: "erase"))
-        m.addItem(item(L("Page Turn"), #selector(MenuActions.padMode(_:)), key: "v", mods: .option,
-                       target: MenuActions.shared, represented: "page"))
-        m.addItem(item(L("Write"), #selector(MenuActions.padMode(_:)), key: "b", mods: .option,
-                       target: MenuActions.shared, represented: "note"))
+        m.addItem(item(L("Eraser"), #selector(MenuActions.padMode(_:)),
+                       target: MenuActions.shared, represented: "erase", shortcut: .eraser))
+        m.addItem(item(L("Page Turn"), #selector(MenuActions.padMode(_:)),
+                       target: MenuActions.shared, represented: "page", shortcut: .pageTurn))
+        m.addItem(item(L("Write"), #selector(MenuActions.padMode(_:)),
+                       target: MenuActions.shared, represented: "note", shortcut: .write))
         m.addItem(.separator())
-        m.addItem(post(L("Night Mode"), .toggleNightMode, key: "n", mods: [.command, .option]))
-        m.addItem(post(L("Canvas Mode"), .toggleCanvasMode, key: "c", mods: [.command, .option]))
+        m.addItem(post(L("Night Mode"), .toggleNightMode, shortcut: .nightMode))
+        m.addItem(post(L("Canvas Mode"), .toggleCanvasMode, shortcut: .canvasMode))
         return item0
     }
 
     private static func aiMenu() -> NSMenuItem {
         let (item0, m) = container(L("AI"))
-        m.addItem(item(L("AI Panel"), #selector(MenuActions.aiPanel(_:)), key: "a",
-                       mods: [.command, .shift], target: MenuActions.shared))
+        m.addItem(item(L("AI Panel"), #selector(MenuActions.aiPanel(_:)),
+                       target: MenuActions.shared, shortcut: .aiPanel))
         m.addItem(.separator())
-        m.addItem(post(L("Snip to AI"), .toggleSnipTool, key: "s", mods: .option))
+        m.addItem(post(L("Snip to AI"), .toggleSnipTool, shortcut: .snipToAI))
         return item0
     }
 
@@ -207,8 +238,9 @@ final class MenuActions: NSObject {
 
     @objc func aiPanel(_ sender: Any?) {
         // 内置模式下 ⌘⇧A 是展开/收起那块侧面板，而不是凭空开一扇窗（那扇窗此刻不该存在）。
+        // 浮窗模式下是**显示/隐藏**（用户 2026-09-13）：隐藏只是把窗口撤下屏幕，网页与对话都还在，再按就回来。
         if AIPanelModel.shared.mode == .inline { AIPanelModel.shared.toggleInlineActive() }
-        else { AIPanelWindowController.show() }
+        else { AIPanelWindowController.toggle() }
     }
 
     // MARK: 剪贴板五项（先响应者链，没人接才给阅读区）

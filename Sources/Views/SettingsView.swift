@@ -3,13 +3,14 @@ import SwiftUI
 
 /// 设置窗的标签页；顺序即标题栏里的顺序。图标/文案放这里，窗口壳（`SettingsTabController`）直接取用。
 enum SettingsTab: CaseIterable {
-    case general, tablet, reading, diagnostics
+    case general, tablet, reading, shortcuts, diagnostics
 
     var title: String {
         switch self {
         case .general: return L("General")
         case .tablet: return L("Tablet")
         case .reading: return L("Reading")
+        case .shortcuts: return L("Shortcuts")
         case .diagnostics: return L("Diagnostics")
         }
     }
@@ -19,6 +20,7 @@ enum SettingsTab: CaseIterable {
         case .general: return "gear"
         case .tablet: return "ipad"
         case .reading: return "book"
+        case .shortcuts: return "keyboard"
         case .diagnostics: return "stopwatch"
         }
     }
@@ -57,6 +59,7 @@ struct SettingsView: View {
         case .general: generalTab
         case .tablet: tabletTab
         case .reading: readingTab
+        case .shortcuts: ShortcutsSettings()
         case .diagnostics: diagnosticsTab
         }
     }
@@ -324,5 +327,100 @@ struct SettingsView: View {
         if h.tileCount > 0 { parts.append("\(h.tileCount) \(L("tile")) \(mb(h.tileBytes))") }
         if h.snapCount > 0 { parts.append("\(h.snapCount) \(L("snap")) \(mb(h.snapBytes))") }
         return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - 快捷键页
+
+/// 设置 › 快捷键：每个可改动作一行，点按钮进入录制，按下一组键就记下（`Shortcuts`）。
+/// 基础命令（新建/打开/关闭/撤销/剪贴板/查找/退出…）与数字键选笔固定，不在这一页。
+struct ShortcutsSettings: View {
+    @ObservedObject private var store = Shortcuts.shared
+
+    var body: some View {
+        Form {
+            ForEach(Array(ShortcutAction.Section.allCases.enumerated()), id: \.offset) { i, section in
+                Section {
+                    ForEach(section.actions) { ShortcutRow(action: $0, store: store) }
+                } header: {
+                    Text(section.title)
+                } footer: {
+                    if section == .readerKeys {
+                        Text(L("Reader keys work while reading; they are ignored while typing in a text field or the AI panel. Keys 1–9 pick a pen and are fixed."))
+                    }
+                }
+            }
+            Section {
+                LabeledContent {
+                    Button(L("Reset All Shortcuts")) { store.resetAll() }
+                        .disabled(store.overrides.isEmpty)
+                } label: {
+                    Text(L("Defaults"))
+                }
+            } footer: {
+                Text(L("Click a shortcut to change it, then press the new keys. Esc cancels; Delete removes the shortcut. Basic commands (New, Open, Close, Undo, Copy, Paste, Find, Quit…) are fixed."))
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// 一行：动作名 + 当前键（点它录制）+ 改过才出现的「恢复默认」。
+/// 录制用 NSEvent 本地监视器**吃掉**按下的键（返回 nil）——否则按 ⌘Q 这类组合键时菜单会先响应。
+struct ShortcutRow: View {
+    let action: ShortcutAction
+    @ObservedObject var store: Shortcuts
+    @State private var recording = false
+    @State private var monitor: Any?
+    @State private var problem: String?
+
+    var body: some View {
+        LabeledContent {
+            HStack(spacing: 8) {
+                if !store.isDefault(action) {
+                    Button { store.reset(action) } label: { Image(systemName: "arrow.counterclockwise") }
+                        .help(L("Reset to default"))
+                }
+                Button(recording ? L("Press keys…") : (store.combo(for: action)?.display ?? L("None"))) {
+                    recording ? stop() : start()
+                }
+                .frame(minWidth: 96)
+                .monospacedDigit()
+            }
+        } label: {
+            Text(action.title)
+            if let problem { Text(problem) }
+        }
+        .onDisappear { stop() }
+    }
+
+    private func start() {
+        problem = nil
+        recording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            handle(e)
+            return nil
+        }
+    }
+
+    private func stop() {
+        if let m = monitor { NSEvent.removeMonitor(m) }
+        monitor = nil
+        recording = false
+    }
+
+    private func handle(_ e: NSEvent) {
+        let mods = e.modifierFlags.intersection(KeyCombo.relevantMods)
+        if e.keyCode == 53, mods.isEmpty { stop(); return }                        // Esc：取消
+        if e.keyCode == 51, mods.isEmpty { store.set(nil, for: action); stop(); return }   // ⌫：清掉
+        guard let c = KeyCombo(event: e) else { return }                          // 认不出的键：继续等
+        if action.scope == .menu, !c.isMenuSafe {
+            problem = L("Menu shortcuts need ⌘, ⌥ or ⌃ (or a function key).")
+        } else if let who = store.conflict(c, for: action) {
+            problem = String(format: L("Already used by “%@”."), who)
+        } else {
+            store.set(c, for: action)
+        }
+        stop()
     }
 }

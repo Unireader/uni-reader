@@ -275,11 +275,12 @@ extension ReaderSurface {
         }
     }
 
-    // MARK: 单键工具快捷键（e 橡皮 / 1-9 选笔 / b 书写 / v 翻页 / l 框选 / i 本机笔 / t 文字选择；
-    //       **有选中文字时** h 快速高亮 / n 文字笔记）
-    // 与 ⌥ 菜单快捷键（UniReaderApp .commands）同一套 apply 路径，广播到平板天然生效。
-    // **只认无修饰键的单字母**：带 ⌘/⌥/⌃ 的组合键、文本框焦点（查找/笔记编辑/重命名）、
-    // 以及**内置 AI 面板里的 webview 焦点**一律放行（后者见 `aiWebInputHasFocus`）。
+    // MARK: 阅读区单键快捷键（默认 e 橡皮 / b 书写 / v 翻页 / l 框选 / i 本机笔 / t 文字选择；
+    //       **有选中文字时** h 快速高亮 / n 文字笔记；1-9 选笔固定不可改）
+    // 键位查 `Shortcuts`（设置 › 快捷键可改，默认值在 `ShortcutAction.defaultCombo`）；
+    // 动作与 ⌥ 菜单项同一套 apply 路径，广播到平板天然生效。
+    // 按下的键在表里没有对应动作就原样放行（含带 ⌘/⌥/⌃ 的组合键——那些归菜单）；
+    // 文本框焦点（查找/笔记编辑/重命名）与**内置 AI 面板里的 webview 焦点**一律放行（后者见 `aiWebInputHasFocus`）。
     // 输入法：没有文本输入焦点时输入法根本不介入（它只挂在 NSTextInputClient 上），按键原样到这里；
     // 有文本焦点（含正在组字）则 firstResponder 是 NSText / WKWebView，上面两条守卫已放行。
     // 笔架里的 eraser/钢笔图标 Button 不能挂 `.keyboardShortcut("e")`——那在文本框焦点时也会抢键。
@@ -288,27 +289,33 @@ extension ReaderSurface {
         guard scratch.toolKeyMonitor == nil else { return }
         scratch.toolKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard scratch.isActiveWindow,
-                  event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
                   !(NSApp.keyWindow?.firstResponder is NSText),
                   !aiWebInputHasFocus(),          // 内置 AI 面板在打字 → 键归它（WKWebView 不是 NSText）
-                  let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
-            // 选中了文字：h / n 归选区（高亮 / 笔记），只在这两个键上盖过下面的工具切换；
-            // 草稿纸盖着时阅读区没有选区可言，自然落到下面的分支。
+                  let combo = KeyCombo(event: event) else { return event }
+            // 数字键 1–9 直选笔槽：固定不进映射表（9 个连号，三端同约定，见 `REQUIREMENTS.md §1.5`）。
+            if combo.mods.isEmpty, combo.key.count == 1, let d = Int(combo.key), (1...9).contains(d) {
+                guard d - 1 < app.pens.count else { return event }
+                app.applyPenSelection(index: d - 1)
+                return nil
+            }
+            guard let action = Shortcuts.shared.readerAction(for: combo) else { return event }
+            // 选中了文字：高亮 / 笔记两个动作才有对象；没选区时这两个键原样放行。
+            // 草稿纸盖着时阅读区没有选区可言。
             let hasSelection = selection?.text.isEmpty == false && session.openPadID == nil
-            switch key {
-            case "h" where hasSelection: quickHighlight()
-            case "n" where hasSelection: beginAddNote()
-            case "e": app.setPadMode(app.padMode == "erase" ? "note" : "erase")
-            case "b", "n": app.setPadMode("note")
-            case "v": app.setPadMode(app.padMode == "page" ? "note" : "page")
-            case "l": app.pointerTool = app.pointerTool == .lasso ? .textSelect : .lasso
-            case "i": app.pointerTool = app.pointerTool == .ink ? .textSelect : .ink
-            case "t": app.pointerTool = .textSelect
-            case "1"..."9":
-                let i = Int(key)! - 1
-                guard i < app.pens.count else { return event }
-                app.applyPenSelection(index: i)
-            default: return event
+            switch action {
+            case .highlightSelection:
+                guard hasSelection else { return event }
+                quickHighlight()
+            case .noteFromSelection:
+                guard hasSelection else { return event }
+                beginAddNote()
+            case .keyEraser: app.setPadMode(app.padMode == "erase" ? "note" : "erase")
+            case .keyWrite: app.setPadMode("note")
+            case .keyPageTurn: app.setPadMode(app.padMode == "page" ? "note" : "page")
+            case .keyLasso: app.pointerTool = app.pointerTool == .lasso ? .textSelect : .lasso
+            case .keyLocalInk: app.pointerTool = app.pointerTool == .ink ? .textSelect : .ink
+            case .keyTextSelect: app.pointerTool = .textSelect
+            default: return event   // 菜单类动作不在这里处理
             }
             return nil
         }

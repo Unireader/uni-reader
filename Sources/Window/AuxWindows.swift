@@ -95,6 +95,7 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
         if let c = shared, let w = c.window {
             w.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            AIPanelDock.shared.reapply()   // 隐藏时解除了子窗口关系，回来要重新贴边
             return
         }
         guard let app = AppDelegate.shared?.appModel else { return }
@@ -102,6 +103,19 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
         shared = c
         c.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// ⌘⇧A（浮窗模式）：显示 ⇄ 隐藏（用户 2026-09-13「不关闭，暂时隐藏」）。
+    /// 隐藏 = `orderOut`：窗口与内容都留着（网页、对话、滚动位置原样），不走 `windowWillClose` 那条释放路径；
+    /// 是吸附着的子窗口时先摘下来——子窗口跟着父窗口的显隐走，直接 orderOut 可能被父窗口再带回来。
+    static func toggle() {
+        if let c = shared, let w = c.window, w.isVisible { c.hide() } else { show() }
+    }
+
+    private func hide() {
+        guard let w = window else { return }
+        w.parent?.removeChildWindow(w)
+        w.orderOut(nil)
     }
 
     /// 切到内置模式时把这扇窗关掉（迁移前是 `AIPanelView` 里的 `dismissWindow`）。
