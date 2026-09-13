@@ -1013,7 +1013,7 @@
    ——它就是用来照出「改一边忘了另两边」的。首轮修掉两条真分叉（钢笔锥度、铅笔三道纹理），
    剩下的两处小差异见下面「已知欠账」。
 
-4. **MCP 服务（给外部 Agent 用）——批 1 已落地并实测通过、批 2/3 已落地待实测（分支 `worktree-mcp`）**（2026-09-13，**`MCP-PLAN.md`**）。
+4. **MCP 服务（给外部 Agent 用）——三批已落地合入 `main`；批 1 实测通过、批 2/3 待实测**（2026-09-13，**`MCP-PLAN.md`**）。
    App 内置 Streamable HTTP 端点（默认 `127.0.0.1:8773/mcp`，可绑所有接口但必须口令），自写协议层不引 SDK，
    页码对外 1 起。分三批：批 1 读取（`get_state` / 工作区与文档的列出与打开 / `get_document` / `read_pages`）→
    批 2 读取+导航（搜索 / 页图 / 批注列表 / `goto` / 资源）→ 批 3 写入（书签 / 笔记 / 高亮 / 导入 / 建工作区 / 触发 OCR，
@@ -1022,7 +1022,8 @@
    （`search_text` / `render_page` / `get_current_view` / `list_annotations` / `goto`）+ 五条资源 URI（方案 §16）；
    批 3 六个写入工具（`add_bookmark` / `add_note` / `add_highlight` / `import_pdf` / `create_workspace` / `run_ocr`）+
    写入开关 + Agent 来源标记（方案 §17）。实测清单在 §16.2 / §17.4。三个 spike（`spike/mcp-protocol-test.swift` 77 项、`spike/mcp-quote-locator-test.swift` 15 项、
-   `spike/mcp-server-test.swift` 31 项）全绿。实测通过后合回 `main`；批 1b（stdio 桥接）/ 1c（新版协议）视需要。
+   `spike/mcp-server-test.swift` 31 项）全绿。已合入 `main`（2026-09-13，合并提交 `7a79546`）；批 2/3 与
+   §17.3 那条图钉修复一起等用户实测；批 1b（stdio 桥接）/ 1c（新版协议）视需要。
 
 5. **选区型文字笔记：支持拖拽改锚点**（2026-09-13 用户提）。起因：Agent 经 MCP 建的笔记引文在 OCR 页上曾按整行落框、
    图钉跑到行末（已修：`MCPQuoteLocator` 按字符裁剪，方案 §17.3），但**用户手上没有办法把一枚落偏的图钉挪回去**——
