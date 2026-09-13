@@ -39,8 +39,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// 位置/尺寸靠 frame autosave 记，下次重建照旧）。
     private var refWindowController: RefWindowController?
 
-    /// 在 `WorkspaceRegistry` 的登记号（关窗时按它归还工作区实例）。
-    private let windowId = UUID()
+    /// 在 `WorkspaceRegistry` 的登记号（关窗时按它归还工作区实例）。MCP 的 `window_id` 也用它（`MCPFacade`）。
+    let windowId = UUID()
     private var bag = Set<AnyCancellable>()
     private var didChooseInitialDoc = false
     /// 已结清过（见 `shutdown()`）。

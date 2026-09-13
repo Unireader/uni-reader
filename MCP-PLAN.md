@@ -1,6 +1,6 @@
 # MCP 服务方案（macOS 端，2026-09-13 首版）
 
-> 状态：**方案已拍板（2026-09-13，决策见 §2），未动代码**。
+> 状态：**方案已拍板（2026-09-13，决策见 §2）；批 1 已落地并经用户实测通过（同日，分支 `worktree-mcp`，实现记录见 §15）；批 2 进行中**。
 > 目标：让外部 Agent（Claude Code、Codex 等命令行 Agent）通过 MCP 协议操作 UniReader——
 > 前期只做**读取类**（打开工作区、打开文档、读 PDF 文本/目录/页图、看当前阅读位置），
 > 后期再加**写入类**（跳页、书签、文字笔记、高亮、导入 PDF）。分批上线，每批都能单独交付。
@@ -647,3 +647,52 @@ curl -si http://<本机IP>:8773/mcp -H 'Content-Type: application/json' -H 'Auth
 7. 🔴 每次调用有上限（40 页 / 200k 字符 / 一张页图 / 4 MB 请求体），不做取消。
 8. 🔴 设置页文案双语、系统控件、`.primary` 颜色。
 9. 🔴 不提供删除类工具。
+
+---
+
+## 15. 实现记录 — 批 1（2026-09-13 落地，分支 `worktree-mcp`）
+
+`xcodebuild … -derivedDataPath build/dev` 通过；两个 spike 全绿（协议层 68 项、监听链路 31 项）。
+**用户 2026-09-13 实测通过**（「agent 可以调用到这些信息了」）。
+
+### 15.1 文件（与 §5.1 的出入）
+
+| 文件 | 内容 | 与方案的差别 |
+|---|---|---|
+| `Sources/MCP/MCPModels.swift` | `MCPObject` / `MCPJSON` / `MCPToolError`（→ isError）/ `MCPInvalidParams`（→ -32602）/ `PageNo`（1 起 ↔ 0 起唯一换算点）/ `MCPArgs` 入参读取器 / `MCPSchema` | — |
+| `Sources/MCP/MCPHTTP.swift` | 字节 → 请求（按 `Content-Length` 读满）、应答 → 字节、`Origin` / `Bearer` / 口令定长比较，全是纯函数 | 从 `MCPServer` 拆出来单独一个文件，为了 spike 能直接喂字节 |
+| `Sources/MCP/MCPCatalog.swift` | 工具注册表：`MCPTool`（name / schema / tier / handler）、`MCPToolResult`（text + structuredContent + image）、两层错误映射、写入开关拦截 | — |
+| `Sources/MCP/MCPProtocol.swift` | 版本协商、`MCPSession` + `MCPSessionStore`（actor，30 分钟清）、`MCPDispatcher.dispatch(body:session:)` 纯逻辑 | `resources/list` / `resources/templates/list` / `prompts/list` 批 1 就应答空列表（有客户端会无差别探一遍） |
+| `Sources/MCP/MCPServer.swift` | `mcpLog`、`MCPToken`（Keychain）、`MCPServer`（`NWListener` 回环或所有接口、口令/Origin/版本头校验、会话、面板账）| 多了 `tokenProvider` 注入点（spike 不碰真 Keychain）；「最近调用」环形缓冲 50 条 |
+| `Sources/MCP/MCPFacade.swift` | `@MainActor` 唯一活状态入口：`state` / `workspaces` / `openWorkspace` / `documents` / `openDocument` / `resolveTarget` | 文件下落用只读探测（不走 `openTarget`，那个会写 lastOpened） |
+| `Sources/MCP/MCPDocReader.swift` | 私有 `PDFDocument` LRU 4 份 + OCR 文本层缓存 2 本；原生文本 / 抽样 / 目录 / OCR 行拼段落（滤水印） | `allOCRPayloads` 库里本来就有，§5.4 那条「加批量读」作废；页图渲染没做（批 2 的事） |
+| `Sources/MCP/MCPTools.swift` + `MCPTools+Workspace.swift` + `MCPTools+Document.swift` | 七个工具的 schema / 文本拼装 / 处理函数 | 方案写的是四个 `MCPTools+*.swift`，批 1 只需要两个；`+Reader` / `+Notes` 到批 2/3 再加 |
+| `Sources/Views/MCPSettingsView.swift` | 设置 › Agent 页（服务开关 / 监听地址 / 端口 / 口令 / 配置片段 / 已连接客户端 / 最近调用） | 端口改完要按回车才重启（改到一半的数字不能拿去重启） |
+| `spike/mcp-protocol-test.swift` / `spike/mcp-server-test.swift` | 见文件头的运行命令 | — |
+
+现有代码只动了四处：`AppDelegate.readerWindowControllers`（只读访问器）+ `makeReaderWindow(…) throws`（`openReaderWindow` 改为调它并保留弹框）、
+`ReaderWindowController.windowId` 改成 internal、`AppModel.mcp`、`applicationDidFinishLaunching` 里装配工具目录 + 按设置自启。
+`SettingsTab` 加 `agent`；双语文案各加 35 条。
+
+### 15.2 行为要点（读代码前先知道）
+
+- **口令与监听地址在批 1 就做了**（决策 D5）：`MCPServer.start()` 发现「所有接口 + 无口令」→ 回落回环并写 `lastError`；
+  设置页切到「所有接口」时没口令就当场生成。`/health` 不校验口令。
+- `open_document` 只认库文档 id（决策 D7）；读取类工具的 `path` 参数直接读库外 PDF（不碰书库）。
+- `read_pages` 的 `auto`：原生文本 ≥ 8 字符就用它，否则查 OCR 缓存（`PaddleOCR.providerID`），行按 y 分行、x 排序拼段落，
+  水印按 `OCRWatermark` 整本指纹过滤；都没有 → `source: "none"` + `hint`。
+- 会话表在 `restart()` / `stop()` 时清空，改口令/地址/端口后客户端要重新握手（旧版客户端收到 404 会自动做）。
+
+### 15.3 用户实测（按 §11.3；另加两条）
+
+```bash
+open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
+# 设置 › Agent → 启动；然后 §11.3 的 1~4
+```
+⑦ 设置页「复制」出来的 Claude Code 命令直接能用；⑧ 「所有网络接口」模式下口令自动出现、「删除口令」灰掉。
+
+### 15.4 批 1 已知未做
+
+- 「服务」菜单里的 MCP 开关（方案 §10 提了一句）没加，只有设置页——够用就不加了。
+- `get_current_view` 的选区镜像（§5.4 最后一条）是批 2 的事，没动 `DocSession`。
+- 新版协议（2026-07-28，`server/discover`）没做，等客户端开始发再补（批 1c）。

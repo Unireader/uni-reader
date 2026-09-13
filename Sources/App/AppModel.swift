@@ -23,6 +23,8 @@ enum EraserMode: String, CaseIterable {
 /// 平板显示的会话 = 平板手动选中的（padSelectedSessionID），否则跟随最后激活窗口（activeSessionID）。
 final class AppModel: ObservableObject {
     let server = LANServer()
+    /// MCP 服务（给外部 Agent 用，`MCP-PLAN.md`）。与平板服务各自独立：不共用端口、不共用队列。
+    let mcp = MCPServer()
     @Published private(set) var sessions: [DocSession] = []
     @Published var activeSessionID: UUID?
     @Published var padSelectedSessionID: UUID?

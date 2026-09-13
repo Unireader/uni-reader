@@ -1,0 +1,193 @@
+import Foundation
+import PDFKit
+
+/// 离主线程读 PDF（方案 §5.1 `MCPDocReader` / §5.3 第 1 条）：
+/// 🔴 `session.pdf` 只许主线程碰，所以这里**按路径另开一份 `PDFDocument`**，LRU 缓存 4 份，
+/// 全部工作在自己的串行队列 `mcp.doc` 上。它只读文件、不持有会话，文档/工作区关闭时不必同步清。
+final class MCPDocReader {
+    static let shared = MCPDocReader()
+
+    private let queue = DispatchQueue(label: "tech.xvanturing.unireader.mcp.doc", qos: .userInitiated)
+
+    private struct Entry { let doc: PDFDocument; var lastUsed: CFAbsoluteTime }
+    private var docs: [String: Entry] = [:]          // path → 文档（只在 queue 上碰）
+    private let maxDocs = 4
+
+    /// OCR 文本层缓存：内容 hash → (各页行, 水印指纹)。读一本书的全部 OCR 页要几 MB，别每次调用都读。
+    private struct OCRBook { let pages: [Int: [TextRun]]; let profile: OCRWatermark.Profile; var lastUsed: CFAbsoluteTime }
+    private var ocrBooks: [String: OCRBook] = [:]
+    private let maxOCRBooks = 2
+
+    /// 判「这一页有没有原生文本」的门槛（与 `NativePDFTextProvider.isLikelyScanned` 同一条）。
+    static let nativeMinChars = 8
+
+    // MARK: - 队列
+
+    /// 在 `mcp.doc` 队列上拿到（或打开）文档再干活。文件打不开抛 `MCPToolError`。
+    func withDocument<T>(path: String, _ body: @escaping (PDFDocument) throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { cont in
+            queue.async {
+                do {
+                    let doc = try self.open(path)
+                    cont.resume(returning: try body(doc))
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func open(_ path: String) throws -> PDFDocument {
+        let now = CFAbsoluteTimeGetCurrent()
+        if var e = docs[path] {
+            e.lastUsed = now; docs[path] = e
+            return e.doc
+        }
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw MCPToolError("file not found: \(path)")
+        }
+        guard let doc = PDFDocument(url: URL(fileURLWithPath: path)) else {
+            throw MCPToolError("cannot open PDF: \(path)")
+        }
+        if docs.count >= maxDocs, let victim = docs.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key {
+            docs.removeValue(forKey: victim)
+        }
+        docs[path] = Entry(doc: doc, lastUsed: now)
+        return doc
+    }
+
+    // MARK: - 文本
+
+    struct PageText {
+        let index: Int          // 内部 0 起
+        let label: String?      // 书自己印的页码（与序号不同才给）
+        let native: String      // 原生文本（可能为空）
+    }
+
+    /// 若干页的原生文本（`PDFPage.string`）。
+    func nativeTexts(path: String, pages: [Int]) async throws -> [PageText] {
+        try await withDocument(path: path) { doc in
+            pages.map { i in
+                let page = doc.page(at: i)
+                let text = page?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return PageText(index: i, label: Self.label(of: page, index: i), native: text)
+            }
+        }
+    }
+
+    /// 抽样：前 `count` 页里有几页有原生文本（`get_document.text`，让 Agent 知道这本能不能直接读字）。
+    func nativeSample(path: String, count: Int) async throws -> (sampled: Int, withText: Int) {
+        try await withDocument(path: path) { doc in
+            let n = min(count, doc.pageCount)
+            var withText = 0
+            for i in 0..<n where (doc.page(at: i)?.string?.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0) >= Self.nativeMinChars {
+                withText += 1
+            }
+            return (n, withText)
+        }
+    }
+
+    struct Summary {
+        let pageCount: Int
+        let firstPageSize: CGSize
+        let toc: [TOCEntry]
+    }
+
+    /// 页数、首页尺寸、目录树（`TOCEntry.build` 与阅读区同一份实现）。
+    func summary(path: String, includeTOC: Bool) async throws -> Summary {
+        try await withDocument(path: path) { doc in
+            let size = doc.page(at: 0).map { PageBitmap.displaySize($0) } ?? .zero
+            return Summary(pageCount: doc.pageCount, firstPageSize: size, toc: includeTOC ? TOCEntry.build(from: doc) : [])
+        }
+    }
+
+    private static func label(of page: PDFPage?, index: Int) -> String? {
+        guard let l = page?.label?.trimmingCharacters(in: .whitespaces), !l.isEmpty, l != String(index + 1) else { return nil }
+        return l
+    }
+
+    // MARK: - OCR 缓存
+
+    /// 某几页的 OCR 文本（库里 `ocr_page` 的缓存）：行按版面拼成段落，滤掉平铺水印
+    /// （`OCRWatermark`，与阅读区 `ocrVisibleRuns` 同一条判据）。没缓存的页不在返回里。
+    ///
+    /// `LibraryStore` 一条语句一把锁，后台用主线程那条连接是既有做法（`DocSession.rebuildWatermarkProfile` 同款）。
+    func ocrTexts(store: LibraryStore, contentHash: String, pages: [Int]) async -> [Int: String] {
+        guard !contentHash.isEmpty else { return [:] }
+        return await withCheckedContinuation { cont in
+            queue.async {
+                let book = self.ocrBook(store: store, contentHash: contentHash)
+                var out: [Int: String] = [:]
+                for i in pages {
+                    guard let runs = book.pages[i], !runs.isEmpty else { continue }
+                    let mask = OCRWatermark.mask(runs: runs, profile: book.profile)
+                    let kept = zip(runs, mask).compactMap { $1 ? nil : $0 }
+                    let text = Self.joinRuns(kept)
+                    if !text.isEmpty { out[i] = text }
+                }
+                cont.resume(returning: out)
+            }
+        }
+    }
+
+    /// 库里这本书有几页 OCR 缓存（`get_document.text.ocr_cached_pages`）。
+    func ocrPageCount(store: LibraryStore, contentHash: String) async -> Int {
+        guard !contentHash.isEmpty else { return 0 }
+        return await withCheckedContinuation { cont in
+            queue.async {
+                cont.resume(returning: (try? store.ocrPageCount(contentHash: contentHash, provider: PaddleOCR.providerID)) ?? 0)
+            }
+        }
+    }
+
+    private func ocrBook(store: LibraryStore, contentHash: String) -> OCRBook {
+        let now = CFAbsoluteTimeGetCurrent()
+        if var b = ocrBooks[contentHash] {
+            b.lastUsed = now; ocrBooks[contentHash] = b
+            return b
+        }
+        var pages: [Int: [TextRun]] = [:]
+        if let raw = try? store.allOCRPayloads(contentHash: contentHash, provider: PaddleOCR.providerID) {
+            let dec = JSONDecoder()
+            for (page, data) in raw {
+                if let payload = try? dec.decode(OCRPagePayload.self, from: data) { pages[page] = payload.runs }
+            }
+        }
+        let book = OCRBook(pages: pages, profile: OCRWatermark.buildProfile(pages), lastUsed: now)
+        if ocrBooks.count >= maxOCRBooks, let victim = ocrBooks.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key {
+            ocrBooks.removeValue(forKey: victim)
+        }
+        ocrBooks[contentHash] = book
+        return book
+    }
+
+    /// 把 OCR 行拼成可读文本：按 y 分行（垂直中心落在上一行高度的一半以内算同一行），行内按 x 排，
+    /// 行内相邻块中文直接接、西文补空格（与 `String.flattenedQuote` 同一条判据），行间换行。
+    static func joinRuns(_ runs: [TextRun]) -> String {
+        let sorted = runs.sorted { $0.y != $1.y ? $0.y < $1.y : $0.x < $1.x }
+        var lines: [[TextRun]] = []
+        var lineCenter = 0.0, lineH = 0.0
+        for r in sorted {
+            let c = r.y + r.h / 2
+            if let last = lines.last, !last.isEmpty, abs(c - lineCenter) <= max(lineH, r.h) * 0.5 {
+                lines[lines.count - 1].append(r)
+                lineH = max(lineH, r.h)
+            } else {
+                lines.append([r])
+                lineCenter = c; lineH = r.h
+            }
+        }
+        var out: [String] = []
+        for line in lines {
+            var s = ""
+            for r in line.sorted(by: { $0.x < $1.x }) {
+                let t = r.text.trimmingCharacters(in: .whitespaces)
+                if t.isEmpty { continue }
+                if let a = s.last, let b = t.first, !(a.isCJKLike && b.isCJKLike) { s += " " }
+                s += t
+            }
+            if !s.isEmpty { out.append(s) }
+        }
+        return out.joined(separator: "\n")
+    }
+}
