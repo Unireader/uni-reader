@@ -322,32 +322,57 @@ extension ReaderSurface {
         if app.quickHighlightColor != color { app.quickHighlightColor = color }
     }
 
-    /// 单击阅读区（`.onTapGesture(count: 1)`，为区分双击**要等一拍**）：收起文字选择与框选。
-    /// 高亮气泡的开合**不在这里**——它走 `highlightClickGesture`，抬起鼠标就响应，不等这一拍
-    /// （用户 2026-09-12 报「点高亮很慢才出弹窗」，慢的正是这一拍＝系统双击间隔）。
-    func tapReader() {
-        clearSelection()
-        clearLassoSelection()
-    }
-
-    /// 单击即时响应（按下→抬起位移 ≤3pt 才算单击）：**命中一条文字高亮就把它的操作气泡打开**
-    /// （删除/换色入口，用户 2026-09-03 要的「点高亮要能删」），没命中则收起气泡。
-    /// 挂成 `minimumDistance: 0` 的拖拽手势而不是 tap：tap 要等系统双击间隔确认「不是双击」才回调，
-    /// 气泡于是总慢半秒出来；这里抬手即回调。真拖动（拖选/拖图钉）位移大于阈值，不会误判成单击。
+    /// 阅读区的**单击**（按下→抬起位移 ≤3pt），抬手即响应、不等系统双击间隔那一拍：
+    ///  · **按下那一刻把键盘焦点收回来**（`takeKeyboardFocus`，任何工具、草稿纸开着也一样）；
+    ///  · 单击 = **收起文字选择与框选**（点空白取消选择，用户 2026-09-12 要的「点击空白则取消」）；
+    ///  · 文字工具下**命中一条文字高亮就把它的操作气泡打开**（删除/换色入口，用户 2026-09-03 要的
+    ///    「点高亮要能删」），没命中则收起气泡。
     ///
-    /// 命中判定放在容器这一层（而不是给铺色层加 Button）：铺色的 Canvas 一旦吃命中，
+    /// 挂成 `minimumDistance: 0` 的拖拽手势而不是 `.onTapGesture(count: 1)`：tap 要等系统双击间隔确认
+    /// 「不是双击」才回调，气泡/取消于是总慢半秒（2026-09-12 先为气泡改的，取消选择这次跟上）。
+    /// 真拖动（拖选/拖图钉/框选）位移大于阈值，不会误判成单击；一次抖动 2~3pt 的「假拖选」留下的
+    /// 一两个字的选区也顺手被这里清掉。
+    /// **双击的第二下不算单击**（`isMultiClick`）：否则它会把 `.onTapGesture(count: 2)` 刚选好的词
+    /// 又清掉——两者谁先回调没有保证，不能赌顺序。
+    ///
+    /// 高亮命中判定放在容器这一层（而不是给铺色层加 Button）：铺色的 Canvas 一旦吃命中，
     /// 高亮盖住的那块文字就选不了、框选不到了——高亮是**铺在正文上的**，不能挡住正文的交互。
     /// 起点落在点注解图钉上的让位给图钉（同拖选的让位规则），免得点图钉时顺带弹出底下高亮的气泡。
-    var highlightClickGesture: some Gesture {
+    var readerClickGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { _ in takeKeyboardFocus() }   // 首个回调 = 鼠标按下
             .onEnded { v in
-                guard app.pointerTool == .textSelect, scratch.pinch == nil,
-                      session.openPadID == nil,
+                takeKeyboardFocus()   // 按下那次没跑到（手势被别的抢先）也兜住
+                guard scratch.pinch == nil, session.openPadID == nil,
                       abs(v.translation.width) <= 3, abs(v.translation.height) <= 3,
-                      pointNotePinHit(v.startLocation) == nil else { return }
+                      !isMultiClick else { return }
+                clearSelection()
+                clearLassoSelection()
+                guard app.pointerTool == .textSelect, draggablePinHit(v.startLocation) == nil else { return }
                 let mark = highlightHit(v.startLocation).map { HighlightTap(id: $0.highlight.id, rect: $0.rect) }
                 if activeHighlight != mark { activeHighlight = mark }
             }
+    }
+
+    /// 这次鼠标事件是不是连击的第二下及以后。SwiftUI 手势回调跑在 AppKit 派发那个鼠标事件的同一
+    /// 调用栈里，`NSApp.currentEvent` 就是它。`clickCount` 对非鼠标事件会抛异常，先验类型。
+    var isMultiClick: Bool {
+        guard let e = NSApp.currentEvent,
+              [.leftMouseDown, .leftMouseUp, .leftMouseDragged].contains(e.type) else { return false }
+        return e.clickCount >= 2
+    }
+
+    /// 点阅读区 = 把第一响应者交还给窗口本身。
+    ///
+    /// 阅读区是纯 SwiftUI、没有任何可聚焦的东西，AppKit 不会因为点了它就挪第一响应者——于是
+    /// 工具栏搜索框一旦激活就一直攥着键盘（单键工具快捷键全被它吃掉），内置 AI 面板的网页也一样：
+    /// `WKWebView` 认领 `copy:`，Edit 菜单先走响应者链（`MenuActions.route`），⌘C 被它接走，
+    /// 选中的 PDF 文字永远复制不到（用户 2026-09-12 报的两条）。窗口本身与 `NSHostingView`
+    /// 都不认领剪贴板那五个动作（spike 实测），交还给窗口后菜单命令就会落到阅读区。
+    /// 只碰事件所在的那扇窗（不是 `keyWindow`——AI 浮窗是子窗口时两者可能不同）；已经是窗口本身就不动。
+    func takeKeyboardFocus() {
+        guard let w = NSApp.currentEvent?.window ?? NSApp.keyWindow, w.firstResponder !== w else { return }
+        w.makeFirstResponder(nil)
     }
 
     /// 文字高亮命中测试（容器/视口坐标 P，与双击选词同 `.local` 空间）→ 命中的高亮**与被点中的那一行**。
@@ -471,7 +496,7 @@ extension ReaderSurface {
     }
 
     /// 拖选：起点定锚（一次），移动实时扩选。锚点所在页有 OCR 层 → 走 OCR 行选择；否则 PDFKit 原生选择。
-    /// minimumDistance 2 → 纯单击不触发拖选（交给 `.onTapGesture` 取消），2px 内抖动不误选。
+    /// minimumDistance 2 → 纯单击不触发拖选（交给 `readerClickGesture` 取消），2px 内抖动不误选。
     /// `pointerTool == .ink` 时反向门控：拖选让位给本机落墨手势。
     /// 起点命中点注解图钉时让位图钉拖拽（容器手势是 simultaneous，不让位会边拖图钉边扩选）。
     var dragSelectGesture: some Gesture {

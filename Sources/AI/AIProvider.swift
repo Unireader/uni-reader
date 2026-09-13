@@ -10,8 +10,9 @@ import Foundation
 /// ⚠️ `threadPattern` 是 S2「对话绑定」用的会话 URL 正则。**内置那条 DeepSeek 已按真实 URL 核对**
 /// （见下方注释）；将来任何新增/改动都必须拿真实会话 URL 对一遍——写错就是「绑定永远不 commit」
 /// 这种查不出的静默失效（外部配置正是为此留的）。
-/// 平台上那条「模式」分段控件的一档。DeepSeek 的新对话页在输入框上方摆着三档：
-/// **快速模式 / 专家模式 / 识图模式**（输入框里那两枚「深度思考 / 智能搜索」是另一组开关，不归这里管）。
+/// 平台上那条「模式」分段控件的一档。DeepSeek 的新对话页曾在输入框上方摆着三档
+/// **快速模式 / 专家模式 / 识图模式**（2026-09-12 用户实测已撤掉、只剩一种，内置表不再填；
+/// 输入框里那两枚「深度思考 / 智能搜索」是另一组开关，从来不归这里管）。
 ///
 /// 🔴 `labels` 是**页面上的可见文字**——适配器只按可见文字认，**不猜 class 名**：class 每周都在变，
 /// 可见文字变了用户一眼就看得出来，改外部配置即可。多给几条是为了站点改名/换语言时能一并覆盖，
@@ -87,15 +88,12 @@ extension AIProvider {
                    //    会话 https://chat.deepseek.com/a/chat/s/66ecab55-6b60-4b56-8e92-39cb9e95c0e5
                    threadPattern: #"^https://chat\.deepseek\.com/a/chat/s/[0-9a-fA-F-]+"#,
                    adapter: "deepseek",
-                   dataDomains: ["deepseek.com"],
-                   // ✅ 2026-09-06 用户截图核对：新对话页输入框上方一条三段控件。
-                   // **只填实际见过的中文可见文字**——英文界面的写法我没见过，猜一个塞进来
-                   // 反而可能在别处误匹配（"Pro" 这种短词到处都是）。换语言就改外部配置。
-                   modes: [AIMode(id: "fast", name: "快速模式", labels: ["快速模式"]),
-                           AIMode(id: "pro", name: "专家模式", labels: ["专家模式"]),
-                           AIMode(id: "vision", name: "识图模式", labels: ["识图模式"])],
-                   modeForImage: "vision",     // 有图 → 识图模式（用户定）
-                   modeForText: "pro"),        // 无图 → 专家模式（用户定）
+                   dataDomains: ["deepseek.com"]),
+        // ✅ 2026-09-12 用户实测：DeepSeek **已不再分模式**（2026-09-06 那条「快速 / 专家 / 识图」
+        // 三段控件没了，只剩一种），图片上传照常。于是内置表不再填 `modes`——面板里的模式菜单
+        // 随之隐藏、投递前也不再找那条控件（`AIPanelModel.applyMode` 见 `modes` 为空直接返回）。
+        // 机制整套保留：站点哪天又长出模式来，外部配置 `ai-providers.json` 填上 `modes` +
+        // `mode_for_image` / `mode_for_text` 即可，不必重编译。
     ]
 
     /// 整条 Safari UA。面板默认走 `applicationNameForUserAgent`（见 `AIPanelModel`）拼出等价串，

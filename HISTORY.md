@@ -3,6 +3,25 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 阅读区收回键盘焦点 + 点击即取消选择 + DeepSeek 撤掉模式（2026-09-12，Mac，用户四条）
+
+1. **点阅读区把第一响应者交还给窗口**（`ReaderSurface.takeKeyboardFocus`，挂在 `readerClickGesture`
+   的按下与抬手两处）。根因一条、症状两条：阅读区是纯 SwiftUI、没有可聚焦的东西，AppKit 不会因为点了它
+   就挪第一响应者——① 工具栏搜索框一旦激活就永远攥着键盘（用户：「搜索栏一旦激活就不能失焦」）；
+   ② 内置 AI 面板的 `WKWebView` 认领 `copy:`，Edit 菜单先走响应者链（`MenuActions.route`），⌘C 被它
+   接走、选中的 PDF 文字复制不到（用户：「AI 侧边小窗导致不能复制 pdf 的文字」）。
+   spike 实测 `NSWindow` / `NSHostingView` 都不认领剪贴板五项，`makeFirstResponder(nil)` 之后
+   ⌘C 自然落到 `.readerCopy`。只碰事件所在的那扇窗（AI 浮窗是子窗口时 `keyWindow` 可能不是它）。
+2. **单击即取消选择**：`.onTapGesture(count: 1) { tapReader() }` 删掉，收选区/收框选并进
+   `readerClickGesture`（原 `highlightClickGesture`，`DragGesture(minimumDistance: 0)` 抬手 ≤3pt 算单击），
+   与高亮气泡同一条路——不再等系统双击间隔那一拍。**双击的第二下不算单击**（`isMultiClick` 读
+   `NSApp.currentEvent.clickCount`，先验事件类型），否则会把刚选好的词又清掉。
+3. **DeepSeek 内置表不再填 `modes`**：用户实测站点已撤掉「快速 / 专家 / 识图」三段控件、只剩一种，
+   图片上传照常。模式菜单随之隐藏、投递前不再找控件；机制整套保留，外部配置填上就能回来。
+   ⚠️ 若 `~/Library/Application Support/UniReader/ai-providers.json` 存在（之前导出过模板），它整份覆盖
+   内置表，里面的 `modes` 要自己删掉。
+   ✅ 用户 2026-09-12 实测四条全部通过（搜索框失焦 / 内置面板后 ⌘C / 点空白即取消 / 双击选词）。
+
 ## 高亮三项（2026-09-12，Mac：选中按 h 高亮 / 按 n 笔记 · 高亮可换色 · 点高亮气泡即时出）
 
 1. **选中文字后 `h` 快速高亮、`n` 文字笔记**：接进既有的单键工具监视器（`installToolKeyMonitor`，
