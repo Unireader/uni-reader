@@ -149,7 +149,9 @@ final class MCPDocReader {
                     let mask = OCRWatermark.mask(runs: runs, profile: book.profile)
                     for (r, isWM) in zip(runs, mask) where !isWM {
                         guard r.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { continue }
-                        out.append(Hit(index: idx, snippet: Self.flatten(r.text), rects: [r.rect], source: "ocr"))
+                        // 框按命中的字符裁（同 add_highlight 的口径），裁不出来才给整行
+                        let rects = MCPQuoteLocator.locate(quote: query, in: [r]) ?? [r.rect]
+                        out.append(Hit(index: idx, snippet: Self.flatten(r.text), rects: rects, source: "ocr"))
                         if out.count >= maxHits { cont.resume(returning: out); return }
                     }
                 }
@@ -176,11 +178,9 @@ final class MCPDocReader {
                 let book = self.ocrBook(store: store, contentHash: contentHash)
                 guard let runs = book.pages[index] else { cont.resume(returning: nil); return }
                 let mask = OCRWatermark.mask(runs: runs, profile: book.profile)
-                let hits = zip(runs, mask).compactMap { run, wm -> CGRect? in
-                    guard !wm, run.text.range(of: quote, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { return nil }
-                    return run.rect
-                }
-                cont.resume(returning: hits.isEmpty ? nil : hits)
+                let visible = zip(runs, mask).compactMap { $1 ? nil : $0 }
+                // 🔴 按字符裁剪，不给整行（整行的末端是行末，图钉会跑到最右边；见 `MCPQuoteLocator`）
+                cont.resume(returning: MCPQuoteLocator.locate(quote: quote, in: visible))
             }
         }
     }

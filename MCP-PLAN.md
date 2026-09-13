@@ -745,7 +745,19 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 `MCPFacade.writeTarget` 先查「有没有标签正显示这篇」：有 → 只改 `DocSession` 的数组（`textNotes` / `highlights` / `bookmarks`），
 由 `DocTabModel` 现有对账落库并广播平板；没有 → `WorkspaceManager.save*` 直接写库。出参里 `via: session | library` 说明走了哪条。
 
-### 17.3 用户实测清单
+### 17.3 首轮反馈修复：Agent 建的笔记图钉跑到行末（2026-09-13）
+
+用户报「有选中文字的笔记位置跑到很右边去了，没有像手动那样紧贴选中文字」。根因：OCR 页上手动选字的行框是按
+选中字符范围**裁剪**的（`OCRTextSelect.clip`），而 `MCPDocReader.locate` 的 OCR 分支给的是**整行**框——图钉落在
+`anchor.maxX` 右侧（`PageCellView.markerPos`），整行的 maxX 就是行末。原生 PDF 页不受影响（`findString` 本来就贴字）。
+
+修法：新增 **`MCPQuoteLocator`**（纯函数）——行按阅读顺序拼起来、去空白、折叠大小写找引文，首行/末行按字符裁、
+中间行整行；`search_text` 的 OCR 命中框也改用它。spike `mcp-quote-locator-test.swift` 15 项（行内/行首/跨行/空白与
+换行/大小写/单字框优先/乱序行）。**待用户实测**：在 OCR 页让 Agent 在一句话中间加笔记，图钉应贴在引文末字右侧。
+
+顺带记入 `TODO.md` 第 5 条：选区型笔记的图钉将来要能拖拽改位置（用户 2026-09-13 提）。
+
+### 17.4 用户实测清单
 
 开写入开关后在 Claude Code 里：① 「在第 N 页加个书签叫 X」→ 目录树里出现；② 「把第 N 页的『……』那句高亮成绿色」→ 页面铺色、
 Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉出现、气泡正文对、Inspector 行末有终端图标；④ 关掉文档再做 ①~③（走库那条路）→

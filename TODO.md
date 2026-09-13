@@ -1013,8 +1013,15 @@
    **现状**：批 1 七个工具 + 设置 › Agent 页 + 口令/监听地址全在（方案 §15，用户已实测通过）；批 2 五个工具
    （`search_text` / `render_page` / `get_current_view` / `list_annotations` / `goto`）+ 五条资源 URI（方案 §16）；
    批 3 六个写入工具（`add_bookmark` / `add_note` / `add_highlight` / `import_pdf` / `create_workspace` / `run_ocr`）+
-   写入开关 + Agent 来源标记（方案 §17）。实测清单在 §16.2 / §17.3。两个 spike（`spike/mcp-protocol-test.swift` 77 项、
+   写入开关 + Agent 来源标记（方案 §17）。实测清单在 §16.2 / §17.4。三个 spike（`spike/mcp-protocol-test.swift` 77 项、`spike/mcp-quote-locator-test.swift` 15 项、
    `spike/mcp-server-test.swift` 31 项）全绿。实测通过后合回 `main`；批 1b（stdio 桥接）/ 1c（新版协议）视需要。
+
+5. **选区型文字笔记：支持拖拽改锚点**（2026-09-13 用户提）。起因：Agent 经 MCP 建的笔记引文在 OCR 页上曾按整行落框、
+   图钉跑到行末（已修：`MCPQuoteLocator` 按字符裁剪，方案 §17.3），但**用户手上没有办法把一枚落偏的图钉挪回去**——
+   现在图钉位置完全由 `rects`/`anchor` 决定（`PageCellView.markerPos`：选区注解落在 `anchor.maxX` 右侧），
+   落偏了只能删了重建。要做的：图钉可拖，松手把新位置写进 `TextNote.anchor`（选区注解的 `rects` 保留用于铺色，
+   图钉改看一个显式的锚点），三端协议/payload 要一起定（`anchor` 语义从「行框包围盒」变成「图钉位置」得有兼容方案，
+   老数据无显式锚点仍按包围盒推）。点注解（无行框）本来就是锚点即图钉，同一套拖拽顺带覆盖。
 
 ## 🐞 已知欠账（未修 / 刻意没做）
 
