@@ -20,6 +20,14 @@ extension PageSnip {
     /// 所以这里天然拿到原始白底黑字——正是要发给模型的样子。
     static func render(pdf: PDFDocument, region: Region,
                        quality: CGFloat = PageRenderer.defaultJPEGQuality) -> Shot? {
+        guard let (out, pages) = renderImage(pdf: pdf, region: region),
+              let data = PageRenderer.encode(out, format: .jpeg(quality: quality)) else { return nil }
+        return Shot(data: data, pixelSize: CGSize(width: out.width, height: out.height), pageCount: pages)
+    }
+
+    /// 同上，但只出位图不编码——图片笔记那条路要的是 PNG（`ImageAssets.prepare(_ image:)`），
+    /// AI 那条路要的是 JPEG，两边共用这一份渲染。
+    static func renderImage(pdf: PDFDocument, region: Region) -> (image: CGImage, pageCount: Int)? {
         let sl = slices(region)
         guard !sl.isEmpty else { return nil }
 
@@ -46,11 +54,8 @@ extension PageSnip {
 
         // ③ 单页直接用，跨页纵向拼接
         let pxW = Int((ptW * Double(s)).rounded())
-        guard let out = tiles.count == 1 ? tiles[0] : stack(tiles, width: pxW),
-              let data = PageRenderer.encode(out, format: .jpeg(quality: quality))
-        else { return nil }
-        return Shot(data: data, pixelSize: CGSize(width: out.width, height: out.height),
-                    pageCount: tiles.count)
+        guard let out = tiles.count == 1 ? tiles[0] : stack(tiles, width: pxW) else { return nil }
+        return (out, tiles.count)
     }
 
     /// 跨页：各页切片纵向拼接，中间留一条浅灰分隔（不留的话跨页处会被看成一段连续正文）。

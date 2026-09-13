@@ -188,6 +188,9 @@ final class DocTabModel: ObservableObject, Identifiable {
         on(session.$highlights) { s in
             s.persistHighlights()        // 高亮新建/改色/删除时增量落库
         }
+        on(session.$imageNotes) { s in
+            s.persistImageNotes()        // 图片笔记新建/编辑/删除时增量落库（不上线：平板本轮不认识 kind=6）
+        }
         on(session.$bookmarks) { s in
             s.persistBookmarks()         // 书签新建/改名/删除时增量落库
             // 镜像给平板（非 padSession 时 broadcastBookmarks 内部会挑真正跟随的那个会话，
@@ -258,6 +261,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         persistInkLayers()
         persistTextNotes()
         persistHighlights()
+        persistImageNotes()
         persistBookmarks()
         persistAIThreads()
         persistScratchPads()
@@ -397,7 +401,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; session.toc = []; session.title = ""
             clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); clearBookmarks(); clearScratch()
-            clearAIThreads()
+            clearAIThreads(); clearImageNotes()
             session.reloadOCRState(); return
         }
         let trace = session.openTrace
@@ -416,6 +420,7 @@ final class DocTabModel: ObservableObject, Identifiable {
             clearBookmarks()
             clearScratch()
             clearAIThreads()
+            clearImageNotes()
             return
         }
         missingDoc = nil
@@ -433,6 +438,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         // 各段 detail 记条数：账本上「注解 154ms」这种数字没有条数就分不清是量大还是单价贵。
         trace.phase("注解", detail: "\(session.textNotes.count)条") { loadTextNotes(documentId: id) }    // 恢复该文档已落库的文字注解
         trace.phase("高亮", detail: "\(session.highlights.count)条") { loadHighlights(documentId: id) }   // 恢复该文档已落库的高亮
+        trace.phase("图片", detail: "\(session.imageNotes.count)条") { loadImageNotes(documentId: id) }  // 恢复该文档已落库的图片笔记
         trace.phase("书签", detail: "\(session.bookmarks.count)条") { loadBookmarks(documentId: id) }    // 恢复该文档已落库的书签（与目录合并显示）
         trace.phase("AI", detail: "\(session.aiThreads.count)条") { loadAIThreads(documentId: id) }      // 恢复该文档已落库的 AI 会话绑定
         trace.phase("草稿纸", detail: "\(session.scratchPads.count)张") { loadScratch(documentId: id) }  // 恢复该文档的草稿纸（纸上笔迹后台读，默认不打开任何一张）
@@ -912,6 +918,35 @@ final class DocTabModel: ObservableObject, Identifiable {
             workspace.deleteHighlight(id: goneID)
         }
         session.persistedHighlights = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    // MARK: - 图片笔记持久化（note kind=6，`IMAGE-NOTE-PLAN.md`）
+
+    /// 清空内存图片笔记与对账集（对账集先于列表赋值，同 loadTextNotes 防切档误删）。
+    private func clearImageNotes() {
+        session.persistedImageNotes = [:]
+        session.imageNotes = []
+    }
+
+    private func loadImageNotes(documentId id: String) {
+        let loaded = workspace.imageNotes(documentId: id)
+        session.persistedImageNotes = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+        session.imageNotes = loaded
+    }
+
+    /// 内存图片笔记 ↔ 库对账：新增/改说明/改展开方式/挪位 upsert；已无的 delete。
+    /// 删那条时把它指向的 sha 一并交给 `deleteImageNote` —— 最后一条引用没了，那张图当场进待删除。
+    private func persistImageNotes() {
+        guard let id = session.documentId else { return }
+        let current = session.imageNotes
+        let currentIDs = Set(current.map(\.id))
+        for n in current where session.persistedImageNotes[n.id] != n {
+            workspace.saveImageNote(documentId: id, n)
+        }
+        for (goneID, old) in session.persistedImageNotes where !currentIDs.contains(goneID) {
+            workspace.deleteImageNote(id: goneID, image: old.image)
+        }
+        session.persistedImageNotes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     // MARK: - 书签持久化（note kind=5，`REQUIREMENTS.md §1.9`）

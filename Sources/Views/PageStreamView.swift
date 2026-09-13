@@ -20,6 +20,9 @@ struct PageStreamView: View {
     /// 底部标签栏占掉的高度（`TabBarMetrics.inset`，只有一个标签时为 0）。
     /// 用途两处：滚动条不钻到标签栏底下、笔架拖不到标签栏底下。**内容仍然垫到底**（同 topInset 的口径）。
     let bottomInset: CGFloat
+    /// 拖进阅读区的**非图片**文件（PDF）往上交给窗口层入库。图片文件阅读区自己收成图片笔记
+    /// （`ReaderSurface+ImageNote`），所以拖放得挂在阅读区这一层——只有它知道落点在哪一页。
+    var onDropFiles: ([URL]) -> Void = { _ in }
 
     /// 全宽（含侧栏/Inspector 玻璃下延伸区）。与未遮宽对比可区分「窗口缩放」vs「侧栏开合」。
     @State var fullWidth: CGFloat = 0
@@ -34,7 +37,8 @@ struct PageStreamView: View {
                           unobSize: geo.size,
                           fullWidth: fullWidth,
                           indicatorTopInset: geo.safeAreaInsets.top,
-                          bottomInset: bottomInset)
+                          bottomInset: bottomInset,
+                          onDropFiles: onDropFiles)
                 .ignoresSafeArea()
         }
         .background {
@@ -61,6 +65,8 @@ struct ReaderSurface: View {
     let fullWidth: CGFloat        // 全宽（第二个 GeometryReader；区分窗口缩放 vs 侧栏开合）
     let indicatorTopInset: CGFloat // 滚动条顶端下压量（避让玻璃工具栏；内容仍垫底）
     let bottomInset: CGFloat       // 底部标签栏占掉的高度（滚动条与笔架都要避让它；内容仍垫底）
+    /// 拖进阅读区的非图片文件（PDF）交给窗口层入库（见 `PageStreamView.onDropFiles`）。
+    let onDropFiles: ([URL]) -> Void
     /// 本次是不是**从快照种下的**（= 切标签回来）。见 `init` 的红线。
     let seededFromSnapshot: Bool
 
@@ -80,7 +86,8 @@ struct ReaderSurface: View {
     /// （期间窗口或侧栏尺寸变过的话旧快照是错的）。
     init(session: DocSession, docKey: String, nightMode: Bool, interpEnabled: Bool,
          isActiveWindow: Bool, unobSize: CGSize, fullWidth: CGFloat,
-         indicatorTopInset: CGFloat, bottomInset: CGFloat) {
+         indicatorTopInset: CGFloat, bottomInset: CGFloat,
+         onDropFiles: @escaping ([URL]) -> Void = { _ in }) {
         _session = ObservedObject(wrappedValue: session)
         self.docKey = docKey
         self.nightMode = nightMode
@@ -90,6 +97,7 @@ struct ReaderSurface: View {
         self.fullWidth = fullWidth
         self.indicatorTopInset = indicatorTopInset
         self.bottomInset = bottomInset
+        self.onDropFiles = onDropFiles
 
         // ⚠️ 这里用不了实例属性（还没初始化完），故 `layoutW` 就地重算一遍。
         let lw = fullWidth > 0 ? fullWidth : unobSize.width
@@ -227,6 +235,10 @@ struct ReaderSurface: View {
     @State var activeHighlight: HighlightTap?
     /// 指针悬停在哪枚图钉上（`hover` 模式的展开条件；离开即 nil）。
     @State var hoveredNote: UUID?
+    /// 图片笔记编辑器目标（非 nil 即呈现 sheet；只有「编辑」——新建不弹编辑器，存了就是一条）。
+    @State var imageEditor: ImageNote?
+    /// 看大图（非 nil 即呈现 sheet）。
+    @State var imageViewer: ImageNote?
 
     @State var snipRect: SnipRect?                  // 进行中的框选截图矩形（容器坐标）
     @State var snipToast: SnipToast?                // 截图投递的即时反馈（自动消失）
@@ -382,7 +394,7 @@ struct ReaderSurface: View {
     var voidColor: Color { nightMode ? Color(white: 0.06) : Color(nsColor: .windowBackgroundColor) }
 
     var body: some View {
-        snipRoutes(canvasRoutes(editRoutes(surfaceBody)))
+        imageRoutes(snipRoutes(canvasRoutes(editRoutes(surfaceBody))))
     }
 
     /// Edit 菜单路由（撤销/重做 + 框选选中集的剪切/粘贴/删除）单独包一层，理由同 `canvasRoutes`：
@@ -403,7 +415,10 @@ struct ReaderSurface: View {
                 if isActiveWindow, session.openPadID == nil { cutLassoSelection() }
             }
             .onReceive(NotificationCenter.default.publisher(for: .readerPaste)) { _ in
-                if isActiveWindow, session.openPadID == nil { pasteInk() }
+                // 剪贴板里是笔迹就贴笔迹；否则是图片就贴成图片笔记（`ReaderSurface+ImageNote`）
+                if isActiveWindow, session.openPadID == nil {
+                    if InkClipboard.hasInk() { pasteInk() } else { pasteImageNote() }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .readerDelete)) { _ in
                 if isActiveWindow, session.openPadID == nil { deleteLassoSelection() }
@@ -656,6 +671,14 @@ struct ReaderSurface: View {
                          if inside { hoveredNote = id } else if hoveredNote == id { hoveredNote = nil }
                      },
                      noteDrag: notePinDrag,
+                     imageNotes: buckets.imageNotes[i] ?? [],
+                     imageInfo: { workspace.imageInfo(sha256: $0) },
+                     onOpenImageNote: { imageEditor = $0 },
+                     onToggleImageNote: { n in
+                         if expandedNotes.contains(n.id) { expandedNotes.remove(n.id) }
+                         else { expandedNotes.insert(n.id) }
+                     },
+                     onViewImageNote: { imageViewer = $0 },
                      scratchPins: buckets.scratchPins[i] ?? [],
                      onOpenScratchPad: { session.openPadID = $0 },
                      bookmarks: buckets.bookmarks[i] ?? [],

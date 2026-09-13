@@ -3,6 +3,33 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## 图片笔记（2026-09-13，Mac + 离线镜像：「从外部导入 / 从 pdf 节选出图片，图片按引用计数管理，30 天后彻底删除」）
+
+方案 `IMAGE-NOTE-PLAN.md`、规格 `REQUIREMENTS.md §1.10`。四条拍板（用户选的）：图钉 + 气泡呈现／⌥⇧ 拖当节选入口
+（⌥拖发 AI 不动）／离线镜像这轮一起带上图片／「待删除」只在设置里加一行。
+
+- **存储**：schema v13 新表 `image`（`sha256` 主键、ext/宽高/字节/`created_at`/`orphaned_at`），文件 `Images/<sha>.<ext>`
+  （`ImageAssets`：png/jpg/gif/webp 原字节存，其它转 PNG，长边 >4096 缩到 4096，`.part` 原子写）。笔记复用 `note` 表 kind=6
+  （`ImageNote`，payload `image`/`caption`/`display`/`source`），增量对账/级联删除/`mergeDocument` 原样继承。
+- **引用计数不存列、数出来**（`LibraryStore.imageRefCounts`）：`reconcileImageOrphans` 只在「有引用 ↔ 无引用」翻转时改
+  `orphaned_at`（已待删除的不重置，免得越拖越长）；`purgeableImages(before:)` + `WorkspaceManager.purgeImages` 删文件再删行；
+  打开工作区、删/存笔记、镜像合并后、设置页「立即清理」四处触发。
+- **入口**：`ReaderSurface+Snip` ⇧ 分流 → `finishSnipAsImageNote`（与 AI 截图同一条渲染路径 `PageSnip.renderImage`，出 PNG）；
+  `ReaderSurface+ImageNote`：拖文件（阅读区 `dropDestination` 接图片、PDF 转交 `onDropFiles` 入库）、右键「在此导入图片…」
+  （`NSOpenPanel`）、⌘V（笔迹剪贴板优先，否则文件 URL → png → tiff）。新建不弹编辑器。
+- **呈现**：`PageCellView` 淡青 `photo` 图钉（节选落框右上角外侧、导入落锚点）+ `ImageBubbleView`（尺寸走 `NoteBubble`
+  同一套页宽比例，缩略图高 ≤ 气泡宽，说明 ≤3 行）；三态展开与文字笔记同款、共用 `expandedNotes`/`hoveredNote`；
+  图钉拖拽与点注解共用 `notePinDragGesture`（`draggablePinHit`/`pinAnchor`）；`ImageNoteEditorSheet`（说明 + 展开方式 + 删除）；
+  `ImageViewerSheet`（原图、复制、Finder）；缩略图走 `ImageThumbCache`（后台解码、按 256/512/1024 档缓存、只有叶子视图订阅）。
+  Inspector「笔记」页新增「图片」分段（编辑/查看经通知请阅读区弹 sheet）。撤销栈 `InkPatch` 加 `images` 一栏。
+- **镜像**：`image` 表走 OCR 那条 additive 通道——`MirrorBuilder` 带 `Images/`（到期的不带、估算计字节）、
+  `MirrorStore.imageKeys`（有行 ∧ 文件在 ∧ 没到期）、`MirrorDiff.Plan.imagesToSource/ToMirror`（缺行**或**缺文件都算缺）、
+  `MirrorApply.fillImages`（`INSERT OR IGNORE` + 拷文件，**`orphaned_at` 原样带过去**）后两侧各对账；报告多一行；
+  与 OCR 同样不挡自动推送。
+- **设置**：通用页「图片笔记」区块按打开着的工作区逐个列「图片 N 张 · 待删除 M 张 · 占用」+「立即清理」。
+- 验证：`spike/image-store-test`(39)／`image-mirror-test`(31)／`ink-undo-test`(40)／store／mirror-*／scratch-store／ink-store／page-snip
+  全绿；`xcodebuild` 过。真机待验清单见 `TODO.md` 同日条目。范围外：平板/安卓（`notes` 广播不发 kind=6）。
+
 ## 阅读区收回键盘焦点 + 点击即取消选择 + DeepSeek 撤掉模式（2026-09-12，Mac，用户四条）
 
 1. **点阅读区把第一响应者交还给窗口**（`ReaderSurface.takeKeyboardFocus`，挂在 `readerClickGesture`

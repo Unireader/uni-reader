@@ -36,6 +36,7 @@ enum MirrorBuilder {
         var internalized: Int      // 外部文件被拷进镜像 PDFs/ 的条数
         var baseRows: Int          // sync_base 记下的行数
         var unresolved: [String]
+        var copiedImages: Int = 0  // 带过去的图片本体张数（`Images/`）
     }
 
     enum Failure: LocalizedError {
@@ -64,6 +65,11 @@ enum MirrorBuilder {
         let fm = FileManager.default
         // 库本身（VACUUM INTO 后通常更小，按原大小算即多留一点余量）
         bytes += fileSize(fm, store.fileURL.path)
+        // 图片本体全部带上（`IMAGE-NOTE-PLAN.md §7`：小文件、不做选择性）
+        for im in imagesToCopy(store: store, folder: source) {
+            files += 1
+            bytes += Int64(im.bytes)
+        }
         for docId in plan.documentsWithPDF.sorted() {
             guard let (path, _) = pickSource(store: store, documentId: docId, resolve: resolve) else {
                 unresolved.append(docId)
@@ -150,6 +156,17 @@ enum MirrorBuilder {
                 }
             }
 
+            // ③.5 图片本体：表已随 VACUUM 整份过去，文件按表里的行拷（`Images/` 里没有行指着的孤儿文件不拷）。
+            // 已到期的待删除图不带（`imagesToCopy` 滤掉），镜像库里那几行留着也无妨——镜像打开时自己会清。
+            progress?("正在复制图片…", 0.9)
+            var copiedImages = 0
+            for im in imagesToCopy(store: store, folder: source) {
+                try ImageAssets.copy(from: ImageAssets.url(in: source, sha256: im.sha256, ext: im.ext),
+                                     to: destination, sha256: im.sha256, ext: im.ext)
+                copiedImages += 1
+                copiedBytes += Int64(im.bytes)
+            }
+
             // ④ 血缘 meta。**镜像必须换一个自己的 workspace_id**：VACUUM 出来的副本原样带着源库的 id，
             // 不换的话「扫一圈盘按 workspace_id 找源」会把镜像自己也认成源。
             progress?("正在写入基线…", 0.92)
@@ -185,7 +202,7 @@ enum MirrorBuilder {
             progress?("完成", 1)
             return Result(url: destination, mirrorId: mirrorId, copiedFiles: copied,
                           copiedBytes: copiedBytes, internalized: internalized,
-                          baseRows: baseRows, unresolved: est.unresolved)
+                          baseRows: baseRows, unresolved: est.unresolved, copiedImages: copiedImages)
         } catch {
             if created { try? fm.removeItem(at: destination) }
             throw error
@@ -193,6 +210,15 @@ enum MirrorBuilder {
     }
 
     // MARK: - 内部
+
+    /// 要带进镜像的图片：表里有行、文件在、且不是已到期的待删除。
+    static func imagesToCopy(store: LibraryStore, folder: URL, now: Date = .now) -> [LibImage] {
+        let cutoff = now.addingTimeInterval(-LibraryStore.imagePurgeAfter)
+        return ((try? store.images()) ?? []).filter { im in
+            (im.orphanedAt.map { $0 >= cutoff } ?? true)
+                && ImageAssets.exists(in: folder, sha256: im.sha256, ext: im.ext)
+        }
+    }
 
     /// 挑一条能打开的 location：**工作区内的优先**（那条随文件夹走、最稳），其次外部。
     static func pickSource(store: LibraryStore, documentId: String,

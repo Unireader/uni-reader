@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 12
+    static let schemaVersion = 13
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -44,6 +44,12 @@ final class LibraryStore {
 
     /// 本库 `ocr_page` 的全部键（纯 additive 表，不进基线，见 `MirrorStore.ocrKeys`）。
     func mirrorOCRKeys() throws -> Set<MirrorDiff.OCRKey> { try MirrorStore.ocrKeys(db) }
+
+    /// 本工作区拿得出来的图片（有行且文件在，见 `MirrorStore.imageKeys`）。同 OCR 那条 additive 通道。
+    func mirrorImageKeys() throws -> Set<String> { try MirrorStore.imageKeys(db, folder: workspaceFolder) }
+
+    /// 工作区包的根（`fileURL` 是 `<根>/UniReader/library.sqlite`）。
+    var workspaceFolder: URL { fileURL.deletingLastPathComponent().deletingLastPathComponent() }
 
     /// 镜像基线（`sync_base`）。不是镜像时返回空 —— 那张表只在镜像库里存在。
     func syncBase() throws -> [String: [String: String]] { try MirrorStore.syncBase(db) }
@@ -142,6 +148,18 @@ final class LibraryStore {
           content_hash TEXT PRIMARY KEY, page_count INTEGER NOT NULL,
           heights BLOB NOT NULL, created_at TEXT NOT NULL
         );
+        -- v13：图片本体注册表（`IMAGE-NOTE-PLAN.md §2`，跨端契约）。文件在 `<工作区>/Images/<sha256>.<ext>`，
+        -- **主键就是内容 SHA-256**（同图只存一份；两端各自导入同一张图在镜像合并时天然合一）。
+        -- 引用 = note 表 kind=6 的 payload `image` 键指向这里，**不存计数列**——数出来的永远对
+        -- （`imageRefCounts`）。orphaned_at 非 NULL = 从那一刻起没有引用（待删除），30 天后 `purgeImages` 真删。
+        -- 离线镜像走 OCR 那条纯 additive 通道（不进 sync_base，`MirrorApply.fillImages`）。
+        CREATE TABLE IF NOT EXISTS image (
+          sha256 TEXT PRIMARY KEY,
+          ext TEXT NOT NULL,
+          width INTEGER NOT NULL, height INTEGER NOT NULL, bytes INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          orphaned_at TEXT
+        );
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -167,6 +185,8 @@ final class LibraryStore {
         // v11 → v12：画板模式（页面两侧空白也能写字）。逐文档记；已有文档补列即 0（关），观感不变。
         // 页边笔迹仍是页内笔迹（note kind=2），只是归一化 x 越出 0~1，故 note 表不用动。
         try addColumnIfMissing("document", "canvas_mode", "INTEGER NOT NULL DEFAULT 0")
+        // v12 → v13 只新增 image 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
+        // 图片笔记复用 note 表（kind=6），故 note 也不用改结构。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -587,6 +607,86 @@ final class LibraryStore {
         try db.run("DELETE FROM scratch_pad WHERE id=?", [.text(id)])
     }
 
+    // MARK: - 图片本体（image，v13；`IMAGE-NOTE-PLAN.md §2~3`）
+
+    /// 图片笔记的 note kind。定义在 Store 层而不是 App 层：引用计数是 SQL 算的，这个数字 DAO 自己要用。
+    static let imageNoteKind = 6
+    /// 待删除多久后真删（秒）：30 天。
+    static let imagePurgeAfter: TimeInterval = 30 * 86_400
+
+    func images() throws -> [LibImage] {
+        try db.query("SELECT * FROM image ORDER BY created_at ASC").map(Self.image)
+    }
+    func image(sha256: String) throws -> LibImage? {
+        try db.query("SELECT * FROM image WHERE sha256=?", [.text(sha256)]).map(Self.image).first
+    }
+    /// 登记一张图（已存在则不动——同图只有一行，`orphaned_at` 由对账管）。
+    func insertImageIfAbsent(_ im: LibImage) throws {
+        try db.run("""
+        INSERT OR IGNORE INTO image(sha256,ext,width,height,bytes,created_at,orphaned_at) VALUES(?,?,?,?,?,?,?)
+        """, [.text(im.sha256), .text(im.ext), .int(Int64(im.width)), .int(Int64(im.height)),
+              .int(Int64(im.bytes)), .text(ISO.string(im.createdAt)),
+              im.orphanedAt.map { .text(ISO.string($0)) } ?? .null])
+    }
+    /// 只删行。**文件由调用方删**（`ImageAssets.remove`）——DAO 不碰文件系统，spike 才能只测库。
+    func deleteImage(sha256: String) throws {
+        try db.run("DELETE FROM image WHERE sha256=?", [.text(sha256)])
+    }
+
+    /// 每张图当前被几条图片笔记引用（**数出来的**：`note` kind=6 的 payload `image` 键）。没被引用的图不在结果里。
+    /// 图片笔记一篇文档几十条顶天，`json_extract` 这点开销可忽略。
+    func imageRefCounts() throws -> [String: Int] {
+        var out: [String: Int] = [:]
+        for (sha, n) in try db.query("""
+        SELECT json_extract(payload, '$.image'), COUNT(*) FROM note WHERE kind=?
+        GROUP BY json_extract(payload, '$.image')
+        """, [.int(Int64(Self.imageNoteKind))], row: { r in (r.text(0), Int(r.int64(1))) }) where !sha.isEmpty {
+            out[sha] = n
+        }
+        return out
+    }
+    func imageRefCount(sha256: String) throws -> Int {
+        let r = try db.query("SELECT COUNT(*) FROM note WHERE kind=? AND json_extract(payload, '$.image')=?",
+                             [.int(Int64(Self.imageNoteKind)), .text(sha256)]) { r in Int(r.int64(0)) }
+        return r.first ?? 0
+    }
+
+    /// 对账 `orphaned_at`（方案 §3 规则 1）：有引用 → 清空；无引用且此前为空 → 记下 `now`。
+    /// **已经非空的不重置**——否则「删了又恢复又删」把 30 天越拖越长。返回状态**变了**的 sha 列表。
+    /// `only` 非 nil 时只对账那几张（删一条笔记后只需要看它指向的那一张）。
+    @discardableResult
+    func reconcileImageOrphans(now: Date = .now, only: Set<String>? = nil) throws -> [String] {
+        let refs = try imageRefCounts()
+        var changed: [String] = []
+        for im in try images() {
+            if let only, !only.contains(im.sha256) { continue }
+            let referenced = (refs[im.sha256] ?? 0) > 0
+            if referenced, im.orphanedAt != nil {
+                try db.run("UPDATE image SET orphaned_at=NULL WHERE sha256=?", [.text(im.sha256)])
+                changed.append(im.sha256)
+            } else if !referenced, im.orphanedAt == nil {
+                try db.run("UPDATE image SET orphaned_at=? WHERE sha256=?", [.text(ISO.string(now)), .text(im.sha256)])
+                changed.append(im.sha256)
+            }
+        }
+        return changed
+    }
+
+    /// 待删除且已到期的图（`orphaned_at < before`）。调用方删文件 + `deleteImage`。
+    /// `before` 传「现在」= 立即清理全部待删除；传「现在 − 30 天」= 常规到期清理。
+    func purgeableImages(before: Date) throws -> [LibImage] {
+        try db.query("SELECT * FROM image WHERE orphaned_at IS NOT NULL AND orphaned_at < ?",
+                     [.text(ISO.string(before))]).map(Self.image)
+    }
+
+    /// 设置页那一行要的数：总数 / 待删除数 / 总字节。
+    func imageStats() -> (total: Int, orphaned: Int, bytes: Int64) {
+        let r = (try? db.query("""
+        SELECT COUNT(*), SUM(orphaned_at IS NOT NULL), COALESCE(SUM(bytes), 0) FROM image
+        """) { r in (Int(r.int64(0)), Int(r.int64(1)), r.int64(2)) }) ?? []
+        return r.first ?? (0, 0, 0)
+    }
+
     // MARK: - 页面几何缓存（page_geom）
 
     /// 某内容的每页高度（文档单位）；没缓存或页数对不上 → nil（上层按 PDF 现算并回填）。
@@ -712,6 +812,13 @@ final class LibraryStore {
                       showPage: (r["show_page"] as? Int64 ?? 0) != 0,
                       createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                       updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
+    private static func image(_ r: [String: Any]) -> LibImage {
+        LibImage(sha256: r["sha256"] as? String ?? "", ext: r["ext"] as? String ?? "png",
+                 width: Int(r["width"] as? Int64 ?? 0), height: Int(r["height"] as? Int64 ?? 0),
+                 bytes: Int(r["bytes"] as? Int64 ?? 0),
+                 createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                 orphanedAt: ISO.date(r["orphaned_at"] as? String))
     }
     private static func ocr(_ r: [String: Any]) -> OCRPage {
         OCRPage(contentHash: r["content_hash"] as? String ?? "",

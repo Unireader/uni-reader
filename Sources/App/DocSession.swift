@@ -357,6 +357,12 @@ final class DocSession: ObservableObject, Identifiable {
     /// 已落库的高亮快照（id → 值），增量对账用，非 @Published。
     var persistedHighlights: [UUID: Highlight] = [:]
 
+    // 图片笔记（note kind=6，`IMAGE-NOTE-PLAN.md`）。同上套路：阅读区图钉/气泡 + Inspector 列表，
+    // `DocTabModel` 的 `.onChange` 增量对账落库（落库那一步顺带对账图片本体的待删除状态）。
+    @Published var imageNotes: [ImageNote] = []
+    /// 已落库的图片笔记快照（id → 值），增量对账用，非 @Published。
+    var persistedImageNotes: [UUID: ImageNote] = [:]
+
     // 书签（note kind=5，`REQUIREMENTS.md §1.9`）。同上套路：目录树里与 TOC 合并显示，
     // `DocTabModel` 的 `.onChange` 增量对账落库。列表**恒按 `Bookmark.before` 有序**
     // （读库时排一次，新增/改名后再排一次）——合并算法与三端显示都指望这个不变量。

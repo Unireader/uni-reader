@@ -51,6 +51,11 @@ struct PageCellView: View {
     var onToggleNote: (TextNote) -> Void = { _ in }        // 点图钉：tap 模式展开/收起气泡
     var onHoverNote: (UUID, Bool) -> Void = { _, _ in }    // 图钉悬停进出（hover 模式用）
     var noteDrag: (id: UUID, off: CGSize)? = nil   // 点注解拖拽 ghost（非空且 id 匹配时该图钉按 off 挪显示位）
+    var imageNotes: [ImageNote] = []       // 本页图片笔记（kind=6）：图钉 + 缩略图气泡（`IMAGE-NOTE-PLAN.md §5`）
+    var imageInfo: (String) -> (url: URL, size: CGSize)? = { _ in nil }   // sha → 文件与像素尺寸（WorkspaceManager.imageInfo，带缓存）
+    var onOpenImageNote: (ImageNote) -> Void = { _ in }    // 进编辑器
+    var onToggleImageNote: (ImageNote) -> Void = { _ in }  // 点图钉：tap 模式展开/收起（与文字笔记共用 expandedNotes/hoverNote）
+    var onViewImageNote: (ImageNote) -> Void = { _ in }    // 看大图
     var scratchPins: [(id: UUID, nx: Double, ny: Double, name: String)] = []   // 本页的草稿纸图钉（点开那张纸）
     var onOpenScratchPad: (UUID) -> Void = { _ in }
     var bookmarks: [Bookmark] = []                         // 本页的书签（页右缘小旗标，点开改名/删除）
@@ -262,6 +267,33 @@ struct PageCellView: View {
                                    onEdit: n.display == .hover ? nil : { onOpenNote(n) })
                 }
             }
+            // 图片笔记图钉 + 气泡：与批注图钉同一套语义（tap 展开/收起、hover/always 点开编辑器）、
+            // 同一套拖拽 ghost（`noteDrag` 按 id 匹配，容器手势 `notePinDragGesture` 两种图钉都认）。
+            ForEach(imageNotes) { n in
+                let pos = Self.imageMarkerPos(n, size: size)
+                let dragging = noteDrag?.id == n.id
+                Button { n.display == .tap ? onToggleImageNote(n) : onOpenImageNote(n) } label: {
+                    imagePin
+                }
+                .buttonStyle(.plain)
+                .help(n.display == .hover ? "" : (n.caption.isEmpty ? n.sourceLabel : n.caption))
+                .opacity(dragging ? 0.3 : 1)
+                .position(pos)
+                .onHover { onHoverNote(n.id, $0) }
+                if dragging, let off = noteDrag?.off {
+                    imagePin
+                        .allowsHitTesting(false)
+                        .position(x: pos.x + off.width, y: pos.y + off.height)
+                }
+            }
+            ForEach(imageNotes) { n in
+                if imageBubbleVisible(n), noteDrag?.id != n.id {
+                    ImageBubbleView(note: n, info: imageInfo(n.image), pageSize: size,
+                                    pin: Self.imageMarkerPos(n, size: size), pinRadius: Self.pinRadius,
+                                    onEdit: n.display == .hover ? nil : { onOpenImageNote(n) },
+                                    onView: n.display == .hover ? nil : { onViewImageNote(n) })
+                }
+            }
             // 草稿纸图钉：标记「这张纸是在页面的哪儿建的」，点开对应草稿纸。与批注图钉同款钳制/样式约束
             // （扁平圆底 + SF Symbol，无渐变高光），只是换个图标与配色以便一眼分得清。
             ForEach(scratchPins, id: \.id) { pin in
@@ -395,6 +427,38 @@ struct PageCellView: View {
         let y = n.rects.isEmpty ? n.anchor.minY * size.height : n.anchor.minY * size.height + 7
         return CGPoint(x: min(max(x, 12), size.width - 12),
                        y: min(max(y, 10), size.height - 10))
+    }
+
+    /// 图片笔记图钉的底色：淡青。与文字注解（黄）/ 草稿纸（浅蓝）/ 书签（红缎带）一眼分得开。
+    private static let imageMarker = Color(red: 0.64, green: 0.88, blue: 0.80)
+
+    /// 图片笔记的气泡此刻要不要画：同文字笔记三态，但图片笔记**永远有东西可展开**（那张图）。
+    private func imageBubbleVisible(_ n: ImageNote) -> Bool {
+        switch n.display {
+        case .always: return true
+        case .tap: return expandedNotes.contains(n.id)
+        case .hover: return hoverNote == n.id
+        }
+    }
+
+    /// 图片笔记图钉落位：PDF 节选（有框）落在框**右上角外侧**（不遮框里的内容）；导入（点锚）落在锚点处。钳制在页内。
+    /// static：容器层的命中测试（`ReaderSurface.imagePinHit`）要用同一份数，画在哪就点在哪。
+    static func imageMarkerPos(_ n: ImageNote, size: CGSize) -> CGPoint {
+        let boxed = n.anchor.width > 0 || n.anchor.height > 0
+        let x = boxed ? n.anchor.maxX * size.width + 9 : n.anchor.minX * size.width
+        let y = boxed ? n.anchor.minY * size.height + 7 : n.anchor.minY * size.height
+        return CGPoint(x: min(max(x, 12), size.width - 12),
+                       y: min(max(y, 10), size.height - 10))
+    }
+
+    /// 图片笔记图钉外观（原位 Button 与拖拽 ghost 共用）：与批注图钉同一形制，只换图标与底色。
+    private var imagePin: some View {
+        Image(systemName: "photo")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.black.opacity(0.75))
+            .padding(3)
+            .background(Self.imageMarker, in: Circle())
+            .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
     }
 
     /// 图钉外观（原位 Button 与拖拽 ghost 共用）。

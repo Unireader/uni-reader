@@ -142,7 +142,8 @@ struct ReaderPane: View {
                            nightMode: nightMode,
                            interpEnabled: scrollInterp,
                            isActiveWindow: chrome.isKeyWindow,
-                           bottomInset: tabBarInset)
+                           bottomInset: tabBarInset,
+                           onDropFiles: onIngest)   // 拖进阅读区的 PDF 仍入库；图片由阅读区自己收成图片笔记
                 .overlay(alignment: .top) { if tab.isHashing { indexingBadge } }
         } else if let doc = tab.missingDoc {
             ContentUnavailableView {

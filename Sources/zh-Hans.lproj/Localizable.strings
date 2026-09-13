@@ -448,3 +448,32 @@
 "Erase" = "擦除";
 "Move" = "移动";
 "Resize" = "缩放";
+
+/* 图片笔记（IMAGE-NOTE-PLAN.md） */
+"Image Note" = "图片笔记";
+"Image Notes" = "图片笔记";
+"Edit Image Note" = "编辑图片笔记";
+"Delete Image Note" = "删除图片笔记";
+"Clipped from p.%d" = "节选自第 %d 页";
+"Clipped from p.%d–%d" = "节选自第 %d–%d 页";
+"Pasted image" = "粘贴的图片";
+"Image file is missing (not in this copy, or already cleaned up)." = "图片文件不在（这份副本没带它，或已被清理）。";
+"View Full Size" = "查看原图";
+"Copy Image" = "复制图片";
+"Import Image Here…" = "在此导入图片…";
+"Choose images to add as notes on this page" = "选择要加到这一页上的图片";
+"Saving image note…" = "正在保存图片笔记…";
+"Saved as image note" = "已存为图片笔记";
+"Could not save the image." = "图片没能保存。";
+"Importing image…" = "正在导入图片…";
+"Saved %d image notes" = "已存为 %d 条图片笔记";
+"Saved %d of %d images." = "%2$d 张图片里存下了 %1$d 张。";
+"That file isn't an image we can read." = "这个文件不是能读的图片。";
+"No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page." = "还没有图片笔记。在页面上按住 ⌥⇧ 拖一个框可以节选一块，也可以把图片文件拖到页面上。";
+"Edit this image note" = "编辑这条图片笔记";
+"Delete this image note" = "删除这条图片笔记";
+"Edit…" = "编辑…";
+"No workspace is open." = "没有打开的工作区。";
+"Images live inside the workspace package. An image whose notes are all deleted becomes pending; it is removed for good 30 days later (undo the deletion before then to keep it)." = "图片存在工作区包内。引用它的笔记全部删除后进入待删除状态，30 天后彻底删除（在此之前撤销删除即可留住）。";
+"Clean Up Now" = "立即清理";
+"%d images · %d pending deletion · %@" = "图片 %d 张 · 待删除 %d 张 · %@";

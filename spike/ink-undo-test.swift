@@ -1,5 +1,5 @@
 // 编辑撤销栈（`InkUndo.swift`）与笔迹剪贴板（`InkClipboard.swift`）的纯逻辑测试。运行：
-//   cp spike/ink-undo-test.swift /tmp/main.swift && swiftc Sources/Support/L.swift Sources/Store/LibraryModels.swift Sources/App/PenPreset.swift Sources/App/InkModel.swift Sources/App/InkLayerModel.swift Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/ScratchPadModel.swift Sources/App/InkUndo.swift Sources/App/InkClipboard.swift /tmp/main.swift -o /tmp/iut && /tmp/iut
+//   cp spike/ink-undo-test.swift /tmp/main.swift && swiftc Sources/Support/L.swift Sources/Store/LibraryModels.swift Sources/App/PenPreset.swift Sources/App/InkModel.swift Sources/App/InkLayerModel.swift Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/ImageNoteModel.swift Sources/App/ScratchPadModel.swift Sources/App/InkUndo.swift Sources/App/InkClipboard.swift /tmp/main.swift -o /tmp/iut && /tmp/iut
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift。`DocSession` 上那层薄封装在
 //  `Sources/App/DocSession+InkUndo.swift`，不进这里——它只是 inkEdit{} 取前后快照再调 record。）
 // 覆盖：diff/apply（新增/删除/改值/插回原位）、撤销-重做往返、擦除合并（同一次拖动并成一步）、

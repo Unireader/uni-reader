@@ -91,6 +91,11 @@ enum MirrorDiff {
         /// 再按键逐页取。
         var ocrToSource: [OCRKey] = []
         var ocrToMirror: [OCRKey] = []
+        /// 图片本体（`image` 表 + `Images/` 文件，`IMAGE-NOTE-PLAN.md §7`）里**对面缺的那些**（sha256）：
+        /// 与 OCR 同一条纯 additive 通道——补行（`INSERT OR IGNORE`，`orphaned_at` 原样带过去）+ 拷文件，
+        /// 不删不改、不进基线。「缺」= 对面没有这一行、**或**有行但文件不在（见 `MirrorStore.imageKeys`）。
+        var imagesToSource: [String] = []
+        var imagesToMirror: [String] = []
         /// `document.last_opened_at` **不在指纹里**（方案 §4：进了指纹「翻开过」就把整行标记成改过），
         /// 所以 diff 看不见它 —— 这里单独算出「两边取较大的那个」，`docId → ISO`。
         ///
@@ -103,6 +108,7 @@ enum MirrorDiff {
 
         var isEmpty: Bool {
             changes.isEmpty && lastOpenedMerges.isEmpty && ocrToSource.isEmpty && ocrToMirror.isEmpty
+                && imagesToSource.isEmpty && imagesToMirror.isEmpty
         }
 
         /// 这份 plan 能不能**自动静默地**从源盘推给副本（用户 2026-09-01 拍板的方向不对称：
@@ -118,8 +124,10 @@ enum MirrorDiff {
         /// `INSERT OR IGNORE` 的派生缓存 —— 不覆盖、不删除任何东西，也不进 `sync_base`，
         /// 所以上面那条「只应用一半就重算基线会抹掉证据」对它根本不成立。挡住它的唯一效果
         /// 是让"算过一次的页还要再花一次 API 钱"，那正是这张表存在的理由。
+        /// 图片本体与 OCR 同一口径（同样是只增不改不删的 additive 通道）。
         var isCleanPushToMirror: Bool {
-            !(changes.isEmpty && ocrToSource.isEmpty && ocrToMirror.isEmpty)
+            !(changes.isEmpty && ocrToSource.isEmpty && ocrToMirror.isEmpty
+              && imagesToSource.isEmpty && imagesToMirror.isEmpty)
                 && conflicts.isEmpty && changes.allSatisfy { $0.side == .mirror }
         }
 
@@ -155,13 +163,18 @@ enum MirrorDiff {
     ///   - theirs: 源库现在的全部行
     ///   - mineOCR / theirsOCR: 两侧 `ocr_page` 的键集合（不含 payload，见 `Plan.ocrToSource`）
     static func compute(base: Base, mine: Snapshot, theirs: Snapshot,
-                        mineOCR: Set<OCRKey> = [], theirsOCR: Set<OCRKey> = []) -> Plan {
+                        mineOCR: Set<OCRKey> = [], theirsOCR: Set<OCRKey> = [],
+                        mineImages: Set<String> = [], theirsImages: Set<String> = []) -> Plan {
         var plan = Plan()
         // OCR 缓存：**只补对面缺的、不判改删**（方案 §4）。
         // 「一边清了缓存」于是会被另一边补回来 —— 这是刻意的：这张表是派生数据，
         // 删它的语义是"腾空间/想重跑"，不是"这份内容作废了"，而重跑一次要真花 API 的钱。
         plan.ocrToSource = mineOCR.subtracting(theirsOCR).sorted()
         plan.ocrToMirror = theirsOCR.subtracting(mineOCR).sorted()
+        // 图片本体同一条通道：一边清理掉（30 天到期）的图，只要另一边还没到期就会被补回来——
+        // 也是刻意的：`orphaned_at` 原样带过去，两边到期时刻一致，下一轮各自删干净，不会来回补。
+        plan.imagesToSource = mineImages.subtracting(theirsImages).sorted()
+        plan.imagesToMirror = theirsImages.subtracting(mineImages).sorted()
         for spec in MirrorFp.specs {
             let t = spec.table
             let baseFps = base[t] ?? [:]

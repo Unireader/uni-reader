@@ -110,6 +110,21 @@ struct LibScratchPad: Identifiable, Equatable {
     var updatedAt: Date
 }
 
+/// 一张图片本体（`image` 表，v13）。**主键就是内容 SHA-256**：同一张图导两次只有一行一文件；
+/// 两端各自导入同一张图在离线镜像合并时也天然合一。文件在 `<工作区>/Images/<sha256>.<ext>`。
+/// 引用 = `note` 表 kind=6 的 payload 里 `image` 键指向这里，**不存计数列**（数出来的永远对，
+/// 见 `IMAGE-NOTE-PLAN.md §2.2`）。`orphanedAt` 非 nil = 从那一刻起没有任何引用（待删除，30 天后清）。
+struct LibImage: Identifiable, Equatable {
+    var id: String { sha256 }
+    var sha256: String
+    var ext: String             // png / jpg / gif / webp
+    var width: Int
+    var height: Int
+    var bytes: Int
+    var createdAt: Date
+    var orphanedAt: Date?
+}
+
 /// 一页的 OCR 缓存（`ocr_page` 表，v3）。按内容 hash（= variant 物理内容）+ 页 + 引擎缓存，
 /// 随文件移动/换机复用。`payload` = JSON `OCRPagePayload`（归一化 0~1 文本框，见 `OCR.swift`）。
 struct OCRPage: Equatable {

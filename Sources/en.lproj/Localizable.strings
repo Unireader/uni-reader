@@ -446,3 +446,32 @@
 "Erase" = "Erase";
 "Move" = "Move";
 "Resize" = "Resize";
+
+/* 图片笔记（IMAGE-NOTE-PLAN.md） */
+"Image Note" = "Image Note";
+"Image Notes" = "Image Notes";
+"Edit Image Note" = "Edit Image Note";
+"Delete Image Note" = "Delete Image Note";
+"Clipped from p.%d" = "Clipped from p.%d";
+"Clipped from p.%d–%d" = "Clipped from p.%d–%d";
+"Pasted image" = "Pasted image";
+"Image file is missing (not in this copy, or already cleaned up)." = "Image file is missing (not in this copy, or already cleaned up).";
+"View Full Size" = "View Full Size";
+"Copy Image" = "Copy Image";
+"Import Image Here…" = "Import Image Here…";
+"Choose images to add as notes on this page" = "Choose images to add as notes on this page";
+"Saving image note…" = "Saving image note…";
+"Saved as image note" = "Saved as image note";
+"Could not save the image." = "Could not save the image.";
+"Importing image…" = "Importing image…";
+"Saved %d image notes" = "Saved %d image notes";
+"Saved %d of %d images." = "Saved %d of %d images.";
+"That file isn't an image we can read." = "That file isn't an image we can read.";
+"No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page." = "No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page.";
+"Edit this image note" = "Edit this image note";
+"Delete this image note" = "Delete this image note";
+"Edit…" = "Edit…";
+"No workspace is open." = "No workspace is open.";
+"Images live inside the workspace package. An image whose notes are all deleted becomes pending; it is removed for good 30 days later (undo the deletion before then to keep it)." = "Images live inside the workspace package. An image whose notes are all deleted becomes pending; it is removed for good 30 days later (undo the deletion before then to keep it).";
+"Clean Up Now" = "Clean Up Now";
+"%d images · %d pending deletion · %@" = "%d images · %d pending deletion · %@";

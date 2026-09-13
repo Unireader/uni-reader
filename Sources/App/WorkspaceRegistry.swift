@@ -115,6 +115,11 @@ final class WorkspaceRegistry: ObservableObject {
     /// 不能另开一条 —— 两条活连接同时写同一个库，正是 §8.1 红线要根除的。
     func openManager(at folder: URL) -> WorkspaceManager? { byPath[Self.key(folder)]?.manager }
 
+    /// 此刻**活着**的全部工作区实例（设置页「图片笔记」那一行按工作区逐个列）。弱引用池里已经释放的不算。
+    var openManagers: [WorkspaceManager] {
+        byPath.values.compactMap(\.manager).sorted { $0.name < $1.name }
+    }
+
     // MARK: - 实例池
 
     /// 取（或建）某工作区的 manager 并 +1 引用。**同路径必返回同一实例**（红线，见类型注释）。

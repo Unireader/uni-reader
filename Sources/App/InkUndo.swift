@@ -29,8 +29,10 @@ struct InkPatch {
     var at: CFAbsoluteTime
     var strokes: [UUID: Change<InkStroke>]
     var notes: [UUID: Change<TextNote>]
+    /// 图片笔记（kind=6）。撤销一次删除把它加回来 = 引用回来，落库对账会把那张图从待删除里捞回。
+    var images: [UUID: Change<ImageNote>] = [:]
 
-    var isEmpty: Bool { strokes.isEmpty && notes.isEmpty }
+    var isEmpty: Bool { strokes.isEmpty && notes.isEmpty && images.isEmpty }
 
     /// 把**更晚**的一次变更并进本条（连续擦除批次合成一步）：`before` 保留最早那份、
     /// `after` 换成最新那份 —— 复合之后这一条仍是「一步到位」的正确增量。
@@ -41,9 +43,13 @@ struct InkPatch {
         for (id, c) in newer.notes {
             if var old = notes[id] { old.after = c.after; notes[id] = old } else { notes[id] = c }
         }
+        for (id, c) in newer.images {
+            if var old = images[id] { old.after = c.after; images[id] = old } else { images[id] = c }
+        }
         // 来回擦成原样的条目（before == after）留着只会让撤销白写一遍，清掉。
         strokes = strokes.filter { $0.value.before != $0.value.after }
         notes = notes.filter { $0.value.before != $0.value.after }
+        images = images.filter { $0.value.before != $0.value.after }
         at = newer.at
     }
 }
@@ -150,11 +156,13 @@ final class InkUndoStack {
     /// 记一次「前后两份值数组」的差。无差异 = 不记（调用方不必自己判断有没有改动）。
     func record(label: String, kind: InkPatch.Kind,
                 strokesBefore: [InkStroke] = [], strokesAfter: [InkStroke] = [],
-                notesBefore: [TextNote] = [], notesAfter: [TextNote] = []) {
+                notesBefore: [TextNote] = [], notesAfter: [TextNote] = [],
+                imagesBefore: [ImageNote] = [], imagesAfter: [ImageNote] = []) {
         guard !applying else { return }
         let patch = InkPatch(label: label, kind: kind, at: CFAbsoluteTimeGetCurrent(),
                              strokes: InkDelta.diff(strokesBefore, strokesAfter),
-                             notes: InkDelta.diff(notesBefore, notesAfter))
+                             notes: InkDelta.diff(notesBefore, notesAfter),
+                             images: InkDelta.diff(imagesBefore, imagesAfter))
         push(patch)
     }
 

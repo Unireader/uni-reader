@@ -194,7 +194,9 @@ extension WorkspaceManager {
         // 为读一张表再开一条连接就是在自找「硬盘弹不出去」那类问题（§8「关掉工作区 = 当场放掉引用」）。
         let plan = MirrorDiff.compute(base: try store.syncBase(), mine: mine, theirs: theirs,
                                       mineOCR: try store.mirrorOCRKeys(),
-                                      theirsOCR: try MirrorStore.ocrKeys(srcDB))
+                                      theirsOCR: try MirrorStore.ocrKeys(srcDB),
+                                      mineImages: try store.mirrorImageKeys(),
+                                      theirsImages: try MirrorStore.imageKeys(srcDB, folder: sourceFolder))
         return DryRun(plan: plan,
                       titles: MirrorStore.titles(mine: mine, theirs: theirs),
                       hashTitles: MirrorStore.ocrTitles(mine: mine, theirs: theirs))
@@ -217,7 +219,9 @@ extension WorkspaceManager {
         let theirs = try store.mirrorSnapshot()
         let plan = MirrorDiff.compute(base: try mirrorStore.syncBase(), mine: mine, theirs: theirs,
                                       mineOCR: try mirrorStore.mirrorOCRKeys(),
-                                      theirsOCR: try store.mirrorOCRKeys())
+                                      theirsOCR: try store.mirrorOCRKeys(),
+                                      mineImages: try mirrorStore.mirrorImageKeys(),
+                                      theirsImages: try store.mirrorImageKeys())
         return DryRun(plan: plan,
                       titles: MirrorStore.titles(mine: mine, theirs: theirs),
                       hashTitles: MirrorStore.ocrTitles(mine: mine, theirs: theirs))
@@ -244,6 +248,8 @@ extension WorkspaceManager {
         DispatchQueue.main.async {
             self.refresh()
             opened?.refresh()
+            self.reconcileAndPurgeImages()      // 合并后图片的引用可能变了：对账 + 清缓存（`imageInfo`）
+            opened?.reconcileAndPurgeImages()
         }
         return r
     }
@@ -299,6 +305,8 @@ extension WorkspaceManager {
         DispatchQueue.main.async {
             self.refresh()
             opened?.refresh()
+            self.reconcileAndPurgeImages()
+            opened?.reconcileAndPurgeImages()
         }
         return r
     }

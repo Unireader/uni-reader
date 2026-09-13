@@ -185,16 +185,34 @@ enum MirrorStore {
         return out
     }
 
+    /// 一个工作区里**真正拿得出来**的图片（`IMAGE-NOTE-PLAN.md §7`）：`image` 表有行 **且** `Images/` 里文件在。
+    /// 只有这样的图才能补给对面；行在文件不在（拷一半被拔盘）的算「缺」，对面有的话会补回来。
+    /// 已待删除且**到期**的不算——马上要清的东西没必要搬。
+    static func imageKeys(_ db: SQLiteDB, folder: URL, now: Date = .now) throws -> Set<String> {
+        var out: Set<String> = []
+        let cutoff = ISO.string(now.addingTimeInterval(-LibraryStore.imagePurgeAfter))
+        for row in try db.query("SELECT sha256, ext FROM image WHERE orphaned_at IS NULL OR orphaned_at >= ?",
+                                [.text(cutoff)]) {
+            guard let sha = row["sha256"] as? String, let ext = row["ext"] as? String,
+                  ImageAssets.exists(in: folder, sha256: sha, ext: ext) else { continue }
+            out.insert(sha)
+        }
+        return out
+    }
+
     /// **干跑**：算出这次同步会做什么，一个字都不写。
     ///
     /// 源库走调用方传进来的 `LibraryStore` 实例（§8.1「同一路径同一实例」红线）；
     /// 镜像库是本端自己开的连接。
-    static func plan(mirror: SQLiteDB, source: LibraryStore) throws -> MirrorDiff.Plan {
+    /// `mirrorFolder` 给了才算图片（要查 `Images/` 里文件在不在）；不给 = 图片不进这份 plan。
+    static func plan(mirror: SQLiteDB, mirrorFolder: URL? = nil, source: LibraryStore) throws -> MirrorDiff.Plan {
         MirrorDiff.compute(base: try syncBase(mirror),
                            mine: try snapshot(mirror),
                            theirs: try source.mirrorSnapshot(),
                            mineOCR: try ocrKeys(mirror),
-                           theirsOCR: try source.mirrorOCRKeys())
+                           theirsOCR: try source.mirrorOCRKeys(),
+                           mineImages: try mirrorFolder.map { try imageKeys(mirror, folder: $0) } ?? [],
+                           theirsImages: mirrorFolder == nil ? [] : try source.mirrorImageKeys())
     }
 
     /// 两侧合起来的 `documentId → 书名`，给报告用。

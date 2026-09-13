@@ -37,6 +37,8 @@ extension ReaderSurface {
 
     /// 此刻是否按着 ⌥。纯事件读取，不引 AppKit 视图（同 ⇧ 尺子读 `NSEvent.modifierFlags` 的先例）。
     var snipModifierDown: Bool { NSEvent.modifierFlags.contains(.option) }
+    /// 此刻是否按着 ⇧：框选时加上它 = **存为图片笔记**而不是发给 AI（`IMAGE-NOTE-PLAN.md §4`，用户选的入口）。
+    var snipShiftDown: Bool { NSEvent.modifierFlags.contains(.shift) }
 
     /// 手势 + 覆盖层 + ⌥S 路由，单独包一层挂在 `body` 上（理由见 `ReaderSurface.body` 注释）。
     func snipRoutes<V: View>(_ base: V) -> some View {
@@ -60,14 +62,20 @@ extension ReaderSurface {
                     // 起手闸：常驻 snip 工具，或按着 ⌥ 临时截。两者都不满足就整条手势哑火。
                     guard app.pointerTool == .snip || snipModifierDown else { return }
                     scratch.snipViaOption = (app.pointerTool != .snip)
+                    scratch.snipToNote = snipShiftDown
                 }
+                // ⇧ 起手时没按、拖到一半才按上也算数（松手前任一时刻按过 ⇧ = 要的是图片笔记）
+                if snipShiftDown { scratch.snipToNote = true }
                 snipRect = SnipRect(start: v.startLocation, end: v.location)
             }
             .onEnded { v in
                 guard let r = snipRect else { return }
                 snipRect = nil
                 scratch.snipViaOption = false
-                finishSnip(start: r.start, end: v.location)
+                let toNote = scratch.snipToNote || snipShiftDown
+                scratch.snipToNote = false
+                if toNote { finishSnipAsImageNote(start: r.start, end: v.location) }
+                else { finishSnip(start: r.start, end: v.location) }
             }
     }
 
@@ -110,12 +118,14 @@ extension ReaderSurface {
         }
     }
 
-    /// 「p.12」/「p.12–13」。取不到布局时不显示（宁可没有，也别显示错的页码）。
+    /// 「p.12」/「p.12–13」；⇧ 按着时缀上「· 图片笔记」——拖到一半就能看出松手会落到哪条路。
+    /// 取不到布局时不显示（宁可没有，也别显示错的页码）。
     private func snipPageLabel(_ box: CGRect) -> String? {
         guard let a = containerPointToPageNorm(CGPoint(x: box.midX, y: box.minY)),
               let b = containerPointToPageNorm(CGPoint(x: box.midX, y: box.maxY)) else { return nil }
         let lo = min(a.page, b.page) + 1, hi = max(a.page, b.page) + 1
-        return lo == hi ? String(format: L("p.%d"), lo) : "\(String(format: L("p.%d"), lo))–\(hi)"
+        let pages = lo == hi ? String(format: L("p.%d"), lo) : "\(String(format: L("p.%d"), lo))–\(hi)"
+        return scratch.snipToNote ? "\(pages) · \(L("Image Note"))" : pages
     }
 
     @ViewBuilder var snipToastView: some View {

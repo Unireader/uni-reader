@@ -23,6 +23,16 @@ extension Notification.Name {
     static let readerDelete = Notification.Name("com.xvan.UniReader.readerDelete")
     static let readerUndo = Notification.Name("com.xvan.UniReader.readerUndo")
     static let readerRedo = Notification.Name("com.xvan.UniReader.readerRedo")
+    // 图片笔记：Inspector 那边点「编辑 / 查看」→ 阅读区弹 sheet（编辑器与看大图的 @State 都在 `ReaderSurface`）。
+    // `object` = `ImageNoteRequest`（会话 id + 笔记 id），非本会话的窗口不认领。
+    static let imageNoteEdit = Notification.Name("com.xvan.UniReader.imageNoteEdit")
+    static let imageNoteView = Notification.Name("com.xvan.UniReader.imageNoteView")
+}
+
+/// `imageNoteEdit` / `imageNoteView` 通知的载荷。
+struct ImageNoteRequest {
+    var sessionID: UUID
+    var noteID: UUID
 }
 
 // MARK: - 内部实现
@@ -166,6 +176,8 @@ struct PageBuckets {
     var matchRects: [Int: [CGRect]] = [:]
     var highlights: [Int: [Highlight]] = [:]
     var notes: [Int: [TextNote]] = [:]
+    /// 本窗口内各页的图片笔记（kind=6，`IMAGE-NOTE-PLAN.md`）。
+    var imageNotes: [Int: [ImageNote]] = [:]
     /// 本窗口内各页的草稿纸图钉（id + 页内归一化位置 + 显示名）。
     var scratchPins: [Int: [(id: UUID, nx: Double, ny: Double, name: String)]] = [:]
     /// 本窗口内各页的书签（页边小旗标；`REQUIREMENTS.md §1.9`）。
@@ -182,6 +194,9 @@ struct PageBuckets {
         }
         for n in session.textNotes where range.contains(n.page) {
             notes[n.page, default: []].append(n)
+        }
+        for n in session.imageNotes where range.contains(n.page) {
+            imageNotes[n.page, default: []].append(n)
         }
         for (i, p) in session.scratchPads.enumerated() where range.contains(p.anchorPage) {
             scratchPins[p.anchorPage, default: []].append(
@@ -278,6 +293,7 @@ final class Scratch {
     var localInkStart: (page: Int, nx: Double, ny: Double)?     // 进行中本机落墨的起点（⇧ 尺子锚点；非 nil = 有一笔/一次擦除在画）
     var lassoDragMode: LassoDragMode?  // 进行中框选手势的形态（nil = 无框选/移动在飞）
     var snipViaOption = false          // 这次框选截图是 ⌥ 临时触发的（松手后不该留在 snip 工具上）
+    var snipToNote = false             // 这次框选是 ⌥⇧（或 snip 工具 + ⇧）起手的 → 存为图片笔记而不是发给 AI
     var noteDragID: UUID?              // 进行中点注解图钉拖拽的 note id（起点命中定锚一次；非 nil = 有图钉在拖）
     var lassoEscMonitor: Any?          // Esc 清除框选选中集的 NSEvent 本地监视器（事件管道，非视图）
     var toolKeyMonitor: Any?           // 单键工具切换（e 橡皮 / 数字选笔等）的 NSEvent 本地监视器

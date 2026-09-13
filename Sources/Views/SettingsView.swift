@@ -145,8 +145,38 @@ struct SettingsView: View {
             } header: {
                 Text(L("Toolbar"))
             }
+
+            // 图片笔记的图片本体（`IMAGE-NOTE-PLAN.md §8`）：设置窗是 App 级的、图片是工作区级的，
+            // 所以按**此刻开着的工作区**逐个列一行。每秒重算（同诊断页的理由：设置窗不销毁，静态取值会一直是旧数）。
+            Section {
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    let managers = WorkspaceRegistry.shared.openManagers
+                    if managers.isEmpty {
+                        Text(L("No workspace is open.")).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(managers, id: \.folder) { ws in imageStatsRow(ws) }
+                    }
+                }
+            } header: {
+                Text(L("Image Notes"))
+            } footer: {
+                Text(L("Images live inside the workspace package. An image whose notes are all deleted becomes pending; it is removed for good 30 days later (undo the deletion before then to keep it)."))
+            }
         }
         .formStyle(.grouped)
+    }
+
+    /// 一个工作区的图片账：「图片 N 张 · 待删除 M 张 · 占用」+「立即清理」。
+    @ViewBuilder private func imageStatsRow(_ ws: WorkspaceManager) -> some View {
+        let s = ws.imageStats()
+        LabeledContent {
+            Button(L("Clean Up Now")) { _ = ws.purgeImagesNow() }
+                .disabled(s.orphaned == 0)
+        } label: {
+            Text(ws.name)
+            Text(String(format: L("%d images · %d pending deletion · %@"), s.total, s.orphaned,
+                        ByteCountFormatter.string(fromByteCount: s.bytes, countStyle: .file)))
+        }
     }
 
     /// 平板：滚动跟随算法 + 服务开机自启。

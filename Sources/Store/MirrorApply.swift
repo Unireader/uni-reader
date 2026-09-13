@@ -30,6 +30,9 @@ enum MirrorApply {
         /// 双向补齐的 OCR 缓存页数（见 `fillOCR`）。
         var ocrFilledToSource = 0
         var ocrFilledToMirror = 0
+        /// 双向补齐的图片本体张数（行 + 文件，见 `fillImages`）。
+        var imagesFilledToSource = 0
+        var imagesFilledToMirror = 0
         var backup: URL?
     }
 
@@ -228,6 +231,29 @@ enum MirrorApply {
         return n
     }
 
+    // MARK: - 图片本体补齐
+
+    /// 把 [keys] 这些图从 [from] 补到 [to]（`IMAGE-NOTE-PLAN.md §7`）：行 `INSERT OR IGNORE` + 文件 `.part` 原子拷。
+    /// 与 OCR 同一条 additive 通道，同样事务外、幂等、可重入。
+    ///
+    /// 🔴 `orphaned_at` **原样带过去**，不许重置成 now：两侧到期时刻一致才会各自删干净；
+    /// 重置的话「一侧先删、另一侧补回来、再重置……」永远删不完。
+    /// 对面已有行（只是文件丢了）时 `INSERT OR IGNORE` 不动那一行——它自己的 `orphaned_at` 更可信。
+    @discardableResult
+    static func fillImages(from: LibraryStore, fromFolder: URL, to: LibraryStore, toFolder: URL,
+                           keys: [String]) throws -> Int {
+        var n = 0
+        for sha in keys {
+            guard let im = try from.image(sha256: sha),
+                  ImageAssets.exists(in: fromFolder, sha256: sha, ext: im.ext) else { continue }
+            try ImageAssets.copy(from: ImageAssets.url(in: fromFolder, sha256: sha, ext: im.ext),
+                                 to: toFolder, sha256: sha, ext: im.ext)
+            try to.insertImageIfAbsent(im)
+            n += 1
+        }
+        return n
+    }
+
     // MARK: - 主流程
 
     /// 应用一次合并。**在后台线程调用。**
@@ -278,6 +304,16 @@ enum MirrorApply {
         progress?("正在补齐识别结果…", 0.85)
         r.ocrFilledToSource = try fillOCR(from: mirrorStore, to: sourceStore, keys: plan.ocrToSource)
         r.ocrFilledToMirror = try fillOCR(from: sourceStore, to: mirrorStore, keys: plan.ocrToMirror)
+
+        // ④.6 图片本体双向补齐（同上），然后两侧各对账一遍待删除状态：
+        // 笔记行刚在 ②③ 里合并过，「这张图在这一侧还有没有引用」此刻才有答案。
+        progress?("正在补齐图片…", 0.88)
+        r.imagesFilledToSource = try fillImages(from: mirrorStore, fromFolder: mirrorFolder,
+                                                to: sourceStore, toFolder: sourceFolder, keys: plan.imagesToSource)
+        r.imagesFilledToMirror = try fillImages(from: sourceStore, fromFolder: sourceFolder,
+                                                to: mirrorStore, toFolder: mirrorFolder, keys: plan.imagesToMirror)
+        try sourceStore.reconcileImageOrphans()
+        try mirrorStore.reconcileImageOrphans()
 
         // ⑤ 两侧都成功了才重算基线 —— 这一步之前任何失败都靠"下次再跑一遍"自愈（见类型注释）
         progress?("正在重置基线…", 0.9)

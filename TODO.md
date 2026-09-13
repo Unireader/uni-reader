@@ -442,6 +442,21 @@
     ⑥ **（2026-09-10 补）缓存那一行不是全部**：视图层（各窗口 `images`/`tiles`、参考窗、缩略图栏）是
     第二个持有者，LRU 管不到它。设置页现在按 `MemoryDiag` 分项列出，看「窗口持有」那几行。
 
+  - **2026-09-13：图片笔记落地（Mac + 离线镜像），待用户真机验证**（方案 `IMAGE-NOTE-PLAN.md`，规格 `REQUIREMENTS.md §1.10`，
+    实现记录见 `HISTORY.md` 同日条目）。要记住的四条：
+    ① **schema v13** 新表 `image`（主键 = 内容 sha256，文件 `Images/<sha>.<ext>`）；笔记复用 `note` 表 **kind=6**；
+    ② **引用计数是数出来的**（`LibraryStore.imageRefCounts`，`json_extract(payload,'$.image')`），没有计数列——
+    别在任何路径上「维护」它；待删除 = `orphaned_at`，规则三条全在 `LibraryStore` §3；
+    ③ **⌥⇧ 拖 = 存为图片笔记**，⌥拖发 AI 不变（`ReaderSurface+Snip` 只多一个 ⇧ 分流）；拖文件 / 右键导入 / ⌘V 三条入口在
+    `ReaderSurface+ImageNote`；图钉拖拽与文字点注解共用一条手势（`draggablePinHit`）；
+    ④ **镜像走 additive 通道**（同 OCR，不进 `sync_base`）：`MirrorApply.fillImages` 补行 + 拷文件，
+    `orphaned_at` **原样带过去**（重置成 now 会两侧来回补、永远删不完）。
+    验证：`spike/image-store-test`(39)／`image-mirror-test`(31)／`ink-undo-test`(40)／store-test／mirror-*／scratch-store／ink-store／page-snip 全绿；`xcodebuild` 过。
+    ⚠️ `spike/mirror-apply-test` 里「上次打开取较晚的那个」一条**与本改动无关地**开始失败：它把 2026-09-05 写死当「较晚」，
+    而 `findOrCreate` 盖的是今天——日期一过就翻车，待改成相对时间。
+    **真机待验**：⌥⇧ 拖存图 / 拖文件 / ⌘V / 右键导入；三种展开方式；看大图；Inspector 跳转与删除；⌘Z 恢复后设置里「待删除」回落；
+    建镜像后镜像上图片可见；镜像上删笔记同步回来后源盘进待删除。
+
   - **2026-09-10：三窗口 2.34GB 内存排查 + 五处修复**（分析全文与实测数字见 `HISTORY.md` 同日条目）。
     根因三笔：视图层持有 41 张页图（缓存只记了 8 张）／每张都有 CA 副本（×2）／夜间反色出的 11 张
     237MB 走 `createCGImage`、完全账外。改动：① 夜间反色渲进 mmap 缓冲（`PageBitmap.invert`，

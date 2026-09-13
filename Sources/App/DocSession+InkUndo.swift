@@ -11,11 +11,12 @@ extension DocSession {
     /// 落库与镜像照旧由既有的 `@Published` 订阅完成，这里只多记一笔账。
     @discardableResult
     func inkEdit<R>(_ label: String, kind: InkPatch.Kind, _ body: () -> R) -> R {
-        let s0 = strokes, n0 = textNotes     // COW 快照，O(1)
+        let s0 = strokes, n0 = textNotes, i0 = imageNotes     // COW 快照，O(1)
         let r = body()
         inkUndo.record(label: label, kind: kind,
                        strokesBefore: s0, strokesAfter: strokes,
-                       notesBefore: n0, notesAfter: textNotes)
+                       notesBefore: n0, notesAfter: textNotes,
+                       imagesBefore: i0, imagesAfter: imageNotes)
         return r
     }
 
@@ -41,6 +42,11 @@ extension DocSession {
                 var arr = textNotes
                 InkDelta.apply(patch.notes, to: &arr, undo: !redo)
                 textNotes = arr
+            }
+            if !patch.images.isEmpty {
+                var arr = imageNotes
+                InkDelta.apply(patch.images, to: &arr, undo: !redo)
+                imageNotes = arr
             }
         }
         return true

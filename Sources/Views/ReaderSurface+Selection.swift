@@ -208,6 +208,7 @@ extension ReaderSurface {
         } else {
             Button(L("Add Note Here")) { beginAddNoteAtCursor() }   // 点注解（锚到右键处页面坐标）
         }
+        imageNoteMenuItems   // 导入图片…（点锚在右键处；见 `ReaderSurface+ImageNote`）
         Divider()
         Button(L("Add Bookmark Here")) { addBookmarkAtCursor() }
         Button(L("New Scratchpad Here")) { newScratchPadAtCursor() }
@@ -507,7 +508,7 @@ extension ReaderSurface {
                 // ⌥ 按下 = 用户要框选截图 → **尚未起手**的才让位（已经在拖选的不打断）
                 guard !(snipModifierDown && scratch.selDragAnchor == nil) else { return }
                 if scratch.selDragAnchor == nil {
-                    if pointNotePinHit(v.startLocation) != nil { return }   // selDragAnchor 保持 nil → 整段拖选不启动
+                    if draggablePinHit(v.startLocation) != nil { return }   // selDragAnchor 保持 nil → 整段拖选不启动
                     scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
                 }
                 guard let a = scratch.selDragAnchor, let f = containerPointToPageNorm(v.location) else { return }
@@ -540,6 +541,18 @@ extension ReaderSurface {
         return nil
     }
 
+    /// 可拖的图钉命中（点注解 **或** 图片笔记）：返回 id。三处共用——单击手势让位、拖选让位、图钉拖拽定锚。
+    func draggablePinHit(_ P: CGPoint) -> UUID? {
+        pointNotePinHit(P)?.id ?? imagePinHit(P)?.id
+    }
+
+    /// 某枚可拖图钉此刻的锚点（页 + 归一化锚矩形），两种笔记都认。
+    func pinAnchor(id: UUID) -> (page: Int, anchor: CGRect)? {
+        if let n = session.textNotes.first(where: { $0.id == id }) { return (n.page, n.anchor) }
+        if let n = session.imageNotes.first(where: { $0.id == id }) { return (n.page, n.anchor) }
+        return nil
+    }
+
     /// 点注解图钉拖拽手势（同挂 ScrollView 容器，与 lasso 同款模式）：起点命中图钉才激活
     /// （`pointNotePinHit` 定锚一次存 `scratch.noteDragID`），拖动只动 ghost（`notePinDrag` 瞬态，
     /// 位移 clamp 到锚点不出本页），松手 `commitNoteDrag` 一次性提交。仅 textSelect 模式；
@@ -550,11 +563,11 @@ extension ReaderSurface {
                 guard app.pointerTool == .textSelect, scratch.pinch == nil,
                       session.openPadID == nil else { return }
                 if scratch.noteDragID == nil {
-                    guard let hit = pointNotePinHit(v.startLocation) else { return }
-                    scratch.noteDragID = hit.id
+                    guard let hit = draggablePinHit(v.startLocation) else { return }
+                    scratch.noteDragID = hit
                 }
                 guard let id = scratch.noteDragID,
-                      let n = session.textNotes.first(where: { $0.id == id }),
+                      let n = pinAnchor(id: id),
                       let layout, layout.heights.indices.contains(n.page), pageW > 0 else { return }
                 // 容器像素位移 == 页内像素位移（delta 与平移无关）；clamp 到锚点不出本页
                 let pageHDisp = layout.heights[n.page] * max(0.0001, dispScale)
@@ -567,8 +580,8 @@ extension ReaderSurface {
                 scratch.noteDragID = nil
                 let off = notePinDrag?.off ?? .zero
                 notePinDrag = nil
-                guard let n = session.textNotes.first(where: { $0.id == id }) else { return }
-                commitNoteDrag(n, translation: off)
+                if let n = session.textNotes.first(where: { $0.id == id }) { commitNoteDrag(n, translation: off) }
+                else if let n = session.imageNotes.first(where: { $0.id == id }) { commitImageNoteDrag(n, translation: off) }
             }
     }
 

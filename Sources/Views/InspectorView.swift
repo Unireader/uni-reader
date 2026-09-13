@@ -5,15 +5,16 @@ enum InspectorTab: Hashable { case info, thumbnails, contents, notes }
 /// 「笔记」页的**二级分区**（2026-09-02 用户：文字/高亮/笔迹/草稿纸/AI 全堆一页「太多了看不过来」）。
 /// 一次只显示一类，各自带自己的计数与空态；选中项记在 `@AppStorage` 里，换文档/重开都还在原处。
 enum NotesSection: String, CaseIterable, Identifiable {
-    case text, highlight, bookmark, ink, scratch, ai
+    case text, highlight, image, bookmark, ink, scratch, ai
 
     var id: String { rawValue }
 
-    /// 二级分区栏是**图标分段**（面板窄，六个字标签排不下）。文字标签仍给辅助功能与块标题用。
+    /// 二级分区栏是**图标分段**（面板窄，七个字标签排不下）。文字标签仍给辅助功能与块标题用。
     var icon: String {
         switch self {
         case .text: return "note.text"
         case .highlight: return "highlighter"
+        case .image: return "photo"
         case .bookmark: return "bookmark"
         case .ink: return "scribble"
         case .scratch: return "square.and.pencil"
@@ -25,6 +26,7 @@ enum NotesSection: String, CaseIterable, Identifiable {
         switch self {
         case .text: return L("Text Notes")
         case .highlight: return L("Highlights")
+        case .image: return L("Image Notes")
         case .bookmark: return L("Bookmarks")
         case .ink: return L("Ink")
         case .scratch: return L("Scratchpads")
@@ -179,6 +181,7 @@ struct InspectorView: View {
         switch notesSection {
         case .text: textBlock
         case .highlight: highlightBlock
+        case .image: imageBlock
         case .bookmark: bookmarkBlock
         case .ink: inkBlock
         case .scratch: scratchBlock
@@ -633,6 +636,77 @@ struct InspectorView: View {
               session.highlights[i].color != color else { return }
         session.highlights[i].color = color
         session.highlights[i].updatedAt = .now
+    }
+
+    // MARK: - 图片笔记（`IMAGE-NOTE-PLAN.md §6`）
+
+    /// 图片笔记列表：缩略图 + 说明（没有就显示来源）+ 页码；点条目跳转，右键编辑/查看/删除。
+    private var imageBlock: some View {
+        block("\(L("Image Notes")) · \(session.imageNotes.count)") {
+            if session.imageNotes.isEmpty {
+                Text(L("No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page."))
+                    .foregroundStyle(.secondary).font(.callout)
+            } else {
+                ForEach(session.imageNotes) { n in
+                    HStack(alignment: .top, spacing: 6) {
+                        Button {
+                            onJumpTo(n.page, max(0, n.anchor.minY - 0.03))
+                        } label: {
+                            HStack(alignment: .top, spacing: 8) {
+                                ImageNoteThumb(info: workspace.imageInfo(sha256: n.image), side: 48)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(n.caption.isEmpty ? n.sourceLabel : n.caption)
+                                        .font(.callout).lineLimit(2)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(n.caption.isEmpty
+                                         ? String(format: L("Page %d"), n.page + 1)
+                                         : "\(String(format: L("Page %d"), n.page + 1)) · \(n.sourceLabel)")
+                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button { requestImageNote(.imageNoteEdit, n) } label: {
+                            Image(systemName: "pencil").font(.body).foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("Edit this image note"))
+
+                        Button { deleteImageNote(n) } label: {
+                            Image(systemName: "xmark.circle.fill").font(.body).foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("Delete this image note"))
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
+                    .contextMenu {
+                        Button(L("Edit…")) { requestImageNote(.imageNoteEdit, n) }
+                        Button(L("View Full Size")) { requestImageNote(.imageNoteView, n) }
+                            .disabled(workspace.imageInfo(sha256: n.image) == nil)
+                        Divider()
+                        Button(L("Delete Image Note"), role: .destructive) { deleteImageNote(n) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 编辑器 / 看大图的 sheet 都挂在阅读区（`ReaderSurface+ImageNote.imageRoutes`），这边发通知请它弹。
+    private func requestImageNote(_ name: Notification.Name, _ n: ImageNote) {
+        NotificationCenter.default.post(name: name, object: ImageNoteRequest(sessionID: session.id, noteID: n.id))
+    }
+
+    /// 删一条图片笔记：从内存移除 → `DocTabModel` 对账删库并对账那张图的待删除状态。
+    /// 走 `inkEdit` 记撤销（⌘Z 加回来 = 引用回来 = 图脱离待删除）。
+    private func deleteImageNote(_ n: ImageNote) {
+        session.inkEdit("Delete Image Note", kind: .delete) {
+            session.imageNotes.removeAll { $0.id == n.id }
+        }
     }
 
     // MARK: - 书签（`REQUIREMENTS.md §1.9`）

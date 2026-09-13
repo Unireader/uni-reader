@@ -21,6 +21,8 @@ enum MirrorReport {
         case 2: return "笔迹"
         case 3: return "高亮"
         case 4: return "草稿纸笔迹"
+        case 5: return "书签"
+        case 6: return "图片笔记"
         default: return "笔记"
         }
     }
@@ -88,6 +90,13 @@ enum MirrorReport {
             if !plan.ocrToMirror.isEmpty { bits.append("拉回本机 \(plan.ocrToMirror.count) 页") }
             out.append(Line(text: also("补齐文字识别结果：" + bits.joined(separator: "、")),
                             detail: ocrBreakdown(plan, hashTitles: hashTitles)))
+        }
+        // 图片本体：同 OCR，只补不删（笔记本身的增删在上面「图片笔记」那一类里）
+        if !plan.imagesToSource.isEmpty || !plan.imagesToMirror.isEmpty {
+            var bits: [String] = []
+            if !plan.imagesToSource.isEmpty { bits.append("写入硬盘 \(plan.imagesToSource.count) 张") }
+            if !plan.imagesToMirror.isEmpty { bits.append("拉回本机 \(plan.imagesToMirror.count) 张") }
+            out.append(Line(text: also("补齐图片文件：" + bits.joined(separator: "、"))))
         }
         if !plan.conflicts.isEmpty {
             out.append(Line(text: "冲突 \(plan.conflicts.count) 条", detail: conflictLines(plan, titles: titles)))
@@ -189,6 +198,8 @@ enum MirrorReport {
         if plan.conflicts.count > 0 { bits.append("冲突 \(plan.conflicts.count)") }
         let ocr = plan.ocrToSource.count + plan.ocrToMirror.count
         if ocr > 0 { bits.append("识别结果 \(ocr) 页") }
+        let images = plan.imagesToSource.count + plan.imagesToMirror.count
+        if images > 0 { bits.append("图片 \(images) 张") }
         if !bits.isEmpty { return bits.joined(separator: " · ") }
         return plan.progressMerges.isEmpty ? "只更新「上次打开」" : "只更新阅读进度"
     }

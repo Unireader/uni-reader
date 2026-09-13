@@ -23,6 +23,8 @@ final class WorkspaceManager: ObservableObject {
     private var openDocs: [String] = []              // 当前打开的文档集（= 本工作区所有窗口当前文档，去重保序）；持久化供下次恢复
 
     private(set) var store: LibraryStore?
+    /// `imageInfo(sha256:)` 的缓存（sha → 路径+尺寸；值为 nil = 查过、没有）。见那个方法的注释。
+    private var imageInfoCache: [String: (url: URL, size: CGSize)?] = [:]
 
     /// 打开一个工作区；文件夹是空的就在里面建库（首次启动引导、`createWorkspace` 都依赖这点）。
     /// ⚠️ 因此**不要拿用户随手选的路径直接调它**——那会把一个无关空文件夹静默变成新工作区，
@@ -165,6 +167,7 @@ final class WorkspaceManager: ObservableObject {
         windowDocs = [:]
         refresh()
         lastError = nil
+        reconcileAndPurgeImages()                // 图片本体：对账待删除 + 清掉到期的（方案 §3 触发时机 ①）
     }
 
     /// **彻底放手这个工作区**：关掉 SQLite 连接并置空 `store`，之后所有读写自动退化成 no-op。
@@ -713,6 +716,105 @@ final class WorkspaceManager: ObservableObject {
     /// 删除一条书签（note.id == Bookmark.id）。
     func deleteBookmark(id: UUID) {
         try? store?.deleteNote(id: id.uuidString)
+    }
+
+    // MARK: - 图片笔记（note kind=6）+ 图片本体（image 表 / Images/，`IMAGE-NOTE-PLAN.md`）
+
+    /// 读取某文档已落库的全部图片笔记（按页 / 页内位置序），用于重开恢复。
+    func imageNotes(documentId: String) -> [ImageNote] {
+        ((try? store?.notes(documentId: documentId, kind: ImageNote.noteKind)) ?? [])
+            .compactMap(ImageNote.init(note:))
+            .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
+    }
+
+    /// 落库/更新一条图片笔记。写完对账它指向的那张图：撤销删除把笔记加回来 = 引用回来，
+    /// 那张图得当场脱离待删除（方案 §3 触发时机 ③）。
+    func saveImageNote(documentId: String, _ n: ImageNote) {
+        guard let store, let row = n.toNote(documentId: documentId) else { return }
+        try? store.upsertNote(row)
+        try? store.reconcileImageOrphans(only: [n.image])
+    }
+
+    /// 删除一条图片笔记，并对账它指向的那张图（最后一条引用没了 → 进待删除）。
+    func deleteImageNote(id: UUID, image sha: String) {
+        guard let store else { return }
+        try? store.deleteNote(id: id.uuidString)
+        try? store.reconcileImageOrphans(only: [sha])
+    }
+
+    /// 把一张整理好的图存进工作区（文件 + 行；同图幂等）。返回 nil = 工作区没开或写盘失败。
+    /// 调用方拿到后再建笔记引用它；此刻它还没有引用，但**不标待删除**——下一次对账（笔记落库时）
+    /// 会看到引用。要是调用方建笔记失败了，它就会在下次打开工作区时被标上，30 天后清掉。
+    func storeImage(_ p: ImageAssets.Prepared) -> LibImage? {
+        guard let store, let folder else { return nil }
+        do {
+            try ImageAssets.write(p, in: folder)
+            let im = LibImage(sha256: p.sha256, ext: p.ext, width: p.width, height: p.height,
+                              bytes: p.data.count, createdAt: .now, orphanedAt: nil)
+            try store.insertImageIfAbsent(im)
+            imageInfoCache.removeValue(forKey: p.sha256)   // 之前可能缓存过「没有」
+            return (try? store.image(sha256: p.sha256)) ?? im
+        } catch {
+            wsLog("[IMAGE] 存图失败 \(p.sha256.prefix(8)): \(error)")
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func image(sha256: String) -> LibImage? {
+        (try? store?.image(sha256: sha256)) ?? nil
+    }
+
+    /// 一张图在页面上要用的两样东西：文件路径 + 像素尺寸（气泡按尺寸先占好位，不等解码）。
+    /// 行不在或文件不在 → nil（镜像上没带这张图 / 已被清理）。
+    /// **带缓存**：页元胞每帧都会问，一帧一次 SQL + 一次 stat 不行。存图/清理/对账时整个清掉。
+    func imageInfo(sha256: String) -> (url: URL, size: CGSize)? {
+        if let hit = imageInfoCache[sha256] { return hit }
+        guard let folder else { return nil }
+        var out: (url: URL, size: CGSize)?
+        if let im = image(sha256: sha256) {
+            let u = ImageAssets.url(in: folder, sha256: im.sha256, ext: im.ext)
+            if FileManager.default.fileExists(atPath: u.path) {
+                out = (u, CGSize(width: im.width, height: im.height))
+            }
+        }
+        imageInfoCache[sha256] = out
+        return out
+    }
+
+    func imageStats() -> (total: Int, orphaned: Int, bytes: Int64) {
+        store?.imageStats() ?? (0, 0, 0)
+    }
+
+    /// 对账全部图片的待删除状态，再清掉到期的（打开工作区时跑一次；镜像合并后也跑）。
+    func reconcileAndPurgeImages() {
+        guard let store else { return }
+        imageInfoCache = [:]
+        try? store.reconcileImageOrphans()
+        purgeImages(before: Date().addingTimeInterval(-LibraryStore.imagePurgeAfter))
+    }
+
+    /// 设置页「立即清理」：待删除的全部现在就删，不等 30 天。返回删了几张。
+    @discardableResult
+    func purgeImagesNow() -> Int {
+        guard store != nil else { return 0 }
+        try? store?.reconcileImageOrphans()
+        return purgeImages(before: .distantFuture)
+    }
+
+    /// 删 `orphaned_at < before` 的图：先删文件再删行（反过来若中途失败会留一个没有行的文件，永远没人管）。
+    @discardableResult
+    private func purgeImages(before: Date) -> Int {
+        guard let store, let folder else { return 0 }
+        var n = 0
+        for im in (try? store.purgeableImages(before: before)) ?? [] {
+            ImageAssets.remove(in: folder, sha256: im.sha256, ext: im.ext)
+            try? store.deleteImage(sha256: im.sha256)
+            imageInfoCache.removeValue(forKey: im.sha256)
+            n += 1
+        }
+        if n > 0 { wsLog("[IMAGE] 清理待删除图片 \(n) 张") }
+        return n
     }
 
     // MARK: - AI 会话绑定持久化（note kind=1；挂逻辑文档，全版本共用）
