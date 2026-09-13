@@ -1,5 +1,5 @@
 // 气泡右上角「编辑」按钮的**图标候选样张**（用户 2026-08-27 报现版「有点丑」）。运行：
-//   cp spike/note-bubble-icon-look.swift /tmp/main.swift && swiftc Sources/Views/NoteBubbleView.swift Sources/Support/L.swift /tmp/main.swift -o /tmp/nbi && /tmp/nbi
+//   cp spike/note-bubble-icon-look.swift /tmp/main.swift && swiftc Sources/App/NoteMarkdown.swift Sources/Views/NoteBubbleView.swift Sources/Support/L.swift /tmp/main.swift -o /tmp/nbi && /tmp/nbi
 // 产物：/tmp/note-bubble-icon/candidates.png —— 一张图里把候选按**真实尺寸**并排放，直接看。
 //
 // 每行一个候选：左边是 760pt 页宽下的实际大小（字号 ≈16.7pt、按钮边长 ≈28pt），

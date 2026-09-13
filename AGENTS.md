@@ -29,6 +29,10 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - 例外只有一个：**用 Xcode GUI 打开项目时它仍写自己的 DerivedData**，那份不归本约定管、也别拿它
   当交付物；命令行一律按上表来。
 
+- **唯一的第三方包**：`swift-markdown-engine`（SPM，`project.yml` 里 `exactVersion` 钉死；只取核心产品 `MarkdownEngine`，
+  零外部依赖）——笔记编辑器 sheet 用它（`MarkdownNoteEditor`），**不进阅读区**。包解析落在 `build/dev/SourcePackages/`，
+  新克隆或 `rm -rf build` 之后首次编译要先 `xcodebuild … -derivedDataPath build/dev -resolvePackageDependencies`
+  （联网拉包 = 装依赖，**按用户规矩给命令让用户跑**，别自己跑）。升版本只改 `project.yml` 再解析。
 - 无测试 target；验证走 spike 脚本：`swift spike/<name>.swift`（如 `store-test.swift` 32 项 DAO、`ink-store-test.swift` 21 项）。
 - 采集页前端（`web/`，Svelte + Vite）：改动后跑 `scripts/build-web.sh`（npm install + 单文件构建 + 占位符自检 + 覆盖 `Sources/Resources/capture.html`），再重新编译 App。`capture.html` 是构建产物、**不入 git**——新克隆先跑一次 `build-web.sh`；`scripts/package.sh` 打包时会自动重建。
 - 项目级用户规则：不代用户执行安装（brew/pip/npm 一律给脚本让用户跑）；交流用中文或英文。
@@ -61,6 +65,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 ## 红线（用户明确否决过，勿重走）
 
 - 阅读区**纯 SwiftUI**，严禁 AppKit 视图（含 NSViewRepresentable 包 NSScrollView / PDFView）。v1 因缩放跳位/闪烁已被用户删除。
+  **唯一例外（用户 2026-09-13 拍板）**：笔记气泡里的正文用 `swift-markdown-engine` 只读渲染（`MarkdownNoteReader`，
+  `isEditable: false`、`.fitsContent`、外观钉死浅色）——限定在气泡正文那一块，滚动/缩放面本身仍是 SwiftUI，别往外扩。
 - UI 外观**严禁自绘仿系统样式**（用户 2026-07-25 明确否决）：分组/胶囊这类系统观感只能用系统标准 API（如 `ControlGroup`），系统渲染成什么样就什么样；做不到就保持系统默认，不要自己画。
 - **material / 玻璃底上的文字与按钮别用 `.secondary` / `.borderless`**：系统会把它们画得极淡，
   表现是「元素还在、就是看不见」。已踩两次——2026-08-07 草稿纸工具条的非激活按钮、2026-09-01

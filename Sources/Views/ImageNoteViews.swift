@@ -12,14 +12,16 @@ enum ImageBubble {
     /// 缩略图与说明之间的间隙 ÷ 字号
     static let captionGapRatio: CGFloat = 0.35
 
-    /// 气泡宽度下限 ÷ 口径宽：竖图把气泡收窄到贴着图，但别窄到说明文字一行放不下几个字。
+    /// 气泡宽度下限 ÷ 最大宽：竖图把气泡收窄到贴着图，但别窄到说明文字一行放不下几个字（与设置的最小宽取大者）。
     static let minWidthRatio: CGFloat = 0.45
     /// 图不在时的占位高度 ÷ 字号（一小条就够，别按不存在的图占一大块）。
     static let missingHeightRatio: CGFloat = 3.5
 
     /// 气泡尺寸：横图撑满口径宽；**竖图**高到上限后按比例缩窄，气泡跟着**收窄贴着图**（不留两侧大片空白）；
-    /// 说明文字在缩略图下面。`pixelSize` 是图的像素尺寸（先占位，不等解码）；`missing` = 图不在（占位一小条）。
-    static func size(m: NoteBubble.Metrics, pixelSize: CGSize, caption: String, missing: Bool)
+    /// 说明文字在缩略图下面。`pixelSize` 是图的像素尺寸（先占位，不等解码）；`missing` = 图不在（占位一小条）；
+    /// `captionH` = 引擎报回来的说明高度（nil = 还没排，按估计值）。
+    static func size(m: NoteBubble.Metrics, pixelSize: CGSize, caption: String, missing: Bool,
+                     captionH: CGFloat? = nil)
         -> (w: CGFloat, h: CGFloat, thumb: CGSize) {
         let fullW = max(1, m.w - m.pad * 2)
         var thumb: CGSize
@@ -31,11 +33,13 @@ enum ImageBubble {
             let h = min(fullW * aspect, capH)
             thumb = CGSize(width: h >= capH ? max(1, capH / aspect) : fullW, height: h)
         }
-        let w = max(thumb.width + m.pad * 2, m.w * minWidthRatio)
+        let w = min(m.w, max(thumb.width + m.pad * 2, max(m.minW, m.w * minWidthRatio)))
         let textW = max(1, w - m.pad * 2)
         var h = m.pad + thumb.height + m.pad
         if !caption.isEmpty {
-            h += m.fs * captionGapRatio + NoteBubble.textHeight(caption, width: textW, m: m, maxLines: captionMaxLines)
+            let est = NoteBubble.textHeight(caption, width: textW, m: m, maxLines: captionMaxLines)
+            let ch = (captionH ?? 0) > 1 ? captionH! : est
+            h += m.fs * captionGapRatio + min(ch, m.height(lines: captionMaxLines))
         }
         return (w, h, thumb)
     }
@@ -56,11 +60,13 @@ struct ImageBubbleView: View {
     let onDelete: (() -> Void)?
 
     @ObservedObject private var thumbs = ImageThumbCache.shared
+    /// 引擎报回来的说明高度（同 `NoteBubbleView.bodyH`）。
+    @State private var captionH: CGFloat?
 
     var body: some View {
         let m = metrics
         let px = info?.size ?? CGSize(width: 4, height: 3)
-        let s = ImageBubble.size(m: m, pixelSize: px, caption: note.caption, missing: info == nil)
+        let s = ImageBubble.size(m: m, pixelSize: px, caption: note.caption, missing: info == nil, captionH: captionH)
         let o = NoteBubble.origin(w: s.w, h: s.h, m: m, pin: pin, pinRadius: pinRadius, pageSize: pageSize)
         let innerW = max(1, s.w - m.pad * 2)
 
@@ -74,14 +80,16 @@ struct ImageBubbleView: View {
                 thumb(s.thumb, m: m)
                     .frame(width: innerW, alignment: .center)
                 if !note.caption.isEmpty {
-                    Text(note.caption)
-                        .font(.system(size: m.fs))
-                        .foregroundStyle(NoteBubble.ink)
-                        .lineSpacing(m.lineSpacing)
-                        .lineLimit(ImageBubble.captionMaxLines)
-                        .multilineTextAlignment(.leading)
-                        .frame(width: innerW, alignment: .topLeading)
-                        .allowsHitTesting(false)
+                    // 说明也是 Markdown 源，同一个引擎只读渲染；超 3 行裁掉
+                    // 量理想高度再钳上限（同 `NoteBubbleView` 那条注释：别用 `.frame(maxHeight:)`）
+                    let capH = m.height(lines: ImageBubble.captionMaxLines)
+                    let est = NoteBubble.textHeight(note.caption, width: innerW, m: m, maxLines: ImageBubble.captionMaxLines)
+                    MarkdownNoteReader(text: note.caption, fontSize: m.fs, documentId: "\(note.id.uuidString)-caption")
+                        .frame(width: innerW)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { captionH = $0 }
+                        .frame(width: innerW, height: min((captionH ?? 0) > 1 ? captionH! : est, capH), alignment: .top)
+                        .clipped()
                 }
             }
             .padding(m.pad)
@@ -164,7 +172,6 @@ struct ImageNoteEditorSheet: View {
 
     @State private var caption: String
     @State private var display: NoteDisplay
-    @FocusState private var editorFocused: Bool
     @ObservedObject private var thumbs = ImageThumbCache.shared
 
     init(note: ImageNote, info: (url: URL, size: CGSize)?,
@@ -193,11 +200,8 @@ struct ImageNoteEditorSheet: View {
                 .frame(height: 220)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
 
-            TextEditor(text: $caption)
-                .font(.body)
-                .frame(width: 380, height: 90)
-                .focused($editorFocused)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+            MarkdownNoteEditor(text: $caption, documentId: note.id.uuidString, placeholder: L("Caption… (Markdown)"))
+                .frame(width: 380, height: 100)
 
             HStack(spacing: 8) {
                 Text(L("Show note")).font(.callout).foregroundStyle(.secondary)
@@ -217,13 +221,12 @@ struct ImageNoteEditorSheet: View {
                 Button(L("Cancel")) { onCancel() }
                     .keyboardShortcut(.cancelAction)
                 Button(L("Save")) { onSave(caption, display) }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.return, modifiers: .command)   // ⌘↩ 保存（编辑框里回车是换行）
                     .buttonStyle(.borderedProminent)
             }
         }
         .padding(16)
         .frame(width: 420)
-        .onAppear { editorFocused = true }
     }
 
     @ViewBuilder private var preview: some View {

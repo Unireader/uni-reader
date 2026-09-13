@@ -46,6 +46,11 @@ struct SettingsView: View {
     @AppStorage("renderCacheMB") private var renderCacheMB = 256
     /// 笔记气泡跟不跟页缩放（默认关 = 固定尺寸；阅读区 `ReaderSurface` 读同一个键）。
     @AppStorage(NoteBubble.followsZoomKey) private var bubbleFollowsZoom = false
+    /// 气泡正文字号 / 编辑框字号（阅读区与 `MarkdownNoteEditor` 各读自己那个键）。
+    @AppStorage(NoteBubble.fontSizeKey) private var bubbleFontSize = Int(NoteBubble.fixedFont)
+    @AppStorage(NoteBubble.editorFontSizeKey) private var editorFontSize = Int(NoteBubble.defaultEditorFont)
+    @AppStorage(NoteBubble.minWidthKey) private var bubbleMinWidth = Int(NoteBubble.fixedMinWidth)
+    @AppStorage(NoteBubble.maxWidthKey) private var bubbleMaxWidth = Int(NoteBubble.fixedMaxWidth)
 
     var body: some View {
         switch tab {
@@ -211,12 +216,28 @@ struct SettingsView: View {
     private var readingTab: some View {
         Form {
             // 笔记气泡的尺寸口径（`NoteBubble`）：默认固定尺寸；打开 = 2026-08-27 那套「跟页缩放」（三端契约的比例）。
+            // 字号两档分开设（用户 2026-09-13）：气泡是看的、编辑框是写的，想要的大小不一样。
             Section {
+                Picker(L("Note bubble text size"), selection: $bubbleFontSize) {
+                    ForEach(NoteBubble.fontSizeChoices, id: \.self) { Text("\($0) pt").tag($0) }
+                }
+                Picker(L("Note editor text size"), selection: $editorFontSize) {
+                    ForEach(NoteBubble.fontSizeChoices, id: \.self) { Text("\($0) pt").tag($0) }
+                }
+                // 宽度：短文按内容收窄，落在最小…最大之间（用户 2026-09-13）。两个数互相钳住，最小永远不超过最大。
+                Stepper(value: $bubbleMinWidth, in: NoteBubble.widthRange, step: NoteBubble.widthStep) {
+                    LabeledContent(L("Note bubble min width"), value: "\(bubbleMinWidth) pt")
+                }
+                .onChange(of: bubbleMinWidth) { _, v in if bubbleMaxWidth < v { bubbleMaxWidth = v } }
+                Stepper(value: $bubbleMaxWidth, in: NoteBubble.widthRange, step: NoteBubble.widthStep) {
+                    LabeledContent(L("Note bubble max width"), value: "\(bubbleMaxWidth) pt")
+                }
+                .onChange(of: bubbleMaxWidth) { _, v in if bubbleMinWidth > v { bubbleMinWidth = v } }
                 Toggle(L("Note bubbles follow page zoom"), isOn: $bubbleFollowsZoom)
             } header: {
                 Text(L("Notes"))
             } footer: {
-                Text(L("Off: expanded text and image notes keep a fixed size on screen. On: they scale with the page, like on the tablet."))
+                Text(L("Text size and widths apply to expanded text and image notes on the page; a short note shrinks to its content between the min and max width. Editor size applies to the note editor. Follow page zoom off: bubbles keep a fixed size on screen; on: they scale with the page, like on the tablet."))
             }
 
             Section {

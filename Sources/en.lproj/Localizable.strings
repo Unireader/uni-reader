@@ -476,5 +476,11 @@
 "Clean Up Now" = "Clean Up Now";
 "%d images · %d pending deletion · %@" = "%d images · %d pending deletion · %@";
 "Note bubbles follow page zoom" = "Note bubbles follow page zoom";
-"Off: expanded text and image notes keep a fixed size on screen. On: they scale with the page, like on the tablet." = "Off: expanded text and image notes keep a fixed size on screen. On: they scale with the page, like on the tablet.";
 "Click to view full size" = "Click to view full size";
+"Write a note… (Markdown)" = "Write a note… (Markdown)";
+"Caption… (Markdown)" = "Caption… (Markdown)";
+"Note bubble text size" = "Note bubble text size";
+"Note editor text size" = "Note editor text size";
+"Note bubble min width" = "Note bubble min width";
+"Note bubble max width" = "Note bubble max width";
+"Text size and widths apply to expanded text and image notes on the page; a short note shrinks to its content between the min and max width. Editor size applies to the note editor. Follow page zoom off: bubbles keep a fixed size on screen; on: they scale with the page, like on the tablet." = "Text size and widths apply to expanded text and image notes on the page; a short note shrinks to its content between the min and max width. Editor size applies to the note editor. Follow page zoom off: bubbles keep a fixed size on screen; on: they scale with the page, like on the tablet.";

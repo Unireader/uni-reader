@@ -483,7 +483,7 @@ struct InspectorView: View {
                                     }
                                 }
                                 if !n.text.isEmpty {
-                                    Text(n.text).font(.callout).lineLimit(2)
+                                    Text(NoteMarkdown.plain(n.text)).font(.callout).lineLimit(2)   // 列表里只要文字，不要 Markdown 记号
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 if !n.quote.isEmpty {
@@ -655,7 +655,7 @@ struct InspectorView: View {
                             HStack(alignment: .top, spacing: 8) {
                                 ImageNoteThumb(info: workspace.imageInfo(sha256: n.image), side: 48)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(n.caption.isEmpty ? n.sourceLabel : n.caption)
+                                    Text(n.caption.isEmpty ? n.sourceLabel : NoteMarkdown.plain(n.caption))
                                         .font(.callout).lineLimit(2)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     Text(n.caption.isEmpty

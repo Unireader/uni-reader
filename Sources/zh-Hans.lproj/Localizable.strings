@@ -478,5 +478,11 @@
 "Clean Up Now" = "立即清理";
 "%d images · %d pending deletion · %@" = "图片 %d 张 · 待删除 %d 张 · %@";
 "Note bubbles follow page zoom" = "笔记气泡跟随页面缩放";
-"Off: expanded text and image notes keep a fixed size on screen. On: they scale with the page, like on the tablet." = "关：展开的文字/图片笔记在屏幕上保持固定大小。开：随页面一起缩放（与平板端一致）。";
 "Click to view full size" = "点击查看原图";
+"Write a note… (Markdown)" = "写批注…（支持 Markdown）";
+"Caption… (Markdown)" = "说明…（支持 Markdown）";
+"Note bubble text size" = "气泡正文字号";
+"Note editor text size" = "编辑框字号";
+"Note bubble min width" = "气泡最小宽度";
+"Note bubble max width" = "气泡最大宽度";
+"Text size and widths apply to expanded text and image notes on the page; a short note shrinks to its content between the min and max width. Editor size applies to the note editor. Follow page zoom off: bubbles keep a fixed size on screen; on: they scale with the page, like on the tablet." = "字号和宽度作用于页面上展开的文字/图片笔记；短笔记按内容收窄，落在最小与最大宽度之间。编辑框字号作用于笔记编辑器。跟随页面缩放关：气泡在屏幕上保持固定大小；开：随页面一起缩放（与平板端一致）。";

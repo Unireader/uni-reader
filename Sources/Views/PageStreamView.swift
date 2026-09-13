@@ -237,6 +237,10 @@ struct ReaderSurface: View {
     @State var hoveredNote: UUID?
     /// 笔记气泡跟不跟页缩放（设置 → 阅读；默认关 = 固定尺寸，见 `NoteBubble`）。
     @AppStorage(NoteBubble.followsZoomKey) var bubbleFollowsZoom = false
+    /// 气泡正文字号 / 最小宽 / 最大宽（设置 → 阅读；默认 12 / 120 / 280）。
+    @AppStorage(NoteBubble.fontSizeKey) var bubbleFontSize = Int(NoteBubble.fixedFont)
+    @AppStorage(NoteBubble.minWidthKey) var bubbleMinWidth = Int(NoteBubble.fixedMinWidth)
+    @AppStorage(NoteBubble.maxWidthKey) var bubbleMaxWidth = Int(NoteBubble.fixedMaxWidth)
     /// 图片笔记编辑器目标（非 nil 即呈现 sheet；只有「编辑」——新建不弹编辑器，存了就是一条）。
     @State var imageEditor: ImageNote?
     /// 看大图（非 nil 即呈现 sheet）。
@@ -505,6 +509,7 @@ struct ReaderSurface: View {
             NoteEditorSheet(quote: target.quote, initialText: target.initialText,
                             initialTypeId: target.initialTypeId,
                             initialDisplay: target.initialDisplay,
+                            documentId: target.id.uuidString,
                             noteTypes: session.noteTypes,
                             usageCount: { id in session.textNotes.filter { $0.typeId == id }.count },
                             onSave: { saveEditor(target, text: $0, typeId: $1, display: $2) },
@@ -683,6 +688,9 @@ struct ReaderSurface: View {
                      onViewImageNote: { imageViewer = $0 },
                      onDeleteImageNote: { deleteImageNote($0) },
                      bubbleFollowsZoom: bubbleFollowsZoom,
+                     bubbleFontSize: CGFloat(bubbleFontSize),
+                     bubbleMinWidth: CGFloat(bubbleMinWidth),
+                     bubbleMaxWidth: CGFloat(bubbleMaxWidth),
                      scratchPins: buckets.scratchPins[i] ?? [],
                      onOpenScratchPad: { session.openPadID = $0 },
                      bookmarks: buckets.bookmarks[i] ?? [],

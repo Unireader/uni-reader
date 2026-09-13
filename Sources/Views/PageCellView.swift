@@ -59,6 +59,11 @@ struct PageCellView: View {
     var onDeleteImageNote: (ImageNote) -> Void = { _ in }  // 气泡右键「删除」
     /// 笔记气泡跟不跟页缩放（设置项，默认关 = 固定尺寸；见 `NoteBubble`）。
     var bubbleFollowsZoom: Bool = false
+    /// 气泡正文字号（设置项，默认 12）。
+    var bubbleFontSize: CGFloat = NoteBubble.fixedFont
+    /// 气泡最小 / 最大宽度（设置项，默认 120 / 280；短文按内容在两者之间收窄）。
+    var bubbleMinWidth: CGFloat = NoteBubble.fixedMinWidth
+    var bubbleMaxWidth: CGFloat = NoteBubble.fixedMaxWidth
     var scratchPins: [(id: UUID, nx: Double, ny: Double, name: String)] = []   // 本页的草稿纸图钉（点开那张纸）
     var onOpenScratchPad: (UUID) -> Void = { _ in }
     var bookmarks: [Bookmark] = []                         // 本页的书签（页右缘小旗标，点开改名/删除）
@@ -251,7 +256,7 @@ struct PageCellView: View {
                     notePin(typed: typed, t: t)
                 }
                 .buttonStyle(.plain)
-                .help(n.display == .hover && !n.text.isEmpty ? "" : (n.text.isEmpty ? n.quote : n.text))
+                .help(n.display == .hover && !n.text.isEmpty ? "" : (n.text.isEmpty ? n.quote : NoteMarkdown.plain(n.text)))
                 .opacity(dragging ? 0.3 : 1)
                 .position(pos)
                 .onHover { onHoverNote(n.id, $0) }
@@ -265,7 +270,8 @@ struct PageCellView: View {
             // 拖拽中的那条不画——气泡跟不跟手都是错的（跟手＝一大块跟着晃，不跟＝指着旧位置）。
             ForEach(notes) { n in
                 if bubbleVisible(n), noteDrag?.id != n.id {
-                    NoteBubbleView(text: n.text, metrics: bubbleMetrics, pageSize: size,
+                    NoteBubbleView(text: n.text, documentId: "\(n.id.uuidString)-bubble",
+                                   metrics: bubbleMetrics, pageSize: size,
                                    pin: markerPos(n, size: size), pinRadius: Self.pinRadius,
                                    onEdit: n.display == .hover ? nil : { onOpenNote(n) })
                 }
@@ -279,7 +285,7 @@ struct PageCellView: View {
                     imagePin
                 }
                 .buttonStyle(.plain)
-                .help(n.display == .hover ? "" : (n.caption.isEmpty ? n.sourceLabel : n.caption))
+                .help(n.display == .hover ? "" : (n.caption.isEmpty ? n.sourceLabel : NoteMarkdown.plain(n.caption)))
                 .opacity(dragging ? 0.3 : 1)
                 .position(pos)
                 .onHover { onHoverNote(n.id, $0) }
@@ -415,7 +421,8 @@ struct PageCellView: View {
 
     /// 本页两种气泡共用的尺寸口径（固定尺寸 / 跟页缩放）。
     private var bubbleMetrics: NoteBubble.Metrics {
-        NoteBubble.metrics(pageWidth: size.width, followsZoom: bubbleFollowsZoom)
+        NoteBubble.metrics(pageWidth: size.width, followsZoom: bubbleFollowsZoom, fontSize: bubbleFontSize,
+                           minWidth: bubbleMinWidth, maxWidth: bubbleMaxWidth)
     }
 
     /// 点图钉是「展开/收起」还是「进编辑器」：只有 tap 模式且有正文才是前者。

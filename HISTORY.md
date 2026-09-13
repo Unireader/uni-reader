@@ -39,7 +39,38 @@
   顺手：竖图气泡收窄贴图（不留两侧大片空白）、图不在时占位一小条；
   ④ 「文字字体太大、行距大」→ 固定口径 12pt/1.25 解决；顺手修了一条老 bug：`textHeight` 量正文高度时没把 `lineSpacing`
   算进去，多行笔记会从气泡底边溢出（样张里能看出来）。样张：`spike/note-bubble-look.swift`（两种口径各三档）、
-  新增 `spike/image-bubble-look.swift`。Markdown 编辑器（`swift-markdown-engine`）待用户拍板后接。
+  新增 `spike/image-bubble-look.swift`。
+  ✅ 用户 2026-09-13 实测「可以了」。
+- **Markdown 编辑器接入（2026-09-13，用户拍板「直接就用 `swift-markdown-engine`」，Perch 里用过）**：
+  项目第一个 SPM 依赖（`project.yml` 钉 0.9.0，只取核心产品 `MarkdownEngine`，零外部依赖；解析命令给用户跑）。
+  `MarkdownNoteEditor` 包一层 `NativeTextViewWrapper`（13pt、去底部留白、竖滚动条、开 sheet 自动进焦点——AppKit 视图
+  得自己找第一响应者），文字笔记正文与图片笔记说明两个 sheet 都换上，⌘↩ 保存（回车是换行）。**存的仍是纯文本**
+  （Markdown 源），库/协议/镜像零改动。页面气泡不能进 AppKit（阅读区红线）→ `NoteMarkdown` 把源折成 `Text` 能画的
+  `AttributedString`（行内样式系统解析；块级近似：标题→粗体行、列表→•、任务→☐/☑、引用→│、围栏去掉、水平线→横线），
+  量高度改按折算后的字体特征量。Inspector 列表与图钉提示显示去记号的纯文字。`spike/note-markdown-test.swift` 31 项全绿，
+  样张 `note-bubble-look` 第二条改成 Markdown 源看过。网页/安卓端画原样源码，未动。
+  **同日二轮**：用户实测编辑器可以，但「气泡渲染效果不好，很多东西没处理，最好也用这个渲染，关闭编辑即可」→
+  气泡正文改成同一个引擎**只读**渲染（`MarkdownNoteReader`：`isEditable: false`、`.fitsContent`（滚轮交给下一响应者，
+  鼠标停在气泡上照样滚阅读区）、无内边距无滚动条、`.environment(\.colorScheme, .light)` 钉死浅色外观（气泡永远纸白）、
+  主题字色钉死、字号按 0.5pt 取整少触发重排）。**这是阅读区「纯 SwiftUI」红线的唯一例外**，记进 `AGENTS.md`。
+  高度：引擎 `.fitsContent` 报回 → `onGeometryChange`，第一帧按 `NoteBubble.textHeight` 估计占位；
+  🔴 量的是 `fixedSize(vertical:)` 下的理想高度，再由外层 `frame(height:)` 钳到行数上限 + `clipped()`——
+  别用 `.frame(maxHeight:)`，它把提议高度整个吃下来，量到的就是提议值，气泡每帧长一圈内边距直到长到上限
+  （样张里一行字的气泡长成十四行那么高，就是这么来的）。引擎默认是整页文档的尺度（一级标题 2 倍、列表缩进 27.5pt），
+  给笔记收成 1.4 倍 / 16pt（`applyNoteTypography`，编辑器与气泡共用）。`NoteMarkdown.attributed` 不再被视图用，
+  `plain()`（列表/提示）与 `nsAttributed()`（估高度）还在用。
+  样张：新增 `spike/note-bubble-engine-look.swift`——`ImageRenderer` 画不出 AppKit 视图，改为开一扇不上屏的窗
+  `cacheDisplay` 截真实渲染（链接 `build/dev/…/MarkdownEngine.o`），深色外观下截、验字色不变白。
+- **字号设置（同日，用户：「设置添加字体大小，包括编辑框的笔记的大小」）**：设置 → 阅读 → 「气泡正文字号」（默认 12）与
+  「编辑框字号」（默认 13）两个 Picker，档位 10~24。固定口径下编辑按钮/行距按「÷ 12」等比随字号（宽度那一半随即被下一条推翻）；跟页缩放口径下
+  同一倍率乘到字号比例上，三端契约常数不动（`NoteBubble.metrics(pageWidth:followsZoom:fontSize:…)`）；编辑框
+  `MarkdownNoteEditor` 自己读 `noteEditorFontSize`，两个 sheet 都跟着变。
+- **宽度按内容收窄 + 最小/最大宽设置（同日，用户：「短文按内容收窄，然后有个最小和最大宽度，一样在设置里面设置」）**：
+  `NoteMarkdown.naturalWidth` 不折行逐行量最宽一行（标题按放大后的粗体、列表加缩进、任务加勾选框、引用加竖条、
+  水平线不算），`NoteBubble.fitWidth` 加 4% + 6pt 余量后钳在设置的最小…最大之间（估窄了顶多多折一行，不会溢出）；
+  图片气泡横图撑到最大宽、竖图收窄贴图但不低于最小宽。设置 → 阅读 两个 Stepper（默认 120 / 280，80~800 步进 20，
+  互相钳住）。**宽度从此不跟字号**（上一条里「宽随字号等比」的做法作废——宽度自己是设置项了）。跟页缩放口径下
+  按参考页宽 933pt 折算。`note-markdown-test` 加到 40 项；样张 `note-bubble-engine-look` 多摆三条短的看过收窄效果。
 
 ## 阅读区收回键盘焦点 + 点击即取消选择 + DeepSeek 撤掉模式（2026-09-12，Mac，用户四条）
 

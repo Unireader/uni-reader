@@ -1,5 +1,5 @@
 // 图片笔记「展开气泡」的**样张自查**（同 note-bubble-look 的纪律：自绘图形先出图看一眼）。运行：
-//   cp spike/image-bubble-look.swift /tmp/main.swift && swiftc Sources/Support/L.swift Sources/Store/LibraryModels.swift Sources/Store/ImageAssets.swift Sources/App/PenPreset.swift Sources/App/InkModel.swift Sources/App/InkLayerModel.swift Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/ImageNoteModel.swift Sources/App/ImageThumbCache.swift Sources/Views/NoteBubbleView.swift Sources/Views/ImageNoteViews.swift /tmp/main.swift -o /tmp/iblook && /tmp/iblook
+//   cp spike/image-bubble-look.swift /tmp/main.swift && swiftc Sources/Support/L.swift Sources/Store/LibraryModels.swift Sources/Store/ImageAssets.swift Sources/App/PenPreset.swift Sources/App/InkModel.swift Sources/App/InkLayerModel.swift Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/ImageNoteModel.swift Sources/App/ImageThumbCache.swift Sources/App/NoteMarkdown.swift Sources/Views/NoteBubbleView.swift Sources/Views/ImageNoteViews.swift /tmp/main.swift -o /tmp/iblook && /tmp/iblook
 // 产物：/tmp/image-bubble-look/*.png（可传一个目录当第 1 个参数）。
 //
 // 一张常规页宽（760）出固定尺寸 / 跟页缩放两张，各摆四条：横图无说明 / 竖图（高到上限被缩）带说明 /

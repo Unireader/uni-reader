@@ -1,5 +1,5 @@
 // 文字笔记「展开气泡」的**样张自查**（交付前必跑；纪律：自绘图形不靠脑补，先出图看一眼）。运行：
-//   cp spike/note-bubble-look.swift /tmp/main.swift && swiftc Sources/Views/NoteBubbleView.swift Sources/Support/L.swift /tmp/main.swift -o /tmp/nblook && /tmp/nblook
+//   cp spike/note-bubble-look.swift /tmp/main.swift && swiftc Sources/App/NoteMarkdown.swift Sources/Views/NoteBubbleView.swift Sources/Support/L.swift /tmp/main.swift -o /tmp/nblook && /tmp/nblook
 // 产物：/tmp/note-bubble-look/*.png —— 直接看，别猜。
 //
 // 三档页宽（缩小 420 / 常规 760 / 放大 1400）各出一张，验证肉眼可判的四件事：
@@ -28,12 +28,14 @@ func save<V: View>(_ name: String, _ size: CGSize, @ViewBuilder _ view: () -> V)
 }
 
 let short = "这一段是关键：先看定义再看例题。"
+// 正文是 Markdown 源：这条带标题/列表/任务/强调/代码，看 `NoteMarkdown` 折算后气泡里长什么样、高度量得准不准
 let long = """
-洛必达法则只对 0/0 与 ∞/∞ 两种未定式成立，别的形式要先化过去。
-用之前先确认分母导数在去心邻域内不为零，否则结论无效。
-连续用两次以上时每一步都要重新验证条件——这是最常见的失分点。
-另外注意：极限存在不代表导数之比的极限存在，反向推不成立。
-考场上如果两次之后还没化开，多半是方法选错了，回去看看能不能等价无穷小替换。
+## 洛必达法则
+只对 **0/0** 与 **∞/∞** 两种未定式成立，别的形式要*先化过去*。
+- 用之前先确认分母导数在去心邻域内不为零，否则结论无效
+- 连续用两次以上时每一步都要重新验证条件——最常见的失分点
+- [x] 极限存在不代表导数之比的极限存在，反向推不成立
+> 两次之后还没化开，多半是方法选错了，试 `等价无穷小替换`
 """
 
 /// 一页白纸 + 若干枚图钉与它们展开的气泡（图钉画法与 `PageCellView.notePin` 同款：扁平圆底 + 符号）。

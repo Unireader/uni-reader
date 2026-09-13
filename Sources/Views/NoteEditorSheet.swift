@@ -1,11 +1,14 @@
 import SwiftUI
 
-/// 文字注解编辑器（新建 / 编辑复用）。上方展示被注解的原文（只读引文），下方 TextEditor 输入批注。
+/// 文字注解编辑器（新建 / 编辑复用）。上方展示被注解的原文（只读引文），下方是 Markdown 编辑器
+/// （`MarkdownNoteEditor`，2026-09-13 起；正文存的就是 Markdown 源）。
 /// 标题行右侧挂类型选择（Menu：通用 + 工作区自定义类型，底部「管理类型…」弹管理面板）。
 /// 走标准 `.sheet` 呈现（原生模态，无浮层 hack）；⌘回车保存、Esc 取消。
 struct NoteEditorSheet: View {
     let quote: String
     let saveTitle: String
+    /// 编辑器的文档 id（引擎按它分撤销栈）：编辑传笔记 id，新建传草稿 id。
+    let documentId: String
     let noteTypes: [NoteType]                 // 工作区自定义类型（不含通用）
     let usageCount: (UUID) -> Int             // 某类型被多少条笔记引用（删除确认用）
     let onSave: (String, UUID?, NoteDisplay) -> Void   // 批注文本 + 类型（nil=通用）+ 展开方式
@@ -17,10 +20,10 @@ struct NoteEditorSheet: View {
     @State private var typeId: UUID?
     @State private var display: NoteDisplay
     @State private var managing = false
-    @FocusState private var editorFocused: Bool
 
     init(quote: String, initialText: String, initialTypeId: UUID?,
          initialDisplay: NoteDisplay = .tap,
+         documentId: String = "note-draft",
          noteTypes: [NoteType], usageCount: @escaping (UUID) -> Int,
          saveTitle: String = L("Save"),
          onSave: @escaping (String, UUID?, NoteDisplay) -> Void,
@@ -29,6 +32,7 @@ struct NoteEditorSheet: View {
          onCancel: @escaping () -> Void) {
         self.quote = quote
         self.saveTitle = saveTitle
+        self.documentId = documentId
         self.noteTypes = noteTypes
         self.usageCount = usageCount
         self.onSave = onSave
@@ -60,11 +64,8 @@ struct NoteEditorSheet: View {
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
             }
 
-            TextEditor(text: $text)
-                .font(.body)
-                .frame(width: 380, height: 140)
-                .focused($editorFocused)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+            MarkdownNoteEditor(text: $text, documentId: documentId, placeholder: L("Write a note… (Markdown)"))
+                .frame(width: 380, height: 170)
 
             // 展开方式（每条笔记自己的属性，三端同步）：这条笔记的正文在页面上怎么露出来。
             HStack(spacing: 8) {
@@ -85,14 +86,14 @@ struct NoteEditorSheet: View {
                 Spacer()
                 Button(L("Cancel")) { onCancel() }
                     .keyboardShortcut(.cancelAction)
+                // ⌘↩ 保存（不是裸回车：编辑框里回车是换行）
                 Button(saveTitle) { onSave(text, typeId, display) }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent)
             }
         }
         .padding(16)
         .frame(width: 420)
-        .onAppear { editorFocused = true }
         .sheet(isPresented: $managing) {
             NoteTypeManagerView(noteTypes: noteTypes, usageCount: usageCount,
                                 onChange: { types in
