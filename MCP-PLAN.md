@@ -1,6 +1,6 @@
 # MCP 服务方案（macOS 端，2026-09-13 首版）
 
-> 状态：**方案已拍板（2026-09-13，决策见 §2），未动代码**。
+> 状态：**方案已拍板（2026-09-13，决策见 §2）；批 1 已落地并经用户实测通过（§15）；批 2、批 3 已落地待用户实测（§16 / §17）；均在分支 `worktree-mcp`**。
 > 目标：让外部 Agent（Claude Code、Codex 等命令行 Agent）通过 MCP 协议操作 UniReader——
 > 前期只做**读取类**（打开工作区、打开文档、读 PDF 文本/目录/页图、看当前阅读位置），
 > 后期再加**写入类**（跳页、书签、文字笔记、高亮、导入 PDF）。分批上线，每批都能单独交付。
@@ -647,3 +647,119 @@ curl -si http://<本机IP>:8773/mcp -H 'Content-Type: application/json' -H 'Auth
 7. 🔴 每次调用有上限（40 页 / 200k 字符 / 一张页图 / 4 MB 请求体），不做取消。
 8. 🔴 设置页文案双语、系统控件、`.primary` 颜色。
 9. 🔴 不提供删除类工具。
+
+---
+
+## 15. 实现记录 — 批 1（2026-09-13 落地，分支 `worktree-mcp`）
+
+`xcodebuild … -derivedDataPath build/dev` 通过；两个 spike 全绿（协议层 68 项、监听链路 31 项）。
+**用户 2026-09-13 实测通过**（「agent 可以调用到这些信息了」）。
+
+### 15.1 文件（与 §5.1 的出入）
+
+| 文件 | 内容 | 与方案的差别 |
+|---|---|---|
+| `Sources/MCP/MCPModels.swift` | `MCPObject` / `MCPJSON` / `MCPToolError`（→ isError）/ `MCPInvalidParams`（→ -32602）/ `PageNo`（1 起 ↔ 0 起唯一换算点）/ `MCPArgs` 入参读取器 / `MCPSchema` | — |
+| `Sources/MCP/MCPHTTP.swift` | 字节 → 请求（按 `Content-Length` 读满）、应答 → 字节、`Origin` / `Bearer` / 口令定长比较，全是纯函数 | 从 `MCPServer` 拆出来单独一个文件，为了 spike 能直接喂字节 |
+| `Sources/MCP/MCPCatalog.swift` | 工具注册表：`MCPTool`（name / schema / tier / handler）、`MCPToolResult`（text + structuredContent + image）、两层错误映射、写入开关拦截 | — |
+| `Sources/MCP/MCPProtocol.swift` | 版本协商、`MCPSession` + `MCPSessionStore`（actor，30 分钟清）、`MCPDispatcher.dispatch(body:session:)` 纯逻辑 | `resources/list` / `resources/templates/list` / `prompts/list` 批 1 就应答空列表（有客户端会无差别探一遍） |
+| `Sources/MCP/MCPServer.swift` | `mcpLog`、`MCPToken`（Keychain）、`MCPServer`（`NWListener` 回环或所有接口、口令/Origin/版本头校验、会话、面板账）| 多了 `tokenProvider` 注入点（spike 不碰真 Keychain）；「最近调用」环形缓冲 50 条 |
+| `Sources/MCP/MCPFacade.swift` | `@MainActor` 唯一活状态入口：`state` / `workspaces` / `openWorkspace` / `documents` / `openDocument` / `resolveTarget` | 文件下落用只读探测（不走 `openTarget`，那个会写 lastOpened） |
+| `Sources/MCP/MCPDocReader.swift` | 私有 `PDFDocument` LRU 4 份 + OCR 文本层缓存 2 本；原生文本 / 抽样 / 目录 / OCR 行拼段落（滤水印） | `allOCRPayloads` 库里本来就有，§5.4 那条「加批量读」作废；页图渲染没做（批 2 的事） |
+| `Sources/MCP/MCPTools.swift` + `MCPTools+Workspace.swift` + `MCPTools+Document.swift` | 七个工具的 schema / 文本拼装 / 处理函数 | 方案写的是四个 `MCPTools+*.swift`，批 1 只需要两个；`+Reader` / `+Notes` 到批 2/3 再加 |
+| `Sources/Views/MCPSettingsView.swift` | 设置 › Agent 页（服务开关 / 监听地址 / 端口 / 口令 / 配置片段 / 已连接客户端 / 最近调用） | 端口改完要按回车才重启（改到一半的数字不能拿去重启） |
+| `spike/mcp-protocol-test.swift` / `spike/mcp-server-test.swift` | 见文件头的运行命令 | — |
+
+现有代码只动了四处：`AppDelegate.readerWindowControllers`（只读访问器）+ `makeReaderWindow(…) throws`（`openReaderWindow` 改为调它并保留弹框）、
+`ReaderWindowController.windowId` 改成 internal、`AppModel.mcp`、`applicationDidFinishLaunching` 里装配工具目录 + 按设置自启。
+`SettingsTab` 加 `agent`；双语文案各加 35 条。
+
+### 15.2 行为要点（读代码前先知道）
+
+- **口令与监听地址在批 1 就做了**（决策 D5）：`MCPServer.start()` 发现「所有接口 + 无口令」→ 回落回环并写 `lastError`；
+  设置页切到「所有接口」时没口令就当场生成。`/health` 不校验口令。
+- `open_document` 只认库文档 id（决策 D7）；读取类工具的 `path` 参数直接读库外 PDF（不碰书库）。
+- `read_pages` 的 `auto`：原生文本 ≥ 8 字符就用它，否则查 OCR 缓存（`PaddleOCR.providerID`），行按 y 分行、x 排序拼段落，
+  水印按 `OCRWatermark` 整本指纹过滤；都没有 → `source: "none"` + `hint`。
+- 会话表在 `restart()` / `stop()` 时清空，改口令/地址/端口后客户端要重新握手（旧版客户端收到 404 会自动做）。
+
+### 15.3 用户实测（按 §11.3；另加两条）
+
+```bash
+open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
+# 设置 › Agent → 启动；然后 §11.3 的 1~4
+```
+⑦ 设置页「复制」出来的 Claude Code 命令直接能用；⑧ 「所有网络接口」模式下口令自动出现、「删除口令」灰掉。
+
+### 15.4 批 1 已知未做
+
+- 「服务」菜单里的 MCP 开关（方案 §10 提了一句）没加，只有设置页——够用就不加了。
+- 新版协议（2026-07-28，`server/discover`）没做，等客户端开始发再补（批 1c）。
+
+---
+
+## 16. 实现记录 — 批 2（2026-09-13 落地，同一分支，待用户实测）
+
+编译通过；协议层 spike 加了资源与页码筛选 9 项（77/77），监听链路 31/31 不变。**没有启动 App 自测**。
+
+### 16.1 新增
+
+| 东西 | 在哪 | 要点 |
+|---|---|---|
+| `search_text` | `MCPTools+Document.swift` + `MCPDocReader.searchNative/searchOCR` | 原生走 `PDFDocument.findString`（与 ⌘F 同路），摘要 = 选区两头各扩 80 字符再压平；OCR 缓存逐行包含匹配，**同一页两层都有只报原生**；`pages` 筛选、`max_hits` 默认 50 |
+| `render_page` | 同上 + `MCPDocReader.render` | `PageBitmap.render` + `PageRenderer.encode`（与 `/page.png` 同一条原语），宽度归 `pageWidthSteps` 档、上限 2160；返回 `image` 内容 + 尺寸 |
+| `get_current_view` | `MCPTools+Reader.swift` + `MCPFacade.currentView` | 页/页内比例取 `scrollAnchor`；`chapter` 用 `TOCEntry.chapterLabel`；`selection` 取 `DocSession.currentSelection` |
+| `goto` | 同上 + `MCPFacade.goto` | `session.jump(kind: .list, label: "Agent", origin: "mcp")`，进跳转历史；**默认不抢焦点**（`activate=false`，与 `open_document` 相反——翻页时用户多半正在终端里打字） |
+| `list_annotations` | 同上 + `MCPFacade.annotations` | 七类（note / highlight / bookmark / image_note / ai_thread / scratch_pad / ink 汇总）；开着读 `DocSession`、没开读库；**不要求文件在**（文件丢了的文档照样有笔记） |
+| 资源 | `MCPResources.swift` + `MCPCatalog.resources` + `MCPProtocol` 三个 `resources/*` 方法 | 五条 URI（§8 那张表），**每条就是调一次对应工具再取 `structuredContent`/图片**，没有第二套读法；`initialize` 装了提供者才声明 `resources` 能力 |
+| 选区镜像 | `DocSession.currentSelection`（普通属性）+ `PageStreamView` 里一个 `onChange` | 🔴 `onChange` **不能再挂主修饰符链**（多一个就超类型检查器时限，2026-09-13 实测），搭在框选覆盖层的 `ZStack` 里；换文档 `DocTabModel.load` 清空 |
+| `PageNo.parse(limit:)` | `MCPModels.swift` | 筛选类参数（搜索 / 批注列表）传 `Int.max`，不受 40 页上限 |
+
+### 16.2 用户实测清单
+
+在 Claude Code 里：① 「在这本书里找 X」→ `search_text` 报页码与摘要；② 「看看第 N 页的图」→ `render_page` 出图（模型能描述页面内容）；
+③ 选中一段文字后问「我选了什么」→ `get_current_view.selection`；④ 「翻到第 N 页」→ `goto` 滚动、⌘[ 能跳回；
+⑤ 「我在这本书上记了什么」→ `list_annotations` 与 Inspector 一致；⑥ 客户端若支持资源，`unireader://doc/<id>/page/<n>` 能当附件拉进来。
+
+---
+
+## 17. 实现记录 — 批 3（2026-09-13 落地，同一分支，待用户实测）
+
+编译通过；spike 不变（写入开关的拦截在批 1 的 spike 里就测了）。**没有启动 App 自测**。
+
+### 17.1 新增
+
+| 东西 | 在哪 | 要点 |
+|---|---|---|
+| 写入开关 | 设置 › Agent「允许 Agent 写入」（`mcpAllowWrites`，默认关）| 关着时写入工具照常列出、调用时拦（D6）；`get_state.app.writes_enabled` 报出来 |
+| 来源标记 | `NoteSource.agentKind = "agent"` + `isAgent`；Inspector 笔记行加 `terminal` 图标（悬停显示客户端名）| `provider` = `initialize` 的 `clientInfo.name`，`url` 空串；payload 零迁移 |
+| `add_bookmark` | `MCPTools+Notes.swift` + `MCPFacade.addBookmark` | 名字必填（`Bookmark.validTitle`）；开着 → `session.addBookmark`，没开 → `ws.saveBookmark` |
+| `add_note` | 同上 + `MCPFacade.addNote` | 锚点三选一：`quote`（`MCPDocReader.locate`：先 `findString`、再 OCR 行；找不到**报错不猜**）> `rect` > 页顶横条；`type` 按名字对 `noteTypes`，不存在就报错并列出可用的；开着时经 `session.inkEdit` 进撤销栈 |
+| `add_highlight` | 同上 + `MCPFacade.addHighlight` | `quote` 必填、必须找得到；颜色收色板名或 `#RRGGBB` |
+| `import_pdf` / `open_document(path:)` | `MCPTools+Document.swift` + **`WorkspaceManager.importPDF(at:)`**（新，面板/拖拽/MCP 三处共用，`ReaderWindowController.ingest` 改为调它）| 按 hash 去重，返回 `imported` 是否新建；`open_document` 带 `path` 时虽是导航级工具也按写入开关拦 |
+| `create_workspace` | `MCPTools+Workspace.swift` + `MCPFacade.createWorkspace` | 🔴 **已存在的路径一律拒绝**（界面那条 `createWorkspace(at:)` 会覆盖非工作区路径，那是保存面板确认过「替换」才允许的）；缺 `.unrd` 自动补 |
+| `run_ocr` | 同上 + `MCPFacade.runOCR` | 文档必须开着（OCR 走会话队列）；没配引擎报错；立即返回队列状态，Agent 稍后再 `read_pages` |
+
+### 17.2 🔴 写入两条路径的落点（§9.3 的兑现）
+
+`MCPFacade.writeTarget` 先查「有没有标签正显示这篇」：有 → 只改 `DocSession` 的数组（`textNotes` / `highlights` / `bookmarks`），
+由 `DocTabModel` 现有对账落库并广播平板；没有 → `WorkspaceManager.save*` 直接写库。出参里 `via: session | library` 说明走了哪条。
+
+### 17.3 首轮反馈修复：Agent 建的笔记图钉跑到行末（2026-09-13）
+
+用户报「有选中文字的笔记位置跑到很右边去了，没有像手动那样紧贴选中文字」。根因：OCR 页上手动选字的行框是按
+选中字符范围**裁剪**的（`OCRTextSelect.clip`），而 `MCPDocReader.locate` 的 OCR 分支给的是**整行**框——图钉落在
+`anchor.maxX` 右侧（`PageCellView.markerPos`），整行的 maxX 就是行末。原生 PDF 页不受影响（`findString` 本来就贴字）。
+
+修法：新增 **`MCPQuoteLocator`**（纯函数）——行按阅读顺序拼起来、去空白、折叠大小写找引文，首行/末行按字符裁、
+中间行整行；`search_text` 的 OCR 命中框也改用它。spike `mcp-quote-locator-test.swift` 15 项（行内/行首/跨行/空白与
+换行/大小写/单字框优先/乱序行）。**待用户实测**：在 OCR 页让 Agent 在一句话中间加笔记，图钉应贴在引文末字右侧。
+
+顺带记入 `TODO.md` 第 5 条：选区型笔记的图钉将来要能拖拽改位置（用户 2026-09-13 提）。
+
+### 17.4 用户实测清单
+
+开写入开关后在 Claude Code 里：① 「在第 N 页加个书签叫 X」→ 目录树里出现；② 「把第 N 页的『……』那句高亮成绿色」→ 页面铺色、
+Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉出现、气泡正文对、Inspector 行末有终端图标；④ 关掉文档再做 ①~③（走库那条路）→
+重新打开都在；⑤ 「把 ~/Downloads/x.pdf 导进来」→ 侧栏出现、再导一次不重复；⑥ 「新建一个工作区放到 ~/Desktop/试试」→ 生成 `试试.unrd` 并开窗，
+对已存在路径拒绝；⑦ 关掉写入开关再试 ① → 拦下并提示。

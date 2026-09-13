@@ -519,7 +519,15 @@ struct ReaderSurface: View {
         }
         .overlay(alignment: .topLeading) { followTicker }
         // 框选进行中的虚线自由路径（视口坐标，与 DragGesture .local 同空间；不随内容滚动——框选拖动中不滚动）。
-        .overlay { lassoDragOverlay }
+        // 选区镜像给 MCP 也搭在这一层里（`DocSession.currentSelection` 是普通属性，写它不触发任何刷新）：
+        // 🔴 不能再往主修饰符链上挂一个 `.onChange`——多一个就超类型检查器时限（2026-09-13 实测）。
+        .overlay {
+            ZStack {
+                lassoDragOverlay
+                Color.clear.frame(width: 1, height: 1).allowsHitTesting(false)
+                    .onChange(of: selection) { _, s in session.currentSelection = s }
+            }
+        }
         // 本机擦除的尺寸圆环（同挂 ScrollView 视口坐标系）：pointerTool==.ink 且 erase 模式跟光标，
         // 直径 = 2×eraserRadius×页宽；eraserRing 关则不画。
         .overlay { localEraserOverlay }

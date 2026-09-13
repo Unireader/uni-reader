@@ -39,8 +39,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// 位置/尺寸靠 frame autosave 记，下次重建照旧）。
     private var refWindowController: RefWindowController?
 
-    /// 在 `WorkspaceRegistry` 的登记号（关窗时按它归还工作区实例）。
-    private let windowId = UUID()
+    /// 在 `WorkspaceRegistry` 的登记号（关窗时按它归还工作区实例）。MCP 的 `window_id` 也用它（`MCPFacade`）。
+    let windowId = UUID()
     private var bag = Set<AnyCancellable>()
     private var didChooseInitialDoc = false
     /// 已结清过（见 `shutdown()`）。
@@ -433,15 +433,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             guard let self else { return }
             var lastId: String?
             for url in pdfs {
-                let hash = await Task.detached(priority: .userInitiated) {
-                    (try? FileHasher.sha256Cached(of: url)) ?? ""
-                }.value
-                let pageCount = PDFDocument(url: url)?.pageCount ?? 0
-                if let doc = self.workspace.ingest(path: url.path, hash: hash,
-                                                   title: url.deletingPathExtension().lastPathComponent,
-                                                   pageCount: pageCount) {
-                    lastId = doc.id
-                }
+                if let r = await self.workspace.importPDF(at: url) { lastId = r.document.id }   // 与 MCP import_pdf 同一条路
             }
             self.tabs.active.isHashing = false
             if let lastId { _ = self.tabs.open(lastId) }

@@ -261,6 +261,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 没人持有就会当场释放、窗口跟着消失。
     private var readerWindows: [ReaderWindowController] = []
 
+    /// 只读视图，给 MCP 的 `get_state` / `open_document` 枚举窗口用（`MCPFacade`）。
+    var readerWindowControllers: [ReaderWindowController] { readerWindows }
+
     /// 是否正在退出（cmd+q / 被单实例守卫接管）。用于区分「退出关窗」vs「cmd+w 单独关窗」：
     /// 退出时**不修改**工作区「打开集」（下次启动原样恢复所有窗口）；cmd+w 才逐个移除。
     /// `applicationShouldTerminate` 在各窗口 `onDisappear` **之前**触发，故此标志对关窗回调可见。
@@ -349,6 +352,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PageRenderEngine.shared.setCacheLimitMB(
             UserDefaults.standard.object(forKey: "renderCacheMB") as? Int ?? 256)
         if UserDefaults.standard.bool(forKey: "autoStartServer") { appModel.server.start() }
+        // MCP 服务：工具目录装配一次；「启动时开启」照平板服务的先例。
+        MCPTools.registerAll(into: appModel.mcp)
+        if UserDefaults.standard.bool(forKey: MCPServer.autoStartKey) { appModel.mcp.start() }
         observeVolumes()
         NotificationCenter.default.post(name: .appDidFinishLaunching, object: nil)
         // 首个窗口：双击 .unrd 拉起就开那个工作区，否则开上次用的。
@@ -365,6 +371,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 所以这条路径**不严格校验**——严格是给「用户指着某个具体工作区说打开它」用的）。
     @discardableResult
     func openReaderWindow(workspacePath: String?, docId: String?) -> ReaderWindowController? {
+        do {
+            return try makeReaderWindow(workspacePath: workspacePath, docId: docId, activate: true)
+        } catch {
+            let a = NSAlert()
+            a.messageText = L("Cannot Open Workspace")
+            a.informativeText = error.localizedDescription
+            a.addButton(withTitle: L("OK"))
+            a.runModal()
+            return nil
+        }
+    }
+
+    /// `openReaderWindow` 的 `throws` 版本：失败把错误交给调用方，不弹框。MCP 那条路（`MCPFacade`）
+    /// 要把错误文本回给 Agent，而不是弹一个没人点的 `NSAlert` 把服务卡住。
+    /// `activate = false` 时不抢前台（Agent 只想在后台把窗口准备好）。
+    @discardableResult
+    func makeReaderWindow(workspacePath: String?, docId: String?, activate: Bool) throws -> ReaderWindowController {
         let folder: URL
         let strict: Bool
         if let p = workspacePath {
@@ -385,17 +408,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             readerWindows.append(c)
             wsTime("上屏(showWindow)") { c.showWindow(nil) }
-            NSApp.activate(ignoringOtherApps: true)
+            if activate { NSApp.activate(ignoringOtherApps: true) }
             wsLog("开窗：\(folder.lastPathComponent) doc=\(docId ?? "nil")")
             return c
         } catch {
             wsLog("开窗失败：\(error.localizedDescription)")
-            let a = NSAlert()
-            a.messageText = L("Cannot Open Workspace")
-            a.informativeText = error.localizedDescription
-            a.addButton(withTitle: L("OK"))
-            a.runModal()
-            return nil
+            throw error
         }
     }
 
