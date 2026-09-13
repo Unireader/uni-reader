@@ -3,14 +3,14 @@
 // 产物：/tmp/note-bubble-look/*.png —— 直接看，别猜。
 //
 // 三档页宽（缩小 420 / 常规 760 / 放大 1400）各出一张，验证肉眼可判的四件事：
-//  ① 「跟页缩放」的观感：气泡宽/字号确实随页宽走，缩小档还读不读得清（这是这条设计的代价所在）；
+//  ① 两种口径各出一套：固定尺寸（默认，`fixed-*`）三档页宽下气泡应当**一样大**；跟页缩放（`zoom-*`）随页宽走；
 //  ② 正文不溢出、不压到右上角铅笔，超 10 行截断；
 //  ③ 图钉右侧放不下时翻到左侧、整体钳在页内（右下角那条就是贴边用例）；
 //  ④ 纸白底 + 发丝描边在白页上分得出边界，且没有投影/渐变（红线：不拟物）。
 import AppKit
 import SwiftUI
 
-let outDir = URL(fileURLWithPath: "/tmp/note-bubble-look")
+let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "/tmp/note-bubble-look")
 try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
 @MainActor
@@ -38,7 +38,8 @@ let long = """
 
 /// 一页白纸 + 若干枚图钉与它们展开的气泡（图钉画法与 `PageCellView.notePin` 同款：扁平圆底 + 符号）。
 @MainActor
-func page(_ w: CGFloat, _ h: CGFloat) -> some View {
+func page(_ w: CGFloat, _ h: CGFloat, followsZoom: Bool) -> some View {
+    let m = NoteBubble.metrics(pageWidth: w, followsZoom: followsZoom)
     let pins: [(x: CGFloat, y: CGFloat, text: String, edit: Bool)] = [
         (w * 0.16, h * 0.12, short, true),     // 常规：右侧展开 + 铅笔
         (w * 0.10, h * 0.40, long, true),      // 长文：折行 + 截断
@@ -55,7 +56,7 @@ func page(_ w: CGFloat, _ h: CGFloat) -> some View {
                 .background(Color(red: 1, green: 0.80, blue: 0.15), in: Circle())
                 .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
                 .position(x: min(max(p.x, 12), w - 12), y: min(max(p.y, 10), h - 10))
-            NoteBubbleView(text: p.text, pageSize: CGSize(width: w, height: h),
+            NoteBubbleView(text: p.text, metrics: m, pageSize: CGSize(width: w, height: h),
                            pin: CGPoint(x: min(max(p.x, 12), w - 12), y: min(max(p.y, 10), h - 10)),
                            pinRadius: 9,
                            onEdit: p.edit ? {} : nil)
@@ -69,7 +70,8 @@ func page(_ w: CGFloat, _ h: CGFloat) -> some View {
 func run() {
     for (name, w) in [("small-420", CGFloat(420)), ("normal-760", 760), ("large-1400", 1400)] {
         let h = w * 1.3
-        save("bubble-\(name)", CGSize(width: w, height: h)) { page(w, h) }
+        save("fixed-\(name)", CGSize(width: w, height: h)) { page(w, h, followsZoom: false) }
+        save("zoom-\(name)", CGSize(width: w, height: h)) { page(w, h, followsZoom: true) }
     }
     print("\n逐张看：气泡是否跟页缩放、正文有无溢出/压铅笔、贴边是否翻侧并钳回页内。")
 }

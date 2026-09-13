@@ -235,6 +235,8 @@ struct ReaderSurface: View {
     @State var activeHighlight: HighlightTap?
     /// 指针悬停在哪枚图钉上（`hover` 模式的展开条件；离开即 nil）。
     @State var hoveredNote: UUID?
+    /// 笔记气泡跟不跟页缩放（设置 → 阅读；默认关 = 固定尺寸，见 `NoteBubble`）。
+    @AppStorage(NoteBubble.followsZoomKey) var bubbleFollowsZoom = false
     /// 图片笔记编辑器目标（非 nil 即呈现 sheet；只有「编辑」——新建不弹编辑器，存了就是一条）。
     @State var imageEditor: ImageNote?
     /// 看大图（非 nil 即呈现 sheet）。
@@ -679,6 +681,8 @@ struct ReaderSurface: View {
                          else { expandedNotes.insert(n.id) }
                      },
                      onViewImageNote: { imageViewer = $0 },
+                     onDeleteImageNote: { deleteImageNote($0) },
+                     bubbleFollowsZoom: bubbleFollowsZoom,
                      scratchPins: buckets.scratchPins[i] ?? [],
                      onOpenScratchPad: { session.openPadID = $0 },
                      bookmarks: buckets.bookmarks[i] ?? [],

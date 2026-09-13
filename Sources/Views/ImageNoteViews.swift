@@ -3,96 +3,96 @@ import SwiftUI
 
 // MARK: - 图片笔记的几样视图（`IMAGE-NOTE-PLAN.md §5`）：页面气泡 / 编辑器 / 看大图
 
-/// 图片气泡的尺寸口径：与文字气泡（`NoteBubble`）**同一套比例常数**——宽、圆角、内边距、间隙都按页宽走，
-/// 缩放页面时两种气泡看起来是一体的。这里只多两条自己的数：缩略图的高度上限、说明最多几行。
+/// 图片气泡的尺寸口径：与文字气泡**同一份 `NoteBubble.Metrics`**（固定尺寸 / 跟页缩放两种口径都从那边来），
+/// 这里只多两条自己的数：缩略图的高度上限、说明最多几行。
 enum ImageBubble {
     /// 缩略图高度上限 = 气泡宽（太高的图裁到这个高度以内等比缩小，全图去看大图）。
     static let maxThumbHeightRatio: CGFloat = 1.0
     static let captionMaxLines = 3
     /// 缩略图与说明之间的间隙 ÷ 字号
-    static let captionGapRatio: CGFloat = 0.45
+    static let captionGapRatio: CGFloat = 0.35
 
-    /// 气泡尺寸（宽恒 = 页宽比例；高由缩略图 + 说明算出）。`pixelSize` 是图的像素尺寸（先占位，不等解码）。
-    static func size(pageWidth: CGFloat, pixelSize: CGSize, caption: String, hasEdit: Bool)
-        -> (w: CGFloat, h: CGFloat, thumb: CGSize, fs: CGFloat, pad: CGFloat) {
-        let fs = NoteBubble.font(pageWidth: pageWidth)
-        let w = NoteBubble.width(pageWidth: pageWidth)
-        let pad = fs * NoteBubble.padRatio
-        let thumbW = max(1, w - pad * 2)
-        let aspect = pixelSize.width > 0 ? pixelSize.height / pixelSize.width : 0.75
-        let thumbH = min(thumbW * aspect, w * maxThumbHeightRatio)
-        var h = pad + thumbH + pad
-        if !caption.isEmpty {
-            let textH = min(NoteBubble.textHeight(caption, width: thumbW, fontSize: fs),
-                            fs * NoteBubble.lineHeightRatio * CGFloat(captionMaxLines))
-            h += fs * captionGapRatio + textH
+    /// 气泡宽度下限 ÷ 口径宽：竖图把气泡收窄到贴着图，但别窄到说明文字一行放不下几个字。
+    static let minWidthRatio: CGFloat = 0.45
+    /// 图不在时的占位高度 ÷ 字号（一小条就够，别按不存在的图占一大块）。
+    static let missingHeightRatio: CGFloat = 3.5
+
+    /// 气泡尺寸：横图撑满口径宽；**竖图**高到上限后按比例缩窄，气泡跟着**收窄贴着图**（不留两侧大片空白）；
+    /// 说明文字在缩略图下面。`pixelSize` 是图的像素尺寸（先占位，不等解码）；`missing` = 图不在（占位一小条）。
+    static func size(m: NoteBubble.Metrics, pixelSize: CGSize, caption: String, missing: Bool)
+        -> (w: CGFloat, h: CGFloat, thumb: CGSize) {
+        let fullW = max(1, m.w - m.pad * 2)
+        var thumb: CGSize
+        if missing {
+            thumb = CGSize(width: fullW, height: m.fs * missingHeightRatio)
+        } else {
+            let aspect = pixelSize.width > 0 ? pixelSize.height / pixelSize.width : 0.75
+            let capH = m.w * maxThumbHeightRatio
+            let h = min(fullW * aspect, capH)
+            thumb = CGSize(width: h >= capH ? max(1, capH / aspect) : fullW, height: h)
         }
-        return (w, h, CGSize(width: thumbW, height: thumbH), fs, pad)
+        let w = max(thumb.width + m.pad * 2, m.w * minWidthRatio)
+        let textW = max(1, w - m.pad * 2)
+        var h = m.pad + thumb.height + m.pad
+        if !caption.isEmpty {
+            h += m.fs * captionGapRatio + NoteBubble.textHeight(caption, width: textW, m: m, maxLines: captionMaxLines)
+        }
+        return (w, h, thumb)
     }
 }
 
-/// 一条图片笔记展开后的气泡：缩略图 + 说明（有才画）+ 右上角铅笔（常驻气泡才有，同文字气泡的口径）。
-/// 位置规则同 `NoteBubbleView`：图钉右侧优先 → 放不下翻左侧 → 整体钳进页内。
-/// 双击缩略图看大图（只在常驻气泡上挂——悬浮预览一移开就收，够不着）。
+/// 一条图片笔记展开后的气泡：缩略图 + 说明（有才画）。**没有铅笔**（压在图上很突兀，用户 2026-09-13）——
+/// 点缩略图看原图，右键出「查看原图 / 编辑… / 删除」。位置规则同文字气泡（`NoteBubble.origin`）。
+/// `onEdit`/`onView`/`onDelete` 为 nil = 悬停预览（一移开就收，够不着任何按钮，也就不挂菜单）。
 struct ImageBubbleView: View {
     let note: ImageNote
     let info: (url: URL, size: CGSize)?     // nil = 图不在（镜像没带 / 已清理）
+    let metrics: NoteBubble.Metrics
     let pageSize: CGSize
     let pin: CGPoint
     let pinRadius: CGFloat
     let onEdit: (() -> Void)?
     let onView: (() -> Void)?
+    let onDelete: (() -> Void)?
 
     @ObservedObject private var thumbs = ImageThumbCache.shared
 
     var body: some View {
+        let m = metrics
         let px = info?.size ?? CGSize(width: 4, height: 3)
-        let m = ImageBubble.size(pageWidth: pageSize.width, pixelSize: px,
-                                 caption: note.caption, hasEdit: onEdit != nil)
-        let o = origin(w: m.w, h: m.h, fs: m.fs)
-        let edit = onEdit == nil ? 0 : m.fs * NoteBubble.editRatio
+        let s = ImageBubble.size(m: m, pixelSize: px, caption: note.caption, missing: info == nil)
+        let o = NoteBubble.origin(w: s.w, h: s.h, m: m, pin: pin, pinRadius: pinRadius, pageSize: pageSize)
+        let innerW = max(1, s.w - m.pad * 2)
 
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: m.fs * NoteBubble.radiusRatio)
+            RoundedRectangle(cornerRadius: m.radius)
                 .fill(NoteBubble.fill)
-                .overlay(RoundedRectangle(cornerRadius: m.fs * NoteBubble.radiusRatio)
-                    .stroke(NoteBubble.stroke, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: m.radius).stroke(NoteBubble.stroke, lineWidth: 1))
                 .allowsHitTesting(false)
             VStack(alignment: .leading, spacing: m.fs * ImageBubble.captionGapRatio) {
-                thumb(m.thumb, fs: m.fs)
+                // 竖图比气泡内宽窄时居中摆（气泡已经收窄到下限，剩下那点空白左右平分）
+                thumb(s.thumb, m: m)
+                    .frame(width: innerW, alignment: .center)
                 if !note.caption.isEmpty {
                     Text(note.caption)
                         .font(.system(size: m.fs))
                         .foregroundStyle(NoteBubble.ink)
-                        .lineSpacing(m.fs * (NoteBubble.lineHeightRatio - 1))
+                        .lineSpacing(m.lineSpacing)
                         .lineLimit(ImageBubble.captionMaxLines)
                         .multilineTextAlignment(.leading)
-                        .frame(width: m.thumb.width, alignment: .topLeading)
+                        .frame(width: innerW, alignment: .topLeading)
                         .allowsHitTesting(false)
                 }
             }
             .padding(m.pad)
-            if let onEdit {
-                Button(action: onEdit) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: m.fs * 0.95, weight: .medium))
-                        .foregroundStyle(NoteBubble.editGlyph)
-                        .frame(width: edit, height: edit)
-                        // 铅笔压在缩略图上，垫一层纸色圆底才看得见（扁平、无阴影）
-                        .background(NoteBubble.fill, in: Circle())
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(L("Edit note"))
-                .offset(x: m.w - edit - m.pad * 0.4, y: m.pad * 0.4)
-            }
         }
-        .frame(width: m.w, height: m.h, alignment: .topLeading)
+        .frame(width: s.w, height: s.h, alignment: .topLeading)
         .offset(x: o.x, y: o.y)
     }
 
-    @ViewBuilder private func thumb(_ box: CGSize, fs: CGFloat) -> some View {
+    @ViewBuilder private func thumb(_ box: CGSize, m: NoteBubble.Metrics) -> some View {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let sticky = onView != nil   // 常驻气泡（点开的 / 始终展示的）才可点、才挂菜单
         ZStack {
             if let info, let cg = thumbs.image(url: info.url, maxPixel: Int((box.width * scale).rounded(.up))) {
                 Image(decorative: cg, scale: 1)
@@ -101,26 +101,28 @@ struct ImageBubbleView: View {
                     .aspectRatio(contentMode: .fit)
             } else {
                 // 还没解出来 / 图不在：占位方块 + 图标（尺寸已按像素尺寸占好，解好了原地换图不跳版）
-                RoundedRectangle(cornerRadius: fs * 0.3)
+                RoundedRectangle(cornerRadius: m.radius * 0.6)
                     .fill(NoteBubble.stroke.opacity(0.35))
                 Image(systemName: info == nil ? "photo.badge.exclamationmark" : "photo")
-                    .font(.system(size: max(10, fs * 1.6)))
+                    .font(.system(size: max(10, m.fs * 1.6)))
                     .foregroundStyle(NoteBubble.editGlyph)
             }
         }
         .frame(width: box.width, height: box.height)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { onView?() }
-        .help(info == nil ? L("Image file is missing (not in this copy, or already cleaned up).") : "")
-    }
-
-    private func origin(w: CGFloat, h: CGFloat, fs: CGFloat) -> CGPoint {
-        let gap = fs * NoteBubble.gapRatio
-        var x = pin.x + pinRadius + gap
-        if x + w > pageSize.width { x = pin.x - pinRadius - gap - w }
-        let y = pin.y - pinRadius
-        return CGPoint(x: min(max(x, 0), max(0, pageSize.width - w)),
-                       y: min(max(y, 0), max(0, pageSize.height - h)))
+        // 悬停预览不挂手势也不挂菜单：它一移开就收，挂了也是够不着的假入口，白白吃掉一块命中区域
+        .allowsHitTesting(sticky)
+        .onTapGesture { onView?() }
+        .contextMenu {
+            if let onView { Button(L("View Full Size")) { onView() }.disabled(info == nil) }
+            if let onEdit { Button(L("Edit…")) { onEdit() } }
+            if let onDelete {
+                Divider()
+                Button(L("Delete Image Note"), role: .destructive) { onDelete() }
+            }
+        }
+        .help(info == nil ? L("Image file is missing (not in this copy, or already cleaned up).")
+                          : (sticky ? L("Click to view full size") : ""))
     }
 }
 

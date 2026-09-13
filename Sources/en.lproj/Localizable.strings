@@ -475,3 +475,6 @@
 "Images live inside the workspace package. An image whose notes are all deleted becomes pending; it is removed for good 30 days later (undo the deletion before then to keep it)." = "Images live inside the workspace package. An image whose notes are all deleted becomes pending; it is removed for good 30 days later (undo the deletion before then to keep it).";
 "Clean Up Now" = "Clean Up Now";
 "%d images · %d pending deletion · %@" = "%d images · %d pending deletion · %@";
+"Note bubbles follow page zoom" = "Note bubbles follow page zoom";
+"Off: expanded text and image notes keep a fixed size on screen. On: they scale with the page, like on the tablet." = "Off: expanded text and image notes keep a fixed size on screen. On: they scale with the page, like on the tablet.";
+"Click to view full size" = "Click to view full size";

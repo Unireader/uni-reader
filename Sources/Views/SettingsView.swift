@@ -44,6 +44,8 @@ struct SettingsView: View {
     /// 页图缓存上限（MB，= 真实占用；引擎按「一张图三份」计费，见 `PageRenderEngine.copiesPerImage`）。
     /// ⚠️ 默认值与 `ContentView` 启动时那句 `?? 256` **必须一致**，改一处要改两处。
     @AppStorage("renderCacheMB") private var renderCacheMB = 256
+    /// 笔记气泡跟不跟页缩放（默认关 = 固定尺寸；阅读区 `ReaderSurface` 读同一个键）。
+    @AppStorage(NoteBubble.followsZoomKey) private var bubbleFollowsZoom = false
 
     var body: some View {
         switch tab {
@@ -208,6 +210,15 @@ struct SettingsView: View {
     /// 阅读：页图渲染缓存 + 文字识别（OCR）。
     private var readingTab: some View {
         Form {
+            // 笔记气泡的尺寸口径（`NoteBubble`）：默认固定尺寸；打开 = 2026-08-27 那套「跟页缩放」（三端契约的比例）。
+            Section {
+                Toggle(L("Note bubbles follow page zoom"), isOn: $bubbleFollowsZoom)
+            } header: {
+                Text(L("Notes"))
+            } footer: {
+                Text(L("Off: expanded text and image notes keep a fixed size on screen. On: they scale with the page, like on the tablet."))
+            }
+
             Section {
                 Picker(L("Page render cache limit"), selection: $renderCacheMB) {
                     Text("128 MB").tag(128)
