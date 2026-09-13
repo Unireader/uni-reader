@@ -385,6 +385,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     private func load(_ id: String?) {
         session.clearSearch()   // 换文档：旧文档的查找命中/高亮不应带过去
         session.clearJumps()    // 跳转历史按文档分（`JumpHistory`）：换文档 = 换一条新轨迹
+        session.currentSelection = nil   // MCP 的选区镜像也跟着清（阅读区的选区状态随后会自己清）
         // 换文档 = 撤销链作废：栈里存的是**上一篇**那些条目的增量，套到新文档上就是凭空造笔迹。
         session.inkUndo.reset()
         session.scratchUndo.reset()

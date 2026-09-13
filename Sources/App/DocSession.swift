@@ -421,6 +421,12 @@ final class DocSession: ObservableObject, Identifiable {
     /// 本文档走过的跳转轨迹。换文档时由 `DocTabModel.load` 清空。
     @Published var jumps = JumpHistory()
 
+    /// 阅读区当前文字选区的镜像（MCP `get_current_view` 给 Agent 看「用户选中了什么」）。
+    /// 选区本体在 `ReaderSurface` 的 `@State` 里，模型层拿不到；阅读区在选区变化时写这里一次。
+    /// **普通属性、不 `@Published`**：拖选期间每个鼠标事件都在改它，进视图树就是每次拖动重算整窗
+    /// （`readZoom` 那条红线的同款）。换文档时 `DocTabModel.load` 清空。
+    var currentSelection: TextSelection?
+
     /// 此刻停在哪儿 —— 作为「离开点」入历史。位置取一路维护着的 `scrollAnchor`
     /// （本机滚动每帧在写），它比 `currentPageIndex` 多一个页内比例，回来才回得准。
     var currentMark: JumpMark {

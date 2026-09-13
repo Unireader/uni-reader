@@ -123,13 +123,13 @@ final class MCPFacade {
 
     // MARK: - get_state
 
-    func state(mcp: MCPServer) -> MCPObject {
+    func state(mcp: MCPServer?) -> MCPObject {
         let key = keyController
         let app = AppDelegate.shared?.appModel
         return ["app": ["version": MCPServer.appVersion,
                         "pid": Int(ProcessInfo.processInfo.processIdentifier),
                         "writes_enabled": MCPServer.allowWrites,
-                        "bind": mcp.effectiveBind.rawValue] as MCPObject,
+                        "bind": (mcp ?? app?.mcp)?.effectiveBind.rawValue ?? MCPServer.bind.rawValue] as MCPObject,
                 "key_window_id": key?.windowId.uuidString ?? NSNull(),
                 "windows": controllers.map { windowDTO($0, isKey: $0 === key) },
                 "tablet": ["running": app?.server.isRunning ?? false,
@@ -310,5 +310,205 @@ final class MCPFacade {
             if let d = m.document(id: documentId) { return documentDTO(m, d) }
         }
         return nil
+    }
+
+    // MARK: - get_current_view（批 2）
+
+    func currentView(windowId: String?) throws -> MCPObject {
+        let c: ReaderWindowController
+        if let windowId { c = try controller(windowId: windowId) }
+        else {
+            guard let k = keyController else { throw MCPToolError("no reader window is open") }
+            c = k
+        }
+        let tab = c.tabs.active
+        let s = tab.session
+        var o: MCPObject = ["window_id": c.windowId.uuidString,
+                            "session_id": tab.id.uuidString,
+                            "workspace": workspaceDTO(c.workspace)]
+        guard let docId = tab.docID else {
+            o["document_id"] = NSNull()
+            return o
+        }
+        o["document_id"] = docId
+        o["title"] = tab.tabTitle
+        o["page"] = PageNo.external(s.scrollAnchor?.page ?? s.currentPageIndex)
+        o["frac"] = s.scrollAnchor?.frac ?? 0
+        o["page_count"] = s.pdf?.pageCount ?? 0
+        o["zoom"] = Double(s.readZoom)
+        o["canvas_mode"] = s.canvasMode
+        o["file_missing"] = tab.missingDoc != nil
+        if let sel = s.currentSelection, !sel.text.isEmpty, let first = sel.rects.keys.min() {
+            o["selection"] = ["page": PageNo.external(first),
+                              "text": sel.text,
+                              "rects": (sel.rects[first] ?? []).map(Self.rectArray)] as MCPObject
+        }
+        if !s.toc.isEmpty {
+            let chapter = TOCEntry.chapterLabel(for: s.currentPageIndex, in: s.toc)
+            if !chapter.isEmpty { o["chapter"] = chapter }
+        }
+        return o
+    }
+
+    // MARK: - goto（批 2，导航）
+
+    /// 找目标会话：`session_id` > `document_id`（正显示它的标签，key 窗口优先）> `window_id`（活动标签）> key 窗口活动标签。
+    private func targetTab(sessionId: String?, documentId: String?, windowId: String?) throws -> (ReaderWindowController, DocTabModel) {
+        if let sessionId {
+            guard let uuid = UUID(uuidString: sessionId),
+                  let c = controllers.first(where: { $0.tabs.owns(uuid) }),
+                  let t = c.tabs.tabs.first(where: { $0.id == uuid }) else {
+                throw MCPToolError("session '\(sessionId)' not found; call get_state")
+            }
+            return (c, t)
+        }
+        if let documentId {
+            let showing = sessionsShowing(documentId)
+            guard !showing.isEmpty else {
+                throw MCPToolError("document '\(documentId)' is not open in any tab; call open_document first")
+            }
+            let key = keyController
+            let t = showing.first { key?.tabs.owns($0.id) == true } ?? showing[0]
+            guard let c = controllers.first(where: { $0.tabs.owns(t.id) }) else { throw MCPToolError("window not found") }
+            return (c, t)
+        }
+        let c: ReaderWindowController
+        if let windowId { c = try controller(windowId: windowId) }
+        else {
+            guard let k = keyController else { throw MCPToolError("no reader window is open") }
+            c = k
+        }
+        return (c, c.tabs.active)
+    }
+
+    func goto(page: Int, frac: Double, sessionId: String?, documentId: String?, windowId: String?, activate: Bool) throws -> MCPObject {
+        let (c, tab) = try targetTab(sessionId: sessionId, documentId: documentId, windowId: windowId)
+        guard let pdf = tab.session.pdf else {
+            throw MCPToolError("that tab has no document loaded")
+        }
+        let idx = try PageNo.index(page, pageCount: pdf.pageCount)
+        let f = min(max(frac, 0), 1)
+        if !tab.isActive { c.tabs.activate(tab.id) }
+        tab.session.jump(page: idx, frac: f, kind: .list, label: "Agent", origin: "mcp")
+        if activate {
+            NSApp.activate(ignoringOtherApps: true)
+            c.window?.makeKeyAndOrderFront(nil)
+        }
+        return ["session_id": tab.id.uuidString, "window_id": c.windowId.uuidString,
+                "document_id": tab.docID ?? NSNull(), "page": page, "frac": f]
+    }
+
+    // MARK: - list_annotations（批 2）
+
+    /// 文档开着 → 读 `DocSession` 的数组（内存真源，含节流中未落库的改动）；没开 → 读库。
+    func annotations(documentId: String?, workspacePath: String?, kinds: Set<String>, pages: Set<Int>?) throws -> (json: MCPObject, text: String) {
+        // 不走 `resolveTarget`：批注不需要文件在——文件丢了的文档照样有笔记
+        let id: String
+        if let documentId, !documentId.isEmpty { id = documentId }
+        else {
+            guard let key = keyController else { throw MCPToolError("no reader window is open; pass document_id") }
+            guard let d = key.tabs.active.docID else { throw MCPToolError("the key window has no document open; pass document_id") }
+            id = d
+        }
+        let ws: WorkspaceManager
+        if let p = workspacePath, !p.isEmpty { ws = try manager(workspacePath: p) }
+        else if let key = keyController, key.workspace.document(id: id) != nil { ws = key.workspace }
+        else if let m = WorkspaceRegistry.shared.openManagers.first(where: { $0.document(id: id) != nil }) { ws = m }
+        else { throw MCPToolError("document '\(id)' not found in any open workspace; call list_documents") }
+        guard let doc = ws.document(id: id) else { throw MCPToolError("document '\(id)' not found in workspace '\(ws.name)'") }
+        let s = sessionsShowing(id).first?.session
+        func inPages(_ p: Int) -> Bool { pages?.contains(p) ?? true }
+
+        let types = s?.noteTypes ?? ws.noteTypes()
+        func typeName(_ tid: UUID?) -> Any { tid.flatMap { t in types.first { $0.id == t }?.name } ?? NSNull() }
+
+        var out: MCPObject = ["document_id": id, "title": doc.title]
+        var lines: [String] = ["“\(doc.title)”"]
+
+        if kinds.contains("note") {
+            let notes = (s?.textNotes ?? ws.textNotes(documentId: id)).filter { inPages($0.page) }
+                .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
+            out["notes"] = notes.map { n -> MCPObject in
+                var o: MCPObject = ["id": n.id.uuidString, "page": PageNo.external(n.page), "rect": Self.rectArray(n.anchor),
+                                    "quote": n.quote, "text": n.text, "type": typeName(n.typeId), "display": n.display.rawValue,
+                                    "created_at": MCPJSON.iso(n.createdAt), "updated_at": MCPJSON.iso(n.updatedAt)]
+                if let src = n.source { o["source"] = ["kind": src.kind, "provider": src.provider, "url": src.url] as MCPObject }
+                return o
+            }
+            lines.append("Notes (\(notes.count)):")
+            lines += notes.map { "- p.\(PageNo.external($0.page)) [\($0.id.uuidString.prefix(8))] “\($0.quote.flattenedQuote.prefix(60))” → \($0.text.prefix(120))" }
+        }
+        if kinds.contains("highlight") {
+            let hs = (s?.highlights ?? ws.highlights(documentId: id)).filter { inPages($0.page) }
+                .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
+            out["highlights"] = hs.map { h -> MCPObject in
+                ["id": h.id.uuidString, "page": PageNo.external(h.page), "rect": Self.rectArray(h.anchor),
+                 "quote": h.quote, "color": Self.hex(h.color), "created_at": MCPJSON.iso(h.createdAt)]
+            }
+            lines.append("Highlights (\(hs.count)):")
+            lines += hs.map { "- p.\(PageNo.external($0.page)) [\($0.id.uuidString.prefix(8))] “\($0.quote.flattenedQuote.prefix(80))”" }
+        }
+        if kinds.contains("bookmark") {
+            let bs = (s?.bookmarks ?? ws.bookmarks(documentId: id)).filter { inPages($0.page) }.sorted(by: Bookmark.before)
+            out["bookmarks"] = bs.map { b -> MCPObject in
+                ["id": b.id.uuidString, "page": PageNo.external(b.page), "frac": b.frac, "title": b.title,
+                 "created_at": MCPJSON.iso(b.createdAt)]
+            }
+            lines.append("Bookmarks (\(bs.count)):")
+            lines += bs.map { "- p.\(PageNo.external($0.page)) \($0.title)" }
+        }
+        if kinds.contains("image_note") {
+            let ims = (s?.imageNotes ?? ws.imageNotes(documentId: id)).filter { inPages($0.page) }
+                .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
+            out["image_notes"] = ims.map { im -> MCPObject in
+                var o: MCPObject = ["id": im.id.uuidString, "page": PageNo.external(im.page), "rect": Self.rectArray(im.anchor),
+                                    "caption": im.caption, "image_sha256": im.image]
+                switch im.source {
+                case let .pdf(page, rect, pages):
+                    o["from"] = ["kind": "pdf", "page": PageNo.external(page), "rect": Self.rectArray(rect), "pages": pages] as MCPObject
+                case let .file(name):
+                    o["from"] = ["kind": "file", "name": name] as MCPObject
+                }
+                return o
+            }
+            lines.append("Image notes (\(ims.count)):")
+            lines += ims.map { "- p.\(PageNo.external($0.page)) \($0.caption.isEmpty ? "(no caption)" : $0.caption.prefix(80))" }
+        }
+        if kinds.contains("ai_thread") {
+            let ts = (s?.aiThreads ?? ws.aiThreads(documentId: id)).filter { inPages($0.page) }.sorted { $0.page < $1.page }
+            out["ai_threads"] = ts.map { t -> MCPObject in
+                ["id": t.id.uuidString, "page": PageNo.external(t.page), "provider": t.provider, "url": t.url,
+                 "title": t.title, "state": t.state == .ok ? "ok" : "suspect", "created_at": MCPJSON.iso(t.createdAt)]
+            }
+            lines.append("AI threads (\(ts.count)):")
+            lines += ts.map { "- p.\(PageNo.external($0.page)) \($0.provider) \($0.title.isEmpty ? $0.url : $0.title)" }
+        }
+        if kinds.contains("scratch_pad") {
+            let ps = (s?.scratchPads ?? ws.scratchPads(documentId: id)).filter { inPages($0.anchorPage) }.sorted { $0.anchorPage < $1.anchorPage }
+            out["scratch_pads"] = ps.map { p -> MCPObject in
+                ["id": p.id.uuidString, "page": PageNo.external(p.anchorPage), "title": p.title,
+                 "anchor": [p.anchorX, p.anchorY]]
+            }
+            lines.append("Scratch pads (\(ps.count)):")
+            lines += ps.map { "- p.\(PageNo.external($0.anchorPage)) \($0.title.isEmpty ? "(untitled)" : $0.title)" }
+        }
+        if kinds.contains("ink") {
+            let sums = ((try? ws.store?.inkPageSummaries(documentId: id)) ?? []).filter { inPages($0.page) }.sorted { $0.page < $1.page }
+            out["ink"] = ["pages": sums.map { ["page": PageNo.external($0.page), "count": $0.count] as MCPObject },
+                          "total": sums.reduce(0) { $0 + $1.count }] as MCPObject
+            lines.append("Ink: \(sums.reduce(0) { $0 + $1.count }) strokes on \(sums.count) pages" +
+                         (sums.isEmpty ? "" : " (" + sums.prefix(30).map { "p.\(PageNo.external($0.page))×\($0.count)" }.joined(separator: ", ") + (sums.count > 30 ? ", …" : "") + ")"))
+        }
+        return (out, lines.joined(separator: "\n"))
+    }
+
+    // MARK: - 小工具
+
+    static func rectArray(_ r: CGRect) -> [Double] {
+        [Double(r.minX), Double(r.minY), Double(r.width), Double(r.height)]
+    }
+
+    static func hex(_ c: InkColor) -> String {
+        String(format: "#%02X%02X%02X", Int(c.r.rounded()), Int(c.g.rounded()), Int(c.b.rounded()))
     }
 }

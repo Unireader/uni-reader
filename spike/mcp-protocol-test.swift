@@ -191,8 +191,50 @@ struct Main {
 
         // 其它方法
         if case let .response(r) = await d.dispatch(body: rpc("resources/list"), session: session) {
-            check((((r["result"] as? MCPObject)?["resources"]) as? [Any])?.isEmpty == true, "resources/list 批 1 给空列表")
+            check((((r["result"] as? MCPObject)?["resources"]) as? [Any])?.isEmpty == true, "没装资源提供者：resources/list 给空列表")
         } else { check(false, "resources/list 应有应答") }
+        if case let .response(r) = await d.dispatch(body: rpc("resources/read", params: ["uri": "x://y"]), session: session) {
+            check((r["error"] as? MCPObject)?["code"] as? Int == JSONRPCCode.resourceNotFound, "没装资源提供者：resources/read → -32002")
+        } else { check(false, "resources/read 应有应答") }
+
+        print("资源（批 2）")
+        catalog.resources = MCPResourceProvider(
+            list: { [["uri": "test://a", "name": "A", "mimeType": "text/plain"]] },
+            templates: [["uriTemplate": "test://{id}", "name": "T"]],
+            read: { uri in
+                if uri == "test://a" { return MCPResourceContent(uri: uri, mimeType: "text/plain", text: "hello") }
+                if uri == "test://img" { return MCPResourceContent(uri: uri, mimeType: "image/png", blob: Data([1, 2, 3])) }
+                throw MCPResourceNotFound(uri: uri)
+            })
+        if case let .initialized(_, response) = await d.dispatch(body: rpc("initialize", params: ["protocolVersion": "2025-11-25"]), session: nil) {
+            let caps = (response["result"] as? MCPObject)?["capabilities"] as? MCPObject
+            check((caps?["resources"] as? MCPObject) != nil, "装了资源提供者：initialize 声明 resources 能力")
+        } else { check(false, "initialize 应成功") }
+        if case let .response(r) = await d.dispatch(body: rpc("resources/list"), session: session) {
+            let list = ((r["result"] as? MCPObject)?["resources"] as? [MCPObject]) ?? []
+            check(list.count == 1 && list.first?["uri"] as? String == "test://a", "resources/list 列出提供者给的资源")
+        } else { check(false, "resources/list 应有应答") }
+        if case let .response(r) = await d.dispatch(body: rpc("resources/templates/list"), session: session) {
+            let list = ((r["result"] as? MCPObject)?["resourceTemplates"] as? [MCPObject]) ?? []
+            check(list.first?["uriTemplate"] as? String == "test://{id}", "resources/templates/list")
+        } else { check(false, "templates 应有应答") }
+        if case let .response(r) = await d.dispatch(body: rpc("resources/read", params: ["uri": "test://a"]), session: session) {
+            let c = ((r["result"] as? MCPObject)?["contents"] as? [MCPObject])?.first
+            check(c?["text"] as? String == "hello" && c?["mimeType"] as? String == "text/plain" && c?["uri"] as? String == "test://a", "resources/read 文本资源")
+        } else { check(false, "read 应有应答") }
+        if case let .response(r) = await d.dispatch(body: rpc("resources/read", params: ["uri": "test://img"]), session: session) {
+            let c = ((r["result"] as? MCPObject)?["contents"] as? [MCPObject])?.first
+            check(c?["blob"] as? String == Data([1, 2, 3]).base64EncodedString() && c?["text"] == nil, "resources/read 二进制资源走 blob(base64)")
+        } else { check(false, "read 应有应答") }
+        if case let .response(r) = await d.dispatch(body: rpc("resources/read", params: ["uri": "test://nope"]), session: session) {
+            check((r["error"] as? MCPObject)?["code"] as? Int == JSONRPCCode.resourceNotFound, "未知 URI → -32002")
+        } else { check(false, "read 应有应答") }
+        if case let .response(r) = await d.dispatch(body: rpc("resources/read"), session: session) {
+            check((r["error"] as? MCPObject)?["code"] as? Int == JSONRPCCode.invalidParams, "缺 uri → -32602")
+        } else { check(false, "read 应有应答") }
+
+        print("页码筛选（limit）")
+        check((try? PageNo.parse("1-500", pageCount: 1000, limit: Int.max))?.count == 500, "limit=Int.max 时不受 40 页上限")
         if case let .response(r) = await d.dispatch(body: rpc("nope/method"), session: session) {
             check((r["error"] as? MCPObject)?["code"] as? Int == JSONRPCCode.methodNotFound, "未知方法 → -32601")
         } else { check(false, "未知方法应有应答") }

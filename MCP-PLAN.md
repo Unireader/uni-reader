@@ -1,6 +1,6 @@
 # MCP 服务方案（macOS 端，2026-09-13 首版）
 
-> 状态：**方案已拍板（2026-09-13，决策见 §2）；批 1 已落地并经用户实测通过（同日，分支 `worktree-mcp`，实现记录见 §15）；批 2 进行中**。
+> 状态：**方案已拍板（2026-09-13，决策见 §2）；批 1 已落地并经用户实测通过（§15）；批 2 已落地待用户实测（§16）；均在分支 `worktree-mcp`**。
 > 目标：让外部 Agent（Claude Code、Codex 等命令行 Agent）通过 MCP 协议操作 UniReader——
 > 前期只做**读取类**（打开工作区、打开文档、读 PDF 文本/目录/页图、看当前阅读位置），
 > 后期再加**写入类**（跳页、书签、文字笔记、高亮、导入 PDF）。分批上线，每批都能单独交付。
@@ -694,5 +694,29 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 ### 15.4 批 1 已知未做
 
 - 「服务」菜单里的 MCP 开关（方案 §10 提了一句）没加，只有设置页——够用就不加了。
-- `get_current_view` 的选区镜像（§5.4 最后一条）是批 2 的事，没动 `DocSession`。
 - 新版协议（2026-07-28，`server/discover`）没做，等客户端开始发再补（批 1c）。
+
+---
+
+## 16. 实现记录 — 批 2（2026-09-13 落地，同一分支，待用户实测）
+
+编译通过；协议层 spike 加了资源与页码筛选 9 项（77/77），监听链路 31/31 不变。**没有启动 App 自测**。
+
+### 16.1 新增
+
+| 东西 | 在哪 | 要点 |
+|---|---|---|
+| `search_text` | `MCPTools+Document.swift` + `MCPDocReader.searchNative/searchOCR` | 原生走 `PDFDocument.findString`（与 ⌘F 同路），摘要 = 选区两头各扩 80 字符再压平；OCR 缓存逐行包含匹配，**同一页两层都有只报原生**；`pages` 筛选、`max_hits` 默认 50 |
+| `render_page` | 同上 + `MCPDocReader.render` | `PageBitmap.render` + `PageRenderer.encode`（与 `/page.png` 同一条原语），宽度归 `pageWidthSteps` 档、上限 2160；返回 `image` 内容 + 尺寸 |
+| `get_current_view` | `MCPTools+Reader.swift` + `MCPFacade.currentView` | 页/页内比例取 `scrollAnchor`；`chapter` 用 `TOCEntry.chapterLabel`；`selection` 取 `DocSession.currentSelection` |
+| `goto` | 同上 + `MCPFacade.goto` | `session.jump(kind: .list, label: "Agent", origin: "mcp")`，进跳转历史；**默认不抢焦点**（`activate=false`，与 `open_document` 相反——翻页时用户多半正在终端里打字） |
+| `list_annotations` | 同上 + `MCPFacade.annotations` | 七类（note / highlight / bookmark / image_note / ai_thread / scratch_pad / ink 汇总）；开着读 `DocSession`、没开读库；**不要求文件在**（文件丢了的文档照样有笔记） |
+| 资源 | `MCPResources.swift` + `MCPCatalog.resources` + `MCPProtocol` 三个 `resources/*` 方法 | 五条 URI（§8 那张表），**每条就是调一次对应工具再取 `structuredContent`/图片**，没有第二套读法；`initialize` 装了提供者才声明 `resources` 能力 |
+| 选区镜像 | `DocSession.currentSelection`（普通属性）+ `PageStreamView` 里一个 `onChange` | 🔴 `onChange` **不能再挂主修饰符链**（多一个就超类型检查器时限，2026-09-13 实测），搭在框选覆盖层的 `ZStack` 里；换文档 `DocTabModel.load` 清空 |
+| `PageNo.parse(limit:)` | `MCPModels.swift` | 筛选类参数（搜索 / 批注列表）传 `Int.max`，不受 40 页上限 |
+
+### 16.2 用户实测清单
+
+在 Claude Code 里：① 「在这本书里找 X」→ `search_text` 报页码与摘要；② 「看看第 N 页的图」→ `render_page` 出图（模型能描述页面内容）；
+③ 选中一段文字后问「我选了什么」→ `get_current_view.selection`；④ 「翻到第 N 页」→ `goto` 滚动、⌘[ 能跳回；
+⑤ 「我在这本书上记了什么」→ `list_annotations` 与 Inspector 一致；⑥ 客户端若支持资源，`unireader://doc/<id>/page/<n>` 能当附件拉进来。

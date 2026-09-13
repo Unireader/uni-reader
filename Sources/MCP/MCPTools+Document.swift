@@ -121,6 +121,96 @@ extension MCPTools {
         }
     }
 
+    static func searchText() -> MCPTool {
+        MCPTool(
+            name: "search_text",
+            title: "Search text in a document",
+            description: "Find a phrase in a document (case-insensitive). Searches the PDF's own text like ⌘F, and cached OCR text on scanned pages. Returns page numbers, a snippet with context, and the highlight rectangles.",
+            inputSchema: MCPSchema.object(targetProperties.merging([
+                "query": MCPSchema.string("Text to find"),
+                "pages": ["anyOf": [["type": "integer"], ["type": "string"]], "description": "Limit to these pages, e.g. \"1-50\". Default: whole document."],
+                "max_hits": MCPSchema.integer("Stop after this many hits", min: 1, max: 500),
+            ]) { a, _ in a }, required: ["query"]),
+            outputSchema: MCPSchema.object([
+                "document_id": MCPSchema.string("library document id, absent for a plain file"),
+                "query": MCPSchema.string("the query"),
+                "hits": MCPSchema.array(of: MCPSchema.object([
+                    "page": MCPSchema.integer("1-based"), "snippet": MCPSchema.string("text around the hit"),
+                    "source": MCPSchema.enumeration(["native", "ocr"], "text layer"),
+                    "rects": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")), "[x, y, w, h] normalized, top-left origin")])),
+                "truncated": MCPSchema.boolean("more hits exist"),
+            ]),
+            tier: .read
+        ) { _, args in
+            let target = try await MainActor.run {
+                try MCPFacade.shared.resolveTarget(documentId: try args.string("document_id"), path: try args.string("path"),
+                                                   workspacePath: try args.string("workspace"))
+            }
+            let query = try args.requiredString("query")
+            let maxHits = try args.int("max_hits") ?? 50
+            let reader = MCPDocReader.shared
+            let pageCount = try await reader.withDocument(path: target.path) { $0.pageCount }
+            var pageSet: Set<Int>? = nil
+            if let spec = try args.pages("pages") { pageSet = Set(try PageNo.parse(spec, pageCount: pageCount, limit: Int.max)) }
+
+            var hits = try await reader.searchNative(path: target.path, query: query, pages: pageSet, context: 80, maxHits: maxHits + 1)
+            if let store = target.store {
+                let nativePages = Set(hits.map(\.index))
+                let ocr = await reader.searchOCR(store: store, contentHash: target.contentHash, query: query, pages: pageSet, maxHits: maxHits + 1)
+                    .filter { !nativePages.contains($0.index) }   // 同一页两层都有就只报原生的，别重复
+                hits = (hits + ocr).sorted { a, b in
+                    a.index != b.index ? a.index < b.index : (a.rects.first?.minY ?? 0) < (b.rects.first?.minY ?? 0)
+                }
+            }
+            let truncated = hits.count > maxHits
+            if truncated { hits = Array(hits.prefix(maxHits)) }
+            let items: [MCPObject] = hits.map {
+                ["page": PageNo.external($0.index), "snippet": $0.snippet, "source": $0.source,
+                 "rects": $0.rects.map(MCPFacade.rectArray)]
+            }
+            var r: MCPObject = ["query": query, "hits": items, "truncated": truncated]
+            if let id = target.documentId { r["document_id"] = id }
+            var lines = ["\(hits.count)\(truncated ? "+" : "") hits for “\(query)” in “\(target.title)”"]
+            lines += hits.map { "- p.\(PageNo.external($0.index)): …\($0.snippet)…" }
+            return MCPToolResult(text: lines.joined(separator: "\n"), structured: r)
+        }
+    }
+
+    static func renderPage() -> MCPTool {
+        MCPTool(
+            name: "render_page",
+            title: "Render a page image",
+            description: "Render one page as an image (JPEG by default) so a vision-capable model can look at figures, formulas or layout. Page content only, no ink or highlights.",
+            inputSchema: MCPSchema.object(targetProperties.merging([
+                "page": MCPSchema.integer("Page to render, 1-based", min: 1),
+                "width": MCPSchema.integer("Pixel width; snapped to \(LANServer.pageWidthSteps.map(String.init).joined(separator: "/")), max 2160", min: 240, max: 2160),
+                "format": MCPSchema.enumeration(["jpeg", "png"], "image format", default: "jpeg"),
+            ]) { a, _ in a }, required: ["page"]),
+            outputSchema: MCPSchema.object([
+                "page": MCPSchema.integer("1-based"), "width": MCPSchema.integer("pixels"), "height": MCPSchema.integer("pixels"),
+                "mime": MCPSchema.string("image/jpeg or image/png"), "bytes": MCPSchema.integer("encoded size"),
+            ]),
+            tier: .read
+        ) { _, args in
+            let target = try await MainActor.run {
+                try MCPFacade.shared.resolveTarget(documentId: try args.string("document_id"), path: try args.string("path"),
+                                                   workspacePath: try args.string("workspace"))
+            }
+            let page = try args.int("page") ?? 1
+            let width = min(LANServer.snapPageWidth(try args.int("width") ?? 1080), 2160)
+            let fmt = try args.string("format") ?? "jpeg"
+            guard fmt == "jpeg" || fmt == "png" else { throw MCPInvalidParams("format must be jpeg or png") }
+            let format: PageRenderer.Format = fmt == "png" ? .png : .jpeg(quality: PageRenderer.defaultJPEGQuality)
+            let reader = MCPDocReader.shared
+            let pageCount = try await reader.withDocument(path: target.path) { $0.pageCount }
+            let idx = try PageNo.index(page, pageCount: pageCount)
+            let img = try await reader.render(path: target.path, index: idx, pixelWidth: width, format: format)
+            let r: MCPObject = ["page": page, "width": img.width, "height": img.height, "mime": img.mime, "bytes": img.data.count]
+            return MCPToolResult(text: "Page \(page) of “\(target.title)” · \(img.width)×\(img.height) \(fmt)",
+                                 structured: r, image: (img.data, img.mime))
+        }
+    }
+
     static func readPages() -> MCPTool {
         MCPTool(
             name: "read_pages",

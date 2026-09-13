@@ -101,6 +101,92 @@ final class MCPDocReader {
         }
     }
 
+    // MARK: - 搜索（批 2）
+
+    struct Hit {
+        let index: Int              // 内部 0 起
+        let snippet: String
+        let rects: [CGRect]         // 归一化行框（页局部）
+        let source: String          // native / ocr
+    }
+
+    /// 原生文本搜索：`PDFDocument.findString`（与 ⌘F 同一条路），命中前后各扩 `context` 个字符做摘要。
+    /// `pages` = nil 不限页。结果按页、页内位置排序；最多 `maxHits` 条。
+    func searchNative(path: String, query: String, pages: Set<Int>?, context: Int, maxHits: Int) async throws -> [Hit] {
+        try await withDocument(path: path) { doc in
+            let sels = doc.findString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
+            var out: [Hit] = []
+            for sel in sels {
+                guard let page = sel.pages.first else { continue }
+                let idx = doc.index(for: page)
+                guard idx >= 0, idx < doc.pageCount else { continue }
+                if let pages, !pages.contains(idx) { continue }
+                let rects = PageGeometry.normalizedLineRects(of: sel, in: doc)[idx] ?? []
+                // 摘要：复制一份选区往两头扩，取字符串再把换行压平
+                let wide = sel.copy() as! PDFSelection
+                wide.extend(atStart: context)
+                wide.extend(atEnd: context)
+                let snippet = Self.flatten(wide.string ?? sel.string ?? "")
+                out.append(Hit(index: idx, snippet: snippet, rects: rects, source: "native"))
+                if out.count >= maxHits { break }
+            }
+            return out.sorted { a, b in
+                a.index != b.index ? a.index < b.index : (a.rects.first?.minY ?? 0) < (b.rects.first?.minY ?? 0)
+            }
+        }
+    }
+
+    /// OCR 缓存里搜：逐行不区分大小写的包含匹配（与 `DocSession.searchOCR` 同法），摘要 = 命中那一行。
+    func searchOCR(store: LibraryStore, contentHash: String, query: String, pages: Set<Int>?, maxHits: Int) async -> [Hit] {
+        guard !contentHash.isEmpty else { return [] }
+        return await withCheckedContinuation { cont in
+            queue.async {
+                let book = self.ocrBook(store: store, contentHash: contentHash)
+                var out: [Hit] = []
+                for idx in book.pages.keys.sorted() {
+                    if let pages, !pages.contains(idx) { continue }
+                    guard let runs = book.pages[idx] else { continue }
+                    let mask = OCRWatermark.mask(runs: runs, profile: book.profile)
+                    for (r, isWM) in zip(runs, mask) where !isWM {
+                        guard r.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { continue }
+                        out.append(Hit(index: idx, snippet: Self.flatten(r.text), rects: [r.rect], source: "ocr"))
+                        if out.count >= maxHits { cont.resume(returning: out); return }
+                    }
+                }
+                cont.resume(returning: out)
+            }
+        }
+    }
+
+    /// 摘要用：换行/连续空白压成一个空格。
+    static func flatten(_ s: String) -> String {
+        s.split(whereSeparator: { $0.isNewline || $0 == " " || $0 == "\t" }).joined(separator: " ")
+    }
+
+    // MARK: - 页图（批 2）
+
+    struct Rendered {
+        let data: Data
+        let width: Int
+        let height: Int
+        let mime: String
+    }
+
+    /// 渲一页（与平板 `/page.png` 同一条原语：`PageBitmap.render` + `PageRenderer.encode`）。
+    func render(path: String, index: Int, pixelWidth: Int, format: PageRenderer.Format) async throws -> Rendered {
+        try await withDocument(path: path) { doc in
+            guard let page = doc.page(at: index) else { throw MCPToolError("page \(index + 1) not found") }
+            let disp = PageBitmap.displaySize(page)
+            guard disp.width > 0, disp.height > 0 else { throw MCPToolError("page \(index + 1) has no size") }
+            let px = Int(min(CGFloat(pixelWidth), disp.width * 4).rounded())
+            guard px > 0, let cg = PageBitmap.render(page: page, pixelWidth: px),
+                  let data = PageRenderer.encode(cg, format: format) else {
+                throw MCPToolError("cannot render page \(index + 1)")
+            }
+            return Rendered(data: data, width: cg.width, height: cg.height, mime: format.contentType)
+        }
+    }
+
     private static func label(of page: PDFPage?, index: Int) -> String? {
         guard let l = page?.label?.trimmingCharacters(in: .whitespaces), !l.isEmpty, l != String(index + 1) else { return nil }
         return l

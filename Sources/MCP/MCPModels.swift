@@ -68,7 +68,9 @@ enum PageNo {
 
     /// 解析页范围写法 `"12"` / `"3-7"` / `"1-3,9,20-22"` → **去重、升序**的内部下标。
     /// 空白随意；`"7-3"` 这种倒着写按 3-7 处理（不猜用户是不是想倒序读，读出来的顺序永远升序）。
-    static func parse(_ spec: String, pageCount: Int) throws -> [Int] {
+    /// `limit` = 最多几页（读文本用默认的 40；纯筛选（搜索/批注列表）传 `Int.max`）。
+    static func parse(_ spec: String, pageCount: Int, limit: Int = maxPagesPerCall) throws -> [Int] {
+        let maxPagesPerCall = limit
         var out = Set<Int>()
         for rawPart in spec.split(separator: ",") {
             let part = rawPart.trimmingCharacters(in: .whitespaces)

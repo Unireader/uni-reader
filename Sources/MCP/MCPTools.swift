@@ -3,6 +3,12 @@ import Foundation
 /// 工具目录的装配（方案 §7）。每个工具 = 一个 `MCPTool`（说明 / schema / 处理函数），处理函数很薄：
 /// 活状态 `await MainActor.run { MCPFacade… }`，读 PDF 走 `MCPDocReader`，然后拼 `MCPToolResult`。
 enum MCPTools {
+    /// 全部装配（App 启动时调一次）。
+    static func registerAll(into server: MCPServer) {
+        registerBatch1(into: server)
+        registerBatch2(into: server)
+    }
+
     /// 批 1：读取类 + 打开工作区/文档两个导航动作。
     static func registerBatch1(into server: MCPServer) {
         let c = server.catalog
@@ -13,6 +19,17 @@ enum MCPTools {
         c.register(openDocument())
         c.register(getDocument())
         c.register(readPages())
+    }
+
+    /// 批 2：搜索 / 页图 / 当前视图 / 批注列表 / 跳页 + 资源。
+    static func registerBatch2(into server: MCPServer) {
+        let c = server.catalog
+        c.register(searchText())
+        c.register(renderPage())
+        c.register(getCurrentView())
+        c.register(listAnnotations())
+        c.register(goto())
+        c.resources = MCPResources.provider(catalog: c)
     }
 
     // MARK: - 共用的 schema 片段

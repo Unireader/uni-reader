@@ -25,6 +25,8 @@ enum JSONRPCCode {
     static let internalError = -32603
     /// 旧版握手前就来别的请求（协议没给固定码，用服务端保留区）。
     static let notInitialized = -32002
+    /// `resources/read` 找不到 URI（协议规定的码，与上面同值是协议自己的安排）。
+    static let resourceNotFound = -32002
 }
 
 /// 一个旧版会话（`Mcp-Session-Id`）。只在 `MCPSessionStore` 的 actor 里改。
@@ -157,9 +159,29 @@ struct MCPDispatcher {
                 return .response(Self.error(id: id!, code: JSONRPCCode.internalError, message: "\(error)"))
             }
         case "resources/list":
-            return .response(Self.result(id: id!, ["resources": [MCPObject]()]))          // 批 2 再填
+            let list = await catalog.resources?.list() ?? []
+            return .response(Self.result(id: id!, ["resources": list]))
         case "resources/templates/list":
-            return .response(Self.result(id: id!, ["resourceTemplates": [MCPObject]()]))
+            return .response(Self.result(id: id!, ["resourceTemplates": catalog.resources?.templates ?? []]))
+        case "resources/read":
+            guard let uri = params["uri"] as? String, !uri.isEmpty else {
+                return .response(Self.error(id: id!, code: JSONRPCCode.invalidParams, message: "resources/read needs params.uri"))
+            }
+            guard let provider = catalog.resources else {
+                return .response(Self.error(id: id!, code: JSONRPCCode.resourceNotFound, message: "resource not found: \(uri)"))
+            }
+            do {
+                let c = try await provider.read(uri)
+                return .response(Self.result(id: id!, ["contents": [c.json()]]))
+            } catch let e as MCPResourceNotFound {
+                return .response(Self.error(id: id!, code: JSONRPCCode.resourceNotFound, message: "resource not found: \(e.uri)"))
+            } catch let e as MCPInvalidParams {
+                return .response(Self.error(id: id!, code: JSONRPCCode.invalidParams, message: e.message))
+            } catch let e as MCPToolError {
+                return .response(Self.error(id: id!, code: JSONRPCCode.internalError, message: e.message))
+            } catch {
+                return .response(Self.error(id: id!, code: JSONRPCCode.internalError, message: "\(error)"))
+            }
         case "prompts/list":
             return .response(Self.result(id: id!, ["prompts": [MCPObject]()]))
         default:
@@ -174,12 +196,13 @@ struct MCPDispatcher {
         let session = await sessions.create(protocolVersion: version,
                                             clientName: (client["name"] as? String) ?? "unknown",
                                             clientVersion: (client["version"] as? String) ?? "")
+        var capabilities: MCPObject = ["tools": ["listChanged": false]]
+        if catalog.resources != nil {
+            capabilities["resources"] = ["subscribe": false, "listChanged": false]
+        }
         let result: MCPObject = [
             "protocolVersion": version,
-            "capabilities": [
-                "tools": ["listChanged": false],
-                // 批 1 只声明 tools（方案 §4.2）；resources 到批 2 再打开
-            ],
+            "capabilities": capabilities,
             "serverInfo": ["name": info.name, "version": info.version],
             "instructions": info.instructions,
         ]

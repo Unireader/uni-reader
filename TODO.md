@@ -1005,13 +1005,15 @@
    ——它就是用来照出「改一边忘了另两边」的。首轮修掉两条真分叉（钢笔锥度、铅笔三道纹理），
    剩下的两处小差异见下面「已知欠账」。
 
-4. **MCP 服务（给外部 Agent 用）——批 1 已落地并实测通过（分支 `worktree-mcp`），批 2 进行中**（2026-09-13，**`MCP-PLAN.md`**）。
+4. **MCP 服务（给外部 Agent 用）——批 1 已落地并实测通过、批 2 已落地待实测（分支 `worktree-mcp`）**（2026-09-13，**`MCP-PLAN.md`**）。
    App 内置 Streamable HTTP 端点（默认 `127.0.0.1:8773/mcp`，可绑所有接口但必须口令），自写协议层不引 SDK，
    页码对外 1 起。分三批：批 1 读取（`get_state` / 工作区与文档的列出与打开 / `get_document` / `read_pages`）→
    批 2 读取+导航（搜索 / 页图 / 批注列表 / `goto` / 资源）→ 批 3 写入（书签 / 笔记 / 高亮 / 导入 / 建工作区 / 触发 OCR，
    带写入开关与来源标记）。动手前先读方案 §5.3 三条线程红线与 §9.3 写入两条路径。
-   **现状**：批 1 七个工具 + 设置 › Agent 页 + 口令/监听地址全在，实现记录见方案 §15，用户已实测通过；
-   两个 spike（`spike/mcp-protocol-test.swift` 68 项、`spike/mcp-server-test.swift` 31 项）全绿。批 2 在同一分支上继续。
+   **现状**：批 1 七个工具 + 设置 › Agent 页 + 口令/监听地址全在（方案 §15，用户已实测通过）；批 2 五个工具
+   （`search_text` / `render_page` / `get_current_view` / `list_annotations` / `goto`）+ 五条资源 URI 已落地（方案 §16，
+   实测清单在 §16.2）。两个 spike（`spike/mcp-protocol-test.swift` 77 项、`spike/mcp-server-test.swift` 31 项）全绿。
+   下一步：批 3 写入（方案 §7.13 / §9）。
 
 ## 🐞 已知欠账（未修 / 刻意没做）
 

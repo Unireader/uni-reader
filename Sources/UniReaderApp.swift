@@ -353,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UserDefaults.standard.object(forKey: "renderCacheMB") as? Int ?? 256)
         if UserDefaults.standard.bool(forKey: "autoStartServer") { appModel.server.start() }
         // MCP 服务：工具目录装配一次；「启动时开启」照平板服务的先例。
-        MCPTools.registerBatch1(into: appModel.mcp)
+        MCPTools.registerAll(into: appModel.mcp)
         if UserDefaults.standard.bool(forKey: MCPServer.autoStartKey) { appModel.mcp.start() }
         observeVolumes()
         NotificationCenter.default.post(name: .appDidFinishLaunching, object: nil)

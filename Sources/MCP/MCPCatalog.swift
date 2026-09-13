@@ -72,9 +72,41 @@ struct MCPTool {
     }
 }
 
+/// `resources/read` 的一项内容：文本或二进制（base64 由这里编）。
+struct MCPResourceContent {
+    var uri: String
+    var mimeType: String
+    var text: String? = nil
+    var blob: Data? = nil
+
+    func json() -> MCPObject {
+        var o: MCPObject = ["uri": uri, "mimeType": mimeType]
+        if let text { o["text"] = text }
+        if let blob { o["blob"] = blob.base64EncodedString() }
+        return o
+    }
+}
+
+/// 资源提供者（方案 §8，批 2）：列表 / 模板 / 按 URI 读。内容与同名工具完全一致，不另起一套读法。
+struct MCPResourceProvider {
+    /// `resources/list`：此刻能列出来的具体资源（开着的文档等）。
+    var list: () async -> [MCPObject]
+    /// `resources/templates/list`：URI 模板（静态）。
+    var templates: [MCPObject]
+    /// `resources/read`：认不出的 URI 抛 `MCPResourceNotFound`。
+    var read: (String) async throws -> MCPResourceContent
+}
+
+/// `resources/read` 找不到 URI（协议错误码 -32002）。
+struct MCPResourceNotFound: Error {
+    let uri: String
+}
+
 final class MCPCatalog {
     private(set) var tools: [MCPTool] = []
     private var byName: [String: MCPTool] = [:]
+    /// 批 2 装上；nil = `initialize` 不声明 resources 能力，`resources/*` 应答空列表。
+    var resources: MCPResourceProvider?
 
     func register(_ tool: MCPTool) {
         precondition(byName[tool.name] == nil, "MCP 工具重名：\(tool.name)")
