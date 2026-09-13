@@ -72,6 +72,9 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - **material / 玻璃底上的文字与按钮别用 `.secondary` / `.borderless`**：系统会把它们画得极淡，
   表现是「元素还在、就是看不见」。已踩两次——2026-08-07 草稿纸工具条的非激活按钮、2026-09-01
   AI 内置面板 header 里绑定的文档名与页码。层级差异改用**字号**表达，颜色一律显式 `.primary`。
+- **显示页图的窗口 `colorSpace` 必须与页图色彩空间一致**（页图 = sRGB，`ReaderWindowController`/`RefWindowController`
+  都设 `win.colorSpace = .sRGB`；2026-09-13 实测定）：不一致时 SwiftUI 显示每张 `Image(decorative:)` 都要 CA 用 CG
+  整张重画转色 → 每张页图三份（mmap + CA 副本 + CG 转换缓存），连平板滚 10 秒就多 600MB。新开一种带页图的窗口照此设。
 - 存储**弃用 SwiftData**，用工作区 SQLite（`Sources/Store/`，系统 libsqlite3、零第三方依赖，跨平台 payload 用显式 JSON 数组）。
 - 代码库**禁用单轴 `scrollTo(x:)`/`scrollTo(y:)`**（后写覆盖前写、未指定轴归零，spike 实测），一律 `scrollTo(point:)`。
 - 滚动跟随**只跟随不预测**：纯临界阻尼低通，禁速度外推（WiFi 成批投递导致过冲闪回，已修过一次）。
