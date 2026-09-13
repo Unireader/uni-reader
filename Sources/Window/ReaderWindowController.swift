@@ -424,15 +424,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             guard let self else { return }
             var lastId: String?
             for url in pdfs {
-                let hash = await Task.detached(priority: .userInitiated) {
-                    (try? FileHasher.sha256Cached(of: url)) ?? ""
-                }.value
-                let pageCount = PDFDocument(url: url)?.pageCount ?? 0
-                if let doc = self.workspace.ingest(path: url.path, hash: hash,
-                                                   title: url.deletingPathExtension().lastPathComponent,
-                                                   pageCount: pageCount) {
-                    lastId = doc.id
-                }
+                if let r = await self.workspace.importPDF(at: url) { lastId = r.document.id }   // 与 MCP import_pdf 同一条路
             }
             self.tabs.active.isHashing = false
             if let lastId { _ = self.tabs.open(lastId) }

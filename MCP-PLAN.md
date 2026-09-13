@@ -1,6 +1,6 @@
 # MCP 服务方案（macOS 端，2026-09-13 首版）
 
-> 状态：**方案已拍板（2026-09-13，决策见 §2）；批 1 已落地并经用户实测通过（§15）；批 2 已落地待用户实测（§16）；均在分支 `worktree-mcp`**。
+> 状态：**方案已拍板（2026-09-13，决策见 §2）；批 1 已落地并经用户实测通过（§15）；批 2、批 3 已落地待用户实测（§16 / §17）；均在分支 `worktree-mcp`**。
 > 目标：让外部 Agent（Claude Code、Codex 等命令行 Agent）通过 MCP 协议操作 UniReader——
 > 前期只做**读取类**（打开工作区、打开文档、读 PDF 文本/目录/页图、看当前阅读位置），
 > 后期再加**写入类**（跳页、书签、文字笔记、高亮、导入 PDF）。分批上线，每批都能单独交付。
@@ -720,3 +720,34 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 在 Claude Code 里：① 「在这本书里找 X」→ `search_text` 报页码与摘要；② 「看看第 N 页的图」→ `render_page` 出图（模型能描述页面内容）；
 ③ 选中一段文字后问「我选了什么」→ `get_current_view.selection`；④ 「翻到第 N 页」→ `goto` 滚动、⌘[ 能跳回；
 ⑤ 「我在这本书上记了什么」→ `list_annotations` 与 Inspector 一致；⑥ 客户端若支持资源，`unireader://doc/<id>/page/<n>` 能当附件拉进来。
+
+---
+
+## 17. 实现记录 — 批 3（2026-09-13 落地，同一分支，待用户实测）
+
+编译通过；spike 不变（写入开关的拦截在批 1 的 spike 里就测了）。**没有启动 App 自测**。
+
+### 17.1 新增
+
+| 东西 | 在哪 | 要点 |
+|---|---|---|
+| 写入开关 | 设置 › Agent「允许 Agent 写入」（`mcpAllowWrites`，默认关）| 关着时写入工具照常列出、调用时拦（D6）；`get_state.app.writes_enabled` 报出来 |
+| 来源标记 | `NoteSource.agentKind = "agent"` + `isAgent`；Inspector 笔记行加 `terminal` 图标（悬停显示客户端名）| `provider` = `initialize` 的 `clientInfo.name`，`url` 空串；payload 零迁移 |
+| `add_bookmark` | `MCPTools+Notes.swift` + `MCPFacade.addBookmark` | 名字必填（`Bookmark.validTitle`）；开着 → `session.addBookmark`，没开 → `ws.saveBookmark` |
+| `add_note` | 同上 + `MCPFacade.addNote` | 锚点三选一：`quote`（`MCPDocReader.locate`：先 `findString`、再 OCR 行；找不到**报错不猜**）> `rect` > 页顶横条；`type` 按名字对 `noteTypes`，不存在就报错并列出可用的；开着时经 `session.inkEdit` 进撤销栈 |
+| `add_highlight` | 同上 + `MCPFacade.addHighlight` | `quote` 必填、必须找得到；颜色收色板名或 `#RRGGBB` |
+| `import_pdf` / `open_document(path:)` | `MCPTools+Document.swift` + **`WorkspaceManager.importPDF(at:)`**（新，面板/拖拽/MCP 三处共用，`ReaderWindowController.ingest` 改为调它）| 按 hash 去重，返回 `imported` 是否新建；`open_document` 带 `path` 时虽是导航级工具也按写入开关拦 |
+| `create_workspace` | `MCPTools+Workspace.swift` + `MCPFacade.createWorkspace` | 🔴 **已存在的路径一律拒绝**（界面那条 `createWorkspace(at:)` 会覆盖非工作区路径，那是保存面板确认过「替换」才允许的）；缺 `.unrd` 自动补 |
+| `run_ocr` | 同上 + `MCPFacade.runOCR` | 文档必须开着（OCR 走会话队列）；没配引擎报错；立即返回队列状态，Agent 稍后再 `read_pages` |
+
+### 17.2 🔴 写入两条路径的落点（§9.3 的兑现）
+
+`MCPFacade.writeTarget` 先查「有没有标签正显示这篇」：有 → 只改 `DocSession` 的数组（`textNotes` / `highlights` / `bookmarks`），
+由 `DocTabModel` 现有对账落库并广播平板；没有 → `WorkspaceManager.save*` 直接写库。出参里 `via: session | library` 说明走了哪条。
+
+### 17.3 用户实测清单
+
+开写入开关后在 Claude Code 里：① 「在第 N 页加个书签叫 X」→ 目录树里出现；② 「把第 N 页的『……』那句高亮成绿色」→ 页面铺色、
+Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉出现、气泡正文对、Inspector 行末有终端图标；④ 关掉文档再做 ①~③（走库那条路）→
+重新打开都在；⑤ 「把 ~/Downloads/x.pdf 导进来」→ 侧栏出现、再导一次不重复；⑥ 「新建一个工作区放到 ~/Desktop/试试」→ 生成 `试试.unrd` 并开窗，
+对已存在路径拒绝；⑦ 关掉写入开关再试 ① → 拦下并提示。

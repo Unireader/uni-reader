@@ -33,31 +33,124 @@ extension MCPTools {
         MCPTool(
             name: "open_document",
             title: "Open a document",
-            description: "Show a library document in a reader tab (activates the tab if it is already open, otherwise opens one in a window of its workspace). Optionally jump to a page. Only documents already in a workspace library: importing a new PDF is a separate (write) tool.",
+            description: "Show a library document in a reader tab (activates the tab if it is already open, otherwise opens one in a window of its workspace). Optionally jump to a page. Pass `path` instead of `document_id` to import a PDF file into the workspace first (same as dragging it in; requires writes to be enabled).",
             inputSchema: MCPSchema.object([
                 "document_id": MCPSchema.string("Library document id from list_documents."),
-                "workspace": MCPSchema.string("Workspace .unrd path, only when the id is ambiguous across open workspaces."),
+                "path": MCPSchema.string("Absolute path of a PDF to import into the workspace and open (write; needs writes enabled). Use either document_id or path."),
+                "workspace": MCPSchema.string("Workspace .unrd path: target for import, or disambiguation for document_id."),
                 "window_id": MCPSchema.string("Open in this window (from get_state). Default: the window already showing it, else the workspace's key window."),
                 "page": MCPSchema.integer("Jump to this page after opening (1-based).", min: 1),
                 "activate": MCPSchema.boolean("Bring UniReader and the window to front", default: true),
-            ], required: ["document_id"]),
+            ]),
             outputSchema: MCPSchema.object([
                 "session_id": MCPSchema.string("tab / session id"), "window_id": MCPSchema.string("window id"),
                 "document": documentDTOSchema, "page": MCPSchema.integer("current page, 1-based"),
+                "imported": MCPSchema.boolean("a new library entry was created"),
             ]),
             tier: .navigate
-        ) { _, args in
-            let id = try args.requiredString("document_id")
+        ) { ctx, args in
+            var id = try args.string("document_id") ?? ""
+            let path = try args.string("path") ?? ""
             let wsPath = try args.string("workspace")
             let windowId = try args.string("window_id")
             let page = try args.int("page")
             let activate = try args.bool("activate", default: true)
-            let r = try await MainActor.run {
+            var imported = false
+            if !path.isEmpty {
+                // 导入 = 写入（决策 D7）：这个工具本身是导航级，带 path 时按写入开关拦
+                guard id.isEmpty else { throw MCPInvalidParams("pass either document_id or path, not both") }
+                guard ctx.writesEnabled else {
+                    throw MCPToolError("importing a PDF is a write; writes are disabled in UniReader › Settings › Agent (pass document_id for a document already in the library)")
+                }
+                let r = try await importPDF(path: path, workspacePath: wsPath, group: nil)
+                id = (r["document"] as? MCPObject)?["id"] as? String ?? ""
+                imported = (r["imported"] as? Bool) == true
+            }
+            guard !id.isEmpty else { throw MCPInvalidParams("argument 'document_id' (or 'path') is required") }
+            var r = try await MainActor.run {
                 try MCPFacade.shared.openDocument(documentId: id, workspacePath: wsPath, windowId: windowId, page: page, activate: activate)
             }
+            r["imported"] = imported
             let doc = (r["document"] as? MCPObject) ?? [:]
-            return MCPToolResult(text: "Opened “\(doc["title"] ?? "")” at page \(r["page"] ?? 1) · session_id \(r["session_id"] ?? "") · window_id \(r["window_id"] ?? "")",
+            return MCPToolResult(text: "\(imported ? "Imported and opened" : "Opened") “\(doc["title"] ?? "")” at page \(r["page"] ?? 1) · session_id \(r["session_id"] ?? "") · window_id \(r["window_id"] ?? "")",
                                  structured: r)
+        }
+    }
+
+    /// `import_pdf` 与 `open_document(path:)` 共用：校验 → 目标工作区 → `WorkspaceManager.importPDF`（后台算 hash）→ 分组。
+    static func importPDF(path: String, workspacePath: String?, group: String?) async throws -> MCPObject {
+        let abs = (path as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: abs) else { throw MCPToolError("file not found: \(path)") }
+        guard (abs as NSString).pathExtension.lowercased() == "pdf" else { throw MCPToolError("not a PDF file: \(path)") }
+        let ws = try await MainActor.run { try MCPFacade.shared.importWorkspace(workspacePath: workspacePath) }
+        guard let res = await ws.importPDF(at: URL(fileURLWithPath: abs)) else {
+            throw MCPToolError("could not import \(path) (unreadable file?)")
+        }
+        let (dto, wsInfo) = await MainActor.run {
+            (MCPFacade.shared.afterImport(ws, res.document, group: group),
+             ["name": ws.name, "path": ws.folder?.path ?? ""] as MCPObject)
+        }
+        return ["document": dto, "imported": res.isNew, "workspace": wsInfo]
+    }
+
+    static func importPDFTool() -> MCPTool {
+        MCPTool(
+            name: "import_pdf",
+            title: "Import a PDF into a workspace",
+            description: "Add a PDF file to a workspace library (same as dragging it into UniReader). A file already in the library is recognized by content hash and not duplicated. Does not open it unless `open` is true.",
+            inputSchema: MCPSchema.object([
+                "path": MCPSchema.string("Absolute path of the PDF file"),
+                "workspace": MCPSchema.string("Target workspace .unrd path (must be open). Default: the key window's workspace."),
+                "group": MCPSchema.string("Put it in this group (created if new)."),
+                "open": MCPSchema.boolean("Also open it in a tab", default: false),
+            ], required: ["path"]),
+            outputSchema: MCPSchema.object([
+                "document": documentDTOSchema, "imported": MCPSchema.boolean("a new library entry was created (false = it was already there)"),
+                "workspace": MCPSchema.object(["name": MCPSchema.string("name"), "path": MCPSchema.string(".unrd path")]),
+                "session_id": MCPSchema.string("tab id when open = true"),
+            ]),
+            tier: .write
+        ) { _, args in
+            let path = try args.requiredString("path")
+            let wsPath = try args.string("workspace")
+            let group = try args.string("group")
+            let open = try args.bool("open", default: false)
+            var r = try await importPDF(path: path, workspacePath: wsPath, group: group)
+            let doc = (r["document"] as? MCPObject) ?? [:]
+            if open, let id = doc["id"] as? String {
+                let o = try await MainActor.run {
+                    try MCPFacade.shared.openDocument(documentId: id, workspacePath: wsPath, windowId: nil, page: nil, activate: true)
+                }
+                r["session_id"] = o["session_id"]
+            }
+            let isNew = (r["imported"] as? Bool) == true
+            return MCPToolResult(text: "\(isNew ? "Imported" : "Already in the library:") “\(doc["title"] ?? "")” · document_id \(doc["id"] ?? "")\(open ? " · opened" : "")", structured: r)
+        }
+    }
+
+    static func runOCR() -> MCPTool {
+        MCPTool(
+            name: "run_ocr",
+            title: "Run OCR on pages",
+            description: "Queue OCR for scanned pages of a document that is open in a tab (uses the OCR engine configured in UniReader; cached pages are reused). Returns immediately; call read_pages again later to get the text.",
+            inputSchema: MCPSchema.object(writeTargetProperties.merging([
+                "pages": ["anyOf": [["type": "integer"], ["type": "string"]], "description": "Pages to recognize, e.g. \"1-20\". Default: the whole document."],
+            ]) { a, _ in a }),
+            outputSchema: MCPSchema.object([
+                "document_id": MCPSchema.string("document"), "requested": MCPSchema.integer("pages asked for"),
+                "pending": MCPSchema.integer("pages still queued or running"), "done": MCPSchema.integer("pages with text now"),
+                "total": MCPSchema.integer("pages in the document"),
+            ]),
+            tier: .write
+        ) { _, args in
+            let docId = try args.string("document_id"), wsPath = try args.string("workspace")
+            var pages: [Int]? = nil
+            if let spec = try args.pages("pages") {
+                let count = try await MainActor.run { try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath).pageCount }
+                pages = try PageNo.parse(spec, pageCount: count, limit: Int.max)
+            }
+            let r = try await MainActor.run { try MCPFacade.shared.runOCR(documentId: docId, workspacePath: wsPath, pages: pages) }
+            return MCPToolResult(text: "OCR queued: \(r["requested"] ?? 0) pages requested, \(r["pending"] ?? 0) pending, \(r["done"] ?? 0)/\(r["total"] ?? 0) have text. Call read_pages later.", structured: r)
         }
     }
 

@@ -546,3 +546,7 @@
 "No client connected." = "No client connected.";
 "Recent Calls" = "Recent Calls";
 "No calls yet." = "No calls yet.";
+"Writing" = "Writing";
+"Allow agents to write" = "Allow agents to write";
+"Lets agents add bookmarks, text notes and highlights, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Agents can never delete anything." = "Lets agents add bookmarks, text notes and highlights, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Agents can never delete anything.";
+"Written by an agent (%@)" = "Written by an agent (%@)";

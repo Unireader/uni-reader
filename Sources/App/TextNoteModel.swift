@@ -13,14 +13,17 @@ import Foundation
 /// 旧 payload 没有这个键 → nil，**零迁移**（与 `type_id` 完全同一个先例）。
 struct NoteSource: Equatable {
     static let aiKind = "ai"
+    /// 外部 Agent 经 MCP 写进来的（`MCP-PLAN.md §9.2`）：`provider` = 客户端名（如 claude-code），`url` 空串。
+    static let agentKind = "agent"
 
-    var kind: String            // 目前恒为 "ai"，留着是为了将来还有别的来源
-    var provider: String        // AIProvider.id
-    var url: String             // 那次对话的唯一链接
+    var kind: String            // "ai"（AI 面板回填）/ "agent"（MCP 写入）
+    var provider: String        // AIProvider.id / MCP 客户端名
+    var url: String             // 那次对话的唯一链接；agent 来源为空串
     var threadId: UUID?         // 对应的 AIThread（note kind=1）；解绑过就可能为 nil
     var at: Date
 
     var isAI: Bool { kind == Self.aiKind }
+    var isAgent: Bool { kind == Self.agentKind }
 }
 
 /// 一条文字笔记在页面上**怎么展开正文**（每条笔记自己的属性，三端同款语义）。

@@ -75,6 +75,26 @@ extension MCPTools {
         }
     }
 
+    static func createWorkspace() -> MCPTool {
+        MCPTool(
+            name: "create_workspace",
+            title: "Create a workspace",
+            description: "Create a new, empty workspace (.unrd package) at a path that does not exist yet, and open it in a window. Existing paths are refused.",
+            inputSchema: MCPSchema.object([
+                "path": MCPSchema.string("Where to create it; “.unrd” is appended when missing"),
+                "activate": MCPSchema.boolean("Bring UniReader and the new window to front", default: true),
+            ], required: ["path"]),
+            outputSchema: MCPSchema.object(["workspace": workspaceDTOSchema, "window_id": MCPSchema.string("window showing it")]),
+            tier: .write
+        ) { _, args in
+            let path = try args.requiredString("path")
+            let activate = try args.bool("activate", default: true)
+            let r = try await MainActor.run { try MCPFacade.shared.createWorkspace(path: path, activate: activate) }
+            let ws = (r["workspace"] as? MCPObject) ?? [:]
+            return MCPToolResult(text: "Created workspace “\(ws["name"] ?? "")” at \(ws["path"] ?? "") · window_id \(r["window_id"] ?? "")", structured: r)
+        }
+    }
+
     static func openWorkspace() -> MCPTool {
         MCPTool(
             name: "open_workspace",

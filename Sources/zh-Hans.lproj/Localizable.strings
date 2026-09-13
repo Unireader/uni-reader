@@ -548,3 +548,7 @@
 "No client connected." = "没有客户端连接。";
 "Recent Calls" = "最近调用";
 "No calls yet." = "还没有调用记录。";
+"Writing" = "写入";
+"Allow agents to write" = "允许 Agent 写入";
+"Lets agents add bookmarks, text notes and highlights, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Agents can never delete anything." = "允许 Agent 添加书签、文字笔记和高亮，导入 PDF，新建工作区，以及发起 OCR。Agent 写的笔记会带一个终端图标标记。Agent 永远不能删除任何东西。";
+"Written by an agent (%@)" = "由 Agent 写入（%@）";

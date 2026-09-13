@@ -158,6 +158,33 @@ final class MCPDocReader {
         }
     }
 
+    /// 在某一页上找一段原文（批 3 `add_note` / `add_highlight` 的锚点）：先原生 `findString`，
+    /// 没有再在 OCR 缓存的行里找（整行包含就算）。返回归一化行框；找不到 → nil，**不猜**。
+    func locate(path: String, store: LibraryStore?, contentHash: String, index: Int, quote: String) async throws -> [CGRect]? {
+        let native: [CGRect]? = try await withDocument(path: path) { doc in
+            for sel in doc.findString(quote, withOptions: [.caseInsensitive, .diacriticInsensitive]) {
+                guard let page = sel.pages.first, doc.index(for: page) == index else { continue }
+                let rects = PageGeometry.normalizedLineRects(of: sel, in: doc)[index] ?? []
+                if !rects.isEmpty { return rects }
+            }
+            return nil
+        }
+        if let native { return native }
+        guard let store, !contentHash.isEmpty else { return nil }
+        return await withCheckedContinuation { cont in
+            queue.async {
+                let book = self.ocrBook(store: store, contentHash: contentHash)
+                guard let runs = book.pages[index] else { cont.resume(returning: nil); return }
+                let mask = OCRWatermark.mask(runs: runs, profile: book.profile)
+                let hits = zip(runs, mask).compactMap { run, wm -> CGRect? in
+                    guard !wm, run.text.range(of: quote, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { return nil }
+                    return run.rect
+                }
+                cont.resume(returning: hits.isEmpty ? nil : hits)
+            }
+        }
+    }
+
     /// 摘要用：换行/连续空白压成一个空格。
     static func flatten(_ s: String) -> String {
         s.split(whereSeparator: { $0.isNewline || $0 == " " || $0 == "\t" }).joined(separator: " ")

@@ -502,6 +502,11 @@ struct InspectorView: View {
                             }
                             .buttonStyle(.plain)
                             .help(L("Open the AI conversation this came from"))
+                        } else if let src = n.source, src.isAgent {
+                            // 外部 Agent 经 MCP 写的（没有可点回去的链接，只标来源）
+                            Image(systemName: "terminal")
+                                .font(.caption).foregroundStyle(.tertiary)
+                                .help(String(format: L("Written by an agent (%@)"), src.provider))
                         }
 
                         Button {

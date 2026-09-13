@@ -9,6 +9,8 @@ struct MCPSettingsView: View {
     @AppStorage(MCPServer.autoStartKey) private var autoStart = false
     @AppStorage(MCPServer.bindKey) private var bindRaw = MCPServer.Bind.loopback.rawValue
     @AppStorage(MCPServer.portKey) private var port = MCPServer.defaultPort
+    /// 写入开关（方案 §9.1）：关着时写入工具照常列出，调用时拦下并提示来这里开。
+    @AppStorage(MCPServer.allowWritesKey) private var allowWrites = false
     /// 口令的界面镜像（本体在 Keychain，`MCPToken`）。
     @State private var token: String? = MCPToken.current()
 
@@ -36,6 +38,7 @@ struct MCPSettingsView: View {
     var body: some View {
         Form {
             serviceSection
+            writesSection
             listenSection
             tokenSection
             configSection
@@ -43,6 +46,18 @@ struct MCPSettingsView: View {
             callsSection
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - 写入
+
+    private var writesSection: some View {
+        Section {
+            Toggle(L("Allow agents to write"), isOn: $allowWrites)
+        } header: {
+            Text(L("Writing"))
+        } footer: {
+            Text(L("Lets agents add bookmarks, text notes and highlights, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Agents can never delete anything."))
+        }
     }
 
     // MARK: - 服务

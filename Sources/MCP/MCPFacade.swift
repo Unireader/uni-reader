@@ -502,6 +502,152 @@ final class MCPFacade {
         return (out, lines.joined(separator: "\n"))
     }
 
+    // MARK: - 写入（批 3，方案 §9.3）
+
+    /// 一次写入的目标：文档在哪个工作区、开没开（🔴 开着就只许改 `DocSession` 的数组——直接写库会被对账当成
+    /// 「内存里没有的行」删掉；没开才走 `WorkspaceManager.save*`）。
+    struct WriteTarget {
+        var id: String
+        var title: String
+        var ws: WorkspaceManager
+        var session: DocSession?
+        var pageCount: Int
+        /// 文件路径 + hash（找引文用；文件丢了也能写书签/笔记，所以是可选的）
+        var path: String?
+        var contentHash: String
+    }
+
+    func writeTarget(documentId: String?, workspacePath: String?) throws -> WriteTarget {
+        let id: String
+        if let documentId, !documentId.isEmpty { id = documentId }
+        else {
+            guard let key = keyController else { throw MCPToolError("no reader window is open; pass document_id") }
+            guard let d = key.tabs.active.docID else { throw MCPToolError("the key window has no document open; pass document_id") }
+            id = d
+        }
+        let ws: WorkspaceManager
+        if let p = workspacePath, !p.isEmpty { ws = try manager(workspacePath: p) }
+        else if let key = keyController, key.workspace.document(id: id) != nil { ws = key.workspace }
+        else if let m = WorkspaceRegistry.shared.openManagers.first(where: { $0.document(id: id) != nil }) { ws = m }
+        else { throw MCPToolError("document '\(id)' not found in any open workspace; call list_documents") }
+        guard let doc = ws.document(id: id) else { throw MCPToolError("document '\(id)' not found in workspace '\(ws.name)'") }
+        let session = sessionsShowing(id).first?.session
+        let f = fileInfo(ws, documentId: id)
+        let hash = session?.contentHash.isEmpty == false ? session!.contentHash : f.hash
+        return WriteTarget(id: id, title: doc.title, ws: ws, session: session,
+                           pageCount: session?.pdf?.pageCount ?? doc.pageCount,
+                           path: f.exists ? f.path : nil, contentHash: hash)
+    }
+
+    func addBookmark(_ t: WriteTarget, page: Int, frac: Double, title: String) throws -> MCPObject {
+        guard Bookmark.validTitle(title) else { throw MCPInvalidParams("title must not be empty") }
+        let idx = try PageNo.index(page, pageCount: t.pageCount)
+        let f = min(max(frac, 0), 1)
+        let b: Bookmark
+        if let s = t.session {
+            guard let made = s.addBookmark(page: idx, frac: f, title: title) else { throw MCPToolError("could not add bookmark") }
+            b = made
+        } else {
+            b = Bookmark(page: idx, frac: f, title: title.trimmingCharacters(in: .whitespacesAndNewlines))
+            t.ws.saveBookmark(documentId: t.id, b)
+        }
+        return ["id": b.id.uuidString, "document_id": t.id, "page": page, "frac": f, "title": b.title,
+                "via": t.session == nil ? "library" : "session"]
+    }
+
+    func addNote(_ t: WriteTarget, page: Int, text: String, quote: String, rects: [CGRect]?, anchorRect: CGRect?,
+                 typeName: String?, display: NoteDisplay, client: String) throws -> MCPObject {
+        let idx = try PageNo.index(page, pageCount: t.pageCount)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if quote.isEmpty, trimmed.isEmpty { throw MCPInvalidParams("a note without a quote needs text") }
+        let types = t.session?.noteTypes ?? t.ws.noteTypes()
+        var typeId: UUID? = nil
+        if let typeName, !typeName.isEmpty {
+            guard let ty = types.first(where: { $0.name.caseInsensitiveCompare(typeName) == .orderedSame }) else {
+                let names = types.map(\.name).joined(separator: ", ")
+                throw MCPToolError("note type '\(typeName)' does not exist; available: \(names.isEmpty ? "(none)" : names)")
+            }
+            typeId = ty.id
+        }
+        // 锚点：行框 → 行框包围盒；只给了矩形 → 它；都没有 → 页左上一条横条（方案 §7.13）
+        let lineRects: [CGRect]
+        let anchor: CGRect
+        if let rects, !rects.isEmpty {
+            lineRects = rects
+            anchor = rects.reduce(CGRect.null) { $0.union($1) }
+        } else if let anchorRect {
+            lineRects = [anchorRect]
+            anchor = anchorRect
+        } else {
+            anchor = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.02)
+            lineRects = []
+        }
+        let note = TextNote(page: idx, anchor: anchor, quote: quote, text: text, rects: lineRects, typeId: typeId,
+                            source: NoteSource(kind: NoteSource.agentKind, provider: client, url: "", threadId: nil, at: .now),
+                            display: display)
+        if let s = t.session {
+            s.inkEdit("Note", kind: .note) { s.textNotes.append(note) }   // 进撤销栈，同界面新建
+        } else {
+            t.ws.saveTextNote(documentId: t.id, note)
+        }
+        return ["id": note.id.uuidString, "document_id": t.id, "page": page, "rect": Self.rectArray(anchor),
+                "type": typeId == nil ? NSNull() : (typeName ?? ""), "via": t.session == nil ? "library" : "session"]
+    }
+
+    func addHighlight(_ t: WriteTarget, page: Int, quote: String, rects: [CGRect], color: InkColor, colorName: String) throws -> MCPObject {
+        let idx = try PageNo.index(page, pageCount: t.pageCount)
+        guard !rects.isEmpty else { throw MCPToolError("quote not found on page \(page)") }
+        let bbox = rects.reduce(CGRect.null) { $0.union($1) }
+        let h = Highlight(page: idx, anchor: bbox.isNull ? .zero : bbox, quote: quote, rects: rects, color: color)
+        if let s = t.session { s.highlights.append(h) } else { t.ws.saveHighlight(documentId: t.id, h) }
+        return ["id": h.id.uuidString, "document_id": t.id, "page": page, "rect": Self.rectArray(h.anchor),
+                "color": colorName, "via": t.session == nil ? "library" : "session"]
+    }
+
+    /// 导入前的解析：目标工作区（显式路径 > key 窗口的）。
+    func importWorkspace(workspacePath: String?) throws -> WorkspaceManager { try manager(workspacePath: workspacePath) }
+
+    func afterImport(_ ws: WorkspaceManager, _ doc: LibDocument, group: String?) -> MCPObject {
+        if let group, !group.isEmpty { ws.setGroup(documentId: doc.id, group: group) }
+        let fresh = ws.document(id: doc.id) ?? doc
+        return documentDTO(ws, fresh)
+    }
+
+    func createWorkspace(path: String, activate: Bool) throws -> MCPObject {
+        var p = (path as NSString).expandingTildeInPath
+        if (p as NSString).pathExtension.lowercased() != WorkspaceManager.packageExtension {
+            p = (p as NSString).appendingPathExtension(WorkspaceManager.packageExtension) ?? p
+        }
+        let url = URL(fileURLWithPath: p).standardizedFileURL
+        // 🔴 界面那条 `createWorkspace(at:)` 会覆盖「已存在但不是工作区」的路径（保存面板确认过「替换」）；
+        // Agent 没有那句确认，已存在一律拒绝
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            throw MCPToolError("path already exists: \(url.path); pick a new path")
+        }
+        do { try WorkspaceManager.createWorkspace(at: url) } catch {
+            throw MCPToolError("cannot create workspace: \(error.localizedDescription)")
+        }
+        guard let delegate = AppDelegate.shared else { throw MCPToolError("app is not ready") }
+        let c = try delegate.makeReaderWindow(workspacePath: url.path, docId: nil, activate: activate)
+        WorkspaceRegistry.shared.rememberRecent(url)
+        return ["workspace": workspaceDTO(c.workspace), "window_id": c.windowId.uuidString]
+    }
+
+    func runOCR(documentId: String?, workspacePath: String?, pages: [Int]?) throws -> MCPObject {
+        let t = try writeTarget(documentId: documentId, workspacePath: workspacePath)
+        guard let s = t.session, s.pdf != nil else {
+            throw MCPToolError("document must be open in a tab to run OCR; call open_document first")
+        }
+        guard PaddleOCR.configFromDefaults() != nil else {
+            throw MCPToolError("no OCR engine is configured in UniReader › Settings › Reading")
+        }
+        let want = pages ?? Array(0..<s.ocrTotalPages)
+        s.ocrEnabled = true
+        s.enqueueOCR(want)
+        return ["document_id": t.id, "requested": want.count, "pending": s.ocrPendingCount, "done": s.ocrDoneCount,
+                "total": s.ocrTotalPages]
+    }
+
     // MARK: - 小工具
 
     static func rectArray(_ r: CGRect) -> [Double] {

@@ -7,6 +7,7 @@ enum MCPTools {
     static func registerAll(into server: MCPServer) {
         registerBatch1(into: server)
         registerBatch2(into: server)
+        registerBatch3(into: server)
     }
 
     /// 批 1：读取类 + 打开工作区/文档两个导航动作。
@@ -30,6 +31,17 @@ enum MCPTools {
         c.register(listAnnotations())
         c.register(goto())
         c.resources = MCPResources.provider(catalog: c)
+    }
+
+    /// 批 3：写入（书签 / 笔记 / 高亮 / 导入 / 建工作区 / 触发 OCR）。全部 `.write`，受设置里的开关管（方案 §9）。
+    static func registerBatch3(into server: MCPServer) {
+        let c = server.catalog
+        c.register(addBookmark())
+        c.register(addNote())
+        c.register(addHighlight())
+        c.register(importPDFTool())
+        c.register(createWorkspace())
+        c.register(runOCR())
     }
 
     // MARK: - 共用的 schema 片段

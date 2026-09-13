@@ -313,6 +313,20 @@ final class WorkspaceManager: ObservableObject {
         return res?.document
     }
 
+    /// 导入一个 PDF 文件：后台算 hash → `ingest`。**同一文件已在库里就是同一篇**（按 hash 去重，不重复插行）。
+    /// 打开面板 / 拖拽 / MCP `import_pdf` 三处共用；返回 `(文档, 是否新建)`。大文件算 hash 要几秒，调用方等着。
+    func importPDF(at url: URL) async -> (document: LibDocument, isNew: Bool)? {
+        let hash = await Task.detached(priority: .userInitiated) {
+            (try? FileHasher.sha256Cached(of: url)) ?? ""
+        }.value
+        guard !hash.isEmpty else { return nil }
+        let existed = ((try? store?.variant(hash: hash)) ?? nil) != nil
+        let pageCount = PDFDocument(url: url)?.pageCount ?? 0
+        guard let doc = ingest(path: url.path, hash: hash,
+                               title: url.deletingPathExtension().lastPathComponent, pageCount: pageCount) else { return nil }
+        return (doc, !existed)
+    }
+
     func delete(documentId: String) { try? store?.deleteDocument(id: documentId); forgetOpen(documentId); refresh() }
     func rename(documentId: String, title: String) { try? store?.rename(documentId: documentId, title: title); refresh() }
     func document(id: String) -> LibDocument? { documents.first { $0.id == id } }
