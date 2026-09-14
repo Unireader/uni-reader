@@ -338,6 +338,11 @@ final class DocSession: ObservableObject, Identifiable {
     @Published var textNotes: [TextNote] = []
     /// 已落库的文字注解快照（id → 值），用于增量对账（检测新增/内容变更/删除），非 @Published。
     var persistedTextNotes: [UUID: TextNote] = [:]
+    /// 「把这条笔记的气泡展开」的一次性请求（`unireader://open?note=…` 链接，见 `DeepLinkRouter`）。
+    /// 气泡开合是阅读区的视图状态（`PageStreamView.expandedNotes`，瞬态不落库），会话够不着，
+    /// 只能把 id 放在这里等阅读区来取：视图在就 `onChange` 当场取走，视图还没建（文档刚开）就在
+    /// 首帧 `setup` 里取。取走即置 nil。文字笔记与图片笔记共用（两者本来就共用 `expandedNotes`）。
+    @Published var revealNoteID: UUID?
 
     // 笔记类型（工作区级，meta JSON 持久化）。阅读区（图钉/编辑器）与 Inspector（标识/筛选）共读；
     // 由 ReaderSurface.saveNoteTypes 增删改并整体落库；「通用」为内置兜底，不在此数组。

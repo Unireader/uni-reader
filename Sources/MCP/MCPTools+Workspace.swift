@@ -11,7 +11,8 @@ extension MCPTools {
             outputSchema: MCPSchema.object([
                 "app": MCPSchema.object(["version": MCPSchema.string("UniReader version"), "pid": MCPSchema.integer("process id"),
                                          "writes_enabled": MCPSchema.boolean("write tools allowed in Settings"),
-                                         "bind": MCPSchema.enumeration(["loopback", "all"], "where the MCP service listens")]),
+                                         "bind": MCPSchema.enumeration(["loopback", "all"], "where the MCP service listens"),
+                                         "deep_link": MCPSchema.string("format of unireader:// links that open UniReader at a document / page / note (documents and annotations also carry a ready-made `link`)")]),
                 "key_window_id": MCPSchema.string("window id of the key window, or null"),
                 "windows": MCPSchema.array(of: MCPSchema.object([
                     "window_id": MCPSchema.string("window id"), "is_key": MCPSchema.boolean("is the key window"),

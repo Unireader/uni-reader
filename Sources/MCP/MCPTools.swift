@@ -61,6 +61,7 @@ enum MCPTools {
     static var documentDTOSchema: MCPObject {
         MCPSchema.object([
             "id": MCPSchema.string("document id"), "title": MCPSchema.string("title"),
+            "link": MCPSchema.string("unireader:// link that opens this document (add &page=N or &note=<id> to point inside it)"),
             "page_count": MCPSchema.integer("pages"), "group": MCPSchema.string("group name, empty = ungrouped"),
             "read_page": MCPSchema.integer("last reading position, 1-based"), "read_frac": MCPSchema.number("position inside that page, 0 top … 1 bottom"),
             "last_opened_at": MCPSchema.string("ISO-8601"), "added_at": MCPSchema.string("ISO-8601"),

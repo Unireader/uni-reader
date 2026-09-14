@@ -274,17 +274,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 见 `RootView` 里的时序说明），得等 `didFinishLaunching` 那一轮。
     static var pendingWorkspacePath: String?
 
-    /// Finder 双击 / 拖到 Dock 图标的 .unrd 工作区包（**现代入口**）。
+    /// 冷启动时被 `unireader://` 链接拉起的那一下（同 `pendingWorkspacePath` 的理由：此刻窗口不该建，
+    /// 连「链接写坏了」的弹框也得等到有窗口再弹）。存**原始 URL**、不存解析结果，解析放到消费那一刻。
+    /// 由 `applicationDidFinishLaunching` 消费，**优先级低于** `.unrd` 双击——两者同时到（几乎不可能）以文件为准。
+    static var pendingDeepLinkURL: URL?
+
+    /// Finder 双击 / 拖到 Dock 图标的 .unrd 工作区包（**现代入口**），以及 `unireader://open?…` 链接
+    /// （Obsidian 笔记 / Agent 写的清单 / 终端 `open` 都从这里进，见 `DeepLink`）。
     /// AppKit 只要 delegate 实现了这个方法就一律走它，下面那个 `openFile:` 版本便再也不会被调用
     /// （`openFile:`/`openFiles:` 都是 deprecated 的旧签名）。两个都留着并各自打点，日志即可判明
     /// 系统实际投递到了哪一条。
     func application(_ application: NSApplication, open urls: [URL]) {
-        wsLog("application(open:) urls=\(urls.map(\.path))")
-        guard let u = urls.first(where: { $0.pathExtension == WorkspaceManager.packageExtension }) else {
-            wsLog("application(open:) 里没有 .\(WorkspaceManager.packageExtension) 包，忽略")
+        wsLog("application(open:) urls=\(urls.map(\.absoluteString))")
+        if let u = urls.first(where: { $0.isFileURL && $0.pathExtension == WorkspaceManager.packageExtension }) {
+            Self.deliverWorkspace(u.path)
             return
         }
-        Self.deliverWorkspace(u.path)
+        if let u = urls.first(where: { DeepLink.isDeepLink($0) }) {
+            Self.deliverDeepLink(u)
+            return
+        }
+        wsLog("application(open:) 里既没有 .\(WorkspaceManager.packageExtension) 包也没有 \(DeepLink.scheme):// 链接，忽略")
+    }
+
+    /// `unireader://` 链接的统一投递：热启动直接路由，冷启动缓冲到 `didFinishLaunching`。
+    /// 解析失败（主机不对 / 页码写坏）弹框——链接是别处写的，静默吞掉用户就只看到「点了没反应」；
+    /// 冷启动下先开默认窗口再弹，不然 App 起来了却一扇窗都没有。
+    static func deliverDeepLink(_ url: URL) {
+        guard didFinishLaunching, let me = shared else {
+            pendingDeepLinkURL = url
+            wsLog("链接 → 冷启动缓冲：\(url.absoluteString)")
+            return
+        }
+        wsLog("链接 → 路由：\(url.absoluteString)")
+        do {
+            DeepLinkRouter.open(try DeepLink.parse(url))
+        } catch {
+            wsLog("链接解析失败：\(url.absoluteString) \(error)")
+            if me.readerWindows.isEmpty { me.openReaderWindow(workspacePath: nil, docId: nil) }
+            DeepLinkRouter.alert(url: url, error: error)
+        }
     }
 
     /// 同上的旧签名入口（保留兜底：万一某条路径/某个系统版本仍走它）。
@@ -357,9 +386,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if UserDefaults.standard.bool(forKey: MCPServer.autoStartKey) { appModel.mcp.start() }
         observeVolumes()
         NotificationCenter.default.post(name: .appDidFinishLaunching, object: nil)
-        // 首个窗口：双击 .unrd 拉起就开那个工作区，否则开上次用的。
+        // 首个窗口：双击 .unrd 拉起就开那个工作区；`unireader://` 链接拉起就照链接开；否则开上次用的。
         if let p = Self.consumePendingWorkspace() {
+            Self.pendingDeepLinkURL = nil
             routeWorkspace(URL(fileURLWithPath: p), strict: true)
+        } else if let u = Self.pendingDeepLinkURL {
+            Self.pendingDeepLinkURL = nil
+            Self.deliverDeepLink(u)   // 此刻 didFinishLaunching 已置真，走的是直接路由那一支
         } else {
             openReaderWindow(workspacePath: nil, docId: nil)
         }
@@ -415,6 +448,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             wsLog("开窗失败：\(error.localizedDescription)")
             throw error
         }
+    }
+
+    /// 让书库里的某篇文档显示出来（MCP `open_document` 与 `unireader://` 链接**共用这一条**，
+    /// 别各写一份——两边的「找标签 / 挑窗口」规则一旦分叉，Agent 开的和链接开的就会落在不同窗口）：
+    ///  · 某个标签已经在显示它（任一窗口）→ 切过去，不重开；
+    ///  · 该工作区有窗口 → 在 key 的那扇（没有就第一扇）里开标签（`TabsModel.open` 的语义）；
+    ///  · 该工作区没有窗口 → 新开一扇只装这篇的窗口。
+    /// 返回窗口与标签；`activate` 只管新开窗口那一路要不要抢前台，已有窗口由调用方自己决定。
+    func showDocument(_ documentId: String, in ws: WorkspaceManager, activate: Bool) throws -> (ReaderWindowController, DocTabModel) {
+        if let (c, tab) = tabShowing(documentId) {
+            c.tabs.activate(tab.id)
+            return (c, tab)
+        }
+        let mine = readerWindows.filter { $0.workspace === ws }
+        if let c = mine.first(where: { $0.window?.isKeyWindow == true }) ?? mine.first {
+            return (c, c.tabs.open(documentId))
+        }
+        let c = try makeReaderWindow(workspacePath: ws.folder?.path, docId: documentId, activate: activate)
+        return (c, c.tabs.active)
+    }
+
+    /// 哪扇窗的哪个标签正显示这篇（跨所有窗口；key 窗口优先）。
+    func tabShowing(_ documentId: String) -> (ReaderWindowController, DocTabModel)? {
+        let key = readerWindows.first { $0.window?.isKeyWindow == true }
+        for c in [key].compactMap({ $0 }) + readerWindows.filter({ $0 !== key }) {
+            if let t = c.tabs.tabs.first(where: { $0.docID == documentId }) { return (c, t) }
+        }
+        return nil
     }
 
     /// 双击 `.unrd` / Dock 菜单 / 侧栏入口共用的路由：校验 → 已有窗口就激活 → 否则开新窗口。

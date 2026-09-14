@@ -15,6 +15,7 @@ extension MCPTools {
                 "workspace": workspaceDTOSchema,
                 "document_id": MCPSchema.string("library document id, null for an empty tab"), "title": MCPSchema.string("title"),
                 "page": MCPSchema.integer("page at the top of the viewport, 1-based"), "frac": MCPSchema.number("position inside that page, 0 top … 1 bottom"),
+                "link": MCPSchema.string("unireader:// link that reopens exactly this position"),
                 "page_count": MCPSchema.integer("pages"), "zoom": MCPSchema.number("zoom relative to fit-width"),
                 "canvas_mode": MCPSchema.boolean("canvas mode on"), "chapter": MCPSchema.string("outline entry the page falls in"),
                 "selection": MCPSchema.object(["page": MCPSchema.integer("1-based"), "text": MCPSchema.string("selected text"),
@@ -31,6 +32,7 @@ extension MCPTools {
                 if let sel = v["selection"] as? MCPObject { lines.append("Selected on page \(sel["page"] ?? 0): “\(sel["text"] ?? "")”") }
                 else { lines.append("No text selected.") }
                 lines.append("document_id \(v["document_id"] ?? "") · session_id \(v["session_id"] ?? "") · window_id \(v["window_id"] ?? "")")
+                if let link = v["link"] as? String { lines.append("link \(link)") }
             } else {
                 lines.append("The window has an empty tab (no document). window_id \(v["window_id"] ?? "")")
             }
@@ -54,6 +56,7 @@ extension MCPTools {
             outputSchema: MCPSchema.object([
                 "session_id": MCPSchema.string("tab"), "window_id": MCPSchema.string("window"),
                 "document_id": MCPSchema.string("document"), "page": MCPSchema.integer("1-based"), "frac": MCPSchema.number("0…1"),
+                "link": MCPSchema.string("unireader:// link to this position"),
             ]),
             tier: .navigate
         ) { _, args in
@@ -77,7 +80,7 @@ extension MCPTools {
         MCPTool(
             name: "list_annotations",
             title: "List notes, highlights and bookmarks",
-            description: "Everything the user has added to a document: text notes (with the quoted passage and the note text), highlights, bookmarks, image notes, AI chat threads, scratch pads, and how many handwritten strokes are on each page (counts only). Defaults to the document in the key window.",
+            description: "Everything the user has added to a document: text notes (with the quoted passage and the note text), highlights, bookmarks, image notes, AI chat threads, scratch pads, and how many handwritten strokes are on each page (counts only). Every item carries a `link` (unireader://…) that opens UniReader at that exact spot — paste it into notes written elsewhere (Obsidian etc.). Defaults to the document in the key window.",
             inputSchema: MCPSchema.object([
                 "document_id": MCPSchema.string("Library document id. Omit for the key window's document."),
                 "workspace": MCPSchema.string("Workspace .unrd path, only when the id is ambiguous."),
@@ -86,27 +89,33 @@ extension MCPTools {
             ]),
             outputSchema: MCPSchema.object([
                 "document_id": MCPSchema.string("document"), "title": MCPSchema.string("title"),
+                "link": MCPSchema.string("unireader:// link that opens the document"),
                 "notes": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("note id"), "page": MCPSchema.integer("1-based"), "rect": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h]"),
                     "quote": MCPSchema.string("quoted passage"), "text": MCPSchema.string("the note"), "type": MCPSchema.string("note type name or null"),
                     "display": MCPSchema.enumeration(["tap", "hover", "always"], "how the bubble opens"),
                     "source": MCPSchema.object(["kind": MCPSchema.string("ai / agent"), "provider": MCPSchema.string("who wrote it"), "url": MCPSchema.string("link")]),
+                    "link": MCPSchema.string("unireader:// link: opens the document at this note and expands its bubble"),
                     "created_at": MCPSchema.string("ISO-8601"), "updated_at": MCPSchema.string("ISO-8601")])),
                 "highlights": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "rect": MCPSchema.array(of: MCPSchema.number("0…1")),
-                    "quote": MCPSchema.string("highlighted text"), "color": MCPSchema.string("#RRGGBB"), "created_at": MCPSchema.string("ISO-8601")])),
+                    "quote": MCPSchema.string("highlighted text"), "color": MCPSchema.string("#RRGGBB"), "created_at": MCPSchema.string("ISO-8601"),
+                    "link": MCPSchema.string("unireader:// link to this highlight")])),
                 "bookmarks": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "frac": MCPSchema.number("0…1"), "title": MCPSchema.string("name"),
-                    "created_at": MCPSchema.string("ISO-8601")])),
+                    "created_at": MCPSchema.string("ISO-8601"), "link": MCPSchema.string("unireader:// link to this bookmark")])),
                 "image_notes": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "rect": MCPSchema.array(of: MCPSchema.number("0…1")),
-                    "caption": MCPSchema.string("caption"), "image_sha256": MCPSchema.string("image id"), "from": ["type": "object"]])),
+                    "caption": MCPSchema.string("caption"), "image_sha256": MCPSchema.string("image id; the file is <workspace>/Images/<sha256>.<ext>"), "from": ["type": "object"],
+                    "link": MCPSchema.string("unireader:// link: opens the document at this image note and expands it")])),
                 "ai_threads": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "provider": MCPSchema.string("chatgpt / …"),
-                    "url": MCPSchema.string("conversation link"), "title": MCPSchema.string("title"), "state": MCPSchema.enumeration(["ok", "suspect"], "link health")])),
+                    "url": MCPSchema.string("conversation link"), "title": MCPSchema.string("title"), "state": MCPSchema.enumeration(["ok", "suspect"], "link health"),
+                    "link": MCPSchema.string("unireader:// link to the page it is pinned on")])),
                 "scratch_pads": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "title": MCPSchema.string("title"),
-                    "anchor": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y] pin position")])),
+                    "anchor": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y] pin position"),
+                    "link": MCPSchema.string("unireader:// link to the page it is pinned on")])),
                 "ink": MCPSchema.object(["pages": MCPSchema.array(of: MCPSchema.object(["page": MCPSchema.integer("1-based"), "count": MCPSchema.integer("strokes")])),
                                          "total": MCPSchema.integer("strokes in the document")]),
             ]),

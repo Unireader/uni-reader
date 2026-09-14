@@ -20,6 +20,8 @@
   （`ANDROID-STANDALONE-PLAN.md`）④ 安卓模式2 输入板 ✅（`ANDROID-MODE2-PLAN.md`）⑤ Rust 笔迹核心 ❌
   用户 2026-09-07 放弃（见「刻意没做」）。
 - **MCP 服务**（`MCP-PLAN.md`，2026-09-13 三批合入 `main`，合并提交 `7a79546`）：批 1b（stdio 桥接）/ 1c（新版协议）视需要再做。
+- **`unireader://` 链接 + Obsidian**（`URL-SCHEME-PLAN.md`，2026-09-14）：从 Obsidian / Agent 清单点回 App 的某页某条笔记；
+  MCP 的文档 / 批注 / 位置 DTO 都带 `link`。**导出不做进 App**，Agent 按 `skills/unireader-obsidian-export/SKILL.md` 做。
 
 ## ⏭️ 接下来（建议顺序）
 
