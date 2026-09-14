@@ -763,3 +763,16 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉出现、气泡正文对、Inspector 行末有终端图标；④ 关掉文档再做 ①~③（走库那条路）→
 重新打开都在；⑤ 「把 ~/Downloads/x.pdf 导进来」→ 侧栏出现、再导一次不重复；⑥ 「新建一个工作区放到 ~/Desktop/试试」→ 生成 `试试.unrd` 并开窗，
 对已存在路径拒绝；⑦ 关掉写入开关再试 ① → 拦下并提示。
+
+---
+
+## 18. 2026-09-14 追加：DTO 带 `link`、`open_document` 中段与 `unireader://` 链接共用
+
+`URL-SCHEME-PLAN.md` 落地时顺手改了三处，读 §7 / §15–17 时按这里为准：
+
+- `documentDTO`、`list_annotations` 的每条（notes / highlights / bookmarks / image_notes / ai_threads / scratch_pads）、`get_current_view`、
+  `open_document`、`goto` 的结果都多一个 **`link`** = `unireader://open?…`（`MCPFacade.link`）。Agent 把它原样写进 Obsidian 等处，点了就回到那一处。
+  `get_state.app.deep_link` 是一行格式说明（`DeepLink.formatHint`）。
+- `open_document` 的「已在显示 → 切过去；该工作区有窗 → 开标签；没窗 → 新开一扇只装这篇」抽成 **`AppDelegate.showDocument`**，
+  与链接路由共用；`window_id` 分支仍在 `MCPFacade` 里。行为不变。
+- `image_notes[].image_sha256` 的 schema 描述补了文件位置 `<workspace>/Images/<sha256>.<ext>`（Agent 导出图片要复制它）。

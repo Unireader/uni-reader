@@ -552,3 +552,16 @@
 "Allow agents to write" = "允许 Agent 写入";
 "Lets agents add bookmarks, text notes and highlights, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Agents can never delete anything." = "允许 Agent 添加书签、文字笔记和高亮，导入 PDF，新建工作区，以及发起 OCR。Agent 写的笔记会带一个终端图标标记。Agent 永远不能删除任何东西。";
 "Written by an agent (%@)" = "由 Agent 写入（%@）";
+
+/* unireader:// 链接（DeepLinkRouter） */
+"Cannot Open Link" = "无法打开链接";
+"Link" = "链接";
+"UniReader is still starting up." = "UniReader 还在启动中。";
+"Workspace not found: %@" = "找不到工作区：%@";
+"Document not found in this workspace: %@" = "这个工作区里没有这篇文档：%@";
+"The link does not say which workspace or document to open, and nothing is open." = "链接没有说明要打开哪个工作区或文档，而当前也没有打开任何窗口。";
+"This is not a UniReader link." = "这不是 UniReader 的链接。";
+"Unknown link type “%@” (expected “open”)." = "不认识的链接类型“%@”（应为“open”）。";
+"Bad page number “%@” (pages start at 1)." = "页码“%@”不对（页码从 1 起）。";
+"Bad position “%@” (expected 0…1)." = "页内位置“%@”不对（应为 0…1）。";
+"Bad note id “%@”." = "笔记 id“%@”不对。";

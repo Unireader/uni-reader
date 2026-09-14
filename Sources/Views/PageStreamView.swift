@@ -446,6 +446,9 @@ struct ReaderSurface: View {
             .onChange(of: session.inkMovedRev) { _, _ in refreshCanvasMargin() }
             // 平板正在写的那一笔（本机落墨在手势里已生长）：笔尖越界即跳档，别等抬笔
             .onChange(of: session.liveStroke?.points.count) { _, _ in growCanvasForLive() }
+            // `unireader://open?note=…` 链接要求展开某条笔记的气泡（`DocSession.revealNoteID`）。
+            // 挂在这一层同样是因为 `surfaceBody` 那条链再加一个 onChange 就超时（2026-09-14 实测）。
+            .onChange(of: session.revealNoteID) { _, id in revealNote(id) }
     }
 
     /// 阅读区主体。**框选截图的手势与覆盖层单独包一层**（`snipRoutes`，见 `ReaderSurface+Snip`）——
@@ -860,6 +863,17 @@ struct ReaderSurface: View {
             scratch.pendingRestore = a
             lastAppliedSeq = a.seq
         }
+        // 视图创建前就到的「展开这条笔记」请求（链接开文档：`DeepLinkRouter` 先置、视图后建），同上补取。
+        revealNote(session.revealNoteID)
+    }
+
+    /// 应 `unireader://open?note=…` 之请把气泡展开（`DocSession.revealNoteID`）。取走即清，
+    /// 下一条同 id 的请求才能再触发 `onChange`。id 不是本文档的笔记也无妨——`expandedNotes` 里多一个
+    /// 没人查的 id 什么都不显示。
+    func revealNote(_ id: UUID?) {
+        guard let id else { return }
+        expandedNotes.insert(id)
+        session.revealNoteID = nil
     }
 
 }

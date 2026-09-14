@@ -45,6 +45,7 @@ extension MCPTools {
             outputSchema: MCPSchema.object([
                 "session_id": MCPSchema.string("tab / session id"), "window_id": MCPSchema.string("window id"),
                 "document": documentDTOSchema, "page": MCPSchema.integer("current page, 1-based"),
+                "link": MCPSchema.string("unireader:// link to the document at this page"),
                 "imported": MCPSchema.boolean("a new library entry was created"),
             ]),
             tier: .navigate

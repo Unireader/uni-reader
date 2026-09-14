@@ -909,6 +909,23 @@ AI 面板 S1~S5 与吸附、内置模式 / 文字笔记展开方式 / PDF 画板
   - 验证：Mac `mirror-diff-test` 53/53（新增 6 条钉死新行为）、安卓 JVM 75/75。
 
 ---
+## `unireader://` 链接 + MCP 带 `link` + Obsidian 导出 skill（2026-09-14，Mac，分支 `worktree-url-scheme`）
+
+起因：2026-09-13 用户问「怎么和 Obsidian 打通」。分析给了四条路（App 内导出 / 自动同步 / MCP 让 Agent 搬 / Obsidian 插件读库），
+用户拍板：**「回跳很重要，优先做；已经做了 Agent 接入，不考虑导出了，Agent 可以帮我们；导出部分提供一套 skill/提示词」**。
+
+- **链接契约**（`URL-SCHEME-PLAN.md §1`）：`unireader://open?ws=<.unrd 路径>&wsid=&doc=&hash=&page=<1 起>&frac=<0…1>&note=<笔记 id>`，
+  每个参数可省；`note` 给了就跳到那条并展开气泡（文字 / 图片笔记）。生成时按 RFC 3986 unreserved 严格编码——
+  链接的归宿是 Markdown 的 `[text](url)`，空格 / 括号 / `#` 漏一个就断。
+- **落地**：`Info.plist` 注册 scheme；`DeepLink`（纯 Foundation，spike 34 项全绿）+ `DeepLinkRouter`；`AppDelegate.application(_:open:)`
+  按 scheme 分流、冷启动缓冲；`DocSession.revealNoteID` → `PageStreamView.revealNote`（`onChange` 挂 `canvasRoutes` 层——
+  `surfaceBody` 那条链再加一个 onChange 就超类型检查器时限，又踩一次）。
+- **与 MCP 合流**：`MCPFacade.openDocument` 的中段抽成 `AppDelegate.showDocument`（🔴 唯一一份「找标签 / 挑窗口」）；
+  `documentDTO` / `list_annotations` 每条 / `get_current_view` / `open_document` / `goto` 都带 `link`，`get_state.app.deep_link` 是格式说明。
+- **导出**：`skills/unireader-obsidian-export/SKILL.md`——Agent 用 `list_annotations` 读、写成「每篇一文件 + frontmatter + 生成区标记 +
+  callout + 末尾回跳链接」，图片从 `<工作区>/Images/<sha>.*` 复制（不碰 `library.sqlite`）。
+- 实测清单在 `URL-SCHEME-PLAN.md §6`。
+
 ## 内存（2026-09-13，Mac：「连接设备后 macOS 内存飙升」→ 窗口色彩空间改 sRGB，用户实测「暴降」）
 
 用户报连平板后内存飙升。对正在跑的进程 1 秒一采（`footprint` 分类 + 平板日志增量 + 阅读区 body 重算次数），

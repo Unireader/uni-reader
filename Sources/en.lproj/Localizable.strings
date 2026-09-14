@@ -550,3 +550,16 @@
 "Allow agents to write" = "Allow agents to write";
 "Lets agents add bookmarks, text notes and highlights, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Agents can never delete anything." = "Lets agents add bookmarks, text notes and highlights, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Agents can never delete anything.";
 "Written by an agent (%@)" = "Written by an agent (%@)";
+
+/* unireader:// 链接（DeepLinkRouter） */
+"Cannot Open Link" = "Cannot Open Link";
+"Link" = "Link";
+"UniReader is still starting up." = "UniReader is still starting up.";
+"Workspace not found: %@" = "Workspace not found: %@";
+"Document not found in this workspace: %@" = "Document not found in this workspace: %@";
+"The link does not say which workspace or document to open, and nothing is open." = "The link does not say which workspace or document to open, and nothing is open.";
+"This is not a UniReader link." = "This is not a UniReader link.";
+"Unknown link type “%@” (expected “open”)." = "Unknown link type “%@” (expected “open”).";
+"Bad page number “%@” (pages start at 1)." = "Bad page number “%@” (pages start at 1).";
+"Bad position “%@” (expected 0…1)." = "Bad position “%@” (expected 0…1).";
+"Bad note id “%@”." = "Bad note id “%@”.";

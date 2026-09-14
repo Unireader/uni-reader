@@ -106,9 +106,23 @@ final class MCPFacade {
         controllers.flatMap { $0.tabs.tabs }.filter { $0.docID == documentId }
     }
 
+    /// 回到 App 里这个位置的 `unireader://` 链接（`DeepLink`）：Agent 写进 Obsidian / 清单里，点了就回来。
+    /// 带 `ws` 路径 + `wsid`（有才带，盘换了挂载点靠它找回）；`page` 对外 1 起。
+    func link(_ ws: WorkspaceManager, doc: String? = nil, page: Int? = nil, frac: Double? = nil, note: UUID? = nil) -> String {
+        var l = DeepLink()
+        l.workspacePath = ws.folder?.path
+        l.workspaceId = ws.store?.workspaceId
+        l.documentId = doc
+        l.page = page
+        l.frac = frac
+        l.noteId = note
+        return l.absoluteString
+    }
+
     private func documentDTO(_ ws: WorkspaceManager, _ d: LibDocument) -> MCPObject {
         let f = fileInfo(ws, documentId: d.id)
         return ["id": d.id,
+                "link": link(ws, doc: d.id),
                 "title": d.title,
                 "page_count": d.pageCount,
                 "group": d.group,
@@ -129,7 +143,8 @@ final class MCPFacade {
         return ["app": ["version": MCPServer.appVersion,
                         "pid": Int(ProcessInfo.processInfo.processIdentifier),
                         "writes_enabled": MCPServer.allowWrites,
-                        "bind": (mcp ?? app?.mcp)?.effectiveBind.rawValue ?? MCPServer.bind.rawValue] as MCPObject,
+                        "bind": (mcp ?? app?.mcp)?.effectiveBind.rawValue ?? MCPServer.bind.rawValue,
+                        "deep_link": DeepLink.formatHint] as MCPObject,
                 "key_window_id": key?.windowId.uuidString ?? NSNull(),
                 "windows": controllers.map { windowDTO($0, isKey: $0 === key) },
                 "tablet": ["running": app?.server.isRunning ?? false,
@@ -217,19 +232,11 @@ final class MCPFacade {
         if let windowId {
             c = try controller(windowId: windowId)
             tab = c.tabs.open(documentId)
-        } else if let showing = sessionsShowing(documentId).first,
-                  let owner = controllers.first(where: { $0.tabs.owns(showing.id) }) {
-            // 某个标签已经在显示它 → 切过去，不重开
-            c = owner
-            c.tabs.activate(showing.id)
-            tab = showing
-        } else if let owner = controllers(for: ws).first(where: { $0.window?.isKeyWindow == true }) ?? controllers(for: ws).first {
-            c = owner
-            tab = c.tabs.open(documentId)
         } else {
+            // 「已在显示 → 切过去；该工作区有窗 → 开标签；没窗 → 新开一扇」与 `unireader://` 链接共用
+            // `AppDelegate.showDocument`，别在这里另写一份。
             guard let delegate = AppDelegate.shared else { throw MCPToolError("app is not ready") }
-            c = try delegate.makeReaderWindow(workspacePath: ws.folder?.path, docId: documentId, activate: activate)
-            tab = c.tabs.active
+            (c, tab) = try delegate.showDocument(documentId, in: ws, activate: activate)
         }
         if let page {
             let count = tab.session.pdf?.pageCount ?? doc.pageCount
@@ -243,7 +250,8 @@ final class MCPFacade {
         return ["session_id": tab.id.uuidString,
                 "window_id": c.windowId.uuidString,
                 "document": documentDTO(ws, doc),
-                "page": PageNo.external(tab.session.currentPageIndex)]
+                "page": PageNo.external(tab.session.currentPageIndex),
+                "link": link(ws, doc: doc.id, page: PageNo.external(tab.session.currentPageIndex))]
     }
 
     // MARK: - 读取类工具的目标解析
@@ -332,8 +340,11 @@ final class MCPFacade {
         }
         o["document_id"] = docId
         o["title"] = tab.tabTitle
-        o["page"] = PageNo.external(s.scrollAnchor?.page ?? s.currentPageIndex)
-        o["frac"] = s.scrollAnchor?.frac ?? 0
+        let page = PageNo.external(s.scrollAnchor?.page ?? s.currentPageIndex)
+        let frac = s.scrollAnchor?.frac ?? 0
+        o["page"] = page
+        o["frac"] = frac
+        o["link"] = link(c.workspace, doc: docId, page: page, frac: frac)
         o["page_count"] = s.pdf?.pageCount ?? 0
         o["zoom"] = Double(s.readZoom)
         o["canvas_mode"] = s.canvasMode
@@ -395,7 +406,8 @@ final class MCPFacade {
             c.window?.makeKeyAndOrderFront(nil)
         }
         return ["session_id": tab.id.uuidString, "window_id": c.windowId.uuidString,
-                "document_id": tab.docID ?? NSNull(), "page": page, "frac": f]
+                "document_id": tab.docID ?? NSNull(), "page": page, "frac": f,
+                "link": link(c.workspace, doc: tab.docID, page: page, frac: f)]
     }
 
     // MARK: - list_annotations（批 2）
@@ -422,7 +434,7 @@ final class MCPFacade {
         let types = s?.noteTypes ?? ws.noteTypes()
         func typeName(_ tid: UUID?) -> Any { tid.flatMap { t in types.first { $0.id == t }?.name } ?? NSNull() }
 
-        var out: MCPObject = ["document_id": id, "title": doc.title]
+        var out: MCPObject = ["document_id": id, "title": doc.title, "link": link(ws, doc: id)]
         var lines: [String] = ["“\(doc.title)”"]
 
         if kinds.contains("note") {
@@ -431,7 +443,8 @@ final class MCPFacade {
             out["notes"] = notes.map { n -> MCPObject in
                 var o: MCPObject = ["id": n.id.uuidString, "page": PageNo.external(n.page), "rect": Self.rectArray(n.anchor),
                                     "quote": n.quote, "text": n.text, "type": typeName(n.typeId), "display": n.display.rawValue,
-                                    "created_at": MCPJSON.iso(n.createdAt), "updated_at": MCPJSON.iso(n.updatedAt)]
+                                    "created_at": MCPJSON.iso(n.createdAt), "updated_at": MCPJSON.iso(n.updatedAt),
+                                    "link": link(ws, doc: id, note: n.id)]
                 if let src = n.source { o["source"] = ["kind": src.kind, "provider": src.provider, "url": src.url] as MCPObject }
                 return o
             }
@@ -443,7 +456,8 @@ final class MCPFacade {
                 .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
             out["highlights"] = hs.map { h -> MCPObject in
                 ["id": h.id.uuidString, "page": PageNo.external(h.page), "rect": Self.rectArray(h.anchor),
-                 "quote": h.quote, "color": Self.hex(h.color), "created_at": MCPJSON.iso(h.createdAt)]
+                 "quote": h.quote, "color": Self.hex(h.color), "created_at": MCPJSON.iso(h.createdAt),
+                 "link": link(ws, doc: id, note: h.id)]
             }
             lines.append("Highlights (\(hs.count)):")
             lines += hs.map { "- p.\(PageNo.external($0.page)) [\($0.id.uuidString.prefix(8))] “\($0.quote.flattenedQuote.prefix(80))”" }
@@ -452,7 +466,7 @@ final class MCPFacade {
             let bs = (s?.bookmarks ?? ws.bookmarks(documentId: id)).filter { inPages($0.page) }.sorted(by: Bookmark.before)
             out["bookmarks"] = bs.map { b -> MCPObject in
                 ["id": b.id.uuidString, "page": PageNo.external(b.page), "frac": b.frac, "title": b.title,
-                 "created_at": MCPJSON.iso(b.createdAt)]
+                 "created_at": MCPJSON.iso(b.createdAt), "link": link(ws, doc: id, note: b.id)]
             }
             lines.append("Bookmarks (\(bs.count)):")
             lines += bs.map { "- p.\(PageNo.external($0.page)) \($0.title)" }
@@ -462,7 +476,7 @@ final class MCPFacade {
                 .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
             out["image_notes"] = ims.map { im -> MCPObject in
                 var o: MCPObject = ["id": im.id.uuidString, "page": PageNo.external(im.page), "rect": Self.rectArray(im.anchor),
-                                    "caption": im.caption, "image_sha256": im.image]
+                                    "caption": im.caption, "image_sha256": im.image, "link": link(ws, doc: id, note: im.id)]
                 switch im.source {
                 case let .pdf(page, rect, pages):
                     o["from"] = ["kind": "pdf", "page": PageNo.external(page), "rect": Self.rectArray(rect), "pages": pages] as MCPObject
@@ -478,7 +492,8 @@ final class MCPFacade {
             let ts = (s?.aiThreads ?? ws.aiThreads(documentId: id)).filter { inPages($0.page) }.sorted { $0.page < $1.page }
             out["ai_threads"] = ts.map { t -> MCPObject in
                 ["id": t.id.uuidString, "page": PageNo.external(t.page), "provider": t.provider, "url": t.url,
-                 "title": t.title, "state": t.state == .ok ? "ok" : "suspect", "created_at": MCPJSON.iso(t.createdAt)]
+                 "title": t.title, "state": t.state == .ok ? "ok" : "suspect", "created_at": MCPJSON.iso(t.createdAt),
+                 "link": link(ws, doc: id, page: PageNo.external(t.page))]
             }
             lines.append("AI threads (\(ts.count)):")
             lines += ts.map { "- p.\(PageNo.external($0.page)) \($0.provider) \($0.title.isEmpty ? $0.url : $0.title)" }
@@ -487,7 +502,7 @@ final class MCPFacade {
             let ps = (s?.scratchPads ?? ws.scratchPads(documentId: id)).filter { inPages($0.anchorPage) }.sorted { $0.anchorPage < $1.anchorPage }
             out["scratch_pads"] = ps.map { p -> MCPObject in
                 ["id": p.id.uuidString, "page": PageNo.external(p.anchorPage), "title": p.title,
-                 "anchor": [p.anchorX, p.anchorY]]
+                 "anchor": [p.anchorX, p.anchorY], "link": link(ws, doc: id, page: PageNo.external(p.anchorPage), frac: p.anchorY)]
             }
             lines.append("Scratch pads (\(ps.count)):")
             lines += ps.map { "- p.\(PageNo.external($0.anchorPage)) \($0.title.isEmpty ? "(untitled)" : $0.title)" }
