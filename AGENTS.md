@@ -51,7 +51,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `PROTOCOL.md` — 二进制线格式**唯一契约**（Mac / web / 安卓三端字节级一致），改协议先改它
 - `MCP-PLAN.md` — MCP 服务（给外部 Agent 用，App 内置 HTTP 端点，默认回环、可绑所有接口+口令）：分批工具目录、协议层、线程红线、写入策略（2026-09-13 拍板并同日三批全部落地合入 `main`，**§15/§16/§17 是实现记录**；批 1 用户实测通过，批 2/3 待实测）
 - `IMAGE-NOTE-PLAN.md` — 图片笔记（note kind=6 + `image` 表 v13 + `Images/`）：内容寻址、引用计数数出来、待删除 30 天、⌥⇧ 拖节选、离线镜像 additive 通道（2026-09-13 Mac 端已落地）
-- `URL-SCHEME-PLAN.md` — `unireader://open?ws=&doc=&page=&frac=&note=` 链接（从 Obsidian / Agent 写的清单点回 App 的某页某条笔记）：参数契约、解析顺序、与 MCP 共用的 `showDocument`；MCP 的文档 / 批注 / 位置 DTO 都带现成 `link`（2026-09-14 落地，待实测）。**导出到 Obsidian 不做进 App**，由 Agent 按 `skills/unireader-obsidian-export/SKILL.md` 做
+- `URL-SCHEME-PLAN.md` — `unireader://open?ws=&doc=&page=&frac=&note=` 链接（从 Obsidian / Agent 写的清单点回 App 的某页某条笔记）：参数契约、解析顺序、与 MCP 共用的 `showDocument`；MCP 的文档 / 批注 / 位置 DTO 都带现成 `link`（2026-09-14 落地，用户实测通过）。**导出到 Obsidian 不做进 App**，由 Agent 按 `skills/unireader-obsidian-export/SKILL.md` 做
 - **`android/AGENTS.md`** — 安卓端（两种模式）的构建、结构、红线与坑；**动安卓代码只需读它 + 上面的跨端契约**
 
 ### 子目录可以自带 AGENTS.md（`android/` 就是这么做的）

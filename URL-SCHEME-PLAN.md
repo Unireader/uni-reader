@@ -1,6 +1,6 @@
 # `unireader://` 链接（macOS 端，2026-09-14 落地）
 
-> 状态：**已落地（分支 `worktree-url-scheme`），待用户实测（§6）。**
+> 状态：**已落地并合入 `main`（2026-09-14，合并提交 `5ad9f1d`），用户同日实测通过。**
 > 背景：2026-09-13 分析「怎么和 Obsidian 打通」，用户拍板——**不做 App 内导出**（导出交给 Agent：MCP 已有
 > `list_annotations` 等工具，配一份 skill 让 Agent 把笔记写进 Obsidian，见 `skills/unireader-obsidian-export/`），
 > **优先做「从 Obsidian 回跳到 UniReader」**——这就是本文件。
@@ -107,7 +107,7 @@ unireader://open?ws=%2FUsers%2Fxvan%2FDocuments%2F%E8%AF%BB%E4%B9%A6.unrd&doc=6F
 
 ---
 
-## 6. 用户实测清单（我不能自证，见 `user-must-test`）
+## 6. 用户实测清单（2026-09-14 用户已过；留作回归清单）
 
 > 先跑一次 Debug 包让 LaunchServices 登记 scheme：`open build/dev/Build/Products/Debug/UniReader.app`。
 > 机器上若同时有别的 UniReader.app（主目录的 `build/dev`、`/Applications`），系统可能把链接派给另一份——
