@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.35"
-    CURRENT_PROJECT_VERSION: "25"
+    MARKETING_VERSION: "0.1.37"
+    CURRENT_PROJECT_VERSION: "27"
 # 第三方包（SPM）。唯一一个：笔记编辑器的 Markdown 引擎（TextKit 2 + AppKit，只用在编辑器 sheet 里，
 # 不进阅读区——阅读区纯 SwiftUI 的红线不受影响）。pre-1.0，**钉死版本**，升级要手动改这里再解析。
 # 只取核心产品 `MarkdownEngine`（零外部依赖）；代码高亮/LaTeX 那两个产品各带一个第三方库，用到再加。
