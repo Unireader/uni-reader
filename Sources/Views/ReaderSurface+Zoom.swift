@@ -276,7 +276,7 @@ extension ReaderSurface {
     }
 
     // MARK: 阅读区单键快捷键（默认 e 橡皮 / b 书写 / v 翻页 / l 框选 / i 本机笔 / t 文字选择；
-    //       **有选中文字时** h 快速高亮 / n 文字笔记；1-9 选笔固定不可改）
+    //       **有选中文字时** h 铺色高亮 / ⇧H 画线 / ⌥H 画框 / n 文字笔记；1-9 选笔固定不可改）
     // 键位查 `Shortcuts`（设置 › 快捷键可改，默认值在 `ShortcutAction.defaultCombo`）；
     // 动作与 ⌥ 菜单项同一套 apply 路径，广播到平板天然生效。
     // 按下的键在表里没有对应动作就原样放行（含带 ⌘/⌥/⌃ 的组合键——那些归菜单）；
@@ -305,7 +305,13 @@ extension ReaderSurface {
             switch action {
             case .highlightSelection:
                 guard hasSelection else { return event }
-                quickHighlight()
+                quickHighlight(style: .fill)
+            case .underlineSelection:
+                guard hasSelection else { return event }
+                quickHighlight(style: .underline)
+            case .boxSelection:
+                guard hasSelection else { return event }
+                quickHighlight(style: .box)
             case .noteFromSelection:
                 guard hasSelection else { return event }
                 beginAddNote()

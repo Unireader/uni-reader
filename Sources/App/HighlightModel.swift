@@ -6,7 +6,10 @@ import Foundation
 ///  · `rects`  = 逐行归一化框（页局部），铺色用。
 ///  · `quote`  = 被高亮的原文（Inspector 列表展示 + 复制）。
 ///  · `color`  = 荧光色（存基色 a=1，渲染时统一降透明）。
+///  · `style`  = 铺色 / 画线 / 画框（`HighlightStyle`，定义在 `TextNoteModel.swift`；payload 键 `style`，缺省 fill）。
 /// 落 `note` 表 kind=3（挂逻辑文档，全版本共用；payload=JSON 跨平台可读）。
+/// 🔴 payload 键集是三端契约：安卓模式1 `LibraryStore.textFills` 直接读它（目前只认 `quote/rects/color`，
+/// `style` 它还不认——画线/画框在安卓上暂按铺色画，见 `TODO.md` 已知欠账）。
 struct Highlight: Identifiable, Equatable {
     var id: UUID = UUID()
     var page: Int
@@ -14,6 +17,7 @@ struct Highlight: Identifiable, Equatable {
     var quote: String
     var rects: [CGRect]
     var color: InkColor
+    var style: HighlightStyle = .fill
     var createdAt: Date = .now
     var updatedAt: Date = .now
 }
@@ -64,6 +68,8 @@ extension Highlight {
     static let defaultColor = palette[0].color
     /// 铺色透明度（荧光笔观感，压在文字上仍可读）。
     static let fillOpacity: Double = 0.38
+    /// 画线 / 画框的描边透明度：线要压得住正文，不再像铺色那样降到四成。
+    static let strokeOpacity: Double = 0.9
 }
 
 // MARK: - 持久化（note 表，kind=3）
@@ -73,13 +79,15 @@ private struct HighlightPayload: Codable {
     var quote: String
     var rects: [[Double]]
     var color: InkColor
+    var style: String?      // JSON 键 style（fill/underline/box）；旧 payload 无此键 → fill，零迁移
 }
 
 extension Highlight {
     func toNote(documentId: String) -> LibNote? {
         let payload = HighlightPayload(quote: quote,
                                        rects: rects.map { [$0.minX, $0.minY, $0.width, $0.height] },
-                                       color: color)
+                                       color: color,
+                                       style: style.rawValue)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
                        page: page, anchor: anchor, payload: data,
@@ -99,6 +107,8 @@ extension Highlight {
             return CGRect(x: x, y: y, width: w, height: h)
         }
         self.init(id: uuid, page: note.page, anchor: note.anchor, quote: p.quote,
-                  rects: rects, color: p.color, createdAt: note.createdAt, updatedAt: note.updatedAt)
+                  rects: rects, color: p.color,
+                  style: p.style.flatMap { HighlightStyle(rawValue: $0) } ?? .fill,
+                  createdAt: note.createdAt, updatedAt: note.updatedAt)
     }
 }

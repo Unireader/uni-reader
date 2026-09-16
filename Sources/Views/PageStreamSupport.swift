@@ -60,12 +60,16 @@ struct TextSelection: Equatable {
 }
 
 /// 「添加批注」草稿：右键选区触发，捕获选区起始页 + 归一化锚点/行框 + 原文，待编辑器填批注后落成 `TextNote`。
+/// 由高亮转来的草稿（`ReaderSurface.beginNoteFromHighlight`）额外带上颜色 / 画法与原高亮 id——保存时删掉那条高亮。
 struct PendingNote: Identifiable {
     let id = UUID()
     var page: Int
     var anchor: CGRect       // 归一化包围盒 0~1（页局部）
     var rects: [CGRect]      // 选区逐行归一化框（页局部）
     var quote: String        // 选中原文
+    var color: InkColor? = nil            // 显式铺色（高亮转来的带上高亮色；选区新建为 nil = 按类型色）
+    var style: HighlightStyle = .fill     // 画法（高亮转来的带上原画法）
+    var replacesHighlight: UUID? = nil    // 非空 = 这份草稿是由这条高亮转来的，保存即删它
 }
 
 /// 批注编辑器目标：新建（选区草稿）或编辑（已存在注解）。统一走一个 `.sheet(item:)`，避免多 sheet 竞态。
@@ -102,6 +106,27 @@ enum NoteEditorTarget: Identifiable {
         switch self {
         case .new: return .tap
         case .edit(let n): return n.display
+        }
+    }
+    /// 显式铺色：新建取草稿的（高亮转来的带高亮色，否则 nil），编辑取这条笔记自己的。
+    var initialColor: InkColor? {
+        switch self {
+        case .new(let p): return p.color
+        case .edit(let n): return n.color
+        }
+    }
+    /// 画法（铺色/画线/画框）：同上。
+    var initialStyle: HighlightStyle {
+        switch self {
+        case .new(let p): return p.style
+        case .edit(let n): return n.style
+        }
+    }
+    /// 有没有行框：点注解（无行框）没有可画的东西，编辑器里不给颜色/画法那一行。
+    var hasRects: Bool {
+        switch self {
+        case .new(let p): return !p.rects.isEmpty
+        case .edit(let n): return !n.rects.isEmpty
         }
     }
     /// 编辑已存在注解时才给「删除」入口（新建草稿没有可删的东西）。

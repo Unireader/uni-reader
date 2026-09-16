@@ -93,6 +93,12 @@
   线上 `notes` 消息只发 anchor 左上角（`PROTOCOL.md §4.3`），拿不到宽，`TextNote.aw` 恒 0。
   要对齐得扩协议 → **方案已写好，见 `ANDROID-MODE2-PLAN.md §9`**。
 
+- **安卓划字缺口③：模式1 不认高亮 / 笔记的画法与笔记显式颜色**（2026-09-16 Mac 加了画线 / 画框 + 文字笔记多色，
+  见 `HISTORY.md` 同日条目）：`LibraryStore.textFills` 只读 `quote/rects/color`，payload 新键 `style`（fill/underline/box）
+  与 kind=0 的 `color` 它都不看——画线 / 画框在安卓上暂按铺色画，笔记的显式颜色被忽略、仍按类型色 / 暖黄铺。
+  补法：`TextFill` 加 `style`，`PageCanvasView` 按画法画（Mac `PageCellView.markNorm` 是口径：画线 = 行框底边、粗细约行高 7%
+  下限 1.5pt；画框 = 每行描 1.5pt 圆角边；两者基色 × 0.9），`textFills` 里 kind=0 优先取 payload `color`。不丢数据，只是观感不同。
+
 - **三端笔迹观感：还剩两处小差异**（2026-09-07 用对比工具量了一轮，大的两条已修，见 `HISTORY.md`）。
   工具 = `spike/ink-cross/run.sh`，一条命令跑三端出图 + 报告；**改任何一端的笔迹渲染之后顺手跑一次**，
   它就是用来照出「改一边忘了另两边」的。

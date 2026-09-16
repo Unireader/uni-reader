@@ -36,6 +36,8 @@ struct PageCellView: View {
     var onDismissHighlight: () -> Void = {}
     var onDeleteHighlight: (Highlight) -> Void = { _ in }
     var onRecolorHighlight: (Highlight, InkColor) -> Void = { _, _ in }   // 气泡里点色点换色
+    var onRestyleHighlight: (Highlight, HighlightStyle) -> Void = { _, _ in }   // 气泡里切铺色/画线/画框
+    var onNoteFromHighlight: (Highlight) -> Void = { _ in }   // 气泡里「添加笔记…」：高亮转成文字笔记
     var notes: [TextNote] = []             // 本页文字注解（kind=0）：荧光高亮 + 可点图钉
     var noteTypes: [NoteType] = []         // 工作区笔记类型：图钉/高亮配色（通用保持既有黄色样式）
     var ocrBlocks: [TextRun] = []          // 调试/demo：OCR 识别块（逐块上色 + 序号），空=不显示
@@ -149,12 +151,11 @@ struct PageCellView: View {
                 }
                 .allowsHitTesting(false)
             }
-            // 文字高亮（kind=3，最底层）：每条按自己的颜色铺在选中文字上。
+            // 文字高亮（kind=3，最底层）：每条按自己的颜色 + 画法（铺色/画线/画框）画在选中文字上。
             if !highlights.isEmpty {
                 Canvas { ctx, sz in
                     for h in highlights {
-                        let col = Color(nsColor: h.color.nsColor).opacity(Highlight.fillOpacity)
-                        for r in h.rects { fillNorm(r, in: &ctx, size: sz, color: col) }
+                        markNorm(h.rects, style: h.style, base: Color(nsColor: h.color.nsColor), in: &ctx, size: sz)
                     }
                 }
                 .allowsHitTesting(false)
@@ -180,7 +181,8 @@ struct PageCellView: View {
                             Text(String(format: L("Page %d"), h.page + 1))
                                 .font(.caption).foregroundStyle(.primary)
                             Divider()
-                            // 换色：调色板色点一排（与笔记类型编辑器同款扁平色点），当前色描一圈。
+                            // 换色：调色板色点一排（与笔记类型编辑器同款扁平色点），当前色描一圈；
+                            // 右侧换画法（铺色/画线/画框）。
                             HStack(spacing: 8) {
                                 ForEach(Array(Highlight.palette.enumerated()), id: \.offset) { _, item in
                                     Circle()
@@ -192,8 +194,19 @@ struct PageCellView: View {
                                         .onTapGesture { onRecolorHighlight(h, item.color) }
                                         .help(L(item.name))
                                 }
+                                Spacer()
+                                Picker(L("Mark"), selection: Binding(get: { h.style },
+                                                                     set: { onRestyleHighlight(h, $0) })) {
+                                    ForEach(HighlightStyle.allCases, id: \.self) { s in
+                                        Image(systemName: s.iconName).tag(s).help(s.title)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .fixedSize()
                             }
                             Divider()
+                            Button(L("Add Note…")) { onNoteFromHighlight(h) }   // 高亮转文字笔记（颜色/画法带过去）
                             Button(L("Delete Highlight"), role: .destructive) { onDeleteHighlight(h) }
                         }
                         .padding(12)
@@ -201,13 +214,15 @@ struct PageCellView: View {
                     }
                     .position(x: r.midX, y: r.midY)
             }
-            // 文字注解荧光高亮（持久层，居搜索/选择高亮之下）：通用铺暖黄，自定义类型铺类型色。
+            // 文字注解的标记（持久层，居搜索/选择高亮之下）：设了显式颜色按它画，否则通用暖黄 / 类型色；
+            // 画法同高亮三选一（图钉不随显式颜色走，仍按类型色——用户 2026-09-16 拍板）。
             if !notes.isEmpty {
                 Canvas { ctx, sz in
                     for n in notes {
-                        let col = n.typeId == nil ? Self.noteHighlight
-                            : NoteType.resolve(n.typeId, in: noteTypes).uiColor.opacity(0.32)
-                        for r in n.rects { fillNorm(r, in: &ctx, size: sz, color: col) }
+                        let base: Color = n.color.map { Color(nsColor: $0.nsColor) }
+                            ?? (n.typeId == nil ? Self.noteBase : NoteType.resolve(n.typeId, in: noteTypes).uiColor)
+                        markNorm(n.rects, style: n.style, base: base, in: &ctx, size: sz,
+                                 fillOpacity: Self.noteFillOpacity)
                     }
                 }
                 .allowsHitTesting(false)
@@ -406,7 +421,9 @@ struct PageCellView: View {
         }
     }
 
-    private static let noteHighlight = Color(red: 1, green: 0.82, blue: 0.15).opacity(0.32)
+    /// 通用笔记的标记基色（暖黄）与铺色透明度；显式颜色 / 类型色走同一透明度。
+    private static let noteBase = Color(red: 1, green: 0.82, blue: 0.15)
+    private static let noteFillOpacity: Double = 0.32
     private static let noteMarker = Color(red: 1, green: 0.80, blue: 0.15)
     private static let scratchMarker = Color(red: 0.62, green: 0.83, blue: 0.98)
     /// 书签缎带的红与尺寸。**红色是书签的通用色**——2026-09-02 第一版用的暖橘，用户实测
@@ -501,5 +518,41 @@ struct PageCellView: View {
         let px = CGRect(x: r.minX * size.width, y: r.minY * size.height,
                         width: r.width * size.width, height: r.height * size.height)
         ctx.fill(Path(roundedRect: px.insetBy(dx: -1, dy: -0.5), cornerRadius: 2), with: .color(color))
+    }
+
+    /// 高亮 / 文字笔记的标记：按画法把一组归一化行框画出来（高亮层与笔记层共用，两者只差铺色透明度）。
+    ///  · 铺色：同 `fillNorm`（基色降到 `fillOpacity`）。
+    ///  · 画线：每个行框**底边**一条线，粗细随行高走（约行高 7%，下限 1.5pt），落在框底边略下——
+    ///    行框是字形的包围盒，贴着底边画会压到下伸部（g/y/p）。
+    ///  · 画框：每个行框描一圈（用户拍板每行一个框），线宽 1.5pt，圆角同铺色。
+    /// 画线 / 画框用基色 × `Highlight.strokeOpacity`（不像铺色那样降到四成，线太淡就看不见了）。
+    private func markNorm(_ rects: [CGRect], style: HighlightStyle, base: Color,
+                          in ctx: inout GraphicsContext, size: CGSize,
+                          fillOpacity: Double = Highlight.fillOpacity) {
+        switch style {
+        case .fill:
+            let col = base.opacity(fillOpacity)
+            for r in rects { fillNorm(r, in: &ctx, size: size, color: col) }
+        case .underline:
+            let col = base.opacity(Highlight.strokeOpacity)
+            for r in rects {
+                let px = CGRect(x: r.minX * size.width, y: r.minY * size.height,
+                                width: r.width * size.width, height: r.height * size.height)
+                let w = max(1.5, px.height * 0.07)
+                let y = px.maxY + w * 0.5
+                var p = Path()
+                p.move(to: CGPoint(x: px.minX - 1, y: y))
+                p.addLine(to: CGPoint(x: px.maxX + 1, y: y))
+                ctx.stroke(p, with: .color(col), style: StrokeStyle(lineWidth: w, lineCap: .round))
+            }
+        case .box:
+            let col = base.opacity(Highlight.strokeOpacity)
+            for r in rects {
+                let px = CGRect(x: r.minX * size.width, y: r.minY * size.height,
+                                width: r.width * size.width, height: r.height * size.height)
+                ctx.stroke(Path(roundedRect: px.insetBy(dx: -1.5, dy: -1), cornerRadius: 2),
+                           with: .color(col), lineWidth: 1.5)
+            }
+        }
     }
 }

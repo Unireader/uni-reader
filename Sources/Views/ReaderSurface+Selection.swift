@@ -197,9 +197,12 @@ extension ReaderSurface {
         inkClipMenuItems   // 框选选中集的剪切/复制/粘贴/删除（见 `ReaderSurface+InkClip`）
         if selection?.text.isEmpty == false {
             Button(L("Add Note")) { beginAddNote() }          // 注解选中文字（锚到选区）
-            Menu(L("Highlight")) {                             // 一键高亮（选调色板颜色）
-                ForEach(Array(Highlight.palette.enumerated()), id: \.offset) { _, item in
-                    Button(L(item.name)) { addHighlight(color: item.color) }
+            // 铺色 / 画线 / 画框各一个子菜单，里面是调色板四色（同一套颜色，只是画法不同）
+            ForEach(HighlightStyle.allCases, id: \.self) { style in
+                Menu(style.title) {
+                    ForEach(Array(Highlight.palette.enumerated()), id: \.offset) { _, item in
+                        Button(L(item.name)) { addHighlight(color: item.color, style: style) }
+                    }
                 }
             }
             Button(L("Copy")) { copySelectionToPasteboard() }
@@ -294,20 +297,22 @@ extension ReaderSurface {
     }
 
     /// 高亮当前选区：逐页各落一条高亮（每页自己的行框），跨页选区各页都铺色。无正文、无图钉、无编辑器。
-    /// 用过的颜色记成下次 `h` 快速高亮的颜色（`AppModel.quickHighlightColor`）。
-    func addHighlight(color: InkColor) {
+    /// `style` = 铺色 / 画线 / 画框（同一套颜色，只是画法不同）。
+    /// 用过的颜色记成下次 `h` / `⇧H` / `⌥H` 快速高亮的颜色（`AppModel.quickHighlightColor`，三种样式共用一份）。
+    func addHighlight(color: InkColor, style: HighlightStyle = .fill) {
         guard let sel = selection, !sel.text.isEmpty else { return }
         for (page, rects) in sel.rects where !rects.isEmpty {
             let bbox = rects.reduce(CGRect.null) { $0.union($1) }
             session.highlights.append(Highlight(page: page, anchor: bbox.isNull ? .zero : bbox,
-                                                quote: sel.text, rects: rects, color: color))
+                                                quote: sel.text, rects: rects, color: color, style: style))
         }
         rememberHighlightColor(color)
         clearSelection()
     }
 
-    /// 选中文字后按 `h`：用最近一次选过的颜色直接高亮，不弹菜单（`installToolKeyMonitor` 分派）。
-    func quickHighlight() { addHighlight(color: app.quickHighlightColor) }
+    /// 选中文字后按 `h`（铺色）/ `⇧H`（画线）/ `⌥H`（画框）：用最近一次选过的颜色直接落，不弹菜单
+    /// （`installToolKeyMonitor` 分派）。
+    func quickHighlight(style: HighlightStyle = .fill) { addHighlight(color: app.quickHighlightColor, style: style) }
 
     /// 给一条已有高亮换色（气泡里的色点 / Inspector 列表）：就地改色 + bump updatedAt →
     /// `DocTabModel.persistHighlights` 对账识别为「变更」并 upsert。换过的颜色同样记成下次 `h` 的颜色。
@@ -319,8 +324,25 @@ extension ReaderSurface {
         rememberHighlightColor(color)
     }
 
+    /// 给一条已有高亮换画法（气泡里的样式切换 / Inspector 右键）：同 `recolorHighlight` 的落库路径。
+    func restyleHighlight(_ h: Highlight, style: HighlightStyle) {
+        guard let i = session.highlights.firstIndex(where: { $0.id == h.id }),
+              session.highlights[i].style != style else { return }
+        session.highlights[i].style = style
+        session.highlights[i].updatedAt = .now
+    }
+
     func rememberHighlightColor(_ color: InkColor) {
         if app.quickHighlightColor != color { app.quickHighlightColor = color }
+    }
+
+    /// 「高亮补充为文字笔记」（用户 2026-09-16，拍板为**转换**而非并存）：由这条高亮起一份笔记草稿——
+    /// 页 / 锚点 / 行框 / 引文 / 颜色 / 画法原样带过去，编辑器里填正文，保存时落成 `TextNote` 并删掉原高亮
+    /// （`commitNote` 按 `replacesHighlight` 处理）；取消则什么都不动。
+    func beginNoteFromHighlight(_ h: Highlight) {
+        activeHighlight = nil
+        editorTarget = .new(PendingNote(page: h.page, anchor: h.anchor, rects: h.rects, quote: h.quote,
+                                        color: h.color, style: h.style, replacesHighlight: h.id))
     }
 
     /// 阅读区的**单击**（按下→抬起位移 ≤3pt），抬手即响应、不等系统双击间隔那一拍：
@@ -419,35 +441,42 @@ extension ReaderSurface {
     }
 
     /// 编辑器保存分派：新建 → 追加；编辑 → 就地改文本与类型。
-    func saveEditor(_ target: NoteEditorTarget, text: String, typeId: UUID?, display: NoteDisplay) {
+    func saveEditor(_ target: NoteEditorTarget, _ out: NoteEditorOutput) {
         switch target {
-        case .new(let draft): commitNote(draft: draft, text: text, typeId: typeId, display: display)
-        case .edit(let note): updateNote(note, text: text, typeId: typeId, display: display)
+        case .new(let draft): commitNote(draft: draft, out)
+        case .edit(let note): updateNote(note, out)
         }
         editorTarget = nil
     }
 
     /// 新建批注：落成 `TextNote` 追加到 `session.textNotes`（ContentView 的 onChange 增量落库）。
     /// 点注解（无引文）必须有文字，否则是个空图钉——直接丢弃不落库。选区注解允许空文字（=纯高亮标记）。
-    func commitNote(draft: PendingNote, text: String, typeId: UUID?, display: NoteDisplay = .tap) {
-        if draft.quote.isEmpty, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    /// 草稿是由高亮转来的（`replacesHighlight`）→ 同一步里把原高亮删掉（高亮不进撤销栈，与删除高亮同口径）。
+    func commitNote(draft: PendingNote, _ out: NoteEditorOutput) {
+        if draft.quote.isEmpty, out.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             clearSelection(); return
         }
         session.inkEdit("Note", kind: .note) {
             session.textNotes.append(TextNote(page: draft.page, anchor: draft.anchor, quote: draft.quote,
-                                              text: text, rects: draft.rects, typeId: typeId,
-                                              display: display))
+                                              text: out.text, rects: draft.rects,
+                                              color: out.color, style: out.style, typeId: out.typeId,
+                                              display: out.display))
+        }
+        if let hid = draft.replacesHighlight {
+            session.highlights.removeAll { $0.id == hid }
         }
         clearSelection()
     }
 
-    /// 编辑批注：就地改文本 + 类型 + 展开方式 + bump updatedAt → 数组变更触发 onChange，对账识别为“变更”并 upsert。
-    func updateNote(_ note: TextNote, text: String, typeId: UUID?, display: NoteDisplay = .tap) {
+    /// 编辑批注：就地改文本 + 类型 + 展开方式 + 铺色/画法 + bump updatedAt → 数组变更触发 onChange，对账识别为“变更”并 upsert。
+    func updateNote(_ note: TextNote, _ out: NoteEditorOutput) {
         guard let idx = session.textNotes.firstIndex(where: { $0.id == note.id }) else { return }
         var n = session.textNotes[idx]
-        n.text = text
-        n.typeId = typeId
-        n.display = display
+        n.text = out.text
+        n.typeId = out.typeId
+        n.display = out.display
+        n.color = out.color
+        n.style = out.style
         n.updatedAt = .now
         session.inkEdit("Note", kind: .note) { session.textNotes[idx] = n }
     }

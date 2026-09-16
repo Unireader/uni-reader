@@ -99,18 +99,21 @@ extension MCPTools {
 
     static func addHighlight() -> MCPTool {
         let names = Highlight.palette.map(\.name)
+        let styles = HighlightStyle.allCases.map(\.rawValue)
         return MCPTool(
             name: "add_highlight",
             title: "Highlight a passage",
-            description: "Highlight a passage on a page. `quote` must be the exact text on that page (copy it from read_pages); it is located with the same engine as ⌘F, so line breaks inside the passage are fine. Fails, rather than guessing, when the text is not found.",
+            description: "Highlight a passage on a page. `quote` must be the exact text on that page (copy it from read_pages); it is located with the same engine as ⌘F, so line breaks inside the passage are fine. `style` picks how it is drawn: fill (highlighter, default), underline, or box (outline only). Fails, rather than guessing, when the text is not found.",
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "page": MCPSchema.integer("Page, 1-based", min: 1),
                 "quote": MCPSchema.string("Exact passage to highlight"),
                 "color": MCPSchema.string("Highlight color: one of \(names.joined(separator: ", ")) or #RRGGBB (default \(names[0]))"),
+                "style": MCPSchema.enumeration(styles, "How to draw it (default fill)"),
             ]) { a, _ in a }, required: ["page", "quote"]),
             outputSchema: MCPSchema.object([
                 "id": MCPSchema.string("highlight id"), "document_id": MCPSchema.string("document"), "page": MCPSchema.integer("1-based"),
                 "rect": MCPSchema.array(of: MCPSchema.number("0…1"), "bounding box [x, y, w, h]"), "color": MCPSchema.string("color name or #RRGGBB"),
+                "style": MCPSchema.enumeration(styles, "how it is drawn"),
                 "via": MCPSchema.enumeration(["session", "library"], "written through the open tab or straight into the library"),
             ]),
             tier: .write
@@ -126,6 +129,10 @@ extension MCPTools {
             } else {
                 throw MCPInvalidParams("color must be one of \(names.joined(separator: ", ")) or #RRGGBB")
             }
+            let styleArg = try args.string("style") ?? HighlightStyle.fill.rawValue
+            guard let style = HighlightStyle(rawValue: styleArg.lowercased()) else {
+                throw MCPInvalidParams("style must be one of \(styles.joined(separator: ", "))")
+            }
             let docId = try args.string("document_id"), wsPath = try args.string("workspace")
             let t = try await MainActor.run { try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath) }
             guard let path = t.path else { throw MCPToolError("the document's file is missing, so the passage cannot be located") }
@@ -134,7 +141,7 @@ extension MCPTools {
                 throw MCPToolError("quote not found on page \(page); use read_pages to copy the exact text")
             }
             let r = try await MainActor.run {
-                try MCPFacade.shared.addHighlight(t, page: page, quote: quote, rects: rects, color: color, colorName: colorArg)
+                try MCPFacade.shared.addHighlight(t, page: page, quote: quote, rects: rects, color: color, colorName: colorArg, style: style)
             }
             return MCPToolResult(text: "Highlighted “\(quote.prefix(60))\(quote.count > 60 ? "…" : "")” on page \(page) · id \(r["id"] ?? "")", structured: r)
         }

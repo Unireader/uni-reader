@@ -140,7 +140,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     // AI
     case aiPanel, snipToAI
     // 阅读区单键（不带修饰键也行；文本框/AI 面板打字时一律放行）
-    case highlightSelection, noteFromSelection
+    case highlightSelection, underlineSelection, boxSelection, noteFromSelection
     case keyEraser, keyWrite, keyPageTurn, keyLasso, keyLocalInk, keyTextSelect
 
     var id: String { rawValue }
@@ -150,8 +150,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var scope: Scope {
         switch self {
-        case .highlightSelection, .noteFromSelection, .keyEraser, .keyWrite, .keyPageTurn,
-             .keyLasso, .keyLocalInk, .keyTextSelect:
+        case .highlightSelection, .underlineSelection, .boxSelection, .noteFromSelection,
+             .keyEraser, .keyWrite, .keyPageTurn, .keyLasso, .keyLocalInk, .keyTextSelect:
             return .reader
         default:
             return .menu
@@ -210,6 +210,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .aiPanel: return L("AI Panel")
         case .snipToAI: return L("Snip to AI")
         case .highlightSelection: return L("Highlight Selection")
+        case .underlineSelection: return L("Underline Selection")
+        case .boxSelection: return L("Box Selection")
         case .noteFromSelection: return L("Note from Selection")
         case .keyEraser: return L("Eraser ⇄ Write")
         case .keyWrite: return L("Write")
@@ -244,6 +246,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .aiPanel: return KeyCombo("a", [.command, .shift])
         case .snipToAI: return KeyCombo("s", .option)
         case .highlightSelection: return KeyCombo("h")
+        case .underlineSelection: return KeyCombo("h", .shift)    // ⇧H 画线（用户 2026-09-16：小写 h 铺色、大写 H 画线）
+        case .boxSelection: return KeyCombo("h", .option)         // ⌥H 画框
         case .noteFromSelection: return KeyCombo("n")
         case .keyEraser: return KeyCombo("e")
         case .keyWrite: return KeyCombo("b")

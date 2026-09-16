@@ -449,7 +449,7 @@ NWListener(127.0.0.1 或 0.0.0.0 : port) ──serial queue "mcp.net"──▶ �
 |---|---|---|---|
 | `add_bookmark` | `document_id?, page, frac?, title` | 开着 → `session.bookmarks.append`；没开 → `workspace.saveBookmark` | `title` 必填（`Bookmark.validTitle`，用户 2026-09-02 拍板） |
 | `add_note` | `document_id?, page, text, quote?, rect?, type?` | 同上两条路（`textNotes` / `saveTextNote`） | 锚点：给了 `quote` 就在该页 `findString` 取行框；给 `rect` 直接用；都没有 → 页左上 `[0.05,0.05,0.9,0.02]` 一条横条。`source` 见 §9.2 |
-| `add_highlight` | `document_id?, page, quote, color?` | 同上（`highlights` / `saveHighlight`） | `quote` 在该页找不到 → 失败，不猜 |
+| `add_highlight` | `document_id?, page, quote, color?, style?` | 同上（`highlights` / `saveHighlight`） | `quote` 在该页找不到 → 失败，不猜；`style` = fill / underline / box（2026-09-16 加，缺省 fill） |
 | `import_pdf` | `path, workspace?, group?, open?: bool = false` | §5.4 拆出的导入函数（`FileHasher.sha256Cached` 后台算 hash → `workspace.ingest`）；`open=true` 再开标签 | **同一文件已在库里就是同一篇**（`findOrCreate` 按 hash 去重），不会重复插行；大文件算 hash 要几秒，工具等它算完再应答。同一批给 `open_document` 加 `path` 参数 = `import_pdf(open: true)` |
 | `create_workspace` | `path` | `WorkspaceManager.createWorkspace(at:)` + 开窗 | 路径必须以 `.unrd` 结尾 |
 | `run_ocr` | `document_id?, pages` | `session.enqueueOCR`（文档必须开着，OCR 走会话的队列） | 立即返回 `{queued: n}`；Agent 之后再 `read_pages` |
@@ -735,7 +735,7 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 | 来源标记 | `NoteSource.agentKind = "agent"` + `isAgent`；Inspector 笔记行加 `terminal` 图标（悬停显示客户端名）| `provider` = `initialize` 的 `clientInfo.name`，`url` 空串；payload 零迁移 |
 | `add_bookmark` | `MCPTools+Notes.swift` + `MCPFacade.addBookmark` | 名字必填（`Bookmark.validTitle`）；开着 → `session.addBookmark`，没开 → `ws.saveBookmark` |
 | `add_note` | 同上 + `MCPFacade.addNote` | 锚点三选一：`quote`（`MCPDocReader.locate`：先 `findString`、再 OCR 行；找不到**报错不猜**）> `rect` > 页顶横条；`type` 按名字对 `noteTypes`，不存在就报错并列出可用的；开着时经 `session.inkEdit` 进撤销栈 |
-| `add_highlight` | 同上 + `MCPFacade.addHighlight` | `quote` 必填、必须找得到；颜色收色板名或 `#RRGGBB` |
+| `add_highlight` | 同上 + `MCPFacade.addHighlight` | `quote` 必填、必须找得到；颜色收色板名或 `#RRGGBB`；`style` 收 fill / underline / box（2026-09-16），`list_annotations` 的高亮 DTO 回 `style`、笔记 DTO 回 `style` + 设了才有的 `color` |
 | `import_pdf` / `open_document(path:)` | `MCPTools+Document.swift` + **`WorkspaceManager.importPDF(at:)`**（新，面板/拖拽/MCP 三处共用，`ReaderWindowController.ingest` 改为调它）| 按 hash 去重，返回 `imported` 是否新建；`open_document` 带 `path` 时虽是导航级工具也按写入开关拦 |
 | `create_workspace` | `MCPTools+Workspace.swift` + `MCPFacade.createWorkspace` | 🔴 **已存在的路径一律拒绝**（界面那条 `createWorkspace(at:)` 会覆盖非工作区路径，那是保存面板确认过「替换」才允许的）；缺 `.unrd` 自动补 |
 | `run_ocr` | 同上 + `MCPFacade.runOCR` | 文档必须开着（OCR 走会话队列）；没配引擎报错；立即返回队列状态，Agent 稍后再 `read_pages` |

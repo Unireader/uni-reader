@@ -81,5 +81,27 @@ check(NoteDisplay.tap.wire == 0 && NoteDisplay.hover.wire == 1 && NoteDisplay.al
       "display 线上编号 0/1/2")
 check(NoteDisplay.fromWire(9) == .tap, "未知线上编号 → tap")
 
+// 7) TextNote.style / color（2026-09-16：画法 + 显式铺色）：旧 payload 无 style 键 → fill、无 color → nil（零迁移）；
+//    三种画法回环；坏值落 fill；显式颜色回环
+check(TextNote(note: oldRow)?.style == .fill, "旧 payload（无 style）→ fill")
+check(TextNote(note: oldRow)?.color == nil, "旧 payload（无 color）→ nil（按类型色）")
+for s in HighlightStyle.allCases {
+    note.style = s
+    let r = note.toNote(documentId: docId)!
+    check(String(data: r.payload, encoding: .utf8)!.contains("\"style\":\"\(s.rawValue)\""), "payload 含 style 键（\(s.rawValue)）")
+    check(TextNote(note: r)?.style == s, "style 编解码回环（\(s.rawValue)）")
+}
+let badStyle = LibNote(id: note.id.uuidString, documentId: docId, kind: TextNote.noteKind,
+                       page: 2, anchor: note.anchor,
+                       payload: Data("{\"quote\":\"\",\"text\":\"x\",\"rects\":[],\"style\":\"wavy\"}".utf8),
+                       createdAt: note.createdAt, updatedAt: note.updatedAt)
+check(TextNote(note: badStyle)?.style == .fill, "未知 style 值 → fill")
+note.color = InkColor(r: 120, g: 190, b: 255, a: 1)
+let colored = note.toNote(documentId: docId)!
+check(TextNote(note: colored)?.color == InkColor(r: 120, g: 190, b: 255, a: 1), "显式 color 编解码回环")
+note.color = nil
+check(!String(data: note.toNote(documentId: docId)!.payload, encoding: .utf8)!.contains("\"color\":{"),
+      "color 为 nil 时 payload 不带 color 对象")
+
 print("\n通过 \(pass)，失败 \(fail)")
 if fail > 0 { exit(1) }

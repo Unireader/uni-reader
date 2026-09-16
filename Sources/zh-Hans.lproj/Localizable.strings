@@ -101,6 +101,12 @@
 "Delete this highlight" = "删除此高亮";
 "Delete Highlight" = "删除高亮";
 "Highlight Color" = "高亮颜色";
+/* 高亮 / 文字笔记的画法（铺色 / 画线 / 画框）与编辑器里的「标记」一行 */
+"Underline" = "画线";
+"Box" = "画框";
+"Mark" = "标记";
+"Type color" = "跟随类型色";
+"Add Note…" = "添加批注…";
 
 /* 侧栏手动排序（右键） */
 "Move Up" = "上移";
@@ -493,6 +499,8 @@
 "Reader Keys" = "阅读区单键";
 "View" = "视图";
 "Highlight Selection" = "高亮选中文字";
+"Underline Selection" = "选中文字画线";
+"Box Selection" = "选中文字画框";
 "Note from Selection" = "选中文字加批注";
 "Eraser ⇄ Write" = "橡皮 ⇄ 书写";
 "Page Turn ⇄ Write" = "翻页 ⇄ 书写";

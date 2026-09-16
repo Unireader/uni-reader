@@ -909,6 +909,30 @@ AI 面板 S1~S5 与吸附、内置模式 / 文字笔记展开方式 / PDF 画板
   - 验证：Mac `mirror-diff-test` 53/53（新增 6 条钉死新行为）、安卓 JVM 75/75。
 
 ---
+## 高亮画线 / 画框 + 高亮转文字笔记 + 文字笔记多色（2026-09-16，Mac，用户三条）
+
+用户原话：「添加画框，类似高亮只有边」「高亮补充为文字笔记，文字笔记支持多色高亮」「高亮支持画线模式（原来小写 h，画线大写 H）」。
+四处拍板：画框**每行一个框**（不是整段包围盒）；画框默认键 **⌥H**；「补充为文字笔记」= **转换**（原高亮条目消失）；
+文字笔记设了显式颜色**图钉仍按类型色**，颜色只管选中文字上的标记。
+
+- **数据**：`HighlightStyle`（`fill` / `underline` / `box`，定义在 `TextNoteModel.swift`——spike 都编它、不编 `HighlightModel.swift`）；
+  `Highlight.style` 与 `TextNote.style` 各一份，payload 新键 `style`（小写串），旧 payload 缺省 `fill`，零迁移。
+  `TextNote.color`（payload 早有、从没用过）启用：nil = 按类型色 / 通用暖黄。schema 不变（都在 `note.payload` JSON 里）。
+  `spike/note-type-test` 加 11 项（38/38）。
+- **渲染**（`PageCellView.markNorm`，高亮层与笔记层共用）：铺色照旧；画线 = 每个行框底边一条线，粗细约行高 7%（下限 1.5pt），
+  落在底边略下免得压到下伸部；画框 = 每个行框描 1.5pt 圆角边。画线 / 画框用基色 × 0.9（`Highlight.strokeOpacity`），
+  不像铺色那样降到四成。
+- **入口**：右键菜单「高亮 / 画线 / 画框」三个子菜单各带四色；阅读区单键 `h` 铺色 / `⇧H` 画线 / `⌥H` 画框
+  （`ShortcutAction.underlineSelection` / `.boxSelection`，设置页可改），三者共用一份「上次用过的颜色」；
+  高亮气泡里加画法三选一（segmented）+「添加批注…」；Inspector 高亮右键加「标记」子菜单，条目图标随画法。
+- **高亮 → 文字笔记**（`beginNoteFromHighlight`）：`PendingNote` 带 `color / style / replacesHighlight`，编辑器保存时
+  `commitNote` 落笔记并删原高亮（高亮不进撤销栈，与删除高亮同口径）；取消则什么都不动。
+- **编辑器**（`NoteEditorSheet`）：选区注解多一行「标记」= 色点（第一枚跟随类型色 + 调色板四色）+ 画法三选一；点注解不给这一行。
+  `onSave` 从三个参数改成一包 `NoteEditorOutput`。
+- **MCP**：`add_highlight` 加可选 `style`；`list_annotations` 高亮 DTO 带 `style`、笔记 DTO 带 `style` 与（设了才有的）`color`。
+- **没做**：安卓模式1 直接读 payload，`style` 与笔记 `color` 它都不认——画线 / 画框在那边暂按铺色画，笔记显式颜色被忽略，
+  记进 `TODO.md` 已知欠账。Inspector 高亮右键没有「添加批注…」（编辑器挂在阅读区那一层，Inspector 没有开它的路）。
+
 ## `unireader://` 链接 + MCP 带 `link` + Obsidian 导出 skill（2026-09-14，Mac，分支 `worktree-url-scheme`）
 
 起因：2026-09-13 用户问「怎么和 Obsidian 打通」。分析给了四条路（App 内导出 / 自动同步 / MCP 让 Agent 搬 / Obsidian 插件读库），

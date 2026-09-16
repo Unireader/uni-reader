@@ -54,6 +54,35 @@ enum NoteDisplay: String, Codable, CaseIterable {
     }
 }
 
+/// 高亮 / 文字笔记在选中文字上**怎么画**（2026-09-16 起两者共用一套；定义放这里是因为 spike 都编 `TextNoteModel.swift`）。
+///
+/// payload 里是同名小写串（键 `style`）；旧 payload 无此键 → `.fill`，**零迁移**（与 `display`/`type_id` 同先例）。
+/// 三种都按**逐行框**画（用户 2026-09-16 拍板：画框也是每行一个框，与铺色同口径）。
+/// 🔴 安卓模式1 直接读 payload，目前只认铺色（`LibraryStore.textFills`）——画线/画框在那边暂按铺色画，见 `TODO.md` 已知欠账。
+enum HighlightStyle: String, Codable, CaseIterable {
+    case fill        // 铺色（荧光笔，默认）
+    case underline   // 画线：行框底边一条线
+    case box         // 画框：只描边不填充
+
+    /// 菜单 / 设置页里的显示名。
+    var title: String {
+        switch self {
+        case .fill: return L("Highlight")
+        case .underline: return L("Underline")
+        case .box: return L("Box")
+        }
+    }
+
+    /// SF Symbol（Inspector 条目 / 气泡里的样式切换）。
+    var iconName: String {
+        switch self {
+        case .fill: return "highlighter"
+        case .underline: return "underline"
+        case .box: return "rectangle"
+        }
+    }
+}
+
 struct TextNote: Identifiable, Equatable {
     var id: UUID = UUID()
     var page: Int
@@ -61,7 +90,8 @@ struct TextNote: Identifiable, Equatable {
     var quote: String           // 选中的原文
     var text: String            // 用户批注
     var rects: [CGRect]         // 选区逐行归一化框（页局部）——渲染精确高亮用
-    var color: InkColor?        // 预留：高亮色（高亮形态复用）
+    var color: InkColor?        // 显式铺色（`Highlight.palette` 那几色）；nil = 按类型色 / 通用暖黄（2026-09-16 起启用，图钉仍按类型色）
+    var style: HighlightStyle = .fill   // 选区上怎么画（铺色/画线/画框）；点注解无行框，此字段无意义
     var typeId: UUID? = nil     // 笔记类型（工作区 NoteType.id）；nil/未知 = 通用
     var source: NoteSource? = nil   // 来源（AI 回填）；nil = 用户自己写的
     var display: NoteDisplay = .tap // 页面上怎么展开正文（每条自己的属性）
@@ -78,6 +108,7 @@ private struct TextNotePayload: Codable {
     var text: String
     var rects: [[Double]]
     var color: InkColor?
+    var style: String?      // JSON 键 style（fill/underline/box）；旧 payload 无此键 → fill，零迁移
     var typeId: String?     // JSON 键 type_id；旧 payload 无此键 → nil（通用），零迁移
     var source: Src?        // JSON 键 source；旧 payload 无此键 → nil，同样零迁移
     var display: String?    // JSON 键 display（tap/hover/always）；旧 payload 无此键 → tap，零迁移
@@ -96,7 +127,7 @@ private struct TextNotePayload: Codable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case quote, text, rects, color, source, display
+        case quote, text, rects, color, style, source, display
         case typeId = "type_id"
     }
 }
@@ -109,7 +140,7 @@ extension TextNote {
     func toNote(documentId: String) -> LibNote? {
         let payload = TextNotePayload(quote: quote, text: text,
                                       rects: rects.map { [$0.minX, $0.minY, $0.width, $0.height] },
-                                      color: color, typeId: typeId?.uuidString,
+                                      color: color, style: style.rawValue, typeId: typeId?.uuidString,
                                       source: source.map {
                                           TextNotePayload.Src(kind: $0.kind, provider: $0.provider,
                                                               url: $0.url,
@@ -142,7 +173,9 @@ extension TextNote {
                        at: ISO.date($0.at) ?? note.createdAt)
         }
         self.init(id: uuid, page: note.page, anchor: note.anchor, quote: p.quote, text: p.text,
-                  rects: rects, color: p.color, typeId: p.typeId.flatMap { UUID(uuidString: $0) },
+                  rects: rects, color: p.color,
+                  style: p.style.flatMap { HighlightStyle(rawValue: $0) } ?? .fill,
+                  typeId: p.typeId.flatMap { UUID(uuidString: $0) },
                   source: src, display: p.display.flatMap { NoteDisplay(rawValue: $0) } ?? .tap,
                   createdAt: note.createdAt, updatedAt: note.updatedAt)
     }

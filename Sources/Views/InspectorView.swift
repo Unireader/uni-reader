@@ -591,7 +591,7 @@ struct InspectorView: View {
                                     .frame(width: 12, height: 12)
                                     .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Label(String(format: L("Page %d"), h.page + 1), systemImage: "highlighter")
+                                    Label(String(format: L("Page %d"), h.page + 1), systemImage: h.style.iconName)
                                         .font(.callout)
                                     if !h.quote.isEmpty {
                                         Text(h.quote.flattenedQuote).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -616,11 +616,19 @@ struct InspectorView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
-                    // 右键：换色（调色板）/ 删除——与页面上高亮气泡里的两项对应。
+                    // 右键：换色（调色板）/ 换画法 / 删除——与页面上高亮气泡里的几项对应
+                    // （「添加笔记…」只在页面气泡里：编辑器挂在阅读区那一层，Inspector 没有开它的路）。
                     .contextMenu {
                         Menu(L("Highlight Color")) {
                             ForEach(Array(Highlight.palette.enumerated()), id: \.offset) { _, item in
                                 Button(L(item.name)) { recolorHighlight(h, color: item.color) }
+                            }
+                        }
+                        Menu(L("Mark")) {
+                            ForEach(HighlightStyle.allCases, id: \.self) { s in
+                                Button { restyleHighlight(h, style: s) } label: {
+                                    if h.style == s { Label(s.title, systemImage: "checkmark") } else { Text(s.title) }
+                                }
                             }
                         }
                         Button(L("Delete Highlight"), role: .destructive) { deleteHighlight(h) }
@@ -640,6 +648,14 @@ struct InspectorView: View {
         guard let i = session.highlights.firstIndex(where: { $0.id == h.id }),
               session.highlights[i].color != color else { return }
         session.highlights[i].color = color
+        session.highlights[i].updatedAt = .now
+    }
+
+    /// 给一条高亮换画法（铺色/画线/画框）：同上落库路径（与 `ReaderSurface.restyleHighlight` 同款）。
+    private func restyleHighlight(_ h: Highlight, style: HighlightStyle) {
+        guard let i = session.highlights.firstIndex(where: { $0.id == h.id }),
+              session.highlights[i].style != style else { return }
+        session.highlights[i].style = style
         session.highlights[i].updatedAt = .now
     }
 

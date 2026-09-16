@@ -443,8 +443,10 @@ final class MCPFacade {
             out["notes"] = notes.map { n -> MCPObject in
                 var o: MCPObject = ["id": n.id.uuidString, "page": PageNo.external(n.page), "rect": Self.rectArray(n.anchor),
                                     "quote": n.quote, "text": n.text, "type": typeName(n.typeId), "display": n.display.rawValue,
+                                    "style": n.style.rawValue,
                                     "created_at": MCPJSON.iso(n.createdAt), "updated_at": MCPJSON.iso(n.updatedAt),
                                     "link": link(ws, doc: id, note: n.id)]
+                if let c = n.color { o["color"] = Self.hex(c) }   // 显式铺色才给；没设 = 按类型色
                 if let src = n.source { o["source"] = ["kind": src.kind, "provider": src.provider, "url": src.url] as MCPObject }
                 return o
             }
@@ -456,8 +458,8 @@ final class MCPFacade {
                 .sorted { $0.page != $1.page ? $0.page < $1.page : $0.anchor.minY < $1.anchor.minY }
             out["highlights"] = hs.map { h -> MCPObject in
                 ["id": h.id.uuidString, "page": PageNo.external(h.page), "rect": Self.rectArray(h.anchor),
-                 "quote": h.quote, "color": Self.hex(h.color), "created_at": MCPJSON.iso(h.createdAt),
-                 "link": link(ws, doc: id, note: h.id)]
+                 "quote": h.quote, "color": Self.hex(h.color), "style": h.style.rawValue,
+                 "created_at": MCPJSON.iso(h.createdAt), "link": link(ws, doc: id, note: h.id)]
             }
             lines.append("Highlights (\(hs.count)):")
             lines += hs.map { "- p.\(PageNo.external($0.page)) [\($0.id.uuidString.prefix(8))] “\($0.quote.flattenedQuote.prefix(80))”" }
@@ -609,14 +611,15 @@ final class MCPFacade {
                 "type": typeId == nil ? NSNull() : (typeName ?? ""), "via": t.session == nil ? "library" : "session"]
     }
 
-    func addHighlight(_ t: WriteTarget, page: Int, quote: String, rects: [CGRect], color: InkColor, colorName: String) throws -> MCPObject {
+    func addHighlight(_ t: WriteTarget, page: Int, quote: String, rects: [CGRect], color: InkColor, colorName: String,
+                      style: HighlightStyle) throws -> MCPObject {
         let idx = try PageNo.index(page, pageCount: t.pageCount)
         guard !rects.isEmpty else { throw MCPToolError("quote not found on page \(page)") }
         let bbox = rects.reduce(CGRect.null) { $0.union($1) }
-        let h = Highlight(page: idx, anchor: bbox.isNull ? .zero : bbox, quote: quote, rects: rects, color: color)
+        let h = Highlight(page: idx, anchor: bbox.isNull ? .zero : bbox, quote: quote, rects: rects, color: color, style: style)
         if let s = t.session { s.highlights.append(h) } else { t.ws.saveHighlight(documentId: t.id, h) }
         return ["id": h.id.uuidString, "document_id": t.id, "page": page, "rect": Self.rectArray(h.anchor),
-                "color": colorName, "via": t.session == nil ? "library" : "session"]
+                "color": colorName, "style": style.rawValue, "via": t.session == nil ? "library" : "session"]
     }
 
     /// 导入前的解析：目标工作区（显式路径 > key 窗口的）。

@@ -99,6 +99,12 @@
 "Delete this highlight" = "Delete this highlight";
 "Delete Highlight" = "Delete Highlight";
 "Highlight Color" = "Highlight Color";
+/* 高亮 / 文字笔记的画法（铺色 / 画线 / 画框）与编辑器里的「标记」一行 */
+"Underline" = "Underline";
+"Box" = "Box";
+"Mark" = "Mark";
+"Type color" = "Type color";
+"Add Note…" = "Add Note…";
 
 /* 侧栏手动排序（右键） */
 "Move Up" = "Move Up";
@@ -491,6 +497,8 @@
 "Reader Keys" = "Reader Keys";
 "View" = "View";
 "Highlight Selection" = "Highlight Selection";
+"Underline Selection" = "Underline Selection";
+"Box Selection" = "Box Selection";
 "Note from Selection" = "Note from Selection";
 "Eraser ⇄ Write" = "Eraser ⇄ Write";
 "Page Turn ⇄ Write" = "Page Turn ⇄ Write";
