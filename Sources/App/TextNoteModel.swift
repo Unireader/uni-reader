@@ -54,6 +54,182 @@ enum NoteDisplay: String, Codable, CaseIterable {
     }
 }
 
+/// 用户手动摆过的笔记卡片（页面上展开的气泡；文字笔记与图片笔记共用，2026-09-16）。定义放这里同 `HighlightStyle`：spike 都编这个文件。
+///
+///  · `dx` / `dy` = 卡片**左上角**相对**图钉中心**的偏移。摆过就一定有（任何一次拖动 / 改大小都会把位置钉住，
+///    否则改宽时自动规则会把卡片从图钉右边翻到左边）。
+///  · `w` = 宽；`h` = **高度上限**（内容比它短就收到内容高，比它长就在卡片里滚动——用户 2026-09-16 定的语义）。
+///    nil = 这一维没动过，照旧按自动规则（宽按内容收窄、高按行数上限）。
+///  · 单位 = **固定尺寸口径下的点**；跟页缩放口径按 `NoteBubble.Metrics.unit`（页宽 ÷ 参考页宽）换算，
+///    两种口径切换时卡片与页面的相对大小不跳。
+/// payload 键 `card: {dx, dy, w?, h?}`；旧 payload 无此键 → nil（没摆过），零迁移。网页 / 安卓暂不认，按自动规则画。
+struct NoteCard: Equatable, Codable {
+    var dx: Double
+    var dy: Double
+    var w: Double?
+    var h: Double?
+}
+
+/// 按下卡片的哪儿决定拖动做什么：四边 / 四角改大小，其余地方移动。
+enum NoteCardZone: Equatable {
+    case move, top, bottom, leading, trailing, topLeading, topTrailing, bottomLeading, bottomTrailing
+
+    /// 边的命中宽度 / 角的命中边长（屏幕点，不随缩放变——手要瞄得准的是屏幕上的那几个点）。
+    static let edge: CGFloat = 5
+    static let corner: CGFloat = 12
+
+    /// `p` = 卡片内坐标（左上原点），`size` = 卡片尺寸。
+    static func at(_ p: CGPoint, size: CGSize) -> NoteCardZone {
+        let nearL = p.x <= corner, nearR = p.x >= size.width - corner
+        let nearT = p.y <= corner, nearB = p.y >= size.height - corner
+        if nearT && nearL { return .topLeading }
+        if nearT && nearR { return .topTrailing }
+        if nearB && nearL { return .bottomLeading }
+        if nearB && nearR { return .bottomTrailing }
+        if p.x <= edge { return .leading }
+        if p.x >= size.width - edge { return .trailing }
+        if p.y <= edge { return .top }
+        if p.y >= size.height - edge { return .bottom }
+        return .move
+    }
+
+    /// 横向：-1 拖左边、+1 拖右边、0 不改宽。
+    var horizontal: Int {
+        switch self {
+        case .leading, .topLeading, .bottomLeading: return -1
+        case .trailing, .topTrailing, .bottomTrailing: return 1
+        default: return 0
+        }
+    }
+
+    /// 纵向：-1 拖上边、+1 拖下边、0 不改高。
+    var vertical: Int {
+        switch self {
+        case .top, .topLeading, .topTrailing: return -1
+        case .bottom, .bottomLeading, .bottomTrailing: return 1
+        default: return 0
+        }
+    }
+}
+
+/// 卡片**不许盖住自己的图钉**（用户 2026-09-16）。图钉周围留一块禁区（图钉半径 + 间隙的方块），卡片压进去就挪开。
+/// 纯函数，spike `note-type-test` 测它。全部是页内像素。
+enum NoteCardPin {
+    /// 图钉禁区：以图钉中心为心、边长 2×`clearance` 的方块。
+    static func keepOut(pin: CGPoint, clearance: CGFloat) -> CGRect {
+        CGRect(x: pin.x - clearance, y: pin.y - clearance, width: clearance * 2, height: clearance * 2)
+    }
+
+    /// 严格相交（只贴着边不算压住）。`CGRect.intersects` 对贴边的判定不好说，自己比。
+    static func overlaps(_ a: CGRect, _ b: CGRect) -> Bool {
+        a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY
+    }
+
+    /// 卡片压住禁区时把它**整块挪开**（大小不变）：试图钉右 / 左 / 下 / 上四个贴边位置，各自钳进页内后仍不压住的里面，
+    /// 取离原位最近的。四个都放不下（页比卡片还窄小）就原样返回。没压住直接原样返回。
+    static func pushOut(_ rect: CGRect, keepOut k: CGRect, page: CGSize) -> CGRect {
+        guard overlaps(rect, k) else { return rect }
+        func clampX(_ x: CGFloat) -> CGFloat { min(max(x, 0), max(0, page.width - rect.width)) }
+        func clampY(_ y: CGFloat) -> CGFloat { min(max(y, 0), max(0, page.height - rect.height)) }
+        let candidates = [
+            CGPoint(x: clampX(k.maxX), y: clampY(rect.minY)),                // 图钉右边
+            CGPoint(x: clampX(k.minX - rect.width), y: clampY(rect.minY)),   // 图钉左边
+            CGPoint(x: clampX(rect.minX), y: clampY(k.maxY)),                // 图钉下面
+            CGPoint(x: clampX(rect.minX), y: clampY(k.minY - rect.height)),  // 图钉上面
+        ]
+        var best: CGRect?
+        var bestCost = CGFloat.greatestFiniteMagnitude
+        for o in candidates {
+            let r = CGRect(origin: o, size: rect.size)
+            guard !overlaps(r, k) else { continue }
+            let cost = abs(o.x - rect.minX) + abs(o.y - rect.minY)
+            if cost < bestCost { bestCost = cost; best = r }
+        }
+        return best ?? rect
+    }
+}
+
+/// 一次拖动卡片的起点快照 + 由位移算出新卡片（纯函数，spike `note-type-test` 测它）。全部是页内像素。
+struct NoteCardDrag {
+    let zone: NoteCardZone
+    /// 按下时卡片在页上的样子（已按内容与上限算好的可见大小）。
+    let frame: CGRect
+    /// 按下时内容**全部露出**要多高（含内边距）：高度是「上限」，可见高 = min(内容高, 上限)。
+    let contentHeight: CGFloat
+    /// 按下时存着的卡片（nil = 还没摆过）。
+    let card: NoteCard?
+
+    /// - Parameters:
+    ///   - unit: 存的数 × unit = 页内像素（固定口径 1，跟页缩放口径见 `NoteBubble.Metrics.unit`）。
+    ///   - pin: 图钉中心；`minSize`: 卡片最小宽 / 最小可见高；`page`: 页尺寸（卡片钳在页内）。
+    ///   - pinClearance: 图钉禁区半边长（见 `NoteCardPin`）：移动时压进禁区就整块挪开；改大小时拖的那条边停在禁区边上。
+    func card(translation t: CGSize, unit: CGFloat, pin: CGPoint, minSize: CGSize, page: CGSize,
+              pinClearance: CGFloat = 0) -> NoteCard {
+        func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { min(max(v, lo), max(lo, hi)) }
+        let u = max(unit, 0.0001)
+        var x = frame.minX, y = frame.minY, w = frame.width, visible = frame.height
+        var cap: CGFloat?   // 这次拖出来的高度上限（只拖了横向时为 nil，保留原值）
+
+        switch zone.horizontal {
+        case 1:
+            w = clamp(frame.width + t.width, minSize.width, page.width - frame.minX)
+        case -1:
+            w = clamp(frame.width - t.width, minSize.width, frame.maxX)
+            x = frame.maxX - w
+        default: break
+        }
+        switch zone.vertical {
+        case 1:
+            let c = clamp(frame.height + t.height, minSize.height, page.height - frame.minY)
+            cap = c
+            visible = min(contentHeight, c)
+        case -1:
+            // 拖上边：下边不动。上限从「按下时的可见高」起算（存着的上限可能比内容高得多，从它起算手感会发空）。
+            let c = clamp(frame.height - t.height, minSize.height, frame.maxY)
+            cap = c
+            visible = min(contentHeight, c)
+            y = frame.maxY - visible
+        default: break
+        }
+        if zone == .move {
+            x = clamp(frame.minX + t.width, 0, page.width - w)
+            y = clamp(frame.minY + t.height, 0, page.height - visible)
+        }
+
+        if pinClearance > 0 {
+            let k = NoteCardPin.keepOut(pin: pin, clearance: pinClearance)
+            if zone != .move {
+                // 改大小：拖的那条边碰到禁区就停在禁区边上（对边不动）。停不住（最小尺寸都放不下）交给下面整块挪开。
+                let rowOverlap = y < k.maxY && y + visible > k.minY
+                if zone.horizontal == 1, rowOverlap, x < k.minX, x + w > k.minX, k.minX - x >= minSize.width {
+                    w = k.minX - x
+                } else if zone.horizontal == -1, rowOverlap, frame.maxX > k.maxX, x < k.maxX,
+                          frame.maxX - k.maxX >= minSize.width {
+                    x = k.maxX
+                    w = frame.maxX - x
+                }
+                let colOverlap = x < k.maxX && x + w > k.minX
+                if zone.vertical == 1, colOverlap, y < k.minY, y + visible > k.minY, k.minY - y >= minSize.height {
+                    cap = k.minY - y
+                    visible = min(contentHeight, k.minY - y)
+                } else if zone.vertical == -1, colOverlap, frame.maxY > k.maxY, y < k.maxY,
+                          frame.maxY - k.maxY >= minSize.height {
+                    cap = frame.maxY - k.maxY
+                    visible = min(contentHeight, frame.maxY - k.maxY)
+                    y = frame.maxY - visible
+                }
+            }
+            let r = NoteCardPin.pushOut(CGRect(x: x, y: y, width: w, height: visible), keepOut: k, page: page)
+            x = r.minX
+            y = r.minY
+        }
+
+        return NoteCard(dx: Double((x - pin.x) / u), dy: Double((y - pin.y) / u),
+                        w: zone.horizontal != 0 ? Double(w / u) : card?.w,
+                        h: cap.map { Double($0 / u) } ?? card?.h)
+    }
+}
+
 /// 高亮 / 文字笔记在选中文字上**怎么画**（2026-09-16 起两者共用一套；定义放这里是因为 spike 都编 `TextNoteModel.swift`）。
 ///
 /// payload 里是同名小写串（键 `style`）；旧 payload 无此键 → `.fill`，**零迁移**（与 `display`/`type_id` 同先例）。
@@ -95,6 +271,7 @@ struct TextNote: Identifiable, Equatable {
     var typeId: UUID? = nil     // 笔记类型（工作区 NoteType.id）；nil/未知 = 通用
     var source: NoteSource? = nil   // 来源（AI 回填）；nil = 用户自己写的
     var display: NoteDisplay = .tap // 页面上怎么展开正文（每条自己的属性）
+    var card: NoteCard? = nil       // 气泡卡片手动摆过的位置 / 大小；nil = 自动规则
     var createdAt: Date = .now
     var updatedAt: Date = .now
 }
@@ -112,6 +289,7 @@ private struct TextNotePayload: Codable {
     var typeId: String?     // JSON 键 type_id；旧 payload 无此键 → nil（通用），零迁移
     var source: Src?        // JSON 键 source；旧 payload 无此键 → nil，同样零迁移
     var display: String?    // JSON 键 display（tap/hover/always）；旧 payload 无此键 → tap，零迁移
+    var card: NoteCard?     // JSON 键 card（{dx, dy, w?, h?}）；旧 payload 无此键 → nil，零迁移
 
     struct Src: Codable {
         var kind: String
@@ -127,7 +305,7 @@ private struct TextNotePayload: Codable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case quote, text, rects, color, style, source, display
+        case quote, text, rects, color, style, source, display, card
         case typeId = "type_id"
     }
 }
@@ -147,7 +325,7 @@ extension TextNote {
                                                               threadId: $0.threadId?.uuidString,
                                                               at: ISO.string($0.at))
                                       },
-                                      display: display.rawValue)
+                                      display: display.rawValue, card: card)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
                        page: page, anchor: anchor, payload: data,
@@ -176,7 +354,7 @@ extension TextNote {
                   rects: rects, color: p.color,
                   style: p.style.flatMap { HighlightStyle(rawValue: $0) } ?? .fill,
                   typeId: p.typeId.flatMap { UUID(uuidString: $0) },
-                  source: src, display: p.display.flatMap { NoteDisplay(rawValue: $0) } ?? .tap,
+                  source: src, display: p.display.flatMap { NoteDisplay(rawValue: $0) } ?? .tap, card: p.card,
                   createdAt: note.createdAt, updatedAt: note.updatedAt)
     }
 }

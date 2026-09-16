@@ -59,6 +59,12 @@ struct PageCellView: View {
     var onToggleImageNote: (ImageNote) -> Void = { _ in }  // 点图钉：tap 模式展开/收起（与文字笔记共用 expandedNotes/hoverNote）
     var onViewImageNote: (ImageNote) -> Void = { _ in }    // 看大图
     var onDeleteImageNote: (ImageNote) -> Void = { _ in }  // 气泡右键「删除」
+    /// 笔记卡片（展开的气泡）能不能拖动 / 改大小：文字工具 + 草稿纸没盖着（悬停预览另外恒不能，见各气泡视图）。
+    var cardsInteractive: Bool = false
+    /// 卡片松手提交（笔记 id, 新卡片 / nil = 恢复自动, 拖的是哪儿 / nil = 右键恢复）。两种笔记共用，按 id 找。
+    var onCard: (UUID, NoteCard?, NoteCardZone?) -> Void = { _, _, _ in }
+    /// 卡片此刻占页上哪块（笔记 id, 页号, 页内像素矩形 / nil = 收起了）：阅读区容器手势据此让位（`ReaderSurface.cardHit`）。
+    var onCardFrame: (UUID, Int, CGRect?) -> Void = { _, _, _ in }
     /// 笔记气泡跟不跟页缩放（设置项，默认关 = 固定尺寸；见 `NoteBubble`）。
     var bubbleFollowsZoom: Bool = false
     /// 气泡正文字号（设置项，默认 12）。
@@ -288,6 +294,10 @@ struct PageCellView: View {
                     NoteBubbleView(text: n.text, documentId: "\(n.id.uuidString)-bubble",
                                    metrics: bubbleMetrics, pageSize: size,
                                    pin: markerPos(n, size: size), pinRadius: Self.pinRadius,
+                                   card: n.card,
+                                   interactive: cardsInteractive && n.display != .hover,
+                                   onCard: { onCard(n.id, $0, $1) },
+                                   onFrame: { onCardFrame(n.id, pageIndex, $0) },
                                    onEdit: n.display == .hover ? nil : { onOpenNote(n) })
                 }
             }
@@ -315,6 +325,9 @@ struct PageCellView: View {
                     let sticky = n.display != .hover   // 悬停预览没有可点的入口（同文字气泡 onEdit == nil 的口径）
                     ImageBubbleView(note: n, info: imageInfo(n.image), metrics: bubbleMetrics, pageSize: size,
                                     pin: Self.imageMarkerPos(n, size: size), pinRadius: Self.pinRadius,
+                                    interactive: cardsInteractive,
+                                    onCard: { onCard(n.id, $0, $1) },
+                                    onFrame: { onCardFrame(n.id, pageIndex, $0) },
                                     onEdit: sticky ? { onOpenImageNote(n) } : nil,
                                     onView: sticky ? { onViewImageNote(n) } : nil,
                                     onDelete: sticky ? { onDeleteImageNote(n) } : nil)
@@ -402,7 +415,12 @@ struct PageCellView: View {
             }
         }
         .frame(width: size.width, height: size.height)
+        // 笔记卡片拖动取位移用的坐标系：页元胞在拖动中不动，卡片自己在动（见 `NoteCardInteraction`）。
+        // 每页同名无妨——手势取的是离自己最近的那个祖先。
+        .coordinateSpace(.named(Self.cardSpace))
     }
+
+    static let cardSpace = "PageCellView.cardSpace"
 
     /// 画板模式下「铺到页边」的那两层（纸面、墨迹）：内层 frame 比页宽 `2×inkMargin`，
     /// 外层再把**布局尺寸**钳回页尺寸——SwiftUI 的 frame 只定布局不裁剪，内层于是居中溢出、

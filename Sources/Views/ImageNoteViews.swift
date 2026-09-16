@@ -20,34 +20,41 @@ enum ImageBubble {
     /// 气泡尺寸：横图撑满口径宽；**竖图**高到上限后按比例缩窄，气泡跟着**收窄贴着图**（不留两侧大片空白）；
     /// 说明文字在缩略图下面。`pixelSize` 是图的像素尺寸（先占位，不等解码）；`missing` = 图不在（占位一小条）；
     /// `captionH` = 引擎报回来的说明高度（nil = 还没排，按估计值）。
+    /// 手动摆过的卡片（`NoteCard`）：`width` = 定死的宽（缩略图按它铺，不再收窄贴图）；`maxHeight` = 整张卡片的高度上限，
+    /// 比内容矮时卡片就这么高、内容在卡片里滚（用户 2026-09-16：「高度不够时，内容滚动」）。
+    /// 返回的 `contentH` = 内容全部露出要多高（视图据此决定滚不滚；拖动改大小也按它算，见 `NoteCardDrag`）。
     static func size(m: NoteBubble.Metrics, pixelSize: CGSize, caption: String, missing: Bool,
-                     captionH: CGFloat? = nil)
-        -> (w: CGFloat, h: CGFloat, thumb: CGSize) {
-        let fullW = max(1, m.w - m.pad * 2)
-        var thumb: CGSize
+                     captionH: CGFloat? = nil, width: CGFloat? = nil, maxHeight: CGFloat? = nil)
+        -> (w: CGFloat, h: CGFloat, thumb: CGSize, contentH: CGFloat) {
+        let budget = width ?? m.w
+        let fullW = max(1, budget - m.pad * 2)
+        let thumb: CGSize
         if missing {
             thumb = CGSize(width: fullW, height: m.fs * missingHeightRatio)
         } else {
             let aspect = pixelSize.width > 0 ? pixelSize.height / pixelSize.width : 0.75
-            let capH = m.w * maxThumbHeightRatio
+            let capH = budget * maxThumbHeightRatio
             let h = min(fullW * aspect, capH)
             thumb = CGSize(width: h >= capH ? max(1, capH / aspect) : fullW, height: h)
         }
-        let w = min(m.w, max(thumb.width + m.pad * 2, max(m.minW, m.w * minWidthRatio)))
+        let w = width ?? min(m.w, max(thumb.width + m.pad * 2, max(m.minW, m.w * minWidthRatio)))
         let textW = max(1, w - m.pad * 2)
-        var h = m.pad + thumb.height + m.pad
+        var captionPart: CGFloat = 0
         if !caption.isEmpty {
             let est = NoteBubble.textHeight(caption, width: textW, m: m, maxLines: captionMaxLines)
             let ch = (captionH ?? 0) > 1 ? captionH! : est
-            h += m.fs * captionGapRatio + min(ch, m.height(lines: captionMaxLines))
+            captionPart = m.fs * captionGapRatio + min(ch, m.height(lines: captionMaxLines))
         }
-        return (w, h, thumb)
+        let contentH = m.pad * 2 + thumb.height + captionPart
+        guard let maxHeight, contentH > maxHeight else { return (w, contentH, thumb, contentH) }
+        return (w, max(maxHeight, NoteBubble.cardMinSize(m).height), thumb, contentH)
     }
 }
 
 /// 一条图片笔记展开后的气泡：缩略图 + 说明（有才画）。**没有铅笔**（压在图上很突兀，用户 2026-09-13）——
-/// 点缩略图看原图，右键出「查看原图 / 编辑… / 删除」。位置规则同文字气泡（`NoteBubble.origin`）。
-/// `onEdit`/`onView`/`onDelete` 为 nil = 悬停预览（一移开就收，够不着任何按钮，也就不挂菜单）。
+/// 点缩略图看原图，右键出「查看原图 / 编辑… / 删除」。位置规则同文字气泡（`NoteBubble.origin`；摆过按 `note.card`）。
+/// 拖动 / 改大小与文字气泡同一套（`NoteCardInteraction`）；「点缩略图看原图」也由它认出单击后分派。
+/// `onEdit`/`onView`/`onDelete` 为 nil = 悬停预览（一移开就收，够不着任何按钮，也就不挂菜单、不能拖）。
 struct ImageBubbleView: View {
     let note: ImageNote
     let info: (url: URL, size: CGSize)?     // nil = 图不在（镜像没带 / 已清理）
@@ -55,6 +62,10 @@ struct ImageBubbleView: View {
     let pageSize: CGSize
     let pin: CGPoint
     let pinRadius: CGFloat
+    /// 能不能拖动 / 改大小（另外还要是常驻气泡，见 `sticky`）。
+    var interactive: Bool = false
+    var onCard: (NoteCard?, NoteCardZone?) -> Void = { _, _ in }
+    var onFrame: (CGRect?) -> Void = { _ in }
     let onEdit: (() -> Void)?
     let onView: (() -> Void)?
     let onDelete: (() -> Void)?
@@ -62,45 +73,92 @@ struct ImageBubbleView: View {
     @ObservedObject private var thumbs = ImageThumbCache.shared
     /// 引擎报回来的说明高度（同 `NoteBubbleView.bodyH`）。
     @State private var captionH: CGFloat?
+    /// 拖动 / 改大小进行中的预览。
+    @State private var live: NoteCard?
+    /// 卡片里滚过的距离（内容比高度上限高时才滚得动）：单击看原图要按它换算缩略图此刻在哪。
+    @State private var scrollY: CGFloat = 0
 
     var body: some View {
         let m = metrics
+        let c = live ?? note.card
+        let sticky = onView != nil
         let px = info?.size ?? CGSize(width: 4, height: 3)
-        let s = ImageBubble.size(m: m, pixelSize: px, caption: note.caption, missing: info == nil, captionH: captionH)
-        let o = NoteBubble.origin(w: s.w, h: s.h, m: m, pin: pin, pinRadius: pinRadius, pageSize: pageSize)
+        let s = ImageBubble.size(m: m, pixelSize: px, caption: note.caption, missing: info == nil, captionH: captionH,
+                                 width: c?.w == nil ? nil : NoteBubble.cardWidth(c, auto: m.w, m: m, pageSize: pageSize),
+                                 maxHeight: c?.h.map { CGFloat($0) * m.unit })
+        let o = NoteBubble.placed(
+            c.map { NoteBubble.cardOrigin($0, w: s.w, h: s.h, m: m, pin: pin, pageSize: pageSize) }
+                ?? NoteBubble.origin(w: s.w, h: s.h, m: m, pin: pin, pinRadius: pinRadius, pageSize: pageSize),
+            w: s.w, h: s.h, m: m, pin: pin, pinRadius: pinRadius, pageSize: pageSize)
         let innerW = max(1, s.w - m.pad * 2)
+        // 缩略图在卡片里占的那块（卡片内坐标，扣掉卡片里滚动过的距离）：单击落在这里才是「看原图」
+        let thumbRect = CGRect(x: m.pad + (innerW - s.thumb.width) / 2, y: m.pad - scrollY,
+                               width: s.thumb.width, height: s.thumb.height)
 
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: m.radius)
                 .fill(NoteBubble.fill)
                 .overlay(RoundedRectangle(cornerRadius: m.radius).stroke(NoteBubble.stroke, lineWidth: 1))
                 .allowsHitTesting(false)
-            VStack(alignment: .leading, spacing: m.fs * ImageBubble.captionGapRatio) {
-                // 竖图比气泡内宽窄时居中摆（气泡已经收窄到下限，剩下那点空白左右平分）
-                thumb(s.thumb, m: m)
-                    .frame(width: innerW, alignment: .center)
-                if !note.caption.isEmpty {
-                    // 说明也是 Markdown 源，同一个引擎只读渲染；超 3 行裁掉
-                    // 量理想高度再钳上限（同 `NoteBubbleView` 那条注释：别用 `.frame(maxHeight:)`）
-                    let capH = m.height(lines: ImageBubble.captionMaxLines)
-                    let est = NoteBubble.textHeight(note.caption, width: innerW, m: m, maxLines: ImageBubble.captionMaxLines)
-                    MarkdownNoteReader(text: note.caption, fontSize: m.fs, documentId: "\(note.id.uuidString)-caption")
-                        .frame(width: innerW)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { captionH = $0 }
-                        .frame(width: innerW, height: min((captionH ?? 0) > 1 ? captionH! : est, capH), alignment: .top)
-                        .clipped()
+            // 高度上限比内容矮时在卡片里滚（同文字卡片：滚动容器常驻，放得下时禁用，滚轮照常滚页面）
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: m.fs * ImageBubble.captionGapRatio) {
+                    // 竖图比气泡内宽窄时居中摆（气泡已经收窄到下限，剩下那点空白左右平分）
+                    thumb(s.thumb, m: m)
+                        .frame(width: innerW, alignment: .center)
+                    if !note.caption.isEmpty {
+                        // 说明也是 Markdown 源，同一个引擎只读渲染；超 3 行裁掉
+                        // 量理想高度再钳上限（同 `NoteBubbleView` 那条注释：别用 `.frame(maxHeight:)`）
+                        let capH = m.height(lines: ImageBubble.captionMaxLines)
+                        let est = NoteBubble.textHeight(note.caption, width: innerW, m: m,
+                                                        maxLines: ImageBubble.captionMaxLines)
+                        MarkdownNoteReader(text: note.caption, fontSize: m.fs, width: innerW,
+                                           documentId: "\(note.id.uuidString)-caption")
+                            .frame(width: innerW)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { captionH = $0 }
+                            .frame(width: innerW, height: min((captionH ?? 0) > 1 ? captionH! : est, capH),
+                                   alignment: .top)
+                            .clipped()
+                    }
                 }
+                .padding(m.pad)
             }
-            .padding(m.pad)
+            .scrollDisabled(s.contentH <= s.h)
+            .scrollIndicators(.never)   // 同文字卡片：不写 `.never` 可滚动时内容整体左移 8.5pt 越出卡片
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in scrollY = y }
+            .frame(width: s.w, height: s.h, alignment: .topLeading)
+            .clipShape(RoundedRectangle(cornerRadius: m.radius))   // 描边在外层，不裁
         }
         .frame(width: s.w, height: s.h, alignment: .topLeading)
+        .modifier(NoteCardInteraction(enabled: interactive && sticky,
+                                      frame: CGRect(x: o.x, y: o.y, width: s.w, height: s.h),
+                                      contentHeight: s.contentH, card: note.card, metrics: m, pin: pin,
+                                      pinRadius: pinRadius, pageSize: pageSize, live: $live,
+                                      onCommit: { onCard($0, $1) },
+                                      onClick: { p in if thumbRect.contains(p) { onView?() } },
+                                      onFrame: onFrame))
+        // 悬停预览不挂菜单：它一移开就收，挂了也是够不着的假入口
+        .contextMenu {
+            if sticky {
+                if let onView { Button(L("View Full Size")) { onView() }.disabled(info == nil) }
+                if let onEdit { Button(L("Edit…")) { onEdit() } }
+                if interactive, note.card != nil {
+                    Divider()
+                    Button(L("Reset Card Size and Position")) { onCard(nil, nil) }
+                }
+                if let onDelete {
+                    Divider()
+                    Button(L("Delete Image Note"), role: .destructive) { onDelete() }
+                }
+            }
+        }
         .offset(x: o.x, y: o.y)
     }
 
     @ViewBuilder private func thumb(_ box: CGSize, m: NoteBubble.Metrics) -> some View {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
-        let sticky = onView != nil   // 常驻气泡（点开的 / 始终展示的）才可点、才挂菜单
+        let sticky = onView != nil   // 常驻气泡（点开的 / 始终展示的）才有「点击看原图」的提示
         ZStack {
             if let info, let cg = thumbs.image(url: info.url, maxPixel: Int((box.width * scale).rounded(.up))) {
                 Image(decorative: cg, scale: 1)
@@ -117,18 +175,8 @@ struct ImageBubbleView: View {
             }
         }
         .frame(width: box.width, height: box.height)
-        .contentShape(Rectangle())
-        // 悬停预览不挂手势也不挂菜单：它一移开就收，挂了也是够不着的假入口，白白吃掉一块命中区域
-        .allowsHitTesting(sticky)
-        .onTapGesture { onView?() }
-        .contextMenu {
-            if let onView { Button(L("View Full Size")) { onView() }.disabled(info == nil) }
-            if let onEdit { Button(L("Edit…")) { onEdit() } }
-            if let onDelete {
-                Divider()
-                Button(L("Delete Image Note"), role: .destructive) { onDelete() }
-            }
-        }
+        // 单击看原图 / 右键菜单都挪到整张卡片上了（`body` 里的 `NoteCardInteraction` / `.contextMenu`）：
+        // 缩略图自己再挂点击手势，会跟卡片的拖动抢——按在图上就拖不动卡片。
         .help(info == nil ? L("Image file is missing (not in this copy, or already cleaned up).")
                           : (sticky ? L("Click to view full size") : ""))
     }

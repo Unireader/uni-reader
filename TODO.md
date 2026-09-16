@@ -93,6 +93,12 @@
   线上 `notes` 消息只发 anchor 左上角（`PROTOCOL.md §4.3`），拿不到宽，`TextNote.aw` 恒 0。
   要对齐得扩协议 → **方案已写好，见 `ANDROID-MODE2-PLAN.md §9`**。
 
+- **网页 / 安卓不认笔记卡片的手动位置与大小**（2026-09-16 Mac 加的，见 `HISTORY.md` 同日「笔记卡片」条目）：
+  文字 / 图片笔记 payload 新键 `card: {dx, dy, w?, h?}`（`NoteCard`：相对图钉中心的左上角偏移 + 宽 + 高度上限，
+  单位 = 固定口径的点，跟页缩放口径 × 页宽 ÷ 参考页宽）。网页（模式2，线上 `notes` 不带它）与安卓（两模式）照旧按
+  `NoteBubble.origin` 那条自动规则画——同一条笔记在 Mac 上摆到左边、平板上仍在右边。安卓模式1 改笔记时是就地改 JSON，
+  **不会冲掉**这个键。要对齐：安卓模式1 直接读 payload；模式2 / 网页得扩 `notes` 线格式（`PROTOCOL.md §4.3`）。
+
 - **安卓划字缺口③：模式1 不认高亮 / 笔记的画法与笔记显式颜色**（2026-09-16 Mac 加了画线 / 画框 + 文字笔记多色，
   见 `HISTORY.md` 同日条目）：`LibraryStore.textFills` 只读 `quote/rects/color`，payload 新键 `style`（fill/underline/box）
   与 kind=0 的 `color` 它都不看——画线 / 画框在安卓上暂按铺色画，笔记的显式颜色被忽略、仍按类型色 / 暖黄铺。
@@ -115,6 +121,8 @@
 - **网页 / 安卓端的笔记气泡画的是 Markdown 原样源码**（2026-09-13 Mac 气泡换成 `swift-markdown-engine` 只读渲染后留下的
   分叉）：会露出 `**`、`#` 这类记号。要对齐得把 `NoteMarkdown` 的折算规则（行内样式 + 块级近似：标题→粗体行、列表→•、
   任务→☐/☑、引用→│、围栏去掉、水平线→横线）移植到 web `render.ts` 与安卓 `shared/NoteBubbleGeom.kt` 那边。
+  2026-09-16 Mac 气泡又加了 LaTeX 公式渲染（`$…$` / `$$…$$`），这两端同样显示公式源码；要对齐得各自找公式排版库
+  （web 端 KaTeX 可进单文件构建；安卓端要另选），比折 Markdown 记号大得多，单独立项。
 
 - **`spike/mirror-apply-test` 里「上次打开取较晚的那个」一条会随日期翻车**（2026-09-13 发现，与当天改动无关）：
   它把 2026-09-05 写死当「较晚」，而 `findOrCreate` 盖的是今天，日期一过就失败。改成相对时间。

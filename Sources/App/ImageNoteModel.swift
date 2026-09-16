@@ -25,6 +25,7 @@ struct ImageNote: Identifiable, Equatable {
     var caption: String = ""
     var display: NoteDisplay = .tap
     var source: Source
+    var card: NoteCard? = nil   // 气泡卡片手动摆过的位置 / 大小（与文字笔记同一套，见 `NoteCard`）；nil = 自动规则
     var createdAt: Date = .now
     var updatedAt: Date = .now
 
@@ -44,12 +45,14 @@ struct ImageNote: Identifiable, Equatable {
 // MARK: - 持久化（note 表，kind=6）
 
 /// 落库到 `note.payload` 的 JSON 形态（页/锚点走 note 列，这里只存其余字段）。
-/// 键名是跨端契约（`IMAGE-NOTE-PLAN.md §2.2`）：`image` / `caption` / `display` / `source{kind,page,rect,pages,name}`。
+/// 键名是跨端契约（`IMAGE-NOTE-PLAN.md §2.2`）：`image` / `caption` / `display` / `source{kind,page,rect,pages,name}` /
+/// `card{dx,dy,w?,h?}`（2026-09-16 加，缺键 = 没摆过）。
 private struct ImageNotePayload: Codable {
     var image: String
     var caption: String
     var display: String?
     var source: Src?
+    var card: NoteCard?
 
     struct Src: Codable {
         var kind: String            // "pdf" / "file"
@@ -75,7 +78,7 @@ extension ImageNote {
         case .file(let name):
             src = .init(kind: "file", page: nil, rect: nil, pages: nil, name: name)
         }
-        let payload = ImageNotePayload(image: image, caption: caption, display: display.rawValue, source: src)
+        let payload = ImageNotePayload(image: image, caption: caption, display: display.rawValue, source: src, card: card)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
                        page: page, anchor: anchor, payload: data,
@@ -100,6 +103,6 @@ extension ImageNote {
         }
         self.init(id: uuid, page: note.page, anchor: note.anchor, image: p.image, caption: p.caption,
                   display: p.display.flatMap { NoteDisplay(rawValue: $0) } ?? .tap,
-                  source: source, createdAt: note.createdAt, updatedAt: note.updatedAt)
+                  source: source, card: p.card, createdAt: note.createdAt, updatedAt: note.updatedAt)
     }
 }

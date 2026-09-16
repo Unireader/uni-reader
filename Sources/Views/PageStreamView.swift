@@ -502,7 +502,8 @@ struct ReaderSurface: View {
         // 第二下的抬手不会被上面的单击手势当成单击清掉（`isMultiClick`）。
         .onTapGesture(count: 2) {
             activeHighlight = nil
-            if let p = scratch.cursorP { selectWord(atContainer: p) }
+            // 双击在笔记卡片上不选底下的词（卡片正文本身不能选字）
+            if let p = scratch.cursorP, cardHit(p) == nil { selectWord(atContainer: p) }
         }
         // 右键选区 → 「添加批注 / 复制」（原生上下文菜单，非浮层 hack）。菜单项常驻、无选区时禁用，
         // 避免按选区有无条件包裹 ScrollView 改变其身份而重置滚动位置。
@@ -703,6 +704,9 @@ struct ReaderSurface: View {
                      },
                      onViewImageNote: { imageViewer = $0 },
                      onDeleteImageNote: { deleteImageNote($0) },
+                     cardsInteractive: app.pointerTool == .textSelect && session.openPadID == nil,
+                     onCard: { commitCard($0, card: $1, zone: $2) },
+                     onCardFrame: { id, page, rect in scratch.cardFrames[id] = rect.map { (page, $0) } },
                      bubbleFollowsZoom: bubbleFollowsZoom,
                      bubbleFontSize: CGFloat(bubbleFontSize),
                      bubbleMinWidth: CGFloat(bubbleMinWidth),

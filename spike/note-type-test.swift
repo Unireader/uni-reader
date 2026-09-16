@@ -103,5 +103,69 @@ note.color = nil
 check(!String(data: note.toNote(documentId: docId)!.payload, encoding: .utf8)!.contains("\"color\":{"),
       "color 为 nil 时 payload 不带 color 对象")
 
+// 8) NoteCard（2026-09-16：卡片手动摆位 / 改大小）：payload 回环、旧数据零迁移、拖动几何
+check(TextNote(note: oldRow)?.card == nil, "旧 payload（无 card）→ nil（自动规则）")
+note.card = NoteCard(dx: 12, dy: -7.5, w: 300, h: nil)
+let carded = note.toNote(documentId: docId)!
+check(TextNote(note: carded)?.card == NoteCard(dx: 12, dy: -7.5, w: 300, h: nil), "card 编解码回环（h 缺省）")
+check(String(data: carded.payload, encoding: .utf8)!.contains("\"card\":{"), "payload 含 card 键")
+note.card = nil
+
+let page = CGSize(width: 600, height: 800)
+let pin = CGPoint(x: 100, y: 100)
+let f0 = CGRect(x: 112, y: 91, width: 280, height: 120)   // 按下时卡片的样子
+let minS = CGSize(width: 80, height: 22)
+func drag(_ z: NoteCardZone, _ t: CGSize, content: CGFloat = 500, card: NoteCard? = nil, unit: CGFloat = 1) -> NoteCard {
+    NoteCardDrag(zone: z, frame: f0, contentHeight: content, card: card)
+        .card(translation: t, unit: unit, pin: pin, minSize: minS, page: page)
+}
+var r = drag(.move, CGSize(width: 50, height: 30))
+check(r == NoteCard(dx: 62, dy: 21, w: nil, h: nil), "移动：只动位置，宽高保持自动（nil）")
+r = drag(.move, CGSize(width: -1000, height: 5000))
+check(r.dx == -100 && r.dy == Double(800 - 120 - 100), "移动：钳在页内（左边到 0、下边贴页底）")
+r = drag(.trailing, CGSize(width: 40, height: 99))
+check(r.w == 320 && r.h == nil && r.dx == 12 && r.dy == -9, "拖右边：只改宽，位置钉住在原处")
+r = drag(.leading, CGSize(width: 30, height: 0))
+check(r.w == 250 && r.dx == 42, "拖左边：右边不动，左边跟手")
+r = drag(.leading, CGSize(width: 500, height: 0))
+check(r.w == 80 && r.dx == Double(392 - 80 - 100), "拖左边过头：钳到最小宽，右边仍不动")
+r = drag(.bottom, CGSize(width: 0, height: 60))
+check(r.h == 180 && r.w == nil, "拖下边：高度上限 = 可见高 + 位移")
+r = drag(.top, CGSize(width: 0, height: 20), content: 500)
+check(r.h == 100 && r.dy == Double(91 + 20 - 100), "拖上边：下边不动，上限变小")
+r = drag(.top, CGSize(width: 0, height: -200), content: 150)
+check(r.h == 211 && r.dy == Double(211 - 150 - 100), "拖上边超过内容高：上限照记，可见高收到内容高、下边仍不动")
+r = drag(.bottomTrailing, CGSize(width: 10, height: 10), card: NoteCard(dx: 0, dy: 0, w: 999, h: 999))
+check(r.w == 290 && r.h == 130, "拖右下角：宽高一起改（覆盖旧值）")
+r = drag(.trailing, CGSize(width: 20, height: 0), card: NoteCard(dx: 1, dy: 2, w: nil, h: 555))
+check(r.h == 555, "只拖右边：原来存的高度上限保留")
+r = drag(.trailing, CGSize(width: 20, height: 0), unit: 2)
+check(r.w == 150 && r.dx == 6, "跟页缩放口径：存的数 = 像素 ÷ unit")
+// 图钉禁区（用户 2026-09-16：卡片不许盖住自己的图钉）。pin (100,100)、禁区半边 12 → (88…112, 88…112)
+let k = NoteCardPin.keepOut(pin: pin, clearance: 12)
+check(!NoteCardPin.overlaps(CGRect(x: 112, y: 90, width: 50, height: 50), k), "只贴着禁区右边：不算压住")
+let pushed = NoteCardPin.pushOut(CGRect(x: 95, y: 80, width: 100, height: 60), keepOut: k, page: page)
+check(pushed == CGRect(x: 112, y: 80, width: 100, height: 60), "压住一点点：挪到最近的一侧（右边，挪 17）→ \(pushed)")
+let pushedUp = NoteCardPin.pushOut(CGRect(x: 20, y: 60, width: 300, height: 40), keepOut: k, page: page)
+check(pushedUp.minY == 48 && pushedUp.minX == 20,
+      "宽卡片横跨图钉（左边放不下）：往上挪 12 比往下 52、往右 92 都近 → \(pushedUp)")
+let edgePage = CGSize(width: 130, height: 800)   // 页很窄：图钉右边放不下
+let pushedLeft = NoteCardPin.pushOut(CGRect(x: 30, y: 95, width: 50, height: 30), keepOut: k, page: edgePage)
+check(!NoteCardPin.overlaps(pushedLeft, k), "右边放不下（钳进页内还压着）的候选不选 → \(pushedLeft)")
+r = drag(.move, CGSize(width: -60, height: 0))   // f0 从 x=112 往左拖 60：压进禁区
+let movedRect = CGRect(x: pin.x + CGFloat(r.dx), y: pin.y + CGFloat(r.dy), width: f0.width, height: f0.height)
+check(movedRect.minX == 52 && NoteCardPin.overlaps(movedRect, k), "不带禁区参数：纯移动，不管图钉（x=\(movedRect.minX)）")
+let rPin = NoteCardDrag(zone: .move, frame: f0, contentHeight: 500, card: nil)
+    .card(translation: CGSize(width: -60, height: 0), unit: 1, pin: pin, minSize: minS, page: page, pinClearance: 12)
+let rPinRect = CGRect(x: pin.x + CGFloat(rPin.dx), y: pin.y + CGFloat(rPin.dy), width: f0.width, height: f0.height)
+check(!NoteCardPin.overlaps(rPinRect, k), "移动压进图钉：整块挪开 → \(rPinRect)")
+let rEdge = NoteCardDrag(zone: .leading, frame: f0, contentHeight: 500, card: nil)
+    .card(translation: CGSize(width: -60, height: 0), unit: 1, pin: pin, minSize: minS, page: page, pinClearance: 12)
+check(rEdge.dx == 12 && rEdge.w == Double(f0.width), "左边往左拉进图钉：停在禁区右边上（宽不变）→ dx=\(rEdge.dx) w=\(rEdge.w ?? -1)")
+check(NoteCardZone.at(CGPoint(x: 2, y: 2), size: f0.size) == .topLeading
+      && NoteCardZone.at(CGPoint(x: 279, y: 60), size: f0.size) == .trailing
+      && NoteCardZone.at(CGPoint(x: 140, y: 118), size: f0.size) == .bottom
+      && NoteCardZone.at(CGPoint(x: 140, y: 60), size: f0.size) == .move, "按下位置 → 分区（角 / 边 / 中间）")
+
 print("\n通过 \(pass)，失败 \(fail)")
 if fail > 0 { exit(1) }

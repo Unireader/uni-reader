@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS image (
   "caption": "说明文字（可空）",
   "display": "tap" | "hover" | "always", // 同文字笔记的 display，缺省 tap
   "source":  { "kind": "pdf", "page": 12, "rect": [x, y, w, h], "pages": 2 }   // 从 PDF 节选：来源页 + 归一化矩形 + 跨了几页
-          |  { "kind": "file", "name": "figure.png" }                          // 外部导入：原文件名（纯展示）
+          |  { "kind": "file", "name": "figure.png" },                         // 外部导入：原文件名（纯展示）
+  "card":    { "dx": 12, "dy": -8, "w": 300, "h": 240 }  // 可缺：气泡卡片手动摆过的位置 / 宽 / 高度上限（2026-09-16，与文字笔记同一个键，见 `NoteCard`）
 }
 ```
 

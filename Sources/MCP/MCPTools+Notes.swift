@@ -56,7 +56,7 @@ extension MCPTools {
             description: "Add a text note (annotation) to a page. Anchor it to a passage by giving `quote` (the exact text on that page; it is located and the note pins to it), or to an area with `rect`, or to the top of the page with neither. Notes written this way are marked as coming from an agent.",
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "page": MCPSchema.integer("Page, 1-based", min: 1),
-                "text": MCPSchema.string("The note body (Markdown is rendered in the bubble). Required unless quote is given."),
+                "text": MCPSchema.string("The note body (Markdown is rendered in the bubble). Math: $…$ inline, $$…$$ on its own line for a block; \\(…\\) and \\[…\\] are NOT rendered. Required unless quote is given."),
                 "quote": MCPSchema.string("Passage on that page to attach the note to (must exist on the page, case-insensitive)."),
                 "rect": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] normalized area on the page, top-left origin; used when there is no quote."),
                 "type": MCPSchema.string("Note type name as shown in UniReader (must already exist). Omit for the generic type."),

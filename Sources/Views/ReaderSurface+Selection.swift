@@ -371,7 +371,8 @@ extension ReaderSurface {
                       !isMultiClick else { return }
                 clearSelection()
                 clearLassoSelection()
-                guard app.pointerTool == .textSelect, draggablePinHit(v.startLocation) == nil else { return }
+                guard app.pointerTool == .textSelect, draggablePinHit(v.startLocation) == nil,
+                      cardHit(v.startLocation) == nil else { return }   // 点卡片不弹底下高亮的气泡
                 let mark = highlightHit(v.startLocation).map { HighlightTap(id: $0.highlight.id, rect: $0.rect) }
                 if activeHighlight != mark { activeHighlight = mark }
             }
@@ -537,7 +538,8 @@ extension ReaderSurface {
                 // ⌥ 按下 = 用户要框选截图 → **尚未起手**的才让位（已经在拖选的不打断）
                 guard !(snipModifierDown && scratch.selDragAnchor == nil) else { return }
                 if scratch.selDragAnchor == nil {
-                    if draggablePinHit(v.startLocation) != nil { return }   // selDragAnchor 保持 nil → 整段拖选不启动
+                    // 起点在图钉 / 笔记卡片上：让位，selDragAnchor 保持 nil → 整段拖选不启动
+                    if draggablePinHit(v.startLocation) != nil || cardHit(v.startLocation) != nil { return }
                     scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
                 }
                 guard let a = scratch.selDragAnchor, let f = containerPointToPageNorm(v.location) else { return }
@@ -575,6 +577,42 @@ extension ReaderSurface {
         pointNotePinHit(P)?.id ?? imagePinHit(P)?.id
     }
 
+    /// 展开着的笔记卡片命中（容器/视口坐标 P）→ 卡片所属笔记 id。卡片位置由卡片视图自己报（`Scratch.cardFrames`），
+    /// 画在哪就算在哪，不在这边重算一遍排版。
+    ///
+    /// 容器上的手势全是 simultaneous：按在卡片上，卡片自己的拖动手势和这边的拖选 / 单击 / 双击选词 / 落墨 / 框选 /
+    /// 图钉拖拽**同时**收到，所以这几处起手时都先问它，命中就让位（卡片在最上面，按在它上面就是冲它去的）。
+    func cardHit(_ P: CGPoint) -> UUID? {
+        guard !scratch.cardFrames.isEmpty, let layout else { return nil }
+        let g = scratch.geo
+        let ds = max(0.0001, dispScale)
+        let cx = g.offsetX + P.x, cy = g.offsetY + P.y
+        let page = layout.locate(docY: cy / ds).page
+        guard layout.offsets.indices.contains(page) else { return nil }
+        let p = CGPoint(x: cx - pageX, y: cy - layout.offsets[page] * ds)   // 页内显示坐标
+        return scratch.cardFrames.first { $0.value.page == page && $0.value.rect.contains(p) }?.key
+    }
+
+    /// 卡片松手提交（拖动 / 改大小）或右键「恢复自动」（`card == nil`）：就地改那条笔记（文字 / 图片按 id 找），
+    /// bump `updatedAt` → 增量对账落库。进撤销栈（与拖图钉一样是一步「移动」，改大小记成「调整大小」）。
+    /// 不广播平板：线上 `notes` 不带卡片（网页 / 安卓暂按自动规则画）。
+    func commitCard(_ id: UUID, card: NoteCard?, zone: NoteCardZone?) {
+        let label = zone == .move ? "Move" : "Resize"
+        if let i = session.textNotes.firstIndex(where: { $0.id == id }) {
+            guard session.textNotes[i].card != card else { return }
+            session.inkEdit(label, kind: .move) {
+                session.textNotes[i].card = card
+                session.textNotes[i].updatedAt = .now
+            }
+        } else if let i = session.imageNotes.firstIndex(where: { $0.id == id }) {
+            guard session.imageNotes[i].card != card else { return }
+            session.inkEdit(label, kind: .move) {
+                session.imageNotes[i].card = card
+                session.imageNotes[i].updatedAt = .now
+            }
+        }
+    }
+
     /// 某枚可拖图钉此刻的锚点（页 + 归一化锚矩形），两种笔记都认。
     func pinAnchor(id: UUID) -> (page: Int, anchor: CGRect)? {
         if let n = session.textNotes.first(where: { $0.id == id }) { return (n.page, n.anchor) }
@@ -592,7 +630,8 @@ extension ReaderSurface {
                 guard app.pointerTool == .textSelect, scratch.pinch == nil,
                       session.openPadID == nil else { return }
                 if scratch.noteDragID == nil {
-                    guard let hit = draggablePinHit(v.startLocation) else { return }
+                    guard cardHit(v.startLocation) == nil,   // 卡片盖住的图钉：卡片在上面，按下是冲卡片去的
+                          let hit = draggablePinHit(v.startLocation) else { return }
                     scratch.noteDragID = hit
                 }
                 guard let id = scratch.noteDragID,
@@ -646,7 +685,8 @@ extension ReaderSurface {
                 let isErase = app.padMode == "erase"
                 // 起笔（本手势首个回调）：定锚 + inkBegin / 首点擦除
                 if scratch.localInkStart == nil {
-                    guard let n0 = containerPointToPageNorm(v.startLocation, xRange: inkXRange) else { return }
+                    guard cardHit(v.startLocation) == nil,   // 按在笔记卡片上不落笔（画在卡片底下也看不见）
+                          let n0 = containerPointToPageNorm(v.startLocation, xRange: inkXRange) else { return }
                     growCanvasMargin(towardX: Double(n0.nx))   // 起笔就在页边深处（滚过去写）也要先长够
                     let p0 = InkPoint(Double(n0.nx), Double(n0.ny), 0.5)
                     if isErase {

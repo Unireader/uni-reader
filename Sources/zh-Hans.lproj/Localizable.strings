@@ -107,6 +107,9 @@
 "Mark" = "标记";
 "Type color" = "跟随类型色";
 "Add Note…" = "添加批注…";
+/* 笔记卡片（展开的气泡）右键菜单 */
+"Copy Note Text" = "复制笔记正文";
+"Reset Card Size and Position" = "恢复卡片默认大小和位置";
 
 /* 侧栏手动排序（右键） */
 "Move Up" = "上移";

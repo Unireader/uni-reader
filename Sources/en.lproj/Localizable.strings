@@ -105,6 +105,9 @@
 "Mark" = "Mark";
 "Type color" = "Type color";
 "Add Note…" = "Add Note…";
+/* 笔记卡片（展开的气泡）右键菜单 */
+"Copy Note Text" = "Copy Note Text";
+"Reset Card Size and Position" = "Reset Card Size and Position";
 
 /* 侧栏手动排序（右键） */
 "Move Up" = "Move Up";

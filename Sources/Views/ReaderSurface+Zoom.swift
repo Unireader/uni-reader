@@ -250,12 +250,19 @@ extension ReaderSurface {
     // MARK: ⌘+滚轮缩放（光标为锚；系统缩放同向：自然滚动下两指上滑/滚轮向上 = 放大）
     // SwiftUI 无滚轮 API → NSEvent 本地监视器（纯事件管道，无 AppKit 视图）。
     // 只在「⌘按住 + 光标在本阅读区内 + 非动量惯性 + 无进行中 pinch」时消费事件，其余原样放行。
+    // 同一个监视器顺带拦「笔记卡片里滚到头的滚轮」（2026-09-16，见 `NoteCardWheel`），⌘ 按住时不拦（缩放优先）。
 
     func installWheelMonitor() {
         guard scratch.wheelMonitor == nil else { return }
         scratch.wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
-            guard session.openPadID == nil,   // 草稿纸开着时滚轮全归它（它自己也装了个监视器）
-                  event.modifierFlags.contains(.command),
+            guard session.openPadID == nil else { return event }   // 草稿纸开着时滚轮全归它（它自己也装了个监视器）
+            // 指针在可滚动的笔记卡片上、而卡片已滚到头：吞掉，不让它接着滚页面（见 `NoteCardWheel`）
+            if !event.modifierFlags.contains(.command),
+               NoteCardWheel.shouldSwallow(event, in: event.window,
+                                           overCard: scratch.cursorP.map { cardHit($0) != nil } ?? false) {
+                return nil
+            }
+            guard event.modifierFlags.contains(.command),
                   event.momentumPhase == [],
                   let p = scratch.cursorP,
                   layout != nil, scratch.didInitialGeo, scratch.pinch == nil else { return event }

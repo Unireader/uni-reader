@@ -277,6 +277,10 @@ final class Scratch {
     deinit { wsLog("阅读区状态释放（页图已放）") }
 
     var geo = GeoSnap()
+    /// 展开着的笔记卡片此刻各占哪一页的哪块（页内显示像素；卡片视图自己报，收起即删）。
+    /// 阅读区容器上的拖选 / 单击 / 双击选词 / 落墨 / 框选 / 图钉拖拽按下在卡片上时据此让位（`ReaderSurface.cardHit`）。
+    /// 普通属性不发通知：卡片拖动中逐帧写，写它不能触发阅读区重算。
+    var cardFrames: [UUID: (page: Int, rect: CGRect)] = [:]
     var topDocY: CGFloat = 0
     var basePixelW = 0
     /// 本窗口最近用过的基图像素宽（最新在前，最多 4 个）。目标宽度的图还没渲出来时，

@@ -87,8 +87,10 @@ struct NoteEditorSheet: View {
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
             }
 
+            // 编辑框尺寸：原来 380×170，写几行公式就挤得没法输入（用户 2026-09-16 报），放到 sheet 满宽 × 340。
             MarkdownNoteEditor(text: $text, documentId: documentId, placeholder: L("Write a note… (Markdown)"))
-                .frame(width: 380, height: 170)
+                .frame(maxWidth: .infinity)
+                .frame(height: 340)
 
             // 标记（选区注解才有）：选中文字上铺什么颜色、怎么画。色点第一枚 = 跟随类型色（nil），
             // 其余是高亮调色板那四色——与高亮气泡里的换色色点同款扁平色点，当前项描一圈。
@@ -137,7 +139,7 @@ struct NoteEditorSheet: View {
             }
         }
         .padding(16)
-        .frame(width: 420)
+        .frame(width: 640)
         .sheet(isPresented: $managing) {
             NoteTypeManagerView(noteTypes: noteTypes, usageCount: usageCount,
                                 onChange: { types in
