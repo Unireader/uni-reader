@@ -17,6 +17,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 |---|---|---|
 | **开发/测试包**（含只为验证编译） | `build/dev/` | 上面那条 `-derivedDataPath build/dev` |
 | **正式分发包** | `build/UniReader-<版本>.zip` | `scripts/package.sh` |
+| **GitHub 发布** | `build/UniReader-<版本>.zip` + `.dmg` | `scripts/release.sh`（见下方「发布到 GitHub」） |
 
 - **`-derivedDataPath build/dev` 不是可选项**——省掉它，xcodebuild 就写进
   `~/Library/Developer/Xcode/DerivedData/UniReader-<一长串随机码>/`：路径随机、用户找不到、
@@ -29,6 +30,23 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - 例外只有一个：**用 Xcode GUI 打开项目时它仍写自己的 DerivedData**，那份不归本约定管、也别拿它
   当交付物；命令行一律按上表来。
 
+### 发布到 GitHub（`scripts/release.sh`，2026-09-16 加）
+
+公开仓库 `Unireader/uni-reader` 的 release，附件 = 公证并装订过的 zip + dmg。流程：
+
+1. **Agent 先写发布日志** `release-notes/v<版本>.md`：中文 + 英文各一份，只写上次发布以来的改动，
+   按功能归类、用日常说法（commit 里的内部实现细节不写），界面文案以 `Localizable.strings` 为准。
+2. 演练：`./scripts/release.sh <版本> --notes-file release-notes/v<版本>.md --dry-run`
+   （检查 + 改版本号 + Debug 编译，跑完还原 `project.yml`；不提交、不公证、不推送）。
+3. 正式发布：同一条命令去掉 `--dry-run`。会推送 main 和 tag 并公开发布，**Agent 跑之前必须先得到用户确认**。
+   2026-09-16 在 Agent 会话里 `notarytool history` 曾两次报「No Keychain password item found」，
+   过一会儿又能读到（原因未确认）；再遇到就重试一次，仍失败再问用户。
+
+- 版本号由脚本改（构建号自动 +1），发布日志随版本号一起提交成 `release: v<版本>`；要求工作区干净（发布日志除外）、在 `main` 上、不落后 `origin/main`。
+- 公证全部通过后才打 tag、`git push --atomic` 推 main + tag，再 `gh release create --verify-tag`；中途失败远端不变，脚本会打印撤销命令。
+- 编译走 `-derivedDataPath build/dev -disableAutomaticPackageResolution`，不联网拉包；采集页走 `build-web.sh --no-install`，不装依赖。
+- 公证配置名默认 `noticky-notary`，不同就 `NOTARY_PROFILE=<配置名> ./scripts/release.sh …`。
+
 - **唯一的第三方包**：`swift-markdown-engine`（SPM，`project.yml` 里 `exactVersion` 钉死）——笔记编辑器 sheet
   （`MarkdownNoteEditor`）与气泡正文只读渲染（`MarkdownNoteReader`，红线例外）用它。取两个产品：核心 `MarkdownEngine`
   （零外部依赖）+ `MarkdownEngineLatex`（2026-09-16 加，笔记里的 `$…$` / `$$…$$` 公式；传递依赖 **SwiftMath**，MIT，
@@ -37,7 +55,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   新克隆或 `rm -rf build` 之后首次编译要先 `xcodebuild … -derivedDataPath build/dev -resolvePackageDependencies`
   （联网拉包 = 装依赖，**按用户规矩给命令让用户跑**，别自己跑）。升版本只改 `project.yml` 再解析。
 - 无测试 target；验证走 spike 脚本：`swift spike/<name>.swift`（如 `store-test.swift` 32 项 DAO、`ink-store-test.swift` 21 项）。
-- 采集页前端（`web/`，Svelte + Vite）：改动后跑 `scripts/build-web.sh`（npm install + 单文件构建 + 占位符自检 + 覆盖 `Sources/Resources/capture.html`），再重新编译 App。`capture.html` 是构建产物、**不入 git**——新克隆先跑一次 `build-web.sh`；`scripts/package.sh` 打包时会自动重建。
+- 采集页前端（`web/`，Svelte + Vite）：改动后跑 `scripts/build-web.sh`（npm install + 单文件构建 + 占位符自检 + 覆盖 `Sources/Resources/capture.html`），再重新编译 App。`capture.html` 是构建产物、**不入 git**——新克隆先跑一次 `build-web.sh`；`scripts/package.sh` 打包时会自动重建（`release.sh` 用 `--no-install` 只构建不装依赖）。
 - 项目级用户规则：不代用户执行安装（brew/pip/npm 一律给脚本让用户跑）；交流用中文或英文。
 - Android 端（`android/`）：构建 `cd android && ./gradlew assembleDebug`，打包 `android/pack.sh`。**其余规则、结构与坑全在 `android/AGENTS.md`（改安卓代码前先读它），本文件不再重复。**
 
