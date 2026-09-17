@@ -64,7 +64,7 @@ extension MCPTools {
             ]) { a, _ in a }, required: ["page"]),
             outputSchema: MCPSchema.object([
                 "id": MCPSchema.string("note id"), "document_id": MCPSchema.string("document"), "page": MCPSchema.integer("1-based"),
-                "rect": MCPSchema.array(of: MCPSchema.number("0…1"), "anchor [x, y, w, h]"), "type": MCPSchema.string("type name or null"),
+                "rect": MCPSchema.array(of: MCPSchema.number("0…1"), "anchor [x, y, w, h]"), "type": MCPSchema.nullable(MCPSchema.string("type name or null")),
                 "via": MCPSchema.enumeration(["session", "library"], "written through the open tab or straight into the library"),
             ]),
             tier: .write

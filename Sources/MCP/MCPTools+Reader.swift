@@ -13,7 +13,7 @@ extension MCPTools {
             outputSchema: MCPSchema.object([
                 "window_id": MCPSchema.string("window id"), "session_id": MCPSchema.string("tab / session id"),
                 "workspace": workspaceDTOSchema,
-                "document_id": MCPSchema.string("library document id, null for an empty tab"), "title": MCPSchema.string("title"),
+                "document_id": MCPSchema.nullable(MCPSchema.string("library document id, null for an empty tab")), "title": MCPSchema.string("title"),
                 "page": MCPSchema.integer("page at the top of the viewport, 1-based"), "frac": MCPSchema.number("position inside that page, 0 top … 1 bottom"),
                 "link": MCPSchema.string("unireader:// link that reopens exactly this position"),
                 "page_count": MCPSchema.integer("pages"), "zoom": MCPSchema.number("zoom relative to fit-width"),
@@ -92,7 +92,7 @@ extension MCPTools {
                 "link": MCPSchema.string("unireader:// link that opens the document"),
                 "notes": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("note id"), "page": MCPSchema.integer("1-based"), "rect": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h]"),
-                    "quote": MCPSchema.string("quoted passage"), "text": MCPSchema.string("the note"), "type": MCPSchema.string("note type name or null"),
+                    "quote": MCPSchema.string("quoted passage"), "text": MCPSchema.string("the note"), "type": MCPSchema.nullable(MCPSchema.string("note type name or null")),
                     "display": MCPSchema.enumeration(["tap", "hover", "always"], "how the bubble opens"),
                     "style": MCPSchema.enumeration(["fill", "underline", "box"], "how the quoted passage is marked"),
                     "color": MCPSchema.string("#RRGGBB when the note has an explicit mark color; absent = the note type's color"),

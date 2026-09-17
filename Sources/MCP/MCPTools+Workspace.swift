@@ -13,13 +13,13 @@ extension MCPTools {
                                          "writes_enabled": MCPSchema.boolean("write tools allowed in Settings"),
                                          "bind": MCPSchema.enumeration(["loopback", "all"], "where the MCP service listens"),
                                          "deep_link": MCPSchema.string("format of unireader:// links that open UniReader at a document / page / note (documents and annotations also carry a ready-made `link`)")]),
-                "key_window_id": MCPSchema.string("window id of the key window, or null"),
+                "key_window_id": MCPSchema.nullable(MCPSchema.string("window id of the key window, or null")),
                 "windows": MCPSchema.array(of: MCPSchema.object([
                     "window_id": MCPSchema.string("window id"), "is_key": MCPSchema.boolean("is the key window"),
                     "workspace": workspaceDTOSchema,
                     "tabs": MCPSchema.array(of: MCPSchema.object([
                         "session_id": MCPSchema.string("tab / session id"), "is_active": MCPSchema.boolean("the visible tab"),
-                        "document_id": MCPSchema.string("library document id, null for an empty tab"),
+                        "document_id": MCPSchema.nullable(MCPSchema.string("library document id, null for an empty tab")),
                         "title": MCPSchema.string("document title"), "page": MCPSchema.integer("current page, 1-based"),
                         "page_count": MCPSchema.integer("pages"), "zoom": MCPSchema.number("zoom relative to fit-width"),
                         "canvas_mode": MCPSchema.boolean("canvas mode on"), "file_missing": MCPSchema.boolean("file could not be found")])),

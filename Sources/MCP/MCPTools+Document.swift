@@ -170,7 +170,7 @@ extension MCPTools {
                 "first_page_size_pt": MCPSchema.array(of: MCPSchema.number("points"), "[width, height] of page 1 in PDF points"),
                 "text": MCPSchema.object(["native_sample_pages": MCPSchema.integer("pages sampled"), "native_pages": MCPSchema.integer("sampled pages that have their own text"),
                                           "ocr_cached_pages": MCPSchema.integer("pages with cached OCR text")]),
-                "toc": MCPSchema.array(of: MCPSchema.object(["title": MCPSchema.string("entry"), "page": MCPSchema.integer("1-based, null if the entry has no page"),
+                "toc": MCPSchema.array(of: MCPSchema.object(["title": MCPSchema.string("entry"), "page": MCPSchema.nullable(MCPSchema.integer("1-based, null if the entry has no page")),
                                                              "children": MCPSchema.array(of: ["type": "object"])])),
             ]),
             tier: .read

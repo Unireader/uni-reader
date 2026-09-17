@@ -176,6 +176,16 @@ enum MCPSchema {
         if let description { o["description"] = description }
         return o
     }
+    /// 给一个字段类型加上「或 null」（JSON Schema `anyOf` 写法）。用于描述里写了 "or null" / "null for …"
+    /// 但底层就是普通 `string`/`integer` 类型的字段——不加这个，DTO 侧一旦真赋值 `NSNull()`，输出就会被
+    /// 客户端按 `type` 校验拒收（`data/x must be string`），哪怕文档已经说明可以是 null。
+    static func nullable(_ schema: MCPObject) -> MCPObject {
+        var inner = schema
+        let description = inner.removeValue(forKey: "description")
+        var o: MCPObject = ["anyOf": [inner, ["type": "null"]]]
+        if let description { o["description"] = description }
+        return o
+    }
     static func enumeration(_ values: [String], _ description: String, default def: String? = nil) -> MCPObject {
         var o: MCPObject = ["type": "string", "enum": values, "description": description]
         if let def { o["default"] = def }

@@ -65,7 +65,7 @@ enum MCPTools {
             "page_count": MCPSchema.integer("pages"), "group": MCPSchema.string("group name, empty = ungrouped"),
             "read_page": MCPSchema.integer("last reading position, 1-based"), "read_frac": MCPSchema.number("position inside that page, 0 top … 1 bottom"),
             "last_opened_at": MCPSchema.string("ISO-8601"), "added_at": MCPSchema.string("ISO-8601"),
-            "file": MCPSchema.object(["path": MCPSchema.string("absolute path or null"), "exists": MCPSchema.boolean("file present"),
+            "file": MCPSchema.object(["path": MCPSchema.nullable(MCPSchema.string("absolute path or null")), "exists": MCPSchema.boolean("file present"),
                                       "in_workspace": MCPSchema.boolean("copy lives inside the workspace package")]),
             "content_hash": MCPSchema.string("SHA-256 of the file"),
             "open_in": MCPSchema.array(of: MCPSchema.string("session id"), "tabs currently showing it"),
