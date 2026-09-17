@@ -200,7 +200,7 @@ struct ReaderPane: View {
         if !session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             HStack(spacing: 8) {
                 Text(findStatusText)
-                    .font(.caption).foregroundStyle(.secondary).fixedSize()
+                    .font(.caption).foregroundStyle(.primary).fixedSize()
                 Button { session.prevMatch() } label: {
                     Image(systemName: "chevron.up").frame(width: 24, height: 24)
                         .contentShape(Rectangle())

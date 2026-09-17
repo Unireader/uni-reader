@@ -506,21 +506,50 @@ final class DocSession: ObservableObject, Identifiable {
         guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
         searchMatches = matches
         isSearching = false
-        if matches.isEmpty { currentMatchIndex = nil } else { jumpToMatch(0) }
+        // 新一轮搜索的首个跳转目标不是文档里排最前的那个，是离当前阅读位置最近的那个
+        // （用户 2026-09-17 拍板：正在看第 300 页时搜索，不该先跳回第 1 页）。
+        if matches.isEmpty { currentMatchIndex = nil } else { jumpToMatch(nearestMatchIndex(in: matches)) }
     }
 
-    /// OCR 文本搜索：逐行匹配（大小写不敏感），命中行整框高亮。只覆盖已识别页。
+    /// `matches` 里离当前阅读位置（`currentMark`）最近的下标，按文档纵向距离（page+frac）算，
+    /// 前后不分方向——就是「哪个离我最近」。
+    private func nearestMatchIndex(in matches: [TextMatch]) -> Int {
+        let cur = Double(currentMark.page) + currentMark.frac
+        var best = 0
+        var bestDist = Double.greatestFiniteMagnitude
+        for (i, m) in matches.enumerated() {
+            let dist = abs(Double(m.page) + m.frac - cur)
+            if dist < bestDist { bestDist = dist; best = i }
+        }
+        return best
+    }
+
+    /// OCR 文本搜索：逐行匹配（大小写不敏感），只框住命中的那一段（有单字框数据时）。只覆盖已识别页。
     /// 走**可见行**——不然搜书名里的字（扫描件水印常就是出版方名字）会命中满屏水印碎片。
     private func searchOCR(_ q: String) -> [TextMatch] {
         let ql = q.lowercased()
         var out: [TextMatch] = []
         for page in ocrRuns.keys {
             guard let runs = ocrVisibleRuns(page: page) else { continue }
-            for r in runs where r.text.lowercased().contains(ql) {
-                out.append(TextMatch(page: page, rects: [r.rect], frac: r.y))
+            for r in runs {
+                let lowered = r.text.lowercased()
+                guard let range = lowered.range(of: ql) else { continue }
+                out.append(TextMatch(page: page, rects: [matchRect(r, range: range, in: lowered)], frac: r.y))
             }
         }
         return out.sorted { $0.page != $1.page ? $0.page < $1.page : $0.frac < $1.frac }
+    }
+
+    /// 命中行里只框住匹配到的那一段，不是整行：有逐字符边界（`chars`，PP-OCRv6 单字框）就按字符
+    /// 比例精确截取；老缓存/无单字框数据时退回整行框（唯一能给的粒度）。
+    private func matchRect(_ r: TextRun, range: Range<String.Index>, in lowered: String) -> CGRect {
+        guard let chars = r.chars, chars.count == r.text.count + 1 else { return r.rect }
+        let start = lowered.distance(from: lowered.startIndex, to: range.lowerBound)
+        let end = lowered.distance(from: lowered.startIndex, to: range.upperBound)
+        guard chars.indices.contains(start), chars.indices.contains(end) else { return r.rect }
+        let x0 = r.x + chars[start] * r.w
+        let x1 = r.x + chars[end] * r.w
+        return CGRect(x: x0, y: r.y, width: max(0, x1 - x0), height: r.h)
     }
 
     func clearSearch() {

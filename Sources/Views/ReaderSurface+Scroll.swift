@@ -325,8 +325,24 @@ extension ReaderSurface {
         follower.pageCount = layout.pageCount
         follower.interpEnabled = interpEnabled
         let cur = layout.locate(docY: scratch.topDocY)
-        follower.apply(a, currentProgress: Double(cur.page) + cur.frac)
-        if a.origin == "search" { beginMatchPulse() }
+        var target = a
+        if a.origin == "search" {
+            // 搜索命中要落在视口**中间**，不是贴顶——贴顶常被工具栏/查找胶囊挡住，找到了也看不见
+            // （用户 2026-09-17 实测反馈）。把命中行的文档 Y 上移半个视口高度再反解回 page/frac，
+            // 落地时 `followStep` 那套「对齐到顶」的公式算出来就正好是「对齐到中间」。
+            let ds = max(0.0001, dispScale)
+            let matchDocY = layout.docY(page: a.page, frac: a.frac)
+            let halfViewportDocY = (scratch.geo.containerH / ds) / 2
+            let centered = layout.locate(docY: matchDocY - halfViewportDocY)
+            target.page = centered.page
+            target.frac = centered.frac
+        }
+        follower.apply(target, currentProgress: Double(cur.page) + cur.frac)
+        // 闪烁不在这里现发——滚动动画还在半路上，此刻目标多半还没进视口，闪完用户也没看见
+        // （长距离跳转尤其明显）。改成等 `followStep` 侦测到跟随落位（`isActive` 转假）才真正播。
+        // `matchPulseEnabled` 关掉时干脆不进这条支路：`matchPulseT` 保持默认的 1，
+        // `PageCellView` 天然只画常态高亮（0.55 透明度、无外扩），没有额外分支要维护。
+        if a.origin == "search", matchPulseEnabled { scratch.matchPulsePending = true }
     }
 
     func followStep() {
@@ -336,15 +352,20 @@ extension ReaderSurface {
         // 只驱动 y，x 显式带当前值（单轴 scrollTo 会把另一轴重置为 0——scroll-x-probe T4）
         let clamped = clampOffset(CGPoint(x: scratch.geo.offsetX, y: y), pageWidth: pageW)
         pos.scrollTo(point: clamped)
+        // 跟随刚落位（这一步过后 `isActive` 转假）：目标此刻真的在视口里了，这才开始闪烁。
+        if scratch.matchPulsePending, !follower.isActive {
+            scratch.matchPulsePending = false
+            beginMatchPulse()
+        }
     }
 
-    // MARK: 搜索命中闪烁（`incomingAnchor` 收到 `origin == "search"` 时触发）
+    // MARK: 搜索命中闪烁（滚动跟随落位后触发，见 `followStep`）
     //
     // 阅读区无隐式动画红线（`PageStreamView.contentBody` 的 `.transaction { $0.animation = nil }`）
     // 覆盖了整个页元胞子树，`withAnimation` 在这里会被吞掉、静默不生效——所以跟 `zoomAnimStep` 同款，
     // 逐帧手动算出一个 0…1 的进度值直接赋给 `@State`，靠数值本身的连续变化产生动画观感。
 
-    var matchPulseDuration: CFTimeInterval { 0.3 }   // 计算属性：扩展里不能放存储属性
+    var matchPulseDuration: CFTimeInterval { 0.45 }   // 计算属性：扩展里不能放存储属性
 
     func beginMatchPulse() {
         scratch.matchPulseStartedAt = CACurrentMediaTime()

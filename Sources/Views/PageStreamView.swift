@@ -196,6 +196,8 @@ struct ReaderSurface: View {
     @State var zoomAnimOn = false         // 缩放动画进行中（驱动 TimelineView 帧源）
     @State var matchPulseOn = false       // 搜索命中切换闪烁进行中（同上，驱动 TimelineView 帧源）
     @State var matchPulseT: CGFloat = 1   // 0=刚切换命中(最亮)…1=已落定(基础透明度)；仅对当前命中生效
+    /// 设置里的开关（`SettingsView` 读同一个 key）：关闭时切换命中只显示常态高亮，不播闪烁。
+    @AppStorage("matchPulseEnabled") var matchPulseEnabled = true
     /// 缩放进行中：墨迹层走快速描边（见 `inkDrawStroke` 的 `fast`）。
     /// 用 `@State` 而非 `scratch`：进出快速态各需要一次 body 重算（后者要按高质量重画一遍）。
     @State var inkFastDraw = false

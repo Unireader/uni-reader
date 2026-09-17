@@ -55,6 +55,8 @@ struct SettingsView: View {
     @AppStorage(NoteBubble.editorFontSizeKey) private var editorFontSize = Int(NoteBubble.defaultEditorFont)
     @AppStorage(NoteBubble.minWidthKey) private var bubbleMinWidth = Int(NoteBubble.fixedMinWidth)
     @AppStorage(NoteBubble.maxWidthKey) private var bubbleMaxWidth = Int(NoteBubble.fixedMaxWidth)
+    /// 搜索切换命中时是否播放高亮闪烁动画（阅读区 `ReaderSurface` 读同一个键）。
+    @AppStorage("matchPulseEnabled") private var matchPulseEnabled = true
 
     var body: some View {
         switch tab {
@@ -244,6 +246,14 @@ struct SettingsView: View {
                 Text(L("Notes"))
             } footer: {
                 Text(L("Text size and widths apply to expanded text and image notes on the page; a short note shrinks to its content between the min and max width. Editor size applies to the note editor. Follow page zoom off: bubbles keep a fixed size on screen; on: they scale with the page, like on the tablet."))
+            }
+
+            Section {
+                Toggle(L("Flash active search match"), isOn: $matchPulseEnabled)
+            } header: {
+                Text(L("Search"))
+            } footer: {
+                Text(L("When switching between search matches, briefly flash the current match to help you spot it. Off: the match is highlighted directly with no animation."))
             }
 
             Section {

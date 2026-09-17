@@ -487,6 +487,9 @@
 "Clean Up Now" = "立即清理";
 "%d images · %d pending deletion · %@" = "图片 %d 张 · 待删除 %d 张 · %@";
 "Note bubbles follow page zoom" = "笔记气泡跟随页面缩放";
+"Search" = "搜索";
+"Flash active search match" = "命中切换时闪烁提示";
+"When switching between search matches, briefly flash the current match to help you spot it. Off: the match is highlighted directly with no animation." = "切换搜索命中时短暂闪烁当前命中，帮助你更容易找到它。关闭后命中直接显示高亮，不做动画。";
 "Click to view full size" = "点击查看原图";
 "Write a note… (Markdown)" = "写批注…（支持 Markdown）";
 "Caption… (Markdown)" = "说明…（支持 Markdown）";

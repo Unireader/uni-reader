@@ -236,10 +236,26 @@ struct PageCellView: View {
             }
             if !matchRects.isEmpty || !activeMatchRects.isEmpty {
                 Canvas { ctx, sz in
-                    for r in matchRects { fillNorm(r, in: &ctx, size: sz, color: .yellow.opacity(0.35)) }
-                    // 切换命中的瞬间更亮，`matchPulse` 在 0.3s 内从 0 回落到 1，落定后即常态 0.55。
-                    let activeOpacity = 0.55 + (1 - matchPulse) * 0.35
-                    for r in activeMatchRects { fillNorm(r, in: &ctx, size: sz, color: .orange.opacity(activeOpacity)) }
+                    // 搜索命中框自己的圆角（4pt，比其它高亮共用的 `fillNorm`/2pt 更明显）——
+                    // 不改 `fillNorm` 本身，免得连带影响文字选区/持久批注那些共用它的地方。
+                    for r in matchRects {
+                        let px = CGRect(x: r.minX * sz.width, y: r.minY * sz.height,
+                                        width: r.width * sz.width, height: r.height * sz.height)
+                        ctx.fill(Path(roundedRect: px.insetBy(dx: -1, dy: -0.5), cornerRadius: 4),
+                                 with: .color(.yellow.opacity(0.35)))
+                    }
+                    // 切换命中的瞬间更亮更大，`matchPulse` 在 `matchPulseDuration` 内从 0 回落到 1，
+                    // 落定后即常态（0.55 透明度、常规外扩）。纯色+尺寸变化，不带阴影/渐变（红线：扁平）。
+                    let ease = 1 - matchPulse
+                    let activeOpacity = 0.55 + ease * 0.45
+                    let grow = ease * 3
+                    for r in activeMatchRects {
+                        let px = CGRect(x: r.minX * sz.width, y: r.minY * sz.height,
+                                        width: r.width * sz.width, height: r.height * sz.height)
+                        let grown = px.insetBy(dx: -1 - grow, dy: -0.5 - grow * 0.4)
+                        ctx.fill(Path(roundedRect: grown, cornerRadius: 4 + grow * 0.5),
+                                 with: .color(.orange.opacity(activeOpacity)))
+                    }
                 }
                 .allowsHitTesting(false)
             }

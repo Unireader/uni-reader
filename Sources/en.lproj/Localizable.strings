@@ -485,6 +485,9 @@
 "Clean Up Now" = "Clean Up Now";
 "%d images · %d pending deletion · %@" = "%d images · %d pending deletion · %@";
 "Note bubbles follow page zoom" = "Note bubbles follow page zoom";
+"Search" = "Search";
+"Flash active search match" = "Flash active search match";
+"When switching between search matches, briefly flash the current match to help you spot it. Off: the match is highlighted directly with no animation." = "When switching between search matches, briefly flash the current match to help you spot it. Off: the match is highlighted directly with no animation.";
 "Click to view full size" = "Click to view full size";
 "Write a note… (Markdown)" = "Write a note… (Markdown)";
 "Caption… (Markdown)" = "Caption… (Markdown)";

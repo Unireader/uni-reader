@@ -18,6 +18,9 @@ final class ScrollFollower: ObservableObject {
     private var smCurrent = 0.0, smTarget = 0.0
     private var lastAnchorAt: CFTimeInterval = 0
     private var lastStepAt: CFTimeInterval = 0
+    /// 本轮跟随是否要"看得见"地飞过去（`ScrollAnchor.animate`，目前只有搜索切换命中）。
+    /// 同一套临界阻尼低通，只是换一个更慢的时间常数——不是引入弹簧/缓动（红线：只跟随不外推）。
+    private var animateMode = false
 
     // 时间戳插值状态（仅平板路径）
     private struct TSample { var t: Double; var pos: Double }
@@ -34,6 +37,7 @@ final class ScrollFollower: ObservableObject {
         let now = CACurrentMediaTime()
         lastAnchorAt = now
         isSuppressing = true
+        animateMode = a.animate
 
         if a.senderT > 0 && interpEnabled {                  // 平板：时间戳插值
             useInterp = true
@@ -61,7 +65,7 @@ final class ScrollFollower: ObservableObject {
         isActive = false
         smCurrent = 0; smTarget = 0; lastAnchorAt = 0
         buf.removeAll(); useInterp = false; haveOffset = false; clockOffset = 0
-        isSuppressing = false
+        isSuppressing = false; animateMode = false
     }
 
     /// 每帧调用；返回本帧全局进度（page+frac）。收敛后输出精确终点、自动停机，之后返回 nil。
@@ -77,7 +81,9 @@ final class ScrollFollower: ObservableObject {
             catchup = min(1.0, 60.0 * dt)                    // 快低通(~15ms)只为平掉迟到包台阶
         } else {
             target = smTarget
-            catchup = min(1.0, 22.0 * dt)                    // 本地低通（时间常数 ~45ms）
+            // 本地低通：普通滚动跟随时间常数 ~45ms（贴手感）；搜索切换命中故意放慢到 ~150ms，
+            // 让「飞过去」的过程肉眼可见（否则 45ms 基本一帧到位，看不出动画）。
+            catchup = min(1.0, (animateMode ? 8.0 : 22.0) * dt)
         }
         smCurrent += (target - smCurrent) * catchup
 

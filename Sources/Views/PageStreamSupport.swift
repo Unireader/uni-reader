@@ -297,6 +297,9 @@ final class Scratch {
     var lastPinchCommitAt: CFTimeInterval = 0   // 捏合提交限流（~60Hz，见 pinchChanged）
     var zoomAnim: ZoomAnim?        // 进行中的命令式缩放动画（pinch/⌘wheel 介入即取消）
     var matchPulseStartedAt: CFTimeInterval = 0   // 搜索命中闪烁起始时刻（算进度用，见 `matchPulseStep`）
+    /// 搜索锚点已发、跟随动画还没落位——落位后才真正开始闪烁（见 `followStep`）。
+    /// 不然长距离跳转时闪烁在滚动路上就播完了，用户根本还没看到目标就已经结束。
+    var matchPulsePending = false
     var pendingRestore: ScrollAnchor?
     var pendingZoom: CGFloat = 1           // 待恢复的缩放倍率（首帧定基准后套用）
     /// 当前 `zoom` 是「从库里恢复来的倍率」而非用户手动缩的。启动稳定窗内窗口宽度落位时，它必须按
