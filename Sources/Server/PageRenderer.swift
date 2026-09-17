@@ -67,12 +67,14 @@ enum PageRenderer {
     /// → `representation(using: .png)`，既是在后台线程用 AppKit，又要多一次 ~13MB 未压缩 TIFF
     /// 中转 + 一次全量重解码。改用与 Mac 阅读区同一条渲染原语 `PageBitmap.render`（CGContext）
     /// + `CGImageDestination` 直接编码。
-    static func image(page: PDFPage, pixelWidth: CGFloat, format: Format) -> Data? {
-        let disp = PageBitmap.displaySize(page)
+    ///
+    /// `align` = 这一页的扫描页对齐参数（没开传 nil）：平板上画的笔迹是对齐后页面的坐标，页图必须同口径。
+    static func image(page: PDFPage, pixelWidth: CGFloat, format: Format, align: PageAlign?) -> Data? {
+        let disp = PageBitmap.displaySize(page, align: align)
         guard disp.width > 0, disp.height > 0 else { return nil }
         let px = Int(min(pixelWidth, disp.width * 4).rounded())
         let t0 = CFAbsoluteTimeGetCurrent()
-        guard px > 0, let cg = PageBitmap.render(page: page, pixelWidth: px) else { return nil }
+        guard px > 0, let cg = PageBitmap.render(page: page, pixelWidth: px, align: align) else { return nil }
         let t1 = CFAbsoluteTimeGetCurrent()
         let data = encode(cg, format: format)
         let t2 = CFAbsoluteTimeGetCurrent()

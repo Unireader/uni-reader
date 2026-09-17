@@ -1,6 +1,6 @@
 // Mac 阅读区磁盘页图缓存的两条纪律测试（2026-09-02 加）。运行：
 //   cp spike/page-disk-cache-test.swift /tmp/main.swift && \
-//   swiftc -O Sources/App/PageBitmap.swift Sources/App/PageRenderEngine.swift \
+//   swiftc -O Sources/App/PageBitmap.swift Sources/App/PageRenderEngine.swift Sources/App/ScanAlign.swift \
 //          Sources/Server/PageDiskCache.swift Sources/Server/PageRenderer.swift \
 //          /tmp/main.swift -o /tmp/pdc && /tmp/pdc [某个.pdf]
 // （`PadLog` 住在 `UniReaderApp.swift` 里、带整个 app 一起走，所以本文件末尾给了个桩。）
@@ -37,7 +37,7 @@ check(PageRenderEngine.isTileKey(tile) && !PageRenderEngine.isTileKey(base0), "�
 let pdfPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
 if let doc = PDFDocument(url: URL(fileURLWithPath: pdfPath)), let page = doc.page(at: 0) {
     let before = PageBitmap.liveImages
-    guard let rendered = PageBitmap.render(page: page, pixelWidth: 800) else {
+    guard let rendered = PageBitmap.render(page: page, pixelWidth: 800, align: nil) else {
         print("  ❌ 渲染失败"); exit(1)
     }
     check(PageBitmap.liveImages.count == before.count + 1, "渲染出的图计进 liveImages")

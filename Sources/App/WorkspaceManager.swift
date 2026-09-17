@@ -434,16 +434,66 @@ final class WorkspaceManager: ObservableObject {
     /// 结果由 `DocSession` 捎带成快照，同 `libraryDocs` 的既有办法。
     func refDocIndex() -> [String: RefDocInfo] {
         guard let store else { return [:] }
+        // 开着扫描页对齐的那几份一次取齐（参考窗出图 / 页尺寸都要按对齐后的页面来，见 `RefDocInfo.align`）
+        var aligns: [String: PageAlignRow] = [:]
+        for r in (try? store.enabledPageAligns()) ?? [] { aligns[r.contentHash] = r }
         var out: [String: RefDocInfo] = [:]
         for d in documents {
             var locs = (try? store.locations(documentId: d.id)) ?? []
             locs.sort { $0.inWorkspace && !$1.inWorkspace }   // 工作区副本优先（同 openTarget）
             guard let loc = locs.first else { continue }
-            let hash = (try? store.variant(id: loc.variantId))?.contentHash ?? ""
+            let variant = try? store.variant(id: loc.variantId)
+            let hash = variant?.contentHash ?? ""
+            let align = aligns[hash].flatMap { Self.activeTable($0) }
             out[d.id] = RefDocInfo(path: resolvedPath(loc), hash: hash, title: d.title,
-                                   pageCount: d.pageCount, readPage: d.readPage, readFrac: d.readFrac)
+                                   pageCount: d.pageCount, readPage: d.readPage, readFrac: d.readFrac,
+                                   align: align)
         }
         return out
+    }
+
+    // MARK: - 扫描页对齐（page_align，v14，`SCAN-ALIGN-PLAN.md`）
+
+    /// 某份内容**正在生效**的对齐参数：开着、格式认得、页数与这份 PDF 对得上才返回，否则 nil（按没开处理）。
+    func scanAlign(contentHash: String, pageCount: Int) -> ScanAlignTable? {
+        guard !contentHash.isEmpty, let row = try? store?.pageAlign(contentHash: contentHash),
+              row.pageCount == pageCount else { return nil }
+        return Self.activeTable(row)
+    }
+
+    /// 这份内容有没有测过（开关关着也算）、测过的页数对不对得上。
+    func hasScanAlignParams(contentHash: String, pageCount: Int) -> Bool {
+        guard let row = try? store?.pageAlign(contentHash: contentHash) else { return false }
+        return row.pageCount == pageCount && ScanAlignTable.decode(row.payload, pageCount: pageCount) != nil
+    }
+
+    /// 测完落库并打开。
+    func saveScanAlign(contentHash: String, table: ScanAlignTable) {
+        let now = Date()
+        try? store?.upsertPageAlign(PageAlignRow(contentHash: contentHash, enabled: true, pageCount: table.pageCount,
+                                                 payload: table.payload, createdAt: now, updatedAt: now))
+    }
+
+    /// 只切开关（参数不动）。
+    func setScanAlignEnabled(contentHash: String, on: Bool) {
+        try? store?.setPageAlignEnabled(contentHash: contentHash, on: on)
+    }
+
+    /// 切对齐时清掉这份内容的 OCR 结果：行框是按切换前的页面坐标存的，留着就和新页面错位。
+    func deleteOCR(contentHash: String) {
+        try? store?.deleteOCRPages(contentHash: contentHash)
+    }
+
+    /// 切换前弹窗要的两个数：挂在页面坐标上的批注条数、已识别的 OCR 页数。
+    func scanAlignImpact(documentId: String, contentHash: String) -> (notes: Int, ocrPages: Int) {
+        let notes = (try? store?.pageAnchoredNoteCount(documentId: documentId)) ?? 0
+        let ocr = (try? store?.ocrPageCount(contentHash: contentHash, provider: PaddleOCR.providerID)) ?? 0
+        return (notes, ocr)
+    }
+
+    static func activeTable(_ row: PageAlignRow) -> ScanAlignTable? {
+        guard row.enabled else { return nil }
+        return ScanAlignTable.decode(row.payload, pageCount: row.pageCount)
     }
 
     // MARK: - 阅读进度

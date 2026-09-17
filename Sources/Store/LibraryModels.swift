@@ -136,6 +136,18 @@ struct OCRPage: Equatable {
     var createdAt: Date
 }
 
+/// 一份文件的扫描页对齐参数（`page_align` 表，v14，`SCAN-ALIGN-PLAN.md §3`）。
+struct PageAlignRow: Equatable {
+    var contentHash: String
+    var enabled: Bool
+    var pageCount: Int
+    var payload: Data           // JSON，解码走 `ScanAlignTable.decode`
+    var createdAt: Date         // 测量时刻
+    var updatedAt: Date         // 最近一次开 / 关（离线镜像按它取新）
+    // 解码成 `ScanAlignTable` 在 `WorkspaceManager.scanAlign(contentHash:pageCount:)`：本文件被一堆只编 Store 层的
+    // spike 直接编译，别让它依赖 App 层的类型。
+}
+
 /// ISO-8601（带小数秒）读写，供 SQLite TEXT 时间列使用；跨平台标准。
 enum ISO {
     private static let fmt: ISO8601DateFormatter = {

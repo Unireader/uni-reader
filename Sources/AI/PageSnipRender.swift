@@ -18,38 +18,40 @@ extension PageSnip {
     ///
     /// **夜间反色不进截图**：`renderTile` 本身不反色（反色是 `PageRenderEngine` 拿到图之后才加的），
     /// 所以这里天然拿到原始白底黑字——正是要发给模型的样子。
-    static func render(pdf: PDFDocument, region: Region,
+    /// `align` = 扫描页对齐参数表（没开传 nil）：切片坐标是对齐后的页面，出图也得按对齐后的来。
+    static func render(pdf: PDFDocument, region: Region, align: ScanAlignTable?,
                        quality: CGFloat = PageRenderer.defaultJPEGQuality) -> Shot? {
-        guard let (out, pages) = renderImage(pdf: pdf, region: region),
+        guard let (out, pages) = renderImage(pdf: pdf, region: region, align: align),
               let data = PageRenderer.encode(out, format: .jpeg(quality: quality)) else { return nil }
         return Shot(data: data, pixelSize: CGSize(width: out.width, height: out.height), pageCount: pages)
     }
 
     /// 同上，但只出位图不编码——图片笔记那条路要的是 PNG（`ImageAssets.prepare(_ image:)`），
     /// AI 那条路要的是 JPEG，两边共用这一份渲染。
-    static func renderImage(pdf: PDFDocument, region: Region) -> (image: CGImage, pageCount: Int)? {
+    static func renderImage(pdf: PDFDocument, region: Region, align: ScanAlignTable?) -> (image: CGImage, pageCount: Int)? {
         let sl = slices(region)
         guard !sl.isEmpty else { return nil }
 
         // ① 归一化切片 → 该页的显示坐标矩形（pt，左上原点，正是 renderTile 要的形状）
-        var boxes: [(page: PDFPage, rect: CGRect)] = []
+        var boxes: [(page: PDFPage, rect: CGRect, align: PageAlign?)] = []
         var ptW: Double = 0
         var ptH: Double = 0
         for s in sl {
             guard let page = pdf.page(at: s.page) else { continue }
-            let disp = PageBitmap.displaySize(page)
+            let pa = align?.page(s.page)
+            let disp = PageBitmap.displaySize(page, align: pa)
             let r = CGRect(x: s.rect.minX * disp.width, y: s.rect.minY * disp.height,
                            width: s.rect.width * disp.width, height: s.rect.height * disp.height)
             guard r.width > 0.5, r.height > 0.5 else { continue }
             ptW = max(ptW, Double(r.width))
             ptH += Double(r.height)
-            boxes.append((page, r))
+            boxes.append((page, r, pa))
         }
         guard !boxes.isEmpty, ptW > 0, ptH > 0 else { return nil }
 
         // ② 倍率按目标像素定
         let s = CGFloat(scale(ptWidth: ptW, ptHeight: ptH))
-        let tiles = boxes.compactMap { PageBitmap.renderTile(page: $0.page, subRect: $0.rect, scale: s) }
+        let tiles = boxes.compactMap { PageBitmap.renderTile(page: $0.page, subRect: $0.rect, scale: s, align: $0.align) }
         guard !tiles.isEmpty else { return nil }
 
         // ③ 单页直接用，跨页纵向拼接

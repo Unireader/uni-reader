@@ -83,7 +83,7 @@ extension MCPTools {
             if !quote.isEmpty {
                 guard let path = t.path else { throw MCPToolError("the document's file is missing, so the quote cannot be located; pass rect or omit quote") }
                 let idx = try PageNo.index(page, pageCount: t.pageCount)
-                guard let found = try await MCPDocReader.shared.locate(path: path, store: t.ws.store, contentHash: t.contentHash, index: idx, quote: quote) else {
+                guard let found = try await MCPDocReader.shared.locate(path: path, store: t.ws.store, contentHash: t.contentHash, index: idx, quote: quote, align: t.align) else {
                     throw MCPToolError("quote not found on page \(page); use read_pages to copy the exact text, or pass rect instead")
                 }
                 rects = found
@@ -137,7 +137,7 @@ extension MCPTools {
             let t = try await MainActor.run { try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath) }
             guard let path = t.path else { throw MCPToolError("the document's file is missing, so the passage cannot be located") }
             let idx = try PageNo.index(page, pageCount: t.pageCount)
-            guard let rects = try await MCPDocReader.shared.locate(path: path, store: t.ws.store, contentHash: t.contentHash, index: idx, quote: quote) else {
+            guard let rects = try await MCPDocReader.shared.locate(path: path, store: t.ws.store, contentHash: t.contentHash, index: idx, quote: quote, align: t.align) else {
                 throw MCPToolError("quote not found on page \(page); use read_pages to copy the exact text")
             }
             let r = try await MainActor.run {

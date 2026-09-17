@@ -252,7 +252,9 @@ final class AppModel: ObservableObject {
 
     private let renderLock = NSLock()
     private var padRenderPDF: PDFDocument?
-    private var padRenderKey = ""              // = 文档 contentHash，作缓存/版本键
+    private var padRenderKey = ""              // = 文档显示身份（`DocSession.displayKey`），作缓存/版本键
+    /// 平板页图按对齐后的页面出（`SCAN-ALIGN-PLAN.md §4`）。与 `padRenderKey` 同批换、同一把锁。
+    private var padRenderAlign: ScanAlignTable?
     /// 平板页图缓存。**按字节记额度**（`cost` = 编码后的字节数）：档位化之后同一页会有不止一份，
     /// 按条数记的 `countLimit` 拦不住内存。256MB 够装满一整本中等厚度的书的常看那几十页。
     private let pageCache: NSCache<NSString, NSData> = {
@@ -271,10 +273,11 @@ final class AppModel: ObservableObject {
     /// 主线程渲的，撞不上；把它挪下主线程修翻页卡顿后，这条竞争才暴露出来）。
     /// 各开各的实例即彻底解耦：`PDFDocument` 惰性解析，多开一份主要只是 xref 表的内存。
     /// 取不到 URL（极少见）时退回共用——功能优先，这条路径本来就没有并发保证。
-    private func setPadRender(pdf: PDFDocument, key: String) {
+    private func setPadRender(pdf: PDFDocument, key: String, align: ScanAlignTable?) {
         renderLock.lock(); defer { renderLock.unlock() }
         // 同文档已建好独立实例就不重开（`push()` 每次翻页都会调进来）。
         guard padRenderKey != key || padRenderPDF == nil else { return }
+        padRenderAlign = align
         // ⚠️ **换文档不清 `pageCache`**（2026-08-29 修，用户报「平板切标签页每次都要重新加载 PDF 页」）：
         // 缓存键里本来就带 `padRenderKey`（= contentHash），两篇文档的页图不会串；一清，平板切回
         // 上一篇就得让 Mac 把每一页重渲一遍，而这活儿占的是 `LANServer` 那条串行 queue（连笔迹 RT
@@ -292,9 +295,10 @@ final class AppModel: ObservableObject {
         releaseRefRender()
         renderLock.lock(); defer { renderLock.unlock() }
         guard padRenderPDF != nil else { return }
-        if !padRenderKey.isEmpty, sessions.contains(where: { $0.contentHash == padRenderKey }) { return }
+        if !padRenderKey.isEmpty, sessions.contains(where: { $0.displayKey == padRenderKey }) { return }
         padRenderPDF = nil
         padRenderKey = ""
+        padRenderAlign = nil
         pageCache.removeAllObjects()
     }
 
@@ -305,21 +309,23 @@ final class AppModel: ObservableObject {
     /// 只留最近一本——参考窗一次只看一本书，换书即换实例。
     private var refRenderPDF: PDFDocument?
     private var refRenderDocId = ""
-    private var refRenderKey = ""      // = contentHash，页图缓存/磁盘缓存的键前缀
+    private var refRenderKey = ""      // = 显示身份（内容哈希，开着扫描页对齐时带戳），页图缓存/磁盘缓存的键前缀
+    private var refRenderAlign: ScanAlignTable?
 
     /// 库文档 id → 路径/哈希/标题/进度。主线程注入（`WorkspaceManager` 是 `@MainActor`，
     /// 服务 queue 够不着它），由 `push()` 顺带从会话快照捎带过来。
     private var refIndex: [String: RefDocInfo] = [:]
 
     /// 服务 queue 上按 id 取参考文档的渲染实例。**必须在 `renderLock` 内调用。**
-    private func refDocLocked(_ docId: String) -> (PDFDocument?, String) {
-        if docId == refRenderDocId, refRenderPDF != nil { return (refRenderPDF, refRenderKey) }
-        guard let info = refIndex[docId] else { return (nil, "") }
+    private func refDocLocked(_ docId: String) -> (PDFDocument?, String, ScanAlignTable?) {
+        if docId == refRenderDocId, refRenderPDF != nil { return (refRenderPDF, refRenderKey, refRenderAlign) }
+        guard let info = refIndex[docId] else { return (nil, "", nil) }
         let doc = PDFDocument(url: URL(fileURLWithPath: info.path))
         refRenderPDF = doc
         refRenderDocId = doc == nil ? "" : docId
-        refRenderKey = doc == nil ? "" : (info.hash.isEmpty ? docId : info.hash)
-        return (refRenderPDF, refRenderKey)
+        refRenderKey = doc == nil ? "" : (info.hash.isEmpty ? docId : info.displayKey)
+        refRenderAlign = doc == nil ? nil : info.align
+        return (refRenderPDF, refRenderKey, refRenderAlign)
     }
 
     /// 参考窗要的文档元信息：页尺寸表 + 页数 + 进度。**JSON 走 HTTP，刻意不进线格式**——
@@ -328,15 +334,16 @@ final class AppModel: ObservableObject {
     func refDocMeta(_ docId: String) -> Data? {
         renderLock.lock()
         let info = refIndex[docId]
-        let (pdf, _) = refDocLocked(docId)
+        let (pdf, _, align) = refDocLocked(docId)
         renderLock.unlock()
         guard let info, let pdf else { return nil }
         var pages: [[Double]] = []
         pages.reserveCapacity(pdf.pageCount)
         for i in 0..<pdf.pageCount {
             guard let p = pdf.page(at: i) else { pages.append([612, 792]); continue }
-            // 与页内笔迹/平板 `layout` 同一个口径：CropBox 有效则 CropBox、否则 MediaBox，含 rotation。
-            let sz = PageBitmap.displaySize(p)
+            // 与页内笔迹/平板 `layout` 同一个口径：CropBox 有效则 CropBox、否则 MediaBox，含 rotation；
+            // 开着扫描页对齐就是对齐后的页面尺寸。
+            let sz = PageBitmap.displaySize(p, align: align?.page(i))
             pages.append([Double(sz.width), Double(sz.height)])
         }
         let dict: [String: Any] = [
@@ -371,11 +378,13 @@ final class AppModel: ObservableObject {
         renderLock.lock()
         let pdf: PDFDocument?
         let key: String
+        let align: ScanAlignTable?
         if req.docId.isEmpty {
             pdf = padRenderPDF
             key = padRenderKey
+            align = padRenderAlign
         } else {
-            (pdf, key) = refDocLocked(req.docId)
+            (pdf, key, align) = refDocLocked(req.docId)
         }
         // 缓存键必须含宽度与格式：平板按视口宽度取图（`?w=`），同一页会有不止一个档位。
         let ck = "\(key)#\(idx)@\(req.width)/\(req.format.name)" as NSString
@@ -396,7 +405,8 @@ final class AppModel: ObservableObject {
 
         PadLog.log("页图 #\(idx)@\(req.width) 未命中，开渲…")
         guard let pdf, idx >= 0, idx < pdf.pageCount, let page = pdf.page(at: idx),
-              let data = PageRenderer.image(page: page, pixelWidth: CGFloat(req.width), format: req.format) else {
+              let data = PageRenderer.image(page: page, pixelWidth: CGFloat(req.width), format: req.format,
+                                            align: align?.page(idx)) else {
             PadLog.log("页图 #\(idx)@\(req.width) 渲染失败（\(PadLog.ms(CFAbsoluteTimeGetCurrent() - t0))）")
             return nil
         }
@@ -730,7 +740,7 @@ final class AppModel: ObservableObject {
     /// 阅读区那份在视图里（`ReaderSurface.pageAspect`），这里是模型侧的同款——平板路径够不着视图。
     private func pageAspect(of s: DocSession, page: Int) -> Double {
         guard let p = s.pdf?.page(at: page) else { return 1.4142 }
-        let size = PageBitmap.displaySize(p)
+        let size = PageBitmap.displaySize(p, align: s.pageAlign(page))
         return size.width > 0 ? Double(size.height / size.width) : 1.4142
     }
 
@@ -947,7 +957,7 @@ final class AppModel: ObservableObject {
 
     private func currentPageAspect(page: Int) -> Double {
         guard let pdf = padSession?.pdf, page >= 0, page < pdf.pageCount, let pg = pdf.page(at: page) else { return 1 }
-        let b = pg.bounds(for: PageBitmap.effectiveBox(pg))
+        let b = padSession?.pageAlign(page)?.alignedSize ?? pg.bounds(for: PageBitmap.effectiveBox(pg)).size
         return b.width > 0 ? Double(b.height / b.width) : 1
     }
 
@@ -1353,10 +1363,11 @@ final class AppModel: ObservableObject {
             }
         }
         walk(s.toc, 0)
-        let key = s.contentHash + "#\(list.count)"
+        let key = s.displayKey + "#\(list.count)"
         if !force && key == pushedTOCKey { return }
         pushedTOCKey = key
-        server.broadcast(["type": "toc", "docId": s.contentHash, "list": list])
+        // docId = 显示身份（与 `layout.v` 同口径，`SCAN-ALIGN-PLAN.md §4`）：客户端只比相等
+        server.broadcast(["type": "toc", "docId": s.displayKey, "list": list])
     }
 
     /// 把当前文档的书签全量镜像推给平板（`PROTOCOL.md` 的 `bookmarks`，规格 `REQUIREMENTS.md §1.9`）。
@@ -1369,7 +1380,7 @@ final class AppModel: ObservableObject {
         let list: [[String: Any]] = s.bookmarks.map {
             ["id": $0.id.uuidString, "page": $0.page, "frac": $0.frac, "title": $0.title]
         }
-        server.broadcast(["type": "bookmarks", "docId": s.contentHash, "list": list])
+        server.broadcast(["type": "bookmarks", "docId": s.displayKey, "list": list])
     }
 
     /// 平板/网页请求加/改名/删一枚书签（`bookmarkEdit` 上行）。**Mac 是唯一真源**：这里落进
@@ -1428,8 +1439,9 @@ final class AppModel: ObservableObject {
     func push() {
         guard server.hasClients, let s = padSession, let pdf = s.pdf,
               let page = pdf.page(at: s.currentPageIndex) else { return }
-        setPadRender(pdf: pdf, key: s.contentHash)   // 方案 B：更新按页渲染源
-        let b = page.bounds(for: PageBitmap.effectiveBox(page))
+        setPadRender(pdf: pdf, key: s.displayKey, align: s.scanAlign)   // 方案 B：更新按页渲染源
+        // 开着扫描页对齐：页面尺寸是对齐后的（`SCAN-ALIGN-PLAN.md §4`）
+        let b = s.pageAlign(s.currentPageIndex)?.alignedSize ?? page.bounds(for: PageBitmap.effectiveBox(page)).size
         server.setPage(index: s.currentPageIndex,
                        count: pdf.pageCount,
                        width: Double(b.width),
@@ -1444,7 +1456,8 @@ final class AppModel: ObservableObject {
     /// 平板收到新 docId 的 layout 会清空本地笔迹，不补发就得等下一次书写/擦除才恢复。
     /// 必须在 pushLayout 之后调用：平板上 layout 清空在前、strokes 恢复在后。
     private func pushStrokesIfDocChanged(_ s: DocSession) {
-        let key = s.documentId ?? s.contentHash
+        // 带上显示身份：扫描页对齐一切换 `layout.v` 就变，平板据此清空本地笔迹——这里不跟着补发就一直空着
+        let key = (s.documentId ?? s.contentHash) + "|" + s.displayKey
         guard !key.isEmpty, key != pushedStrokesKey else { return }
         pushedStrokesKey = key
         broadcastStrokes()
@@ -1469,18 +1482,23 @@ final class AppModel: ObservableObject {
     /// 避免每次滚动/翻页重广播 layout，减少平板端无谓 relayout 与回环噪声。
     func pushLayout(force: Bool = false) {
         guard server.hasClients, let s = padSession, let pdf = s.pdf else { return }
-        if !force && s.contentHash == pushedLayoutKey { return }
-        pushedLayoutKey = s.contentHash
+        let key = s.displayKey
+        if !force && key == pushedLayoutKey { return }
+        pushedLayoutKey = key
         var pages: [[Double]] = []
         pages.reserveCapacity(pdf.pageCount)
         for i in 0..<pdf.pageCount {
-            let b = pdf.page(at: i).map { $0.bounds(for: PageBitmap.effectiveBox($0)) } ?? .zero
+            // 开着扫描页对齐：对齐后的页面尺寸（参数表里现成，不碰 PDF）
+            let b = s.pageAlign(i)?.alignedSize
+                ?? pdf.page(at: i).map { $0.bounds(for: PageBitmap.effectiveBox($0)).size } ?? .zero
             pages.append([Double(b.width), Double(b.height)])
         }
+        // docId / v = 显示身份（`SCAN-ALIGN-PLAN.md §4`）：没开对齐就是内容哈希，与从前逐字节相同；
+        // 开着时带戳，平板页图缓存按 `v` 换键，目录 / 书签的核对也用同一个值。
         server.broadcast([
             "type": "layout",
-            "docId": s.contentHash,
-            "v": s.contentHash,
+            "docId": key,
+            "v": key,
             "count": pdf.pageCount,
             "pages": pages
         ])

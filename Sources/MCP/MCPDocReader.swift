@@ -94,10 +94,12 @@ final class MCPDocReader {
     }
 
     /// 页数、首页尺寸、目录树（`TOCEntry.build` 与阅读区同一份实现）。
-    func summary(path: String, includeTOC: Bool) async throws -> Summary {
+    /// `align` = 扫描页对齐参数表（没开传 nil），下同：页尺寸 / 目录落点 / 命中框 / 页图都按对齐后的页面。
+    func summary(path: String, includeTOC: Bool, align: ScanAlignTable?) async throws -> Summary {
         try await withDocument(path: path) { doc in
-            let size = doc.page(at: 0).map { PageBitmap.displaySize($0) } ?? .zero
-            return Summary(pageCount: doc.pageCount, firstPageSize: size, toc: includeTOC ? TOCEntry.build(from: doc) : [])
+            let size = doc.page(at: 0).map { PageBitmap.displaySize($0, align: align?.page(0)) } ?? .zero
+            return Summary(pageCount: doc.pageCount, firstPageSize: size,
+                           toc: includeTOC ? TOCEntry.build(from: doc, align: align) : [])
         }
     }
 
@@ -112,7 +114,8 @@ final class MCPDocReader {
 
     /// 原生文本搜索：`PDFDocument.findString`（与 ⌘F 同一条路），命中前后各扩 `context` 个字符做摘要。
     /// `pages` = nil 不限页。结果按页、页内位置排序；最多 `maxHits` 条。
-    func searchNative(path: String, query: String, pages: Set<Int>?, context: Int, maxHits: Int) async throws -> [Hit] {
+    func searchNative(path: String, query: String, pages: Set<Int>?, context: Int, maxHits: Int,
+                      align: ScanAlignTable?) async throws -> [Hit] {
         try await withDocument(path: path) { doc in
             let sels = doc.findString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
             var out: [Hit] = []
@@ -121,7 +124,7 @@ final class MCPDocReader {
                 let idx = doc.index(for: page)
                 guard idx >= 0, idx < doc.pageCount else { continue }
                 if let pages, !pages.contains(idx) { continue }
-                let rects = PageGeometry.normalizedLineRects(of: sel, in: doc)[idx] ?? []
+                let rects = PageGeometry.normalizedLineRects(of: sel, in: doc, align: { align?.page($0) })[idx] ?? []
                 // 摘要：复制一份选区往两头扩，取字符串再把换行压平
                 let wide = sel.copy() as! PDFSelection
                 wide.extend(atStart: context)
@@ -162,11 +165,12 @@ final class MCPDocReader {
 
     /// 在某一页上找一段原文（批 3 `add_note` / `add_highlight` 的锚点）：先原生 `findString`，
     /// 没有再在 OCR 缓存的行里找（整行包含就算）。返回归一化行框；找不到 → nil，**不猜**。
-    func locate(path: String, store: LibraryStore?, contentHash: String, index: Int, quote: String) async throws -> [CGRect]? {
+    func locate(path: String, store: LibraryStore?, contentHash: String, index: Int, quote: String,
+                align: ScanAlignTable?) async throws -> [CGRect]? {
         let native: [CGRect]? = try await withDocument(path: path) { doc in
             for sel in doc.findString(quote, withOptions: [.caseInsensitive, .diacriticInsensitive]) {
                 guard let page = sel.pages.first, doc.index(for: page) == index else { continue }
-                let rects = PageGeometry.normalizedLineRects(of: sel, in: doc)[index] ?? []
+                let rects = PageGeometry.normalizedLineRects(of: sel, in: doc, align: { align?.page($0) })[index] ?? []
                 if !rects.isEmpty { return rects }
             }
             return nil
@@ -200,13 +204,15 @@ final class MCPDocReader {
     }
 
     /// 渲一页（与平板 `/page.png` 同一条原语：`PageBitmap.render` + `PageRenderer.encode`）。
-    func render(path: String, index: Int, pixelWidth: Int, format: PageRenderer.Format) async throws -> Rendered {
+    func render(path: String, index: Int, pixelWidth: Int, format: PageRenderer.Format,
+                align: ScanAlignTable?) async throws -> Rendered {
         try await withDocument(path: path) { doc in
             guard let page = doc.page(at: index) else { throw MCPToolError("page \(index + 1) not found") }
-            let disp = PageBitmap.displaySize(page)
+            let pa = align?.page(index)
+            let disp = PageBitmap.displaySize(page, align: pa)
             guard disp.width > 0, disp.height > 0 else { throw MCPToolError("page \(index + 1) has no size") }
             let px = Int(min(CGFloat(pixelWidth), disp.width * 4).rounded())
-            guard px > 0, let cg = PageBitmap.render(page: page, pixelWidth: px),
+            guard px > 0, let cg = PageBitmap.render(page: page, pixelWidth: px, align: pa),
                   let data = PageRenderer.encode(cg, format: format) else {
                 throw MCPToolError("cannot render page \(index + 1)")
             }

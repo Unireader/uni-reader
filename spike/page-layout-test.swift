@@ -1,5 +1,6 @@
 // PageLayout 纯数学测试（编译真实源文件，非副本）。
-// 运行：swiftc spike/page-layout-test.swift Sources/App/PageLayout.swift Sources/App/PageBitmap.swift -o /tmp/layout-test && /tmp/layout-test
+// 运行：swiftc spike/page-layout-test.swift Sources/App/PageLayout.swift Sources/App/PageBitmap.swift Sources/App/ScanAlign.swift -o /tmp/layout-test && /tmp/layout-test
+// （`PageBitmap` 的 `align` 参数类型在 `ScanAlign.swift`，2026-09-17 起要一起编）
 
 import Foundation
 import PDFKit

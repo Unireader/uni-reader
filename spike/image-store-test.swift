@@ -71,7 +71,7 @@ check(max(thumb.width, thumb.height) == 20, "load(maxPixel:) 出缩略图")
 
 print("— 库：登记 + 引用计数 —")
 let store = try! LibraryStore(workspaceFolder: ws)
-check(store.meta("schema_version") == "13", "schema v13")
+check(Int(store.meta("schema_version") ?? "") ?? 0 >= 13, "schema ≥ v13（image 表所在的版本）")
 let (doc, _) = try! store.findOrCreate(hash: "h1", title: "书", pageCount: 10, path: "/tmp/a.pdf")
 let now = Date()
 func lib(_ p: ImageAssets.Prepared) -> LibImage {

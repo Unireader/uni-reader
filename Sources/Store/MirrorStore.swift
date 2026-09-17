@@ -185,6 +185,20 @@ enum MirrorStore {
         return out
     }
 
+    /// 一个库里 `page_align` 的「内容 hash → updated_at」（`SCAN-ALIGN-PLAN.md §5`，不带 payload）。
+    /// **表不存在就当空**：安卓建的库（`Schema.kt` 早于 v14）和没被新版 Mac 打开过的老库都没有这张表，
+    /// 查不到表就抛错的话整次同步都会失败。
+    static func alignStamps(_ db: SQLiteDB) throws -> [String: String] {
+        let has = try db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='page_align'")
+        guard !has.isEmpty else { return [:] }
+        var out: [String: String] = [:]
+        for row in try db.query("SELECT content_hash, updated_at FROM page_align") {
+            guard let hash = row["content_hash"] as? String, let u = row["updated_at"] as? String else { continue }
+            out[hash] = u
+        }
+        return out
+    }
+
     /// 一个工作区里**真正拿得出来**的图片（`IMAGE-NOTE-PLAN.md §7`）：`image` 表有行 **且** `Images/` 里文件在。
     /// 只有这样的图才能补给对面；行在文件不在（拷一半被拔盘）的算「缺」，对面有的话会补回来。
     /// 已待删除且**到期**的不算——马上要清的东西没必要搬。
@@ -212,7 +226,9 @@ enum MirrorStore {
                            mineOCR: try ocrKeys(mirror),
                            theirsOCR: try source.mirrorOCRKeys(),
                            mineImages: try mirrorFolder.map { try imageKeys(mirror, folder: $0) } ?? [],
-                           theirsImages: mirrorFolder == nil ? [] : try source.mirrorImageKeys())
+                           theirsImages: mirrorFolder == nil ? [] : try source.mirrorImageKeys(),
+                           mineAlign: try alignStamps(mirror),
+                           theirsAlign: try source.mirrorAlignStamps())
     }
 
     /// 两侧合起来的 `documentId → 书名`，给报告用。

@@ -292,7 +292,7 @@ extension ReaderSurface {
             guard PageRenderEngine.shared.cached(key) == nil else { continue }
             PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
                                                   tileRect: nil, tileScale: 1, night: scratch.nightLive,
-                                                  diskCache: !isZooming)) { _, _ in }
+                                                  diskCache: !isZooming, align: session.pageAlign(i))) { _, _ in }
         }
         return keys
     }
@@ -325,7 +325,8 @@ extension ReaderSurface {
         // 🔴 缩放**过程中**的中间宽度不落盘：`currentBaseWidth()` 不分档，每停一下就是一整套新键，
         // 全写进去就是拿磁盘换一堆再也不会被问到的图（同 `recentBaseWidths` 只留 4 档的账）。
         PageRenderEngine.shared.request(.init(key: key, doc: doc, index: index, pixelWidth: width,
-                                              night: night, diskCache: !isZooming)) { doneKey, img in
+                                              night: night, diskCache: !isZooming,
+                                              align: session.pageAlign(index))) { doneKey, img in
             ZoomProbe.measure("图落地") {
             // 页已经滚出留图范围：不写。图已在缓存里，滑回来照样命中；写进 `images` 就要等下一次
             // 窗口变动才被驱逐，空闲窗口里等于永久挂着。
@@ -392,14 +393,16 @@ extension ReaderSurface {
                 tiles[i] = PageTile(normRect: norm, image: hit)
                 continue
             }
-            // 子矩形按页自然显示坐标（pt）+ 像素比例
-            let natural = PageBitmap.displaySize(page)
+            // 子矩形按页自然显示坐标（pt，开着扫描页对齐就是对齐后的页面）+ 像素比例
+            let align = session.pageAlign(i)
+            let natural = PageBitmap.displaySize(page, align: align)
             let sub = CGRect(x: norm.minX * natural.width, y: norm.minY * natural.height,
                              width: norm.width * natural.width, height: norm.height * natural.height)
             let scale = (pageW * displayScale) / max(1, natural.width)
             let idx = i
             PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: nil,
-                                                  tileRect: sub, tileScale: scale, night: scratch.nightLive)) { doneKey, img in
+                                                  tileRect: sub, tileScale: scale, night: scratch.nightLive,
+                                                  align: align)) { doneKey, img in
                 // 页已滚出留图范围的迟到贴片不写（同 `requestBase` 那条守门）。
                 guard scratch.keepRange.contains(idx) else { return }
                 if doneKey == tileKeyFor(page: idx, normRect: norm) {

@@ -144,7 +144,7 @@ extension ReaderSurface {
         guard layout != nil, scratch.didInitialGeo, let pdf = session.pdf, pdf.pageCount > 0 else { return }
         let idx = min(max(0, session.currentPageIndex), pdf.pageCount - 1)
         guard let page = pdf.page(at: idx) else { return }
-        let w = PageBitmap.displaySize(page).width
+        let w = PageBitmap.displaySize(page, align: session.pageAlign(idx)).width
         guard w > 0, basis > 0 else { return }
         animateZoom(to: w / basis, anchorP: viewportCenter)
     }

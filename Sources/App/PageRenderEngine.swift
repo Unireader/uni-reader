@@ -38,16 +38,22 @@ final class PageRenderEngine {
         ///   全落盘就是拿磁盘换一堆再也不会被问到的图）。
         /// 调用方只在「稳定态的整页基图」上打开它 —— 那正是下次开这本书要的那一套。
         var diskCache = false
+        /// 这一页的扫描页对齐参数（`SCAN-ALIGN-PLAN.md`，没开为 nil）。**值类型、入队时就拷好**——渲染在后台队列上跑，
+        /// 不回头读会话。键里的 doc 部分必须是 `displayKey`（开关一变键就变），否则会读到另一种页面的旧图。
+        var align: PageAlign?
 
         init(key: String, page: PDFPage, pixelWidth: Int? = nil, tileRect: CGRect? = nil, tileScale: CGFloat = 1,
-             night: Bool, diskCache: Bool = false) {
+             night: Bool, diskCache: Bool = false, align: PageAlign?) {
             self.key = key; pageSource = .page(page); self.pixelWidth = pixelWidth
             self.tileRect = tileRect; self.tileScale = tileScale; self.night = night; self.diskCache = diskCache
+            self.align = align
         }
         /// 页对象到渲染队列上再取（见 `PageSource.lazy`）。
-        init(key: String, doc: PDFDocument, index: Int, pixelWidth: Int?, night: Bool, diskCache: Bool = false) {
+        init(key: String, doc: PDFDocument, index: Int, pixelWidth: Int?, night: Bool, diskCache: Bool = false,
+             align: PageAlign?) {
             self.key = key; pageSource = .lazy(doc, index); self.pixelWidth = pixelWidth
             tileRect = nil; tileScale = 1; self.night = night; self.diskCache = diskCache
+            self.align = align
         }
     }
 
@@ -200,7 +206,7 @@ final class PageRenderEngine {
     }
 
     /// 贴片键判别：`baseKey` 形如 `<doc>#<page>#w…`、`tileKey` 形如 `<doc>#<page>#t…`，
-    /// 而 doc 是内容哈希（十六进制，不含 `#`）→ 键里出现 `#t` 只可能来自贴片标记。
+    /// 而 doc 是显示身份（内容哈希，开着扫描页对齐时再带 `~a<戳>`，都不含 `#`）→ 键里出现 `#t` 只可能来自贴片标记。
     static func isTileKey(_ key: String) -> Bool { key.contains("#t") }
 
     private func store(_ key: String) -> RenderImageCache { Self.isTileKey(key) ? tileCache : cache }
@@ -346,9 +352,9 @@ final class PageRenderEngine {
             }
             if out == nil, let page = r.pageSource.resolve() {   // `.lazy` 在这里才取页对象（解析在渲染队列上）
                 if let rect = r.tileRect {
-                    out = PageBitmap.renderTile(page: page, subRect: rect, scale: r.tileScale)
+                    out = PageBitmap.renderTile(page: page, subRect: rect, scale: r.tileScale, align: r.align)
                 } else if let pw = r.pixelWidth {
-                    out = PageBitmap.render(page: page, pixelWidth: pw)
+                    out = PageBitmap.render(page: page, pixelWidth: pw, align: r.align)
                 }
                 // 落盘的是**反色之前**那张（亮色版，见上面的红线）。编码在磁盘缓存自己的队列上做，
                 // 不占这条渲染队列。

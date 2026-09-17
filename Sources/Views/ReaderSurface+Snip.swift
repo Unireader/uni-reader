@@ -177,8 +177,9 @@ extension ReaderSurface {
 
         // 🔴 渲染走 `PageRenderEngine` 那条队列，不在主线程：阅读区的页图渲染就在它上面，
         // 同一份 `PDFDocument` 不能被并发使用。
+        let align = session.scanAlign
         PageRenderEngine.shared.renderOffMain {
-            PageSnip.render(pdf: pdf, region: region)
+            PageSnip.render(pdf: pdf, region: region, align: align)
         } completion: { shot in
             guard let shot else {
                 showSnipToast(SnipToast(kind: .fail, text: L("Could not capture that area.")))

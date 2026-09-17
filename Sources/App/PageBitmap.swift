@@ -20,48 +20,60 @@ import PDFKit
 enum PageBitmap {
     /// 该页实际显示用的 box：优先 CropBox，退化（未定义/零尺寸）时退回 MediaBox。
     /// 渲染、选区坐标归一化、TOC 跳转、平板页面宽高必须用同一个 box，否则互相错位。
+    /// （开着扫描页对齐时，「页面」是这个 box 转正后再过一道对齐变换的样子，见 `displaySize` 的 `align`。）
     static func effectiveBox(_ page: PDFPage) -> PDFDisplayBox {
         let crop = page.bounds(for: .cropBox)
         return (crop.width > 0 && crop.height > 0) ? .cropBox : .mediaBox
     }
 
     /// 页的显示尺寸（pt，已含旋转换边）。
-    static func displaySize(_ page: PDFPage) -> CGSize {
+    ///
+    /// `align` = 这一页的扫描页对齐参数（`SCAN-ALIGN-PLAN.md`，没开就传 nil）。开着时「页面」就是对齐后的那张
+    /// `(W, sh)`——出图、页尺寸、归一化坐标全按它。**参数刻意不给默认值**：每个出图口都得想清楚自己要哪一种，
+    /// 漏传一处就是那一处的页面和笔迹对不上。
+    static func displaySize(_ page: PDFPage, align: PageAlign?) -> CGSize {
+        if let align { return align.alignedSize }
         let b = page.bounds(for: effectiveBox(page))
         let rot = ((page.rotation % 360) + 360) % 360
         return rot % 180 == 0 ? b.size : CGSize(width: b.height, height: b.width)
     }
 
     /// 整页渲染（宽 pixelWidth 像素，白底）。
-    static func render(page: PDFPage, pixelWidth: Int) -> CGImage? {
-        let disp = displaySize(page)
+    static func render(page: PDFPage, pixelWidth: Int, align: PageAlign?) -> CGImage? {
+        let disp = displaySize(page, align: align)
         guard disp.width > 0, disp.height > 0, pixelWidth > 0 else { return nil }
         let scale = CGFloat(pixelWidth) / disp.width
         return draw(page: page,
                     pixelSize: CGSize(width: CGFloat(pixelWidth), height: (disp.height * scale).rounded()),
                     scale: scale,
-                    subOrigin: .zero)
+                    subOrigin: .zero,
+                    align: align)
     }
 
-    /// 子矩形贴片：`subRect` 为「页显示坐标、左上原点」的区域（pt）；`scale` = 像素/pt。
-    static func renderTile(page: PDFPage, subRect: CGRect, scale: CGFloat) -> CGImage? {
-        let disp = displaySize(page)
+    /// 子矩形贴片：`subRect` 为「页显示坐标、左上原点」的区域（pt，开着对齐就是对齐后的页面坐标）；`scale` = 像素/pt。
+    static func renderTile(page: PDFPage, subRect: CGRect, scale: CGFloat, align: PageAlign?) -> CGImage? {
+        let disp = displaySize(page, align: align)
         guard subRect.width > 0, subRect.height > 0, scale > 0 else { return nil }
         return draw(page: page,
                     pixelSize: CGSize(width: (subRect.width * scale).rounded(),
                                       height: (subRect.height * scale).rounded()),
                     scale: scale,
-                    subOrigin: CGPoint(x: subRect.minX, y: disp.height - subRect.maxY))  // 左上原点 → CG 底左原点
+                    subOrigin: CGPoint(x: subRect.minX, y: disp.height - subRect.maxY),  // 左上原点 → CG 底左原点
+                    align: align)
     }
 
     /// 整页/贴片的实际绘制（几何在调用方算好）。内存与像素格式的全部纪律在 `makeImage`。
-    private static func draw(page: PDFPage, pixelSize: CGSize, scale: CGFloat, subOrigin: CGPoint) -> CGImage? {
+    /// 对齐：先铺白底，再在「对齐后的页面坐标」里套上 `cgTransform` 画原页——转出页外的角被裁掉，
+    /// 页内空出来的角是白的（`SCAN-ALIGN-PLAN.md §2.2`）。
+    private static func draw(page: PDFPage, pixelSize: CGSize, scale: CGFloat, subOrigin: CGPoint,
+                             align: PageAlign?) -> CGImage? {
         makeImage(pixelWidth: Int(pixelSize.width), pixelHeight: Int(pixelSize.height)) { ctx in
             ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
             ctx.fill(CGRect(origin: .zero, size: pixelSize))
             ctx.interpolationQuality = .high
             ctx.scaleBy(x: scale, y: scale)
             ctx.translateBy(x: -subOrigin.x, y: -subOrigin.y)
+            if let align { ctx.concatenate(align.cgTransform) }
             page.draw(with: effectiveBox(page), to: ctx)
         }
     }

@@ -17,7 +17,8 @@ struct PageLayout {
         var hs: [CGFloat] = []
         hs.reserveCapacity(doc.pageCount)
         for i in 0..<doc.pageCount {
-            let s = doc.page(at: i).map { PageBitmap.displaySize($0) } ?? CGSize(width: 1, height: 1.4)
+            // 原始页面的尺寸（开着扫描页对齐时调用方走 `init(heights:)` + 参数表，不走这里）
+            let s = doc.page(at: i).map { PageBitmap.displaySize($0, align: nil) } ?? CGSize(width: 1, height: 1.4)
             hs.append(s.width > 0 ? s.height / s.width * Self.refWidth : Self.refWidth * 1.4)
         }
         self.init(heights: hs)

@@ -69,8 +69,11 @@ final class RefWindowModel: ObservableObject {
     @Published private(set) var title = ""
     @Published private(set) var pdf: PDFDocument?
     @Published private(set) var layout: PageLayout?
-    /// 页图缓存键的 doc 段 = 内容哈希，与阅读区同口径 —— 参考的若正是当前这本，**缓存直接共用**。
+    /// 页图缓存键的 doc 段 = 显示身份（内容哈希，开着扫描页对齐时带戳），与阅读区同口径 ——
+    /// 参考的若正是当前这本，**缓存直接共用**。
     @Published private(set) var docKey = ""
+    /// 这本书的扫描页对齐参数（没开为 nil）：小窗的页图与页尺寸也按对齐后的页面来。
+    private(set) var align: ScanAlignTable?
     /// 这本书的目录（`TOCEntry.build` 是纯函数，与阅读区同一份解析，含坏书签的处置）。
     /// 用户 2026-09-02：「参考小窗支持 toc 跳转」——对照习题/答案时按章节翻比拖滚动条实在。
     /// 仍不违反「只读」：跳转只动小窗自己的视口，**不写回那本书的阅读进度**（方案 §3 红线）。
@@ -147,10 +150,13 @@ final class RefWindowModel: ObservableObject {
         // PDFKit 内部状态，2026-07-27 实测表现为 Mac 阅读区整片白屏、须手动翻页才恢复。
         releaseRenderClaim()
         docID = documentId
+        let al = workspace.scanAlign(contentHash: target.hash, pageCount: doc.pageCount)
+        align = al
         pdf = doc
-        layout = PageLayout(doc: doc)
-        toc = TOCEntry.build(from: doc)
-        docKey = target.hash.isEmpty ? documentId : target.hash
+        layout = al.map { PageLayout(heights: $0.heights(refWidth: Double(PageLayout.refWidth)).map { CGFloat($0) }) }
+            ?? PageLayout(doc: doc)
+        toc = TOCEntry.build(from: doc, align: al)
+        docKey = target.hash.isEmpty ? documentId : ScanAlignTable.displayKey(contentHash: target.hash, table: al)
         title = workspace.document(id: documentId)?.title ?? ""
         let p = workspace.progress(documentId: documentId)
         seedPage = min(max(0, p.page), max(0, doc.pageCount - 1))

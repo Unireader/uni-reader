@@ -98,6 +98,14 @@ enum MirrorReport {
             if !plan.imagesToMirror.isEmpty { bits.append("拉回本机 \(plan.imagesToMirror.count) 张") }
             out.append(Line(text: also("补齐图片文件：" + bits.joined(separator: "、"))))
         }
+        // 扫描页对齐：开关 / 参数整行按较新的那边覆盖（`SCAN-ALIGN-PLAN.md §5`）
+        if !plan.alignToSource.isEmpty || !plan.alignToMirror.isEmpty {
+            var bits: [String] = []
+            if !plan.alignToSource.isEmpty { bits.append("写入硬盘 \(plan.alignToSource.count) 本") }
+            if !plan.alignToMirror.isEmpty { bits.append("拉回本机 \(plan.alignToMirror.count) 本") }
+            let names = (plan.alignToSource + plan.alignToMirror).map { hashTitles[$0] ?? "（未知文档）" }
+            out.append(Line(text: also("扫描页对齐设置：" + bits.joined(separator: "、")), detail: names))
+        }
         if !plan.conflicts.isEmpty {
             out.append(Line(text: "冲突 \(plan.conflicts.count) 条", detail: conflictLines(plan, titles: titles)))
         }
@@ -200,6 +208,8 @@ enum MirrorReport {
         if ocr > 0 { bits.append("识别结果 \(ocr) 页") }
         let images = plan.imagesToSource.count + plan.imagesToMirror.count
         if images > 0 { bits.append("图片 \(images) 张") }
+        let aligns = plan.alignToSource.count + plan.alignToMirror.count
+        if aligns > 0 { bits.append("扫描页对齐 \(aligns) 本") }
         if !bits.isEmpty { return bits.joined(separator: " · ") }
         return plan.progressMerges.isEmpty ? "只更新「上次打开」" : "只更新阅读进度"
     }

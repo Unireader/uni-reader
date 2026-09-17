@@ -178,7 +178,7 @@ struct ScratchPadOverlay: View {
     /// 锚定页的显示纵横比（页高/页宽，CropBox 优先 + rotation，与页内笔迹同一个口径）。
     private var pageAspect: Double {
         guard let page = session.pdf?.page(at: pad.anchorPage) else { return 1.4142 }
-        let s = PageBitmap.displaySize(page)
+        let s = PageBitmap.displaySize(page, align: session.pageAlign(pad.anchorPage))
         return s.width > 0 ? Double(s.height / s.width) : 1.4142
     }
     /// 页面底图在画布坐标下的矩形（契约见 `ScratchPad.pageRect`）。
@@ -218,7 +218,8 @@ struct ScratchPadOverlay: View {
             return
         }
         let padID = pad.id
-        PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: w, night: false)) { doneKey, img in
+        PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: w, night: false,
+                                              align: session.pageAlign(pad.anchorPage))) { doneKey, img in
             // ⚠️ 逃逸闭包里的 `pad` 是落笔那一刻的**值拷贝**（同 `isFrontWindow` 记的那个坑）：
             // 图渲完可能已经关了开关/切了纸，判据一律从引用类型 `session` 现读。
             guard doneKey == key, session.openPadID == padID,

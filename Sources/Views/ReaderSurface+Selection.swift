@@ -39,7 +39,8 @@ extension ReaderSurface {
     func pageSpacePoint(_ n: (page: Int, nx: CGFloat, ny: CGFloat)) -> CGPoint? {
         guard let pdf = session.pdf, let pdfPage = pdf.page(at: n.page) else { return nil }
         let mb = pdfPage.bounds(for: PageBitmap.effectiveBox(pdfPage))
-        return PageGeometry.pageSpacePoint(normX: n.nx, normY: n.ny, box: mb, rotation: pdfPage.rotation)
+        return PageGeometry.pageSpacePoint(normX: n.nx, normY: n.ny, box: mb, rotation: pdfPage.rotation,
+                                           align: session.pageAlign(n.page))
     }
 
     /// 该页可用的 OCR 行文本层（非空才返回）；有它就覆盖不准的原生文本。
@@ -53,7 +54,8 @@ extension ReaderSurface {
             if selection != nil { selection = nil }
             return
         }
-        selection = TextSelection(rects: PageGeometry.normalizedLineRects(of: sel, in: pdf),
+        let align = session.scanAlign
+        selection = TextSelection(rects: PageGeometry.normalizedLineRects(of: sel, in: pdf, align: { align?.page($0) }),
                                   text: sel.string ?? "")
     }
 

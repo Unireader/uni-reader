@@ -793,7 +793,7 @@ struct ReaderSurface: View {
     /// （抽成方法而不是内联在 `onDisappear` 里：那条修饰符链早就到顶，多两行就
     /// 「unable to type-check in reasonable time」——本文件的老地雷。）
     func releaseRenderCache() {
-        let stillOpen = app.sessions.contains { $0.contentHash == docKey }
+        let stillOpen = app.sessions.contains { $0.displayKey == docKey }
         guard !stillOpen else {
             // **切到后台的标签**：图要留着（切回来靠它零加载），但只留**当前这一档宽度**。
             // 🔴 原样全留是不行的（2026-08-29 实测：3 个标签用一阵子 footprint 1617MB、峰值 1919MB）——
@@ -816,13 +816,18 @@ struct ReaderSurface: View {
         // 库里有这份内容的每页高度（`page_geom`）就一行读完，不用遍历 340 页 `page.bounds`
         //（冷的外置盘上那是 ~100ms，账本 `布局计算 96(316页)`）。
         var fromStore: [Double]?
-        if session.cachedLayout == nil, let store = session.store, !session.contentHash.isEmpty {
+        // 开着扫描页对齐：页高直接由参数表算（对齐后页宽统一），不碰 `page_geom`——那张表存的是原始页面的高
+        let align = session.scanAlign
+        if session.cachedLayout == nil, align == nil, let store = session.store, !session.contentHash.isEmpty {
             let hash = session.contentHash, n = pdf.pageCount
             fromStore = session.openTrace.phase("布局读库") { try? store.pageHeights(contentHash: hash, pageCount: n) }
         }
         if let cached = session.cachedLayout {
             lay = cached
             session.openTrace?.markOnce("布局", "缓存命中")
+        } else if let align {
+            lay = PageLayout(heights: align.heights(refWidth: Double(PageLayout.refWidth)).map { CGFloat($0) })
+            session.openTrace?.markOnce("布局", "对齐参数")
         } else if let hs = fromStore {
             lay = PageLayout(heights: hs.map { CGFloat($0) })
             session.openTrace?.markOnce("布局", "库缓存")

@@ -260,7 +260,7 @@ struct RefPageStream: View {
             PageRenderEngine.shared.request(
                 // 落盘：小窗的宽度本来就走档位阶梯（`snapWidth`），键稳定、复用率高。
                 .init(key: k, page: page, pixelWidth: w, tileRect: nil, tileScale: 1, night: nightMode,
-                      diskCache: true)
+                      diskCache: true, align: model.align?.page(i))
             ) { doneKey, img in
                 guard scratch.keepRange.contains(i) else { return }   // 页已滚出窗口的迟到完成不写
                 // 仍是当前期望的那一版（宽度/夜间都没变过）才写；否则只在这页空着时先顶上。

@@ -16,7 +16,8 @@ struct TOCEntry: Identifiable {
     var childrenOrNil: [TOCEntry]? { children.isEmpty ? nil : children }
 
     /// 从 PDF 的 outlineRoot 递归构建目录树。
-    static func build(from doc: PDFDocument) -> [TOCEntry] {
+    /// `align` = 扫描页对齐参数表（没开传 nil）：开着时落点的页内比例按对齐后的页面算。
+    static func build(from doc: PDFDocument, align: ScanAlignTable?) -> [TOCEntry] {
         guard let root = doc.outlineRoot else { return [] }
         func walk(_ o: PDFOutline) -> [TOCEntry] {
             var out: [TOCEntry] = []
@@ -30,6 +31,13 @@ struct TOCEntry: Identifiable {
                         let b = page.bounds(for: PageBitmap.effectiveBox(page))
                         let y = dest.point.y
                         if y.isFinite, b.height > 0 { frac = min(max(0, Double((b.maxY - y) / b.height)), 1) }
+                        // 对齐：落点过一道对齐变换再取纵向比例（x 没给就按页中线；旋转角很小，x 只影响零点几 pt）
+                        if let pa = align?.page(idx), b.width > 0 {
+                            let x = dest.point.x
+                            let nx = (x.isFinite && x >= b.minX && x <= b.maxX) ? Double((x - b.minX) / b.width) : 0.5
+                            let q = pa.toAligned(CGPoint(x: nx * pa.sw, y: frac * pa.sh))
+                            frac = min(max(0, Double(q.y) / pa.sh), 1)
+                        }
                     }
                 }
                 out.append(TOCEntry(label: (c.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines),

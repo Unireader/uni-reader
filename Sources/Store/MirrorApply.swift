@@ -33,6 +33,9 @@ enum MirrorApply {
         /// 双向补齐的图片本体张数（行 + 文件，见 `fillImages`）。
         var imagesFilledToSource = 0
         var imagesFilledToMirror = 0
+        /// 双向覆盖的扫描页对齐参数行数（见 `fillAlign`）。
+        var alignToSource = 0
+        var alignToMirror = 0
         var backup: URL?
     }
 
@@ -254,6 +257,17 @@ enum MirrorApply {
         return n
     }
 
+    // MARK: - 扫描页对齐参数
+
+    /// 把 [keys] 这些内容的 `page_align` 行从 [from] 整行覆盖到 [to]（`SCAN-ALIGN-PLAN.md §5`，谁新谁赢已在 plan 里算好）。
+    /// 事务外、幂等：再跑一次两侧 `updated_at` 已相等，plan 里就不会再有它。
+    @discardableResult
+    static func fillAlign(from: LibraryStore, to: LibraryStore, keys: [String]) throws -> Int {
+        var n = 0
+        for hash in keys where try from.copyPageAlign(contentHash: hash, to: to) { n += 1 }
+        return n
+    }
+
     // MARK: - 主流程
 
     /// 应用一次合并。**在后台线程调用。**
@@ -314,6 +328,10 @@ enum MirrorApply {
                                                 to: mirrorStore, toFolder: mirrorFolder, keys: plan.imagesToMirror)
         try sourceStore.reconcileImageOrphans()
         try mirrorStore.reconcileImageOrphans()
+
+        // ④.7 扫描页对齐参数（整行按 updated_at 取新，同样事务外、幂等）
+        r.alignToSource = try fillAlign(from: mirrorStore, to: sourceStore, keys: plan.alignToSource)
+        r.alignToMirror = try fillAlign(from: sourceStore, to: mirrorStore, keys: plan.alignToMirror)
 
         // ⑤ 两侧都成功了才重算基线 —— 这一步之前任何失败都靠"下次再跑一遍"自愈（见类型注释）
         progress?("正在重置基线…", 0.9)

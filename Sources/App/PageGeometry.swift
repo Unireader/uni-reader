@@ -58,7 +58,9 @@ enum PageGeometry {
 
     /// 一处 `PDFSelection` → 逐页的显示归一化行框（`selectionsByLine` 按行拆，各行框 rotation-aware 归一化）。
     /// 文字选择高亮与搜索命中高亮共用同款画法（`PageCellView.fillNorm`）。
-    static func normalizedLineRects(of selection: PDFSelection, in pdf: PDFDocument) -> [Int: [CGRect]] {
+    /// `align` = 页号 → 扫描页对齐参数（没开返回 nil）：开着时行框再过一道对齐变换（四角包围盒）。
+    static func normalizedLineRects(of selection: PDFSelection, in pdf: PDFDocument,
+                                    align: (Int) -> PageAlign?) -> [Int: [CGRect]] {
         let lines = selection.selectionsByLine()
         var out: [Int: [CGRect]] = [:]
         for page in selection.pages {
@@ -66,14 +68,35 @@ enum PageGeometry {
             guard idx != NSNotFound else { continue }
             let box = page.bounds(for: PageBitmap.effectiveBox(page))
             guard box.width > 0, box.height > 0 else { continue }
+            let pageAlign = align(idx)
             var rects: [CGRect] = []
             for line in lines where line.pages.contains(page) {
                 let b = line.bounds(for: page)
                 guard b.width > 0, b.height > 0 else { continue }
-                rects.append(normalizedRect(b, box: box, rotation: page.rotation))
+                rects.append(normalizedRect(b, box: box, rotation: page.rotation, align: pageAlign))
             }
             if !rects.isEmpty { out[idx] = rects }
         }
         return out
+    }
+
+    // MARK: 扫描页对齐（`SCAN-ALIGN-PLAN.md §2.3`）
+    //
+    // 原生页坐标 ↔ 原始显示归一化（上面两个函数）→ 再过对齐变换 ↔ 对齐显示归一化。
+    // 开着对齐时，App 里「页内归一化坐标」一律指后者；关着时 `align` 传 nil，与原来逐位相同。
+
+    /// 原生页矩形 → 显示归一化矩形（开着对齐 = 对齐后的页面）。
+    static func normalizedRect(_ r: CGRect, box b: CGRect, rotation: Int, align: PageAlign?) -> CGRect {
+        let raw = normalizedRect(r, box: b, rotation: rotation)
+        guard let align else { return raw }
+        return align.alignedNorm(fromRawNorm: raw)
+    }
+
+    /// 显示归一化点（开着对齐 = 对齐后的页面）→ 原生页空间点。
+    static func pageSpacePoint(normX nx: CGFloat, normY ny: CGFloat, box b: CGRect, rotation: Int,
+                               align: PageAlign?) -> CGPoint {
+        guard let align else { return pageSpacePoint(normX: nx, normY: ny, box: b, rotation: rotation) }
+        let raw = align.rawNorm(fromAlignedNorm: CGPoint(x: nx, y: ny))
+        return pageSpacePoint(normX: raw.x, normY: raw.y, box: b, rotation: rotation)
     }
 }

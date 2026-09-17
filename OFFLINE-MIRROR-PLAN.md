@@ -109,6 +109,7 @@ CREATE TABLE sync_base (
 | `variant` | ✅ | 加书才会新增；`content_hash` 唯一，天然去重 |
 | **`location`** | ❌ **绝不同步** | **「文件在哪」是设备本地事实**。镜像把外部文件内化成 `PDFs/xxx.pdf`，这条路径在源盘上毫无意义；反过来源盘的绝对路径在平板上必然失效。同步它 = 制造大批假的"路径失效" |
 | `ocr_page` | ✅ 双向 `INSERT OR IGNORE` | 按 `content_hash` 缓存、纯 additive、两端算出的内容等价 → **不需要 base**，直接互补即可 |
+| `page_align`（v14） | ✅ 双向，**按 `updated_at` 整行取新** | 扫描页对齐的参数 + 开关，按 `content_hash`（`SCAN-ALIGN-PLAN.md §5`）。不进 base、删除不传播；但它是**用户设置**且决定页面坐标，所以写入硬盘方向与普通改动一样**要人工确认**（见 §4.2） |
 | `meta.note_types` | ✅ LWW | 工作区级配置 |
 | `meta.workspace_name` | ✅ LWW | 小事 |
 | `meta.open_documents` | ❌ | 「本机开着哪几篇」，设备本地 |
@@ -149,6 +150,20 @@ CREATE TABLE sync_base (
 
 ⚠️ **OCR 的「引擎选择」与 API key 仍然是设备本地事实，不进工作区**：引擎在 UserDefaults、
 key 在 Keychain（密钥不进共享文件夹）。换台机器打开同一个工作区要自己填一次 key。
+
+### 4.2 `page_align` 那条通道（2026-09-17，扫描页对齐）
+
+同样不进 `MirrorFp.specs`（主键是 `content_hash`、没有 `document_id`），另开一条，与 OCR 那条的差别只在规则：
+
+- **按 `updated_at` 整行取新**（开 / 关开关都会刷新它），一侧没有就补过去；删除不传播（本表没有删除操作）。
+  两侧时间戳字符串相等才算一致，所以搬运是**逐字**搬（`LibraryStore.copyPageAlign`），不经 `Date` 往返。
+- 事务外、幂等（`MirrorApply.fillAlign`）。
+- **写入硬盘那个方向要人工确认**：计入 `pendingToSource`、挡 `isCleanPushToMirror`。理由：它不是派生缓存，
+  而是决定「页面坐标是哪一种」的用户设置，静默改掉源盘上的它 = 源盘那边的批注整体错位。拉回本机方向照常可以自动。
+- 查 `page_align` 前先看表在不在（`MirrorStore.alignStamps`）：安卓建的库、没被新版 Mac 打开过的老库都没有这张表。
+- 干跑报告单列「扫描页对齐设置：写入硬盘 N 本、拉回本机 M 本」，明细是书名。
+
+用例：Mac `spike/mirror-align-test.swift`；安卓端同名规则的测试见 `android/AGENTS.md`。
 
 ---
 

@@ -132,19 +132,30 @@ struct ReaderPane: View {
             .overlay { AIInlineLayer(session: session) }
             .overlay { refWindowLayer }
             .overlay { jumpHistoryLayer }
+            // 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：挂在这里而不是 `body` 那条修饰符链上——那条早就到类型检查器的时限了
+            .onReceive(NotificationCenter.default.publisher(for: .toggleScanAlign)) { _ in
+                if chrome.isKeyWindow { tab.toggleScanAlign() }
+            }
+            .alert(L("Align Scanned Pages"), isPresented: scanAlignAlertPresented, presenting: tab.scanAlignConfirm,
+                   actions: scanAlignAlertActions, message: scanAlignAlertMessage)
     }
 
     @ViewBuilder
     private var readerContent: some View {
         if session.pdf != nil {
+            // docKey = 显示身份（`DocSession.displayKey`）：页图缓存键 + 阅读区 `.id`。扫描页对齐一切换键就变，
+            // 阅读区整个按新页面重建，缓存也不会拿到另一种页面的旧图。
             PageStreamView(session: session,
-                           docKey: session.contentHash,
+                           docKey: session.displayKey,
                            nightMode: nightMode,
                            interpEnabled: scrollInterp,
                            isActiveWindow: chrome.isKeyWindow,
                            bottomInset: tabBarInset,
                            onDropFiles: onIngest)   // 拖进阅读区的 PDF 仍入库；图片由阅读区自己收成图片笔记
-                .overlay(alignment: .top) { if tab.isHashing { indexingBadge } }
+                .overlay(alignment: .top) {
+                    if tab.isHashing { indexingBadge }
+                    else if let p = tab.scanAlignProgress { scanAlignBadge(p) }
+                }
         } else if let doc = tab.missingDoc {
             ContentUnavailableView {
                 Label(L("File Not Found"), systemImage: "questionmark.folder")
@@ -233,6 +244,40 @@ struct ReaderPane: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.thinMaterial, in: Capsule())
             .padding(.top, 8)
+    }
+
+    /// 扫描页对齐测量中。文字显式 `.primary`（material 底上别用 `.secondary`，AGENTS.md 红线）。
+    private func scanAlignBadge(_ p: DocTabModel.ScanAlignProgress) -> some View {
+        Label(String(format: L("Aligning scanned pages… %d/%d"), p.done, p.total), systemImage: "text.alignleft")
+            .foregroundStyle(.primary)
+            .monospacedDigit()
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.thinMaterial, in: Capsule())
+            .padding(.top, 8)
+    }
+
+    // MARK: 扫描页对齐的确认弹窗
+
+    private var scanAlignAlertPresented: Binding<Bool> {
+        Binding(get: { tab.scanAlignConfirm != nil }, set: { if !$0 { tab.scanAlignConfirm = nil } })
+    }
+
+    @ViewBuilder
+    private func scanAlignAlertActions(_ c: DocTabModel.ScanAlignConfirm) -> some View {
+        Button(c.turnOn ? L("Align Pages") : L("Turn Off Alignment")) { tab.applyScanAlign(c) }
+        Button(L("Cancel"), role: .cancel) { tab.scanAlignConfirm = nil }
+    }
+
+    private func scanAlignAlertMessage(_ c: DocTabModel.ScanAlignConfirm) -> Text {
+        var parts: [String] = []
+        if c.notes > 0 {
+            parts.append(String(format: L("This document has %d annotations. They will not move with the pages and may end up out of place."), c.notes))
+        }
+        if c.ocrPages > 0 {
+            parts.append(String(format: L("Text recognition results for %d pages will be cleared and need to be recognized again."), c.ocrPages))
+        }
+        if c.needsMeasure { parts.append(L("The whole document will be analyzed first, which may take a few seconds.")) }
+        return Text(parts.joined(separator: "\n\n"))
     }
 
     // MARK: 「文件已变化」alert

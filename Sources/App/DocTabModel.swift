@@ -246,6 +246,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.openTrace = nil
         progressSaveTask?.cancel()
         progressSaveTask = nil
+        scanAlignCancel?.set()   // 在测的扫描页对齐停掉（工作线程各开着一份 PDF，不停就吊着文件）
         bag.removeAll()          // 先断订阅，避免下面这几步自己又触发一轮
         flushPersist()
         saveProgress()
@@ -341,7 +342,7 @@ final class DocTabModel: ObservableObject, Identifiable {
             session.openTrace?.finish("中断：再次切换")
             let trace = OpenTrace(title: tabTitle, reason: "切标签")
             session.openTrace = trace
-            OpenStats.bind(trace, docKey: session.contentHash)
+            OpenStats.bind(trace, docKey: session.displayKey)
         }
         // 有快照就叫阅读区**在重建的首次求值里**用它种状态（一帧都不空；细节见 `ReaderSurface.init`）。
         // 下面那条 restore 锚点是兜底：窗口尺寸变过导致快照作废时，靠它把位置恢复回来（慢一拍但不丢）。
@@ -398,6 +399,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.readerSnapshot = nil
         session.readerSeedPending = false
         session.cachedLayout = nil
+        session.scanAlign = nil                         // 扫描页对齐按内容记，下面拿到内容哈希后按库覆盖
         session.canvasMode = false                      // 画板模式逐文档记，同上按库覆盖
         guard let id, let doc = workspace.document(id: id) else {
             session.pdf = nil; missingDoc = nil; session.toc = []; session.title = ""
@@ -428,7 +430,9 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.pdf = pdf
         session.title = doc.title
         session.contentHash = target.hash
-        if let trace { OpenStats.bind(trace, docKey: target.hash) }   // 从此视图层/笔迹层按 docKey 找得到账本
+        // 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：**必须赶在一切出图 / 布局 / 平板广播之前**——它决定了「页面」长什么样
+        session.scanAlign = workspace.scanAlign(contentHash: target.hash, pageCount: pdf.pageCount)
+        if let trace { OpenStats.bind(trace, docKey: session.displayKey) }   // 从此视图层/笔迹层按 docKey 找得到账本
         session.toc = []
         buildTOC(documentId: id, path: target.path)   // 目录在后台建（账本记里程碑「目录到位」），先空着
         trace.phase("OCR") { session.reloadOCRState() }   // 换文档重置 OCR；该内容已有缓存则自动启用
@@ -473,10 +477,11 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 换了文档就丢弃；到位后补一次平板广播（`load()` 里那次广播出去的是空目录）。
     private func buildTOC(documentId id: String, path: String) {
         let hash = session.contentHash
+        let align = session.scanAlign
         let t0 = CFAbsoluteTimeGetCurrent()
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let doc = PDFDocument(url: URL(fileURLWithPath: path)) else { return }
-            let toc = TOCEntry.build(from: doc)
+            let toc = TOCEntry.build(from: doc, align: align)
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             await MainActor.run { [weak self] in
                 guard let self, !self.closed, self.session.documentId == id, self.session.contentHash == hash else { return }
@@ -513,13 +518,26 @@ final class DocTabModel: ObservableObject, Identifiable {
         workspace.rekeyLocation(documentId: m.docId, absolutePath: m.path,
                                 newHash: m.newHash, pageCount: session.pdf?.pageCount ?? 0)
         session.contentHash = m.newHash
+        refreshScanAlignForCurrentContent()
         session.reloadOCRState()
     }
 
     /// 「文件已变化」→ 仍打开（不改库：本次按实际内容打开，下次打开仍会提示）。
     func openAnyway(_ m: HashMismatch) {
         session.contentHash = m.newHash
+        refreshScanAlignForCurrentContent()
         session.reloadOCRState()
+    }
+
+    /// 内容哈希原地换了（文件被替换）→ 对齐参数按新内容重取。页面长相变了的话，布局缓存与屏幕快照一并作废
+    /// （阅读区挂在 `.id(displayKey)` 上，键一变自己会重建，重建时不能再拿旧布局）。
+    private func refreshScanAlignForCurrentContent() {
+        let before = session.displayKey
+        session.scanAlign = workspace.scanAlign(contentHash: session.contentHash, pageCount: session.pdf?.pageCount ?? 0)
+        guard session.displayKey != before else { return }
+        session.cachedLayout = nil
+        session.readerSnapshot = nil
+        session.readerSeedPending = false
     }
 
     // MARK: - 重定位
@@ -549,6 +567,92 @@ final class DocTabModel: ObservableObject, Identifiable {
         guard session.pdf != nil, let id = docID, session.canvasMode != on else { return }
         session.canvasMode = on
         workspace.setCanvasMode(documentId: id, on: on)
+    }
+
+    // MARK: - 扫描页对齐（`SCAN-ALIGN-PLAN.md`）
+
+    /// 切换前的确认（非 nil = 阅读区弹窗）。
+    struct ScanAlignConfirm: Identifiable {
+        let id = UUID()
+        let turnOn: Bool
+        /// 挂在页面坐标上的批注条数（切换后不跟着动，会偏）。
+        let notes: Int
+        /// 已识别的 OCR 页数（切换时清掉）。
+        let ocrPages: Int
+        /// 打开且还没测过：要先测全书。
+        let needsMeasure: Bool
+    }
+    @Published var scanAlignConfirm: ScanAlignConfirm?
+
+    /// 测量进度（nil = 没在测）。阅读区顶部的提示读它。
+    struct ScanAlignProgress: Equatable { var done: Int; var total: Int }
+    @Published var scanAlignProgress: ScanAlignProgress?
+    private var scanAlignCancel: ScanAlignCancelFlag?
+
+    var isScanAlignOn: Bool { session.scanAlign != nil }
+
+    /// 菜单「对齐扫描页」。有批注或 OCR 结果会受影响时先弹窗确认（用户 2026-09-17 定：不换算、提示条数），否则直接切。
+    func toggleScanAlign() {
+        guard session.pdf != nil, let id = docID, !session.contentHash.isEmpty, scanAlignProgress == nil else { return }
+        let turnOn = !isScanAlignOn
+        let impact = workspace.scanAlignImpact(documentId: id, contentHash: session.contentHash)
+        let c = ScanAlignConfirm(turnOn: turnOn, notes: impact.notes, ocrPages: impact.ocrPages,
+                                 needsMeasure: turnOn && !workspace.hasScanAlignParams(
+                                    contentHash: session.contentHash, pageCount: session.pdf?.pageCount ?? 0))
+        if c.notes == 0 && c.ocrPages == 0 { applyScanAlign(c) } else { scanAlignConfirm = c }
+    }
+
+    /// 确认后真正切换：关 = 只改开关；开 = 测过就只改开关，没测过先在后台测全书、落库。
+    /// 两条路最后都是「清这份内容的 OCR → 存进度 → 整篇重载」——页面长相变了，布局 / 页图 / 平板广播全得按新的来，
+    /// 重载是现成的、验熟了的那条路（重定位也走它），别在这里一件件手动刷新。
+    func applyScanAlign(_ c: ScanAlignConfirm) {
+        scanAlignConfirm = nil
+        guard let pdf = session.pdf, let id = docID, !session.contentHash.isEmpty, scanAlignProgress == nil else { return }
+        let hash = session.contentHash, n = pdf.pageCount
+        guard c.turnOn else {
+            workspace.setScanAlignEnabled(contentHash: hash, on: false)
+            finishScanAlignSwitch(hash)
+            return
+        }
+        if workspace.hasScanAlignParams(contentHash: hash, pageCount: n) {
+            workspace.setScanAlignEnabled(contentHash: hash, on: true)
+            finishScanAlignSwitch(hash)
+            return
+        }
+        guard let url = pdf.documentURL else { return }
+        let flag = ScanAlignCancelFlag()
+        scanAlignCancel = flag
+        scanAlignProgress = ScanAlignProgress(done: 0, total: n)
+        let step = max(1, n / 60)   // 进度最多报 60 次：每次都是一次 @Published → 阅读区那一层重算
+        let t0 = CFAbsoluteTimeGetCurrent()
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let ms = ScanAlignRunner.measure(url: url, pageCount: n, isCancelled: { flag.isSet }) { done in
+                guard done % step == 0 || done == n else { return }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !flag.isSet, self.scanAlignProgress != nil else { return }
+                    self.scanAlignProgress = ScanAlignProgress(done: done, total: n)
+                }
+            }
+            let table = ms.map { ScanAlignSolver.solve($0) }
+            let secs = CFAbsoluteTimeGetCurrent() - t0
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if self.scanAlignCancel === flag { self.scanAlignCancel = nil; self.scanAlignProgress = nil }
+                guard let table, !flag.isSet, !self.closed, self.docID == id, self.session.contentHash == hash else { return }
+                wsLog(String(format: "扫描页对齐：测完 %d 页 %.1fs，戳 %@", n, secs, table.stamp))
+                self.workspace.saveScanAlign(contentHash: hash, table: table)
+                self.finishScanAlignSwitch(hash)
+            }
+        }
+    }
+
+    private func finishScanAlignSwitch(_ hash: String) {
+        workspace.deleteOCR(contentHash: hash)   // 行框按切换前的页面存的，留着就错位（方案 §1）
+        // 参考索引平时只在书库变了才重建（`syncWorkspaceSnapshot`），开关不算书库变化——手动刷一次，
+        // 否则平板参考窗看这本书时还按切换前的页面出图
+        session.libraryRefIndex = workspace.refDocIndex()
+        saveProgress()                           // 重载按库里的进度恢复位置
+        reload()
     }
 
     // MARK: - 阅读进度

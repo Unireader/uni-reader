@@ -90,6 +90,11 @@ struct RefDocInfo: Equatable {
     var pageCount: Int
     var readPage: Int
     var readFrac: Double
+    /// 这份内容开着扫描页对齐时的参数（`SCAN-ALIGN-PLAN.md`）：参考窗的页图、页尺寸、缓存键都按它。
+    var align: ScanAlignTable? = nil
+
+    /// 页图缓存键（同 `DocSession.displayKey`）。
+    var displayKey: String { ScanAlignTable.displayKey(contentHash: hash, table: align) }
 }
 
 /// 一个打开中的 PDF 窗口的运行时状态。每个 reader 窗口一个。
@@ -190,6 +195,16 @@ final class DocSession: ObservableObject, Identifiable {
     /// 页面布局缓存（`PageLayout(doc:)` 要遍历全部页取尺寸，切标签重建时不该重算）。
     /// 换文档时由 `DocTabModel.load` 清空。
     var cachedLayout: PageLayout?
+
+    /// 扫描页对齐参数（`SCAN-ALIGN-PLAN.md`）。**开着才非 nil**——开着时「页面」就是对齐后的那张：
+    /// 出图、页尺寸、页内归一化坐标（笔迹 / 高亮 / 笔记 / OCR 行框…）全按它。
+    /// 只在装载文档时写一次（`DocTabModel.load`，切换开关走整篇重载），非 @Published。
+    var scanAlign: ScanAlignTable?
+    /// 第 i 页的对齐参数（没开 / 越界 → nil）。所有 `PageBitmap` / `PageGeometry` 调用都从这里取。
+    func pageAlign(_ page: Int) -> PageAlign? { scanAlign?.page(page) }
+    /// 显示身份：页图缓存键（内存 + 磁盘）、阅读区 `.id`、平板 `layout.v` 都用它（方案 §3.1）。
+    /// 没开对齐 = `contentHash`，行为与对齐功能出现之前逐字节相同。
+    var displayKey: String { ScanAlignTable.displayKey(contentHash: contentHash, table: scanAlign) }
     /// 正在替本会话向 `PageRenderEngine` 声明 wanted 的阅读区（键 = `Scratch.clientID`，值 = 它的
     /// 收尾闭包，**只捕获 `Scratch`、不捕获视图**）。`teardown` 要先替它们把 wanted 清空、放掉
     /// NSEvent 监视器与防抖闭包，再 `purge`——引擎靠「还有没有窗口声明要这份文档的键」判断能不能清，
@@ -498,8 +513,9 @@ final class DocSession: ObservableObject, Identifiable {
         if ocrEnabled, !ocrRuns.isEmpty {
             matches = searchOCR(q)
         } else {
+            let align = scanAlign
             matches = await Task.detached(priority: .userInitiated) {
-                TextSearch.find(query: q, in: pdf)
+                TextSearch.find(query: q, in: pdf, align: align)
             }.value
         }
         // 过期结果丢弃：搜索期间用户又改了词，只认最新一次。
@@ -790,10 +806,12 @@ final class DocSession: ObservableObject, Identifiable {
     private func startNetworkOCR(_ page: Int) {
         guard let pdf = ocrRenderDocument(), let config = PaddleOCR.configFromDefaults() else { return }
         let hash = contentHash
+        // 开着扫描页对齐：识别对齐后的页面，行框天然落在「页面坐标」上（切换开关时这份内容的 OCR 结果会清掉重跑）
+        let align = pageAlign(page)
         ocrActivePages.insert(page)
         ocrInFlight += 1
         ocrTasks[page] = Task { [weak self] in
-            let img = await Self.renderPageForOCR(pdf: pdf, page: page)
+            let img = await Self.renderPageForOCR(pdf: pdf, page: page, align: align)
             var runs: [TextRun]?
             var err: String?
             if let img {
@@ -821,10 +839,13 @@ final class DocSession: ObservableObject, Identifiable {
         }
     }
 
-    private static func renderPageForOCR(pdf: PDFDocument, page: Int, pixelWidth: Int = 2400) async -> CGImage? {
+    private static func renderPageForOCR(pdf: PDFDocument, page: Int, align: PageAlign?,
+                                         pixelWidth: Int = 2400) async -> CGImage? {
         await withCheckedContinuation { cont in
             ocrRenderQueue.async {
-                cont.resume(returning: pdf.page(at: page).flatMap { PageBitmap.render(page: $0, pixelWidth: pixelWidth) })
+                cont.resume(returning: pdf.page(at: page).flatMap {
+                    PageBitmap.render(page: $0, pixelWidth: pixelWidth, align: align)
+                })
             }
         }
     }
@@ -869,7 +890,7 @@ final class DocSession: ObservableObject, Identifiable {
             cleanup()
         }
         renderClients.removeAll()
-        PageRenderEngine.shared.purge(doc: contentHash)
+        PageRenderEngine.shared.purge(doc: displayKey)   // 页图键的 doc 段是显示身份（开着对齐时带戳）
         contentHash = ""     // 在途 OCR 任务回主线程时按 hash 自弃（既有机制），不会再动已清空的状态
         store = nil
         toc = []

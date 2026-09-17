@@ -96,6 +96,12 @@ enum MirrorDiff {
         /// 不删不改、不进基线。「缺」= 对面没有这一行、**或**有行但文件不在（见 `MirrorStore.imageKeys`）。
         var imagesToSource: [String] = []
         var imagesToMirror: [String] = []
+        /// 扫描页对齐参数（`page_align`，`SCAN-ALIGN-PLAN.md §5`）要整行覆盖到对面的那些（content_hash）：
+        /// 按内容 hash 对，一侧缺 → 补；两侧 `updated_at` 不同 → 较新的覆盖较旧的。不进基线、删除不传播。
+        /// ⚠️ 与 OCR / 图片不同，它**改的是用户设置**（开关）而且决定页面坐标，所以写入硬盘那个方向
+        /// 与普通改动一样**要人工确认**（计入 `pendingToSource`、挡 `isCleanPushToMirror`）。
+        var alignToSource: [String] = []
+        var alignToMirror: [String] = []
         /// `document.last_opened_at` **不在指纹里**（方案 §4：进了指纹「翻开过」就把整行标记成改过），
         /// 所以 diff 看不见它 —— 这里单独算出「两边取较大的那个」，`docId → ISO`。
         ///
@@ -109,6 +115,7 @@ enum MirrorDiff {
         var isEmpty: Bool {
             changes.isEmpty && lastOpenedMerges.isEmpty && ocrToSource.isEmpty && ocrToMirror.isEmpty
                 && imagesToSource.isEmpty && imagesToMirror.isEmpty
+                && alignToSource.isEmpty && alignToMirror.isEmpty
         }
 
         /// 这份 plan 能不能**自动静默地**从源盘推给副本（用户 2026-09-01 拍板的方向不对称：
@@ -127,12 +134,12 @@ enum MirrorDiff {
         /// 图片本体与 OCR 同一口径（同样是只增不改不删的 additive 通道）。
         var isCleanPushToMirror: Bool {
             !(changes.isEmpty && ocrToSource.isEmpty && ocrToMirror.isEmpty
-              && imagesToSource.isEmpty && imagesToMirror.isEmpty)
-                && conflicts.isEmpty && changes.allSatisfy { $0.side == .mirror }
+              && imagesToSource.isEmpty && imagesToMirror.isEmpty && alignToMirror.isEmpty)
+                && conflicts.isEmpty && changes.allSatisfy { $0.side == .mirror } && alignToSource.isEmpty
         }
 
         /// 待人工确认的条数（副本 → 源盘那个方向）。提示条报的就是它。
-        var pendingToSource: Int { changes.lazy.filter { $0.side == .source }.count }
+        var pendingToSource: Int { changes.lazy.filter { $0.side == .source }.count + alignToSource.count }
 
         func changes(to side: Side) -> [Change] { changes.filter { $0.side == side } }
 
@@ -145,6 +152,21 @@ enum MirrorDiff {
 
     /// 一侧的某一行相对基线处于什么状态。
     enum RowState { case added, deleted, unchanged, modified, absent }
+
+    /// `page_align` 那条通道（`SCAN-ALIGN-PLAN.md §5`）：纯函数，两侧 `content_hash → updated_at`。
+    /// 🔴 跨端契约：与安卓 `local/mirror/MirrorDiff.kt` 的同名规则一致。
+    static func alignPlan(mine: [String: String], theirs: [String: String]) -> (toSource: [String], toMirror: [String]) {
+        var toSource: [String] = [], toMirror: [String] = []
+        for (hash, m) in mine {
+            if let t = theirs[hash] {
+                if m > t { toSource.append(hash) } else if t > m { toMirror.append(hash) }
+            } else {
+                toSource.append(hash)
+            }
+        }
+        for hash in theirs.keys where mine[hash] == nil { toMirror.append(hash) }
+        return (toSource.sorted(), toMirror.sorted())
+    }
 
     static func state(base: String?, now: String?) -> RowState {
         switch (base, now) {
@@ -162,10 +184,16 @@ enum MirrorDiff {
     ///   - mine: 镜像库现在的全部行
     ///   - theirs: 源库现在的全部行
     ///   - mineOCR / theirsOCR: 两侧 `ocr_page` 的键集合（不含 payload，见 `Plan.ocrToSource`）
+    ///   - mineAlign / theirsAlign: 两侧 `page_align` 的 `content_hash → updated_at`（见 `Plan.alignToSource`）
     static func compute(base: Base, mine: Snapshot, theirs: Snapshot,
                         mineOCR: Set<OCRKey> = [], theirsOCR: Set<OCRKey> = [],
-                        mineImages: Set<String> = [], theirsImages: Set<String> = []) -> Plan {
+                        mineImages: Set<String> = [], theirsImages: Set<String> = [],
+                        mineAlign: [String: String] = [:], theirsAlign: [String: String] = [:]) -> Plan {
         var plan = Plan()
+        // 扫描页对齐：按 updated_at 取新（ISO-8601 同格式，字典序即时间序）；一侧没有就补过去
+        let aligns = alignPlan(mine: mineAlign, theirs: theirsAlign)
+        plan.alignToSource = aligns.toSource
+        plan.alignToMirror = aligns.toMirror
         // OCR 缓存：**只补对面缺的、不判改删**（方案 §4）。
         // 「一边清了缓存」于是会被另一边补回来 —— 这是刻意的：这张表是派生数据，
         // 删它的语义是"腾空间/想重跑"，不是"这份内容作废了"，而重跑一次要真花 API 的钱。

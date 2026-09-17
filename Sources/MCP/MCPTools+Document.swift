@@ -181,7 +181,7 @@ extension MCPTools {
             }
             let includeTOC = try args.bool("include_toc", default: true)
             let reader = MCPDocReader.shared
-            let summary = try await reader.summary(path: target.path, includeTOC: includeTOC)
+            let summary = try await reader.summary(path: target.path, includeTOC: includeTOC, align: target.align)
             let sample = try await reader.nativeSample(path: target.path, count: 5)
             var ocrCached = 0
             if let store = target.store { ocrCached = await reader.ocrPageCount(store: store, contentHash: target.contentHash) }
@@ -247,7 +247,8 @@ extension MCPTools {
             var pageSet: Set<Int>? = nil
             if let spec = try args.pages("pages") { pageSet = Set(try PageNo.parse(spec, pageCount: pageCount, limit: Int.max)) }
 
-            var hits = try await reader.searchNative(path: target.path, query: query, pages: pageSet, context: 80, maxHits: maxHits + 1)
+            var hits = try await reader.searchNative(path: target.path, query: query, pages: pageSet, context: 80,
+                                                     maxHits: maxHits + 1, align: target.align)
             if let store = target.store {
                 let nativePages = Set(hits.map(\.index))
                 let ocr = await reader.searchOCR(store: store, contentHash: target.contentHash, query: query, pages: pageSet, maxHits: maxHits + 1)
@@ -298,7 +299,8 @@ extension MCPTools {
             let reader = MCPDocReader.shared
             let pageCount = try await reader.withDocument(path: target.path) { $0.pageCount }
             let idx = try PageNo.index(page, pageCount: pageCount)
-            let img = try await reader.render(path: target.path, index: idx, pixelWidth: width, format: format)
+            let img = try await reader.render(path: target.path, index: idx, pixelWidth: width, format: format,
+                                              align: target.align)
             let r: MCPObject = ["page": page, "width": img.width, "height": img.height, "mime": img.mime, "bytes": img.data.count]
             return MCPToolResult(text: "Page \(page) of “\(target.title)” · \(img.width)×\(img.height) \(fmt)",
                                  structured: r, image: (img.data, img.mime))

@@ -366,6 +366,15 @@
 "Canvas Mode" = "画板模式";
 "Write in the blank space beside the page" = "在页面两侧的空白处书写";
 
+/* 扫描页对齐（SCAN-ALIGN-PLAN.md） */
+"Align Scanned Pages" = "对齐扫描页";
+"Aligning scanned pages… %d/%d" = "正在对齐扫描页… %d/%d";
+"Align Pages" = "对齐";
+"Turn Off Alignment" = "关闭对齐";
+"This document has %d annotations. They will not move with the pages and may end up out of place." = "这篇文档已有 %d 条批注（笔迹、高亮、笔记、书签等），切换后不会跟着页面移动，位置可能对不上。";
+"Text recognition results for %d pages will be cleared and need to be recognized again." = "已识别的 %d 页文字结果会清除，需要重新识别。";
+"The whole document will be analyzed first, which may take a few seconds." = "会先检测全书，页数多时要等几秒。";
+
 /* 标签页（MAC-TABS-PLAN.md） */
 "New Tab" = "新标签页";
 "Close Tab" = "关闭标签页";

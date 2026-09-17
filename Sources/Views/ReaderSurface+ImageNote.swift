@@ -97,8 +97,9 @@ extension ReaderSurface {
         showSnipToast(SnipToast(kind: .working, text: L("Saving image note…")))
         // 🔴 渲染走 `PageRenderEngine` 那条队列：同一份 `PDFDocument` 不能被并发使用（同 finishSnip）。
         // PNG 编码 + hash 也顺手在那边做完，主线程只收一个整理好的包。
+        let align = session.scanAlign
         PageRenderEngine.shared.renderOffMain {
-            PageSnip.renderImage(pdf: pdf, region: region).flatMap { out in
+            PageSnip.renderImage(pdf: pdf, region: region, align: align).flatMap { out in
                 ImageAssets.prepare(out.image).map { ($0, out.pageCount) }
             }
         } completion: { result in

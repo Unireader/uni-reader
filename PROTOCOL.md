@@ -246,6 +246,11 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 > `library`(0x3B)/`openDoc`(0x2A) 的 id = **库文档 id**（`LibDocument.id`，SQLite 主键，跨窗口稳定）；
 > `layout`(0x31) 的 `docId`/`v` 与 `toc`(0x3C) 的 `docId` = **内容哈希**（`DocSession.contentHash`，
 > 同一文件的不同窗口相同）。平板判「这份目录是不是当前这本书的」只能用第三种。
+>
+> 🔴 **2026-09-17 起第三种精确地说是「显示身份」`DocSession.displayKey`**（`SCAN-ALIGN-PLAN.md §3.1 / §4`）：
+> 没开扫描页对齐时 = 内容哈希（与从前逐字节相同）；开着时 = `<内容哈希>~a<8 位十六进制戳>`。
+> `layout` 的 `docId`/`v`、`toc`/`bookmarks` 的 `docId` 一律用它。**客户端只拿它比相等、当页图缓存键，
+> 不许解析、不许当成真哈希去算什么**——开关一切换它就变，平板的页图缓存自然换键、目录书签的核对照旧成立。
 
 ### 4.2 Mac→平板 状态下发（可靠）
 
@@ -302,6 +307,8 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 对象形状（与旧 JSON 逐字段一致）：
 - `page` → `{type:"page", v, index, count, w, h}`（方案 B 下平板忽略，仍编码）
 - `layout` → `{type:"layout", docId, v, count, pages:[[w,h],…]}`
+  （`docId`/`v` = 显示身份，见 §4.1 末尾那条；`pages` 是**页面尺寸**——开着扫描页对齐时是对齐后的 `(W, sh)`，
+  与 `/page.png` 出的图、线上所有归一化坐标同一个口径。`page` 的 `w`/`h`、参考窗 `/docmeta` 的 `pages` 同理。）
 - `viewport` → `{type:"viewport", page, frac, seq, force}`（`force` 布尔；`macScrolled` 走 seq、`pushCurrentViewport` 走 force=true）
 - `docs` → `{type:"docs", list:[{id,title,ws},…], selected, following}`
 
@@ -390,7 +397,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   任一窗口换了文档（`open` 标记会变）。空工作区发 `n=0`，平板显示空态而不是一直转圈）
 - `toc` → `{type:"toc", docId, list:[{depth, page, frac, label},…]}`（**当前文档的 PDF 目录**，
   由 `TOCEntry.build` 从 `outlineRoot` 递归构建后**先序拍平**：`depth` 从 0 起，客户端按它重建折叠树
-  （比嵌套编码省事，且天然定长前缀）。`docId` = 内容哈希，与 `layout` 的 `docId`/`v` 同一口径——
+  （比嵌套编码省事，且天然定长前缀）。`docId` = 内容哈希（精确说是显示身份，见 §4.1 末尾），与 `layout` 的 `docId`/`v` 同一口径——
   平板必须核对它与当前显示文档一致才应用，否则切档瞬间会把上一本的目录挂到新书上。
   **坏书签**（destination 解不出目标页，现实里常见：空 dest、dest 指向别的文档）线上 `hasPage=0`、
   `page`/`frac` 填 0，解码后对象里 **`page = -1`**；平板必须把它渲染成不可点的灰行，**不能当第 1 页**
@@ -402,7 +409,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
   `toc` 是两回事，但客户端要把它俩**合并成同一棵树**显示：按页号挂进所在的一级目录组，没组可挂就
   平铺在树顶。合并规则的参照实现是 Mac 的 `Sources/App/TOCMerge.swift`（纯函数，有 spike 覆盖），
   **三端照它实现，别各自照文字再推一遍**。
-  - `docId` = 内容哈希，与 `toc`/`layout` 同一口径 —— **客户端必须核对**才敢渲染（同 `toc` 那笔账：
+  - `docId` = 内容哈希（精确说是显示身份，见 §4.1 末尾），与 `toc`/`layout` 同一口径 —— **客户端必须核对**才敢渲染（同 `toc` 那笔账：
     切档时两条广播的先后没有保证，不核对就会把上一本的书签挂到新书上）。
   - `list` **恒按 页 → 页内位置 → 建立时刻 有序**（Mac 侧 `Bookmark.before`），客户端可以直接用，
     不要再自己排——排序口径不一致，「第 2 个书签」在两端就不是同一个。

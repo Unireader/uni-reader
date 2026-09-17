@@ -185,6 +185,8 @@ enum MainMenu {
         m.addItem(.separator())
         m.addItem(post(L("Night Mode"), .toggleNightMode, shortcut: .nightMode))
         m.addItem(post(L("Canvas Mode"), .toggleCanvasMode, shortcut: .canvasMode))
+        // 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：按文件记、不常切，不配默认快捷键。勾选状态见 `validateMenuItem`。
+        m.addItem(post(L("Align Scanned Pages"), .toggleScanAlign))
         return item0
     }
 
@@ -311,6 +313,12 @@ extension MenuActions: NSMenuItemValidation {
         switch menuItem.action {
         case #selector(undo(_:)): return validateUndoItem(menuItem, redo: false)
         case #selector(redo(_:)): return validateUndoItem(menuItem, redo: true)
+        case #selector(postNotification(_:))
+            where menuItem.representedObject as? String == Notification.Name.toggleScanAlign.rawValue:
+            // 勾 = 当前文档开着对齐；没开文档时灰掉
+            let s = activeSession
+            menuItem.state = s?.scanAlign != nil ? .on : .off
+            return s?.pdf != nil
         default: return true
         }
     }

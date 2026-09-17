@@ -267,6 +267,8 @@ final class MCPFacade {
         /// 该会话当前页（`read_pages` 不给 `pages` 时的默认页）。
         var currentPage: Int?
         var workspaceName: String?
+        /// 扫描页对齐参数（`SCAN-ALIGN-PLAN.md`，没开 / 库外文件为 nil）：出图、首页尺寸、命中框都按对齐后的页面。
+        var align: ScanAlignTable? = nil
     }
 
     /// `document_id` / `path` / 都不给（= key 窗口活动标签那篇）三种写法统一解析（方案 §6.1）。
@@ -308,8 +310,10 @@ final class MCPFacade {
         }
         let tab = sessionsShowing(id).first
         let hash = tab?.session.contentHash.isEmpty == false ? tab!.session.contentHash : f.hash
+        let align = tab.map { $0.session.scanAlign } ?? ws.scanAlign(contentHash: hash, pageCount: doc.pageCount)
         return DocTarget(documentId: id, title: doc.title, path: p, contentHash: hash, store: ws.store,
-                         session: tab?.session, currentPage: tab?.session.currentPageIndex, workspaceName: ws.name)
+                         session: tab?.session, currentPage: tab?.session.currentPageIndex, workspaceName: ws.name,
+                         align: align)
     }
 
     /// `get_document` 用：库里那一行的 DTO（库外文件没有）。
@@ -532,6 +536,8 @@ final class MCPFacade {
         /// 文件路径 + hash（找引文用；文件丢了也能写书签/笔记，所以是可选的）
         var path: String?
         var contentHash: String
+        /// 扫描页对齐参数（没开为 nil）：找引文得到的行框要落在对齐后的页面上。
+        var align: ScanAlignTable? = nil
     }
 
     func writeTarget(documentId: String?, workspacePath: String?) throws -> WriteTarget {
@@ -551,9 +557,11 @@ final class MCPFacade {
         let session = sessionsShowing(id).first?.session
         let f = fileInfo(ws, documentId: id)
         let hash = session?.contentHash.isEmpty == false ? session!.contentHash : f.hash
+        let pageCount = session?.pdf?.pageCount ?? doc.pageCount
         return WriteTarget(id: id, title: doc.title, ws: ws, session: session,
-                           pageCount: session?.pdf?.pageCount ?? doc.pageCount,
-                           path: f.exists ? f.path : nil, contentHash: hash)
+                           pageCount: pageCount,
+                           path: f.exists ? f.path : nil, contentHash: hash,
+                           align: session.map { $0.scanAlign } ?? ws.scanAlign(contentHash: hash, pageCount: pageCount))
     }
 
     func addBookmark(_ t: WriteTarget, page: Int, frac: Double, title: String) throws -> MCPObject {

@@ -123,13 +123,15 @@ struct InspectorView: View {
                             onSelect: onSelectTOC)
             }
         } else if tab == .thumbnails {
-            ThumbnailListView(pdf: session.pdf, documentId: session.contentHash,
+            // 键用显示身份（扫描页对齐开着时带戳）：缩略图与阅读区共用页图键空间（`ReaderSurface.fallbackBase`），
+            // 两边必须同一个口径。
+            ThumbnailListView(pdf: session.pdf, documentId: session.displayKey, align: session.scanAlign,
                               currentPage: session.currentPageIndex) { page in
                 onJumpTo(page, 0)
             }
             // 换文档/切标签 = 全新一份列表：它的 `images` 字典按页号存，不重建的话上一本书的
             // 缩略图（最多 48 张、连 CA 副本上百 MB）会留在字典里，还会先顶在新书的同页号格子上。
-            .id(session.contentHash)
+            .id(session.displayKey)
         } else if let id = documentId, let doc = workspace.document(id: id) {
             if tab == .info {
                 ScrollView {

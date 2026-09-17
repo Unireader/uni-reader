@@ -364,6 +364,15 @@
 "Canvas Mode" = "Canvas Mode";
 "Write in the blank space beside the page" = "Write in the blank space beside the page";
 
+/* Scanned page alignment (SCAN-ALIGN-PLAN.md) */
+"Align Scanned Pages" = "Align Scanned Pages";
+"Aligning scanned pages… %d/%d" = "Aligning scanned pages… %d/%d";
+"Align Pages" = "Align Pages";
+"Turn Off Alignment" = "Turn Off Alignment";
+"This document has %d annotations. They will not move with the pages and may end up out of place." = "This document has %d annotations. They will not move with the pages and may end up out of place.";
+"Text recognition results for %d pages will be cleared and need to be recognized again." = "Text recognition results for %d pages will be cleared and need to be recognized again.";
+"The whole document will be analyzed first, which may take a few seconds." = "The whole document will be analyzed first, which may take a few seconds.";
+
 /* 标签页（MAC-TABS-PLAN.md） */
 "New Tab" = "New Tab";
 "Close Tab" = "Close Tab";

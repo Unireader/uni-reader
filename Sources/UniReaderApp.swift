@@ -640,6 +640,8 @@ extension Notification.Name {
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
     static let toggleCanvasMode = Notification.Name("com.xvan.UniReader.toggleCanvasMode")
+    /// 扫描页对齐开关（`SCAN-ALIGN-PLAN.md`），key 窗口的活动标签认领。
+    static let toggleScanAlign = Notification.Name("com.xvan.UniReader.toggleScanAlign")
     static let toggleSidebar = Notification.Name("com.xvan.UniReader.toggleSidebar")
     static let toggleInspector = Notification.Name("com.xvan.UniReader.toggleInspector")
     static let toggleSnipTool = Notification.Name("com.xvan.UniReader.toggleSnipTool")

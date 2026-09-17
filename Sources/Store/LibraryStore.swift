@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 13
+    static let schemaVersion = 14
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -47,6 +47,9 @@ final class LibraryStore {
 
     /// 本工作区拿得出来的图片（有行且文件在，见 `MirrorStore.imageKeys`）。同 OCR 那条 additive 通道。
     func mirrorImageKeys() throws -> Set<String> { try MirrorStore.imageKeys(db, folder: workspaceFolder) }
+
+    /// 本库 `page_align` 的「内容 hash → updated_at」（扫描页对齐那条通道，见 `MirrorStore.alignStamps`）。
+    func mirrorAlignStamps() throws -> [String: String] { try MirrorStore.alignStamps(db) }
 
     /// 工作区包的根（`fileURL` 是 `<根>/UniReader/library.sqlite`）。
     var workspaceFolder: URL { fileURL.deletingLastPathComponent().deletingLastPathComponent() }
@@ -160,6 +163,17 @@ final class LibraryStore {
           created_at TEXT NOT NULL,
           orphaned_at TEXT
         );
+        -- v14：扫描页对齐（`SCAN-ALIGN-PLAN.md §3`，跨端契约）。按内容 hash（同 ocr_page）：每页旋转 + 平移参数 +
+        -- 开关。payload = JSON {"v":1,"w":目标页宽,"pages":[[rot,dx,dy,sw,sh],…]}。**只有 Mac 写**（测量要跑像素统计），
+        -- 安卓只读。关开关不删行（enabled=0，再开不用重测）。离线镜像按 updated_at 取新（方案 §5），不进 sync_base。
+        CREATE TABLE IF NOT EXISTS page_align (
+          content_hash TEXT PRIMARY KEY,
+          enabled INTEGER NOT NULL DEFAULT 0,
+          page_count INTEGER NOT NULL,
+          payload BLOB NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -187,6 +201,7 @@ final class LibraryStore {
         try addColumnIfMissing("document", "canvas_mode", "INTEGER NOT NULL DEFAULT 0")
         // v12 → v13 只新增 image 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
         // 图片笔记复用 note 表（kind=6），故 note 也不用改结构。
+        // v13 → v14 只新增 page_align 表（同上，无需 ALTER）。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -545,6 +560,16 @@ final class LibraryStore {
         return r.first ?? 0
     }
 
+    /// 挂在**页面坐标**上的批注条数：文字笔记 0 / 页内笔迹 2 / 高亮 3 / 书签 5 / 图片笔记 6 + 草稿纸（锚点在页上）。
+    /// 不含 AI 会话（1）与草稿纸上的笔迹（4，画布坐标）。扫描页对齐切换前提示「多少条会偏」用。
+    func pageAnchoredNoteCount(documentId: String) throws -> Int {
+        let notes = try db.query("SELECT COUNT(*) FROM note WHERE document_id=? AND kind IN (0,2,3,5,6)",
+                                 [.text(documentId)]) { Int($0.int64(0)) }
+        let pads = try db.query("SELECT COUNT(*) FROM scratch_pad WHERE document_id=?",
+                                [.text(documentId)]) { Int($0.int64(0)) }
+        return (notes.first ?? 0) + (pads.first ?? 0)
+    }
+
     /// 全篇页内笔迹的横向范围（归一化，anchor 列 = 包围盒）：画板模式页边宽度的首值
     /// （`CanvasMargin`），不必把整篇点装进内存扫一遍。没有笔迹 → nil。
     func inkXExtent(documentId: String) throws -> (minX: Double, maxX: Double)? {
@@ -705,6 +730,46 @@ final class LibraryStore {
         """, [.text(contentHash), .int(Int64(heights.count)), .blob(data), .text(ISO.string(.now))])
     }
 
+    // MARK: - 扫描页对齐（page_align，v14，`SCAN-ALIGN-PLAN.md §3`）
+
+    /// 某内容的对齐参数行（没测过 → nil）。开关开没开都返回，调用方看 `enabled`。
+    func pageAlign(contentHash: String) throws -> PageAlignRow? {
+        try db.query("SELECT * FROM page_align WHERE content_hash=?", [.text(contentHash)]).first.map(Self.pageAlign)
+    }
+    /// 全部开着的对齐参数行（参考窗索引一次取齐，别逐篇查）。
+    func enabledPageAligns() throws -> [PageAlignRow] {
+        try db.query("SELECT * FROM page_align WHERE enabled=1").map(Self.pageAlign)
+    }
+    /// 写一整行（测量完 / 离线镜像合并按 `updated_at` 取新时用）。
+    func upsertPageAlign(_ r: PageAlignRow) throws {
+        try db.run("""
+        INSERT INTO page_align(content_hash,enabled,page_count,payload,created_at,updated_at) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(content_hash) DO UPDATE SET enabled=excluded.enabled, page_count=excluded.page_count,
+          payload=excluded.payload, created_at=excluded.created_at, updated_at=excluded.updated_at
+        """, [.text(r.contentHash), .int(r.enabled ? 1 : 0), .int(Int64(r.pageCount)), .blob(r.payload),
+              .text(ISO.string(r.createdAt)), .text(ISO.string(r.updatedAt))])
+    }
+    /// 只切开关（参数不动、不重测）。
+    func setPageAlignEnabled(contentHash: String, on: Bool, at date: Date = .now) throws {
+        try db.run("UPDATE page_align SET enabled=?, updated_at=? WHERE content_hash=?",
+                   [.int(on ? 1 : 0), .text(ISO.string(date)), .text(contentHash)])
+    }
+    /// 离线镜像合并：把这一行**原样**（时间戳字符串逐字，不经 Date 往返）写到另一个库，覆盖对面同键那一行。
+    /// 逐字搬是为了下一轮干跑两侧 `updated_at` 相等、不再判出差异。没有这一行 → false。
+    @discardableResult
+    func copyPageAlign(contentHash: String, to other: LibraryStore) throws -> Bool {
+        guard let r = try db.query("SELECT * FROM page_align WHERE content_hash=?", [.text(contentHash)]).first
+        else { return false }
+        try other.db.run("""
+        INSERT INTO page_align(content_hash,enabled,page_count,payload,created_at,updated_at) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(content_hash) DO UPDATE SET enabled=excluded.enabled, page_count=excluded.page_count,
+          payload=excluded.payload, created_at=excluded.created_at, updated_at=excluded.updated_at
+        """, [.text(contentHash), .int(r["enabled"] as? Int64 ?? 0), .int(r["page_count"] as? Int64 ?? 0),
+              .blob(r["payload"] as? Data ?? Data()), .text(r["created_at"] as? String ?? ""),
+              .text(r["updated_at"] as? String ?? "")])
+        return true
+    }
+
     // MARK: - OCR 缓存（ocr_page，v3）
 
     /// 取某内容(hash) 某页某引擎的 OCR 缓存（miss → nil，上层再真跑 OCR 并回填）。
@@ -819,6 +884,14 @@ final class LibraryStore {
                  bytes: Int(r["bytes"] as? Int64 ?? 0),
                  createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                  orphanedAt: ISO.date(r["orphaned_at"] as? String))
+    }
+    private static func pageAlign(_ r: [String: Any]) -> PageAlignRow {
+        PageAlignRow(contentHash: r["content_hash"] as? String ?? "",
+                     enabled: (r["enabled"] as? Int64 ?? 0) != 0,
+                     pageCount: Int(r["page_count"] as? Int64 ?? 0),
+                     payload: r["payload"] as? Data ?? Data(),
+                     createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                     updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
     }
     private static func ocr(_ r: [String: Any]) -> OCRPage {
         OCRPage(contentHash: r["content_hash"] as? String ?? "",

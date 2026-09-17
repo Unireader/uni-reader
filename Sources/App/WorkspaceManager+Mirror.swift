@@ -196,7 +196,9 @@ extension WorkspaceManager {
                                       mineOCR: try store.mirrorOCRKeys(),
                                       theirsOCR: try MirrorStore.ocrKeys(srcDB),
                                       mineImages: try store.mirrorImageKeys(),
-                                      theirsImages: try MirrorStore.imageKeys(srcDB, folder: sourceFolder))
+                                      theirsImages: try MirrorStore.imageKeys(srcDB, folder: sourceFolder),
+                                      mineAlign: try store.mirrorAlignStamps(),
+                                      theirsAlign: try MirrorStore.alignStamps(srcDB))
         return DryRun(plan: plan,
                       titles: MirrorStore.titles(mine: mine, theirs: theirs),
                       hashTitles: MirrorStore.ocrTitles(mine: mine, theirs: theirs))
@@ -221,7 +223,9 @@ extension WorkspaceManager {
                                       mineOCR: try mirrorStore.mirrorOCRKeys(),
                                       theirsOCR: try store.mirrorOCRKeys(),
                                       mineImages: try mirrorStore.mirrorImageKeys(),
-                                      theirsImages: try store.mirrorImageKeys())
+                                      theirsImages: try store.mirrorImageKeys(),
+                                      mineAlign: try mirrorStore.mirrorAlignStamps(),
+                                      theirsAlign: try store.mirrorAlignStamps())
         return DryRun(plan: plan,
                       titles: MirrorStore.titles(mine: mine, theirs: theirs),
                       hashTitles: MirrorStore.ocrTitles(mine: mine, theirs: theirs))

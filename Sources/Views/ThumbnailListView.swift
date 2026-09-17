@@ -5,7 +5,10 @@ import PDFKit
 /// 缩略图复用 `PageRenderEngine` 后台渲染 + LRU 缓存——独立像素宽度的键，不挤占阅读区基图缓存。
 struct ThumbnailListView: View {
     let pdf: PDFDocument?
+    /// 页图键的 doc 段（显示身份 `DocSession.displayKey`，不是库文档 id）。
     let documentId: String
+    /// 扫描页对齐参数（没开为 nil）：缩略图也按对齐后的页面出。
+    let align: ScanAlignTable?
     let currentPage: Int
     let onSelect: (Int) -> Void
 
@@ -38,7 +41,7 @@ struct ThumbnailListView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(0..<pdf.pageCount, id: \.self) { i in
-                            ThumbnailCell(pdf: pdf, documentId: documentId, page: i,
+                            ThumbnailCell(pdf: pdf, documentId: documentId, align: align?.page(i), page: i,
                                           pixelWidth: Self.pixelWidth, isCurrent: i == currentPage,
                                           image: images[i], onTap: { onSelect(i) },
                                           onRendered: { keep(page: i, image: $0) })
@@ -85,6 +88,7 @@ struct ThumbnailListView: View {
 private struct ThumbnailCell: View {
     let pdf: PDFDocument
     let documentId: String
+    let align: PageAlign?
     let page: Int
     let pixelWidth: Int
     let isCurrent: Bool
@@ -129,7 +133,7 @@ private struct ThumbnailCell: View {
 
     private var aspect: CGFloat {
         guard let p = pdf.page(at: page) else { return 0.75 }
-        let s = PageBitmap.displaySize(p)
+        let s = PageBitmap.displaySize(p, align: align)
         return s.height > 0 ? s.width / s.height : 0.75
     }
 
@@ -145,7 +149,7 @@ private struct ThumbnailCell: View {
         // （`PageDiskCache` 自带 1GB 上限 + trim，攒不炸。）
         PageRenderEngine.shared.request(.init(key: key, page: p, pixelWidth: pixelWidth,
                                               tileRect: nil, tileScale: 1, night: false,
-                                              diskCache: true)) { doneKey, img in
+                                              diskCache: true, align: align)) { doneKey, img in
             if doneKey == key { onRendered(img) }
         }
     }
