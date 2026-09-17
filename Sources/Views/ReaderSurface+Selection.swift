@@ -210,6 +210,7 @@ extension ReaderSurface {
                 .disabled(session.documentId == nil)
         } else {
             Button(L("Add Note Here")) { beginAddNoteAtCursor() }   // 点注解（锚到右键处页面坐标）
+            Button(L("Copy Link")) { copyLinkAtCursor() }
         }
         imageNoteMenuItems   // 导入图片…（点锚在右键处；见 `ReaderSurface+ImageNote`）
         Divider()
@@ -277,6 +278,30 @@ extension ReaderSurface {
                         ? String(format: L("%@ isn't ready yet (still loading, or not signed in)."), provider)
                         : L("Couldn't put it in the chat box.")))
             }
+        }
+    }
+
+    // MARK: 复制链接（`unireader://` 深链，书签/图钉/高亮/空白处右键共用）
+
+    /// 生成 `unireader://` 深链接并写入剪贴板。复用 MCP 那边现成的 `MCPFacade.link`（`MCP-PLAN.md`
+    /// 「文档/批注/位置 DTO 都带现成 link」同一套逻辑，不自己重新拼 URL）。`page` 传内部下标（0 起），
+    /// 这里转外部页码；本项目没有公共剪贴板 util，同 `copySelectionToPasteboard` 那套写法就地写。
+    func copyLinkToPasteboard(page: Int? = nil, frac: Double? = nil, note: UUID? = nil) {
+        guard let docId = session.documentId else { return }
+        let url = MCPFacade.shared.link(workspace, doc: docId, page: page.map(PageNo.external), frac: frac, note: note)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(url, forType: .string)
+    }
+
+    /// 右键处「复制链接」：落点精确在某条高亮上就链到那条高亮（`note:`，跟 MCP 给高亮生成 link 同一套
+    /// 参数），否则链到当前页/该处的页内位置——取光标位置的写法同 `addBookmarkAtCursor`。
+    func copyLinkAtCursor() {
+        guard let p = scratch.cursorP else { return }
+        if let hit = highlightHit(p) {
+            copyLinkToPasteboard(note: hit.highlight.id)
+        } else if let n = containerPointToPageNorm(p) {
+            copyLinkToPasteboard(page: n.page, frac: Double(n.ny))
         }
     }
 

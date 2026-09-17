@@ -328,6 +328,8 @@ struct NoteBubbleView: View {
     /// 非 nil 才画右上角铅笔（tap/always 的「常驻气泡」有；hover 预览没有——
     /// 鼠标一旦离开图钉去够按钮，气泡就收了，那颗按钮是够不着的假入口）。
     let onEdit: (() -> Void)?
+    /// 右键菜单「复制链接」；nil = 不显示这一项（预览/spike 场景没有真笔记标识符）。
+    var onCopyLink: (() -> Void)? = nil
 
     /// 引擎排完版报回来的正文高度（**完整**高度，没钳过）。nil / 0 = 还没排（用估计值占位）。
     @State private var bodyH: CGFloat?
@@ -408,6 +410,7 @@ struct NoteBubbleView: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
                 }
+                if let onCopyLink { Button(L("Copy Link")) { onCopyLink() } }
                 if card != nil {
                     Divider()
                     Button(L("Reset Card Size and Position")) { onCard(nil, nil) }

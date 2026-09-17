@@ -75,9 +75,12 @@ struct PageCellView: View {
     var bubbleMaxWidth: CGFloat = NoteBubble.fixedMaxWidth
     var scratchPins: [(id: UUID, nx: Double, ny: Double, name: String)] = []   // 本页的草稿纸图钉（点开那张纸）
     var onOpenScratchPad: (UUID) -> Void = { _ in }
+    var onCopyScratchLink: (UUID, Double) -> Void = { _, _ in }   // 草稿纸图钉右键「复制链接」(id, ny)
     var bookmarks: [Bookmark] = []                         // 本页的书签（页右缘小旗标，点开改名/删除）
     var onRenameBookmark: (Bookmark) -> Void = { _ in }
     var onDeleteBookmark: (Bookmark) -> Void = { _ in }
+    var onCopyBookmarkLink: (Bookmark) -> Void = { _ in }  // 书签右键「复制链接」
+    var onCopyNoteLink: (TextNote) -> Void = { _ in }      // 文字笔记图钉/气泡右键「复制链接」
     /// 画板模式（v12）的每侧页边宽度（像素，0 = 关）。纸面与墨迹层按它向两侧铺开，
     /// 其余各层（页图/高亮/选择/图钉/光标）一律还是页内坐标——页边只是「同一页的横向延伸」。
     var inkMargin: CGFloat = 0
@@ -296,6 +299,7 @@ struct PageCellView: View {
                     notePin(typed: typed, t: t)
                 }
                 .buttonStyle(.plain)
+                .contextMenu { Button(L("Copy Link")) { onCopyNoteLink(n) } }
                 .help(n.display == .hover && !n.text.isEmpty ? "" : (n.text.isEmpty ? n.quote : NoteMarkdown.plain(n.text)))
                 .opacity(dragging ? 0.3 : 1)
                 .position(pos)
@@ -317,7 +321,8 @@ struct PageCellView: View {
                                    interactive: cardsInteractive && n.display != .hover,
                                    onCard: { onCard(n.id, $0, $1) },
                                    onFrame: { onCardFrame(n.id, pageIndex, $0) },
-                                   onEdit: n.display == .hover ? nil : { onOpenNote(n) })
+                                   onEdit: n.display == .hover ? nil : { onOpenNote(n) },
+                                   onCopyLink: { onCopyNoteLink(n) })
                 }
             }
             // 图片笔记图钉 + 气泡：与批注图钉同一套语义（tap 展开/收起、hover/always 点开编辑器）、
@@ -364,6 +369,7 @@ struct PageCellView: View {
                         .overlay(Circle().stroke(.black.opacity(0.15), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
+                .contextMenu { Button(L("Copy Link")) { onCopyScratchLink(pin.id, pin.ny) } }
                 .help(pin.name)
                 .position(x: min(max(pin.nx * size.width, 12), size.width - 12),
                           y: min(max(pin.ny * size.height, 10), size.height - 10))
@@ -384,6 +390,7 @@ struct PageCellView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .contextMenu { Button(L("Copy Link")) { onCopyBookmarkLink(b) } }
                 .help(b.title)
                 .popover(isPresented: Binding(get: { openBookmark == b.id },
                                               set: { if !$0 { openBookmark = nil } }),
