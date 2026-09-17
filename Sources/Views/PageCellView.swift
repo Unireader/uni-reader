@@ -31,6 +31,7 @@ struct PageCellView: View {
     var selectionRects: [CGRect] = []      // 文字选择高亮（T1），归一化 0~1 左上原点
     var matchRects: [CGRect] = []          // 搜索命中高亮，归一化 0~1 左上原点（T2，全部命中，淡黄）
     var activeMatchRects: [CGRect] = []    // 当前命中（同上坐标，橙色强调）
+    var matchPulse: CGFloat = 1            // 当前命中切换闪烁：0=刚切换(最亮)…1=已落定(基础透明度)
     var highlights: [Highlight] = []       // 本页文字高亮（kind=3）：按各自颜色铺色，最底层
     var activeHighlight: HighlightTap? = nil   // 被点开的那条高亮 + 被点中的那一行：在那一行上挂删除气泡
     var onDismissHighlight: () -> Void = {}
@@ -236,7 +237,9 @@ struct PageCellView: View {
             if !matchRects.isEmpty || !activeMatchRects.isEmpty {
                 Canvas { ctx, sz in
                     for r in matchRects { fillNorm(r, in: &ctx, size: sz, color: .yellow.opacity(0.35)) }
-                    for r in activeMatchRects { fillNorm(r, in: &ctx, size: sz, color: .orange.opacity(0.55)) }
+                    // 切换命中的瞬间更亮，`matchPulse` 在 0.3s 内从 0 回落到 1，落定后即常态 0.55。
+                    let activeOpacity = 0.55 + (1 - matchPulse) * 0.35
+                    for r in activeMatchRects { fillNorm(r, in: &ctx, size: sz, color: .orange.opacity(activeOpacity)) }
                 }
                 .allowsHitTesting(false)
             }

@@ -10,6 +10,11 @@ struct ScrollAnchor: Equatable {
     var seq: Int
     var origin: String   // "mac" | "pad" | "toc" | "search" | "restore"
     var senderT: Double = 0   // 发送端单调时钟(ms)，>0 启用时间戳插值；0=本地(sim/mac)走低通
+
+    /// 起步方式：true = 从当前位置起步、交给 `ScrollFollower` 的低通滤波器动画飞过去
+    /// （想要「看得见」的跳转，目前只有搜索切换命中）；false = 首帧当帧对齐、瞬间到位
+    /// （TOC/restore 要的是即时定位，不需要额外的滚动动画，见 `ScrollFollower.apply`）。
+    var animate: Bool { origin == "search" }
 }
 
 /// 平板笔悬停位置（**页内**归一化坐标，左上原点）。笔只在 PDF 页上操作 → 光标锚定页内容（随页滚动/缩放），

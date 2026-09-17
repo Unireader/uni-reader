@@ -324,7 +324,9 @@ extension ReaderSurface {
         }
         follower.pageCount = layout.pageCount
         follower.interpEnabled = interpEnabled
-        follower.apply(a)
+        let cur = layout.locate(docY: scratch.topDocY)
+        follower.apply(a, currentProgress: Double(cur.page) + cur.frac)
+        if a.origin == "search" { beginMatchPulse() }
     }
 
     func followStep() {
@@ -334,6 +336,26 @@ extension ReaderSurface {
         // 只驱动 y，x 显式带当前值（单轴 scrollTo 会把另一轴重置为 0——scroll-x-probe T4）
         let clamped = clampOffset(CGPoint(x: scratch.geo.offsetX, y: y), pageWidth: pageW)
         pos.scrollTo(point: clamped)
+    }
+
+    // MARK: 搜索命中闪烁（`incomingAnchor` 收到 `origin == "search"` 时触发）
+    //
+    // 阅读区无隐式动画红线（`PageStreamView.contentBody` 的 `.transaction { $0.animation = nil }`）
+    // 覆盖了整个页元胞子树，`withAnimation` 在这里会被吞掉、静默不生效——所以跟 `zoomAnimStep` 同款，
+    // 逐帧手动算出一个 0…1 的进度值直接赋给 `@State`，靠数值本身的连续变化产生动画观感。
+
+    var matchPulseDuration: CFTimeInterval { 0.3 }   // 计算属性：扩展里不能放存储属性
+
+    func beginMatchPulse() {
+        scratch.matchPulseStartedAt = CACurrentMediaTime()
+        matchPulseT = 0
+        matchPulseOn = true
+    }
+
+    func matchPulseStep() {
+        let t = CGFloat(min(1, (CACurrentMediaTime() - scratch.matchPulseStartedAt) / matchPulseDuration))
+        matchPulseT = t
+        if t >= 1 { matchPulseOn = false }
     }
 
 }

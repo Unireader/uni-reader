@@ -194,6 +194,8 @@ struct ReaderSurface: View {
     @State var fitBasis: CGFloat = 0      // fit 基准宽（pt）；resize settle 时重定标
     @State var userZoomed = false
     @State var zoomAnimOn = false         // 缩放动画进行中（驱动 TimelineView 帧源）
+    @State var matchPulseOn = false       // 搜索命中切换闪烁进行中（同上，驱动 TimelineView 帧源）
+    @State var matchPulseT: CGFloat = 1   // 0=刚切换命中(最亮)…1=已落定(基础透明度)；仅对当前命中生效
     /// 缩放进行中：墨迹层走快速描边（见 `inkDrawStroke` 的 `fast`）。
     /// 用 `@State` 而非 `scratch`：进出快速态各需要一次 body 重算（后者要按高质量重画一遍）。
     @State var inkFastDraw = false
@@ -668,6 +670,7 @@ struct ReaderSurface: View {
                      selectionRects: selection?.rects[i] ?? [],
                      matchRects: buckets.matchRects[i] ?? [],
                      activeMatchRects: buckets.activeMatch?.page == i ? (buckets.activeMatch?.rects ?? []) : [],
+                     matchPulse: buckets.activeMatch?.page == i ? matchPulseT : 1,
                      highlights: buckets.highlights[i] ?? [],
                      activeHighlight: session.openPadID == nil ? activeHighlight : nil,   // 草稿纸盖着时不弹（纸归纸）
                      onDismissHighlight: { activeHighlight = nil },
@@ -726,13 +729,14 @@ struct ReaderSurface: View {
 
     /// 帧驱动（跟随器 / 缩放动画任一激活即挂载；TimelineView(.animation) 与刷新率同步）。
     @ViewBuilder var followTicker: some View {
-        if follower.isActive || zoomAnimOn {
+        if follower.isActive || zoomAnimOn || matchPulseOn {
             TimelineView(.animation) { tl in
                 Color.clear
                     .frame(width: 1, height: 1)
                     .onChange(of: tl.date) { _, _ in
                         if follower.isActive { followStep() }
                         if zoomAnimOn { ZoomProbe.measure("动画帧") { zoomAnimStep() } }
+                        if matchPulseOn { matchPulseStep() }
                     }
             }
             .allowsHitTesting(false)

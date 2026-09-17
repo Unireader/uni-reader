@@ -27,8 +27,9 @@ final class ScrollFollower: ObservableObject {
     private var useInterp = false
     private let interpDelay = 0.08   // 渲染落后 80ms 吸收抖动/成批（越大越稳、越滞后）
 
-    /// 应用来自 sim/平板/toc/restore 的锚点。首次激活时当帧对齐（restore/toc 即时到位）。
-    func apply(_ a: ScrollAnchor) {
+    /// 应用来自 sim/平板/toc/restore/search 的锚点。首次激活时默认当帧对齐（restore/toc 即时到位）；
+    /// `a.animate`（目前只有搜索切换命中）时从 `currentProgress` 起步，交给下面的低通滤波器动画飞过去。
+    func apply(_ a: ScrollAnchor, currentProgress: Double? = nil) {
         let newTarget = Double(a.page) + a.frac
         let now = CACurrentMediaTime()
         lastAnchorAt = now
@@ -47,7 +48,9 @@ final class ScrollFollower: ObservableObject {
             smTarget = newTarget
         }
         if !isActive {
-            smCurrent = newTarget                            // 首帧对齐，避免大跳
+            // `animate` 时从当前位置起步交给下面 step() 的低通滤波器飞过去；否则维持原样
+            // 当帧对齐（TOC/restore 要即时到位，没有 currentProgress 兜底时同样即时到位）。
+            smCurrent = (a.animate ? currentProgress : nil) ?? newTarget
             lastStepAt = now
             isActive = true
         }
