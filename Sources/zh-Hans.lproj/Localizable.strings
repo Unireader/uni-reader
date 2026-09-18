@@ -617,7 +617,6 @@
 /* Agent 面板（ACP，ACP-AGENT-PLAN.md） */
 "Agent Panel" = "Agent 面板";
 "Open Agent Panel" = "打开 Agent 面板";
-"Agent Options" = "Agent 选项";
 "Earlier Chats" = "历史对话";
 "No earlier chats" = "没有历史对话";
 "Untitled Chat" = "未命名对话";

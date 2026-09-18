@@ -165,7 +165,8 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
         case ID.history:
             return menuItem(id, L("Earlier Chats"), "clock.arrow.circlepath", menu: "history")
         case ID.options:
-            return menuItem(id, L("Agent Options"), "slider.horizontal.3", menu: "options")
+            // 与咨询 AI 浮窗的「更多」同图标同名（同功能同图标，用户 2026-09-18）
+            return menuItem(id, L("More"), "ellipsis", menu: "options")
         case ID.pin:
             // 开关：`pushOnPushOff` 让系统画按下态（咨询面板 2026-09-01 的教训：只换实心图标看不出来）
             let it = NSToolbarItem(itemIdentifier: id)

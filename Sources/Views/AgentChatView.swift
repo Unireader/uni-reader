@@ -323,9 +323,10 @@ struct AgentOptionsMenu: View {
                 Button(L("Show Inside Reading Window")) { panel.setMode(.inline) }
             }
         } label: {
-            Label(L("Agent Options"), systemImage: "slider.horizontal.3")
+            // 与咨询 AI 的「更多」同图标同名：两边这个菜单装的都是面板本身的设置（吸附 / 形态……）
+            Label(L("More"), systemImage: "ellipsis")
         }
-        .help(L("Agent Options"))
+        .help(L("More"))
     }
 }
 

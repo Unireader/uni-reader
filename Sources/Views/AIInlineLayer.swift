@@ -143,12 +143,13 @@ struct AIInlineLayer: View {
             }
             Spacer(minLength: 4)
             modeMenu
-            headerButton("house", L("New Chat")) { panel.goHome() }
+            // 图标与 Agent 面板统一（同功能同图标，用户 2026-09-18）：新对话 = square.and.pencil、收起 = sidebar.trailing
+            headerButton("square.and.pencil", L("New Chat")) { panel.goHome() }
             headerButton("macwindow", L("Open as Separate Window")) {
                 panel.setMode(.window)
                 AIPanelWindowController.show()   // 迁移后浮窗归 AppKit，不再走 SwiftUI 的 openWindow
             }
-            headerButton("chevron.right", L("Collapse")) { panel.setInlineOpen(false, for: session.windowID) }
+            headerButton("sidebar.trailing", L("Collapse")) { panel.setInlineOpen(false, for: session.windowID) }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)

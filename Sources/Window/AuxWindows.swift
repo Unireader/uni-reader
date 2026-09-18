@@ -207,7 +207,8 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
         case ID.back: return button(id, L("Back"), "chevron.left", #selector(goBack))
         case ID.forward: return button(id, L("Forward"), "chevron.right", #selector(goForward))
         case ID.reload: return button(id, L("Reload"), "arrow.clockwise", #selector(reloadOrStop))
-        case ID.home: return button(id, L("New Chat"), "house", #selector(goHome))
+        // 新对话与 Agent 面板统一用 square.and.pencil（同功能同图标，用户 2026-09-18）
+        case ID.home: return button(id, L("New Chat"), "square.and.pencil", #selector(goHome))
         case ID.pin: return toggleButton(id, L("Keep Panel on Top"), "pin", #selector(togglePin))
         case ID.platform:
             let it = NSMenuToolbarItem(itemIdentifier: id)
