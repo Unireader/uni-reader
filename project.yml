@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.42"
-    CURRENT_PROJECT_VERSION: "32"
+    MARKETING_VERSION: "0.1.43"
+    CURRENT_PROJECT_VERSION: "33"
 # 第三方包（SPM），目前两个：
 #   - 笔记的 Markdown 引擎（TextKit 2 + AppKit；编辑器 sheet + 气泡正文只读渲染，
 #     后者是「阅读区纯 SwiftUI」红线的唯一例外）。pre-1.0，**钉死版本**，升级要手动改这里再解析。
