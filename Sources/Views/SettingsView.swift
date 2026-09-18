@@ -57,6 +57,8 @@ struct SettingsView: View {
     @AppStorage(NoteBubble.maxWidthKey) private var bubbleMaxWidth = Int(NoteBubble.fixedMaxWidth)
     /// 搜索切换命中时是否播放高亮闪烁动画（阅读区 `ReaderSurface` 读同一个键）。
     @AppStorage("matchPulseEnabled") private var matchPulseEnabled = true
+    /// 拖选文字的算法：默认框选（简单、支持 ⌘+拖叠加多段），关闭改回流式选择（阅读区同一个键）。
+    @AppStorage("textSelectBoxMode") private var textSelectBoxMode = true
 
     var body: some View {
         switch tab {
@@ -254,6 +256,17 @@ struct SettingsView: View {
                 Text(L("Search"))
             } footer: {
                 Text(L("When switching between search matches, briefly flash the current match to help you spot it. Off: the match is highlighted directly with no animation."))
+            }
+
+            Section {
+                Picker(L("Drag-select style"), selection: $textSelectBoxMode) {
+                    Text(L("Box select")).tag(true)
+                    Text(L("Flow select")).tag(false)
+                }
+            } header: {
+                Text(L("Text Selection"))
+            } footer: {
+                Text(L("Box select: draw a rectangle to pick any line or character it touches; ⌘-drag adds another box to the selection. Flow select: drag from a start point to an end point and everything in between is selected in reading order, like the old PDFView behavior."))
             }
 
             Section {

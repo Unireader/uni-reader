@@ -497,6 +497,11 @@
 "Search" = "Search";
 "Flash active search match" = "Flash active search match";
 "When switching between search matches, briefly flash the current match to help you spot it. Off: the match is highlighted directly with no animation." = "When switching between search matches, briefly flash the current match to help you spot it. Off: the match is highlighted directly with no animation.";
+"Text Selection" = "Text Selection";
+"Drag-select style" = "Drag-select style";
+"Box select" = "Box select";
+"Flow select" = "Flow select";
+"Box select: draw a rectangle to pick any line or character it touches; ⌘-drag adds another box to the selection. Flow select: drag from a start point to an end point and everything in between is selected in reading order, like the old PDFView behavior." = "Box select: draw a rectangle to pick any line or character it touches; ⌘-drag adds another box to the selection. Flow select: drag from a start point to an end point and everything in between is selected in reading order, like the old PDFView behavior.";
 "Click to view full size" = "Click to view full size";
 "Write a note… (Markdown)" = "Write a note… (Markdown)";
 "Caption… (Markdown)" = "Caption… (Markdown)";

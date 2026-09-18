@@ -7,6 +7,7 @@ import SwiftUI
 @MainActor
 final class SettingsWindowController: NSWindowController {
     private static var shared: SettingsWindowController?
+    private var bag = Set<AnyCancellable>()
 
     static func show() {
         if let c = shared, c.window != nil {
@@ -35,6 +36,16 @@ final class SettingsWindowController: NSWindowController {
         win.setFrameAutosaveName(Self.frameName)
         win.isReleasedWhenClosed = false
         super.init(window: win)
+        // ⌘W / ⇧⌘W 是 App 级菜单命令（广播 + key 窗口认领，见 `ReaderWindowController`/`RefWindowController`
+        // 同款订阅）；设置窗没有标签，两个都是关它自己。
+        for name in [Notification.Name.closeTabRequested, .closeWindowRequested] {
+            NotificationCenter.default.publisher(for: name)
+                .sink { [weak self] _ in
+                    guard let self, self.window?.isKeyWindow == true else { return }
+                    self.window?.performClose(nil)
+                }
+                .store(in: &bag)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }

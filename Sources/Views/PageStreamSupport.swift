@@ -322,7 +322,12 @@ final class Scratch {
     /// 放 `Scratch` 而不是读 `realized`：逃逸闭包捕获的是 struct 拷贝，@State 读出来可能是旧值。
     var keepRange: ClosedRange<Int> = 0...Int.max
     var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点 / 双击选词定位；域外为 nil）
-    var selDragAnchor: (page: Int, nx: CGFloat, ny: CGFloat)?   // 进行中拖选的锚点（页号 + 页内归一化坐标）
+    var selDragAnchor: (page: Int, nx: CGFloat, ny: CGFloat)?   // 进行中拖选（流式选择）的锚点（页号 + 页内归一化坐标）
+    /// ⌘+拖叠加框选：起手前已经选中的内容（新框选区在这基础上叠加，逐帧预览合并结果；松手后清空）。
+    /// 只在合并计算里读，不驱动渲染，放 `Scratch` 无妨（进行中的拖拽本体 `boxSelectDrag` 驱动虚线框
+    /// overlay，必须是 `@State`，见 `ReaderSurface`——`Scratch` 是引用类型，改它不触发 SwiftUI 重算，
+    /// 松手清它 overlay 不会跟着消失，同 `lassoPath`/`lassoGhostOffset` 的先例）。
+    var boxSelectBase: TextSelection?
     var localInkStart: (page: Int, nx: Double, ny: Double)?     // 进行中本机落墨的起点（⇧ 尺子锚点；非 nil = 有一笔/一次擦除在画）
     var lassoDragMode: LassoDragMode?  // 进行中框选手势的形态（nil = 无框选/移动在飞）
     var snipViaOption = false          // 这次框选截图是 ⌥ 临时触发的（松手后不该留在 snip 工具上）

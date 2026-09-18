@@ -909,6 +909,31 @@ AI 面板 S1~S5 与吸附、内置模式 / 文字笔记展开方式 / PDF 画板
   - 验证：Mac `mirror-diff-test` 53/53（新增 6 条钉死新行为）、安卓 JVM 75/75。
 
 ---
+## 框选文字模式 + 设置窗 ⌘W 关闭（2026-09-18，Mac，用户两条）
+
+- **拖选文字新增「框选」算法**（设置 → 阅读 → 拖选文字方式，默认框选；关掉退回原来的流式选择）：
+  拖出矩形，**框到哪些字就选哪些字**（字符级，不是整行/整段）——原生页直接吃 PDFKit 自带的
+  `PDFPage.selection(for:)`（矩形转 PDF 页空间四角求包围盒喂给它，rotation/scan-align 是 90° 整数倍时
+  精确，scan-align 小角度校正只会让包围盒略外扩，边缘偶尔多选一点不算错），OCR 页按矩形纵向命中到的
+  每一行、再按矩形与该行的横向重叠区间裁字符（复用 `OCRTextSelect.charOffset`/`clip`，与
+  `ocrGroupSelection` 裁首末行同一套定位逻辑）——首版误做成整行选，用户当场纠正「框选到哪些字就是哪些字」。
+  比原来「起点→终点」的流式选择（还要管阅读顺序/跨栏排序/分组感知）简单在**不用判断分组归属**，
+  不是简单在选择粒度。
+  **⌘+拖 = 叠加**（同 Finder/Mail 的不连续多选惯例，用户确认过）：起手前先把当前选区存一份，这次框选
+  的内容在它基础上逐帧合并预览，松手即成多段不连续选区（`TextSelection.rects` 本就是按页存数组，
+  一页多段天然支持）；不按 ⌘ 起手＝每次拖都是全新选区。实现落在新文件 `ReaderSurface+BoxSelect.swift`
+  （命中/合并/虚线框 overlay），`ReaderSurface+Selection.dragSelectGesture` 按 `textSelectBoxMode`
+  分派到它或原 `flowSelectChanged`（原实现原样保留，只是改了名字）。
+  🔴 **进行中的拖拽本体 `boxSelectDrag` 必须是 `@State`，不能放 `Scratch`**：首版放进了 `Scratch`
+  （引用类型，改它不触发 SwiftUI 重算），松手只清它、不改 `selection`，于是虚线框在松手后留在原地
+  好一会才消失（用户当场报的 bug）——同 `lassoPath`/`lassoGhostOffset` 的先例，改回 `@State` 立即修好；
+  `boxSelectBase`（⌘+拖叠加的起手快照）只在合并计算里读、不驱动渲染，留在 `Scratch` 无妨。
+- **设置窗加 ⌘W/⇧⌘W 关闭**：这扇窗此前没接主菜单「关闭标签/关闭窗口」那两条广播通知（`ReaderWindowController`/
+  `RefWindowController` 各自订阅、按「自己是不是 key 窗口」认领），照它们的样子给 `SettingsWindowController`
+  补上同款订阅。
+- 编译通过（`xcodebuild` 全绿），手感与「⌘+拖叠加是否符合预期」待用户实测。
+
+---
 ## 扫描页对齐（2026-09-17，Mac + 安卓模式1：「扫描件 pdf 没有做对齐，动态计算出来偏移然后调整显示」）
 
 方案与契约全在 **`SCAN-ALIGN-PLAN.md`**（坐标公式 / `page_align` 表 v14 / 显示身份 / 线协议取值 / 离线镜像通道），这里只记过程与结论。

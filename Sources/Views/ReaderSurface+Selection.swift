@@ -553,7 +553,9 @@ extension ReaderSurface {
         }
     }
 
-    /// 拖选：起点定锚（一次），移动实时扩选。锚点所在页有 OCR 层 → 走 OCR 行选择；否则 PDFKit 原生选择。
+    /// 拖选文字：`textSelectBoxMode` 分两套算法（设置 → 阅读可切）——
+    ///  · **框选**（默认）：拖出矩形，选中与它相交的行/字，算法更简单；⌘+拖叠加多段，见 `ReaderSurface+BoxSelect`。
+    ///  · **流式选择**：起点定锚（一次），按阅读顺序连续扩选到终点，同 PDFView 老手感（本函数原实现）。
     /// minimumDistance 2 → 纯单击不触发拖选（交给 `readerClickGesture` 取消），2px 内抖动不误选。
     /// `pointerTool == .ink` 时反向门控：拖选让位给本机落墨手势。
     /// 起点命中点注解图钉时让位图钉拖拽（容器手势是 simultaneous，不让位会边拖图钉边扩选）。
@@ -563,21 +565,30 @@ extension ReaderSurface {
                 guard app.pointerTool == .textSelect, scratch.pinch == nil,
                       session.openPadID == nil else { return }   // 草稿纸盖着时阅读区一概不响应
                 // ⌥ 按下 = 用户要框选截图 → **尚未起手**的才让位（已经在拖选的不打断）
-                guard !(snipModifierDown && scratch.selDragAnchor == nil) else { return }
-                if scratch.selDragAnchor == nil {
-                    // 起点在图钉 / 笔记卡片上：让位，selDragAnchor 保持 nil → 整段拖选不启动
-                    if draggablePinHit(v.startLocation) != nil || cardHit(v.startLocation) != nil { return }
-                    scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
-                }
-                guard let a = scratch.selDragAnchor, let f = containerPointToPageNorm(v.location) else { return }
-                if ocrRuns(page: a.page) != nil {
-                    setOCRSelection(anchor: a, focus: f)
-                } else if let pdf = session.pdf, let pa = pdf.page(at: a.page), let pf = pdf.page(at: f.page),
-                          let ptA = pageSpacePoint(a), let ptF = pageSpacePoint(f) {
-                    setSelection(pdf.selection(from: pa, at: ptA, to: pf, at: ptF))
-                }
+                guard !(snipModifierDown && scratch.selDragAnchor == nil && boxSelectDrag == nil) else { return }
+                if textSelectBoxMode { boxSelectChanged(v) } else { flowSelectChanged(v) }
             }
-            .onEnded { _ in scratch.selDragAnchor = nil }
+            .onEnded { _ in
+                scratch.selDragAnchor = nil
+                boxSelectEnded()
+            }
+    }
+
+    /// 流式选择（原实现，`textSelectBoxMode == false` 时走这条）：锚点所在页有 OCR 层 → 走 OCR 行选择；
+    /// 否则 PDFKit 原生选择。
+    private func flowSelectChanged(_ v: DragGesture.Value) {
+        if scratch.selDragAnchor == nil {
+            // 起点在图钉 / 笔记卡片上：让位，selDragAnchor 保持 nil → 整段拖选不启动
+            if draggablePinHit(v.startLocation) != nil || cardHit(v.startLocation) != nil { return }
+            scratch.selDragAnchor = containerPointToPageNorm(v.startLocation)
+        }
+        guard let a = scratch.selDragAnchor, let f = containerPointToPageNorm(v.location) else { return }
+        if ocrRuns(page: a.page) != nil {
+            setOCRSelection(anchor: a, focus: f)
+        } else if let pdf = session.pdf, let pa = pdf.page(at: a.page), let pf = pdf.page(at: f.page),
+                  let ptA = pageSpacePoint(a), let ptF = pageSpacePoint(f) {
+            setSelection(pdf.selection(from: pa, at: ptA, to: pf, at: ptF))
+        }
     }
 
     /// 点注解图钉命中测试（容器/视口坐标 P，与 dragSelect 同 `.local` 空间）→ 命中的 note。
