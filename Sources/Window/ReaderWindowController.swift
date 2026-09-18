@@ -305,7 +305,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             AppDelegate.shared?.openReaderWindow(
                 workspacePath: c.workspace.folder?.standardizedFileURL.path, docId: nil)
         }
-        on(.newTabRequested) { _ = $0.tabs.newTab() }
+        on(.newTabRequested) { $0.tabs.docPickerPresented = true }
         on(.closeTabRequested) { $0.closeTabOrWindow() }
         on(.closeWindowRequested) { $0.window?.performClose(nil) }
         on(.nextTabRequested) { $0.tabs.activate(offset: 1) }

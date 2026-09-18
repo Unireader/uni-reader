@@ -109,15 +109,9 @@ final class TabsModel: ObservableObject {
         return t
     }
 
-    /// 新开一个空标签（标签栏的 `+` / ⌘T）。
-    @discardableResult
-    func newTab() -> DocTabModel {
-        // 当前就是空标签就别再开一个（连点 + 不该攒出一排空标签）。
-        if active.docID == nil { return active }
-        let t = appendTab(docID: nil)
-        activate(t.id)
-        return t
-    }
+    /// 标签栏的 `+` / ⌘T 不再开空标签，而是弹本工作区的选文档弹窗（`DocPickerView`，用户 2026-09-17 定），
+    /// 选中后走 `open`。弹窗挂在「+」上；标签栏不显示时挂在阅读区底部（见 `ReaderPane.tabBar`）。
+    @Published var docPickerPresented = false
 
     /// 建标签但**不切过去**（冷启动恢复一组标签时用：切来切去会让平板跟随反复易主）。
     /// `staged` = 只记下要开哪篇、先不装（见 `DocTabModel.staged`），由 `activate` 负责装。

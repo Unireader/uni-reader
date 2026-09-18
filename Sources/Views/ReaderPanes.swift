@@ -179,26 +179,43 @@ struct ReaderPane: View {
             } actions: {
                 Button(L("Re-link File…")) { onRelocate(doc) }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            // 撑满阅读区：不撑的话 ContentUnavailableView 只有内容那么大，挂在它底边的标签栏
+            // 就跑到屏幕中间、还被压成窄条（2026-09-17 用户截图）。
             ContentUnavailableView(
                 L("No Document"),
                 systemImage: "doc.richtext",
                 description: Text(L("Open a PDF to start reading."))
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .top) { if tab.isHashing { indexingBadge } }
         }
     }
 
     /// 底部标签栏。草稿纸开着时不显示——那是盖满阅读区的覆盖层，自带工具条与 minimap。
-    @ViewBuilder
     private var tabBar: some View {
-        if session.openPadID == nil {
-            TabBarView(tabs: tabs, padSessionID: app.padSession?.id,
-                       onOpenInNewWindow: { docId in
-                           AppDelegate.shared?.openReaderWindow(
-                               workspacePath: workspace.folder?.standardizedFileURL.path, docId: docId)
-                       })
+        ZStack(alignment: .bottom) {
+            if session.openPadID == nil {
+                TabBarView(tabs: tabs, padSessionID: app.padSession?.id,
+                           onOpenInNewWindow: { docId in
+                               AppDelegate.shared?.openReaderWindow(
+                                   workspacePath: workspace.folder?.standardizedFileURL.path, docId: docId)
+                           })
+            }
+            // ⌘T 时标签栏没显示（只有一个标签 / 草稿纸开着）→「+」不在，选文档弹窗改挂这个点上。
+            Color.clear.frame(width: 1, height: 1)
+                .padding(.bottom, TabBarMetrics.floatBottom)
+                .allowsHitTesting(false)
+                .popover(isPresented: pickerWithoutTabBar, arrowEdge: .bottom) {
+                    DocPickerView.forTabs(tabs, workspace: workspace)
+                }
         }
+    }
+
+    private var pickerWithoutTabBar: Binding<Bool> {
+        Binding(get: { tabs.docPickerPresented && (tabs.tabs.count <= 1 || session.openPadID != nil) },
+                set: { tabs.docPickerPresented = $0 })
     }
 
     @ViewBuilder

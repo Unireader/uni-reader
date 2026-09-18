@@ -16,8 +16,13 @@ struct TabBarView: View {
     let padSessionID: UUID?
     let onOpenInNewWindow: (String) -> Void
 
+    @EnvironmentObject private var workspace: WorkspaceManager
     @AppStorage(TabBarStyle.key) private var styleRaw = TabBarStyle.floating.rawValue
     private var style: TabBarStyle { TabBarStyle(rawValue: styleRaw) ?? .floating }
+
+    private func picker() -> AnyView {
+        AnyView(DocPickerView.forTabs(tabs, workspace: workspace))
+    }
 
     var body: some View {
         // ≥2 个标签才显示（用户拍板）：只开一篇时完全不占地方、不盖 PDF，与从前一模一样。
@@ -29,10 +34,12 @@ struct TabBarView: View {
                      onOpenInNewWindow: { id in
                          if let d = tabs.tabs.first(where: { $0.id == id })?.docID { onOpenInNewWindow(d) }
                      },
-                     onNewTab: { tabs.newTab() },
+                     onNewTab: { tabs.docPickerPresented = true },
                      onToggleStyle: {
                          styleRaw = (style == .floating ? TabBarStyle.docked : .floating).rawValue
-                     })
+                     },
+                     pickerPresented: $tabs.docPickerPresented,
+                     picker: picker)
         }
     }
 

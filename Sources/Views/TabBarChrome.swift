@@ -53,6 +53,9 @@ struct TabStrip: View {
     var onOpenInNewWindow: (UUID) -> Void = { _ in }
     var onNewTab: () -> Void = {}
     var onToggleStyle: () -> Void = {}
+    /// 「+」上的选文档弹窗。纯呈现层只管挂，内容由调用方给（样张里不传 = 不挂）。
+    var pickerPresented: Binding<Bool> = .constant(false)
+    var picker: (() -> AnyView)? = nil
 
     var body: some View {
         switch style {
@@ -134,6 +137,7 @@ struct TabStrip: View {
             }
             .buttonStyle(.plain)
             .help(L("New Tab"))
+            .popover(isPresented: pickerPresented, arrowEdge: .bottom) { picker?() }
         }
         .fixedSize(horizontal: true, vertical: false)
     }

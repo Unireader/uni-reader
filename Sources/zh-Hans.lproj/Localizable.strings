@@ -588,3 +588,10 @@
 "Bad page number “%@” (pages start at 1)." = "页码“%@”不对（页码从 1 起）。";
 "Bad position “%@” (expected 0…1)." = "页内位置“%@”不对（应为 0…1）。";
 "Bad note id “%@”." = "笔记 id“%@”不对。";
+
+/* 新建标签：选文档弹窗 */
+"Search Documents" = "搜索文档";
+"No documents in this workspace." = "这个工作区里还没有文档。";
+"No matching documents." = "没有匹配的文档。";
+"Already Open" = "已打开";
+"%d pages" = "%d 页";

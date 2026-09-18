@@ -586,3 +586,10 @@
 "Bad page number “%@” (pages start at 1)." = "Bad page number “%@” (pages start at 1).";
 "Bad position “%@” (expected 0…1)." = "Bad position “%@” (expected 0…1).";
 "Bad note id “%@”." = "Bad note id “%@”.";
+
+/* New tab: document picker */
+"Search Documents" = "Search Documents";
+"No documents in this workspace." = "No documents in this workspace.";
+"No matching documents." = "No matching documents.";
+"Already Open" = "Already Open";
+"%d pages" = "%d pages";
