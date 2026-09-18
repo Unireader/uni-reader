@@ -911,27 +911,54 @@ AI 面板 S1~S5 与吸附、内置模式 / 文字笔记展开方式 / PDF 画板
 ---
 ## 框选文字模式 + 设置窗 ⌘W 关闭（2026-09-18，Mac，用户两条）
 
-- **拖选文字新增「框选」算法**（设置 → 阅读 → 拖选文字方式，默认框选；关掉退回原来的流式选择）：
-  拖出矩形，**框到哪些字就选哪些字**（字符级，不是整行/整段）——原生页直接吃 PDFKit 自带的
-  `PDFPage.selection(for:)`（矩形转 PDF 页空间四角求包围盒喂给它，rotation/scan-align 是 90° 整数倍时
-  精确，scan-align 小角度校正只会让包围盒略外扩，边缘偶尔多选一点不算错），OCR 页按矩形纵向命中到的
-  每一行、再按矩形与该行的横向重叠区间裁字符（复用 `OCRTextSelect.charOffset`/`clip`，与
-  `ocrGroupSelection` 裁首末行同一套定位逻辑）——首版误做成整行选，用户当场纠正「框选到哪些字就是哪些字」。
-  比原来「起点→终点」的流式选择（还要管阅读顺序/跨栏排序/分组感知）简单在**不用判断分组归属**，
-  不是简单在选择粒度。
-  **⌘+拖 = 叠加**（同 Finder/Mail 的不连续多选惯例，用户确认过）：起手前先把当前选区存一份，这次框选
-  的内容在它基础上逐帧合并预览，松手即成多段不连续选区（`TextSelection.rects` 本就是按页存数组，
-  一页多段天然支持）；不按 ⌘ 起手＝每次拖都是全新选区。实现落在新文件 `ReaderSurface+BoxSelect.swift`
-  （命中/合并/虚线框 overlay），`ReaderSurface+Selection.dragSelectGesture` 按 `textSelectBoxMode`
-  分派到它或原 `flowSelectChanged`（原实现原样保留，只是改了名字）。
+- **拖选文字新增「框选」算法**：拖出矩形，**框到哪些字就选哪些字**（字符级，不是整行/整段）——
+  原生页直接吃 PDFKit 自带的 `PDFPage.selection(for:)`（矩形转 PDF 页空间四角求包围盒喂给它，
+  rotation/scan-align 是 90° 整数倍时精确，scan-align 小角度校正只会让包围盒略外扩，边缘偶尔多选
+  一点不算错），OCR 页按矩形纵向命中到的每一行、再按矩形与该行的横向重叠区间裁字符（复用
+  `OCRTextSelect.charOffset`/`clip`，与 `ocrGroupSelection` 裁首末行同一套定位逻辑）——首版误做成
+  整行选，用户当场纠正「框选到哪些字就是哪些字」。比原来「起点→终点」的流式选择（还要管阅读顺序/
+  跨栏排序/分组感知）简单在**不用判断分组归属**，不是简单在选择粒度。实现落在新文件
+  `ReaderSurface+BoxSelect.swift`（命中/合并/虚线框 overlay）。
   🔴 **进行中的拖拽本体 `boxSelectDrag` 必须是 `@State`，不能放 `Scratch`**：首版放进了 `Scratch`
   （引用类型，改它不触发 SwiftUI 重算），松手只清它、不改 `selection`，于是虚线框在松手后留在原地
-  好一会才消失（用户当场报的 bug）——同 `lassoPath`/`lassoGhostOffset` 的先例，改回 `@State` 立即修好；
-  `boxSelectBase`（⌘+拖叠加的起手快照）只在合并计算里读、不驱动渲染，留在 `Scratch` 无妨。
+  好一会才消失（用户当场报的 bug）——同 `lassoPath`/`lassoGhostOffset` 的先例，改回 `@State` 立即修好。
+- **同日改版（用户复盘后调整触发方式）**：首版做成设置里的一个开关（`textSelectBoxMode`，默认框选，
+  关掉退回流式选择），⌘+拖表示在框选内叠加多段。用户改主意：**默认还是流式选择（旧手感），起手时
+  按住 ⌘ 才切成框选**，删掉设置里那个开关——`ReaderSurface+Selection.dragSelectGesture` 起手那一刻读
+  一次 `NSEvent.modifierFlags.contains(.command)` 定下这一次拖拽走哪条算法（存 `Scratch.dragUsesBoxSelect`，
+  全程沿用，不因中途松开/按下 ⌘ 变卦），不再是设置项分派。设置面板里的 Picker、对应的 5 条本地化
+  字符串一并删除。
+- **三改（用户再次纠正）**：「cmd 选择每次都要是附加才行，然后选中过的再次选中的是去除，这样比较
+  符合逻辑」——二改删掉「⌘+拖叠加多段」时的理由（⌘ 已经是触发键，拿不出第二个键表达叠加）站不住：
+  每次框选拖拽本来就该在已有选区上叠加，⌘ 是触发键不妨碍它同时也是「这次操作是叠加」的信号；真正要
+  加的是「叠加时再框到已选中的部分要能取消」（同 Finder 图标视图 ⌘+拖橡皮筋的惯例）。
+  为此把框选内部的选区表示从「一份拍平的 `rects`+拼好的整段 `text`」换成 **`BoxSelectItem`
+  （rect+text 成对存放）**——旧表示只知道"这些矩形+这一整段字"，删除局部选区时不知道该从整段文本里
+  砍哪一截；按行/字符片段配对存好，删哪项就精确少哪一段文本。框选状态落在 `Scratch`：`boxSelectPages`
+  （框选内部逐页累积的命中，跨多次拖拽持续累加，toggle 真正作用的对象）、`boxSelectStrokeBase`（当前
+  这次拖拽起手时冻结的 `boxSelectPages` 快照，每帧从它重新算 toggle 而不是在上一帧结果上累加，避免
+  拖拽路径中途扫过又缩回去留下脏状态）。每次新拖拽起手都拿 `composeBoxSelection()` 现算一遍跟当前
+  `selection` 对比：一致就继续在 `boxSelectPages` 上累加，不一致（中途做过一次流式选择、或点别处清过
+  选区）就把当前 `selection` 整个塞进去，起手那一刻自愈，不用去别处另外通知框选。PDF 原生页命中项也
+  从「一次 `selection(for:)` + combined `.string`」改成 `selectionsByLine()` 按行取，才能拿到与 OCR
+  页同粒度的 rect+text 配对。
+  **四改（用户报的小问题）**：「先用行选模式然后再用框选，被行选的没有被框选的处理」——三改版本图省事，
+  给「会话开始前就有的选区」单留了一份 `boxSelectFloor`，原样带着走但不参与 toggle（说是"拆不出逐行"，
+  其实是偷懒）。改法：`boxSelectFloor` 整个删掉，起手时若跟当前 `selection` 对不上，不分来源，一律
+  `decomposeIntoBoxSelectItems` 拆成 `boxSelectPages`——每条既有矩形拿它自己当 `box` 反查一遍
+  `pageBoxHits`（框选本来就有的字符级裁剪逻辑），流式选择裁过的半行一样能精确复原文字（裁过的窄矩形
+  反查回去，字符边界与当初选的分毫不差）。拆完之后不管这份选区原来是流式选择选的还是框选选的，从此
+  一视同仁，都能被框选单独 toggle 掉。
+  **五改（用户要求把 toggle 做成可关的设置）**：反选不再是唯一行为，设置 → 阅读补一个「框选重复区域」
+  Picker——**合并**（保留原有选区，只新增没框过的部分，`boxSelectOverlapMerge` 恒真，即三改之前的
+  纯叠加行为）／**反选**（重叠部分互相取消，四改那套 toggle），**默认合并**（用户拍板：默认求稳，
+  反选留给想要的人自己开）。`ReaderSurface+BoxSelect.applyBoxDrag` 按这个键决定 `kept` 是否要把
+  跟这次拖拽重叠的 `existing` 项过滤掉，`added`（新命中里没被 `existing` 覆盖的部分）两种模式共用
+  不变。
 - **设置窗加 ⌘W/⇧⌘W 关闭**：这扇窗此前没接主菜单「关闭标签/关闭窗口」那两条广播通知（`ReaderWindowController`/
   `RefWindowController` 各自订阅、按「自己是不是 key 窗口」认领），照它们的样子给 `SettingsWindowController`
   补上同款订阅。
-- 编译通过（`xcodebuild` 全绿），手感与「⌘+拖叠加是否符合预期」待用户实测。
+- 编译通过（`xcodebuild` 全绿），手感待用户实测。
 
 ---
 ## 扫描页对齐（2026-09-17，Mac + 安卓模式1：「扫描件 pdf 没有做对齐，动态计算出来偏移然后调整显示」）

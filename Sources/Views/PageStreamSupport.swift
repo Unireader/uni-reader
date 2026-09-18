@@ -323,11 +323,19 @@ final class Scratch {
     var keepRange: ClosedRange<Int> = 0...Int.max
     var cursorP: CGPoint?              // 光标在滚动容器坐标里的位置（⌘wheel 缩放锚点 / 双击选词定位；域外为 nil）
     var selDragAnchor: (page: Int, nx: CGFloat, ny: CGFloat)?   // 进行中拖选（流式选择）的锚点（页号 + 页内归一化坐标）
-    /// ⌘+拖叠加框选：起手前已经选中的内容（新框选区在这基础上叠加，逐帧预览合并结果；松手后清空）。
-    /// 只在合并计算里读，不驱动渲染，放 `Scratch` 无妨（进行中的拖拽本体 `boxSelectDrag` 驱动虚线框
-    /// overlay，必须是 `@State`，见 `ReaderSurface`——`Scratch` 是引用类型，改它不触发 SwiftUI 重算，
-    /// 松手清它 overlay 不会跟着消失，同 `lassoPath`/`lassoGhostOffset` 的先例）。
-    var boxSelectBase: TextSelection?
+    /// 本次拖选是否走框选算法：起手（`selDragAnchor`/`boxSelectDrag` 均为 nil）那一刻按 ⌘ 是否按下
+    /// 定一次，之后同一次拖拽全程沿用（`ReaderSurface.dragSelectGesture` 写、读）。只在分派逻辑里读，
+    /// 不驱动渲染，放 `Scratch` 无妨（同 `selDragAnchor`）。
+    var dragUsesBoxSelect = false
+    /// 框选文字的会话状态（`ReaderSurface+BoxSelect`，⌘+拖恒为叠加、再框一遍已选中的部分取消，对
+    /// 任何来源的既有选区都生效）：`boxSelectPages` = 框选内部逐页累积的命中，跨多次拖拽持续累加，
+    /// 是 toggle 真正作用的对象——起手时若跟当前 `selection` 对不上（比如中途做过一次流式选择），
+    /// 就把 `selection` 整个 `decomposeIntoBoxSelectItems` 一遍装进来；`boxSelectStrokeBase` = 当前
+    /// 这一次拖拽起手时冻结的 `boxSelectPages` 快照，每帧从它重新算 toggle（不在上一帧结果上累加），
+    /// 避免拖拽路径中途扫过又缩回去留下脏状态。两者只在框选的合并计算里读写，不驱动渲染，放 `Scratch`
+    /// 无妨（同 `selDragAnchor`）。
+    var boxSelectPages: [Int: [BoxSelectItem]] = [:]
+    var boxSelectStrokeBase: [Int: [BoxSelectItem]] = [:]
     var localInkStart: (page: Int, nx: Double, ny: Double)?     // 进行中本机落墨的起点（⇧ 尺子锚点；非 nil = 有一笔/一次擦除在画）
     var lassoDragMode: LassoDragMode?  // 进行中框选手势的形态（nil = 无框选/移动在飞）
     var snipViaOption = false          // 这次框选截图是 ⌥ 临时触发的（松手后不该留在 snip 工具上）

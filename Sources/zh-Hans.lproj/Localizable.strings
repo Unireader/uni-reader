@@ -499,11 +499,10 @@
 "Search" = "搜索";
 "Flash active search match" = "命中切换时闪烁提示";
 "When switching between search matches, briefly flash the current match to help you spot it. Off: the match is highlighted directly with no animation." = "切换搜索命中时短暂闪烁当前命中，帮助你更容易找到它。关闭后命中直接显示高亮，不做动画。";
-"Text Selection" = "文字选择";
-"Drag-select style" = "拖选文字方式";
-"Box select" = "框选";
-"Flow select" = "流式选择";
-"Box select: draw a rectangle to pick any line or character it touches; ⌘-drag adds another box to the selection. Flow select: drag from a start point to an end point and everything in between is selected in reading order, like the old PDFView behavior." = "框选：拖出一个矩形，选中它碰到的每一行/字；按住 ⌘ 拖可以再框一块加进选区。流式选择：从起点拖到终点，中间的内容按阅读顺序连续选中，与旧版 PDFView 手感一致。";
+"Overlapping box selection" = "框选重复区域";
+"Merge" = "合并";
+"Invert" = "反选";
+"When ⌘-dragging a new box over text you already selected: Merge keeps the existing selection and only adds the new part. Invert deselects the overlapping part instead, like ⌘-dragging a fresh rubber band in Finder's icon view." = "⌘+拖新框选到已经选中的文字时：合并保留原有选区，只新增没框到的部分；反选则让重叠的部分互相取消，与 Finder 图标视图 ⌘+拖橡皮筋的惯例一致。";
 "Click to view full size" = "点击查看原图";
 "Write a note… (Markdown)" = "写批注…（支持 Markdown）";
 "Caption… (Markdown)" = "说明…（支持 Markdown）";

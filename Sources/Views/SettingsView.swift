@@ -58,8 +58,9 @@ struct SettingsView: View {
     @AppStorage(NoteBubble.maxWidthKey) private var bubbleMaxWidth = Int(NoteBubble.fixedMaxWidth)
     /// 搜索切换命中时是否播放高亮闪烁动画（阅读区 `ReaderSurface` 读同一个键）。
     @AppStorage("matchPulseEnabled") private var matchPulseEnabled = true
-    /// 拖选文字的算法：默认框选（简单、支持 ⌘+拖叠加多段），关闭改回流式选择（阅读区同一个键）。
-    @AppStorage("textSelectBoxMode") private var textSelectBoxMode = true
+    /// 框选文字再框到已选中区域时：true=合并（保留原有，只新增没框过的部分）、false=反选（重叠部分
+    /// 互相取消，同 Finder 图标视图 ⌘+拖惯例）。阅读区 `ReaderSurface+BoxSelect` 读同一个键。
+    @AppStorage("boxSelectOverlapMerge") private var boxSelectOverlapMerge = true
 
     var body: some View {
         switch tab {
@@ -314,14 +315,14 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker(L("Drag-select style"), selection: $textSelectBoxMode) {
-                    Text(L("Box select")).tag(true)
-                    Text(L("Flow select")).tag(false)
+                Picker(L("Overlapping box selection"), selection: $boxSelectOverlapMerge) {
+                    Text(L("Merge")).tag(true)
+                    Text(L("Invert")).tag(false)
                 }
             } header: {
                 Text(L("Text Selection"))
             } footer: {
-                Text(L("Box select: draw a rectangle to pick any line or character it touches; ⌘-drag adds another box to the selection. Flow select: drag from a start point to an end point and everything in between is selected in reading order, like the old PDFView behavior."))
+                Text(L("When ⌘-dragging a new box over text you already selected: Merge keeps the existing selection and only adds the new part. Invert deselects the overlapping part instead, like ⌘-dragging a fresh rubber band in Finder's icon view."))
             }
 
             Section {

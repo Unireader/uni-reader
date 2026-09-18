@@ -228,20 +228,19 @@ struct ReaderSurface: View {
     // 的「视觉阅读顺序」连续选区——不再自研词框排序（旧实现对多栏/思维导图版面会东一块西一块）。
     // 存归一化逐页行框 + 选中串；拖选期间实时重算，随缩放/滚动免重算（归一化随页尺寸自适应）。
     @State var selection: TextSelection?
-    /// 拖选文字的算法（设置 → 阅读；默认开 = 框选：拖出矩形，选中与它相交的行/字，⌘+拖可叠加多段；
-    /// 关 = 流式选择：起点→终点按阅读顺序连续选，同 PDFView 老手感）。`SettingsView` 读同一个 key。
-    @AppStorage("textSelectBoxMode") var textSelectBoxMode = true
+    /// 框选文字再框到已选中区域时的行为（设置 → 阅读；默认合并）：true=合并（保留原有，只新增没框过
+    /// 的部分）、false=反选（重叠部分互相取消，同 Finder 图标视图 ⌘+拖惯例）。`SettingsView` 读同一个键。
+    @AppStorage("boxSelectOverlapMerge") var boxSelectOverlapMerge = true
     /// 批注编辑器目标（非 nil 即呈现 sheet）：新建（选区草稿）或编辑（点页面图钉）。
     @State var editorTarget: NoteEditorTarget?
     // 框选移动/缩放（pointerTool == .lasso，仅页内；全部瞬态，不持久化——逻辑见 ReaderSurface+Lasso）
     @State var lassoSelection: LassoSelection?      // 选中集（同页笔迹/注解 id + 归一化联合包围盒）
     @State var lassoPath: [CGPoint]?                // 进行中的自由框选路径（视口坐标，≥3pt 抽稀）
     @State var lassoGhostOffset: CGSize = .zero     // 移动中的 ghost 预览偏移（显示点；数据在松手前不动）
-    /// 进行中框选文字的拖拽：起点/当前点均容器 `.local` 坐标（画虚线框、与 DragGesture 同空间）；
-    /// `additive` = 起手时按住 ⌘（这一框选完加进 `scratch.boxSelectBase`，组成不连续多段选区，见
-    /// `ReaderSurface+BoxSelect`）。**必须是 `@State`**（同 `lassoPath` 的理由）：松手只清它、不改
-    /// `selection`，若放进引用类型 `Scratch` 就不会触发重算，虚线框会留在原地直到别的状态变化才消失。
-    @State var boxSelectDrag: (start: CGPoint, current: CGPoint, additive: Bool)?
+    /// 进行中框选文字的拖拽：起点/当前点均容器 `.local` 坐标（画虚线框、与 DragGesture 同空间）。
+    /// **必须是 `@State`**（同 `lassoPath` 的理由）：松手只清它、不改 `selection`，若放进引用类型
+    /// `Scratch` 就不会触发重算，虚线框会留在原地直到别的状态变化才消失。
+    @State var boxSelectDrag: (start: CGPoint, current: CGPoint)?
     /// 缩放中的 ghost 预览（显示空间缩放比 + 被拖的手柄；anchor = 其对侧手柄；数据在松手前不动）。
     @State var lassoGhostScale: (sx: CGFloat, sy: CGFloat, handle: LassoHandle)?
     /// 点注解图钉拖拽的 ghost 预览偏移（note id + 页内像素位移；数据在松手前不动，逻辑见 ReaderSurface+Selection）。
