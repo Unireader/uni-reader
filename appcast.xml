@@ -9,6 +9,36 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.1.43</title>
+      <pubDate>Fri, 18 Sep 2026 06:52:25 +0000</pubDate>
+      <sparkle:version>33</sparkle:version>
+      <sparkle:shortVersionString>0.1.43</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<p>本版汇总 0.1.42 以来的改动。</p>
+<h4>框选文字改用 ⌘+拖触发，支持叠加与取消</h4>
+<ul>
+<li>拖选文字默认是流式选择（起点拖到终点，按阅读顺序选中之间内容，老版本的行为）；起手时按住 ⌘ 才切换成框选（拖出一个矩形，框到哪些字就选哪些字）。设置 › 阅读里原来那个「拖选文字方式」开关已经拿掉，改成按键触发。</li>
+<li>⌘+拖框选永远是叠加在已有选区上，不会换成一份全新的选区——不管这份已有选区是刚才流式选择出来的，还是之前框选出来的。</li>
+<li>新增设置 › 阅读 ›「框选重复区域」：再框到已经选中的部分时，选「合并」（默认）会保留原有选区、只新增没框到的部分；选「反选」则让重叠的部分互相取消，跟 Finder 图标视图里 ⌘+拖橡皮筋的效果一样。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.1.43">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<p>This release covers changes since 0.1.42.</p>
+<h4>Box Select Now Triggered by ⌘-drag, With Add and Remove</h4>
+<ul>
+<li>Drag-selecting text now defaults to flow select (drag from a start point to an end point, selecting everything in between in reading order — the old behavior). Hold ⌘ when you start the drag to switch to box select instead (drag out a rectangle and it selects whatever text the rectangle touches). The "Drag-select style" setting under Settings › Reading has been removed in favor of this key-triggered switch.</li>
+<li>⌘-drag box selection always adds to whatever is already selected, never replaces it — whether that existing selection came from a flow select or an earlier box select.</li>
+<li>New setting, Settings › Reading › "Overlapping box selection": when a new box overlaps text you already selected, "Merge" (the default) keeps the existing selection and only adds the new part, while "Invert" deselects the overlapping part instead — same as ⌘-dragging a fresh rubber band in Finder's icon view.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.1.43">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.1.43/UniReader-0.1.43.zip" length="12078813" type="application/octet-stream" sparkle:edSignature="IQhLkgcL1H8naoBFwSwGsUoxku6lVCYc2S5RAJfJUjluMbyhSUUWiEefkN00GA/Prg6bACxziR1vdupaqimpDw==" />
+    </item>
+    <item>
       <title>v0.1.42</title>
       <pubDate>Fri, 18 Sep 2026 05:13:57 +0000</pubDate>
       <sparkle:version>32</sparkle:version>
