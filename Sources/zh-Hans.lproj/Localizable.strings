@@ -527,6 +527,7 @@
 "Lasso Select ⇄ Text Selection" = "框选移动 ⇄ 文字选择";
 "Local Pen ⇄ Text Selection" = "本机笔 ⇄ 文字选择";
 "Text Selection" = "文字选择";
+"Check for Updates…" = "检查更新…";
 "Settings…" = "设置…";
 "Hide UniReader" = "隐藏 UniReader";
 "Hide Others" = "隐藏其他";
@@ -599,4 +600,17 @@
 "No documents in this workspace." = "这个工作区里还没有文档。";
 "No matching documents." = "没有匹配的文档。";
 "Already Open" = "已打开";
+
+/* 设置 › 通用：更新（Sparkle） */
+"Updates" = "更新";
+"Automatically check for updates" = "自动检查更新";
+"Check frequency" = "检查频率";
+"Hourly" = "每小时";
+"Daily" = "每天";
+"Weekly" = "每周";
+"Current version" = "当前版本";
+"Last checked" = "上次检查";
+"Never" = "从未";
+"Check Now" = "立即检查";
+"Updates are signed with EdDSA, downloaded over HTTPS, and installed by Sparkle's helper." = "更新通过 EdDSA 签名校验、HTTPS 下载，由 Sparkle 的辅助进程完成安装。";
 "%d pages" = "%d 页";

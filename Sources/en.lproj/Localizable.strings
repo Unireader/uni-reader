@@ -525,6 +525,7 @@
 "Lasso Select ⇄ Text Selection" = "Lasso Select ⇄ Text Selection";
 "Local Pen ⇄ Text Selection" = "Local Pen ⇄ Text Selection";
 "Text Selection" = "Text Selection";
+"Check for Updates…" = "Check for Updates…";
 "Settings…" = "Settings…";
 "Hide UniReader" = "Hide UniReader";
 "Hide Others" = "Hide Others";
@@ -597,4 +598,17 @@
 "No documents in this workspace." = "No documents in this workspace.";
 "No matching documents." = "No matching documents.";
 "Already Open" = "Already Open";
+
+/* Settings › General: Updates (Sparkle) */
+"Updates" = "Updates";
+"Automatically check for updates" = "Automatically check for updates";
+"Check frequency" = "Check frequency";
+"Hourly" = "Hourly";
+"Daily" = "Daily";
+"Weekly" = "Weekly";
+"Current version" = "Current version";
+"Last checked" = "Last checked";
+"Never" = "Never";
+"Check Now" = "Check Now";
+"Updates are signed with EdDSA, downloaded over HTTPS, and installed by Sparkle's helper." = "Updates are signed with EdDSA, downloaded over HTTPS, and installed by Sparkle's helper.";
 "%d pages" = "%d pages";

@@ -52,5 +52,18 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Sparkle 2 自动更新（2026-09-18 加，见 project.yml 顶部注释与 AGENTS.md「发布到 GitHub」一节）。
+	     appcast 托管在仓库 main 分支的 appcast.xml，release.sh 每次发布 push 更新。 -->
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/Unireader/uni-reader/main/appcast.xml</string>
+	<!-- EdDSA 公钥——Sparkle 用它校验下载的 zip 签名；首次发布前必须用
+	     build/dev/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys 生成并填上，
+	     私钥自动存本机登录钥匙串。⚠️ 一旦发布后严禁更换，否则已装版本会拒绝所有未来更新。 -->
+	<key>SUPublicEDKey</key>
+	<string>g3SCjADYsXhMN5/4hnQZ7eOawvtVoGJJsS5CFew15WQ=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 </dict>
 </plist>

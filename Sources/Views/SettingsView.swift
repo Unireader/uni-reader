@@ -39,6 +39,7 @@ struct SettingsView: View {
     let tab: SettingsTab
 
     @EnvironmentObject private var app: AppModel
+    @ObservedObject private var updater = UpdaterService.shared
 
     @AppStorage("autoNightMode") private var autoNightMode = false
     @AppStorage("scrollInterp") private var scrollInterp = true      // true=时间戳插值 / false=纯低通
@@ -153,6 +154,8 @@ struct SettingsView: View {
                 Text(L("When on, Night Mode follows the system appearance automatically."))
             }
 
+            updatesSection
+
             // 工具栏的显隐/排序改走**系统那套**（`.toolbar(id: "reader")`，见 `ContentView.toolbarContent`），
             // 这里只留一句指路——设置页再放一份开关就是两套状态打架。
             Section {
@@ -181,6 +184,58 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - 更新（Sparkle）
+
+    /// 频率选项（秒）。Sparkle 下限 1 小时，所以最小给到每小时。
+    private static let updateIntervalOptions: [(label: String, seconds: TimeInterval)] = [
+        (L("Hourly"), 3600),
+        (L("Daily"), 86400),
+        (L("Weekly"), 604800),
+    ]
+
+    /// 把 Sparkle 当前的 `updateCheckInterval` 吸附到最近的预设选项，保证 Picker 永远有一个
+    /// 匹配的 tag（否则非预设值会让 Picker 显示空白）。
+    private var snappedUpdateInterval: TimeInterval {
+        let current = updater.checkInterval
+        return Self.updateIntervalOptions
+            .min { abs($0.seconds - current) < abs($1.seconds - current) }?
+            .seconds ?? 86400
+    }
+
+    private var lastCheckedLabel: String {
+        guard let date = updater.lastChecked else { return L("Never") }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private var updatesSection: some View {
+        Section {
+            Toggle(L("Automatically check for updates"), isOn: Binding(
+                get: { updater.autoCheck },
+                set: { updater.autoCheck = $0 }
+            ))
+            Picker(L("Check frequency"), selection: Binding(
+                get: { snappedUpdateInterval },
+                set: { updater.setUpdateInterval($0) }
+            )) {
+                ForEach(Self.updateIntervalOptions, id: \.seconds) { option in
+                    Text(option.label).tag(option.seconds)
+                }
+            }
+            .disabled(!updater.autoCheck)
+            LabeledContent(L("Current version"), value: "\(updater.currentVersion) (\(updater.currentBuild))")
+            LabeledContent(L("Last checked"), value: lastCheckedLabel)
+            HStack {
+                Spacer()
+                Button(L("Check Now")) { updater.checkForUpdates() }
+                    .disabled(!updater.canCheck)
+            }
+        } header: {
+            Text(L("Updates"))
+        } footer: {
+            Text(L("Updates are signed with EdDSA, downloaded over HTTPS, and installed by Sparkle's helper."))
+        }
     }
 
     /// 一个工作区的图片账：「图片 N 张 · 待删除 M 张 · 占用」+「立即清理」。

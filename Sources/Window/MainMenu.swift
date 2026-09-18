@@ -86,6 +86,9 @@ enum MainMenu {
         let (item0, m) = container("UniReader")
         m.addItem(item(L("About UniReader"), #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
         m.addItem(.separator())
+        m.addItem(item(L("Check for Updates…"), #selector(MenuActions.checkForUpdates(_:)),
+                       target: MenuActions.shared))
+        m.addItem(.separator())
         m.addItem(item(L("Settings…"), #selector(MenuActions.openSettings(_:)), key: ",",
                        target: MenuActions.shared))
         m.addItem(.separator())
@@ -223,6 +226,8 @@ final class MenuActions: NSObject {
     }
 
     @objc func openSettings(_ sender: Any?) { SettingsWindowController.show() }
+
+    @objc func checkForUpdates(_ sender: Any?) { UpdaterService.shared.checkForUpdates() }
 
     @objc func customizeToolbar(_ sender: Any?) {
         NSApp.keyWindow?.toolbar?.runCustomizationPalette(sender)

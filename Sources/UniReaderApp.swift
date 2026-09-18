@@ -384,6 +384,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // MCP 服务：工具目录装配一次；「启动时开启」照平板服务的先例。
         MCPTools.registerAll(into: appModel.mcp)
         if UserDefaults.standard.bool(forKey: MCPServer.autoStartKey) { appModel.mcp.start() }
+        // Sparkle：首次访问 `.shared` 触发 controller 启动，之后整个进程生命周期里都活着；
+        // 是否自动检查/检查间隔由 Sparkle 自己按 defaults 排，这里不用手动触发一次检查。
+        _ = UpdaterService.shared
         observeVolumes()
         NotificationCenter.default.post(name: .appDidFinishLaunching, object: nil)
         // 首个窗口：双击 .unrd 拉起就开那个工作区；`unireader://` 链接拉起就照链接开；否则开上次用的。

@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 # 发布到 GitHub：改版本号 → 重建采集页 → Debug 编译验证 → 提交 → archive → Developer ID 导出
-# → 公证 + 装订 → zip + dmg（dmg 也公证装订）→ 打 tag → 推送 main 和 tag → gh release 上传 zip + dmg
+# → 公证 + 装订 → zip + dmg（dmg 也公证装订）→ Sparkle 签名 zip + 更新 appcast.xml
+# → 打 tag → 推送 main 和 tag → gh release 上传 zip + dmg → 推送 appcast.xml
 #
-# 由 agent-home/.claude/skills/release-macos-app 的 template-release-basic.sh（无 Sparkle）改写，差异：
+# 由 agent-home/.claude/skills/release-macos-app 的 template-release-basic.sh 改写，2026-09-18 按
+# template-release-sparkle.sh 补上 Sparkle 自动更新（Swift 侧集成见 Sources/App/UpdaterService.swift）。
+# 与两份模板的差异：
 #   - 版本号读写 project.yml 的 MARKETING_VERSION / CURRENT_PROJECT_VERSION（本项目不用 CFBundle* 键）
 #   - 产物按 AGENTS.md「产物只许落在这两个地方」：build/UniReader-<版本>.zip / .dmg；中间产物沿用
 #     package.sh 的 build/UniReader.xcarchive、build/export；编译一律 -derivedDataPath build/dev
-#     + -disableAutomaticPackageResolution（SPM 包缓存就在那，发布时不联网拉包）
+#     + -disableAutomaticPackageResolution（SPM 包缓存就在那，发布时不联网拉包，Sparkle 的 sign_update/
+#     generate_keys 工具也从这份缓存里找，不会现场再解析一次）
 #   - 发布日志必须提前写好（--notes-file），不用 gh 自动生成；日志文件在仓库里时随版本号一起提交
 #   - 采集页走 build-web.sh --no-install（不代装依赖）
 #   - 公证全部通过之后才推送 main 和 tag：中途失败时远端什么都没变
 #   - --dry-run 不提交：检查 + 改版本号 + Debug 编译，跑完把 project.yml 还原
-#
-# 用法：
-#   ./scripts/release.sh <版本号> --notes-file <路径> [--prerelease <后缀>] [--dry-run]
-#
-# 例：
-#   ./scripts/release.sh 0.1.38 --notes-file release-notes/v0.1.38.md --dry-run   # 先演练
-#   ./scripts/release.sh 0.1.38 --notes-file release-notes/v0.1.38.md             # 正式发布（仓库是公开的）
+#   - **`--prerelease` 版本不进 Sparkle 更新通道**：appcast.xml 只收录正式版。本项目暂不做 Perch 那种
+#     「beta channel」偏好开关（2026-09-18 与用户确认过，以后要加再补），所以最简单也最安全的做法就是
+#     预发布版压根不写进 appcast——不然普通用户会被 Sparkle 自动推到未测试的构建。
 #
 # 前置条件（只需做一次）：
 #   - 钥匙串里有 team T8F5T6HKG8 的 Developer ID Application 证书
@@ -25,6 +25,20 @@
 #     默认配置名 noticky-notary（与 package.sh 相同）；名字不同就 NOTARY_PROFILE=<配置名> ./scripts/release.sh ...
 #   - gh 已登录（gh auth status）
 #   - web/node_modules 已装（scripts/build-web.sh）、build/dev/SourcePackages 已解析（见 AGENTS.md）
+#   - 正式版发布还需要：Sparkle 的 EdDSA 密钥已生成过一次（`Sources/Info.plist` 的 SUPublicEDKey 非空、
+#     登录钥匙串里有对应私钥）——第一次发布前跑：
+#       xcodegen generate
+#       xcodebuild -project UniReader.xcodeproj -scheme UniReader -derivedDataPath build/dev -resolvePackageDependencies
+#       build/dev/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys
+#     把打印的公钥粘进 Sources/Info.plist 的 SUPublicEDKey，再 xcodegen generate 一次。
+#     ⚠️ 公钥一旦随首次发布公开，严禁更换——否则所有已装版本都会拒绝以后的更新。
+#
+# 用法：
+#   ./scripts/release.sh <版本号> --notes-file <路径> [--prerelease <后缀>] [--dry-run]
+#
+# 例：
+#   ./scripts/release.sh 0.1.38 --notes-file release-notes/v0.1.38.md --dry-run   # 先演练
+#   ./scripts/release.sh 0.1.38 --notes-file release-notes/v0.1.38.md             # 正式发布（仓库是公开的）
 
 set -euo pipefail
 
@@ -40,6 +54,11 @@ DERIVED_DATA="$BUILD_DIR/dev"
 ARCHIVE="$BUILD_DIR/$PRODUCT.xcarchive"
 EXPORT_DIR="$BUILD_DIR/export"
 EXPORT_OPTIONS="scripts/exportOptions.plist"
+# Sparkle 自动更新（正式版才用，见文件头「--prerelease 版本不进 Sparkle 更新通道」）
+APPCAST="appcast.xml"
+APPCAST_MARKER="<!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->"
+INFO_PLIST_SRC="Sources/Info.plist"
+SPARKLE_BIN_DIR="$DERIVED_DATA/SourcePackages/artifacts/sparkle/Sparkle/bin"
 
 # ── 参数 ────────────────────────────────────────────────────────────
 usage() {
@@ -113,7 +132,8 @@ on_exit() {
         echo "" >&2
         echo "发布中断：版本号提交还在本地，没有推送，远端没有变化。重试前先撤销：" >&2
         if [[ "$STAGE" == "tagged" ]]; then echo "  git tag -d $TAG" >&2; fi
-        echo "  git reset HEAD~1 && git checkout -- $PROJECT_YML && xcodegen generate" >&2
+        # $APPCAST 可能在 Sparkle 签名那一步被本地改过（还没提交），一并还原。
+        echo "  git reset HEAD~1 && git checkout -- $PROJECT_YML $APPCAST && xcodegen generate" >&2
       fi
       ;;
     pushed)
@@ -121,6 +141,14 @@ on_exit() {
         echo "" >&2
         echo "发布中断：main 和 $TAG 已推送，但 GitHub release 没建成。产物还在，可以手动补建：" >&2
         echo "  gh release create $TAG --repo $GH_REPO --verify-tag --title \"$TITLE\" --notes-file \"$NOTES_FILE\" $ZIP $DMG" >&2
+      fi
+      ;;
+    released)
+      if [[ $rc -ne 0 ]]; then
+        echo "" >&2
+        echo "发布中断：GitHub release $TAG 已建好（zip/dmg 可下载），但 $APPCAST 的提交/推送失败。" >&2
+        echo "老用户暂时收不到这次更新提醒，手动补：" >&2
+        echo "  git add $APPCAST && git commit -m \"appcast: $TAG\" && git push origin main" >&2
       fi
       ;;
   esac
@@ -156,6 +184,42 @@ gh auth status >/dev/null 2>&1 || fail "gh 没登录，先跑 gh auth login"
 [[ -d web/node_modules ]] || fail "web/node_modules 不存在，先跑 scripts/build-web.sh 装依赖"
 [[ -d "$DERIVED_DATA/SourcePackages/checkouts" ]] \
   || fail "SPM 包缓存不存在，先跑：xcodegen generate && xcodebuild -project $PROJECT -scheme $SCHEME -derivedDataPath $DERIVED_DATA -resolvePackageDependencies"
+
+# Sparkle 相关检查只在正式版才做——预发布版不进 appcast（见文件头说明），不需要这些前置条件。
+# 密钥/工具没配好时 --dry-run 只 WARN 放行（同下面 notarytool 配置那条的口径：dry-run 只验证
+# 版本号/编译这条主链路，Sparkle 的一次性密钥设置留到真要发布时再拦）；正式发布严格 fail。
+sparkle_precheck_fail() {
+  if [[ "$DRY_RUN" == true ]]; then
+    echo "WARN: $* （演练继续；正式发布会在这里停下）" >&2
+  else
+    fail "$*"
+  fi
+}
+
+if [[ -z "$PRERELEASE" ]]; then
+  [[ -f "$APPCAST" ]] || fail "找不到 $APPCAST"
+  grep -qF "$APPCAST_MARKER" "$APPCAST" || fail "$APPCAST 里没有 BEGIN-ITEMS marker，拒绝写入（可能被手改坏了）"
+
+  ED_PUBKEY="$(plutil -extract SUPublicEDKey raw -o - "$INFO_PLIST_SRC" 2>/dev/null || echo "")"
+  if [[ -z "$ED_PUBKEY" ]]; then
+    sparkle_precheck_fail "$INFO_PLIST_SRC 里 SUPublicEDKey 是空的。首次发布前，在本机生成一次 Sparkle EdDSA 密钥（私钥自动存登录钥匙串）：
+  1. 解析 SPM（如果还没做过）：
+       xcodegen generate
+       xcodebuild -project $PROJECT -scheme $SCHEME -derivedDataPath $DERIVED_DATA -resolvePackageDependencies
+  2. 生成密钥（打印公钥）：
+       $SPARKLE_BIN_DIR/generate_keys
+  3. 把打印的公钥粘进 $INFO_PLIST_SRC 的 SUPublicEDKey，再跑一次 xcodegen generate
+  4. 重新跑本脚本
+  ⚠️ 公钥一旦随首次发布公开，严禁更换——否则所有已装版本都会拒绝以后的更新。"
+  else
+    [[ -x "$SPARKLE_BIN_DIR/sign_update" ]] \
+      || sparkle_precheck_fail "Sparkle 的 sign_update 工具不存在（$SPARKLE_BIN_DIR），SPM 包缓存里没解析出 Sparkle，重新跑一次上面那条 -resolvePackageDependencies 命令"
+    if [[ -x "$SPARKLE_BIN_DIR/generate_keys" ]]; then
+      "$SPARKLE_BIN_DIR/generate_keys" -p >/dev/null 2>&1 \
+        || sparkle_precheck_fail "Sparkle EdDSA 私钥不在登录钥匙串里（公钥已经填在 $INFO_PLIST_SRC，但对应私钥找不到）。换了台机器就恢复备份的私钥（generate_keys -f <key.pem>）；如果这是第一次发布却看到这条报错，说明公钥和这台机器的私钥对不上，需要重新走一遍生成流程。"
+    fi
+  fi
+fi
 
 # 管道末尾别用 grep -q：pipefail 下前面的命令可能因 SIGPIPE 被判失败
 security find-identity -v -p codesigning | grep "Developer ID Application.*$TEAM_ID" >/dev/null \
@@ -277,6 +341,123 @@ echo "==> 装订公证票据到 dmg"
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
 
+# ── Sparkle：签 zip + 更新 appcast.xml（预发布版跳过，见文件头说明）─────
+if [[ -z "$PRERELEASE" ]]; then
+  echo "==> 用 Sparkle EdDSA 密钥签名 zip"
+  SIGN_LINE="$("$SPARKLE_BIN_DIR/sign_update" "$ZIP")"
+  ED_SIG="$(echo "$SIGN_LINE" | sed -E 's/.*sparkle:edSignature="([^"]+)".*/\1/')"
+  ASSET_LEN="$(echo "$SIGN_LINE" | sed -E 's/.*length="([^"]+)".*/\1/')"
+  if [[ -z "$ED_SIG" || -z "$ASSET_LEN" || "$ED_SIG" == "$SIGN_LINE" ]]; then
+    fail "解析不了 sign_update 的输出: $SIGN_LINE"
+  fi
+  echo "    edSignature ${ED_SIG:0:24}…  length ${ASSET_LEN}"
+
+  DOWNLOAD_URL="https://github.com/$GH_REPO/releases/download/$TAG/$(basename "$ZIP")"
+  RELEASE_NOTES_LINK="https://github.com/$GH_REPO/releases/tag/$TAG"
+
+  echo "==> 更新 $APPCAST"
+  python3 - "$APPCAST" "$TAG" "$VERSION" "$NEXT_BUILD" "$ED_SIG" "$ASSET_LEN" \
+      "$DOWNLOAD_URL" "$RELEASE_NOTES_LINK" "$NOTES_FILE" <<'PYEOF'
+import sys, html, re
+from datetime import datetime, timezone
+
+appcast, tag, short_ver, build, ed_sig, length, dl_url, notes_link, notes_md_file = sys.argv[1:]
+
+pub_date = datetime.now(timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')
+
+# ── 极简 Markdown → HTML（够用：标题/列表/**粗体**/`code`/裸链接），先转义再替换，
+# 免得发布日志里出现 "fix: handle <empty>" 这种文本被当成标签吞掉。
+def md_to_html(md):
+    def inline(s):
+        s = html.escape(s, quote=False)
+        s = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', s)
+        s = re.sub(r'\*([^*\n]+?)\*', r'<em>\1</em>', s)
+        s = re.sub(r'`(.+?)`', r'<code>\1</code>', s)
+        s = re.sub(r'(https?://[^\s<]+)', r'<a href="\1">\1</a>', s)
+        return s
+    out, in_list = [], False
+    def close_list():
+        nonlocal in_list
+        if in_list:
+            out.append('</ul>'); in_list = False
+    for raw in md.splitlines():
+        line = raw.rstrip()
+        heading = re.match(r'^(#{1,6})\s+(.*)$', line)
+        bullet = re.match(r'^[-*]\s+(.*)$', line)
+        if bullet:
+            if not in_list:
+                out.append('<ul>'); in_list = True
+            out.append(f'<li>{inline(bullet.group(1))}</li>')
+        elif re.match(r'^([-*_])\1{2,}\s*$', line):
+            close_list(); out.append('<hr>')
+        elif heading:
+            close_list()
+            lvl = min(len(heading.group(1)) + 1, 6)
+            out.append(f'<h{lvl}>{inline(heading.group(2))}</h{lvl}>')
+        elif line:
+            close_list(); out.append(f'<p>{inline(line)}</p>')
+        else:
+            close_list()
+    close_list()
+    return '\n'.join(out)
+
+# ── 按 "<!-- lang:xx -->" marker 拆多语言段落——发布日志目前是 "## 中文" / "## English"
+# 两段，往后写新日志时在每段标题前加一行 <!-- lang:zh --> / <!-- lang:en -->（不可见 HTML 注释，
+# gh release 那份 GitHub 正文不受影响），appcast 就能按用户系统语言各自显示对应段落。没打 marker
+# 的旧文件走 fallback：整份塞进一个不带 xml:lang 的 description（两种语言堆在一起，能用但不智能）。
+def split_langs(md):
+    parts = re.split(r'(?im)^[ \t]*<!--[ \t]*lang:([a-z]{2})[ \t]*-->[ \t]*$', md)
+    if len(parts) == 1:
+        return [(None, md)]
+    it = iter(parts[1:])
+    return [(lang.lower(), chunk) for lang, chunk in zip(it, it) if chunk.strip()]
+
+FOOTER = {'en': 'View full release on GitHub →', 'zh': '在 GitHub 查看完整更新 →'}
+
+def build_description(lang, chunk):
+    notes_html = md_to_html(chunk)
+    foot = FOOTER.get(lang or 'en', FOOTER['en'])
+    notes_html += f'\n<p><a href="{html.escape(notes_link)}">{foot}</a></p>'
+    notes_html = notes_html.replace(']]>', ']]&gt;')
+    lang_attr = f' xml:lang="{lang}"' if lang else ''
+    return (f"      <description{lang_attr}><![CDATA[\n"
+            f"{notes_html}\n"
+            "      ]]></description>\n")
+
+with open(notes_md_file, 'r', encoding='utf-8') as f:
+    description = "".join(build_description(l, c) for l, c in split_langs(f.read()))
+
+item = (
+    "    <item>\n"
+    f"      <title>{tag}</title>\n"
+    f"      <pubDate>{pub_date}</pubDate>\n"
+    f"      <sparkle:version>{build}</sparkle:version>\n"
+    f"      <sparkle:shortVersionString>{short_ver}</sparkle:shortVersionString>\n"
+    "      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>\n"
+    f"{description}"
+    f"      <enclosure url=\"{dl_url}\" length=\"{length}\" "
+    f"type=\"application/octet-stream\" sparkle:edSignature=\"{ed_sig}\" />\n"
+    "    </item>\n"
+)
+
+with open(appcast, 'r', encoding='utf-8') as f:
+    src = f.read()
+
+marker = "<!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->\n"
+if marker not in src:
+    sys.exit(f"ERROR: marker line not found in {appcast}; refuse to mangle it.")
+
+with open(appcast, 'w', encoding='utf-8') as f:
+    f.write(src.replace(marker, marker + item, 1))
+PYEOF
+
+  # 回读一遍刚写的签名，确认没有中途出岔子（并发改动/编码问题之类）再往下走。
+  APPCAST_SIG="$(grep -m1 "sparkle:edSignature=" "$APPCAST" | sed -E 's/.*sparkle:edSignature="([^"]+)".*/\1/')"
+  [[ "$APPCAST_SIG" == "$ED_SIG" ]] || fail "$APPCAST 顶部的签名和刚生成的对不上，拒绝继续"
+else
+  echo "==> [--prerelease] 跳过 Sparkle 签名和 $APPCAST 更新"
+fi
+
 # ── tag → 推送 → GitHub release ─────────────────────────────────────
 echo "==> 打 tag $TAG"
 git tag -a "$TAG" -m "$TITLE"
@@ -296,10 +477,23 @@ else
 fi
 STAGE=released
 
+# ── 推送 appcast.xml（此时 zip 已经能从 GitHub release 下到，appcast 指向的下载链接才是有效的）──
+if [[ -z "$PRERELEASE" ]]; then
+  echo "==> 推送 $APPCAST"
+  git add "$APPCAST"
+  git commit -q -m "appcast: $TAG"
+  git push origin main
+fi
+
 echo ""
 echo "================================================================"
 echo "已发布 $TAG"
 echo "  zip : $ZIP ($(du -h "$ZIP" | cut -f1))"
 echo "  dmg : $DMG ($(du -h "$DMG" | cut -f1))"
 echo "  页面: https://github.com/$GH_REPO/releases/tag/$TAG"
+if [[ -z "$PRERELEASE" ]]; then
+  echo "  Sparkle 更新已推送，老用户下次按检查间隔/手动检查会看到这个版本"
+else
+  echo "  预发布版，未进 Sparkle 更新通道"
+fi
 echo "================================================================"

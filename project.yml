@@ -10,15 +10,26 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.41"
     CURRENT_PROJECT_VERSION: "31"
-# 第三方包（SPM）。唯一一个：笔记的 Markdown 引擎（TextKit 2 + AppKit；编辑器 sheet + 气泡正文只读渲染，
-# 后者是「阅读区纯 SwiftUI」红线的唯一例外）。pre-1.0，**钉死版本**，升级要手动改这里再解析。
-# 取两个产品：核心 `MarkdownEngine`（零外部依赖）+ `MarkdownEngineLatex`（2026-09-16 加，公式渲染；
-# 传递依赖 SwiftMath，MIT，版本由引擎的 `from: 1.7.0` 解析、钉在 Package.resolved，带 ~7MB 数学字体资源）。
-# 代码高亮那个产品（带 HighlighterSwift）仍没取，用到再加。
+# 第三方包（SPM），目前两个：
+#   - 笔记的 Markdown 引擎（TextKit 2 + AppKit；编辑器 sheet + 气泡正文只读渲染，
+#     后者是「阅读区纯 SwiftUI」红线的唯一例外）。pre-1.0，**钉死版本**，升级要手动改这里再解析。
+#     取两个产品：核心 `MarkdownEngine`（零外部依赖）+ `MarkdownEngineLatex`（2026-09-16 加，公式渲染；
+#     传递依赖 SwiftMath，MIT，版本由引擎的 `from: 1.7.0` 解析、钉在 Package.resolved，带 ~7MB 数学字体资源）。
+#     代码高亮那个产品（带 HighlighterSwift）仍没取，用到再加。
+#   - Sparkle 2 自动更新框架（2026-09-18 加，参考同作者 Perch 项目的集成）。装好后：
+#       - `Sources/App/UpdaterService.swift` 用 `SPUStandardUpdaterController` 驱动整条更新流程
+#         （拉 appcast、EdDSA 校验、下载、out-of-process 安装、重启），用 Sparkle 自带的标准 UI，
+#         不像 Perch 那样做 gentle-reminder 自定义 delegate（UniReader 是常规窗口 App 不是菜单栏 App）。
+#       - `scripts/release.sh` 用 SPM artifact 里的 `sign_update` 给每个 release 的 zip 签 EdDSA，
+#         把 `<item>` 插进仓库根目录的 `appcast.xml`。
+#       - UniReader **不在 sandbox**，所以不需要 Installer XPC service 或额外 entitlements。
 packages:
   MarkdownEngine:
     url: https://github.com/nodes-app/swift-markdown-engine
     exactVersion: 0.9.0
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle.git
+    from: "2.9.1"
 targets:
   UniReader:
     type: application
@@ -30,6 +41,8 @@ targets:
         product: MarkdownEngine
       - package: MarkdownEngine
         product: MarkdownEngineLatex
+      - package: Sparkle
+        product: Sparkle
     settings:
       base:
         PRODUCT_NAME: UniReader

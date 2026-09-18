@@ -30,28 +30,47 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - 例外只有一个：**用 Xcode GUI 打开项目时它仍写自己的 DerivedData**，那份不归本约定管、也别拿它
   当交付物；命令行一律按上表来。
 
-### 发布到 GitHub（`scripts/release.sh`，2026-09-16 加）
+### 发布到 GitHub（`scripts/release.sh`，2026-09-16 加，2026-09-18 补 Sparkle 自动更新）
 
-公开仓库 `Unireader/uni-reader` 的 release，附件 = 公证并装订过的 zip + dmg。流程：
+公开仓库 `Unireader/uni-reader` 的 release，附件 = 公证并装订过的 zip + dmg；正式版还会把这次更新
+写进仓库根目录的 `appcast.xml`（Sparkle 用，托管在 `raw.githubusercontent.com` 的 `main` 分支，
+Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 
 1. **Agent 先写发布日志** `release-notes/v<版本>.md`：中文 + 英文各一份，只写上次发布以来的改动，
    按功能归类、用日常说法（commit 里的内部实现细节不写），界面文案以 `Localizable.strings` 为准。
+   两段标题（`## 中文` / `## English`）前各加一行不可见的 `<!-- lang:zh -->` / `<!-- lang:en -->`
+   HTML 注释——GitHub 正文渲染不受影响，release.sh 靠它把 appcast 里的更新说明拆成中英文两份，
+   Sparkle 按用户系统语言显示对应的那份；没打这两行 marker 的旧发布日志会退化成一份不分语言的说明。
 2. 演练：`./scripts/release.sh <版本> --notes-file release-notes/v<版本>.md --dry-run`
-   （检查 + 改版本号 + Debug 编译，跑完还原 `project.yml`；不提交、不公证、不推送）。
+   （检查 + 改版本号 + Debug 编译，跑完还原 `project.yml`；不提交、不公证、不推送、不碰 appcast）。
 3. 正式发布：同一条命令去掉 `--dry-run`。会推送 main 和 tag 并公开发布，**Agent 跑之前必须先得到用户确认**。
    2026-09-16 在 Agent 会话里 `notarytool history` 曾两次报「No Keychain password item found」，
    过一会儿又能读到（原因未确认）；再遇到就重试一次，仍失败再问用户。
 
 - 版本号由脚本改（构建号自动 +1），发布日志随版本号一起提交成 `release: v<版本>`；要求工作区干净（发布日志除外）、在 `main` 上、不落后 `origin/main`。
 - 公证全部通过后才打 tag、`git push --atomic` 推 main + tag，再 `gh release create --verify-tag`；中途失败远端不变，脚本会打印撤销命令。
-- 编译走 `-derivedDataPath build/dev -disableAutomaticPackageResolution`，不联网拉包；采集页走 `build-web.sh --no-install`，不装依赖。
+- appcast.xml 的提交/推送放在 `gh release create` **之后**（这样 appcast 里的下载链接一发布出去就能打开）；
+  这一步失败时 release 本身已经发出去了，脚本会打印手动补推 appcast 的命令。
+- 编译走 `-derivedDataPath build/dev -disableAutomaticPackageResolution`，不联网拉包；采集页走 `build-web.sh --no-install`，不装依赖；
+  Sparkle 的 `sign_update`/`generate_keys` 工具也是从 `build/dev/SourcePackages` 这份缓存里找，同样不现场拉包。
 - 公证配置名默认 `noticky-notary`，不同就 `NOTARY_PROFILE=<配置名> ./scripts/release.sh …`。
+- **`--prerelease` 版本不进 Sparkle 更新通道**（appcast.xml 只收录正式版）——本项目暂不做「预发布 beta
+  channel」这层偏好开关，2026-09-18 与用户确认过，以后要加再补；用这个方式最简单也最安全，不会有人被
+  自动推到未测试的构建。
+- **Sparkle EdDSA 密钥**（`Sources/Info.plist` 的 `SUPublicEDKey` + 本机登录钥匙串里的私钥）首次发布前
+  只需生成一次：`xcodegen generate` → 解析 SPM（`xcodebuild … -resolvePackageDependencies`）→
+  `build/dev/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys` 打印公钥，粘进
+  `Sources/Info.plist` 再 `xcodegen generate` 一次。⚠️ 公钥一旦随首次发布公开，**严禁更换**——换了
+  老版本会拒绝所有未来更新。密钥生成这步涉及本机 Keychain 写入，按项目规矩交给用户自己跑，Agent 不代跑。
 
-- **唯一的第三方包**：`swift-markdown-engine`（SPM，`project.yml` 里 `exactVersion` 钉死）——笔记编辑器 sheet
+- **第三方包（SPM）**，目前两个：`swift-markdown-engine`（`project.yml` 里 `exactVersion` 钉死）——笔记编辑器 sheet
   （`MarkdownNoteEditor`）与气泡正文只读渲染（`MarkdownNoteReader`，红线例外）用它。取两个产品：核心 `MarkdownEngine`
   （零外部依赖）+ `MarkdownEngineLatex`（2026-09-16 加，笔记里的 `$…$` / `$$…$$` 公式；传递依赖 **SwiftMath**，MIT，
   带 ~7MB 数学字体进 app 包）。公式渲染器 = `NoteLatexRenderer`（套在引擎的 `SwiftMathBridge` 外面：`$$` 块加 `\displaystyle` 按块排版 + 缓存封顶）；
-  某条公式能不能渲染，用 `spike/latex-look.swift` 出样张看（SwiftMath 不支持的命令会原样显示源码）。包解析落在 `build/dev/SourcePackages/`，
+  某条公式能不能渲染，用 `spike/latex-look.swift` 出样张看（SwiftMath 不支持的命令会原样显示源码）。另一个是
+  **Sparkle**（`from: "2.9.1"`，2026-09-18 加）——`Sources/App/UpdaterService.swift` 薄封装
+  `SPUStandardUpdaterController`，菜单「UniReader › 检查更新…」与设置 ›「通用」的「更新」区块共用它；
+  UniReader 不在 sandbox，不需要 Installer XPC service 或额外 entitlements。包解析落在 `build/dev/SourcePackages/`，
   新克隆或 `rm -rf build` 之后首次编译要先 `xcodebuild … -derivedDataPath build/dev -resolvePackageDependencies`
   （联网拉包 = 装依赖，**按用户规矩给命令让用户跑**，别自己跑）。升版本只改 `project.yml` 再解析。
 - 无测试 target；验证走 spike 脚本：`swift spike/<name>.swift`（如 `store-test.swift` 32 项 DAO、`ink-store-test.swift` 21 项）。
@@ -106,7 +125,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 
 ## 结构要点
 
-- `Sources/App/` — App 级单例：`AppModel`/`DocSession`（多窗口共享 WS/LANServer）、`WorkspaceManager`（工作区 = `.unrd` 包：UTI 声明在 `Sources/Info.plist`，旧无扩展名工作区首启原地改名迁移、工作区改名联动改包名；双击/拖 Dock 由 `AppDelegate.openFile` → 通知路由到 key 窗口）、`PageRenderEngine`/`PageLayout`/`PageBitmap`（v2 渲染管线）、`InkEdit`（笔迹纯函数：局部擦除切段/平移/缩放/尺子吸附/自由框选多边形命中，**`splitStroke` 与 web 端 JS 版同算法两份实现，改它必须同步另一边**，测试 `spike/ink-edit-test.swift`）、`InkUndo`+`DocSession+InkUndo`（编辑撤销栈：**增量**记账、瞬态不落库、页内与草稿纸各一条；连续擦除并成一步，抬笔封口）、`InkPaste`（粘贴的摆放数学，纯函数：Mac 本机 ⌘V 与平板 `clip paste` 共用一份）、`InkClipboard`（笔迹剪贴板，系统 `NSPasteboard` 自有类型，条目编码复用落库 payload；两者测试 `spike/ink-undo-test.swift`）、`InkWindow`（笔迹**按页窗口**装载/淘汰的纯函数：`session.strokes` 只是已装载页的集合，整篇操作问库，见 `INK-PAGING-PLAN.md §9`；测试 `spike/ink-window-test.swift`）。笔迹点 `InkPoint = SIMD3<Float>`，「存 Float、算 Double」
+- `Sources/App/` — App 级单例：`AppModel`/`DocSession`（多窗口共享 WS/LANServer）、`WorkspaceManager`（工作区 = `.unrd` 包：UTI 声明在 `Sources/Info.plist`，旧无扩展名工作区首启原地改名迁移、工作区改名联动改包名；双击/拖 Dock 由 `AppDelegate.openFile` → 通知路由到 key 窗口）、`UpdaterService`（Sparkle 2 自动更新薄封装，2026-09-18 加，菜单「检查更新…」与设置 ›「通用」的「更新」区块共用；详见「发布到 GitHub」一节）、`PageRenderEngine`/`PageLayout`/`PageBitmap`（v2 渲染管线）、`InkEdit`（笔迹纯函数：局部擦除切段/平移/缩放/尺子吸附/自由框选多边形命中，**`splitStroke` 与 web 端 JS 版同算法两份实现，改它必须同步另一边**，测试 `spike/ink-edit-test.swift`）、`InkUndo`+`DocSession+InkUndo`（编辑撤销栈：**增量**记账、瞬态不落库、页内与草稿纸各一条；连续擦除并成一步，抬笔封口）、`InkPaste`（粘贴的摆放数学，纯函数：Mac 本机 ⌘V 与平板 `clip paste` 共用一份）、`InkClipboard`（笔迹剪贴板，系统 `NSPasteboard` 自有类型，条目编码复用落库 payload；两者测试 `spike/ink-undo-test.swift`）、`InkWindow`（笔迹**按页窗口**装载/淘汰的纯函数：`session.strokes` 只是已装载页的集合，整篇操作问库，见 `INK-PAGING-PLAN.md §9`；测试 `spike/ink-window-test.swift`）。笔迹点 `InkPoint = SIMD3<Float>`，「存 Float、算 Double」
 - `Sources/Server/` — LAN WS 服务、二维码配对、UDP RT 上行（`UDPTransport` + 纯逻辑 `UDPReorder`，契约 `PROTOCOL.md §6`）
 - `Sources/MCP/` — MCP 服务（给外部 Agent 用，`MCP-PLAN.md`）：`MCPModels`/`MCPHTTP`/`MCPCatalog`/`MCPProtocol` 四个**只依赖 Foundation** 的纯逻辑文件（spike `mcp-protocol-test.swift` 直接编它们）+ `MCPServer`（`NWListener`，与 `LANServer` **不共用端口和队列**）+ `MCPFacade`（🔴 **唯一**碰 App 活状态的地方，`@MainActor`，只拼 DTO）+ `MCPDocReader`（私有 `PDFDocument`，`session.pdf` 不出主线程）+ `MCPTools*`（工具目录）+ `MCPResources`（资源 = 调同名工具）。页码对外 1 起、对内 0 起，**换算只在 `PageNo`**。🔴 写入按「文档开没开」分两条路（开着只改 `DocSession` 数组，见 `MCPFacade.writeTarget`）。设置页在 `Views/MCPSettingsView.swift`
 - `unireader://` 链接（`URL-SCHEME-PLAN.md`）：`App/DeepLink`（纯 Foundation 的解析 / 生成，spike `deep-link-test.swift`）+ `App/DeepLinkRouter`（找工作区 → 开窗 → 开文档 → 跳位置 → `DocSession.revealNoteID` 展开气泡）；入口 `AppDelegate.application(_:open:)` 按 scheme 分流、冷启动缓冲 `pendingDeepLinkURL`。🔴 **「让某篇显示出来」只有 `AppDelegate.showDocument` 一份**（MCP `open_document` 与链接共用），别在任何一边另写找标签 / 挑窗口的规则
