@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit   // 仅 NSEvent 滚轮监视器（标签排横向滚动），不含 AppKit 视图
 
 /// 标签栏的两种形态（用户 2026-08-29：「两个模式都要支持，浮动可以固定，固定可以浮动」）。
 /// 存 app 级 `@AppStorage`，不逐窗口记——它是一条外观偏好，不是某扇窗口的状态。
@@ -57,6 +58,9 @@ struct TabStrip: View {
     var pickerPresented: Binding<Bool> = .constant(false)
     var picker: (() -> AnyView)? = nil
 
+    @State private var hoveringScroll = false
+    @State private var wheelMonitor: Any?
+
     var body: some View {
         switch style {
         case .floating:
@@ -107,8 +111,33 @@ struct TabStrip: View {
             ScrollView(.horizontal) { row }
                 .scrollIndicators(.never)
                 .scrollClipDisabled()
+                .onHover { hoveringScroll = $0 }
+                .onChange(of: hoveringScroll) { _, on in setWheelMonitor(on) }
+                .onDisappear { setWheelMonitor(false) }
         }
         .frame(height: TabBarMetrics.rowHeight)
+    }
+
+    /// 鼠标悬停在横向滚动的标签排上时，把竖向滚轮转成横向（用户 2026-09-17：不用按 Shift）。
+    /// 做法同系统按 Shift 时的效果：交换滚轮事件的两个轴，交回给 ScrollView 自己滚。
+    /// 本身就带横向分量的（触控板横扫）原样放过。
+    private func setWheelMonitor(_ on: Bool) {
+        if let m = wheelMonitor { NSEvent.removeMonitor(m); wheelMonitor = nil }
+        guard on else { return }
+        wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard event.scrollingDeltaX == 0, event.scrollingDeltaY != 0,
+                  let cg = event.cgEvent?.copy() else { return event }
+            let pairs: [(CGEventField, CGEventField)] = [
+                (.scrollWheelEventDeltaAxis1, .scrollWheelEventDeltaAxis2),
+                (.scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis2),
+                (.scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2),
+            ]
+            for (y, x) in pairs {
+                cg.setDoubleValueField(x, value: cg.getDoubleValueField(y))
+                cg.setDoubleValueField(y, value: 0)
+            }
+            return NSEvent(cgEvent: cg) ?? event
+        }
     }
 
     /// 🔴 `fixedSize(horizontal:)` 不能省（2026-08-29 样张当场抓到）：标签用了
