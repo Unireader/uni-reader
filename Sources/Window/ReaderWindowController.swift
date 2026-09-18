@@ -360,9 +360,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         chrome.isKeyWindow = true
         app.setActive(session)
         AIPanelDock.shared.setHost(window)
+        AIPanelDock.agent.setHost(window)
         if AIPanelModel.shared.mode == .inline {
             AIPanelModel.shared.setActiveHost(.inline(session.windowID))
         }
+        AgentPanelModel.shared.noteKeyReader(self)
     }
 
     func windowDidResignKey(_ notification: Notification) { chrome.isKeyWindow = false }
@@ -392,6 +394,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         dismissRefWindow()   // 订阅要下一拍才跑，关窗/退出等不起，这里直接关
         AIPanelModel.shared.releaseHost(.inline(session.windowID))
         AIPanelModel.shared.forgetInline(session.windowID)
+        AgentPanelModel.shared.readerClosed(tabs.windowID)
         tabs.closeWindow()
         WorkspaceRegistry.shared.closeRootWindow(windowId)
         AppDelegate.shared?.forget(self)

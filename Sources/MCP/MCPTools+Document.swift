@@ -68,6 +68,12 @@ extension MCPTools {
                 imported = (r["imported"] as? Bool) == true
             }
             guard !id.isEmpty else { throw MCPInvalidParams("argument 'document_id' (or 'path') is required") }
+            // 「跟随 Agent」关着：导入照做（那是写入，不是导航），只是不把它显示出来
+            if ctx.fromInAppAgent, !AgentFollow.enabled {
+                // structured 只放 outputSchema 里有的键（additionalProperties:false，多一个 Kimi 就判失败）
+                return MCPToolResult(text: (imported ? "Imported document_id \(id). " : "") + AgentFollow.declined,
+                                     structured: ["imported": imported])
+            }
             var r = try await MainActor.run {
                 try MCPFacade.shared.openDocument(documentId: id, workspacePath: wsPath, windowId: windowId, page: page, activate: activate)
             }

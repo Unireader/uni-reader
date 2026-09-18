@@ -63,14 +63,16 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `Sources/Info.plist` 再 `xcodegen generate` 一次。⚠️ 公钥一旦随首次发布公开，**严禁更换**——换了
   老版本会拒绝所有未来更新。密钥生成这步涉及本机 Keychain 写入，按项目规矩交给用户自己跑，Agent 不代跑。
 
-- **第三方包（SPM）**，目前两个：`swift-markdown-engine`（`project.yml` 里 `exactVersion` 钉死）——笔记编辑器 sheet
+- **第三方包（SPM）**，目前三个：`swift-markdown-engine`（`project.yml` 里 `exactVersion` 钉死）——笔记编辑器 sheet
   （`MarkdownNoteEditor`）与气泡正文只读渲染（`MarkdownNoteReader`，红线例外）用它。取两个产品：核心 `MarkdownEngine`
   （零外部依赖）+ `MarkdownEngineLatex`（2026-09-16 加，笔记里的 `$…$` / `$$…$$` 公式；传递依赖 **SwiftMath**，MIT，
   带 ~7MB 数学字体进 app 包）。公式渲染器 = `NoteLatexRenderer`（套在引擎的 `SwiftMathBridge` 外面：`$$` 块加 `\displaystyle` 按块排版 + 缓存封顶）；
   某条公式能不能渲染，用 `spike/latex-look.swift` 出样张看（SwiftMath 不支持的命令会原样显示源码）。另一个是
   **Sparkle**（`from: "2.9.1"`，2026-09-18 加）——`Sources/App/UpdaterService.swift` 薄封装
   `SPUStandardUpdaterController`，菜单「UniReader › 检查更新…」与设置 ›「通用」的「更新」区块共用它；
-  UniReader 不在 sandbox，不需要 Installer XPC service 或额外 entitlements。包解析落在 `build/dev/SourcePackages/`，
+  UniReader 不在 sandbox，不需要 Installer XPC service 或额外 entitlements。第三个是 **`swift-acp`**（自家 fork
+  `Unireader/swift-acp`，`exactVersion: 0.1.0-unireader.1`，2026-09-18 加，MIT）——Agent 面板的 ACP 客户端，取 `ACP` + `ACPModel`
+  两个产品；fork 怎么改、怎么打 tag 见 `ACP-AGENT-PLAN.md §2`。包解析落在 `build/dev/SourcePackages/`，
   新克隆或 `rm -rf build` 之后首次编译要先 `xcodebuild … -derivedDataPath build/dev -resolvePackageDependencies`
   （联网拉包 = 装依赖，**按用户规矩给命令让用户跑**，别自己跑）。升版本只改 `project.yml` 再解析。
 - 无测试 target；验证走 spike 脚本：`swift spike/<name>.swift`（如 `store-test.swift` 32 项 DAO、`ink-store-test.swift` 21 项）。
@@ -93,6 +95,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 - `IMAGE-NOTE-PLAN.md` — 图片笔记（note kind=6 + `image` 表 v13 + `Images/`）：内容寻址、引用计数数出来、待删除 30 天、⌥⇧ 拖节选、离线镜像 additive 通道（2026-09-13 Mac 端已落地）
 - `SCAN-ALIGN-PLAN.md` — 扫描页对齐（每页旋转 + 平移，「视图」菜单「对齐扫描页」开关，按内容哈希记）：**开着时对齐后的页面就是页面坐标**；变换公式 / `page_align` 表（v14）/ 显示身份 `displayKey` / 离线镜像通道是三端契约（2026-09-17 Mac + 安卓模式1 落地）
 - `URL-SCHEME-PLAN.md` — `unireader://open?ws=&doc=&page=&frac=&note=` 链接（从 Obsidian / Agent 写的清单点回 App 的某页某条笔记）：参数契约、解析顺序、与 MCP 共用的 `showDocument`；MCP 的文档 / 批注 / 位置 DTO 都带现成 `link`（2026-09-14 落地，用户实测通过）。**导出到 Obsidian 不做进 App**，由 Agent 按 `skills/unireader-obsidian-export/SKILL.md` 做
+- `ACP-AGENT-PLAN.md` — Agent 面板（ACP）：不自己做 Agent，把本机 `kimi acp` 当子进程拉起、App 只做界面、能力全走已有 MCP；客户端 = 自家 fork `Unireader/swift-acp`；会话不落库（历史由 Agent 按工作目录保存）；工作目录 = `.unrd` 包的上一级；与「咨询 AI」（网页）并存、各管各的（2026-09-18 拍板并落地第一批）
 - **`android/AGENTS.md`** — 安卓端（两种模式）的构建、结构、红线与坑；**动安卓代码只需读它 + 上面的跨端契约**
 
 ### 子目录可以自带 AGENTS.md（`android/` 就是这么做的）
@@ -128,6 +131,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 - `Sources/App/` — App 级单例：`AppModel`/`DocSession`（多窗口共享 WS/LANServer）、`WorkspaceManager`（工作区 = `.unrd` 包：UTI 声明在 `Sources/Info.plist`，旧无扩展名工作区首启原地改名迁移、工作区改名联动改包名；双击/拖 Dock 由 `AppDelegate.openFile` → 通知路由到 key 窗口）、`UpdaterService`（Sparkle 2 自动更新薄封装，2026-09-18 加，菜单「检查更新…」与设置 ›「通用」的「更新」区块共用；详见「发布到 GitHub」一节）、`PageRenderEngine`/`PageLayout`/`PageBitmap`（v2 渲染管线）、`InkEdit`（笔迹纯函数：局部擦除切段/平移/缩放/尺子吸附/自由框选多边形命中，**`splitStroke` 与 web 端 JS 版同算法两份实现，改它必须同步另一边**，测试 `spike/ink-edit-test.swift`）、`InkUndo`+`DocSession+InkUndo`（编辑撤销栈：**增量**记账、瞬态不落库、页内与草稿纸各一条；连续擦除并成一步，抬笔封口）、`InkPaste`（粘贴的摆放数学，纯函数：Mac 本机 ⌘V 与平板 `clip paste` 共用一份）、`InkClipboard`（笔迹剪贴板，系统 `NSPasteboard` 自有类型，条目编码复用落库 payload；两者测试 `spike/ink-undo-test.swift`）、`InkWindow`（笔迹**按页窗口**装载/淘汰的纯函数：`session.strokes` 只是已装载页的集合，整篇操作问库，见 `INK-PAGING-PLAN.md §9`；测试 `spike/ink-window-test.swift`）。笔迹点 `InkPoint = SIMD3<Float>`，「存 Float、算 Double」
 - `Sources/Server/` — LAN WS 服务、二维码配对、UDP RT 上行（`UDPTransport` + 纯逻辑 `UDPReorder`，契约 `PROTOCOL.md §6`）
 - `Sources/MCP/` — MCP 服务（给外部 Agent 用，`MCP-PLAN.md`）：`MCPModels`/`MCPHTTP`/`MCPCatalog`/`MCPProtocol` 四个**只依赖 Foundation** 的纯逻辑文件（spike `mcp-protocol-test.swift` 直接编它们）+ `MCPServer`（`NWListener`，与 `LANServer` **不共用端口和队列**）+ `MCPFacade`（🔴 **唯一**碰 App 活状态的地方，`@MainActor`，只拼 DTO）+ `MCPDocReader`（私有 `PDFDocument`，`session.pdf` 不出主线程）+ `MCPTools*`（工具目录）+ `MCPResources`（资源 = 调同名工具）。页码对外 1 起、对内 0 起，**换算只在 `PageNo`**。🔴 写入按「文档开没开」分两条路（开着只改 `DocSession` 数组，见 `MCPFacade.writeTarget`）。设置页在 `Views/MCPSettingsView.swift`
+- `Sources/Agent/` — Agent 面板（`ACP-AGENT-PLAN.md`）：`AgentConnection`（一个工作目录一个 `kimi acp` 子进程，swift-acp 的 `Client`）+ `AgentChat`（一段对话，**不落库**）+ `AgentTranscript`（纯函数：`session/update` 拼条目、回放时剔上下文块）+ `AgentPanelModel`（形态 / 进程池 / 对话表）。界面 `Views/AgentChatView` + `Views/AgentInlineLayer`（内置）+ `Window/AgentWindowController`（独立窗口）。与咨询 AI（`Sources/AI/`）**各管各的**，别混。MCP 这边只多了一个请求头 `x-unireader-agent`（「跟随 Agent」开关，`AgentFollow`）
 - `unireader://` 链接（`URL-SCHEME-PLAN.md`）：`App/DeepLink`（纯 Foundation 的解析 / 生成，spike `deep-link-test.swift`）+ `App/DeepLinkRouter`（找工作区 → 开窗 → 开文档 → 跳位置 → `DocSession.revealNoteID` 展开气泡）；入口 `AppDelegate.application(_:open:)` 按 scheme 分流、冷启动缓冲 `pendingDeepLinkURL`。🔴 **「让某篇显示出来」只有 `AppDelegate.showDocument` 一份**（MCP `open_document` 与链接共用），别在任何一边另写找标签 / 挑窗口的规则
 - `web/` — 平板采集页前端工程（Svelte 5 + Vite + TypeScript，`vite-plugin-singlefile` 单文件构建）。`Sources/Resources/capture.html` 是它的**构建产物，勿手改**；源在 `web/src/`（`App/TopBar/StatsPanel/PenStat/TextNoteEditor.svelte`（文字笔记编辑器）+ `lib/`：shared 状态袋与公式（含 `GState` 等共享类型）/ hud.svelte.ts 响应式 HUD / render / input / ws / capture 装配）。占位符 `__WS_PORT__`/`__TOKEN__`/`__PENS__` 在 `web/index.html` 内联脚本里（不过 bundler），由 `CapturePage.swift` 运行时替换；`wire.js` 协议编解码器由 `web/src/lib/wire.ts` 直接 import `Sources/Resources/wire.js`（单一真源，勿复制）构建期内联。
 - `Sources/Views/` — `ContentView`（body 拆 `mainSplit` + `eventRoutes` 两段——修饰符链挂一个表达式会超类型检查器时限，与 `toolbarContent` 抽出同款）；阅读区 v2 拆分为 `PageStreamView`（外壳 + `ReaderSurface` 主体）+ `ReaderSurface+Scroll/Render/Selection/Zoom/Lasso/InkClip`（六个扩展：滚动几何与跟随 / 渲染调度与贴片 / 文字选择与注解+本机落墨手势 / 缩放与事件监视 / 框选——自由路径框选+移动+角手柄缩放+选中笔迹光晕 / 选中集的剪切复制粘贴删除+撤销入口）+ `PageStreamSupport`（GeoSnap/Scratch 等支持类型）+ `PageCellView`/`InkLayers`/`RadialMenuView`（页元胞/墨迹层/环形选笔盘）；`ScrollFollower`。本机指针工具 = `AppModel.pointerTool`（textSelect/ink/lasso，设备级全局，笔架切换）

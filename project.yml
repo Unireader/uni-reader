@@ -30,6 +30,11 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle.git
     from: "2.9.1"
+  # Agent 面板的 ACP 客户端（ACP-AGENT-PLAN.md）。自家 fork：去掉了上游的 reference submodule，
+  # 有问题直接改 fork 再打 v0.1.0-unireader.N 新 tag。
+  ACP:
+    url: https://github.com/Unireader/swift-acp
+    exactVersion: 0.1.0-unireader.1
 targets:
   UniReader:
     type: application
@@ -43,6 +48,10 @@ targets:
         product: MarkdownEngineLatex
       - package: Sparkle
         product: Sparkle
+      - package: ACP
+        product: ACP
+      - package: ACP
+        product: ACPModel
     settings:
       base:
         PRODUCT_NAME: UniReader

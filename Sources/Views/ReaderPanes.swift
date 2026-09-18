@@ -52,9 +52,9 @@ struct InspectorPane: View {
     }
 }
 
-/// 阅读区段：页流 + 四层浮层（标签栏 / AI 内置面板 / 参考窗 / 跳转历史）+ 查找条。
+/// 阅读区段：页流 + 浮层（标签栏 / 两枚 AI 气泡 / 参考窗 / 跳转历史）+ 查找条，右侧并排两块内置 AI 面板。
 ///
-/// 🔴 浮层全部挂在**这一层**（`readerColumn`），与迁移前完全一样的两条理由：身份要稳
+/// 🔴 浮层全部挂在**这一层**（`readerArea`），与迁移前完全一样的两条理由：身份要稳
 /// （不能落进 `PageStreamView` 内部 `.id(docKey)` 的下游），以及要挡得住阅读区那四个挂在
 /// `ScrollView` 上的拖拽手势（`.overlay` 加在同一个视图上挡不住）。
 struct ReaderPane: View {
@@ -100,7 +100,6 @@ struct ReaderPane: View {
         let _ = session.openTrace?.markOnce("阅读区段 body")   // 打开耗时账本：各段 body 的先后（找首帧后主线程忙在哪）
         readerColumn
             .dropDestination(for: URL.self) { urls, _ in onIngest(urls); return true }
-            .overlay(alignment: .top) { findBanner }
             .onChange(of: systemScheme) { _, s in if autoNightMode { nightMode = (s == .dark) } }
             .onChange(of: autoNightMode) { _, on in if on { nightMode = (systemScheme == .dark) } }
             .onChange(of: tabs.activeID) { _, _ in
@@ -136,14 +135,31 @@ struct ReaderPane: View {
                    actions: hashAlertActions, message: hashAlertMessage)
     }
 
+    /// 阅读区 + 两块内置面板**并排**（从左到右：阅读区 | Agent | 咨询 AI）。面板展开时把阅读区往左挤，
+    /// 不再盖在 PDF 上（用户 2026-09-18）。面板收起时整个不存在，阅读区占满。
+    /// 收起时的两枚气泡仍是浮在阅读区右下角的覆盖层（`readerArea` 里的 `.bubble`）。
     private var readerColumn: some View {
+        HStack(spacing: 0) {
+            readerArea
+            AgentInlineLayer(windowID: tabs.windowID, workspaceFolder: workspace.folder,
+                             workspaceName: workspace.name, part: .panel)
+            AIInlineLayer(session: session, part: .panel)
+        }
+    }
+
+    private var readerArea: some View {
         readerContent
+            .overlay(alignment: .top) { findBanner }   // 挂阅读区上：内置面板开着时仍居中在 PDF 上方
             .overlay(alignment: .bottom) { tabBar.padding(.bottom, scrollerLift) }
             .onReceive(NotificationCenter.default.publisher(
                 for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
                 legacyScroller = NSScroller.preferredScrollerStyle == .legacy
             }
-            .overlay { AIInlineLayer(session: session) }
+            .overlay { AIInlineLayer(session: session, part: .bubble) }
+            .overlay {
+                AgentInlineLayer(windowID: tabs.windowID, workspaceFolder: workspace.folder,
+                                 workspaceName: workspace.name, part: .bubble)
+            }
             .overlay { refWindowLayer }
             .overlay { jumpHistoryLayer }
             // 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：挂在这里而不是 `body` 那条修饰符链上——那条早就到类型检查器的时限了

@@ -22,6 +22,8 @@
 - **MCP 服务**（`MCP-PLAN.md`，2026-09-13 三批合入 `main`，合并提交 `7a79546`）：批 1b（stdio 桥接）/ 1c（新版协议）视需要再做。
 - **`unireader://` 链接 + Obsidian**（`URL-SCHEME-PLAN.md`，2026-09-14）：从 Obsidian / Agent 清单点回 App 的某页某条笔记；
   MCP 的文档 / 批注 / 位置 DTO 都带 `link`。**导出不做进 App**，Agent 按 `skills/unireader-obsidian-export/SKILL.md` 做。
+- **Agent 面板（ACP）**（`ACP-AGENT-PLAN.md`，2026-09-18 第一批 A1）：把本机 `kimi acp` 当子进程拉起，App 只做界面，
+  能力走 MCP；客户端 = 自家 fork `Unireader/swift-acp`；会话不落库；与网页版「咨询 AI」并存。A2~A4 见「接下来」第 6 条。
 
 ## ⏭️ 接下来（建议顺序）
 
@@ -68,6 +70,11 @@
    - 用户在本机生成 EdDSA 密钥对（`generate_keys`），把公钥填进 `Sources/Info.plist` 的 `SUPublicEDKey`；
    - 跑一次带这次改动的正式发布，验证 `release.sh` 的签名/appcast 流程和 App 里「检查更新」→「发现新版本」
      这条完整路径（之前只能验证到菜单/设置页接进了 Sparkle，appcast 还没推上 GitHub 没法测到真的发现更新）。
+
+6. **Agent 面板后续批次**（`ACP-AGENT-PLAN.md §5`，A1 已于 2026-09-18 落地）：
+   - A2：附带页面截图（复用 `PageSnip`；Kimi 声明支持图片）+ 选中文字作为引用发给 Agent；
+   - A3：块级 Markdown（标题 / 列表 / 代码块 / 公式）——现在只渲染行内语法。
+   （A4 独立窗口吸附、两块内置面板改为与阅读区并排，2026-09-18 已做。）
 
 ## 🐞 已知欠账（未修 / 刻意没做）
 

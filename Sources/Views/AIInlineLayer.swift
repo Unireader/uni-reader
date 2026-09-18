@@ -2,10 +2,18 @@ import SwiftUI
 import WebKit
 import AppKit
 
-/// **内置模式**：AI 面板不另开窗口，而是贴在阅读窗口右侧；收起时缩成右下角一枚气泡按钮
-/// （像网页上那种客服按钮），点一下展开。
+/// 内置面板拆成的两半（咨询 AI 与 Agent 两块内置面板共用这个说法）。
+enum InlinePanelPart {
+    /// 收起时的气泡按钮：浮在阅读区右下角（`.overlay`）。
+    case bubble
+    /// 展开的侧栏：与阅读区并排，展开时把阅读区往左挤（2026-09-18 起，之前是盖在阅读区上）。
+    case panel
+}
+
+/// **内置模式**：AI 面板不另开窗口，而是贴在阅读窗口右侧、与阅读区并排（展开时把 PDF 往左推）；
+/// 收起时缩成右下角一枚气泡按钮（像网页上那种客服按钮），点一下展开。
 ///
-/// 挂在 `PageStreamView` 这一层而**不是** `ReaderSurface` 里，是为了让它天然挡住阅读区的手势：
+/// 气泡那一半挂在 `PageStreamView` 这一层而**不是** `ReaderSurface` 里，是为了让它天然挡住阅读区的手势：
 /// 阅读区那四个拖拽手势（拖选 / 落墨 / 框选移动 / 框选截图）都挂在 `ScrollView` 容器上，
 /// 用 `.overlay` 加在**同一个视图**上的覆盖层（如草稿纸）挡不住它们——所以草稿纸才要在每个
 /// gesture 里显式写 `session.openPadID == nil`。挂到上一层就成了普通的遮挡关系，一行门控都不用加。
@@ -19,6 +27,10 @@ import AppKit
 /// 展开/收起也是**按窗口各管各的**（`inlineOpenSessions`）。
 struct AIInlineLayer: View {
     @ObservedObject var session: DocSession
+    /// 拆成两处挂（用户 2026-09-18：「打开后向左推开 pdf 内容，现在会叠加在 pdf 区域上」）：
+    /// `.bubble` 浮在阅读区右下角（收起时那枚按钮，外加本宿主的生命周期钩子）；
+    /// `.panel` 与阅读区**并排**放在 `ReaderPane.readerColumn` 的 HStack 里，展开时把阅读区往左挤。
+    var part: InlinePanelPart
     @StateObject private var panel = AIPanelModel.shared
 
     @State private var dragStartWidth: Double?
@@ -40,27 +52,29 @@ struct AIInlineLayer: View {
 
     var body: some View {
         if hosts {
-            ZStack(alignment: .bottomTrailing) {
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    if isOpen {
-                        sidePanel.transition(.move(edge: .trailing))
+            switch part {
+            case .bubble:
+                // 生命周期钩子挂在这一半：它在内置模式下始终在（面板那一半收起时整个不存在）
+                ZStack {
+                    if !isOpen {
+                        bubble.transition(.scale.combined(with: .opacity))
                     }
                 }
-                if !isOpen {
-                    bubble.transition(.scale.combined(with: .opacity))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .animation(.easeOut(duration: 0.18), value: isOpen)
+                .onAppear {
+                    panel.seedInlineOpen(session.windowID)   // 新窗口沿用「上次是展开还是收着」
+                    if wantsHost { takePage() }
                 }
+                .onChange(of: wantsHost) { _, want in if want { takePage() } }
+                .onChange(of: panel.currentID) { _, _ in if wantsHost { takePage() } }
+                // 🔴 **刻意不在 onDisappear 放页面**：切到另一扇阅读窗口、或收成气泡，都不算这个宿主消失，
+                // 放了就等于清掉那扇窗口正在进行的对话状态。真正的回收在 `ContentView.onDisappear`
+                // （窗口关闭）里做。
+            case .panel:
+                // 🔴 不加展开动画：面板变宽的每一帧阅读区都要按新宽度重排（fit-width 缩放跟着变），逐帧动画会卡
+                if isOpen { sidePanel }
             }
-            .animation(.easeOut(duration: 0.18), value: isOpen)
-            .onAppear {
-                panel.seedInlineOpen(session.windowID)   // 新窗口沿用「上次是展开还是收着」
-                if wantsHost { takePage() }
-            }
-            .onChange(of: wantsHost) { _, want in if want { takePage() } }
-            .onChange(of: panel.currentID) { _, _ in if wantsHost { takePage() } }
-            // 🔴 **刻意不在 onDisappear 放页面**：切到另一扇阅读窗口、或收成气泡，都不算这个宿主消失，
-            // 放了就等于清掉那扇窗口正在进行的对话状态。真正的回收在 `ContentView.onDisappear`
-            // （窗口关闭）里做。
         }
     }
 
@@ -96,9 +110,10 @@ struct AIInlineLayer: View {
         }
         .frame(width: panel.inlineWidth)
         .frame(maxHeight: .infinity)
-        .background(.regularMaterial)
+        // 与阅读区并排（不再盖在上面）：标准窗口底色 + 左侧分隔线，像系统的检查器栏那样
+        .background(.background)
+        .overlay(alignment: .leading) { Divider() }
         .overlay(alignment: .leading) { resizeHandle }
-        .shadow(color: .black.opacity(0.18), radius: 10, x: -3)
     }
 
     private var header: some View {

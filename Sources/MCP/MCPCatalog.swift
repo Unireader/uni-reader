@@ -8,8 +8,24 @@ struct MCPCallContext {
     var clientName: String
     var clientVersion: String
     var writesEnabled: Bool
+    /// 这次调用来自 App 内置的 Agent 面板（它启动的 Agent 在请求头里带 `AgentFollow.header`）。
+    /// 只用来**收紧**（「跟随 Agent」关着时不动阅读区），不授予任何额外权限——所以谁伪造这个头都占不到便宜。
+    var fromInAppAgent = false
 
     static let anonymous = MCPCallContext(clientName: "unknown", clientVersion: "", writesEnabled: false)
+}
+
+/// 「跟随 Agent」开关（`ACP-AGENT-PLAN.md`）：App 内置 Agent 调 `goto` / `open_document` 时，
+/// 阅读区跟不跟着跳。默认开。放在这里（只依赖 Foundation）是因为网络队列上的工具要读它。
+enum AgentFollow {
+    static let key = "agentFollow"
+    /// App 内置 Agent 连 MCP 时带的请求头（值无意义，有就算）。
+    static let header = "x-unireader-agent"
+
+    static var enabled: Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+
+    /// 开关关着时导航类工具给 Agent 的回话：说清楚没动、为什么，免得它以为跳过去了。
+    static let declined = "Follow Agent is turned off in UniReader, so the user's view was not moved. Tell the user which page or document you mean instead of navigating."
 }
 
 /// 工具分级（方案 §1 / §6.5）：读取 / 导航（改界面不改数据）/ 写入（受设置里的开关管）。

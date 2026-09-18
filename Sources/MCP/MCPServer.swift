@@ -305,7 +305,8 @@ final class MCPServer: ObservableObject {
                     return
                 }
             }
-            let outcome = await dispatcher.dispatch(body: req.body, session: session)
+            let outcome = await dispatcher.dispatch(body: req.body, session: session,
+                                                    inAppAgent: req.header(AgentFollow.header) != nil)
             let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
             switch outcome {
             case .accepted:

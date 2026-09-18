@@ -104,7 +104,8 @@ struct MCPDispatcher {
     let writesEnabled: () -> Bool
 
     /// 处理一条 HTTP 请求体。`session` = HTTP 层按 `Mcp-Session-Id` 查到的会话（没带/查不到 = nil）。
-    func dispatch(body: Data, session: MCPSession?) async -> MCPDispatchOutcome {
+    /// `inAppAgent` = 请求带了 `AgentFollow.header`（App 内置 Agent 面板启动的 Agent）。
+    func dispatch(body: Data, session: MCPSession?, inAppAgent: Bool = false) async -> MCPDispatchOutcome {
         guard let parsed = MCPJSON.parse(body) else {
             return .response(Self.error(id: nil, code: JSONRPCCode.parseError, message: "parse error: body is not valid JSON"))
         }
@@ -140,7 +141,7 @@ struct MCPDispatcher {
                                         message: "session not initialized; send initialize first"))
         }
         let ctx = MCPCallContext(clientName: session.clientName, clientVersion: session.clientVersion,
-                                 writesEnabled: writesEnabled())
+                                 writesEnabled: writesEnabled(), fromInAppAgent: inAppAgent)
 
         switch method {
         case "tools/list":

@@ -14,6 +14,11 @@ struct MCPSettingsView: View {
     /// 口令的界面镜像（本体在 Keychain，`MCPToken`）。
     @State private var token: String? = MCPToken.current()
 
+    @AppStorage(AgentConfig.commandKey) private var agentCommand = ""
+    @AppStorage(AgentConfig.argumentsKey) private var agentArguments = AgentConfig.defaultArguments
+    /// 命令解析出来的绝对路径（按登录 shell 的 PATH 找；nil = 没找到）。
+    @State private var agentResolved: String?
+
     private var bind: MCPServer.Bind { MCPServer.Bind(rawValue: bindRaw) ?? .loopback }
     private var portValid: Bool { port >= 1024 && port <= 65535 }
 
@@ -38,6 +43,7 @@ struct MCPSettingsView: View {
     var body: some View {
         Form {
             serviceSection
+            agentSection
             writesSection
             listenSection
             tokenSection
@@ -46,6 +52,26 @@ struct MCPSettingsView: View {
             callsSection
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - 内置 Agent（ACP）
+
+    /// Agent 面板启动哪条命令（`ACP-AGENT-PLAN.md`）。首批只接 Kimi（`kimi acp`）。
+    private var agentSection: some View {
+        Section {
+            TextField(L("Command"), text: $agentCommand, prompt: Text(AgentConfig.defaultCommand))
+            TextField(L("Arguments"), text: $agentArguments, prompt: Text(AgentConfig.defaultArguments))
+            LabeledContent(L("Resolved")) {
+                Text(agentResolved ?? L("Not found")).textSelection(.enabled)
+            }
+        } header: {
+            Text(L("Agent Panel"))
+        } footer: {
+            Text(L("The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats."))
+        }
+        .task(id: agentCommand) {
+            agentResolved = try? await AgentConfig.resolveExecutable(AgentConfig.command)
+        }
     }
 
     // MARK: - 写入

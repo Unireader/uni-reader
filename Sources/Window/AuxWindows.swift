@@ -127,6 +127,7 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
         guard let w = window else { return }
         w.parent?.removeChildWindow(w)
         w.orderOut(nil)
+        AIPanelDock.agent.reapply()   // Agent 浮窗若排在它右边，挪回阅读窗口旁边
     }
 
     /// 切到内置模式时把这扇窗关掉（迁移前是 `AIPanelView` 里的 `dismissWindow`）。
@@ -173,6 +174,8 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
     func windowWillClose(_ notification: Notification) {
         panel.releaseHost(.window)
         Self.shared = nil
+        // Agent 浮窗若排在它右边：等它真关掉（下一拍）再挪回阅读窗口旁边
+        DispatchQueue.main.async { AIPanelDock.agent.reapply() }
     }
 
     // MARK: 工具栏

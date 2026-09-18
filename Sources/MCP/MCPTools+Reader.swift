@@ -18,6 +18,9 @@ extension MCPTools {
                 "link": MCPSchema.string("unireader:// link that reopens exactly this position"),
                 "page_count": MCPSchema.integer("pages"), "zoom": MCPSchema.number("zoom relative to fit-width"),
                 "canvas_mode": MCPSchema.boolean("canvas mode on"), "chapter": MCPSchema.string("outline entry the page falls in"),
+                // 🔴 返回里有的键这里必须都有：schema 是 additionalProperties:false，Kimi 的 MCP 客户端严格校验，
+                // 漏一个整个调用判失败（2026-09-18 漏了 file_missing，Claude Code 不校验所以一直没暴露）
+                "file_missing": MCPSchema.boolean("the PDF file cannot be found on disk"),
                 "selection": MCPSchema.object(["page": MCPSchema.integer("1-based"), "text": MCPSchema.string("selected text"),
                                                "rects": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")))]),
             ]),
@@ -59,7 +62,8 @@ extension MCPTools {
                 "link": MCPSchema.string("unireader:// link to this position"),
             ]),
             tier: .navigate
-        ) { _, args in
+        ) { ctx, args in
+            if ctx.fromInAppAgent, !AgentFollow.enabled { return MCPToolResult(text: AgentFollow.declined, structured: [:]) }
             let page = try args.int("page") ?? 1
             let frac: Double
             if let f = args.raw["frac"] as? NSNumber { frac = f.doubleValue } else { frac = 0 }
@@ -114,6 +118,7 @@ extension MCPTools {
                 "ai_threads": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "provider": MCPSchema.string("chatgpt / …"),
                     "url": MCPSchema.string("conversation link"), "title": MCPSchema.string("title"), "state": MCPSchema.enumeration(["ok", "suspect"], "link health"),
+                    "created_at": MCPSchema.string("ISO-8601"),   // 返回里一直有，schema 漏了（Kimi 严格校验时报错）
                     "link": MCPSchema.string("unireader:// link to the page it is pinned on")])),
                 "scratch_pads": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "title": MCPSchema.string("title"),
