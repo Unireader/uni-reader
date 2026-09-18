@@ -632,6 +632,14 @@
 "Allow “%@”?" = "允许执行“%@”吗？";
 "Ask %@…" = "向 %@ 提问…";
 "Ask %@" = "向 %@ 提问";
+"Model" = "模型";
+"How the agent asks before running tools" = "Agent 执行工具前怎么征求你的同意";
+"Ask Every Time" = "每次询问";
+"Tools run only after you approve them." = "每个工具都要你批准后才执行。";
+"Plan Only" = "只做计划";
+"Read-only: the agent plans but runs no tools." = "只读：Agent 只做计划，不执行任何工具。";
+"Approve for Me" = "自动批准";
+"Safe operations are approved automatically." = "安全的操作自动批准。";
 "It can read the document you are looking at, find pages, and add notes, highlights and bookmarks." = "它能读取你正在看的文档、查找页面，还能添加笔记、高亮和书签。";
 "Send" = "发送";
 "Thinking" = "思考过程";

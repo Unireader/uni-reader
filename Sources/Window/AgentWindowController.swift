@@ -251,43 +251,8 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
         }
     }
 
+    /// 面板本身的设置。模式 / 模型在输入框那一行（`AgentModeMenu` / `AgentConfigMenu`，用户 2026-09-18 定）。
     private func fillOptions(_ m: NSMenu) {
-        guard let chat else { return }
-        if !chat.modes.isEmpty {
-            m.addItem(.sectionHeader(title: L("Mode")))
-            for mode in chat.modes {
-                let it = NSMenuItem(title: mode.name, action: #selector(selectMode(_:)), keyEquivalent: "")
-                it.target = self
-                it.representedObject = mode.id
-                it.state = mode.id == chat.currentMode ? .on : .off
-                it.toolTip = mode.description
-                m.addItem(it)
-            }
-        }
-        for item in chat.configs {
-            switch item.kind {
-            case .select(let current, let options):
-                let sub = NSMenu()
-                for o in options {
-                    let it = NSMenuItem(title: o.name, action: #selector(selectConfig(_:)), keyEquivalent: "")
-                    it.target = self
-                    it.representedObject = [item.id, o.value]
-                    it.state = o.value == current ? .on : .off
-                    sub.addItem(it)
-                }
-                let parent = NSMenuItem(title: item.name, action: nil, keyEquivalent: "")
-                parent.submenu = sub
-                m.addItem(.separator())
-                m.addItem(parent)
-            case .toggle(let on):
-                let it = NSMenuItem(title: item.name, action: #selector(toggleConfig(_:)), keyEquivalent: "")
-                it.target = self
-                it.representedObject = [item.id, on ? "0" : "1"]
-                it.state = on ? .on : .off
-                m.addItem(it)
-            }
-        }
-        m.addItem(.separator())
         let follow = NSMenuItem(title: L("Follow Agent"), action: #selector(toggleFollow), keyEquivalent: "")
         follow.target = self
         follow.state = panel.follow ? .on : .off
@@ -310,21 +275,6 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
         guard let id = sender.representedObject as? String, let chat,
               let s = chat.history.first(where: { $0.sessionId.value == id }) else { return }
         chat.load(s)
-    }
-
-    @objc private func selectMode(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        chat?.setMode(id)
-    }
-
-    @objc private func selectConfig(_ sender: NSMenuItem) {
-        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
-        chat?.setConfig(pair[0], value: pair[1])
-    }
-
-    @objc private func toggleConfig(_ sender: NSMenuItem) {
-        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
-        chat?.setConfig(pair[0], flag: pair[1] == "1")
     }
 
     @objc private func toggleFollow() { panel.setFollow(!panel.follow) }

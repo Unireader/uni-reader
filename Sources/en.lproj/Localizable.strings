@@ -630,6 +630,14 @@
 "Allow “%@”?" = "Allow “%@”?";
 "Ask %@…" = "Ask %@…";
 "Ask %@" = "Ask %@";
+"Model" = "Model";
+"How the agent asks before running tools" = "How the agent asks before running tools";
+"Ask Every Time" = "Ask Every Time";
+"Tools run only after you approve them." = "Tools run only after you approve them.";
+"Plan Only" = "Plan Only";
+"Read-only: the agent plans but runs no tools." = "Read-only: the agent plans but runs no tools.";
+"Approve for Me" = "Approve for Me";
+"Safe operations are approved automatically." = "Safe operations are approved automatically.";
 "It can read the document you are looking at, find pages, and add notes, highlights and bookmarks." = "It can read the document you are looking at, find pages, and add notes, highlights and bookmarks.";
 "Send" = "Send";
 "Thinking" = "Thinking";

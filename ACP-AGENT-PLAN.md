@@ -55,6 +55,11 @@ Sources/Window/AgentWindowController.swift  独立窗口（全 App 一扇，跟�
 界面规矩（用户 2026-09-18「UI 都要优化符合 macOS 设计」）：独立窗口的操作一律放窗口工具栏（NSToolbar，紧凑样式），
 不在内容里另画标题行；内置形态挂不了窗口工具栏，用系统 `ControlGroup`；输入框 / 按钮 / 空状态 / 分组框全用系统控件。
 
+输入区（用户 2026-09-18 参考其他 Agent 客户端定）：一个圆角框，上面多行输入（`TextEditor`，默认约三行、随内容长高、
+上限后框内滚动；**回车发送、⇧/⌥回车换行、输入法组字时回车放行给输入法**），下面一行左「模式」（审批方式，Kimi 三档按 id
+本地化：每次询问 / 只做计划 / 自动批准）、右「模型」（Agent 给的全部配置项）+ 发送 / 停止。**模式与模型只在这里**，
+顶部只留面板本身的设置（跟随 Agent / 吸附 / 形态）。附件按钮（A2）将来放在这一行最左边。
+
 接入点：`ReaderWindowController.windowDidBecomeKey` → `noteKeyReader`；`shutdown()` → `readerClosed`；
 `AppDelegate.applicationShouldTerminate` → `teardownAll()`（同步 SIGTERM 进程组，不留孤儿进程）；
 「AI」菜单 › Agent 面板（`ShortcutAction.agentPanel`，默认 ⌘⇧K）；设置 › Agent 页加了「Agent 面板」分组。

@@ -186,14 +186,74 @@ struct AgentChatView<Trailing: View>: View {
 
     // MARK: - 输入
 
+    /// 输入区（用户 2026-09-18 参考其他 Agent 客户端定的布局）：一个圆角框，上面是多行输入，
+    /// 下面一行左边「模式」（审批方式）、右边「模型」+ 发送。模式 / 模型从顶部挪到这里——它们是
+    /// 「这一句话怎么发」的设置，挨着输入框；顶部只留面板本身的设置（跟随 / 吸附 / 形态）。
+    /// 附件（页面截图 / 选中文字，A2）将来加在这一行最左边。
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField(String(format: L("Ask %@…"), AgentConfig.displayName), text: $draft, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...8)
+        VStack(alignment: .leading, spacing: 8) {
+            input
+            HStack(spacing: 6) {
+                AgentModeMenu(chat: chat)
+                Spacer(minLength: 4)
+                AgentConfigMenu(chat: chat)
+                sendButton
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.separator)
+        }
+        // 点框里空白处也进输入态（整块看起来就是一个输入框）
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture { inputFocused = true }
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
+    }
+
+    /// 多行输入（用户 2026-09-18：「输入框默认高一些，支持换行，多行输入」）。
+    ///
+    /// 用系统多行编辑框 `TextEditor`（`TextField` 竖向模式回车就提交，换行不顺手）：
+    /// **回车发送，⇧回车 / ⌥回车换行**（交给 NSTextView 自己插换行）。默认约三行高，随内容长高，
+    /// 到上限后框内滚动——高度由底下一份隐藏的同字体 `Text` 撑出来。
+    /// 🔴 输入法组字时的回车是「上屏」不是发送：有 marked text 就放行给输入法（中文用户，必须）。
+    private var input: some View {
+        ZStack(alignment: .topLeading) {
+            Text(draft.isEmpty ? " " : draft + " ")   // 撑高度；末尾补空格，最后一行是空行时也算上
+                .font(.body)
+                .padding(.horizontal, 5)                 // 与 NSTextView 的 lineFragmentPadding 对齐
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .hidden()
+            TextEditor(text: $draft)
+                .font(.body)
+                .scrollContentBackground(.hidden)
                 .focused($inputFocused)
-                .onSubmit(send)
                 .disabled(chat.sessionId == nil)
+                .onKeyPress(.return, phases: .down) { press in
+                    if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.hasMarkedText() { return .ignored }
+                    guard press.modifiers.isDisjoint(with: [.shift, .option]) else { return .ignored }
+                    send()
+                    return .handled
+                }
+            if draft.isEmpty {
+                Text(String(format: L("Ask %@…"), AgentConfig.displayName))
+                    .font(.body)
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 5)
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(minHeight: 56, maxHeight: 200)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var sendButton: some View {
+        Group {
             if chat.phase == .running {
                 Button(action: chat.cancel) {
                     Label(L("Stop"), systemImage: "stop.fill")
@@ -211,9 +271,6 @@ struct AgentChatView<Trailing: View>: View {
         .labelStyle(.iconOnly)
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.circle)
-        .padding(.horizontal, 12)
-        .padding(.top, 4)
-        .padding(.bottom, 12)
     }
 
     private var canSend: Bool {
@@ -251,31 +308,13 @@ struct AgentHistoryMenu: View {
     }
 }
 
-/// 模式 / 模型等配置 / 跟随 Agent / 切换形态。
+/// 面板本身的设置：跟随 Agent / 切换形态（模式与模型在输入框那一行，见 `AgentModeMenu` / `AgentConfigMenu`）。
 struct AgentOptionsMenu: View {
     @ObservedObject var chat: AgentChat
     @ObservedObject private var panel = AgentPanelModel.shared
 
     var body: some View {
         Menu {
-            if !chat.modes.isEmpty {
-                Picker(L("Mode"), selection: Binding(get: { chat.currentMode ?? "" }, set: { chat.setMode($0) })) {
-                    ForEach(chat.modes, id: \.id) { m in Text(m.name).tag(m.id) }
-                }
-                .pickerStyle(.inline)
-            }
-            ForEach(chat.configs) { item in
-                switch item.kind {
-                case .select(let current, let options):
-                    Picker(item.name, selection: Binding(get: { current }, set: { chat.setConfig(item.id, value: $0) })) {
-                        ForEach(options, id: \.value) { o in Text(o.name).tag(o.value) }
-                    }
-                    .pickerStyle(.menu)
-                case .toggle(let on):
-                    Toggle(item.name, isOn: Binding(get: { on }, set: { chat.setConfig(item.id, flag: $0) }))
-                }
-            }
-            Divider()
             Toggle(L("Follow Agent"), isOn: Binding(get: { panel.follow }, set: { panel.setFollow($0) }))
             Divider()
             if panel.mode == .inline {
@@ -287,6 +326,82 @@ struct AgentOptionsMenu: View {
             Label(L("Agent Options"), systemImage: "slider.horizontal.3")
         }
         .help(L("Agent Options"))
+    }
+}
+
+// MARK: - 输入框那一行的两个菜单
+
+/// 模式（审批方式）。Kimi 的三档按 id 给本地化的名字和说明；认不出的 id 用 Agent 自己给的名字。
+struct AgentModeMenu: View {
+    @ObservedObject var chat: AgentChat
+
+    var body: some View {
+        if !chat.modes.isEmpty {
+            Menu {
+                ForEach(chat.modes, id: \.id) { m in
+                    let info = Self.info(m)
+                    Toggle(isOn: Binding(get: { m.id == chat.currentMode }, set: { _ in chat.setMode(m.id) })) {
+                        Text(info.name)
+                        Text(info.detail)   // 菜单项第二行说明（macOS 14+ 菜单支持副标题）
+                    }
+                }
+            } label: {
+                let cur = chat.modes.first { $0.id == chat.currentMode }.map(Self.info)
+                Label(cur?.name ?? L("Mode"), systemImage: cur?.icon ?? "hand.raised")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.primary)
+            .fixedSize()
+            .help(L("How the agent asks before running tools"))
+        }
+    }
+
+    static func info(_ m: ModeInfo) -> (name: String, detail: String, icon: String) {
+        switch m.id {
+        case "default": return (L("Ask Every Time"), L("Tools run only after you approve them."), "hand.raised")
+        case "plan": return (L("Plan Only"), L("Read-only: the agent plans but runs no tools."), "list.bullet.clipboard")
+        case "auto": return (L("Approve for Me"), L("Safe operations are approved automatically."), "checkmark.shield")
+        default: return (m.name, m.description ?? "", "slider.horizontal.3")
+        }
+    }
+}
+
+/// 模型等会话配置（Agent 给什么列什么）。按钮上显示当前模型名。
+struct AgentConfigMenu: View {
+    @ObservedObject var chat: AgentChat
+
+    /// 按钮上显示的：「模型」那一项的当前值（认 id / 分类为 model 的，没有就取第一个下拉项）。
+    private var title: String? {
+        let selects = chat.configs.filter { if case .select = $0.kind { return true } else { return false } }
+        let model = selects.first { $0.id == "model" } ?? selects.first
+        guard let model, case .select(let current, let options) = model.kind else { return nil }
+        return options.first { $0.value == current }?.name ?? current
+    }
+
+    var body: some View {
+        if let title {
+            Menu {
+                ForEach(chat.configs) { item in
+                    switch item.kind {
+                    case .select(let current, let options):
+                        Picker(item.name, selection: Binding(get: { current }, set: { chat.setConfig(item.id, value: $0) })) {
+                            ForEach(options, id: \.value) { o in Text(o.name).tag(o.value) }
+                        }
+                        .pickerStyle(.inline)
+                    case .toggle(let on):
+                        Toggle(item.name, isOn: Binding(get: { on }, set: { chat.setConfig(item.id, flag: $0) }))
+                    }
+                }
+            } label: {
+                Text(title).lineLimit(1)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.primary)
+            .fixedSize()
+            .help(L("Model"))
+        }
     }
 }
 
