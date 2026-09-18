@@ -82,6 +82,16 @@ struct ReaderPane: View {
                             tabCount: tabs.tabs.count)
     }
 
+    /// 🔴 接鼠标时系统用**占位式**滚动条：水平条的槽固定在阅读区最底边。给它设
+    /// `contentMargins(.bottom, for: .scrollIndicators)` 只会把条挪上去、槽留在原地——条浮在页面上、
+    /// 最底下空一条深色槽（2026-09-17 用户报，独立复现程序量过 NSScroller / NSClipView 的 frame）。
+    /// 所以占位式时滚动条不让位，改由标签栏整体抬高一条槽的高度。悬浮式滚动条不占槽，照旧让位。
+    @State private var legacyScroller = NSScroller.preferredScrollerStyle == .legacy
+    private var scrollerLift: CGFloat {
+        legacyScroller && tabBarInset > 0
+            ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+    }
+
     private func bind<V>(_ keyPath: ReferenceWritableKeyPath<DocSession, V>) -> Binding<V> {
         Binding(get: { session[keyPath: keyPath] }, set: { session[keyPath: keyPath] = $0 })
     }
@@ -128,7 +138,11 @@ struct ReaderPane: View {
 
     private var readerColumn: some View {
         readerContent
-            .overlay(alignment: .bottom) { tabBar }
+            .overlay(alignment: .bottom) { tabBar.padding(.bottom, scrollerLift) }
+            .onReceive(NotificationCenter.default.publisher(
+                for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
+                legacyScroller = NSScroller.preferredScrollerStyle == .legacy
+            }
             .overlay { AIInlineLayer(session: session) }
             .overlay { refWindowLayer }
             .overlay { jumpHistoryLayer }
@@ -150,7 +164,8 @@ struct ReaderPane: View {
                            nightMode: nightMode,
                            interpEnabled: scrollInterp,
                            isActiveWindow: chrome.isKeyWindow,
-                           bottomInset: tabBarInset,
+                           bottomInset: tabBarInset + scrollerLift,
+                           indicatorBottomInset: legacyScroller ? 0 : tabBarInset,
                            onDropFiles: onIngest)   // 拖进阅读区的 PDF 仍入库；图片由阅读区自己收成图片笔记
                 .overlay(alignment: .top) {
                     if tab.isHashing { indexingBadge }

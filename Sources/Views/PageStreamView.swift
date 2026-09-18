@@ -20,6 +20,8 @@ struct PageStreamView: View {
     /// 底部标签栏占掉的高度（`TabBarMetrics.inset`，只有一个标签时为 0）。
     /// 用途两处：滚动条不钻到标签栏底下、笔架拖不到标签栏底下。**内容仍然垫到底**（同 topInset 的口径）。
     let bottomInset: CGFloat
+    /// 滚动条底部让位。占位式滚动条时为 0（见 `ReaderPane.scrollerLift`）：它的槽固定在最底边，只挪条不挪槽。
+    let indicatorBottomInset: CGFloat
     /// 拖进阅读区的**非图片**文件（PDF）往上交给窗口层入库。图片文件阅读区自己收成图片笔记
     /// （`ReaderSurface+ImageNote`），所以拖放得挂在阅读区这一层——只有它知道落点在哪一页。
     var onDropFiles: ([URL]) -> Void = { _ in }
@@ -38,6 +40,7 @@ struct PageStreamView: View {
                           fullWidth: fullWidth,
                           indicatorTopInset: geo.safeAreaInsets.top,
                           bottomInset: bottomInset,
+                          indicatorBottomInset: indicatorBottomInset,
                           onDropFiles: onDropFiles)
                 .ignoresSafeArea()
         }
@@ -64,7 +67,8 @@ struct ReaderSurface: View {
     let unobSize: CGSize          // 未遮视口尺寸（fit 基准；GeometryReader 提供，与内容无关）
     let fullWidth: CGFloat        // 全宽（第二个 GeometryReader；区分窗口缩放 vs 侧栏开合）
     let indicatorTopInset: CGFloat // 滚动条顶端下压量（避让玻璃工具栏；内容仍垫底）
-    let bottomInset: CGFloat       // 底部标签栏占掉的高度（滚动条与笔架都要避让它；内容仍垫底）
+    let bottomInset: CGFloat       // 底部标签栏占掉的高度（笔架要避让它；内容仍垫底）
+    let indicatorBottomInset: CGFloat // 滚动条底部让位（占位式滚动条时为 0）
     /// 拖进阅读区的非图片文件（PDF）交给窗口层入库（见 `PageStreamView.onDropFiles`）。
     let onDropFiles: ([URL]) -> Void
     /// 本次是不是**从快照种下的**（= 切标签回来）。见 `init` 的红线。
@@ -86,7 +90,7 @@ struct ReaderSurface: View {
     /// （期间窗口或侧栏尺寸变过的话旧快照是错的）。
     init(session: DocSession, docKey: String, nightMode: Bool, interpEnabled: Bool,
          isActiveWindow: Bool, unobSize: CGSize, fullWidth: CGFloat,
-         indicatorTopInset: CGFloat, bottomInset: CGFloat,
+         indicatorTopInset: CGFloat, bottomInset: CGFloat, indicatorBottomInset: CGFloat,
          onDropFiles: @escaping ([URL]) -> Void = { _ in }) {
         _session = ObservedObject(wrappedValue: session)
         self.docKey = docKey
@@ -97,6 +101,7 @@ struct ReaderSurface: View {
         self.fullWidth = fullWidth
         self.indicatorTopInset = indicatorTopInset
         self.bottomInset = bottomInset
+        self.indicatorBottomInset = indicatorBottomInset
         self.onDropFiles = onDropFiles
 
         // ⚠️ 这里用不了实例属性（还没初始化完），故 `layoutW` 就地重算一遍。
@@ -466,7 +471,7 @@ struct ReaderSurface: View {
         //    → 把内容撑回全窗宽 > 真实视口(全窗宽−占位竖滚动条) → 常驻横条。靠首端对齐关掉居中；页面仍由 pageX 在内容内居中。
         .defaultScrollAnchor(.topLeading)
         .contentMargins(.top, indicatorTopInset, for: .scrollIndicators)   // 滚动条不进工具栏区
-        .contentMargins(.bottom, bottomInset, for: .scrollIndicators)      // 也不钻到底部标签栏底下
+        .contentMargins(.bottom, indicatorBottomInset, for: .scrollIndicators)   // 也不钻到底部标签栏底下
         .scrollPosition($pos)
         .onScrollGeometryChange(for: GeoSnap.self) { g in
             GeoSnap(offsetX: g.contentOffset.x, offsetY: g.contentOffset.y,
