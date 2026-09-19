@@ -51,9 +51,13 @@ final class ReaderScrollView: NSScrollView {
 /// 放页面的文档视图：flipped（左上原点，与页内归一化坐标、PageLayout 的 docY 同向），layer-backed。
 /// 页面内容全是 CALayer（`PageLayerGroup`），本视图不写 `draw(_:)`——滚动 / 缩放时 AppKit 不会逐帧重画它。
 final class ReaderDocumentView: NSView {
+    /// 鼠标与右键菜单全部交给阅读区处理（按指针工具分派，见 `ReaderView+Input`）。
+    weak var host: ReaderView?
+
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
     override var wantsUpdateLayer: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -63,4 +67,9 @@ final class ReaderDocumentView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
     override func updateLayer() {}
+
+    override func mouseDown(with event: NSEvent) { host?.readerMouseDown(event) }
+    override func mouseDragged(with event: NSEvent) { host?.readerMouseDragged(event) }
+    override func mouseUp(with event: NSEvent) { host?.readerMouseUp(event) }
+    override func menu(for event: NSEvent) -> NSMenu? { host?.readerContextMenu(event) }
 }

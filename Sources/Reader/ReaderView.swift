@@ -90,6 +90,43 @@ final class ReaderView: NSView {
     var isLiveMagnifying = false
     var zoomAnim: ZoomAnimState?
 
+    // MARK: 交互状态（第 2 步：选区 / 框选 / 笔记 / 截图……）
+
+    /// 覆盖层：图钉、气泡、框选路径、橡皮圈等屏幕固定尺寸的东西（`ReaderOverlayView`）。
+    let overlay = ReaderOverlayView()
+    /// 文字选区（归一化逐页行框 + 原文）。镜像给 MCP（`session.currentSelection`），变了就重画涉及的页。
+    var selection: TextSelection? { didSet { selectionChanged(from: oldValue) } }
+    /// 框选（笔迹 / 注解）选中集与进行中的形态（文档坐标）。
+    var lassoSelection: LassoSelection? { didSet { updateLassoOverlay() } }
+    var lassoPath: [CGPoint]?
+    var lassoGhostOffset: CGSize = .zero
+    var lassoGhostScale: (sx: CGFloat, sy: CGFloat, handle: LassoHandle)?
+    /// ⌘+拖框选文字的虚线框（文档坐标）与合并用的逐页命中（见 `+TextSelect`）。
+    var boxSelectDrag: (start: CGPoint, current: CGPoint)?
+    var boxSelectPages: [Int: [BoxSelectItem]] = [:]
+    var boxSelectStrokeBase: [Int: [BoxSelectItem]] = [:]
+    /// 点开着的 tap 模式笔记（瞬态、不落库）。
+    var expandedNotes: Set<UUID> = [] { didSet { if oldValue != expandedNotes { layoutOverlay() } } }
+    /// 指针悬停在哪枚图钉上（hover 模式的展开条件）。
+    var hoveredNote: UUID? { didSet { if oldValue != hoveredNote { layoutOverlay() } } }
+    /// 被点开的文字高亮（弹操作气泡用）。
+    var activeHighlight: HighlightTap?
+    var highlightPopover: NSPopover?
+    /// 指针此刻在文档坐标里的位置（右键「在此……」、⌘V 落点用）。出了阅读区为 nil。
+    var cursorDoc: CGPoint?
+    /// 当前这次鼠标拖拽（按下时建，松手清）。
+    var mouseTrack: MouseTrack?
+    /// 搜索命中切换闪烁（0 → 1）。
+    var matchPulseT: CGFloat = 1
+    var matchPulseStart: CFTimeInterval = 0
+    /// 截图框（文档坐标）与这次是不是 ⌥ 临时触发 / 存为图片笔记。
+    var snipRect: (start: CGPoint, end: CGPoint)?
+    var keyMonitor: Any?
+    /// 当前弹着的编辑 sheet（批注 / 图片笔记 / 看大图）。
+    var currentSheet: NSWindow?
+    /// 拖进阅读区的**非图片**文件（PDF）交给窗口层入库。图片自己收成图片笔记。
+    var onDropFiles: ([URL]) -> Void = { _ in }
+
     // MARK: 生命周期
 
     var didSetup = false
@@ -133,8 +170,18 @@ final class ReaderView: NSView {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         scrollView.onCommandWheel = { [weak self] factor, p in self?.commandWheel(factor: factor, docPoint: p) ?? false }
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.leadingAnchor.constraint(equalTo: leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        docView.host = self
         follower.interpEnabled = interpEnabled
         installObservers()
+        installInteraction()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
@@ -296,6 +343,7 @@ final class ReaderView: NSView {
         if docView.frame != f { docView.frame = f }
         let m = marginDoc
         for (i, g) in groups { g.place(frame: pageFrame(i), margin: m) }
+        layoutOverlay()
     }
 
     // MARK: 滚动定位
@@ -339,6 +387,7 @@ final class ReaderView: NSView {
             didRealize = true
             realize(range, evict: !zooming)
             kickBaseRenders()
+            refreshMarks()
             if session.ocrEnabled { session.enqueueOCR(Array(range)) }
         }
         // 顶端页 → 当前页（程序化滚动 / 缩放期间停更，平板与进度依赖它）
@@ -487,10 +536,12 @@ final class ReaderView: NSView {
         updateRealized()
     }
 
-    // MARK: 链接展开笔记（第 2 步接气泡）
+    // MARK: 链接展开笔记
 
+    /// `unireader://open?note=…` 要求展开某条笔记的气泡（`DocSession.revealNoteID`）。取走即清。
     func revealNote(_ id: UUID?) {
-        guard id != nil else { return }
+        guard let id else { return }
+        expandedNotes.insert(id)
         session.revealNoteID = nil
     }
 
@@ -501,6 +552,9 @@ final class ReaderView: NSView {
         guard !tornDown else { return }
         tornDown = true
         releaseRetainers()
+        removeKeyMonitor()
+        dismissHighlightPopover()
+        dismissSheet()
         follower.reset()
         bag.removeAll()
         NotificationCenter.default.removeObserver(self)

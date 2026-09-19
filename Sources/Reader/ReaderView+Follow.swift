@@ -12,6 +12,8 @@ extension ReaderView {
     @objc func clipBoundsChanged(_ note: Notification) {
         guard didSetup, !tornDown else { return }
         updateRealized()
+        layoutOverlay()
+        updateEraserRing()
         session.readHFrac = fitBasis > 0 ? Double(max(0, clipView.bounds.minX) / fitBasis) : 0
         maybeEmit()
         scheduleSettle()
@@ -68,8 +70,8 @@ extension ReaderView {
         }
     }
 
-    /// 搜索命中闪烁（第 2 步接到标记层上）。
-    func beginMatchPulse() {}
+    /// 搜索命中闪烁：跟随落位（目标真的进了视口）才开始。
+    func beginMatchPulse() { beginMatchPulseAnimation() }
 
     // MARK: 订阅
 

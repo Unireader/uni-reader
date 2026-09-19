@@ -177,6 +177,9 @@ extension ReaderView {
     @objc func frameTick(_ link: CADisplayLink) {
         if follower.isActive { followStep() }
         if zoomAnim != nil { stepZoomAnim() }
-        if !follower.isActive, zoomAnim == nil { stopFrameLink() }
+        if isMatchPulsing { stepMatchPulse() }
+        let pressing = pressRingAnimating
+        if pressing { updateTabletOverlay() }
+        if !follower.isActive, zoomAnim == nil, !isMatchPulsing, !pressing { stopFrameLink() }
     }
 }

@@ -68,8 +68,8 @@ final class PageLayerGroup: QuietLayer {
     let paper = QuietLayer()
     let image = QuietLayer()
     let tile = QuietLayer()
-    /// 标记层（第 2 步填内容）。先占好位置，层序就固定了。
-    let marks = QuietLayer()
+    /// 标记层：高亮 / 批注标记 / 搜索命中 / 选区（`PageMarksLayer`）。
+    let marks = PageMarksLayer()
     let ink = PageInkLayer()
     let live = PageInkLayer()
 
@@ -101,7 +101,10 @@ final class PageLayerGroup: QuietLayer {
         let wide = local.insetBy(dx: -margin, dy: 0)
         paper.frame = wide
         image.frame = local
-        marks.frame = local
+        if marks.frame != local {
+            marks.frame = local
+            if !marks.isEmpty { marks.setNeedsDisplay() }
+        }
         if ink.frame != wide || ink.margin != margin {
             ink.frame = wide
             ink.margin = margin
@@ -133,6 +136,18 @@ final class PageLayerGroup: QuietLayer {
         live.strokes = []
         live.contents = nil
         marks.contents = nil
+        marks.marks = []
+        marks.matchRects = []
+        marks.activeMatchRects = []
+        marks.selectionRects = []
+        marks.ocrBlocks = []
+        marks.ocrGroups = []
+        marks.ocrWatermarks = []
         pageIndex = -1
     }
+}
+
+/// 形状图层同样不许有隐式动画（改 path / 位置都瞬时生效）。覆盖层上的框选路径、选中框、橡皮圈都用它。
+final class QuietShapeLayer: CAShapeLayer {
+    override func action(forKey event: String) -> CAAction? { nil }
 }

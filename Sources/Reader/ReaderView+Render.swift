@@ -151,6 +151,8 @@ extension ReaderView {
         // 缩放稳定了才回报倍率（供进度持久化）；`readZoom` 是 @Published，别逐帧写
         if session.readZoom != zoom { session.readZoom = zoom }
         refreshInkScale()
+        refreshMarks()   // 标记层同样按新倍率重画（固定屏幕点的线宽 / 外扩跟着换算）
+        layoutOverlay()
         let w = basePixelW
         var wanted = Set<String>()
         // 贴片先行：放大超过基图上限后清晰全靠它，必须排在基图重渲之前
