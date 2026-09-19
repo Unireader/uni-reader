@@ -266,7 +266,9 @@ final class ReaderPaneController: NSViewController {
         if let r = readerView {
             r.isActiveWindow = chrome.isKeyWindow
             r.interpEnabled = UserDefaults.standard.object(forKey: "scrollInterp") as? Bool ?? true
-            r.scrollerBottomInset = legacyScroller ? 0 : tabBarInset
+            // 滚动条始终贴窗格底边（用户 2026-09-19：横向滚动条别跑到浮动标签胶囊上面）；
+            // 只有贴底整条的标签栏是实心条、会挡住它，那时才让到标签栏上面
+            r.scrollerBottomInset = (legacyScroller || tabBarStyle == .floating) ? 0 : tabBarInset
         }
 
         // 查找条 / 角标
