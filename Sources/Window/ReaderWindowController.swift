@@ -189,20 +189,17 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// （方案 §2）。侧栏/Inspector 用系统的 `sidebarWithViewController` /
     /// `inspectorWithViewController`，观感与折叠动画都是系统的，不自绘。
     private func buildPanes() {
-        let sidebar = NSHostingController(rootView: SidebarPane(
-            tabs: tabs,
-            onChooseWorkspace: { [weak self] in self?.chooseWorkspace() },
-            onCreateWorkspace: { [weak self] in self?.createNewWorkspace() },
-            onOpenRecent: { [weak self] in self?.openRecentWorkspace($0) },
-            onDropFiles: { [weak self] in self?.ingest(urls: $0) },
-            onOpenPDF: { [weak self] in self?.openPDF() },
-            onOpenInNewWindow: { [weak self] docId in
-                guard let self else { return }
-                AppDelegate.shared?.openReaderWindow(
-                    workspacePath: self.workspace.folder?.standardizedFileURL.path, docId: docId)
-            })
-            .environmentObject(app)
-            .environmentObject(workspace))
+        // 侧栏：AppKit（`APPKIT-REWRITE-PLAN.md` 第 4 步，替代 SwiftUI `SidebarView`）
+        let sidebar = SidebarViewController(tabs: tabs, workspace: workspace)
+        sidebar.onChooseWorkspace = { [weak self] in self?.chooseWorkspace() }
+        sidebar.onCreateWorkspace = { [weak self] in self?.createNewWorkspace() }
+        sidebar.onOpenRecent = { [weak self] in self?.openRecentWorkspace($0) }
+        sidebar.onDropFiles = { [weak self] in self?.ingest(urls: $0) }
+        sidebar.onOpenPDF = { [weak self] in self?.openPDF() }
+        sidebar.onOpenInNewWindow = { [weak self] docId in
+            guard let self else { return }
+            AppDelegate.shared?.openReaderWindow(workspacePath: self.workspace.folder?.standardizedFileURL.path, docId: docId)
+        }
 
         // 阅读窗格：AppKit（`APPKIT-REWRITE-PLAN.md` 第 3 步，替代 SwiftUI `ReaderPane`）
         let content = ReaderPaneController(tabs: tabs, chrome: chrome, refWindow: refWindow, jumpPanel: jumpPanel,
@@ -221,7 +218,6 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // autosave 存下来的窗口尺寸也会被这一下覆盖，看起来就是「窗口大小没恢复」。
         // 窗口尺寸该由 autosave 和用户拖动决定，内容只负责填满给它的地方。
         // （三个 hosting controller 的泛型参数各不相同，装不进同一个数组，只能逐个设。）
-        sidebar.sizingOptions = []
         inspector.sizingOptions = []
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
