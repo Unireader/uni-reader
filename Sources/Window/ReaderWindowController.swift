@@ -229,12 +229,33 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = Self.paneMinWidth
         inspectorItem.maximumThickness = 400
-        inspectorItem.isCollapsed = true
+
+        // 左侧栏 / Inspector 记住上次开合（用户 2026-09-19）：全 app 一份偏好，新窗口按它开。
+        // 首次（没记过）：侧栏开、Inspector 收——与原来的默认一致。
+        let d = UserDefaults.standard
+        sidebarItem.isCollapsed = d.bool(forKey: Self.sidebarCollapsedKey)
+        inspectorItem.isCollapsed = d.object(forKey: Self.inspectorCollapsedKey) as? Bool ?? true
+        chrome.inspectorOpen = !inspectorItem.isCollapsed
 
         splitVC.addSplitViewItem(sidebarItem)
         splitVC.addSplitViewItem(contentItem)
         splitVC.addSplitViewItem(inspectorItem)
+
+        // 开合的入口不止一条（工具栏 / 菜单 / 快捷键 / 拖到最窄自动收起），所以不在各入口记，直接盯分栏项本身
+        paneObservations = [
+            sidebarItem.observe(\.isCollapsed, options: [.new]) { item, _ in
+                UserDefaults.standard.set(item.isCollapsed, forKey: Self.sidebarCollapsedKey)
+            },
+            inspectorItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
+                UserDefaults.standard.set(item.isCollapsed, forKey: Self.inspectorCollapsedKey)
+                DispatchQueue.main.async { self?.chrome.inspectorOpen = !item.isCollapsed }
+            },
+        ]
     }
+
+    private static let sidebarCollapsedKey = "readerSidebarCollapsed"
+    private static let inspectorCollapsedKey = "readerInspectorCollapsed"
+    private var paneObservations: [NSKeyValueObservation] = []
 
     // MARK: - 标题
 
