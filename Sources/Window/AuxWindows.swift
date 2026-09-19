@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import SwiftUI
 
 /// 设置窗（⌘,）：一扇普通窗口，**全 app 只有一扇**（再按 ⌘, 是把它调到前面）。
 @MainActor
@@ -50,8 +51,9 @@ final class SettingsWindowController: NSWindowController {
 }
 
 /// 设置窗的分页壳：`NSTabViewController` 的 `.toolbar` 样式——标签（图标 + 文字）住在标题栏里，
-/// 与系统各 app 的设置窗同款；每页是一个 `SettingsPage`（`NSGridView` 表单）。
-/// 为什么不用 SwiftUI `TabView`：装进普通 `NSWindow` 后它把标签条画在标题栏**下面**、自带一层
+/// 与系统各 app 的设置窗同款；每页内容是 SwiftUI 表单（`SettingsView(tab:)`，2026-09-19 用户定：设置页用 SwiftUI——
+/// 简单表单正是它的长处，AppKit 的 `NSGridView` 版排出来变形）。
+/// 分页壳不用 SwiftUI `TabView`：装进普通 `NSWindow` 后它把标签条画在标题栏**下面**、自带一层
 /// 更浅的底色 + 分隔线，跟标题栏两种灰叠在一起像错位（2026-09-10 用户截图）。
 @MainActor
 final class SettingsTabController: NSTabViewController {
@@ -59,7 +61,10 @@ final class SettingsTabController: NSTabViewController {
         super.init(nibName: nil, bundle: nil)
         tabStyle = .toolbar
         for t in SettingsTab.allCases {
-            let page = t.makePage(app: app)
+            let page = NSHostingController(rootView: SettingsView(tab: t).environmentObject(app))
+            // 不让 SwiftUI 内容的尺寸变成约束：初始大小 / 最小值 / 可缩放全由窗口管。默认的
+            // `.standardBounds` 会把「理想尺寸」也做成约束——各页内容高矮不一，切一下标签窗口就跳一下。
+            page.sizingOptions = []
             // 🔴 **必须给子控制器设 `title`**：`.toolbar` 样式下切标签后 AppKit 会（晚一拍、异步地）
             // 把窗口标题改成选中子控制器的 `title`——没设就显示成「Untitled」（2026-09-10 用户报）。
             page.title = t.title

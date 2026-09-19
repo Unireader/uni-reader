@@ -187,13 +187,15 @@ ReaderScrollView : NSScrollView            ← 外框永远铺满内容区（今
 | `Sources/Reader/Ref/` | 参考窗页流 `RefPageStreamView`（覆盖层与独立窗口共用） |
 | `Sources/Reader/Rack/` | 笔架 `PenRackNSView`（笔 / 橡皮编辑面板）、图层面板 `LayerManagerNSView` |
 | `Sources/Reader/Scratch/` | 草稿纸 `ScratchPadNSView`（画布 / 工具条 / 框选）+ `ScratchCanvasNSLayers`（底纹 / 页面底图 / 笔迹 / minimap / 纸样） |
-| `Sources/Window/` | 窗口壳：阅读窗、侧栏、Inspector、AI 面板（`AI/`）、浮层卡片（`Floating/`：参考窗覆盖层、跳转历史）、工具栏弹出面板与选文档弹窗（`Panels/`）、各种 sheet（`Sheets/`）、设置（`Settings/`） |
-| `Sources/Markdown/` | `MarkdownNoteEditor.swift`：Markdown 引擎的 SwiftUI 包装 + 公式渲染器（**唯一的 SwiftUI**，见 §5 风险 3 的方案 a） |
+| `Sources/Window/` | 窗口壳：阅读窗、侧栏、Inspector、AI 面板（`AI/`）、浮层卡片（`Floating/`：参考窗覆盖层、跳转历史）、工具栏弹出面板与选文档弹窗（`Panels/`）、各种 sheet（`Sheets/`）、设置窗壳（`AuxWindows.swift`） |
+| `Sources/Settings/` | 设置窗六页的 SwiftUI 表单（用户 2026-09-19 实测后要求改回 SwiftUI，见 §9.2） |
+| `Sources/Markdown/` | `MarkdownNoteEditor.swift`：Markdown 引擎的 SwiftUI 包装 + 公式渲染器（见 §5 风险 3 的方案 a） |
 
 ### 9.2 与方案的出入
 
-- **设置页**按方案用 `NSGridView`：左列说明右对齐、右列控件，是传统 macOS 设置窗的排法，**和原来 SwiftUI 分组表单
-  （圆角分组底板）长得不一样**——AppKit 没有这种分组表单的系统控件，自己画底板又违反「严禁自绘仿系统样式」。要你看过再定。
+- **设置页改回 SwiftUI**：先按方案用 `NSGridView` 写了一版，用户 2026-09-19 实测「完全变形」，定为设置页用 SwiftUI
+  （简单表单是它的长处；不让用的是重要部分）。原 `SettingsView` / `MCPSettingsView` 从删除前的提交原样恢复到 `Sources/Settings/`，
+  分页壳仍是 AppKit 的 `SettingsTabController`。
 - **笔架**拖动：从按钮上按下、挪过 6pt 就算拖（原版同款手感，由每个格子自己转交给笔架）。
 - **参考窗页流**缩放改用滚动视图自带的放大倍率（与阅读区同一套），原版手写的锚点账本不再需要。
 - 草稿纸视口动画（回中 / 适应内容）用显示刷新逐帧插值，0.18s 缓出，与原版同时长。

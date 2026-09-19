@@ -33,7 +33,7 @@
 > 本节**只留真的没做的事**，验收类条目不挂在这里（2026-09-07 / 09-13 两次裁决）。
 
 0. **`appkit-rewrite` 分支合并前**：用户按 `APPKIT-REWRITE-PLAN.md §7.1` 实测 → 修出来的问题 → 处理 §9.3 遗留
-   （失效的出样张 spike、`spike/ink-cross` 的 Mac 一侧改编 `InkRenderCG`、设置页 `NSGridView` 排法要用户看过再定）→ 合并 `main`。
+   （失效的出样张 spike、`spike/ink-cross` 的 Mac 一侧改编 `InkRenderCG`）→ 合并 `main`。
 
 1. **安卓模式2：标签页共存，换文档不再重置**（2026-09-07 用户定方向，**方案待写 → `ANDROID-MODE2-PLAN.md`**）。
 

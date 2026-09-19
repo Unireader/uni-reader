@@ -26,6 +26,7 @@ final class FloatingCardView: NSView {
     var onCommit: (CGSize, CGSize) -> Void = { _, _ in }
 
     private let shell = NSVisualEffectView()
+    private let content = FlippedView()
     private let topLine = NSBox()
     private let bottomLine = NSBox()
     private let left = EdgeHandle(horizontal: true, vertical: false)
@@ -58,8 +59,10 @@ final class FloatingCardView: NSView {
         topLine.boxType = .separator
         bottomLine.boxType = .separator
         addSubview(shell)
-        for v in [header, topLine, body, bottomLine, footer] as [NSView] { shell.addSubview(v) }
-        for h in [left, top, corner] { shell.addSubview(h) }
+        // 材质视图不是翻转坐标系：内容放进一层翻转容器，标题条才在顶部
+        shell.addSubview(content)
+        for v in [header, topLine, body, bottomLine, footer] as [NSView] { content.addSubview(v) }
+        for h in [left, top, corner] { content.addSubview(h) }
 
         header.onDrag = { [weak self] d, phase in self?.moveDrag(d, phase) }
         for h in [left, top, corner] {
@@ -99,6 +102,7 @@ final class FloatingCardView: NSView {
         super.layout()
         let b = bounds
         shell.frame = b
+        content.frame = b
         header.frame = NSRect(x: 0, y: 0, width: b.width, height: headerHeight)
         topLine.frame = NSRect(x: 0, y: headerHeight, width: b.width, height: 1)
         let fh = footerHeight

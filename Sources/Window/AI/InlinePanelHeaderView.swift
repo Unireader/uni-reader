@@ -54,15 +54,35 @@ final class InlinePanelHeaderView: NSView {
             }
         }
         self.buttons = buttons
-        for (i, b) in buttons.enumerated() { group.setMenu(b.menu?(), forSegment: i) }
         needsLayout = true
     }
 
+    /// 单击就执行：普通按钮调动作；带菜单的段在它下方弹出菜单。
+    /// 不用 `setMenu(_:forSegment:)`：那样系统要**按住**才弹菜单，单击什么都不发生（2026-09-19 用户报「按钮失效」）。
     @objc private func tapped() {
         let i = group.selectedSegment
         guard buttons.indices.contains(i) else { return }
-        // 挂了菜单（带菜单指示）的段由系统自己弹菜单，这里只处理普通按钮
-        buttons[i].action?()
+        let b = buttons[i]
+        if let make = b.menu {
+            let m = make()
+            let x = segmentMinX(i)
+            let y: CGFloat = group.isFlipped ? group.bounds.maxY + 4 : -4
+            m.popUp(positioning: nil, at: NSPoint(x: x, y: y), in: group)
+        } else {
+            b.action?()
+        }
+    }
+
+    /// 第 i 段的左边缘（段宽自动时按控件总宽平均分，够用来定菜单位置）。
+    private func segmentMinX(_ i: Int) -> CGFloat {
+        var x: CGFloat = 0
+        var widths: [CGFloat] = []
+        for k in 0..<group.segmentCount { widths.append(group.width(forSegment: k)) }
+        if widths.contains(0) {
+            return group.bounds.width / CGFloat(max(1, group.segmentCount)) * CGFloat(i)
+        }
+        for k in 0..<i { x += widths[k] }
+        return x
     }
 
     override func layout() {

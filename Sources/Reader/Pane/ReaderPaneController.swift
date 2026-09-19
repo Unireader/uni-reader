@@ -333,14 +333,29 @@ final class ReaderPaneController: NSViewController {
     // MARK: 布局
 
     /// 浮层摆在安全区里（让开侧栏 / 工具栏 / 右侧内置 AI 面板）；阅读区与空白提示铺满。
+    /// 工具栏盖住窗格顶部多高。直接按窗口的 `contentLayoutRect`（工具栏以下的可用区）算，不单靠 `safeAreaInsets`：
+    /// 分栏中间这一格的安全区顶边并不总是带上工具栏高度（AI 面板顶到工具栏底下、按钮点不着，2026-09-19 用户报）。
+    private var toolbarInset: CGFloat {
+        guard let win = view.window, view.superview != nil else { return view.safeAreaInsets.top }
+        let usable = view.convert(win.contentLayoutRect, from: nil)   // 窗口坐标 → 本视图（翻转）坐标
+        return max(view.safeAreaInsets.top, max(0, usable.minY))
+    }
+    private var loggedInset: (CGFloat, CGFloat)?
+
     private func layoutChrome() {
         let b = view.bounds
+        let top = toolbarInset
+        if loggedInset.map({ $0 != (top, view.safeAreaInsets.top) }) ?? true {
+            loggedInset = (top, view.safeAreaInsets.top)
+            wsLog("[PANE] 顶部让位 = \(top)（safeAreaInsets.top = \(view.safeAreaInsets.top)）")
+        }
         readerView?.frame = b
-        readerView?.topInset = view.safeAreaInsets.top
+        readerView?.topInset = top
         panels.frame = b
-        panels.topInset = view.safeAreaInsets.top
+        panels.topInset = top
         let panel = panels.inset
-        let si = view.safeAreaInsets
+        var si = view.safeAreaInsets
+        si.top = top
         let safe = NSRect(x: si.left, y: si.top, width: max(0, b.width - si.left - si.right - panel),
                           height: max(0, b.height - si.top - si.bottom))
         placeholder.frame = safe
