@@ -208,9 +208,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         content.onIngest = { [weak self] urls in self?.ingest(urls: urls) }
         readerPane = content
 
-        let inspector = NSHostingController(rootView: InspectorPane(tabs: tabs)
-            .environmentObject(app)
-            .environmentObject(workspace))
+        // Inspector：AppKit（第 4 步，替代 SwiftUI `InspectorView`）
+        let inspector = InspectorViewController(tabs: tabs, workspace: workspace)
 
         // 🔴 **三段都要关掉尺寸传播**：`NSHostingController` 默认把 SwiftUI 内容的 fitting size
         // 报成 `preferredContentSize`，AppKit 于是拿它去调整窗口——2026-09-01 用户实测的两个症状
@@ -218,7 +217,6 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // autosave 存下来的窗口尺寸也会被这一下覆盖，看起来就是「窗口大小没恢复」。
         // 窗口尺寸该由 autosave 和用户拖动决定，内容只负责填满给它的地方。
         // （三个 hosting controller 的泛型参数各不相同，装不进同一个数组，只能逐个设。）
-        inspector.sizingOptions = []
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.allowsFullHeightLayout = true   // 侧栏一路铺到标题栏后面（默认就是 true，写明意图）
