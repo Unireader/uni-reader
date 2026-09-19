@@ -1,19 +1,16 @@
 import AppKit
-import SwiftUI
 
 /// 阅读区里的「动作」：批注 / 高亮 / 图片笔记 / 书签 / 草稿纸 / 复制链接 / 卡片与图钉提交 / 问 AI（逻辑同 SwiftUI 版
 /// `ReaderSurface+Selection` / `+ImageNote` 各处，逐条移植）。
 ///
-/// 三个编辑弹窗（批注编辑器、图片笔记编辑器、看大图）**暂时仍是原来的 SwiftUI 界面**，用 `NSHostingController`
-/// 以 sheet 弹出——按方案第 7 步再换成 AppKit（批注编辑器里的 Markdown 编辑区属于允许保留的那一块）。
+/// 三个编辑弹窗（批注编辑器、图片笔记编辑器、看大图）见 `Window/Sheets/NoteSheets.swift`，以 sheet 弹出。
 extension ReaderView {
 
     // MARK: 弹窗（sheet）
 
-    func presentSheet<V: View>(_ content: V) {
+    func presentSheet(_ vc: NSViewController) {
         guard let win = window, currentSheet == nil else { return }
-        let hc = NSHostingController(rootView: content.environmentObject(app).environmentObject(workspace))
-        let sheet = NSWindow(contentViewController: hc)
+        let sheet = NSWindow(contentViewController: vc)
         currentSheet = sheet
         win.beginSheet(sheet)
     }
@@ -28,7 +25,7 @@ extension ReaderView {
 
     func presentNoteEditor(_ target: NoteEditorTarget) {
         dismissHighlightPopover()
-        presentSheet(NoteEditorSheet(
+        presentSheet(NoteEditorController(.init(
             quote: target.quote, initialText: target.initialText, initialTypeId: target.initialTypeId,
             initialDisplay: target.initialDisplay, initialColor: target.initialColor, initialStyle: target.initialStyle,
             hasRects: target.hasRects, documentId: target.id.uuidString, noteTypes: session.noteTypes,
@@ -36,7 +33,7 @@ extension ReaderView {
             onSave: { [weak self] out in self?.saveEditor(target, out) },
             onDelete: target.editedNote == nil ? nil : { [weak self] in self?.deleteEditorNote(target) },
             onChangeTypes: { [weak self] types in self?.saveNoteTypes(types) },
-            onCancel: { [weak self] in self?.dismissSheet() }))
+            onCancel: { [weak self] in self?.dismissSheet() })))
     }
 
     func openNoteEditor(_ id: UUID) {
@@ -243,7 +240,7 @@ extension ReaderView {
 
     func openImageEditor(_ id: UUID) {
         guard let n = session.imageNotes.first(where: { $0.id == id }) else { return }
-        presentSheet(ImageNoteEditorSheet(
+        presentSheet(ImageNoteEditorController(
             note: n, info: workspace.imageInfo(sha256: n.image),
             onSave: { [weak self] caption, display in
                 self?.updateImageNote(id, caption: caption, display: display)
@@ -260,7 +257,7 @@ extension ReaderView {
     func openImageViewer(_ id: UUID) {
         guard let n = session.imageNotes.first(where: { $0.id == id }) else { return }
         if let info = workspace.imageInfo(sha256: n.image) {
-            presentSheet(ImageViewerSheet(note: n, url: info.url, onClose: { [weak self] in self?.dismissSheet() }))
+            presentSheet(ImageViewerController(note: n, url: info.url, onClose: { [weak self] in self?.dismissSheet() }))
         } else {
             let alert = NSAlert()
             alert.messageText = L("Image file is missing (not in this copy, or already cleaned up).")

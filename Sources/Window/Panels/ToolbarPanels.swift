@@ -26,11 +26,15 @@ class StackPanelController: NSViewController {
         stack.edgeInsets = NSEdgeInsets(top: inset, left: inset, bottom: inset, right: inset)
         stack.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(stack)
+        // 底边只给次高优先级：当 sheet 用时窗口按内容定高；当弹出框用时尺寸归弹出框，不和它顶
+        let bottom = stack.bottomAnchor.constraint(equalTo: v.bottomAnchor)
+        bottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: v.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: v.trailingAnchor),
             stack.topAnchor.constraint(equalTo: v.topAnchor),
             stack.widthAnchor.constraint(equalToConstant: width),
+            bottom,
         ])
         view = v
     }
