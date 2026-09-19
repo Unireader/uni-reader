@@ -512,7 +512,6 @@ final class ReaderView: NSView {
         guard let layout = pageLayout, didSetup else { return }
         let newFit = fitAvail
         lastFitAvail = newFit
-        geoLog(String(format: "refit newFit=%.1f userZoomed=%d", newFit, userZoomed ? 1 : 0))
         guard abs(newFit - fitBasis) > 0.5 else { return }
         let anchor = layout.locate(docY: topDocY)
         let hfrac = fitBasis > 0 ? max(0, clipView.bounds.minX) / fitBasis : 0

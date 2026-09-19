@@ -340,15 +340,10 @@ final class ReaderPaneController: NSViewController {
         let usable = view.convert(win.contentLayoutRect, from: nil)   // 窗口坐标 → 本视图（翻转）坐标
         return max(view.safeAreaInsets.top, max(0, usable.minY))
     }
-    private var loggedInset: (CGFloat, CGFloat)?
 
     private func layoutChrome() {
         let b = view.bounds
         let top = toolbarInset
-        if loggedInset.map({ $0 != (top, view.safeAreaInsets.top) }) ?? true {
-            loggedInset = (top, view.safeAreaInsets.top)
-            wsLog("[PANE] 顶部让位 = \(top)（safeAreaInsets.top = \(view.safeAreaInsets.top)）")
-        }
         readerView?.frame = b
         readerView?.topInset = top
         panels.frame = b

@@ -144,7 +144,6 @@ extension ReaderView {
 
     func settleRender(nightRadius: Int = 0) {
         guard let layout = pageLayout, let pdf = session.pdf, didSetup else { return }
-        geoLog("settle")
         adoptBaseWidth(currentBaseWidth())
         let settled = updateRealized()
         // 笔迹按页窗口装载：只在 settle 时报范围（逐帧装卸 = 逐帧写 @Published strokes，红线）
