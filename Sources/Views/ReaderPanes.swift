@@ -387,8 +387,12 @@ struct InlinePanelsColumn<Reader: View, Panels: View>: View {
                 HStack(spacing: 0) { panels }
                     .animation(Self.slide, value: agentOpen)
                     .animation(Self.slide, value: consultOpen)
+                    // 滑入前 / 滑出后面板在右边界外，别画到窗口别处。
+                    // 🔴 **只裁面板这一层，且裁剪框向上铺进安全区**：阅读区是铺到工具栏底下的（`ignoresSafeArea`），
+                    // 工具栏的半透明靠透出它。2026-09-19 曾把 `.clipped()` 挂在整个阅读区上，按安全区裁掉了
+                    // 工具栏底下那一截 → 页面滚上去工具栏也不透（用户对比 Preview 发现）。
+                    .mask { Rectangle().ignoresSafeArea() }
             }
-            .clipped()   // 滑入前 / 滑出后面板在右边界外，别画到窗口别处
     }
 }
 
