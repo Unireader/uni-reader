@@ -5,7 +5,8 @@ import Combine
 ///  · 从左到右「阅读区 | Agent | 咨询 AI」，**浮在阅读区上面**，阅读区外框不变（外框一变玻璃工具栏按钮就变浅，
 ///    2026-09-19 录屏确认）；盖住的宽度经 `onInset` 交给阅读区自己适配；
 ///  · 开合时从右边滑入 / 滑出（0.28s），开合只走阅读窗口工具栏上的两枚开关（面板里没有收起按钮）；
-///  · 底是系统 Liquid Glass（与左侧边栏同材质，用户 2026-09-19 确认一致），一直铺到工具栏底下；左缘可拖动改宽度。
+///  · 底是系统 Liquid Glass（与左侧边栏同材质，用户 2026-09-19 确认一致）；整块从工具栏下沿开始，
+///    **不伸到工具栏后面**（用户 2026-09-19 实测要求）；左缘可拖动改宽度。
 @MainActor
 final class InlineAIPanelsView: NSView {
     let windowID: UUID
@@ -141,7 +142,9 @@ final class InlineAIPanelsView: NSView {
         let consultX = consultOpen ? b.maxX - cw : b.maxX
         let agentRight = consultOpen ? consultX : b.maxX
         let agentX = agentOpen ? agentRight - aw : b.maxX
-        return (NSRect(x: agentX, y: 0, width: aw, height: b.height), NSRect(x: consultX, y: 0, width: cw, height: b.height))
+        // 整块面板（含玻璃底）从工具栏下沿开始，不伸到工具栏后面（用户 2026-09-19 实测要求）
+        let y = min(topInset, b.height), h = max(0, b.height - topInset)
+        return (NSRect(x: agentX, y: y, width: aw, height: h), NSRect(x: consultX, y: y, width: cw, height: h))
     }
 
     override func layout() {
@@ -151,16 +154,12 @@ final class InlineAIPanelsView: NSView {
         consultBox.frame = f.consult
         agentBox.isHidden = !agentOpen
         consultBox.isHidden = !consultOpen
-        agentBox.topInset = topInset
-        consultBox.topInset = topInset
     }
 
     private func animateLayout() {
         let f = targetFrames()
         if agentOpen { agentBox.isHidden = false }
         if consultOpen { consultBox.isHidden = false }
-        agentBox.topInset = topInset
-        consultBox.topInset = topInset
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.28
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
