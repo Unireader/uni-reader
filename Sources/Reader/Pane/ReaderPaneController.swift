@@ -28,6 +28,8 @@ final class ReaderPaneController: NSViewController {
     /// 参考窗覆盖层 / 跳转历史：摆在安全区里（让开工具栏与内置 AI 面板），身份跟窗口走（切标签不重建）。
     private let floating = FloatingLayerView()
     private var refCard: RefCard!
+    /// 笔架：有 PDF 时浮在阅读区上（设备级全局状态，图层按当前文档）。
+    private var penRack: PenRackNSView?
     private var jumpCard: JumpHistoryCard!
     private var docPicker: NSPopover?
     private var bookmarkSheet: NSWindow?
@@ -247,6 +249,18 @@ final class ReaderPaneController: NSViewController {
                 placeholder.set(symbol: "doc.richtext", title: L("No Document"), detail: L("Open a PDF to start reading."))
             }
         }
+        if readerView != nil {
+            if let rack = penRack {
+                rack.bind(s)
+            } else {
+                let rack = PenRackNSView(app: app, session: s)
+                view.addSubview(rack, positioned: .below, relativeTo: floating)
+                penRack = rack
+            }
+        } else if let rack = penRack {
+            rack.removeFromSuperview()
+            penRack = nil
+        }
         if let r = readerView {
             r.isActiveWindow = chrome.isKeyWindow
             r.interpEnabled = UserDefaults.standard.object(forKey: "scrollInterp") as? Bool ?? true
@@ -304,6 +318,8 @@ final class ReaderPaneController: NSViewController {
                           height: max(0, b.height - si.top - si.bottom))
         placeholder.frame = safe
         floating.frame = safe
+        penRack?.place(viewport: NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - panel), height: b.height),
+                       topInset: si.top, bottomInset: tabBarInset + scrollerLift)
         if !findBanner.isHidden {
             let s = findBanner.fittingSize
             findBanner.frame = NSRect(x: safe.midX - s.width / 2, y: safe.minY + 8, width: s.width, height: max(30, s.height))
