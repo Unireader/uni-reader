@@ -1,6 +1,7 @@
 # AGENTS.md — UniReader
 
-macOS 26+ PDF 阅读器（非沙盒，Tahoe 专属，不做低版本兼容）。Swift 5 / SwiftUI / xcodegen 管理。
+macOS 26+ PDF 阅读器（非沙盒，Tahoe 专属，不做低版本兼容）。Swift 5 / AppKit / xcodegen 管理
+（`appkit-rewrite` 分支起界面全部是 AppKit，SwiftUI 只剩 Markdown 引擎托管那一处，见 `APPKIT-REWRITE-PLAN.md`）。
 
 ## 构建与验证
 
@@ -64,7 +65,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   老版本会拒绝所有未来更新。密钥生成这步涉及本机 Keychain 写入，按项目规矩交给用户自己跑，Agent 不代跑。
 
 - **第三方包（SPM）**，目前三个：`swift-markdown-engine`（`project.yml` 里 `exactVersion` 钉死）——笔记编辑器 sheet
-  （`MarkdownNoteEditor`）与气泡正文只读渲染（`MarkdownNoteReader`，红线例外）用它。取两个产品：核心 `MarkdownEngine`
+  （`MarkdownNoteEditor`）与气泡正文只读渲染（`MarkdownNoteReader`，全项目唯一允许的 SwiftUI）用它。取两个产品：核心 `MarkdownEngine`
   （零外部依赖）+ `MarkdownEngineLatex`（2026-09-16 加，笔记里的 `$…$` / `$$…$$` 公式；传递依赖 **SwiftMath**，MIT，
   带 ~7MB 数学字体进 app 包）。公式渲染器 = `NoteLatexRenderer`（套在引擎的 `SwiftMathBridge` 外面：`$$` 块加 `\displaystyle` 按块排版 + 缓存封顶）；
   某条公式能不能渲染，用 `spike/latex-look.swift` 出样张看（SwiftMath 不支持的命令会原样显示源码）。另一个是
@@ -88,7 +89,8 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 - `PDF-VIEWER-REBUILD-PLAN.md` — 阅读区 v2（`PageStreamView`）的五条硬指标与零闪烁纪律
 - `REF-WINDOW-PLAN.md` — 参考窗（只读浮窗，各端）：一句话定义 + 被砍清单 + 三端落地要点
 - `OFFLINE-MIRROR-PLAN.md` — 工作区离线镜像（Mac + 安卓模式1）：整份复制到本机、离线写笔迹、接回硬盘三方合并
-- `APPKIT-WINDOW-PLAN.md` — 窗口层迁到 AppKit（壳归 AppKit / 内容仍 SwiftUI，2026-09-01 拍板，进行中）
+- `APPKIT-WINDOW-PLAN.md` — 窗口层迁到 AppKit（壳归 AppKit / 内容仍 SwiftUI，2026-09-01 拍板；已被下一份取代）
+- **`APPKIT-REWRITE-PLAN.md`** — 界面整体重写为 AppKit（含阅读区，2026-09-19 拍板，`appkit-rewrite` 分支）：阅读区结构与五条硬指标的 AppKit 做法、对照表、**§7.1 实测清单**、**§9 实现记录（目录 / 与方案的出入 / 已知遗留）**
 - `INK-PAGING-PLAN.md` — 笔迹内存：点压到 f32 + 按页窗口加载/淘汰（**`session.strokes` 不再是全集**；2026-09-10 已落地，§9 是落地记录，改笔迹代码前先读）
 - `PROTOCOL.md` — 二进制线格式**唯一契约**（Mac / web / 安卓三端字节级一致），改协议先改它
 - `MCP-PLAN.md` — MCP 服务（给外部 Agent 用，App 内置 HTTP 端点，默认回环、可绑所有接口+口令）：分批工具目录、协议层、线程红线、写入策略（2026-09-13 拍板并同日三批全部落地合入 `main`，**§15/§16/§17 是实现记录**；批 1 用户实测通过，批 2/3 待实测）
@@ -110,19 +112,22 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 
 ## 红线（用户明确否决过，勿重走）
 
-- 阅读区**纯 SwiftUI**，严禁 AppKit 视图（含 NSViewRepresentable 包 NSScrollView / PDFView）。v1 因缩放跳位/闪烁已被用户删除。
-  **唯一例外（用户 2026-09-13 拍板）**：笔记气泡里的正文用 `swift-markdown-engine` 只读渲染（`MarkdownNoteReader`，
-  `isEditable: false`、`.fitsContent`、外观钉死浅色、**不吃鼠标**——2026-09-16 起卡片可拖动 / 改大小，
-  链接由卡片单击去开，见 `NoteCardInteraction`）——限定在气泡正文那一块，滚动/缩放面本身仍是 SwiftUI，别往外扩。
-- UI 外观**严禁自绘仿系统样式**（用户 2026-07-25 明确否决）：分组/胶囊这类系统观感只能用系统标准 API（如 `ControlGroup`），系统渲染成什么样就什么样；做不到就保持系统默认，不要自己画。
-- **material / 玻璃底上的文字与按钮别用 `.secondary` / `.borderless`**：系统会把它们画得极淡，
-  表现是「元素还在、就是看不见」。已踩两次——2026-08-07 草稿纸工具条的非激活按钮、2026-09-01
-  AI 内置面板 header 里绑定的文档名与页码。层级差异改用**字号**表达，颜色一律显式 `.primary`。
+- 阅读区**严禁 `PDFView`**（v1 因缩放跳位 / 闪烁被用户删除，根因是 PDFKit 私有 clip view 缺陷）。PDFKit 只用
+  `PDFDocument` / `PDFPage` 解析与出图。2026-09-19 起阅读区改为 AppKit（`NSScrollView` + 每页一棵 `CALayer`，
+  用户拍板推翻原「阅读区纯 SwiftUI」红线，`APPKIT-REWRITE-PLAN.md`）；**零闪烁纪律照旧**：阅读区图层一律无隐式动画
+  （继承 `QuietLayer` / `QuietShapeLayer`），图只替换不清空，缩放用滚动视图自带的放大倍率。
+- **SwiftUI 只允许留在 Markdown 引擎那一处**（`swift-markdown-engine` 只公开了 SwiftUI 包装）：笔记气泡正文只读渲染
+  （`BubbleMarkdownHost` → `MarkdownNoteReader`，外观钉死浅色、不吃鼠标，链接由卡片单击去开）与编辑弹窗里的编辑区
+  （`MarkdownEditorHost` → `MarkdownNoteEditor`），都用 `NSHostingView` 托管。别在别处再引 SwiftUI。
+- UI 外观**严禁自绘仿系统样式**（用户 2026-07-25 明确否决）：分组 / 胶囊这类系统观感只能用系统标准控件与材质（`NSVisualEffectView` / `NSGlassEffectView` / 系统按钮），系统渲染成什么样就什么样；做不到就保持系统默认，不要自己画。
+- **材质 / 玻璃底上的文字与按钮别用次要色 / 无边框的淡样式**（SwiftUI 时代的 `.secondary` / `.borderless`；AppKit 里对应
+  `secondaryLabelColor` 与不设 `contentTintColor` 的无边框按钮）：系统会把它们画得极淡，表现是「元素还在、就是看不见」。
+  已踩两次——2026-08-07 草稿纸工具条的非激活按钮、2026-09-01 AI 内置面板 header 里的文档名与页码。
+  层级差异改用**字号**表达，颜色一律显式 `labelColor`。
 - **显示页图的窗口 `colorSpace` 必须与页图色彩空间一致**（页图 = sRGB，`ReaderWindowController`/`RefWindowController`
-  都设 `win.colorSpace = .sRGB`；2026-09-13 实测定）：不一致时 SwiftUI 显示每张 `Image(decorative:)` 都要 CA 用 CG
-  整张重画转色 → 每张页图三份（mmap + CA 副本 + CG 转换缓存），连平板滚 10 秒就多 600MB。新开一种带页图的窗口照此设。
+  都设 `win.colorSpace = .sRGB`；2026-09-13 实测定）：不一致时 CA 每张页图都要用 CG 整张重画转色 →
+  每张页图三份（mmap + CA 副本 + CG 转换缓存），连平板滚 10 秒就多 600MB。新开一种带页图的窗口照此设。
 - 存储**弃用 SwiftData**，用工作区 SQLite（`Sources/Store/`，系统 libsqlite3、零第三方依赖，跨平台 payload 用显式 JSON 数组）。
-- 代码库**禁用单轴 `scrollTo(x:)`/`scrollTo(y:)`**（后写覆盖前写、未指定轴归零，spike 实测），一律 `scrollTo(point:)`。
 - 滚动跟随**只跟随不预测**：纯临界阻尼低通，禁速度外推（WiFi 成批投递导致过冲闪回，已修过一次）。
 - 重建 PDF 显示前必须先与用户确认方案，不要自行动手。
 
@@ -130,13 +135,16 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 
 - `Sources/App/` — App 级单例：`AppModel`/`DocSession`（多窗口共享 WS/LANServer）、`WorkspaceManager`（工作区 = `.unrd` 包：UTI 声明在 `Sources/Info.plist`，旧无扩展名工作区首启原地改名迁移、工作区改名联动改包名；双击/拖 Dock 由 `AppDelegate.openFile` → 通知路由到 key 窗口）、`UpdaterService`（Sparkle 2 自动更新薄封装，2026-09-18 加，菜单「检查更新…」与设置 ›「通用」的「更新」区块共用；详见「发布到 GitHub」一节）、`PageRenderEngine`/`PageLayout`/`PageBitmap`（v2 渲染管线）、`InkEdit`（笔迹纯函数：局部擦除切段/平移/缩放/尺子吸附/自由框选多边形命中，**`splitStroke` 与 web 端 JS 版同算法两份实现，改它必须同步另一边**，测试 `spike/ink-edit-test.swift`）、`InkUndo`+`DocSession+InkUndo`（编辑撤销栈：**增量**记账、瞬态不落库、页内与草稿纸各一条；连续擦除并成一步，抬笔封口）、`InkPaste`（粘贴的摆放数学，纯函数：Mac 本机 ⌘V 与平板 `clip paste` 共用一份）、`InkClipboard`（笔迹剪贴板，系统 `NSPasteboard` 自有类型，条目编码复用落库 payload；两者测试 `spike/ink-undo-test.swift`）、`InkWindow`（笔迹**按页窗口**装载/淘汰的纯函数：`session.strokes` 只是已装载页的集合，整篇操作问库，见 `INK-PAGING-PLAN.md §9`；测试 `spike/ink-window-test.swift`）。笔迹点 `InkPoint = SIMD3<Float>`，「存 Float、算 Double」
 - `Sources/Server/` — LAN WS 服务、二维码配对、UDP RT 上行（`UDPTransport` + 纯逻辑 `UDPReorder`，契约 `PROTOCOL.md §6`）
-- `Sources/MCP/` — MCP 服务（给外部 Agent 用，`MCP-PLAN.md`）：`MCPModels`/`MCPHTTP`/`MCPCatalog`/`MCPProtocol` 四个**只依赖 Foundation** 的纯逻辑文件（spike `mcp-protocol-test.swift` 直接编它们）+ `MCPServer`（`NWListener`，与 `LANServer` **不共用端口和队列**）+ `MCPFacade`（🔴 **唯一**碰 App 活状态的地方，`@MainActor`，只拼 DTO）+ `MCPDocReader`（私有 `PDFDocument`，`session.pdf` 不出主线程）+ `MCPTools*`（工具目录）+ `MCPResources`（资源 = 调同名工具）。页码对外 1 起、对内 0 起，**换算只在 `PageNo`**。🔴 写入按「文档开没开」分两条路（开着只改 `DocSession` 数组，见 `MCPFacade.writeTarget`）。设置页在 `Views/MCPSettingsView.swift`
-- `Sources/Agent/` — Agent 面板（`ACP-AGENT-PLAN.md`）：`AgentConnection`（一个工作目录一个 `kimi acp` 子进程，swift-acp 的 `Client`）+ `AgentChat`（一段对话，**不落库**）+ `AgentTranscript`（纯函数：`session/update` 拼条目、回放时剔上下文块）+ `AgentPanelModel`（形态 / 进程池 / 对话表）。界面 `Views/AgentChatView` + `Views/AgentInlineLayer`（内置）+ `Window/AgentWindowController`（独立窗口）。与咨询 AI（`Sources/AI/`）**各管各的**，别混。MCP 这边只多了一个请求头 `x-unireader-agent`（「跟随 Agent」开关，`AgentFollow`）
+- `Sources/MCP/` — MCP 服务（给外部 Agent 用，`MCP-PLAN.md`）：`MCPModels`/`MCPHTTP`/`MCPCatalog`/`MCPProtocol` 四个**只依赖 Foundation** 的纯逻辑文件（spike `mcp-protocol-test.swift` 直接编它们）+ `MCPServer`（`NWListener`，与 `LANServer` **不共用端口和队列**）+ `MCPFacade`（🔴 **唯一**碰 App 活状态的地方，`@MainActor`，只拼 DTO）+ `MCPDocReader`（私有 `PDFDocument`，`session.pdf` 不出主线程）+ `MCPTools*`（工具目录）+ `MCPResources`（资源 = 调同名工具）。页码对外 1 起、对内 0 起，**换算只在 `PageNo`**。🔴 写入按「文档开没开」分两条路（开着只改 `DocSession` 数组，见 `MCPFacade.writeTarget`）。设置页在 `Window/Settings/MCPSettingsPage.swift`
+- `Sources/Agent/` — Agent 面板（`ACP-AGENT-PLAN.md`）：`AgentConnection`（一个工作目录一个 `kimi acp` 子进程，swift-acp 的 `Client`）+ `AgentChat`（一段对话，**不落库**）+ `AgentTranscript`（纯函数：`session/update` 拼条目、回放时剔上下文块）+ `AgentPanelModel`（形态 / 进程池 / 对话表）。界面 `Window/AI/AgentChatNSView` + `Window/AI/InlineAIPanelsView`（内置）+ `Window/AgentWindowController`（独立窗口）。与咨询 AI（`Sources/AI/`）**各管各的**，别混。MCP 这边只多了一个请求头 `x-unireader-agent`（「跟随 Agent」开关，`AgentFollow`）
 - `unireader://` 链接（`URL-SCHEME-PLAN.md`）：`App/DeepLink`（纯 Foundation 的解析 / 生成，spike `deep-link-test.swift`）+ `App/DeepLinkRouter`（找工作区 → 开窗 → 开文档 → 跳位置 → `DocSession.revealNoteID` 展开气泡）；入口 `AppDelegate.application(_:open:)` 按 scheme 分流、冷启动缓冲 `pendingDeepLinkURL`。🔴 **「让某篇显示出来」只有 `AppDelegate.showDocument` 一份**（MCP `open_document` 与链接共用），别在任何一边另写找标签 / 挑窗口的规则
 - `web/` — 平板采集页前端工程（Svelte 5 + Vite + TypeScript，`vite-plugin-singlefile` 单文件构建）。`Sources/Resources/capture.html` 是它的**构建产物，勿手改**；源在 `web/src/`（`App/TopBar/StatsPanel/PenStat/TextNoteEditor.svelte`（文字笔记编辑器）+ `lib/`：shared 状态袋与公式（含 `GState` 等共享类型）/ hud.svelte.ts 响应式 HUD / render / input / ws / capture 装配）。占位符 `__WS_PORT__`/`__TOKEN__`/`__PENS__` 在 `web/index.html` 内联脚本里（不过 bundler），由 `CapturePage.swift` 运行时替换；`wire.js` 协议编解码器由 `web/src/lib/wire.ts` 直接 import `Sources/Resources/wire.js`（单一真源，勿复制）构建期内联。
-- `Sources/Views/` — `ContentView`（body 拆 `mainSplit` + `eventRoutes` 两段——修饰符链挂一个表达式会超类型检查器时限，与 `toolbarContent` 抽出同款）；阅读区 v2 拆分为 `PageStreamView`（外壳 + `ReaderSurface` 主体）+ `ReaderSurface+Scroll/Render/Selection/Zoom/Lasso/InkClip`（六个扩展：滚动几何与跟随 / 渲染调度与贴片 / 文字选择与注解+本机落墨手势 / 缩放与事件监视 / 框选——自由路径框选+移动+角手柄缩放+选中笔迹光晕 / 选中集的剪切复制粘贴删除+撤销入口）+ `PageStreamSupport`（GeoSnap/Scratch 等支持类型）+ `PageCellView`/`InkLayers`/`RadialMenuView`（页元胞/墨迹层/环形选笔盘）；`ScrollFollower`。本机指针工具 = `AppModel.pointerTool`（textSelect/ink/lasso，设备级全局，笔架切换）
-- 关键坑：`onDisappear` 在 Cmd-Q 也触发 → 退出收缩逻辑用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating` 守卫；NSViewRepresentable 存储属性不变会跳过 `updateNSView`，需把变化值显式传入。
+- `Sources/Reader/` — 阅读区（AppKit）：`ReaderView`（主类：输入量、状态、实化页、图层池）+ 扩展 `Render`（出图调度 / 贴片 / 夜间）、`Zoom`（⌘滚轮 / 捏合 / 缩放动画 / 换基准）、`Follow`（滚动回报 + 平板跟随，`ScrollFollower` 由 `NSView.displayLink` 驱动）、`Canvas`（画板页边）、`Marks`（坐标换算 + 标记层刷新）、`Overlay`（图钉 / 气泡 / 橡皮圈 / 提示条）、`Input`（鼠标按指针工具分派 + 键盘 + 拖放）、`TextSelect`、`Lasso`、`Actions`（批注 / 高亮 / 图片笔记 / 书签 / 草稿纸入口）、`Menus`（右键菜单与高亮气泡）、`Snip`（⌥ 拖截图）；`ReaderScrollView`（居中 clip view + ⌘滚轮 + 翻转文档视图）、`ReaderLayers` / `PageMarksLayer`（每页图层树，全部无隐式动画）、`InkRenderCG`（四种笔型的 CoreGraphics 画法）、`ReaderSupportTypes`（选择 / 框选 / 批注草稿 / 菜单命令通知等纯数据）。子目录：`Pane/`（阅读窗格 `ReaderPaneController`：阅读区 + 查找条 + 标签栏 + 笔架 + 草稿纸 + 浮层的装配与摆位）、`Ref/`（参考窗页流）、`Rack/`（笔架 + 图层面板）、`Scratch/`（草稿纸）。本机指针工具 = `AppModel.pointerTool`（textSelect/ink/lasso/snip，设备级全局，笔架切换）
+- `Sources/Window/` — 窗口壳与其余界面：`ReaderWindowController`（三段分栏 + `NSToolbar`）、`Sidebar/`、`Inspector/`、`AI/`（内置两块面板 + Agent 对话视图 + 网页 AI 面板）、`Floating/`（浮在阅读区上的卡片：参考窗覆盖层、跳转历史）、`Panels/`（工具栏弹出面板、选文档弹窗）、`Sheets/`（批注 / 图片笔记编辑、看大图、类型管理、离线镜像两张面板）、`Settings/`（设置六页，`NSGridView` 表单）
+- `Sources/Markdown/` — `MarkdownNoteEditor.swift`：Markdown 引擎的 SwiftUI 包装、公式渲染器 `NoteLatexRenderer`、`NoteLinkClick`（**全项目唯一的 SwiftUI**）
+- 关键坑：退出收缩逻辑用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating` 守卫（窗口在 ⌘Q 时也会走关闭路径）。
+- 关键坑（`@Published` 在 `willSet` 发出）：AppKit 这边用 Combine 订阅模型时，回调里读到的还是旧值——一律 `.receive(on: DispatchQueue.main)` 推到下一拍再读，多个来源的刷新合并成一次（`queueRefresh` 那种写法）。
 - OCR 文本层：消费方（选择/复制/⌘A/OCR 搜索/分组/调试上色）一律走 `DocSession.ocrVisibleRuns(page:)`——它已滤掉扫描件的平铺水印块（`OCRWatermark`，几何 + 跨页重复判定，不认具体文字）；`ocrRuns` 是真源，只给落库与建指纹用，**别直接消费**（`ocrGroups` 的下标是按可见行算的，混用即错位）。
 - 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：纯逻辑 `App/ScanAlign`（变换 / 参数表 / 测量 / 定中心，spike `scan-align-test.swift`；真 PDF 出对比图用 `scan-align-real.swift`）+ `App/ScanAlignRunner`（多份 `PDFDocument` 并行测全书）。🔴 **「页面」在开着对齐时就是对齐后的那张**：`PageBitmap.displaySize/render/renderTile` 的 `align` 参数**刻意不给默认值**，新增出图口必须传 `session.pageAlign(i)`（漏一处就是那一处的页图和笔迹对不上）；页图缓存键 / 阅读区 `.id` / 平板 `layout.v` 一律用 `DocSession.displayKey`，别用 `contentHash`；与 PDF 原生页坐标互转（选字 / 搜索 / 目录）走 `PageGeometry` 带 `align` 的重载。开关切换 = 清这份内容的 OCR + 整篇重载（`DocTabModel.applyScanAlign`）
 - 关键坑（Tahoe 工具栏胶囊合并规则，2026-07-28 实测）：`ToolbarItemGroup` 里**只有连续的纯图标 Button（Image label）才会被系统合并渲染成单一玻璃胶囊分段组**；掺一个 `Text` label（如 `1:1`）整组立刻散成独立圆钮。`ControlGroup` 在 Tahoe 工具栏里反而不分组（同样拆成独立圆钮），别再用它做工具栏分组。相邻两组想分成两个胶囊，中间插 `ToolbarSpacer()`，否则 Tahoe 会把相邻 item 粘进同一胶囊。
-- 关键坑（玻璃工具栏按钮变浅，2026-09-19 录屏实测，macOS 27）：**别用 SwiftUI 布局去改阅读区滚动视图的外框宽度**（如 HStack 里并排一块面板让它变窄）——每改一次，内容区上方那几组玻璃工具栏按钮就被系统重判一次深浅、整几组变浅（拖窗口、开合 Inspector 都不会）。内置 AI 面板因此改成浮在右侧、阅读区外框铺满，盖住的宽度经环境值 `readerPanelInset` 交给阅读区自己适配（`InlinePanelsColumn`）。另：`refreshToolbarStates` 这类跟着会话每次变化跑的刷新，给工具栏 item 写值一律「值变了才写」。
+- 关键坑（玻璃工具栏按钮变浅，2026-09-19 录屏实测，macOS 27）：**别去改阅读区滚动视图的外框宽度**（比如并排一块面板让它变窄）——每改一次，内容区上方那几组玻璃工具栏按钮就被系统重判一次深浅、整几组变浅（拖窗口、开合 Inspector 都不会）。内置 AI 面板因此浮在右侧、阅读区外框铺满，盖住的宽度作为 `ReaderView.panelInset` 交给阅读区自己用 `contentInsets` 让开（`InlineAIPanelsView.onInset`）。另：`refreshToolbarStates` 这类跟着会话每次变化跑的刷新，给工具栏 item 写值一律「值变了才写」。

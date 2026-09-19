@@ -24,10 +24,16 @@
   MCP 的文档 / 批注 / 位置 DTO 都带 `link`。**导出不做进 App**，Agent 按 `skills/unireader-obsidian-export/SKILL.md` 做。
 - **Agent 面板（ACP）**（`ACP-AGENT-PLAN.md`，2026-09-18 第一批 A1）：把本机 `kimi acp` 当子进程拉起，App 只做界面，
   能力走 MCP；客户端 = 自家 fork `Unireader/swift-acp`；会话不落库；与网页版「咨询 AI」并存。A2~A4 见「接下来」第 6 条。
+- **界面整体改写为 AppKit**（`APPKIT-REWRITE-PLAN.md`，2026-09-19，分支 `appkit-rewrite`，**未合并**）：含阅读区，
+  `Sources/Views/` 已删除，SwiftUI 只剩 Markdown 引擎托管。代码第 1–8 步写完、Debug 包可编译，**还没有实测过**。
+  `main` 上仍是 SwiftUI 版，红线以 `main` 的 `AGENTS.md` 为准直到合并。
 
 ## ⏭️ 接下来（建议顺序）
 
 > 本节**只留真的没做的事**，验收类条目不挂在这里（2026-09-07 / 09-13 两次裁决）。
+
+0. **`appkit-rewrite` 分支合并前**：用户按 `APPKIT-REWRITE-PLAN.md §7.1` 实测 → 修出来的问题 → 处理 §9.3 遗留
+   （失效的出样张 spike、`spike/ink-cross` 的 Mac 一侧改编 `InkRenderCG`、设置页 `NSGridView` 排法要用户看过再定）→ 合并 `main`。
 
 1. **安卓模式2：标签页共存，换文档不再重置**（2026-09-07 用户定方向，**方案待写 → `ANDROID-MODE2-PLAN.md`**）。
 
