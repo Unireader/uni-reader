@@ -1,5 +1,5 @@
-import Foundation
-import SwiftUI
+import AppKit
+import Combine
 import WebKit
 
 /// 面板当前在为「哪个窗口的哪本书的哪一页」服务。由阅读区发起绑定时设入；

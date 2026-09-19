@@ -199,3 +199,24 @@ enum InkRenderCG {
         return path
     }
 }
+
+/// 快速态的屏幕点抽稀：相邻点在屏幕上不足 `minStep` 的并掉，首末点必留。
+/// 一并返回全笔平均压感（快速态用恒宽，不逐点变宽）。
+/// 缩小时收益极大——zoom 0.31 时真实笔迹的点数只剩 16%（用「408学习区」9.2 万个点实测）。
+func thinnedScreenPoints(_ st: InkStroke, minStep: CGFloat = 1.5,
+                         map: (InkPoint) -> CGPoint) -> (pts: [CGPoint], avgZ: Double) {
+    var zSum = 0.0
+    for p in st.points { zSum += p.dz }
+    let avgZ = st.points.isEmpty ? 0.5 : zSum / Double(st.points.count)
+    guard st.points.count > 2 else { return (st.points.map(map), avgZ) }
+    var out = [map(st.points[0])]
+    var last = out[0]
+    for i in 1..<(st.points.count - 1) {
+        let p = map(st.points[i])
+        let dx = abs(p.x - last.x), dy = abs(p.y - last.y)
+        guard dx + dy >= minStep else { continue }
+        out.append(p); last = p
+    }
+    out.append(map(st.points[st.points.count - 1]))   // 末点必留（尺子那种两点直线全靠它）
+    return (out, avgZ)
+}

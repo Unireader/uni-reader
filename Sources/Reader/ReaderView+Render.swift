@@ -55,7 +55,7 @@ extension ReaderView {
         }
         guard !nightLive else { return nil }
         return PageRenderEngine.shared.cached(
-            PageRenderEngine.baseKey(doc: docKey, page: page, pixelWidth: ThumbnailListView.pixelWidth, night: false))
+            PageRenderEngine.baseKey(doc: docKey, page: page, pixelWidth: ThumbnailListNSView.pixelWidth, night: false))
     }
 
     func hasTargetImage(_ page: Int, width: Int) -> Bool {

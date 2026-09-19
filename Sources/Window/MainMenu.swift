@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 /// 主菜单（代码构建）。原先是 SwiftUI 的 `.commands { }`，迁移后由这里全权负责
 /// （方案 `APPKIT-WINDOW-PLAN.md` §3）。

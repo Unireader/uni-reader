@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import SwiftUI
 
 /// 阅读窗格（分栏的中间那段，AppKit 版，替代 SwiftUI `ReaderPane`）：
 /// 当前标签的阅读区（`ReaderView`）或空白提示 + 查找条 + 角标 + 底部标签栏 + 书签命名框 + 两种确认弹窗，

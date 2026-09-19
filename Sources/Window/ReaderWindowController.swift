@@ -1,7 +1,6 @@
 import AppKit
 import Combine
 import PDFKit
-import SwiftUI
 import UniformTypeIdentifiers
 
 /// 本窗口的「外壳状态」——内容层要知道、但不属于任何模型的那几样。

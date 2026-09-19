@@ -236,6 +236,18 @@ final class JumpHistoryCard: NSObject, NSTableViewDataSource, NSTableViewDelegat
     }
 }
 
+extension JumpMark {
+    /// 一条历史在界面上叫什么：有现成名字（目录条目名 / 搜索词）就用它；没有的（缩略图、笔记列表跳转、离开点）
+    /// 显示它落在哪一章——比干巴巴一个页码有用；连目录都没有才退回「第 N 页」。
+    func displayTitle(toc: [TOCEntry]) -> String {
+        if !label.isEmpty {
+            return kind == .search ? "\u{201C}\(label)\u{201D}" : label
+        }
+        let chapter = TOCEntry.chapterLabel(for: page, in: toc)
+        return chapter.isEmpty ? String(format: L("Page %d"), page + 1) : chapter
+    }
+}
+
 /// 历史里的一行：类型图标 + 名字（可截断）+ 页码；当前这条用强调色 + 浅底。
 private final class JumpRowView: NSTableCellView {
     private let icon = NSImageView()

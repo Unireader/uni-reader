@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import SwiftUI
 
 /// 设置窗（⌘,）：一扇普通窗口，**全 app 只有一扇**（再按 ⌘, 是把它调到前面）。
 @MainActor

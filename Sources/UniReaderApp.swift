@@ -1,4 +1,3 @@
-import SwiftUI
 import AppKit
 
 /// 工作区打开链路的诊断日志（`[WS-OPEN]` 前缀）。**文件通道默认关闭**——只在日志文件已存在时才追加：

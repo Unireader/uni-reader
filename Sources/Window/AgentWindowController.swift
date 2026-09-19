@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import SwiftUI
 
 /// 浮窗当前显示哪一段对话（controller 决定，内容视图只管显示）。
 @MainActor

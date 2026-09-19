@@ -1,6 +1,6 @@
 import Foundation
 import AppKit
-import SwiftUI
+import Combine
 
 /// 「最近工作区」的一条记录。
 ///

@@ -3,7 +3,7 @@
 //   · 零反转：输出单调不减（容差 1e-6）
 //   · 收敛：流停止后 ≤0.6s 停机，末值 = 终点
 // 两种路径：本地低通（senderT=0）与时间戳插值（senderT>0，WiFi 成批投递）。
-// 运行：swiftc -parse-as-library spike/follower-step-test.swift Sources/Views/ScrollFollower.swift Sources/App/DocSession.swift -o /tmp/follower-test && /tmp/follower-test
+// 运行：swiftc -parse-as-library spike/follower-step-test.swift Sources/Reader/ScrollFollower.swift Sources/App/DocSession.swift -o /tmp/follower-test && /tmp/follower-test
 
 import Foundation
 import QuartzCore

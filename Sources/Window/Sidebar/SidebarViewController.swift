@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import SwiftUI
 
 /// 侧栏（AppKit 版，替代 SwiftUI `SidebarView`，行为逐条同原版）：
 ///  · 当前工作区的文档列表，`NSOutlineView` 源列表样式；有分组时按分组分段（未分组在前）；

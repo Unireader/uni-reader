@@ -1,4 +1,3 @@
-import SwiftUI
 import AppKit
 
 /// 笔头类型：真正不同的笔触渲染效果（不只是换个颜色/名字）。公式细节见 `PageStreamView.drawStroke`
@@ -157,14 +156,4 @@ enum PenPresets {
 extension InkColor {
     /// CSS `rgba(r,g,b,a)`（采集页/注入用）。
     var cssRGBA: String { "rgba(\(Int(r)),\(Int(g)),\(Int(b)),\(a))" }
-
-    /// SwiftUI Color（设置页 ColorPicker 用；sRGB + 透明度）。
-    var swiftUIColor: Color { Color(.sRGB, red: r / 255, green: g / 255, blue: b / 255, opacity: a) }
-
-    /// 从 SwiftUI Color 取回（ColorPicker 回写用）。
-    init(color: Color) {
-        let ns = NSColor(color).usingColorSpace(.sRGB) ?? NSColor.black
-        self.init(r: Double(ns.redComponent) * 255, g: Double(ns.greenComponent) * 255,
-                  b: Double(ns.blueComponent) * 255, a: Double(ns.alphaComponent))
-    }
 }

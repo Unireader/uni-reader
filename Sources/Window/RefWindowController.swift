@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import SwiftUI
 
 /// 参考窗的**独立窗口形态**（`RefWindowModel.mode == .window`；用户 2026-09-11
 /// 「参考小窗支持独立小窗口（类似 AI 窗口那样）」）。

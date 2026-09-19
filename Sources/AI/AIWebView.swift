@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import SwiftUI
 import WebKit
 
 /// 一份长驻的网页（我们自己持有的 `WKWebView` + 它的可观察状态）。
@@ -185,25 +184,5 @@ final class AIWebShell: NSView {
         // 不显式 removeFromSuperview：`addSubview` 本来就会先从旧父摘掉，一步到位少一帧空档。
         container.frame = bounds
         addSubview(container)
-    }
-}
-
-/// SwiftUI 侧的承载壳（见 `AIWebShell`）。
-struct AIWebHost: NSViewRepresentable {
-    /// ⚠️ 必须是**存储属性**：存储属性不变时 SwiftUI 会跳过 `updateNSView`
-    /// （`WindowAccessor.swift` 里记过同款坑），换了 box 就挂不过去。
-    let box: AIPageBox
-
-    func makeNSView(context: Context) -> AIWebShell {
-        let shell = AIWebShell()
-        shell.wantsLayer = true
-        shell.autoresizesSubviews = false      // 容器的 frame 由 `layout()` 直接给
-        shell.box = box
-        return shell
-    }
-
-    func updateNSView(_ shell: AIWebShell, context: Context) {
-        if shell.box !== box { shell.box = box }
-        shell.needsLayout = true               // 触发一次 claim（万一容器被别处带走了）
     }
 }

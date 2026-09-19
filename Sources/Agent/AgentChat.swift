@@ -494,3 +494,12 @@ enum AgentImageFile {
                           caption: name, note: "an image file the user attached (\"\(name)\").")
     }
 }
+
+extension ISO8601DateFormatter {
+    /// Agent 给的 `updatedAt` 带毫秒（`2026-09-18T10:07:12.606Z`）。
+    static let agent: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+}

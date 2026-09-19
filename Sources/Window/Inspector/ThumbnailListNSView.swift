@@ -1,9 +1,9 @@
 import AppKit
 import PDFKit
 
-/// 缩略图列表（AppKit 版，替代 SwiftUI `ThumbnailListView`；规则同原版）：
+/// 缩略图列表：
 ///  · 点击跳到该页顶部；当前页描一圈强调色、自动滚到正中；
-///  · 出图复用 `PageRenderEngine`（独立像素宽 `ThumbnailListView.pixelWidth`，落磁盘缓存）；
+///  · 出图复用 `PageRenderEngine`（独立像素宽 `pixelWidth`，落磁盘缓存）；
 ///  · 当前页立即请求，其余页 150ms 后仍可见才请求（快速滚动途经的页不占串行渲染队列）；
 ///  · 视图层最多留 48 张（离当前页最远的先丢），持有量报给 `PageHoldings`。
 final class ThumbnailListNSView: NSView, NSTableViewDataSource, NSTableViewDelegate {
@@ -20,6 +20,13 @@ final class ThumbnailListNSView: NSView, NSTableViewDataSource, NSTableViewDeleg
     private var aspects: [Int: CGFloat] = [:]
     private let clientID = "thumbs-" + UUID().uuidString
     private static let maxKept = 48
+
+    /// 缩略图渲染像素宽。阅读区也会读它：目标宽度的页图还没渲出来时，拿这份小图当最后兜底（同 doc/page 键空间）。
+    /// 必须跟得上侧栏的物理像素：栏最小宽约 276pt 可用，Retina 下 552 物理像素；原来的 160 糊得认不出字
+    /// （用户 2026-09-03 报），480 只放大 1.15 倍。改大它要连带看视图层留图上限与共享 LRU 的开销。
+    static let pixelWidth = 480
+    /// 缩略图圆角（图、底、选中描边共用一个值，三者必须一致，否则方角图会盖住圆角底）。
+    static let corner: CGFloat = 5
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -132,14 +139,14 @@ final class ThumbnailListNSView: NSView, NSTableViewDataSource, NSTableViewDeleg
 
     private func requestImage(_ page: Int) {
         guard let pdf, let p = pdf.page(at: page) else { return }
-        let key = PageRenderEngine.baseKey(doc: docKey, page: page, pixelWidth: ThumbnailListView.pixelWidth, night: false)
+        let key = PageRenderEngine.baseKey(doc: docKey, page: page, pixelWidth: ThumbnailListNSView.pixelWidth, night: false)
         if let hit = PageRenderEngine.shared.cached(key) { keep(page, hit); return }
         let doc = docKey
         let go = { [weak self] in
             guard let self, self.docKey == doc, self.images[page] == nil else { return }
             // 非当前页：去抖期间滚出去了就不渲
             if page != self.currentPage, !self.table.rows(in: self.table.visibleRect).contains(page) { return }
-            PageRenderEngine.shared.request(.init(key: key, page: p, pixelWidth: ThumbnailListView.pixelWidth,
+            PageRenderEngine.shared.request(.init(key: key, page: p, pixelWidth: ThumbnailListNSView.pixelWidth,
                                                   tileRect: nil, tileScale: 1, night: false, diskCache: true,
                                                   align: self.align?.page(page))) { [weak self] doneKey, img in
                 guard let self, doneKey == key, self.docKey == doc else { return }
@@ -177,7 +184,7 @@ private final class ThumbCell: NSTableCellView {
         super.init(frame: .zero)
         identifier = Self.id
         frameView.wantsLayer = true
-        frameView.layer?.cornerRadius = ThumbnailListView.corner
+        frameView.layer?.cornerRadius = ThumbnailListNSView.corner
         frameView.layer?.masksToBounds = true
         frameView.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.3).cgColor
         imageLayer.contentsGravity = .resize
