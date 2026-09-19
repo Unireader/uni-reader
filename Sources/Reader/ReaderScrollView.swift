@@ -6,13 +6,13 @@ import AppKit
 /// 捏合缩放过程中系统逐帧改放大倍率，文档宽跟着倍率变会和系统的锚点计算打架（松手那一下跳）。
 ///
 /// 可见区要扣掉左右的 `contentInsets`（右侧 = 内置 AI 面板盖住的宽度）：居中是在面板左边那块里居中。
-/// `contentInsets` 是视图点，bounds 是文档坐标（= 视图点 / 放大倍率），换算要除以倍率。
+/// 🔴 **clip view 自己的 `contentInsets` 已经是文档坐标**（滚动视图设 443 点、倍率 0.25 时这里读到 1772，离屏实测），
+/// 不要再除以倍率——曾经多除一次，缩小到 fit 以下时可用宽算成负数、居中永远不生效，页面贴在最左边（2026-09-19 用户报）。
 final class ReaderClipView: NSClipView {
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
         var r = super.constrainBoundsRect(proposedBounds)
         guard let doc = documentView else { return r }
-        let mag = max(0.0001, enclosingScrollView?.magnification ?? 1)
-        let left = contentInsets.left / mag, right = contentInsets.right / mag
+        let left = contentInsets.left, right = contentInsets.right
         let avail = r.width - left - right
         let docW = doc.frame.width
         if docW < avail {

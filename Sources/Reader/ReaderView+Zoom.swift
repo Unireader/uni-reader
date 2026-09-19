@@ -10,6 +10,15 @@ extension ReaderView {
 
     func clampZoom(_ z: CGFloat) -> CGFloat { min(max(z, zoomMin), zoomMax) }
 
+    /// 排查「缩放后 PDF 跑到很左边」（2026-09-19 用户报）的几何日志，写 ws 日志通道（`[GEO]`）。查清后删。
+    func geoLog(_ tag: String) {
+        let c = clipView.frame, b = clipView.bounds, d = docView.frame, ci = scrollView.contentInsets
+        wsLog(String(format: "[GEO] %@ clipFrame=(%.0f,%.0f %.0fx%.0f) clipBounds=(%.1f,%.1f %.1fx%.1f) doc=(%.1f,%.1f %.1fx%.1f) mag=%.3f fit=%.1f avail=%.1f insets(t%.0f l%.0f r%.0f) readerFrame=(%.0f,%.0f %.0fx%.0f)",
+                     tag, c.minX, c.minY, c.width, c.height, b.minX, b.minY, b.width, b.height,
+                     d.minX, d.minY, d.width, d.height, zoom, fitBasis, fitAvail, ci.top, ci.left, ci.right,
+                     frame.minX, frame.minY, frame.width, frame.height))
+    }
+
     /// 缩放正在进行（捏合 / 命令动画）。期间凡是「马上要重来一遍」的周边工作都让路：
     /// 实化只扩不缩、不驱逐页图、不入队注定作废宽度的渲染、不排 settle。
     var isZooming: Bool { isLiveMagnifying || zoomAnim != nil }
@@ -41,6 +50,7 @@ extension ReaderView {
         scrollView.magnification = z
         scrollClip(to: NSPoint(x: d.x - v.x / z, y: d.y - v.y / z))
         CATransaction.commit()
+        geoLog(String(format: "applyZoom anchorDoc=(%.1f,%.1f) anchorView=(%.1f,%.1f)", d.x, d.y, v.x, v.y))
         suppressEmitUntil = CACurrentMediaTime() + 0.3
     }
 
@@ -60,6 +70,7 @@ extension ReaderView {
 
     func liveMagnifyStarted() {
         guard didSetup else { return }
+        geoLog("pinchStart")
         isLiveMagnifying = true
         follower.reset()
         cancelZoomAnim()
@@ -68,6 +79,7 @@ extension ReaderView {
 
     func liveMagnifyEnded() {
         guard didSetup else { return }
+        geoLog("pinchEnd")
         isLiveMagnifying = false
         userZoomed = true
         suppressEmitUntil = CACurrentMediaTime() + 0.3
