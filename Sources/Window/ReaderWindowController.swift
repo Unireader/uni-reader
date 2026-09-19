@@ -998,19 +998,17 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: 弹出面板
 
     @objc private func showContents(_ sender: NSButton) {
-        present(NSHostingController(rootView: TOCPopoverContent(tabs: tabs, onPicked: { [weak self] in
-            self?.popover?.performClose(nil)
-        }).environmentObject(app).environmentObject(workspace)), from: sender)
+        let vc = TOCPanelController(tabs: tabs)
+        vc.onPicked = { [weak self] in self?.popover?.performClose(nil) }
+        present(vc, from: sender)
     }
 
     @objc private func showOCR(_ sender: NSButton) {
-        present(NSHostingController(rootView: OCRPopoverContent(tabs: tabs)
-            .environmentObject(app).environmentObject(workspace)), from: sender)
+        present(OCRPanelController(tabs: tabs), from: sender)
     }
 
     @objc private func showTablet(_ sender: NSButton) {
-        present(NSHostingController(rootView: ServerPanel(server: app.server)
-            .environmentObject(app).environmentObject(workspace)), from: sender)
+        present(ServerPanelController(server: app.server), from: sender)
     }
 
     /// 一次只开一个面板：再点同一枚就是关掉（与 SwiftUI `.popover(isPresented:)` 的手感一致）。
@@ -1028,9 +1026,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         p.contentViewController = vc
         p.behavior = .transient
         popover = p
-        // 尺寸显式给死：`NSHostingController` 不一定把 SwiftUI 的固有尺寸报给 popover，
-        // 而尺寸不定的 popover 定位起来就是「跑偏」。三个面板内容本来都带 `.frame(...)`。
-        p.contentSize = vc.view.fittingSize
+        // 尺寸显式给死：尺寸不定的 popover 定位起来就是「跑偏」。面板在 `viewDidLoad` 里按内容算好
+        // `preferredContentSize`（之后内容变高变矮，弹出框跟着它变）。
+        _ = vc.view
+        p.contentSize = vc.preferredContentSize != .zero ? vc.preferredContentSize : vc.view.fittingSize
         let inWindow = view.superview?.convert(view.frame, to: nil) ?? .zero
         wsLog("popover 锚点：bounds=\(view.bounds) 窗口内=\(inWindow)"
               + " 翻转=\(view.isFlipped) 尺寸=\(p.contentSize)"

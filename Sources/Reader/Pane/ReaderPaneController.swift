@@ -380,7 +380,10 @@ final class ReaderPaneController: NSViewController {
             guard docPicker == nil else { return }
             let pop = NSPopover()
             pop.behavior = .transient
-            pop.contentViewController = NSHostingController(rootView: DocPickerView.forTabs(tabs, workspace: workspace))
+            let vc = DocPickerController.forTabs(tabs, workspace: workspace)
+            pop.contentViewController = vc
+            _ = vc.view
+            pop.contentSize = vc.preferredContentSize
             let closer = PopoverCloseRelay { [weak self] in self?.tabs.docPickerPresented = false }
             pop.delegate = closer
             objc_setAssociatedObject(pop, &PopoverCloseRelay.key, closer, .OBJC_ASSOCIATION_RETAIN)
