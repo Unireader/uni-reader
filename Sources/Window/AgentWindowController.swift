@@ -62,13 +62,12 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     init() {
-        let host = NSHostingController(rootView: AgentWindowRoot(state: state))
-        // 只让 SwiftUI 管最小尺寸，不许它按内容理想尺寸改窗口大小——窗口大小归吸附（`AIPanelDock`）与用户拖动
-        host.sizingOptions = [.minSize]
-        let win = NSWindow(contentViewController: host)
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 720),
+                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                           backing: .buffered, defer: false)
+        win.contentView = AgentWindowContentView(state: state)
+        win.contentMinSize = NSSize(width: 340, height: 360)
         win.title = AgentConfig.displayName
-        win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        win.setContentSize(NSSize(width: 460, height: 720))
         win.isReleasedWhenClosed = false
         win.isRestorable = false
         // 紧凑工具栏：标题与按钮同一行（咨询面板 2026-08-25「toolbar 太大太高」之后定的规矩）
@@ -95,6 +94,7 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshPin() }
             .store(in: &bag)
+        refreshPin()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
@@ -226,6 +226,7 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
 
     private func refreshPin() {
         let on = UserDefaults.standard.bool(forKey: AgentPanelModel.floatingKey)
+        window?.level = on ? .floating : .normal
         for it in window?.toolbar?.items ?? [] where it.itemIdentifier == ID.pin {
             (it.view as? NSButton)?.state = on ? .on : .off
         }
@@ -288,32 +289,57 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
     @objc private func toggleDock() { panel.setDocked(!panel.docked) }
     @objc private func showInline() { panel.setMode(.inline) }
 
-    /// 置顶与内容层共用同一个 `@AppStorage` 键——那边的 `WindowLevelAccessor` 会把 `NSWindow.level` 跟上。
+    /// 置顶只翻偏好值；`refreshPin`（跟着 `UserDefaults` 变化）把 `NSWindow.level` 与按钮一起跟上。
     @objc private func togglePin() {
         let d = UserDefaults.standard
         d.set(!d.bool(forKey: AgentPanelModel.floatingKey), forKey: AgentPanelModel.floatingKey)
     }
 }
 
-/// 独立窗口的内容：controller 选好对话，这里只管显示。
-private struct AgentWindowRoot: View {
-    @ObservedObject var state: AgentWindowState
-    @ObservedObject private var panel = AgentPanelModel.shared
-    @AppStorage(AgentPanelModel.floatingKey) private var floating = false
+/// 独立窗口的内容：controller 选好对话，这里只管显示（没工作区时显示空态）。
+@MainActor
+private final class AgentWindowContentView: NSView {
+    private let state: AgentWindowState
+    private let placeholder = PlaceholderView()
+    private var chatView: AgentChatNSView?
+    private var bag = Set<AnyCancellable>()
 
-    var body: some View {
-        Group {
-            if let chat = state.chat, let ctx = panel.windowContext {
-                AgentChatView(chat: chat, workspaceName: ctx.workspaceName, showsHeader: false)
-                    .id(ObjectIdentifier(chat))   // 跟到另一个工作区 → 换一份对话，视图重建
-            } else if panel.windowContext == nil {
-                ContentUnavailableView(L("No Workspace"), systemImage: "folder",
-                                       description: Text(L("Open a workspace to talk to the agent about it.")))
+    init(state: AgentWindowState) {
+        self.state = state
+        super.init(frame: NSRect(x: 0, y: 0, width: 460, height: 720))
+        placeholder.set(symbol: "folder", title: L("No Workspace"), detail: L("Open a workspace to talk to the agent about it."))
+        state.$chat.receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refresh() }.store(in: &bag)
+        AgentPanelModel.shared.$windowContext.receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refresh() }.store(in: &bag)
+        refresh()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    private func refresh() {
+        let ctx = AgentPanelModel.shared.windowContext
+        if let chat = state.chat, let ctx {
+            placeholder.removeFromSuperview()
+            if chatView?.chat !== chat {
+                // 跟到另一个工作区 → 换一份对话，视图重建
+                chatView?.removeFromSuperview()
+                let v = AgentChatNSView(chat: chat, workspaceName: ctx.workspaceName, showsHeader: false)
+                chatView = v
+                addSubview(v)
             } else {
-                ProgressView()
+                chatView?.workspaceName = ctx.workspaceName
             }
+        } else {
+            chatView?.removeFromSuperview()
+            chatView = nil
+            if placeholder.superview == nil { addSubview(placeholder) }
         }
-        .frame(minWidth: 340, minHeight: 360)
-        .background(WindowLevelAccessor(floating: floating))
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        chatView?.frame = bounds
+        placeholder.frame = bounds
     }
 }

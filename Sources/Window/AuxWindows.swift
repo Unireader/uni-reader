@@ -142,11 +142,15 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     init(app: AppModel) {
-        let host = NSHostingController(rootView: AIPanelView().environmentObject(app))
-        let win = NSWindow(contentViewController: host)
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 760),
+                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                           backing: .buffered, defer: false)
+        // 本窗口就是 `.window` 这个宿主，有自己那一份网页（见 `AIPanelModel` 的宿主说明）
+        panel.setActiveHost(.window)
+        _ = panel.page(for: .window)
+        win.contentView = ConsultPanelNSView(host: .window, inline: false)
+        win.contentMinSize = NSSize(width: 320, height: 360)
         win.title = L("AI")
-        win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        win.setContentSize(NSSize(width: 480, height: 760))
         win.isReleasedWhenClosed = false
         win.isRestorable = false
         // 紧凑工具栏（系统标准样式）：默认的 expanded 在 Tahoe 上又高又占地方，一个聊天浮窗
@@ -172,7 +176,19 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
             .receive(on: RunLoop.main)
             .sink { m in if m == .inline { AIPanelWindowController.closeIfOpen() } }
             .store(in: &bag)
+        // 换了平台 → 本窗口这一份页面跟上
+        panel.$currentID
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in _ = self?.panel.page(for: .window) }
+            .store(in: &bag)
+
+        AIPanelDock.shared.setPanel(win)
+        AIPanelDock.shared.setEnabled(panel.docked)
+        refreshPin()
     }
+
+    /// 前台切回浮窗 → 模型级操作作用到它这一份页面。
+    func windowDidBecomeKey(_ notification: Notification) { panel.setActiveHost(.window) }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
@@ -280,6 +296,7 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     private func refreshPin() {
         let on = UserDefaults.standard.bool(forKey: "aiPanelFloating")
+        window?.level = on ? .floating : .normal
         for it in window?.toolbar?.items ?? [] where it.itemIdentifier == ID.pin {
             (it.view as? NSButton)?.state = on ? .on : .off
         }
@@ -333,8 +350,7 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
         if panel.current?.isLoading == true { panel.stop() } else { panel.reload() }
     }
 
-    /// 置顶开关与内容层共用同一个 `@AppStorage` 键——那边的 `WindowLevelAccessor` 会把
-    /// `NSWindow.level` 跟上，这里只管翻这个值。
+    /// 置顶只翻偏好值；`refreshPin`（跟着 `UserDefaults` 变化）把 `NSWindow.level` 与按钮一起跟上。
     @objc private func togglePin() {
         let d = UserDefaults.standard
         d.set(!d.bool(forKey: "aiPanelFloating"), forKey: "aiPanelFloating")

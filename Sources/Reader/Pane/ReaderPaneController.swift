@@ -24,6 +24,7 @@ final class ReaderPaneController: NSViewController {
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
     private let tabBar = TabBarNSView()
+    private var panels: InlineAIPanelsView!
     private var docPicker: NSPopover?
     private var bookmarkSheet: NSWindow?
     private var alertShowing = false
@@ -56,6 +57,22 @@ final class ReaderPaneController: NSViewController {
         view = v
         placeholder.isHidden = true
         for sub in [placeholder, badge, findBanner, tabBar] as [NSView] { v.addSubview(sub) }
+        // 右侧两块内置 AI 面板：最上层，浮在阅读区上；盖住的宽度交给阅读区适配、浮层跟着让位
+        panels = InlineAIPanelsView(windowID: tabs.windowID, workspace: workspace)
+        panels.onInset = { [weak self] inset, animated in
+            guard let self else { return }
+            self.readerView?.panelInset = inset
+            if animated {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.28
+                    ctx.allowsImplicitAnimation = true
+                    self.layoutChrome()
+                }
+            } else {
+                self.layoutChrome()
+            }
+        }
+        v.addSubview(panels)
         findBanner.isHidden = true
         badge.isHidden = true
         tabBar.isHidden = true
@@ -199,6 +216,7 @@ final class ReaderPaneController: NSViewController {
                 readerView?.removeFromSuperview()
                 let r = ReaderView(session: s, app: app, workspace: workspace, docKey: key)
                 r.onDropFiles = { [weak self] urls in self?.onIngest(urls) }
+                r.panelInset = panels.inset
                 view.addSubview(r, positioned: .below, relativeTo: placeholder)
                 readerView = r
                 view.needsLayout = true
@@ -260,7 +278,9 @@ final class ReaderPaneController: NSViewController {
         let b = view.bounds
         readerView?.frame = b
         readerView?.topInset = view.safeAreaInsets.top
-        let panel = readerView?.panelInset ?? 0
+        panels.frame = b
+        panels.topInset = view.safeAreaInsets.top
+        let panel = panels.inset
         let si = view.safeAreaInsets
         let safe = NSRect(x: si.left, y: si.top, width: max(0, b.width - si.left - si.right - panel),
                           height: max(0, b.height - si.top - si.bottom))
