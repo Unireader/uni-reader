@@ -216,8 +216,9 @@ final class InlinePanelContainer: NSView {
         super.layout()
         let b = bounds
         glass.frame = b
-        line.frame = NSRect(x: 0, y: 0, width: 1, height: b.height)
-        handle.frame = NSRect(x: 0, y: 0, width: 6, height: b.height)
+        // 分隔线只画在工具栏以下（同原 SwiftUI 版：玻璃底铺进工具栏，线挂在内容上）——画满的话工具栏里会露出一条边界
+        line.frame = NSRect(x: 0, y: topInset, width: 1, height: max(0, b.height - topInset))
+        handle.frame = NSRect(x: 0, y: topInset, width: 6, height: max(0, b.height - topInset))
         content?.frame = NSRect(x: 1, y: topInset, width: b.width - 1, height: max(0, b.height - topInset))
     }
 }

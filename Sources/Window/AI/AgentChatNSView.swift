@@ -747,11 +747,31 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         placeholder.frame = NSRect(x: 12, y: y, width: b.width - 24, height: 18)
         let rowY = b.height - 8 - 26
         attach.frame = NSRect(x: 10, y: rowY, width: 26, height: 26)
-        modeMenu.sizeToFit()
-        modeMenu.frame = NSRect(x: attach.frame.maxX + 4, y: rowY, width: modeMenu.frame.width, height: 26)
         send.frame = NSRect(x: b.width - 12 - 28, y: rowY - 1, width: 28, height: 28)
+        // 两个下拉菜单分「附图」与「发送」之间的宽度：放得下按原宽；放不下一起收窄（标题自动省略号截断），
+        // 太窄就先让模式菜单让位——各按原宽摆会叠在一起（2026-09-19 用户报面板变窄后挤成一团）
+        let left = attach.frame.maxX + 4, right = send.frame.minX - 6
+        let avail = max(0, right - left)
+        let gap: CGFloat = 4
+        modeMenu.sizeToFit()
         configMenu.sizeToFit()
-        configMenu.frame = NSRect(x: send.frame.minX - 6 - configMenu.frame.width, y: rowY, width: configMenu.frame.width, height: 26)
+        let wantM = modeMenu.isHidden ? 0 : modeMenu.frame.width
+        let wantC = configMenu.isHidden ? 0 : configMenu.frame.width
+        var wM = wantM, wC = wantC
+        if wantM + wantC + (wantM > 0 && wantC > 0 ? gap : 0) > avail {
+            if wantM > 0, wantC > 0 {
+                wC = min(wantC, max(avail * 0.55, avail - wantM - gap))
+                wM = avail - gap - wC
+                if wM < 48 { wM = 0; wC = min(wantC, avail) }   // 太窄：模式菜单先不显示
+            } else {
+                wM = min(wantM, avail)
+                wC = min(wantC, avail)
+            }
+        }
+        let modeShown = wM > 0
+        modeMenu.alphaValue = modeShown ? 1 : 0
+        modeMenu.frame = NSRect(x: left, y: rowY, width: modeShown ? wM : 0, height: 26)
+        configMenu.frame = NSRect(x: right - wC, y: rowY, width: wC, height: 26)
     }
 
     // MARK: 输入
