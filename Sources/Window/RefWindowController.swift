@@ -13,9 +13,7 @@ import SwiftUI
 /// 用户摆哪就是哪）：恒在阅读窗之上（点回正文它不会沉到后面去——对照习题/答案时正是这一点），
 /// 拖阅读窗它跟着走，阅读窗最小化它一起收。代价是不能把它藏到阅读窗后面，要藏就关掉。
 ///
-/// 🔴 **工具栏由这里建**：SwiftUI 的 `.toolbar` 只作用于 SwiftUI 自己创建的窗口，装进
-/// `NSHostingController` 后对 AppKit 窗口不生效（`APPKIT-WINDOW-PLAN.md §5.1`）。
-/// 内容（页流）仍是 SwiftUI（`RefDetachedContent`），与覆盖层形态共用同一份 `RefPageStream`。
+/// 工具栏由这里建；内容是页流 `RefPageStreamView`（与覆盖层形态同一个类，各建一份）。
 @MainActor
 final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     private let model: RefWindowModel
@@ -41,12 +39,11 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         self.currentDocID = currentDocID
         self.onGotoMain = onGotoMain
 
-        let host = NSHostingController(rootView: RefDetachedContent(model: model)
-            .environmentObject(app).environmentObject(workspace))
-        // 窗口尺寸归 autosave 与用户拖动，内容只负责填满（`APPKIT-WINDOW-PLAN.md §5.1` 第一条）。
-        host.sizingOptions = []
-        let win = NSWindow(contentViewController: host)
-        win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        // 窗口尺寸归 autosave 与用户拖动，内容（页流）只负责填满。
+        let win = NSWindow(contentRect: NSRect(origin: .zero, size: model.size),
+                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                           backing: .buffered, defer: false)
+        win.contentView = RefPageStreamView(model: model, host: .window)
         // 紧凑工具栏：标题（文档名 + 页码）与那几枚按钮共一行——小窗口不该拿两行去放标题。
         win.toolbarStyle = .unifiedCompact
         win.titleVisibility = .visible
@@ -120,8 +117,7 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
 
     /// 关掉（由 `ReaderWindowController` 在 model 关闭 / 切回覆盖层 / 关阅读窗时调）。
     ///
-    /// 🔴 先替页流交还认领：AppKit 直接销毁 hosting 视图，SwiftUI 的 `onDisappear` 来不来没保证，
-    /// 不交的话滚轮监视器与 wanted 都会挂着（同 `DocSession.renderClients` 那笔账）。
+    /// 先替页流交还认领（窗口关掉时视图不一定马上离开窗口，wanted 不能挂着）。
     /// **只交独立窗口这一份**——切回覆盖层时覆盖层的页流多半已经登记进来了，不能一锅端。
     func dismiss() {
         model.releaseViews(host: .window)
@@ -276,13 +272,7 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
             popover = nil
             return
         }
-        let vc = NSHostingController(rootView: RefTOCPopoverContent(model: model, onPicked: { [weak self] in
-            self?.popover?.performClose(nil)
-        }))
-        let p = NSPopover()
-        p.contentViewController = vc
-        p.behavior = .transient
-        p.contentSize = vc.view.fittingSize
+        let p = RefTOCPopover.make(model: model) { [weak self] in self?.popover?.performClose(nil) }
         popover = p
         p.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
     }

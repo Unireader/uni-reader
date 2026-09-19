@@ -25,6 +25,10 @@ final class ReaderPaneController: NSViewController {
     private let badge = StatusBadgeView()
     private let tabBar = TabBarNSView()
     private var panels: InlineAIPanelsView!
+    /// 参考窗覆盖层 / 跳转历史：摆在安全区里（让开工具栏与内置 AI 面板），身份跟窗口走（切标签不重建）。
+    private let floating = FloatingLayerView()
+    private var refCard: RefCard!
+    private var jumpCard: JumpHistoryCard!
     private var docPicker: NSPopover?
     private var bookmarkSheet: NSWindow?
     private var alertShowing = false
@@ -56,7 +60,16 @@ final class ReaderPaneController: NSViewController {
         v.onLayout = { [weak self] in self?.layoutChrome() }
         view = v
         placeholder.isHidden = true
-        for sub in [placeholder, badge, findBanner, tabBar] as [NSView] { v.addSubview(sub) }
+        for sub in [placeholder, badge, findBanner, tabBar, floating] as [NSView] { v.addSubview(sub) }
+        refCard = RefCard(model: refWindow, workspace: workspace)
+        refCard.currentDocID = { [weak self] in self?.tab.docID }
+        refCard.onGotoMain = { [weak self] page in self?.session.jump(page: page, frac: 0, kind: .list) }
+        jumpCard = JumpHistoryCard(panel: jumpPanel)
+        for sub in [jumpCard.card, refCard.card, refCard.bubble] as [NSView] { floating.addSubview(sub) }
+        floating.onLayout = { [weak self] size in
+            self?.refCard.layout(in: size)
+            self?.jumpCard.layout(in: size)
+        }
         // 右侧两块内置 AI 面板：最上层，浮在阅读区上；盖住的宽度交给阅读区适配、浮层跟着让位
         panels = InlineAIPanelsView(windowID: tabs.windowID, workspace: workspace)
         panels.onInset = { [weak self] inset, animated in
@@ -262,6 +275,11 @@ final class ReaderPaneController: NSViewController {
                 TabBarItem(id: $0.id, title: $0.tabTitle, padFollowing: $0.id == app.padSession?.id, hasDocument: $0.docID != nil)
             }, activeID: tabs.activeID, style: tabBarStyle)
         }
+        // 参考窗 / 跳转历史：草稿纸开着时隐去（它盖满阅读区）
+        jumpCard.bind(s)
+        jumpCard.suppressed = s.openPadID != nil
+        refCard.suppressed = s.openPadID != nil
+        refCard.sync()
         syncDocPicker()
         syncBookmarkSheet()
         syncAlerts()
@@ -285,6 +303,7 @@ final class ReaderPaneController: NSViewController {
         let safe = NSRect(x: si.left, y: si.top, width: max(0, b.width - si.left - si.right - panel),
                           height: max(0, b.height - si.top - si.bottom))
         placeholder.frame = safe
+        floating.frame = safe
         if !findBanner.isHidden {
             let s = findBanner.fittingSize
             findBanner.frame = NSRect(x: safe.midX - s.width / 2, y: safe.minY + 8, width: s.width, height: max(30, s.height))
