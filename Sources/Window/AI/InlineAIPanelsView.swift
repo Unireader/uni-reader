@@ -88,7 +88,6 @@ final class InlineAIPanelsView: NSView {
         let a = agent.mode == .inline && agent.enabled && agent.isInlineOpen(windowID)
         let c = consult.mode == .inline && consult.enabled && consult.isInlineOpen(windowID)
         let toggled = a != agentOpen || c != consultOpen
-        let oldInset = inset
         agentOpen = a
         consultOpen = c
         if a { ensureAgentContent() }
@@ -98,9 +97,15 @@ final class InlineAIPanelsView: NSView {
         } else {
             needsLayout = true
         }
+        // 🔴 跟「上次报给阅读区的值」比，不能跟刷新前现算的 `inset` 比：拖宽度时模型里的宽度已经先改了，
+        // 现算出来的「旧值」就是新值，阅读区收不到通知、右侧让位停在旧宽度，面板变宽后盖住滚动条（2026-09-19 用户报）
         let newInset = inset
-        if abs(newInset - oldInset) > 0.5 || toggled { onInset(newInset, toggled) }
+        if abs(newInset - reportedInset) > 0.5 || toggled {
+            reportedInset = newInset
+            onInset(newInset, toggled)
+        }
     }
+    private var reportedInset: CGFloat = 0
 
     private func ensureAgentContent() {
         guard let folder = workspace.folder else {
