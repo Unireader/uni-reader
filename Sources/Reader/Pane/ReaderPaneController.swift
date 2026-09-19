@@ -30,6 +30,8 @@ final class ReaderPaneController: NSViewController {
     private var refCard: RefCard!
     /// 笔架：有 PDF 时浮在阅读区上（设备级全局状态，图层按当前文档）。
     private var penRack: PenRackNSView?
+    /// 开着的草稿纸（盖满阅读区，笔架仍在它上面可用）。
+    private var scratchPad: ScratchPadNSView?
     private var jumpCard: JumpHistoryCard!
     private var docPicker: NSPopover?
     private var bookmarkSheet: NSWindow?
@@ -249,6 +251,7 @@ final class ReaderPaneController: NSViewController {
                 placeholder.set(symbol: "doc.richtext", title: L("No Document"), detail: L("Open a PDF to start reading."))
             }
         }
+        syncScratchPad()
         if readerView != nil {
             if let rack = penRack {
                 rack.bind(s)
@@ -300,6 +303,31 @@ final class ReaderPaneController: NSViewController {
         layoutChrome()
     }
 
+    /// 草稿纸：换一张 = 全新视口（新建一个视图）；开 / 关淡入淡出 0.16s。
+    private func syncScratchPad() {
+        let s = session
+        let want = readerView != nil ? s.openPadID : nil
+        // 阅读区重建过（换了显示身份）也要重建：新阅读区是插在最底下那一层之上的，旧纸会被它盖住
+        if let cur = scratchPad, cur.padID == want, cur.session === s, cur.docKey == readerView?.docKey { return }
+        if let old = scratchPad {
+            scratchPad = nil
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.16
+                old.animator().alphaValue = 0
+            }, completionHandler: { old.removeFromSuperview() })
+        }
+        guard let id = want, let r = readerView else { return }
+        let v = ScratchPadNSView(app: app, session: s, padID: id, docKey: r.docKey)
+        v.alphaValue = 0
+        view.addSubview(v, positioned: .above, relativeTo: r)
+        scratchPad = v
+        layoutChrome()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.16
+            v.animator().alphaValue = 1
+        }
+    }
+
     @objc private func prevMatch() { session.prevMatch() }
     @objc private func nextMatch() { session.nextMatch() }
 
@@ -318,6 +346,10 @@ final class ReaderPaneController: NSViewController {
                           height: max(0, b.height - si.top - si.bottom))
         placeholder.frame = safe
         floating.frame = safe
+        if let pad = scratchPad {
+            pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧内置 AI 面板让位
+            pad.topInset = si.top
+        }
         penRack?.place(viewport: NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - panel), height: b.height),
                        topInset: si.top, bottomInset: tabBarInset + scrollerLift)
         if !findBanner.isHidden {
