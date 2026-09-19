@@ -45,6 +45,8 @@ class StackPanelController: NSViewController {
         let h = stack.fittingSize.height
         let s = NSSize(width: width, height: h)
         if preferredContentSize != s { preferredContentSize = s }
+        // 当 sheet 用时窗口跟着内容变高变矮（弹出框自己会跟 `preferredContentSize`）
+        if let w = view.window, w.sheetParent != nil, w.contentLayoutRect.size != s { w.setContentSize(s) }
     }
 
     // 控件小工具

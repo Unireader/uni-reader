@@ -548,19 +548,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         a.beginSheetModal(for: win)
     }
 
-    // 离线副本的两张面板（SwiftUI，第 7 步换 AppKit）：以 sheet 弹出，关掉时重算提示
+    // 离线副本的两张面板：以 sheet 弹出，关掉时重算提示
     private func presentMakeMirror() {
-        presentHosted(MakeMirrorSheet())
+        let vc = MakeMirrorController(workspace: workspace)
+        vc.onDismiss = { [weak self] in self?.refreshNotice() }
+        presentAsSheet(vc)
     }
 
-    private func presentSync(_ side: MirrorSyncSheet.Side, switchTo: URL?) {
-        presentHosted(MirrorSyncSheet(side: side, onSynced: switchTo.map { src in { [weak self] _ in self?.switchBack(to: src) } }))
-    }
-
-    private func presentHosted<V: View>(_ v: V) {
-        let hc = DismissNotifyingHostingController(rootView: AnyView(v.environmentObject(workspace)))
-        hc.onDismiss = { [weak self] in self?.refreshNotice() }
-        presentAsSheet(hc)
+    private func presentSync(_ side: MirrorSyncController.Side, switchTo: URL?) {
+        let vc = MirrorSyncController(workspace: workspace, side: side,
+                                      onSynced: switchTo.map { src in { [weak self] _ in self?.switchBack(to: src) } })
+        vc.onDismiss = { [weak self] in self?.refreshNotice() }
+        presentAsSheet(vc)
     }
 
     // MARK: 离线副本提示（逻辑同原版）
@@ -654,13 +653,4 @@ final class SidebarNode: NSObject {
 
     var isSection: Bool { if case .section = kind { return true } else { return false } }
     var docID: String? { if case .doc(let d) = kind { return d.id } else { return nil } }
-}
-
-/// SwiftUI 面板（`@Environment(\.dismiss)` 关自己）以 sheet 弹出时，关掉那一刻回调一句。
-final class DismissNotifyingHostingController: NSHostingController<AnyView> {
-    var onDismiss: () -> Void = {}
-    override func viewDidDisappear() {
-        super.viewDidDisappear()
-        onDismiss()
-    }
 }
