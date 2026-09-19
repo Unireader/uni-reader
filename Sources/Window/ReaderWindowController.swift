@@ -56,6 +56,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var zoomItem: NSToolbarItemGroup?
     private var sidebarItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
+    /// 阅读窗格（AppKit）。
+    private var readerPane: ReaderPaneController?
 
     private var session: DocSession { tabs.active.session }
 
@@ -202,12 +204,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .environmentObject(app)
             .environmentObject(workspace))
 
-        let content = NSHostingController(rootView: ReaderPane(
-            tabs: tabs, chrome: chrome, refWindow: refWindow, jumpPanel: jumpPanel,
-            onRelocate: { [weak self] doc in self?.relocate(doc) },
-            onIngest: { [weak self] urls in self?.ingest(urls: urls) })
-            .environmentObject(app)
-            .environmentObject(workspace))
+        // 阅读窗格：AppKit（`APPKIT-REWRITE-PLAN.md` 第 3 步，替代 SwiftUI `ReaderPane`）
+        let content = ReaderPaneController(tabs: tabs, chrome: chrome, refWindow: refWindow, jumpPanel: jumpPanel,
+                                           app: app, workspace: workspace)
+        content.onRelocate = { [weak self] doc in self?.relocate(doc) }
+        content.onIngest = { [weak self] urls in self?.ingest(urls: urls) }
+        readerPane = content
 
         let inspector = NSHostingController(rootView: InspectorPane(tabs: tabs)
             .environmentObject(app)
@@ -220,7 +222,6 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // 窗口尺寸该由 autosave 和用户拖动决定，内容只负责填满给它的地方。
         // （三个 hosting controller 的泛型参数各不相同，装不进同一个数组，只能逐个设。）
         sidebar.sizingOptions = []
-        content.sizingOptions = []
         inspector.sizingOptions = []
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
