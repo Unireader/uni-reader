@@ -657,3 +657,17 @@
 "Resolved" = "Resolved";
 "Not found" = "Not found";
 "The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats." = "The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats.";
+
+/* Snip → Agent / Web AI (2026-09-19) */
+"Web AI" = "Web AI";
+"Remove" = "Remove";
+"Ask about the image…" = "Ask about the image…";
+"%@ does not accept images." = "%@ does not accept images.";
+"%@ does not accept images. Remove the image to send." = "%@ does not accept images. Remove the image to send.";
+"No AI is available. Turn one on in Settings." = "No AI is available. Turn one on in Settings.";
+"Attach Images…" = "Attach Images…";
+"Could not read “%@” as an image." = "Could not read “%@” as an image.";
+
+/* Settings › General › AI (2026-09-19) */
+"Web AI Panel" = "Web AI Panel";
+"Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed." = "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed.";

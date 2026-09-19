@@ -271,6 +271,15 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshToolbarStates() }
             .store(in: &bag)
+        // Agent / 咨询 AI 两枚开关：内置侧栏开合、形态切换（模型发布），独立窗口显示 / 隐藏 / 关闭（通知）
+        let agent = AgentPanelModel.shared, consult = AIPanelModel.shared
+        Publishers.Merge4(agent.$inlineOpenWindows.map { _ in () }, agent.$mode.map { _ in () },
+                          consult.$inlineOpenWindows.map { _ in () }, consult.$mode.map { _ in () })
+            .merge(with: NotificationCenter.default.publisher(for: .auxPanelVisibilityChanged).map { _ in () },
+                   agent.$enabled.map { _ in () }, consult.$enabled.map { _ in () })
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.refreshToolbarStates() }
+            .store(in: &bag)
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshToolbarStates() }
@@ -279,8 +288,14 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private func refreshTitle() {
         let s = session
-        window?.title = s.title.isEmpty ? L("Library") : s.title
-        window?.subtitle = s.pdf.map { "\(s.currentPageIndex + 1)/\($0.pageCount)" } ?? ""
+        // 只在真变了时写（标题 / 副标题在 Tahoe 上画在工具栏里，写一次可能让工具栏重排）；写了记一行 `[TB]`
+        let title = s.title.isEmpty ? L("Library") : s.title
+        let subtitle = s.pdf.map { "\(s.currentPageIndex + 1)/\($0.pageCount)" } ?? ""
+        if let w = window, w.title != title || w.subtitle != subtitle {
+            wsLog("[TB] 窗口标题 → \(title) · \(subtitle)")
+            if w.title != title { w.title = title }
+            if w.subtitle != subtitle { w.subtitle = subtitle }
+        }
         refreshToolbarStates()   // 会话的任何变化都过这里，画板模式的按下态跟着刷
     }
 
@@ -541,6 +556,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         static let night = NSToolbarItem.Identifier("doc.night")
         static let reference = NSToolbarItem.Identifier("aux.reference")
         static let tablet = NSToolbarItem.Identifier("aux.tablet")
+        static let agent = NSToolbarItem.Identifier("aux.agent")
+        static let consult = NSToolbarItem.Identifier("aux.consult")
         static let search = NSToolbarItem.Identifier("search")
         static let inspector = NSToolbarItem.Identifier("inspector")
     }
@@ -571,6 +588,16 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             }
             index += 1
         }
+        // Agent / 咨询 AI 两枚（2026-09-19 加）：接在平板 / 参考窗后面；两枚都被拖走了就放到弹性空白前
+        for id in [ToolID.agent, ToolID.consult] where !adopted.contains(id.rawValue) {
+            adopted.insert(id.rawValue)
+            guard !tb.items.contains(where: { $0.itemIdentifier == id }) else { continue }
+            let ids = tb.items.map(\.itemIdentifier)
+            let at = [ToolID.agent, ToolID.tablet, ToolID.reference].lazy
+                .compactMap { ids.lastIndex(of: $0) }.first.map { $0 + 1 }
+                ?? ids.firstIndex(of: .flexibleSpace) ?? ids.count
+            tb.insertItem(withItemIdentifier: id, at: at)
+        }
         UserDefaults.standard.set(Array(adopted), forKey: key)
     }
 
@@ -582,7 +609,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
          ToolID.zoom, .space,
          ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory, .space,
          ToolID.ocr, ToolID.canvas, ToolID.night, .space,
-         ToolID.reference, ToolID.tablet,
+         ToolID.reference, ToolID.tablet, .space,
+         ToolID.agent, ToolID.consult,
          .flexibleSpace, ToolID.search, ToolID.inspector]
     }
 
@@ -592,7 +620,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
          ToolID.zoom,
          ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory,
          ToolID.ocr, ToolID.canvas, ToolID.night,
-         ToolID.reference, ToolID.tablet, ToolID.search, ToolID.inspector]
+         ToolID.reference, ToolID.tablet, ToolID.agent, ToolID.consult,
+         ToolID.search, ToolID.inspector]
     }
 
     /// Inspector 那枚钉死不许移除：它是笔记/目录/信息整个面板的唯一入口，拖丢了用户找不回来。
@@ -612,6 +641,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             it.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
             it.menu = workspaceMenu()
             workspaceItem = it
+            workspaceSymbol = "folder"   // 新建的这一枚挂的就是它；是镜像的话下一次刷新会换
             return it
         case ToolID.zoom:
             return zoomGroup(id)
@@ -626,11 +656,16 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         case ToolID.canvas:
             return toggleButton(id, L("Canvas Mode"), "arrow.left.and.right.square", #selector(toggleCanvas))
         case ToolID.night:
+            nightSymbol = "moon.fill"   // 同工作区那枚：记下新建时挂的图标
             return toggleButton(id, L("Night Mode"), "moon.fill", #selector(toggleNight))
         case ToolID.reference:
             return toggleButton(id, L("Reference Window"), "rectangle.on.rectangle", #selector(toggleReference))
         case ToolID.tablet:
             return popoverButton(id, L("Tablet"), "wifi", #selector(showTablet(_:)))
+        case ToolID.agent:
+            return toggleButton(id, L("Agent Panel"), "sparkles", #selector(toggleAgentPanel))
+        case ToolID.consult:
+            return toggleButton(id, L("AI Panel"), "bubble.left.and.text.bubble.right", #selector(toggleConsultPanel))
         case ToolID.inspector:
             return button(id, L("Inspector"), "sidebar.right", #selector(inspectorToggled))
         case ToolID.search:
@@ -718,35 +753,73 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// 把开关型按钮的按下态刷成当前状态。挂在几条现成的信号上：标签/会话的任何变化
     /// （`tabs.objectWillChange`，画板模式就在里面）、参考窗开合、以及 `UserDefaults`
     /// （夜间模式是 `@AppStorage`，内容层和菜单都可能改它）。
+    ///
+    /// 🔴 **每一处都只在值真变了时才写**（2026-09-19 用户报：内置面板滑入结束时整排工具栏按钮闪）。
+    /// 这个函数跟着会话的每次变化跑（翻页 / 缩放 / 适配宽度），而给工具栏 item 换图标、改 `isHidden`、
+    /// 改启用状态，哪怕是同一个值也可能让工具栏重排一遍。图标尤其如此：每次 `NSImage(systemSymbolName:)`
+    /// 都是新对象，系统没法知道它和原来那张一样。真写了就记一行日志（`[TB]`），再闪时对照时间点看是不是这里。
     private func refreshToolbarStates() {
         guard let items = window?.toolbar?.items else { return }
         let night = UserDefaults.standard.bool(forKey: "nightMode")
         // 缩放组：group 走不走 `validateToolbarItem` 不好赌，这里显式推一次（两边同一个条件）。
         if let g = zoomItem {
             let on = session.pdf != nil
-            g.isEnabled = on
-            for sub in g.subitems { sub.isEnabled = on }
+            if g.isEnabled != on {
+                wsLog("[TB] 缩放组 isEnabled → \(on)")
+                g.isEnabled = on
+            }
+            for sub in g.subitems where sub.isEnabled != on { sub.isEnabled = on }
+        }
+        func setState(_ btn: NSButton, _ on: Bool) {
+            let s: NSControl.StateValue = on ? .on : .off
+            if btn.state != s { btn.state = s }
         }
         for it in items {
             guard let btn = it.view as? NSButton else { continue }
             switch it.itemIdentifier {
-            case ToolID.canvas: btn.state = session.canvasMode ? .on : .off
+            case ToolID.canvas: setState(btn, session.canvasMode)
             case ToolID.night:
-                btn.state = night ? .on : .off
-                btn.image = NSImage(systemSymbolName: night ? "sun.max.fill" : "moon.fill",
-                                    accessibilityDescription: nil)
-            case ToolID.reference: btn.state = refWindow.isOpen ? .on : .off
-            case ToolID.jumpHistory: btn.state = jumpPanel.isOpen ? .on : .off
+                setState(btn, night)
+                let symbol = night ? "sun.max.fill" : "moon.fill"
+                if nightSymbol != symbol {
+                    wsLog("[TB] 夜间按钮图标 → \(symbol)")
+                    nightSymbol = symbol
+                    btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+                }
+            case ToolID.reference: setState(btn, refWindow.isOpen)
+            case ToolID.jumpHistory: setState(btn, jumpPanel.isOpen)
+            case ToolID.agent:
+                let p = AgentPanelModel.shared
+                // 设置里关掉了就不显示（自定工具栏里仍在，打开后原位回来）
+                if it.isHidden == p.enabled {
+                    wsLog("[TB] Agent 按钮 isHidden → \(!p.enabled)")
+                    it.isHidden = !p.enabled
+                }
+                setState(btn, p.mode == .inline ? p.isInlineOpen(tabs.windowID) : AgentWindowController.isShown)
+            case ToolID.consult:
+                let p = AIPanelModel.shared
+                if it.isHidden == p.enabled {
+                    wsLog("[TB] AI 按钮 isHidden → \(!p.enabled)")
+                    it.isHidden = !p.enabled
+                }
+                setState(btn, p.mode == .inline ? p.isInlineOpen(tabs.windowID) : AIPanelWindowController.isShown)
             default: break
             }
         }
         // 工作区菜单那枚：标题/图标跟着当前工作区走（镜像换个图标就够了——用户要的是
         // 「一眼认出这不是硬盘上那份」，不是一段说明）。
-        workspaceItem?.toolTip = workspace.name.isEmpty ? L("Workspace") : workspace.name
-        workspaceItem?.image = NSImage(
-            systemSymbolName: workspace.isMirror ? "externaldrive.badge.timemachine" : "folder",
-            accessibilityDescription: nil)
+        let tip = workspace.name.isEmpty ? L("Workspace") : workspace.name
+        if workspaceItem?.toolTip != tip { workspaceItem?.toolTip = tip }
+        let wsSymbol = workspace.isMirror ? "externaldrive.badge.timemachine" : "folder"
+        if let item = workspaceItem, workspaceSymbol != wsSymbol {
+            wsLog("[TB] 工作区按钮图标 → \(wsSymbol)")
+            workspaceSymbol = wsSymbol
+            item.image = NSImage(systemSymbolName: wsSymbol, accessibilityDescription: nil)
+        }
     }
+    /// 上面两枚按钮此刻挂着的图标名（判断「真变了没有」用；新建的 `NSImage` 之间没法比）。
+    private var nightSymbol: String?
+    private var workspaceSymbol: String?
 
     /// 要弹面板的三枚（目录 / OCR / 平板）得自带一个 `NSButton` 当 view —— `NSPopover` 必须锚在
     /// 一个真实的 view 上，而标准 `NSToolbarItem` 不把它内部那个按钮交出来。
@@ -781,6 +854,27 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func toggleJumpHistory() { jumpPanel.toggle() }
     @objc private func toggleCanvas() { tabs.active.toggleCanvasMode() }
     @objc private func inspectorToggled() { toggleInspector() }
+
+    /// Agent / 咨询 AI 两枚开关（用户 2026-09-19：和参考窗一样用工具栏按钮切换，不再在阅读区里画气泡）。
+    /// 内置形态切**本窗口**的侧栏，独立窗口形态显示 ⇄ 隐藏——与菜单 / 快捷键同一套语义，
+    /// 只是作用对象明确是按钮所在的这扇窗（菜单那条走「当前 key 窗口」）。
+    @objc private func toggleAgentPanel() {
+        let p = AgentPanelModel.shared
+        if p.mode == .inline { p.setInlineOpen(!p.isInlineOpen(tabs.windowID), for: tabs.windowID) }
+        else { AgentWindowController.toggle() }
+        refreshToolbarStates()
+    }
+
+    @objc private func toggleConsultPanel() {
+        let p = AIPanelModel.shared
+        if p.mode == .inline {
+            p.setActiveHost(.inline(tabs.windowID))
+            p.toggleInline(tabs.windowID)
+        } else {
+            AIPanelWindowController.toggle()
+        }
+        refreshToolbarStates()
+    }
 
     @objc private func toggleNight() {
         let d = UserDefaults.standard

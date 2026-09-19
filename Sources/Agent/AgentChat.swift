@@ -1,5 +1,7 @@
 import ACPModel
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 /// 发给 Agent 的「用户此刻在看什么」。每次发消息时现取（不缓存），变了才随消息带上。
 struct AgentReaderContext: Equatable {
@@ -84,6 +86,8 @@ final class AgentChat: ObservableObject {
     @Published private(set) var history: [SessionInfo] = []
     /// 这段会话建立时 MCP 服务没开 → Agent 手上没有 unireader 工具。面板据此提示。
     @Published private(set) var missingMCP = false
+    /// 输入框上待发的图片（框选截图投进来的），随下一句话一起发出去。换会话不清——和没发出去的草稿一样留着。
+    @Published private(set) var attachments: [AgentImage] = []
 
     private var connection: AgentConnection?
     /// 上次随消息带过去的上下文。没变就不重复带（省 token，也免得对话里满是同一段）。
@@ -172,12 +176,66 @@ final class AgentChat: ObservableObject {
 
     // MARK: - 发消息
 
+    // MARK: - 图片附件
+
+    /// Agent 收不收图片（握手时声明的 `promptCapabilities.image`）。还没握手 = nil（不知道）。
+    var acceptsImages: Bool? {
+        guard let r = connection?.initResponse else { return nil }
+        return r.agentCapabilities.promptCapabilities?.image ?? false
+    }
+
+    func addAttachment(_ image: AgentImage) { attachments.append(image) }
+
+    func removeAttachment(_ id: UUID) { attachments.removeAll { $0.id == id } }
+
+    /// 用户从磁盘选的图片（附件按钮 / 拖到输入框上）：后台解码、压到长边 2000 像素再挂上。
+    /// 读不了的文件（不是图片 / 已损坏）跳过并提示一句。
+    func attachFiles(_ urls: [URL]) {
+        if acceptsImages == false {
+            items.append(AgentItem(kind: .notice(
+                String(format: L("%@ does not accept images."), AgentConfig.displayName), isError: true)))
+            return
+        }
+        Task {
+            let loaded = await Task.detached(priority: .userInitiated) {
+                urls.map { url in (url, AgentImageFile.load(url)) }
+            }.value
+            for (url, img) in loaded {
+                if let img { attachments.append(img) }
+                else {
+                    items.append(AgentItem(kind: .notice(
+                        String(format: L("Could not read “%@” as an image."), url.lastPathComponent), isError: true)))
+                }
+            }
+        }
+    }
+
+    // MARK: - 发消息
+
     func send(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let id = sessionId, let c = connection, phase == .idle else { return }
+        // 握手说不收图：图片留在输入框上，这句话不发，提示一下（发出去 Agent 会整条报错）
+        if !attachments.isEmpty, acceptsImages == false {
+            items.append(AgentItem(kind: .notice(
+                String(format: L("%@ does not accept images. Remove the image to send."), AgentConfig.displayName),
+                isError: true)))
+            return
+        }
+        let images = attachments
+        attachments = []
         // 🔴 用户的话放**第一块**、上下文块跟在后面：Kimi 拿第一块文字给会话起标题（spike 实测），
-        // 上下文在前的话历史列表里每条都叫「<unireader-context>」
+        // 上下文在前的话历史列表里每条都叫「<unireader-context>」。图片夹在两者之间
         var blocks: [ContentBlock] = [.text(TextContent(text: text))]
+        for img in images {
+            blocks.append(.image(ImageContent(data: img.data.base64EncodedString(), mimeType: img.mimeType)))
+        }
+        // 图片的来源（哪本书哪一页）放进隐藏块：Agent 要用 MCP 去读那一页时用得上，回放时剔掉
+        let notes = images.enumerated().compactMap { i, img in img.note.map { "Attached image \(i + 1): \($0)" } }
+        if !notes.isEmpty {
+            blocks.append(.text(TextContent(text: ([AgentTranscript.contextOpen] + notes + [AgentTranscript.contextClose])
+                .joined(separator: "\n"))))
+        }
         if let ctx = contextProvider() {
             let t = ctx.promptText
             if t != lastContextSent {
@@ -185,7 +243,7 @@ final class AgentChat: ObservableObject {
                 lastContextSent = t
             }
         }
-        items.append(AgentItem(kind: .user(text)))
+        items.append(AgentItem(kind: .user(text, images: images)))
         phase = .running
         Task {
             do {
@@ -402,5 +460,37 @@ final class AgentChat: ObservableObject {
               var s = String(data: data, encoding: .utf8), s != "{}", s != "null" else { return "" }
         if s.count > 400 { s = String(s.prefix(400)) + "…" }
         return s
+    }
+}
+
+/// 从磁盘读一张图片，转成发给 Agent 的样子（纯 ImageIO，可在任何线程调）。
+///
+/// 一律按 EXIF 方向摆正、长边压到 `PageSnip.maxLongEdge`（2000 像素）——手机照片原图动辄十几 MB，
+/// 按 base64 塞进一条 JSON 消息既慢又没必要，模型那边也会再压。带透明的存 PNG（JPEG 会把透明画成黑底），
+/// 其余存 JPEG。HEIC / TIFF 等格式也就此转成 Agent 一定认识的格式。
+enum AgentImageFile {
+    static func load(_ url: URL) -> AgentImage? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: Int(PageSnip.maxLongEdge),
+              ] as CFDictionary)
+        else { return nil }
+        let alpha: Bool
+        switch cg.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: alpha = false
+        default: alpha = true
+        }
+        let type: UTType = alpha ? .png : .jpeg
+        let out = NSMutableData()
+        guard let dst = CGImageDestinationCreateWithData(out, type.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dst, cg, alpha ? nil : [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        guard CGImageDestinationFinalize(dst) else { return nil }
+        let name = url.lastPathComponent
+        return AgentImage(data: out as Data, mimeType: type.preferredMIMEType ?? (alpha ? "image/png" : "image/jpeg"),
+                          caption: name, note: "an image file the user attached (\"\(name)\").")
     }
 }

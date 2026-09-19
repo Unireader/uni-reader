@@ -626,6 +626,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension Notification.Name {
+    /// 咨询 AI / Agent 的独立窗口显示、隐藏或关闭了（阅读窗口工具栏两枚开关据此刷按下态）。
+    static let auxPanelVisibilityChanged = Notification.Name("com.xvan.UniReader.auxPanelVisibilityChanged")
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
     static let openWorkspaceRequested = Notification.Name("com.xvan.UniReader.openWorkspaceRequested")
     /// 有卷挂上了 —— 可能就是那块源盘插回来了，提示条该重算一次

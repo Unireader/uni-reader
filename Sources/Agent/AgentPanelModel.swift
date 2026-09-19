@@ -57,6 +57,24 @@ final class AgentPanelModel: ObservableObject {
         let w = d.double(forKey: Self.inlineWidthKey)
         if w > 0 { inlineWidth = w }
         docked = d.object(forKey: Self.dockKey) as? Bool ?? true
+        enabled = d.object(forKey: Self.enabledKey) as? Bool ?? true
+    }
+
+    // MARK: - 总开关
+
+    private static let enabledKey = "agentEnabled"
+    /// 设置 ›「通用」›「AI」里的开关（用户 2026-09-19：两种 AI 各自一个开关）。关掉 = 工具栏开关藏起来、
+    /// 菜单项灰掉、框选截图不再问要不要发给它、内置侧栏不显示。默认开。
+    @Published private(set) var enabled = true
+
+    func setEnabled(_ on: Bool) {
+        guard on != enabled else { return }
+        enabled = on
+        UserDefaults.standard.set(on, forKey: Self.enabledKey)
+        guard !on else { return }
+        // 关掉就当场放掉：浮窗关掉（它自己的对话随之结束），其余对话与 Agent 进程一并结束
+        AgentWindowController.closeIfOpen()
+        teardownAll()
     }
 
     func setDocked(_ on: Bool) {
@@ -110,6 +128,7 @@ final class AgentPanelModel: ObservableObject {
 
     /// 菜单 / 快捷键：内置模式切当前 key 窗口的侧栏，浮窗模式显示 ⇄ 隐藏。
     func toggle() {
+        guard enabled else { return }
         if mode == .inline {
             guard let id = lastKeyReader?.tabs.windowID else { return }
             setInlineOpen(!isInlineOpen(id), for: id)
@@ -168,6 +187,24 @@ final class AgentPanelModel: ObservableObject {
         c.contextProvider = { [weak self] in self?.context(for: host) }
         chats[host] = c
         return c
+    }
+
+    /// 这扇阅读窗口能不能把东西发给 Agent（已开工作区 = 有工作目录）。框选截图松手时据此决定菜单里有没有 Agent 那一项。
+    func canAttach(from window: UUID) -> Bool { enabled && context(for: .inline(window)) != nil }
+
+    /// 框选截图投给 Agent（`ReaderSurface+Snip`）：把这扇窗对应的面板亮出来（内置 = 展开本窗侧栏，
+    /// 浮窗 = 显示），图片挂到那段对话的输入框上，等用户写一句话一起发。
+    /// 返回 false = 发不了（没开工作区，或 Agent 已声明不收图片）。
+    @discardableResult
+    func attach(_ image: AgentImage, from window: UUID) -> Bool {
+        guard enabled, let ctx = context(for: .inline(window)) else { return false }
+        let host: AgentHost = mode == .inline ? .inline(window) : .window
+        // 与面板视图拿的是同一份（`chat(for:cwd:)` 按宿主 + 工作目录复用）；视图还没出来也先建好，图片不丢
+        let chat = chat(for: host, cwd: ctx.cwd)
+        guard chat.acceptsImages != false else { return false }
+        chat.addAttachment(image)
+        if mode == .inline { setInlineOpen(true, for: window) } else { AgentWindowController.show() }
+        return true
     }
 
     /// 浮窗关了（不是隐藏）：结束它的对话。

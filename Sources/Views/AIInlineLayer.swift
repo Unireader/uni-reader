@@ -4,19 +4,56 @@ import AppKit
 
 /// 内置面板拆成的两半（咨询 AI 与 Agent 两块内置面板共用这个说法）。
 enum InlinePanelPart {
-    /// 收起时的气泡按钮：浮在阅读区右下角（`.overlay`）。
-    case bubble
+    /// 不显示任何东西，只挂生命周期钩子（首次出现时按上次的开合状态展开等）：挂在阅读区的 `.overlay` 上，
+    /// 内置模式下始终在。展开 / 收起的入口是阅读窗口工具栏上的开关（用户 2026-09-19：像参考窗那样用
+    /// 工具栏按钮，不在阅读区里画气泡按钮）。
+    case lifecycle
     /// 展开的侧栏：与阅读区并排，展开时把阅读区往左挤（2026-09-18 起，之前是盖在阅读区上）。
     case panel
 }
 
+/// 两块内置面板（Agent / 咨询 AI）**共用**的标题行（用户 2026-09-19：两边高度、图标样式要统一）。
+/// 左边图标 + 两行文字（标题 / 副标题），右边一组按钮用系统 `ControlGroup` 分组，高度固定——
+/// 副标题有没有都一样高，两块面板并排时标题行底边对齐。
+/// 🔴 面板底色是 `.background`（不是 material），文字仍显式 `.primary`（红线：别用 `.secondary`）。
+struct InlinePanelHeader<Controls: View>: View {
+    let icon: String
+    let title: String
+    var subtitle: String?
+    @ViewBuilder var controls: () -> Controls
+
+    static var height: CGFloat { 48 }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .imageScale(.large)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1).truncationMode(.tail)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+            }
+            .layoutPriority(1)
+            Spacer(minLength: 4)
+            ControlGroup { controls() }
+                .fixedSize()
+        }
+        .foregroundStyle(.primary)
+        .labelStyle(.iconOnly)
+        .padding(.horizontal, 12)
+        .frame(height: Self.height)
+    }
+}
+
 /// **内置模式**：AI 面板不另开窗口，而是贴在阅读窗口右侧、与阅读区并排（展开时把 PDF 往左推）；
-/// 收起时缩成右下角一枚气泡按钮（像网页上那种客服按钮），点一下展开。
-///
-/// 气泡那一半挂在 `PageStreamView` 这一层而**不是** `ReaderSurface` 里，是为了让它天然挡住阅读区的手势：
-/// 阅读区那四个拖拽手势（拖选 / 落墨 / 框选移动 / 框选截图）都挂在 `ScrollView` 容器上，
-/// 用 `.overlay` 加在**同一个视图**上的覆盖层（如草稿纸）挡不住它们——所以草稿纸才要在每个
-/// gesture 里显式写 `session.openPadID == nil`。挂到上一层就成了普通的遮挡关系，一行门控都不用加。
+/// 展开 / 收起用阅读窗口工具栏上的「AI 面板」开关（`ReaderWindowController.toggleConsultPanel`；
+/// 2026-09-19 前是阅读区右下角一枚自绘气泡按钮，用户要求改成和参考窗一样的工具栏按钮）。
 ///
 /// 每扇阅读窗口的内置层是一个独立宿主，各挂自己那一份网页（`AIHost.inline(session.id)`）。
 /// webview 归 `AIPageBox` 自己持有，**本视图被重建也不会出事**——2026-08-26 为「SwiftUI 重建视图 →
@@ -28,7 +65,7 @@ enum InlinePanelPart {
 struct AIInlineLayer: View {
     @ObservedObject var session: DocSession
     /// 拆成两处挂（用户 2026-09-18：「打开后向左推开 pdf 内容，现在会叠加在 pdf 区域上」）：
-    /// `.bubble` 浮在阅读区右下角（收起时那枚按钮，外加本宿主的生命周期钩子）；
+    /// `.lifecycle` 挂在阅读区的覆盖层上（不显示东西，只挂本宿主的生命周期钩子）；
     /// `.panel` 与阅读区**并排**放在 `ReaderPane.readerColumn` 的 HStack 里，展开时把阅读区往左挤。
     var part: InlinePanelPart
     @StateObject private var panel = AIPanelModel.shared
@@ -36,12 +73,12 @@ struct AIInlineLayer: View {
     @State private var dragStartWidth: Double?
 
     /// 内置模式下每扇阅读窗口都是宿主 —— 不再看是不是活跃窗口。
-    private var hosts: Bool { panel.mode == .inline }
+    private var hosts: Bool { panel.mode == .inline && panel.enabled }
 
-    /// 本窗口的面板是展开的还是收成气泡。
+    /// 本窗口的面板是展开的还是收起的。
     private var isOpen: Bool { panel.isInlineOpen(session.windowID) }
 
-    /// 该不该挂 webview：展开时才挂（收成气泡就不占着）。
+    /// 该不该挂 webview：展开时才挂（收起就不占着）。
     private var wantsHost: Bool { hosts && isOpen }
 
     private var host: AIHost { .inline(session.windowID) }
@@ -53,27 +90,22 @@ struct AIInlineLayer: View {
     var body: some View {
         if hosts {
             switch part {
-            case .bubble:
+            case .lifecycle:
                 // 生命周期钩子挂在这一半：它在内置模式下始终在（面板那一半收起时整个不存在）
-                ZStack {
-                    if !isOpen {
-                        bubble.transition(.scale.combined(with: .opacity))
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .animation(.easeOut(duration: 0.18), value: isOpen)
+                Color.clear
+                .allowsHitTesting(false)
                 .onAppear {
                     panel.seedInlineOpen(session.windowID)   // 新窗口沿用「上次是展开还是收着」
                     if wantsHost { takePage() }
                 }
                 .onChange(of: wantsHost) { _, want in if want { takePage() } }
                 .onChange(of: panel.currentID) { _, _ in if wantsHost { takePage() } }
-                // 🔴 **刻意不在 onDisappear 放页面**：切到另一扇阅读窗口、或收成气泡，都不算这个宿主消失，
+                // 🔴 **刻意不在 onDisappear 放页面**：切到另一扇阅读窗口、或收起面板，都不算这个宿主消失，
                 // 放了就等于清掉那扇窗口正在进行的对话状态。真正的回收在 `ContentView.onDisappear`
                 // （窗口关闭）里做。
             case .panel:
-                // 🔴 不加展开动画：面板变宽的每一帧阅读区都要按新宽度重排（fit-width 缩放跟着变），逐帧动画会卡
-                if isOpen { sidePanel }
+                // 从右边滑入 / 滑出（动画挂在外壳 `InlinePanelsColumn` 上，阅读区不逐帧重排）
+                if isOpen { sidePanel.transition(.move(edge: .trailing)) }
             }
         }
     }
@@ -82,23 +114,6 @@ struct AIInlineLayer: View {
     /// ⚠️ **不在这里抢 `activeHost`**：多扇窗口的面板同时出现时，谁最后 `onAppear` 谁就赢，
     /// 那是错的。`activeHost` 由「哪扇窗口是 key」决定（`ContentView` 的 `onKeyChange`）。
     private func takePage() { _ = panel.page(for: host) }
-
-    // MARK: - 气泡
-
-    private var bubble: some View {
-        Button { panel.setInlineOpen(true, for: session.windowID) } label: {
-            Image(systemName: "bubble.left.and.text.bubble.right")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.primary)
-                .frame(width: 46, height: 46)
-                .background(.regularMaterial, in: Circle())
-                .overlay { Circle().strokeBorder(.separator, lineWidth: 0.5) }
-                .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
-        }
-        .buttonStyle(.plain)
-        .padding(18)
-        .help(L("Open AI Panel"))
-    }
 
     // MARK: - 侧面板
 
@@ -116,43 +131,29 @@ struct AIInlineLayer: View {
         .overlay(alignment: .leading) { resizeHandle }
     }
 
+    /// 与 Agent 面板共用 `InlinePanelHeader`（用户 2026-09-19：两边高度、图标样式统一）。
+    /// 副标题 =「这段对话绑在哪一页」（文档名 · 页码）：从中间省略，窄面板下页码也保得住
+    /// （2026-09-01 用户报「内置模式下标题栏看不清链接的 pdf 和页」）。
+    /// 按钮与 Agent 那组一一对应：模式 / 更多（面板本身的设置）/ 新对话；面板里不放收起按钮，开合只走工具栏开关。
     private var header: some View {
-        HStack(spacing: 6) {
-            Image(systemName: panel.currentProvider?.icon ?? "bubble.left.and.text.bubble.right")
-                .foregroundStyle(.secondary)
-            // 🔴 挤压优先级要写明，否则窄面板下先被挤没的正是最该看见的那两样
-            // （2026-09-01 用户报「内置模式下标题栏看不清链接的 pdf 和页」）：
-            // 平台名可以缩（图标已经说明是哪家），**文档名与页码优先保住**——它们回答的是
-            // 「这段对话绑在哪一页上」，是这条 header 存在的理由。
-            Text(panel.currentProvider?.name ?? L("AI"))
-                .font(.callout.weight(.medium))
-                .lineLimit(1).truncationMode(.tail)
-                .layoutPriority(0)
-            if let ctx = panel.bindContext {
-                // 🔴 **在 material 底上别用 `.secondary`**：会被画得极淡、几乎看不见
-                // （2026-09-01 用户截图实测；与 2026-08-07 草稿纸工具条「非激活按钮几乎看不见」
-                // 同一笔账）。层级差异靠**字号**表达就够了——这两样是「这段对话绑在哪一页」的答案，
-                // 是整条 header 存在的理由，不该比背景亮不了多少。
-                Text(ctx.docTitle)
-                    .font(.caption).foregroundStyle(.primary)
-                    .lineLimit(1).truncationMode(.middle)
-                    .layoutPriority(1)
-                Text(String(format: L("p.%d"), ctx.page + 1))
-                    .font(.caption.monospacedDigit()).foregroundStyle(.primary)
-                    .fixedSize()          // 页码断不得，一断整条都白看
-            }
-            Spacer(minLength: 4)
+        InlinePanelHeader(icon: panel.currentProvider?.icon ?? "bubble.left.and.text.bubble.right",
+                          title: panel.currentProvider?.name ?? L("AI"),
+                          subtitle: panel.bindContext.map { "\($0.docTitle) · \(String(format: L("p.%d"), $0.page + 1))" }) {
             modeMenu
-            // 图标与 Agent 面板统一（同功能同图标，用户 2026-09-18）：新对话 = square.and.pencil、收起 = sidebar.trailing
-            headerButton("square.and.pencil", L("New Chat")) { panel.goHome() }
-            headerButton("macwindow", L("Open as Separate Window")) {
-                panel.setMode(.window)
-                AIPanelWindowController.show()   // 迁移后浮窗归 AppKit，不再走 SwiftUI 的 openWindow
+            Menu {
+                Button(L("Open as Separate Window")) {
+                    panel.setMode(.window)
+                    AIPanelWindowController.show()   // 迁移后浮窗归 AppKit，不再走 SwiftUI 的 openWindow
+                }
+            } label: {
+                Label(L("More"), systemImage: "ellipsis")
             }
-            headerButton("sidebar.trailing", L("Collapse")) { panel.setInlineOpen(false, for: session.windowID) }
+            .help(L("More"))
+            Button { panel.goHome() } label: {
+                Label(L("New Chat"), systemImage: "square.and.pencil")
+            }
+            .help(L("New Chat"))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
     }
 
     /// 发送时用哪档模式（DeepSeek 的「快速 / 专家 / 识图」）。默认「跟内容走」＝
@@ -173,32 +174,10 @@ struct AIInlineLayer: View {
                     }
                 }
             } label: {
-                // material 底上一律显式 `.primary`（红线：`.secondary` 会被画得几乎看不见）
-                Image(systemName: "slider.horizontal.3")
-                    .imageScale(.medium)
-                    .foregroundStyle(.primary)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+                Label(L("Mode for new chats"), systemImage: "slider.horizontal.3")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
             .help(L("Mode for new chats"))
         }
-    }
-
-    /// `.plain` 在 material 底上会把图标画得极淡（2026-08-07 草稿纸工具条踩过一次），
-    /// 所以显式染 `.primary` 并给足命中区。
-    private func headerButton(_ icon: String, _ help: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .imageScale(.medium)
-                .foregroundStyle(.primary)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     @ViewBuilder

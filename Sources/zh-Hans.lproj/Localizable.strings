@@ -659,3 +659,17 @@
 "Resolved" = "实际路径";
 "Not found" = "未找到";
 "The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats." = "Agent 面板通过 Agent Client Protocol（ACP）与本机的 Agent 通信，并自动把本 MCP 服务交给它使用。Agent 需要你自己在终端里安装并登录（Kimi 为“kimi login”）。修改后对新建的对话生效。";
+
+/* 框选截图 → Agent / 网页 AI（2026-09-19） */
+"Web AI" = "网页 AI";
+"Remove" = "移除";
+"Ask about the image…" = "针对图片提问…";
+"%@ does not accept images." = "%@ 不支持接收图片。";
+"%@ does not accept images. Remove the image to send." = "%@ 不支持接收图片，去掉图片后才能发送。";
+"No AI is available. Turn one on in Settings." = "没有可用的 AI，请在设置里打开其中一个。";
+"Attach Images…" = "添加图片…";
+"Could not read “%@” as an image." = "无法把“%@”当作图片读取。";
+
+/* 设置 › 通用 › AI（2026-09-19） */
+"Web AI Panel" = "网页 AI 面板";
+"Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed." = "关掉后，它的工具栏按钮不再显示、菜单项变灰，⌥ 拖截图也不会再发给它；已打开的面板和正在运行的 Agent 会被关闭。";

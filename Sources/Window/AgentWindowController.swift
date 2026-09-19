@@ -22,7 +22,11 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
     private var bag = Set<AnyCancellable>()
     private var chatBag = Set<AnyCancellable>()
 
+    /// 浮窗此刻在不在屏幕上（阅读窗口工具栏那枚开关的按下态）。
+    static var isShown: Bool { shared?.window?.isVisible == true }
+
     static func show() {
+        defer { NotificationCenter.default.post(name: .auxPanelVisibilityChanged, object: nil) }
         if let c = shared, let w = c.window {
             w.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -46,6 +50,7 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
         if let c = shared, let w = c.window, w.isVisible {
             w.parent?.removeChildWindow(w)
             w.orderOut(nil)
+            NotificationCenter.default.post(name: .auxPanelVisibilityChanged, object: nil)
         } else {
             show()
         }
@@ -97,6 +102,7 @@ final class AgentWindowController: NSWindowController, NSWindowDelegate, NSToolb
     func windowWillClose(_ notification: Notification) {
         panel.releaseHost(.window)
         Self.shared = nil
+        NotificationCenter.default.post(name: .auxPanelVisibilityChanged, object: nil)
     }
 
     // MARK: - 对话
@@ -298,7 +304,7 @@ private struct AgentWindowRoot: View {
     var body: some View {
         Group {
             if let chat = state.chat, let ctx = panel.windowContext {
-                AgentChatView(chat: chat, workspaceName: ctx.workspaceName, showsHeader: false) { EmptyView() }
+                AgentChatView(chat: chat, workspaceName: ctx.workspaceName, showsHeader: false)
                     .id(ObjectIdentifier(chat))   // 跟到另一个工作区 → 换一份对话，视图重建
             } else if panel.windowContext == nil {
                 ContentUnavailableView(L("No Workspace"), systemImage: "folder",

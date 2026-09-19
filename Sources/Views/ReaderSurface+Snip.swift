@@ -13,6 +13,17 @@ struct SnipRect {
     var size: CGSize { CGSize(width: end.x - start.x, height: end.y - start.y) }
 }
 
+/// 框选截图发给谁：Agent 面板，还是网页版咨询 AI。
+enum SnipTarget: String { case agent, consult }
+
+/// 「发给谁」那个弹出菜单的动作接收者：菜单项点下去记住是哪一项（`popUp` 返回后读 `picked`）。
+final class SnipTargetPicker: NSObject {
+    var picked: SnipTarget?
+    @objc func pick(_ sender: NSMenuItem) {
+        picked = (sender.representedObject as? String).flatMap(SnipTarget.init(rawValue:))
+    }
+}
+
 /// 截图投递的即时反馈。样式与 `PenRackView`/`findBanner` 同一套（material 胶囊 + 0.5 描边 + 阴影），
 /// 不自绘仿系统外观。
 struct SnipToast: Identifiable {
@@ -70,12 +81,28 @@ extension ReaderSurface {
             }
             .onEnded { v in
                 guard let r = snipRect else { return }
-                snipRect = nil
                 scratch.snipViaOption = false
                 let toNote = scratch.snipToNote || snipShiftDown
                 scratch.snipToNote = false
-                if toNote { finishSnipAsImageNote(start: r.start, end: v.location) }
-                else { finishSnip(start: r.start, end: v.location) }
+                let rect = SnipRect(start: r.start, end: v.location)
+                if toNote {
+                    snipRect = nil
+                    finishSnipAsImageNote(start: rect.start, end: rect.end)
+                    return
+                }
+                guard PageSnip.isMeaningful(rect.size) else { snipRect = nil; return }
+                // 松手先问发给谁（用户 2026-09-19）。问的时候框留着不撤，看得见截的是哪块；
+                // 菜单放到下一拍弹：它会一直占着主线程直到选完，别卡在手势回调里
+                snipRect = rect
+                DispatchQueue.main.async {
+                    let target = chooseSnipTarget()
+                    snipRect = nil
+                    switch target {
+                    case .agent: finishSnipToAgent(start: rect.start, end: rect.end)
+                    case .consult: finishSnip(start: rect.start, end: rect.end)
+                    case nil: break
+                    }
+                }
             }
     }
 
@@ -144,13 +171,96 @@ extension ReaderSurface {
             .overlay { Capsule().strokeBorder(.separator, lineWidth: 0.5) }
             .shadow(radius: 6, y: 2)
             .padding(18)
-            .padding(.trailing, aiInlineInset)
+            .padding(.trailing, panelInset)   // 右侧内置 AI 面板盖在阅读区上，提示让到它左边
             .transition(.opacity)
             .allowsHitTesting(false)
         }
     }
 
-    // MARK: - 截图 → 投递
+    // MARK: - 发给谁
+
+    /// 松手后在指针处弹一个菜单：发给 Agent 还是网页 AI。点空白处 / Esc = 这一框作废（返回 nil）。
+    ///
+    /// 用系统的弹出菜单（`NSMenu.popUp`，与右键菜单同一种东西），不往阅读区里塞 AppKit 视图。
+    /// 只有一个能用时不问、直接给它：Agent 在设置里关了或本窗口没开工作区；网页 AI 在设置里关了。
+    /// 两个都用不了就提示一句，这一框作废。
+    func chooseSnipTarget() -> SnipTarget? {
+        let web = AIPanelModel.shared.currentProvider
+        var options: [(SnipTarget, String, String, String)] = []
+        if AgentPanelModel.shared.canAttach(from: session.windowID) {
+            options.append((.agent, AgentConfig.displayName, L("Agent"), "sparkles"))
+        }
+        if AIPanelModel.shared.enabled {
+            options.append((.consult, web?.name ?? L("AI"), L("Web AI"), web?.icon ?? "bubble.left.and.text.bubble.right"))
+        }
+        guard options.count > 1 else {
+            if options.isEmpty {
+                showSnipToast(SnipToast(kind: .fail, text: L("No AI is available. Turn one on in Settings.")))
+            }
+            return options.first?.0
+        }
+        let picker = SnipTargetPicker()
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (target, name, kind, icon) in options {
+            let item = NSMenuItem(title: String(format: L("Ask %@"), name),
+                                  action: #selector(SnipTargetPicker.pick(_:)), keyEquivalent: "")
+            item.target = picker
+            item.representedObject = target.rawValue
+            item.subtitle = kind
+            item.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        return picker.picked
+    }
+
+    // MARK: - 截图 → Agent
+
+    /// 发给 Agent：渲图后挂到这扇窗对应的 Agent 对话的输入框上，面板亮出来，等用户写一句话一起发。
+    /// 与发给网页 AI 同一份截图（`PageSnip.render`，同一条渲染队列）。
+    func finishSnipToAgent(start: CGPoint, end: CGPoint) {
+        guard let pdf = session.pdf,
+              let a = containerPointToPageNorm(start), let b = containerPointToPageNorm(end) else { return }
+        let region = PageSnip.region(from: (a.page, Double(a.nx), Double(a.ny)),
+                                     to: (b.page, Double(b.nx), Double(b.ny)))
+        guard let first = PageSnip.slices(region).first else { return }
+
+        showSnipToast(SnipToast(kind: .working, text: L("Capturing…")))
+        let caption = aiContextPrefix(page: first.page)
+        let note = snipAgentNote(region)
+        let windowID = session.windowID
+        let align = session.scanAlign
+        PageRenderEngine.shared.renderOffMain {
+            PageSnip.render(pdf: pdf, region: region, align: align)
+        } completion: { shot in
+            guard let shot else {
+                showSnipToast(SnipToast(kind: .fail, text: L("Could not capture that area.")))
+                return
+            }
+            let img = AgentImage(data: shot.data, mimeType: "image/jpeg", caption: caption, note: note)
+            if AgentPanelModel.shared.attach(img, from: windowID) {
+                showSnipToast(SnipToast(kind: .ok, text: String(format: L("Added to %@"), AgentConfig.displayName)))
+            } else {
+                showSnipToast(SnipToast(kind: .fail,
+                                        text: String(format: L("%@ does not accept images."), AgentConfig.displayName)))
+            }
+        }
+    }
+
+    /// 给 Agent 看的截图来源（英文，放进隐藏的上下文块）：哪篇文档、哪几页、页内哪块（归一化坐标），
+    /// Agent 想读原文时可以拿去调 MCP 的 `read_pages` / `render_page`。
+    private func snipAgentNote(_ r: PageSnip.Region) -> String {
+        let pages = r.startPage == r.endPage ? "page \(r.startPage + 1)" : "pages \(r.startPage + 1)–\(r.endPage + 1)"
+        var s = "a region the user cropped from \(pages)"
+        if !session.title.isEmpty { s += " of \"\(session.title)\"" }
+        if let id = session.documentId { s += " (document_id \(id))" }
+        s += String(format: ", x %.2f–%.2f, from y %.2f on the first page to y %.2f on the last (0–1, top-left origin).",
+                    r.x0, r.x1, r.y0, r.y1)
+        return s
+    }
+
+    // MARK: - 截图 → 网页 AI
 
     /// 松手：框太小当误拖静默丢弃，否则渲图 + 投递。
     func finishSnip(start: CGPoint, end: CGPoint) {
@@ -239,16 +349,6 @@ extension ReaderSurface {
     /// （见 `ai-adapters.js` 的 `evidence`）。
     private func snipFileName(page: Int) -> String {
         "unireader-p\(page + 1)-\(UUID().uuidString.prefix(6)).jpg"
-    }
-
-    /// 内置 AI 面板在本窗口占掉的右侧宽度（气泡时按气泡算）——toast 靠右下，得给它让开。
-    /// **刻意不 observe `AIPanelModel`**：ReaderSurface 订阅一个 App 级 `@Published` 会让面板的
-    /// 任何变化都重算整个阅读区（`readZoom` 那条性能红线就是这么踩出来的）。toast 是按需出现的，
-    /// 出现那一刻现读一次就够。
-    var aiInlineInset: CGFloat {
-        let p = AIPanelModel.shared
-        guard p.mode == .inline else { return 0 }
-        return p.isInlineOpen(session.windowID) ? CGFloat(p.inlineWidth) : 60
     }
 
     /// 显示一条反馈并定时收起。`working` 给长一点的兜底超时（正常会被结果那条顶掉）。

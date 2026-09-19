@@ -4,7 +4,8 @@ import Foundation
 /// 对话里的一条（`AgentChat.items`）。流式到来的碎片在 `AgentTranscript.apply` 里拼成整条。
 struct AgentItem: Identifiable, Equatable {
     enum Kind: Equatable {
-        case user(String)
+        /// 用户的一句话 + 随它发出去的图片（回放时 Agent 推回来的图片也拼在这里）。
+        case user(String, images: [AgentImage])
         case agent(String)
         case thought(String)
         case tool(AgentToolCall)
@@ -15,6 +16,21 @@ struct AgentItem: Identifiable, Equatable {
 
     let id = UUID()
     var kind: Kind
+}
+
+/// 一张随消息发给 Agent 的图片（目前只有阅读区 ⌥ 拖出来的框选截图）。
+/// 相等只比 `id`：条目数组每次变化都要比一遍，别去逐字节比图片数据。
+struct AgentImage: Identifiable, Equatable {
+    let id = UUID()
+    /// 原样发给 Agent 的字节（JPEG / PNG）。
+    var data: Data
+    var mimeType: String
+    /// 给人看的来源，如「《书名》 · p.12 · 第三章」；回放来的图片没有。
+    var caption: String?
+    /// 给 Agent 看的来源说明（英文，放进隐藏的上下文块，回放时剔掉）；回放来的图片没有。
+    var note: String?
+
+    static func == (a: AgentImage, b: AgentImage) -> Bool { a.id == b.id }
 }
 
 struct AgentToolCall: Equatable {
@@ -84,14 +100,25 @@ enum AgentTranscript {
     @discardableResult
     static func apply(_ update: SessionUpdate, to items: inout [AgentItem]) -> Bool {
         switch update {
+        case .userMessageChunk(.image(let img)):
+            // 回放：图片挂到眼前这条用户消息上（发送时图片排在文字后面），没有就单起一条
+            guard let data = Data(base64Encoded: img.data) else { return false }
+            let pic = AgentImage(data: data, mimeType: img.mimeType)
+            if case .user(let prev, let imgs)? = items.last?.kind {
+                items[items.count - 1].kind = .user(prev, images: imgs + [pic])
+            } else {
+                items.append(AgentItem(kind: .user("", images: [pic])))
+            }
+            return true
         case .userMessageChunk(let b):
             guard let raw = text(of: b) else { return false }
             let t = stripHidden(raw)
             guard !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-            if case .user(let prev)? = items.last?.kind {
-                items[items.count - 1].kind = .user(prev + t)
+            // 已经带了图片的那条不再往后拼文字：图片在文字后面，再来的文字是下一句
+            if case .user(let prev, let imgs)? = items.last?.kind, imgs.isEmpty {
+                items[items.count - 1].kind = .user(prev + t, images: [])
             } else {
-                items.append(AgentItem(kind: .user(t.trimmingCharacters(in: .whitespacesAndNewlines))))
+                items.append(AgentItem(kind: .user(t.trimmingCharacters(in: .whitespacesAndNewlines), images: [])))
             }
             return true
         case .agentMessageChunk(let b):

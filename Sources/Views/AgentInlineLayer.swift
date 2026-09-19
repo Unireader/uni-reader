@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Agent 面板的**内置形态**：与阅读区并排贴在阅读窗口右侧（展开时把 PDF 往左推），收起时是一枚气泡按钮。
+/// Agent 面板的**内置形态**：与阅读区并排贴在阅读窗口右侧（展开时把 PDF 往左推）。
+/// 展开 / 收起用阅读窗口工具栏上的「Agent 面板」开关（`ReaderWindowController.toggleAgentPanel`）。
 ///
 /// 与咨询 AI 的 `AIInlineLayer` 同一套拆法（`InlinePanelPart`）：
-/// `.bubble` 浮在阅读区右下角；`.panel` 放在 `ReaderPane.readerColumn` 的 HStack 里。
-/// 两块面板可以同时开：从左到右是「阅读区 | Agent | 咨询 AI」；两枚气泡上下错开。
+/// `.lifecycle` 挂在阅读区的覆盖层上（只挂钩子，不显示东西）；`.panel` 放在 `ReaderPane.readerColumn` 的 HStack 里。
+/// 两块面板可以同时开：从左到右是「阅读区 | Agent | 咨询 AI」。
 struct AgentInlineLayer: View {
     /// 本阅读窗口（`TabsModel.windowID`）。
     let windowID: UUID
@@ -14,7 +15,6 @@ struct AgentInlineLayer: View {
     var part: InlinePanelPart
 
     @ObservedObject private var panel = AgentPanelModel.shared
-    @ObservedObject private var consult = AIPanelModel.shared
 
     @State private var chat: AgentChat?
     @State private var dragStartWidth: Double?
@@ -22,28 +22,18 @@ struct AgentInlineLayer: View {
     private var isOpen: Bool { panel.isInlineOpen(windowID) }
     private var cwd: URL? { workspaceFolder?.deletingLastPathComponent() }
 
-    /// 咨询面板的气泡也在右下角 → Agent 的气泡摞在它上面。
-    private var bubbleLift: CGFloat {
-        consult.mode == .inline && !consult.isInlineOpen(windowID) ? 46 + 12 : 0
-    }
-
     var body: some View {
-        if panel.mode == .inline {
+        if panel.mode == .inline, panel.enabled {
             switch part {
-            case .bubble:
-                ZStack {
-                    if !isOpen {
-                        bubble.padding(.bottom, bubbleLift)
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .animation(.easeOut(duration: 0.18), value: isOpen)
-                .onAppear { panel.seedInlineOpen(windowID) }
+            case .lifecycle:
+                Color.clear
+                    .allowsHitTesting(false)
+                    .onAppear { panel.seedInlineOpen(windowID) }
             case .panel:
-                // 🔴 不加展开动画：面板变宽的每一帧阅读区都要按新宽度重排，逐帧动画会卡
+                // 从右边滑入 / 滑出（动画挂在外壳 `InlinePanelsColumn` 上，阅读区不逐帧重排）
                 if isOpen {
                     sidePanel
+                        .transition(.move(edge: .trailing))
                         // 对话只在展开且有工作区时建；换了工作目录（本窗口切了工作区）换一份
                         .task(id: cwd) {
                             guard let cwd else { chat = nil; return }
@@ -54,30 +44,11 @@ struct AgentInlineLayer: View {
         }
     }
 
-    private var bubble: some View {
-        Button { panel.setInlineOpen(true, for: windowID) } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.primary)
-                .frame(width: 46, height: 46)
-                .background(.regularMaterial, in: Circle())
-                .overlay { Circle().strokeBorder(.separator, lineWidth: 0.5) }
-                .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
-        }
-        .buttonStyle(.plain)
-        .padding(18)
-        .help(L("Open Agent Panel"))
-    }
-
     private var sidePanel: some View {
         Group {
             if let chat, workspaceFolder != nil {
-                AgentChatView(chat: chat, workspaceName: workspaceName) {
-                    Button { panel.setInlineOpen(false, for: windowID) } label: {
-                        Label(L("Collapse"), systemImage: "sidebar.trailing")
-                    }
-                    .help(L("Collapse"))
-                }
+                // 面板里不放收起按钮（用户 2026-09-19）：开合只走工具栏开关
+                AgentChatView(chat: chat, workspaceName: workspaceName)
                 .id(ObjectIdentifier(chat))   // 换了一份对话（切了工作区）→ 视图重建，onAppear 重新建会话
             } else if workspaceFolder == nil {
                 ContentUnavailableView(L("No Workspace"), systemImage: "folder",

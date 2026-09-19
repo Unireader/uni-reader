@@ -1,5 +1,6 @@
 import ACPModel
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Agent 面板的内容（`ACP-AGENT-PLAN.md`）：对话记录 + 权限请求 + 输入框，内置形态再加一条标题行。
 ///
@@ -9,14 +10,14 @@ import SwiftUI
 ///
 /// 🔴 系统标准控件，不自绘仿系统样式；内置形态铺在 material 上，文字一律显式 `.primary`、
 /// 按钮不用 `.borderless` / `.plain`（红线：material 底上会被画得几乎看不见）。
-struct AgentChatView<Trailing: View>: View {
+struct AgentChatView: View {
     @ObservedObject var chat: AgentChat
     let workspaceName: String
     var showsHeader = true
-    @ViewBuilder var trailing: () -> Trailing
 
     @ObservedObject private var panel = AgentPanelModel.shared
     @State private var draft = ""
+    @State private var pickingImages = false
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -38,33 +39,17 @@ struct AgentChatView<Trailing: View>: View {
 
     // MARK: - 标题行（仅内置形态）
 
+    /// 与咨询 AI 内置面板共用 `InlinePanelHeader`（用户 2026-09-19：两边高度、图标样式统一）。
     private var header: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(chat.title ?? AgentConfig.displayName)
-                    .font(.headline)
-                    .lineLimit(1).truncationMode(.tail)
-                Text(workspaceName)
-                    .font(.caption)
-                    .lineLimit(1).truncationMode(.middle)
+        InlinePanelHeader(icon: "sparkles", title: chat.title ?? AgentConfig.displayName,
+                          subtitle: workspaceName) {
+            AgentHistoryMenu(chat: chat)
+            AgentOptionsMenu(chat: chat)
+            Button { chat.newChat() } label: {
+                Label(L("New Chat"), systemImage: "square.and.pencil")
             }
-            .foregroundStyle(.primary)
-            .layoutPriority(1)
-            Spacer(minLength: 4)
-            ControlGroup {
-                AgentHistoryMenu(chat: chat)
-                AgentOptionsMenu(chat: chat)
-                Button { chat.newChat() } label: {
-                    Label(L("New Chat"), systemImage: "square.and.pencil")
-                }
-                .help(L("New Chat"))
-            }
-            .fixedSize()
-            trailing()
+            .help(L("New Chat"))
         }
-        .labelStyle(.iconOnly)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     // MARK: - 状态条
@@ -189,11 +174,14 @@ struct AgentChatView<Trailing: View>: View {
     /// 输入区（用户 2026-09-18 参考其他 Agent 客户端定的布局）：一个圆角框，上面是多行输入，
     /// 下面一行左边「模式」（审批方式）、右边「模型」+ 发送。模式 / 模型从顶部挪到这里——它们是
     /// 「这一句话怎么发」的设置，挨着输入框；顶部只留面板本身的设置（跟随 / 吸附 / 形态）。
-    /// 附件（页面截图 / 选中文字，A2）将来加在这一行最左边。
+    /// 待发的图片（阅读区 ⌥ 拖截图 / 附件按钮 / 拖进来的图片文件）排在输入框上面一行，每张右上角可以去掉。
+    /// 左下角是附件按钮，其后是「模式」。
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !chat.attachments.isEmpty { attachmentStrip }
             input
             HStack(spacing: 6) {
+                attachButton
                 AgentModeMenu(chat: chat)
                 Spacer(minLength: 4)
                 AgentConfigMenu(chat: chat)
@@ -210,9 +198,55 @@ struct AgentChatView<Trailing: View>: View {
         // 点框里空白处也进输入态（整块看起来就是一个输入框）
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture { inputFocused = true }
+        // 图片文件直接拖到输入框上 = 附上（和附件按钮同一条路）
+        .dropDestination(for: URL.self) { urls, _ in
+            let images = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
+            guard !images.isEmpty else { return false }
+            chat.attachFiles(images)
+            return true
+        }
         .padding(.horizontal, 12)
         .padding(.top, 4)
         .padding(.bottom, 12)
+    }
+
+    /// 从磁盘选图片附上（用户 2026-09-19：不只是 PDF 里的截图）。系统打开面板，可多选。
+    private var attachButton: some View {
+        Button { pickingImages = true } label: {
+            Label(L("Attach Images…"), systemImage: "photo.badge.plus")
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .foregroundStyle(.primary)
+        .disabled(chat.sessionId == nil)
+        .help(L("Attach Images…"))
+        .fileImporter(isPresented: $pickingImages, allowedContentTypes: [.image],
+                      allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { chat.attachFiles(urls) }
+        }
+    }
+
+    private var attachmentStrip: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(chat.attachments) { img in
+                    AgentImageThumb(image: img, height: 56)
+                        .overlay(alignment: .topTrailing) {
+                            Button { chat.removeAttachment(img.id) } label: {
+                                Label(L("Remove"), systemImage: "xmark")
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonBorderShape(.circle)
+                            .controlSize(.mini)
+                            .offset(x: 6, y: -6)
+                            .help(L("Remove"))
+                        }
+                }
+            }
+            .padding(.top, 6)
+            .padding(.trailing, 6)
+        }
+        .scrollIndicators(.never)
     }
 
     /// 多行输入（用户 2026-09-18：「输入框默认高一些，支持换行，多行输入」）。
@@ -240,7 +274,8 @@ struct AgentChatView<Trailing: View>: View {
                     return .handled
                 }
             if draft.isEmpty {
-                Text(String(format: L("Ask %@…"), AgentConfig.displayName))
+                Text(chat.attachments.isEmpty ? String(format: L("Ask %@…"), AgentConfig.displayName)
+                                              : L("Ask about the image…"))
                     .font(.body)
                     .foregroundStyle(.tertiary)
                     .padding(.leading, 5)
@@ -412,15 +447,23 @@ private struct AgentItemRow: View {
 
     var body: some View {
         switch item.kind {
-        case .user(let s):
-            HStack {
-                Spacer(minLength: 48)
-                Text(s)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        case .user(let s, let images):
+            VStack(alignment: .trailing, spacing: 6) {
+                if !images.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(images) { AgentImageThumb(image: $0, height: 96) }
+                    }
+                }
+                if !s.isEmpty {
+                    Text(s)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
             }
+            .padding(.leading, 48)
+            .frame(maxWidth: .infinity, alignment: .trailing)
         case .agent(let s):
             Text(Self.markdown(s))
                 .textSelection(.enabled)
@@ -494,6 +537,32 @@ private struct AgentItemRow: View {
     static func markdown(_ s: String) -> AttributedString {
         (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(s)
+    }
+}
+
+/// 一张图片的缩略显示（输入框上的待发图片 / 对话里用户发过的图片）。按高度等比缩放，宽度封顶。
+/// 解码放在 `.task` 里只做一次：流式回复时整段对话每个碎片都会重算行视图，别每次都解一遍 JPEG。
+struct AgentImageThumb: View {
+    let image: AgentImage
+    let height: CGFloat
+    @State private var decoded: NSImage?
+
+    var body: some View {
+        Group {
+            if let decoded {
+                Image(nsImage: decoded)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Color.clear.aspectRatio(1, contentMode: .fit)
+            }
+        }
+        .frame(maxWidth: height * 3)
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.separator) }
+        .help(image.caption ?? "")
+        .task(id: image.id) { decoded = NSImage(data: image.data) }
     }
 }
 

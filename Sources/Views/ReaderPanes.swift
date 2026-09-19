@@ -52,7 +52,7 @@ struct InspectorPane: View {
     }
 }
 
-/// 阅读区段：页流 + 浮层（标签栏 / 两枚 AI 气泡 / 参考窗 / 跳转历史）+ 查找条，右侧并排两块内置 AI 面板。
+/// 阅读区段：页流 + 浮层（标签栏 / 两块 AI 面板的钩子 / 参考窗 / 跳转历史）+ 查找条，右侧并排两块内置 AI 面板。
 ///
 /// 🔴 浮层全部挂在**这一层**（`readerArea`），与迁移前完全一样的两条理由：身份要稳
 /// （不能落进 `PageStreamView` 内部 `.id(docKey)` 的下游），以及要挡得住阅读区那四个挂在
@@ -136,11 +136,12 @@ struct ReaderPane: View {
     }
 
     /// 阅读区 + 两块内置面板**并排**（从左到右：阅读区 | Agent | 咨询 AI）。面板展开时把阅读区往左挤，
-    /// 不再盖在 PDF 上（用户 2026-09-18）。面板收起时整个不存在，阅读区占满。
-    /// 收起时的两枚气泡仍是浮在阅读区右下角的覆盖层（`readerArea` 里的 `.bubble`）。
+    /// 不再盖在 PDF 上（用户 2026-09-18）。面板收起时整个不存在，阅读区占满。滑入 / 滑出动画见 `InlinePanelsColumn`。
+    /// 展开 / 收起走阅读窗口工具栏上的两枚开关；`readerArea` 覆盖层里的 `.lifecycle` 只挂钩子，不显示东西。
     private var readerColumn: some View {
-        HStack(spacing: 0) {
+        InlinePanelsColumn(windowID: tabs.windowID) {
             readerArea
+        } panels: {
             AgentInlineLayer(windowID: tabs.windowID, workspaceFolder: workspace.folder,
                              workspaceName: workspace.name, part: .panel)
             AIInlineLayer(session: session, part: .panel)
@@ -149,19 +150,22 @@ struct ReaderPane: View {
 
     private var readerArea: some View {
         readerContent
-            .overlay(alignment: .top) { findBanner }   // 挂阅读区上：内置面板开着时仍居中在 PDF 上方
-            .overlay(alignment: .bottom) { tabBar.padding(.bottom, scrollerLift) }
+            // 浮层一律给右侧的内置面板让位（阅读区外框铺满、面板盖在上面，见 `InlinePanelsColumn`）
+            .overlay(alignment: .top) { findBanner.modifier(ReaderPanelInsetPadding()) }   // 内置面板开着时仍居中在 PDF 上方
+            .overlay(alignment: .bottom) {
+                tabBar.padding(.bottom, scrollerLift).modifier(ReaderPanelInsetPadding())
+            }
             .onReceive(NotificationCenter.default.publisher(
                 for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
                 legacyScroller = NSScroller.preferredScrollerStyle == .legacy
             }
-            .overlay { AIInlineLayer(session: session, part: .bubble) }
+            .overlay { AIInlineLayer(session: session, part: .lifecycle) }
             .overlay {
                 AgentInlineLayer(windowID: tabs.windowID, workspaceFolder: workspace.folder,
-                                 workspaceName: workspace.name, part: .bubble)
+                                 workspaceName: workspace.name, part: .lifecycle)
             }
-            .overlay { refWindowLayer }
-            .overlay { jumpHistoryLayer }
+            .overlay { refWindowLayer.modifier(ReaderPanelInsetPadding()) }
+            .overlay { jumpHistoryLayer.modifier(ReaderPanelInsetPadding()) }
             // 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：挂在这里而不是 `body` 那条修饰符链上——那条早就到类型检查器的时限了
             .onReceive(NotificationCenter.default.publisher(for: .toggleScanAlign)) { _ in
                 if chrome.isKeyWindow { tab.toggleScanAlign() }
@@ -184,8 +188,11 @@ struct ReaderPane: View {
                            indicatorBottomInset: legacyScroller ? 0 : tabBarInset,
                            onDropFiles: onIngest)   // 拖进阅读区的 PDF 仍入库；图片由阅读区自己收成图片笔记
                 .overlay(alignment: .top) {
-                    if tab.isHashing { indexingBadge }
-                    else if let p = tab.scanAlignProgress { scanAlignBadge(p) }
+                    Group {
+                        if tab.isHashing { indexingBadge }
+                        else if let p = tab.scanAlignProgress { scanAlignBadge(p) }
+                    }
+                    .modifier(ReaderPanelInsetPadding())
                 }
         } else if let doc = tab.missingDoc {
             ContentUnavailableView {
@@ -196,6 +203,7 @@ struct ReaderPane: View {
                 Button(L("Re-link File…")) { onRelocate(doc) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .modifier(ReaderPanelInsetPadding())
         } else {
             // 撑满阅读区：不撑的话 ContentUnavailableView 只有内容那么大，挂在它底边的标签栏
             // 就跑到屏幕中间、还被压成窄条（2026-09-17 用户截图）。
@@ -206,6 +214,7 @@ struct ReaderPane: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .top) { if tab.isHashing { indexingBadge } }
+            .modifier(ReaderPanelInsetPadding())
         }
     }
 
@@ -343,5 +352,58 @@ struct ReaderPane: View {
     private func hashAlertMessage(_ m: DocTabModel.HashMismatch) -> Text {
         Text(String(format: L("The file “%@” was replaced on disk and no longer matches the version in your library. Link it as a new version of this document? (Notes are kept either way.)"),
                     (m.path as NSString).lastPathComponent))
+    }
+}
+
+/// 阅读区 + 两块内置面板的外壳：面板**滑入 / 滑出**（用户 2026-09-19）。
+///
+/// 🔴 **阅读区的外框始终铺满，面板开合不改它的尺寸**（2026-09-19 实测）：之前用 HStack 让阅读区变窄，
+/// 只要滚动视图的外框被 SwiftUI 改了宽度（不是拖窗口那种系统调整），内容区上方的玻璃工具栏按钮就会
+/// 被系统重新判断一次深浅，整几组变浅（录屏确认；拖窗口、开合 Inspector 都不会）。
+/// 现在面板浮在右侧叠层里滑动；它盖住的宽度通过环境值 `readerPanelInset` 告诉阅读区，
+/// 由阅读区自己按「全宽 − 这部分」适配页面（`PageStreamView`），外框不动。
+struct InlinePanelsColumn<Reader: View, Panels: View>: View {
+    let windowID: UUID
+    @ViewBuilder var reader: Reader
+    @ViewBuilder var panels: Panels
+
+    @ObservedObject private var agent = AgentPanelModel.shared
+    @ObservedObject private var consult = AIPanelModel.shared
+
+    static var slide: Animation { .smooth(duration: 0.28) }
+
+    private var agentOpen: Bool { agent.mode == .inline && agent.enabled && agent.isInlineOpen(windowID) }
+    private var consultOpen: Bool { consult.mode == .inline && consult.enabled && consult.isInlineOpen(windowID) }
+    /// 面板占掉的阅读区右侧宽度（= 开着的面板宽度之和）。开合时**一步到位、不带动画**：
+    /// 阅读区自己会在宽度稳定 0.2s 后适配一次；叠在阅读区上的标签栏等由 `ReaderPanelInsetPadding` 带动画让位。
+    private var inset: CGFloat {
+        (agentOpen ? CGFloat(agent.inlineWidth) : 0) + (consultOpen ? CGFloat(consult.inlineWidth) : 0)
+    }
+
+    var body: some View {
+        reader
+            .environment(\.readerPanelInset, inset)
+            .overlay(alignment: .trailing) {
+                HStack(spacing: 0) { panels }
+                    .animation(Self.slide, value: agentOpen)
+                    .animation(Self.slide, value: consultOpen)
+            }
+            .clipped()   // 滑入前 / 滑出后面板在右边界外，别画到窗口别处
+    }
+}
+
+extension EnvironmentValues {
+    /// 内置 AI 面板盖住的阅读区右侧宽度（`InlinePanelsColumn` 给，阅读区与叠在它上面的浮层各自让位）。
+    @Entry var readerPanelInset: CGFloat = 0
+}
+
+/// 阅读区上的浮层（查找条 / 标签栏 / 参考窗 / 跳转历史 / 空态）给右侧的内置面板让位，随面板滑动带动画。
+struct ReaderPanelInsetPadding: ViewModifier {
+    @Environment(\.readerPanelInset) private var inset
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.trailing, inset)
+            .animation(InlinePanelsColumn<EmptyView, EmptyView>.slide, value: inset)
     }
 }

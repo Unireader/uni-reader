@@ -28,6 +28,8 @@ struct PageStreamView: View {
 
     /// 全宽（含侧栏/Inspector 玻璃下延伸区）。与未遮宽对比可区分「窗口缩放」vs「侧栏开合」。
     @State var fullWidth: CGFloat = 0
+    /// 右侧内置 AI 面板盖住的宽度（`InlinePanelsColumn` 经环境给）。
+    @Environment(\.readerPanelInset) private var panelInset
 
     var body: some View {
         GeometryReader { geo in
@@ -37,7 +39,12 @@ struct PageStreamView: View {
                           interpEnabled: interpEnabled,
                           isActiveWindow: isActiveWindow,
                           unobSize: geo.size,
-                          fullWidth: fullWidth,
+                          // 🔴 内置 AI 面板开合 = 布局宽度变了（与拖窗口同一条路：`onChange(of: fullWidth)` →
+                          // 稳定 0.2s 后适配一次），但**滚动视图外框不变**——面板盖在右边，页面适配到左边剩下的那块。
+                          // 外框一变，玻璃工具栏按钮就会整几组变浅（2026-09-19 实测，见 `InlinePanelsColumn`）。
+                          // 与侧栏 / Inspector 不同：它们盖住页面而不推开（布局只看全宽）；AI 面板要推开页面。
+                          fullWidth: fullWidth > 0 ? max(1, fullWidth - panelInset) : 0,
+                          panelInset: panelInset,
                           indicatorTopInset: geo.safeAreaInsets.top,
                           bottomInset: bottomInset,
                           indicatorBottomInset: indicatorBottomInset,
@@ -65,7 +72,10 @@ struct ReaderSurface: View {
     let interpEnabled: Bool
     let isActiveWindow: Bool
     let unobSize: CGSize          // 未遮视口尺寸（fit 基准；GeometryReader 提供，与内容无关）
-    let fullWidth: CGFloat        // 全宽（第二个 GeometryReader；区分窗口缩放 vs 侧栏开合）
+    let fullWidth: CGFloat        // 全宽（第二个 GeometryReader；区分窗口缩放 vs 侧栏开合）；已减去 `panelInset`
+    /// 右侧内置 AI 面板盖住的宽度：滚动内容在布局宽之外**多出这一截**（外框不变，页面仍能横向滚到面板左边缘），
+    /// 竖滚动条也挪到面板左边。页面居中只在左边剩下的那块里算（`pageX` 用的 `contentW` 不含它）。
+    let panelInset: CGFloat
     let indicatorTopInset: CGFloat // 滚动条顶端下压量（避让玻璃工具栏；内容仍垫底）
     let bottomInset: CGFloat       // 底部标签栏占掉的高度（笔架要避让它；内容仍垫底）
     let indicatorBottomInset: CGFloat // 滚动条底部让位（占位式滚动条时为 0）
@@ -89,7 +99,7 @@ struct ReaderSurface: View {
     /// 有「待种」标记（`readerSeedPending`，切标签时才置）、几何已是真的、**fit 基准没变**
     /// （期间窗口或侧栏尺寸变过的话旧快照是错的）。
     init(session: DocSession, docKey: String, nightMode: Bool, interpEnabled: Bool,
-         isActiveWindow: Bool, unobSize: CGSize, fullWidth: CGFloat,
+         isActiveWindow: Bool, unobSize: CGSize, fullWidth: CGFloat, panelInset: CGFloat,
          indicatorTopInset: CGFloat, bottomInset: CGFloat, indicatorBottomInset: CGFloat,
          onDropFiles: @escaping ([URL]) -> Void = { _ in }) {
         _session = ObservedObject(wrappedValue: session)
@@ -99,6 +109,7 @@ struct ReaderSurface: View {
         self.isActiveWindow = isActiveWindow
         self.unobSize = unobSize
         self.fullWidth = fullWidth
+        self.panelInset = panelInset
         self.indicatorTopInset = indicatorTopInset
         self.bottomInset = bottomInset
         self.indicatorBottomInset = indicatorBottomInset
@@ -168,7 +179,7 @@ struct ReaderSurface: View {
         sc.pendingTries = 0
         sc.geo = GeoSnap(offsetX: off.x, offsetY: off.y,
                          containerW: unobSize.width, containerH: unobSize.height,
-                         contentW: max(avail, pw), contentH: lay.totalHeight * ds)
+                         contentW: max(avail, pw) + panelInset, contentH: lay.totalHeight * ds)
         sc.topDocY = offY / max(0.0001, ds)
         _scratch = State(initialValue: sc)
         ZoomProbe.mark("标签种子：p\(a.page)+\(String(format: "%.3f", a.frac)) → y=\(Int(offY))"
@@ -479,6 +490,7 @@ struct ReaderSurface: View {
         .defaultScrollAnchor(.topLeading)
         .contentMargins(.top, indicatorTopInset, for: .scrollIndicators)   // 滚动条不进工具栏区
         .contentMargins(.bottom, indicatorBottomInset, for: .scrollIndicators)   // 也不钻到底部标签栏底下
+        .contentMargins(.trailing, panelInset, for: .scrollIndicators)   // 竖滚动条挪到内置 AI 面板左边
         .scrollPosition($pos)
         .onScrollGeometryChange(for: GeoSnap.self) { g in
             GeoSnap(offsetX: g.contentOffset.x, offsetY: g.contentOffset.y,
@@ -560,7 +572,8 @@ struct ReaderSurface: View {
         // 手势另有 `session.openPadID == nil` 的显式门控兜底（见各 gesture）。
         .overlay { scratchPadLayer }
         // 笔架悬浮面板：挂在 ScrollView 本身（视口坐标系，不随内容滚动），跟 followTicker 同一个既有机制。
-        .overlay { GeometryReader { proxy in PenRackView(session: session, viewportSize: proxy.size, topInset: indicatorTopInset, bottomInset: bottomInset, isActiveWindow: isActiveWindow) } }
+        // 笔架只在面板左边那块里摆（右侧内置 AI 面板盖住的部分不算视口）
+        .overlay { GeometryReader { proxy in PenRackView(session: session, viewportSize: proxy.size, topInset: indicatorTopInset, bottomInset: bottomInset, isActiveWindow: isActiveWindow) }.padding(.trailing, panelInset) }
         // 只观察**别处**发来的锚点：本机滚动每帧发的 `"mac"` 锚点不写 `foreignAnchor`，
         // 于是滚动不再把整扇窗标脏（红线见 `DocSession.scrollAnchor`）。`incomingAnchor`
         // 本来就要 `origin != "mac"`，语义完全一致。
@@ -665,7 +678,8 @@ struct ReaderSurface: View {
                 lassoStrokeHalo  // 框选选中笔迹的光晕边缘（内容坐标，置于页元胞之上，随 ghost 变换）
                 lassoHighlight   // 框选选中项高亮框 + 四角缩放手柄 + 移动/缩放 ghost（内容坐标）
             }
-            .frame(width: contentW, height: contentH, alignment: .topLeading)
+            // 右边多出面板盖住的那一截（`panelInset`）：外框不变时仍能横向滚到让页面右缘停在面板左边缘
+            .frame(width: contentW + panelInset, height: contentH, alignment: .topLeading)
             .transaction { $0.animation = nil }   // 零闪烁纪律 4：阅读区无隐式动画
         } else {
             Color.clear.frame(width: 10, height: 10)
@@ -776,6 +790,7 @@ struct ReaderSurface: View {
             }
         }
         .animation(.easeOut(duration: 0.16), value: session.openPadID)
+        .padding(.trailing, panelInset)   // 给右侧内置 AI 面板让位（小地图在右下角，别被盖住）
     }
 
     /// 本机擦除的尺寸圆环（pointerTool == .ink 且 erase 模式）：跟随光标（`eraseCursor`，

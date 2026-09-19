@@ -40,6 +40,8 @@ struct SettingsView: View {
 
     @EnvironmentObject private var app: AppModel
     @ObservedObject private var updater = UpdaterService.shared
+    @ObservedObject private var agentPanel = AgentPanelModel.shared
+    @ObservedObject private var consultPanel = AIPanelModel.shared
 
     @AppStorage("autoNightMode") private var autoNightMode = false
     @AppStorage("scrollInterp") private var scrollInterp = true      // true=时间戳插值 / false=纯低通
@@ -156,6 +158,19 @@ struct SettingsView: View {
             }
 
             updatesSection
+
+            // 两种 AI 各自一个总开关（用户 2026-09-19）。关掉的那个：工具栏开关不显示、菜单项灰掉、
+            // 框选截图不再问要不要发给它；开着的面板 / 进程当场关掉。
+            Section {
+                Toggle(L("Agent Panel"), isOn: Binding(get: { agentPanel.enabled },
+                                                       set: { agentPanel.setEnabled($0) }))
+                Toggle(L("Web AI Panel"), isOn: Binding(get: { consultPanel.enabled },
+                                                        set: { consultPanel.setEnabled($0) }))
+            } header: {
+                Text(L("AI"))
+            } footer: {
+                Text(L("Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed."))
+            }
 
             // 工具栏的显隐/排序改走**系统那套**（`.toolbar(id: "reader")`，见 `ContentView.toolbarContent`），
             // 这里只留一句指路——设置页再放一份开关就是两套状态打架。

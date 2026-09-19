@@ -72,7 +72,16 @@
      这条完整路径（之前只能验证到菜单/设置页接进了 Sparkle，appcast 还没推上 GitHub 没法测到真的发现更新）。
 
 6. **Agent 面板后续批次**（`ACP-AGENT-PLAN.md §5`，A1 已于 2026-09-18 落地）：
-   - A2：附带页面截图（复用 `PageSnip`；Kimi 声明支持图片）+ 选中文字作为引用发给 Agent；
+   - A2：选中文字作为引用发给 Agent（页面截图部分 2026-09-19 已写：⌥ 拖松手选「Agent / 网页 AI」，已编译，**待用户实测**）；
+   - 2026-09-19 同批（已编译，**待用户实测**）：两块面板右下角的自绘气泡按钮去掉，改为阅读窗口工具栏上两枚开关
+     （`aux.agent` / `aux.consult`，与参考窗同款 `toggleButton`，老配置首次启动自动补插到平板 / 参考窗后面）；
+     设置 ›「通用」›「AI」两个独立开关（`agentEnabled` / `consultAIEnabled`，默认开）：关掉 = 工具栏按钮隐藏、
+     菜单项灰掉、⌥ 拖不再问它、划字右键不再有「问 AI」、开着的面板 / Agent 进程当场关掉；
+     内置面板滑入 / 滑出（`InlinePanelsColumn`：面板在叠层里平移；**阅读区外框不变**，面板盖住的宽度经环境值
+     `readerPanelInset` 交给阅读区按「全宽 − 它」适配——外框被 SwiftUI 改宽会让内容区上方几组玻璃工具栏按钮变浅，
+     录屏确认，拖窗口 / Inspector 不会；用户实测确认不再闪）；工具栏刷新改为值变了才写（`[TB]` 日志）；
+     面板里的收起按钮去掉；两块面板标题行统一为 `InlinePanelHeader`（固定高度 + 系统 `ControlGroup`）；
+     Agent 可直接选图片（附件按钮 / 拖到输入框，`AgentImageFile` 摆正 + 长边压到 2000）；
    - A3：块级 Markdown（标题 / 列表 / 代码块 / 公式）——现在只渲染行内语法。
    （A4 独立窗口吸附、两块内置面板改为与阅读区并排，2026-09-18 已做。）
 
@@ -152,6 +161,17 @@
   ③ **开关按内容哈希记**：同一篇文档的另一个版本文件要单独开，两个版本一开一关时批注坐标不通用；
   ④ 切换时**清掉这份内容的 OCR 结果**（按用户定的「不换算」），用网络 OCR 的书要重新花一次识别费用；
   ⑤ MCP 的文档 DTO 没带「是否开了对齐」字段（出图 / 命中框已按对齐后的页面给，Agent 用不着这个标记）。
+
+- **AI 面板放进 Inspector**（2026-09-19 用户提，「先记录，不做」——先把现有的独立窗口 / 内置两种形态打磨好）。
+  做法：Inspector（`ReaderWindowController` 里的 `NSSplitViewItem(inspectorWithViewController:)`）顶部分段加一页，
+  内容直接用 `AgentChatView`；对话由 `AgentPanelModel.chat(for:)` 持有，切页不丢。建议作为 Agent 面板的**第三种形态**
+  与「独立窗口」「内置」并列，咨询 AI 先不放。动手前要注意：
+  ① Inspector 一次只显示一页，看 Agent 时就看不到目录 / 笔记（内置面板现在可与 Inspector 同开）；
+  ② Inspector `maximumThickness` = 400，聊天偏窄，要调大（会连带信息 / 目录页也能拉宽）；
+  ③ 咨询 AI 是 WKWebView，切页取下再挂回有 2026-08-26 那类「同一网页挂两个视图」的崩溃风险，要做成常驻只隐藏；
+  ④ macOS 26 Inspector 是玻璃层，`AgentChatView` 里的 `.secondary` / `.borderless` 要按红线改 `.primary`；
+  ⑤ 「阅读区 | Agent | 咨询 AI」三列并排的能力会没有，只能二选一。
+  待用户定：新增形态还是替换内置形态；咨询 AI 要不要一起放。
 
 - **模式2 的划字（高亮/笔记）**（2026-09-04 用户拍板「先不做，留好方案」）。
   完整方案见 **`ANDROID-MODE2-PLAN.md §9`**：选定「平板本地判定、Mac 只执行动作」

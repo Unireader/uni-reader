@@ -181,6 +181,7 @@ final class AIPanelModel: ObservableObject {
     /// `AIPanelWindowController` 建，模型直接叫得动它（迁移前 `openWindow` 是 SwiftUI 的
     /// environment action，只有视图够得着，于是四处调用点各传一份闭包）。
     func present(window: UUID) {
+        guard enabled else { return }
         if mode == .inline {
             setActiveHost(.inline(window))
             setInlineOpen(true, for: window)
@@ -249,7 +250,25 @@ final class AIPanelModel: ObservableObject {
         inlineOpenDefault = d.object(forKey: Self.inlineOpenKey) as? Bool ?? false
         docked = d.object(forKey: Self.dockKey) as? Bool ?? true
         inlineWidth = min(max(d.object(forKey: Self.inlineWidthKey) as? Double ?? 400, 300), 900)
+        enabled = d.object(forKey: Self.enabledKey) as? Bool ?? true
         reloadConfig()
+    }
+
+    // MARK: - 总开关
+
+    private static let enabledKey = "consultAIEnabled"
+    /// 设置 ›「通用」›「AI」里的开关（用户 2026-09-19：两种 AI 各自一个开关）。关掉 = 工具栏开关藏起来、
+    /// 菜单项灰掉、框选截图 / 划字右键不再发给它、内置侧栏不显示。默认开。
+    @Published private(set) var enabled = true
+
+    func setEnabled(_ on: Bool) {
+        guard on != enabled else { return }
+        enabled = on
+        UserDefaults.standard.set(on, forKey: Self.enabledKey)
+        guard !on else { return }
+        // 关掉就当场放掉：浮窗关掉，所有网页（各窗口内置那几份）一并释放
+        AIPanelWindowController.closeIfOpen()
+        teardownAll()
     }
 
     // MARK: - 平台表（内置 + 外部覆盖）

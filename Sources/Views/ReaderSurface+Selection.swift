@@ -208,8 +208,10 @@ extension ReaderSurface {
                 }
             }
             Button(L("Copy")) { copySelectionToPasteboard() }
-            Button(String(format: L("Ask %@ About This"), aiProviderName)) { askAIAboutSelection() }
-                .disabled(session.documentId == nil)
+            if AIPanelModel.shared.enabled {   // 设置里关掉了网页 AI 就不给这一项
+                Button(String(format: L("Ask %@ About This"), aiProviderName)) { askAIAboutSelection() }
+                    .disabled(session.documentId == nil)
+            }
         } else {
             Button(L("Add Note Here")) { beginAddNoteAtCursor() }   // 点注解（锚到右键处页面坐标）
             Button(L("Copy Link")) { copyLinkAtCursor() }
