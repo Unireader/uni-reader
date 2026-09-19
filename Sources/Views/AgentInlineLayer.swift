@@ -59,8 +59,10 @@ struct AgentInlineLayer: View {
         }
         .frame(width: panel.inlineWidth)
         .frame(maxHeight: .infinity)
-        // 与阅读区并排：标准窗口底色 + 左侧分隔线（像系统的检查器栏）
-        .background(.background)
+        // 系统 Liquid Glass（与左侧边栏同一种材质，用户 2026-09-19：透明度对齐左侧边栏）+ 左侧分隔线；
+        // PDF 放大后伸到面板底下的部分透得出来。铺进安全区（工具栏底下也是它）。
+        // 🔴 玻璃底：文字 / 按钮一律显式 `.primary`，别用 `.secondary` / `.borderless`（红线）
+        .background { Color.clear.glassEffect(.regular, in: Rectangle()).ignoresSafeArea() }
         .overlay(alignment: .leading) { Divider() }
         .overlay(alignment: .leading) { resizeHandle }
     }

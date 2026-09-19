@@ -15,7 +15,8 @@ enum InlinePanelPart {
 /// 两块内置面板（Agent / 咨询 AI）**共用**的标题行（用户 2026-09-19：两边高度、图标样式要统一）。
 /// 左边图标 + 两行文字（标题 / 副标题），右边一组按钮用系统 `ControlGroup` 分组，高度固定——
 /// 副标题有没有都一样高，两块面板并排时标题行底边对齐。
-/// 🔴 面板底色是 `.background`（不是 material），文字仍显式 `.primary`（红线：别用 `.secondary`）。
+/// 🔴 面板底是系统 Liquid Glass（`.glassEffect(.regular)`，与左侧边栏同材质）：文字一律显式 `.primary`
+/// （红线：玻璃 / material 上 `.secondary` 几乎看不见）。
 struct InlinePanelHeader<Controls: View>: View {
     let icon: String
     let title: String
@@ -125,8 +126,8 @@ struct AIInlineLayer: View {
         }
         .frame(width: panel.inlineWidth)
         .frame(maxHeight: .infinity)
-        // 与阅读区并排（不再盖在上面）：标准窗口底色 + 左侧分隔线，像系统的检查器栏那样
-        .background(.background)
+        // 系统 Liquid Glass（与左侧边栏同一种材质，与 Agent 面板一致，用户 2026-09-19）+ 左侧分隔线
+        .background { Color.clear.glassEffect(.regular, in: Rectangle()).ignoresSafeArea() }
         .overlay(alignment: .leading) { Divider() }
         .overlay(alignment: .leading) { resizeHandle }
     }
