@@ -19,6 +19,9 @@ final class ReaderPaneController: NSViewController {
     var onIngest: ([URL]) -> Void = { _ in }
 
     private(set) var readerView: ReaderView?
+    /// 当前标签开的是 Markdown 笔记时的整篇编辑区（v15）。
+    /// 与 `readerView` 互斥——标签里 `docID` 与 `mdID` 本来就互斥。
+    private var mdView: MarkdownDocView?
     private let placeholder = PlaceholderView()
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
@@ -112,6 +115,17 @@ final class ReaderPaneController: NSViewController {
         chrome.$isKeyWindow
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.queueRefresh() }
+            .store(in: &bag)
+        // md 笔记改名 / 被删 / 新导入 → 侧栏与标签栏跟着变
+        workspace.$noteTrees
+            .map { $0.flatMap { $0.root.allNotes.map(\.id) } }
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.tabs.tabs.forEach { $0.closeMarkdownIfGone() }
+                self?.queueRefresh()
+            }
             .store(in: &bag)
         // 平板跟随的是哪个标签（`padSession` 是计算属性，跟着 AppModel 的变化走；刷新本来就合并到下一拍）
         app.objectWillChange
@@ -208,6 +222,38 @@ final class ReaderPaneController: NSViewController {
     func refresh() {
         bindSession()
         let s = session
+        // Markdown 笔记标签（v15）：换一篇就重建（旧那份离开窗口时自己补存）。
+        // 🔴 **不能在这里早退**——后面还有查找条 / 角标 / **标签栏**要刷，早退一次就是一个
+        // 「开了笔记之后标签栏不更新」的 bug。
+        if let ref = tab.noteRef {
+            readerView?.removeFromSuperview(); readerView = nil
+            placeholder.isHidden = true
+            if mdView?.ref != ref {
+                mdView?.flush()
+                mdView?.removeFromSuperview()
+                let v = MarkdownDocView(ref: ref, workspace: workspace)
+                v.onOpenNote = { [weak self] key in
+                    guard let r = NoteRef(key: key) else { return }
+                    self?.tabs.openMarkdown(r)
+                }
+                view.addSubview(v, positioned: .below, relativeTo: placeholder)
+                mdView = v
+                view.needsLayout = true
+            }
+        } else {
+            if mdView != nil {
+                mdView?.flush()
+                mdView?.removeFromSuperview()
+                mdView = nil
+            }
+            readerPart(s)
+        }
+        syncScratchPad()
+        finishRefresh(s)
+    }
+
+    /// 阅读区本体（有 PDF 就建 / 复用 `ReaderView`，没有就是占位）。
+    private func readerPart(_ s: DocSession) {
         // 阅读区：会话 / 显示身份（扫描页对齐一切换就变）/ PDF 变了才重建
         if s.pdf != nil {
             let key = s.displayKey.isEmpty ? "untitled" : s.displayKey
@@ -232,7 +278,10 @@ final class ReaderPaneController: NSViewController {
                 placeholder.set(symbol: "doc.richtext", title: L("No Document"), detail: L("Open a PDF to start reading."))
             }
         }
-        syncScratchPad()
+    }
+
+    /// 阅读区 / 笔记区之外的那一堆（笔架 / 查找条 / 角标 / 标签栏…），两种内容都要跑。
+    private func finishRefresh(_ s: DocSession) {
         if readerView != nil {
             if let rack = penRack {
                 rack.bind(s)
@@ -343,6 +392,10 @@ final class ReaderPaneController: NSViewController {
                           height: max(0, b.height - si.top - si.bottom))
         placeholder.frame = safe
         floating.frame = safe
+        if let md = mdView {
+            md.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
+            md.topInset = si.top
+        }
         if let pad = scratchPad {
             pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧 Inspector 让位
             pad.topInset = si.top

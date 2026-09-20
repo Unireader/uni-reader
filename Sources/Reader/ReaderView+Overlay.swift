@@ -199,6 +199,9 @@ extension ReaderView {
     private func noteBubble(_ id: UUID) -> NoteBubbleNSView {
         if let v = overlay.noteBubbles[id] { return v }
         let v = NoteBubbleNSView(frame: .zero)
+        v.wiki = workspace.wiki
+        v.onOpenNote = { id in NotificationCenter.default.post(name: .openMarkdownNote, object: nil,
+                                                              userInfo: ["id": id]) }
         overlay.bubbleLayerView.addSubview(v)
         overlay.noteBubbles[id] = v
         return v
@@ -207,6 +210,7 @@ extension ReaderView {
     private func imageBubble(_ id: UUID) -> ImageBubbleNSView {
         if let v = overlay.imageBubbles[id] { return v }
         let v = ImageBubbleNSView(frame: .zero)
+        v.wiki = workspace.wiki
         overlay.bubbleLayerView.addSubview(v)
         overlay.imageBubbles[id] = v
         return v

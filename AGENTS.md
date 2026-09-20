@@ -97,8 +97,11 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 - `IMAGE-NOTE-PLAN.md` — 图片笔记（note kind=6 + `image` 表 v13 + `Images/`）：内容寻址、引用计数数出来、待删除 30 天、⌥⇧ 拖节选、离线镜像 additive 通道（2026-09-13 Mac 端已落地）
 - `SCAN-ALIGN-PLAN.md` — 扫描页对齐（每页旋转 + 平移，「视图」菜单「对齐扫描页」开关，按内容哈希记）：**开着时对齐后的页面就是页面坐标**；变换公式 / `page_align` 表（v14）/ 显示身份 `displayKey` / 离线镜像通道是三端契约（2026-09-17 Mac + 安卓模式1 落地）
 - `URL-SCHEME-PLAN.md` — `unireader://open?ws=&doc=&page=&frac=&note=` 链接（从 Obsidian / Agent 写的清单点回 App 的某页某条笔记）：参数契约、解析顺序、与 MCP 共用的 `showDocument`；MCP 的文档 / 批注 / 位置 DTO 都带现成 `link`（2026-09-14 落地，用户实测通过）。**导出到 Obsidian 不做进 App**，由 Agent 按 `skills/unireader-obsidian-export/SKILL.md` 做
-- `ACP-AGENT-PLAN.md` — Agent 面板（ACP）：不自己做 Agent，把本机 `kimi acp` 当子进程拉起、App 只做界面、能力全走已有 MCP；客户端 = 自家 fork `Unireader/swift-acp`；会话不落库（历史由 Agent 按工作目录保存）；工作目录 = `.unrd` 包的上一级；与「咨询 AI」（网页）并存、各管各的（2026-09-18 拍板并落地第一批）
-- **`android/AGENTS.md`** — 安卓端（两种模式）的构建、结构、红线与坑；**动安卓代码只需读它 + 上面的跨端契约**
+- **`MARKDOWN-NOTES-PLAN.md`** — 工作区里的 Markdown 笔记（Obsidian 格式，2026-09-20 拍板并落地，当天改版三次）：
+  **两种源**——内建 `Notes/`（导入 = 整个目录复制进来）与**引用的外部目录**（不复制、就地编辑，
+  列表存 `meta.note_sources`，**不进库也不同步**）；侧栏按**真实目录层级多级展开**；标签页里编辑、自动保存。
+  🔴 **谁都不许改笔记正文**（用户原话「不要改 `[[]]` 现有的哪怕不兼容也不要改」）：`[[…]]` 按**名字**解析，
+  改名 / 挪目录就断链，这是明确接受的代价。`md_doc`（v15）只是内建源的**扫描缓存**，真源永远是文件
 
 ### 子目录可以自带 AGENTS.md（`android/` 就是这么做的）
 
@@ -144,7 +147,22 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 - `Sources/Reader/` — 阅读区（AppKit）：`ReaderView`（主类：输入量、状态、实化页、图层池）+ 扩展 `Render`（出图调度 / 贴片 / 夜间）、`Zoom`（⌘滚轮 / 捏合 / 缩放动画 / 换基准）、`Follow`（滚动回报 + 平板跟随，`ScrollFollower` 由 `NSView.displayLink` 驱动）、`Canvas`（画板页边）、`Marks`（坐标换算 + 标记层刷新）、`Overlay`（图钉 / 气泡 / 橡皮圈 / 提示条）、`Input`（鼠标按指针工具分派 + 键盘 + 拖放）、`TextSelect`、`Lasso`、`Actions`（批注 / 高亮 / 图片笔记 / 书签 / 草稿纸入口）、`Menus`（右键菜单与高亮气泡）、`Snip`（⌥ 拖截图）；`ReaderScrollView`（居中 clip view + ⌘滚轮 + 翻转文档视图）、`ReaderLayers` / `PageMarksLayer`（每页图层树，全部无隐式动画）、`InkRenderCG`（四种笔型的 CoreGraphics 画法）、`ReaderSupportTypes`（选择 / 框选 / 批注草稿 / 菜单命令通知等纯数据）。子目录：`Pane/`（阅读窗格 `ReaderPaneController`：阅读区 + 查找条 + 标签栏 + 笔架 + 草稿纸 + 浮层的装配与摆位）、`Ref/`（参考窗页流）、`Rack/`（笔架 + 图层面板）、`Scratch/`（草稿纸）。本机指针工具 = `AppModel.pointerTool`（textSelect/ink/lasso/snip，设备级全局，笔架切换）
 - `Sources/Window/` — 窗口壳与其余界面：`ReaderWindowController`（三段分栏 + `NSToolbar`）、`Sidebar/`、`Inspector/`（含「Agent」页；🔴 **真分栏、不叠在阅读区上**——`contentItem.automaticallyAdjustsSafeAreaInsets` 保持默认 `false`，工具栏必须带 `.inspectorTrackingSeparator`，详见 `APPKIT-REWRITE-PLAN.md §9.2`）、`AI/`（Agent 对话视图 + 网页 AI 面板；网页 AI 2026-09-19 起停用，`AIPanelModel.available = false`，代码留着）、`Floating/`（浮在阅读区上的卡片：参考窗覆盖层、跳转历史）、`Panels/`（工具栏弹出面板、选文档弹窗）、`Sheets/`（批注 / 图片笔记编辑、看大图、类型管理、离线镜像两张面板）；设置窗壳 `SettingsWindowController` / `SettingsTabController` 在 `AuxWindows.swift`
 - `Sources/Settings/` — 设置窗六页的 SwiftUI 表单（`SettingsView` 含快捷键页、`MCPSettingsView`），允许 SwiftUI 的两处之一
-- `Sources/Markdown/` — `MarkdownNoteEditor.swift`：Markdown 引擎的 SwiftUI 包装、公式渲染器 `NoteLatexRenderer`、`NoteLinkClick`（允许 SwiftUI 的另一处）
+- `Sources/Markdown/` — `MarkdownNoteEditor.swift`：Markdown 引擎的 SwiftUI 包装、公式渲染器 `NoteLatexRenderer`、`NoteLinkClick`（允许 SwiftUI 的另一处）；
+  `WorkspaceWikiIndex.swift`（v15）= 引擎的两个服务：`[[…]]` 解析（`WikiLinkResolver`）+ `![[…]]` 图片（`EmbeddedImageProvider`）。
+  🔴 **一个工作区一个**（`WorkspaceManager.wiki`，`refreshNotes()` 里换快照）——名字只在自己工作区里有意义，做成全局单例
+  会把 A 工作区的 `[[极限]]` 连到 B 工作区同名那篇去。编辑器 / 气泡 / 整篇编辑区三处都由上层把它传进去；
+  `MarkdownDocEditor.swift` 是整篇笔记的编辑区（允许 SwiftUI 的第三处）
+- Markdown 笔记（`MARKDOWN-NOTES-PLAN.md`）：纯逻辑在 `Sources/App/` —— `NoteTree`（`NoteRoot` 两种源 /
+  `NoteRef` = 源+相对路径 = **笔记的身份** / `NoteFolder` 多级树 / `NoteIndex` 按名字解析）+
+  `MarkdownLink`（**只扫描不改写**：保护区、`[[…]]` 目标名、图片引用、frontmatter 别名）+
+  `MarkdownImport`（路径与文件工具 + 整目录复制）。执行层 `WorkspaceManager+Markdown`
+  （源管理 / 扫描与库对账 / 读写 / 导入）。测试 `spike/markdown-link-test.swift`（66 项）
+- Markdown 笔记的界面：标签页里开一篇 = `DocTabModel.noteRef`（🔴 **与 `docID` 互斥**，开笔记前先
+  `select(nil)`——所有按 PDF 记账的地方看到的就是一个空标签，一行都不用改；代价是 md 标签不跨启动恢复）；
+  窗格里的 `MarkdownDocView`（`Sources/Window/Markdown/`）托管 `MarkdownDocEditor`，**自动保存三条**：
+  停手 0.8 秒 / 视图离开窗口 / App 退出。存正文**刻意不调 `refreshNotes()`**（打字时每 0.8 秒重扫一遍目录
+  + 侧栏整棵树重建，代价完全不对等）。侧栏在 `SidebarNode` 的 `md` / `noteFolder` / `noteSection` 三个 case，
+  选中键 `rowID`（`"md:"+NoteRef.key`，与 PDF 的 `docID` 区分开）
 - 关键坑：退出收缩逻辑用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating` 守卫（窗口在 ⌘Q 时也会走关闭路径）。
 - 关键坑（`@Published` 在 `willSet` 发出）：AppKit 这边用 Combine 订阅模型时，回调里读到的还是旧值——一律 `.receive(on: DispatchQueue.main)` 推到下一拍再读，多个来源的刷新合并成一次（`queueRefresh` 那种写法）。
 - OCR 文本层：消费方（选择/复制/⌘A/OCR 搜索/分组/调试上色）一律走 `DocSession.ocrVisibleRuns(page:)`——它已滤掉扫描件的平铺水印块（`OCRWatermark`，几何 + 跨页重复判定，不认具体文字）；`ocrRuns` 是真源，只给落库与建指纹用，**别直接消费**（`ocrGroups` 的下标是按可见行算的，混用即错位）。

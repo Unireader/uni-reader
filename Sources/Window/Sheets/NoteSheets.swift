@@ -18,8 +18,10 @@ private struct MarkdownEditorRoot: View {
     @ObservedObject var box: MarkdownTextBox
     let documentId: String
     let placeholder: String
+    /// 本工作区的 `[[…]]` 服务（`MARKDOWN-NOTES-PLAN.md §3`）；nil = 不认 wiki 链接。
+    let wiki: WorkspaceWikiIndex?
     var body: some View {
-        MarkdownNoteEditor(text: $box.text, documentId: documentId, placeholder: placeholder)
+        MarkdownNoteEditor(text: $box.text, documentId: documentId, placeholder: placeholder, wiki: wiki)
     }
 }
 
@@ -30,9 +32,10 @@ final class MarkdownEditorHost: NSView {
 
     var text: String { box.text }
 
-    init(text: String, documentId: String, placeholder: String) {
+    init(text: String, documentId: String, placeholder: String, wiki: WorkspaceWikiIndex? = nil) {
         box = MarkdownTextBox(text)
-        host = NSHostingView(rootView: MarkdownEditorRoot(box: box, documentId: documentId, placeholder: placeholder))
+        host = NSHostingView(rootView: MarkdownEditorRoot(box: box, documentId: documentId,
+                                                          placeholder: placeholder, wiki: wiki))
         host.sizingOptions = []   // 尺寸归外面给的 frame，别让 SwiftUI 的理想尺寸反过来撑窗口
         super.init(frame: .zero)
         addSubview(host)
@@ -134,6 +137,8 @@ final class NoteEditorController: StackPanelController {
         var initialStyle: HighlightStyle = .fill
         var hasRects = true
         var documentId = "note-draft"
+        /// 本工作区的 `[[…]]` 服务；不给就是老行为（wiki 链接原样显示）。
+        var wiki: WorkspaceWikiIndex?
         var noteTypes: [NoteType]
         var usageCount: (UUID) -> Int
         var saveTitle = L("Save")
@@ -195,7 +200,8 @@ final class NoteEditorController: StackPanelController {
         }
 
         // 编辑框：sheet 满宽 × 340（原来 380×170，写几行公式就挤得没法输入，用户 2026-09-16 报）
-        editor = MarkdownEditorHost(text: cfg.initialText, documentId: cfg.documentId, placeholder: L("Write a note… (Markdown)"))
+        editor = MarkdownEditorHost(text: cfg.initialText, documentId: cfg.documentId,
+                                    placeholder: L("Write a note… (Markdown)"), wiki: cfg.wiki)
         stack.addArrangedSubview(SheetKit.fixed(editor, width: inner, height: 340))
 
         if cfg.hasRects {
@@ -516,15 +522,18 @@ final class ImageNoteEditorController: StackPanelController {
     private let onDelete: () -> Void
     private let onView: () -> Void
     private let onCancel: () -> Void
+    private let wiki: WorkspaceWikiIndex?
     private var editor: MarkdownEditorHost!
     private var displayControl: NSSegmentedControl!
     private let preview = NSImageView()
     private var bag = Set<AnyCancellable>()
 
-    init(note: ImageNote, info: (url: URL, size: CGSize)?, onSave: @escaping (String, NoteDisplay) -> Void,
+    init(note: ImageNote, info: (url: URL, size: CGSize)?, wiki: WorkspaceWikiIndex? = nil,
+         onSave: @escaping (String, NoteDisplay) -> Void,
          onDelete: @escaping () -> Void, onView: @escaping () -> Void, onCancel: @escaping () -> Void) {
         self.note = note
         self.info = info
+        self.wiki = wiki
         self.onSave = onSave
         self.onDelete = onDelete
         self.onView = onView
@@ -550,7 +559,8 @@ final class ImageNoteEditorController: StackPanelController {
         refreshPreview()
         ImageThumbCache.shared.objectWillChange.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshPreview() }.store(in: &bag)
-        editor = MarkdownEditorHost(text: note.caption, documentId: note.id.uuidString, placeholder: L("Caption… (Markdown)"))
+        editor = MarkdownEditorHost(text: note.caption, documentId: note.id.uuidString,
+                                    placeholder: L("Caption… (Markdown)"), wiki: wiki)
         stack.addArrangedSubview(SheetKit.fixed(editor, width: 380, height: 100))
         displayControl = SheetKit.displayControl(note.display)
         stack.addArrangedSubview(SheetKit.hrow([SheetKit.secondary(L("Show note")), displayControl, SheetKit.spacer()], width: inner))

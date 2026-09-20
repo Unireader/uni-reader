@@ -30,6 +30,18 @@ check(full?.page == 12, "page 对外 1 起原样保留")
 check(full?.frac == 0.43, "frac")
 check(full?.noteId == UUID(uuidString: "6BA7B810-9DAD-11D1-80B4-00C04FD430C8"), "note → UUID")
 check(parse("unireader://open?note=6ba7b810-9dad-11d1-80b4-00c04fd430c8")?.noteId?.uuidString == "6BA7B810-9DAD-11D1-80B4-00C04FD430C8", "note 小写也认")
+
+// Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md §4.4`）
+let md = parse("unireader://open?ws=%2FVolumes%2FT7%2F%E8%AF%BB%E4%B9%A6.unrd&md=M1")
+check(md?.markdownId == "M1", "md → 笔记 id")
+check(md?.documentId == nil, "只给 md 时没有 doc")
+check(md?.isEmpty == false, "只有 md 也算有定位参数")
+check(parse("unireader://open")?.markdownId == nil, "光杆链接没有 md")
+var mdLink = DeepLink()
+mdLink.workspacePath = "/Volumes/T7/读书.unrd"
+mdLink.markdownId = "M1"
+check((try? DeepLink.parse(mdLink.url)) == mdLink, "md 链接 生成 → 解析 往返一致")
+check(mdLink.absoluteString.contains("&md=M1"), "生成的链接里带 md 参数")
 check(parse("unireader://open?PAGE=3&Doc=x")?.page == 3 && parse("unireader://open?PAGE=3&Doc=x")?.documentId == "x", "参数名大小写不敏感")
 check(parse("unireader://open?doc=x&foo=bar&page=2")?.page == 2, "未知参数忽略")
 check(parse("unireader://open?doc=&page=")?.isEmpty == true, "空值当没给")

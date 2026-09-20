@@ -147,19 +147,56 @@ extension MarkdownEditorConfiguration {
 /// 按住卡片任意处拖 = 移动卡片），引擎自己的点链接也就收不到了。卡片的手势认出「单击」后调这里：
 /// 按鼠标事件在窗口里的位置找到那块只读正文（非可编辑的 `NSTextView`），看点中的字上有没有 `.link`。
 enum NoteLinkClick {
-    /// - Returns: 真的打开了一个链接。
-    @discardableResult
-    static func open(at event: NSEvent?) -> Bool {
-        guard let url = url(at: event) else { return false }
-        NSWorkspace.shared.open(url)
-        return true
+    /// 点中了什么。
+    enum Hit: Equatable {
+        /// 普通链接（http / unireader…）。
+        case url(URL)
+        /// 气泡里的 `[[…]]`：引擎把目标笔记 id 放在 `.link` 里（v15）。
+        case note(String)
     }
 
-    /// 这个鼠标事件落在哪个链接上（没有 = nil）。
+    /// - Returns: 真的打开了一个链接。
+    /// - Parameter openNote: 点中 `[[…]]` 时调；不给就当没点中（如参考窗那种只读场景）。
+    @discardableResult
+    static func open(at event: NSEvent?, openNote: ((String) -> Void)? = nil) -> Bool {
+        switch hit(at: event) {
+        case .url(let u):
+            NSWorkspace.shared.open(u)
+            return true
+        case .note(let id):
+            guard let openNote else { return false }
+            openNote(id)
+            return true
+        case nil:
+            return false
+        }
+    }
+
+    /// 这个鼠标事件落在什么上（没有 = nil）。
+    ///
+    /// 🔴 引擎给 `[[…]]` 写的 `.link` **是一串裸 id，不是 URL**（见
+    /// `MarkdownASTStyler.styleWikiLink`）。`URL(string:)` 对裸 UUID 也能造出一个相对 URL，
+    /// 交给 `NSWorkspace.open` 就是一次静默失败——所以这里先按「有没有 scheme」分开。
+    static func hit(at event: NSEvent?) -> Hit? {
+        guard let raw = rawLink(at: event) else { return nil }
+        if let u = raw as? URL { return .url(u) }
+        guard let s = raw as? String else { return nil }
+        if let u = URL(string: s), u.scheme != nil { return .url(u) }
+        return .note(s)
+    }
+
+    /// 兼容旧叫法：只要 URL 形态的那一种。
     static func url(at event: NSEvent?) -> URL? {
+        if case .url(let u) = hit(at: event) { return u }
+        return nil
+    }
+
+    /// `.link` 属性的原值（URL 或 String）。
+    private static func rawLink(at event: NSEvent?) -> Any? {
         guard let e = event, let window = e.window, let root = window.contentView,
               let tv = readerTextView(in: root, at: e.locationInWindow),
               let storage = tv.textStorage, storage.length > 0 else { return nil }
+        // 以下与从前一致，只是不再强行拆成 URL
         let p = tv.convert(e.locationInWindow, from: nil)
         let screenP = window.convertPoint(toScreen: e.locationInWindow)
         // 插入点下标：点在字的右半边会给出后一个位置，所以前后两个字都核对——字形框真的罩住鼠标才算点中
@@ -169,7 +206,7 @@ enum NoteLinkClick {
             let r = tv.firstRect(forCharacterRange: NSRange(location: idx, length: 1), actualRange: nil)
             guard r.insetBy(dx: -1, dy: -1).contains(screenP),
                   let link = storage.attribute(.link, at: idx, effectiveRange: nil) else { continue }
-            return (link as? URL) ?? (link as? String).flatMap { URL(string: $0) }
+            return link
         }
         return nil
     }
@@ -200,6 +237,8 @@ struct MarkdownNoteEditor: View {
     @Binding var text: String
     let documentId: String
     var placeholder: String = ""
+    /// 本工作区的 `[[…]]` 索引与图片服务（`WorkspaceWikiIndex`）。nil = 不认 wiki 链接（引擎的无操作默认）。
+    var wiki: WorkspaceWikiIndex?
     /// 正文字号：设置 → 阅读 →「编辑框字号」（默认 13；气泡默认 12，编辑时略大一点看得清）。
     @AppStorage(NoteBubble.editorFontSizeKey) private var fontSizeSetting = Int(NoteBubble.defaultEditorFont)
     private var fontSize: CGFloat { CGFloat(fontSizeSetting) }
@@ -210,7 +249,7 @@ struct MarkdownNoteEditor: View {
 
     /// 引擎配置：小编辑框，不要「舒适的底部留白」（那是给整页长文档设计的，160pt 高的框里会空出一半），
     /// 只留竖滚动条；文字与边框之间留 6pt。
-    static let configuration: MarkdownEditorConfiguration = {
+    static let baseConfiguration: MarkdownEditorConfiguration = {
         var c = MarkdownEditorConfiguration.default
         c.overscroll = OverscrollPolicy(percent: 0, maxPoints: 8, minPoints: 8)
         c.scrollers = .vertical
@@ -218,6 +257,13 @@ struct MarkdownNoteEditor: View {
         Self.applyNoteTypography(&c)
         return c
     }()
+
+    /// 接上本工作区的 `[[…]]` 服务。`services` 里装的是存在类型，换一个只是改两个字段，不必缓存。
+    static func configuration(wiki: WorkspaceWikiIndex?) -> MarkdownEditorConfiguration {
+        var c = baseConfiguration
+        if let wiki { c.services.wikiLinks = wiki; c.services.images = wiki }
+        return c
+    }
 
     /// 笔记的排版尺度与公式渲染（编辑器与气泡共用）：引擎默认是给整页文档定的——一级标题 2 倍字号、
     /// 列表每级缩进 27.5pt，放进几行字的笔记里太夸张。标题只比正文大一点、缩进收到 16pt。
@@ -232,7 +278,7 @@ struct MarkdownNoteEditor: View {
     var body: some View {
         NoteLatexRenderer.shared.registerBlocks(in: text)   // 打开时已有的块公式；之后新敲的由渲染器现查（见 `NoteLatexRenderer`）
         return NativeTextViewWrapper(text: $text,
-                                     configuration: Self.configuration.fittingLatex(to: containerWidth),
+                                     configuration: Self.configuration(wiki: wiki).fittingLatex(to: containerWidth),
                                      fontSize: fontSize,
                                      documentId: documentId,
                                      placeholder: placeholder.isEmpty ? nil : NSAttributedString(
@@ -302,8 +348,10 @@ struct MarkdownNoteReader: View {
     let width: CGFloat
     /// 引擎按它分状态（撤销栈/待替换）；同一条笔记在编辑器里是笔记 id，气泡里用 `<id>-bubble` 错开。
     let documentId: String
+    /// 同 `MarkdownNoteEditor.wiki`。气泡里 `[[…]]` 要显示成当前标题、点得动，就得给它。
+    var wiki: WorkspaceWikiIndex?
 
-    static let configuration: MarkdownEditorConfiguration = {
+    static let baseConfiguration: MarkdownEditorConfiguration = {
         var c = MarkdownEditorConfiguration.default
         c.theme = MarkdownNoteEditor.readerTheme
         c.heightBehavior = .fitsContent
@@ -316,10 +364,16 @@ struct MarkdownNoteReader: View {
         return c
     }()
 
+    static func configuration(wiki: WorkspaceWikiIndex?) -> MarkdownEditorConfiguration {
+        var c = baseConfiguration
+        if let wiki { c.services.wikiLinks = wiki; c.services.images = wiki }
+        return c
+    }
+
     var body: some View {
         NoteLatexRenderer.shared.registerBlocks(in: text)   // 块公式按块排版：须先于引擎排版登记（见 `NoteLatexRenderer`）
         return NativeTextViewWrapper(text: .constant(text),
-                                     configuration: Self.configuration.fittingLatex(to: width),
+                                     configuration: Self.configuration(wiki: wiki).fittingLatex(to: width),
                                      fontSize: (fontSize * 2).rounded() / 2,
                                      documentId: documentId,
                                      isEditable: false)

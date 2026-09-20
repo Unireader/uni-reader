@@ -343,6 +343,16 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .store(in: &bag)
     }
 
+    /// 同上，但把通知本体也交给回调（带 `userInfo` 的那几条）。
+    private func on(_ name: Notification.Name, _ action: @escaping (ReaderWindowController, Notification) -> Void) {
+        NotificationCenter.default.publisher(for: name)
+            .sink { [weak self] note in
+                guard let self, self.isKey else { return }
+                action(self, note)
+            }
+            .store(in: &bag)
+    }
+
     private func observeMenuCommands() {
         on(.openPDFRequested) { $0.openPDF() }
         on(.newWindowRequested) { c in
@@ -350,6 +360,14 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                 workspacePath: c.workspace.folder?.standardizedFileURL.path, docId: nil)
         }
         on(.newTabRequested) { $0.tabs.docPickerPresented = true }
+        on(.newMarkdownNoteRequested) { $0.newMarkdownNote() }
+        on(.importMarkdownRequested) { $0.importMarkdownFolder() }
+        on(.openMarkdownNote) { c, note in
+            guard let key = note.userInfo?["id"] as? String,
+                  let item = c.workspace.note(key: key) else { return }
+            c.tabs.openMarkdown(item.ref)
+        }
+        on(.referenceMarkdownRequested) { $0.referenceMarkdownFolder() }
         on(.closeTabRequested) { $0.closeTabOrWindow() }
         on(.closeWindowRequested) { $0.window?.performClose(nil) }
         on(.nextTabRequested) { $0.tabs.activate(offset: 1) }
@@ -521,6 +539,80 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
         ingest(urls: panel.urls)
+    }
+
+    // MARK: - Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md`）
+
+    /// 新建一篇空笔记并在当前窗口打开。
+    func newMarkdownNote() {
+        guard let ref = workspace.createNote(title: L("Untitled Note")) else {
+            if let e = workspace.lastError { presentError(e) }
+            return
+        }
+        tabs.openMarkdown(ref)
+    }
+
+    /// 引用一个**外部**笔记目录：不复制，直接在那儿读写（2026-09-20 用户要的「引用模式」）。
+    func referenceMarkdownFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = L("Reference")
+        panel.message = L("Choose a notes folder to edit in place. UniReader does not copy or move it.")
+        guard panel.runModal() == .OK, let dir = panel.url else { return }
+        guard workspace.addReferencedNotesFolder(dir) != nil else {
+            presentError(L("That folder is already inside this workspace."))
+            return
+        }
+    }
+
+    /// 把一个现有笔记目录搬进工作区（**复制**，原目录一个字节不动）。
+    ///
+    /// 同步跑（要读一遍全部 md + 复制附件），跑完弹一张报告：导进来几篇 / 几张图 /
+    /// 改写了几条链接 / 哪些没解析出来。**静默跳过是绝对不行的**（同离线镜像那条规矩）。
+    func importMarkdownFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = L("Import")
+        panel.message = L("Choose a folder of Markdown notes (an Obsidian vault or a folder inside one).")
+        guard panel.runModal() == .OK, let dir = panel.url else { return }
+        do {
+            let report = try workspace.importMarkdown(from: dir)
+            presentImportReport(report)
+        } catch {
+            presentError(error.localizedDescription)
+        }
+    }
+
+    private func presentImportReport(_ r: WorkspaceManager.MarkdownImportReport) {
+        let a = NSAlert()
+        if r.isEmpty {
+            a.messageText = L("No notes found")
+            a.informativeText = L("That folder has no Markdown files in it.")
+        } else {
+            a.messageText = String(format: L("Imported %d notes"), r.notes)
+            var lines = [String(format: L("Copied into Notes/%@ — %d files in all, nothing was changed."),
+                                r.folderName, r.files)]
+            if !r.unresolved.isEmpty {
+                lines.append(String(format: L("%d [[links]] point at notes that are not here: %@"),
+                                    r.unresolved.count, r.unresolved.prefix(8).joined(separator: "、")))
+            }
+            for f in r.failed.prefix(8) { lines.append("⚠︎ \(f.path) — \(f.reason)") }
+            a.informativeText = lines.joined(separator: "\n")
+        }
+        a.addButton(withTitle: L("OK"))
+        a.runModal()
+    }
+
+    private func presentError(_ text: String) {
+        let a = NSAlert()
+        a.messageText = L("Could not complete that")
+        a.informativeText = text
+        a.addButton(withTitle: L("OK"))
+        a.runModal()
     }
 
     /// 导入一批 PDF（打开面板 / 拖拽都走这里）：逐个算 hash 入库，选中最后一个。

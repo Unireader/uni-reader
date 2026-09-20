@@ -10,10 +10,13 @@ struct BubbleMarkdownHost: View {
     let fontSize: CGFloat
     let width: CGFloat
     let documentId: String
+    /// 本工作区的 `[[…]]` 服务（`MARKDOWN-NOTES-PLAN.md §3`）：气泡里的 wiki 链接要显示成**当前标题**，
+    /// 没有它就会露出 `[[名字|<uuid>]]` 这个存储形态。由 `ReaderView+Overlay` 建气泡时塞进来。
+    var wiki: WorkspaceWikiIndex?
     let onHeight: (CGFloat) -> Void
 
     var body: some View {
-        MarkdownNoteReader(text: text, fontSize: fontSize, width: width, documentId: documentId)
+        MarkdownNoteReader(text: text, fontSize: fontSize, width: width, documentId: documentId, wiki: wiki)
             .frame(width: width)
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onHeight($0) }
@@ -194,11 +197,15 @@ class ReaderCardView: NSView {
 
 /// 一条文字笔记展开后的气泡（排版规则同 SwiftUI 版 `NoteBubbleView`，数全从 `NoteBubble` 来）。
 final class NoteBubbleNSView: ReaderCardView {
+    /// 见 `BubbleMarkdownHost.wiki`。建视图时由阅读区设一次。
+    var wiki: WorkspaceWikiIndex?
     private(set) var text = ""
     private var documentId = ""
     private var hasEdit = false
     var onEdit: (() -> Void)?
     var onCopyLink: (() -> Void)?
+    /// 正文里的 `[[…]]` 被点中（参数 = 目标 md 笔记 id）。由阅读区接到标签上。
+    var onOpenNote: ((String) -> Void)?
 
     private let scroll = BubbleScrollView()
     private let body = FlippedView()
@@ -265,7 +272,7 @@ final class NoteBubbleNSView: ReaderCardView {
         if key != hostKey {
             hostKey = key
             let root = BubbleMarkdownHost(text: text, fontSize: m.fs, width: textW,
-                                          documentId: "\(documentId)-bubble") { [weak self] hgt in
+                                          documentId: "\(documentId)-bubble", wiki: wiki) { [weak self] hgt in
                 guard let self, abs((self.bodyH ?? 0) - hgt) > 0.5 else { return }
                 self.bodyH = hgt
                 self.relayout()
@@ -292,7 +299,8 @@ final class NoteBubbleNSView: ReaderCardView {
     }
 
     override func clicked(at p: CGPoint, event: NSEvent) {
-        NoteLinkClick.open(at: event)   // 正文不吃鼠标：链接由卡片的单击去开
+        // 正文不吃鼠标：链接由卡片的单击去开。`[[…]]` 指的是本工作区的 md 笔记（v15）。
+        NoteLinkClick.open(at: event, openNote: { [weak self] id in self?.onOpenNote?(id) })
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -318,6 +326,8 @@ final class NoteBubbleNSView: ReaderCardView {
 /// 图片笔记展开后的气泡：缩略图 + 说明（排版同 SwiftUI 版 `ImageBubbleView`，尺寸口径 `ImageBubble.size`）。
 /// 没有铅笔；单击缩略图看原图；右键「查看原图 / 编辑… / 删除」。`onView == nil` = 悬停预览（不挂菜单、不能拖）。
 final class ImageBubbleNSView: ReaderCardView {
+    /// 见 `BubbleMarkdownHost.wiki`。
+    var wiki: WorkspaceWikiIndex?
     private var note: ImageNote?
     private var info: (url: URL, size: CGSize)?
     var onEdit: (() -> Void)?
@@ -417,7 +427,7 @@ final class ImageBubbleNSView: ReaderCardView {
             if key != captionKey {
                 captionKey = key
                 let root = BubbleMarkdownHost(text: note.caption, fontSize: m.fs, width: innerW,
-                                              documentId: "\(note.id.uuidString)-caption") { [weak self] hgt in
+                                              documentId: "\(note.id.uuidString)-caption", wiki: wiki) { [weak self] hgt in
                     guard let self, abs((self.captionH ?? 0) - hgt) > 0.5 else { return }
                     self.captionH = hgt
                     self.relayout()

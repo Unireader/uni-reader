@@ -25,6 +25,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let scroll = NSScrollView()
     private var roots: [SidebarNode] = []
     private var syncingSelection = false
+    /// 笔记目录的展开状态（`"<源 id>:<目录相对路径>"`）。**默认全收起**，记住用户自己展开过的那些
+    /// （2026-09-20 用户提：「展开不要默认，可以记忆之前的打开状态」）。
+    /// 存 UserDefaults 按工作区分键——这是本机界面状态，不进库、不跟着离线镜像走。
+    private var expandedFolders: Set<String> = []
+    /// 正在按记忆恢复展开状态：这期间 AppKit 发回来的展开/收起通知不算数，别把记忆覆盖了。
+    private var restoringExpansion = false
     private var bag = Set<AnyCancellable>()
     private var observers: [NSObjectProtocol] = []
 
@@ -74,6 +80,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     // MARK: 订阅
 
     private func installObservers() {
+        loadExpanded()
         workspace.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.reload() }
@@ -125,6 +132,50 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     deinit { for o in observers { NotificationCenter.default.removeObserver(o) } }
 
+    // MARK: 展开状态（记忆）
+
+    private var expandedKey: String? {
+        workspace.folder.map { "noteFolders:" + $0.standardizedFileURL.path }
+    }
+    private func loadExpanded() {
+        guard let k = expandedKey else { return }
+        expandedFolders = Set(UserDefaults.standard.stringArray(forKey: k) ?? [])
+    }
+    private func saveExpanded() {
+        guard let k = expandedKey else { return }
+        UserDefaults.standard.set(Array(expandedFolders).sorted(), forKey: k)
+    }
+    private static func folderKey(_ source: NoteRoot, _ folder: NoteFolder) -> String {
+        "\(source.id):\(folder.path)"
+    }
+
+    /// 按记忆把该展开的目录展开（递归；父目录没展开时子目录也没法展开，所以自顶向下走）。
+    private func restoreExpansion(_ nodes: [SidebarNode]) {
+        for node in nodes {
+            if case .noteFolder(let src, let folder) = node.kind,
+               expandedFolders.contains(Self.folderKey(src, folder)) {
+                outline.expandItem(node)
+            }
+            restoreExpansion(node.children)
+        }
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        guard !restoringExpansion,
+              let node = notification.userInfo?["NSObject"] as? SidebarNode,
+              case .noteFolder(let src, let folder) = node.kind else { return }
+        expandedFolders.insert(Self.folderKey(src, folder))
+        saveExpanded()
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard !restoringExpansion,
+              let node = notification.userInfo?["NSObject"] as? SidebarNode,
+              case .noteFolder(let src, let folder) = node.kind else { return }
+        expandedFolders.remove(Self.folderKey(src, folder))
+        saveExpanded()
+    }
+
     // MARK: 数据
 
     private func reload() {
@@ -148,23 +199,50 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 r.append(sec)
             }
         }
-        let keep = selectedDocIDs()
+        // Markdown 笔记（v15）：**每个源一段**（内建 `Notes/` + 引用进来的外部目录），
+        // 段里按**真实目录层级**递归展开（2026-09-20 用户要求多级目录）。
+        for section in workspace.noteTrees where section.root.hasAnything || section.source.kind == .reference {
+            let sec = SidebarNode(kind: .noteSection(source: section.source, folder: section.root))
+            sec.children = Self.noteChildren(section.source, section.root)
+            r.append(sec)
+        }
+        let keep = selectedRowIDs()
         roots = r
         syncingSelection = true
         outline.reloadData()
-        for n in roots where n.isSection { outline.expandItem(n) }
-        select(ids: keep.isEmpty ? Set([tabs.active.docID].compactMap { $0 }) : keep)
+        restoringExpansion = true
+        for n in roots where n.isSection { outline.expandItem(n) }   // 段头恒展开（同书库那边的老规矩）
+        restoreExpansion(roots)                                      // 子目录按上次的状态，默认收起
+        restoringExpansion = false
+        select(ids: keep.isEmpty ? Set([tabs.active.rowID].compactMap { $0 }) : keep)
         syncingSelection = false
     }
 
+    /// 一层目录底下的节点：子目录在前、笔记在后（顺序由 `NoteFolder` 排好）。
+    private static func noteChildren(_ source: NoteRoot, _ folder: NoteFolder) -> [SidebarNode] {
+        var out: [SidebarNode] = []
+        for sub in folder.folders {
+            let node = SidebarNode(kind: .noteFolder(source: source, folder: sub))
+            node.children = noteChildren(source, sub)
+            out.append(node)
+        }
+        out += folder.notes.map { SidebarNode(kind: .md($0)) }
+        return out
+    }
+
+    /// 选中的 **PDF** id（右键作用对象 / 拖拽排序 / 改分组都只认 PDF）。
     private func selectedDocIDs() -> Set<String> {
         Set(outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? SidebarNode)?.docID })
+    }
+    /// 选中的所有条目（PDF + md 笔记，用 `rowID` 区分）。
+    private func selectedRowIDs() -> Set<String> {
+        Set(outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? SidebarNode)?.rowID })
     }
 
     private func select(ids: Set<String>) {
         var rows = IndexSet()
         for row in 0..<outline.numberOfRows {
-            if let id = (outline.item(atRow: row) as? SidebarNode)?.docID, ids.contains(id) { rows.insert(row) }
+            if let id = (outline.item(atRow: row) as? SidebarNode)?.rowID, ids.contains(id) { rows.insert(row) }
         }
         outline.selectRowIndexes(rows, byExtendingSelection: false)
     }
@@ -172,8 +250,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 打开的文档 → 选中（外部改了打开文档：恢复会话 / 新窗口打开 / 删除回落）。
     private func syncSelectionFromTabs() {
         guard !syncingSelection else { return }
-        let want = Set([tabs.active.docID].compactMap { $0 })
-        guard selectedDocIDs() != want else { return }
+        let want = Set([tabs.active.rowID].compactMap { $0 })
+        guard selectedRowIDs() != want else { return }
         syncingSelection = true
         select(ids: want)
         syncingSelection = false
@@ -190,7 +268,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        (item as? SidebarNode)?.isSection == true
+        // 🔴 段头**与笔记子目录**都要能展开。只写 `isSection` 的话，笔记的多级目录
+        // 永远展不开（`expandItem` 变成空操作），侧栏上就只看得到几个文件夹、看不到笔记。
+        (item as? SidebarNode)?.isExpandable == true
     }
 
     func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
@@ -198,10 +278,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        (item as? SidebarNode)?.docID != nil
+        (item as? SidebarNode)?.rowID != nil
     }
 
-    func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool { false }
+    /// 段头不要那个展开小三角（它们恒展开，同书库那边的老规矩）；**笔记子目录要有**，
+    /// 否则用户没法收起层级很深的目录。
+    func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
+        if case .noteFolder = (item as? SidebarNode)?.kind { return true }
+        return false
+    }
 
     // MARK: 行视图
 
@@ -228,6 +313,34 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             return iconCell(symbol: local ? "doc.richtext" : "doc.badge.ellipsis", title: doc.title,
                             subtitle: nil, dim: !local,
                             tip: local ? nil : L("Not available offline — reconnect the source drive to read it."))
+        case .md(let note):
+            // 文件被手动删了 / 引用的盘没挂上 → 灰一档 + 换图标（同 PDF 那条规矩）
+            let here = workspace.noteURL(note.ref).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+            return iconCell(symbol: here ? "text.document" : "doc.badge.ellipsis", title: note.title,
+                            subtitle: nil, dim: !here,
+                            tip: here ? note.ref.relPath : L("The note file is missing."))
+        case .noteFolder(_, let folder):
+            return iconCell(symbol: "folder", title: folder.name, subtitle: nil, dim: false, tip: folder.path)
+        case .noteSection(let source, let folder):
+            // 段头：内建源就叫「笔记」，引用源多一枚链接图标 + 完整路径当提示
+            let cell = NSTableCellView()
+            let t = NSTextField(labelWithString: source.kind == .reference
+                                ? "\(source.name) \u{2197}" : source.name)
+            t.font = .preferredFont(forTextStyle: .subheadline)
+            t.textColor = .secondaryLabelColor
+            t.lineBreakMode = .byTruncatingTail
+            t.toolTip = source.kind == .reference
+                ? String(format: L("Referenced folder · %d notes · %@"), folder.noteCount, source.path)
+                : String(format: L("%d notes in this workspace"), folder.noteCount)
+            t.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(t)
+            cell.textField = t
+            NSLayoutConstraint.activate([
+                t.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                t.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+                t.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
         case .notice(let notice):
             switch notice {
             case .sourceBack(_, let count):
@@ -293,12 +406,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !syncingSelection else { return }
         // 多选期间不动当前打开的文档；恰选一篇才联动
-        let ids = selectedDocIDs()
-        if ids.count == 1, let id = ids.first, id != tabs.active.docID {
-            syncingSelection = true
+        let ids = selectedRowIDs()
+        guard ids.count == 1, let id = ids.first, id != tabs.active.rowID else { return }
+        syncingSelection = true
+        if id.hasPrefix("md:"), let ref = NoteRef(key: String(id.dropFirst(3))) {
+            tabs.openMarkdown(ref)
+        } else if !id.hasPrefix("md:") {
             _ = tabs.open(id)
-            syncingSelection = false
         }
+        syncingSelection = false
     }
 
     @objc private func rowClicked() {
@@ -340,9 +456,95 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(ClosureMenuItem(L("Delete Group")) { [weak self] in self?.workspace.renameGroup(from: group, to: "") })
         case .doc(let doc):
             buildDocMenu(menu, doc: doc)
+        case .md(let note):
+            buildNoteMenu(menu, note: note)
+        case .noteSection(let source, _):
+            buildNoteSectionMenu(menu, source: source)
+        case .noteFolder(let source, let folder):
+            menu.addItem(ClosureMenuItem(L("New Note Here")) { [weak self] in
+                guard let self, let ref = self.workspace.createNote(title: L("Untitled Note"),
+                                                                    in: source.id, folder: folder.path) else { return }
+                self.tabs.openMarkdown(ref)
+            })
+            menu.addItem(ClosureMenuItem(L("Show in Finder")) { [weak self] in
+                guard let root = self?.workspace.noteRootURL(source) else { return }
+                NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(folder.path)])
+            })
         default:
             break
         }
+    }
+
+    /// md 笔记的右键菜单。没有「分组 / 排序 / 关联为同一文档」那一排——那些是 PDF 书库的事。
+    private func buildNoteMenu(_ m: NSMenu, note: NoteItem) {
+        let external = workspace.noteSource(id: note.ref.sourceID)?.kind == .reference
+        m.addItem(ClosureMenuItem(L("Rename…")) { [weak self] in
+            self?.textPrompt(title: L("Rename Note"), placeholder: L("Note name"), initial: note.title) { name in
+                guard let self, let newRef = self.workspace.renameNote(note.ref, to: name) else {
+                    if let e = self?.workspace.lastError { self?.presentNoteError(e) }
+                    return
+                }
+                // 🔴 改名 = 改文件名，指向它的 `[[旧名字]]` 会断链（我们不改别人的正文，红线）
+                for t in self.tabs.tabs where t.noteRef == note.ref { t.openMarkdown(newRef) }
+            }
+        })
+        m.addItem(ClosureMenuItem(L("Show in Finder")) { [weak self] in
+            guard let url = self?.workspace.noteURL(note.ref) else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        })
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem(L("Move to Trash…")) { [weak self] in
+            guard let self else { return }
+            let a = NSAlert()
+            a.messageText = String(format: L("Move “%@” to the Trash?"), note.title)
+            a.informativeText = external
+                ? String(format: L("This file lives in a referenced folder outside the workspace:\n%@"),
+                         self.workspace.noteURL(note.ref)?.path ?? note.ref.relPath)
+                : L("Links pointing at it will show as broken.")
+            a.addButton(withTitle: L("Move to Trash"))
+            a.addButton(withTitle: L("Cancel"))
+            guard a.runModal() == .alertFirstButtonReturn else { return }
+            self.workspace.deleteNote(note.ref)
+            for t in self.tabs.tabs { t.closeMarkdownIfGone() }
+        })
+    }
+
+    /// 笔记段头的右键菜单：新建、在访达里显示；引用源还能改名 / 取消引用。
+    private func buildNoteSectionMenu(_ m: NSMenu, source: NoteRoot) {
+        m.addItem(ClosureMenuItem(L("New Note Here")) { [weak self] in
+            guard let self, let ref = self.workspace.createNote(title: L("Untitled Note"), in: source.id) else { return }
+            self.tabs.openMarkdown(ref)
+        })
+        m.addItem(ClosureMenuItem(L("Show in Finder")) { [weak self] in
+            guard let url = self?.workspace.noteRootURL(source) else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        })
+        guard source.kind == .reference else { return }
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem(L("Rename…")) { [weak self] in
+            self?.textPrompt(title: L("Rename Folder"), placeholder: L("Display name"), initial: source.name) { name in
+                self?.workspace.renameReferencedNotesFolder(id: source.id, name: name)
+            }
+        })
+        m.addItem(ClosureMenuItem(L("Remove Reference")) { [weak self] in
+            guard let self else { return }
+            let a = NSAlert()
+            a.messageText = String(format: L("Stop showing “%@”?"), source.name)
+            a.informativeText = String(format: L("The folder itself is not touched:\n%@"), source.path)
+            a.addButton(withTitle: L("Remove"))
+            a.addButton(withTitle: L("Cancel"))
+            guard a.runModal() == .alertFirstButtonReturn else { return }
+            self.workspace.removeReferencedNotesFolder(id: source.id)
+            for t in self.tabs.tabs { t.closeMarkdownIfGone() }
+        })
+    }
+
+    private func presentNoteError(_ text: String) {
+        let a = NSAlert()
+        a.messageText = L("Could not complete that")
+        a.informativeText = text
+        a.addButton(withTitle: L("OK"))
+        a.runModal()
     }
 
     /// 右键的作用对象：被点者在选中集内 → 整个选中集；否则仅被点者（macOS 惯例）。
@@ -644,12 +846,35 @@ final class SidebarNode: NSObject {
         case notice(SidebarViewController.Notice)
         case section(group: String?, title: String)
         case doc(LibDocument)
+        /// Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md`）。与 PDF **并列列在侧栏**，
+        /// 但身份是「源 + 源内相对路径」而不是库里的行——所以这里是单独一个 case，
+        /// `docID` 仍然只给 PDF（`targets(for:)` / 拖拽排序 / 分组都只认 PDF）。
+        case md(NoteItem)
+        /// 笔记的**子目录**（多级，2026-09-20 用户要求）。不可选中，只能展开。
+        case noteFolder(source: NoteRoot, folder: NoteFolder)
+        /// 一个笔记源的段头（内建 `Notes/` 或引用进来的外部目录）。
+        case noteSection(source: NoteRoot, folder: NoteFolder)
     }
     let kind: Kind
     var children: [SidebarNode] = []
 
     init(kind: Kind) { self.kind = kind }
 
-    var isSection: Bool { if case .section = kind { return true } else { return false } }
+    var isSection: Bool {
+        switch kind {
+        case .section, .noteSection: return true
+        default: return false
+        }
+    }
+    /// 展开后默认摊开的层（段头与子目录）。
+    var isExpandable: Bool {
+        switch kind {
+        case .section, .noteSection, .noteFolder: return true
+        default: return false
+        }
+    }
     var docID: String? { if case .doc(let d) = kind { return d.id } else { return nil } }
+    var note: NoteItem? { if case .md(let n) = kind { return n } else { return nil } }
+    /// 选中键（两类条目在同一张表里，得能区分）。与 `DocTabModel.rowID` 同口径。
+    var rowID: String? { note.map { "md:" + $0.ref.key } ?? docID }
 }

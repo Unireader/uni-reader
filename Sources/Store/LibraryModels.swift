@@ -205,3 +205,19 @@ enum ISO {
             Double(days * 86_400 + h * 3600 + mi * 60 + se) + Double(msec) / 1000)
     }
 }
+
+/// 工作区里的一篇 Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md §2`）。
+///
+/// 🔴 **正文不在这里，也不在库里**——它就是 `<工作区>/<relPath>` 那个文件。这一行只是元数据；
+/// 库与文件对不上时以文件系统为真源。
+/// `id` 就是笔记正文里 `[[名字|<id>]]` 的那个 id，**一旦写进文件就不许换**。
+struct LibMarkdownDoc: Identifiable, Equatable {
+    var id: String              // UUID
+    var title: String           // 显示名 = `[[…]]` 解析的名字（默认 = 文件名去扩展名）
+    var relPath: String         // 工作区相对路径，如 `Notes/数学/极限.md`（库内唯一）
+    var group: String = ""      // 一级分组名（与 LibDocument.group 同义；空串 = 未分组）
+    var sortOrder: Int = 0
+    var createdAt: Date
+    var updatedAt: Date         // 正文最后修改（离线镜像 LWW 依据）
+    var lastOpenedAt: Date
+}

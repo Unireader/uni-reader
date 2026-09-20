@@ -99,8 +99,13 @@ check(MirrorFp.spec("document")?.columns.map(\.name) ==
 check(MirrorFp.spec("note")?.columns.map(\.name) ==
       ["id", "document_id", "kind", "page", "anchor_x", "anchor_y", "anchor_w", "anchor_h",
        "payload", "created_at", "updated_at"], "note 列表")
-check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "meta"],
-      "参与同步的表恰好 6 张（location 不在其中 —— 它是设备本地事实）")
+check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc", "meta"],
+      "参与同步的表恰好 7 张（location 不在其中 —— 它是设备本地事实）")
+check(MirrorFp.spec("md_doc")?.columns.map(\.name) ==
+      ["id", "title", "rel_path", "group_name", "sort_order", "created_at", "updated_at"],
+      "md_doc 列表（v15；**不含 last_opened_at**，同 document）")
+check(MirrorFp.syncedMetaKeys.contains("note_sources") == false,
+      "🔴 note_sources 不同步：引用的外部目录是这台机器的事实（同 location 表）")
 check(MirrorFp.spec("location") == nil, "🔴 location 没有 spec：同步它就是制造满屏假『路径失效』")
 
 print("⑤ 真实表行（按 spec 取值算 fp）")

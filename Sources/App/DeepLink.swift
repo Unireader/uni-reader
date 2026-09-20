@@ -10,6 +10,7 @@ import Foundation
 /// | `ws`   | 工作区 `.unrd` 包的绝对路径（也接受 `file://` 形式与 `~`） |
 /// | `wsid` | 工作区 `workspace_id`（路径变了靠它在最近列表 / 离线副本里找回来） |
 /// | `doc`  | 文档 id（`document.id`） |
+/// | `md`   | Markdown 笔记 id（`md_doc.id`，v15）：工作区里的 md 笔记，与 `doc` 互斥（同时给时 `md` 优先） |
 /// | `hash` | 文件内容 SHA-256（`variant.content_hash`）；`doc` 找不到时按它兜底 |
 /// | `page` | 页码，**1 起**（对外口径与 MCP 一致，换算只在 `PageNo`） |
 /// | `frac` | 页内位置 0（页顶）… 1（页底），默认 0 |
@@ -22,11 +23,14 @@ struct DeepLink: Equatable {
     static let host = "open"
 
     /// 给 Agent 看的一行格式说明（MCP `get_state.app.deep_link`）：不用翻文档也能自己拼链接。
-    static let formatHint = "unireader://open?ws=<.unrd path>&doc=<document_id>[&page=N (1-based)][&frac=0…1][&note=<note/highlight/bookmark id>] — every document / annotation DTO also carries a ready-made `link`"
+    static let formatHint = "unireader://open?ws=<.unrd path>&doc=<document_id>[&page=N (1-based)][&frac=0…1][&note=<note/highlight/bookmark id>] — or ?ws=…&md=<markdown_note_id> for a Markdown note — every document / annotation DTO also carries a ready-made `link`"
 
     var workspacePath: String?
     var workspaceId: String?
     var documentId: String?
+    /// Markdown 笔记 id（`md_doc.id`）。与 `documentId` 互斥——两个都给时**以它为准**
+    /// （导入时降级的那些链接只带它，见 `MARKDOWN-NOTES-PLAN.md §4.4`）。
+    var markdownId: String?
     var contentHash: String?
     /// 对外页码（1 起）。
     var page: Int?
@@ -35,8 +39,8 @@ struct DeepLink: Equatable {
 
     /// 没有任何定位参数（`unireader://open` 光杆）= 只把 App 叫到前台。
     var isEmpty: Bool {
-        workspacePath == nil && workspaceId == nil && documentId == nil && contentHash == nil
-            && page == nil && frac == nil && noteId == nil
+        workspacePath == nil && workspaceId == nil && documentId == nil && markdownId == nil
+            && contentHash == nil && page == nil && frac == nil && noteId == nil
     }
 
     enum ParseError: Error, Equatable {
@@ -72,6 +76,7 @@ struct DeepLink: Equatable {
             case "ws":   link.workspacePath = Self.normalizePath(v)
             case "wsid": link.workspaceId = v
             case "doc":  link.documentId = v
+            case "md":   link.markdownId = v
             case "hash": link.contentHash = v.lowercased()
             case "page":
                 guard let n = Int(v), n >= 1 else { throw ParseError.badPage(v) }
@@ -105,6 +110,7 @@ struct DeepLink: Equatable {
         if let v = workspacePath { items.append(("ws", v)) }
         if let v = workspaceId { items.append(("wsid", v)) }
         if let v = documentId { items.append(("doc", v)) }
+        if let v = markdownId { items.append(("md", v)) }
         if let v = contentHash { items.append(("hash", v)) }
         if let v = page { items.append(("page", String(v))) }
         if let v = frac { items.append(("frac", Self.formatFrac(v))) }

@@ -431,6 +431,7 @@
 "Synced. Backup saved as %@" = "Synced. Backup saved as %@";
 "%d rows were skipped: their document no longer exists." = "%d rows were skipped: their document no longer exists.";
 "%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them." = "%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them.";
+"%d notes were skipped: the other side already has a note at the same path." = "%d notes were skipped: the other side already has a note at the same path.";
 
 /* 跳转历史（JumpHistory）：目录/搜索/列表跳转的轨迹 + 悬浮窗 */
 "Jump History" = "Jump History";
@@ -672,3 +673,39 @@
 /* Settings › General › AI (2026-09-19) */
 "Web AI Panel" = "Web AI Panel";
 "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed." = "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed.";
+
+/* Markdown 笔记（v15，MARKDOWN-NOTES-PLAN.md）*/
+"New Markdown Note" = "New Markdown Note";
+"Import Notes Folder…" = "Import Notes Folder…";
+"Untitled Note" = "Untitled Note";
+"Import" = "Import";
+"Choose a folder of Markdown notes (an Obsidian vault or a folder inside one)." = "Choose a folder of Markdown notes (an Obsidian vault or a folder inside one).";
+"No notes found" = "No notes found";
+"That folder has no Markdown files in it." = "That folder has no Markdown files in it.";
+"Imported %d notes" = "Imported %d notes";
+"Could not complete that" = "Could not complete that";
+"Rename Note" = "Rename Note";
+"Note name" = "Note name";
+"That folder is already inside this workspace." = "That folder is already inside this workspace.";
+"Write in Markdown. Type [[ to link another note." = "Write in Markdown. Type [[ to link another note.";
+
+/* Markdown 笔记 · 引用模式与多级目录（2026-09-20 第三批）*/
+"Reference Notes Folder…" = "Reference Notes Folder…";
+"Choose a notes folder to edit in place. UniReader does not copy or move it." = "Choose a notes folder to edit in place. UniReader does not copy or move it.";
+"Copied into Notes/%@ — %d files in all, nothing was changed." = "Copied into Notes/%@ — %d files in all, nothing was changed.";
+"%d [[links]] point at notes that are not here: %@" = "%d [[links]] point at notes that are not here: %@";
+"The note file is missing." = "The note file is missing.";
+"Referenced folder · %d notes · %@" = "Referenced folder · %d notes · %@";
+"%d notes in this workspace" = "%d notes in this workspace";
+"New Note Here" = "New Note Here";
+"Move to Trash…" = "Move to Trash…";
+"Move “%@” to the Trash?" = "Move “%@” to the Trash?";
+"This file lives in a referenced folder outside the workspace:\n%@" = "This file lives in a referenced folder outside the workspace:\n%@";
+"Links pointing at it will show as broken." = "Links pointing at it will show as broken.";
+"Move to Trash" = "Move to Trash";
+"Rename Folder" = "Rename Folder";
+"Display name" = "Display name";
+"Remove Reference" = "Remove Reference";
+"Stop showing “%@”?" = "Stop showing “%@”?";
+"The folder itself is not touched:\n%@" = "The folder itself is not touched:\n%@";
+"A note with that name already exists in this folder." = "A note with that name already exists in this folder.";

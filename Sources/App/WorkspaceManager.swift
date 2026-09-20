@@ -17,12 +17,23 @@ final class WorkspaceManager: ObservableObject {
     @Published private(set) var folder: URL?
     @Published private(set) var name: String = ""
     @Published private(set) var documents: [LibDocument] = []
+    /// 内建源（`Notes/`）在库里的那些行。**它只是目录扫描的缓存**（v15；2026-09-20 第三批改的口径）：
+    /// 真源是文件，这张表存的是 UUID 与「上次打开」。引用源（外部目录）一行都不进来。
+    /// 🔴 **只许 `refreshNotes()` 写**（`private(set)` 会挡住同模块另一个文件里的扩展，故放开）。
+    @Published var markdownDocs: [LibMarkdownDoc] = []
+    /// 侧栏要画的东西：每个笔记源一段，段里是**多级目录树**（2026-09-20 用户要求）。
+    /// 由 `refreshNotes()` 重扫目录得到。
+    /// 🔴 同上：**只许 `refreshNotes()` 写**。
+    @Published var noteTrees: [NoteTreeSection] = []
     @Published var lastError: String?
     private(set) var restoreDocIds: [String] = []   // 「上次打开集」快照，供本工作区的多窗口恢复（restoreSession 读一次进本地）
     private var windowDocs: [UUID: String] = [:]     // 本工作区各窗口当前文档（sessionId → docId）——「打开集」的真相源
     private var openDocs: [String] = []              // 当前打开的文档集（= 本工作区所有窗口当前文档，去重保序）；持久化供下次恢复
 
     private(set) var store: LibraryStore?
+    /// 笔记引擎的 `[[…]]` 解析与 `![[…]]` 图片服务（`MARKDOWN-NOTES-PLAN.md §3`）。
+    /// **一个工作区一个**——名字只在自己工作区里有意义。快照在 `refresh()` 里更新。
+    let wiki = WorkspaceWikiIndex()
     /// `imageInfo(sha256:)` 的缓存（sha → 路径+尺寸；值为 nil = 查过、没有）。见那个方法的注释。
     private var imageInfoCache: [String: (url: URL, size: CGSize)?] = [:]
 
@@ -279,6 +290,7 @@ final class WorkspaceManager: ObservableObject {
 
     func refresh() {
         documents = (try? store?.allDocuments()) ?? []
+        refreshNotes()          // 笔记：重扫目录 + 与库对账 + 重建 `[[…]]` 索引
         refreshLocalFileFlags()
     }
 

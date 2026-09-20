@@ -628,6 +628,14 @@ extension Notification.Name {
     /// 咨询 AI / Agent 的独立窗口显示、隐藏或关闭了（阅读窗口工具栏两枚开关据此刷按下态）。
     static let auxPanelVisibilityChanged = Notification.Name("com.xvan.UniReader.auxPanelVisibilityChanged")
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
+    /// 新建一篇 Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md`）。
+    static let newMarkdownNoteRequested = Notification.Name("com.xvan.UniReader.newMarkdownNoteRequested")
+    /// 把一个现有笔记目录（Obsidian vault 或它的子目录）**复制**进工作区。
+    static let importMarkdownRequested = Notification.Name("com.xvan.UniReader.importMarkdownRequested")
+    /// **引用**一个外部笔记目录（不复制，直接在那儿编辑）。
+    static let referenceMarkdownRequested = Notification.Name("com.xvan.UniReader.referenceMarkdownRequested")
+    /// 打开某篇 Markdown 笔记（`userInfo["id"]`）。气泡里点 `[[…]]` 走这条。
+    static let openMarkdownNote = Notification.Name("com.xvan.UniReader.openMarkdownNote")
     static let openWorkspaceRequested = Notification.Name("com.xvan.UniReader.openWorkspaceRequested")
     /// 有卷挂上了 —— 可能就是那块源盘插回来了，提示条该重算一次
     static let volumeDidMount = Notification.Name("com.xvan.UniReader.volumeDidMount")

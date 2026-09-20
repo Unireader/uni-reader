@@ -109,6 +109,28 @@ final class TabsModel: ObservableObject {
         return t
     }
 
+    /// 开一篇 Markdown 笔记（v15）。规矩与 `open(_:)` 一致：已经开着就切过去，
+    /// 当前标签是空的就就地开，否则新开一个标签。
+    @discardableResult
+    func openMarkdown(_ ref: NoteRef) -> DocTabModel {
+        if let hit = tabs.first(where: { $0.noteRef == ref }) {
+            activate(hit.id)
+            return hit
+        }
+        if active.docID == nil && active.noteRef == nil {
+            active.openMarkdown(ref)
+            persist()
+            return active
+        }
+        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
+        tabs.append(t)
+        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
+        t.openMarkdown(ref)
+        activate(t.id)
+        persist()
+        return t
+    }
+
     /// 标签栏的 `+` / ⌘T 不再开空标签，而是弹本工作区的选文档弹窗（`DocPickerView`，用户 2026-09-17 定），
     /// 选中后走 `open`。弹窗挂在「+」上；标签栏不显示时挂在阅读区底部（见 `ReaderPane.tabBar`）。
     @Published var docPickerPresented = false

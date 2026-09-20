@@ -440,6 +440,10 @@ final class MirrorSyncController: StackPanelController, NSOutlineViewDataSource,
                 appliedBox.addArrangedSubview(callout("⚠︎ " + String(format: L("%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them."),
                                                                       a.hashClashesSkipped), color: .systemOrange))
             }
+            if a.pathClashesSkipped > 0 {
+                appliedBox.addArrangedSubview(callout("⚠︎ " + String(format: L("%d notes were skipped: the other side already has a note at the same path."),
+                                                                      a.pathClashesSkipped), color: .systemOrange))
+            }
         }
         appliedBox.isHidden = applied == nil
         errorLabel.isHidden = errorText == nil

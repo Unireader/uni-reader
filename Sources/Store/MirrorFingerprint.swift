@@ -101,6 +101,15 @@ enum MirrorFp {
             Column("bg", .text), Column("pattern", .text), Column("show_page", .int),
             Column("created_at", .text), Column("updated_at", .text),
         ], lww: "updated_at"),
+        // v15：Markdown 笔记的**元数据行**（`MARKDOWN-NOTES-PLAN.md §2.2`）。正文是 `Notes/` 下的文件，
+        // 不在这张表里——它按 `Images/` 那条纯 additive 通道复制，两边同一篇都改过时**不合并正文**、
+        // 按 `updated_at` 整份取新（欠账，方案 §7）。这里合并的只是标题 / 路径 / 分组 / 位次。
+        TableSpec(table: "md_doc", key: "id", columns: [
+            Column("id", .text), Column("title", .text), Column("rel_path", .text),
+            Column("group_name", .text), Column("sort_order", .int),
+            Column("created_at", .text), Column("updated_at", .text),
+            // `last_opened_at` 同 `document`：刻意不进指纹（翻开过一次就满屏「改过」）。
+        ], lww: "updated_at"),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),
         ]),

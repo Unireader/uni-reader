@@ -25,6 +25,8 @@ enum MirrorApply {
         var orphansSkipped = 0
         /// 因为**对面已经有同一份内容**而被丢弃的 `variant` 行（见 `write` 里那段）。
         var hashClashesSkipped = 0
+        /// 因为**对面已经有同路径的笔记**而被丢弃的 `md_doc` 行（同上，`rel_path` 是 UNIQUE）。
+        var pathClashesSkipped = 0
         var lastOpenedTouched = 0
         var filesCopiedToSource = 0
         /// 双向补齐的 OCR 缓存页数（见 `fillOCR`）。
@@ -143,6 +145,17 @@ enum MirrorApply {
                 // ⚠️ 它**不会自动收敛** —— 下次干跑还会把它算成待写。这是刻意的：
                 // 「这两本是不是同一本书」是用户的语义判断，书库里有现成的「关联为同一文档」，
                 // 同步这一步不该替他决定。报告里会明说该怎么处理。
+                // `md_doc.rel_path` 同理是 UNIQUE：两边各自把同一个 vault 导进来时，
+                // **id 不同、路径相同**，硬插同样是整次同步失败。跳过并计数——
+                // 那两行确实是两篇独立的笔记（各自被各自的 `[[…]]` 指着），不能自动合并。
+                if table == "md_doc", let rel = row["rel_path"] as? String {
+                    let clash = (try? db.query("SELECT id FROM md_doc WHERE rel_path=? AND id<>?",
+                                               [.text(rel), .text(c.rowId)])) ?? []
+                    if !clash.isEmpty {
+                        result.pathClashesSkipped += 1
+                        continue
+                    }
+                }
                 if table == "variant", let hash = row["content_hash"] as? String {
                     let clash = (try? db.query("SELECT id FROM variant WHERE content_hash=? AND id<>?",
                                                [.text(hash), .text(c.rowId)])) ?? []

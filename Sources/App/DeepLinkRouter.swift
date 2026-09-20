@@ -55,6 +55,17 @@ enum DeepLinkRouter {
         let c0 = try controllerForWorkspace(link, delegate: delegate)
         let ws = c0.workspace
 
+        // 3a：Markdown 笔记（v15）。与 `doc` 互斥且**优先**（`DeepLink.markdownId` 的约定），
+        // 笔记没有「页」也没有「气泡」，到这里就结束。
+        if let mdID = link.markdownId {
+            guard let item = ws.note(key: mdID) else { throw RouteError.documentNotFound(mdID) }
+            c0.tabs.openMarkdown(item.ref)
+            NSApp.activate(ignoringOtherApps: true)
+            c0.window?.makeKeyAndOrderFront(nil)
+            wsLog("链接到位：\(ws.name) md=\(mdID)")
+            return
+        }
+
         // 3：文档（没给就停在该工作区当前标签上）
         var c = c0
         var tab = c0.tabs.active
@@ -93,6 +104,9 @@ enum DeepLinkRouter {
         }
 
         // 链接没说工作区：哪个开着的工作区有这篇就用哪个
+        if let mdID = link.markdownId,
+           let ws = WorkspaceRegistry.shared.openManagers.first(where: { $0.note(key: mdID) != nil }),
+           let c = window(of: ws) { return c }
         if let docId = link.documentId,
            let ws = WorkspaceRegistry.shared.openManagers.first(where: { $0.document(id: docId) != nil }),
            let c = window(of: ws) { return c }

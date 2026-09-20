@@ -112,6 +112,10 @@ enum MainMenu {
         m.addItem(post(L("Open PDF…"), .openPDFRequested, key: "o"))
         m.addItem(post(L("New Tab"), .newTabRequested, key: "t"))
         m.addItem(.separator())
+        m.addItem(post(L("New Markdown Note"), .newMarkdownNoteRequested, key: "n", mods: [.command, .shift]))
+        m.addItem(post(L("Import Notes Folder…"), .importMarkdownRequested))
+        m.addItem(post(L("Reference Notes Folder…"), .referenceMarkdownRequested))
+        m.addItem(.separator())
         // 最近打开：内容随 registry 变，交给 delegate 在展开前重建（见 `RecentMenuDelegate`）。
         let recent = NSMenuItem(title: L("Open Recent"), action: nil, keyEquivalent: "")
         let recentMenu = NSMenu(title: L("Open Recent"))

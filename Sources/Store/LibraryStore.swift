@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 14
+    static let schemaVersion = 15
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -174,6 +174,23 @@ final class LibraryStore {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        -- v15：工作区里的 Markdown 笔记（`MARKDOWN-NOTES-PLAN.md §2`）。**与 PDF 分表**，理由见方案 §2.1
+        -- （`document` 一半的列对 md 是垃圾；`variant/content_hash` 是给不可变文件设计的，md 每存一次就换 hash；
+        --  混表还要在 8 处消费方各加一道 kind 过滤，漏一处就是一个 bug）。
+        -- 🔴 **正文不进库**：就是 `<工作区>/Notes/…` 下的 md 文件本身（那个目录用 Obsidian 打开仍是正常 vault）。
+        -- 这张表只存元数据；库与文件对不上时**以文件系统为真源**。
+        -- `id` 就是 `[[名字|<id>]]` 里的那个 id，**一旦写进文件就不许换**（换了所有指向它的链接同时断）。
+        CREATE TABLE IF NOT EXISTS md_doc (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          rel_path TEXT NOT NULL,
+          group_name TEXT NOT NULL DEFAULT '',
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_opened_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_md_doc_path ON md_doc(rel_path);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -202,6 +219,7 @@ final class LibraryStore {
         // v12 → v13 只新增 image 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
         // 图片笔记复用 note 表（kind=6），故 note 也不用改结构。
         // v13 → v14 只新增 page_align 表（同上，无需 ALTER）。
+        // v14 → v15 只新增 md_doc 表（同上，无需 ALTER）。Markdown 笔记正文在文件里，不动其它表。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -344,6 +362,59 @@ final class LibraryStore {
     }
     func deleteDocument(id: String) throws {
         try db.run("DELETE FROM document WHERE id=?", [.text(id)])   // variant/location/note 级联删
+    }
+
+    // MARK: - Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md §2`）
+
+    /// 全部 md 笔记。排序口径与 `allDocuments` 一致（手动排过的 ≥1 在后，没排过的 0 在前、按最近打开）。
+    func allMarkdownDocs() throws -> [LibMarkdownDoc] {
+        try db.query("SELECT * FROM md_doc ORDER BY sort_order ASC, last_opened_at DESC").map(Self.mdDoc)
+    }
+    func markdownDoc(id: String) throws -> LibMarkdownDoc? {
+        try db.query("SELECT * FROM md_doc WHERE id=?", [.text(id)]).first.map(Self.mdDoc)
+    }
+    func markdownDoc(relPath: String) throws -> LibMarkdownDoc? {
+        try db.query("SELECT * FROM md_doc WHERE rel_path=?", [.text(relPath)]).first.map(Self.mdDoc)
+    }
+    /// 插入一行。`id` 由调用方给——导入时要**先分配 id 建好索引、再重写链接**（方案 §4.2），
+    /// 所以这里不自己生成。`rel_path` 唯一，撞了就抛（调用方负责先避让，见 `MarkdownImport`）。
+    @discardableResult
+    func addMarkdownDoc(id: String, title: String, relPath: String, group: String = "",
+                        at date: Date = .now) throws -> LibMarkdownDoc {
+        let ts = ISO.string(date)
+        try db.run("""
+        INSERT INTO md_doc(id,title,rel_path,group_name,sort_order,created_at,updated_at,last_opened_at)
+        VALUES(?,?,?,?,0,?,?,?)
+        """, [.text(id), .text(title), .text(relPath), .text(group), .text(ts), .text(ts), .text(ts)])
+        return LibMarkdownDoc(id: id, title: title, relPath: relPath, group: group,
+                              createdAt: date, updatedAt: date, lastOpenedAt: date)
+    }
+    /// 改标题。**只改这一行**——指向它的 `[[名字|<id>]]` 一个字都不用动（显示名由 `name(forID:)` 现查）。
+    func renameMarkdownDoc(id: String, title: String, at date: Date = .now) throws {
+        try db.run("UPDATE md_doc SET title=?, updated_at=? WHERE id=?",
+                   [.text(title), .text(ISO.string(date)), .text(id)])
+    }
+    /// 换文件路径（笔记在工作区内挪目录）。同样不碰任何链接。
+    func setMarkdownPath(id: String, relPath: String, at date: Date = .now) throws {
+        try db.run("UPDATE md_doc SET rel_path=?, updated_at=? WHERE id=?",
+                   [.text(relPath), .text(ISO.string(date)), .text(id)])
+    }
+    /// 正文存盘后打时间戳（离线镜像按它取新）。
+    func touchMarkdownDoc(id: String, at date: Date = .now) throws {
+        try db.run("UPDATE md_doc SET updated_at=? WHERE id=?", [.text(ISO.string(date)), .text(id)])
+    }
+    func updateMarkdownLastOpened(id: String, at date: Date = .now) throws {
+        try db.run("UPDATE md_doc SET last_opened_at=? WHERE id=?", [.text(ISO.string(date)), .text(id)])
+    }
+    func setMarkdownGroup(id: String, group: String) throws {
+        try db.run("UPDATE md_doc SET group_name=? WHERE id=?", [.text(group), .text(id)])
+    }
+    func setMarkdownSortOrder(id: String, order: Int) throws {
+        try db.run("UPDATE md_doc SET sort_order=? WHERE id=?", [.int(Int64(order)), .text(id)])
+    }
+    /// 删行。**不删文件**——文件的去留由 `WorkspaceManager` 决定（同 `deleteLocation` 的分工）。
+    func deleteMarkdownDoc(id: String) throws {
+        try db.run("DELETE FROM md_doc WHERE id=?", [.text(id)])
     }
 
     // MARK: - Variant / Location
@@ -836,6 +907,15 @@ final class LibraryStore {
                     readHFrac: r["read_hfrac"] as? Double ?? 0,
                     group: r["group_name"] as? String ?? "",
                     canvasMode: (r["canvas_mode"] as? Int64 ?? 0) != 0)
+    }
+    private static func mdDoc(_ r: [String: Any]) -> LibMarkdownDoc {
+        LibMarkdownDoc(id: r["id"] as? String ?? "", title: r["title"] as? String ?? "",
+                       relPath: r["rel_path"] as? String ?? "",
+                       group: r["group_name"] as? String ?? "",
+                       sortOrder: Int(r["sort_order"] as? Int64 ?? 0),
+                       createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                       updatedAt: ISO.date(r["updated_at"] as? String) ?? .now,
+                       lastOpenedAt: ISO.date(r["last_opened_at"] as? String) ?? .now)
     }
     private static func variant(_ r: [String: Any]) -> LibVariant {
         LibVariant(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String ?? "",

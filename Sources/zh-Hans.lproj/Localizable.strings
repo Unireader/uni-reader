@@ -433,6 +433,7 @@
 "Synced. Backup saved as %@" = "已同步。备份：%@";
 "%d rows were skipped: their document no longer exists." = "有 %d 行被跳过：它们所属的文档已经不在了。";
 "%d versions were skipped: the other side already has the same file. Use “Link as Same Document” to merge them." = "有 %d 个版本被跳过：对面已经有同一份文件了。用「关联为同一文档」把它们合并。";
+"%d notes were skipped: the other side already has a note at the same path." = "有 %d 篇笔记被跳过：对面已经有同路径的笔记了。";
 
 /* 跳转历史（JumpHistory）：目录/搜索/列表跳转的轨迹 + 悬浮窗 */
 "Jump History" = "跳转历史";
@@ -674,3 +675,39 @@
 /* 设置 › 通用 › AI（2026-09-19） */
 "Web AI Panel" = "网页 AI 面板";
 "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed." = "关掉后，它的工具栏按钮不再显示、菜单项变灰，⌥ 拖截图也不会再发给它；已打开的面板和正在运行的 Agent 会被关闭。";
+
+/* Markdown 笔记（v15，MARKDOWN-NOTES-PLAN.md）*/
+"New Markdown Note" = "新建 Markdown 笔记";
+"Import Notes Folder…" = "导入笔记目录…";
+"Untitled Note" = "未命名笔记";
+"Import" = "导入";
+"Choose a folder of Markdown notes (an Obsidian vault or a folder inside one)." = "选一个装 Markdown 笔记的目录（Obsidian 仓库，或它里面的某个子目录）。";
+"No notes found" = "没有找到笔记";
+"That folder has no Markdown files in it." = "那个目录里没有 Markdown 文件。";
+"Imported %d notes" = "导入了 %d 篇笔记";
+"Could not complete that" = "这一步没能完成";
+"Rename Note" = "重命名笔记";
+"Note name" = "笔记名";
+"That folder is already inside this workspace." = "那个目录就在当前工作区里面。";
+"Write in Markdown. Type [[ to link another note." = "用 Markdown 写。输入 [[ 可以链接到另一篇笔记。";
+
+/* Markdown 笔记 · 引用模式与多级目录（2026-09-20 第三批）*/
+"Reference Notes Folder…" = "引用笔记目录…";
+"Choose a notes folder to edit in place. UniReader does not copy or move it." = "选一个笔记目录，直接在原处编辑。UniReader 不会复制也不会移动它。";
+"Copied into Notes/%@ — %d files in all, nothing was changed." = "已复制到 Notes/%@，共 %d 个文件；内容一个字都没改。";
+"%d [[links]] point at notes that are not here: %@" = "有 %d 个 [[链接]] 指向不在这里的笔记：%@";
+"The note file is missing." = "这篇笔记的文件不见了。";
+"Referenced folder · %d notes · %@" = "引用的目录 · %d 篇笔记 · %@";
+"%d notes in this workspace" = "工作区里有 %d 篇笔记";
+"New Note Here" = "在这里新建笔记";
+"Move to Trash…" = "移到废纸篓…";
+"Move “%@” to the Trash?" = "要把「%@」移到废纸篓吗？";
+"This file lives in a referenced folder outside the workspace:\n%@" = "这个文件在工作区之外、你引用进来的目录里：\n%@";
+"Links pointing at it will show as broken." = "指向它的链接会显示成断链。";
+"Move to Trash" = "移到废纸篓";
+"Rename Folder" = "重命名目录";
+"Display name" = "显示名";
+"Remove Reference" = "取消引用";
+"Stop showing “%@”?" = "不再显示「%@」吗？";
+"The folder itself is not touched:\n%@" = "目录本身不会被动：\n%@";
+"A note with that name already exists in this folder." = "这个目录里已经有同名笔记了。";

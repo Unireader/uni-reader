@@ -34,6 +34,12 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 本标签当前显示的库文档 id（原 `ContentView.selectedDocID`）。
     @Published private(set) var docID: String?
+    /// 本标签当前显示的 **Markdown 笔记**（v15，`MARKDOWN-NOTES-PLAN.md`）：源 + 源内相对路径。
+    ///
+    /// 🔴 **与 `docID` 互斥**：开 md 笔记前先 `select(nil)` 把 PDF 那边清干净。这样全项目
+    /// 所有按 PDF 记账的地方（平板 `docs` 广播 / 工作区打开集 / MCP / 参考窗 / 笔架 / 草稿纸）
+    /// 看到的就是一个**空标签**——那是它们本来就支持的状态，一行都不用改。
+    @Published private(set) var noteRef: NoteRef?
     /// 选中但所有路径失效 → 显示重定位提示。
     @Published var missingDoc: LibDocument?
     /// 同路径内容被替换（hash 与入库版本不符）待确认。
@@ -56,11 +62,15 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 标签栏上显示的标题：会话标题为空（空标签 / 路径失效）时退回库里的文档名，再退回「新标签页」。
     var tabTitle: String {
+        if let ref = noteRef { return ref.title }
         if !session.title.isEmpty { return session.title }
         if let d = missingDoc { return d.title }
         if let id = docID, let d = workspace.document(id: id) { return d.title }
         return L("New Tab")
     }
+
+    /// 侧栏 / 标签栏用的选中键（PDF 与 md 笔记在同一张表里列，得能区分）。
+    var rowID: String? { noteRef.map { "md:" + $0.key } ?? docID }
 
     /// 「同路径换内容」待确认：文件存在但 hash 与入库版本不符（用户原地覆盖了 PDF）。
     struct HashMismatch: Identifiable {
@@ -294,7 +304,8 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 切到另一篇文档（原 `ContentView.onChange(of: selectedDocID)` 那一整块）。
     func select(_ id: String?) {
-        guard id != docID else { return }
+        guard id != docID || noteRef != nil else { return }
+        noteRef = nil       // PDF 与 md 笔记互斥
         // 打开耗时账本从这一刻起算（用户点下去 = 这里）。上一本还没齐的按中断结账。
         session.openTrace?.finish("中断：换文档")
         session.openTrace = id.map { OpenTrace(title: workspace.document(id: $0)?.title ?? $0, reason: "打开") }
@@ -356,6 +367,26 @@ final class DocTabModel: ObservableObject, Identifiable {
             session.emitAnchor(page: a?.page ?? session.currentPageIndex,
                                frac: a?.frac ?? 0, origin: "restore")
         }
+    }
+
+    /// 开一篇 Markdown 笔记（v15）。
+    ///
+    /// 先把 PDF 那边收干净（`select(nil)`：结清落库 / 存进度 / 退出工作区打开集 / 放掉 PDF），
+    /// 再记下要显示哪篇笔记。笔记本身不进工作区「打开集」——那一套是给 PDF 会话用的
+    /// （平板广播 / 多窗口恢复都读它），混进去要改很多跨模块记账；代价是 **md 标签不跨启动恢复**
+    /// （方案 §5 第二批已知留白）。
+    func openMarkdown(_ ref: NoteRef) {
+        guard noteRef != ref else { return }
+        if docID != nil { select(nil) }
+        noteRef = ref
+        staged = false
+        workspace.noteWasOpened(ref)
+    }
+
+    /// 这篇 md 笔记被删了 / 不在了 → 标签退回空态。
+    func closeMarkdownIfGone() {
+        guard let ref = noteRef, workspace.note(ref: ref) == nil else { return }
+        noteRef = nil
     }
 
     // MARK: - 懒装载
