@@ -112,6 +112,25 @@ check(index.note(for: "极限\\")?.relPath == "数学/微积分/极限.md", "表
 check(index.note(for: "极限#左极限\\")?.relPath == "数学/微积分/极限.md", "锚点 + 转义竖线一起")
 check(index.note(for: "数学/微积分/极限#左极限\\")?.relPath == "数学/微积分/极限.md", "带路径 + 锚点 + 转义竖线")
 
+// 🔴 别名表：引擎把 `[[名字|别名]]` 竖线后面那段当**不透明 id** 递给 resolve()，真名它自己留着当
+//    显示文本、不给我们。所以带别名的链接只能靠这张表才解析得到（不补就全是灰的、点不动）。
+var ali = NoteIndex()
+for i in items { ali.add(note: i) }
+for p in MarkdownLink.wikiAliases("见 [[极限|那个定义]] 与 [[数学/线代/矩阵#性质\\|矩阵性质]]") {
+    if let r = ali.note(for: p.target) { ali.addAlias(p.alias, r) }
+}
+check(ali.note(for: "那个定义")?.relPath == "数学/微积分/极限.md", "别名 → 笔记")
+check(ali.note(for: "矩阵性质")?.relPath == "数学/线代/矩阵.md", "表格里带锚点的别名 → 笔记")
+check(ali.note(for: "极限")?.relPath == "数学/微积分/极限.md", "真名照旧优先")
+ali.addAlias("极限", NoteRef(sourceID: "ws", relPath: "读书.md"))
+check(ali.note(for: "极限")?.relPath == "数学/微积分/极限.md", "别名不许盖掉同名的真名")
+
+print("\n— 7c) wikiAliases：扫出 (目标, 别名) 对 —")
+let pairs = MarkdownLink.wikiAliases("[[甲|别名一]] [[乙#锚点\\|别名二]] [[丙]] ![[图.png|300]] `[[丁|别名三]]`")
+check(pairs.count == 2, "只取带别名的、跳过图片与行内代码（得到 \(pairs.count) 条）")
+check(pairs.first?.target == "甲" && pairs.first?.alias == "别名一", "普通别名")
+check(pairs.last?.target == "乙" && pairs.last?.alias == "别名二", "锚点 + 转义竖线的别名")
+
 // 名字里本来就带 # 或 | 的笔记不该被收拾掉（先按原样查一次）
 var odd = NoteIndex()
 odd.add(note: NoteItem(ref: NoteRef(sourceID: "ws", relPath: "C#入门.md")))

@@ -15,6 +15,7 @@ final class MarkdownDocView: NSView {
     private(set) var ref: NoteRef
     private let workspace: WorkspaceManager
     private let box: TextBox
+    private let relay: LinkRelay
     private let host: NSHostingView<Root>
     private let titleLabel = NSTextField(labelWithString: "")
     private let pathLabel = NSTextField(labelWithString: "")
@@ -34,6 +35,18 @@ final class MarkdownDocView: NSView {
         init(_ t: String) { text = t }
     }
 
+    /// 点链接的中转。
+    ///
+    /// 🔴 **引擎的 `onLinkClick` 只在 `makeCoordinator()` 里捕获一次**——`updateNSView` 刷新了
+    /// `onCaretRectChange` / `onBuildContextMenu` / `onInlineSelectionChange` / `onInlinePreviewKey` /
+    /// `onCodeBlockSelectionChange` 五个回调，唯独**不刷新它**。所以绝不能「先传个空闭包占位、
+    /// 建完再换 `rootView`」：首次渲染只要发生在换之前，协调器就永久攥着那个空闭包，
+    /// 点链接静悄悄什么都不发生（2026-09-20 用户报「点了还是跳转不了」，根因就是这个）。
+    /// 这里传一个身份固定的中转闭包进去，目标随后再填。
+    final class LinkRelay {
+        var onOpen: (String) -> Void = { _ in }
+    }
+
     struct Root: View {
         @ObservedObject var box: TextBox
         let documentId: String
@@ -50,10 +63,13 @@ final class MarkdownDocView: NSView {
         let text = workspace.noteBody(ref) ?? ""
         savedText = text
         box = TextBox(text)
+        let relay = LinkRelay()
+        self.relay = relay
         host = NSHostingView(rootView: Root(box: box, documentId: "md-\(ref.key)", wiki: workspace.wiki,
-                                            onOpenNote: { _ in }))
+                                            onOpenNote: { [relay] in relay.onOpen($0) }))
         host.sizingOptions = []
         super.init(frame: .zero)
+        relay.onOpen = { [weak self] id in self?.openNote(id) }
 
         header.material = .headerView
         header.blendingMode = .withinWindow
@@ -64,9 +80,6 @@ final class MarkdownDocView: NSView {
         pathLabel.lineBreakMode = .byTruncatingMiddle
         separator.boxType = .separator
         for v in [header, titleLabel, pathLabel, separator, host] as [NSView] { addSubview(v) }
-        // 点链接的回调要拿到 self，建完再补上（`Root` 是值类型，换一份即可）
-        host.rootView = Root(box: box, documentId: "md-\(ref.key)", wiki: workspace.wiki,
-                             onOpenNote: { [weak self] id in self?.openNote(id) })
         syncHeader()
 
         box.$text

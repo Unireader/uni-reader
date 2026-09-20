@@ -128,7 +128,30 @@ extension WorkspaceManager {
         }
 
         noteTrees = trees
+        registerAliases(into: &index, trees: trees)
         wiki.update(index: index)
+    }
+
+    /// 扫一遍全部正文，把每条 `[[名字|别名]]` 的**别名**登记到它指的那篇上。
+    ///
+    /// 🔴 少了这一步，所有带别名的链接在 App 里都是灰的、点不动——引擎把竖线后面那段当 id 递给
+    /// `resolve()`，真名它自己留着（详见 `NoteIndex.aliases`）。用户 2026-09-20 的 vault 里
+    /// 47 条链接有 36 条带竖线。
+    ///
+    /// ⚠️ 代价是**要把每篇正文读一遍**。放在建完名字索引之后（否则 `[[名字|别名]]` 的名字还查不到）。
+    /// 现在是同步读：几百篇没问题，上万篇的 vault 会慢，那时再加「按修改时间缓存」这一层。
+    private func registerAliases(into index: inout NoteIndex, trees: [NoteTreeSection]) {
+        for section in trees {
+            guard let root = noteRootURL(section.source) else { continue }
+            for item in section.root.allNotes {
+                guard let text = MarkdownImport.readText(root.appendingPathComponent(item.ref.relPath)),
+                      text.contains("[[") else { continue }
+                for pair in MarkdownLink.wikiAliases(text) {
+                    guard let ref = index.note(for: pair.target) else { continue }
+                    index.addAlias(pair.alias, ref)
+                }
+            }
+        }
     }
 
     /// 全部笔记的平铺清单（侧栏之外的地方用：标签标题、deep link 查找）。
@@ -137,9 +160,17 @@ extension WorkspaceManager {
     func note(ref: NoteRef) -> NoteItem? { allNotes.first { $0.ref == ref } }
 
     /// `unireader://…&md=` 的两种写法：库里那行的 UUID，或 `<源 id>:<相对路径>`。
+    /// 按「一串东西」找笔记。认三种写法，按这个顺序：
+    ///  ① `<源 id>:<源内相对路径>`（`NoteRef.key`，我们自己拼链接时用）；
+    ///  ② 库里那行的 UUID（`unireader://…&md=<uuid>`）；
+    ///  ③ 🔴 **笔记名字**——引擎点 `[[…]]` 回调给的就是文件里写的那个名字。
+    ///     因为我们不往文件里写 id，`styleWikiLink` 里 `.link = linkID ?? nodeName` 取的永远是后者；
+    ///     不认这一种，点链接就会静悄悄什么都不发生（2026-09-20 用户连报两次）。
     func note(key: String) -> NoteItem? {
         if let r = NoteRef(key: key), let hit = note(ref: r) { return hit }
-        return allNotes.first { $0.rowID == key }
+        if let hit = allNotes.first(where: { $0.rowID == key }) { return hit }
+        if let r = wiki.note(for: key), let hit = note(ref: r) { return hit }
+        return nil
     }
 
     // MARK: - 正文

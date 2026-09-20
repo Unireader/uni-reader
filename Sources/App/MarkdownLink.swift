@@ -21,6 +21,28 @@ enum MarkdownLink {
     static let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif",
                                          "tif", "tiff", "bmp", "svg", "avif"]
 
+    /// 正文里每条**带别名**的 `[[名字|别名]]`：(目标名, 别名原文)。图片嵌入与保护区里的不算。
+    ///
+    /// 🔴 别名要**原文照取**（不 trim、不去转义）：引擎交给 `resolve(displayName:)` 的就是
+    /// 竖线后面那段的原始子串（`**"三次飞跃"**` 这种带星号引号的也一样），登记时动过手就对不上了。
+    /// 详见 `NoteIndex.aliases`。
+    static func wikiAliases(_ text: String) -> [(target: String, alias: String)] {
+        let ns = text as NSString
+        let guarded = protectedRanges(text)
+        var out: [(String, String)] = []
+        for m in wikiRegex.matches(in: text, range: ns.fullRange)
+        where !guarded.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
+            guard !ns.substring(with: m.range).hasPrefix("!") else { continue }   // 图片嵌入的竖线是宽度
+            let inner = ns.substring(with: m.range(at: 1))
+            guard let i = inner.firstIndex(of: "|") else { continue }
+            let alias = String(inner[inner.index(after: i)...])
+            let target = linkTarget(inner)
+            guard !alias.isEmpty, !target.isEmpty else { continue }
+            out.append((target, alias))
+        }
+        return out
+    }
+
     /// 正文里引用到的**笔记名**（`[[…]]` 的目标段，去掉锚点与别名），去重、按出现顺序。
     /// 保护区（代码块 / 行内代码 / frontmatter）里的不算；图片嵌入归 `imageReferences`。
     static func wikiReferences(_ text: String) -> [String] {

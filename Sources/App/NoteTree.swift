@@ -171,6 +171,17 @@ struct NoteIndex {
     /// 附件（图片等非 md 文件）：相对路径 / 文件名 → 绝对路径。
     private var files: [String: URL] = [:]
     private var filesByName: [String: URL] = [:]
+    /// **别名 → 笔记**（优先级低于真名）。
+    ///
+    /// 🔴 为什么非要有这张表：引擎的 `makeDisplayState` 把 `[[名字|别名]]` 竖线后面那段当成
+    /// **不透明 id**（它自己的格式是 `[[名字|<uuid>]]`），于是 `styleWikiLink` 交给
+    /// `resolve(displayName:)` 的是**别名**，竖线前面那个真名它自己留着当显示文本，根本不给我们。
+    /// 我们又不能让 `name(forID:)` 返回非 nil 去兜（那会让存盘时把显示名写回文件，
+    /// `[[名字|别名]]` 变成 `[[别名|别名]]` —— 那是改文件，红线）。
+    /// 所以只能反过来：扫一遍全部正文，把每条 `[[名字|别名]]` 的别名登记到它指的那篇上。
+    /// 用户 2026-09-20 的 vault 里 47 条链接有 36 条带竖线，不补这张表就全是灰的。
+    private var aliases: [String: NoteRef] = [:]
+    private var aliasesFolded: [String: NoteRef] = [:]
 
     /// macOS 上文件名是 NFD、正文里多半是 NFC——不归一化的话「é」这类名字永远查不中。
     static func normalize(_ s: String) -> String {
@@ -201,6 +212,15 @@ struct NoteIndex {
         add(MarkdownImport.dropExt(note.ref.relPath), note.ref)
     }
 
+    /// 登记一条别名（`[[名字|别名]]` 里竖线后面那段 → 名字指的那篇）。
+    /// **不覆盖已有的**：同一个别名在不同笔记里指不同目标时，先来的算（稳定、可预期）。
+    mutating func addAlias(_ alias: String, _ ref: NoteRef) {
+        let k = Self.normalize(alias)
+        guard !k.isEmpty, exact[k] == nil else { return }   // 真名优先，别名不许盖掉它
+        if aliases[k] == nil { aliases[k] = ref }
+        if aliasesFolded[k.lowercased()] == nil { aliasesFolded[k.lowercased()] = ref }
+    }
+
     mutating func addFile(relPath: String, url: URL) {
         let k = Self.normalize(relPath)
         guard !k.isEmpty else { return }
@@ -220,6 +240,9 @@ struct NoteIndex {
         if let r = lookup(raw) { return r }
         let t = Self.normalize(MarkdownLink.linkTarget(raw))
         if t != raw, let r = lookup(t) { return r }
+        // 最后才试别名表（引擎把 `[[名字|别名]]` 的别名当 id 递过来，见 `aliases` 的注释）
+        if let r = aliases[raw] ?? aliasesFolded[raw.lowercased()] { return r }
+        if t != raw, let r = aliases[t] ?? aliasesFolded[t.lowercased()] { return r }
         return nil
     }
 

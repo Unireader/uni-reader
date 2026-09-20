@@ -163,6 +163,12 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   停手 0.8 秒 / 视图离开窗口 / App 退出。存正文**刻意不调 `refreshNotes()`**（打字时每 0.8 秒重扫一遍目录
   + 侧栏整棵树重建，代价完全不对等）。侧栏在 `SidebarNode` 的 `md` / `noteFolder` / `noteSection` 三个 case，
   选中键 `rowID`（`"md:"+NoteRef.key`，与 PDF 的 `docID` 区分开）
+- 关键坑（Markdown 引擎的 `onLinkClick` **只捕获一次**，2026-09-20 实测）：`NativeTextViewWrapper`
+  在 `makeCoordinator()` 里把它存进协调器，而 `updateNSView` 刷新了另外五个回调（`onCaretRectChange` /
+  `onBuildContextMenu` / `onInlineSelectionChange` / `onInlinePreviewKey` / `onCodeBlockSelectionChange`）
+  **唯独不刷新它**。所以绝不能「先传个空闭包占位、建完 `NSHostingView` 再换 `rootView`」——首次渲染只要
+  发生在换之前，协调器就永久攥着那个空闭包，点链接静悄悄什么都不发生。做法见 `MarkdownDocView.LinkRelay`：
+  传一个**身份固定**的中转闭包进去，目标随后再填。
 - 关键坑：退出收缩逻辑用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating` 守卫（窗口在 ⌘Q 时也会走关闭路径）。
 - 关键坑（`@Published` 在 `willSet` 发出）：AppKit 这边用 Combine 订阅模型时，回调里读到的还是旧值——一律 `.receive(on: DispatchQueue.main)` 推到下一拍再读，多个来源的刷新合并成一次（`queueRefresh` 那种写法）。
 - OCR 文本层：消费方（选择/复制/⌘A/OCR 搜索/分组/调试上色）一律走 `DocSession.ocrVisibleRuns(page:)`——它已滤掉扫描件的平铺水印块（`OCRWatermark`，几何 + 跨页重复判定，不认具体文字）；`ocrRuns` 是真源，只给落库与建指纹用，**别直接消费**（`ocrGroups` 的下标是按可见行算的，混用即错位）。
