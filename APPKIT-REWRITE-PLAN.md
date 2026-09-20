@@ -165,7 +165,8 @@ ReaderScrollView : NSScrollView            ← 外框永远铺满内容区（今
 22. 侧栏文档列表、分组、拖放导入、离线镜像两张面板（建镜像 / 同步预览）
 23. Inspector 四页（信息 / 缩略图 / 目录 / 笔记七分区）
 24. Inspector「Agent」页：工具栏 Agent 开关 / 菜单开合并切页、框选截图投给 Agent 自动切过来、换工作区换对话、设置里关掉 Agent 后这一段消失；
-    Inspector 开合：阅读区跟着动画同步让开（页面居中、滚动条不被盖住，不用切 App 才刷新）；连带加宽窗口那套已关掉（网页 AI 已停用，不测）
+    Inspector 开合：真分栏，阅读区跟着变窄 / 变宽（页面居中、滚动条不被盖住）、工具栏在 Inspector 处断开、
+    页面滚到工具栏底下时开合不闪；连带加宽窗口那套已关掉（网页 AI 已停用，不测）
 25. 工具栏弹出面板：目录、OCR、平板服务（二维码、复制地址、断开设备）
 
 **设置与其他**
@@ -204,19 +205,22 @@ ReaderScrollView : NSScrollView            ← 外框永远铺满内容区（今
   （每扇阅读窗口一段对话；工具栏 Agent 开关 / 菜单 / 框选截图投给 Agent 都是「打开 Inspector 并切到这一页」）；
   浮在阅读区右侧的内置面板（`InlineAIPanelsView`）与 Agent 独立窗口（`AgentWindowController`）删掉；
   网页 AI 停用（`AIPanelModel.available = false`，入口全藏、代码留着）。Inspector 最大宽度 400 → 560。
-- **Inspector 挤开内容**（同日用户要求）：Inspector 仍叠在阅读区上（外框不变，避开玻璃按钮变浅那条坑），
-  盖住的宽度 = 内容格安全区右边，交给阅读区 `panelInset` → `contentInsets.right`，页面居中在剩下那块、滚动条贴它左缘；
-  打开时窗口右边屏幕有空地就先把窗口往右加宽（最多 Inspector 那么宽），收起时窗口没被动过就还回去（`setInspector`）。
-  🔕 **加宽窗口这套 2026-09-20 按用户要求关掉**（`widenWindowWithInspector = false`，代码留着，以后做成设置开关）：
-  现在开合只挤开内容、窗口尺寸一点不动。
-- 🔴 **Inspector 开合必须自己驱动内容格的布局**（2026-09-20 实测，日志逐帧采样）：Inspector 是 overlay 式
-  （`inspectorWithViewController` + 内容格 `automaticallyAdjustsSafeAreaInsets`），开合时内容格的**外框一点不变**，
-  只有安全区右边在动画里逐帧变（300 → 0 约 250ms）——而 AppKit **不会**因为安全区变化就去布局内容格：
-  实测整段动画里窗格的 `layout()` 收起时只在末尾被调一次、展开时一次都没有，于是 `panelInset` → 阅读区
-  `contentInsets` 全程是旧值，阅读区不让位、滚动条不挪，要等切 App / 动窗口这类别的原因触发布局才突然跟上。
-  做法：`ReaderWindowController.pumpLayoutDuringInspectorAnimation` 在开合后的 0.8s 内按帧把分栏 + 窗格的布局推一遍
-  （`layoutSubtreeIfNeeded`），收尾再 `ReaderView.refitNow()` 跳过 `scheduleRefit` 那 0.2s 防抖重排一次。
-  拖到最窄被系统自动收起那条路径（`isCollapsed` 观察）也接同一个泵。
+- 🔴 **Inspector = 真分栏，别再叠在阅读区上**（2026-09-20 用户实测拍板，Xcode 同款）：
+  `contentItem.automaticallyAdjustsSafeAreaInsets` **保持系统默认的 `false`**——这个属性的意思就是
+  「允许侧栏 / Inspector 叠在本格之上，并把被遮住的宽度以 `safeAreaInsets` 交给本格」。
+  开合时内容格外框真的变窄 / 变宽，阅读区照常跟着布局，`contentInsets.right` 恒为 0。
+  工具栏必须同时有 **`.inspectorTrackingSeparator`**（在搜索框与 Inspector 开关之间），否则工具栏不知道
+  「内容区 ↔ Inspector」的分界在哪，搜索框会一路铺到 Inspector 上方（用户实测：「完全不对」）；
+  `autosavesConfiguration` 存下来的老清单里没有它，得在 `adoptNewToolbarItems` 里补插一次。
+  🔕 「跟着 Inspector 加宽窗口」那套同日关掉（`widenWindowWithInspector = false`，代码留着，以后做成设置开关）。
+  **09-19 ~ 09-20 曾把它设成 `true`（叠加玻璃形态），留两笔账备查**：
+  ① 开合时内容格外框一点不变、只有安全区逐帧变（300 → 0 约 250ms），而 AppKit **不会**因为安全区变化就去布局内容格
+  （日志逐帧采样：整段动画里窗格的 `layout()` 收起时只在末尾调一次、展开时一次都没有），于是阅读区不让位、
+  滚动条不挪，要等切 App / 动窗口才突然跟上——那阵子是靠一个逐帧布局泵硬推的（已随形态改回删掉）；
+  ② 逐帧改 `contentInsets` 会让系统把**工具栏的滚动边缘状态**重判一次：页面滚到工具栏底下时，开合 Inspector
+  工具栏底色就闪一下（只有 Inspector 会，左侧栏 / 滚动 / 拖窗口都不会）。改回真分栏后这两样一起消失。
+  另：真分栏每次开合都在改阅读区滚动视图的外框宽度，也就是「玻璃工具栏按钮变浅」那条坑的触发条件，
+  但这次实测**没有**复现变浅（那次是 SwiftUI 时代并排内置面板的情形）。
 - **阅读区顶部**（2026-09-20 用户要求，Preview 同款）：阅读区外框仍铺到工具栏底下（页面滚上去从玻璃后面透过去），
   顶部让位全在 `ReaderView` 自己身上——`contentInsets.top = 工具栏高度 + topGap`（`topGap = PageLayout.gap` = 8pt，
   滚到顶时第一页不贴着工具栏下沿，还能再往下拖一点）。🔴 `scrollerInsets` 是**在 `contentInsets` 之上再内缩一次**，

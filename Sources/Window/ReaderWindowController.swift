@@ -225,9 +225,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         sidebarItem.maximumThickness = 420
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = 400
-        // macOS 26：侧栏/Inspector 叠在内容之上，被遮住的宽度以 `safeAreaInsets` 交给内容。
-        // 这一行是**唯一**的改动——先看 AppKit + 现有阅读区代码的原生默认表现，再决定要不要动几何。
-        contentItem.automaticallyAdjustsSafeAreaInsets = true
+        // 🔴 **保持系统默认的 false = Inspector 不叠在阅读区上，内容格真的变窄**（Xcode 同款，用户 2026-09-20 定）。
+        // 设成 true 的那阵子（09-19 ~ 09-20）Inspector 是浮在阅读区上的玻璃，被遮住的宽度以 `safeAreaInsets`
+        // 交给阅读区用 `contentInsets` 让开——代价是每次开合都要逐帧改 `contentInsets`，而这会让系统把工具栏的
+        // 滚动边缘状态重判一次：页面滚到工具栏底下时，开合 Inspector 工具栏底色就闪一下（用户录屏实测，
+        // 只有 Inspector 会，左侧栏 / 滚动 / 拖窗口都不会）。改回真分栏后阅读区的 `contentInsets.right` 恒为 0。
+        contentItem.automaticallyAdjustsSafeAreaInsets = false
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = Self.paneMinWidth
         inspectorItem.maximumThickness = 560   // Agent 对话也住在这里，给它留够宽度
@@ -255,7 +258,6 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                     self.chrome.inspectorOpen = !item.isCollapsed
                     // 不是经 `setInspector` 收起的（比如拖到最窄被系统收起）：加宽过的那份不再还
                     if item.isCollapsed { self.widenedForInspector = nil }
-                    self.pumpLayoutDuringInspectorAnimation()   // 这条路径也要让阅读区跟着安全区重摆
                     self.refreshToolbarStates()
                 }
             },
@@ -385,14 +387,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     func toggleInspector() { setInspector(open: inspectorItem.isCollapsed) }
 
-    /// 开合 Inspector（工具栏 / 菜单 / Agent 开关都走这里）。它叠在阅读区上、阅读区自己让开（`ReaderPaneController.layoutChrome`）；
-    /// 打开时窗口右边屏幕上还有空地就先把窗口往右加宽，阅读区可视宽度不变；没空地就直接打开、把内容往左挤
-    /// （用户 2026-09-19）。收起时把加的那份还回去。
-    /// 🔕 2026-09-20 用户要求先关掉这套「跟着 Inspector 加宽窗口」的行为，代码保留待以后做成设置开关，
+    /// 开合 Inspector（工具栏 / 菜单 / Agent 开关都走这里）。它是**真分栏**（不叠在阅读区上，Xcode 同款，
+    /// 用户 2026-09-20 定）：开合时内容格外框跟着变窄 / 变宽，阅读区照常跟着布局，不需要我们自己驱动。
+    /// 🔕 「跟着 Inspector 加宽窗口」那套 2026-09-20 按用户要求关掉，代码保留待以后做成设置开关，
     ///    见 `widenWindowWithInspector`。关着时窗口尺寸完全不动，Inspector 直接挤开内容。
     func setInspector(open: Bool) {
         guard open == inspectorItem.isCollapsed, let win = window else { return }
-        pumpLayoutDuringInspectorAnimation()
         if open {
             widenWindowForInspector(win)
             inspectorItem.animator().isCollapsed = false
@@ -414,38 +414,6 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             }
         }
         refreshToolbarStates()
-    }
-
-    /// 🔴 Inspector 是 overlay 式（`inspectorWithViewController` + 内容格 `automaticallyAdjustsSafeAreaInsets`）：
-    /// 开合时**内容格的外框一点没变**，只有安全区右边在变，AppKit 不会因此重新布局内容格，
-    /// `ReaderPaneController.layoutChrome`（panelInset → 阅读区 contentInsets → 滚动条位置）也就不跑——
-    /// 表现是阅读区不让位，直到切 App / 动窗口这类别的原因触发一次布局才突然跟上（用户 2026-09-20 报）。
-    /// 所以开合动画期间自己按帧把分栏 + 窗格的布局推一遍，让位与滚动条跟着动画走。
-    private var inspectorLayoutPump: Timer?
-
-    private func pumpLayoutDuringInspectorAnimation() {
-        inspectorLayoutPump?.invalidate()
-        let deadline = CACurrentMediaTime() + 0.8   // 系统折叠动画 ~0.25s，留足余量收尾
-        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] t in
-            MainActor.assumeIsolated {
-                guard let self, self.window != nil else { t.invalidate(); return }
-                // 先让分栏重算安全区（它才是把 inset 推给内容格的那一层），再让窗格按新安全区重摆
-                self.splitVC.view.layoutSubtreeIfNeeded()
-                if let pane = self.readerPane?.view {
-                    pane.needsLayout = true
-                    pane.layoutSubtreeIfNeeded()
-                }
-                if CACurrentMediaTime() >= deadline {
-                    t.invalidate()
-                    self.inspectorLayoutPump = nil
-                    // 收尾：按最终宽度立刻重排一次（`scheduleRefit` 那 0.2s 防抖是给连续拖窗口用的，
-                    // 开合是一次性动作，没必要再等）
-                    self.readerPane?.readerView?.refitNow()
-                }
-            }
-        }
-        RunLoop.main.add(t, forMode: .common)
-        inspectorLayoutPump = t
     }
 
     /// 开合 Inspector 时是否连带改窗口宽度。暂时关闭（2026-09-20 用户定），以后接到设置项上即可恢复。
@@ -711,12 +679,25 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                 ?? ids.firstIndex(of: .flexibleSpace) ?? ids.count
             tb.insertItem(withItemIdentifier: id, at: at)
         }
+        // Inspector 分界（2026-09-20 加，Inspector 改真分栏后必需）：插在 Inspector 开关前面。
+        // 不补的话，`autosavesConfiguration` 存下来的老清单里没有它，搜索框照旧铺到 Inspector 上方。
+        let sep = NSToolbarItem.Identifier.inspectorTrackingSeparator
+        if !adopted.contains(sep.rawValue) {
+            adopted.insert(sep.rawValue)
+            if !tb.items.contains(where: { $0.itemIdentifier == sep }) {
+                let ids = tb.items.map(\.itemIdentifier)
+                tb.insertItem(withItemIdentifier: sep, at: ids.lastIndex(of: ToolID.inspector) ?? ids.count)
+            }
+        }
         UserDefaults.standard.set(Array(adopted), forKey: key)
     }
 
     /// 🔴 **`.sidebarTrackingSeparator` 不能省**：它是「侧栏区 ↔ 内容区」的分界，工具栏靠它知道
     /// 哪些 item 属于侧栏那一侧。少了它，侧栏开关会被当成普通 item 排到内容区里去
     /// （2026-09-01 用户实测：「左侧边栏按钮跑右边去了」）。
+    /// 🔴 右边同理，**`.inspectorTrackingSeparator` 也不能省**（2026-09-20 用户实测）：Inspector 改成真分栏后
+    /// 少了它，工具栏不知道「内容区 ↔ Inspector」的分界在哪，搜索框会一路铺到 Inspector 上方去。
+    /// 它后面那枚 Inspector 开关就是 Inspector 那一段自己的工具栏（Xcode 右上角同款）。
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, ToolID.addPDF, ToolID.workspace, .sidebarTrackingSeparator,
          ToolID.zoom, .space,
@@ -724,7 +705,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
          ToolID.ocr, ToolID.canvas, ToolID.night, .space,
          ToolID.reference, ToolID.tablet, .space,
          ToolID.agent, ToolID.consult,
-         .flexibleSpace, ToolID.search, ToolID.inspector]
+         .flexibleSpace, ToolID.search, .inspectorTrackingSeparator, ToolID.inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -734,7 +715,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
          ToolID.contents, ToolID.jumpBack, ToolID.jumpHistory,
          ToolID.ocr, ToolID.canvas, ToolID.night,
          ToolID.reference, ToolID.tablet, ToolID.agent, ToolID.consult,
-         ToolID.search, ToolID.inspector]
+         ToolID.search, .inspectorTrackingSeparator, ToolID.inspector]
     }
 
     /// Inspector 那枚钉死不许移除：它是笔记/目录/信息整个面板的唯一入口，拖丢了用户找不回来。

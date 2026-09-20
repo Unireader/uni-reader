@@ -334,8 +334,9 @@ final class ReaderPaneController: NSViewController {
         readerView?.topInset = top
         var si = view.safeAreaInsets
         si.top = top
-        // 右侧 Inspector 叠在阅读区上（外框不变，见 AGENTS.md「玻璃工具栏按钮变浅」），盖住的宽度 = 安全区右边：
-        // 交给阅读区自己用 contentInsets 让开，页面居中在剩下那块、滚动条贴 Inspector 左缘（用户 2026-09-19：要挤开内容）
+        // 右侧被别的分栏项叠住的宽度（= 安全区右边）交给阅读区自己用 contentInsets 让开。
+        // Inspector 2026-09-20 起是**真分栏**（`contentItem.automaticallyAdjustsSafeAreaInsets = false`），
+        // 内容格外框本身就变窄了，所以这里恒为 0；这条路留着，将来再有叠在阅读区上的面板可以直接用。
         let panel = si.right
         readerView?.panelInset = panel
         let safe = NSRect(x: si.left, y: si.top, width: max(0, b.width - si.left - si.right),
