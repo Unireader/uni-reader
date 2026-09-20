@@ -41,6 +41,16 @@ final class InspectorViewController: NSViewController {
     private var variants: [LibVariant] = []
     private var locations: [LibLocation] = []
     private var locationsDoc: String?
+    /// 还没建成视图的条目（滚到哪建到哪，见 `appendBatch`）。
+    private var pendingItems: [() -> NSView] = []
+    /// 这一屏已经建出来的条目数；重建列表时照这个数补回去，免得改一条笔记就被拽回第一批。
+    private var loadedItems = 0
+    /// 重建列表时至少要补回的条目数（见 `rebuild`）。
+    private var restoreTarget = 0
+    /// 下一拍已经排了建批的活，别重复排。
+    private var batchScheduled = false
+    /// 一拍建多少条（实测一张卡片 ≈1.4ms 构造 + 布局，12 条一拍 ≈17ms，不掉帧）。
+    private static let batchSize = 12
 
     private static let sectionKey = "inspectorNotesSection"
     private var notesSection: NotesSection {
@@ -96,6 +106,7 @@ final class InspectorViewController: NSViewController {
         listScroll.autohidesScrollers = true
         listStack.translatesAutoresizingMaskIntoConstraints = false
         listStack.widthAnchor.constraint(equalTo: listScroll.contentView.widthAnchor).isActive = true
+        listScroll.contentView.postsBoundsChangedNotifications = true
 
         tocAddBookmark.title = L("Add Bookmark")
         tocAddBookmark.image = NSImage(systemSymbolName: "bookmark", accessibilityDescription: nil)
@@ -142,11 +153,17 @@ final class InspectorViewController: NSViewController {
         tocAddBookmark.frame = NSRect(x: tocPage.bounds.width - 12 - bs.width, y: 0, width: bs.width, height: bs.height)
         toc.frame = NSRect(x: 0, y: bs.height + 6, width: tocPage.bounds.width, height: max(0, tocPage.bounds.height - bs.height - 6))
         emptyLabel.frame = NSRect(x: 20, y: b.height / 2 - 30, width: b.width - 40, height: 60)
+        // 窗口变高 / 列表刚建完第一批：可视区还空着就接着建（滚动那一路走 `boundsDidChange`）
+        loadMoreIfNeeded()
     }
 
     // MARK: 订阅
 
     private func installObservers() {
+        // 滚动到离底不足一屏就再建一批条目
+        NotificationCenter.default.publisher(for: NSView.boundsDidChangeNotification, object: listScroll.contentView)
+            .sink { [weak self] _ in self?.loadMoreIfNeeded() }
+            .store(in: &bag)
         tabs.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.queueRefresh() }
@@ -204,6 +221,7 @@ final class InspectorViewController: NSViewController {
         boundSession = s
         sessionBag.removeAll()
         lastSignature = ""
+        resetPaging()   // 换了文档 = 换了一份列表
         s.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.queueRefresh() }
@@ -236,6 +254,7 @@ final class InspectorViewController: NSViewController {
     @objc private func sectionChanged() {
         notesSection = sections[max(0, sectionControl.selectedSegment)]
         lastSignature = ""
+        resetPaging()
         refresh()
     }
 
@@ -245,6 +264,7 @@ final class InspectorViewController: NSViewController {
         sectionControl.isHidden = tab != .notes
         sectionControl.selectedSegment = sections.firstIndex(of: notesSection) ?? 0
         lastSignature = ""
+        resetPaging()
         view.needsLayout = true
         refresh()
     }
@@ -321,12 +341,75 @@ final class InspectorViewController: NSViewController {
         agentView = nil
     }
 
-    private func rebuild(_ views: [NSView]) {
+    // MARK: 列表分页
+
+    /// 重建列表：头部（标题 / 筛选器这些，条数固定）当场建，条目**一条都不当场建**。
+    /// 🔴 切页那一拍里一条都别建：实测一张卡片 ≈0.6ms 构造 + 0.8ms 布局 + 1ms 绘制，
+    /// 首屏 30 条就是 70ms 上下，切到「笔记」页会明显顿一下（用户 2026-09-20 报）。
+    /// 所以切过去先把页面切开、列表留空，条目按拍补（`scheduleBatch`），每拍只建一小批。
+    private func rebuild(_ rows: InspectorRows) {
         for v in listStack.arrangedSubviews { listStack.removeArrangedSubview(v); v.removeFromSuperview() }
-        for v in views {
-            listStack.addArrangedSubview(v)
-            v.widthAnchor.constraint(equalTo: listStack.widthAnchor, constant: -32).isActive = true
+        for v in rows.head { addRow(v) }
+        pendingItems = rows.items
+        // 重建前已经建出多少条，就补回多少条：删一条 / 改一条笔记会重建整张列表，
+        // 要是退回第一批，用户滚到的位置就没了。这一段同样按拍补，不在一拍里补几百条。
+        restoreTarget = min(loadedItems, rows.items.count)
+        loadedItems = 0
+        loadMoreIfNeeded()
+    }
+
+    private func rebuild(_ views: [NSView]) { rebuild(InspectorRows(head: views)) }
+
+    private func addRow(_ v: NSView) {
+        listStack.addArrangedSubview(v)
+        v.widthAnchor.constraint(equalTo: listStack.widthAnchor, constant: -32).isActive = true
+    }
+
+    /// 建下一批条目。
+    private func appendBatch() {
+        guard !pendingItems.isEmpty else { return }
+        let n = min(Self.batchSize, pendingItems.count)
+        for make in pendingItems.prefix(n) { addRow(make()) }
+        pendingItems.removeFirst(n)
+        loadedItems += n
+    }
+
+    /// 还该不该接着建：补回重建前的条数，或者内容还没盖过「可视区再往下一屏」。
+    private func needsMoreItems() -> Bool {
+        guard !pendingItems.isEmpty else { return false }
+        if loadedItems < restoreTarget { return true }
+        let clip = listScroll.contentView.bounds
+        guard clip.height > 0, !listScroll.isHidden else { return false }
+        return listStack.frame.height - clip.maxY < clip.height
+    }
+
+    /// 要建就排到下一拍建（切页 / 滚动 / 布局都走这里）。每拍只建一小批，建完接着排下一拍，
+    /// 直到填满可视区——这样主线程每拍只占十几毫秒，切页和滚动都不会被卡住。
+    private func loadMoreIfNeeded() {
+        guard !batchScheduled, needsMoreItems() else { return }
+        batchScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.batchScheduled = false
+            self.appendBatch()
+            self.listStack.layoutSubtreeIfNeeded()   // 量到新高度，下一拍才知道还差多少
+            self.loadMoreIfNeeded()
         }
+    }
+
+    /// 把一串数据包成「怎么建」的闭包。🔴 `self` 一律弱捕获——这些闭包由 `self` 存着（`pendingItems`），
+    /// 强捕获就是一个环，列表没滚完的窗口关掉后整个 Inspector 都不释放。
+    private func lazyItems<T>(_ list: [T], _ make: @escaping (InspectorViewController, T) -> NSView) -> [() -> NSView] {
+        list.map { e in { [weak self] in self.map { make($0, e) } ?? NSView() } }
+    }
+
+    /// 换了页 / 换了分区 / 换了文档：列表是另一份了，从第一批重来并回到顶部。
+    private func resetPaging() {
+        loadedItems = 0
+        restoreTarget = 0
+        pendingItems = []
+        listScroll.contentView.scroll(to: .zero)
+        listScroll.reflectScrolledClipView(listScroll.contentView)
     }
 
     private func reloadLocations(_ id: String) {
@@ -395,21 +478,39 @@ final class InspectorViewController: NSViewController {
 
     // MARK: 笔记页
 
+    /// 列表内容的指纹（没变就不重建）。🔴 别拿字符串拼：会话每变一下（翻页也算）都要跑一次，
+    /// 上千条笔记时每次都在造一个几十 KB 的串再扔掉；一路 `Hasher` 只出 8 个字节。
     private func notesSignature() -> String {
         let s = session
+        var h = Hasher()
+        h.combine(notesSection)
         switch notesSection {
         case .text:
-            return "text|\(s.textNotes.map { "\($0.id)\($0.updatedAt.timeIntervalSince1970)" })|\(s.noteTypeFilter)|\(s.noteTypes.map(\.id))"
-        case .highlight: return "hl|\(s.highlights.map { "\($0.id)\($0.updatedAt.timeIntervalSince1970)" })"
-        case .image: return "img|\(s.imageNotes.map { "\($0.id)\($0.updatedAt.timeIntervalSince1970)" })"
-        case .bookmark: return "bm|\(s.bookmarks.map { "\($0.id)\($0.title)\($0.page)" })"
-        case .ink: return "ink|\(inkSummaries.map { "\($0.page):\($0.count)" })|\(inkExpanded)"
-        case .scratch: return "sc|\(s.scratchPads.map(\.id))|\(s.scratchStrokes.count)"
-        case .ai: return "ai|\(s.aiThreads.map { "\($0.id)\($0.title)\($0.state)" })"
+            for n in s.textNotes { h.combine(n.id); h.combine(n.updatedAt) }
+            switch s.noteTypeFilter {
+            case .all: h.combine(0)
+            case .only(let id): h.combine(1); h.combine(id)
+            }
+            for t in s.noteTypes { h.combine(t.id) }
+        case .highlight:
+            for x in s.highlights { h.combine(x.id); h.combine(x.updatedAt) }
+        case .image:
+            for x in s.imageNotes { h.combine(x.id); h.combine(x.updatedAt) }
+        case .bookmark:
+            for b in s.bookmarks { h.combine(b.id); h.combine(b.title); h.combine(b.page) }
+        case .ink:
+            for k in inkSummaries { h.combine(k.page); h.combine(k.count) }
+            h.combine(inkExpanded)
+        case .scratch:
+            for p in s.scratchPads { h.combine(p.id) }
+            h.combine(s.scratchStrokes.count)
+        case .ai:
+            for t in s.aiThreads { h.combine(t.id); h.combine(t.title); h.combine(t.state) }
         }
+        return String(h.finalize())
     }
 
-    private func notesRows() -> [NSView] {
+    private func notesRows() -> InspectorRows {
         switch notesSection {
         case .text: return textRows()
         case .highlight: return highlightRows()
@@ -423,7 +524,7 @@ final class InspectorViewController: NSViewController {
 
     private func jump(_ page: Int, _ frac: Double) { session.jump(page: page, frac: frac, kind: .list) }
 
-    private func textRows() -> [NSView] {
+    private func textRows() -> InspectorRows {
         let s = session
         let filtered = s.textNotes.filter { n in
             switch s.noteTypeFilter {
@@ -431,53 +532,55 @@ final class InspectorViewController: NSViewController {
             case .only(let id): return n.typeId == id
             }
         }
-        var out: [NSView] = [sectionTitle("\(L("Text Notes")) · \(filtered.count)")]
-        guard !s.textNotes.isEmpty else { out.append(hint(L("No text notes yet."))); return out }
-        out.append(typeFilterButton())
-        for n in filtered {
-            let t = NoteType.resolve(n.typeId, in: s.noteTypes)
-            let dot = NSView()
-            dot.wantsLayer = true
-            dot.layer?.backgroundColor = t.nsColor.cgColor
-            dot.layer?.cornerRadius = 4
-            dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
-            dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
-            var head: [NSView] = [dot, symbolLabel(t.icon, String(format: L("Page %d"), n.page + 1))]
-            if t.id != NoteType.generalID {
-                let tn = label(t.name, .caption1); tn.textColor = .labelColor; head.append(tn)
-            }
-            var lines: [NSView] = [hstack(head)]
-            if !n.text.isEmpty { lines.append(multiline(NoteMarkdown.plain(n.text), .callout, lines: 2)) }
-            if !n.quote.isEmpty {
-                let q = multiline(n.quote.flattenedQuote, .caption1, lines: 2)
-                q.textColor = .labelColor
-                lines.append(q)
-            }
-            var buttons: [NSButton] = []
-            if let src = n.source, src.isAI, AIPanelModel.shared.enabled {
-                buttons.append(iconButton("bubble.left.and.text.bubble.right", L("Open the AI conversation this came from"),
-                                          tint: .labelColor) { [weak self] in self?.openAISource(src) })
-            } else if let src = n.source, src.isAgent {
-                let b = iconButton("terminal", String(format: L("Written by an agent (%@)"), src.provider), tint: .labelColor) {}
-                b.isEnabled = false
-                buttons.append(b)
-            }
-            let id = n.id
-            // 编辑：跟图片笔记一样发通知给本会话的阅读区，由它弹批注编辑器（`ReaderView.openNoteEditor`）
-            buttons.append(iconButton("pencil.circle.fill", L("Edit this note"), tint: .labelColor) { [weak self] in
-                guard let self else { return }
-                NotificationCenter.default.post(name: .textNoteEdit,
-                                                object: NoteRequest(sessionID: self.session.id, noteID: id))
-            })
-            buttons.append(iconButton("xmark.circle.fill", L("Delete this note")) { [weak self] in
-                guard let s = self?.session else { return }
-                s.inkEdit("Delete", kind: .delete) { s.textNotes.removeAll { $0.id == id } }
-            })
-            let card = InspectorCard(content: vstack(lines, spacing: 5), buttons: buttons)
-            card.onTap = { [weak self] in self?.jump(n.page, max(0, Double(n.anchor.minY) - 0.03)) }
-            out.append(card)
+        var head: [NSView] = [sectionTitle("\(L("Text Notes")) · \(filtered.count)")]
+        guard !s.textNotes.isEmpty else { head.append(hint(L("No text notes yet."))); return InspectorRows(head: head) }
+        head.append(typeFilterButton())
+        return InspectorRows(head: head, items: lazyItems(filtered) { me, n in me.textCard(n) })
+    }
+
+    private func textCard(_ n: TextNote) -> NSView {
+        let s = session
+        let t = NoteType.resolve(n.typeId, in: s.noteTypes)
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = t.nsColor.cgColor
+        dot.layer?.cornerRadius = 4
+        dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
+        dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
+        var head: [NSView] = [dot, symbolLabel(t.icon, String(format: L("Page %d"), n.page + 1))]
+        if t.id != NoteType.generalID {
+            let tn = label(t.name, .caption1); tn.textColor = .labelColor; head.append(tn)
         }
-        return out
+        var lines: [NSView] = [hstack(head)]
+        if !n.text.isEmpty { lines.append(multiline(NoteMarkdown.plain(n.text), .callout, lines: 2)) }
+        if !n.quote.isEmpty {
+            let q = multiline(n.quote.flattenedQuote, .caption1, lines: 2)
+            q.textColor = .labelColor
+            lines.append(q)
+        }
+        var buttons: [NSButton] = []
+        if let src = n.source, src.isAI, AIPanelModel.shared.enabled {
+            buttons.append(iconButton("bubble.left.and.text.bubble.right", L("Open the AI conversation this came from"),
+                                      tint: .labelColor) { [weak self] in self?.openAISource(src) })
+        } else if let src = n.source, src.isAgent {
+            let b = iconButton("terminal", String(format: L("Written by an agent (%@)"), src.provider), tint: .labelColor) {}
+            b.isEnabled = false
+            buttons.append(b)
+        }
+        let id = n.id
+        // 编辑：跟图片笔记一样发通知给本会话的阅读区，由它弹批注编辑器（`ReaderView.openNoteEditor`）
+        buttons.append(iconButton("pencil.circle.fill", L("Edit this note"), tint: .labelColor) { [weak self] in
+            guard let self else { return }
+            NotificationCenter.default.post(name: .textNoteEdit,
+                                            object: NoteRequest(sessionID: self.session.id, noteID: id))
+        })
+        buttons.append(iconButton("xmark.circle.fill", L("Delete this note")) { [weak self] in
+            guard let s = self?.session else { return }
+            s.inkEdit("Delete", kind: .delete) { s.textNotes.removeAll { $0.id == id } }
+        })
+        let card = InspectorCard(content: vstack(lines, spacing: 5), buttons: buttons)
+        card.onTap = { [weak self] in self?.jump(n.page, max(0, Double(n.anchor.minY) - 0.03)) }
+        return card
     }
 
     private func typeFilterButton() -> NSView {
@@ -524,54 +627,55 @@ final class InspectorViewController: NSViewController {
         AIPanelModel.shared.openLoose(src.url, provider: src.provider)
     }
 
-    private func highlightRows() -> [NSView] {
+    private func highlightRows() -> InspectorRows {
         let s = session
-        var out: [NSView] = [sectionTitle("\(L("Highlights")) · \(s.highlights.count)")]
-        guard !s.highlights.isEmpty else { out.append(hint(L("No highlights yet."))); return out }
-        for h in s.highlights {
-            let swatch = NSView()
-            swatch.wantsLayer = true
-            swatch.layer?.backgroundColor = h.color.nsColor.cgColor
-            swatch.layer?.cornerRadius = 3
-            swatch.widthAnchor.constraint(equalToConstant: 12).isActive = true
-            swatch.heightAnchor.constraint(equalToConstant: 12).isActive = true
-            var lines: [NSView] = [symbolLabel(h.style.iconName, String(format: L("Page %d"), h.page + 1))]
-            if !h.quote.isEmpty {
-                let q = multiline(h.quote.flattenedQuote, .caption1, lines: 2)
-                q.textColor = .labelColor
-                lines.append(q)
-            }
-            let id = h.id
-            let card = InspectorCard(content: hstack([swatch, vstack(lines, spacing: 5)], alignment: .top, spacing: 8),
-                                     buttons: [iconButton("xmark.circle.fill", L("Delete this highlight")) { [weak self] in
-                                         self?.session.highlights.removeAll { $0.id == id }
-                                     }])
-            card.onTap = { [weak self] in self?.jump(h.page, max(0, Double(h.anchor.minY) - 0.03)) }
-            // 右键：换色 / 换画法 / 删除（与页面上的高亮气泡对应）
-            card.menuProvider = { [weak self] in
-                let m = NSMenu()
-                let colors = NSMenu()
-                for item in Highlight.palette {
-                    colors.addItem(ClosureMenuItem(L(item.name)) { self?.recolor(id, item.color) })
-                }
-                let c = NSMenuItem(title: L("Highlight Color"), action: nil, keyEquivalent: "")
-                c.submenu = colors
-                m.addItem(c)
-                let styles = NSMenu()
-                for st in HighlightStyle.allCases {
-                    let i = ClosureMenuItem(st.title) { self?.restyle(id, st) }
-                    i.state = h.style == st ? .on : .off
-                    styles.addItem(i)
-                }
-                let sm = NSMenuItem(title: L("Mark"), action: nil, keyEquivalent: "")
-                sm.submenu = styles
-                m.addItem(sm)
-                m.addItem(ClosureMenuItem(L("Delete Highlight")) { self?.session.highlights.removeAll { $0.id == id } })
-                return m
-            }
-            out.append(card)
+        var head: [NSView] = [sectionTitle("\(L("Highlights")) · \(s.highlights.count)")]
+        guard !s.highlights.isEmpty else { head.append(hint(L("No highlights yet."))); return InspectorRows(head: head) }
+        return InspectorRows(head: head, items: lazyItems(s.highlights) { me, h in me.highlightCard(h) })
+    }
+
+    private func highlightCard(_ h: Highlight) -> NSView {
+        let swatch = NSView()
+        swatch.wantsLayer = true
+        swatch.layer?.backgroundColor = h.color.nsColor.cgColor
+        swatch.layer?.cornerRadius = 3
+        swatch.widthAnchor.constraint(equalToConstant: 12).isActive = true
+        swatch.heightAnchor.constraint(equalToConstant: 12).isActive = true
+        var lines: [NSView] = [symbolLabel(h.style.iconName, String(format: L("Page %d"), h.page + 1))]
+        if !h.quote.isEmpty {
+            let q = multiline(h.quote.flattenedQuote, .caption1, lines: 2)
+            q.textColor = .labelColor
+            lines.append(q)
         }
-        return out
+        let id = h.id
+        let card = InspectorCard(content: hstack([swatch, vstack(lines, spacing: 5)], alignment: .top, spacing: 8),
+                                 buttons: [iconButton("xmark.circle.fill", L("Delete this highlight")) { [weak self] in
+                                     self?.session.highlights.removeAll { $0.id == id }
+                                 }])
+        card.onTap = { [weak self] in self?.jump(h.page, max(0, Double(h.anchor.minY) - 0.03)) }
+        // 右键：换色 / 换画法 / 删除（与页面上的高亮气泡对应）
+        card.menuProvider = { [weak self] in
+            let m = NSMenu()
+            let colors = NSMenu()
+            for item in Highlight.palette {
+                colors.addItem(ClosureMenuItem(L(item.name)) { self?.recolor(id, item.color) })
+            }
+            let c = NSMenuItem(title: L("Highlight Color"), action: nil, keyEquivalent: "")
+            c.submenu = colors
+            m.addItem(c)
+            let styles = NSMenu()
+            for st in HighlightStyle.allCases {
+                let i = ClosureMenuItem(st.title) { self?.restyle(id, st) }
+                i.state = h.style == st ? .on : .off
+                styles.addItem(i)
+            }
+            let sm = NSMenuItem(title: L("Mark"), action: nil, keyEquivalent: "")
+            sm.submenu = styles
+            m.addItem(sm)
+            m.addItem(ClosureMenuItem(L("Delete Highlight")) { self?.session.highlights.removeAll { $0.id == id } })
+            return m
+        }
+        return card
     }
 
     private func recolor(_ id: UUID, _ c: InkColor) {
@@ -586,123 +690,127 @@ final class InspectorViewController: NSViewController {
         session.highlights[i].updatedAt = .now
     }
 
-    private func imageRows() -> [NSView] {
+    private func imageRows() -> InspectorRows {
         let s = session
-        var out: [NSView] = [sectionTitle("\(L("Image Notes")) · \(s.imageNotes.count)")]
+        var head: [NSView] = [sectionTitle("\(L("Image Notes")) · \(s.imageNotes.count)")]
         guard !s.imageNotes.isEmpty else {
-            out.append(hint(L("No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page.")))
-            return out
+            head.append(hint(L("No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page.")))
+            return InspectorRows(head: head)
         }
-        for n in s.imageNotes {
-            let info = workspace.imageInfo(sha256: n.image)
-            let thumb = NSImageView()
-            thumb.wantsLayer = true
-            thumb.layer?.cornerRadius = 4
-            thumb.layer?.masksToBounds = true
-            thumb.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.6).cgColor
-            thumb.imageScaling = .scaleProportionallyUpOrDown
-            if let info, let cg = ImageThumbCache.shared.image(url: info.url, maxPixel: 96) {
-                thumb.image = NSImage(cgImage: cg, size: .zero)
-            } else {
-                thumb.image = NSImage(systemSymbolName: info == nil ? "photo.badge.exclamationmark" : "photo", accessibilityDescription: nil)
-                thumb.contentTintColor = .labelColor
-            }
-            thumb.widthAnchor.constraint(equalToConstant: 48).isActive = true
-            thumb.heightAnchor.constraint(equalToConstant: 48).isActive = true
-            let title = multiline(n.caption.isEmpty ? n.sourceLabel : NoteMarkdown.plain(n.caption), .callout, lines: 2)
-            let sub = label(n.caption.isEmpty ? String(format: L("Page %d"), n.page + 1)
-                                              : "\(String(format: L("Page %d"), n.page + 1)) · \(n.sourceLabel)", .caption1)
-            sub.textColor = .labelColor
-            let req: (Notification.Name) -> Void = { [weak self] name in
-                guard let self else { return }
-                NotificationCenter.default.post(name: name, object: NoteRequest(sessionID: self.session.id, noteID: n.id))
-            }
-            let id = n.id
-            let delete: () -> Void = { [weak self] in
-                guard let s = self?.session else { return }
-                s.inkEdit("Delete Image Note", kind: .delete) { s.imageNotes.removeAll { $0.id == id } }
-            }
-            let card = InspectorCard(content: hstack([thumb, vstack([title, sub], spacing: 2)], alignment: .top, spacing: 8),
-                                     buttons: [iconButton("pencil.circle.fill", L("Edit this image note"), tint: .labelColor) { req(.imageNoteEdit) },
-                                               iconButton("xmark.circle.fill", L("Delete this image note"), action: delete)])
-            card.onTap = { [weak self] in self?.jump(n.page, max(0, Double(n.anchor.minY) - 0.03)) }
-            card.menuProvider = {
-                let m = NSMenu()
-                m.addItem(ClosureMenuItem(L("Edit…")) { req(.imageNoteEdit) })
-                let v = ClosureMenuItem(L("View Full Size")) { req(.imageNoteView) }
-                v.isEnabled = info != nil
-                m.autoenablesItems = false
-                m.addItem(v)
-                m.addItem(.separator())
-                m.addItem(ClosureMenuItem(L("Delete Image Note"), action: delete))
-                return m
-            }
-            out.append(card)
-        }
-        return out
+        return InspectorRows(head: head, items: lazyItems(s.imageNotes) { me, n in me.imageCard(n) })
     }
 
-    private func bookmarkRows() -> [NSView] {
+    /// 缩略图在这里才读盘 / 才解码——分页之后没滚到的图片笔记就不读（`ImageThumbCache` 仍然负责缓存）。
+    private func imageCard(_ n: ImageNote) -> NSView {
+        let info = workspace.imageInfo(sha256: n.image)
+        let thumb = NSImageView()
+        thumb.wantsLayer = true
+        thumb.layer?.cornerRadius = 4
+        thumb.layer?.masksToBounds = true
+        thumb.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.6).cgColor
+        thumb.imageScaling = .scaleProportionallyUpOrDown
+        if let info, let cg = ImageThumbCache.shared.image(url: info.url, maxPixel: 96) {
+            thumb.image = NSImage(cgImage: cg, size: .zero)
+        } else {
+            thumb.image = NSImage(systemSymbolName: info == nil ? "photo.badge.exclamationmark" : "photo", accessibilityDescription: nil)
+            thumb.contentTintColor = .labelColor
+        }
+        thumb.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        thumb.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        let title = multiline(n.caption.isEmpty ? n.sourceLabel : NoteMarkdown.plain(n.caption), .callout, lines: 2)
+        let sub = label(n.caption.isEmpty ? String(format: L("Page %d"), n.page + 1)
+                                          : "\(String(format: L("Page %d"), n.page + 1)) · \(n.sourceLabel)", .caption1)
+        sub.textColor = .labelColor
+        let req: (Notification.Name) -> Void = { [weak self] name in
+            guard let self else { return }
+            NotificationCenter.default.post(name: name, object: NoteRequest(sessionID: self.session.id, noteID: n.id))
+        }
+        let id = n.id
+        let delete: () -> Void = { [weak self] in
+            guard let s = self?.session else { return }
+            s.inkEdit("Delete Image Note", kind: .delete) { s.imageNotes.removeAll { $0.id == id } }
+        }
+        let card = InspectorCard(content: hstack([thumb, vstack([title, sub], spacing: 2)], alignment: .top, spacing: 8),
+                                 buttons: [iconButton("pencil.circle.fill", L("Edit this image note"), tint: .labelColor) { req(.imageNoteEdit) },
+                                           iconButton("xmark.circle.fill", L("Delete this image note"), action: delete)])
+        card.onTap = { [weak self] in self?.jump(n.page, max(0, Double(n.anchor.minY) - 0.03)) }
+        card.menuProvider = {
+            let m = NSMenu()
+            m.addItem(ClosureMenuItem(L("Edit…")) { req(.imageNoteEdit) })
+            let v = ClosureMenuItem(L("View Full Size")) { req(.imageNoteView) }
+            v.isEnabled = info != nil
+            m.autoenablesItems = false
+            m.addItem(v)
+            m.addItem(.separator())
+            m.addItem(ClosureMenuItem(L("Delete Image Note"), action: delete))
+            return m
+        }
+        return card
+    }
+
+    private func bookmarkRows() -> InspectorRows {
         let s = session
-        var out: [NSView] = [sectionTitle("\(L("Bookmarks")) · \(s.bookmarks.count)")]
+        var head: [NSView] = [sectionTitle("\(L("Bookmarks")) · \(s.bookmarks.count)")]
         let add = NSButton(title: L("Add Bookmark"), image: NSImage(systemSymbolName: "bookmark", accessibilityDescription: nil) ?? NSImage(),
                            target: self, action: #selector(addBookmark))
         add.isBordered = false
         add.contentTintColor = .labelColor
         add.imagePosition = .imageLeading
-        out.append(add)
-        guard !s.bookmarks.isEmpty else { out.append(hint(L("No bookmarks yet."))); return out }
-        for b in s.bookmarks {
-            let sub = label(String(format: L("Page %d"), b.page + 1), .caption1)
-            sub.textColor = .labelColor
-            let card = InspectorCard(content: vstack([symbolLabel("bookmark.fill", b.title), sub], spacing: 2),
-                                     buttons: [iconButton("pencil.circle.fill", L("Rename this bookmark"), tint: .labelColor) { [weak self] in
-                                                   self?.session.beginBookmarkRename(b)
-                                               },
-                                               iconButton("xmark.circle.fill", L("Delete this bookmark")) { [weak self] in
-                                                   self?.session.deleteBookmark(id: b.id)
-                                               }])
-            card.onTap = { [weak self] in self?.session.jump(page: b.page, frac: b.frac, kind: .toc, label: b.title) }
-            out.append(card)
-        }
-        return out
+        head.append(add)
+        guard !s.bookmarks.isEmpty else { head.append(hint(L("No bookmarks yet."))); return InspectorRows(head: head) }
+        return InspectorRows(head: head, items: lazyItems(s.bookmarks) { me, b in me.bookmarkCard(b) })
     }
 
-    private func inkRows() -> [NSView] {
+    private func bookmarkCard(_ b: Bookmark) -> NSView {
+        let sub = label(String(format: L("Page %d"), b.page + 1), .caption1)
+        sub.textColor = .labelColor
+        let card = InspectorCard(content: vstack([symbolLabel("bookmark.fill", b.title), sub], spacing: 2),
+                                 buttons: [iconButton("pencil.circle.fill", L("Rename this bookmark"), tint: .labelColor) { [weak self] in
+                                               self?.session.beginBookmarkRename(b)
+                                           },
+                                           iconButton("xmark.circle.fill", L("Delete this bookmark")) { [weak self] in
+                                               self?.session.deleteBookmark(id: b.id)
+                                           }])
+        card.onTap = { [weak self] in self?.session.jump(page: b.page, frac: b.frac, kind: .toc, label: b.title) }
+        return card
+    }
+
+    private func inkRows() -> InspectorRows {
         let total = inkSummaries.reduce(0) { $0 + $1.count }
-        let head = NSButton(title: "\(L("Ink")) · \(total)", target: self, action: #selector(toggleInk))
-        head.setButtonType(.pushOnPushOff)
-        head.bezelStyle = .disclosure
-        head.state = inkExpanded ? .on : .off
-        head.imagePosition = .imageLeading
-        head.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold)
-        var out: [NSView] = [head]
-        guard inkExpanded else { return out }
-        guard !inkSummaries.isEmpty else { out.append(hint(L("No ink yet."))); return out }
-        for s in inkSummaries {
-            var parts: [NSView] = [symbolLabel("pencil.tip", String(format: L("Page %d"), s.page + 1)), flexible()]
-            for c in s.colors.prefix(6) {
-                let dot = NSView()
-                dot.wantsLayer = true
-                dot.layer?.backgroundColor = c.nsColor.cgColor
-                dot.layer?.cornerRadius = 5
-                dot.widthAnchor.constraint(equalToConstant: 10).isActive = true
-                dot.heightAnchor.constraint(equalToConstant: 10).isActive = true
-                parts.append(dot)
-            }
-            let n = label("\(s.count)", .caption1)
-            n.textColor = .labelColor
-            parts.append(n)
-            let page = s.page
-            let card = InspectorCard(content: hstack(parts), buttons: [iconButton("xmark.circle.fill", L("Delete ink on this page")) { [weak self] in
-                guard let sess = self?.session else { return }
-                sess.inkEnsureLoaded?(page)   // 不在装载窗口里的页先补读，走内存这条路才可撤销
-                sess.inkEdit("Delete", kind: .delete) { sess.strokes.removeAll { $0.page == page } }
-            }], plain: true)
-            card.onTap = { [weak self] in self?.jump(s.page, max(0, s.minY - 0.05)) }
-            out.append(card)
+        let title = NSButton(title: "\(L("Ink")) · \(total)", target: self, action: #selector(toggleInk))
+        title.setButtonType(.pushOnPushOff)
+        title.bezelStyle = .disclosure
+        title.state = inkExpanded ? .on : .off
+        title.imagePosition = .imageLeading
+        title.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold)
+        var head: [NSView] = [title]
+        guard inkExpanded else { return InspectorRows(head: head) }
+        guard !inkSummaries.isEmpty else { head.append(hint(L("No ink yet."))); return InspectorRows(head: head) }
+        return InspectorRows(head: head, items: lazyItems(inkSummaries) { me, s in me.inkCard(s) })
+    }
+
+    private func inkCard(_ s: InkPageSummary) -> NSView {
+        var parts: [NSView] = [symbolLabel("pencil.tip", String(format: L("Page %d"), s.page + 1)), flexible()]
+        for c in s.colors.prefix(6) {
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = c.nsColor.cgColor
+            dot.layer?.cornerRadius = 5
+            dot.widthAnchor.constraint(equalToConstant: 10).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 10).isActive = true
+            parts.append(dot)
         }
-        return out
+        let n = label("\(s.count)", .caption1)
+        n.textColor = .labelColor
+        parts.append(n)
+        let page = s.page
+        let card = InspectorCard(content: hstack(parts), buttons: [iconButton("xmark.circle.fill", L("Delete ink on this page")) { [weak self] in
+            guard let sess = self?.session else { return }
+            sess.inkEnsureLoaded?(page)   // 不在装载窗口里的页先补读，走内存这条路才可撤销
+            sess.inkEdit("Delete", kind: .delete) { sess.strokes.removeAll { $0.page == page } }
+        }], plain: true)
+        card.onTap = { [weak self] in self?.jump(s.page, max(0, s.minY - 0.05)) }
+        return card
     }
 
     @objc private func toggleInk() {
@@ -711,53 +819,63 @@ final class InspectorViewController: NSViewController {
         refresh()
     }
 
-    private func scratchRows() -> [NSView] {
+    private func scratchRows() -> InspectorRows {
         let s = session
-        var out: [NSView] = [sectionTitle("\(L("Scratchpads")) · \(s.scratchPads.count)")]
-        guard !s.scratchPads.isEmpty else { out.append(hint(L("No scratchpads yet. Right-click in the page to add one."))); return out }
-        for (i, pad) in s.scratchPads.enumerated() {
-            let count = s.scratchStrokes.count { $0.padId == pad.id }
-            let n = label("\(count)", .caption1)
-            n.textColor = .labelColor
-            let id = pad.id
-            let card = InspectorCard(content: hstack([symbolLabel("square.and.pencil", pad.displayName(index: i)), flexible(), n]),
-                                     buttons: [iconButton("scope", L("Go to anchor"), tint: .labelColor) { [weak self] in
-                                                   self?.jump(pad.anchorPage, pad.anchorY)
-                                               },
-                                               iconButton("xmark.circle.fill", L("Delete this scratchpad and its ink")) { [weak self] in
-                                                   guard let s = self?.session else { return }
-                                                   if s.openPadID == id { s.openPadID = nil; s.scratchLive = nil }
-                                                   s.scratchPads.removeAll { $0.id == id }
-                                                   s.scratchStrokes.removeAll { $0.padId == id }
-                                               }], plain: true)
-            card.toolTip = String(format: L("Open · anchored on page %d"), pad.anchorPage + 1)
-            card.onTap = { [weak self] in self?.session.openPadID = id }
-            out.append(card)
+        var head: [NSView] = [sectionTitle("\(L("Scratchpads")) · \(s.scratchPads.count)")]
+        guard !s.scratchPads.isEmpty else {
+            head.append(hint(L("No scratchpads yet. Right-click in the page to add one.")))
+            return InspectorRows(head: head)
         }
-        return out
+        let pads = Array(s.scratchPads.enumerated())
+        return InspectorRows(head: head, items: lazyItems(pads) { me, e in me.scratchCard(e.element, index: e.offset) })
     }
 
-    private func aiRows() -> [NSView] {
+    private func scratchCard(_ pad: ScratchPad, index: Int) -> NSView {
         let s = session
-        var out: [NSView] = [sectionTitle("\(L("AI Chats")) · \(s.aiThreads.count)")]
-        guard !s.aiThreads.isEmpty else { out.append(hint(L("No AI chats yet. Right-click in the page to start one."))); return out }
-        for t in s.aiThreads {
-            let p = label(String(format: L("p.%d"), t.page + 1), .caption1)
-            p.textColor = .labelColor
-            let icon = t.state == .suspect ? "exclamationmark.bubble" : "bubble.left.and.text.bubble.right"
-            let id = t.id
-            let card = InspectorCard(content: hstack([symbolLabel(icon, t.hasTitle ? t.title : L("Untitled chat")), flexible(), p]),
-                                     buttons: [iconButton("scope", L("Go to anchor"), tint: .labelColor) { [weak self] in
-                                                   self?.jump(t.page, Double(t.anchor.minY))
-                                               },
-                                               iconButton("xmark.circle.fill", L("Unbind (the conversation itself stays on the platform)")) { [weak self] in
-                                                   self?.session.aiThreads.removeAll { $0.id == id }
-                                               }], plain: true)
-            card.toolTip = t.state == .suspect ? L("This conversation may no longer exist.") : t.url
-            card.onTap = { [weak self] in self?.openAIThread(t) }
-            out.append(card)
+        let count = s.scratchStrokes.count { $0.padId == pad.id }
+        let n = label("\(count)", .caption1)
+        n.textColor = .labelColor
+        let id = pad.id
+        let card = InspectorCard(content: hstack([symbolLabel("square.and.pencil", pad.displayName(index: index)), flexible(), n]),
+                                 buttons: [iconButton("scope", L("Go to anchor"), tint: .labelColor) { [weak self] in
+                                               self?.jump(pad.anchorPage, pad.anchorY)
+                                           },
+                                           iconButton("xmark.circle.fill", L("Delete this scratchpad and its ink")) { [weak self] in
+                                               guard let s = self?.session else { return }
+                                               if s.openPadID == id { s.openPadID = nil; s.scratchLive = nil }
+                                               s.scratchPads.removeAll { $0.id == id }
+                                               s.scratchStrokes.removeAll { $0.padId == id }
+                                           }], plain: true)
+        card.toolTip = String(format: L("Open · anchored on page %d"), pad.anchorPage + 1)
+        card.onTap = { [weak self] in self?.session.openPadID = id }
+        return card
+    }
+
+    private func aiRows() -> InspectorRows {
+        let s = session
+        var head: [NSView] = [sectionTitle("\(L("AI Chats")) · \(s.aiThreads.count)")]
+        guard !s.aiThreads.isEmpty else {
+            head.append(hint(L("No AI chats yet. Right-click in the page to start one.")))
+            return InspectorRows(head: head)
         }
-        return out
+        return InspectorRows(head: head, items: lazyItems(s.aiThreads) { me, t in me.aiCard(t) })
+    }
+
+    private func aiCard(_ t: AIThread) -> NSView {
+        let p = label(String(format: L("p.%d"), t.page + 1), .caption1)
+        p.textColor = .labelColor
+        let icon = t.state == .suspect ? "exclamationmark.bubble" : "bubble.left.and.text.bubble.right"
+        let id = t.id
+        let card = InspectorCard(content: hstack([symbolLabel(icon, t.hasTitle ? t.title : L("Untitled chat")), flexible(), p]),
+                                 buttons: [iconButton("scope", L("Go to anchor"), tint: .labelColor) { [weak self] in
+                                               self?.jump(t.page, Double(t.anchor.minY))
+                                           },
+                                           iconButton("xmark.circle.fill", L("Unbind (the conversation itself stays on the platform)")) { [weak self] in
+                                               self?.session.aiThreads.removeAll { $0.id == id }
+                                           }], plain: true)
+        card.toolTip = t.state == .suspect ? L("This conversation may no longer exist.") : t.url
+        card.onTap = { [weak self] in self?.openAIThread(t) }
+        return card
     }
 
     // MARK: 小零件
@@ -867,6 +985,13 @@ final class InspectorViewController: NSViewController {
         v.heightAnchor.constraint(equalToConstant: h).isActive = true
         return v
     }
+}
+
+/// Inspector 列表的一段内容：`head` 是条数固定的头部（分区标题、筛选器、空列表提示），
+/// `items` 是条目**怎么建**而不是建好的视图——建不建由滚动位置决定（见 `InspectorViewController.rebuild`）。
+struct InspectorRows {
+    var head: [NSView] = []
+    var items: [() -> NSView] = []
 }
 
 /// Inspector 里的一张条目卡片：淡色圆角底 + 内容（点它 = `onTap`）+ 右侧小按钮；右键 `menuProvider`。
