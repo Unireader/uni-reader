@@ -57,34 +57,49 @@ struct AgentMarkdownHost: View {
 
 /// 一段 Markdown 正文（Agent 的回复 / 思考过程）。宽度由外面的约束给，高度是引擎排完版报回来的。
 ///
-/// 🔴 **流式要就地更新，不能重建**：Agent 的回复是一个碎片一个碎片来的，每来一片都把整条重新渲染一遍。
-/// 重建视图 = 每片都新建一棵 TextKit 2 的视图树，长回复几百片下来必卡；所以对话记录那边认出是同一条时
-/// 只调 `update(text:)`。同理，连着来的碎片按 80ms 并成一次交给引擎排版（`interval`），
-/// 免得一条几千字的回复被排上几百遍（每次都是整篇重排）。
+/// 🔴 **排版很贵，交给引擎的次数必须掐着来**——每排一次都是整篇重排（TextKit 2），下面三条缺一不可：
+///  · **流式就地更新，不重建视图**：回复是一个碎片一个碎片来的。重建 = 每片都新建一棵 TextKit 2 的视图树，
+///    长回复几百片下来必卡；所以对话记录那边认出是同一条时只调 `update(text:)`。
+///  · **文本按 80ms 并流**（`textInterval`）：否则一条几千字的回复要被整篇排上几百遍。
+///  · **宽度防抖 + 看不见不排**（2026-09-20 用户实测「拖侧边栏很卡，不管在不在 Agent 页」）：
+///    `InspectorViewController.viewDidLayout` **每次布局都给 Agent 页及其子视图设 frame**，不管这页显不显示；
+///    拖分隔条时逐帧改宽度，照排就是每帧把每条回复整篇重排一遍。所以宽度变化只在停手后排一次
+///    （`widthInterval`），而且看不见时（不在窗口 / 自己或祖先隐藏 / 折叠着的思考过程）一次都不排，
+///    露出来时再补（`viewDidUnhide` / `viewDidMoveToWindow`）。
 @MainActor
 final class AgentMarkdownView: NSView {
+    /// 已经交给引擎的文本。
     private(set) var text: String
     private let fontSize: CGFloat
     private let documentId: String
     private var host: NSHostingView<AgentMarkdownHost>?
-    /// 已经交给引擎的宽度（`bounds.width` 变了才重排）。
+    /// 已经交给引擎的宽度。
     private var hostWidth: CGFloat = -1
     /// 引擎报回来的正文高度。
     private var height: CGFloat = 0
     /// 排完版高度变了：对话记录据此决定要不要继续贴着底。
     var onHeightChange: (() -> Void)?
 
-    /// 还没交给引擎的文本（流式并流中）。
-    private var pending: String?
+    /// 还没交给引擎的输入（攒着，到点 / 露出来再一起排）。
+    private var pendingText: String?
+    private var pendingWidth: CGFloat?
     private var lastApply = Date.distantPast
     private var timer: Timer?
-    private static let interval: TimeInterval = 0.08
+    /// 文本并流的间隔（最多这么频繁地重排一次）。
+    private static let textInterval: TimeInterval = 0.08
+    /// 宽度是防抖：拖分隔条的整个过程一次都不排，停手才排。
+    private static let widthInterval: TimeInterval = 0.15
+
+    /// 现在排版有没有意义。
+    private var isVisible: Bool { window != nil && !isHiddenOrHasHiddenAncestor }
 
     init(text: String, fontSize: CGFloat, documentId: String) {
         self.text = text
         self.fontSize = fontSize
         self.documentId = documentId
         super.init(frame: .zero)
+        // 拖窄的那一瞬间正文还是按旧宽度排的，别让它画到面板外面去
+        clipsToBounds = true
         lastApply = Date()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
@@ -100,22 +115,52 @@ final class AgentMarkdownView: NSView {
 
     /// 流式来的新文本（同一条回复越来越长）。
     func update(text: String) {
-        guard text != self.text, text != pending else { return }
-        if Date().timeIntervalSince(lastApply) >= Self.interval {
-            apply(text)
+        guard text != (pendingText ?? self.text) else { return }
+        pendingText = text
+        guard isVisible else { return }          // 看不见：攒着，露出来再排
+        if Date().timeIntervalSince(lastApply) >= Self.textInterval {
+            flush()
         } else {
-            pending = text
-            scheduleFlush()
+            arm(Self.textInterval, restart: false)
         }
     }
 
-    private func scheduleFlush() {
+    override func layout() {
+        super.layout()
+        host?.frame = bounds
+        guard abs(bounds.width - (pendingWidth ?? hostWidth)) > 0.5 else { return }
+        pendingWidth = bounds.width
+        guard isVisible else { return }
+        // 第一次得立刻排，不然面板要空着等防抖那几十毫秒
+        if host == nil { flush() } else { arm(Self.widthInterval, restart: true) }
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        needsLayout = true      // 藏着的时候宽度可能变过，量一遍
+        flushIfPending()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        needsLayout = true
+        flushIfPending()
+    }
+
+    private func flushIfPending() {
+        guard isVisible, pendingText != nil || pendingWidth != nil else { return }
+        flush()
+    }
+
+    /// 到点（或该露面了）就把攒下的文本 / 宽度一起交给引擎，排一次。
+    private func arm(_ interval: TimeInterval, restart: Bool) {
+        if restart { timer?.invalidate(); timer = nil }
         guard timer == nil else { return }
-        let t = Timer(timeInterval: Self.interval, repeats: false) { [weak self] _ in
+        let t = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.timer = nil
-                if let p = self.pending { self.apply(p) }
+                self.flush()
             }
         }
         timer = t
@@ -123,20 +168,16 @@ final class AgentMarkdownView: NSView {
         RunLoop.main.add(t, forMode: .common)
     }
 
-    private func apply(_ text: String) {
-        pending = nil
+    private func flush() {
+        timer?.invalidate()
+        timer = nil
+        guard pendingText != nil || pendingWidth != nil else { return }
+        if let t = pendingText { text = t }
+        if let w = pendingWidth { hostWidth = w }
+        pendingText = nil
+        pendingWidth = nil
         lastApply = Date()
-        self.text = text
         rebuildRoot()
-    }
-
-    override func layout() {
-        super.layout()
-        if abs(bounds.width - hostWidth) > 0.5 {
-            hostWidth = bounds.width
-            rebuildRoot()
-        }
-        host?.frame = bounds
     }
 
     private func rebuildRoot() {

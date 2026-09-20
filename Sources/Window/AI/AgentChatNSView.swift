@@ -81,10 +81,17 @@ final class AgentChatNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        needsLayout = true
         guard window != nil, !started else { return }
         started = true
         chat.start()
         composer.focus()
+    }
+
+    /// 从别的页切回来：藏着的时候没摆过位（见 `layout`），补一次。
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        needsLayout = true
     }
 
     private func buildEmpty() {
@@ -107,6 +114,9 @@ final class AgentChatNSView: NSView {
 
     override func layout() {
         super.layout()
+        // 🔴 看不见就不摆位：`InspectorViewController.viewDidLayout` 每次布局都会给 Agent 页及其子视图设 frame，
+        // 不管这页显不显示——拖分隔条时逐帧来一遍。切回来时 `viewDidUnhide` 会补一次。
+        guard window != nil, !isHiddenOrHasHiddenAncestor else { return }
         let b = bounds
         var y: CGFloat = 0
         if showsHeader {
@@ -285,25 +295,40 @@ final class AgentChatNSView: NSView {
         stickBottom = clip.bounds.maxY >= transcript.frame.height - 40
     }
 
-    /// 正文排完版高度变了（Markdown 渲染是异步报回来的）：本来贴着底就继续贴着。
-    /// 推到下一拍再滚：这个回调是在排版过程中来的，当场 `layoutSubtreeIfNeeded` 等于在布局里再布局一次。
+    /// 正文排完版高度变了（Markdown 渲染是异步报回来的）：本来贴着底就继续贴着，没贴底的也得让滚动视图重算一遍。
+    /// 推到下一拍再做：这个回调是在排版过程中来的，当场 `layoutSubtreeIfNeeded` 等于在布局里再布局一次。
     private func keepBottom() {
-        guard stickBottom, !bottomQueued else { return }
+        guard !bottomQueued else { return }
         bottomQueued = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.bottomQueued = false
-            if self.stickBottom { self.scrollToBottom() }
+            self.syncScroll()
         }
     }
 
-    private func scrollToBottom() {
-        let clip = transcriptScroll.contentView
+    /// 内容高度变了之后把滚动视图对齐：滚到该在的位置 + 重算滚动条。
+    ///
+    /// 🔴 **非重算不可**：正文高度是引擎排完版**异步**报回来的，那一刻滚动视图自己的 frame 没动，
+    /// 它就不会重新 `tile`——竖滚动条停在上一次的判断上。表现是拖宽 Inspector（内容重排变矮）之后
+    /// 滚动条整个消失，改一下窗口大小又回来（2026-09-20 用户实测）。
+    private func syncScroll(toBottom: Bool = false) {
         transcript.layoutSubtreeIfNeeded()
-        let y = max(0, transcript.frame.height - clip.bounds.height)
-        clip.scroll(to: NSPoint(x: 0, y: y))
+        let clip = transcriptScroll.contentView
+        let maxY = max(0, transcript.frame.height - clip.bounds.height)
+        if toBottom || stickBottom {
+            clip.scroll(to: NSPoint(x: 0, y: maxY))
+        } else if clip.bounds.origin.y > maxY {
+            clip.scroll(to: NSPoint(x: 0, y: maxY))   // 内容变矮了，原来的位置已经超出去
+        }
+        // 🔴 **别手动调 `tile()`**：它会把系统 overlay 滚动条的布局搅乱——knob 变成一小块方块卡在角上，
+        // 竖的横的都一样（2026-09-20 实测）。要让滚动条重新判断，标记 `needsLayout`，
+        // 由 AppKit 在自己的布局周期里去 tile。
+        transcriptScroll.needsLayout = true
         transcriptScroll.reflectScrolledClipView(clip)
     }
+
+    private func scrollToBottom() { syncScroll(toBottom: true) }
 
     /// 权限请求卡片：详情（等宽、最多 5 行）+ 选项按钮（「允许一次」是强调样式，不挂回车，免得打字时顺手批掉）。
     private func refreshPermissions() {

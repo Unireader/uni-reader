@@ -159,9 +159,19 @@ Agent 的回复从前只解析行内语法（`AttributedString(markdown:)` 的 `
   重建只发生在真的新增条目时。另外连着来的碎片按 **80ms** 并成一次交给引擎（一条几千字的回复否则要
   整篇重排几百遍）。`AgentDisclosureView` 也因此从构造函数改成了类——顺带治好「展开着的思考过程
   一来新内容就被折回去」。
-- **贴底**：正文高度是引擎排完版**异步**报回来的，那时再按几何判断「刚才在不在底部」已经晚了。
-  所以滚动时就把 `stickBottom` 记下来（监听 clip 的 `boundsDidChange`），高度变化时按它决定要不要继续贴底；
-  滚动推到下一拍执行，别在排版过程里再 `layoutSubtreeIfNeeded` 一次。
+- 🔴 **宽度变化要防抖，看不见就一次都不排**（用户实测「拖侧边栏很卡，不管在不在 Agent 页」）：
+  `InspectorViewController.viewDidLayout` **每次布局都给 Agent 页及其子视图设 frame**，不管这页显不显示——
+  拖分隔条时逐帧改宽度，照排就是每帧把每条回复整篇重排一遍。所以宽度变化只在停手 150ms 后排一次；
+  不在窗口 / 自己或祖先隐藏（切到别的 Inspector 页、折叠着的思考过程）时文本与宽度都只攒着，
+  `viewDidUnhide` / `viewDidMoveToWindow` 时再补排。`AgentChatNSView.layout` 同理，看不见直接返回。
+  拖动中正文还按旧宽度画，所以 `AgentMarkdownView` 开了 `clipsToBounds`。
+- **贴底与滚动条**：正文高度是引擎排完版**异步**报回来的，那时再按几何判断「刚才在不在底部」已经晚了。
+  所以滚动时就把 `stickBottom` 记下来（监听 clip 的 `boundsDidChange`），高度变化时走 `syncScroll()`：
+  本来贴底的继续贴底、内容变矮后滚动位置超界的钳回来、最后让滚动条重新判断一次。推到下一拍执行，
+  别在排版过程里再 `layoutSubtreeIfNeeded` 一次。
+  🔴 让滚动条重新判断只能 `needsLayout = true` + `reflectScrolledClipView`，**不许手动调 `tile()`**——
+  那是给 `NSScrollView` 子类重写布局用的，外面调会把系统 overlay 滚动条的布局搅乱：knob 变成一小块方块
+  卡在角上，竖的横的都一样（2026-09-20 踩过）。
 - **SwiftUI**：引擎只公开了 SwiftUI 包装，这里同样用 `NSHostingView` 托管——与笔记气泡 / 编辑弹窗 /
   整篇编辑区同属「Markdown 引擎」那条例外，界面其余部分仍是 AppKit。
 - **没做**：代码块语法高亮（要另取引擎的 `MarkdownEngineCodeBlocks` 产品 + `HighlighterSwift` 依赖，
