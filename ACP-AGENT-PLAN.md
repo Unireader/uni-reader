@@ -130,7 +130,7 @@ MCP 服务没开 → 不带，面板顶部提示「开启并重新连接」（**
 |---|---|---|
 | A1 | 进程管理 + ACP 客户端 + 文字对话 + 工具卡片 + 权限卡片 + 自动交 MCP + 两种形态 + 历史列表 / 回放 + 模式 / 配置 + 跟随开关 + 设置页 | ✅ 2026-09-18 |
 | A2 | 附带页面截图（复用 `PageSnip`，Kimi 支持图片）、选中文字作为引用发给 Agent | 截图部分 2026-09-19 已写（待编译 + 用户实测）：⌥ 拖松手在指针处弹系统菜单选「Agent / 网页 AI」（本窗口没开工作区时不问，直接给网页 AI）；发给 Agent = 图片挂在输入框上方（可移除），和下一句话一起发，块顺序「用户文字 → 图片 → 隐藏块（图片来源：文档 / 页 / 归一化区域）→ 上下文块」；握手声明不收图时不发并提示；回放时图片挂回用户消息。选中文字待做 |
-| A3 | 块级 Markdown（标题 / 列表 / 代码块 / 公式）：现在只做行内语法；可评估复用 `MarkdownNoteReader` 的渲染 | 待做 |
+| A3 | 块级 Markdown（标题 / 列表 / 代码块 / 表格 / 公式）：回复与思考过程都改用笔记那套 Markdown 引擎只读渲染（`AgentMarkdownView`，见 §7） | ✅ 2026-09-20（待用户实测） |
 | A4 | 独立窗口吸附到阅读窗口旁、同高、跟着移动：`AIPanelDock` 泛化成两份实例（`shared` 咨询 / `agent`），两扇都吸附时 Agent 排在咨询右边；选项菜单里「吸附到阅读窗口」，默认开 | ✅ 2026-09-18 |
 | — | 两块内置面板改为与阅读区**并排**（阅读区 \| Agent \| 咨询），展开时把 PDF 往左推，不再盖在上面；气泡仍浮在阅读区右下角（`InlinePanelPart`）；展开不做动画（逐帧重排阅读区会卡） | ✅ 2026-09-18 |
 | — | 其他 Agent（Claude 等）：只要改设置里的命令即可接；Claude 要 Node 适配器，用户暂不考虑 | 暂缓 |
@@ -141,3 +141,28 @@ MCP 服务没开 → 不带，面板顶部提示「开启并重新连接」（**
 - **不存会话数据**（D4）。
 - **不自动开 MCP 服务**（§3.3）。
 - **不做 MCP-over-ACP**（SDK 支持的实验性能力：MCP 直接走 ACP 通道、不要 HTTP 端口）：现在的 HTTP 方案够用，Kimi 是否支持也没核实。
+
+## 7. 正文的 Markdown 渲染（2026-09-20，A3）
+
+Agent 的回复从前只解析行内语法（`AttributedString(markdown:)` 的 `inlineOnlyPreservingWhitespace`），
+标题 / 列表 / 代码块 / 表格 / 公式全是原样的源码。现在改成与笔记同一个引擎（`swift-markdown-engine`）的
+只读渲染：`Sources/Window/AI/AgentMarkdownView.swift`。
+
+- **谁用**：Agent 回复（13pt）与思考过程（折叠块里，12pt）。**工具输出不用**——那是 JSON / diff 这类
+  原样的东西，照旧等宽纯文本；用户自己发的话也照旧是纯文本气泡。
+- **配置**（`AgentMarkdown.configuration`）：`heightBehavior = .fitsContent`（高度由内容定，滚轮交给
+  对话记录那个滚动视图）、不要自带滚动条与留白、不做拼写检查；标题 / 列表缩进的尺度与公式渲染器
+  跟笔记共用一套（`MarkdownNoteEditor.applyNoteTypography`）。主题用引擎默认的——`bodyText` 就是
+  `labelColor`，跟系统外观走；**气泡那套 `readerTheme` 是钉死浅色的（纸白底），不能拿来用**。
+- 🔴 **流式必须就地更新，不能重建视图**：回复是一个碎片一个碎片来的，每片都要把整条重新渲染一遍。
+  `AgentItemViews.update(_:to:)` 认出是同一条就只换文字（`AgentMarkdownView.update(text:)`），
+  重建只发生在真的新增条目时。另外连着来的碎片按 **80ms** 并成一次交给引擎（一条几千字的回复否则要
+  整篇重排几百遍）。`AgentDisclosureView` 也因此从构造函数改成了类——顺带治好「展开着的思考过程
+  一来新内容就被折回去」。
+- **贴底**：正文高度是引擎排完版**异步**报回来的，那时再按几何判断「刚才在不在底部」已经晚了。
+  所以滚动时就把 `stickBottom` 记下来（监听 clip 的 `boundsDidChange`），高度变化时按它决定要不要继续贴底；
+  滚动推到下一拍执行，别在排版过程里再 `layoutSubtreeIfNeeded` 一次。
+- **SwiftUI**：引擎只公开了 SwiftUI 包装，这里同样用 `NSHostingView` 托管——与笔记气泡 / 编辑弹窗 /
+  整篇编辑区同属「Markdown 引擎」那条例外，界面其余部分仍是 AppKit。
+- **没做**：代码块语法高亮（要另取引擎的 `MarkdownEngineCodeBlocks` 产品 + `HighlighterSwift` 依赖，
+  改 `project.yml` 要先跟用户确认）；裸 URL 不会自动变成链接（引擎只认 Markdown 语法写的链接）。

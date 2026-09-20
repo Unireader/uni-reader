@@ -26,6 +26,10 @@ final class AgentChatNSView: NSView {
     private var bag = Set<AnyCancellable>()
     private var queued = false
     private var started = false
+    /// 对话记录此刻是不是贴着底（用户自己往上翻过就不是了）。正文高度是 Markdown 排完版才报回来的，
+    /// 那时再按几何去判断已经晚了，所以滚动时就记下来。
+    private var stickBottom = true
+    private var bottomQueued = false
 
     init(chat: AgentChat, workspaceName: String, showsHeader: Bool) {
         self.chat = chat
@@ -56,6 +60,11 @@ final class AgentChatNSView: NSView {
         for v in [header, headerLine, banners, transcriptScroll, empty, permissions, composer] as [NSView] { addSubview(v) }
         header.isHidden = !showsHeader
         headerLine.isHidden = !showsHeader
+        transcriptScroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.publisher(for: NSView.boundsDidChangeNotification,
+                                             object: transcriptScroll.contentView)
+            .sink { [weak self] _ in self?.noteScrolled() }
+            .store(in: &bag)
         chat.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.queueRefresh() }
@@ -230,8 +239,7 @@ final class AgentChatNSView: NSView {
         let isEmpty = chat.items.isEmpty && chat.phase == .idle && chat.sessionId != nil
         empty.isHidden = !isEmpty
         transcriptScroll.isHidden = isEmpty
-        let clip = transcriptScroll.contentView
-        let nearBottom = clip.bounds.maxY >= transcript.frame.height - 40
+        let nearBottom = stickBottom
         let ids = chat.items.map(\.id)
         let changedOrder = ids != order
         if changedOrder {
@@ -243,9 +251,15 @@ final class AgentChatNSView: NSView {
         for item in chat.items {
             if let cur = itemViews[item.id], cur.kind == item.kind {
                 transcript.addArrangedSubview(cur.view)
+            } else if let cur = itemViews[item.id], AgentItemViews.update(cur.view, to: item.kind) {
+                // 流式：同一条回复 / 思考又长了一段，就地换文字，别重建视图（见 `AgentMarkdownView`）
+                itemViews[item.id] = (item.kind, cur.view)
+                transcript.addArrangedSubview(cur.view)
             } else {
                 itemViews[item.id]?.view.removeFromSuperview()
                 let v = AgentItemViews.make(item)
+                if let md = v as? AgentMarkdownView { md.onHeightChange = { [weak self] in self?.keepBottom() } }
+                if let d = v as? AgentDisclosureView { d.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
                 itemViews[item.id] = (item.kind, v)
                 transcript.addArrangedSubview(v)
                 // 宽度约束只在新建时加一次（重排时视图仍是子视图，约束还在）
@@ -261,14 +275,34 @@ final class AgentChatNSView: NSView {
             spinner.removeFromSuperview()
         }
         if nearBottom || changedOrder {
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.transcript.layoutSubtreeIfNeeded()
-                let y = max(0, self.transcript.frame.height - clip.bounds.height)
-                clip.scroll(to: NSPoint(x: 0, y: y))
-                self.transcriptScroll.reflectScrolledClipView(clip)
-            }
+            DispatchQueue.main.async { [weak self] in self?.scrollToBottom() }
         }
+    }
+
+    /// 滚动（或改窗口大小）之后记一下还在不在底上。
+    private func noteScrolled() {
+        let clip = transcriptScroll.contentView
+        stickBottom = clip.bounds.maxY >= transcript.frame.height - 40
+    }
+
+    /// 正文排完版高度变了（Markdown 渲染是异步报回来的）：本来贴着底就继续贴着。
+    /// 推到下一拍再滚：这个回调是在排版过程中来的，当场 `layoutSubtreeIfNeeded` 等于在布局里再布局一次。
+    private func keepBottom() {
+        guard stickBottom, !bottomQueued else { return }
+        bottomQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.bottomQueued = false
+            if self.stickBottom { self.scrollToBottom() }
+        }
+    }
+
+    private func scrollToBottom() {
+        let clip = transcriptScroll.contentView
+        transcript.layoutSubtreeIfNeeded()
+        let y = max(0, transcript.frame.height - clip.bounds.height)
+        clip.scroll(to: NSPoint(x: 0, y: y))
+        transcriptScroll.reflectScrolledClipView(clip)
     }
 
     /// 权限请求卡片：详情（等宽、最多 5 行）+ 选项按钮（「允许一次」是强调样式，不挂回车，免得打字时顺手批掉）。
@@ -358,11 +392,28 @@ enum AgentItemViews {
     static func make(_ item: AgentItem) -> NSView {
         switch item.kind {
         case .user(let s, let images): return user(s, images)
-        case .agent(let s): return agent(s)
-        case .thought(let s): return disclosure(title: L("Thinking"), symbol: "brain", body: s, mono: false)
+        case .agent(let s): return agent(s, id: item.id)
+        case .thought(let s): return thought(s, id: item.id)
         case .tool(let call): return tool(call)
         case .plan(let entries): return plan(entries)
         case .notice(let s, let isError): return notice(s, isError)
+        }
+    }
+
+    /// 同一条条目又来了新内容（流式）：能就地更新就别重建视图。
+    /// - Returns: 吃下了这次更新（调用方据此跳过重建）。
+    static func update(_ view: NSView, to kind: AgentItem.Kind) -> Bool {
+        switch kind {
+        case .agent(let s):
+            guard let v = view as? AgentMarkdownView else { return false }
+            v.update(text: s)
+            return true
+        case .thought(let s):
+            guard let v = view as? AgentDisclosureView, v.markdown != nil else { return false }
+            v.update(text: s)
+            return true
+        default:
+            return false
         }
     }
 
@@ -399,57 +450,16 @@ enum AgentItemViews {
         return col
     }
 
-    /// 行内 Markdown（粗体 / 代码 / 链接），保留换行；块级语法原样（A3 待做）。
-    private static func agent(_ s: String) -> NSView {
-        let t = NSTextField(wrappingLabelWithString: "")
-        let attr = (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            .map { NSMutableAttributedString($0) } ?? NSMutableAttributedString(string: s)
-        let full = NSRange(location: 0, length: attr.length)
-        attr.addAttribute(.foregroundColor, value: NSColor.labelColor, range: full)
-        attr.enumerateAttribute(.font, in: full) { v, r, _ in
-            if v == nil { attr.addAttribute(.font, value: NSFont.systemFont(ofSize: NSFont.systemFontSize), range: r) }
-        }
-        let para = NSMutableParagraphStyle()
-        para.lineSpacing = 2
-        attr.addAttribute(.paragraphStyle, value: para, range: full)
-        t.attributedStringValue = attr
-        t.isSelectable = true
-        t.allowsEditingTextAttributes = true   // 链接可点
-        return t
+    /// Agent 的回复：Markdown 引擎只读渲染（标题 / 列表 / 代码块 / 表格 / 公式，`AgentMarkdownView`）。
+    private static func agent(_ s: String, id: UUID) -> NSView {
+        AgentMarkdownView(text: s, fontSize: AgentMarkdown.bodyFontSize, documentId: "agent-\(id)")
     }
 
-    private static func disclosure(title: String, symbol: String, body: String, mono: Bool,
-                                   header: NSView? = nil) -> NSView {
-        let toggle = NSButton()
-        toggle.bezelStyle = .disclosure
-        toggle.setButtonType(.pushOnPushOff)
-        toggle.title = ""
-        toggle.state = .off
-        let head: NSView
-        if let header { head = header } else {
-            let l = NSTextField(labelWithString: title)
-            l.font = .preferredFont(forTextStyle: .callout)
-            let i = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
-            let s = NSStackView(views: [i, l])
-            s.spacing = 4
-            head = s
-        }
-        let row = NSStackView(views: [toggle, head])
-        row.spacing = 2
-        let text = NSTextField(wrappingLabelWithString: body)
-        text.font = mono ? .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-                         : .preferredFont(forTextStyle: .callout)
-        text.isSelectable = true
-        text.isHidden = true
-        let col = NSStackView(views: [row, text])
-        col.orientation = .vertical
-        col.alignment = .leading
-        col.spacing = 4
-        let relay = DisclosureRelay(text: text)
-        toggle.target = relay
-        toggle.action = #selector(DisclosureRelay.toggled(_:))
-        objc_setAssociatedObject(toggle, &DisclosureRelay.key, relay, .OBJC_ASSOCIATION_RETAIN)
-        return col
+    /// 思考过程：折叠起来，正文同样走 Markdown 渲染（小一号）。
+    private static func thought(_ s: String, id: UUID) -> NSView {
+        let md = AgentMarkdownView(text: s, fontSize: AgentMarkdown.thoughtFontSize, documentId: "thought-\(id)")
+        return AgentDisclosureView(header: AgentDisclosureView.headerRow(title: L("Thinking"), symbol: "brain"),
+                                   body: md, markdown: md)
     }
 
     private static func tool(_ call: AgentToolCall) -> NSView {
@@ -478,7 +488,11 @@ enum AgentItemViews {
         label.spacing = 6
         guard !call.output.isEmpty else { return label }
         let out = call.output.count > 4000 ? String(call.output.prefix(4000)) + "…" : call.output
-        return disclosure(title: "", symbol: "", body: out, mono: true, header: label)
+        // 工具输出是 JSON / diff 这类原样的东西，不当 Markdown 渲染：等宽照原样显示
+        let text = NSTextField(wrappingLabelWithString: out)
+        text.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        text.isSelectable = true
+        return AgentDisclosureView(header: label, body: text)
     }
 
     private static func plan(_ entries: [AgentPlanEntry]) -> NSView {
@@ -521,14 +535,6 @@ enum AgentItemViews {
         row.spacing = 6
         return row
     }
-}
-
-/// 折叠 / 展开一段文字（思考过程、工具输出）。
-final class DisclosureRelay: NSObject {
-    static var key: UInt8 = 0
-    private weak var text: NSView?
-    init(text: NSView) { self.text = text }
-    @objc func toggled(_ sender: NSButton) { text?.isHidden = sender.state != .on }
 }
 
 /// 一张图片的缩略显示（输入框上的待发图片 / 对话里用户发过的图片）：按高度等比、宽度封顶 3 倍高。
