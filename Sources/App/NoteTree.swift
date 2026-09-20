@@ -209,10 +209,21 @@ struct NoteIndex {
         if filesByName[name] == nil { filesByName[name] = url }
     }
 
-    /// `[[名字]]` / `[[子目录/名字]]` → 哪篇笔记。
+    /// `[[名字]]` / `[[子目录/名字]]` / `[[名字#锚点\\|别名]]` → 哪篇笔记。
+    ///
+    /// **先按原样查一次**：名字里本来就带 `#` 或 `|` 的笔记（`C#入门` 这种）不该被收拾掉。
+    /// 查不中再用 `MarkdownLink.linkTarget` 去掉别名段 / 锚点 / 转义之后重来一遍——
+    /// 引擎交给 `resolve(displayName:)` 的就是没收拾过的原串（见那个函数的注释）。
     func note(for key: String) -> NoteRef? {
-        let k = Self.normalize(key)
-        guard !k.isEmpty else { return nil }
+        let raw = Self.normalize(key)
+        guard !raw.isEmpty else { return nil }
+        if let r = lookup(raw) { return r }
+        let t = Self.normalize(MarkdownLink.linkTarget(raw))
+        if t != raw, let r = lookup(t) { return r }
+        return nil
+    }
+
+    private func lookup(_ k: String) -> NoteRef? {
         if let r = exact[k] ?? folded[k.lowercased()] { return r }
         // 带扩展名写法 `[[极限.md]]`
         let noExt = MarkdownImport.dropExt(k)

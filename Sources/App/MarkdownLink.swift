@@ -49,6 +49,45 @@ enum MarkdownLink {
     /// `[文字](目标)` / `![文字](目标)`。目标不含空白与右括号（带空格的目标要写成 `<…>`，这里不碰）。
     static let inlineLinkRegex = try! NSRegularExpression(pattern: #"!?\[([^\[\]\r\n]*)\]\(([^()\s]*)\)"#)
 
+    /// 把 `[[…]]` 里写的那一串收拾成**目标名**：去别名段、去锚点、去 Markdown 转义。
+    ///
+    /// 🔴 **表格里的竖线是转义的**（2026-09-20 用户的 vault 实测）：Obsidian 在表格单元格里写
+    /// `[[名字\|别名]]`，不转义的话 `|` 会把表格列切断。而引擎的解析正则 `[^\|\]…]*` 在**第一个**
+    /// 竖线处就切，不管前面有没有反斜杠——于是它交给 `resolve(displayName:)` 的名字尾巴上挂着一个 `\`，
+    /// 怎么都查不中。同理它也**不去掉 `#锚点`**。所以这道收拾必须放在解析入口（`NoteIndex.note(for:)`），
+    /// 只在 `WikiParts` 里做是不够的——引擎那条路根本不经过它。
+    static func linkTarget(_ raw: String) -> String {
+        var s = raw
+        // 别名段：**第一个竖线**就是分隔符，转没转义都一样——表格里的 `\|` 只是为了不切断单元格，
+        // 不代表名字里真有个竖线（文件名里带竖线的链接 Obsidian 自己也不支持）。
+        if let i = s.firstIndex(of: "|") { s = String(s[s.startIndex..<i]) }
+        while s.hasSuffix("\\") { s.removeLast() }      // 引擎在 `\|` 处切一刀后留下的那个反斜杠
+        if let i = s.firstIndex(of: "#") { s = String(s[s.startIndex..<i]) }   // `#小节` / `#^块`
+        return unescapeMarkdown(s).trimmed
+    }
+
+    /// `\X` → `X`，只还原 Markdown 真会转义的那些标点；别的反斜杠原样留着
+    /// （文件名里带反斜杠虽然少见，但它是合法字符）。
+    private static func unescapeMarkdown(_ s: String) -> String {
+        guard s.contains("\\") else { return s }
+        let escapable: Set<Character> = ["|", "#", "[", "]", "(", ")", "*", "_", "`", "~", "\\"]
+        var out = ""
+        var pending = false
+        for c in s {
+            if pending {
+                if !escapable.contains(c) { out.append("\\") }
+                out.append(c)
+                pending = false
+            } else if c == "\\" {
+                pending = true
+            } else {
+                out.append(c)
+            }
+        }
+        if pending { out.append("\\") }
+        return out
+    }
+
     /// `[[目标#锚点|别名]]` 拆成三段。竖线只认第一个，锚点只认目标段里的第一个 `#`。
     struct WikiParts: Equatable {
         var target: String
@@ -63,9 +102,8 @@ enum MarkdownLink {
             }
             if let i = head.firstIndex(of: "#") {
                 anchor = String(head[head.index(after: i)...]).replacingOccurrences(of: "^", with: "")
-                head = String(head[head.startIndex..<i])
             }
-            target = head.trimmed
+            target = MarkdownLink.linkTarget(inner)
         }
     }
 

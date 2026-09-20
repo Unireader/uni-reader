@@ -103,6 +103,29 @@ check(index.note(for: "别的/极限")?.relPath == "数学/微积分/极限.md",
 check(index.note(for: "还没写的") == nil, "解析不到 → nil（正文原样留着，画成断链）")
 check(index.note(for: "  极限 ") != nil, "两头空白不影响")
 
+// 🔴 引擎交给 resolve() 的是**没收拾过的原串**：它在第一个竖线处就切（不管有没有反斜杠转义），
+//    而且不去锚点。表格里 Obsidian 把竖线写成 `\|`，于是名字尾巴上挂着一个反斜杠。
+//    这几种以前全都解析不到（2026-09-20 用户的 vault 实测）。
+check(index.note(for: "极限#左极限")?.relPath == "数学/微积分/极限.md", "带锚点 `名字#小节`")
+check(index.note(for: "极限#^abc123")?.relPath == "数学/微积分/极限.md", "带块锚点 `名字#^块`")
+check(index.note(for: "极限\\")?.relPath == "数学/微积分/极限.md", "表格里 `[[名字\\|别名]]` 留下的尾巴反斜杠")
+check(index.note(for: "极限#左极限\\")?.relPath == "数学/微积分/极限.md", "锚点 + 转义竖线一起")
+check(index.note(for: "数学/微积分/极限#左极限\\")?.relPath == "数学/微积分/极限.md", "带路径 + 锚点 + 转义竖线")
+
+// 名字里本来就带 # 或 | 的笔记不该被收拾掉（先按原样查一次）
+var odd = NoteIndex()
+odd.add(note: NoteItem(ref: NoteRef(sourceID: "ws", relPath: "C#入门.md")))
+check(odd.note(for: "C#入门")?.relPath == "C#入门.md", "名字里本来就带 # 的笔记，原样能查中")
+
+print("\n— 7b) linkTarget：把写在文件里的那一串收拾成目标名 —")
+eq(MarkdownLink.linkTarget("名字"), "名字", "纯名字")
+eq(MarkdownLink.linkTarget("名字|别名"), "名字", "普通别名")
+eq(MarkdownLink.linkTarget("名字\\|别名"), "名字", "表格里的转义竖线")
+eq(MarkdownLink.linkTarget("名字#小节"), "名字", "锚点")
+eq(MarkdownLink.linkTarget("名字#^块\\|别名"), "名字", "块锚点 + 转义竖线")
+eq(MarkdownLink.linkTarget("名字\\"), "名字", "引擎切完留下的尾巴反斜杠")
+eq(MarkdownLink.linkTarget("a\\|b"), "a", "转义竖线同样是分隔符（Obsidian 的口径）")
+
 var dup = NoteIndex()
 dup.add(note: NoteItem(ref: NoteRef(sourceID: "ws", relPath: "b/同名.md")))
 dup.add(note: NoteItem(ref: NoteRef(sourceID: "ws", relPath: "a/同名.md")))

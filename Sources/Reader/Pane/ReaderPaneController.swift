@@ -232,9 +232,10 @@ final class ReaderPaneController: NSViewController {
                 mdView?.flush()
                 mdView?.removeFromSuperview()
                 let v = MarkdownDocView(ref: ref, workspace: workspace)
-                v.onOpenNote = { [weak self] key in
-                    guard let r = NoteRef(key: key) else { return }
-                    self?.tabs.openMarkdown(r)
+                // 引擎回调给的是文件里写的那个**名字**（不是 NoteRef.key），统一交给 `note(key:)` 认
+                v.onOpenNote = { [weak self] target in
+                    guard let self, let item = self.workspace.note(key: target) else { return }
+                    self.tabs.openMarkdown(item.ref)
                 }
                 view.addSubview(v, positioned: .below, relativeTo: placeholder)
                 mdView = v
