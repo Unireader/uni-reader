@@ -27,7 +27,7 @@ final class ReaderView: NSView {
 
     /// 工具栏占掉的顶部高度（视图点）。页面从它下面开始、滚上去从它底下透过去。
     var topInset: CGFloat = 0 { didSet { if oldValue != topInset { applyInsets() } } }
-    /// 右侧内置 AI 面板盖住的宽度（视图点）：页面适配到左边剩下的那块，外框不变（方案 §3.3）。
+    /// 右侧 Inspector 盖住的宽度（视图点）：页面适配到左边剩下的那块，外框不变（方案 §3.3）。
     var panelInset: CGFloat = 0 { didSet { if oldValue != panelInset { applyInsets() } } }
     /// 滚动条底部让位（底部标签栏）。内容仍垫到底。
     var scrollerBottomInset: CGFloat = 0 { didSet { if oldValue != scrollerBottomInset { applyInsets() } } }
@@ -261,6 +261,11 @@ final class ReaderView: NSView {
 
     override func viewDidEndLiveResize() {
         super.viewDidEndLiveResize()
+        refitNow()
+    }
+
+    /// 跳过 `scheduleRefit` 的防抖，按当前宽度立刻重排（拖窗口结束、Inspector 开合收尾这类一次性动作）。
+    func refitNow() {
         guard didSetup else { return }
         refitWork?.cancel(); refitWork = nil
         refit()

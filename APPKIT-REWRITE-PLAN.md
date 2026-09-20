@@ -164,7 +164,8 @@ ReaderScrollView : NSScrollView            ← 外框永远铺满内容区（今
 **侧栏 / Inspector / AI**
 22. 侧栏文档列表、分组、拖放导入、离线镜像两张面板（建镜像 / 同步预览）
 23. Inspector 四页（信息 / 缩略图 / 目录 / 笔记七分区）
-24. 内置 Agent 面板与网页 AI 面板：开合动画、改宽度、玻璃底；Agent 独立窗口、网页 AI 独立窗口（吸附、置顶、⌘F）
+24. Inspector「Agent」页：工具栏 Agent 开关 / 菜单开合并切页、框选截图投给 Agent 自动切过来、换工作区换对话、设置里关掉 Agent 后这一段消失；
+    Inspector 开合：阅读区跟着动画同步让开（页面居中、滚动条不被盖住，不用切 App 才刷新）；连带加宽窗口那套已关掉（网页 AI 已停用，不测）
 25. 工具栏弹出面板：目录、OCR、平板服务（二维码、复制地址、断开设备）
 
 **设置与其他**
@@ -199,6 +200,23 @@ ReaderScrollView : NSScrollView            ← 外框永远铺满内容区（今
 - **笔架**拖动：从按钮上按下、挪过 6pt 就算拖（原版同款手感，由每个格子自己转交给笔架）。
 - **参考窗页流**缩放改用滚动视图自带的放大倍率（与阅读区同一套），原版手写的锚点账本不再需要。
 - 草稿纸视口动画（回中 / 适应内容）用显示刷新逐帧插值，0.18s 缓出，与原版同时长。
+- **AI 面板并进 Inspector**（用户 2026-09-19 测试后定）：Agent 对话成了 Inspector 顶部分段的第五页「Agent」
+  （每扇阅读窗口一段对话；工具栏 Agent 开关 / 菜单 / 框选截图投给 Agent 都是「打开 Inspector 并切到这一页」）；
+  浮在阅读区右侧的内置面板（`InlineAIPanelsView`）与 Agent 独立窗口（`AgentWindowController`）删掉；
+  网页 AI 停用（`AIPanelModel.available = false`，入口全藏、代码留着）。Inspector 最大宽度 400 → 560。
+- **Inspector 挤开内容**（同日用户要求）：Inspector 仍叠在阅读区上（外框不变，避开玻璃按钮变浅那条坑），
+  盖住的宽度 = 内容格安全区右边，交给阅读区 `panelInset` → `contentInsets.right`，页面居中在剩下那块、滚动条贴它左缘；
+  打开时窗口右边屏幕有空地就先把窗口往右加宽（最多 Inspector 那么宽），收起时窗口没被动过就还回去（`setInspector`）。
+  🔕 **加宽窗口这套 2026-09-20 按用户要求关掉**（`widenWindowWithInspector = false`，代码留着，以后做成设置开关）：
+  现在开合只挤开内容、窗口尺寸一点不动。
+- 🔴 **Inspector 开合必须自己驱动内容格的布局**（2026-09-20 实测，日志逐帧采样）：Inspector 是 overlay 式
+  （`inspectorWithViewController` + 内容格 `automaticallyAdjustsSafeAreaInsets`），开合时内容格的**外框一点不变**，
+  只有安全区右边在动画里逐帧变（300 → 0 约 250ms）——而 AppKit **不会**因为安全区变化就去布局内容格：
+  实测整段动画里窗格的 `layout()` 收起时只在末尾被调一次、展开时一次都没有，于是 `panelInset` → 阅读区
+  `contentInsets` 全程是旧值，阅读区不让位、滚动条不挪，要等切 App / 动窗口这类别的原因触发布局才突然跟上。
+  做法：`ReaderWindowController.pumpLayoutDuringInspectorAnimation` 在开合后的 0.8s 内按帧把分栏 + 窗格的布局推一遍
+  （`layoutSubtreeIfNeeded`），收尾再 `ReaderView.refitNow()` 跳过 `scheduleRefit` 那 0.2s 防抖重排一次。
+  拖到最窄被系统自动收起那条路径（`isCollapsed` 观察）也接同一个泵。
 
 ### 9.3 已知遗留（不影响编译，合并前要处理或确认）
 

@@ -330,19 +330,13 @@ enum AgentMenus {
         return m
     }
 
-    /// 面板本身的设置：跟随 Agent / 切换形态。
+    /// 面板本身的设置：跟随 Agent。
     static func options() -> NSMenu {
         let panel = AgentPanelModel.shared
         let m = NSMenu()
         let follow = ClosureMenuItem(L("Follow Agent")) { panel.setFollow(!panel.follow) }
         follow.state = panel.follow ? .on : .off
         m.addItem(follow)
-        m.addItem(.separator())
-        if panel.mode == .inline {
-            m.addItem(ClosureMenuItem(L("Open as Separate Window")) { panel.setMode(.window) })
-        } else {
-            m.addItem(ClosureMenuItem(L("Show Inside Reading Window")) { panel.setMode(.inline) })
-        }
         return m
     }
 

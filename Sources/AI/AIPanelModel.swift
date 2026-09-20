@@ -250,11 +250,16 @@ final class AIPanelModel: ObservableObject {
         inlineOpenDefault = d.object(forKey: Self.inlineOpenKey) as? Bool ?? false
         docked = d.object(forKey: Self.dockKey) as? Bool ?? true
         inlineWidth = min(max(d.object(forKey: Self.inlineWidthKey) as? Double ?? 400, 300), 900)
-        enabled = d.object(forKey: Self.enabledKey) as? Bool ?? true
+        enabled = Self.available && (d.object(forKey: Self.enabledKey) as? Bool ?? true)
         reloadConfig()
     }
 
     // MARK: - 总开关
+
+    /// 网页 AI 整体停用（用户 2026-09-19「先停用 web 网页 AI，入口先停掉」）：为假时 `enabled` 恒为假，
+    /// 所有入口（工具栏开关、菜单、右键 / 框选截图里的那几项、设置开关、Inspector 的「AI 对话」分区）都跟着消失。
+    /// 代码原样留着，要恢复就把它改回 true（内置形态的界面随 AI 面板进 Inspector 时已删，恢复前要先给它安排位置）。
+    static let available = false
 
     private static let enabledKey = "consultAIEnabled"
     /// 设置 ›「通用」›「AI」里的开关（用户 2026-09-19：两种 AI 各自一个开关）。关掉 = 工具栏开关藏起来、
@@ -262,7 +267,7 @@ final class AIPanelModel: ObservableObject {
     @Published private(set) var enabled = true
 
     func setEnabled(_ on: Bool) {
-        guard on != enabled else { return }
+        guard on != enabled, !on || Self.available else { return }
         enabled = on
         UserDefaults.standard.set(on, forKey: Self.enabledKey)
         guard !on else { return }

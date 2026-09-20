@@ -209,6 +209,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
         // Inspector：AppKit（第 4 步，替代 SwiftUI `InspectorView`）
         let inspector = InspectorViewController(tabs: tabs, workspace: workspace)
+        inspector.onTabChange = { [weak self] in self?.refreshToolbarStates() }
+        inspectorVC = inspector
 
         // 🔴 **三段都要关掉尺寸传播**：`NSHostingController` 默认把 SwiftUI 内容的 fitting size
         // 报成 `preferredContentSize`，AppKit 于是拿它去调整窗口——2026-09-01 用户实测的两个症状
@@ -228,7 +230,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         contentItem.automaticallyAdjustsSafeAreaInsets = true
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = Self.paneMinWidth
-        inspectorItem.maximumThickness = 400
+        inspectorItem.maximumThickness = 560   // Agent 对话也住在这里，给它留够宽度
 
         // 左侧栏 / Inspector 记住上次开合（用户 2026-09-19）：全 app 一份偏好，新窗口按它开。
         // 首次（没记过）：侧栏开、Inspector 收——与原来的默认一致。
@@ -248,7 +250,14 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             },
             inspectorItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
                 UserDefaults.standard.set(item.isCollapsed, forKey: Self.inspectorCollapsedKey)
-                DispatchQueue.main.async { self?.chrome.inspectorOpen = !item.isCollapsed }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.chrome.inspectorOpen = !item.isCollapsed
+                    // 不是经 `setInspector` 收起的（比如拖到最窄被系统收起）：加宽过的那份不再还
+                    if item.isCollapsed { self.widenedForInspector = nil }
+                    self.pumpLayoutDuringInspectorAnimation()   // 这条路径也要让阅读区跟着安全区重摆
+                    self.refreshToolbarStates()
+                }
             },
         ]
     }
@@ -256,6 +265,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private static let sidebarCollapsedKey = "readerSidebarCollapsed"
     private static let inspectorCollapsedKey = "readerInspectorCollapsed"
     private var paneObservations: [NSKeyValueObservation] = []
+    private var inspectorVC: InspectorViewController!
+    /// 打开 Inspector 时为它把窗口往右加宽过：(加了多宽, 加宽后的窗口外框)。收起时窗口还是这个外框（用户没动过）才还回去。
+    private var widenedForInspector: (by: CGFloat, frame: NSRect)?
 
     // MARK: - 标题
 
@@ -286,12 +298,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshToolbarStates() }
             .store(in: &bag)
-        // Agent / 咨询 AI 两枚开关：内置侧栏开合、形态切换（模型发布），独立窗口显示 / 隐藏 / 关闭（通知）
+        // Agent / 咨询 AI 两枚开关：总开关（模型发布）、咨询 AI 形态切换与浮窗显示 / 隐藏 / 关闭（通知）。
+        // Agent 开关的按下态 = Inspector 开着且在 Agent 页，由 `setInspector` / `onTabChange` 刷
         let agent = AgentPanelModel.shared, consult = AIPanelModel.shared
-        Publishers.Merge4(agent.$inlineOpenWindows.map { _ in () }, agent.$mode.map { _ in () },
-                          consult.$inlineOpenWindows.map { _ in () }, consult.$mode.map { _ in () })
-            .merge(with: NotificationCenter.default.publisher(for: .auxPanelVisibilityChanged).map { _ in () },
-                   agent.$enabled.map { _ in () }, consult.$enabled.map { _ in () })
+        Publishers.Merge3(consult.$inlineOpenWindows.map { _ in () }, consult.$mode.map { _ in () },
+                          NotificationCenter.default.publisher(for: .auxPanelVisibilityChanged).map { _ in () })
+            .merge(with: agent.$enabled.map { _ in () }, consult.$enabled.map { _ in () })
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.refreshToolbarStates() }
             .store(in: &bag)
@@ -371,9 +383,96 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .store(in: &bag)
     }
 
-    func toggleInspector() {
-        inspectorItem.animator().isCollapsed.toggle()
-        chrome.inspectorOpen = !inspectorItem.isCollapsed
+    func toggleInspector() { setInspector(open: inspectorItem.isCollapsed) }
+
+    /// 开合 Inspector（工具栏 / 菜单 / Agent 开关都走这里）。它叠在阅读区上、阅读区自己让开（`ReaderPaneController.layoutChrome`）；
+    /// 打开时窗口右边屏幕上还有空地就先把窗口往右加宽，阅读区可视宽度不变；没空地就直接打开、把内容往左挤
+    /// （用户 2026-09-19）。收起时把加的那份还回去。
+    /// 🔕 2026-09-20 用户要求先关掉这套「跟着 Inspector 加宽窗口」的行为，代码保留待以后做成设置开关，
+    ///    见 `widenWindowWithInspector`。关着时窗口尺寸完全不动，Inspector 直接挤开内容。
+    func setInspector(open: Bool) {
+        guard open == inspectorItem.isCollapsed, let win = window else { return }
+        pumpLayoutDuringInspectorAnimation()
+        if open {
+            widenWindowForInspector(win)
+            inspectorItem.animator().isCollapsed = false
+            chrome.inspectorOpen = true
+        } else {
+            let widened = widenedForInspector
+            widenedForInspector = nil
+            chrome.inspectorOpen = false
+            NSAnimationContext.runAnimationGroup { _ in
+                inspectorItem.animator().isCollapsed = true
+            } completionHandler: { [weak win] in
+                MainActor.assumeIsolated {
+                    // 用户在开着期间拖过 / 挪过窗口就不动它
+                    guard let win, let w = widened, win.frame == w.frame else { return }
+                    var f = win.frame
+                    f.size.width -= w.by
+                    win.setFrame(f, display: true, animate: true)
+                }
+            }
+        }
+        refreshToolbarStates()
+    }
+
+    /// 🔴 Inspector 是 overlay 式（`inspectorWithViewController` + 内容格 `automaticallyAdjustsSafeAreaInsets`）：
+    /// 开合时**内容格的外框一点没变**，只有安全区右边在变，AppKit 不会因此重新布局内容格，
+    /// `ReaderPaneController.layoutChrome`（panelInset → 阅读区 contentInsets → 滚动条位置）也就不跑——
+    /// 表现是阅读区不让位，直到切 App / 动窗口这类别的原因触发一次布局才突然跟上（用户 2026-09-20 报）。
+    /// 所以开合动画期间自己按帧把分栏 + 窗格的布局推一遍，让位与滚动条跟着动画走。
+    private var inspectorLayoutPump: Timer?
+
+    private func pumpLayoutDuringInspectorAnimation() {
+        inspectorLayoutPump?.invalidate()
+        let deadline = CACurrentMediaTime() + 0.8   // 系统折叠动画 ~0.25s，留足余量收尾
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] t in
+            MainActor.assumeIsolated {
+                guard let self, self.window != nil else { t.invalidate(); return }
+                // 先让分栏重算安全区（它才是把 inset 推给内容格的那一层），再让窗格按新安全区重摆
+                self.splitVC.view.layoutSubtreeIfNeeded()
+                if let pane = self.readerPane?.view {
+                    pane.needsLayout = true
+                    pane.layoutSubtreeIfNeeded()
+                }
+                if CACurrentMediaTime() >= deadline {
+                    t.invalidate()
+                    self.inspectorLayoutPump = nil
+                    // 收尾：按最终宽度立刻重排一次（`scheduleRefit` 那 0.2s 防抖是给连续拖窗口用的，
+                    // 开合是一次性动作，没必要再等）
+                    self.readerPane?.readerView?.refitNow()
+                }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        inspectorLayoutPump = t
+    }
+
+    /// 开合 Inspector 时是否连带改窗口宽度。暂时关闭（2026-09-20 用户定），以后接到设置项上即可恢复。
+    private static let widenWindowWithInspector = false
+
+    private func widenWindowForInspector(_ win: NSWindow) {
+        guard Self.widenWindowWithInspector else { return }
+        guard !win.styleMask.contains(.fullScreen), let visible = (win.screen ?? NSScreen.main)?.visibleFrame else { return }
+        // 要让出的宽度 = Inspector 上次的宽度（收着时视图仍保留上次的尺寸）
+        let want = max(inspectorVC.view.frame.width, inspectorItem.minimumThickness)
+        let by = min(want, visible.maxX - win.frame.maxX)
+        guard by >= 20 else { return }   // 右边几乎没空地：直接挤开内容
+        var f = win.frame
+        f.size.width += by
+        win.setFrame(f, display: true, animate: true)
+        widenedForInspector = (by, win.frame)
+    }
+
+    /// Agent 开关 / 框选截图投给 Agent：Inspector 切到「Agent」页并打开。
+    func showAgentTab() {
+        inspectorVC.show(tab: .agent)
+        setInspector(open: true)
+    }
+
+    /// 工具栏 Agent 开关与菜单：已经开着且在 Agent 页 → 收起；否则切过去。
+    func toggleAgentTab() {
+        if !inspectorItem.isCollapsed && inspectorVC.currentTab == .agent { setInspector(open: false) } else { showAgentTab() }
     }
 
     /// ⌘W：**关当前标签**，只剩一个标签时才关窗口（同 Safari / Xcode）。
@@ -390,7 +489,6 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         chrome.isKeyWindow = true
         app.setActive(session)
         AIPanelDock.shared.setHost(window)
-        AIPanelDock.agent.setHost(window)
         if AIPanelModel.shared.mode == .inline {
             AIPanelModel.shared.setActiveHost(.inline(session.windowID))
         }
@@ -810,7 +908,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                     wsLog("[TB] Agent 按钮 isHidden → \(!p.enabled)")
                     it.isHidden = !p.enabled
                 }
-                setState(btn, p.mode == .inline ? p.isInlineOpen(tabs.windowID) : AgentWindowController.isShown)
+                setState(btn, inspectorItem?.isCollapsed == false && inspectorVC?.currentTab == .agent)
             case ToolID.consult:
                 let p = AIPanelModel.shared
                 if it.isHidden == p.enabled {
@@ -870,15 +968,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func toggleCanvas() { tabs.active.toggleCanvasMode() }
     @objc private func inspectorToggled() { toggleInspector() }
 
-    /// Agent / 咨询 AI 两枚开关（用户 2026-09-19：和参考窗一样用工具栏按钮切换，不再在阅读区里画气泡）。
-    /// 内置形态切**本窗口**的侧栏，独立窗口形态显示 ⇄ 隐藏——与菜单 / 快捷键同一套语义，
-    /// 只是作用对象明确是按钮所在的这扇窗（菜单那条走「当前 key 窗口」）。
-    @objc private func toggleAgentPanel() {
-        let p = AgentPanelModel.shared
-        if p.mode == .inline { p.setInlineOpen(!p.isInlineOpen(tabs.windowID), for: tabs.windowID) }
-        else { AgentWindowController.toggle() }
-        refreshToolbarStates()
-    }
+    /// Agent 开关：本窗口 Inspector 的「Agent」页开 ⇄ 收（与菜单 / 快捷键同一套语义，
+    /// 只是作用对象明确是按钮所在的这扇窗，菜单那条走「当前 key 窗口」）。
+    @objc private func toggleAgentPanel() { toggleAgentTab() }
+
+    /// 咨询 AI 开关（网页 AI 停用期间按钮藏着，见 `AIPanelModel.available`）。
 
     @objc private func toggleConsultPanel() {
         let p = AIPanelModel.shared

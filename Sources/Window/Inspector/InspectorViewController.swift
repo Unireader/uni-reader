@@ -2,12 +2,16 @@ import AppKit
 import Combine
 
 /// 右侧 Inspector（AppKit 版，替代 SwiftUI `InspectorView`，内容与行为逐项同原版）：
-/// 顶部系统分段切「信息 / 缩略图 / 目录 / 笔记」；笔记页再分七个二级分区（记在 `inspectorNotesSection`）。
+/// 顶部系统分段切「信息 / 缩略图 / 目录 / 笔记 / Agent」；笔记页再分几个二级分区（记在 `inspectorNotesSection`）。
 /// 只刷新看得见的那一页；会话变化合并到下一拍刷一次，且各页按「数据签名」没变就不重建。
+/// 「Agent」页 = 本窗口的 Agent 对话（2026-09-19 起 Agent 面板只住在这里）；设置里关掉 Agent 就没有这一段。
 @MainActor
 final class InspectorViewController: NSViewController {
     let tabs: TabsModel
     let workspace: WorkspaceManager
+    /// 切了页（阅读窗口据此刷工具栏 Agent 开关的按下态）。
+    var onTabChange: () -> Void = {}
+    var currentTab: InspectorTab { tab }
 
     private let tabControl = NSSegmentedControl()
     private let sectionControl = NSSegmentedControl()
@@ -19,8 +23,13 @@ final class InspectorViewController: NSViewController {
     private let tocAddBookmark = NSButton()
     private let tocPage = NSView()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
+    private let agentPage = NSView()
+    private var agentView: AgentChatNSView?
+    private let agentPlaceholder = PlaceholderView()
 
     private var tab: InspectorTab = .info
+    /// 顶部分段此刻有哪几页（Agent 关掉时没有最后那段）。
+    private var tabList: [InspectorTab] = []
     private var bag = Set<AnyCancellable>()
     private var sessionBag = Set<AnyCancellable>()
     private weak var boundSession: DocSession?
@@ -35,9 +44,14 @@ final class InspectorViewController: NSViewController {
 
     private static let sectionKey = "inspectorNotesSection"
     private var notesSection: NotesSection {
-        get { NotesSection(rawValue: UserDefaults.standard.string(forKey: Self.sectionKey) ?? "") ?? .text }
+        get {
+            let s = NotesSection(rawValue: UserDefaults.standard.string(forKey: Self.sectionKey) ?? "") ?? .text
+            return sections.contains(s) ? s : .text
+        }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.sectionKey) }
     }
+    /// 二级分区：网页 AI 停用期间没有「AI 对话」（`AIPanelModel.available`）。
+    private let sections = NotesSection.allCases.filter { $0 != .ai || AIPanelModel.available }
 
     init(tabs: TabsModel, workspace: WorkspaceManager) {
         self.tabs = tabs
@@ -53,22 +67,13 @@ final class InspectorViewController: NSViewController {
 
     override func loadView() {
         let root = FlippedView()
-        let tabDefs: [(InspectorTab, String, String)] = [
-            (.info, "info.circle", L("Info")), (.thumbnails, "rectangle.grid.1x2", L("Thumbnails")),
-            (.contents, "list.bullet.indent", L("Contents")), (.notes, "note.text", L("Notes")),
-        ]
-        tabControl.segmentCount = tabDefs.count
-        for (i, d) in tabDefs.enumerated() {
-            tabControl.setImage(NSImage(systemSymbolName: d.1, accessibilityDescription: d.2), forSegment: i)
-            tabControl.setToolTip(d.2, forSegment: i)
-        }
         tabControl.segmentDistribution = .fillEqually
         tabControl.trackingMode = .selectOne
-        tabControl.selectedSegment = 0
         tabControl.target = self
         tabControl.action = #selector(tabChanged)
-        sectionControl.segmentCount = NotesSection.allCases.count
-        for (i, s) in NotesSection.allCases.enumerated() {
+        rebuildTabControl()
+        sectionControl.segmentCount = sections.count
+        for (i, s) in sections.enumerated() {
             sectionControl.setImage(NSImage(systemSymbolName: s.icon, accessibilityDescription: s.title), forSegment: i)
             sectionControl.setToolTip(s.title, forSegment: i)
         }
@@ -109,7 +114,8 @@ final class InspectorViewController: NSViewController {
         emptyLabel.alignment = .center
         emptyLabel.textColor = .secondaryLabelColor
         for v in [tabControl, sectionControl, pageHost, emptyLabel] as [NSView] { root.addSubview(v) }
-        for v in [listScroll, thumbs, tocPage] as [NSView] { pageHost.addSubview(v) }
+        for v in [listScroll, thumbs, tocPage, agentPage] as [NSView] { pageHost.addSubview(v) }
+        agentPlaceholder.set(symbol: "folder", title: L("No Workspace"), detail: L("Open a workspace to talk to the agent about it."))
         view = root
         installObservers()
         applyTab()
@@ -126,7 +132,8 @@ final class InspectorViewController: NSViewController {
             y = sectionControl.frame.maxY + 6
         }
         pageHost.frame = NSRect(x: 0, y: y, width: b.width, height: max(0, b.height - y))
-        for v in [listScroll, thumbs, tocPage] as [NSView] { v.frame = pageHost.bounds }
+        for v in [listScroll, thumbs, tocPage, agentPage] as [NSView] { v.frame = pageHost.bounds }
+        for v in agentPage.subviews { v.frame = agentPage.bounds }
         let bs = tocAddBookmark.fittingSize
         tocAddBookmark.frame = NSRect(x: tocPage.bounds.width - 12 - bs.width, y: 0, width: bs.width, height: bs.height)
         toc.frame = NSRect(x: 0, y: bs.height + 6, width: tocPage.bounds.width, height: max(0, tocPage.bounds.height - bs.height - 6))
@@ -144,6 +151,47 @@ final class InspectorViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.queueRefresh() }
             .store(in: &bag)
+        // 设置里开 / 关 Agent：分段加 / 减最后那段；关掉时对话已被模型结束，视图一并丢掉
+        AgentPanelModel.shared.$enabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if !AgentPanelModel.shared.enabled { self.dropAgentView() }
+                self.rebuildTabControl()
+            }
+            .store(in: &bag)
+    }
+
+    /// 顶部分段按当前可用的页重建（只在页的组成变了时动）；当前页没了就回「信息」。
+    private func rebuildTabControl() {
+        var defs: [(InspectorTab, String, String)] = [
+            (.info, "info.circle", L("Info")), (.thumbnails, "rectangle.grid.1x2", L("Thumbnails")),
+            (.contents, "list.bullet.indent", L("Contents")), (.notes, "note.text", L("Notes")),
+        ]
+        if AgentPanelModel.shared.enabled { defs.append((.agent, "sparkles", L("Agent"))) }
+        let list = defs.map(\.0)
+        guard list != tabList else { return }
+        tabList = list
+        tabControl.segmentCount = defs.count
+        for (i, d) in defs.enumerated() {
+            tabControl.setImage(NSImage(systemSymbolName: d.1, accessibilityDescription: d.2), forSegment: i)
+            tabControl.setToolTip(d.2, forSegment: i)
+        }
+        if !list.contains(tab) {
+            show(tab: .info)
+        } else {
+            tabControl.selectedSegment = list.firstIndex(of: tab) ?? 0
+        }
+    }
+
+    /// 切到某一页（Agent 开关 / 框选截图投给 Agent 从外面调）。
+    func show(tab t: InspectorTab) {
+        guard tabList.contains(t) else { return }
+        tabControl.selectedSegment = tabList.firstIndex(of: t) ?? 0
+        guard t != tab else { return }
+        tab = t
+        applyTab()
+        onTabChange()
     }
 
     private func bindSession() {
@@ -176,12 +224,13 @@ final class InspectorViewController: NSViewController {
     // MARK: 切页
 
     @objc private func tabChanged() {
-        tab = [InspectorTab.info, .thumbnails, .contents, .notes][max(0, tabControl.selectedSegment)]
+        tab = tabList[max(0, min(tabControl.selectedSegment, tabList.count - 1))]
         applyTab()
+        onTabChange()
     }
 
     @objc private func sectionChanged() {
-        notesSection = NotesSection.allCases[max(0, sectionControl.selectedSegment)]
+        notesSection = sections[max(0, sectionControl.selectedSegment)]
         lastSignature = ""
         refresh()
     }
@@ -190,7 +239,7 @@ final class InspectorViewController: NSViewController {
 
     private func applyTab() {
         sectionControl.isHidden = tab != .notes
-        sectionControl.selectedSegment = NotesSection.allCases.firstIndex(of: notesSection) ?? 0
+        sectionControl.selectedSegment = sections.firstIndex(of: notesSection) ?? 0
         lastSignature = ""
         view.needsLayout = true
         refresh()
@@ -203,6 +252,7 @@ final class InspectorViewController: NSViewController {
         let s = session
         thumbs.isHidden = tab != .thumbnails
         tocPage.isHidden = tab != .contents
+        agentPage.isHidden = tab != .agent
         let needsDoc = tab == .info || tab == .notes
         let doc = documentId.flatMap { workspace.document(id: $0) }
         listScroll.isHidden = !(needsDoc && doc != nil)
@@ -211,6 +261,8 @@ final class InspectorViewController: NSViewController {
             emptyLabel.stringValue = "\(L("No Document"))\n\(L("Select a document to see its info and notes."))"
         }
         switch tab {
+        case .agent:
+            ensureAgentContent()
         case .thumbnails:
             thumbs.update(pdf: s.pdf, docKey: s.displayKey, align: s.scanAlign, currentPage: s.currentPageIndex)
         case .contents:
@@ -230,6 +282,39 @@ final class InspectorViewController: NSViewController {
             lastSignature = sig
             rebuild(notesRows())
         }
+    }
+
+    // MARK: Agent 页
+
+    /// 头一次切到 Agent 页才建对话视图（视图进窗口时才连 Agent，别让没打开过的窗口白拉起进程）；
+    /// 换了工作区 → 模型给的是另一份对话，视图重建。
+    private func ensureAgentContent() {
+        guard AgentPanelModel.shared.enabled else { return }
+        guard let folder = workspace.folder else {
+            dropAgentView()
+            setAgentContent(agentPlaceholder)
+            return
+        }
+        let chat = AgentPanelModel.shared.chat(for: tabs.windowID, cwd: folder.deletingLastPathComponent())
+        if agentView?.chat !== chat {
+            let v = AgentChatNSView(chat: chat, workspaceName: workspace.name, showsHeader: true)
+            agentView = v
+            setAgentContent(v)
+        } else if agentView?.workspaceName != workspace.name {
+            agentView?.workspaceName = workspace.name
+        }
+    }
+
+    private func setAgentContent(_ v: NSView) {
+        guard v.superview !== agentPage else { return }
+        for s in agentPage.subviews { s.removeFromSuperview() }
+        v.frame = agentPage.bounds
+        agentPage.addSubview(v)
+    }
+
+    private func dropAgentView() {
+        agentView?.removeFromSuperview()
+        agentView = nil
     }
 
     private func rebuild(_ views: [NSView]) {
@@ -365,7 +450,7 @@ final class InspectorViewController: NSViewController {
                 lines.append(q)
             }
             var buttons: [NSButton] = []
-            if let src = n.source, src.isAI {
+            if let src = n.source, src.isAI, AIPanelModel.shared.enabled {
                 buttons.append(iconButton("bubble.left.and.text.bubble.right", L("Open the AI conversation this came from"),
                                           tint: .tertiaryLabelColor) { [weak self] in self?.openAISource(src) })
             } else if let src = n.source, src.isAgent {

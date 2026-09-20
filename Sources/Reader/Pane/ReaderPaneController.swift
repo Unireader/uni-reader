@@ -23,8 +23,7 @@ final class ReaderPaneController: NSViewController {
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
     private let tabBar = TabBarNSView()
-    private var panels: InlineAIPanelsView!
-    /// 参考窗覆盖层 / 跳转历史：摆在安全区里（让开工具栏与内置 AI 面板），身份跟窗口走（切标签不重建）。
+    /// 参考窗覆盖层 / 跳转历史：摆在安全区里（让开工具栏与左右两侧栏），身份跟窗口走（切标签不重建）。
     private let floating = FloatingLayerView()
     private var refCard: RefCard!
     /// 笔架：有 PDF 时浮在阅读区上（设备级全局状态，图层按当前文档）。
@@ -73,22 +72,6 @@ final class ReaderPaneController: NSViewController {
             self?.refCard.layout(in: size)
             self?.jumpCard.layout(in: size)
         }
-        // 右侧两块内置 AI 面板：最上层，浮在阅读区上；盖住的宽度交给阅读区适配、浮层跟着让位
-        panels = InlineAIPanelsView(windowID: tabs.windowID, workspace: workspace)
-        panels.onInset = { [weak self] inset, animated in
-            guard let self else { return }
-            self.readerView?.panelInset = inset
-            if animated {
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.28
-                    ctx.allowsImplicitAnimation = true
-                    self.layoutChrome()
-                }
-            } else {
-                self.layoutChrome()
-            }
-        }
-        v.addSubview(panels)
         findBanner.isHidden = true
         badge.isHidden = true
         tabBar.isHidden = true
@@ -232,7 +215,6 @@ final class ReaderPaneController: NSViewController {
                 readerView?.removeFromSuperview()
                 let r = ReaderView(session: s, app: app, workspace: workspace, docKey: key)
                 r.onDropFiles = { [weak self] urls in self?.onIngest(urls) }
-                r.panelInset = panels.inset
                 view.addSubview(r, positioned: .below, relativeTo: placeholder)
                 readerView = r
                 view.needsLayout = true
@@ -347,18 +329,18 @@ final class ReaderPaneController: NSViewController {
         let b = view.bounds
         let top = toolbarInset
         readerView?.frame = b
-        readerView?.topInset = top
-        panels.frame = b
-        panels.topInset = top
-        let panel = panels.inset
         var si = view.safeAreaInsets
         si.top = top
-        let safe = NSRect(x: si.left, y: si.top, width: max(0, b.width - si.left - si.right - panel),
+        // 右侧 Inspector 叠在阅读区上（外框不变，见 AGENTS.md「玻璃工具栏按钮变浅」），盖住的宽度 = 安全区右边：
+        // 交给阅读区自己用 contentInsets 让开，页面居中在剩下那块、滚动条贴 Inspector 左缘（用户 2026-09-19：要挤开内容）
+        let panel = si.right
+        readerView?.panelInset = panel
+        let safe = NSRect(x: si.left, y: si.top, width: max(0, b.width - si.left - si.right),
                           height: max(0, b.height - si.top - si.bottom))
         placeholder.frame = safe
         floating.frame = safe
         if let pad = scratchPad {
-            pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧内置 AI 面板让位
+            pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧 Inspector 让位
             pad.topInset = si.top
         }
         penRack?.place(viewport: NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - panel), height: b.height),
@@ -516,3 +498,4 @@ final class PopoverCloseRelay: NSObject, NSPopoverDelegate {
     init(_ onClose: @escaping () -> Void) { self.onClose = onClose }
     func popoverDidClose(_ notification: Notification) { onClose() }
 }
+

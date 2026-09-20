@@ -206,8 +206,8 @@ final class SnipTargetPicker: NSObject {
     }
 }
 
-/// Inspector 的四页。
-enum InspectorTab: Hashable { case info, thumbnails, contents, notes }
+/// Inspector 顶部分段的各页。`agent` = Agent 对话（2026-09-19 起 Agent 面板只住在这里，不再有浮层 / 独立窗口）。
+enum InspectorTab: Hashable { case info, thumbnails, contents, notes, agent }
 
 /// 「笔记」页的二级分区（文字 / 高亮 / 图片 / 书签 / 笔迹 / 草稿纸 / AI 全堆一页太多，一次只显示一类）。
 enum NotesSection: String, CaseIterable, Identifiable {

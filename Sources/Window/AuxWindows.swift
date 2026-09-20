@@ -129,7 +129,6 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
         guard let w = window else { return }
         w.parent?.removeChildWindow(w)
         w.orderOut(nil)
-        AIPanelDock.agent.reapply()   // Agent 浮窗若排在它右边，挪回阅读窗口旁边
         NotificationCenter.default.post(name: .auxPanelVisibilityChanged, object: nil)
     }
 
@@ -194,8 +193,6 @@ final class AIPanelWindowController: NSWindowController, NSWindowDelegate, NSToo
         panel.releaseHost(.window)
         Self.shared = nil
         NotificationCenter.default.post(name: .auxPanelVisibilityChanged, object: nil)
-        // Agent 浮窗若排在它右边：等它真关掉（下一拍）再挪回阅读窗口旁边
-        DispatchQueue.main.async { AIPanelDock.agent.reapply() }
     }
 
     // MARK: 工具栏

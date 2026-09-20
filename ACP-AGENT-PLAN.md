@@ -10,7 +10,7 @@
 |---|---|---|
 | 是什么 | 网页版 AI 问答（`Sources/AI/`，WKWebView） | 本机 Agent（`kimi acp`）的原生对话界面 |
 | 代码 | `AIPanelModel` / `AIInlineLayer` / `AIPanelWindowController` | `Sources/Agent/` + `AgentChatView` / `AgentInlineLayer` / `AgentWindowController` |
-| 形态 | 内置 / 独立窗口 | 内置 / 独立窗口（**各管各的**，两块可同时开） |
+| 形态 | 内置 / 独立窗口 | 内置 / 独立窗口（**各管各的**，两块可同时开）。🔴 **2026-09-19 起改为只住在 Inspector 的「Agent」页**（内置面板与独立窗口都已删，网页 AI 停用），见 `APPKIT-REWRITE-PLAN.md §9.2`；本文件下面讲形态 / 窗口的段落是历史记录 |
 | 快捷键 | ⌘⇧A | ⌘⇧K（「AI」菜单 › Agent 面板，可在设置里改） |
 | 存数据 | 会话链接落库（`AIThread`） | **什么都不存**（历史由 Agent 自己保存，见 §3） |
 

@@ -10,17 +10,10 @@ import Foundation
 /// **主窗口最大化/全屏时不吸附**：那时右边压根没有地方，硬贴会把面板顶到屏幕外
 /// （用户 2026-08-26 明确「如果窗口不是最大化的情况」）。这种情况下面板保持自由浮动。
 ///
-/// **两份实例**（2026-09-18 起）：`shared` 管咨询 AI 的浮窗，`agent` 管 Agent 面板的浮窗
-/// （用户：「独立窗口没有跟随主窗口高度」）。两扇都吸附在同一扇阅读窗口上时，Agent 那扇排在咨询那扇的**右边**
-/// （`besides`），不互相压住；咨询那扇重新贴边后顺手让 Agent 那扇跟着重排（`follower`）。
+/// 只管咨询 AI 的浮窗（Agent 面板 2026-09-19 起只住在 Inspector 里，没有浮窗了）。
 @MainActor
 final class AIPanelDock {
     static let shared = AIPanelDock(floatingKey: "aiPanelFloating")
-    static let agent: AIPanelDock = {
-        let d = AIPanelDock(floatingKey: AgentPanelModel.floatingKey, besides: .shared)
-        AIPanelDock.shared.follower = d
-        return d
-    }()
 
     /// 面板与主窗口之间的缝。
     static let gap: CGFloat = 8
@@ -31,20 +24,9 @@ final class AIPanelDock {
     private var resizeToken: Any?
     /// 置顶开关的 UserDefaults 键（贴边后要补一次 level，见 `reapply`）。
     private let floatingKey: String
-    /// 同一扇阅读窗口上已经贴着的另一扇面板：本面板排在它右边。
-    private weak var besides: AIPanelDock?
-    /// 排在本面板右边的那一扇：本面板位置变了要让它重排。
-    private weak var follower: AIPanelDock?
 
-    private init(floatingKey: String, besides: AIPanelDock? = nil) {
+    private init(floatingKey: String) {
         self.floatingKey = floatingKey
-        self.besides = besides
-    }
-
-    /// 本面板此刻是不是贴在 `host` 上（给排在右边的那扇找位置用）。
-    fileprivate func dockedFrame(on host: NSWindow) -> NSRect? {
-        guard let panel, panel.isVisible, panel.parent === host else { return nil }
-        return panel.frame
     }
 
     /// AI 面板窗口本体（`AIPanelView` 挂载时捕获）。
@@ -87,13 +69,10 @@ final class AIPanelDock {
 
     /// 重新评估并施加吸附。条件不满足就只是松开，不去动面板的位置（用户自己摆的别乱改）。
     func reapply() {
-        defer { follower?.reapply() }   // 本面板动了（或松开了），排在右边的那扇跟着重排
         guard let panel, panel.isVisible else { return }
         detach()
         guard enabled, let host, host.isVisible, canDock(host) else { return }
-        // 另一扇面板已贴在同一扇阅读窗口上 → 排在它右边
-        let anchor = besides?.dockedFrame(on: host) ?? host.frame
-        position(panel, rightOf: anchor, host: host)
+        position(panel, rightOf: host.frame, host: host)
         host.addChildWindow(panel, ordered: .above)
         // ⚠️ `addChildWindow` 会把子窗口的层级拉到跟父窗口一致，把「置顶」按钮的效果抹掉 →
         // 贴完再补一次（`WindowLevelAccessor` 只在 SwiftUI 更新时跑，赶不上这一下）。

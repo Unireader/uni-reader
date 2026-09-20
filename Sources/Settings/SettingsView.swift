@@ -164,8 +164,10 @@ struct SettingsView: View {
             Section {
                 Toggle(L("Agent Panel"), isOn: Binding(get: { agentPanel.enabled },
                                                        set: { agentPanel.setEnabled($0) }))
-                Toggle(L("Web AI Panel"), isOn: Binding(get: { consultPanel.enabled },
-                                                        set: { consultPanel.setEnabled($0) }))
+                if AIPanelModel.available {   // 网页 AI 整体停用期间不给开关（见 `AIPanelModel.available`）
+                    Toggle(L("Web AI Panel"), isOn: Binding(get: { consultPanel.enabled },
+                                                            set: { consultPanel.setEnabled($0) }))
+                }
             } header: {
                 Text(L("AI"))
             } footer: {

@@ -194,8 +194,10 @@ enum MainMenu {
 
     private static func aiMenu() -> NSMenuItem {
         let (item0, m) = container(L("AI"))
-        m.addItem(item(L("AI Panel"), #selector(MenuActions.aiPanel(_:)),
-                       target: MenuActions.shared, shortcut: .aiPanel))
+        if AIPanelModel.available {   // 网页 AI 停用期间不给入口（`AIPanelModel.available`）
+            m.addItem(item(L("AI Panel"), #selector(MenuActions.aiPanel(_:)),
+                           target: MenuActions.shared, shortcut: .aiPanel))
+        }
         m.addItem(item(L("Agent Panel"), #selector(MenuActions.agentPanel(_:)),
                        target: MenuActions.shared, shortcut: .agentPanel))
         m.addItem(.separator())
@@ -252,7 +254,7 @@ final class MenuActions: NSObject {
         else { AIPanelWindowController.toggle() }
     }
 
-    /// Agent 面板（`ACP-AGENT-PLAN.md`）：与咨询面板同一套开关语义——内置切侧栏，浮窗显示 ⇄ 隐藏。
+    /// Agent 面板（`ACP-AGENT-PLAN.md`）：当前 key 阅读窗口的 Inspector「Agent」页开 ⇄ 收。
     @objc func agentPanel(_ sender: Any?) { AgentPanelModel.shared.toggle() }
 
     // MARK: 剪贴板五项（先响应者链，没人接才给阅读区）

@@ -168,16 +168,13 @@
   ④ 切换时**清掉这份内容的 OCR 结果**（按用户定的「不换算」），用网络 OCR 的书要重新花一次识别费用；
   ⑤ MCP 的文档 DTO 没带「是否开了对齐」字段（出图 / 命中框已按对齐后的页面给，Agent 用不着这个标记）。
 
-- **AI 面板放进 Inspector**（2026-09-19 用户提，「先记录，不做」——先把现有的独立窗口 / 内置两种形态打磨好）。
-  做法：Inspector（`ReaderWindowController` 里的 `NSSplitViewItem(inspectorWithViewController:)`）顶部分段加一页，
-  内容直接用 `AgentChatView`；对话由 `AgentPanelModel.chat(for:)` 持有，切页不丢。建议作为 Agent 面板的**第三种形态**
-  与「独立窗口」「内置」并列，咨询 AI 先不放。动手前要注意：
-  ① Inspector 一次只显示一页，看 Agent 时就看不到目录 / 笔记（内置面板现在可与 Inspector 同开）；
-  ② Inspector `maximumThickness` = 400，聊天偏窄，要调大（会连带信息 / 目录页也能拉宽）；
-  ③ 咨询 AI 是 WKWebView，切页取下再挂回有 2026-08-26 那类「同一网页挂两个视图」的崩溃风险，要做成常驻只隐藏；
-  ④ macOS 26 Inspector 是玻璃层，`AgentChatView` 里的 `.secondary` / `.borderless` 要按红线改 `.primary`；
-  ⑤ 「阅读区 | Agent | 咨询 AI」三列并排的能力会没有，只能二选一。
-  待用户定：新增形态还是替换内置形态；咨询 AI 要不要一起放。
+- **网页 AI（咨询面板）已停用，待定去留**（2026-09-19 用户：「先停用 web 网页 AI，入口先停掉」）。
+  开关 = `AIPanelModel.available`（false 时 `enabled` 恒假，工具栏 / 菜单 / 右键 / 框选截图 / 设置 / Inspector「AI 对话」分区全藏）。
+  代码原样留着，但它的「内置」形态随 Agent 进 Inspector 时已删（`InlineAIPanelsView`），恢复前要先定它住哪：
+  放进 Inspector 的话，WKWebView 切页取下再挂回有 2026-08-26 那类「同一网页挂两个视图」的崩溃风险，要做成常驻只隐藏。
+- **Inspector 玻璃底上的字看不清**（2026-09-19 用户报，「先不管」）：macOS 26 的 Inspector 是透明玻璃，
+  底下是白页面时暗色模式的白字几乎看不见。可选：给系统玻璃设 `tintColor` 压低透明度 / 页面不进 Inspector 底下 /
+  系统不透明材质。现在阅读区已按 Inspector 宽度让开，只有放大后页面比可视区宽时才会滚进它底下。
 
 - **模式2 的划字（高亮/笔记）**（2026-09-04 用户拍板「先不做，留好方案」）。
   完整方案见 **`ANDROID-MODE2-PLAN.md §9`**：选定「平板本地判定、Mac 只执行动作」
