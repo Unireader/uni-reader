@@ -217,6 +217,12 @@ ReaderScrollView : NSScrollView            ← 外框永远铺满内容区（今
   做法：`ReaderWindowController.pumpLayoutDuringInspectorAnimation` 在开合后的 0.8s 内按帧把分栏 + 窗格的布局推一遍
   （`layoutSubtreeIfNeeded`），收尾再 `ReaderView.refitNow()` 跳过 `scheduleRefit` 那 0.2s 防抖重排一次。
   拖到最窄被系统自动收起那条路径（`isCollapsed` 观察）也接同一个泵。
+- **阅读区顶部**（2026-09-20 用户要求，Preview 同款）：阅读区外框仍铺到工具栏底下（页面滚上去从玻璃后面透过去），
+  顶部让位全在 `ReaderView` 自己身上——`contentInsets.top = 工具栏高度 + topGap`（`topGap = PageLayout.gap` = 8pt，
+  滚到顶时第一页不贴着工具栏下沿，还能再往下拖一点）。🔴 `scrollerInsets` 是**在 `contentInsets` 之上再内缩一次**，
+  不是从滚动视图边缘算：内容内边距已经把竖滚动条推到工具栏下面了，再写一遍工具栏高度会多推一整个工具栏
+  （实测滑块起点又低 60pt）；要让滚动条顶端正好抵住工具栏下沿，`scrollerInsets.top = -topGap`。
+  另：`layoutChrome` 里的 `readerView?.topInset = top` 曾在删内置 AI 面板时被误删，后果是第一页整段压在工具栏底下。
 
 ### 9.3 已知遗留（不影响编译，合并前要处理或确认）
 

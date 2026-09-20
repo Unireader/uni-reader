@@ -222,14 +222,22 @@ final class ReaderView: NSView {
 
     // MARK: 内边距
 
+    /// 第一页上方留白（视图点）：与页间距同宽，滚到顶时第一页不贴着工具栏下沿（Preview 同款，可以再往下拖一点）。
+    static let topGap: CGFloat = PageLayout.gap
+
     func applyInsets() {
+        let top = topInset + Self.topGap
         let ci = scrollView.contentInsets
-        if ci.top != topInset || ci.right != panelInset || ci.left != 0 || ci.bottom != 0 {
-            scrollView.contentInsets = NSEdgeInsets(top: topInset, left: 0, bottom: 0, right: panelInset)
+        if ci.top != top || ci.right != panelInset || ci.left != 0 || ci.bottom != 0 {
+            scrollView.contentInsets = NSEdgeInsets(top: top, left: 0, bottom: 0, right: panelInset)
         }
+        // 🔴 竖滚动条排在工具栏**下方**（布局上让开，不是压在它底下：用户 2026-09-20），顶端正好抵住工具栏下沿。
+        // `scrollerInsets` 是在 `contentInsets` **之上再内缩一次**：内容内边距已经把滚动条推到工具栏下面了，
+        // 这里再写一遍工具栏高度就会多推一整个工具栏（实测滑块起点又低了 60pt）。只需把那点顶部留白抵掉。
+        let scrollerTop = -Self.topGap
         let si = scrollView.scrollerInsets
-        if si.bottom != scrollerBottomInset {
-            scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: scrollerBottomInset, right: 0)
+        if si.top != scrollerTop || si.bottom != scrollerBottomInset {
+            scrollView.scrollerInsets = NSEdgeInsets(top: scrollerTop, left: 0, bottom: scrollerBottomInset, right: 0)
         }
         needsLayout = true
     }

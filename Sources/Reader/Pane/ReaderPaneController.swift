@@ -329,6 +329,9 @@ final class ReaderPaneController: NSViewController {
         let b = view.bounds
         let top = toolbarInset
         readerView?.frame = b
+        // 阅读区外框铺到工具栏底下（页面滚上去从玻璃后面透过去），顶部内边距交给它自己让开工具栏那段高度。
+        // 🔴 这一行 2026-09-19 删内置 AI 面板时被误删，后果是第一页整段压在工具栏底下（2026-09-20 用户报）。
+        readerView?.topInset = top
         var si = view.safeAreaInsets
         si.top = top
         // 右侧 Inspector 叠在阅读区上（外框不变，见 AGENTS.md「玻璃工具栏按钮变浅」），盖住的宽度 = 安全区右边：
