@@ -46,7 +46,7 @@ final class ThumbnailListNSView: NSView, NSTableViewDataSource, NSTableViewDeleg
         scroll.contentInsets = NSEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
         scroll.automaticallyAdjustsContentInsets = false
         addSubview(scroll)
-        emptyLabel.textColor = .secondaryLabelColor
+        emptyLabel.textColor = .labelColor
         addSubview(emptyLabel)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
@@ -199,7 +199,7 @@ private final class ThumbCell: NSTableCellView {
 
     func configure(page: Int, image: CGImage?, current: Bool) {
         number.stringValue = "\(page + 1)"
-        number.textColor = current ? .controlAccentColor : .secondaryLabelColor
+        number.textColor = current ? .controlAccentColor : .labelColor
         imageLayer.contents = image
         frameView.layer?.borderWidth = current ? 2 : 0
         frameView.layer?.borderColor = NSColor.controlAccentColor.cgColor

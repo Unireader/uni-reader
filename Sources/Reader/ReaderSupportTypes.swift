@@ -17,13 +17,14 @@ extension Notification.Name {
     static let readerDelete = Notification.Name("com.xvan.UniReader.readerDelete")
     static let readerUndo = Notification.Name("com.xvan.UniReader.readerUndo")
     static let readerRedo = Notification.Name("com.xvan.UniReader.readerRedo")
-    // 图片笔记：Inspector 那边点「编辑 / 查看」→ 阅读区弹 sheet。`object` = `ImageNoteRequest`，非本会话的窗口不认领。
+    // 笔记：Inspector 那边点「编辑 / 查看」→ 阅读区弹 sheet。`object` = `NoteRequest`，非本会话的窗口不认领。
     static let imageNoteEdit = Notification.Name("com.xvan.UniReader.imageNoteEdit")
     static let imageNoteView = Notification.Name("com.xvan.UniReader.imageNoteView")
+    static let textNoteEdit = Notification.Name("com.xvan.UniReader.textNoteEdit")
 }
 
-/// `imageNoteEdit` / `imageNoteView` 通知的载荷。
-struct ImageNoteRequest {
+/// `imageNoteEdit` / `imageNoteView` / `textNoteEdit` 通知的载荷。
+struct NoteRequest {
     var sessionID: UUID
     var noteID: UUID
 }

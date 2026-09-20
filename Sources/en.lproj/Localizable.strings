@@ -487,6 +487,7 @@
 "That file isn't an image we can read." = "That file isn't an image we can read.";
 "No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page." = "No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page.";
 "Edit this image note" = "Edit this image note";
+"Edit this note" = "Edit this note";
 "Delete this image note" = "Delete this image note";
 "Edit…" = "Edit…";
 "No workspace is open." = "No workspace is open.";

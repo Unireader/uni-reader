@@ -489,6 +489,7 @@
 "That file isn't an image we can read." = "这个文件不是能读的图片。";
 "No image notes yet. ⌥⇧-drag on a page to clip one, or drop an image file onto a page." = "还没有图片笔记。在页面上按住 ⌥⇧ 拖一个框可以节选一块，也可以把图片文件拖到页面上。";
 "Edit this image note" = "编辑这条图片笔记";
+"Edit this note" = "编辑这条笔记";
 "Delete this image note" = "删除这条图片笔记";
 "Edit…" = "编辑…";
 "No workspace is open." = "没有打开的工作区。";

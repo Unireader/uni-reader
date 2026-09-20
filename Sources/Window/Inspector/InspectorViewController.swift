@@ -69,6 +69,9 @@ final class InspectorViewController: NSViewController {
         let root = FlippedView()
         tabControl.segmentDistribution = .fillEqually
         tabControl.trackingMode = .selectOne
+        // 顶部分段 = 切页的标签（Xcode 的 Inspector 同款）：macOS 27 起用 `role = .tabs`，
+        // 选中块的液态玻璃滑动由系统画，我们不自绘（用户 2026-09-20）。
+        if #available(macOS 27.0, *) { tabControl.role = .tabs }
         tabControl.target = self
         tabControl.action = #selector(tabChanged)
         rebuildTabControl()
@@ -79,6 +82,7 @@ final class InspectorViewController: NSViewController {
         }
         sectionControl.segmentDistribution = .fillEqually
         sectionControl.trackingMode = .selectOne
+        if #available(macOS 27.0, *) { sectionControl.role = .tabs }   // 与顶部分段同款液态玻璃
         sectionControl.target = self
         sectionControl.action = #selector(sectionChanged)
 
@@ -112,7 +116,7 @@ final class InspectorViewController: NSViewController {
         thumbs.onSelect = { [weak self] p in self?.session.jump(page: p, frac: 0, kind: .list) }
 
         emptyLabel.alignment = .center
-        emptyLabel.textColor = .secondaryLabelColor
+        emptyLabel.textColor = .labelColor
         for v in [tabControl, sectionControl, pageHost, emptyLabel] as [NSView] { root.addSubview(v) }
         for v in [listScroll, thumbs, tocPage, agentPage] as [NSView] { pageHost.addSubview(v) }
         agentPlaceholder.set(symbol: "folder", title: L("No Workspace"), detail: L("Open a workspace to talk to the agent about it."))
@@ -368,10 +372,10 @@ final class InspectorViewController: NSViewController {
             if !l.isValid { badges.append(badge(L("Missing"), .systemOrange)) }
             let hash = label(String((hashByVar[l.variantId] ?? "").prefix(8)), .caption2)
             hash.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize - 2, weight: .regular)
-            hash.textColor = .secondaryLabelColor
+            hash.textColor = .labelColor
             let line = hstack([name] + badges + [flexible(), hash])
             let path = label(workspace.resolvedPath(l), .caption2)
-            path.textColor = .secondaryLabelColor
+            path.textColor = .labelColor
             path.lineBreakMode = .byTruncatingMiddle
             var buttons: [NSButton] = []
             if locations.count > 1 {   // 至少保留一项
@@ -384,7 +388,7 @@ final class InspectorViewController: NSViewController {
                     self.refresh()
                 })
             }
-            out.append(InspectorCard(content: vstack([line, path], spacing: 3), buttons: buttons))
+            out.append(InspectorCard(content: vstack([line, path], spacing: 5), buttons: buttons))
         }
         return out
     }
@@ -440,30 +444,36 @@ final class InspectorViewController: NSViewController {
             dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
             var head: [NSView] = [dot, symbolLabel(t.icon, String(format: L("Page %d"), n.page + 1))]
             if t.id != NoteType.generalID {
-                let tn = label(t.name, .caption1); tn.textColor = .secondaryLabelColor; head.append(tn)
+                let tn = label(t.name, .caption1); tn.textColor = .labelColor; head.append(tn)
             }
             var lines: [NSView] = [hstack(head)]
             if !n.text.isEmpty { lines.append(multiline(NoteMarkdown.plain(n.text), .callout, lines: 2)) }
             if !n.quote.isEmpty {
                 let q = multiline(n.quote.flattenedQuote, .caption1, lines: 2)
-                q.textColor = .secondaryLabelColor
+                q.textColor = .labelColor
                 lines.append(q)
             }
             var buttons: [NSButton] = []
             if let src = n.source, src.isAI, AIPanelModel.shared.enabled {
                 buttons.append(iconButton("bubble.left.and.text.bubble.right", L("Open the AI conversation this came from"),
-                                          tint: .tertiaryLabelColor) { [weak self] in self?.openAISource(src) })
+                                          tint: .labelColor) { [weak self] in self?.openAISource(src) })
             } else if let src = n.source, src.isAgent {
-                let b = iconButton("terminal", String(format: L("Written by an agent (%@)"), src.provider), tint: .tertiaryLabelColor) {}
+                let b = iconButton("terminal", String(format: L("Written by an agent (%@)"), src.provider), tint: .labelColor) {}
                 b.isEnabled = false
                 buttons.append(b)
             }
             let id = n.id
+            // 编辑：跟图片笔记一样发通知给本会话的阅读区，由它弹批注编辑器（`ReaderView.openNoteEditor`）
+            buttons.append(iconButton("pencil.circle.fill", L("Edit this note"), tint: .labelColor) { [weak self] in
+                guard let self else { return }
+                NotificationCenter.default.post(name: .textNoteEdit,
+                                                object: NoteRequest(sessionID: self.session.id, noteID: id))
+            })
             buttons.append(iconButton("xmark.circle.fill", L("Delete this note")) { [weak self] in
                 guard let s = self?.session else { return }
                 s.inkEdit("Delete", kind: .delete) { s.textNotes.removeAll { $0.id == id } }
             })
-            let card = InspectorCard(content: vstack(lines, spacing: 3), buttons: buttons)
+            let card = InspectorCard(content: vstack(lines, spacing: 5), buttons: buttons)
             card.onTap = { [weak self] in self?.jump(n.page, max(0, Double(n.anchor.minY) - 0.03)) }
             out.append(card)
         }
@@ -528,11 +538,11 @@ final class InspectorViewController: NSViewController {
             var lines: [NSView] = [symbolLabel(h.style.iconName, String(format: L("Page %d"), h.page + 1))]
             if !h.quote.isEmpty {
                 let q = multiline(h.quote.flattenedQuote, .caption1, lines: 2)
-                q.textColor = .secondaryLabelColor
+                q.textColor = .labelColor
                 lines.append(q)
             }
             let id = h.id
-            let card = InspectorCard(content: hstack([swatch, vstack(lines, spacing: 2)], alignment: .top, spacing: 8),
+            let card = InspectorCard(content: hstack([swatch, vstack(lines, spacing: 5)], alignment: .top, spacing: 8),
                                      buttons: [iconButton("xmark.circle.fill", L("Delete this highlight")) { [weak self] in
                                          self?.session.highlights.removeAll { $0.id == id }
                                      }])
@@ -595,17 +605,17 @@ final class InspectorViewController: NSViewController {
                 thumb.image = NSImage(cgImage: cg, size: .zero)
             } else {
                 thumb.image = NSImage(systemSymbolName: info == nil ? "photo.badge.exclamationmark" : "photo", accessibilityDescription: nil)
-                thumb.contentTintColor = .secondaryLabelColor
+                thumb.contentTintColor = .labelColor
             }
             thumb.widthAnchor.constraint(equalToConstant: 48).isActive = true
             thumb.heightAnchor.constraint(equalToConstant: 48).isActive = true
             let title = multiline(n.caption.isEmpty ? n.sourceLabel : NoteMarkdown.plain(n.caption), .callout, lines: 2)
             let sub = label(n.caption.isEmpty ? String(format: L("Page %d"), n.page + 1)
                                               : "\(String(format: L("Page %d"), n.page + 1)) · \(n.sourceLabel)", .caption1)
-            sub.textColor = .secondaryLabelColor
+            sub.textColor = .labelColor
             let req: (Notification.Name) -> Void = { [weak self] name in
                 guard let self else { return }
-                NotificationCenter.default.post(name: name, object: ImageNoteRequest(sessionID: self.session.id, noteID: n.id))
+                NotificationCenter.default.post(name: name, object: NoteRequest(sessionID: self.session.id, noteID: n.id))
             }
             let id = n.id
             let delete: () -> Void = { [weak self] in
@@ -613,7 +623,7 @@ final class InspectorViewController: NSViewController {
                 s.inkEdit("Delete Image Note", kind: .delete) { s.imageNotes.removeAll { $0.id == id } }
             }
             let card = InspectorCard(content: hstack([thumb, vstack([title, sub], spacing: 2)], alignment: .top, spacing: 8),
-                                     buttons: [iconButton("pencil", L("Edit this image note"), tint: .secondaryLabelColor) { req(.imageNoteEdit) },
+                                     buttons: [iconButton("pencil.circle.fill", L("Edit this image note"), tint: .labelColor) { req(.imageNoteEdit) },
                                                iconButton("xmark.circle.fill", L("Delete this image note"), action: delete)])
             card.onTap = { [weak self] in self?.jump(n.page, max(0, Double(n.anchor.minY) - 0.03)) }
             card.menuProvider = {
@@ -644,9 +654,9 @@ final class InspectorViewController: NSViewController {
         guard !s.bookmarks.isEmpty else { out.append(hint(L("No bookmarks yet."))); return out }
         for b in s.bookmarks {
             let sub = label(String(format: L("Page %d"), b.page + 1), .caption1)
-            sub.textColor = .secondaryLabelColor
+            sub.textColor = .labelColor
             let card = InspectorCard(content: vstack([symbolLabel("bookmark.fill", b.title), sub], spacing: 2),
-                                     buttons: [iconButton("pencil", L("Rename this bookmark"), tint: .secondaryLabelColor) { [weak self] in
+                                     buttons: [iconButton("pencil.circle.fill", L("Rename this bookmark"), tint: .labelColor) { [weak self] in
                                                    self?.session.beginBookmarkRename(b)
                                                },
                                                iconButton("xmark.circle.fill", L("Delete this bookmark")) { [weak self] in
@@ -681,7 +691,7 @@ final class InspectorViewController: NSViewController {
                 parts.append(dot)
             }
             let n = label("\(s.count)", .caption1)
-            n.textColor = .secondaryLabelColor
+            n.textColor = .labelColor
             parts.append(n)
             let page = s.page
             let card = InspectorCard(content: hstack(parts), buttons: [iconButton("xmark.circle.fill", L("Delete ink on this page")) { [weak self] in
@@ -708,10 +718,10 @@ final class InspectorViewController: NSViewController {
         for (i, pad) in s.scratchPads.enumerated() {
             let count = s.scratchStrokes.count { $0.padId == pad.id }
             let n = label("\(count)", .caption1)
-            n.textColor = .secondaryLabelColor
+            n.textColor = .labelColor
             let id = pad.id
             let card = InspectorCard(content: hstack([symbolLabel("square.and.pencil", pad.displayName(index: i)), flexible(), n]),
-                                     buttons: [iconButton("scope", L("Go to anchor"), tint: .tertiaryLabelColor) { [weak self] in
+                                     buttons: [iconButton("scope", L("Go to anchor"), tint: .labelColor) { [weak self] in
                                                    self?.jump(pad.anchorPage, pad.anchorY)
                                                },
                                                iconButton("xmark.circle.fill", L("Delete this scratchpad and its ink")) { [weak self] in
@@ -733,11 +743,11 @@ final class InspectorViewController: NSViewController {
         guard !s.aiThreads.isEmpty else { out.append(hint(L("No AI chats yet. Right-click in the page to start one."))); return out }
         for t in s.aiThreads {
             let p = label(String(format: L("p.%d"), t.page + 1), .caption1)
-            p.textColor = .secondaryLabelColor
+            p.textColor = .labelColor
             let icon = t.state == .suspect ? "exclamationmark.bubble" : "bubble.left.and.text.bubble.right"
             let id = t.id
             let card = InspectorCard(content: hstack([symbolLabel(icon, t.hasTitle ? t.title : L("Untitled chat")), flexible(), p]),
-                                     buttons: [iconButton("scope", L("Go to anchor"), tint: .tertiaryLabelColor) { [weak self] in
+                                     buttons: [iconButton("scope", L("Go to anchor"), tint: .labelColor) { [weak self] in
                                                    self?.jump(t.page, Double(t.anchor.minY))
                                                },
                                                iconButton("xmark.circle.fill", L("Unbind (the conversation itself stays on the platform)")) { [weak self] in
@@ -778,19 +788,19 @@ final class InspectorViewController: NSViewController {
     private func sectionTitle(_ s: String) -> NSTextField {
         let t = label(s, .subheadline)
         t.font = .systemFont(ofSize: t.font?.pointSize ?? 11, weight: .semibold)
-        t.textColor = .secondaryLabelColor
+        t.textColor = .labelColor
         return t
     }
 
     private func hint(_ s: String) -> NSTextField {
         let t = multiline(s, .callout, lines: 0)
-        t.textColor = .secondaryLabelColor
+        t.textColor = .labelColor
         return t
     }
 
     private func kvRow(_ k: String, _ v: String) -> NSView {
         let kl = label(k, .callout)
-        kl.textColor = .secondaryLabelColor
+        kl.textColor = .labelColor
         kl.setContentCompressionResistancePriority(.required, for: .horizontal)
         let vl = multiline(v, .callout, lines: 0)
         vl.alignment = .right
@@ -818,7 +828,7 @@ final class InspectorViewController: NSViewController {
         return box
     }
 
-    private func iconButton(_ symbol: String, _ tip: String, tint: NSColor = .tertiaryLabelColor,
+    private func iconButton(_ symbol: String, _ tip: String, tint: NSColor = .labelColor,
                             action: @escaping () -> Void) -> NSButton {
         let b = ClosureButton(action: action)
         b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
@@ -869,22 +879,62 @@ final class InspectorCard: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         if !plain {
-            layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.5).cgColor
-            layer?.cornerRadius = 7
+            // 🔴 卡片底用**系统材质**，别用 `quaternaryLabelColor` 那种淡色（它本身就是半透明标签色，
+            // 再乘 0.5 之后在 Inspector 的材质底上根本看不出有块，文字跟着糊成一片：用户 2026-09-20 报）。
+            let bg = NSVisualEffectView()
+            bg.material = .contentBackground
+            bg.blendingMode = .withinWindow
+            bg.state = .followsWindowActiveState
+            bg.wantsLayer = true
+            bg.layer?.cornerRadius = 7
+            bg.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(bg)
+            NSLayoutConstraint.activate([
+                bg.leadingAnchor.constraint(equalTo: leadingAnchor),
+                bg.trailingAnchor.constraint(equalTo: trailingAnchor),
+                bg.topAnchor.constraint(equalTo: topAnchor),
+                bg.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
         }
-        let row = NSStackView(views: [content] + buttons)
-        row.alignment = .top
-        row.spacing = 6
-        row.edgeInsets = plain ? NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0) : NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        // 🔴 按钮**用约束钉在右上角**，不要靠 stack view 里 content 拉不拉得开（短文本的条目里
+        // 删除按钮会跟在文字屁股后面，不在右边：用户 2026-09-20 报「文字笔记的关闭按钮要右对齐」）。
+        let padH: CGFloat = plain ? 0 : 10
+        let padV: CGFloat = plain ? 2 : 10   // 8 → 10：卡片显得挤（Files / 高亮两处用户实测）
         content.setContentHuggingPriority(.init(1), for: .horizontal)
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        var cs: [NSLayoutConstraint] = [
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padH),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: padV),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padV),
+        ]
+        if buttons.isEmpty {
+            cs.append(content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padH))
+        } else {
+            // 🔴 **别用 NSStackView 装这几枚按钮**：它按 gravity area 分布，一枚按钮时碰巧贴右、
+            // 加到两枚就把它们按在左侧、跟在文字屁股后面（用户 2026-09-20 两次报「按钮没贴右」）。
+            // 逐枚从右往左用约束钉死，与内容宽度无关。
+            var anchor = trailingAnchor
+            var gap = -padH
+            for b in buttons.reversed() {
+                b.setContentHuggingPriority(.required, for: .horizontal)
+                b.setContentCompressionResistancePriority(.required, for: .horizontal)
+                b.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(b)
+                cs += [
+                    b.trailingAnchor.constraint(equalTo: anchor, constant: gap),
+                    b.topAnchor.constraint(equalTo: topAnchor, constant: padV),
+                    b.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -padV),
+                ]
+                anchor = b.leadingAnchor
+                gap = -4
+            }
+            // content 优先撑到最左那枚按钮旁边（低优先级，放不下时收缩）；按钮的位置是 required，跑不掉
+            let fill = content.trailingAnchor.constraint(equalTo: anchor, constant: -6)
+            fill.priority = .defaultLow
+            cs += [fill, content.trailingAnchor.constraint(lessThanOrEqualTo: anchor, constant: -6)]
+        }
+        NSLayoutConstraint.activate(cs)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 

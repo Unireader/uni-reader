@@ -227,6 +227,19 @@ ReaderScrollView : NSScrollView            ← 外框永远铺满内容区（今
   不是从滚动视图边缘算：内容内边距已经把竖滚动条推到工具栏下面了，再写一遍工具栏高度会多推一整个工具栏
   （实测滑块起点又低 60pt）；要让滚动条顶端正好抵住工具栏下沿，`scrollerInsets.top = -topGap`。
   另：`layoutChrome` 里的 `readerView?.topInset = top` 曾在删内置 AI 面板时被误删，后果是第一页整段压在工具栏底下。
+- **Inspector 的可读性与卡片**（2026-09-20 用户实测，逐条对着红线改）：
+  ① 文字一律 `labelColor`，层级用字号——`secondaryLabelColor` / `tertiaryLabelColor` 在 Inspector 的材质底上淡到看不清
+  （只留一处例外：目录里**没有页码**的章节仍是 `tertiaryLabelColor`，那是「不可跳转」的禁用态）；
+  ② 卡片底用系统材质 `NSVisualEffectView(.contentBackground)`，不要 `quaternaryLabelColor` 那种淡色（它本身就是
+  半透明标签色，再乘 0.5 等于没有）；内边距 10、行距 5（8 / 2~3 显得挤）；
+  ③ 🔴 **卡片右侧那几枚小按钮别用 `NSStackView` 装**：它按 gravity area 分布，一枚碰巧贴右、加到两枚就把它们按在
+  左侧跟着文字走（同一个毛病用户报了两次）。`InspectorCard` 改成逐枚从右往左用 required 约束钉死，内容只给一条
+  低优先级的「撑到按钮旁边」；
+  ④ 分段控件用 macOS 27 的 `NSSegmentedControl.role = .tabs`（顶部五页 + 笔记页的二级分区都设），
+  选中块的液态玻璃滑动由系统画，别自绘（Xcode 的 Inspector 同款）。
+- **文字笔记在 Inspector 里直接编辑**（2026-09-20）：卡片上一枚 `pencil.circle.fill`，发 `.textNoteEdit` 通知
+  （载荷 `NoteRequest`，图片笔记的两个通知共用这个类型），本会话的阅读区接到后调已有的 `ReaderView.openNoteEditor`，
+  弹的就是页面上那个批注编辑器，保存 / 撤销走原路径。Inspector 不直接碰 sheet——它不持有 `ReaderView`。
 
 ### 9.3 已知遗留（不影响编译，合并前要处理或确认）
 

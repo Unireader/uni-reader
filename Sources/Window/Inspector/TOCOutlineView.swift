@@ -47,9 +47,9 @@ final class TOCOutlineView: NSView, NSOutlineViewDataSource, NSOutlineViewDelega
         addSubview(scroll)
         let icon = NSImageView(image: NSImage(systemSymbolName: "list.bullet.indent", accessibilityDescription: nil) ?? NSImage())
         icon.symbolConfiguration = .init(textStyle: .title2)
-        icon.contentTintColor = .tertiaryLabelColor
+        icon.contentTintColor = .labelColor
         let label = NSTextField(labelWithString: L("No table of contents"))
-        label.textColor = .secondaryLabelColor
+        label.textColor = .labelColor
         label.font = .preferredFont(forTextStyle: .callout)
         empty.orientation = .vertical
         empty.spacing = 8
@@ -202,13 +202,13 @@ final class TOCOutlineView: NSView, NSOutlineViewDataSource, NSOutlineViewDelega
             title.stringValue = b.title
             title.textColor = .labelColor
             page.stringValue = "\(b.page + 1)"
-            page.textColor = .secondaryLabelColor
+            page.textColor = .labelColor   // 红线：材质底上别用次要色，层级靠字号
         } else if let e = n.entry {
             let isCurrent = n.id == currentID
             title.stringValue = e.label.isEmpty ? "—" : e.label
             title.textColor = isCurrent ? .controlAccentColor : (e.pageIndex == nil ? .tertiaryLabelColor : .labelColor)
             page.stringValue = e.pageIndex.map { "\($0 + 1)" } ?? ""   // 坏书签留空
-            page.textColor = isCurrent ? .controlAccentColor : .secondaryLabelColor
+            page.textColor = isCurrent ? .controlAccentColor : .labelColor
             cell.wantsLayer = true
             cell.layer?.cornerRadius = 6
             cell.layer?.backgroundColor = isCurrent ? NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor : nil

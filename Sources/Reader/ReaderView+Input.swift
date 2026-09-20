@@ -60,12 +60,17 @@ extension ReaderView {
                 }
             })
         }
-        // Inspector 列表里的「编辑 / 查看」图片笔记
-        for (name, view) in [(Notification.Name.imageNoteEdit, false), (.imageNoteView, true)] {
+        // Inspector 列表里的「编辑 / 查看」：图片笔记两种、文字笔记一种，都弹阅读区自己的 sheet
+        let noteRequests: [(Notification.Name, (ReaderView, UUID) -> Void)] = [
+            (.imageNoteEdit, { $0.openImageEditor($1) }),
+            (.imageNoteView, { $0.openImageViewer($1) }),
+            (.textNoteEdit, { $0.openNoteEditor($1) }),
+        ]
+        for (name, action) in noteRequests {
             observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 MainActor.assumeIsolated {
-                    guard let self, let req = note.object as? ImageNoteRequest, req.sessionID == self.session.id else { return }
-                    if view { self.openImageViewer(req.noteID) } else { self.openImageEditor(req.noteID) }
+                    guard let self, let req = note.object as? NoteRequest, req.sessionID == self.session.id else { return }
+                    action(self, req.noteID)
                 }
             })
         }
