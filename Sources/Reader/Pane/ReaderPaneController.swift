@@ -429,6 +429,7 @@ final class ReaderPaneController: NSViewController {
         // 内容格外框本身就变窄了，所以这里恒为 0；这条路留着，将来再有叠在阅读区上的面板可以直接用。
         let panel = si.right
         readerView?.panelInset = panel
+        ScrollerLog.write("窗格摆位 窗格\(Int(b.width))×\(Int(b.height)) 安全区[上\(Int(si.top)) 左\(Int(si.left)) 右\(Int(si.right))] 工具栏\(Int(top)) 标签栏\(Int(tabBarInset))")
         let safe = NSRect(x: si.left, y: si.top, width: max(0, b.width - si.left - si.right),
                           height: max(0, b.height - si.top - si.bottom))
         placeholder.frame = safe

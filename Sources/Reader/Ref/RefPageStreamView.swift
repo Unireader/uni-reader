@@ -73,6 +73,11 @@ final class RefPageStreamView: NSView {
         observers.append(nc.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.nightChanged() }
         })
+        // 滚动条样式变了（系统设置 / 插拔鼠标）：常驻占一列、覆盖式不占，`availWidth` 把它算在内（同阅读区）
+        observers.append(nc.addObserver(forName: NSScroller.preferredScrollerStyleDidChangeNotification,
+                                        object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsLayout = true }
+        })
         model.$seedRev.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.seedIfReady() }.store(in: &bag)
         model.$docKey.receive(on: DispatchQueue.main)
@@ -104,6 +109,16 @@ final class RefPageStreamView: NSView {
     private var paperColor: CGColor { night ? CGColor(gray: 0.10, alpha: 1) : CGColor(gray: 1, alpha: 1) }
     private var voidColor: NSColor { night ? NSColor(white: 0.06, alpha: 1) : .windowBackgroundColor }
     private var sc: CGFloat { fitW / PageLayout.refWidth }
+    /// 页宽用的可用宽（视图点）：滚动视图外框 − 常驻竖滚动条那一列 − 半点余量。
+    /// 🔴 与阅读区同一条规矩（原委见 `ReaderView.fitAvail`）：**不能用 tile 之后的视口宽**，
+    /// 否则「页宽 = 视口宽」会把横滚动条卡在要不要出现的边界上，而其中一个稳定解是竖滚动条被页面盖住。
+    private var availWidth: CGFloat {
+        var w = scrollView.frame.width
+        if scrollView.scrollerStyle == .legacy {
+            w -= NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+        }
+        return max(0, (w - 0.5).rounded(.down))
+    }
     private var clip: NSClipView { scrollView.contentView }
 
     // MARK: 布局
@@ -112,7 +127,7 @@ final class RefPageStreamView: NSView {
         super.layout()
         scrollView.frame = bounds
         reloadIfNeeded()
-        let w = scrollView.contentSize.width.rounded()
+        let w = availWidth
         guard w > 0, let layout = model.layout, layout.pageCount > 0 else { return }
         guard abs(w - fitW) > 0.5 else { return }
         // 视口宽变了（改小窗尺寸）→ 页宽跟着变，把视口对回原来那个文档位置

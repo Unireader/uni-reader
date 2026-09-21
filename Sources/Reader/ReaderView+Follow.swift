@@ -98,6 +98,12 @@ extension ReaderView {
                                         object: scrollView, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.liveMagnifyEnded() }
         })
+        // 滚动条样式变了（系统设置改「始终显示滚动条」/ 插拔鼠标）：常驻要占一列、覆盖式不占，
+        // 而 `fitAvail` 把这一列算在内，所以得按新样式重排一次（外框没变，`layout()` 自己不会被叫醒）。
+        observers.append(nc.addObserver(forName: NSScroller.preferredScrollerStyleDidChangeNotification,
+                                        object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refitNow() }
+        })
         // 夜间模式（`@AppStorage("nightMode")`，窗口层的开关与自动跟随系统都写它）
         observers.append(nc.addObserver(forName: UserDefaults.didChangeNotification,
                                         object: nil, queue: .main) { [weak self] _ in

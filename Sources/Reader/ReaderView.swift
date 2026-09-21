@@ -3,6 +3,25 @@ import Combine
 import PDFKit
 import QuartzCore
 
+/// 阅读区竖滚动条的几何打点。**默认关**（同 `wsLog` 的文件开关）：
+/// ```
+/// touch ~/Library/Logs/UniReader-scroller.log    # 开启
+/// rm    ~/Library/Logs/UniReader-scroller.log    # 关闭
+/// ```
+/// 排「把右侧 Inspector 拖到最宽之后阅读区竖滚动条不见了」用：每个关口记一行完整几何，
+/// 看得出滚动条是**被判定为不需要**（内容高 ≤ 视口）、**被摆到看不见的地方**（frame 在可见区之外），
+/// 还是**根本没重排**（外框还是旧宽度、被 Inspector 盖住）。
+enum ScrollerLog {
+    static let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/UniReader-scroller.log")
+
+    static func write(_ s: String) {
+        guard let h = try? FileHandle(forWritingTo: url) else { return }   // 文件不在 = 没开
+        defer { try? h.close() }
+        _ = try? h.seekToEnd()
+        try? h.write(contentsOf: Data("\(Date.now.formatted(date: .omitted, time: .standard)) \(s)\n".utf8))
+    }
+}
+
 /// AppKit 版阅读区（`APPKIT-REWRITE-PLAN.md` §3，替代 SwiftUI 的 `PageStreamView` / `ReaderSurface`）。
 ///
 /// 结构：`ReaderScrollView` → `ReaderClipView` → `ReaderDocumentView`（flipped）→ 每页一组 `PageLayerGroup`。
@@ -213,10 +232,26 @@ final class ReaderView: NSView {
     /// 屏幕上的页宽（点）。
     var pageW: CGFloat { fitBasis * zoom }
 
-    /// fit 可用宽（视图点）：clip view 宽 − 左右内容内边距（右 = AI 面板）。与内容无关 → 不会互抬成环。
+    /// fit 可用宽（视图点）：滚动视图外框宽 − 左右内容内边距（右 = 叠在阅读区上的面板）
+    /// − 常驻竖滚动条占掉的那一列 − 半点余量。与内容无关 → 不会互抬成环。
+    ///
+    /// 🔴 **不能拿 clip view 的实测宽来算**（2026-09-21 实测定，用户报「把右侧 Inspector 拖到最宽，
+    /// 阅读区竖滚动条就没了，滚轮滚也不回来，而且不是每次都出现」）：clip 的宽度是 AppKit 摆放滚动条
+    /// （tile）的**结果**，而页宽又是它的**输入**——两边互相追。fit 模式下页宽正好等于视口宽，横滚动条
+    /// 就卡在「要不要出现」的边界上（日志里它一会儿显一会儿藏），而
+    /// 「clip 占满整宽 + 页宽 = 整宽 + 竖条没有自己那一列」是个**自洽且稳定**的解：
+    /// 不透明的页面正好盖在竖滚动条上，滑块其实一直好好的（`可用=true`、矩形也对），只是被压住了，
+    /// 所以怎么滚都不会露出来。按外框算就与 tile 的结果无关，这个坏解也就不存在了。
+    /// 排这类问题：`touch ~/Library/Logs/UniReader-scroller.log` 开 `ScrollerLog`。
     var fitAvail: CGFloat {
         let ci = scrollView.contentInsets
-        return max(1, clipView.frame.width - ci.left - ci.right)
+        var w = scrollView.frame.width - ci.left - ci.right
+        // 常驻滚动条（系统设置「始终显示滚动条」或接了鼠标）实打实占掉一列；覆盖式是浮在内容上的，不占。
+        if scrollView.scrollerStyle == .legacy {
+            w -= NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+        }
+        // 再留半点：页宽正好等于视口宽时，一个浮点零头就能把横滚动条顶出来。
+        return max(1, w - 0.5)
     }
 
     func pageFrame(_ i: Int) -> CGRect {
@@ -251,6 +286,51 @@ final class ReaderView: NSView {
             scrollView.scrollerInsets = NSEdgeInsets(top: scrollerTop, left: 0, bottom: scrollerBottomInset, right: 0)
         }
         needsLayout = true
+        logScroller("内边距")
+    }
+
+    /// 打一行竖滚动条的几何（默认不开，见 `ScrollerLog`）。
+    func logScroller(_ tag: String) {
+        let ci = scrollView.contentInsets, si = scrollView.scrollerInsets
+        let sc = scrollView.verticalScroller
+        let hs = scrollView.horizontalScroller
+        let viewport = scrollView.contentSize.height
+        let content = docView.frame.height * scrollView.magnification
+        // 竖滚动条在窗口坐标里的位置：看它是不是被摆到了可见区外 / Inspector 底下
+        let inWin = sc.map { scrollView.convert($0.frame, from: $0.superview) } ?? .zero
+        // 滑块矩形（滚动条自己的坐标）：轨道在、滑块没画出来的情况全看这一项
+        let knob = sc?.rect(for: .knob) ?? .zero
+        // 竖条在窗口坐标里的实际位置 + 没被祖先裁掉的那部分：看它是不是根本不在可见区里
+        let scWin = sc.map { $0.convert($0.bounds, to: nil) } ?? .zero
+        let scVis = sc?.visibleRect ?? .zero
+        // 分栏各格在窗口坐标里的位置：拖分隔条时如果隔壁格压过界，就会正好盖住最右边那一列
+        var panes = ""
+        if let split = window?.contentViewController as? NSSplitViewController {
+            panes = split.splitViewItems.map { item -> String in
+                let f = item.viewController.view.convert(item.viewController.view.bounds, to: nil)
+                return "\(item.isCollapsed ? "收" : "")[\(Int(f.minX))→\(Int(f.maxX))]"
+            }.joined()
+        }
+        ScrollerLog.write("""
+            \(tag) 本视图\(Int(bounds.width))×\(Int(bounds.height)) 滚动视图\(Int(scrollView.frame.width))×\
+            \(Int(scrollView.frame.height)) 视口\(Int(scrollView.contentSize.width))×\(Int(viewport)) \
+            内容\(Int(docView.frame.width))×\(Int(docView.frame.height)) 倍率\(String(format: "%.3f", scrollView.magnification)) \
+            折算内容高\(Int(content)) 该有竖条=\(content > viewport + 0.5) \
+            内边距[上\(Int(ci.top)) 右\(Int(ci.right))] 条内缩[上\(Int(si.top)) 下\(Int(si.bottom))] \
+            fit基准\(Int(fitBasis)) 可用\(Int(fitAvail)) 上次可用\(Int(lastFitAvail)) \
+            竖条\(sc == nil ? "无" : (sc!.isHidden ? "藏" : "显"))\
+            α\(String(format: "%.2f", sc?.alphaValue ?? -1)) \
+            框(\(Int(inWin.minX)),\(Int(inWin.minY)) \(Int(inWin.width))×\(Int(inWin.height))) \
+            占比\(String(format: "%.3f", sc?.knobProportion ?? -1)) \
+            可用=\(sc?.isEnabled.description ?? "-") 位置\(String(format: "%.3f", sc?.doubleValue ?? -1)) \
+            滑块(\(Int(knob.minX)),\(Int(knob.minY)) \(Int(knob.width))×\(Int(knob.height))) \
+            可用部件\(sc.map { String(describing: $0.usableParts.rawValue) } ?? "-") \
+            横条\(hs == nil ? "无" : (hs!.isHidden ? "藏" : "显"))\(hs?.isEnabled == true ? "可用" : "禁用") \
+            clip框(\(Int(clipView.frame.minX)),\(Int(clipView.frame.minY)) \(Int(clipView.frame.width))×\(Int(clipView.frame.height))) \
+            竖条窗口x\(Int(scWin.minX))→\(Int(scWin.maxX)) 未被裁\(Int(scVis.width))×\(Int(scVis.height)) \
+            分栏\(panes.isEmpty ? "-" : panes) \
+            样式\(scrollView.scrollerStyle == .overlay ? "覆盖" : "常驻") 拖动中=\(inLiveResize) 已落位=\(didSetup)
+            """)
     }
 
     // MARK: 布局
@@ -262,11 +342,34 @@ final class ReaderView: NSView {
             setupIfPossible()
             return
         }
+        retileIfScrollersOverlapContent()
         let avail = fitAvail
         if abs(avail - lastFitAvail) > 0.5 {
             lastFitAvail = avail
+            logScroller("摆位(可用宽变了)")
             scheduleRefit()
         }
+    }
+
+    /// 常驻滚动条与内容叠在一起时，把它们重新摆一次。
+    ///
+    /// 🔴 拖分隔条 / 拖窗口期间 AppKit **不保证**重新摆放滚动条（tile）：clip view 占满整宽、
+    /// 常驻竖滚动条压在内容上面，而页面是不透明的，正好把它盖住——表现是**拖动过程中竖滚动条不见了、
+    /// 松手才回来**（2026-09-21 实测：`clip框(0,0 1200×907)` 与 `竖条框(1183,52 17×838)` 叠着，
+    /// 正常时 clip 是 `1183×890`；日志里有几帧它自己又 tile 了，所以时有时无）。
+    /// 只在**确实叠上了**时叫一次 `tile()`：
+    /// 🔴 覆盖式滚动条本来就浮在内容上（叠着是对的），也**不能**对它叫 `tile()`——会把布局搅乱
+    /// （滑块变成一小块方块卡在角上，见 `AGENTS.md`），所以先按样式挡掉。
+    private func retileIfScrollersOverlapContent() {
+        guard scrollView.scrollerStyle == .legacy else { return }
+        let content = clipView.frame
+        let overlaps: (NSScroller?) -> Bool = { s in
+            guard let s, !s.isHidden else { return false }
+            return content.intersects(s.frame.insetBy(dx: 0.5, dy: 0.5))
+        }
+        guard overlaps(scrollView.verticalScroller) || overlaps(scrollView.horizontalScroller) else { return }
+        scrollView.tile()
+        logScroller("滚动条压着内容，重摆")
     }
 
     override func viewDidMoveToWindow() {
@@ -278,9 +381,17 @@ final class ReaderView: NSView {
         }
     }
 
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        logScroller("拖动开始")
+    }
+
     override func viewDidEndLiveResize() {
         super.viewDidEndLiveResize()
+        logScroller("拖动结束")
         refitNow()
+        // 重排是同步的，但滚动条什么时候重判由 AppKit 定：半秒后再记一行「定局」
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.logScroller("定局") }
     }
 
     /// 跳过 `scheduleRefit` 的防抖，按当前宽度立刻重排（拖窗口结束、Inspector 开合收尾这类一次性动作）。
@@ -539,7 +650,7 @@ final class ReaderView: NSView {
     func scheduleRefit() {
         guard didSetup else { return }
         refitWork?.cancel(); refitWork = nil
-        if inLiveResize { return }
+        if inLiveResize { ScrollerLog.write("  重排推迟（拖动中，等拖动结束）"); return }
         if CACurrentMediaTime() - appearAt < 1.5 { refit(); return }
         let work = DispatchWorkItem { [weak self] in
             self?.refitWork = nil
@@ -554,7 +665,10 @@ final class ReaderView: NSView {
         guard let layout = pageLayout, didSetup else { return }
         let newFit = fitAvail
         lastFitAvail = newFit
-        guard abs(newFit - fitBasis) > 0.5 else { return }
+        guard abs(newFit - fitBasis) > 0.5 else {
+            ScrollerLog.write("重排 跳过（可用宽 \(Int(newFit)) 与 fit 基准 \(Int(fitBasis)) 只差 \(String(format: "%.1f", Double(abs(newFit - fitBasis))))）")
+            return
+        }
         let anchor = layout.locate(docY: topDocY)
         let hfrac = fitBasis > 0 ? max(0, clipView.bounds.minX) / fitBasis : 0
         let oldPageW = pageW
@@ -577,6 +691,7 @@ final class ReaderView: NSView {
         suppressEmitUntil = CACurrentMediaTime() + 0.3
         updateRealized()
         scheduleSettle()
+        logScroller("重排后")
     }
 
     // MARK: 活跃窗口
