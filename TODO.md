@@ -113,6 +113,13 @@
 
 ### 真 Bug（未修）
 
+- **Agent 调 `update_markdown` 时面板僵住、工具一直显示在跑**（2026-09-21 用户报，**未修，缺数据**）：
+  笔记内容其实已经写进去了，但那个工具的转圈图标**静止不动**（= 主线程被占死，不是请求没回来），
+  要等很久才显示完成。怀疑是 `MCPFacade.updateMarkdown` 写完文件后调 `applyMarkdownText`
+  （`MarkdownDocView.applySavedText` → `box.text = text`），长笔记整篇重排 TextKit 2 卡住主线程，
+  那几秒里 Agent 推回来的「工具已完成」也刷不上屏。**这是推断，别照着就改**——
+  `touch ~/Library/Logs/UniReader-mcp.log` 开日志复现一次，看 `update_markdown` 那行的毫秒数：
+  小（几十~一两百）= 服务端早写完了，卡在面板刷新；大（几秒以上）= 写入路径本身堵在主线程。
 - **平板滚动时整窗视图树每秒重算 40~56 次**（2026-09-13 查内存时量到，未修）：平板每个 `scroll` 事件 →
   `DocSession.emitAnchor(origin:"pad")` → `foreignAnchor`（`@Published`）→ `PageStreamView` 整体重算 →
   `ReaderSurface.init` 跑一遍种子逻辑（`seedImages` 查缓存 + 扔掉一个临时 `Scratch`，ws 日志里那串
