@@ -69,6 +69,39 @@ final class LibraryStore {
     /// **别拿它当"拿连接的口子"用**，下一个功能照着做，这个类就名存实亡了。
     func withMirrorDB<T>(_ body: (SQLiteDB) throws -> T) rethrows -> T { try body(db) }
 
+    // MARK: - 回收站（`BACKUP-PLAN.md §2`，实现在 `TrashStore`）
+    //
+    // 同 `mirrorSnapshot` 那几条的口径：连接不出这个类，只把四个具体动作开出去。
+    // 搬运要按列通用地复制整张表（列由 `PRAGMA table_info` 现取），故实现另起一个文件。
+
+    /// 把一篇文档的全部行归档进 [path] 的新快照库。🔴 **归档成功之后才允许调 `deleteDocument`**。
+    func archiveDocument(id: String, to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveDocument(db, documentId: id, to: path)
+    }
+
+    /// 把一个笔迹图层连同它那些笔画归档。判定与 `deleteInkStrokes` 同一套（默认层含无 `layerId` 的老行）。
+    func archiveInkLayer(documentId: String, layerId: String, isDefaultLayer: Bool,
+                         to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveInkLayer(db, documentId: documentId, layerId: layerId,
+                                       isDefaultLayer: isDefaultLayer, to: path)
+    }
+
+    /// 恢复前探路：这份快照的 PDF 已经被重新导入过吗（返回要并入的那篇文档 id）。
+    func trashMergeTarget(snapshot path: String) throws -> String? {
+        try TrashStore.mergeTarget(db, snapshot: path)
+    }
+
+    /// 把快照写回主库（`remapDocumentId` 非 nil = 并入现有那篇，见 `TrashStore.restore`）。
+    @discardableResult
+    func restoreTrash(snapshot path: String, remapDocumentId: String?) throws -> Int {
+        try TrashStore.restore(db, snapshot: path, remapDocumentId: remapDocumentId)
+    }
+
+    /// 重新数一份快照里有什么（manifest 丢了 / 版本对不上时用）。
+    func trashSummary(snapshot path: String) throws -> TrashStore.Archived {
+        try TrashStore.summary(db, snapshot: path)
+    }
+
     // MARK: - Schema / 迁移
 
     private func migrate() throws {
@@ -639,6 +672,14 @@ final class LibraryStore {
         let pads = try db.query("SELECT COUNT(*) FROM scratch_pad WHERE document_id=?",
                                 [.text(documentId)]) { Int($0.int64(0)) }
         return (notes.first ?? 0) + (pads.first ?? 0)
+    }
+
+    /// 按 kind 数一篇文档的 note 行（删除确认框那句「2616 笔笔迹、12 条笔记…」用）。
+    /// 一条 GROUP BY，不读 payload。
+    func noteKindCounts(documentId: String) throws -> [Int: Int] {
+        let rows = try db.query("SELECT kind, COUNT(*) FROM note WHERE document_id=? GROUP BY kind",
+                                [.text(documentId)]) { r in (Int(r.int64(0)), Int(r.int64(1))) }
+        return Dictionary(rows, uniquingKeysWith: +)
     }
 
     /// 全篇页内笔迹的横向范围（归一化，anchor 列 = 包围盒）：画板模式页边宽度的首值

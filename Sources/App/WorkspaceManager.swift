@@ -178,7 +178,9 @@ final class WorkspaceManager: ObservableObject {
         windowDocs = [:]
         refresh()
         lastError = nil
+        purgeExpiredTrash()                      // 回收站：清掉过了保留期的条目（`BACKUP-PLAN.md §2.6`）
         reconcileAndPurgeImages()                // 图片本体：对账待删除 + 清掉到期的（方案 §3 触发时机 ①）
+        BackupService.shared.scheduleOpenBackup(for: self)   // 资料库快照（`BACKUP-PLAN.md §3.2`）
     }
 
     /// **彻底放手这个工作区**：关掉 SQLite 连接并置空 `store`，之后所有读写自动退化成 no-op。
@@ -339,6 +341,9 @@ final class WorkspaceManager: ObservableObject {
         return (doc, !existed)
     }
 
+    /// 🔴 **硬删，不经回收站。** 界面上的删除一律走 `trashDocument(id:)`（`BACKUP-PLAN.md §2.4`：
+    /// 先归档、成功了才删）——这里只是那条路的最后一步。别从别处直接调它，
+    /// 调了就等于把「那一下手滑还有救」这件事在那条路上取消掉。
     func delete(documentId: String) { try? store?.deleteDocument(id: documentId); forgetOpen(documentId); refresh() }
     func rename(documentId: String, title: String) { try? store?.rename(documentId: documentId, title: title); refresh() }
     func document(id: String) -> LibDocument? { documents.first { $0.id == id } }
@@ -895,11 +900,16 @@ final class WorkspaceManager: ObservableObject {
     }
 
     /// 删 `orphaned_at < before` 的图：先删文件再删行（反过来若中途失败会留一个没有行的文件，永远没人管）。
+    ///
+    /// 🔴 **回收站护着的图一张都不删**（`BACKUP-PLAN.md §2.6`）：文档一进回收站，它引用的图立刻
+    /// 变成孤儿并开始那 30 天的计时；保留期若设成 90 天 / 永不，图片会先一步被清掉，
+    /// 再恢复就只剩一个空框。护身符 = 各条目 manifest 里的 `images`，条目一消失护身符也跟着消失。
     @discardableResult
     private func purgeImages(before: Date) -> Int {
         guard let store, let folder else { return 0 }
         var n = 0
-        for im in (try? store.purgeableImages(before: before)) ?? [] {
+        let held = trashHeldImages
+        for im in (try? store.purgeableImages(before: before)) ?? [] where !held.contains(im.sha256) {
             ImageAssets.remove(in: folder, sha256: im.sha256, ext: im.ext)
             try? store.deleteImage(sha256: im.sha256)
             imageInfoCache.removeValue(forKey: im.sha256)

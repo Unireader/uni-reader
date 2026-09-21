@@ -167,12 +167,26 @@ final class LayerManagerNSView: NSView, NSTableViewDataSource, NSTableViewDelega
         let n = session.inkStrokeCount(layerId: layer.id)
         let a = NSAlert()
         a.messageText = String(format: L("Delete layer “%@”?"), layer.name)
-        if n > 0 { a.informativeText = String(format: L("%d stroke(s) on this layer will be deleted too."), n) }
+        var info: [String] = []
+        if n > 0 { info.append(String(format: L("%d stroke(s) on this layer will be deleted too."), n)) }
+        info.append(L("They go to Recently Deleted and can be put back from File ▸ Recently Deleted."))
+        a.informativeText = info.joined(separator: "\n")
         let del = a.addButton(withTitle: L("Delete"))
         del.hasDestructiveAction = true
         a.addButton(withTitle: L("Cancel"))
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] resp in
             guard let self, resp == .alertFirstButtonReturn else { return }
+            // 🔴 **先归档、再删**（`BACKUP-PLAN.md §2.4`）。归档失败就整个放弃——
+            // 反过来做，中间任何一步出错都等于这一层的笔迹已经没了。
+            if n > 0, let store = self.session.store, let docId = self.session.documentId,
+               Trash.archiveInkLayer(store: store, documentId: docId, documentTitle: self.session.title,
+                                     layerId: layer.id, layerName: layer.name,
+                                     isDefaultLayer: layer.id == InkLayer.defaultID) == nil {
+                NSAlert(error: NSError(domain: "UniReader", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: L("Could not archive this layer, so nothing was deleted.")
+                ])).runModal()
+                return
+            }
             self.session.deleteInkStrokes(layerId: layer.id)
             self.session.inkLayers.removeAll { $0.id == layer.id }
             if self.session.activeLayerID == layer.id { self.session.activeLayerID = self.session.inkLayers.first?.id }

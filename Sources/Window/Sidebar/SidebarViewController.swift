@@ -116,6 +116,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         on(.workspaceMakeMirrorRequested) { c, _ in if c.isKeyWindow { c.presentMakeMirror() } }
         on(.workspaceDropMirrorRequested) { c, _ in if c.isKeyWindow { c.confirmDropMirror() } }
         on(.workspaceSyncToSourceRequested) { c, _ in if c.isKeyWindow { c.presentSync(.fromMirror, switchTo: nil) } }
+        // 这两条除了菜单（key 窗口认领）还从**设置窗**发过来——那会儿 key 窗口是设置窗，
+        // 所以带一个工作区路径当收件人；认领到就把自己这扇窗提到前面再弹。
+        on(.workspaceTrashRequested) { c, n in c.claimSheet(n) { c.presentTrash() } }
+        on(.workspaceBackupsRequested) { c, n in c.claimSheet(n) { c.presentBackups() } }
         on(NSApplication.willResignActiveNotification) { c, _ in c.refreshNotice() }   // 切走 = 天然的收尾时机
         on(.volumeDidMount) { c, _ in
             c.refreshNotice()
@@ -609,9 +613,32 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         m.addItem(.separator())
         m.addItem(item(L("Delete"), "trash") { [weak self] in
-            guard let self else { return }
-            for id in targets { self.workspace.delete(documentId: id) }
+            self?.confirmDelete(Array(targets))
         })
+    }
+
+    /// 删除文档：**先确认，再移入回收站**（`BACKUP-PLAN.md §2.4`）。
+    ///
+    /// 2026-09-21 之前这里是点一下直接 `DELETE FROM document`，`note` / `ink_layer` / `scratch_pad`
+    /// 全部级联删掉且没有任何撤销路径 —— 手滑一下就是一篇书的全部笔迹。
+    private func confirmDelete(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        let a = NSAlert()
+        let titles = ids.compactMap { workspace.document(id: $0)?.title }
+        a.messageText = ids.count == 1
+            ? String(format: L("Delete “%@”?"), titles.first ?? "")
+            : String(format: L("Delete %d documents?"), ids.count)
+        var lines = ids.compactMap { workspace.deletionSummary(documentId: $0) }.filter { !$0.isEmpty }
+        lines.append(L("They go to Recently Deleted and can be put back from File ▸ Recently Deleted."))
+        a.informativeText = lines.joined(separator: "\n")
+        let del = a.addButton(withTitle: L("Delete"))
+        del.hasDestructiveAction = true
+        a.addButton(withTitle: L("Cancel"))
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] resp in
+            guard let self, resp == .alertFirstButtonReturn else { return }
+            for id in ids { self.workspace.trashDocument(id: id) }
+        }
+        if let win = view.window { a.beginSheetModal(for: win, completionHandler: finish) } else { finish(a.runModal()) }
     }
 
     private func item(_ title: String, _ symbol: String, _ action: @escaping () -> Void) -> NSMenuItem {
@@ -753,6 +780,32 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func presentMakeMirror() {
         let vc = MakeMirrorController(workspace: workspace)
         vc.onDismiss = { [weak self] in self?.refreshNotice() }
+        presentAsSheet(vc)
+    }
+
+    // 兜底那两张面板（`BACKUP-PLAN.md`）：回收站 / 工作区备份
+
+    /// 认领一条「弹面板」的通知：`object` 带工作区路径 = 点名给某个工作区（设置窗发的，
+    /// 认领到要把自己这扇窗提到前面，否则 sheet 弹在设置窗背后没人看得见）；
+    /// `object` 为空 = 菜单发的，key 窗口认领。
+    private func claimSheet(_ n: Notification, _ present: () -> Void) {
+        if let folder = n.object as? URL {
+            guard workspace.folder?.standardizedFileURL == folder.standardizedFileURL else { return }
+            view.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        } else if !isKeyWindow {
+            return
+        }
+        present()
+    }
+
+    private func presentTrash() {
+        let vc = TrashSheetController(workspace: workspace)
+        presentAsSheet(vc)
+    }
+
+    private func presentBackups() {
+        let vc = BackupsSheetController(workspace: workspace)
         presentAsSheet(vc)
     }
 

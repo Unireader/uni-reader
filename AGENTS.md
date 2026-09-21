@@ -99,6 +99,10 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 - `MCP-PLAN.md` — MCP 服务（给外部 Agent 用，App 内置 HTTP 端点，默认回环、可绑所有接口+口令）：分批工具目录、协议层、线程红线、写入策略（2026-09-13 拍板并同日三批全部落地合入 `main`，**§15/§16/§17 是实现记录**；批 1 用户实测通过，批 2/3 待实测）
 - `IMAGE-NOTE-PLAN.md` — 图片笔记（note kind=6 + `image` 表 v13 + `Images/`）：内容寻址、引用计数数出来、待删除 30 天、⌥⇧ 拖节选、离线镜像 additive 通道（2026-09-13 Mac 端已落地）
 - `SCAN-ALIGN-PLAN.md` — 扫描页对齐（每页旋转 + 平移，「视图」菜单「对齐扫描页」开关，按内容哈希记）：**开着时对齐后的页面就是页面坐标**；变换公式 / `page_align` 表（v14）/ 显示身份 `displayKey` / 离线镜像通道是三端契约（2026-09-17 Mac + 安卓模式1 落地）
+- **`BACKUP-PLAN.md`** — 两套兜底（2026-09-21 落地）：**回收站**（删文档 / 删笔迹图层前先把库行归档成
+  `<工作区>/UniReader/Trash/<条目>/snapshot.sqlite` + `manifest.json`，**schema 不变、安卓不用动**；
+  恢复时若那份 PDF 已被重新导入就并入现有那篇）+ **定时备份**（`VACUUM INTO` 出 `UniReader/Backups/`，
+  分级稀释，还原 = 留还原点 → 关连接 → 换文件 → 退出 App）
 - `URL-SCHEME-PLAN.md` — `unireader://open?ws=&doc=&page=&frac=&note=` 链接（从 Obsidian / Agent 写的清单点回 App 的某页某条笔记）：参数契约、解析顺序、与 MCP 共用的 `showDocument`；MCP 的文档 / 批注 / 位置 DTO 都带现成 `link`（2026-09-14 落地，用户实测通过）。**导出到 Obsidian 不做进 App**，由 Agent 按 `skills/unireader-obsidian-export/SKILL.md` 做
 - **`MARKDOWN-NOTES-PLAN.md`** — 工作区里的 Markdown 笔记（Obsidian 格式，2026-09-20 拍板并落地，当天改版三次）：
   **两种源**——内建 `Notes/`（导入 = 整个目录复制进来）与**引用的外部目录**（不复制、就地编辑，
@@ -146,6 +150,14 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 ## 结构要点
 
 - `Sources/App/` — App 级单例：`AppModel`/`DocSession`（多窗口共享 WS/LANServer）、`WorkspaceManager`（工作区 = `.unrd` 包：UTI 声明在 `Sources/Info.plist`，旧无扩展名工作区首启原地改名迁移、工作区改名联动改包名；双击/拖 Dock 由 `AppDelegate.openFile` → 通知路由到 key 窗口）、`UpdaterService`（Sparkle 2 自动更新薄封装，2026-09-18 加，菜单「检查更新…」与设置 ›「通用」的「更新」区块共用；详见「发布到 GitHub」一节）、`PageRenderEngine`/`PageLayout`/`PageBitmap`（v2 渲染管线）、`InkEdit`（笔迹纯函数：局部擦除切段/平移/缩放/尺子吸附/自由框选多边形命中，**`splitStroke` 与 web 端 JS 版同算法两份实现，改它必须同步另一边**，测试 `spike/ink-edit-test.swift`）、`InkUndo`+`DocSession+InkUndo`（编辑撤销栈：**增量**记账、瞬态不落库、页内与草稿纸各一条；连续擦除并成一步，抬笔封口）、`InkPaste`（粘贴的摆放数学，纯函数：Mac 本机 ⌘V 与平板 `clip paste` 共用一份）、`InkClipboard`（笔迹剪贴板，系统 `NSPasteboard` 自有类型，条目编码复用落库 payload；两者测试 `spike/ink-undo-test.swift`）、`InkWindow`（笔迹**按页窗口**装载/淘汰的纯函数：`session.strokes` 只是已装载页的集合，整篇操作问库，见 `INK-PAGING-PLAN.md §9`；测试 `spike/ink-window-test.swift`）。笔迹点 `InkPoint = SIMD3<Float>`，「存 Float、算 Double」
+- 回收站与备份（`BACKUP-PLAN.md`）：`Store/TrashStore.swift`（`ATTACH` + 按列通用复制，`LibraryStore` 的 DAO
+  约定在这里开第二条窄口子，同 `MirrorStore`）+ `App/TrashModel.swift`（纯 Foundation：manifest / 目录扫描 /
+  到期判定）+ `App/WorkspaceManager+Trash.swift`（执行层；归档那两个入口是 `Trash` 上的**静态函数**——
+  图层面板手上只有 `DocSession`，而 `LibraryStore` 自己知道 `workspaceFolder`）+ `App/BackupRetention.swift`
+  （纯函数：保留策略 + 文件命名）+ `App/BackupService.swift`（调度与还原）+ `Window/Sheets/{TrashSheet,BackupsSheet}.swift`。
+  🔴 **归档 → 删除，顺序不许反**（先删再存 = 中途失败就没了）；🔴 图片本体的 30 天清理要**跳过回收站还引用着的**
+  （`WorkspaceManager.purgeImages` 读 `trashHeldImages`），否则保留期 90 天 / 永不时图片先一步被清、恢复只剩空框。
+  测试 `spike/trash-test.swift`（62 项）、`spike/backup-retention-test.swift`（39 项）
 - `Sources/Server/` — LAN WS 服务、二维码配对、UDP RT 上行（`UDPTransport` + 纯逻辑 `UDPReorder`，契约 `PROTOCOL.md §6`）
 - `Sources/MCP/` — MCP 服务（给外部 Agent 用，`MCP-PLAN.md`）：`MCPModels`/`MCPHTTP`/`MCPCatalog`/`MCPProtocol` 四个**只依赖 Foundation** 的纯逻辑文件（spike `mcp-protocol-test.swift` 直接编它们）+ `MCPServer`（`NWListener`，与 `LANServer` **不共用端口和队列**）+ `MCPFacade`（🔴 **唯一**碰 App 活状态的地方，`@MainActor`，只拼 DTO）+ `MCPDocReader`（私有 `PDFDocument`，`session.pdf` 不出主线程）+ `MCPTools*`（工具目录）+ `MCPResources`（资源 = 调同名工具）。页码对外 1 起、对内 0 起，**换算只在 `PageNo`**。🔴 写入按「文档开没开」分两条路（开着只改 `DocSession` 数组，见 `MCPFacade.writeTarget`）。设置页在 `Settings/MCPSettingsView.swift`
 - `Sources/Agent/` — Agent 面板（`ACP-AGENT-PLAN.md`）：`AgentConnection`（一个工作目录一个 `kimi acp` 子进程，swift-acp 的 `Client`）+ `AgentChat`（一段对话，**不落库**）+ `AgentTranscript`（纯函数：`session/update` 拼条目、回放时剔上下文块）+ `AgentPanelModel`（总开关 / 进程池 / 对话表，每扇阅读窗口一段对话）。界面 `Window/AI/AgentChatNSView`，**只住在 Inspector 的「Agent」页**（2026-09-19 用户定；浮在阅读区右侧的内置面板与独立窗口已删）。回复与思考的正文走 Markdown 引擎只读渲染（`Window/AI/AgentMarkdownView`，2026-09-20，`ACP-AGENT-PLAN.md §7`）——🔴 **流式碎片只就地换文字、不重建视图**，且按 80ms 并成一次交给引擎；工具输出照旧是等宽纯文本。与咨询 AI（`Sources/AI/`）**各管各的**，别混。MCP 这边只多了一个请求头 `x-unireader-agent`（「跟随 Agent」开关，`AgentFollow`）
@@ -178,6 +190,10 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   发生在换之前，协调器就永久攥着那个空闭包，点链接静悄悄什么都不发生。做法见 `MarkdownDocView.LinkRelay`：
   传一个**身份固定**的中转闭包进去，目标随后再填。
 - 关键坑：退出收缩逻辑用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating` 守卫（窗口在 ⌘Q 时也会走关闭路径）。
+- 关键坑（设置页的开关/下拉「点了没反应」，2026-09-21 用户报）：`Sources/Settings/` 里的每一项**必须绑到
+  SwiftUI 自己的状态**（`@AppStorage` / `@State` / `@ObservedObject`）。拿 `Binding(get:set:)` 包一个
+  静态属性（`BackupService.enabled` 那种本机全局设置）看着能跑，实则 body 里没有任何 SwiftUI 状态被读到
+  → 选完不重算 → 控件立刻按旧值画回去。要跑副作用（重建定时器之类）用 `.onChange`，别写进 Binding 的 setter。
 - 关键坑（`@Published` 在 `willSet` 发出）：AppKit 这边用 Combine 订阅模型时，回调里读到的还是旧值——一律 `.receive(on: DispatchQueue.main)` 推到下一拍再读，多个来源的刷新合并成一次（`queueRefresh` 那种写法）。
 - OCR 文本层：消费方（选择/复制/⌘A/OCR 搜索/分组/调试上色）一律走 `DocSession.ocrVisibleRuns(page:)`——它已滤掉扫描件的平铺水印块（`OCRWatermark`，几何 + 跨页重复判定，不认具体文字）；`ocrRuns` 是真源，只给落库与建指纹用，**别直接消费**（`ocrGroups` 的下标是按可见行算的，混用即错位）。
 - 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：纯逻辑 `App/ScanAlign`（变换 / 参数表 / 测量 / 定中心，spike `scan-align-test.swift`；真 PDF 出对比图用 `scan-align-real.swift`）+ `App/ScanAlignRunner`（多份 `PDFDocument` 并行测全书）。🔴 **「页面」在开着对齐时就是对齐后的那张**：`PageBitmap.displaySize/render/renderTile` 的 `align` 参数**刻意不给默认值**，新增出图口必须传 `session.pageAlign(i)`（漏一处就是那一处的页图和笔迹对不上）；页图缓存键 / 阅读区 `.id` / 平板 `layout.v` 一律用 `DocSession.displayKey`，别用 `contentHash`；与 PDF 原生页坐标互转（选字 / 搜索 / 目录）走 `PageGeometry` 带 `align` 的重载。开关切换 = 清这份内容的 OCR + 整篇重载（`DocTabModel.applyScanAlign`）

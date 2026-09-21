@@ -123,6 +123,10 @@ enum MainMenu {
         recent.submenu = recentMenu
         m.addItem(recent)
         m.addItem(.separator())
+        // 兜底那两套（`BACKUP-PLAN.md`）：误删找回来、库回到某个时间点。
+        m.addItem(post(L("Recently Deleted…"), .workspaceTrashRequested))
+        m.addItem(post(L("Workspace Backups…"), .workspaceBackupsRequested))
+        m.addItem(.separator())
         m.addItem(post(L("Close Tab"), .closeTabRequested, key: "w"))
         m.addItem(post(L("Close Window"), .closeWindowRequested, key: "w", mods: [.command, .shift]))
         m.addItem(post(L("Next Tab"), .nextTabRequested, key: "\t", mods: .control))

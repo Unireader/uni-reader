@@ -580,6 +580,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentPanelModel.shared.teardownAll()
         // 进度/打开集这类小写在后台队列里排着（`WorkspaceManager.bookkeeping`），进程退出前同步落地。
         WorkspaceRegistry.shared.flushAllBookkeeping()
+        // 资料库快照（`BACKUP-PLAN.md §3.2`）。**放在结清之后**：刚才那些写要在快照里。
+        // 节流照旧生效（距上次不足 30 分钟就跳过），所以频繁开关 app 不会每次都写一份。
+        BackupService.shared.backupBeforeQuit()
         return .terminateNow
     }
 
@@ -666,6 +669,9 @@ extension Notification.Name {
     static let workspaceMakeMirrorRequested = Notification.Name("com.xvan.UniReader.workspaceMakeMirror")
     static let workspaceDropMirrorRequested = Notification.Name("com.xvan.UniReader.workspaceDropMirror")
     static let workspaceSyncToSourceRequested = Notification.Name("com.xvan.UniReader.workspaceSyncToSource")
+    /// 回收站 / 备份两张面板（`BACKUP-PLAN.md`）。同上：菜单发通知，key 窗口的侧栏认领并弹 sheet。
+    static let workspaceTrashRequested = Notification.Name("com.xvan.UniReader.workspaceTrash")
+    static let workspaceBackupsRequested = Notification.Name("com.xvan.UniReader.workspaceBackups")
     /// 跳转历史：后退 / 前进 / 开关浮窗（由 key 窗口的 `ContentView` 响应）
     static let jumpBackRequested = Notification.Name("com.xvan.UniReader.jumpBackRequested")
     static let jumpForwardRequested = Notification.Name("com.xvan.UniReader.jumpForwardRequested")

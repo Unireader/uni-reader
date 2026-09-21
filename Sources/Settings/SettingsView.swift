@@ -63,6 +63,12 @@ struct SettingsView: View {
     /// 框选文字再框到已选中区域时：true=合并（保留原有，只新增没框过的部分）、false=反选（重叠部分
     /// 互相取消，同 Finder 图标视图 ⌘+拖惯例）。阅读区 `ReaderSurface+BoxSelect` 读同一个键。
     @AppStorage("boxSelectOverlapMerge") private var boxSelectOverlapMerge = true
+    /// 备份与回收站三项（`BACKUP-PLAN.md`）。**键名与 `BackupService.enabled` /
+    /// `BackupService.intervalHours` / `WorkspaceManager.trashRetention` 的 getter 一一对应**，
+    /// 默认值也必须一致——两边对不上就是「设置页显示一套、实际跑另一套」。
+    @AppStorage("backupEnabled") private var backupEnabled = true
+    @AppStorage("backupIntervalHours") private var backupIntervalHours = 6
+    @AppStorage("trashRetentionDays") private var trashRetentionDays = 30
 
     var body: some View {
         switch tab {
@@ -200,8 +206,73 @@ struct SettingsView: View {
             } footer: {
                 Text(L("Images live inside the workspace package. An image whose notes are all deleted becomes pending; it is removed for good 30 days later (undo the deletion before then to keep it)."))
             }
+
+            backupSection
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - 兜底（回收站 + 定时备份，`BACKUP-PLAN.md`）
+
+    /// 备份间隔的几档。Sparkle 那一节同款写法：预设 tag，避免 Picker 撞上非预设值显示空白。
+    private static let backupIntervalOptions: [(label: String, hours: Int)] = [
+        (L("Every hour"), 1),
+        (String(format: L("Every %d hours"), 6), 6),
+        (String(format: L("Every %d hours"), 12), 12),
+        (L("Daily"), 24),
+    ]
+
+    /// 🔴 这三项**必须走 `@AppStorage`，不能拿 `Binding(get:set:)` 包一个静态属性**
+    /// （2026-09-21 用户报「选不了其他选项」）：那种写法下 body 里没有任何 SwiftUI 状态被读到，
+    /// 选完之后视图不重算，Picker 立刻按旧值画回去 —— 看起来就是「点了没反应」。
+    /// 这里绑的是 `BackupService` / `WorkspaceManager` 读的**同一批 UserDefaults 键**，
+    /// 键名写错就是各写各的，改这几行务必对着那两处的 getter 核一遍。
+    private var backupSection: some View {
+        Section {
+            Toggle(L("Back up the library automatically"), isOn: $backupEnabled)
+                .onChange(of: backupEnabled) { _, _ in BackupService.shared.restartTimer() }
+            Picker(L("Backup frequency"), selection: $backupIntervalHours) {
+                ForEach(Self.backupIntervalOptions, id: \.hours) { o in Text(o.label).tag(o.hours) }
+            }
+            .disabled(!backupEnabled)
+            .onChange(of: backupIntervalHours) { _, _ in BackupService.shared.restartTimer() }
+            Picker(L("Keep deleted items"), selection: $trashRetentionDays) {
+                Text(L("Keep for 30 days")).tag(Trash.Retention.days30.rawValue)
+                Text(L("Keep for 90 days")).tag(Trash.Retention.days90.rawValue)
+                Text(L("Keep forever")).tag(Trash.Retention.forever.rawValue)
+            }
+            TimelineView(.periodic(from: .now, by: 2)) { _ in
+                let managers = WorkspaceRegistry.shared.openManagers
+                if managers.isEmpty {
+                    Text(L("No workspace is open.")).foregroundStyle(.secondary)
+                } else {
+                    ForEach(managers, id: \.folder) { ws in backupStatsRow(ws) }
+                }
+            }
+        } header: {
+            Text(L("Backups"))
+        } footer: {
+            Text(L("A snapshot of the library (every stroke, note and highlight) is kept inside the workspace: the 5 most recent, one a day for a week, one a week for a month. Deleted documents and ink layers are kept in Recently Deleted — open it from File ▸ Recently Deleted."))
+        }
+    }
+
+    /// 一个工作区的备份账：「N 份 · 占用 · 上次」。按钮开那张面板（列表 / 立即备份 / 还原都在那里）。
+    @ViewBuilder private func backupStatsRow(_ ws: WorkspaceManager) -> some View {
+        let items = ws.folder.map { BackupService.items(in: $0) } ?? []
+        let bytes = items.reduce(Int64(0)) { $0 + $1.bytes }
+        LabeledContent {
+            // 面板要弹在**那个工作区的阅读窗**上（设置窗此刻才是 key 窗口，所以带上工作区路径认领）。
+            Button(L("Manage…")) {
+                NotificationCenter.default.post(name: .workspaceBackupsRequested, object: ws.folder)
+            }
+        } label: {
+            Text(ws.name)
+            Text(items.isEmpty
+                 ? L("No backups yet.")
+                 : String(format: L("%d backups · %@ · last %@"), items.count,
+                          ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file),
+                          items[0].date.formatted(date: .abbreviated, time: .shortened)))
+        }
     }
 
     // MARK: - 更新（Sparkle）
