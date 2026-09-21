@@ -172,6 +172,8 @@ enum MainMenu {
         m.addItem(post(L("Back to Previous Position"), .jumpBackRequested, shortcut: .jumpBack))
         m.addItem(post(L("Forward to Next Position"), .jumpForwardRequested, shortcut: .jumpForward))
         m.addItem(post(L("Jump History"), .toggleJumpHistory, shortcut: .jumpHistory))
+        // 跳转到指定页：默认 ⌃G（用户 2026-09-21 指定）。⌘G 是系统的「查找下一个」口径，不占。
+        m.addItem(post(L("Go to Page…"), .gotoPageRequested, shortcut: .gotoPage))
         m.addItem(.separator())
         m.addItem(item(L("Customize Toolbar…"), #selector(MenuActions.customizeToolbar(_:)),
                        key: "", mods: [], target: MenuActions.shared))
@@ -338,6 +340,9 @@ extension MenuActions: NSMenuItemValidation {
             let s = activeSession
             menuItem.state = s?.scanAlign != nil ? .on : .off
             return s?.pdf != nil
+        case #selector(postNotification(_:))
+            where menuItem.representedObject as? String == Notification.Name.gotoPageRequested.rawValue:
+            return activeSession?.pdf != nil   // 空标签 / Markdown 笔记没有「第几页」可言
         default: return true
         }
     }

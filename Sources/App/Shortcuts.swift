@@ -133,7 +133,7 @@ struct KeyCombo: Hashable {
 enum ShortcutAction: String, CaseIterable, Identifiable {
     // 视图
     case toggleSidebar, toggleInspector, zoomIn, zoomOut, zoomFit
-    case addBookmark, jumpBack, jumpForward, jumpHistory
+    case addBookmark, jumpBack, jumpForward, jumpHistory, gotoPage
     case nightMode, canvasMode, refWindow
     // 笔与模式（菜单，带 ⌥）
     case penSlot1, penSlot2, penSlot3, penSlot4, eraser, pageTurn, write
@@ -175,7 +175,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     var section: Section {
         switch self {
         case .toggleSidebar, .toggleInspector, .zoomIn, .zoomOut, .zoomFit, .addBookmark,
-             .jumpBack, .jumpForward, .jumpHistory, .nightMode, .canvasMode, .refWindow:
+             .jumpBack, .jumpForward, .jumpHistory, .gotoPage, .nightMode, .canvasMode, .refWindow:
             return .view
         case .penSlot1, .penSlot2, .penSlot3, .penSlot4, .eraser, .pageTurn, .write:
             return .pens
@@ -197,6 +197,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .jumpBack: return L("Back to Previous Position")
         case .jumpForward: return L("Forward to Next Position")
         case .jumpHistory: return L("Jump History")
+        case .gotoPage: return L("Go to Page…")
         case .nightMode: return L("Night Mode")
         case .canvasMode: return L("Canvas Mode")
         case .refWindow: return L("Reference Window")
@@ -234,6 +235,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .jumpBack: return KeyCombo("[", .command)
         case .jumpForward: return KeyCombo("]", .command)
         case .jumpHistory: return KeyCombo("j", [.command, .option])
+        case .gotoPage: return KeyCombo("g", .control)   // ⌃G（用户 2026-09-21 指定）
         case .nightMode: return KeyCombo("n", [.command, .option])
         case .canvasMode: return KeyCombo("c", [.command, .option])
         case .refWindow: return KeyCombo("r", [.command, .option])

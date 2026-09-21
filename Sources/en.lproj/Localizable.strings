@@ -437,6 +437,12 @@
 "Jump History" = "Jump History";
 "Back to Previous Position" = "Back to Previous Position";
 "Forward to Next Position" = "Forward to Next Position";
+
+/* 跳转到指定页（⌃G）：菜单项 + 输入框 */
+"Go to Page…" = "Go to Page…";
+"Go to Page" = "Go to Page";
+"Enter a page number between 1 and %d." = "Enter a page number between 1 and %d.";
+"Go" = "Go";
 "Keep the jump history in a floating window" = "Keep the jump history in a floating window";
 "No jumps yet" = "No jumps yet";
 "Contents, search and list jumps show up here." = "Contents, search and list jumps show up here.";

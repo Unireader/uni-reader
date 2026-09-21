@@ -37,6 +37,9 @@ final class ReaderPaneController: NSViewController {
     private var docPicker: NSPopover?
     private var bookmarkSheet: NSWindow?
     private var alertShowing = false
+    /// 「跳转到指定页」的输入框正开着（⌃G 连按不叠第二张）。与 `alertShowing` 分开：
+    /// 那一个是「文件已变化 / 扫描页对齐」两张**被动**弹窗的互斥位，这一张是用户主动按出来的。
+    private var gotoPageShowing = false
 
     private var bag = Set<AnyCancellable>()
     private var sessionBag = Set<AnyCancellable>()
@@ -150,6 +153,7 @@ final class ReaderPaneController: NSViewController {
             (.jumpForwardRequested, { $0.session.jumpForward() }),
             (.toggleJumpHistory, { $0.jumpPanel.toggle() }),
             (.addBookmarkRequested, { c in if c.session.documentId != nil { c.session.beginBookmarkAtCurrent() } }),
+            (.gotoPageRequested, { $0.promptGotoPage() }),
             (.toggleScanAlign, { $0.tab.toggleScanAlign() }),
         ]
         for (name, action) in commands {
@@ -506,6 +510,49 @@ final class ReaderPaneController: NSViewController {
             bookmarkSheet = nil
             view.window?.endSheet(sheet)
         }
+    }
+
+    // MARK: 跳转到指定页（⌃G）
+
+    /// 弹一张系统提示框问页码，回车 / 「跳转」即跳（`session.jump`，与点目录、点缩略图同一条路，
+    /// 所以进得了跳转历史、⌘[ 回得来）。没开 PDF（空标签 / Markdown 笔记）时什么都不做——
+    /// 菜单项那边也会灰掉（`MainMenu.validateMenuItem`）。
+    private func promptGotoPage() {
+        guard !gotoPageShowing, let pdf = session.pdf, pdf.pageCount > 0, let win = view.window else { return }
+        let total = pdf.pageCount
+        let current = min(max(0, session.currentPageIndex), total - 1)
+        gotoPageShowing = true
+
+        let a = NSAlert()
+        a.messageText = L("Go to Page")
+        a.informativeText = String(format: L("Enter a page number between 1 and %d."), total)
+        let go = a.addButton(withTitle: L("Go"))
+        a.addButton(withTitle: L("Cancel"))
+        let field = NSTextField(string: "\(current + 1)")
+        field.frame = NSRect(x: 0, y: 0, width: 200, height: 24)
+        field.alignment = .left
+        // 回车 = 按「跳转」（NSAlert 的 accessory 里不接这一下的话，回车会先被输入框吃掉）
+        field.target = go
+        field.action = #selector(NSButton.performClick(_:))
+        a.accessoryView = field
+        a.window.initialFirstResponder = field
+
+        a.beginSheetModal(for: win) { [weak self] resp in
+            guard let self else { return }
+            self.gotoPageShowing = false
+            guard resp == .alertFirstButtonReturn else { return }
+            // 输进来的是人用的页码（1 起），会话内部 0 起；超出范围就夹到两端，不报错也不静默跳过
+            let typed = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard let n = Int(typed) else { return }
+            let idx = min(max(0, n - 1), total - 1)
+            // 仍是这篇、这个标签才跳（弹着的时候可能已经切走了）
+            guard self.session.pdf === pdf else { return }
+            self.session.jump(page: idx, frac: 0, kind: .list,
+                              label: String(format: L("Page %d"), idx + 1))
+        }
+        // 预填当前页码并全选：直接打数字就是覆盖，不用先清空。
+        // 推到下一拍——`beginSheetModal` 返回时表单还没上屏，字段编辑器（`currentEditor`）此刻多半还不存在。
+        DispatchQueue.main.async { field.currentEditor()?.selectAll(nil) }
     }
 
     // MARK: 确认弹窗（文件已变化 / 扫描页对齐）

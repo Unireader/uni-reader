@@ -439,6 +439,12 @@
 "Jump History" = "跳转历史";
 "Back to Previous Position" = "返回上一位置";
 "Forward to Next Position" = "前进到下一位置";
+
+/* 跳转到指定页（⌃G）：菜单项 + 输入框 */
+"Go to Page…" = "跳转到指定页…";
+"Go to Page" = "跳转到指定页";
+"Enter a page number between 1 and %d." = "请输入 1 到 %d 之间的页码。";
+"Go" = "跳转";
 "Keep the jump history in a floating window" = "把跳转历史摆成悬浮窗";
 "No jumps yet" = "还没有跳转记录";
 "Contents, search and list jumps show up here." = "点目录、搜索命中、列表跳转都会记在这里。";

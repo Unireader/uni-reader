@@ -672,6 +672,8 @@ extension Notification.Name {
     static let toggleJumpHistory = Notification.Name("com.xvan.UniReader.toggleJumpHistory")
     /// 书签：在当前阅读位置加一枚（⌘D，由 key 窗口的 `ReaderPane` 响应）
     static let addBookmarkRequested = Notification.Name("com.xvan.UniReader.addBookmarkRequested")
+    /// 跳转到指定页（⌃G，由 key 窗口的 `ReaderPane` 弹输入框）
+    static let gotoPageRequested = Notification.Name("com.xvan.UniReader.gotoPageRequested")
     /// 参考窗开关（视图菜单；key 窗口认领——阅读窗开合自己那份，独立形态的参考窗是 key 时关自己）
     static let toggleRefWindow = Notification.Name("com.xvan.UniReader.toggleRefWindow")
 }
