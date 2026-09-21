@@ -9,6 +9,14 @@ import QuartzCore
 final class ReaderOverlayView: NSView {
     override var isFlipped: Bool { true }
 
+    /// 窗口工具栏盖住的顶部高度（屏幕点）。阅读区本身仍铺到工具栏后面，让页面从玻璃后透过去；
+    /// 只有图钉 / 笔记卡片在这里明确裁到工具栏下沿，避免它们作为交互浮层画到工具栏之上。
+    var topOcclusion: CGFloat = 0 {
+        didSet {
+            if abs(oldValue - topOcclusion) > 0.5 { needsLayout = true }
+        }
+    }
+
     // 图钉 / 气泡（键：见 `ReaderView+Overlay`）
     var pins: [String: ReaderPinView] = [:]
     var noteBubbles: [UUID: NoteBubbleNSView] = [:]
@@ -39,7 +47,8 @@ final class ReaderOverlayView: NSView {
         wantsLayer = true
         for v in [pinLayerView, bubbleLayerView] {
             v.frame = bounds
-            v.autoresizingMask = [.width, .height]
+            v.wantsLayer = true
+            v.layer?.masksToBounds = true
             addSubview(v)
         }
         let accent = NSColor.controlAccentColor
@@ -99,6 +108,18 @@ final class ReaderOverlayView: NSView {
         addSubview(toast)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    override func layout() {
+        super.layout()
+        let top = min(max(topOcclusion, 0), bounds.height)
+        let visible = NSRect(x: bounds.minX, y: bounds.minY + top,
+                             width: bounds.width, height: bounds.height - top)
+        for v in [pinLayerView, bubbleLayerView] {
+            // frame 与 bounds 使用同一坐标原点：子视图仍按覆盖层全局坐标摆放，只裁掉顶部。
+            if v.frame != visible { v.frame = visible }
+            if v.bounds != visible { v.bounds = visible }
+        }
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let v = super.hitTest(point)
