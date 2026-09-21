@@ -3,6 +3,24 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
+/// 对话记录滚动条的几何打点。**默认关**，同 `mcpLog` 的做法用文件开关：
+/// ```
+/// touch ~/Library/Logs/UniReader-agent-scroll.log    # 开启
+/// rm    ~/Library/Logs/UniReader-agent-scroll.log    # 关闭
+/// ```
+/// 排「拖完分隔条竖滚动条不见了」这类问题用：每次对齐滚动位置记一行几何，
+/// 看得出内容高 / 视口高 / 滚动条状态三者是不是对得上。
+enum AgentScrollLog {
+    static let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/UniReader-agent-scroll.log")
+
+    static func write(_ s: String) {
+        guard let h = try? FileHandle(forWritingTo: url) else { return }   // 文件不在 = 没开
+        defer { try? h.close() }
+        _ = try? h.seekToEnd()
+        try? h.write(contentsOf: Data("\(Date.now.formatted(date: .omitted, time: .standard)) \(s)\n".utf8))
+    }
+}
+
 /// Agent 面板的内容（AppKit 版，替代 SwiftUI `AgentChatView`，行为逐项同原版，`ACP-AGENT-PLAN.md`）：
 /// 状态条 + 对话记录 + 权限请求 + 输入区；内置形态顶上多一条标题行（独立窗口的操作在窗口工具栏上）。
 /// 🔴 系统控件、不自绘仿系统样式；玻璃 / 材质底上的文字一律 `labelColor`。
@@ -30,6 +48,17 @@ final class AgentChatNSView: NSView {
     /// 那时再按几何去判断已经晚了，所以滚动时就记下来。
     private var stickBottom = true
     private var bottomQueued = false
+    /// 上次摆位时对话记录滚动视图的大小（尺寸变了要让滚动条重新判断，见 `layout`）。
+    private var lastScrollSize: NSSize = .zero
+    /// 上次按新尺寸摆过位的面板大小 / 那一刻的时间。连着变 = 正在拖，见 `layout`。
+    private var lastLaidOutSize: NSSize = .zero
+    private var lastSizeChange = Date.distantPast
+    private var resizeTimer: Timer?
+    /// 「值变了才重建」用的快照。流式回复每来一个碎片就走一次 `refresh()`，而标题行 / 提示条 /
+    /// 权限卡片跟碎片全无关系——每次重建一遍纯属白费（同工具栏那条「值变了才写」的老规矩）。
+    private var headerKey: String?
+    private var bannerKey: String?
+    private var permissionKey: [UUID] = []
 
     init(chat: AgentChat, workspaceName: String, showsHeader: Bool) {
         self.chat = chat
@@ -37,6 +66,8 @@ final class AgentChatNSView: NSView {
         self.showsHeader = showsHeader
         composer = AgentComposerView(chat: chat)
         super.init(frame: .zero)
+        // 拖动期间面板停住不摆位（见 `layout`），内容还是旧宽度，别让它画到面板外面去
+        clipsToBounds = true
         headerLine.boxType = .separator
         banners.orientation = .vertical
         banners.spacing = 0
@@ -117,6 +148,21 @@ final class AgentChatNSView: NSView {
         // 🔴 看不见就不摆位：`InspectorViewController.viewDidLayout` 每次布局都会给 Agent 页及其子视图设 frame，
         // 不管这页显不显示——拖分隔条时逐帧来一遍。切回来时 `viewDidUnhide` 会补一次。
         guard window != nil, !isHiddenOrHasHiddenAncestor else { return }
+        // 🔴 **尺寸连着变（拖分隔条 / 拖窗口）的整个过程里，这块面板停住不动**：不摆位、不重排正文、
+        // 不动滚动条，停手后再一次性重来（`finishResize`）。用户 2026-09-21 定：
+        // 「拖拽过程中不更新 UI，直到松手后再重新布局对话流」——逐帧跟着改宽度就是每帧把每条回复
+        // 整篇重排一遍，中间态还会裁成半截。停住期间内容按旧宽度留着，所以要 `clipsToBounds`。
+        if bounds.size != lastLaidOutSize {
+            let now = Date()
+            defer { lastSizeChange = now }
+            if now.timeIntervalSince(lastSizeChange) < Self.resizeQuiet {
+                armResizeEnd()
+                return
+            }
+        }
+        resizeTimer?.invalidate()
+        resizeTimer = nil
+        lastLaidOutSize = bounds.size
         let b = bounds
         var y: CGFloat = 0
         if showsHeader {
@@ -136,8 +182,44 @@ final class AgentChatNSView: NSView {
             bottom = permissions.frame.minY
         }
         transcriptScroll.frame = NSRect(x: 0, y: y, width: b.width, height: max(0, bottom - y))
+        // 🔴 面板尺寸变了（拖 Inspector 分隔条 / 改窗口大小）也得让滚动视图重新判断一次：
+        // 内容高度不一定跟着变（正文没重排就没人报高度），而它自己不会重算——表现就是
+        // 拖完滚动条不见了（AGENTS.md 里记着这条；2026-09-21 又踩一次）。
+        if transcriptScroll.frame.size != lastScrollSize {
+            lastScrollSize = transcriptScroll.frame.size
+            keepBottom()
+        }
         let es = empty.fittingSize
         empty.frame = NSRect(x: (b.width - es.width) / 2, y: y + (bottom - y - es.height) / 2, width: es.width, height: es.height)
+    }
+
+    /// 尺寸不再变多久算「停手」。比一帧长不少，又短到松手时看不出等待。
+    private static let resizeQuiet: TimeInterval = 0.12
+
+    private func armResizeEnd() {
+        resizeTimer?.invalidate()
+        let t = Timer(timeInterval: Self.resizeQuiet, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.resizeTimer = nil
+                self?.finishResize()
+            }
+        }
+        resizeTimer = t
+        RunLoop.main.add(t, forMode: .common)   // .common：拖动期间这只表也得照常走
+    }
+
+    /// 停手了：按新尺寸摆好位 → 对话流立刻按新宽度重排 → 滚动条重新判断。
+    private func finishResize() {
+        lastSizeChange = .distantPast   // 让这一趟 `layout` 认得出「不是在拖」
+        logGeometry("停手前")
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        for (_, entry) in itemViews {
+            (entry.view as? AgentMarkdownView)?.flushNow()
+            (entry.view as? AgentDisclosureView)?.markdown?.flushNow()
+        }
+        syncScroll()
+        keepBottom()   // 正文是排完版才异步报高度的，下一拍再对一次滚动条
     }
 
     // MARK: 刷新
@@ -162,6 +244,9 @@ final class AgentChatNSView: NSView {
 
     private func refreshHeader() {
         guard showsHeader else { return }
+        let key = "\(chat.title ?? "")\u{1}\(workspaceName)"
+        guard key != headerKey else { return }
+        headerKey = key
         header.configure(icon: "sparkles", title: chat.title ?? AgentConfig.displayName, subtitle: workspaceName, buttons: [
             .init(symbol: "clock.arrow.circlepath", tip: L("Earlier Chats"), menu: { [weak self] in self?.historyMenu() ?? NSMenu() }),
             .init(symbol: "ellipsis", tip: L("More"), menu: { AgentMenus.options() }),
@@ -172,6 +257,9 @@ final class AgentChatNSView: NSView {
     func historyMenu() -> NSMenu { AgentMenus.history(chat) }
 
     private func refreshBanners() {
+        let key = "\(chat.missingMCP)\u{1}\(chat.phase)"
+        guard key != bannerKey else { return }
+        bannerKey = key
         for v in banners.arrangedSubviews { banners.removeArrangedSubview(v); v.removeFromSuperview() }
         if chat.missingMCP {
             banners.addArrangedSubview(bannerRow("exclamationmark.triangle", L("The MCP service is off, so the agent cannot see the reader."),
@@ -245,48 +333,84 @@ final class AgentChatNSView: NSView {
     }
 
     /// 对话记录：按条目 id 增量更新（流式回复每个碎片只改最后一条，别整段重建）。
+    ///
+    /// 🔴 **别每次刷新都把整排视图拆下来再装回去**（2026-09-21 用户实测「回答太多会卡顿」的根因）：
+    /// `NSStackView` 每增删一个 arranged subview 都要重建一整串间距 / 对齐约束，回答越长这排视图越多，
+    /// 而流式期间每个碎片都来一次——于是越说越卡。这里先算出这排视图**应该**是什么样，
+    /// 再只动第一处不一样的位置往后那一段；最常见的情况（只是最后一条回复又长了一段）一动不动。
     private func refreshTranscript() {
         let isEmpty = chat.items.isEmpty && chat.phase == .idle && chat.sessionId != nil
         empty.isHidden = !isEmpty
         transcriptScroll.isHidden = isEmpty
-        let nearBottom = stickBottom
         let ids = chat.items.map(\.id)
-        let changedOrder = ids != order
-        if changedOrder {
-            // 条目有增删（新对话 / 回放）：移除不在的，按新顺序补
+        // 条目只在末尾追加 = 同一段对话往下说；否则是换了一段（新对话 / 回放 / 清空）
+        let appended = ids.count >= order.count && Array(ids.prefix(order.count)) == order
+        if !appended {
             let keep = Set(ids)
             for (id, v) in itemViews where !keep.contains(id) { v.view.removeFromSuperview(); itemViews.removeValue(forKey: id) }
         }
-        for v in transcript.arrangedSubviews { transcript.removeArrangedSubview(v) }
+        var views: [NSView] = []
+        views.reserveCapacity(chat.items.count + 1)
+        // 🔴 这一轮新建的条目视图。宽度约束**必须等它进了 stack 再激活**：约束两端要有共同祖先，
+        // 刚 `make` 出来的视图还没有父视图，当场激活 = Auto Layout 抛异常、进程 abort
+        // （2026-09-21 实测，一点历史对话就崩）。
+        var fresh: [NSView] = []
         for item in chat.items {
             if let cur = itemViews[item.id], cur.kind == item.kind {
-                transcript.addArrangedSubview(cur.view)
+                views.append(cur.view)
             } else if let cur = itemViews[item.id], AgentItemViews.update(cur.view, to: item.kind) {
                 // 流式：同一条回复 / 思考又长了一段，就地换文字，别重建视图（见 `AgentMarkdownView`）
                 itemViews[item.id] = (item.kind, cur.view)
-                transcript.addArrangedSubview(cur.view)
+                views.append(cur.view)
             } else {
                 itemViews[item.id]?.view.removeFromSuperview()
                 let v = AgentItemViews.make(item)
                 if let md = v as? AgentMarkdownView { md.onHeightChange = { [weak self] in self?.keepBottom() } }
                 if let d = v as? AgentDisclosureView { d.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
                 itemViews[item.id] = (item.kind, v)
-                transcript.addArrangedSubview(v)
-                // 宽度约束只在新建时加一次（重排时视图仍是子视图，约束还在）
-                v.widthAnchor.constraint(equalTo: transcript.widthAnchor, constant: -28).isActive = true
+                views.append(v)
+                fresh.append(v)
             }
         }
-        order = ids
         if chat.phase == .running, chat.permissions.isEmpty {
-            transcript.addArrangedSubview(spinner)
+            views.append(spinner)
             spinner.startAnimation(nil)
         } else {
             spinner.stopAnimation(nil)
-            spinner.removeFromSuperview()
         }
-        if nearBottom || changedOrder {
+        let moved = applyTranscriptViews(views)
+        // 进了 stack 才有共同祖先，这时才能激活（只在新建时加一次：重排时视图仍是子视图，约束还在）。
+        // `superview` 那道判断是保险：没进去就跳过——宽度不对总好过整个 App 挂掉。
+        for v in fresh where v.superview != nil {
+            v.widthAnchor.constraint(equalTo: transcript.widthAnchor, constant: -28).isActive = true
+        }
+        order = ids
+        // 🔴 **用户自己往上翻过就别再把他拽回底下**：原来只要条目数组变了就无条件滚到底，
+        // 而回答期间新条目（工具调用 / 新一段回复）不断冒出来，表现就是「回答时根本滚不上去」
+        // （2026-09-21 用户实测）。只有换了一段对话（回放 / 新对话）才强制回底。
+        if !appended {
             DispatchQueue.main.async { [weak self] in self?.scrollToBottom() }
+        } else if moved {
+            keepBottom()   // 这排视图变了 = 内容高度会变，滚动条得重新判断（滚不滚由 `stickBottom` 定）
         }
+    }
+
+    /// 把这排视图摆成 `views`：从第一处不一样的位置往后重装，前面原样不动。
+    /// - Returns: 真的动过（调用方据此决定要不要重新对齐滚动位置）。
+    @discardableResult
+    private func applyTranscriptViews(_ views: [NSView]) -> Bool {
+        let current = transcript.arrangedSubviews
+        var k = 0
+        while k < current.count, k < views.count, current[k] === views[k] { k += 1 }
+        guard k < current.count || k < views.count else { return false }
+        let keep = Set(views.map(ObjectIdentifier.init))
+        for v in current[k...] {
+            transcript.removeArrangedSubview(v)
+            // 不再要的（被替换掉的条目视图、停下来的转圈）才真的摘掉
+            if !keep.contains(ObjectIdentifier(v)) { v.removeFromSuperview() }
+        }
+        for v in views[k...] { transcript.addArrangedSubview(v) }
+        return true
     }
 
     /// 滚动（或改窗口大小）之后记一下还在不在底上。
@@ -326,12 +450,31 @@ final class AgentChatNSView: NSView {
         // 由 AppKit 在自己的布局周期里去 tile。
         transcriptScroll.needsLayout = true
         transcriptScroll.reflectScrolledClipView(clip)
+        logGeometry(toBottom ? "回底" : "对齐")
+    }
+
+    /// 打一行几何（默认不开，见 `AgentScrollLog`）。
+    private func logGeometry(_ tag: String) {
+        let clip = transcriptScroll.contentView
+        let content = transcript.frame.height, viewport = clip.bounds.height
+        let scroller = transcriptScroll.verticalScroller
+        AgentScrollLog.write("""
+            \(tag) 面板\(Int(bounds.width))×\(Int(bounds.height)) 滚动视图\(Int(transcriptScroll.frame.width))×\
+            \(Int(transcriptScroll.frame.height)) 视口\(Int(clip.bounds.width))×\(Int(viewport)) \
+            内容高\(Int(content)) 该有竖条=\(content > viewport + 0.5) 竖条\
+            \(scroller == nil ? "无" : (scroller!.isHidden ? "藏" : "显"))\
+            宽\(Int(scroller?.frame.width ?? 0)) 位置\(Int(clip.bounds.origin.y)) \
+            贴底=\(stickBottom) 条目\(transcript.arrangedSubviews.count)
+            """)
     }
 
     private func scrollToBottom() { syncScroll(toBottom: true) }
 
     /// 权限请求卡片：详情（等宽、最多 5 行）+ 选项按钮（「允许一次」是强调样式，不挂回车，免得打字时顺手批掉）。
     private func refreshPermissions() {
+        let ids = chat.permissions.map(\.id)
+        guard ids != permissionKey else { return }
+        permissionKey = ids
         for v in permissions.arrangedSubviews { permissions.removeArrangedSubview(v); v.removeFromSuperview() }
         for ask in chat.permissions {
             let box = NSBox()
@@ -602,6 +745,12 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     private let configMenu = NSPopUpButton(frame: .zero, pullsDown: true)
     private let send = NSButton()
     private var textHeight: CGFloat = 56
+    /// 「值变了才重建」用的快照（同 `AgentChatNSView`）：两个下拉菜单动辄几十项，
+    /// 而流式回复每个碎片都会叫一次 `refresh()`。
+    private var attachmentKey: [UUID] = []
+    private var modeKey: String?
+    private var configKey: String?
+    private var sendKey: String?
 
     init(chat: AgentChat) {
         self.chat = chat
@@ -663,7 +812,28 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     // MARK: 刷新
 
     func refresh() {
-        // 待发图片
+        refreshAttachments()
+        placeholder.isHidden = !textView.string.isEmpty
+        textView.isEditable = chat.sessionId != nil
+        attach.isEnabled = chat.sessionId != nil
+        refreshModeMenu()
+        refreshConfigMenu()
+        refreshSendButton()
+        needsLayout = true
+    }
+
+    /// 待发图片。缩略图只在这排图片真的变了时重建；显隐与占位文字每次都要落实
+    /// （它俩管着输入框怎么摆位，漏一次空的图片条就白占 62pt）。
+    private func refreshAttachments() {
+        defer {
+            stripScroll.isHidden = chat.attachments.isEmpty
+            let hint = chat.attachments.isEmpty ? String(format: L("Ask %@…"), AgentConfig.displayName)
+                                                : L("Ask about the image…")
+            if placeholder.stringValue != hint { placeholder.stringValue = hint }
+        }
+        let ids = chat.attachments.map(\.id)
+        guard ids != attachmentKey else { return }
+        attachmentKey = ids
         for v in strip.arrangedSubviews { strip.removeArrangedSubview(v); v.removeFromSuperview() }
         for img in chat.attachments {
             let thumb = AgentImageThumbView(image: img, height: 56)
@@ -687,14 +857,13 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
             ])
             strip.addArrangedSubview(holder)
         }
-        stripScroll.isHidden = chat.attachments.isEmpty
-        placeholder.stringValue = chat.attachments.isEmpty ? String(format: L("Ask %@…"), AgentConfig.displayName)
-                                                           : L("Ask about the image…")
-        placeholder.isHidden = !textView.string.isEmpty
-        textView.isEditable = chat.sessionId != nil
-        attach.isEnabled = chat.sessionId != nil
-        refreshModeMenu()
-        refreshConfigMenu()
+    }
+
+    /// 发送 / 停止。
+    private func refreshSendButton() {
+        let key = "\(chat.phase)\u{1}\(canSend)"
+        guard key != sendKey else { return }
+        sendKey = key
         if chat.phase == .running {
             send.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: L("Stop"))
             send.toolTip = L("Stop")
@@ -714,6 +883,9 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     private func refreshModeMenu() {
         modeMenu.isHidden = chat.modes.isEmpty
         guard !chat.modes.isEmpty else { return }
+        let key = chat.modes.map(\.id).joined(separator: "\u{1}") + "\u{2}" + (chat.currentMode ?? "")
+        guard key != modeKey else { return }
+        modeKey = key
         let menu = NSMenu()
         let cur = chat.modes.first { $0.id == chat.currentMode }.map(AgentMenus.modeInfo)
         let head = NSMenuItem(title: cur?.name ?? L("Mode"), action: nil, keyEquivalent: "")
@@ -734,6 +906,14 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         let model = selects.first { $0.id == "model" } ?? selects.first
         guard let model, case .select(let current, let options) = model.kind else { configMenu.isHidden = true; return }
         configMenu.isHidden = false
+        let key = chat.configs.map { item in
+            switch item.kind {
+            case .select(let cur, let opts): return "\(item.id)=\(cur)/\(opts.count)"
+            case .toggle(let on): return "\(item.id)=\(on)"
+            }
+        }.joined(separator: "\u{1}")
+        guard key != configKey else { return }
+        configKey = key
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: options.first { $0.value == current }?.name ?? current, action: nil, keyEquivalent: ""))
         for item in chat.configs {

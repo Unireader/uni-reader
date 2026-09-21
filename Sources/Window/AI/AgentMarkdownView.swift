@@ -152,6 +152,9 @@ final class AgentMarkdownView: NSView {
         flush()
     }
 
+    /// 尺寸已经定下来了（拖分隔条松手），立刻按新宽度排一次，别再等防抖那 150ms。
+    func flushNow() { flushIfPending() }
+
     /// 到点（或该露面了）就把攒下的文本 / 宽度一起交给引擎，排一次。
     private func arm(_ interval: TimeInterval, restart: Bool) {
         if restart { timer?.invalidate(); timer = nil }
