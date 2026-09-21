@@ -113,13 +113,12 @@
 
 ### 真 Bug（未修）
 
-- **Agent 调 `update_markdown` 时面板僵住、工具一直显示在跑**（2026-09-21 用户报，**未修，缺数据**）：
-  笔记内容其实已经写进去了，但那个工具的转圈图标**静止不动**（= 主线程被占死，不是请求没回来），
-  要等很久才显示完成。怀疑是 `MCPFacade.updateMarkdown` 写完文件后调 `applyMarkdownText`
-  （`MarkdownDocView.applySavedText` → `box.text = text`），长笔记整篇重排 TextKit 2 卡住主线程，
-  那几秒里 Agent 推回来的「工具已完成」也刷不上屏。**这是推断，别照着就改**——
-  `touch ~/Library/Logs/UniReader-mcp.log` 开日志复现一次，看 `update_markdown` 那行的毫秒数：
-  小（几十~一两百）= 服务端早写完了，卡在面板刷新；大（几秒以上）= 写入路径本身堵在主线程。
+- **Agent 面板把「模型还在写工具参数」显示成「工具正在执行」**（2026-09-21 查清，**不是性能问题，待定怎么显示**）：
+  用户报「`update_markdown` 耗时很久，其实已经完成了」。查 Kimi 会话日志（`~/.kimi-code/sessions/wd_*/session_*/agents/main/wire.jsonl`，
+  `tool.call` 与 `usage.record` 带时间戳）+ MCP 日志，真相是：那一轮模型花 **68 秒**生成那篇 17K 字的新正文
+  （output 20378 tokens），`update_markdown` 工具**本身只跑了 0.46 秒**（另一次 9570 字是 0.06 秒）。
+  也就是说转圈的 68 秒全是模型在吐字，写入一点都不慢。要改的是显示：参数还没到齐时标成「准备中」
+  之类，跟真正在执行区分开。（当时那阵卡顿是另一回事，已随对话记录增量重排修掉，见 `acdeea2`。）
 - **平板滚动时整窗视图树每秒重算 40~56 次**（2026-09-13 查内存时量到，未修）：平板每个 `scroll` 事件 →
   `DocSession.emitAnchor(origin:"pad")` → `foreignAnchor`（`@Published`）→ `PageStreamView` 整体重算 →
   `ReaderSurface.init` 跑一遍种子逻辑（`seedImages` 查缓存 + 扔掉一个临时 `Scratch`，ws 日志里那串

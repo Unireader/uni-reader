@@ -64,7 +64,10 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `Sources/Info.plist` 再 `xcodegen generate` 一次。⚠️ 公钥一旦随首次发布公开，**严禁更换**——换了
   老版本会拒绝所有未来更新。密钥生成这步涉及本机 Keychain 写入，按项目规矩交给用户自己跑，Agent 不代跑。
 
-- **第三方包（SPM）**，目前三个：`swift-markdown-engine`（`project.yml` 里 `exactVersion` 钉死）——笔记编辑器 sheet
+- **第三方包（SPM）**，目前三个：`swift-markdown-engine`（`project.yml` 里 `exactVersion` 钉死，现 **0.13.0**；
+  🔴 **升级前后都跑一遍 `spike/markdown-relayout-cost.swift`**——0.9.0 每敲一个字按整篇算账，17K 字的笔记 56ms/字、
+  52K 字 159ms/字（一帧才 16.7ms），0.13.0 恒定 9~12ms/字不随全文长度涨；量的是主线程 CPU 时间，用法见文件头，
+  改动前后对比一眼就知道有没有退步）——笔记编辑器 sheet
   （`MarkdownNoteEditor`）与气泡正文只读渲染（`MarkdownNoteReader`，允许 SwiftUI 的两处之一）用它。取两个产品：核心 `MarkdownEngine`
   （零外部依赖）+ `MarkdownEngineLatex`（2026-09-16 加，笔记里的 `$…$` / `$$…$$` 公式；传递依赖 **SwiftMath**，MIT，
   带 ~7MB 数学字体进 app 包）。公式渲染器 = `NoteLatexRenderer`（套在引擎的 `SwiftMathBridge` 外面：`$$` 块加 `\displaystyle` 按块排版 + 缓存封顶）；
