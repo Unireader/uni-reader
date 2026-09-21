@@ -22,6 +22,11 @@ On top of that it adds the two things a reader for studying actually needs: real
 handwriting from a tablet stylus, and Markdown notes that sit next to the books
 instead of in a separate app.
 
+![UniReader reading a paper, with the agent panel open](docs/images/Agentic%20Noting.png)
+
+*Highlights, note bubbles and handwriting on the page; the agent panel sits in the
+inspector on the right.*
+
 ## Features
 
 ### Reading
@@ -39,6 +44,11 @@ instead of in a separate app.
   Scanned Pages) — once it is on, the aligned page *is* the page, including for ink
 - Reference window: a second, read-only floating window for another document
 - Night rendering for dark-room reading
+
+![A reference window over the reading area](docs/images/Reference%20Window.png)
+
+*A reference window keeps another page in view — here page 6 of the same paper —
+while you read and write on the page underneath.*
 
 ### Notes that never touch the PDF
 
