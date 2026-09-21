@@ -432,10 +432,25 @@ final class DocSession: ObservableObject, Identifiable {
     var onAnchorChanged: ((ScrollAnchor) -> Void)?
 
     private var anchorSeq = 0
+    /// 上一条记进 `[PROG]` 日志的位置（页 + 页内比例合成的连续进度），用来只记「跳变」的本机滚动。
+    private var lastLoggedAnchor: Double = -1
     func emitAnchor(page: Int, frac: Double, origin: String, senderT: Double = 0) {
         anchorSeq += 1
         let a = ScrollAnchor(page: page, frac: min(max(0, frac), 1), seq: anchorSeq,
                              origin: origin, senderT: senderT)
+        // 进度排查（默认关，见 `ProgressLog`）：别处发来的锚点一律记；本机滚动每帧一条会把日志冲没，
+        // 只记**跳变**（一次跨过大半页以上 —— 正常滚动做不到，那就是位置算飞了）。
+        if ProgressLog.enabled {
+            let prog = Double(a.page) + a.frac
+            let jumped = lastLoggedAnchor >= 0 && abs(prog - lastLoggedAnchor) > 0.75
+            if origin != "mac" || jumped {
+                ProgressLog.log("锚点 \(origin)\(origin == "mac" && jumped ? "(跳变)" : "") "
+                    + "\(ProgressLog.pos(a.page, a.frac)) seq=\(a.seq) "
+                    + (lastLoggedAnchor >= 0 ? String(format: "上一条=%.3f ", lastLoggedAnchor) : "")
+                    + ProgressLog.doc(documentId, title))
+            }
+            lastLoggedAnchor = prog
+        }
         scrollAnchor = a                          // 真相源先落定
         if origin != "mac" { foreignAnchor = a }   // 只有别处来的才惊动视图
         onAnchorChanged?(a)

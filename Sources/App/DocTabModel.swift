@@ -81,6 +81,11 @@ final class DocTabModel: ObservableObject, Identifiable {
     private var lastProgressSave = Date.distantPast
     private var progressSaveTask: Task<Void, Never>?   // 节流窗内被丢变化的尾随补存
     private var closed = false
+    /// 本次装载完成时 `session.scrollAnchor` 的序号（进度排查用，见 `ProgressLog`）。
+    /// 存进度时用的锚点若 **≤ 这个数**，说明它是**上一篇**留下来的——换文档时 `scrollAnchor`
+    /// 没人清，而新文档的库里进度若正好是 p1 顶端（`load` 里那条 `page > 0 || frac > 0` 不成立）
+    /// 就不会发新锚点。真出现就在日志里带「⚠️ 锚点早于本次装载」，一眼可辨。
+    private var anchorSeqAtLoad = 0
 
     deinit { wsLog("标签释放") }
 
@@ -148,7 +153,7 @@ final class DocTabModel: ObservableObject, Identifiable {
 
         on(session.$currentPageIndex) { s in
             s.app.sessionChanged(s.session)
-            s.saveProgress()             // 翻页即存，避免只靠节流/关窗丢进度
+            s.saveProgress(why: "翻页")   // 翻页即存，避免只靠节流/关窗丢进度
         }
         // 锚点走**回调**而不是 `@Published`（红线在 `DocSession.scrollAnchor` 上）：本机滚动每帧
         // 发一次，挂在 `objectWillChange` 上就是每帧把整扇窗标脏。这两件事都不刷新视图，所以
@@ -157,10 +162,11 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.onAnchorChanged = { [weak self] _ in
             guard let self, !self.closed else { return }
             self.app.macScrolled(self.session)
-            self.saveProgressThrottled(self.session.scrollAnchor)
+            self.saveProgressThrottled(self.session.scrollAnchor, why: "滚动")
         }
         on(session.$readZoom) { s in
-            s.saveProgressThrottled(s.session.scrollAnchor)   // 缩放变化也存（含 restore 后手动缩放）
+            // 缩放变化也存（含 restore 后手动缩放）
+            s.saveProgressThrottled(s.session.scrollAnchor, why: "缩放")
         }
         on(session.$strokes) { s in
             s.persistInk()               // 笔画完成/擦除/框选移动时增量落库（liveStroke 变化不触发）
@@ -259,7 +265,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         scanAlignCancel?.set()   // 在测的扫描页对齐停掉（工作线程各开着一份 PDF，不停就吊着文件）
         bag.removeAll()          // 先断订阅，避免下面这几步自己又触发一轮
         flushPersist()
-        saveProgress()
+        saveProgress(why: "关闭标签")
         workspace.closeWindow(session.id)
         WorkspaceRegistry.shared.noteWindow(session.id, path: nil)
         app.unregister(session)
@@ -319,7 +325,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         docID = id
         // 切走前先存旧文档的进度（此刻会话仍是旧文档的锚点/缩放）。`old == nil`（本标签本来就空）
         // 时那个方法什么都不做——**别在那里兜底成当前文档**，理由见它的红线。
-        saveProgress(documentId: old)
+        saveProgress(documentId: old, why: "切走（换文档）")
         load(id)
         workspace.setWindowDoc(session.id, id)   // 更新工作区打开文档集
         // 换文档 = 标题/书库 open 标记/目录都变；平板发起的 openDoc 也在这里收尾（锁到新会话）。
@@ -363,6 +369,9 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.restoreZoom = session.readZoom
         session.restoreHFrac = CGFloat(session.readHFrac)
         let a = session.scrollAnchor
+        ProgressLog.log("切回标签 用锚点=\(a.map { "\($0.origin)#\($0.seq) \(ProgressLog.pos($0.page, $0.frac))" } ?? "无(用currentPageIndex p\(session.currentPageIndex + 1))") "
+            + String(format: "zoom=%.3f hfrac=%.3f ", Double(session.readZoom), session.readHFrac)
+            + "快照=\(session.readerSnapshot != nil) \(ProgressLog.doc(docID, session.title))")
         session.openTrace.phase("恢复锚点") {   // 含 `onAnchorChanged` → 平板 viewport 广播 + 进度节流存
             session.emitAnchor(page: a?.page ?? session.currentPageIndex,
                                frac: a?.frac ?? 0, origin: "restore")
@@ -496,6 +505,14 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.currentPageIndex = page
         ensureInkWindow(realized: page...page)     // 首窗：进度页 ± pad（阅读区首次 settle 再按真实实化范围补齐）
         lastProgressSave = .now                    // 避免恢复动作立刻又写一遍
+        ProgressLog.log("恢复 库里=\(ProgressLog.pos(p.page, p.frac)) → 摆到=\(ProgressLog.pos(page, p.frac)) "
+            + String(format: "zoom=%.3f hfrac=%.3f ", p.zoom, p.hfrac)
+            + "共\(pdf.pageCount)页 "
+            + "留着的旧锚点=\(session.scrollAnchor.map { "\($0.origin)#\($0.seq) \(ProgressLog.pos($0.page, $0.frac))" } ?? "无") "
+            + ProgressLog.doc(id, doc.title))
+        // 进度排查基线：**先取**上一篇留下的那条锚点的序号，此后发出来的（含下面这条 restore）
+        // 才算「本篇的」；存进度时拿到的锚点序号 ≤ 它，就是上一篇的残留（见 `anchorSeqAtLoad`）。
+        anchorSeqAtLoad = session.scrollAnchor?.seq ?? 0
         if page > 0 || p.frac > 0 {
             session.emitAnchor(page: page, frac: p.frac, origin: "restore")
         }
@@ -689,13 +706,13 @@ final class DocTabModel: ObservableObject, Identifiable {
         // 参考索引平时只在书库变了才重建（`syncWorkspaceSnapshot`），开关不算书库变化——手动刷一次，
         // 否则平板参考窗看这本书时还按切换前的页面出图
         session.libraryRefIndex = workspace.refDocIndex()
-        saveProgress()                           // 重载按库里的进度恢复位置
+        saveProgress(why: "扫描页对齐切换")        // 重载按库里的进度恢复位置
         reload()
     }
 
     // MARK: - 阅读进度
 
-    private func saveProgressThrottled(_ a: ScrollAnchor?) {
+    private func saveProgressThrottled(_ a: ScrollAnchor?, why: String = "节流") {
         guard docID != nil else { return }
         let now = Date.now
         let elapsed = now.timeIntervalSince(lastProgressSave)
@@ -703,7 +720,7 @@ final class DocTabModel: ObservableObject, Identifiable {
             lastProgressSave = now
             progressSaveTask?.cancel()
             progressSaveTask = nil
-            saveProgress(anchor: a)
+            saveProgress(anchor: a, why: why)
             return
         }
         // 尾随补存：节流窗内被丢的变化（缩放/滚动尾帧）延迟落库一次。Xcode 重跑(⌘R)是被 lldb
@@ -720,13 +737,13 @@ final class DocTabModel: ObservableObject, Identifiable {
             self.progressSaveTask = nil        // 先腾出槽位，否则被取消那次会把后续补存永久挡住
             guard !Task.isCancelled, !self.closed else { return }
             self.lastProgressSave = .now
-            self.saveProgress()
+            self.saveProgress(why: "\(why)·尾随补存")
         }
     }
 
     /// 存**本标签当前文档**的进度。
-    func saveProgress(anchor: ScrollAnchor? = nil) {
-        saveProgress(documentId: docID, anchor: anchor)
+    func saveProgress(anchor: ScrollAnchor? = nil, why: String = "未注明") {
+        saveProgress(documentId: docID, anchor: anchor, why: why)
     }
 
     /// 存**指定文档**的进度。`documentId == nil` 就什么都不做。
@@ -736,16 +753,33 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// `select()` 会用「切走前的旧文档 id」调它，而窗口第一次开文档时那个 id 是 **nil**——
     /// 兜底成当前文档的话，就会在 `load()` **读取进度之前**，先拿空会话的状态（第 0 页、缩放 1）
     /// 把这篇文档存着的进度覆盖掉。表现就是每次打开文档都自毁一次进度，从来回不到上次的位置。
-    private func saveProgress(documentId: String?, anchor: ScrollAnchor? = nil) {
-        guard let id = documentId else { return }
+    private func saveProgress(documentId: String?, anchor: ScrollAnchor? = nil, why: String = "未注明") {
+        guard let id = documentId else {
+            ProgressLog.log("跳过（没有 documentId）why=\(why) 本标签=\(ProgressLog.doc(docID, session.title))")
+            return
+        }
         // 🔴 **还没装载过的标签没有「当前位置」**：此刻 `session` 还是空的（第 0 页、缩放 1），
         // 存下去就是把库里那篇真正的进度抹成开头。这是懒装载引进来的头号陷阱——关窗（`close`）
         // 与切走（`select` 存旧文档）两条路都会打到这里，所以守卫放在这个最里层的出口。
-        guard !staged else { return }
+        guard !staged else {
+            ProgressLog.log("跳过（标签还没装载）why=\(why) \(ProgressLog.doc(id, session.title))")
+            return
+        }
         let a = anchor ?? session.scrollAnchor
-        workspace.saveProgress(documentId: id, page: a?.page ?? session.currentPageIndex,
-                               frac: a?.frac ?? 0, zoom: Double(session.readZoom),
-                               hfrac: session.readHFrac)
+        let page = a?.page ?? session.currentPageIndex
+        let frac = a?.frac ?? 0
+        if ProgressLog.enabled {
+            // 🔴 锚点比本次装载还旧 = 它是上一篇留下来的（换文档时没人清 `scrollAnchor`）。
+            let stale = (a?.seq ?? 0) <= anchorSeqAtLoad && anchorSeqAtLoad > 0
+            ProgressLog.log("存 \(ProgressLog.pos(page, frac)) "
+                + String(format: "zoom=%.3f hfrac=%.3f ", Double(session.readZoom), session.readHFrac)
+                + "why=\(why) 锚点=\(a.map { "\($0.origin)#\($0.seq)" } ?? "无(用currentPageIndex)") "
+                + "装载基线#\(anchorSeqAtLoad) \(stale ? "⚠️锚点早于本次装载 " : "")"
+                + "活动=\(isActive) 窗口=\(String(session.id.uuidString.prefix(4))) "
+                + ProgressLog.doc(id, session.title))
+        }
+        workspace.saveProgress(documentId: id, page: page, frac: frac,
+                               zoom: Double(session.readZoom), hfrac: session.readHFrac)
     }
 
     // MARK: - 手写笔迹持久化（note kind=2）

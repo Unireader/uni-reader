@@ -36,11 +36,15 @@ extension ReaderView {
     func applyZoom(_ zRaw: CGFloat, anchorDoc d: NSPoint, anchorView v: NSPoint) {
         let z = clampZoom(zRaw)
         guard abs(z - zoom) > 0.00001 else { return }
+        // 🔴 改倍率与校正滚动位置之间那一瞬同样是半成品（见 `relayouting`）：⌘滚轮走这条路时
+        // `isZooming` 恰好是 false（没有动画、也不是捏合），挡不住中途那次上报。
+        relayouting = true
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         scrollView.magnification = z
         scrollClip(to: NSPoint(x: d.x - v.x / z, y: d.y - v.y / z))
         CATransaction.commit()
+        relayouting = false
         suppressEmitUntil = CACurrentMediaTime() + 0.3
     }
 
@@ -148,6 +152,7 @@ extension ReaderView {
         guard let layout = pageLayout else { return }
         let anchor = layout.locate(docY: topDocY)
         let hfrac = fitBasis > 0 ? max(0, clipView.bounds.minX) / fitBasis : 0
+        relayouting = true                      // 🔴 同 `refit`：换基准途中算出来的位置不作数
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         fitBasis = nb
@@ -155,6 +160,10 @@ extension ReaderView {
         scrollView.magnification = 1
         scroll(toPage: anchor.page, frac: anchor.frac, hfrac: hfrac)
         CATransaction.commit()
+        relayouting = false
+        lastEmitted = (anchor.page, anchor.frac)
+        ProgressLog.log("换基准(⌘0) 钉住 \(ProgressLog.pos(anchor.page, anchor.frac)) "
+            + String(format: "fit=%.1f ", Double(nb)) + ProgressLog.doc(session.documentId, session.title))
         userZoomed = false
         suppressEmitUntil = CACurrentMediaTime() + 0.3
         scheduleSettle()

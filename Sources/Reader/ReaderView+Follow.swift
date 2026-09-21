@@ -24,10 +24,21 @@ extension ReaderView {
     func maybeEmit() {
         guard let layout = pageLayout else { return }
         let now = CACurrentMediaTime()
-        guard !follower.isSuppressing, now >= suppressEmitUntil, !isZooming,
+        guard !follower.isSuppressing, now >= suppressEmitUntil, !isZooming, !relayouting,
               now - lastEmitAt >= 1.0 / 120 else { return }
         let (page, frac) = layout.locate(docY: topDocY)
         if let last = lastEmitted, last.page == page, abs(last.frac - frac) < 0.0005 { return }
+        // 进度排查：滚动一帧跨过大半页以上就是位置算飞了（正常滚动做不到）。把当时的几何一并记下来——
+        // 「跑到不知道什么地方」若是本机算出来的，现场就在这一行（`ProgressLog`，默认关）。
+        if let last = lastEmitted, ProgressLog.enabled,
+           abs((Double(page) + frac) - (Double(last.page) + last.frac)) > 0.75 {
+            ProgressLog.log("滚动跳变 \(ProgressLog.pos(last.page, last.frac)) → \(ProgressLog.pos(page, frac)) "
+                + String(format: "topDocY=%.1f ds=%.3f fit=%.1f clipY=%.1f clipH=%.1f docH=%.1f ",
+                         Double(topDocY), Double(ds), Double(fitBasis), Double(clipView.bounds.minY),
+                         Double(clipView.bounds.height), Double(docView.frame.height))
+                + "缩放中=\(isZooming) 跟随中=\(follower.isActive) "
+                + ProgressLog.doc(session.documentId, session.title))
+        }
         lastEmitAt = now
         lastEmitted = (page, frac)
         session.emitAnchor(page: page, frac: frac, origin: "mac")

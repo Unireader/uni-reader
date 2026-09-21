@@ -85,6 +85,16 @@ final class ReaderView: NSView {
     var lastEmitted: (page: Int, frac: Double)?
     var matchPulsePending = false
 
+    /// **正在换基准 / 重排（半成品状态），此刻算出来的位置不作数**（2026-09-21 定，用户报「阅读进度跑到别的页」
+    /// 的根因）：`refit` / `rebase` / `applyZoom` 都是「先按新基准重排文档视图、再把画面钉回原处」，
+    /// 而改 `fitBasis`、`docView.frame`、`magnification` 每一步都会**同步**触发 clip view 的 bounds 通知 →
+    /// `maybeEmit()` 拿**新基准**去解读**还没校正的旧滚动偏移**，算出一个离谱的页码当成「用户滚动到这里」
+    /// 上报、存进库（实测 fit 1385→1085 那一次：真实 p88 被报成 p112，画面随后钉回 p88，库里那条错的没人纠正，
+    /// 切走再回来就落在 p112）。
+    ///
+    /// 🔴 各处 `suppressEmitUntil` 是在**重排做完之后**才设的，挡不住这中间的自发上报，必须有这道门。
+    var relayouting = false
+
     // MARK: 缩放
 
     var isLiveMagnifying = false
@@ -299,6 +309,8 @@ final class ReaderView: NSView {
         userZoomed = abs(z - 1) > 0.001
         session.readerSeedPending = false
 
+        relayouting = true                       // 首次落位同样是「摆好之前不作数」（同 `refit`）
+        defer { relayouting = false }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layoutDocument()
@@ -309,8 +321,14 @@ final class ReaderView: NSView {
             let hfrac = session.readHFrac > 0.0001 ? CGFloat(session.readHFrac)
                       : (session.restoreHFrac > 0.0001 ? session.restoreHFrac : 0)
             scroll(toPage: a.page, frac: a.frac, hfrac: hfrac)
+            ProgressLog.log("首帧 落到 \(ProgressLog.pos(a.page, a.frac)) 锚点=\(a.origin)#\(a.seq) "
+                + String(format: "zoom=%.3f hfrac=%.3f fit=%.1f ", Double(z), Double(hfrac), Double(fitBasis))
+                + "共\(lay.pageCount)页 \(ProgressLog.doc(session.documentId, session.title))")
         } else {
             scroll(toPage: 0, frac: 0, hfrac: 0)
+            ProgressLog.log("首帧 没有锚点 → 回到 p1 顶端 "
+                + String(format: "zoom=%.3f fit=%.1f ", Double(z), Double(fitBasis))
+                + "共\(lay.pageCount)页 \(ProgressLog.doc(session.documentId, session.title))")
         }
         didSetup = true
         updateRealized()
@@ -331,12 +349,16 @@ final class ReaderView: NSView {
             let hash = session.contentHash, n = pdf.pageCount
             fromStore = session.openTrace.phase("布局读库") { try? store.pageHeights(contentHash: hash, pageCount: n) }
         }
+        var source = "现算"
         if let cached = session.cachedLayout {
             lay = cached
+            source = "会话缓存"
         } else if let align {
             lay = PageLayout(heights: align.heights(refWidth: Double(PageLayout.refWidth)).map { CGFloat($0) })
+            source = "对齐参数"
         } else if let hs = fromStore {
             lay = PageLayout(heights: hs.map { CGFloat($0) })
+            source = "库里页高"
         } else {
             lay = session.openTrace.phase("布局计算", detail: "\(pdf.pageCount)页") { PageLayout(doc: pdf) }
             if let store = session.store, !session.contentHash.isEmpty {
@@ -345,6 +367,12 @@ final class ReaderView: NSView {
             }
         }
         session.cachedLayout = lay
+        // 页高来源对不上 PDF 的页数 = 位置换算的基准本身就是错的（比如缓存串到了上一篇），
+        // 进度排查时第一眼要看的就是这条。
+        ProgressLog.log("布局 来源=\(source) \(lay.pageCount)页(PDF \(pdf.pageCount)页)"
+            + String(format: " 总高=%.0f ", Double(lay.totalHeight))
+            + (lay.pageCount != pdf.pageCount ? "⚠️页数对不上 " : "")
+            + ProgressLog.doc(session.documentId, session.title))
         return lay
     }
 
@@ -530,7 +558,9 @@ final class ReaderView: NSView {
         let anchor = layout.locate(docY: topDocY)
         let hfrac = fitBasis > 0 ? max(0, clipView.bounds.minX) / fitBasis : 0
         let oldPageW = pageW
+        let oldFit = fitBasis
         let newZoom = userZoomed ? clampZoom(oldPageW / newFit) : 1
+        relayouting = true                      // 🔴 半成品状态不许上报位置（见属性上的红线）
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         fitBasis = newFit
@@ -538,6 +568,12 @@ final class ReaderView: NSView {
         scrollView.magnification = newZoom
         scroll(toPage: anchor.page, frac: anchor.frac, hfrac: userZoomed ? hfrac : 0)
         CATransaction.commit()
+        relayouting = false
+        lastEmitted = (anchor.page, anchor.frac)   // 位置没变（钉住的就是它），别让下一次去重/跳变判断错位
+        ProgressLog.log("重排(宽度变了) 钉住 \(ProgressLog.pos(anchor.page, anchor.frac)) "
+            + String(format: "fit %.1f→%.1f zoom=%.3f 缩放过=%@ ", Double(oldFit),
+                     Double(newFit), Double(newZoom), userZoomed ? "是" : "否")
+            + ProgressLog.doc(session.documentId, session.title))
         suppressEmitUntil = CACurrentMediaTime() + 0.3
         updateRealized()
         scheduleSettle()
@@ -565,6 +601,9 @@ final class ReaderView: NSView {
     func teardown() {
         guard !tornDown else { return }
         tornDown = true
+        ProgressLog.log("阅读区拆除 最后上报=\(lastEmitted.map { ProgressLog.pos($0.page, $0.frac) } ?? "无") "
+            + "会话锚点=\(session.scrollAnchor.map { "\($0.origin)#\($0.seq) \(ProgressLog.pos($0.page, $0.frac))" } ?? "无") "
+            + ProgressLog.doc(session.documentId, session.title))
         releaseRetainers()
         removeKeyMonitor()
         dismissHighlightPopover()

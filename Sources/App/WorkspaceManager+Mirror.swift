@@ -244,11 +244,13 @@ extension WorkspaceManager {
             (loc.inWorkspace || loc.isRelative)
                 ? mirrorFolder.appendingPathComponent(loc.path).path : loc.path
         }
+        let before = Self.progressSnapshot(store)   // 进度排查：合并会整行 upsert `document`，读到哪也在里面
         let r = try MirrorApply.apply(plan: plan,
                                       mirrorFolder: mirrorFolder, mirrorStore: mirrorStore,
                                       sourceFolder: folder, sourceStore: store,
                                       resolveMirror: mirrorResolve, resolveSource: mirrorResolver(),
                                       progress: progress)
+        Self.logProgressChanges(before, store, side: "本工作区（源）")
         DispatchQueue.main.async {
             self.refresh()
             opened?.refresh()
@@ -301,11 +303,13 @@ extension WorkspaceManager {
             (loc.inWorkspace || loc.isRelative)
                 ? sourceFolder.appendingPathComponent(loc.path).path : loc.path
         }
+        let before = Self.progressSnapshot(store)   // 同上：这一侧是副本
         let r = try MirrorApply.apply(plan: plan,
                                       mirrorFolder: folder, mirrorStore: store,
                                       sourceFolder: sourceFolder, sourceStore: sourceStore,
                                       resolveMirror: mirrorResolver(), resolveSource: srcResolver,
                                       progress: progress)
+        Self.logProgressChanges(before, store, side: "本工作区（副本）")
         DispatchQueue.main.async {
             self.refresh()
             opened?.refresh()
@@ -313,5 +317,30 @@ extension WorkspaceManager {
             opened?.reconcileAndPurgeImages()
         }
         return r
+    }
+
+    // MARK: - 进度排查（`ProgressLog`，默认关）
+
+    /// 合并前后各拍一次「每篇读到哪」。离线镜像的 `document` 行是**整行 upsert**（见 `MirrorApply.write`），
+    /// 所以另一侧（安卓 / 另一台机器）读到的位置会连同笔记一起合并回来——「进度跑到不知道什么地方」
+    /// 如果是这么来的，就只会在这里留下痕迹，其余所有打点都看不见。
+    static func progressSnapshot(_ store: LibraryStore) -> [String: (Int, Double, String)] {
+        guard ProgressLog.enabled, let docs = try? store.allDocuments() else { return [:] }
+        var m: [String: (Int, Double, String)] = [:]
+        for d in docs { m[d.id] = (d.readPage, d.readFrac, d.title) }
+        return m
+    }
+
+    static func logProgressChanges(_ before: [String: (Int, Double, String)],
+                                   _ store: LibraryStore, side: String) {
+        guard ProgressLog.enabled, !before.isEmpty else { return }
+        let after = progressSnapshot(store)
+        for (id, now) in after {
+            guard let was = before[id] else { continue }
+            guard was.0 != now.0 || abs(was.1 - now.1) > 0.0005 else { continue }
+            ProgressLog.log("镜像合并改写进度 \(side) "
+                + "\(ProgressLog.pos(was.0, was.1)) → \(ProgressLog.pos(now.0, now.1)) "
+                + ProgressLog.doc(id, now.2))
+        }
     }
 }

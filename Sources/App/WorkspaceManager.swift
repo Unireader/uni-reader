@@ -515,7 +515,18 @@ final class WorkspaceManager: ObservableObject {
     func saveProgress(documentId: String, page: Int, frac: Double, zoom: Double, hfrac: Double) {
         guard store != nil else { return }
         pendingProgressDocs[documentId, default: 0] += 1
-        bookkeep { try? $0.updateProgress(documentId: documentId, page: page, frac: frac, zoom: zoom, hfrac: hfrac) }
+        let queuedAt = CFAbsoluteTimeGetCurrent()
+        bookkeep {
+            do {
+                try $0.updateProgress(documentId: documentId, page: page, frac: frac, zoom: zoom, hfrac: hfrac)
+                ProgressLog.log("落库 \(ProgressLog.pos(page, frac)) "
+                    + String(format: "zoom=%.3f hfrac=%.3f 排队 %.0fms ", zoom, hfrac,
+                             (CFAbsoluteTimeGetCurrent() - queuedAt) * 1000)
+                    + String(documentId.prefix(8)))
+            } catch {
+                ProgressLog.log("落库失败 \(ProgressLog.pos(page, frac)) \(String(documentId.prefix(8))) — \(error)")
+            }
+        }
         bookkeeping.async { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -527,10 +538,15 @@ final class WorkspaceManager: ObservableObject {
     /// 读取最新进度（直接查库，绕过可能过时的 documents 缓存）。含缩放倍率 + 横向比例 + 画板模式。
     /// 这篇还有进度写在后台排队（关标签又立刻重开）就先排空，别读到旧值。
     func progress(documentId: String) -> (page: Int, frac: Double, zoom: Double, hfrac: Double, canvas: Bool) {
-        if pendingProgressDocs[documentId] != nil { flushBookkeeping() }
+        let waited = pendingProgressDocs[documentId] != nil
+        if waited { flushBookkeeping() }
         if let d = try? store?.document(id: documentId) {
+            ProgressLog.log("读库 \(ProgressLog.pos(d.readPage, d.readFrac)) "
+                + String(format: "zoom=%.3f hfrac=%.3f ", d.readZoom, d.readHFrac)
+                + "\(waited ? "（先排空了后台写）" : "")\(ProgressLog.doc(documentId, d.title))")
             return (d.readPage, d.readFrac, d.readZoom, d.readHFrac, d.canvasMode)
         }
+        ProgressLog.log("读库 查不到这篇 \(String(documentId.prefix(8))) → 退回 p1 顶端")
         return (0, 0, 1, 0, false)
     }
 
