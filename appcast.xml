@@ -9,6 +9,100 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.2.0</title>
+      <pubDate>Mon, 21 Sep 2026 07:34:23 +0000</pubDate>
+      <sparkle:version>34</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<p>本版汇总 0.1.43 以来的改动，是一次比较大的更新：整套界面重做了一遍，新增 Agent 面板与 Markdown 笔记两大块。</p>
+<h4>新增：Agent 面板</h4>
+<ul>
+<li>右侧检查器多了一页「Agent」，可以直接和本机的 Agent 对话（目前接 Kimi）。它能看到你正在读哪一篇、第几页，帮你找页面、加文字笔记 / 高亮 / 书签、跳到某一页，也能读写你正在看的 Markdown 笔记。</li>
+<li>⌥ 拖出来的截图可以直接发给 Agent；也可以点附件按钮或把图片文件拖进输入框，跟着下一句话一起发出去。</li>
+<li>回复和思考过程按 Markdown 显示（标题、列表、代码块、表格、公式都排出来了），文字可以选中复制。</li>
+<li>输入框下面一行选「每次询问 / 只做计划 / 自动批准」和模型；右上角的「跟随 Agent」决定它跳转时阅读区要不要跟着走。以前的对话可以在面板里翻出来继续。</li>
+<li>使用前请自己在终端装好并登录 Agent（Kimi 是 <code>kimi login</code>），然后在「设置 › Agent」里打开。</li>
+</ul>
+<h4>新增：工作区里的 Markdown 笔记</h4>
+<ul>
+<li>笔记可以放进工作区了，用的就是 Obsidian 那套格式。三种入口：「新建 Markdown 笔记」、「导入笔记目录…」（整个目录复制进工作区）、「引用笔记目录…」（不复制，就地编辑你原来的目录）。</li>
+<li>侧栏按真实的目录层级展开；笔记在标签页里打开编辑，停手就自动保存，退出 App 也不会丢。</li>
+<li><code>[[笔记名]]</code> 点一下就跳过去，<code>![[图片]]</code> 和 <code>$公式$</code> 都能显示。⌘F 现在也能搜当前笔记的正文。</li>
+<li>关掉 App 再打开，PDF 和笔记混在一起的那排标签会按原来的顺序回来。</li>
+<li>笔记正文永远以你的文件为准：导入、改名、挪目录都不会替你改动正文里的 <code>[[…]]</code>。</li>
+<li>长笔记打字更跟手了——以前几万字的笔记每敲一个字都要重排整篇，现在不随长度变慢。</li>
+</ul>
+<h4>新增：跳转到指定页（⌃G）</h4>
+<ul>
+<li>「视图」菜单多了「跳转到指定页…」，默认 ⌃G。输入框预填当前页码，直接打数字、回车就跳。</li>
+<li>跳过去之后 ⌘[ 可以回到原来的位置（和点目录一样会记进跳转历史）。</li>
+</ul>
+<h4>界面整体重做</h4>
+<ul>
+<li>界面底层整个换了一遍，滚动、缩放、开合侧栏与检查器都更稳，闪烁和跳位少了很多。</li>
+<li>侧栏和检查器会记住上次是开是关；检查器可以拉得更宽（放得下 Agent 对话）。</li>
+<li>检查器现在是真正的分栏，不再盖在正文上；开合时阅读区会跟着让位。</li>
+<li>阅读区顶部让开工具栏，竖滚动条顶端正好抵住工具栏下沿。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>阅读进度有时会跑到别的页：窗口宽度变化（开合侧栏 / 检查器、拖窗口）时，进度会被错误地记成另一页，切走再回来就落在那儿。已修。</li>
+<li>缩小到比适宽还小时页面不居中、贴在最左边。</li>
+<li>拖检查器分隔条时卡顿；拖宽之后竖滚动条整个消失。</li>
+<li>笔记浮层会盖住工具栏。</li>
+<li>带别名或锚点的 <code>[[笔记|别名]]</code>、<code>[[笔记#小节]]</code> 显示成灰色、点不动。</li>
+<li>检查器里笔记很多时切页会顿一下。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.0">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<p>This release covers changes since 0.1.43. It is a big one: the entire interface was rebuilt, and two major features were added — the Agent panel and Markdown notes.</p>
+<h4>New: Agent Panel</h4>
+<ul>
+<li>The inspector on the right has a new "Agent" page where you can talk to an agent running on your Mac (currently Kimi). It can see which document and page you are on, find pages for you, add text notes / highlights / bookmarks, jump to a page, and read and edit the Markdown note you are looking at.</li>
+<li>Screenshots taken with an ⌥-drag can be sent straight to the agent. You can also use the attachment button or drag image files into the input box; they go out with your next message.</li>
+<li>Replies and thinking are rendered as Markdown (headings, lists, code blocks, tables and formulas all laid out), and the text can be selected and copied.</li>
+<li>The row below the input box picks how it asks before running tools (ask every time / plan only / auto-approve) and which model to use. "Follow Agent" at the top decides whether the reader follows along when the agent jumps somewhere. Earlier chats can be reopened from the panel.</li>
+<li>Install and sign in to the agent in Terminal first (<code>kimi login</code> for Kimi), then turn it on under Settings › Agent.</li>
+</ul>
+<h4>New: Markdown Notes in the Workspace</h4>
+<ul>
+<li>Notes can now live in a workspace, in plain Obsidian-flavored Markdown. Three ways in: "New Markdown Note", "Import Notes Folder…" (copies a whole folder into the workspace) and "Reference Notes Folder…" (no copy — edits your existing folder in place).</li>
+<li>The sidebar shows the real folder hierarchy. Notes open in a tab for editing and save themselves when you pause typing, so nothing is lost on quit.</li>
+<li><code>[[Note name]]</code> links are clickable, and <code>![[image]]</code> embeds and <code>$formula$</code> math render. ⌘F now searches the text of the note you are editing too.</li>
+<li>Quit and reopen, and your row of tabs comes back in order — PDFs and notes mixed together.</li>
+<li>Your files stay the source of truth: importing, renaming and moving notes never rewrites the <code>[[…]]</code> links inside your text.</li>
+<li>Typing in long notes is much smoother — a 50,000-word note used to re-lay out in full on every keystroke; it no longer slows down with length.</li>
+</ul>
+<h4>New: Go to Page (⌃G)</h4>
+<ul>
+<li>The View menu has a new "Go to Page…", ⌃G by default. The field is pre-filled with the current page; type a number and press Return.</li>
+<li>⌘[ takes you back to where you were, since the jump is recorded in the jump history just like clicking a table-of-contents entry.</li>
+</ul>
+<h4>Interface Rebuilt</h4>
+<ul>
+<li>The interface was rebuilt from the ground up: scrolling, zooming and opening or closing the sidebar and inspector are steadier, with far less flicker and position jumping.</li>
+<li>The sidebar and inspector remember whether they were open, and the inspector can be made wider (room for the Agent chat).</li>
+<li>The inspector is now a real split instead of an overlay on top of the page, and the reading area makes room for it as it opens and closes.</li>
+<li>The reading area clears the toolbar, and the vertical scroll bar now starts right below it.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Reading position sometimes jumped to a different page: when the window width changed (opening or closing the sidebar or inspector, resizing the window), the position was recorded as the wrong page, so switching away and back landed you there. Fixed.</li>
+<li>Pages were pinned to the left instead of centered when zoomed out below fit-width.</li>
+<li>Dragging the inspector divider stuttered, and the vertical scroll bar disappeared after widening it.</li>
+<li>Note overlays could cover the toolbar.</li>
+<li><code>[[Note|alias]]</code> and <code>[[Note#section]]</code> links showed as gray and did not respond to clicks.</li>
+<li>Switching inspector pages stuttered when a document had many notes.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.0">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.2.0/UniReader-0.2.0.zip" length="12877367" type="application/octet-stream" sparkle:edSignature="++sDbz8tcOgsRyZ98tUlhCiBeEk7k7r/PhG0YXZpeyzcVLBhPZOZvGIy7fYNaw0b93l6OvUJVW85ECodVVY0AQ==" />
+    </item>
+    <item>
       <title>v0.1.43</title>
       <pubDate>Fri, 18 Sep 2026 06:52:25 +0000</pubDate>
       <sparkle:version>33</sparkle:version>
