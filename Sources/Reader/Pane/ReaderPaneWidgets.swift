@@ -61,15 +61,20 @@ final class FindBannerView: CapsuleMaterialView {
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
     func update(_ session: DocSession) {
-        let q = session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        update(query: session.searchQuery, searching: session.isSearching,
+               currentIndex: session.currentMatchIndex, matchCount: session.searchMatches.count)
+    }
+
+    func update(query: String, searching: Bool, currentIndex: Int?, matchCount: Int) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let text: String
-        if session.isSearching { text = L("Searching…") }
+        if searching { text = L("Searching…") }
         else if q.isEmpty { text = "" }
-        else if session.searchMatches.isEmpty { text = L("No matches") }
-        else { text = String(format: L("%d of %d"), (session.currentMatchIndex ?? 0) + 1, session.searchMatches.count) }
+        else if matchCount == 0 { text = L("No matches") }
+        else { text = String(format: L("%d of %d"), (currentIndex ?? 0) + 1, matchCount) }
         if label.stringValue != text { label.stringValue = text }
-        prev.isEnabled = !session.searchMatches.isEmpty
-        next.isEnabled = !session.searchMatches.isEmpty
+        prev.isEnabled = matchCount > 0
+        next.isEnabled = matchCount > 0
     }
 }
 

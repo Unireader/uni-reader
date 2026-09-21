@@ -1087,8 +1087,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     }
 
     @objc private func searchChanged(_ sender: NSSearchField) {
-        session.searchQuery = sender.stringValue
-        session.scheduleSearch()
+        readerPane?.setSearchQuery(sender.stringValue)
     }
 
     // MARK: 工作区菜单
@@ -1244,11 +1243,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         case ToolID.search:
             // 搜索词可能被别处改（换标签会 clearSearch），同步回输入框——但**正在输入时不碰**，
             // 否则每轮校验都把光标顶掉。
+            let query = readerPane?.searchQuery ?? s.searchQuery
             if let f = searchItem?.searchField, f.currentEditor() == nil,
-               f.stringValue != s.searchQuery {
-                f.stringValue = s.searchQuery
+               f.stringValue != query {
+                f.stringValue = query
             }
-            return s.pdf != nil
+            return s.pdf != nil || tabs.active.noteRef != nil
         default:
             return true
         }

@@ -29,6 +29,12 @@ final class MarkdownDocView: NSView {
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
     /// 点了正文里的 `[[…]]`：参数是目标笔记的 `NoteRef.key`。
     var onOpenNote: (String) -> Void = { _ in }
+    /// 工具栏搜索的命中数 / 当前项变了，让阅读窗格刷新查找状态条。
+    var onSearchStateChange: () -> Void = {}
+
+    private(set) var searchQuery = ""
+    private(set) var searchRanges: [NSRange] = []
+    private(set) var currentSearchIndex: Int?
 
     final class TextBox: ObservableObject {
         @Published var text: String
@@ -87,6 +93,18 @@ final class MarkdownDocView: NSView {
             .debounce(for: .milliseconds(800), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in self?.save() }
             .store(in: &bag)
+        // 正文编辑后，仍开着查找就按新文本重算。推到下一拍，等引擎先把最新 storage text
+        // 同步成编辑器里的 display text（wiki link 两者长度可能不同）。
+        box.$text
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.searchQuery.isEmpty else { return }
+                    self.rebuildSearch()
+                }
+            }
+            .store(in: &bag)
         // 退出 App 时补存（关窗走 `viewDidMoveToWindow`，退出不保证走到那里）
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
@@ -104,6 +122,78 @@ final class MarkdownDocView: NSView {
 
     /// 立刻把待存的改动写下去（切标签 / 关窗 / 退出 / 导出前都要叫一次）。
     func flush() { save() }
+
+    // MARK: - 正文查找
+
+    /// 顶部 `NSSearchToolbarItem` 共用的搜索入口。只读编辑器的 display text，绝不改正文。
+    func setSearchQuery(_ value: String) {
+        let q = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q != searchQuery else { return }
+        searchQuery = q
+        rebuildSearch()
+    }
+
+    func nextSearchMatch() { advanceSearch(by: 1) }
+    func previousSearchMatch() { advanceSearch(by: -1) }
+
+    private func rebuildSearch() {
+        let oldLocation = currentSearchIndex.flatMap { searchRanges.indices.contains($0) ? searchRanges[$0].location : nil }
+        let editor = descendantTextView(in: host)
+        // 引擎会把 wiki link 的 storage text 换成 display text；屏幕上看到什么就搜什么。
+        let source = editor?.string ?? box.text
+        let full = source as NSString
+        let q = searchQuery
+        var ranges: [NSRange] = []
+        if !q.isEmpty, full.length > 0 {
+            var cursor = 0
+            while cursor < full.length {
+                let found = full.range(of: q, options: [.caseInsensitive, .diacriticInsensitive],
+                                       range: NSRange(location: cursor, length: full.length - cursor))
+                guard found.location != NSNotFound else { break }
+                ranges.append(found)
+                cursor = found.location + max(found.length, 1)
+            }
+        }
+        searchRanges = ranges
+        guard !ranges.isEmpty else {
+            currentSearchIndex = nil
+            onSearchStateChange()
+            return
+        }
+
+        let caret = oldLocation ?? editor?.selectedRange().location ?? 0
+        currentSearchIndex = ranges.enumerated().min {
+            abs($0.element.location - caret) < abs($1.element.location - caret)
+        }?.offset ?? 0
+        revealCurrentSearchMatch(in: editor)
+        onSearchStateChange()
+    }
+
+    private func advanceSearch(by delta: Int) {
+        guard !searchRanges.isEmpty else { return }
+        let count = searchRanges.count
+        let current = currentSearchIndex ?? (delta > 0 ? -1 : 0)
+        currentSearchIndex = ((current + delta) % count + count) % count
+        revealCurrentSearchMatch(in: descendantTextView(in: host))
+        onSearchStateChange()
+    }
+
+    private func revealCurrentSearchMatch(in editor: NSTextView?) {
+        guard let editor, let index = currentSearchIndex, searchRanges.indices.contains(index) else { return }
+        let range = searchRanges[index]
+        guard NSMaxRange(range) <= (editor.string as NSString).length else { return }
+        editor.setSelectedRange(range)
+        editor.scrollRangeToVisible(range)
+        editor.showFindIndicator(for: range)
+    }
+
+    private func descendantTextView(in view: NSView) -> NSTextView? {
+        if let textView = view as? NSTextView { return textView }
+        for child in view.subviews {
+            if let found = descendantTextView(in: child) { return found }
+        }
+        return nil
+    }
 
     private func save() {
         let text = box.text

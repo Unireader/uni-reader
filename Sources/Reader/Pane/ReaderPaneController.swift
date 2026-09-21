@@ -237,6 +237,7 @@ final class ReaderPaneController: NSViewController {
                     guard let self, let item = self.workspace.note(key: target) else { return }
                     self.tabs.openMarkdown(item.ref)
                 }
+                v.onSearchStateChange = { [weak self] in self?.queueRefresh() }
                 view.addSubview(v, positioned: .below, relativeTo: placeholder)
                 mdView = v
                 view.needsLayout = true
@@ -304,9 +305,17 @@ final class ReaderPaneController: NSViewController {
         }
 
         // 查找条 / 角标
-        let searching = !s.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let query = searchQuery
+        let searching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         findBanner.isHidden = !searching
-        if searching { findBanner.update(s) }
+        if searching {
+            if let mdView {
+                findBanner.update(query: mdView.searchQuery, searching: false,
+                                  currentIndex: mdView.currentSearchIndex, matchCount: mdView.searchRanges.count)
+            } else {
+                findBanner.update(s)
+            }
+        }
         if tab.isHashing {
             badge.set(symbol: "clock", text: L("Indexing…"))
             badge.isHidden = false
@@ -361,8 +370,24 @@ final class ReaderPaneController: NSViewController {
         }
     }
 
-    @objc private func prevMatch() { session.prevMatch() }
-    @objc private func nextMatch() { session.nextMatch() }
+    /// 当前内容的查找状态。PDF 仍由 `DocSession` 管；Markdown 笔记由编辑器按屏幕上的 display text 管。
+    var searchQuery: String { mdView?.searchQuery ?? session.searchQuery }
+
+    func setSearchQuery(_ value: String) {
+        if let mdView { mdView.setSearchQuery(value) }
+        else {
+            session.searchQuery = value
+            session.scheduleSearch()
+        }
+        queueRefresh()
+    }
+
+    @objc private func prevMatch() {
+        if let mdView { mdView.previousSearchMatch() } else { session.prevMatch() }
+    }
+    @objc private func nextMatch() {
+        if let mdView { mdView.nextSearchMatch() } else { session.nextMatch() }
+    }
 
     // MARK: 布局
 
@@ -556,4 +581,3 @@ final class PopoverCloseRelay: NSObject, NSPopoverDelegate {
     init(_ onClose: @escaping () -> Void) { self.onClose = onClose }
     func popoverDidClose(_ notification: Notification) { onClose() }
 }
-
