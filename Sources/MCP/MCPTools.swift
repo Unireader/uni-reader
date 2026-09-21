@@ -39,6 +39,7 @@ enum MCPTools {
         c.register(addBookmark())
         c.register(addNote())
         c.register(addHighlight())
+        c.register(updateMarkdown())
         c.register(importPDFTool())
         c.register(createWorkspace())
         c.register(runOCR())
@@ -58,6 +59,23 @@ enum MCPTools {
                           "path": MCPSchema.string(".unrd path"), "is_mirror": MCPSchema.boolean("offline mirror copy")])
     }
 
+    static func markdownDTOSchema(includeText: Bool) -> MCPObject {
+        var properties: [String: MCPObject] = [
+            "ref": MCPSchema.string("Markdown note identity: source id plus relative path"),
+            "title": MCPSchema.string("note title"),
+            "source": MCPSchema.string("note source name"),
+            "source_kind": MCPSchema.enumeration(["workspace", "reference", "unknown"], "workspace-owned or referenced external folder"),
+            "relative_path": MCPSchema.string("path relative to the note source"),
+            "link": MCPSchema.string("unireader:// link that activates this Markdown note"),
+            "file_missing": MCPSchema.boolean("the Markdown file cannot be read from disk"),
+        ]
+        if includeText {
+            properties["text"] = MCPSchema.string("current live editor text, including edits not autosaved yet")
+            properties["revision"] = MCPSchema.string("SHA-256 revision of text; pass it to update_markdown to prevent overwriting newer edits")
+        }
+        return MCPSchema.object(properties)
+    }
+
     static var documentDTOSchema: MCPObject {
         MCPSchema.object([
             "id": MCPSchema.string("document id"), "title": MCPSchema.string("title"),
@@ -75,6 +93,12 @@ enum MCPTools {
     // MARK: - 共用的文本拼装
 
     static func describeTab(_ t: MCPObject) -> String {
+        if let note = t["markdown"] as? MCPObject {
+            let title = (note["title"] as? String) ?? "?"
+            let ref = (note["ref"] as? String) ?? "?"
+            let missing = (note["file_missing"] as? Bool) == true ? " · FILE MISSING" : ""
+            return "\(title) — Markdown note\(missing) · note_ref \(ref)"
+        }
         guard let doc = t["document_id"] as? String else { return "(empty tab)" }
         let title = (t["title"] as? String) ?? doc
         let page = (t["page"] as? Int) ?? 0

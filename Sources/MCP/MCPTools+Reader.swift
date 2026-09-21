@@ -6,14 +6,15 @@ extension MCPTools {
         MCPTool(
             name: "get_current_view",
             title: "What the user is looking at",
-            description: "Exact reading position of the key window (or a given window): document, page, position inside the page, zoom, chapter, and the text the user has selected, if any.",
+            description: "What the active tab in the key window (or a given window) is showing. For a PDF: position, zoom, chapter and selection. For a Markdown note: identity and current live editor text, including edits not autosaved yet.",
             inputSchema: MCPSchema.object([
                 "window_id": MCPSchema.string("Window id from get_state. Default: the key window."),
             ]),
             outputSchema: MCPSchema.object([
                 "window_id": MCPSchema.string("window id"), "session_id": MCPSchema.string("tab / session id"),
                 "workspace": workspaceDTOSchema,
-                "document_id": MCPSchema.nullable(MCPSchema.string("library document id, null for an empty tab")), "title": MCPSchema.string("title"),
+                "content_type": MCPSchema.enumeration(["empty", "pdf", "markdown"], "kind of content in the active tab"),
+                "document_id": MCPSchema.nullable(MCPSchema.string("library document id; null for Markdown or an empty tab")), "title": MCPSchema.string("title"),
                 "page": MCPSchema.integer("page at the top of the viewport, 1-based"), "frac": MCPSchema.number("position inside that page, 0 top … 1 bottom"),
                 "link": MCPSchema.string("unireader:// link that reopens exactly this position"),
                 "page_count": MCPSchema.integer("pages"), "zoom": MCPSchema.number("zoom relative to fit-width"),
@@ -23,13 +24,20 @@ extension MCPTools {
                 "file_missing": MCPSchema.boolean("the PDF file cannot be found on disk"),
                 "selection": MCPSchema.object(["page": MCPSchema.integer("1-based"), "text": MCPSchema.string("selected text"),
                                                "rects": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")))]),
+                "markdown": markdownDTOSchema(includeText: true),
             ]),
             tier: .read
         ) { _, args in
             let windowId = try args.string("window_id")
             let v = try await MainActor.run { try MCPFacade.shared.currentView(windowId: windowId) }
             var lines: [String] = []
-            if let title = v["title"] as? String {
+            if let note = v["markdown"] as? MCPObject {
+                lines.append("Current Markdown note: “\(note["title"] ?? "")”")
+                lines.append("source \(note["source"] ?? "") · path \(note["relative_path"] ?? "") · note_ref \(note["ref"] ?? "")")
+                lines.append("session_id \(v["session_id"] ?? "") · window_id \(v["window_id"] ?? "")")
+                if let link = note["link"] as? String { lines.append("link \(link)") }
+                lines.append("\n--- Markdown text ---\n\(note["text"] ?? "")")
+            } else if let title = v["title"] as? String {
                 lines.append("“\(title)” — page \(v["page"] ?? 1)/\(v["page_count"] ?? 0) (\(String(format: "%.0f", ((v["frac"] as? Double) ?? 0) * 100))% down the page) · zoom \(String(format: "%.2f", (v["zoom"] as? Double) ?? 1))")
                 if let ch = v["chapter"] as? String { lines.append("Chapter: \(ch)") }
                 if let sel = v["selection"] as? MCPObject { lines.append("Selected on page \(sel["page"] ?? 0): “\(sel["text"] ?? "")”") }
@@ -37,7 +45,7 @@ extension MCPTools {
                 lines.append("document_id \(v["document_id"] ?? "") · session_id \(v["session_id"] ?? "") · window_id \(v["window_id"] ?? "")")
                 if let link = v["link"] as? String { lines.append("link \(link)") }
             } else {
-                lines.append("The window has an empty tab (no document). window_id \(v["window_id"] ?? "")")
+                lines.append("The window has an empty tab. window_id \(v["window_id"] ?? "")")
             }
             return MCPToolResult(text: lines.joined(separator: "\n"), structured: v)
         }

@@ -373,14 +373,21 @@ final class DocTabModel: ObservableObject, Identifiable {
     ///
     /// 先把 PDF 那边收干净（`select(nil)`：结清落库 / 存进度 / 退出工作区打开集 / 放掉 PDF），
     /// 再记下要显示哪篇笔记。笔记本身不进工作区「打开集」——那一套是给 PDF 会话用的
-    /// （平板广播 / 多窗口恢复都读它），混进去要改很多跨模块记账；代价是 **md 标签不跨启动恢复**
-    /// （方案 §5 第二批已知留白）。
+    /// （平板广播等仍只认 PDF）；Markdown 标签由 `TabsModel` 的混合标签组单独持久化。
     func openMarkdown(_ ref: NoteRef) {
         guard noteRef != ref else { return }
         if docID != nil { select(nil) }
         noteRef = ref
         staged = false
         workspace.noteWasOpened(ref)
+    }
+
+    /// 冷启动恢复 Markdown 标签：只恢复身份，不改「最近打开」时间。
+    /// 编辑器由 `ReaderPaneController` 仅为活动标签创建，因此后台 Markdown 标签也没有额外布局成本。
+    func stageMarkdown(_ ref: NoteRef) {
+        guard docID == nil, noteRef != ref else { return }
+        noteRef = ref
+        staged = false
     }
 
     /// 这篇 md 笔记被删了 / 不在了 → 标签退回空态。

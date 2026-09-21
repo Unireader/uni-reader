@@ -79,10 +79,24 @@ final class AgentPanelModel: ObservableObject {
         guard let folder = c.workspace.folder else { return nil }
         let tab = c.tabs.active
         let s = tab.session
+        let markdown: AgentReaderContext.MarkdownNote? = tab.noteRef.map { ref in
+            let source = c.workspace.noteSource(id: ref.sourceID)
+            var link = DeepLink()
+            link.workspacePath = folder.path
+            link.workspaceId = c.workspace.store?.workspaceId
+            link.markdownId = ref.key
+            return AgentReaderContext.MarkdownNote(
+                ref: ref.key,
+                title: ref.title,
+                sourceName: source?.name ?? ref.sourceID,
+                sourceKind: source?.kind.rawValue ?? "unknown",
+                relativePath: ref.relPath,
+                link: link.absoluteString)
+        }
         return AgentReaderContext(workspaceName: c.workspace.name, workspaceFolder: folder,
                                   windowId: c.windowId, tabId: tab.id, documentId: tab.docID,
                                   docTitle: s.title, page: s.currentPageIndex,
-                                  pageCount: s.pdf?.pageCount ?? 0)
+                                  pageCount: s.pdf?.pageCount ?? 0, markdown: markdown)
     }
 
     // MARK: - 对话

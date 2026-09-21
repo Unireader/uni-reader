@@ -6,7 +6,7 @@ extension MCPTools {
         MCPTool(
             name: "get_state",
             title: "Current UniReader state",
-            description: "What the user has open right now: every reader window, its workspace and tabs (document, current page, zoom), which window is key, whether the tablet service is running. Call this first.",
+            description: "What the user has open right now: every reader window, its workspace and tabs (PDF document or Markdown note), which tab and window are active, and whether the tablet service is running. Call this first.",
             inputSchema: MCPSchema.object([:]),
             outputSchema: MCPSchema.object([
                 "app": MCPSchema.object(["version": MCPSchema.string("UniReader version"), "pid": MCPSchema.integer("process id"),
@@ -19,10 +19,12 @@ extension MCPTools {
                     "workspace": workspaceDTOSchema,
                     "tabs": MCPSchema.array(of: MCPSchema.object([
                         "session_id": MCPSchema.string("tab / session id"), "is_active": MCPSchema.boolean("the visible tab"),
-                        "document_id": MCPSchema.nullable(MCPSchema.string("library document id, null for an empty tab")),
-                        "title": MCPSchema.string("document title"), "page": MCPSchema.integer("current page, 1-based"),
+                        "content_type": MCPSchema.enumeration(["empty", "pdf", "markdown"], "kind of content in this tab"),
+                        "document_id": MCPSchema.nullable(MCPSchema.string("library document id; null for Markdown or an empty tab")),
+                        "title": MCPSchema.string("PDF or Markdown title"), "page": MCPSchema.integer("current page, 1-based"),
                         "page_count": MCPSchema.integer("pages"), "zoom": MCPSchema.number("zoom relative to fit-width"),
-                        "canvas_mode": MCPSchema.boolean("canvas mode on"), "file_missing": MCPSchema.boolean("file could not be found")])),
+                        "canvas_mode": MCPSchema.boolean("canvas mode on"), "file_missing": MCPSchema.boolean("PDF file could not be found"),
+                        "markdown": markdownDTOSchema(includeText: false)])),
                 ])),
                 "tablet": MCPSchema.object(["running": MCPSchema.boolean("tablet service on"), "clients": MCPSchema.integer("connected tablets")]),
             ]),

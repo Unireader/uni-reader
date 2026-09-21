@@ -101,7 +101,7 @@ final class AgentChatNSView: NSView {
         let t = NSTextField(labelWithString: String(format: L("Ask %@"), AgentConfig.displayName))
         t.font = .systemFont(ofSize: 17, weight: .bold)
         t.textColor = .labelColor
-        let d = NSTextField(wrappingLabelWithString: L("It can read the document you are looking at, find pages, and add notes, highlights and bookmarks."))
+        let d = NSTextField(wrappingLabelWithString: L("It can read and edit the Markdown note you are looking at, find PDF pages, and add PDF notes, highlights and bookmarks."))
         d.alignment = .center
         d.textColor = .labelColor
         d.preferredMaxLayoutWidth = 260

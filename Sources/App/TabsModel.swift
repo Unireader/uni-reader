@@ -99,7 +99,7 @@ final class TabsModel: ObservableObject {
             activate(hit.id)
             return hit
         }
-        if active.docID == nil {
+        if active.docID == nil && active.noteRef == nil {
             active.select(docID)
             persist()
             return active
@@ -259,10 +259,57 @@ final class TabsModel: ObservableObject {
         workspace.folder.map { "tabs:" + $0.standardizedFileURL.path }
     }
 
+    /// 标签组自己的稳定身份。PDF 与 Markdown 共用一张标签栏，但各自的真身份不同：
+    /// PDF = 库文档 UUID；Markdown = `NoteRef`（源 id + 源内相对路径）。
+    /// 加前缀后存成 property-list 字符串，既保留左右顺序，也不会把 Markdown 再误当成空标签。
+    private enum StoredTab: Equatable {
+        case pdf(String)
+        case markdown(NoteRef)
+
+        var key: String {
+            switch self {
+            case .pdf(let id): return "pdf:" + id
+            case .markdown(let ref): return "md:" + ref.key
+            }
+        }
+
+        init?(key: String) {
+            if key.hasPrefix("pdf:") {
+                let id = String(key.dropFirst(4))
+                guard !id.isEmpty else { return nil }
+                self = .pdf(id)
+            } else if key.hasPrefix("md:"),
+                      let ref = NoteRef(key: String(key.dropFirst(3))) {
+                self = .markdown(ref)
+            } else {
+                return nil
+            }
+        }
+    }
+
+    private func storedTab(_ tab: DocTabModel) -> StoredTab? {
+        if let ref = tab.noteRef { return .markdown(ref) }
+        if let id = tab.docID { return .pdf(id) }
+        return nil
+    }
+
+    private func isRestorable(_ item: StoredTab) -> Bool {
+        switch item {
+        case .pdf(let id): return workspace.document(id: id) != nil
+        case .markdown(let ref): return workspace.note(ref: ref) != nil
+        }
+    }
+
     private func persist() {
         guard let k = storeKey else { return }
-        UserDefaults.standard.set(["docs": tabs.compactMap(\.docID),
-                                   "active": active.docID ?? ""], forKey: k)
+        let items = tabs.compactMap(storedTab)
+        UserDefaults.standard.set([
+            "version": 2,
+            "items": items.map(\.key),
+            // 留着旧字段，降级到旧版本时至少还能恢复 PDF 标签。
+            "docs": tabs.compactMap(\.docID),
+            "active": storedTab(active)?.key ?? "",
+        ], forKey: k)
     }
 
     /// 冷启动恢复本工作区上次开着的那组标签。**每个工作区只做一次**，由
@@ -271,30 +318,51 @@ final class TabsModel: ObservableObject {
     /// 上限 `max`：从前是「本窗口开第一篇 + 最多再开 4 扇窗口」，现在全在一扇窗口里，
     /// 同样要有个数，否则「最近打开」很长时冷启动要一口气装载十几篇 PDF。
     func restoreTabs(max: Int = 8) {
-        var ids: [String]
-        var wantActive: String?
+        var savedTabs: [StoredTab]
+        var wantActive: StoredTab?
         if let k = storeKey,
            let d = UserDefaults.standard.dictionary(forKey: k),
-           let saved = d["docs"] as? [String], !saved.isEmpty {
-            ids = saved
-            wantActive = (d["active"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+           let saved = d["items"] as? [String], !saved.isEmpty {
+            savedTabs = saved.compactMap(StoredTab.init(key:))
+            wantActive = (d["active"] as? String).flatMap(StoredTab.init(key:))
+        } else if let k = storeKey,
+                  let d = UserDefaults.standard.dictionary(forKey: k),
+                  let saved = d["docs"] as? [String], !saved.isEmpty {
+            // v1：只存 PDF id，active 也是裸 id。
+            savedTabs = saved.map(StoredTab.pdf)
+            wantActive = (d["active"] as? String).flatMap { $0.isEmpty ? nil : .pdf($0) }
         } else {
-            ids = workspace.restoreDocIds        // 没有标签序记录（首次升级）→ 退回库里的「打开集」
-            wantActive = ids.first
+            // 没有标签序记录（首次升级）→ 退回库里的 PDF「打开集」。
+            savedTabs = workspace.restoreDocIds.map(StoredTab.pdf)
+            wantActive = savedTabs.first
         }
-        ids = ids.filter { workspace.document(id: $0) != nil }   // 已删掉的不恢复
-        guard !ids.isEmpty else { return }
-        wsLog("restoreTabs：\(ids.count) 篇 → 本窗口开 \(min(ids.count, max)) 个标签（只装活动那一个）")
-        // 🔴 一律 `stage`（只记 id 不装），最后由下面那句 `activate` 把用户上次停在的那一个装出来。
+        savedTabs = savedTabs.filter(isRestorable)   // 已删掉 / 引用源已移除的内容不恢复
+        guard !savedTabs.isEmpty else { return }
+        let restoring = Array(savedTabs.prefix(max))
+        wsLog("restoreTabs：\(savedTabs.count) 项 → 本窗口开 \(restoring.count) 个标签（PDF 只装活动项）")
+        // PDF 一律 `stage`（只记 id 不装），最后由下面的 `activate` 把用户上次停在的那一个装出来。
         // 从前这里是逐个 `select`，等于冷启动就把每一篇的 PDF、目录、笔迹全读一遍——而窗口里
         // 只有一个标签看得见（2026-09-02 剖析：大书一篇 0.33s，冷盘上近 1s）。
-        for id in ids.prefix(max) where !tabs.contains(where: { $0.docID == id }) {
-            if active.docID == nil && tabs.count == 1 { active.stage(id) } else { appendTab(docID: id, staged: true) }
+        // Markdown 没有 PDF 装载成本，只把 `noteRef` 放进标签；编辑器仍只为活动标签创建。
+        for item in restoring {
+            let target: DocTabModel
+            if active.docID == nil && active.noteRef == nil && tabs.count == 1 {
+                target = active
+            } else {
+                target = appendTab(docID: nil)
+            }
+            switch item {
+            case .pdf(let id): target.stage(id)
+            case .markdown(let ref): target.stageMarkdown(ref)
+            }
         }
-        if let wantActive, let hit = tabs.first(where: { $0.docID == wantActive }) {
+        if let wantActive, restoring.contains(wantActive),
+           let hit = tabs.first(where: { storedTab($0) == wantActive }) {
             activate(hit.id)
         } else {
             activate(tabs[0].id)
         }
+        // `activate` 命中第一个标签时不会进入切换分支；这里统一把 v1 迁移结果、过滤后的列表与活动项写回 v2。
+        persist()
     }
 }

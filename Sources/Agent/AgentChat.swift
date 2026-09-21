@@ -5,6 +5,15 @@ import UniformTypeIdentifiers
 
 /// 发给 Agent 的「用户此刻在看什么」。每次发消息时现取（不缓存），变了才随消息带上。
 struct AgentReaderContext: Equatable {
+    struct MarkdownNote: Equatable {
+        var ref: String
+        var title: String
+        var sourceName: String
+        var sourceKind: String
+        var relativePath: String
+        var link: String
+    }
+
     var workspaceName: String
     /// 工作区 `.unrd` 包本身（Agent 的工作目录是它的上一级）。
     var workspaceFolder: URL
@@ -16,6 +25,8 @@ struct AgentReaderContext: Equatable {
     /// 0 起（发给 Agent 时换成 1 起，与 MCP 一致）。
     var page: Int
     var pageCount: Int
+    /// 活动标签是整篇 Markdown 笔记时非 nil；与 `documentId` 互斥。
+    var markdown: MarkdownNote?
 
     /// Agent 的工作目录 = 工作区包所在的目录（用户 2026-09-18 定）。
     var cwd: URL { workspaceFolder.deletingLastPathComponent() }
@@ -25,10 +36,17 @@ struct AgentReaderContext: Equatable {
         let pkg = workspaceFolder.lastPathComponent
         var lines = [
             AgentTranscript.contextOpen,
-            "The user is talking to you from the Agent panel of UniReader, a PDF reader. Reply in the user's language.",
+            "The user is talking to you from the Agent panel of UniReader, a PDF and Markdown note reader. Reply in the user's language.",
             "Workspace: \(workspaceName). Its library lives in the package \"\(pkg)\" inside your working directory. Never read or modify files inside that .unrd package directly; use the unireader MCP tools for anything in the library (documents, pages, notes, highlights, bookmarks).",
         ]
-        if let documentId {
+        if let markdown {
+            var s = "Current Markdown note: \"\(markdown.title)\" (note_ref \(markdown.ref), source \"\(markdown.sourceName)\" [\(markdown.sourceKind)], relative_path \"\(markdown.relativePath)\")"
+            if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
+            if let windowId { s += ", window_id \(windowId.uuidString)" }
+            lines.append(s + ".")
+            lines.append("Use the unireader get_current_view tool to read the note's current live text and revision. To modify it, use update_markdown with that revision; never edit the file directly.")
+            lines.append("link \(markdown.link)")
+        } else if let documentId {
             var s = "Current document: \"\(docTitle)\" (document_id \(documentId)), page \(page + 1) of \(pageCount)"
             if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
             if let windowId { s += ", window_id \(windowId.uuidString)" }

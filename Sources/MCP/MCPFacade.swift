@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 /// 🔴 全项目**唯一**碰 App 活状态的 MCP 入口（方案 §5.1 / §5.3 第 3 条）：把 `AppDelegate` 的窗口、
@@ -57,10 +58,77 @@ final class MCPFacade {
          "is_mirror": ws.isMirror]
     }
 
-    private func tabDTO(_ tab: DocTabModel) -> MCPObject {
+    private func markdownDTO(_ c: ReaderWindowController, _ ref: NoteRef, includeText: Bool) -> MCPObject {
+        let source = c.workspace.noteSource(id: ref.sourceID)
+        let liveText = c.markdownText(for: ref)
+        let savedText = includeText && liveText == nil ? c.workspace.noteBody(ref) : nil
+        let fileExists = c.workspace.noteURL(ref).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        var o: MCPObject = ["ref": ref.key,
+                            "title": ref.title,
+                            "source": source?.name ?? ref.sourceID,
+                            "source_kind": source?.kind.rawValue ?? "unknown",
+                            "relative_path": ref.relPath,
+                            "link": link(c.workspace, markdown: ref.key),
+                            "file_missing": !fileExists]
+        if includeText {
+            let text = liveText ?? savedText ?? ""
+            o["text"] = text
+            o["revision"] = Self.markdownRevision(text)
+        }
+        return o
+    }
+
+    private static func markdownRevision(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 改当前 Markdown 标签。revision 是乐观锁：用户在 Agent 读完后又敲了字，就拒绝覆盖。
+    /// 同一工作区若有多扇窗口正显示同一篇，只有实时正文完全一致时才允许写；写完同步所有编辑器。
+    func updateMarkdown(windowId: String?, noteRef: String?, expectedRevision: String, text: String) throws -> MCPObject {
+        let c: ReaderWindowController
+        if let windowId { c = try controller(windowId: windowId) }
+        else {
+            guard let key = keyController else { throw MCPToolError("no reader window is open") }
+            c = key
+        }
+        guard let ref = c.tabs.active.noteRef else {
+            throw MCPToolError("the target window's active tab is not a Markdown note; activate the note and call get_current_view first")
+        }
+        if let noteRef {
+            guard NoteRef(key: noteRef) == ref else {
+                throw MCPToolError("the active Markdown note changed; call get_current_view again before writing")
+            }
+        }
+        guard let current = c.markdownText(for: ref) ?? c.workspace.noteBody(ref) else {
+            throw MCPToolError("the Markdown file cannot be read; it may have been moved or deleted")
+        }
+        let currentRevision = Self.markdownRevision(current)
+        guard expectedRevision == currentRevision else {
+            throw MCPToolError("the Markdown note changed after it was read; call get_current_view again, merge the user's latest text, and retry")
+        }
+
+        let visible = controllers(for: c.workspace).filter { $0.tabs.active.noteRef == ref }
+        let conflicting = visible.compactMap { $0.markdownText(for: ref) }.contains { $0 != current }
+        guard !conflicting else {
+            throw MCPToolError("this note has different unsaved edits in another window; ask the user to resolve them before writing")
+        }
+        guard current == text || c.workspace.saveNoteBody(ref, text: text) else {
+            throw MCPToolError(c.workspace.lastError ?? "failed to save the Markdown note")
+        }
+        for reader in visible { reader.applyMarkdownText(text, for: ref) }
+
+        return ["ref": ref.key,
+                "title": ref.title,
+                "link": link(c.workspace, markdown: ref.key),
+                "revision": Self.markdownRevision(text),
+                "characters": text.count]
+    }
+
+    private func tabDTO(_ c: ReaderWindowController, _ tab: DocTabModel) -> MCPObject {
         let s = tab.session
         var o: MCPObject = ["session_id": tab.id.uuidString, "is_active": tab.isActive]
         if let d = tab.docID {
+            o["content_type"] = "pdf"
             o["document_id"] = d
             o["title"] = tab.tabTitle
             o["page"] = PageNo.external(s.currentPageIndex)
@@ -68,7 +136,13 @@ final class MCPFacade {
             o["zoom"] = Double(s.readZoom)
             o["canvas_mode"] = s.canvasMode
             o["file_missing"] = tab.missingDoc != nil
+        } else if let ref = tab.noteRef {
+            o["content_type"] = "markdown"
+            o["document_id"] = NSNull()
+            o["title"] = ref.title
+            o["markdown"] = markdownDTO(c, ref, includeText: false)
         } else {
+            o["content_type"] = "empty"
             o["document_id"] = NSNull()
         }
         return o
@@ -78,7 +152,7 @@ final class MCPFacade {
         ["window_id": c.windowId.uuidString,
          "is_key": isKey,
          "workspace": workspaceDTO(c.workspace),
-         "tabs": c.tabs.tabs.map { tabDTO($0) }]
+         "tabs": c.tabs.tabs.map { tabDTO(c, $0) }]
     }
 
     /// 文档的文件下落（**只探测、不写库**——`openTarget` 会刷 lastOpened，这里不用它，同 `refDocIndex` 的理由）。
@@ -108,7 +182,8 @@ final class MCPFacade {
 
     /// 回到 App 里这个位置的 `unireader://` 链接（`DeepLink`）：Agent 写进 Obsidian / 清单里，点了就回来。
     /// 带 `ws` 路径 + `wsid`（有才带，盘换了挂载点靠它找回）；`page` 对外 1 起。
-    func link(_ ws: WorkspaceManager, doc: String? = nil, page: Int? = nil, frac: Double? = nil, note: UUID? = nil) -> String {
+    func link(_ ws: WorkspaceManager, doc: String? = nil, page: Int? = nil, frac: Double? = nil,
+              note: UUID? = nil, markdown: String? = nil) -> String {
         var l = DeepLink()
         l.workspacePath = ws.folder?.path
         l.workspaceId = ws.store?.workspaceId
@@ -116,6 +191,7 @@ final class MCPFacade {
         l.page = page
         l.frac = frac
         l.noteId = note
+        l.markdownId = markdown
         return l.absoluteString
     }
 
@@ -338,10 +414,20 @@ final class MCPFacade {
         var o: MCPObject = ["window_id": c.windowId.uuidString,
                             "session_id": tab.id.uuidString,
                             "workspace": workspaceDTO(c.workspace)]
+        if let ref = tab.noteRef {
+            o["content_type"] = "markdown"
+            o["document_id"] = NSNull()
+            o["title"] = ref.title
+            o["link"] = link(c.workspace, markdown: ref.key)
+            o["markdown"] = markdownDTO(c, ref, includeText: true)
+            return o
+        }
         guard let docId = tab.docID else {
+            o["content_type"] = "empty"
             o["document_id"] = NSNull()
             return o
         }
+        o["content_type"] = "pdf"
         o["document_id"] = docId
         o["title"] = tab.tabTitle
         let page = PageNo.external(s.scrollAnchor?.page ?? s.currentPageIndex)

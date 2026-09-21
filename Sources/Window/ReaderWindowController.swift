@@ -60,6 +60,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private var session: DocSession { tabs.active.session }
 
+    /// MCP / 内置 Agent 读取当前 Markdown 标签时，优先拿尚未走完 0.8 秒自动保存的实时正文。
+    func markdownText(for ref: NoteRef) -> String? { readerPane?.markdownText(for: ref) }
+    func applyMarkdownText(_ text: String, for ref: NoteRef) { readerPane?.applyMarkdownText(text, for: ref) }
+
     // MARK: - 建窗
 
     init(app: AppModel, workspace: WorkspaceManager, launchDocId: String?) {
@@ -273,7 +277,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     // MARK: - 标题
 
-    /// 标题 = 文档名，副标题 = 当前页/总页数。
+    /// 标题 = PDF 文档名或 Markdown 笔记名，副标题 = PDF 当前页/总页数。
     /// 迁移前这是 `navigationTitle`/`navigationSubtitle`（SwiftUI 接管标题栏后不许再直写
     /// `window.title`）；现在窗口是我们的，直写即可，那条禁令随之作废。
     private func bindTitle() {
@@ -318,7 +322,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func refreshTitle() {
         let s = session
         // 只在真变了时写（标题 / 副标题在 Tahoe 上画在工具栏里，写一次可能让工具栏重排）；写了记一行 `[TB]`
-        let title = s.title.isEmpty ? L("Library") : s.title
+        let title = tabs.active.noteRef?.title ?? (s.title.isEmpty ? L("Library") : s.title)
         let subtitle = s.pdf.map { "\(s.currentPageIndex + 1)/\($0.pageCount)" } ?? ""
         if let w = window, w.title != title || w.subtitle != subtitle {
             wsLog("[TB] 窗口标题 → \(title) · \(subtitle)")

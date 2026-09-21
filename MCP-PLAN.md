@@ -316,6 +316,10 @@ NWListener(127.0.0.1 或 0.0.0.0 : port) ──serial queue "mcp.net"──▶ �
 `title` / `documentId`）+ `WorkspaceManager`（`name` / `folder`）+ `WorkspaceRegistry`（是否离线镜像）+ `LANServer`。
 没有窗口时 `windows: []`，`key_window_id: null`——不报错。
 
+2026-09-21 补 Markdown 标签：每个标签另带 content_type（empty / pdf / markdown）；Markdown 标签的
+markdown 对象含 ref、来源、相对路径、链接与文件是否存在，不把正文塞进状态列表。get_current_view 遇到
+Markdown 活动标签时返回编辑器的实时正文（包括尚未自动保存的改动）；目前不提供 Markdown 写入工具。
+
 ### 7.2 `list_workspaces`（批 1）
 
 入参：无。出参 `workspaces: [{id, name, path, mirror_path?, is_open, window_ids: []}]`。
@@ -736,6 +740,7 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 | `add_bookmark` | `MCPTools+Notes.swift` + `MCPFacade.addBookmark` | 名字必填（`Bookmark.validTitle`）；开着 → `session.addBookmark`，没开 → `ws.saveBookmark` |
 | `add_note` | 同上 + `MCPFacade.addNote` | 锚点三选一：`quote`（`MCPDocReader.locate`：先 `findString`、再 OCR 行；找不到**报错不猜**）> `rect` > 页顶横条；`type` 按名字对 `noteTypes`，不存在就报错并列出可用的；开着时经 `session.inkEdit` 进撤销栈 |
 | `add_highlight` | 同上 + `MCPFacade.addHighlight` | `quote` 必填、必须找得到；颜色收色板名或 `#RRGGBB`；`style` 收 fill / underline / box（2026-09-16），`list_annotations` 的高亮 DTO 回 `style`、笔记 DTO 回 `style` + 设了才有的 `color` |
+| `update_markdown`（2026-09-21） | `MCPTools+Notes.swift` + `MCPFacade.updateMarkdown` | 只改目标窗口的活动 Markdown 标签；先用 `get_current_view.markdown.revision` 做乐观锁，再原子写完整正文并同步所有正在显示该笔记的编辑器。用户在读取后有新编辑或多窗口存在不同未保存正文时拒绝覆盖 |
 | `import_pdf` / `open_document(path:)` | `MCPTools+Document.swift` + **`WorkspaceManager.importPDF(at:)`**（新，面板/拖拽/MCP 三处共用，`ReaderWindowController.ingest` 改为调它）| 按 hash 去重，返回 `imported` 是否新建；`open_document` 带 `path` 时虽是导航级工具也按写入开关拦 |
 | `create_workspace` | `MCPTools+Workspace.swift` + `MCPFacade.createWorkspace` | 🔴 **已存在的路径一律拒绝**（界面那条 `createWorkspace(at:)` 会覆盖非工作区路径，那是保存面板确认过「替换」才允许的）；缺 `.unrd` 自动补 |
 | `run_ocr` | 同上 + `MCPFacade.runOCR` | 文档必须开着（OCR 走会话队列）；没配引擎报错；立即返回队列状态，Agent 稍后再 `read_pages` |
@@ -744,6 +749,10 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 
 `MCPFacade.writeTarget` 先查「有没有标签正显示这篇」：有 → 只改 `DocSession` 的数组（`textNotes` / `highlights` / `bookmarks`），
 由 `DocTabModel` 现有对账落库并广播平板；没有 → `WorkspaceManager.save*` 直接写库。出参里 `via: session | library` 说明走了哪条。
+
+Markdown 不走 PDF 的 `writeTarget`：`update_markdown` 的目标是窗口当前活动标签，正文真源仍是文件；写前比较
+`get_current_view` 返回的实时编辑器正文 revision，写后把相同正文推回所有可见编辑器，避免 0.8 秒自动保存把 Agent
+改动覆盖掉。
 
 ### 17.3 首轮反馈修复：Agent 建的笔记图钉跑到行末（2026-09-13）
 

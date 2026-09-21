@@ -641,7 +641,7 @@
 "Read-only: the agent plans but runs no tools." = "只读：Agent 只做计划，不执行任何工具。";
 "Approve for Me" = "自动批准";
 "Safe operations are approved automatically." = "安全的操作自动批准。";
-"It can read the document you are looking at, find pages, and add notes, highlights and bookmarks." = "它能读取你正在看的文档、查找页面，还能添加笔记、高亮和书签。";
+"It can read and edit the Markdown note you are looking at, find PDF pages, and add PDF notes, highlights and bookmarks." = "它能读取并修改你正在看的 Markdown 笔记、查找 PDF 页面，还能给 PDF 添加笔记、高亮和书签。";
 "Send" = "发送";
 "Thinking" = "思考过程";
 "Plan" = "计划";

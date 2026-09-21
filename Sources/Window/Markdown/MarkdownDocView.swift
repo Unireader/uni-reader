@@ -123,6 +123,15 @@ final class MarkdownDocView: NSView {
     /// 立刻把待存的改动写下去（切标签 / 关窗 / 退出 / 导出前都要叫一次）。
     func flush() { save() }
 
+    /// 屏幕上这份编辑器的实时正文。可能比文件里领先不到自动保存的 0.8 秒；Agent/MCP 读当前视图用它。
+    var currentText: String { box.text }
+
+    /// MCP 已经把正文原子写入文件后，同步正在显示的编辑器，防止它稍后的自动保存把 Agent 改动盖回去。
+    func applySavedText(_ text: String) {
+        savedText = text
+        if box.text != text { box.text = text }
+    }
+
     // MARK: - 正文查找
 
     /// 顶部 `NSSearchToolbarItem` 共用的搜索入口。只读编辑器的 display text，绝不改正文。

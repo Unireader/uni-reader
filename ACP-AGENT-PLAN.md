@@ -84,6 +84,12 @@ Current document: "标题" (document_id …), page N of M, reader tab session_id
 </unireader-context>
 ```
 
+活动标签是 Markdown 笔记时，Current document 那行改为 Current Markdown note，并带笔记标题、note_ref、
+来源、相对路径、标签 session_id、window_id 与 unireader:// 链接。上下文只带身份，不把整篇正文塞进每条消息；
+Agent 要读时调用 get_current_view，拿编辑器里的实时正文与 revision（包括还没走完 0.8 秒自动保存的改动）；
+修改时调用 update_markdown，把原 revision 与完整新正文一起交回。revision 不一致就拒绝，避免覆盖用户刚输入的内容。
+Agent 仍不得绕过 MCP 直接修改文件。
+
 - 🔴 **用户的话放第一块、上下文块放后面**：Kimi 拿第一块文字给会话起标题（spike 实测），反过来历史列表里
   每条都叫「<unireader-context>」。
 - 回放历史时 `AgentTranscript.stripHidden` 按标签对把它从「用户说的话」里剔掉（Kimi 自己注入的

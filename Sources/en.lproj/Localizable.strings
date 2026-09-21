@@ -639,7 +639,7 @@
 "Read-only: the agent plans but runs no tools." = "Read-only: the agent plans but runs no tools.";
 "Approve for Me" = "Approve for Me";
 "Safe operations are approved automatically." = "Safe operations are approved automatically.";
-"It can read the document you are looking at, find pages, and add notes, highlights and bookmarks." = "It can read the document you are looking at, find pages, and add notes, highlights and bookmarks.";
+"It can read and edit the Markdown note you are looking at, find PDF pages, and add PDF notes, highlights and bookmarks." = "It can read and edit the Markdown note you are looking at, find PDF pages, and add PDF notes, highlights and bookmarks.";
 "Send" = "Send";
 "Thinking" = "Thinking";
 "Plan" = "Plan";

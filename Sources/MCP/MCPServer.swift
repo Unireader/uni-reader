@@ -134,9 +134,11 @@ final class MCPServer: ObservableObject {
 
     /// 给模型看的说明（英文），随 `initialize` 下发。
     static let instructions = """
-    UniReader is a PDF reader with per-workspace libraries. Pages are 1-based. \
-    Call get_state first to learn which workspace, document and page the user is looking at; \
-    most tools default to the document in the key window when no target is given. \
+    UniReader is a PDF and Markdown note reader with per-workspace libraries. Pages are 1-based. \
+    Call get_state first to learn which workspace and tab the user is looking at. \
+    get_current_view returns the active PDF position or the active Markdown note's live text and revision. \
+    Use update_markdown with that revision to modify the active note; never edit files inside a .unrd package directly. \
+    Most PDF tools default to the document in the key window when no target is given. \
     document_id is a stable UUID inside a workspace; file paths may change. \
     read_pages returns the PDF's own text, or cached OCR text for scanned pages (empty with a hint when neither exists).
     """

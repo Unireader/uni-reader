@@ -100,8 +100,10 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 - **`MARKDOWN-NOTES-PLAN.md`** — 工作区里的 Markdown 笔记（Obsidian 格式，2026-09-20 拍板并落地，当天改版三次）：
   **两种源**——内建 `Notes/`（导入 = 整个目录复制进来）与**引用的外部目录**（不复制、就地编辑，
   列表存 `meta.note_sources`，**不进库也不同步**）；侧栏按**真实目录层级多级展开**；标签页里编辑、自动保存。
-  🔴 **谁都不许改笔记正文**（用户原话「不要改 `[[]]` 现有的哪怕不兼容也不要改」）：`[[…]]` 按**名字**解析，
-  改名 / 挪目录就断链，这是明确接受的代价。`md_doc`（v15）只是内建源的**扫描缓存**，真源永远是文件
+  🔴 **自动维护不许改笔记正文**（用户原话「不要改 `[[]]` 现有的哪怕不兼容也不要改」）：导入 / 改名 /
+  挪目录 / 扫描不改正文；`[[…]]` 按**名字**解析，改名 / 挪目录就断链，这是明确接受的代价。用户显式编辑
+  或明确要求 Agent 通过 MCP `update_markdown` 修改正文可以写；工具用 revision 防并发覆盖，不自动修链接。
+  `md_doc`（v15）只是内建源的**扫描缓存**，真源永远是文件
 
 ### 子目录可以自带 AGENTS.md（`android/` 就是这么做的）
 
@@ -160,7 +162,8 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `MarkdownImport`（路径与文件工具 + 整目录复制）。执行层 `WorkspaceManager+Markdown`
   （源管理 / 扫描与库对账 / 读写 / 导入）。测试 `spike/markdown-link-test.swift`（66 项）
 - Markdown 笔记的界面：标签页里开一篇 = `DocTabModel.noteRef`（🔴 **与 `docID` 互斥**，开笔记前先
-  `select(nil)`——所有按 PDF 记账的地方看到的就是一个空标签，一行都不用改；代价是 md 标签不跨启动恢复）；
+  `select(nil)`——所有按 PDF 记账的地方看到的就是一个空标签，一行都不用改）；混合标签组由
+  `TabsModel` 另存 PDF / Markdown 的类型与身份，跨启动恢复时仍保持原顺序和活动标签；
   窗格里的 `MarkdownDocView`（`Sources/Window/Markdown/`）托管 `MarkdownDocEditor`，**自动保存三条**：
   停手 0.8 秒 / 视图离开窗口 / App 退出。存正文**刻意不调 `refreshNotes()`**（打字时每 0.8 秒重扫一遍目录
   + 侧栏整棵树重建，代价完全不对等）。侧栏在 `SidebarNode` 的 `md` / `noteFolder` / `noteSection` 三个 case，
