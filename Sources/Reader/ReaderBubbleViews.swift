@@ -29,7 +29,10 @@ struct BubbleMarkdownHost: View {
 final class BubbleScrollView: NSScrollView {
     var scrollable = false
     override func scrollWheel(with event: NSEvent) {
-        if scrollable { super.scrollWheel(with: event) } else { nextResponder?.scrollWheel(with: event) }
+        // 🔴 放不下时**不能**给 `nextResponder`：它就是把滚轮转进来的那张卡片（本视图的父视图），
+        // 两个 `scrollWheel` 会互相调用到栈溢出（2026-09-22 崩溃：滚一个内容放得下的文字笔记气泡必崩）。
+        // 要交给页面就直接跳过卡片，往卡片的下一个响应者去。
+        if scrollable { super.scrollWheel(with: event) } else { superview?.nextResponder?.scrollWheel(with: event) }
     }
 }
 
@@ -120,10 +123,11 @@ class ReaderCardView: NSView {
     /// 卡片上真的要接点击的小按钮（文字气泡右上角的铅笔）。
     func passthroughButton(at p: NSPoint) -> NSView? { nil }
 
-    /// 滚轮交给正文容器（它决定自己滚还是交给页面）。
+    /// 滚轮交给正文容器（正文放不下时才由它滚，否则直接给页面）。
+    /// 🔴 **别无条件转给容器**：容器放得下时又会把事件传回卡片，两边互相调用直到栈溢出（见 `BubbleScrollView`）。
     var contentScroll: BubbleScrollView? { nil }
     override func scrollWheel(with event: NSEvent) {
-        if let s = contentScroll { s.scrollWheel(with: event) } else { nextResponder?.scrollWheel(with: event) }
+        if let s = contentScroll, s.scrollable { s.scrollWheel(with: event) } else { nextResponder?.scrollWheel(with: event) }
     }
 
     // MARK: 拖动 / 改大小
