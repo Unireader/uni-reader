@@ -9,6 +9,32 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.2.2</title>
+      <pubDate>Tue, 22 Sep 2026 15:35:32 +0000</pubDate>
+      <sparkle:version>36</sparkle:version>
+      <sparkle:shortVersionString>0.2.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<p>只修一个崩溃，建议装上。</p>
+<h4>修复</h4>
+<ul>
+<li>鼠标滚轮滚到展开的文字笔记气泡上时，App 会立刻崩溃退出。内容比较短、气泡里本来就不需要滚动的那些笔记必然触发；内容很长、气泡自己要滚的那些不受影响。图片笔记的气泡同样修正。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.2">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<p>A crash fix only — worth installing.</p>
+<h4>Fixes</h4>
+<ul>
+<li>Scrolling the mouse wheel over an expanded text note bubble crashed the app immediately. It happened every time with shorter notes, where the bubble has nothing to scroll; longer notes that scroll inside the bubble were unaffected. Image note bubbles are fixed too.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.2">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.2.2/UniReader-0.2.2.zip" length="13052542" type="application/octet-stream" sparkle:edSignature="eQ6Z5NXRsySmyNkW+o4Lf6vpmDzElXlpbRcIWQLzJgJoLFzVJaeLH5nVYDysO2Va0vc7fyRUsZJoZdRJ2+oiBw==" />
+    </item>
+    <item>
       <title>v0.2.1</title>
       <pubDate>Tue, 22 Sep 2026 15:17:32 +0000</pubDate>
       <sparkle:version>35</sparkle:version>
