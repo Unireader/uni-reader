@@ -9,6 +9,62 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.2.1</title>
+      <pubDate>Tue, 22 Sep 2026 15:17:32 +0000</pubDate>
+      <sparkle:version>35</sparkle:version>
+      <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<p>这一版给「删掉了」和「弄丢了」加了两条退路。</p>
+<h4>新增：回收站</h4>
+<ul>
+<li>以前在侧栏右键「删除」一篇文档，没有任何确认框，那本书的笔迹、笔记、高亮、书签当场全没，也没法撤销。现在删之前会先问一句，删掉的东西连同它的全部笔记都进回收站。</li>
+<li>「文件 ▸ 回收站…」可以看到删过什么、什么时候删的、占多大，选中「放回去」就全回来了。删笔迹图层同样进回收站。</li>
+<li>如果那份 PDF 已经重新导入过，放回去会把这些笔记并进现在那一篇，面板上会写清楚要并多少条。</li>
+<li>保留期可以在设置里选 30 天 / 90 天 / 一直保留。图片笔记引用的图片会跟着一起留住，不会先一步被清掉。</li>
+<li>PDF 文件本身从来不会被删掉，工作区里的其它东西也一样不动。</li>
+</ul>
+<h4>新增：工作区定时备份</h4>
+<ul>
+<li>资料库（全部笔迹、笔记、高亮、书签、草稿纸、阅读进度）会自动存快照，就放在工作区内部，工作区搬到哪它就跟到哪。PDF 不复制，所以不占多少地方。</li>
+<li>打开工作区后、每隔几小时、退出前各存一次，频率可以在「设置 ▸ 通用 ▸ 备份」里调，也可以关掉。</li>
+<li>保留最近 5 份、每天 1 份留一周、每周 1 份留一个月。</li>
+<li>「文件 ▸ 工作区备份…」可以立即备份、删掉某一份，或者还原到某一份。还原之前会先把当前这份另存为还原点，所以还原本身也能退回来；还原完 App 会退出，重新打开工作区就能接着用。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>把右侧检查器拖到最宽时，阅读区的竖滚动条会被页面盖住，滚轮滚也不回来（时有时无）。拖分隔条和拖窗口的整个过程中滚动条不见、松手才回来的问题也一并修了。参考窗同样修正。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.1">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<p>This release adds two safety nets: one for things you deleted, one for things you lost.</p>
+<h4>New: Recently Deleted</h4>
+<ul>
+<li>Deleting a document from the sidebar used to happen instantly with no confirmation, taking all of its ink, notes, highlights and bookmarks with it and no way back. Now it asks first, and what you delete goes to Recently Deleted with all of its notes intact.</li>
+<li>File ▸ Recently Deleted… shows what was deleted, when, and how much space it takes. Select an entry and choose Put Back to get it all back. Deleted ink layers go there too.</li>
+<li>If the PDF has since been imported again, putting it back merges the notes into that document — the panel tells you how many are being merged and where.</li>
+<li>Keep deleted items for 30 days, 90 days or forever, set in Settings. Images used by image notes are held for as long as the deleted item is, so they are never cleaned up ahead of it.</li>
+<li>The PDF files themselves are never deleted, and nothing else in the workspace is touched.</li>
+</ul>
+<h4>New: Workspace Backups</h4>
+<ul>
+<li>The library (every stroke, note, highlight, bookmark, scratch pad and reading position) is snapshotted automatically. Backups live inside the workspace, so they travel with it. PDFs are not copied, so they stay small.</li>
+<li>A backup is taken shortly after opening a workspace, every few hours, and on quit. The frequency is adjustable under Settings ▸ General ▸ Backups, and it can be turned off.</li>
+<li>Kept: the 5 most recent, one a day for a week, one a week for a month.</li>
+<li>File ▸ Workspace Backups… lets you back up now, delete a backup, or restore one. Restoring saves the current library as a restore point first, so the restore itself can be undone; UniReader quits afterwards, and reopening the workspace picks up where it left off.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>With the inspector dragged to its widest, the reading area's vertical scroll bar could be covered by the page and would not come back (it did not happen every time). The scroll bar also disappeared for the duration of dragging the divider or resizing the window, returning only on release. Both are fixed, in the reference window too.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.1">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.2.1/UniReader-0.2.1.zip" length="13052461" type="application/octet-stream" sparkle:edSignature="aB1PMTdmm/vqvvDb62HxUU80B+Y1p4IOKxS3xldrDp0JmoHPQvkoJ5EWGFl8KG5T+V8OTZUIcxowmtlsMLLTAA==" />
+    </item>
+    <item>
       <title>v0.2.0</title>
       <pubDate>Mon, 21 Sep 2026 07:34:23 +0000</pubDate>
       <sparkle:version>34</sparkle:version>
