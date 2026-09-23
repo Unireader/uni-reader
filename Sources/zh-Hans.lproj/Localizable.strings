@@ -779,4 +779,14 @@
 "Backups" = "备份";
 "Backup frequency" = "备份频率";
 "Manage…" = "管理…";
+"Enhance Scanned Pages" = "增强扫描页";
+"Scanned Page Enhancement" = "扫描页增强";
+"Noise reduction" = "降噪";
+"Background whitening" = "底色变白";
+"Darken text" = "文字加深";
+"Sharpen" = "锐化";
+"Black and white" = "黑白";
+"Fine processing (slower)" = "精细处理（较慢）";
+"Restore Defaults" = "恢复默认";
+"Turn it on per document with View › Enhance Scanned Pages. It only changes how pages are drawn on this Mac; the PDF file is not modified. Black and white removes color noise but also turns color figures gray. Fine processing works at twice the resolution for smoother text edges and takes longer per page." = "在「视图 › 增强扫描页」里按文档开启。只改变这台 Mac 上页面的显示效果，不修改 PDF 文件。「黑白」能去掉彩色杂色，但彩色插图也会变成灰色。「精细处理」按 2 倍分辨率处理，文字边缘更平滑，每页耗时更长。";
 "A snapshot of the library (every stroke, note and highlight) is kept inside the workspace: the 5 most recent, one a day for a week, one a week for a month. Deleted documents and ink layers are kept in Recently Deleted — open it from File ▸ Recently Deleted." = "资料库（全部笔迹、笔记、高亮）的快照存在工作区内部：最近 5 份、每天 1 份留一周、每周 1 份留一个月。删掉的文档和笔迹图层留在回收站里——从「文件 ▸ 回收站」打开。";

@@ -199,6 +199,8 @@ enum MainMenu {
         m.addItem(post(L("Canvas Mode"), .toggleCanvasMode, shortcut: .canvasMode))
         // 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：按文件记、不常切，不配默认快捷键。勾选状态见 `validateMenuItem`。
         m.addItem(post(L("Align Scanned Pages"), .toggleScanAlign))
+        // 扫描页增强（`ScanEnhance`）：按文档记在本机，参数在设置 ›「阅读」
+        m.addItem(post(L("Enhance Scanned Pages"), .toggleScanEnhance))
         return item0
     }
 
@@ -344,6 +346,11 @@ extension MenuActions: NSMenuItemValidation {
             let s = activeSession
             menuItem.state = s?.scanAlign != nil ? .on : .off
             return s?.pdf != nil
+        case #selector(postNotification(_:))
+            where menuItem.representedObject as? String == Notification.Name.toggleScanEnhance.rawValue:
+            let s = activeSession
+            menuItem.state = ScanEnhance.isOn(s?.contentHash ?? "") ? .on : .off
+            return s?.pdf != nil && !(s?.contentHash.isEmpty ?? true)
         case #selector(postNotification(_:))
             where menuItem.representedObject as? String == Notification.Name.gotoPageRequested.rawValue:
             return activeSession?.pdf != nil   // 空标签 / Markdown 笔记没有「第几页」可言

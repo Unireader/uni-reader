@@ -62,6 +62,57 @@ enum PageBitmap {
                     align: align)
     }
 
+    /// 扫描页增强版的整页渲染（`ScanEnhance`）。输出尺寸与 `render` 逐像素相同，调用方可以无缝替换。
+    static func renderEnhanced(page: PDFPage, pixelWidth: Int, align: PageAlign?,
+                               params: ScanEnhanceParams, ci: CIContext) -> CGImage? {
+        let disp = displaySize(page, align: align)
+        guard disp.width > 0, disp.height > 0, pixelWidth > 0 else { return nil }
+        return enhanced(page: page, subRect: CGRect(origin: .zero, size: disp),
+                        scale: CGFloat(pixelWidth) / disp.width, align: align, params: params, ci: ci)
+    }
+
+    /// 扫描页增强版的贴片（参数语义同 `renderTile`）。
+    static func renderTileEnhanced(page: PDFPage, subRect: CGRect, scale: CGFloat, align: PageAlign?,
+                                   params: ScanEnhanceParams, ci: CIContext) -> CGImage? {
+        guard subRect.width > 0, subRect.height > 0, scale > 0 else { return nil }
+        return enhanced(page: page, subRect: subRect, scale: scale, align: align, params: params, ci: ci)
+    }
+
+    /// 增强出图：外扩 `marginPt`（夹在页内）→ 按 `scale × 超采样倍数` 渲原图 → 滤镜链 → 缩回 `scale` →
+    /// 只取 `subRect` 那一块渲进我们自己的 mmap 缓冲（记账规矩同 `invert`）。
+    /// 中间那张大图是 `renderTile` 出的自持缓冲，这个函数一返回就释放。
+    private static func enhanced(page: PDFPage, subRect: CGRect, scale: CGFloat, align: PageAlign?,
+                                 params: ScanEnhanceParams, ci: CIContext) -> CGImage? {
+        let disp = displaySize(page, align: align)
+        let m = ScanEnhanceParams.marginPt
+        let outer = subRect.insetBy(dx: -m, dy: -m)
+            .intersection(CGRect(origin: .zero, size: disp))
+        guard !outer.isNull, outer.width > 0, outer.height > 0 else { return nil }
+        // 超采样：处理分辨率封顶 8 px/pt（高倍贴片本来就够细，再翻倍只是白花算力）
+        let ss = params.supersample ? max(1, min(2, 8 / scale)) : 1
+        let workScale = scale * ss
+        guard let raw = renderTile(page: page, subRect: outer, scale: workScale, align: align) else { return nil }
+        var img = ScanEnhance.apply(CIImage(cgImage: raw), pxPerPt: workScale, params)
+        if ss > 1.001 {
+            let ls = CIFilter(name: "CILanczosScaleTransform")
+            ls?.setValue(img, forKey: kCIInputImageKey)
+            ls?.setValue(1 / ss, forKey: kCIInputScaleKey)
+            ls?.setValue(1.0, forKey: kCIInputAspectRatioKey)
+            if let out = ls?.outputImage { img = out }
+        }
+        // `outer` 缩到 `scale` 后的坐标系里（CI 左下原点）取 `subRect` 那块
+        let w = Int((subRect.width * scale).rounded()), h = Int((subRect.height * scale).rounded())
+        guard w > 0, h > 0 else { return nil }
+        let dx = ((subRect.minX - outer.minX) * scale).rounded()
+        let dy = ((outer.maxY - subRect.maxY) * scale).rounded()
+        return makeImageRaw(pixelWidth: w, pixelHeight: h) { buf, bytesPerRow, space in
+            ci.render(img, toBitmap: buf, rowBytes: bytesPerRow,
+                      bounds: CGRect(x: dx, y: dy, width: CGFloat(w), height: CGFloat(h)),
+                      format: .BGRA8, colorSpace: space)
+            return true
+        }
+    }
+
     /// 整页/贴片的实际绘制（几何在调用方算好）。内存与像素格式的全部纪律在 `makeImage`。
     /// 对齐：先铺白底，再在「对齐后的页面坐标」里套上 `cgTransform` 画原页——转出页外的角被裁掉，
     /// 页内空出来的角是白的（`SCAN-ALIGN-PLAN.md §2.2`）。

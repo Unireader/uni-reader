@@ -107,7 +107,10 @@ extension ReaderView {
         // 夜间模式（`@AppStorage("nightMode")`，窗口层的开关与自动跟随系统都写它）
         observers.append(nc.addObserver(forName: UserDefaults.didChangeNotification,
                                         object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.nightDefaultsChanged() }
+            MainActor.assumeIsolated {
+                self?.nightDefaultsChanged()
+                self?.enhanceDefaultsChanged()
+            }
         })
         // 菜单 / 工具栏的缩放命令：只有活跃窗口认领
         let zoomCommands: [(Notification.Name, (ReaderView) -> Void)] = [
@@ -176,5 +179,26 @@ extension ReaderView {
         nightLive = n
         guard didSetup else { imagesNight = n; applyNightColors(); return }
         scheduleNightRender()
+    }
+
+    /// 扫描页增强的开关 / 参数变了（菜单切换、设置页拖滑块都写 UserDefaults）。
+    /// 防抖 0.3 秒：拖滑块时每一帧都在写，停手再按新参数出图。
+    func enhanceDefaultsChanged() {
+        let p = ScanEnhance.params(for: session.contentHash)
+        enhanceWork?.cancel()
+        guard p != enhanceLive else { enhanceWork = nil; return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.tornDown else { return }
+            self.enhanceWork = nil
+            let now = ScanEnhance.params(for: self.session.contentHash)
+            guard now != self.enhanceLive else { return }
+            self.enhanceLive = now
+            self.staleImages = Set(self.images.keys)
+            self.staleTiles = Set(self.tiles.keys)
+            guard self.didSetup else { return }
+            self.settleRender()
+        }
+        enhanceWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 }

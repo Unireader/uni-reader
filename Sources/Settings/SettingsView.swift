@@ -51,6 +51,13 @@ struct SettingsView: View {
     /// 页图缓存上限（MB，= 真实占用；计费系数见 `PageRenderEngine.copiesPerImage`）。
     /// ⚠️ 默认值与 `ContentView` 启动时那句 `?? 256` **必须一致**，改一处要改两处。
     @AppStorage("renderCacheMB") private var renderCacheMB = 256
+    // 扫描页增强参数（`ScanEnhanceParams`，键与默认值以那边为准）。阅读区听 UserDefaults 变化、防抖后按新参数出图。
+    @AppStorage(ScanEnhanceParams.Key.denoise) private var enhDenoise = ScanEnhanceParams.defaults.denoise
+    @AppStorage(ScanEnhanceParams.Key.whitePoint) private var enhWhitePoint = ScanEnhanceParams.defaults.whitePoint
+    @AppStorage(ScanEnhanceParams.Key.inkDarken) private var enhInkDarken = ScanEnhanceParams.defaults.inkDarken
+    @AppStorage(ScanEnhanceParams.Key.sharpen) private var enhSharpen = ScanEnhanceParams.defaults.sharpen
+    @AppStorage(ScanEnhanceParams.Key.grayscale) private var enhGrayscale = ScanEnhanceParams.defaults.grayscale
+    @AppStorage(ScanEnhanceParams.Key.supersample) private var enhSupersample = ScanEnhanceParams.defaults.supersample
     /// 笔记气泡跟不跟页缩放（默认关 = 固定尺寸；阅读区 `ReaderSurface` 读同一个键）。
     @AppStorage(NoteBubble.followsZoomKey) private var bubbleFollowsZoom = false
     /// 气泡正文字号 / 编辑框字号（阅读区与 `MarkdownNoteEditor` 各读自己那个键）。
@@ -437,6 +444,30 @@ struct SettingsView: View {
                 Text(L("Rendering"))
             } footer: {
                 Text(L("The limit covers all page bitmaps in memory: those shown in windows plus the cache; the cache yields room to what windows hold. Every bitmap also has a CoreAnimation copy of the same size, already counted here."))
+            }
+
+            Section {
+                LabeledContent(L("Noise reduction")) { Slider(value: $enhDenoise, in: 0...1) }
+                LabeledContent(L("Background whitening")) {
+                    // 滑块往右 = 推白更狠 = 白点更低，所以反着映射
+                    Slider(value: Binding(get: { 1.78 - enhWhitePoint }, set: { enhWhitePoint = 1.78 - $0 }),
+                           in: 0.80...0.98)
+                }
+                LabeledContent(L("Darken text")) { Slider(value: $enhInkDarken, in: 0...1) }
+                LabeledContent(L("Sharpen")) { Slider(value: $enhSharpen, in: 0...1) }
+                Toggle(L("Black and white"), isOn: $enhGrayscale)
+                Toggle(L("Fine processing (slower)"), isOn: $enhSupersample)
+                LabeledContent {
+                    Button(L("Restore Defaults")) {
+                        let z = ScanEnhanceParams.defaults
+                        enhDenoise = z.denoise; enhWhitePoint = z.whitePoint; enhInkDarken = z.inkDarken
+                        enhSharpen = z.sharpen; enhGrayscale = z.grayscale; enhSupersample = z.supersample
+                    }
+                } label: { EmptyView() }
+            } header: {
+                Text(L("Scanned Page Enhancement"))
+            } footer: {
+                Text(L("Turn it on per document with View › Enhance Scanned Pages. It only changes how pages are drawn on this Mac; the PDF file is not modified. Black and white removes color noise but also turns color figures gray. Fine processing works at twice the resolution for smoother text edges and takes longer per page."))
             }
 
             Section {

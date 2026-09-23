@@ -94,6 +94,13 @@ final class ReaderView: NSView {
     var imagesNight = false
     var nightFlipping = false
     var nightFlipTo: Bool?
+    // 扫描页增强（`ScanEnhance`）：当前生效的参数（没开为 nil）。变了之后屏幕上的旧图先留着（只替换不清空），
+    // 记进 `stale*`，等新图到了逐页换掉；`hasTargetImage` / 贴片复用判断都要看它。
+    var enhanceLive: ScanEnhanceParams?
+    var staleImages = Set<Int>()
+    var staleTiles = Set<Int>()
+    var enhanceWork: DispatchWorkItem?
+    var enhanceSig: String? { enhanceLive?.signature }
 
     // MARK: 滚动 / 锚点
 
@@ -177,6 +184,7 @@ final class ReaderView: NSView {
         wantsLayer = true
         nightLive = UserDefaults.standard.bool(forKey: "nightMode")
         imagesNight = nightLive
+        enhanceLive = ScanEnhance.params(for: session.contentHash)
 
         scrollView.contentView = clipView
         scrollView.documentView = docView

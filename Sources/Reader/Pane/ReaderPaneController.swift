@@ -155,6 +155,10 @@ final class ReaderPaneController: NSViewController {
             (.addBookmarkRequested, { c in if c.session.documentId != nil { c.session.beginBookmarkAtCurrent() } }),
             (.gotoPageRequested, { $0.promptGotoPage() }),
             (.toggleScanAlign, { $0.tab.toggleScanAlign() }),
+            (.toggleScanEnhance, { c in
+                guard c.session.pdf != nil else { return }
+                ScanEnhance.toggle(c.session.contentHash)   // 写 UserDefaults，各阅读区自己听到后换图
+            }),
         ]
         for (name, action) in commands {
             observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in

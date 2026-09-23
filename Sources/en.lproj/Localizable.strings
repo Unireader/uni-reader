@@ -777,4 +777,14 @@
 "Backups" = "Backups";
 "Backup frequency" = "Backup frequency";
 "Manage…" = "Manage…";
+"Enhance Scanned Pages" = "Enhance Scanned Pages";
+"Scanned Page Enhancement" = "Scanned Page Enhancement";
+"Noise reduction" = "Noise reduction";
+"Background whitening" = "Background whitening";
+"Darken text" = "Darken text";
+"Sharpen" = "Sharpen";
+"Black and white" = "Black and white";
+"Fine processing (slower)" = "Fine processing (slower)";
+"Restore Defaults" = "Restore Defaults";
+"Turn it on per document with View › Enhance Scanned Pages. It only changes how pages are drawn on this Mac; the PDF file is not modified. Black and white removes color noise but also turns color figures gray. Fine processing works at twice the resolution for smoother text edges and takes longer per page." = "Turn it on per document with View › Enhance Scanned Pages. It only changes how pages are drawn on this Mac; the PDF file is not modified. Black and white removes color noise but also turns color figures gray. Fine processing works at twice the resolution for smoother text edges and takes longer per page.";
 "A snapshot of the library (every stroke, note and highlight) is kept inside the workspace: the 5 most recent, one a day for a week, one a week for a month. Deleted documents and ink layers are kept in Recently Deleted — open it from File ▸ Recently Deleted." = "A snapshot of the library (every stroke, note and highlight) is kept inside the workspace: the 5 most recent, one a day for a week, one a week for a month. Deleted documents and ink layers are kept in Recently Deleted — open it from File ▸ Recently Deleted.";

@@ -41,19 +41,21 @@ final class PageRenderEngine {
         /// 这一页的扫描页对齐参数（`SCAN-ALIGN-PLAN.md`，没开为 nil）。**值类型、入队时就拷好**——渲染在后台队列上跑，
         /// 不回头读会话。键里的 doc 部分必须是 `displayKey`（开关一变键就变），否则会读到另一种页面的旧图。
         var align: PageAlign?
+        /// 扫描页增强参数（`ScanEnhance`，没开为 nil）。开着时键里必须带 `#e<签名>`（`baseKey`/`tileKey` 的 `enhance`）。
+        var enhance: ScanEnhanceParams?
 
         init(key: String, page: PDFPage, pixelWidth: Int? = nil, tileRect: CGRect? = nil, tileScale: CGFloat = 1,
-             night: Bool, diskCache: Bool = false, align: PageAlign?) {
+             night: Bool, diskCache: Bool = false, align: PageAlign?, enhance: ScanEnhanceParams? = nil) {
             self.key = key; pageSource = .page(page); self.pixelWidth = pixelWidth
             self.tileRect = tileRect; self.tileScale = tileScale; self.night = night; self.diskCache = diskCache
-            self.align = align
+            self.align = align; self.enhance = enhance
         }
         /// 页对象到渲染队列上再取（见 `PageSource.lazy`）。
         init(key: String, doc: PDFDocument, index: Int, pixelWidth: Int?, night: Bool, diskCache: Bool = false,
-             align: PageAlign?) {
+             align: PageAlign?, enhance: ScanEnhanceParams? = nil) {
             self.key = key; pageSource = .lazy(doc, index); self.pixelWidth = pixelWidth
             tileRect = nil; tileScale = 1; self.night = night; self.diskCache = diskCache
-            self.align = align
+            self.align = align; self.enhance = enhance
         }
     }
 
@@ -183,13 +185,17 @@ final class PageRenderEngine {
         pressureSource = src
     }
 
-    static func baseKey(doc: String, page: Int, pixelWidth: Int, night: Bool) -> String {
-        "\(doc)#\(page)#w\(pixelWidth)#n\(night ? 1 : 0)"
+    /// `enhance` = 扫描页增强的参数签名（`ScanEnhanceParams.signature`，没开为 nil），插在页号后面成 `#e<签名>`：
+    /// 键尾仍是 `#n0/1`（夜间快路靠它）、宽度段仍是 `#w<宽>#n`（`purgeBase` 靠它），签名只含十六进制不会冒出 `#t`。
+    static func baseKey(doc: String, page: Int, pixelWidth: Int, night: Bool, enhance: String? = nil) -> String {
+        "\(doc)#\(page)\(enhance.map { "#e" + $0 } ?? "")#w\(pixelWidth)#n\(night ? 1 : 0)"
     }
 
-    static func tileKey(doc: String, page: Int, normRect: CGRect, scale: CGFloat, night: Bool) -> String {
-        String(format: "%@#%d#t%.3f_%.3f_%.3f_%.3f#s%.2f#n%d",
-               doc, page, normRect.minX, normRect.minY, normRect.width, normRect.height,
+    static func tileKey(doc: String, page: Int, normRect: CGRect, scale: CGFloat, night: Bool,
+                        enhance: String? = nil) -> String {
+        String(format: "%@#%d%@#t%.3f_%.3f_%.3f_%.3f#s%.2f#n%d",
+               doc, page, enhance.map { "#e" + $0 } ?? "",
+               normRect.minX, normRect.minY, normRect.width, normRect.height,
                scale, night ? 1 : 0)
     }
 
@@ -351,7 +357,16 @@ final class PageRenderEngine {
                 source = "磁盘"
             }
             if out == nil, let page = r.pageSource.resolve() {   // `.lazy` 在这里才取页对象（解析在渲染队列上）
-                if let rect = r.tileRect {
+                if let p = r.enhance {
+                    if ci == nil { ci = CIContext() }
+                    if let rect = r.tileRect {
+                        out = PageBitmap.renderTileEnhanced(page: page, subRect: rect, scale: r.tileScale,
+                                                            align: r.align, params: p, ci: ci!)
+                    } else if let pw = r.pixelWidth {
+                        out = PageBitmap.renderEnhanced(page: page, pixelWidth: pw, align: r.align, params: p, ci: ci!)
+                    }
+                    source = "增强"
+                } else if let rect = r.tileRect {
                     out = PageBitmap.renderTile(page: page, subRect: rect, scale: r.tileScale, align: r.align)
                 } else if let pw = r.pixelWidth {
                     out = PageBitmap.render(page: page, pixelWidth: pw, align: r.align)

@@ -11,11 +11,13 @@ extension ReaderView {
 
     func setImage(_ page: Int, _ img: CGImage?) {
         images[page] = img
+        if img != nil { staleImages.remove(page) }
         if let g = groups[page] { g.image.contents = img }
     }
 
     func setTileImage(_ page: Int, _ t: PageTile?) {
         tiles[page] = t
+        if t != nil { staleTiles.remove(page) }
         groups[page]?.setTile(t?.normRect, image: t?.image)
     }
 
@@ -41,11 +43,12 @@ extension ReaderView {
     }
 
     func baseKey(_ page: Int, width: Int) -> String {
-        PageRenderEngine.baseKey(doc: docKey, page: page, pixelWidth: width, night: nightLive)
+        PageRenderEngine.baseKey(doc: docKey, page: page, pixelWidth: width, night: nightLive, enhance: enhanceSig)
     }
 
     func tileKey(page: Int, normRect: CGRect) -> String {
-        PageRenderEngine.tileKey(doc: docKey, page: page, normRect: normRect, scale: backingScale, night: nightLive)
+        PageRenderEngine.tileKey(doc: docKey, page: page, normRect: normRect, scale: backingScale, night: nightLive,
+                                enhance: enhanceSig)
     }
 
     /// 目标宽度还没渲出来时的兜底：以前渲过的任一宽度 → Inspector 缩略图那份（仅亮色）。糊，但不是白纸。
@@ -60,7 +63,7 @@ extension ReaderView {
 
     func hasTargetImage(_ page: Int, width: Int) -> Bool {
         guard let cur = images[page] else { return false }
-        return cur.width == width && imagesNight == nightLive
+        return cur.width == width && imagesNight == nightLive && !staleImages.contains(page)
     }
 
     // MARK: 交回缓存
@@ -78,9 +81,9 @@ extension ReaderView {
 
     private func seedToCache(page: Int, image: CGImage) {
         let w = basePixelW
-        guard w > 0, image.width == w else { return }
+        guard w > 0, image.width == w, !staleImages.contains(page) else { return }   // 旧增强参数的图别冒充新键
         PageRenderEngine.shared.seed(image, forKey: PageRenderEngine.baseKey(
-            doc: docKey, page: page, pixelWidth: w, night: imagesNight))
+            doc: docKey, page: page, pixelWidth: w, night: imagesNight, enhance: enhanceSig))
     }
 
     /// 本阅读区销毁时：文档还开在别的标签 / 窗口里 → 只把当前宽度的图交回缓存；没人再看 → 整篇清掉。
@@ -190,7 +193,8 @@ extension ReaderView {
             guard PageRenderEngine.shared.cached(key) == nil else { continue }
             PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: width,
                                                   tileRect: nil, tileScale: 1, night: nightLive,
-                                                  diskCache: !isZooming, align: session.pageAlign(i))) { _, _ in }
+                                                  diskCache: !isZooming, align: session.pageAlign(i),
+                                                  enhance: enhanceLive)) { _, _ in }
         }
         return keys
     }
@@ -211,10 +215,11 @@ extension ReaderView {
     }
 
     func requestBase(key: String, doc: PDFDocument, index: Int, width: Int) {
-        let night = nightLive
+        let night = nightLive, enhance = enhanceLive
         PageRenderEngine.shared.request(.init(key: key, doc: doc, index: index, pixelWidth: width,
                                               night: night, diskCache: !isZooming,
-                                              align: session.pageAlign(index))) { [weak self] doneKey, img in
+                                              align: session.pageAlign(index),
+                                              enhance: enhance)) { [weak self] doneKey, img in
             guard let self, !self.tornDown else { return }
             // 页已滚出留图范围：不写（图已在缓存里，滑回来照样命中）
             guard self.keepRange.contains(index) else { return }
@@ -223,7 +228,9 @@ extension ReaderView {
                 return
             }
             // 宽度已变（连续缩放）：这页空着就先顶上，等正解替换；夜间标志必须相符
-            if self.images[index] == nil, night == self.nightLive { self.setImage(index, img) }
+            if self.images[index] == nil, night == self.nightLive, enhance == self.enhanceLive {
+                self.setImage(index, img)
+            }
         }
     }
 
@@ -255,7 +262,8 @@ extension ReaderView {
             let key = tileKey(page: i, normRect: norm)
             wanted.insert(key)
             let wantPx = Int((norm.width * pageW * scale).rounded())
-            if let t = tiles[i], t.normRect == norm, abs(t.image.width - wantPx) <= 2, imagesNight == nightLive { continue }
+            if let t = tiles[i], t.normRect == norm, abs(t.image.width - wantPx) <= 2, imagesNight == nightLive,
+               !staleTiles.contains(i) { continue }
             if let hit = PageRenderEngine.shared.cached(key) {
                 setTileImage(i, PageTile(normRect: norm, image: hit))
                 continue
@@ -267,7 +275,7 @@ extension ReaderView {
             let tileScale = (pageW * scale) / max(1, natural.width)
             PageRenderEngine.shared.request(.init(key: key, page: page, pixelWidth: nil,
                                                   tileRect: sub, tileScale: tileScale, night: nightLive,
-                                                  align: align)) { [weak self] doneKey, img in
+                                                  align: align, enhance: enhanceLive)) { [weak self] doneKey, img in
                 guard let self, !self.tornDown, self.keepRange.contains(i) else { return }
                 if doneKey == self.tileKey(page: i, normRect: norm) {
                     self.setTileImage(i, PageTile(normRect: norm, image: img))
@@ -287,6 +295,12 @@ extension ReaderView {
     func scheduleNightRender() {
         applyNightColors()
         guard imagesNight != nightLive else {
+            settleRender(nightRadius: Self.nightWarmRadius)
+            return
+        }
+        // 增强参数刚换、屏幕上还有旧参数的图：原地反转会把旧图按新键喂进缓存，改走整批重出
+        guard staleImages.isEmpty, staleTiles.isEmpty else {
+            imagesNight = nightLive
             settleRender(nightRadius: Self.nightWarmRadius)
             return
         }
