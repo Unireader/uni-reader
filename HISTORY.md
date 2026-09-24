@@ -3,6 +3,31 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 笔记小窗：窗口比阅读栏窄时不折行、也没法横向滚动（2026-09-24）
+
+用户报「悬浮小窗没有 wrap，且不 wrap 的时候也没有滚动」。根因：`MarkdownDocEditor`（整篇笔记编辑区，标签页
+与笔记小窗共用）把引擎的 `readingWidth` 定死在 760pt 居中阅读栏，笔记小窗默认 460pt、可缩到 280pt，
+远窄于这个值——文本仍按 760pt 折行，小窗里自然看不到折行效果；而横向滚动条又被配置成 `.vertical`
+（只留竖向），所以超出窗口的部分完全看不到、也够不着。
+
+🔴 第一版按 `.onGeometryChange` 测得的容器宽度动态把 `readingWidth` 改传 `nil`，编译过、**实测无效**——
+查了 `swift-markdown-engine`（`NativeTextViewWrapper.swift`）才发现 `readingWidth` 换算出的
+`textContainer.size` / `widthTracksTextView` **只在 `makeNSView` 那一次生效**，后续 `updateNSView`
+根本不读这个字段，wrap 宽度创建时定了就不再变——而 SwiftUI 首次渲染时几何测量还没跑完，
+`boxWidth` 必然是初始值，所以小窗第一次装起来就已经把 760pt 焊死了，后面再怎么改配置值都没用。
+改成不依赖运行时测量：`MarkdownDocEditor` 新增 `usesReadingColumn`（创建前就定死，不随宽度变化），
+`MarkdownDocView` 按 `showsHeader`（笔记小窗恒为 `false`）在构造时把它传下去——笔记小窗从建立那一刻起
+就没有居中阅读栏这回事，直接按视口宽度折行（同 `AgentMarkdownView` 窄面板的做法）；标签页整篇阅读
+（`showsHeader: true`）行为不变，仍是居中定宽阅读栏。改动在 `Sources/Markdown/MarkdownDocEditor.swift`
++ `Sources/Window/Markdown/MarkdownDocView.swift`，**用户实测通过**。
+
+跨显示器拖动那条（「悬浮小窗不能跨显示器」）根因也已查清：`NoteWindowController.show(attachedTo:)`
+用 `host.addChildWindow` 把小窗做成阅读窗的真 AppKit 子窗口，而子窗口有一条已知的系统限制——
+只能停留在父窗口所在的那块显示器，拖不到别的屏（`RefWindowController` 参考窗用的是同一套机制，
+大概率同病，只是还没人反馈）。要支持跨屏就得放弃子窗口关系换成纯 `NSWindow.level` 悬浮，代价是
+「随阅读窗一起移动 / 一起最小化」不再是免费的系统行为，得自己写。**用户 2026-09-24 定：先不动代码，
+只记录**——见 `TODO.md` 已知欠账。
+
 ## ✅ MCP：Markdown 笔记局部修改 + 分页读取（2026-09-24，`MCP-PLAN.md §19`）
 
 用户原话：「优化编辑文档 tool，达到 code agent 那种能够修改部分内容的能力，以及读取 tool 也细化优化下」。

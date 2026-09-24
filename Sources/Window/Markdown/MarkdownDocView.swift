@@ -67,9 +67,12 @@ final class MarkdownDocView: NSView {
         @ObservedObject var box: TextBox
         let documentId: String
         let wiki: WorkspaceWikiIndex?
+        /// 笔记小窗不要居中阅读栏（见 `MarkdownDocEditor.usesReadingColumn`）。
+        let usesReadingColumn: Bool
         let onOpenNote: (String) -> Void
         var body: some View {
-            MarkdownDocEditor(text: $box.text, documentId: documentId, wiki: wiki, onOpenNote: onOpenNote,
+            MarkdownDocEditor(text: $box.text, documentId: documentId, wiki: wiki,
+                              usesReadingColumn: usesReadingColumn, onOpenNote: onOpenNote,
                               onPersistScrollOffset: { ScrollMemory.shared.offsets[$0] = $1 },
                               restoreScrollOffset: { ScrollMemory.shared.offsets[$0] })
         }
@@ -91,6 +94,7 @@ final class MarkdownDocView: NSView {
         self.relay = relay
         documentId = "md-\(ref.key)"
         host = NSHostingView(rootView: Root(box: box, documentId: documentId, wiki: workspace.wiki,
+                                            usesReadingColumn: showsHeader,
                                             onOpenNote: { [relay] in relay.onOpen($0) }))
         host.sizingOptions = []
         super.init(frame: .zero)
