@@ -489,6 +489,9 @@
 "Choose images to add as notes on this page" = "选择要加到这一页上的图片";
 "Saving image note…" = "正在保存图片笔记…";
 "Saved as image note" = "已存为图片笔记";
+"Save as Image Note" = "存为图片笔记";
+"Image copied" = "已复制图片";
+"Image" = "图片";
 "Could not save the image." = "图片没能保存。";
 "Importing image…" = "正在导入图片…";
 "Saved %d image notes" = "已存为 %d 条图片笔记";

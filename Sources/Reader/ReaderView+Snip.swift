@@ -1,8 +1,9 @@
 import AppKit
 
 /// 问 AI 与框选截图（逻辑同 SwiftUI 版 `ReaderSurface+Snip` 与划字发送，逐条移植）：
-///  · ⌥ 拖（或常驻截图工具）框一块 → 松手在指针处问「发给 Agent / 网页 AI」→ 按页重渲成图投递；
-///  · ⌥⇧ 拖（或拖到一半按上 ⇧）→ 存为图片笔记；
+///  · ⌥ 拖（或常驻截图工具）框一块 → 松手在指针处弹一个菜单：问 Agent / 问网页 AI / 复制图片 / 存为图片笔记
+///    （2026-09-24 用户要求三件事并到一个菜单里，不用再记修饰键）→ 按页重渲成图；
+///  · ⌥⇧ 拖（或拖到一半按上 ⇧）→ 直接存为图片笔记，不问（老快捷方式，留着）；
 ///  · 划字「问 AI」、右键「和 AI 讨论本页」。
 extension ReaderView {
 
@@ -60,7 +61,8 @@ extension ReaderView {
             finishSnipAsImageNote(start: s.start, end: s.end)
             return
         }
-        // 松手先问发给谁（用户 2026-09-19）。问的时候框留着；菜单放到下一拍弹（它会占着主线程直到选完）
+        // 松手先问做什么（用户 2026-09-19 起问发给谁，2026-09-24 把复制 / 图片笔记也并进来）。
+        // 问的时候框留着；菜单放到下一拍弹（它会占着主线程直到选完）
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let target = self.chooseSnipTarget()
@@ -69,39 +71,67 @@ extension ReaderView {
             switch target {
             case .agent: self.finishSnipToAgent(start: s.start, end: s.end)
             case .consult: self.finishSnipToConsult(start: s.start, end: s.end)
+            case .copy: self.finishSnipCopy(start: s.start, end: s.end)
+            case .imageNote: self.finishSnipAsImageNote(start: s.start, end: s.end)
             case nil: break
             }
         }
     }
 
-    /// 在指针处弹系统菜单：发给 Agent 还是网页 AI。只有一个可用时不问；两个都不可用提示一句。
+    /// 在指针处弹系统菜单：上一组是问 AI（Agent / 网页 AI，哪个可用列哪个），下一组是复制图片、存为图片笔记。
+    /// 「复制图片」永远在，所以菜单永远弹（不再有「只有一个选项就不问」）。
     func chooseSnipTarget() -> SnipTarget? {
         let web = AIPanelModel.shared.currentProvider
-        var options: [(SnipTarget, String, String, String)] = []
+        var ask: [(SnipTarget, String, String?, String)] = []
         if AgentPanelModel.shared.canAttach(from: session.windowID) {
-            options.append((.agent, AgentConfig.displayName, L("Agent"), "sparkles"))
+            ask.append((.agent, String(format: L("Ask %@"), AgentConfig.displayName), L("Agent"), "sparkles"))
         }
         if AIPanelModel.shared.enabled {
-            options.append((.consult, web?.name ?? L("AI"), L("Web AI"), web?.icon ?? "bubble.left.and.text.bubble.right"))
+            ask.append((.consult, String(format: L("Ask %@"), web?.name ?? L("AI")), L("Web AI"),
+                        web?.icon ?? "bubble.left.and.text.bubble.right"))
         }
-        guard options.count > 1 else {
-            if options.isEmpty { showToast(.fail, L("No AI is available. Turn one on in Settings.")) }
-            return options.first?.0
+        var keep: [(SnipTarget, String, String?, String)] = [(.copy, L("Copy Image"), nil, "doc.on.doc")]
+        if session.documentId != nil {
+            keep.append((.imageNote, L("Save as Image Note"), nil, "photo.badge.plus"))
         }
         let picker = SnipTargetPicker()
         let menu = NSMenu()
         menu.autoenablesItems = false
-        for (target, name, kind, icon) in options {
-            let item = NSMenuItem(title: String(format: L("Ask %@"), name), action: #selector(SnipTargetPicker.pick(_:)),
-                                  keyEquivalent: "")
-            item.target = picker
-            item.representedObject = target.rawValue
-            item.subtitle = kind
-            item.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
-            menu.addItem(item)
+        for (n, group) in [ask, keep].enumerated() where !group.isEmpty {
+            if n > 0, menu.numberOfItems > 0 { menu.addItem(.separator()) }
+            for (target, title, subtitle, icon) in group {
+                let item = NSMenuItem(title: title, action: #selector(SnipTargetPicker.pick(_:)), keyEquivalent: "")
+                item.target = picker
+                item.representedObject = target.rawValue
+                item.subtitle = subtitle
+                item.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
+                menu.addItem(item)
+            }
         }
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
         return picker.picked
+    }
+
+    /// 复制图片：与图片笔记同一条渲染路径（原清晰度），PNG + TIFF 两种都放上剪贴板，粘到哪儿都认。
+    func finishSnipCopy(start: CGPoint, end: CGPoint) {
+        guard let pdf = session.pdf, let (region, _) = snipRegion(start: start, end: end) else { return }
+        showToast(.working, L("Capturing…"))
+        let align = session.scanAlign
+        PageRenderEngine.shared.renderOffMain {
+            PageSnip.renderImage(pdf: pdf, region: region, align: align).flatMap { out -> (Data, Data?)? in
+                let rep = NSBitmapImageRep(cgImage: out.image)
+                guard let png = rep.representation(using: .png, properties: [:]) else { return nil }
+                return (png, rep.tiffRepresentation)
+            }
+        } completion: { [weak self] result in
+            guard let self else { return }
+            guard let (png, tiff) = result else { self.showToast(.fail, L("Could not capture that area.")); return }
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setData(png, forType: .png)
+            if let tiff { pb.setData(tiff, forType: .tiff) }
+            self.showToast(.ok, L("Image copied"))
+        }
     }
 
     private func snipRegion(start: CGPoint, end: CGPoint) -> (PageSnip.Region, PageSnip.Slice)? {

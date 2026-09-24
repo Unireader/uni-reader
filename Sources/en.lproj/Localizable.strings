@@ -487,6 +487,9 @@
 "Choose images to add as notes on this page" = "Choose images to add as notes on this page";
 "Saving image note…" = "Saving image note…";
 "Saved as image note" = "Saved as image note";
+"Save as Image Note" = "Save as Image Note";
+"Image copied" = "Image copied";
+"Image" = "Image";
 "Could not save the image." = "Could not save the image.";
 "Importing image…" = "Importing image…";
 "Saved %d image notes" = "Saved %d image notes";

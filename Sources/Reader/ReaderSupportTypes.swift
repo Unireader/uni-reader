@@ -196,8 +196,8 @@ enum LassoHandle: Equatable, CaseIterable {
     }
 }
 
-/// 框选截图发给谁：Agent 面板，还是网页版咨询 AI。
-enum SnipTarget: String { case agent, consult }
+/// 框选截图松手后做什么：问 Agent / 问网页 AI / 复制图片 / 存为图片笔记（同一个菜单里选，2026-09-24 用户定）。
+enum SnipTarget: String { case agent, consult, copy, imageNote }
 
 /// 「发给谁」那个弹出菜单的动作接收者：菜单项点下去记住是哪一项（`popUp` 返回后读 `picked`）。
 final class SnipTargetPicker: NSObject {

@@ -591,7 +591,7 @@ enum AgentItemViews {
         col.alignment = .trailing
         col.spacing = 6
         if !images.isEmpty {
-            let row = NSStackView(views: images.map { AgentImageThumbView(image: $0, height: 96) })
+            let row = NSStackView(views: images.map { AgentImageThumbView(image: $0, side: 56) })
             row.spacing = 6
             col.addArrangedSubview(row)
         }
@@ -705,26 +705,99 @@ enum AgentItemViews {
     }
 }
 
-/// 一张图片的缩略显示（输入框上的待发图片 / 对话里用户发过的图片）：按高度等比、宽度封顶 3 倍高。
+/// 图片缩略图（输入框上待发的 / 对话里用户发过的）：**固定的圆角正方形，等比填满、裁掉多余**，
+/// 不追求看清内容（2026-09-24 用户定：原先按宽高比显示，宽截图成了一长条，不好看）。
+/// 看内容：**悬停**一会儿弹系统 popover 预览（同工具栏「目录」面板那种），移开就收；**单击**开固定窗口看原图
+/// （`AgentImageViewer`）。
 final class AgentImageThumbView: NSView {
-    init(image: AgentImage, height: CGFloat) {
+    private let image: AgentImage
+    private var hoverTimer: Timer?
+    private var preview: NSPopover?
+
+    /// 悬停多久才弹预览：鼠标只是划过去时不闪一下。
+    private static let hoverDelay: TimeInterval = 0.35
+    /// 预览里图片最长边（点）。
+    private static let previewMax: CGFloat = 360
+
+    init(image: AgentImage, side: CGFloat) {
+        self.image = image
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 6
+        layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.cgColor
-        layer?.contentsGravity = .resizeAspect
-        toolTip = image.caption
-        var aspect: CGFloat = 1
-        if let img = NSImage(data: image.data) {
-            layer?.contents = img
-            if img.size.height > 0 { aspect = img.size.width / img.size.height }
-        }
-        widthAnchor.constraint(equalToConstant: min(height * 3, height * aspect)).isActive = true
-        heightAnchor.constraint(equalToConstant: height).isActive = true
+        layer?.contentsGravity = .resizeAspectFill
+        if let img = NSImage(data: image.data) { layer?.contents = img }
+        widthAnchor.constraint(equalToConstant: side).isActive = true
+        heightAnchor.constraint(equalToConstant: side).isActive = true
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    deinit { hoverTimer?.invalidate() }
+
+    // MARK: 单击 = 固定窗口
+
+    override func mouseDown(with event: NSEvent) {}   // 别让输入框那层把它当成「点空白处进输入态」
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        closePreview()
+        AgentImageViewer.shared.show(image, near: window)
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    // MARK: 悬停 = popover 预览
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for t in trackingAreas { removeTrackingArea(t) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hoverTimer?.invalidate()
+        hoverTimer = Timer.scheduledTimer(withTimeInterval: Self.hoverDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showPreview() }
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) { closePreview() }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { closePreview() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    private func showPreview() {
+        guard window != nil, preview == nil, let img = NSImage(data: image.data) else { return }
+        let scale = window?.backingScaleFactor ?? 2
+        if let rep = img.representations.first, rep.pixelsWide > 0, rep.pixelsHigh > 0 {
+            img.size = NSSize(width: CGFloat(rep.pixelsWide) / scale, height: CGFloat(rep.pixelsHigh) / scale)
+        }
+        let fit = min(1, Self.previewMax / max(img.size.width, img.size.height, 1))
+        let size = NSSize(width: max(40, img.size.width * fit), height: max(40, img.size.height * fit))
+        let view = NSImageView(frame: NSRect(origin: .zero, size: size))
+        view.image = img
+        view.imageScaling = .scaleProportionallyUpOrDown
+        let vc = NSViewController()
+        vc.view = view
+        let p = NSPopover()
+        p.contentViewController = vc
+        p.contentSize = size
+        // 自己管开合（移开就收），不交给 transient：那种要点一下别处才收
+        p.behavior = .applicationDefined
+        preview = p
+        p.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+    }
+
+    private func closePreview() {
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        preview?.close()
+        preview = nil
+    }
 }
 
 // MARK: - 输入区
@@ -815,8 +888,11 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
 
     func focus() { window?.makeFirstResponder(textView) }
 
+    /// 待发图片缩略图的边长（正方形，2026-09-24 从 56 收小；悬停预览、单击看原图）。
+    static let thumbHeight: CGFloat = 44
+
     var preferredHeight: CGFloat {
-        10 + (chat.attachments.isEmpty ? 0 : 56 + 6 + 8) + textHeight + 8 + 26 + 8
+        10 + (chat.attachments.isEmpty ? 0 : Self.thumbHeight + 8) + textHeight + 8 + 26 + 8
     }
 
     // MARK: 刷新
@@ -833,7 +909,7 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     }
 
     /// 待发图片。缩略图只在这排图片真的变了时重建；显隐与占位文字每次都要落实
-    /// （它俩管着输入框怎么摆位，漏一次空的图片条就白占 62pt）。
+    /// （它俩管着输入框怎么摆位，漏一次空的图片条就白占一条缩略图的高度）。
     private func refreshAttachments() {
         defer {
             stripScroll.isHidden = chat.attachments.isEmpty
@@ -846,11 +922,16 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         attachmentKey = ids
         for v in strip.arrangedSubviews { strip.removeArrangedSubview(v); v.removeFromSuperview() }
         for img in chat.attachments {
-            let thumb = AgentImageThumbView(image: img, height: 56)
+            let thumb = AgentImageThumbView(image: img, side: Self.thumbHeight)
             let remove = ClosureButton { [weak self] in self?.chat.removeAttachment(img.id) }
-            remove.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("Remove"))
-            remove.bezelStyle = .circular
-            remove.controlSize = .mini
+            // 移除钮压在缩略图左上角：系统的 xmark.circle.fill，白叉 + 深色半透明圆底，
+            // 白底的截图上也看得清（原先右上角那颗 mini 圆钮在白图上几乎看不见，2026-09-24 用户报）
+            let symbol = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+                .applying(.init(paletteColors: [.white, NSColor.black.withAlphaComponent(0.6)]))
+            remove.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: L("Remove"))?
+                .withSymbolConfiguration(symbol)
+            remove.imagePosition = .imageOnly
+            remove.isBordered = false
             remove.toolTip = L("Remove")
             let holder = NSView()
             thumb.translatesAutoresizingMaskIntoConstraints = false
@@ -859,11 +940,13 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
             holder.addSubview(remove)
             NSLayoutConstraint.activate([
                 thumb.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+                thumb.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
+                thumb.topAnchor.constraint(equalTo: holder.topAnchor),
                 thumb.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
-                thumb.topAnchor.constraint(equalTo: holder.topAnchor, constant: 6),
-                holder.trailingAnchor.constraint(equalTo: thumb.trailingAnchor, constant: 6),
-                remove.centerXAnchor.constraint(equalTo: thumb.trailingAnchor),
-                remove.centerYAnchor.constraint(equalTo: thumb.topAnchor),
+                remove.leadingAnchor.constraint(equalTo: thumb.leadingAnchor, constant: 2),
+                remove.topAnchor.constraint(equalTo: thumb.topAnchor, constant: 2),
+                remove.widthAnchor.constraint(equalToConstant: 16),
+                remove.heightAnchor.constraint(equalToConstant: 16),
             ])
             strip.addArrangedSubview(holder)
         }
@@ -954,9 +1037,9 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         let b = bounds
         var y: CGFloat = 10
         if !stripScroll.isHidden {
-            stripScroll.frame = NSRect(x: 12, y: y, width: b.width - 24, height: 62)
+            stripScroll.frame = NSRect(x: 12, y: y, width: b.width - 24, height: Self.thumbHeight)
             strip.frame = NSRect(origin: .zero, size: strip.fittingSize)
-            y += 62 + 8
+            y += Self.thumbHeight + 8
         }
         textScroll.frame = NSRect(x: 12 - 5, y: y, width: b.width - 24 + 10, height: textHeight)
         placeholder.frame = NSRect(x: 12, y: y, width: b.width - 24, height: 18)
