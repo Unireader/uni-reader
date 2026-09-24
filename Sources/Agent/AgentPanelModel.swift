@@ -107,8 +107,46 @@ final class AgentPanelModel: ObservableObject {
         chats[window]?.teardown()
         let c = AgentChat(cwd: cwd)
         c.contextProvider = { [weak self] in self?.context(for: window) }
+        c.mentionProvider = { [weak self] in
+            self?.readers[window]?.controller.map { Self.mentions(in: $0.workspace) } ?? []
+        }
         chats[window] = c
         return c
+    }
+
+    /// 输入框 `@` 的候选：书库里的 PDF + 全部源里的 Markdown 笔记，混在一起按最近打开排
+    /// （引用源的笔记没有「上次打开」，排在最后）。
+    /// PDF 要逐篇查一次库 + stat 文件，所以只在弹出候选时取一次（不是每敲一个字取一次）。
+    static func mentions(in ws: WorkspaceManager) -> [AgentMention] {
+        var out: [(Date, AgentMention)] = []
+        for d in ws.documents {
+            let path = ws.currentFilePath(documentId: d.id)
+            var uri: String
+            if let path {
+                uri = URL(fileURLWithPath: path).absoluteString
+            } else {
+                var link = DeepLink()
+                link.workspacePath = ws.folder?.path
+                link.workspaceId = ws.store?.workspaceId
+                link.documentId = d.id
+                uri = link.absoluteString
+            }
+            let file = path.map { ($0 as NSString).lastPathComponent } ?? d.title + ".pdf"
+            out.append((d.lastOpenedAt, AgentMention(kind: .pdf, id: d.id, name: file,
+                                                     detail: file == d.title + ".pdf" ? "" : d.title, uri: uri)))
+        }
+        for n in ws.allNotes {
+            guard let url = ws.noteURL(n.ref) else { continue }
+            let src = ws.noteSource(id: n.ref.sourceID)?.name ?? ""
+            let place = [src, n.ref.folder].filter { !$0.isEmpty }.joined(separator: " / ")
+            out.append((n.lastOpenedAt ?? .distantPast,
+                        AgentMention(kind: .note, id: n.ref.key, name: url.lastPathComponent,
+                                     detail: place, uri: url.absoluteString)))
+        }
+        // 稳定排序：同一时间（多为「没打开过」）保持原来的先后
+        return out.enumerated()
+            .sorted { $0.element.0 != $1.element.0 ? $0.element.0 > $1.element.0 : $0.offset < $1.offset }
+            .map(\.element.1)
     }
 
     /// 这扇阅读窗口能不能把东西发给 Agent（已开工作区 = 有工作目录）。框选截图松手时据此决定菜单里有没有 Agent 那一项。

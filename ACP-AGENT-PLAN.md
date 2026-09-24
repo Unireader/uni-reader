@@ -182,3 +182,19 @@ Agent 的回复从前只解析行内语法（`AttributedString(markdown:)` 的 `
   整篇编辑区同属「Markdown 引擎」那条例外，界面其余部分仍是 AppKit。
 - **没做**：代码块语法高亮（要另取引擎的 `MarkdownEngineCodeBlocks` 产品 + `HighlighterSwift` 依赖，
   改 `project.yml` 要先跟用户确认）；裸 URL 不会自动变成链接（引擎只认 Markdown 语法写的链接）。
+
+## 8. 输入框 `@` 选文件（2026-09-24）
+
+- **候选** = 这扇窗口工作区书库里的 PDF + 全部笔记源（内建 + 引用）里的 Markdown 笔记，混在一起按
+  「上次打开」排（`AgentPanelModel.mentions(in:)`，经 `AgentChat.mentionProvider` 取；PDF 要逐篇查库 + stat，
+  所以**一次弹出只取一次**，打字只重新过滤）。用户 2026-09-24 在「只列笔记 / 扫 Agent 工作目录」之间选了这一种。
+- 🔴 **只给名字和位置，不给内容**（用户定）：输入框里插 `@文件名 `；发送时对**正文里还留着 `@文件名` 的**
+  各附一个 ACP `resource_link`（uri = 本机 file URL，PDF 本机找不到文件时退成 `unireader://` 链接；
+  title = 书名 / 所在目录；description 里写 document_id / note_ref，让 Agent 走 MCP 读）。
+  `resource_link` 是 ACP 规定所有 Agent 都得收的基本块，不用看握手能力。回放时这种块不拼进用户那句话。
+- **匹配**（`AgentMentionMatch`，纯 Foundation，spike `agent-mention-test.swift` 29 项）：`@` 在行首或空白后、
+  到光标之间没有空白才算在输入提及（邮箱不算）；分档 名字开头 > 名字含 > 第二行含 > 名字模糊 > 名字 + 第二行模糊，
+  不分大小写 / 变音符号，最多 50 条。
+- **浮窗**（`Window/AI/AgentMentionPopup`）：不会变成 key 的子窗口，菜单材质 + `.inset` 表格 + 系统文件图标，
+  摆在 `@` 上方（放不下才放下方）。焦点始终留在输入框：↑↓ / ⌃P⌃N 选、回车 / Tab 确认、Esc 关（这个 `@`
+  不再自己弹出，直到离开它）、鼠标单击也能选；组字中不动它、按键也不截。

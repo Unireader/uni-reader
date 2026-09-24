@@ -751,6 +751,14 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     private var modeKey: String?
     private var configKey: String?
     private var sendKey: String?
+    /// `@` 提及（`ACP-AGENT-PLAN.md §8`）：候选浮窗、正在输入的那个 `@…` 的范围、
+    /// 这次弹出时取的候选（一次弹出只取一次，打字只重新过滤）、按 Esc 关掉的是哪个 `@`（它不再自己弹出来）、
+    /// 以及已经选进输入框的文件（发送时还留在正文里的才附上）。
+    private let mentionPopup = AgentMentionPopup()
+    private var mentionRange: NSRange?
+    private var mentionCandidates: [AgentMention]?
+    private var dismissedMentionAt: Int?
+    private var pickedMentions: [AgentMention] = []
 
     init(chat: AgentChat) {
         self.chat = chat
@@ -774,6 +782,8 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         textView.isVerticallyResizable = true
         textView.autoresizingMask = [.width]
         textView.onSend = { [weak self] in self?.sendTapped() }
+        textView.onKey = { [weak self] in self?.handleMentionKey($0) ?? false }
+        mentionPopup.onPick = { [weak self] in self?.pickMention($0) }
         textScroll.documentView = textView
         textScroll.drawsBackground = false
         textScroll.hasVerticalScroller = true
@@ -992,6 +1002,79 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
             textHeight = h
             superview?.needsLayout = true
         }
+        updateMention()
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) { updateMention() }
+
+    func textDidEndEditing(_ notification: Notification) { closeMention() }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { closeMention() }   // 子窗口挂在旧窗口上，得先摘掉
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    // MARK: @ 提及
+
+    /// 光标前正在输入 `@…` 就弹出 / 刷新候选，否则收起。组字中（输入法还没上屏）先不动。
+    private func updateMention() {
+        guard !textView.hasMarkedText() else { return }
+        let sel = textView.selectedRange()
+        guard textView.isEditable, let win = textView.window, sel.length == 0,
+              let hit = AgentMentionMatch.activeQuery(in: textView.string as NSString, caret: sel.location) else {
+            closeMention()
+            return
+        }
+        if dismissedMentionAt == hit.range.location { return }
+        dismissedMentionAt = nil
+        if mentionCandidates == nil || mentionRange?.location != hit.range.location {
+            mentionCandidates = chat.mentionProvider()
+        }
+        mentionRange = hit.range
+        let list = AgentMentionMatch.rank(mentionCandidates ?? [], query: hit.query)
+        guard !list.isEmpty else { mentionPopup.hide(); return }
+        let anchor = textView.firstRect(forCharacterRange: NSRange(location: hit.range.location, length: 0),
+                                        actualRange: nil)
+        mentionPopup.show(list, anchor: anchor, parent: win)
+    }
+
+    private func closeMention() {
+        mentionPopup.hide()
+        mentionRange = nil
+        mentionCandidates = nil
+        dismissedMentionAt = nil
+    }
+
+    /// 候选开着时，输入框把这几个键交给候选：↑↓（及 ⌃P / ⌃N）选、回车 / Tab 确认、Esc 关掉。
+    private func handleMentionKey(_ event: NSEvent) -> Bool {
+        guard mentionPopup.isShown else { return false }
+        let ctrl = event.modifierFlags.contains(.control)
+        let ch = event.charactersIgnoringModifiers ?? ""
+        switch event.keyCode {
+        case 125: mentionPopup.move(1); return true
+        case 126: mentionPopup.move(-1); return true
+        case 36, 76, 48:
+            if let m = mentionPopup.selectedItem { pickMention(m) }
+            return true
+        case 53:
+            let at = mentionRange?.location
+            closeMention()
+            dismissedMentionAt = at
+            return true
+        default:
+            if ctrl, ch == "n" { mentionPopup.move(1); return true }
+            if ctrl, ch == "p" { mentionPopup.move(-1); return true }
+            return false
+        }
+    }
+
+    /// 把 `@查询` 换成 `@文件名 `（走 `insertText`，能撤销），记下这个文件，发送时附上。
+    private func pickMention(_ m: AgentMention) {
+        guard let r = mentionRange, NSMaxRange(r) <= (textView.string as NSString).length else { closeMention(); return }
+        closeMention()
+        window?.makeFirstResponder(textView)
+        textView.insertText(m.token + " ", replacementRange: r)
+        pickedMentions.append(m)
     }
 
     private var canSend: Bool {
@@ -1001,7 +1084,10 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     @objc private func sendTapped() {
         if chat.phase == .running { chat.cancel(); return }
         guard canSend else { return }
-        chat.send(textView.string)
+        let text = textView.string
+        chat.send(text, mentions: AgentMention.stillReferenced(pickedMentions, in: text))
+        pickedMentions = []
+        closeMention()
         textView.string = ""
         textDidChange(Notification(name: NSText.didChangeNotification))
     }
@@ -1038,8 +1124,11 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
 /// 输入框：回车发送；⇧ / ⌥ 回车换行；组字中（有 marked text）回车交给输入法上屏。
 final class ComposerTextView: NSTextView {
     var onSend: () -> Void = {}
+    /// 先给宿主看一眼（`@` 候选开着时要截 ↑↓ / 回车 / Tab / Esc）；返回 true = 已处理。组字中不问。
+    var onKey: (NSEvent) -> Bool = { _ in false }
 
     override func keyDown(with event: NSEvent) {
+        if !hasMarkedText(), onKey(event) { return }
         let isReturn = event.keyCode == 36 || event.keyCode == 76
         if isReturn, !hasMarkedText(), event.modifierFlags.intersection([.shift, .option]).isEmpty {
             onSend()

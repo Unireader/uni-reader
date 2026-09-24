@@ -92,6 +92,8 @@ final class AgentChat: ObservableObject {
     let cwd: URL
     /// 现取「用户在看什么」。宿主决定来源：内置面板 = 它所在的阅读窗口；浮窗 = 最近的 key 阅读窗口。
     var contextProvider: () -> AgentReaderContext? = { nil }
+    /// 输入框 `@` 的候选（这扇窗口工作区里的 PDF + Markdown 笔记，最近打开的在前）。弹出候选时取一次。
+    var mentionProvider: () -> [AgentMention] = { [] }
 
     @Published private(set) var items: [AgentItem] = []
     @Published private(set) var phase: Phase = .idle
@@ -230,7 +232,8 @@ final class AgentChat: ObservableObject {
 
     // MARK: - 发消息
 
-    func send(_ raw: String) {
+    /// `mentions`：输入框里 `@` 选中的文件，各附一个 `resource_link`（只有名字和位置，不带内容）。
+    func send(_ raw: String, mentions: [AgentMention] = []) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let id = sessionId, let c = connection, phase == .idle else { return }
         // 握手说不收图：图片留在输入框上，这句话不发，提示一下（发出去 Agent 会整条报错）
@@ -245,6 +248,11 @@ final class AgentChat: ObservableObject {
         // 🔴 用户的话放**第一块**、上下文块跟在后面：Kimi 拿第一块文字给会话起标题（spike 实测），
         // 上下文在前的话历史列表里每条都叫「<unireader-context>」。图片夹在两者之间
         var blocks: [ContentBlock] = [.text(TextContent(text: text))]
+        for m in mentions {
+            blocks.append(.resourceLink(ResourceLinkContent(
+                uri: m.uri, name: m.name, title: m.detail.isEmpty ? nil : m.detail,
+                description: m.agentDescription, mimeType: m.mimeType)))
+        }
         for img in images {
             blocks.append(.image(ImageContent(data: img.data.base64EncodedString(), mimeType: img.mimeType)))
         }

@@ -110,6 +110,9 @@ enum AgentTranscript {
                 items.append(AgentItem(kind: .user("", images: [pic])))
             }
             return true
+        case .userMessageChunk(.resourceLink):
+            // 回放：`@` 附上的文件，用户那句话里已经写着 `@名字`，不再把 URI 拼进去
+            return false
         case .userMessageChunk(let b):
             guard let raw = text(of: b) else { return false }
             let t = stripHidden(raw)
