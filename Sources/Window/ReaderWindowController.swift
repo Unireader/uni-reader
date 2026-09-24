@@ -37,6 +37,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// 参考窗的独立窗口形态（`refWindow.mode == .window` 且开着时才存在，关掉即销毁——
     /// 位置/尺寸靠 frame autosave 记，下次重建照旧）。
     private var refWindowController: RefWindowController?
+    /// 这扇阅读窗开着的 Markdown 笔记小窗（`NoteWindowController`，一篇一扇）。
+    private var noteWindows: [NoteWindowController] = []
 
     /// 在 `WorkspaceRegistry` 的登记号（关窗时按它归还工作区实例）。MCP 的 `window_id` 也用它（`MCPFacade`）。
     let windowId = UUID()
@@ -199,6 +201,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         sidebar.onOpenRecent = { [weak self] in self?.openRecentWorkspace($0) }
         sidebar.onDropFiles = { [weak self] in self?.ingest(urls: $0) }
         sidebar.onOpenPDF = { [weak self] in self?.openPDF() }
+        sidebar.onOpenNoteWindow = { [weak self] ref in self?.openNoteWindow(ref) }
         sidebar.onOpenInNewWindow = { [weak self] docId in
             guard let self else { return }
             AppDelegate.shared?.openReaderWindow(workspacePath: self.workspace.folder?.standardizedFileURL.path, docId: docId)
@@ -510,6 +513,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         saveFrame()          // ⌘Q 不发 `windowWillClose`，最后这一下尺寸靠这里落下来
         refWindow.close()
         dismissRefWindow()   // 订阅要下一拍才跑，关窗/退出等不起，这里直接关
+        dismissNoteWindows() // 先存再关（退出时 `willTerminate` 也会补存，这里不依赖它）
         AIPanelModel.shared.releaseHost(.inline(session.windowID))
         AIPanelModel.shared.forgetInline(session.windowID)
         AgentPanelModel.shared.readerClosed(tabs.windowID)
@@ -1082,6 +1086,37 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                 onGotoMain: { [weak self] page in self?.session.jump(page: page, frac: 0, kind: .list) })
         }
         refWindowController?.show(attachedTo: window)
+    }
+
+    // MARK: 笔记小窗
+
+    /// 把一篇笔记开成小窗。这篇已经有小窗了就把那扇提到前面（按笔记绑定，一篇一扇）。
+    func openNoteWindow(_ ref: NoteRef) {
+        if let hit = noteWindows.first(where: { $0.ref == ref }) {
+            hit.show(attachedTo: window)
+            return
+        }
+        let c = NoteWindowController(ref: ref, workspace: workspace)
+        c.canSwitch = { [weak self, weak c] target in
+            guard let self, let other = self.noteWindows.first(where: { $0 !== c && $0.ref == target }) else { return true }
+            other.show(attachedTo: self.window)
+            return false
+        }
+        c.onOpenInTab = { [weak self] ref in
+            guard let self else { return }
+            self.tabs.openMarkdown(ref)
+            self.window?.makeKeyAndOrderFront(nil)
+        }
+        c.onClose = { [weak self] c in self?.noteWindows.removeAll { $0 === c } }
+        noteWindows.append(c)
+        workspace.noteWasOpened(ref)
+        c.show(attachedTo: window)
+    }
+
+    private func dismissNoteWindows() {
+        let all = noteWindows
+        noteWindows = []
+        for c in all { c.dismiss() }
     }
 
     private func dismissRefWindow() {

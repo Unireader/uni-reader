@@ -280,6 +280,9 @@ extension WorkspaceManager {
                let row = markdownDocs.first(where: { $0.relPath == ref.relPath }) {
                 try? store?.touchMarkdownDoc(id: row.id)
             }
+            // 同一篇可能同时开在标签页和笔记小窗里：告诉其余编辑器换成这一版
+            NotificationCenter.default.post(name: .markdownNoteSavedInApp, object: self,
+                                            userInfo: ["key": ref.key, "text": text])
             return true
         } catch {
             lastError = "\(error)"
@@ -447,4 +450,7 @@ extension Notification.Name {
     /// 笔记文件被外部改了（`object` = 那个 `WorkspaceManager`，`userInfo["paths"]` = `Set<String>`，
     /// `NoteFileWatcher.canonicalPath` 口径）。开着的 `MarkdownDocView` 听它重读正文。
     static let markdownNotesChangedOnDisk = Notification.Name("UniReader.markdownNotesChangedOnDisk")
+    /// App 里存了某篇笔记（`object` = `WorkspaceManager`，`userInfo["key"]` = `NoteRef.key`，`["text"]` = 正文）。
+    /// 同一篇开在别的编辑器里（标签页 / 笔记小窗）的据此同步。
+    static let markdownNoteSavedInApp = Notification.Name("UniReader.markdownNoteSavedInApp")
 }

@@ -20,6 +20,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onDropFiles: ([URL]) -> Void = { _ in }
     var onOpenPDF: () -> Void = {}
     var onOpenInNewWindow: (String) -> Void = { _ in }
+    /// 笔记右键「打开为小窗」（`NoteWindowController`）。
+    var onOpenNoteWindow: (NoteRef) -> Void = { _ in }
 
     private let outline = NSOutlineView()
     private let scroll = NSScrollView()
@@ -482,6 +484,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// md 笔记的右键菜单。没有「分组 / 排序 / 关联为同一文档」那一排——那些是 PDF 书库的事。
     private func buildNoteMenu(_ m: NSMenu, note: NoteItem) {
         let external = workspace.noteSource(id: note.ref.sourceID)?.kind == .reference
+        m.addItem(ClosureMenuItem(L("Open in Small Window")) { [weak self] in self?.onOpenNoteWindow(note.ref) })
+        m.addItem(.separator())
         m.addItem(ClosureMenuItem(L("Rename…")) { [weak self] in
             self?.textPrompt(title: L("Rename Note"), placeholder: L("Note name"), initial: note.title) { name in
                 guard let self, let newRef = self.workspace.renameNote(note.ref, to: name) else {

@@ -274,3 +274,21 @@ MCP 工具（完整的列笔记 / 按任意笔记读取；当前修改只针对�
   引擎留了 `onPersistScrollOffset` / `restoreScrollOffset` 两个口子，存进 `MarkdownDocView.ScrollMemory`
   （按 documentId，App 活着期间有效，不落库）；另在 `viewWillMove(toWindow: nil)` 先记一次，
   不依赖托管视图什么时候真正释放。
+
+## 9. 笔记小窗（2026-09-24）
+
+用户原话：「markdown 笔记小窗方便编辑笔记（类似参考窗口那样），通过右键在 markdown 笔记上 → 打开为小窗，
+小窗按照笔记来绑定，不同的小窗可以有不同的 markdown，也可以像参考窗口那样手动选择一个」。
+
+- **形态**：独立小窗口（`Window/Markdown/NoteWindowController`），不做阅读区上的覆盖层——要同时开好几扇、
+  每扇都要打字，覆盖层做不到。**阅读窗的子窗口**（同参考窗独立窗口形态）：恒在阅读窗之上、跟着走、
+  随它最小化，关阅读窗一起关（`ReaderWindowController.shutdown` → `dismissNoteWindows`，先存再关）。
+- **按笔记绑定**：登记表在 `ReaderWindowController.noteWindows`，同一扇阅读窗里一篇最多一扇；再开同一篇 = 提到前面。
+  小窗里换笔记（工具栏笔记菜单，层级同侧栏；或点正文 `[[…]]`）时，目标若已开在另一扇小窗里就不换、改为提那扇到前面。
+- **位置记忆按笔记**（frame autosave `NoteWindow-<NoteRef.key>`）；开着没有**不记**（同参考窗：冷启动不自动弹）。
+- 内容就是 `MarkdownDocView(showsHeader: false)`，保存规则一字不差。工具栏另有「在标签页中打开」。
+- 🔴 **同一篇同时开在两个编辑器里**（标签页 + 小窗）：`saveNoteBody` 发 `.markdownNoteSavedInApp`，
+  其余编辑器本地没有未存输入就换成那一版（有就以本地为准，同外部改动的规矩）。外部改动那条通知认不出
+  App 自己写的（`selfWrittenNotes` 会滤掉），所以必须另走这一条。
+- 🔴 **文件已不在就不自动保存**（`MarkdownDocView.save`）：否则被删 / 在 App 外改名的笔记，
+  开着的编辑器（尤其是关小窗那一下）会在旧路径上把它凭空建回来。笔记没了的小窗直接关掉。

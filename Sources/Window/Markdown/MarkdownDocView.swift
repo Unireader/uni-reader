@@ -77,10 +77,13 @@ final class MarkdownDocView: NSView {
 
     /// 交给引擎的文档身份（撤销栈、滚动记忆都按它分）。
     private let documentId: String
+    /// 顶上那行标题 + 路径。笔记小窗（`NoteWindowController`）不要——窗口标题栏已经写着了。
+    private let showsHeader: Bool
 
-    init(ref: NoteRef, workspace: WorkspaceManager) {
+    init(ref: NoteRef, workspace: WorkspaceManager, showsHeader: Bool = true) {
         self.ref = ref
         self.workspace = workspace
+        self.showsHeader = showsHeader
         let text = workspace.noteBody(ref) ?? ""
         savedText = text
         box = TextBox(text)
@@ -102,6 +105,7 @@ final class MarkdownDocView: NSView {
         pathLabel.lineBreakMode = .byTruncatingMiddle
         separator.boxType = .separator
         for v in [header, titleLabel, pathLabel, separator, host] as [NSView] { addSubview(v) }
+        for v in [header, titleLabel, pathLabel, separator] as [NSView] { v.isHidden = !showsHeader }
         syncHeader()
 
         box.$text
@@ -131,6 +135,14 @@ final class MarkdownDocView: NSView {
             forName: .markdownNotesChangedOnDisk, object: workspace, queue: .main) { [weak self] note in
                 let paths = note.userInfo?["paths"] as? Set<String> ?? []
                 MainActor.assumeIsolated { self?.reloadFromDisk(ifAmong: paths) }
+            })
+        // 同一篇在别处（另一个标签 / 笔记小窗 / MCP）存了 → 跟着换成那一版。
+        // 外部改动那条通知认不出 App 自己写的（`selfWrittenNotes` 会把它当成自己的滤掉），所以另走这一条。
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .markdownNoteSavedInApp, object: workspace, queue: .main) { [weak self] note in
+                guard let key = note.userInfo?["key"] as? String,
+                      let text = note.userInfo?["text"] as? String else { return }
+                MainActor.assumeIsolated { self?.applySavedElsewhere(key: key, text: text) }
             })
         // 笔记改名 / 被删 → 顶上那行跟着变
         workspace.$noteTrees
@@ -166,6 +178,14 @@ final class MarkdownDocView: NSView {
             return
         }
         applySavedText(disk)
+    }
+
+    /// 同一篇在 App 里别的编辑器存了一版。规则同外部改动：本地有没存的输入就以本地为准。
+    /// 自己存的那一次也会收到（`savedText` 还是旧的、正文就是这一版）——走下面那行只是把 `savedText` 对齐，无害。
+    private func applySavedElsewhere(key: String, text: String) {
+        guard key == ref.key, text != savedText else { return }
+        guard box.text == savedText || box.text == text else { return }
+        applySavedText(text)
     }
 
     // MARK: - 正文查找
@@ -243,6 +263,11 @@ final class MarkdownDocView: NSView {
     private func save() {
         let text = box.text
         guard text != savedText else { return }
+        // 文件已经不在了（被删 / 在 App 外改了名）：别自动存——那会把它在旧路径上凭空建回来。
+        guard let url = workspace.noteURL(ref), FileManager.default.fileExists(atPath: url.path) else {
+            wsLog("[MD] \(ref.key) 文件已不在，不自动保存")
+            return
+        }
         guard workspace.saveNoteBody(ref, text: text) else { return }
         savedText = text
     }
@@ -281,6 +306,10 @@ final class MarkdownDocView: NSView {
     override func layout() {
         super.layout()
         let b = bounds
+        guard showsHeader else {
+            host.frame = NSRect(x: 0, y: topInset, width: b.width, height: max(0, b.height - topInset))
+            return
+        }
         let headerH: CGFloat = 44
         header.frame = NSRect(x: 0, y: 0, width: b.width, height: topInset + headerH)
         let titleY = topInset + 5
