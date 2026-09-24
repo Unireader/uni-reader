@@ -62,10 +62,6 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private var session: DocSession { tabs.active.session }
 
-    /// MCP / 内置 Agent 读取当前 Markdown 标签时，优先拿尚未走完 0.8 秒自动保存的实时正文。
-    func markdownText(for ref: NoteRef) -> String? { readerPane?.markdownText(for: ref) }
-    func applyMarkdownText(_ text: String, for ref: NoteRef) { readerPane?.applyMarkdownText(text, for: ref) }
-
     // MARK: - 建窗
 
     init(app: AppModel, workspace: WorkspaceManager, launchDocId: String?) {

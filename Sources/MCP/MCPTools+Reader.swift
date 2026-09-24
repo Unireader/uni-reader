@@ -2,6 +2,9 @@ import Foundation
 
 /// 批 2：`get_current_view` / `goto` / `list_annotations`（方案 §7.10 ~ §7.12）。
 extension MCPTools {
+    /// `get_current_view` 的文字结果里 Markdown 正文最多给多少行。
+    static let currentViewMarkdownLines = 300
+
     static func getCurrentView() -> MCPTool {
         MCPTool(
             name: "get_current_view",
@@ -36,7 +39,17 @@ extension MCPTools {
                 lines.append("source \(note["source"] ?? "") · path \(note["relative_path"] ?? "") · note_ref \(note["ref"] ?? "")")
                 lines.append("session_id \(v["session_id"] ?? "") · window_id \(v["window_id"] ?? "")")
                 if let link = note["link"] as? String { lines.append("link \(link)") }
-                lines.append("\n--- Markdown text ---\n\(note["text"] ?? "")")
+                // 长笔记只给开头一段（结构化结果里仍是全文），其余让 Agent 用 read_markdown 按需读
+                let text = (note["text"] as? String) ?? ""
+                let total = (note["line_count"] as? Int) ?? 0
+                if total > Self.currentViewMarkdownLines {
+                    let head = MCPMarkdownText.lines(text).prefix(Self.currentViewMarkdownLines).joined(separator: "\n")
+                    lines.append("revision \(note["revision"] ?? "") · \(total) lines; showing the first \(Self.currentViewMarkdownLines) — use read_markdown (outline / search / offset) for the rest, edit_markdown to change part of it")
+                    lines.append("\n--- Markdown text (lines 1-\(Self.currentViewMarkdownLines) of \(total)) ---\n\(head)")
+                } else {
+                    lines.append("revision \(note["revision"] ?? "") · \(total) lines · use edit_markdown to change part of it")
+                    lines.append("\n--- Markdown text ---\n\(text)")
+                }
             } else if let title = v["title"] as? String {
                 lines.append("“\(title)” — page \(v["page"] ?? 1)/\(v["page_count"] ?? 0) (\(String(format: "%.0f", ((v["frac"] as? Double) ?? 0) * 100))% down the page) · zoom \(String(format: "%.2f", (v["zoom"] as? Double) ?? 1))")
                 if let ch = v["chapter"] as? String { lines.append("Chapter: \(ch)") }

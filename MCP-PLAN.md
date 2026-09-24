@@ -740,7 +740,7 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 | `add_bookmark` | `MCPTools+Notes.swift` + `MCPFacade.addBookmark` | 名字必填（`Bookmark.validTitle`）；开着 → `session.addBookmark`，没开 → `ws.saveBookmark` |
 | `add_note` | 同上 + `MCPFacade.addNote` | 锚点三选一：`quote`（`MCPDocReader.locate`：先 `findString`、再 OCR 行；找不到**报错不猜**）> `rect` > 页顶横条；`type` 按名字对 `noteTypes`，不存在就报错并列出可用的；开着时经 `session.inkEdit` 进撤销栈 |
 | `add_highlight` | 同上 + `MCPFacade.addHighlight` | `quote` 必填、必须找得到；颜色收色板名或 `#RRGGBB`；`style` 收 fill / underline / box（2026-09-16），`list_annotations` 的高亮 DTO 回 `style`、笔记 DTO 回 `style` + 设了才有的 `color` |
-| `update_markdown`（2026-09-21） | `MCPTools+Notes.swift` + `MCPFacade.updateMarkdown` | 只改目标窗口的活动 Markdown 标签；先用 `get_current_view.markdown.revision` 做乐观锁，再原子写完整正文并同步所有正在显示该笔记的编辑器。用户在读取后有新编辑或多窗口存在不同未保存正文时拒绝覆盖 |
+| `update_markdown`（2026-09-21；2026-09-24 移到 `MCPTools+Markdown.swift`、可按 `note_ref` 指定任意一篇，并新增局部修改 `edit_markdown`，见 §19） | `MCPTools+Notes.swift` + `MCPFacade.updateMarkdown` | 只改目标窗口的活动 Markdown 标签；先用 `get_current_view.markdown.revision` 做乐观锁，再原子写完整正文并同步所有正在显示该笔记的编辑器。用户在读取后有新编辑或多窗口存在不同未保存正文时拒绝覆盖 |
 | `import_pdf` / `open_document(path:)` | `MCPTools+Document.swift` + **`WorkspaceManager.importPDF(at:)`**（新，面板/拖拽/MCP 三处共用，`ReaderWindowController.ingest` 改为调它）| 按 hash 去重，返回 `imported` 是否新建；`open_document` 带 `path` 时虽是导航级工具也按写入开关拦 |
 | `create_workspace` | `MCPTools+Workspace.swift` + `MCPFacade.createWorkspace` | 🔴 **已存在的路径一律拒绝**（界面那条 `createWorkspace(at:)` 会覆盖非工作区路径，那是保存面板确认过「替换」才允许的）；缺 `.unrd` 自动补 |
 | `run_ocr` | 同上 + `MCPFacade.runOCR` | 文档必须开着（OCR 走会话队列）；没配引擎报错；立即返回队列状态，Agent 稍后再 `read_pages` |
@@ -785,3 +785,28 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 - `open_document` 的「已在显示 → 切过去；该工作区有窗 → 开标签；没窗 → 新开一扇只装这篇」抽成 **`AppDelegate.showDocument`**，
   与链接路由共用；`window_id` 分支仍在 `MCPFacade` 里。行为不变。
 - `image_notes[].image_sha256` 的 schema 描述补了文件位置 `<workspace>/Images/<sha256>.<ext>`（Agent 导出图片要复制它）。
+
+## 19. 2026-09-24 Markdown 笔记的读写细化：局部修改 + 分页读取
+
+用户原话：「优化编辑文档 tool，达到 code agent 那种能够修改部分内容的能力，以及读取 tool 也细化优化下」。
+起因见 TODO「Agent 面板把『模型还在写工具参数』显示成『工具正在执行』」：原来只有 `update_markdown` 交整篇新正文，
+17K 字的笔记改一句也要模型重吐全文（那次 68 秒全花在吐字上，工具本身 0.46 秒）。
+
+| 工具 | 级别 | 要点 |
+|---|---|---|
+| `list_markdown_notes`（新） | 读 | 工作区全部笔记（内建 + 引用源）的 `note_ref` / 标题 / 路径；可按 `source` / `folder` / `query` 筛 |
+| `read_markdown`（新） | 读 | 三种模式：按行分页（`offset`/`limit`，默认 400 行、上限 2000 行 / 约 6 万字，`cat -n` 式行号前缀）、`search`（只回含该文字的行 + 行号）、`outline`（`#` 标题大纲，跳过代码块与 frontmatter）。回 `revision` / `line_count` / `unsaved_edits` |
+| `edit_markdown`（新） | 写 | code agent 式局部修改：`old_text` → `new_text`（**逐码元精确匹配，必须唯一**，否则报出现在哪几行；`replace_all` 换全部）或 `insert_line` + `new_text`（整行插入，0 = 最前）。单条用顶层字段，多条用 `edits` 数组，**依次生效、整批原子**。`expected_revision` 可选——不给时「原文必须精确匹配」本身就是防覆盖的检查。结果带改动行号 + 前后 3 行的核对片段 |
+| `update_markdown`（改） | 写 | 仍是整篇替换 + revision 必填；描述里明确「优先用 edit_markdown」 |
+| `get_current_view`（改） | 读 | Markdown 多回 `line_count`；文字结果超过 300 行只给开头，提示改用 `read_markdown`（结构化结果仍是全文，兼容旧用法） |
+
+- **目标不再限于活动标签**：三个笔记工具都收 `note_ref`（`NoteRef.key` / 库行 UUID / 笔记名，同 `WorkspaceManager.note(key:)`），
+  笔记不必开着；不给 = `window_id` 那扇的活动标签 → key 窗口里的编辑区（**含笔记小窗**）→ key 阅读窗的活动标签。
+  ⚠️ `update_markdown` 的 `note_ref` 语义随之从「核对活动标签是不是它」变成「就写它」。
+- **实时正文从哪来**：`MarkdownDocView` 自带一张弱引用登记表（`editors(showing:in:)` / `keyEditor`），标签页与笔记小窗都在里面；
+  原来只问 `ReaderPaneController.mdView`，会漏掉小窗（`ReaderWindowController.markdownText/applyMarkdownText` 已删）。
+- **写入同一条路**（`MCPFacade.markdownForWrite` → `commitMarkdown`）：同一篇开在几个编辑器里且未保存正文不一致 → 拒绝；
+  原子写文件后把新正文推回所有编辑器（防 0.8 秒自动保存盖回去）。
+- 纯逻辑 `MCPMarkdownText`（分行口径：结尾换行不多算一行、`\r` 原样留在行内；匹配失败时「忽略空白」再找一遍**只拿来写提示**，
+  另能认出「把行号前缀也抄进来了」这种常见错误）。测试 `spike/mcp-markdown-text-test.swift`（43 项）；
+  `spike/mcp-schema-audit.py` 补了 `list_markdown_notes` 与 `read_markdown` 三种模式。

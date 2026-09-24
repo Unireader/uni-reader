@@ -228,14 +228,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_md_doc_path ON md_doc(rel_path);
 
 ### 第三批之后可以再想的
 
-MCP 工具（完整的列笔记 / 按任意笔记读取；当前修改只针对活动标签）、离线镜像的 md 正文三方合并、
+~~MCP 工具（完整的列笔记 / 按任意笔记读取；当前修改只针对活动标签）~~（2026-09-24 已做：`list_markdown_notes` /
+`read_markdown` / `edit_markdown`，任意一篇都能读写，见 `MCP-PLAN.md §19`）、离线镜像的 md 正文三方合并、
 导出回 Obsidian（与现有 `skills/unireader-obsidian-export` 对齐）。
 
 ## 6. 红线
 
 - 🔴 **任何自动维护都不许改笔记正文**（2026-09-20 用户定）。导入 / 改名 / 挪目录 / 扫描不得擅自改
-  `[[…]]`、别名、锚点、附件名或标准链接。用户在编辑器里修改、或明确要求 Agent 通过 update_markdown
-  修改正文属于显式编辑；工具只写 Agent 提交的完整正文，不替它“修复”任何链接。
+  `[[…]]`、别名、锚点、附件名或标准链接。用户在编辑器里修改、或明确要求 Agent 通过 edit_markdown /
+  update_markdown 修改正文属于显式编辑；工具只写 Agent 提交的内容，不替它“修复”任何链接。
 - **导入不改原目录**，引用模式更是只读原处编辑——一个字节都不写回用户 vault 之外的地方。
 - **md 正文只走文件，不进库**。`md_doc` 是内建源的扫描缓存，以文件为准，对不上就按文件重建。
 - **引用源不进库、不同步**（§4）：外部路径是这台机器的事实，同 `location` 表的规矩。

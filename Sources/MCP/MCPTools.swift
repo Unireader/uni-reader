@@ -30,6 +30,8 @@ enum MCPTools {
         c.register(getCurrentView())
         c.register(listAnnotations())
         c.register(goto())
+        c.register(listMarkdownNotes())
+        c.register(readMarkdown())
         c.resources = MCPResources.provider(catalog: c)
     }
 
@@ -39,6 +41,7 @@ enum MCPTools {
         c.register(addBookmark())
         c.register(addNote())
         c.register(addHighlight())
+        c.register(editMarkdown())
         c.register(updateMarkdown())
         c.register(importPDFTool())
         c.register(createWorkspace())
@@ -71,7 +74,8 @@ enum MCPTools {
         ]
         if includeText {
             properties["text"] = MCPSchema.string("current live editor text, including edits not autosaved yet")
-            properties["revision"] = MCPSchema.string("SHA-256 revision of text; pass it to update_markdown to prevent overwriting newer edits")
+            properties["revision"] = MCPSchema.string("SHA-256 revision of text; pass it to update_markdown (or optionally edit_markdown) to prevent overwriting newer edits")
+            properties["line_count"] = MCPSchema.integer("lines in text")
         }
         return MCPSchema.object(properties)
     }

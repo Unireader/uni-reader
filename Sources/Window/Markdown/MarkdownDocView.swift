@@ -13,7 +13,7 @@ final class MarkdownDocView: NSView {
 
     /// 正在编辑的是哪一篇（源 + 源内相对路径）。
     private(set) var ref: NoteRef
-    private let workspace: WorkspaceManager
+    let workspace: WorkspaceManager
     private let box: TextBox
     private let relay: LinkRelay
     private let host: NSHostingView<Root>
@@ -94,6 +94,7 @@ final class MarkdownDocView: NSView {
                                             onOpenNote: { [relay] in relay.onOpen($0) }))
         host.sizingOptions = []
         super.init(frame: .zero)
+        Self.all.add(self)
         relay.onOpen = { [weak self] id in self?.openNote(id) }
 
         header.material = .headerView
@@ -156,6 +157,20 @@ final class MarkdownDocView: NSView {
 
     /// 立刻把待存的改动写下去（切标签 / 关窗 / 退出 / 导出前都要叫一次）。
     func flush() { save() }
+
+    /// 活着的编辑区（弱引用）。MCP 读写笔记时要找「这篇此刻开在哪些编辑器里」——标签页和笔记小窗都算，
+    /// 而小窗不挂在阅读窗格上，只问 `ReaderPaneController` 会漏掉它。
+    private static let all = NSHashTable<MarkdownDocView>.weakObjects()
+
+    /// 正显示在窗口里的、编辑这一篇的编辑区（拆下来还没释放的不算）。
+    static func editors(showing ref: NoteRef, in workspace: WorkspaceManager) -> [MarkdownDocView] {
+        all.allObjects.filter { $0.window != nil && $0.ref == ref && $0.workspace === workspace }
+    }
+
+    /// 在 key 窗口里的那个编辑区（笔记小窗是 key 时就是它）。
+    static var keyEditor: MarkdownDocView? {
+        all.allObjects.first { $0.window?.isKeyWindow == true }
+    }
 
     /// 屏幕上这份编辑器的实时正文。可能比文件里领先不到自动保存的 0.8 秒；Agent/MCP 读当前视图用它。
     var currentText: String { box.text }

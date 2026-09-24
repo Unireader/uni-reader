@@ -20,40 +20,6 @@ extension MCPTools {
          "workspace": MCPSchema.string("Workspace .unrd path, only when the id is ambiguous across open workspaces.")]
     }
 
-    static func updateMarkdown() -> MCPTool {
-        MCPTool(
-            name: "update_markdown",
-            title: "Update the current Markdown note",
-            description: "Replace the complete body of the active Markdown note. First call get_current_view and preserve all text that should remain, including existing [[wiki links]], aliases, anchors and embeds. Pass its markdown.revision as expected_revision; the update is refused if the user edited the note after you read it. This writes both the file and the live editor.",
-            inputSchema: MCPSchema.object([
-                "window_id": MCPSchema.string("Window id from get_current_view. Default: the key window."),
-                "note_ref": MCPSchema.string("Expected active note_ref from get_current_view. Recommended: pass it to catch tab switches."),
-                "expected_revision": MCPSchema.string("markdown.revision from get_current_view"),
-                "text": MCPSchema.string("Complete new Markdown body. Existing content is not preserved automatically."),
-            ], required: ["expected_revision", "text"]),
-            outputSchema: MCPSchema.object([
-                "ref": MCPSchema.string("updated note_ref"),
-                "title": MCPSchema.string("note title"),
-                "link": MCPSchema.string("unireader:// link that activates the note"),
-                "revision": MCPSchema.string("revision after the update"),
-                "characters": MCPSchema.integer("character count after the update"),
-            ]),
-            tier: .write
-        ) { _, args in
-            let windowId = try args.string("window_id")
-            let noteRef = try args.string("note_ref")
-            let revision = try args.requiredString("expected_revision")
-            guard let text = try args.string("text") else { throw MCPInvalidParams("argument 'text' is required") }
-            let result = try await MainActor.run {
-                try MCPFacade.shared.updateMarkdown(windowId: windowId, noteRef: noteRef,
-                                                    expectedRevision: revision, text: text)
-            }
-            return MCPToolResult(
-                text: "Updated Markdown note “\(result["title"] ?? "")” · \(result["characters"] ?? 0) characters · revision \(result["revision"] ?? "")",
-                structured: result)
-        }
-    }
-
     static func addBookmark() -> MCPTool {
         MCPTool(
             name: "add_bookmark",

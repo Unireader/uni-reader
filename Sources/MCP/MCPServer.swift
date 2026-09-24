@@ -137,7 +137,10 @@ final class MCPServer: ObservableObject {
     UniReader is a PDF and Markdown note reader with per-workspace libraries. Pages are 1-based. \
     Call get_state first to learn which workspace and tab the user is looking at. \
     get_current_view returns the active PDF position or the active Markdown note's live text and revision. \
-    Use update_markdown with that revision to modify the active note; never edit files inside a .unrd package directly. \
+    For Markdown notes: list_markdown_notes gives note_ref values; read_markdown reads any note by line range \
+    (with line numbers), by search, or as a heading outline; edit_markdown changes part of a note by exact \
+    old_text replacement or line insertion — prefer it over update_markdown, which replaces the whole text. \
+    Never edit files inside a .unrd package directly. \
     Most PDF tools default to the document in the key window when no target is given. \
     document_id is a stable UUID inside a workspace; file paths may change. \
     read_pages returns the PDF's own text, or cached OCR text for scanned pages (empty with a hint when neither exists).

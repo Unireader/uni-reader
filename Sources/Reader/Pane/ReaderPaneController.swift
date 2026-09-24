@@ -381,17 +381,6 @@ final class ReaderPaneController: NSViewController {
     /// 当前内容的查找状态。PDF 仍由 `DocSession` 管；Markdown 笔记由编辑器按屏幕上的 display text 管。
     var searchQuery: String { mdView?.searchQuery ?? session.searchQuery }
 
-    /// 当前活动 Markdown 编辑器里的实时正文；不是这篇时不拿别篇视图的数据兜底。
-    func markdownText(for ref: NoteRef) -> String? {
-        guard let mdView, mdView.ref == ref else { return nil }
-        return mdView.currentText
-    }
-
-    func applyMarkdownText(_ text: String, for ref: NoteRef) {
-        guard let mdView, mdView.ref == ref else { return }
-        mdView.applySavedText(text)
-    }
-
     func setSearchQuery(_ value: String) {
         if let mdView { mdView.setSearchQuery(value) }
         else {

@@ -81,7 +81,18 @@ READ_CALLS = [
     ("get_document", {"document_id": doc}), ("read_pages", {"document_id": doc, "pages": "1-2"}),
     ("search_text", {"document_id": doc, "query": "the"}), ("list_annotations", {"document_id": doc}),
     ("render_page", {"document_id": doc, "page": 1}),
+    ("list_markdown_notes", {}),
 ]
+# Markdown 读取的三种模式（工作区里至少要有一篇 Markdown 笔记）
+md = (rpc("tools/call", {"name": "list_markdown_notes", "arguments": {"limit": 1}})
+      .get("result", {}).get("structuredContent") or {}).get("notes") or []
+if md:
+    ref = md[0]["ref"]
+    READ_CALLS += [("read_markdown", {"note_ref": ref, "limit": 20}),
+                   ("read_markdown", {"note_ref": ref, "search": "a"}),
+                   ("read_markdown", {"note_ref": ref, "outline": True})]
+else:
+    print("⚠️ 工作区里没有 Markdown 笔记：read_markdown 没有校验")
 unchecked = set(tools)
 bad = 0
 for name, args in READ_CALLS:

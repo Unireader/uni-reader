@@ -58,70 +58,238 @@ final class MCPFacade {
          "is_mirror": ws.isMirror]
     }
 
-    private func markdownDTO(_ c: ReaderWindowController, _ ref: NoteRef, includeText: Bool) -> MCPObject {
-        let source = c.workspace.noteSource(id: ref.sourceID)
-        let liveText = c.markdownText(for: ref)
-        let savedText = includeText && liveText == nil ? c.workspace.noteBody(ref) : nil
-        let fileExists = c.workspace.noteURL(ref).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+    private func markdownDTO(_ ws: WorkspaceManager, _ ref: NoteRef, includeText: Bool) -> MCPObject {
+        let source = ws.noteSource(id: ref.sourceID)
+        let fileExists = ws.noteURL(ref).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         var o: MCPObject = ["ref": ref.key,
                             "title": ref.title,
                             "source": source?.name ?? ref.sourceID,
                             "source_kind": source?.kind.rawValue ?? "unknown",
                             "relative_path": ref.relPath,
-                            "link": link(c.workspace, markdown: ref.key),
+                            "link": link(ws, markdown: ref.key),
                             "file_missing": !fileExists]
         if includeText {
-            let text = liveText ?? savedText ?? ""
+            let text = liveMarkdown(ws, ref).text ?? ""
             o["text"] = text
             o["revision"] = Self.markdownRevision(text)
+            o["line_count"] = MCPMarkdownText.lineCount(text)
         }
         return o
     }
 
-    private static func markdownRevision(_ text: String) -> String {
+    static func markdownRevision(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// 改当前 Markdown 标签。revision 是乐观锁：用户在 Agent 读完后又敲了字，就拒绝覆盖。
-    /// 同一工作区若有多扇窗口正显示同一篇，只有实时正文完全一致时才允许写；写完同步所有编辑器。
-    func updateMarkdown(windowId: String?, noteRef: String?, expectedRevision: String, text: String) throws -> MCPObject {
-        let c: ReaderWindowController
-        if let windowId { c = try controller(windowId: windowId) }
-        else {
-            guard let key = keyController else { throw MCPToolError("no reader window is open") }
-            c = key
-        }
-        guard let ref = c.tabs.active.noteRef else {
-            throw MCPToolError("the target window's active tab is not a Markdown note; activate the note and call get_current_view first")
-        }
-        if let noteRef {
-            guard NoteRef(key: noteRef) == ref else {
-                throw MCPToolError("the active Markdown note changed; call get_current_view again before writing")
+    // MARK: - Markdown 笔记（read_markdown / edit_markdown / update_markdown）
+
+    /// 要读写哪一篇：
+    /// - 给了 `note_ref`（`NoteRef.key` / 库行 UUID / 笔记名字，同 `unireader://…&md=`）→ 就是它，**不必开着**；
+    ///   工作区 = `workspace` > `window_id` 那扇 > key 编辑区所在 > key 阅读窗；
+    /// - 没给 → `window_id` 那扇的活动标签；再没给 → key 窗口里的编辑区（含笔记小窗）；再不行 → key 阅读窗的活动标签。
+    private func markdownTarget(noteRef: String?, windowId: String?, workspacePath: String?) throws -> (WorkspaceManager, NoteRef) {
+        if let key = noteRef, !key.isEmpty {
+            let ws: WorkspaceManager
+            if let p = workspacePath, !p.isEmpty { ws = try manager(workspacePath: p) }
+            else if let windowId { ws = try controller(windowId: windowId).workspace }
+            else if let e = MarkdownDocView.keyEditor { ws = e.workspace }
+            else { ws = try manager(workspacePath: nil) }
+            if let hit = ws.note(key: key) { return (ws, hit.ref) }
+            // 刚建、还没扫进清单的文件：按 key 直接认，前提是文件确实在
+            if let r = NoteRef(key: key), let url = ws.noteURL(r), FileManager.default.fileExists(atPath: url.path) {
+                return (ws, r)
             }
+            throw MCPToolError("Markdown note '\(key)' not found in workspace “\(ws.name)”; call list_markdown_notes for valid note_ref values")
         }
-        guard let current = c.markdownText(for: ref) ?? c.workspace.noteBody(ref) else {
+        if let windowId {
+            let c = try controller(windowId: windowId)
+            guard let ref = c.tabs.active.noteRef else {
+                throw MCPToolError("the active tab of window \(windowId) is not a Markdown note; pass note_ref (see list_markdown_notes)")
+            }
+            return (c.workspace, ref)
+        }
+        if let e = MarkdownDocView.keyEditor { return (e.workspace, e.ref) }
+        guard let c = keyController else { throw MCPToolError("no reader window is open") }
+        guard let ref = c.tabs.active.noteRef else {
+            throw MCPToolError("no Markdown note is active; pass note_ref (see list_markdown_notes / get_state)")
+        }
+        return (c.workspace, ref)
+    }
+
+    /// 这篇此刻的正文：开在编辑器里就取编辑器里的（含还没走完 0.8 秒自动保存的输入），否则读文件。
+    /// `conflict` = 同一篇开在好几个编辑器里、各自的未保存正文不一样（此时不许写）。
+    private func liveMarkdown(_ ws: WorkspaceManager, _ ref: NoteRef) -> (text: String?, editors: [MarkdownDocView], conflict: Bool) {
+        let editors = MarkdownDocView.editors(showing: ref, in: ws)
+        let texts = editors.map(\.currentText)
+        if let first = texts.first {
+            // key 窗口里那份优先（用户正在打字的就是它）
+            let key = editors.first { $0.window?.isKeyWindow == true }?.currentText ?? first
+            return (key, editors, Set(texts).count > 1)
+        }
+        return (ws.noteBody(ref), [], false)
+    }
+
+    /// 写入前的共同检查：读得到、没有多份不一致的未保存正文、revision 对得上（给了的话）。
+    private func markdownForWrite(_ ws: WorkspaceManager, _ ref: NoteRef, expectedRevision: String?) throws -> (String, [MarkdownDocView]) {
+        let live = liveMarkdown(ws, ref)
+        guard let current = live.text else {
             throw MCPToolError("the Markdown file cannot be read; it may have been moved or deleted")
         }
-        let currentRevision = Self.markdownRevision(current)
-        guard expectedRevision == currentRevision else {
-            throw MCPToolError("the Markdown note changed after it was read; call get_current_view again, merge the user's latest text, and retry")
+        guard !live.conflict else {
+            throw MCPToolError("this note is open in several editors with different unsaved edits; ask the user to resolve them before writing")
         }
+        if let expectedRevision, !expectedRevision.isEmpty, expectedRevision != Self.markdownRevision(current) {
+            throw MCPToolError("the Markdown note changed after it was read; call read_markdown again, merge the user's latest text, and retry")
+        }
+        return (current, live.editors)
+    }
 
-        let visible = controllers(for: c.workspace).filter { $0.tabs.active.noteRef == ref }
-        let conflicting = visible.compactMap { $0.markdownText(for: ref) }.contains { $0 != current }
-        guard !conflicting else {
-            throw MCPToolError("this note has different unsaved edits in another window; ask the user to resolve them before writing")
+    /// 原子写文件 + 推回所有正显示这篇的编辑器（防它们稍后的自动保存把 Agent 的改动盖回去）。
+    private func commitMarkdown(_ ws: WorkspaceManager, _ ref: NoteRef, old: String, new: String,
+                                editors: [MarkdownDocView]) throws {
+        guard old == new || ws.saveNoteBody(ref, text: new) else {
+            throw MCPToolError(ws.lastError ?? "failed to save the Markdown note")
         }
-        guard current == text || c.workspace.saveNoteBody(ref, text: text) else {
-            throw MCPToolError(c.workspace.lastError ?? "failed to save the Markdown note")
-        }
-        for reader in visible { reader.applyMarkdownText(text, for: ref) }
+        for e in editors { e.applySavedText(new) }
+    }
 
-        return ["ref": ref.key,
-                "title": ref.title,
-                "link": link(c.workspace, markdown: ref.key),
-                "revision": Self.markdownRevision(text),
-                "characters": text.count]
+    private func markdownWriteResult(_ ws: WorkspaceManager, _ ref: NoteRef, _ text: String) -> MCPObject {
+        ["ref": ref.key,
+         "title": ref.title,
+         "link": link(ws, markdown: ref.key),
+         "revision": Self.markdownRevision(text),
+         "characters": text.count,
+         "line_count": MCPMarkdownText.lineCount(text)]
+    }
+
+    /// 笔记清单（给 `note_ref` 用）。`folder` 按源内相对路径前缀筛，`query` 按标题 / 路径子串筛。
+    func markdownNotes(workspacePath: String?, source: String?, folder: String?, query: String?, limit: Int) throws -> MCPObject {
+        let ws = try manager(workspacePath: workspacePath)
+        let open = Set(controllers(for: ws).compactMap { $0.tabs.active.noteRef })
+        var notes = ws.allNotes
+        if let source, !source.isEmpty {
+            notes = notes.filter { n in n.ref.sourceID == source || ws.noteSource(id: n.ref.sourceID)?.name == source }
+        }
+        if let folder, !folder.isEmpty {
+            let f = folder.hasSuffix("/") ? folder : folder + "/"
+            notes = notes.filter { $0.ref.relPath.hasPrefix(f) }
+        }
+        if let query, !query.isEmpty {
+            notes = notes.filter {
+                $0.title.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                    || $0.ref.relPath.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+            }
+        }
+        let total = notes.count
+        let rows: [MCPObject] = notes.prefix(limit).map { n in
+            let src = ws.noteSource(id: n.ref.sourceID)
+            return ["ref": n.ref.key, "title": n.title,
+                    "source": src?.name ?? n.ref.sourceID,
+                    "source_kind": src?.kind.rawValue ?? "unknown",
+                    "relative_path": n.ref.relPath,
+                    "link": link(ws, markdown: n.ref.key),
+                    "is_active_tab": open.contains(n.ref)]
+        }
+        return ["workspace": workspaceDTO(ws),
+                "sources": ws.noteSources.map { ["id": $0.id, "name": $0.name, "kind": $0.kind.rawValue] as MCPObject },
+                "notes": rows, "total": total, "truncated": total > rows.count]
+    }
+
+    enum MarkdownReadMode {
+        case lines(offset: Int, limit: Int)
+        case search(query: String, caseSensitive: Bool)
+        case outline
+    }
+
+    static let markdownReadMaxChars = 60_000
+    static let markdownSearchMaxHits = 200
+
+    /// `read_markdown`：按行分页（带行号）/ 行内搜索 / 标题大纲。
+    func readMarkdown(noteRef: String?, windowId: String?, workspacePath: String?,
+                      mode: MarkdownReadMode) throws -> (json: MCPObject, text: String) {
+        let (ws, ref) = try markdownTarget(noteRef: noteRef, windowId: windowId, workspacePath: workspacePath)
+        let live = liveMarkdown(ws, ref)
+        guard let text = live.text else {
+            throw MCPToolError("the Markdown file for “\(ref.title)” cannot be read; it may have been moved or deleted")
+        }
+        let total = MCPMarkdownText.lineCount(text)
+        let unsaved = !live.editors.isEmpty && ws.noteBody(ref) != text
+        var o = markdownDTO(ws, ref, includeText: false)
+        o["revision"] = Self.markdownRevision(text)
+        o["line_count"] = total
+        o["characters"] = text.count
+        o["open_in_editor"] = !live.editors.isEmpty
+        o["unsaved_edits"] = unsaved
+        var head = "“\(ref.title)” · note_ref \(ref.key) · \(total) lines · revision \(o["revision"] ?? "")"
+        if unsaved { head += " · includes edits not autosaved yet" }
+        var body: String
+        switch mode {
+        case let .lines(offset, limit):
+            let p = MCPMarkdownText.page(text, offset: offset, limit: limit, maxChars: Self.markdownReadMaxChars)
+            o["mode"] = "lines"
+            o["start_line"] = p.startLine
+            o["end_line"] = p.endLine
+            o["truncated"] = p.truncated
+            o["next_offset"] = p.truncated ? p.endLine + 1 : NSNull()
+            o["text"] = p.text
+            if total == 0 { body = "(the note is empty)" }
+            else if p.startLine == 0 { body = "(offset \(offset) is past the end; the note has \(total) lines)" }
+            else {
+                body = "Lines \(p.startLine)-\(p.endLine) of \(total):\n\(p.numbered)"
+                if p.truncated { body += "\n… more lines follow; call read_markdown with offset \(p.endLine + 1)" }
+            }
+        case let .search(query, caseSensitive):
+            let r = MCPMarkdownText.search(text, query: query, caseSensitive: caseSensitive, limit: Self.markdownSearchMaxHits)
+            o["mode"] = "search"
+            o["match_count"] = r.total
+            o["matches"] = r.hits.map { ["line": $0.line, "text": $0.text] as MCPObject }
+            if r.hits.isEmpty { body = "No line contains “\(query)”." }
+            else {
+                body = "\(r.total) matching line(s) for “\(query)”:\n"
+                    + r.hits.map { MCPMarkdownText.numbered([Substring($0.text)], firstLine: $0.line) }.joined(separator: "\n")
+                if r.total > r.hits.count { body += "\n… \(r.total - r.hits.count) more; narrow the query" }
+                body += "\nUse offset/limit around these line numbers to read context."
+            }
+        case .outline:
+            let hs = MCPMarkdownText.outline(text)
+            o["mode"] = "outline"
+            o["headings"] = hs.map { ["line": $0.line, "level": $0.level, "title": $0.title] as MCPObject }
+            body = hs.isEmpty ? "No headings."
+                : "Headings (line: title):\n" + hs.map {
+                    "\($0.line): \(String(repeating: "  ", count: $0.level - 1))\(String(repeating: "#", count: $0.level)) \($0.title)"
+                }.joined(separator: "\n")
+        }
+        return (o, head + "\n\n" + body)
+    }
+
+    /// `edit_markdown`：按原文精确匹配替换 / 按行号插入，整批原子生效。
+    func editMarkdown(noteRef: String?, windowId: String?, workspacePath: String?, expectedRevision: String?,
+                      edits: [MCPMarkdownText.Edit]) throws -> (json: MCPObject, text: String) {
+        let (ws, ref) = try markdownTarget(noteRef: noteRef, windowId: windowId, workspacePath: workspacePath)
+        let (current, editors) = try markdownForWrite(ws, ref, expectedRevision: expectedRevision)
+        let result: MCPMarkdownText.EditResult
+        do { result = try MCPMarkdownText.apply(edits, to: current) }
+        catch let e as MCPMarkdownText.EditError {
+            let which = e.index > 0 && edits.count > 1 ? "edit #\(e.index): " : ""
+            throw MCPToolError("\(which)\(e.message). No change was made.")
+        }
+        try commitMarkdown(ws, ref, old: current, new: result.text, editors: editors)
+        var o = markdownWriteResult(ws, ref, result.text)
+        o["replacements"] = result.counts
+        o["changed_lines"] = result.changedLines.map { [$0.lowerBound, $0.upperBound] }
+        let ranges = result.changedLines.map { $0.count == 1 ? "\($0.lowerBound)" : "\($0.lowerBound)-\($0.upperBound)" }
+        let snippet = MCPMarkdownText.snippet(result.text, around: result.changedLines, context: 3, maxLines: 120)
+        let text = "Edited “\(ref.title)” · \(edits.count) edit(s) · changed line(s) \(ranges.joined(separator: ", ")) · revision \(o["revision"] ?? "")\n\n\(snippet)"
+        return (o, text)
+    }
+
+    /// `update_markdown`：整篇替换。revision 是乐观锁：用户在 Agent 读完后又敲了字，就拒绝覆盖。
+    func updateMarkdown(noteRef: String?, windowId: String?, workspacePath: String?,
+                        expectedRevision: String, text: String) throws -> MCPObject {
+        let (ws, ref) = try markdownTarget(noteRef: noteRef, windowId: windowId, workspacePath: workspacePath)
+        let (current, editors) = try markdownForWrite(ws, ref, expectedRevision: expectedRevision)
+        try commitMarkdown(ws, ref, old: current, new: text, editors: editors)
+        return markdownWriteResult(ws, ref, text)
     }
 
     private func tabDTO(_ c: ReaderWindowController, _ tab: DocTabModel) -> MCPObject {
@@ -140,7 +308,7 @@ final class MCPFacade {
             o["content_type"] = "markdown"
             o["document_id"] = NSNull()
             o["title"] = ref.title
-            o["markdown"] = markdownDTO(c, ref, includeText: false)
+            o["markdown"] = markdownDTO(c.workspace, ref, includeText: false)
         } else {
             o["content_type"] = "empty"
             o["document_id"] = NSNull()
@@ -419,7 +587,7 @@ final class MCPFacade {
             o["document_id"] = NSNull()
             o["title"] = ref.title
             o["link"] = link(c.workspace, markdown: ref.key)
-            o["markdown"] = markdownDTO(c, ref, includeText: true)
+            o["markdown"] = markdownDTO(c.workspace, ref, includeText: true)
             return o
         }
         guard let docId = tab.docID else {

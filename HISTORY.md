@@ -3,6 +3,14 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ MCP：Markdown 笔记局部修改 + 分页读取（2026-09-24，`MCP-PLAN.md §19`）
+
+用户原话：「优化编辑文档 tool，达到 code agent 那种能够修改部分内容的能力，以及读取 tool 也细化优化下」。
+新增 `edit_markdown`（原文精确匹配替换 / 按行号插入，多条依次生效、整批原子，结果带改动行号与核对片段）、
+`read_markdown`（带行号分页 / 行内搜索 / 标题大纲）、`list_markdown_notes`；三者与 `update_markdown` 都能按
+`note_ref` 指定任意一篇（不必开着），默认目标含笔记小窗。实时正文改从 `MarkdownDocView` 的登记表取（原来漏小窗）。
+纯逻辑 `MCPMarkdownText` + spike `mcp-markdown-text-test.swift`（43 项全过）。**待用户实测**（Agent 面板里让它改长笔记的一句）。
+
 ## ✅ 回收站 + 工作区定时备份（2026-09-21，方案 `BACKUP-PLAN.md`）
 
 用户要两套兜底：「笔迹回收站：避免误操作删除 pdf 后导致笔记丢失」「工作区做定时备份，数据库保存在工作区里面」。

@@ -44,7 +44,7 @@ struct AgentReaderContext: Equatable {
             if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
             if let windowId { s += ", window_id \(windowId.uuidString)" }
             lines.append(s + ".")
-            lines.append("Use the unireader get_current_view tool to read the note's current live text and revision. To modify it, use update_markdown with that revision; never edit the file directly.")
+            lines.append("Use the unireader read_markdown tool to read the note's current live text (outline / search / line ranges for long notes). To modify it, use edit_markdown with exact old_text copied from read_markdown; use update_markdown only to rewrite the whole note. Never edit the file directly.")
             lines.append("link \(markdown.link)")
         } else if let documentId {
             var s = "Current document: \"\(docTitle)\" (document_id \(documentId)), page \(page + 1) of \(pageCount)"

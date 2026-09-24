@@ -111,7 +111,8 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   列表存 `meta.note_sources`，**不进库也不同步**）；侧栏按**真实目录层级多级展开**；标签页里编辑、自动保存。
   🔴 **自动维护不许改笔记正文**（用户原话「不要改 `[[]]` 现有的哪怕不兼容也不要改」）：导入 / 改名 /
   挪目录 / 扫描不改正文；`[[…]]` 按**名字**解析，改名 / 挪目录就断链，这是明确接受的代价。用户显式编辑
-  或明确要求 Agent 通过 MCP `update_markdown` 修改正文可以写；工具用 revision 防并发覆盖，不自动修链接。
+  或明确要求 Agent 通过 MCP `edit_markdown`（局部，原文精确匹配）/ `update_markdown`（整篇，revision 乐观锁）
+  修改正文可以写；不自动修链接。
   `md_doc`（v15）只是内建源的**扫描缓存**，真源永远是文件
 
 ### 子目录可以自带 AGENTS.md（`android/` 就是这么做的）
