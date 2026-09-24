@@ -26,6 +26,15 @@ final class WorkspaceManager: ObservableObject {
     /// 🔴 同上：**只许 `refreshNotes()` 写**。
     @Published var noteTrees: [NoteTreeSection] = []
     @Published var lastError: String?
+    /// 笔记源的外部改动监听与它的记账（`WorkspaceManager+Markdown` 的「盯外部改动」一节用；
+    /// 扩展里放不了存储属性，故放这里）。🔴 同 `noteTrees`：只许那一节和 `refreshNotes()` 写。
+    var noteWatcher: NoteFileWatcher?
+    /// 上次扫描时全部源的「有哪些文件和目录」，外部事件来了拿它比结构变没变。
+    var noteSignature: Set<String> = []
+    /// 登记别名之前的那份名字索引：只是正文变了时，在它上面重登别名即可，不用重扫目录。
+    var noteBaseIndex = NoteIndex()
+    /// 自己最近写下去的正文（路径 = `NoteFileWatcher.canonicalPath`）：事件来了内容一样 = 自己写的，不算外部改动。
+    var selfWrittenNotes: [String: String] = [:]
     private(set) var restoreDocIds: [String] = []   // 「上次打开集」快照，供本工作区的多窗口恢复（restoreSession 读一次进本地）
     private var windowDocs: [UUID: String] = [:]     // 本工作区各窗口当前文档（sessionId → docId）——「打开集」的真相源
     private var openDocs: [String] = []              // 当前打开的文档集（= 本工作区所有窗口当前文档，去重保序）；持久化供下次恢复

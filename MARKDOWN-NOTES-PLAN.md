@@ -228,7 +228,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_md_doc_path ON md_doc(rel_path);
 
 ### 第三批之后可以再想的
 
-MCP 工具（完整的列笔记 / 按任意笔记读取；当前修改只针对活动标签）、离线镜像的 md 正文三方合并、FSEvents 实时发现外部目录变化、
+MCP 工具（完整的列笔记 / 按任意笔记读取；当前修改只针对活动标签）、离线镜像的 md 正文三方合并、
 导出回 Obsidian（与现有 `skills/unireader-obsidian-export` 对齐）。
 
 ## 6. 红线
@@ -249,9 +249,28 @@ MCP 工具（完整的列笔记 / 按任意笔记读取；当前修改只针对�
   缺的是那个候选列表面板）。
 - **改名 / 挪目录会断链**——这是「不改别人正文」的直接代价，用户 2026-09-20 明确接受。
   想修的话得做「重建链接」这类显式维护命令，而不是偷偷改。
-- **外部目录在 App 之外被增删改，不会自动发现**：现在靠 `refreshNotes()`（开工作区 / 导入 / 引用 /
-  增删改笔记时）重扫。要实时得上 FSEvents，暂不做。
+- ~~外部目录在 App 之外被增删改，不会自动发现~~ → 2026-09-24 已上 FSEvents，见 §8。
 - **离线镜像不合并 md 正文**（§2.2），只按 `updated_at` 整份取新；引用源根本不同步。
 - **`[[名字#小节]]` 的锚点只是文本**：解析到文档级，不跳到小节。
 - 早先（第一批）导入过的文件里可能残留 `[[名字|<uuid>]]`——那串 uuid 现在解析不到，会画成断链。
   用户没真跑过那版导入，不做迁移。
+
+---
+
+## 8. 外部改动跟随 + 切标签保留滚动位置（2026-09-24）
+
+- **监听**：`App/NoteFileWatcher`（FSEvents 文件级事件，主线程回调，latency 0.3s）一个工作区一个，
+  盯全部源的根目录（内建 `Notes/` + 引用的外部目录），`refreshNotes()` 末尾按根目录清单重建（根没变不动）。
+  路径一律 `NoteFileWatcher.canonicalPath` 口径（`realpath` + Unicode 组合形式）——🔴 别用
+  `URL.resolvingSymlinksInPath()`，它会把 `/private` 去掉，和 FSEvents 报上来的对不上。
+- **分流**（`WorkspaceManager.noteFilesChanged`）：隐藏文件、`.part`、以及**内容与 `selfWrittenNotes`
+  相同的 md**（自己存盘引起的）一概不理——否则打字时每 0.8 秒一次自动保存就要重扫一遍。其余：
+  结构指纹（各源的文件 + 目录清单，`noteSignature`）变了 → 整个 `refreshNotes()`（侧栏跟着变）；
+  只是正文变了 → 在 `noteBaseIndex` 上重登别名，不重建侧栏。正文变了都发 `.markdownNotesChangedOnDisk`。
+- **开着的那篇**（`MarkdownDocView.reloadFromDisk`）：听到自己的文件变了就重读换上；
+  🔴 **本地还有没存下去的输入时以本地为准**（不换，稍后自动保存照常写盘）——两边同时改只能留一边，
+  选了不让用户正在打的字消失的那一边。
+- **滚动位置**：窗格切标签会把整个 `MarkdownDocView` 拆掉重建，引擎协调器里的偏移跟着没了。
+  引擎留了 `onPersistScrollOffset` / `restoreScrollOffset` 两个口子，存进 `MarkdownDocView.ScrollMemory`
+  （按 documentId，App 活着期间有效，不落库）；另在 `viewWillMove(toWindow: nil)` 先记一次，
+  不依赖托管视图什么时候真正释放。

@@ -53,15 +53,30 @@ final class MarkdownDocView: NSView {
         var onOpen: (String) -> Void = { _ in }
     }
 
+    /// 各篇笔记上次看到哪儿（键 = 引擎的 documentId，App 活着期间有效）。
+    ///
+    /// 切标签时窗格把整个 `MarkdownDocView` 拆掉、切回来再新建一份（`ReaderPaneController.refresh`），
+    /// 引擎记在协调器里的滚动偏移随之消失，于是每次切回来都在最上面（2026-09-24 用户报）。
+    /// 引擎为这种「拆掉再装回」留了两个口子（`onPersistScrollOffset` / `restoreScrollOffset`），存在这里。
+    final class ScrollMemory {
+        static let shared = ScrollMemory()
+        var offsets: [String: CGFloat] = [:]
+    }
+
     struct Root: View {
         @ObservedObject var box: TextBox
         let documentId: String
         let wiki: WorkspaceWikiIndex?
         let onOpenNote: (String) -> Void
         var body: some View {
-            MarkdownDocEditor(text: $box.text, documentId: documentId, wiki: wiki, onOpenNote: onOpenNote)
+            MarkdownDocEditor(text: $box.text, documentId: documentId, wiki: wiki, onOpenNote: onOpenNote,
+                              onPersistScrollOffset: { ScrollMemory.shared.offsets[$0] = $1 },
+                              restoreScrollOffset: { ScrollMemory.shared.offsets[$0] })
         }
     }
+
+    /// 交给引擎的文档身份（撤销栈、滚动记忆都按它分）。
+    private let documentId: String
 
     init(ref: NoteRef, workspace: WorkspaceManager) {
         self.ref = ref
@@ -71,7 +86,8 @@ final class MarkdownDocView: NSView {
         box = TextBox(text)
         let relay = LinkRelay()
         self.relay = relay
-        host = NSHostingView(rootView: Root(box: box, documentId: "md-\(ref.key)", wiki: workspace.wiki,
+        documentId = "md-\(ref.key)"
+        host = NSHostingView(rootView: Root(box: box, documentId: documentId, wiki: workspace.wiki,
                                             onOpenNote: { [relay] in relay.onOpen($0) }))
         host.sizingOptions = []
         super.init(frame: .zero)
@@ -110,6 +126,12 @@ final class MarkdownDocView: NSView {
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.save() }
             })
+        // 文件被外部编辑器改了 → 跟着换成新内容（不用切走再切回来）
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .markdownNotesChangedOnDisk, object: workspace, queue: .main) { [weak self] note in
+                let paths = note.userInfo?["paths"] as? Set<String> ?? []
+                MainActor.assumeIsolated { self?.reloadFromDisk(ifAmong: paths) }
+            })
         // 笔记改名 / 被删 → 顶上那行跟着变
         workspace.$noteTrees
             .receive(on: DispatchQueue.main)
@@ -130,6 +152,20 @@ final class MarkdownDocView: NSView {
     func applySavedText(_ text: String) {
         savedText = text
         if box.text != text { box.text = text }
+    }
+
+    /// 外部改了这篇的文件：读回来换上。
+    ///
+    /// 本地还有没存下去的改动（停手不到 0.8 秒）时**以本地为准**：不换，稍后自动保存照常写盘。
+    /// 反过来换成外部那份的话，用户正在打的字会当着他的面消失。
+    private func reloadFromDisk(ifAmong paths: Set<String>) {
+        guard let url = workspace.noteURL(ref), paths.contains(NoteFileWatcher.canonicalPath(url)) else { return }
+        guard let disk = workspace.noteBody(ref), disk != savedText else { return }
+        guard box.text == savedText else {
+            wsLog("[MD] \(ref.key) 外部有改动，但本地还有未保存的输入，保留本地")
+            return
+        }
+        applySavedText(disk)
     }
 
     // MARK: - 正文查找
@@ -224,6 +260,17 @@ final class MarkdownDocView: NSView {
         if titleLabel.stringValue != title { titleLabel.stringValue = title }
         if pathLabel.stringValue != path { pathLabel.stringValue = path }
         needsLayout = true
+    }
+
+    /// 离开窗口前记下滚到哪儿了。引擎的 `dismantleNSView` 也会记，但它要等托管视图真正释放才跑，
+    /// 时机不归我们管；这里在拆之前先记一次，切回来时 `restoreScrollOffset` 一定拿得到。
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil, window != nil,
+           let scroll = descendantTextView(in: host)?.enclosingScrollView,
+           scroll.contentView.bounds.height > 0 {
+            ScrollMemory.shared.offsets[documentId] = scroll.contentView.bounds.origin.y
+        }
+        super.viewWillMove(toWindow: newWindow)
     }
 
     override func viewDidMoveToWindow() {

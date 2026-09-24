@@ -17,6 +17,9 @@ struct MarkdownDocEditor: View {
     let wiki: WorkspaceWikiIndex?
     /// 点了 `[[…]]`：参数是目标笔记 id（引擎从存储形态的竖线后面取出来的）。
     var onOpenNote: (String) -> Void = { _ in }
+    /// 滚动位置的记忆（切标签会把整个编辑区拆掉重建，引擎自己记的偏移跟着没了，由上层存）。
+    var onPersistScrollOffset: ((String, CGFloat) -> Void)?
+    var restoreScrollOffset: ((String) -> CGFloat?)?
 
     @AppStorage(NoteBubble.editorFontSizeKey) private var fontSizeSetting = Int(NoteBubble.defaultEditorFont)
     private var fontSize: CGFloat { CGFloat(fontSizeSetting) + 2 }   // 整页阅读比批注小框再大一点
@@ -56,7 +59,9 @@ struct MarkdownDocEditor: View {
                                      placeholder: NSAttributedString(
                                          string: L("Write in Markdown. Type [[ to link another note."),
                                          attributes: [.foregroundColor: NSColor.placeholderTextColor,
-                                                      .font: NSFont.systemFont(ofSize: fontSize)]))
+                                                      .font: NSFont.systemFont(ofSize: fontSize)]),
+                                     onPersistScrollOffset: onPersistScrollOffset,
+                                     restoreScrollOffset: restoreScrollOffset)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boxWidth = $0 }
     }
 }

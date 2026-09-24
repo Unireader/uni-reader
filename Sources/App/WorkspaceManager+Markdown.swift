@@ -84,31 +84,34 @@ extension WorkspaceManager {
             noteTrees = []
             markdownDocs = []
             wiki.update(index: NoteIndex())
+            noteBaseIndex = NoteIndex()
+            noteSignature = []
+            noteWatcher = nil
             return
         }
         var trees: [NoteTreeSection] = []
         var index = NoteIndex()
         var wsItems: [NoteItem] = []
 
-        for src in noteSources {
-            guard let root = noteRootURL(src) else { continue }
+        let scan = scanNoteSources()
+        for s in scan {
             var items: [NoteItem] = []
-            for url in MarkdownImport.walk(root) {
-                let rel = MarkdownImport.relativePath(of: url, under: root)
+            for (url, rel) in s.files {
                 if MarkdownImport.isMarkdown(url) {
-                    let item = NoteItem(ref: NoteRef(sourceID: src.id, relPath: rel))
+                    let item = NoteItem(ref: NoteRef(sourceID: s.source.id, relPath: rel))
                     items.append(item)
                     index.add(note: item)
                 } else {
                     index.addFile(relPath: rel, url: url)     // 附件：`![[attachments/图.png]]` 按它找
                 }
             }
-            if src.kind == .workspace { wsItems = items }
+            if s.source.kind == .workspace { wsItems = items }
             // 空目录也要进树（用户要往里加笔记），所以除了笔记还要把子目录清单一起给它
-            let dirs = MarkdownImport.walkDirs(root)
-            trees.append(NoteTreeSection(source: src,
-                                         root: NoteFolder.build(items, dirs: dirs, rootName: src.name)))
+            trees.append(NoteTreeSection(source: s.source,
+                                         root: NoteFolder.build(items, dirs: s.dirs, rootName: s.source.name)))
         }
+        noteSignature = Self.noteSignature(of: scan)
+        updateNoteWatcher(roots: scan.map(\.root))
 
         // 内建源与库对账（缓存）：补上新文件、删掉已经不在的行；`last_opened_at` 保留。
         if let store {
@@ -128,8 +131,89 @@ extension WorkspaceManager {
         }
 
         noteTrees = trees
+        noteBaseIndex = index
         registerAliases(into: &index, trees: trees)
         wiki.update(index: index)
+    }
+
+    /// 一个源扫出来的东西：文件（绝对路径 + 源内相对路径）与全部子目录（相对路径）。
+    struct NoteSourceScan {
+        var source: NoteRoot
+        var root: URL
+        var files: [(url: URL, rel: String)]
+        var dirs: [String]
+    }
+
+    /// 把全部源的目录走一遍（只列文件和目录，**不读正文**）。
+    func scanNoteSources() -> [NoteSourceScan] {
+        noteSources.compactMap { src in
+            guard let root = noteRootURL(src) else { return nil }
+            let files = MarkdownImport.walk(root).map { ($0, MarkdownImport.relativePath(of: $0, under: root)) }
+            return NoteSourceScan(source: src, root: root, files: files, dirs: MarkdownImport.walkDirs(root))
+        }
+    }
+
+    /// 结构指纹：哪些源、各有哪些文件和目录。两次一样 = 侧栏的树不用动。
+    static func noteSignature(of scan: [NoteSourceScan]) -> Set<String> {
+        var out = Set<String>()
+        for s in scan {
+            out.insert("s\u{1}\(s.source.id)\u{1}\(s.source.name)")
+            for f in s.files { out.insert("f\u{1}\(s.source.id)\u{1}\(f.rel)") }
+            for d in s.dirs { out.insert("d\u{1}\(s.source.id)\u{1}\(d)") }
+        }
+        return out
+    }
+
+    // MARK: - 盯外部改动（外部编辑器改正文 / 在 Finder 里增删改名）
+
+    /// 按当前各源的根目录（重）建监听；根没变就什么都不做。不存在的目录不盯
+    /// （内建 `Notes/` 第一次新建 / 导入笔记时才建出来，那两条路都会再调 `refreshNotes()`）。
+    private func updateNoteWatcher(roots: [URL]) {
+        let fm = FileManager.default
+        let paths = roots.filter { fm.fileExists(atPath: $0.path) }
+            .map { NoteFileWatcher.canonicalPath($0) }.sorted()
+        if noteWatcher?.paths == paths { return }
+        noteWatcher = nil
+        noteWatcher = NoteFileWatcher(paths: paths) { [weak self] changed in
+            MainActor.assumeIsolated { self?.noteFilesChanged(changed) }
+        }
+    }
+
+    /// 一批文件事件：
+    ///  · 目录结构变了（加 / 删 / 改名，含引用的外部目录）→ 整个 `refreshNotes()`，侧栏跟着变；
+    ///  · 只是正文被外面改了 → 只重登 `[[名字|别名]]` 的别名（不重建侧栏）；
+    ///  · 两种情况都发 `.markdownNotesChangedOnDisk`，开着的那篇自己去读新内容。
+    /// 自己存盘引起的事件（内容与 `selfWrittenNotes` 相同、`.part` 临时文件）一概不理——
+    /// 否则打字时每 0.8 秒一次自动保存就会重扫一遍目录。
+    private func noteFilesChanged(_ paths: [String]) {
+        guard folder != nil else { return }
+        var external: [String] = []
+        var changedNotes = Set<String>()
+        for p in paths {
+            let name = (p as NSString).lastPathComponent
+            if name.hasPrefix(".") || name.hasSuffix(".part") { continue }
+            let url = URL(fileURLWithPath: p)
+            if MarkdownImport.isMarkdown(url) {
+                if let mine = selfWrittenNotes[p], MarkdownImport.readText(url) == mine { continue }
+                changedNotes.insert(p)
+            }
+            external.append(p)
+        }
+        guard !external.isEmpty else { return }
+
+        let scan = scanNoteSources()
+        if Self.noteSignature(of: scan) != noteSignature {
+            wsLog("[MD] 笔记目录有外部变动，重扫（\(external.count) 个路径）")
+            refreshNotes()
+        } else if !changedNotes.isEmpty {
+            var index = noteBaseIndex
+            registerAliases(into: &index, trees: noteTrees)
+            wiki.update(index: index)
+        }
+        if !changedNotes.isEmpty {
+            NotificationCenter.default.post(name: .markdownNotesChangedOnDisk, object: self,
+                                            userInfo: ["paths": changedNotes])
+        }
     }
 
     /// 扫一遍全部正文，把每条 `[[名字|别名]]` 的**别名**登记到它指的那篇上。
@@ -187,6 +271,8 @@ extension WorkspaceManager {
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
+            // 记下自己写的内容：稍后这次写入的文件事件回来，内容一样就知道不是外部改的
+            selfWrittenNotes[NoteFileWatcher.canonicalPath(url)] = text
             try MarkdownImport.writeAtomically(text, to: url)
             // 🔴 **不调 `refreshNotes()`**：这里只有正文变了，而自动保存是打字时每 0.8 秒一次
             //    ——重扫一遍目录 + 侧栏整棵树重建，代价完全不对等。
@@ -355,4 +441,10 @@ extension NoteFolder {
         fillNotes(cache)
         for f in folders { f.fill(from: cache) }
     }
+}
+
+extension Notification.Name {
+    /// 笔记文件被外部改了（`object` = 那个 `WorkspaceManager`，`userInfo["paths"]` = `Set<String>`，
+    /// `NoteFileWatcher.canonicalPath` 口径）。开着的 `MarkdownDocView` 听它重读正文。
+    static let markdownNotesChangedOnDisk = Notification.Name("UniReader.markdownNotesChangedOnDisk")
 }
