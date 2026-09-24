@@ -9,6 +9,48 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.2.4</title>
+      <pubDate>Thu, 24 Sep 2026 02:52:14 +0000</pubDate>
+      <sparkle:version>38</sparkle:version>
+      <sparkle:shortVersionString>0.2.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能</h4>
+<ul>
+<li><strong>笔记小窗</strong>：在侧栏右键一篇 Markdown 笔记，选「打开为小窗」，就能在阅读 PDF 的同时在旁边的小窗里记笔记。每篇笔记开一扇，再开同一篇会把已有的小窗提到前面；小窗会记住各篇的位置，工具栏里可以换一篇，或点「在标签页中打开」。</li>
+<li><strong>Agent 输入框里用 @ 选文件</strong>：输入 <code>@</code> 会弹出工作区里的 PDF 和 Markdown 笔记，按最近打开排序，边打字边筛选；用上下键或鼠标选中后，发送时会告诉 Agent 这是哪个文件（只附名字和位置，不附文件内容）。</li>
+<li><strong>截图后多了「复制图片」</strong>：按住 ⌥ 拖出一块区域，松手后的菜单里可以选问 Agent、复制图片或存为图片笔记；复制的图片按原清晰度生成。按住 ⌥⇧ 拖仍然直接存为图片笔记。</li>
+</ul>
+<h4>改进</h4>
+<ul>
+<li>Markdown 笔记切到别的标签页再切回来，会停在原来的滚动位置。</li>
+<li>笔记文件在 UniReader 外面被修改（比如在 Obsidian 里编辑）后，打开着的笔记会自动换成新内容；如果这边还有没保存的输入，以这边为准。笔记目录里新增、删除或改名文件，侧栏也会自动刷新。</li>
+<li>Agent 面板里的图片缩略图改为统一的圆角方块；鼠标停在上面会弹出预览，单击可以打开大图查看；移除按钮移到左上角，在浅色图片上也看得清。</li>
+<li>给外部 Agent 用的 MCP 服务：可以只修改 Markdown 笔记里的某几处而不用整篇重写，可以按行分页读取、在笔记里搜索、查看标题大纲，也可以列出工作区里的全部笔记；笔记不用先打开就能读写，笔记小窗里的内容也能读到。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.4">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New</h4>
+<ul>
+<li><strong>Note windows</strong>: right-click a Markdown note in the sidebar and choose Open in Small Window to keep notes next to the PDF you are reading. Each note gets one window; opening the same note again brings its window to the front. Each window remembers its position, and its toolbar lets you switch to another note or choose Open in Tab.</li>
+<li><strong>@ to pick files in the Agent input</strong>: typing <code>@</code> shows the PDFs and Markdown notes in the workspace, most recently opened first, filtered as you type. Pick one with the arrow keys or the mouse, and when you send, the Agent is told which file you mean (only its name and location are attached, not its contents).</li>
+<li><strong>Copy Image after a snip</strong>: ⌥-drag over an area and the menu that appears when you let go now offers Ask Agent, Copy Image and Save as Image Note. Copied images are rendered at full resolution. ⌥⇧-drag still saves an image note directly.</li>
+</ul>
+<h4>Improvements</h4>
+<ul>
+<li>Switching away from a Markdown note tab and back keeps your scroll position.</li>
+<li>When a note file is changed outside UniReader (for example in Obsidian), the open note updates to the new content; if you have unsaved typing, your local text is kept. Adding, deleting or renaming files in note folders refreshes the sidebar automatically.</li>
+<li>Image thumbnails in the Agent panel are now uniform rounded squares; hover to see a preview and click to open the full image. The remove button moved to the top-left corner and stays visible on light images.</li>
+<li>MCP service for external agents: edit just a few places in a Markdown note instead of rewriting it, read a note page by page with line numbers, search inside a note, see its heading outline, and list every note in the workspace. Notes can be read and written without opening them first, and text in note windows is visible too.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.4">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.2.4/UniReader-0.2.4.zip" length="13241209" type="application/octet-stream" sparkle:edSignature="bP+00w/+pY6zcdo2yL56C2RjebSqqQ5WRCk2uyUkp0S3jZvkFnl0mfnmkC8mj97uDVkqEsU/LKkCPq4fBoQKAw==" />
+    </item>
+    <item>
       <title>v0.2.3</title>
       <pubDate>Wed, 23 Sep 2026 06:20:58 +0000</pubDate>
       <sparkle:version>37</sparkle:version>
