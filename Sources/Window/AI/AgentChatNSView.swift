@@ -59,6 +59,11 @@ final class AgentChatNSView: NSView {
     private var headerKey: String?
     private var bannerKey: String?
     private var permissionKey: [UUID] = []
+    /// 权限卡片里要跟着面板宽度改的东西：会折行的文字（换行宽度）与按钮行（放不下就竖排）。
+    private var permissionLabels: [NSTextField] = []
+    private var permissionButtonRows: [(row: NSStackView, spacer: NSView)] = []
+    /// `permissions` 是按 frame 摆的，取 `fittingSize` 前先用它把宽度定下来，否则卡片按文字一整行的宽度算高。
+    private lazy var permissionsWidth = permissions.widthAnchor.constraint(equalToConstant: 0)
 
     init(chat: AgentChat, workspaceName: String, showsHeader: Bool) {
         self.chat = chat
@@ -177,6 +182,7 @@ final class AgentChatNSView: NSView {
         composer.frame = NSRect(x: 12, y: b.height - 12 - ch, width: b.width - 24, height: ch)
         var bottom = composer.frame.minY - 4
         if !permissions.arrangedSubviews.isEmpty {
+            fitPermissions(width: b.width - 24)
             let ph = permissions.fittingSize.height
             permissions.frame = NSRect(x: 12, y: bottom - 8 - ph, width: b.width - 24, height: ph)
             bottom = permissions.frame.minY
@@ -470,17 +476,29 @@ final class AgentChatNSView: NSView {
 
     private func scrollToBottom() { syncScroll(toBottom: true) }
 
-    /// 权限请求卡片：详情（等宽、最多 5 行）+ 选项按钮（「允许一次」是强调样式，不挂回车，免得打字时顺手批掉）。
+    /// 权限请求卡片：标题（请求什么，会折行）+ 详情（等宽、最多 5 行）+ 选项按钮（「允许一次」是强调样式，
+    /// 不挂回车，免得打字时顺手批掉）。
+    ///
+    /// 🔴 别再写 `box.contentView = stack`（2026-09-26 用户报「元素全挤在一行」）：那样 box 的内容视图走
+    /// autoresizing，里面的约束传不到 box 的高度上，`fittingSize` 只算出标题那一行高，详情和按钮全叠在上面。
+    /// 现在是内容视图用约束钉在 box 四边、stack 钉在内容视图里；标题也不用 box 自带的（只有一行、长路径被截断），
+    /// 改成可折行的标签。离屏验证 `spike/agent-permission-card-test.swift`。
     private func refreshPermissions() {
         let ids = chat.permissions.map(\.id)
         guard ids != permissionKey else { return }
         permissionKey = ids
         for v in permissions.arrangedSubviews { permissions.removeArrangedSubview(v); v.removeFromSuperview() }
+        permissionLabels = []
+        permissionButtonRows = []
+        permissionsWidth.isActive = !chat.permissions.isEmpty
         for ask in chat.permissions {
             let box = NSBox()
-            box.title = String(format: L("Allow “%@”?"), ask.title)
-            box.titleFont = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .semibold)
-            var rows: [NSView] = []
+            box.titlePosition = .noTitle
+            let title = NSTextField(wrappingLabelWithString: String(format: L("Allow “%@”?"), ask.title))
+            title.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .semibold)
+            title.textColor = .labelColor
+            var rows: [NSView] = [title]
+            var labels = [title]
             if !ask.detail.isEmpty {
                 let d = NSTextField(wrappingLabelWithString: ask.detail)
                 d.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
@@ -488,8 +506,10 @@ final class AgentChatNSView: NSView {
                 d.isSelectable = true
                 d.textColor = .labelColor
                 rows.append(d)
+                labels.append(d)
             }
-            var buttons: [NSView] = [NSView()]
+            let spacer = NSView()
+            var buttons: [NSView] = [spacer]
             for o in ask.options.reversed() {
                 let b = ClosureButton { [weak self] in self?.chat.answer(ask, optionId: o.id) }
                 b.title = o.name
@@ -504,10 +524,50 @@ final class AgentChatNSView: NSView {
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = 8
-            box.contentView = stack
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            let content = NSView()
+            content.addSubview(stack)
+            box.contentView = content
+            content.translatesAutoresizingMaskIntoConstraints = false   // 装进 box 之后再关，box 会重设它
+            // 🔴 先进 stack 再激活约束（两端要有共同祖先，见 AGENTS.md「约束激活顺序」那条）
             permissions.addArrangedSubview(box)
-            box.widthAnchor.constraint(equalTo: permissions.widthAnchor).isActive = true
-            br.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            var cs: [NSLayoutConstraint] = [
+                content.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 5),
+                content.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -5),
+                content.topAnchor.constraint(equalTo: box.topAnchor, constant: 5),
+                content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -5),
+                stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 8),
+                stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8),
+                stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
+                stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -8),
+                box.widthAnchor.constraint(equalTo: permissions.widthAnchor),
+                br.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            ]
+            cs += labels.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) }
+            // 不许压扁：卡片高度不够时宁可整块变高，也不能让标题 / 详情被压成 0 高
+            for l in labels { l.setContentCompressionResistancePriority(.required, for: .vertical) }
+            NSLayoutConstraint.activate(cs)
+            permissionLabels += labels
+            permissionButtonRows.append((br, spacer))
+        }
+    }
+
+    /// 按面板宽度定下权限卡片的折行宽度与按钮排法：按钮一行放得下就靠右横排，放不下就竖排、各占满一行
+    /// （选项名是 Agent 给的，长短不定；Inspector 最窄 300pt 时卡片里只剩约 250pt）。
+    private func fitPermissions(width: CGFloat) {
+        // 先改 frame 宽再改约束：`permissions` 的 frame 也会折成约束，两者一先一后就是一次约束冲突
+        permissions.frame.size.width = width
+        permissionsWidth.constant = width
+        let inner = width - 10 - 16   // box 内容边距 5×2 + stack 边距 8×2
+        for l in permissionLabels where l.preferredMaxLayoutWidth != inner { l.preferredMaxLayoutWidth = inner }
+        for (row, spacer) in permissionButtonRows {
+            let buttons = row.arrangedSubviews.filter { $0 !== spacer }
+            let need = buttons.reduce(0) { $0 + $1.fittingSize.width } + row.spacing * CGFloat(max(0, buttons.count - 1))
+            let orientation: NSUserInterfaceLayoutOrientation = need <= inner ? .horizontal : .vertical
+            guard row.orientation != orientation else { continue }
+            row.orientation = orientation
+            row.alignment = orientation == .vertical ? .width : .centerY
+            spacer.isHidden = orientation == .vertical
         }
     }
 }
