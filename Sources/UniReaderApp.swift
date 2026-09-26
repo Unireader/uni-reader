@@ -659,6 +659,9 @@ extension Notification.Name {
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
     static let toggleCanvasMode = Notification.Name("com.xvan.UniReader.toggleCanvasMode")
+    /// 书写锁定（设备级全局，直接改 `AppModel.writingLocked`，观察者装在 `AppModel.init` 里——
+    /// 不像 nightMode/canvasMode 是按文档记的，不需要 key 窗口认领）。
+    static let toggleWritingLock = Notification.Name("com.xvan.UniReader.toggleWritingLock")
     /// 扫描页对齐开关（`SCAN-ALIGN-PLAN.md`），key 窗口的活动标签认领。
     static let toggleScanAlign = Notification.Name("com.xvan.UniReader.toggleScanAlign")
     /// 扫描页增强开关（`ScanEnhance`，按文档记在本机），key 窗口的活动标签认领。

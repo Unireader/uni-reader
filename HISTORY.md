@@ -3,6 +3,36 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 书写锁定模式 + 相对粗细模式 + 画板记住上次滚动位置（2026-09-26）
+
+用户一次提了一个 feat 加几个优化，逐条确认后一起落地：
+
+- **书写锁定模式**：锁的是**切笔本身**（用户 09-27 纠正：第一版只收窄了环形盘，不对）——锁定后只能在
+  「当前这支笔 ↔ 橡皮」之间来回。Mac 守门在 `AppModel.applyPenSelection`（换别的笔不响应）/`setPadMode`
+  （只许 note/erase）/`addPen`（锁定时不新增），笔架、⌥1~4、数字键、菜单、环形盘都走这三处；笔架上别的笔、
+  「+」、翻页淡显。环形盘只剩「当前笔 + 橡皮」（`AppModel.radialItems`）。安卓 `PageCanvasView.cyclePen`
+  笔记档不再轮替、`selectPen` 只认当前笔、`cycleMode`/`setModeLocal` 只在 笔记/擦除 间来回。
+  Mac 笔架加了锁开关（`PenRackNSView.lockCell`）+ 菜单项/快捷键 ⌥⌘L；安卓顶栏「writeLock」键放在笔组里
+  紧跟模式 / 切换笔（专属图标 `ic_write_lock` = 笔 + 小锁，与「锁定缩放」的整把挂锁分开；老布局经
+  `ToolLayout.MOVED` 一次性从页面组挪过来），模式1 本机独立判定（`RadialController`），模式2 双向同步给 Mac。协议新增 `lock` 0x59（双向，同 `eraser`
+  一个 opcode 两个方向都用），`PROTOCOL.md §4.1` 有記。
+- **相对粗细模式**：开关打开后，落笔那一刻按当前缩放把预设粗细折算成页面坐标下更细的值（放大 200% 写的字，
+  缩回 100% 看是当初视觉粗细的一半）。Mac 笔架上一格开关（`PenRackNSView.relCell`，`lineweight`）+ 笔编辑器
+  勾选（`AppModel.relativeInkWidth`）。**折算在落笔那一端做**：Mac 本机按自己的缩放；pad（两模式、PDF 页内与
+  草稿纸/画板）按 pad 自己的缩放（安卓共用层 `PageCanvasView.strokePen` + `ScratchCanvas.Tools.relativeInk`），
+  模式2 上行的 `pen.w` 已折算、Mac 原样用（第一版在 Mac 上拿 `readZoom` 近似，用户实测模式2 没效果，09-27 改）。
+  开关与 pad 双向同步：协议新增 `relInk` 0x5A（同 `lock`）；安卓模式1 / 模式2 的 ⋯ 里都有这一项。网页端没做。
+- **画板记住上次滚动位置**：`board_note` 加三列 `viewport_x/y/zoom`（schema v19，Mac + 安卓模式1 同步迁移，
+  刻意不进 `MirrorFingerprint`/`MirrorFp`——单纯翻看不算内容修改）。`ScratchPadNSView`/`ScratchCanvas` 打开时
+  存过就回到离开那一刻、没存过按老规矩（无限画布回原点/分页停首页顶），停手 0.6s 节流写回，退后台/关闭立即
+  flush 一次。安卓模式2 没有本机库，不在这次范围内（同上已知差距）。
+- 顺带修的安卓小 bug：`Ui.setActive` 的开关底色只横向内缩 3dp，锁定态渲染成长方形而不是正方形（用户报
+  「拖拽是正方形，笔/框选按下后是长方形」）——改成四边都缩。
+- **撤掉的**：「双指滚动时不要同时缩放」试了两版（±5% 死区；再改成先判意图的 `PinchIntent`），用户实测都影响操作，
+  09-27 要求整个移除，捏合恢复成原来的 `z0 × d / d0`。问题本身记在 `TODO.md` 真 Bug 里，以后重新设计。
+- Mac `xcodebuild` 编译通过，安卓 `./gradlew assembleDebug` + `test`（JVM 单测含 `WireCodecTest`）全绿；
+  界面手感（锁定按钮、相对粗细写字观感、画板视口回位）**都还没有真机/真人测过**，用户自己试。
+
 ## ✅ 画板笔记分页模式，四端（2026-09-26，分支 `board-note`）
 
 用户要「无限画布 / 分页」两种模式：分页可预建 N 页、到底上拉加页，页面大小可选（整本统一），背景是内置模板

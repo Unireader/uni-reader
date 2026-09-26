@@ -17,6 +17,9 @@ struct BoardNote: Identifiable, Equatable {
     var groupName: String = ""
     var createdAt: Date = .now
     var updatedAt: Date = .now
+    /// 上次离开时的视口（原点 + 缩放，`ScratchPadNSView` 打开时用它复位、关闭/切走时存回）。
+    /// `viewport.zoom <= 0` = 从没存过（新建的画板/老库补列），打开时按原来的规矩摆，别直接拿去用。
+    var viewport = ScratchViewport(origin: .zero, zoom: 0)
     var lastOpenedAt: Date?
 
     /// 侧栏选中键 / 标签持久化键的前缀（与 PDF 的 docID、Markdown 的 `md:` 区分开）。
@@ -212,12 +215,16 @@ extension BoardNote {
         self.init(id: UUID(uuidString: row.id) ?? UUID(), title: row.title,
                   bg: InkColor.parse(row.bg), pattern: ScratchPattern(rawValue: row.pattern) ?? .dots,
                   groupName: row.groupName, createdAt: row.createdAt, updatedAt: row.updatedAt,
+                  viewport: ScratchViewport(origin: CGPoint(x: row.viewportX, y: row.viewportY),
+                                            zoom: row.viewportZoom),
                   lastOpenedAt: row.lastOpenedAt)
     }
 
     var row: LibBoard {
         LibBoard(id: id.uuidString, title: title, bg: bg.cssRGBA, pattern: pattern.rawValue,
-                 groupName: groupName, createdAt: createdAt, updatedAt: updatedAt, lastOpenedAt: lastOpenedAt)
+                 groupName: groupName, createdAt: createdAt, updatedAt: updatedAt,
+                 viewportX: Double(viewport.origin.x), viewportY: Double(viewport.origin.y),
+                 viewportZoom: Double(viewport.zoom), lastOpenedAt: lastOpenedAt)
     }
 }
 

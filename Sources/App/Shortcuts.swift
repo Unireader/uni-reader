@@ -136,7 +136,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     case addBookmark, jumpBack, jumpForward, jumpHistory, gotoPage
     case nightMode, canvasMode, refWindow
     // 笔与模式（菜单，带 ⌥）
-    case penSlot1, penSlot2, penSlot3, penSlot4, eraser, pageTurn, write
+    case penSlot1, penSlot2, penSlot3, penSlot4, eraser, pageTurn, write, writingLock
     // AI
     case aiPanel, agentPanel, snipToAI
     // 阅读区单键（不带修饰键也行；文本框/AI 面板打字时一律放行）
@@ -177,7 +177,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .toggleSidebar, .toggleInspector, .zoomIn, .zoomOut, .zoomFit, .addBookmark,
              .jumpBack, .jumpForward, .jumpHistory, .gotoPage, .nightMode, .canvasMode, .refWindow:
             return .view
-        case .penSlot1, .penSlot2, .penSlot3, .penSlot4, .eraser, .pageTurn, .write:
+        case .penSlot1, .penSlot2, .penSlot3, .penSlot4, .eraser, .pageTurn, .write, .writingLock:
             return .pens
         case .aiPanel, .agentPanel, .snipToAI:
             return .ai
@@ -208,6 +208,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .eraser: return L("Eraser")
         case .pageTurn: return L("Page Turn")
         case .write: return L("Write")
+        case .writingLock: return L("Writing Lock")
         case .aiPanel: return L("AI Panel")
         case .agentPanel: return L("Agent Panel")
         case .snipToAI: return L("Snip to AI")
@@ -246,6 +247,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .eraser: return KeyCombo("e", .option)
         case .pageTurn: return KeyCombo("v", .option)
         case .write: return KeyCombo("b", .option)
+        case .writingLock: return KeyCombo("l", [.command, .option])
         case .aiPanel: return KeyCombo("a", [.command, .shift])
         case .agentPanel: return KeyCombo("k", [.command, .shift])
         case .snipToAI: return KeyCombo("s", .option)

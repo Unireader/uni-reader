@@ -47,6 +47,9 @@ enum WireCodec {
         static let boards: UInt8 = 0x52, boardOpen: UInt8 = 0x53, boardAdd: UInt8 = 0x54, boardImages: UInt8 = 0x55
         /// 分页画板（v17，`BOARD-NOTE-PLAN.md §9.5`）
         static let boardPages: UInt8 = 0x56, boardPageAdd: UInt8 = 0x57, boardPageTemplate: UInt8 = 0x58
+        /// 书写锁定开关（双向，同 `eraser` 一个 opcode 两个方向都用）。
+        static let lock: UInt8 = 0x59
+        static let relInk: UInt8 = 0x5A
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -209,6 +212,10 @@ enum WireCodec {
             w.u8(Op.eraser); w.f32(num(o["size"]))
             w.u8(UInt8(clamping: o["mode"] == nil ? 1 : intOf(o["mode"])))   // 0=整笔 1=局部（默认局部）
             w.u8(o["ring"] == nil ? 1 : (boolOf(o["ring"]) ? 1 : 0))          // 尺寸圆环（默认开）
+        case "lock":
+            w.u8(Op.lock); w.u8(boolOf(o["on"]) ? 1 : 0)
+        case "relInk":
+            w.u8(Op.relInk); w.u8(boolOf(o["on"]) ? 1 : 0)
         case "textNote":
             w.u8(Op.textNote); w.str(strOf(o["id"]))
             w.u8(strOf(o["op"]) == "delete" ? 1 : 0)
@@ -543,6 +550,10 @@ enum WireCodec {
         case Op.eraser:
             out = ["type": "eraser", "size": NSNumber(value: r.f32()),
                    "mode": NSNumber(value: r.u8()), "ring": NSNumber(value: r.u8())]
+        case Op.lock:
+            out = ["type": "lock", "on": NSNumber(value: r.u8() != 0)]
+        case Op.relInk:
+            out = ["type": "relInk", "on": NSNumber(value: r.u8() != 0)]
         case Op.textNote:
             let id = r.str(), opRaw = r.u8()
             let page = r.u32(), nx = r.f32(), ny = r.f32(), text = r.str(), display = r.u8()

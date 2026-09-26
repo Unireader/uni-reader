@@ -37,6 +37,9 @@ final class PenRackNSView: NSView {
     private let divider = RackDividerCell()
     private let eraserCell = RackIconCell(symbol: "eraser")
     private let pageCell = RackIconCell(symbol: "hand.draw")
+    /// 书写锁定（用户 2026-09-26 提）：锁定后长按环形盘只剩「当前笔 + 橡皮」（`AppModel.radialItems`）。
+    private let lockCell = RackIconCell(symbol: "lock")
+    private let relCell = RackIconCell(symbol: "lineweight")
     private let inkCell = RackIconCell(symbol: "cursorarrow.motionlines")
     private let lassoCell = RackIconCell(symbol: "lasso")
     private let snipCell = RackIconCell(symbol: "rectangle.dashed.badge.record")
@@ -91,13 +94,15 @@ final class PenRackNSView: NSView {
         window_.addSubview(row)
         shell.addSubview(toggle)
 
-        for c in [addCell, divider, eraserCell, pageCell, inkCell, lassoCell, snipCell, layersCell] as [RackCell] {
+        for c in [addCell, divider, eraserCell, pageCell, lockCell, relCell, inkCell, lassoCell, snipCell, layersCell] as [RackCell] {
             row.addSubview(c)
         }
-        let all: [RackCell] = [toggle, addCell, eraserCell, pageCell, inkCell, lassoCell, snipCell, layersCell]
+        let all: [RackCell] = [toggle, addCell, eraserCell, pageCell, lockCell, relCell, inkCell, lassoCell, snipCell, layersCell]
         for c in all { c.rack = self }
         addCell.tip = L("Add Pen")
         pageCell.tip = L("Page Turn")
+        lockCell.tip = L("Writing Lock")
+        relCell.tip = L("Relative Ink Width")
         inkCell.tip = L("Local Pen")
         lassoCell.tip = L("Lasso Select")
         snipCell.tip = L("Snip to AI")
@@ -105,7 +110,7 @@ final class PenRackNSView: NSView {
         eraserCell.tip = L("Eraser")
         addCell.onClick = { [weak self] in
             guard let self else { return }
-            let i = self.app.addPen()
+            guard let i = self.app.addPen() else { return }
             self.syncFromModel()
             if self.penCells.indices.contains(i) { self.showPenEditor(i) }
         }
@@ -114,6 +119,8 @@ final class PenRackNSView: NSView {
             if self.app.padMode == "erase" { self.showEraserEditor() } else { self.app.setPadMode("erase") }
         }
         pageCell.onClick = { [weak self] in self?.app.setPadMode("page") }
+        lockCell.onClick = { [weak self] in self?.app.writingLocked.toggle() }
+        relCell.onClick = { [weak self] in self?.app.relativeInkWidth.toggle() }
         inkCell.onClick = { [weak self] in self?.togglePointer(.ink) }
         lassoCell.onClick = { [weak self] in self?.togglePointer(.lasso) }
         snipCell.onClick = { [weak self] in self?.togglePointer(.snip) }
@@ -150,12 +157,13 @@ final class PenRackNSView: NSView {
 
     // MARK: 同步模型
 
-    private var lastSig: (pens: [PenPreset], mode: String, pen: Int, tool: PointerTool)?
+    private var lastSig: (pens: [PenPreset], mode: String, pen: Int, tool: PointerTool, locked: Bool, rel: Bool)?
 
     private func syncFromModel() {
         // `AppModel` 为很多不相干的事发变化；笔架看的这几样没变就不动（重排会打断收起动画）
-        let sig = (app.pens, app.padMode, app.padPenIndex, app.pointerTool)
-        if let l = lastSig, l.pens == sig.0, l.mode == sig.1, l.pen == sig.2, l.tool == sig.3 { return }
+        let sig = (app.pens, app.padMode, app.padPenIndex, app.pointerTool, app.writingLocked, app.relativeInkWidth)
+        if let l = lastSig, l.pens == sig.0, l.mode == sig.1, l.pen == sig.2, l.tool == sig.3, l.locked == sig.4,
+           l.rel == sig.5 { return }
         lastSig = sig
         // 笔插槽数量对齐
         while penCells.count < app.pens.count {
@@ -169,13 +177,19 @@ final class PenRackNSView: NSView {
         }
         while penCells.count > app.pens.count { penCells.removeLast().removeFromSuperview() }
         let mode = app.padMode
+        let locked = app.writingLocked
         for (i, c) in penCells.enumerated() {
             c.pen = app.pens[i]
             c.active = mode == "note" && app.padPenIndex == i
             c.tip = app.pens[i].name
+            c.alphaValue = locked && app.padPenIndex != i ? 0.35 : 1   // 书写锁定：别的笔点了不响应，淡显示意
         }
+        addCell.alphaValue = locked ? 0.35 : 1
+        pageCell.alphaValue = locked ? 0.35 : 1
         eraserCell.active = mode == "erase"
         pageCell.active = mode == "page"
+        lockCell.active = app.writingLocked
+        relCell.active = app.relativeInkWidth
         inkCell.active = app.pointerTool == .ink
         lassoCell.active = app.pointerTool == .lasso
         snipCell.active = app.pointerTool == .snip
@@ -214,7 +228,7 @@ final class PenRackNSView: NSView {
     // MARK: 排版
 
     private var rowCells: [RackCell] {
-        penCells as [RackCell] + [addCell, divider, eraserCell, pageCell, inkCell, lassoCell, snipCell, layersCell]
+        penCells as [RackCell] + [addCell, divider, eraserCell, pageCell, lockCell, relCell, inkCell, lassoCell, snipCell, layersCell]
     }
 
     private func layoutRow() {
@@ -615,11 +629,15 @@ final class PenEditorView: NSView {
     private let value = NSTextField(labelWithString: "")
     private let types = NSSegmentedControl()
     private let typeLabel = NSTextField(labelWithString: "")
+    /// 相对粗细模式（全局开关，不是这支笔独有的——放在这里纯粹是「笔类型右边」顺手能看到，
+    /// 见 `AppModel.relativeInkWidth`）。
+    private let relativeCheck = NSButton(checkboxWithTitle: L("Relative"), target: nil, action: nil)
+    private static let panelWidth: CGFloat = 356
 
     init(app: AppModel, index: Int) {
         self.app = app
         self.index = index
-        super.init(frame: NSRect(x: 0, y: 0, width: 260, height: 150))
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.panelWidth, height: 150))
         let pen = app.pens.indices.contains(index) ? app.pens[index] : PenPreset(name: "", color: InkColor(r: 0, g: 0, b: 0, a: 1), width: 8)
         let title = NSTextField(labelWithString: L("Pen"))
         title.font = .preferredFont(forTextStyle: .headline)
@@ -627,7 +645,7 @@ final class PenEditorView: NSView {
         well.colorWellStyle = .minimal
         well.supportsAlpha = true
         well.color = pen.color.nsColor
-        well.frame = NSRect(x: 260 - 14 - 44, y: 12, width: 44, height: 26)
+        well.frame = NSRect(x: Self.panelWidth - 14 - 44, y: 12, width: 44, height: 26)
         well.target = self
         well.action = #selector(colorChanged)
         let wl = NSTextField(labelWithString: L("Width"))
@@ -651,11 +669,16 @@ final class PenEditorView: NSView {
         types.target = self
         types.action = #selector(typeChanged)
         types.frame = NSRect(x: 14, y: 86, width: 232, height: 24)
+        relativeCheck.state = app.relativeInkWidth ? .on : .off
+        relativeCheck.target = self
+        relativeCheck.action = #selector(relativeChanged)
+        relativeCheck.toolTip = L("Ink size stays relative to zoom level when writing")
+        relativeCheck.frame = NSRect(x: 14 + 232 + 12, y: 88, width: Self.panelWidth - (14 + 232 + 12) - 14, height: 20)
         typeLabel.font = .preferredFont(forTextStyle: .caption1)
         typeLabel.textColor = .secondaryLabelColor
         typeLabel.alignment = .center
         typeLabel.frame = NSRect(x: 14, y: 116, width: 232, height: 16)
-        for v in [title, well, wl, slider, value, types, typeLabel] as [NSView] { addSubview(v) }
+        for v in [title, well, wl, slider, value, types, relativeCheck, typeLabel] as [NSView] { addSubview(v) }
         refreshLabels()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
@@ -679,6 +702,8 @@ final class PenEditorView: NSView {
         app.pens[index].width = (slider.doubleValue * 100).rounded() / 100
         refreshLabels()
     }
+
+    @objc private func relativeChanged() { app.relativeInkWidth = relativeCheck.state == .on }
 
     @objc private func typeChanged() {
         guard app.pens.indices.contains(index), PenBrushType.allCases.indices.contains(types.selectedSegment) else { return }

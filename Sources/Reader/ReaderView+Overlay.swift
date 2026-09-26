@@ -261,7 +261,8 @@ extension ReaderView {
             ReaderOverlayView.set(overlay.pressFill, nil)
         }
         if let r = session.radial, realized.contains(r.page) {
-            overlay.radial.show(r, pens: app.pens, center: displayPoint(ofDoc: docPoint(page: r.page, nx: r.cx, ny: r.cy)))
+            overlay.radial.show(r, items: app.radialItems, pens: app.pens,
+                                center: displayPoint(ofDoc: docPoint(page: r.page, nx: r.cx, ny: r.cy)))
         } else {
             overlay.radial.isHidden = true
         }

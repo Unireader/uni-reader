@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 18
+    static let schemaVersion = 19
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -239,6 +239,9 @@ final class LibraryStore {
           group_name TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
+          viewport_x REAL NOT NULL DEFAULT 0,
+          viewport_y REAL NOT NULL DEFAULT 0,
+          viewport_zoom REAL NOT NULL DEFAULT 0,
           last_opened_at TEXT
         );
         -- 画板上的东西，一条一行（离线镜像按行合并）：kind 1 = 笔迹（payload 同草稿纸 kind=4，不带 padId）、
@@ -306,6 +309,12 @@ final class LibraryStore {
         try addColumnIfMissing("note", "points_at", "TEXT")
         try addColumnIfMissing("board_item", "points", "BLOB")
         try addColumnIfMissing("board_item", "points_at", "TEXT")
+        // v18 → v19：画板笔记记住上次的视口（原点 + 缩放），打开时回到离开那一刻而不是画布原点
+        // （用户 2026-09-26 提；与 `document.read_zoom` 同类，故意不进 `MirrorFingerprint`——
+        // 单纯翻看不改内容，进指纹会把「只是看了看」的画板判成「改过」）。
+        try addColumnIfMissing("board_note", "viewport_x", "REAL NOT NULL DEFAULT 0")
+        try addColumnIfMissing("board_note", "viewport_y", "REAL NOT NULL DEFAULT 0")
+        try addColumnIfMissing("board_note", "viewport_zoom", "REAL NOT NULL DEFAULT 0")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -827,17 +836,24 @@ final class LibraryStore {
     }
     func upsertBoard(_ b: LibBoard) throws {
         try db.run("""
-        INSERT INTO board_note(id,title,bg,pattern,group_name,created_at,updated_at,last_opened_at)
-        VALUES(?,?,?,?,?,?,?,?)
+        INSERT INTO board_note(id,title,bg,pattern,group_name,created_at,updated_at,viewport_x,viewport_y,viewport_zoom,last_opened_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET title=excluded.title, bg=excluded.bg, pattern=excluded.pattern,
           group_name=excluded.group_name, updated_at=excluded.updated_at, last_opened_at=excluded.last_opened_at
         """, [.text(b.id), .text(b.title), .text(b.bg), .text(b.pattern), .text(b.groupName),
               .text(ISO.string(b.createdAt)), .text(ISO.string(b.updatedAt)),
+              .double(b.viewportX), .double(b.viewportY), .double(b.viewportZoom),
               b.lastOpenedAt.map { .text(ISO.string($0)) } ?? .null])
     }
     /// 只记「最近打开」（不动 `updated_at`——打开不算改动，否则离线镜像会把没改过的画板当成改过）。
     func touchBoardOpened(id: String, at: Date = .now) throws {
         try db.run("UPDATE board_note SET last_opened_at=? WHERE id=?", [.text(ISO.string(at)), .text(id)])
+    }
+    /// 只记视口（离开时的原点 + 缩放，`BOARD-NOTE-PLAN.md`「记住上次滚动位置」）：同上，不动 `updated_at`，
+    /// 单纯挪动视口不算内容修改，否则离线镜像/协作会把只是看了看的画板判成「改过」。
+    func saveBoardViewport(id: String, x: Double, y: Double, zoom: Double) throws {
+        try db.run("UPDATE board_note SET viewport_x=?, viewport_y=?, viewport_zoom=? WHERE id=?",
+                   [.double(x), .double(y), .double(zoom), .text(id)])
     }
     /// 删一篇画板笔记，连同上面的全部条目（外键 CASCADE）。归档进回收站由上层先做。
     func deleteBoard(id: String) throws {
@@ -1223,6 +1239,9 @@ final class LibraryStore {
                  groupName: r["group_name"] as? String ?? "",
                  createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                  updatedAt: ISO.date(r["updated_at"] as? String) ?? .now,
+                 viewportX: r["viewport_x"] as? Double ?? 0,
+                 viewportY: r["viewport_y"] as? Double ?? 0,
+                 viewportZoom: r["viewport_zoom"] as? Double ?? 1,
                  lastOpenedAt: ISO.date(r["last_opened_at"] as? String))
     }
     private static func boardItem(_ r: [String: Any]) -> LibBoardItem {

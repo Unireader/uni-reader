@@ -847,3 +847,7 @@
 "Page Width" = "宽";
 "Page Height" = "高";
 "Page Settings" = "页面设置";
+"Writing Lock" = "书写锁定";
+"Relative" = "相对粗细";
+"Relative Ink Width" = "相对粗细模式（缩放时保持视觉粗细一致）";
+"Ink size stays relative to zoom level when writing" = "开启后，落笔那一刻按当前缩放折算粗细：放大写字、缩回原尺寸看，粗细和放大前一致；关闭时粗细是页面上的绝对值，与书写时的缩放无关";

@@ -21,6 +21,7 @@ extension AppModel {
                 // 直线（尺子）笔：整笔恒为「起点 + 当前终点」，后续 move 是**替换终点**而不是追加
                 // （吸附已在平板侧算完）。与页内笔迹同一个标记，见 PROTOCOL.md §4.3 ink begin flags。
                 padInkLine = (obj["line"] as? Bool) ?? false
+                // 相对粗细模式：pad 已按它自己的画布缩放折算好 `w`（PROTOCOL.md `relInk`），这里原样用。
                 scratchInkBegin(in: s, pad: padId,
                                 color: InkColor.parse(pen?["color"] as? String),
                                 width: (pen?["w"] as? NSNumber)?.doubleValue ?? 8,

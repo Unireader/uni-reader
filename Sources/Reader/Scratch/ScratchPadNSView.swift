@@ -12,6 +12,9 @@ import PDFKit
 ///  · 软边界 `ScratchBounds`：可视区限制在「内容包围盒 ± 1.5 屏」内，不会一路滑出去找不回来
 ///
 /// 视口是本端私有状态（不落库不上线）；改名 / 纸样 / 页面底图开关只改 `session.scratchPads`，落库与广播由会话那边对账。
+/// **画板笔记是例外**（`BoardNote.viewport`，v19）：打开时按它复位，而不是回到画布原点，离开/换视口一段时间
+/// 后节流写回 `board_note`（`viewportSaveWork`）——「记住上次滚动位置」只对画板笔记做，普通草稿纸仍旧
+/// 每次都回创建时的锚点（那是「从该处显示」的既有约定，两者语义不同，别混）。
 @MainActor
 final class ScratchPadNSView: NSView {
     let app: AppModel
@@ -38,6 +41,8 @@ final class ScratchPadNSView: NSView {
 
     private var vp = ScratchViewport()
     private var didPlace = false
+    /// 画板视口节流写回（离开/持续滚动缩放中不逐帧落库，停手 0.6s 后写一次；见 `viewportChanged`）。
+    private var viewportSaveWork: DispatchWorkItem?
     private var showMinimap = true
     private var cursor: CGPoint?
 
@@ -205,6 +210,7 @@ final class ScratchPadNSView: NSView {
             if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
             // 关纸 / 切纸后这张页图不再需要：撤掉本端的 wanted 声明
             PageRenderEngine.shared.setWanted([], client: pageClientID)
+            flushViewportSave()   // 画板笔记：离开前把节流中的视口立即写一次，别等 0.6s
         }
     }
 
@@ -360,6 +366,20 @@ final class ScratchPadNSView: NSView {
         refreshMinimap()
         bar.setZoom(vp.zoom)
         if paged { bar.setPageLabel(currentPageIndex + 1, of: session.boardPages.count) }
+        if standalone { scheduleViewportSave() }
+    }
+
+    /// 画板视口写回，节流到停手 0.6s 后一次（滚动/缩放中每帧都调 `viewportChanged`，不能逐帧落库）。
+    private func scheduleViewportSave() {
+        viewportSaveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flushViewportSave() }
+        viewportSaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+    private func flushViewportSave() {
+        viewportSaveWork?.cancel(); viewportSaveWork = nil
+        guard standalone else { return }
+        workspace?.saveBoardViewport(id: padID, origin: vp.origin, zoom: vp.zoom)
     }
 
     /// 视口中心所在的页（0 起）。
@@ -388,10 +408,16 @@ final class ScratchPadNSView: NSView {
         hint.frame = NSRect(x: (b.width - min(hs.width, b.width - 40)) / 2, y: (b.height - hs.height) / 2,
                             width: min(hs.width, b.width - 40), height: hs.height)
         if !didPlace, b.width > 1, b.height > 1 {
-            // 打开 = 回到画布原点（「从该处显示」）；分页 = 按页宽适配、停在第一页顶
+            // 打开 = 回到画布原点（「从该处显示」）；分页 = 按页宽适配、停在第一页顶。
+            // 画板笔记例外：存过视口（`viewport.zoom > 0`）就回到离开那一刻，不回原点/页顶。
             didPlace = true
             pagesLayer.pages = paged ? session.boardPages : []
-            vp = paged ? pageTop(0) : .centeredOnOrigin(viewport: b.size)
+            if standalone, let saved = session.board?.viewport, saved.zoom > 0 {
+                vp = saved
+                clampViewport()
+            } else {
+                vp = paged ? pageTop(0) : .centeredOnOrigin(viewport: b.size)
+            }
         } else if didPlace, old.width > 1, old.height > 1, old != b.size {
             // 窗口缩放：保持画布中心不动
             vp.origin.x += (old.width - b.width) / (2 * vp.zoom)
@@ -704,7 +730,9 @@ final class ScratchPadNSView: NSView {
             } else {
                 guard let pen = app.pens.indices.contains(app.padPenIndex) ? app.pens[app.padPenIndex] : app.pens.first
                 else { drag = nil; return }
-                app.scratchInkBegin(in: session, pad: padID, color: pen.color, width: pen.width, type: pen.type, points: [start])
+                // 相对粗细模式：本机纸/画板知道自己当前的视口缩放，按它折算（见 `AppModel.relativeInkWidth`）。
+                let w = app.relativeInkWidth ? pen.width / max(0.05, Double(vp.zoom)) : pen.width
+                app.scratchInkBegin(in: session, pad: padID, color: pen.color, width: w, type: pen.type, points: [start])
             }
         case .lasso:
             drag = .lasso(lassoBeginMode(at: p))

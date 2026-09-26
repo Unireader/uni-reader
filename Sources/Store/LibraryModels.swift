@@ -127,6 +127,11 @@ struct LibBoard: Identifiable, Equatable {
     var groupName: String
     var createdAt: Date
     var updatedAt: Date
+    /// 上次离开时的视口（v19）：原点 x/y（画布坐标）+ 缩放。`viewportZoom <= 0` = 从没存过
+    /// （新建的画板/老库补列），打开时按原来的规矩摆（无限画布回原点、分页停第一页顶）。
+    var viewportX: Double = 0
+    var viewportY: Double = 0
+    var viewportZoom: Double = 0
     var lastOpenedAt: Date?
 }
 

@@ -71,6 +71,12 @@ extension WorkspaceManager {
         refreshBoards()
     }
 
+    /// 存视口（离开时的原点 + 缩放，「记住上次滚动位置」；不改 `updated_at`，不需要 `refreshBoards()`——
+    /// 视口不影响侧栏列表）。`ScratchPadNSView` 关闭/切走时调，节流后调。
+    func saveBoardViewport(id: UUID, origin: CGPoint, zoom: CGFloat) {
+        try? store?.saveBoardViewport(id: id.uuidString, x: Double(origin.x), y: Double(origin.y), zoom: Double(zoom))
+    }
+
     /// 读一篇画板上的全部东西。笔迹的 `padId` 填画板 id（会话里它就是那张永远开着的草稿纸）。
     /// 分页画板：页内坐标 → 画布坐标按 `pages` 的布局换算（`BOARD-NOTE-PLAN.md §9.2`）。
     func boardContents(id: UUID, pages: [BoardPage] = []) -> (strokes: [InkStroke], images: [BoardImage]) {

@@ -118,6 +118,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x56` | boardPages | S→C | 可靠 |
 | `0x57` | boardPageAdd | C→S | 可靠 |
 | `0x58` | boardPageTemplate | C→S | 可靠 |
+| `0x59` | lock | 双向 | 可靠 |
+| `0x5A` | relInk | 双向 | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
 
@@ -148,6 +150,8 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `pen` | `u16 index` | `{type:"pen", index}` |
 | `penset` | `u16 active` · `u16 n` · `n × pen` | `{type:"penset", list:[{color,w,t}], active}`（布局与 `pens` 相同）|
 | `eraser` | `f32 size` · `u8 mode` · `u8 ring` | `{type:"eraser", size, mode, ring}` |
+| `lock` | `u8 on` | `{type:"lock", on}`（书写锁定，`0/1`）|
+| `relInk` | `u8 on` | `{type:"relInk", on}`（相对粗细模式，`0/1`）|
 | `textNote` | `str id` · `u8 op` · `u32 page` · `f32 nx` · `f32 ny` · `str text` · `u8 display` | `{type:"textNote", id, op, page, nx, ny, text, display}` |
 | `bookmarkEdit` | `u8 op` · `str id` · `u32 page` · `f32 frac` · `str title` | `{type:"bookmarkEdit", op, id, page, frac, title}`（`op` 0=add 1=rename 2=delete；见 `bookmarks`）|
 | `padGeom` | `f32 pageW` | `{type:"padGeom", pageW}` |
@@ -185,6 +189,16 @@ Mac 上点开的气泡不会跟着同步到平板。
 `InkEdit.splitStroke` 的命中半径同义）；`mode` u8 `0=整笔 1=局部`（默认 1：整笔=任一点命中即删整条，
 局部=剔除命中点、剩余连续段各成新笔画）；`ring` u8 `0=关 1=开`（默认 1：笔尖/光标处的橡皮尺寸圆环）。
 C→S：平板改橡皮设置；S→C：Mac 侧变更（或新客户端接入补发）时下发同步。
+
+`lock`（书写锁定，双向，同 `eraser` 一个 opcode 两个方向都用）：锁定后只能在「当前这支笔 ↔ 橡皮」之间来回——
+两端各自拦下换别的笔、切翻页/框选等其它模式（所以锁定期间不会有换笔的 `pen` 或切到别的档的 `mode` 上下行）；
+Mac 判定的长按环形盘只剩「当前笔 + 橡皮」两个扇区（`radial` 消息里 `items` 自然变短，线格式不用改）。
+Mac 与 pad 各有一颗按钮，同一把锁，双向同步（回声抑制同 `eraser`）。
+
+`relInk`（相对粗细模式，双向，同 `lock` 的同步方式）：开着时落笔那一刻按**落笔那一端自己的当前缩放**把预设粗细
+折算细（`w / zoom`），放大写的字缩回原尺寸看就是当初视觉粗细的缩影。**折算在 pad 上做**：pad 知道自己的缩放
+（页内 / 草稿纸 / 画板各自的视口），`ink begin`、草稿纸笔迹上行的 `pen.w` 已是折算后的值，Mac 原样用、不再折算。
+这条消息只负责两端的开关同步；Mac 本机落笔按 Mac 自己的缩放折算。
 
 `layerSelect`/`layerVisible`/`layerAdd`（多层笔迹，平板发起，全部 C→S）：图层的增删改全部由 Mac 判定，
 平板只发「请求」，Mac 执行后照旧广播 `layers`（§4.2）把权威状态推下来——与 `pen`（切换）/`penset`

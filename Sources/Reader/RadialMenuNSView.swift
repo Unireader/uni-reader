@@ -31,8 +31,9 @@ final class RadialMenuNSView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
-    /// 摆在 `center`（覆盖层坐标）处，按当前状态重画。
-    func show(_ radial: RadialState, pens: [PenPreset], center: CGPoint) {
+    /// 摆在 `center`（覆盖层坐标）处，按当前状态重画。`items` = 该显示哪些扇区（书写锁定时只有
+    /// 「当前笔 + 橡皮」两项，见 `AppModel.radialItems`），`pens` 仍传完整笔列表供 `.pen(i)` 按下标取色。
+    func show(_ radial: RadialState, items: [RadialItem], pens: [PenPreset], center: CGPoint) {
         let side = Self.side
         frame = NSRect(x: center.x - side / 2, y: center.y - side / 2, width: side, height: side)
         let r = RadialLayout.outerRadius
@@ -41,6 +42,7 @@ final class RadialMenuNSView: NSView {
         base.layer?.masksToBounds = true
         drawing.frame = bounds
         drawing.radial = radial
+        drawing.items = items
         drawing.pens = pens
         drawing.needsDisplay = true
         isHidden = false
@@ -49,6 +51,7 @@ final class RadialMenuNSView: NSView {
 
 private final class RadialDrawingView: NSView {
     var radial = RadialState(page: 0, cx: 0, cy: 0, highlight: -1)
+    var items: [RadialItem] = []
     var pens: [PenPreset] = []
 
     private static let baseDim = 0.10
@@ -59,7 +62,7 @@ private final class RadialDrawingView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let items = RadialLayout.items(penCount: pens.count)
+        let items = self.items
         let n = max(1, items.count)
         let c = CGPoint(x: bounds.midX, y: bounds.midY)
         let outerR = RadialLayout.outerRadius, innerR = RadialLayout.innerRadius, hubR = RadialLayout.hubRadius

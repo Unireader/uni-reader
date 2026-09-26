@@ -195,6 +195,7 @@ enum MainMenu {
                        target: MenuActions.shared, represented: "page", shortcut: .pageTurn))
         m.addItem(item(L("Write"), #selector(MenuActions.padMode(_:)),
                        target: MenuActions.shared, represented: "note", shortcut: .write))
+        m.addItem(post(L("Writing Lock"), .toggleWritingLock, shortcut: .writingLock))
         m.addItem(.separator())
         m.addItem(post(L("Night Mode"), .toggleNightMode, shortcut: .nightMode))
         m.addItem(post(L("Canvas Mode"), .toggleCanvasMode, shortcut: .canvasMode))

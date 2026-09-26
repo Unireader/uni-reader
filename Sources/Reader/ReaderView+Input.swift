@@ -206,7 +206,9 @@ extension ReaderView {
             } else {
                 guard let pen = app.pens.indices.contains(app.padPenIndex) ? app.pens[app.padPenIndex] : app.pens.first
                 else { return .ignore }
-                app.inkBegin(in: session, page: n0.page, color: pen.color, width: pen.width, type: pen.type, points: [p0])
+                // 相对粗细模式：按落笔那一刻本机窗口的实际缩放折算（见 `AppModel.relativeInkWidth`）。
+                let w = app.relativeInkWidth ? pen.width / max(0.05, Double(zoom)) : pen.width
+                app.inkBegin(in: session, page: n0.page, color: pen.color, width: w, type: pen.type, points: [p0])
             }
             return .ink(start: (n0.page, Double(n0.nx), Double(n0.ny)), erase: erase)
         case .lasso:

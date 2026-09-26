@@ -112,7 +112,9 @@ enum MirrorFp {
         ], lww: "updated_at"),
         // v16：画板笔记（`BOARD-NOTE-PLAN.md §6`）。父表在前（`board_item.board_id` 指向它），两张都按
         // `updated_at` 取新；`board_item` 一条一行，两边各加的笔迹 / 图自然并起来。
-        // `last_opened_at` 同 `document` / `md_doc`：刻意不进指纹。
+        // `last_opened_at` 同 `document` / `md_doc`：刻意不进指纹。`viewport_x`/`viewport_y`/`viewport_zoom`
+        // （v19，记上次滚动位置）同理刻意不进——单纯翻看挪了挪视口不算内容修改，进了指纹会把
+        // 「只是看了看」的画板判成「改过」。
         TableSpec(table: "board_note", key: "id", columns: [
             Column("id", .text), Column("title", .text), Column("bg", .text), Column("pattern", .text),
             Column("group_name", .text), Column("created_at", .text), Column("updated_at", .text),

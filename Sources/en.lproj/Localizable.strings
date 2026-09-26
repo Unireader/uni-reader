@@ -845,3 +845,7 @@
 "Page Width" = "Width";
 "Page Height" = "Height";
 "Page Settings" = "Page Settings";
+"Writing Lock" = "Writing Lock";
+"Relative" = "Relative";
+"Relative Ink Width" = "Relative ink width (keeps visual thickness across zoom)";
+"Ink size stays relative to zoom level when writing" = "When on, ink size at the moment you write is scaled to the current zoom: write zoomed in, and it looks the same size once you zoom back out. When off (default), ink size is an absolute page value, independent of the zoom you wrote at.";

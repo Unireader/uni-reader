@@ -329,3 +329,24 @@ CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key
 - 与方案的出入：安卓模式1 没有「页上长按菜单」，页操作都在「页面」弹层里、作用于视口中心那一页；安卓画板本来没有撤销栈
   （记在 `TODO.md` 模式1 对齐一条）；分页画板的纸样面板只保留纸色（底纹归每页模板）。
 
+## 10. 记住上次滚动位置（schema v18 → v19，2026-09-26）
+
+用户提：草稿纸原规矩「打开一律回到画布原点」对画板笔记不合适——画板是一篇要反复回来接着写的独立笔记，不该
+每次都弹回原点。跟用户对齐：只改画板笔记这一种（普通草稿纸挂在 PDF 页上，「打开就回到创建时的锚点」仍是对的，
+两者语义不同不能混），存储选**写进工作区 SQLite、三端同步**（而不是本机 UserDefaults）。
+
+- `board_note` 加三列：`viewport_x REAL DEFAULT 0`、`viewport_y REAL DEFAULT 0`、`viewport_zoom REAL DEFAULT 0`
+  （画布坐标原点 + 缩放；`viewport_zoom <= 0` = 从没存过的哨兵值，打开时按老规矩摆——无限画布回原点、分页停首页顶）。
+  Mac `LibraryStore.schemaVersion = 19`、安卓 `Schema.VERSION = 19`，DDL 逐字同步，两边 `ADD_COLUMNS`/`addColumnIfMissing`
+  同序追加。
+- 🔴 **刻意不进 `MirrorFingerprint`（Mac）/ `MirrorFp`（安卓）**：同 `last_opened_at` 的先例，单纯翻看挪了挪视口不算
+  内容修改，进了指纹会把「只是看了看」的画板判成「改过」，干跑预览里刷一堆无意义条目。
+- Mac：`BoardNote.viewport`（`ScratchViewport`，App 层）↔ `LibBoard.viewportX/Y/Zoom`（Store 层）；`WorkspaceManager
+  .saveBoardViewport(id:origin:zoom:)` 只更新这三列、不碰 `updated_at`；`ScratchPadNSView` 打开时（`layout()` 的
+  `didPlace` 首帧分支）存过就回到离开那一刻，`viewportChanged()` 停手 0.6s 节流写回，`viewDidMoveToWindow` 离窗时
+  立即 flush 一次。
+- 安卓：`BoardNote.viewportX/Y/Zoom`（`local/store` 层，直接就是 DB 行模型，没有分两层）；`LibraryStore.saveBoardViewport`；
+  `ScratchCanvas.openSession(restore:)` + `currentViewport()`；`BoardController` 节流 0.6s 写回（`postDelayed`/`removeCallbacks`），
+  `close()`/宿主 `onPause()` 立即 flush。模式2（连 Mac 的输入板）没有本机库，不在这次范围内——视口仍是「各端各自维护、
+  不上线」，见 `TODO.md` 第 8 条已知差距。
+

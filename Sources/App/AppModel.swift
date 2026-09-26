@@ -106,6 +106,40 @@ final class AppModel: ObservableObject {
     /// 应用平板上行 `eraser` 时置真：抑制 didSet 的回播（值来自 pad，回声无意义还会三连发）。
     private var applyingRemoteEraser = false
 
+    /// 书写锁定模式（用户 2026-09-26 提，09-27 改口径：锁的是**切笔本身**，不只是环形盘）：锁定后
+    /// 只能在「当前这支笔 ↔ 橡皮」之间来回——换别的笔（笔架 / ⌥1~4 / 数字键 / 菜单 / 环形盘）、切翻页、
+    /// 新增笔一律不响应（守门在 `applyPenSelection` / `setPadMode` / `addPen`，所有入口都走这三处）；
+    /// 环形盘也只剩「当前笔 + 橡皮」（见 `radialItems`）。设备级全局、双向同步给 pad（pad 也有一颗
+    /// 按钮切换，同一把锁）：与 `eraserMode` 同款持久化 + didSet 广播 + 回声抑制。
+    @Published var writingLocked: Bool = UserDefaults.standard.bool(forKey: "writingLocked") {
+        didSet {
+            UserDefaults.standard.set(writingLocked, forKey: "writingLocked")
+            broadcastLock()
+        }
+    }
+    /// 应用平板上行 `lock` 时置真：抑制 didSet 的回播，同 `applyingRemoteEraser`。
+    private var applyingRemoteLock = false
+
+    /// 相对粗细模式（用户 2026-09-26 提）：开着时，落笔那一刻按**当前缩放**把预设粗细折算成页面坐标下
+    /// 更细的值——放大 200% 写的字，缩回 100% 看就是当初视觉粗细的一半；关着（默认）是现在的行为，
+    /// 预设粗细是页面坐标的绝对值，与落笔时的缩放无关。只对本机落笔生效（见 `inkBegin`/`scratchInkBegin`
+    /// 调用点）。与 pad 双向同步开关（`relInk` 0x5A，同 `writingLocked`）：pad 落笔时按**它自己的**缩放折算好
+    /// 再上行 `pen.w`，Mac 对 pad 转发的笔迹原样用、不再折算（Mac 拿不到 pad 的缩放）。
+    @Published var relativeInkWidth: Bool = UserDefaults.standard.bool(forKey: "relativeInkWidth") {
+        didSet {
+            UserDefaults.standard.set(relativeInkWidth, forKey: "relativeInkWidth")
+            broadcastRelInk()
+        }
+    }
+    /// 应用平板上行 `relInk` 时置真：抑制 didSet 的回播，同 `applyingRemoteLock`。
+    private var applyingRemoteRelInk = false
+
+    /// 环形盘当前该给哪些扇区（渲染 / 命中判定 / 广播给 pad 三处共用同一份，见 `RadialLayout`）：
+    /// 书写锁定时只剩「当前笔 + 橡皮」，笔固定用当前选中那支（`padPenIndex`），不是笔架第 0 支。
+    var radialItems: [RadialItem] {
+        writingLocked ? [.pen(padPenIndex), .erase] : RadialLayout.items(penCount: pens.count)
+    }
+
     /// 快速高亮（选中文字后按 `h`）用的荧光色 = **最近一次选过的**颜色：右键菜单里点的、
     /// 高亮气泡里换的都算（用户 2026-09-12 要「按 h 快速高亮」+「能调高亮颜色」）。
     /// 本机持久化（与 eraserRadius 同款 UserDefaults），首次默认调色板第一项（黄）；不广播给平板。
@@ -170,6 +204,12 @@ final class AppModel: ObservableObject {
     private weak var overlaySession: DocSession?
 
     init() {
+        // 书写锁定：设备级全局状态，菜单/快捷键直接翻这个开关（不像 nightMode/canvasMode 按文档记，
+        // 不需要 key 窗口认领）；AppModel 是 app 生命周期单例，观察者不用存 token 卸载。
+        NotificationCenter.default.addObserver(forName: .toggleWritingLock, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.writingLocked.toggle() }
+        }
+
         // 平板翻页 → 应用到平板当前会话，并重推页图。
         server.$requestedPageIndex
             .compactMap { $0 }
@@ -186,7 +226,7 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] running in
                 if running {
-                    self?.push(); self?.broadcastDocs(); self?.broadcastPens(); self?.broadcastEraser()
+                    self?.push(); self?.broadcastDocs(); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastLock(); self?.broadcastRelInk()
                     self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)
                     self?.broadcastBookmarks()
                     self?.broadcastScratchPads(); self?.broadcastScratchStrokes()
@@ -205,7 +245,7 @@ final class AppModel: ObservableObject {
         server.$clientCount
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastStrokes(); self?.broadcastNotes(); self?.broadcastLayers()
+                self?.broadcastDocs(); self?.push(); self?.pushLayout(force: true); self?.broadcastPens(); self?.broadcastEraser(); self?.broadcastLock(); self?.broadcastRelInk(); self?.broadcastStrokes(); self?.broadcastNotes(); self?.broadcastLayers()
                 self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)   // 新客户端要补书库 + 目录
                 self?.broadcastBookmarks()                                             // 书签与目录合并显示，一起补
                 self?.broadcastScratchPads(); self?.broadcastScratchStrokes()          // 草稿纸列表 + 开着那张的笔迹
@@ -460,6 +500,18 @@ final class AppModel: ObservableObject {
             eraserRing = ((obj["ring"] as? NSNumber)?.intValue ?? 1) != 0
             return
         }
+        if obj["type"] as? String == "lock" {
+            applyingRemoteLock = true
+            defer { applyingRemoteLock = false }
+            writingLocked = (obj["on"] as? NSNumber)?.boolValue ?? false
+            return
+        }
+        if obj["type"] as? String == "relInk" {
+            applyingRemoteRelInk = true
+            defer { applyingRemoteRelInk = false }
+            relativeInkWidth = (obj["on"] as? NSNumber)?.boolValue ?? false
+            return
+        }
         guard let s = padSession else { return }
         // 草稿纸打开时，笔只能落在草稿纸上（功能定义，用户要求）：`ink`/`erase`/`probe` 整条拦下改走
         // 画布坐标那套（见 `AppModel+Scratch`）。线格式没改——Mac 是「哪张纸开着」的唯一真源。
@@ -477,6 +529,7 @@ final class AppModel: ObservableObject {
                 // 直线（尺子）笔：整笔只有「起点 + 当前终点」两点，move 来的点是**替换终点**而不是追加
                 // （吸附在平板侧做完，Mac 收到的已是吸附后的终点）。见 PROTOCOL.md §4.3 ink begin flags。
                 padInkLine = (obj["line"] as? Bool) ?? false
+                // 相对粗细模式：pad 已按它自己的缩放折算好 `w`（PROTOCOL.md `relInk`），这里原样用。
                 inkBegin(page: page, color: color, width: w, type: type, points: pts)
                 beginLongPressWatch(page: page, first: pts.first)
             } else if phase == "move" {
@@ -894,7 +947,7 @@ final class AppModel: ObservableObject {
     /// 取消区半径按平板屏幕像素判 —— 两者合起来让选择手感不再随任一端缩放漂移。
     private func updateRadial(_ last: InkPoint?) {
         guard var r = padSession?.radial, let p = last else { return }
-        let items = RadialLayout.items(penCount: pens.count)
+        let items = radialItems
         guard !items.isEmpty else { return }
         let dx = p.dx - r.cx
         let dy = (p.dy - r.cy) * currentPageAspect(page: r.page)   // 归一化 y → 与 x 同尺度，方向才是真实方向
@@ -915,7 +968,7 @@ final class AppModel: ObservableObject {
         longPressWork?.cancel(); longPressWork = nil
         setPressRing(nil)
         if inRadial {
-            let items = RadialLayout.items(penCount: pens.count)
+            let items = radialItems
             if let r = padSession?.radial, items.indices.contains(r.highlight) {
                 switch items[r.highlight] {
                 case .pen(let i): applyPenSelection(index: i)   // 选笔 → 顺带回笔记模式
@@ -964,7 +1017,7 @@ final class AppModel: ObservableObject {
              "w": pen?.width ?? 0,
              "t": (pen?.type ?? .ballpoint).rawValue]
         }
-        let items: [[String: Any]] = RadialLayout.items(penCount: pens.count).map { item in
+        let items: [[String: Any]] = radialItems.map { item in
             switch item {
             case .pen(let i): return entry("pen", pens.indices.contains(i) ? pens[i] : nil)
             case .erase: return entry("erase", nil)
@@ -987,6 +1040,7 @@ final class AppModel: ObservableObject {
     /// （跟 pad 自己 PageDown 切笔时顺带把 modeIdx 归零是同一个道理——选了支笔就是要用它画）。
     /// `pens`/`padPenIndex` 是设备级全局状态，不挂在某个文档会话上，故不需要传 `DocSession`。
     func applyPenSelection(index: Int) {
+        if writingLocked, index != padPenIndex { return }   // 书写锁定：只许回到当前这支笔
         padPenIndex = index
         server.broadcast(["type": "pen", "index": index])
         setPadMode("note")
@@ -995,6 +1049,7 @@ final class AppModel: ObservableObject {
     /// 切换当前工具模式（笔记/擦除/翻页）并广播给 pad。画布悬浮工具条的橡皮/翻页按钮走这个。
     func setPadMode(_ mode: String) {
         guard padMode != mode else { return }
+        if writingLocked, mode != "note", mode != "erase" { return }   // 书写锁定：只在笔 ↔ 橡皮间来回
         padMode = mode
         server.broadcast(["type": "mode", "mode": mode])
     }
@@ -1033,9 +1088,23 @@ final class AppModel: ObservableObject {
                           "ring": eraserRing ? 1 : 0])
     }
 
+    /// 书写锁定变更 → 推给 pad，同 `broadcastEraser` 那套双向同步（Mac 与 pad 上各有一枚开关，共一把锁）。
+    func broadcastLock() {
+        guard !applyingRemoteLock, server.hasClients else { return }
+        server.broadcast(["type": "lock", "on": writingLocked])
+    }
+
+    /// 相对粗细模式变更 → 推给 pad，同 `broadcastLock`。
+    func broadcastRelInk() {
+        guard !applyingRemoteRelInk, server.hasClients else { return }
+        server.broadcast(["type": "relInk", "on": relativeInkWidth])
+    }
+
     /// 新增一支收藏笔（默认样式），立即选中。返回新笔下标，供调用方直接弹出编辑面板。
+    /// 书写锁定时不新增（新增即选中 = 换笔），返回 nil。
     @discardableResult
-    func addPen() -> Int {
+    func addPen() -> Int? {
+        guard !writingLocked else { return nil }
         pens.append(PenPreset(name: L("Pen"), color: InkColor(r: 90, g: 90, b: 90, a: 0.95), width: 8))
         let idx = pens.count - 1
         applyPenSelection(index: idx)
