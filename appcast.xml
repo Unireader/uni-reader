@@ -9,6 +9,42 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.0</title>
+      <pubDate>Sat, 26 Sep 2026 15:04:01 +0000</pubDate>
+      <sparkle:version>41</sparkle:version>
+      <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>⚠️ 请把所有设备都更新</h4>
+<p>这一版改了笔迹的保存格式。用新版打开工作区时，会在后台把已有的笔迹转换成新格式；转换之后，<strong>旧版 UniReader（0.2.6 及更早，也包括没更新的安卓 App）打开这个工作区，笔迹会显示为空</strong>。请在所有 Mac 和平板上都更新后再使用。</p>
+<h4>新功能和改进</h4>
+<ul>
+<li>笔迹改用更紧凑的格式保存：笔迹多的文档和画板打开明显更快，工作区文件也更小。PDF 上的笔迹、草稿纸和画板都包括在内。</li>
+<li>平板连接 Mac 使用时，可以在草稿纸和画板上框选笔迹：圈选、拖动移动、拖角或边上的手柄缩放，也能剪切、复制、粘贴。</li>
+<li>新建画板的窗口重新排版；页面大小除了 A4 / A5 / Letter / 当前屏幕，也可以直接输入宽和高。</li>
+<li>分页画板的「页面设置」面板改为底部切换「本页 / 所有页」，默认是本页：本页可以改背景、在前后插入一页、删除这一页；所有页可以改页面大小和批量设置背景。按钮图标换成了更好认的一个。</li>
+<li>分页画板的「纸样」只保留纸色（每页的背景在「页面设置」里改）。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.0">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>⚠️ Please update every device</h4>
+<p>This version changes how strokes are stored. When you open a workspace, existing strokes are converted to the new format in the background. After that, <strong>older versions of UniReader (0.2.6 and earlier, including an out-of-date Android app) will show the workspace's strokes as empty</strong>. Update UniReader on every Mac and tablet before using it.</p>
+<h4>New features &amp; improvements</h4>
+<ul>
+<li>Strokes are stored in a more compact format: documents and boards with lots of handwriting open noticeably faster, and workspaces take less space. This covers ink on PDFs, scratch pads and boards.</li>
+<li>When the tablet is connected to the Mac, you can lasso strokes on scratch pads and boards: circle to select, drag to move, drag a corner or edge handle to resize, and cut, copy or paste.</li>
+<li>The New Board window has a cleaner layout, and besides A4 / A5 / Letter / current screen you can type a page width and height.</li>
+<li>The Page Settings panel for paged boards now switches between This Page and All Pages at the bottom, starting on This Page: change the background, insert a page before or after, or delete the page; All Pages covers page size and backgrounds for several pages at once. Its toolbar icon is easier to recognize.</li>
+<li>For paged boards, Paper now only sets the paper color (page backgrounds live in Page Settings).</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.0">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.0/UniReader-0.3.0.zip" length="13586810" type="application/octet-stream" sparkle:edSignature="o2m/oegpDfyIcTexIzvY/fuBNwfHgkiRHVC6QEgcc2x4unpgkUKr5zuj6OHMcChP1gFO33c+395VnU57Mb78Cw==" />
+    </item>
+    <item>
       <title>v0.2.6</title>
       <pubDate>Sat, 26 Sep 2026 11:00:52 +0000</pubDate>
       <sparkle:version>40</sparkle:version>
