@@ -82,12 +82,15 @@ private struct InkStrokePayload: Codable {
     var layerId: UUID = InkLayer.defaultID
     /// 草稿纸笔迹才有（kind=4）；页内笔迹不写这个键。
     var padId: UUID?
+    /// 分页画板上的笔迹才有（board_item kind=1，v17）：所属那一页的 id，此时 points 是**页内坐标**。
+    var page: String?
 
-    enum CodingKeys: String, CodingKey { case color, width, type, points, layerId, padId }
+    enum CodingKeys: String, CodingKey { case color, width, type, points, layerId, padId, page }
 
-    init(color: InkColor, width: Double, type: PenBrushType, points: [[Float]], layerId: UUID, padId: UUID?) {
+    init(color: InkColor, width: Double, type: PenBrushType, points: [[Float]], layerId: UUID, padId: UUID?,
+         page: String? = nil) {
         self.color = color; self.width = width; self.type = type; self.points = points
-        self.layerId = layerId; self.padId = padId
+        self.layerId = layerId; self.padId = padId; self.page = page
     }
 
     /// 旧笔迹（升级前落库的）payload 里没有 `type`/`layerId`/`padId` 键，同 `PenPreset` 一样手动兜底。
@@ -99,6 +102,7 @@ private struct InkStrokePayload: Codable {
         points = try c.decode([[Double]].self, forKey: .points).map { $0.map(Float.init) }
         layerId = try c.decodeIfPresent(UUID.self, forKey: .layerId) ?? InkLayer.defaultID
         padId = try c.decodeIfPresent(UUID.self, forKey: .padId)
+        page = try c.decodeIfPresent(String.self, forKey: .page)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -110,6 +114,7 @@ private struct InkStrokePayload: Codable {
         try c.encode(layerId, forKey: .layerId)
         // 页内笔迹不写 padId（键不存在 = 不是草稿纸笔迹），保持既有 payload 逐字节不变。
         try c.encodeIfPresent(padId, forKey: .padId)
+        try c.encodeIfPresent(page, forKey: .page)   // 只有分页画板的笔迹写，别的 payload 逐字节不变
     }
 }
 
@@ -195,23 +200,37 @@ extension InkStroke {
 
     /// 序列化为画板笔记的一条笔迹。payload 与草稿纸 kind=4 **同一份 JSON**，只是不写 `padId`
     /// （归属在 `board_item.board_id` 列上，`BOARD-NOTE-PLAN.md §2.2`）。空笔画返回 nil。
-    func toBoardItem(boardId: String, createdAt: Date, now: Date = .now) -> LibBoardItem? {
+    /// `page` 非 nil = 分页画板：写页 id，点换成**页内坐标**（减去该页在画布上的左上角，`BOARD-NOTE-PLAN.md §9.1`）。
+    func toBoardItem(boardId: String, createdAt: Date, now: Date = .now,
+                     page: (id: UUID, origin: CGPoint)? = nil) -> LibBoardItem? {
         guard !points.isEmpty else { return nil }
+        var s = self
+        if let page {
+            let ox = Double(page.origin.x), oy = Double(page.origin.y)
+            s.points = points.map { InkPoint($0.dx - ox, $0.dy - oy, $0.dz) }
+        }
         let payload = InkStrokePayload(color: color, width: width, type: type,
-                                       points: points.map { [$0.x, $0.y, $0.z] }, layerId: layerId,
-                                       padId: nil)
+                                       points: s.points.map { [$0.x, $0.y, $0.z] }, layerId: layerId,
+                                       padId: nil, page: page?.id.uuidString)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibBoardItem(id: id.uuidString, boardId: boardId, kind: Self.boardItemKind,
-                            rect: normalizedBounds, payload: data, createdAt: createdAt, updatedAt: now)
+                            rect: s.normalizedBounds, payload: data, createdAt: createdAt, updatedAt: now)
     }
 
     /// 从一条画板笔迹复原。`padId` = 这篇画板在会话里扮演的那张「永远开着的草稿纸」的 id
     /// （= 画板笔记 id），于是草稿纸那整条链路（渲染 / 擦除 / 撤销 / 平板下行）原样可用。
-    init?(boardItem it: LibBoardItem, padId: UUID) {
+    /// `origin` = 分页画板上「页 id → 该页在画布上的左上角」；payload 带 `page` 而那页不在（孤儿）→ nil。
+    init?(boardItem it: LibBoardItem, padId: UUID, origin: (String) -> CGPoint? = { _ in nil }) {
         guard it.kind == Self.boardItemKind, let uuid = UUID(uuidString: it.id),
               let p = try? JSONDecoder().decode(InkStrokePayload.self, from: it.payload) else { return nil }
+        var ox = 0.0, oy = 0.0
+        if let pg = p.page {
+            guard let o = origin(pg.uppercased()) else { return nil }
+            ox = Double(o.x); oy = Double(o.y)
+        }
         let pts = p.points.map { p -> InkPoint in
-            InkPoint(p.count > 0 ? p[0] : 0, p.count > 1 ? p[1] : 0, p.count > 2 ? p[2] : 0.5)
+            InkPoint(Double(p.count > 0 ? p[0] : 0) + ox, Double(p.count > 1 ? p[1] : 0) + oy,
+                     Double(p.count > 2 ? p[2] : 0.5))
         }
         self.init(id: uuid, page: 0, color: p.color, width: p.width, type: p.type,
                   points: pts, layerId: p.layerId, padId: padId)

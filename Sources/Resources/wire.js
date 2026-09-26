@@ -24,7 +24,8 @@
     undo: 0x4F,                            // 撤销/重做（栈在 Mac，PROTOCOL.md §4.1）
     nack: 0x50,
     clip: 0x51,                            // 剪切/复制/粘贴（剪贴板在 Mac）
-    boards: 0x52, boardOpen: 0x53, boardAdd: 0x54, boardImages: 0x55   // 画板笔记（v16，PROTOCOL.md §4.8）
+    boards: 0x52, boardOpen: 0x53, boardAdd: 0x54, boardImages: 0x55,  // 画板笔记（v16，PROTOCOL.md §4.8）
+    boardPages: 0x56, boardPageAdd: 0x57, boardPageTemplate: 0x58      // 分页画板（v17，PROTOCOL.md §4.8）
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
@@ -305,7 +306,19 @@
         break;
       }
       case "boardOpen": w.u8(OP.boardOpen); w.str(o.id || ""); break;
-      case "boardAdd": w.u8(OP.boardAdd); break;
+      case "boardAdd":
+        w.u8(OP.boardAdd);
+        // 可选尾部（v17）：分页画板参数。无限画布 = 空 payload（字节同老版本）
+        if (o.mode === 1) { w.u8(1); w.f32(o.w || 0); w.f32(o.h || 0); w.u8(o.template || 0); w.u16(o.count || 0); }
+        break;
+      case "boardPages": {
+        w.u8(OP.boardPages); w.f32(o.w || 0); w.f32(o.h || 0);
+        var BP = o.list || []; w.u16(BP.length);
+        for (var bp = 0; bp < BP.length; bp++) { w.str(BP[bp].id || ""); w.u8(BP[bp].template || 0); }
+        break;
+      }
+      case "boardPageAdd": w.u8(OP.boardPageAdd); w.u16(o.count || 0); break;
+      case "boardPageTemplate": w.u8(OP.boardPageTemplate); w.u16(o.index || 0); w.u8(o.template || 0); break;
       case "boardImages": {
         w.u8(OP.boardImages);
         var BI = o.list || []; w.u16(BI.length);
@@ -536,7 +549,21 @@
         return { type: "boards", kind: bdKind, current: bdCur, list: bdl };
       }
       case OP.boardOpen: return { type: "boardOpen", id: r.str() };
-      case OP.boardAdd: return { type: "boardAdd" };
+      case OP.boardAdd: {
+        if (r.left() < 1) return { type: "boardAdd" };
+        var baMode = r.u8(), baW = r.f32(), baH = r.f32(), baT = r.u8(), baN = r.u16();
+        return { type: "boardAdd", mode: baMode, w: baW, h: baH, template: baT, count: baN };
+      }
+      case OP.boardPages: {
+        var bpW = r.f32(), bpH = r.f32(), bpn = r.u16(), bpl = new Array(bpn);
+        for (var bpi = 0; bpi < bpn; bpi++) { var bpId = r.str(); bpl[bpi] = { id: bpId, template: r.u8() }; }
+        return { type: "boardPages", w: bpW, h: bpH, list: bpl };
+      }
+      case OP.boardPageAdd: return { type: "boardPageAdd", count: r.u16() };
+      case OP.boardPageTemplate: {
+        var bptI = r.u16();
+        return { type: "boardPageTemplate", index: bptI, template: r.u8() };
+      }
       case OP.boardImages: {
         var bin = r.u16(), bil = new Array(bin);
         for (var bii = 0; bii < bin; bii++) {

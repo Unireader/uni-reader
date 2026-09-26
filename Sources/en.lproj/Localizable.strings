@@ -810,3 +810,32 @@
 "Board name" = "Board name";
 "Delete…" = "Delete…";
 "Boards have no scratchpads." = "Boards have no scratchpads.";
+
+/* Paged boards (v17, BOARD-NOTE-PLAN.md §9) */
+"New Board…" = "New Board…";
+"Infinite Canvas" = "Infinite Canvas";
+"Paged" = "Pages";
+"Page Count" = "Number of Pages";
+"Page List" = "Pages";
+"Page Size" = "Page Size";
+"Portrait" = "Portrait";
+"Landscape" = "Landscape";
+"Background" = "Background";
+"Blank" = "Blank";
+"Lined" = "Lined";
+"Square Grid" = "Grid";
+"Cornell" = "Cornell";
+"Two Columns" = "Two Columns";
+"Current Screen" = "Current Screen";
+"Keep pulling to add a page" = "Keep pulling to add a page";
+"Page %d of %d" = "Page %d of %d";
+"Insert Page Before" = "Insert Page Before";
+"Insert Page After" = "Insert Page After";
+"Insert Page" = "Insert Page";
+"Page Background" = "Page Background";
+"Background for All Pages" = "Background for All Pages";
+"Delete Page…" = "Delete Page…";
+"Delete this page?" = "Delete this page?";
+"Delete %d pages?" = "Delete %d pages?";
+"The strokes and images on it are deleted too. This cannot be undone." = "The strokes and images on it are deleted too. This cannot be undone.";
+"Select several pages with ⌘ or ⇧ to change them together." = "Select several pages with ⌘ or ⇧ to change them together.";

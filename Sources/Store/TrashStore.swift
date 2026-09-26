@@ -20,7 +20,7 @@ enum TrashStore {
     /// location 则 `REFERENCES variant(id)`。
     static let documentTables = ["document", "variant", "location", "ink_layer", "scratch_pad", "note"]
     /// 画板笔记条目（v16）要搬的表，同样父表在前（`board_item REFERENCES board_note(id)`）。
-    static let boardTables = ["board_note", "board_item"]
+    static let boardTables = ["board_note", "board_page", "board_item"]
 
     /// 页内笔迹的 note.kind（与 `InkStroke.noteKind` 同值，这里不引 App 层的类型）。
     private static let inkKind = 2
@@ -114,6 +114,7 @@ enum TrashStore {
     static func archiveBoard(_ db: SQLiteDB, boardId: String, to path: String) throws -> Archived {
         try withAttached(db, path: path) { t in
             try db.run("CREATE TABLE \(t).board_note AS SELECT * FROM main.board_note WHERE id=?", [.text(boardId)])
+            try db.run("CREATE TABLE \(t).board_page AS SELECT * FROM main.board_page WHERE board_id=?", [.text(boardId)])
             try db.run("CREATE TABLE \(t).board_item AS SELECT * FROM main.board_item WHERE board_id=?", [.text(boardId)])
             return try summarize(db, schema: t)
         }

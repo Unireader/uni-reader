@@ -26,6 +26,15 @@ final class ScratchPadNSView: NSView {
     /// 画板笔记（v16，`BOARD-NOTE-PLAN.md §3.3`）：这张纸就是一整篇画板，占一个标签页——
     /// 不能关（关 = 关标签）、没有页面底图，但能放图。
     private var standalone: Bool { session.isBoard && session.board?.id == padID }
+    /// 分页画板（v17，`BOARD-NOTE-PLAN.md §9`）：页竖排、竖向滚动、到底上拉加页。
+    private var paged: Bool { standalone && session.isPagedBoard }
+    private let pagesLayer = BoardPagesCALayer()
+    /// 到底之后还在往下滚（屏幕点）：超过 `pullThreshold` 就在末尾加一页；一次手势只加一页。
+    private var pullOver: CGFloat = 0
+    private var pullFired = false
+    private var lastPullAt: CFTimeInterval = 0
+    private static let pullThreshold: CGFloat = 110
+    private let pullHint = NSTextField(labelWithString: L("Keep pulling to add a page"))
 
     private var vp = ScratchViewport()
     private var didPlace = false
@@ -76,7 +85,7 @@ final class ScratchPadNSView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = true
-        for l in [grid, pageLayer, imagesLayer, inkLayer, liveLayer, lassoLayer] as [CALayer] { layer?.addSublayer(l) }
+        for l in [grid, pagesLayer, pageLayer, imagesLayer, inkLayer, liveLayer, lassoLayer] as [CALayer] { layer?.addSublayer(l) }
         registerForDraggedTypes([.fileURL, .png, .tiff])
         eraserRing.fillColor = nil
         eraserRing.lineWidth = 1.5
@@ -89,7 +98,11 @@ final class ScratchPadNSView: NSView {
         hint.spacing = 6
         hint.addArrangedSubview(hintTitle)
         hint.addArrangedSubview(hintBody)
-        for v in [hint, topBand, bar, minimap] as [NSView] { addSubview(v) }
+        pullHint.font = .preferredFont(forTextStyle: .callout)
+        pullHint.textColor = .labelColor
+        pullHint.alignment = .center
+        pullHint.isHidden = true
+        for v in [hint, topBand, bar, minimap, pullHint] as [NSView] { addSubview(v) }
         buildToolbar()
         minimap.onJump = { [weak self] center in
             guard let self else { return }
@@ -136,9 +149,10 @@ final class ScratchPadNSView: NSView {
     private var contentBounds: CGRect? {
         var r = ScratchBounds.contentBounds(strokes, page: showsPage ? pageCanvasRect : nil)
         for im in images { r = r.map { $0.union(im.rect) } ?? im.rect }
+        if paged, let pb = session.boardLayout.bounds { r = r.map { $0.union(pb) } ?? pb }
         return r
     }
-    private var hasContent: Bool { !strokes.isEmpty || showsPage || !images.isEmpty }
+    private var hasContent: Bool { !strokes.isEmpty || showsPage || !images.isEmpty || paged }
 
     private func installObservers() {
         session.$scratchStrokes.receive(on: DispatchQueue.main)
@@ -149,6 +163,8 @@ final class ScratchPadNSView: NSView {
             .sink { [weak self] _ in self?.padChanged() }.store(in: &bag)
         session.$boardImages.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.imagesChanged() }.store(in: &bag)
+        session.$boardPages.receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.pagesChanged() }.store(in: &bag)
         app.$pointerTool.receive(on: DispatchQueue.main)
             .sink { [weak self] t in
                 guard let self else { return }
@@ -217,6 +233,7 @@ final class ScratchPadNSView: NSView {
     // MARK: 刷新
 
     private func refreshAll() {
+        pagesLayer.pages = paged ? session.boardPages : []
         padChanged()
         strokesChanged()
         imagesChanged()
@@ -226,11 +243,16 @@ final class ScratchPadNSView: NSView {
 
     private func padChanged() {
         guard let p = pad else { return }
-        layer?.backgroundColor = p.bg.nsColor.cgColor
+        // 分页：纸色只铺在页上，页外是窗口底色；底纹归每页的模板管，画布底纹不画
+        layer?.backgroundColor = (paged ? voidColor : p.bg.nsColor).cgColor
+        grid.isHidden = paged
         grid.pattern = p.pattern
         grid.ink = gridInk
         grid.setNeedsDisplay()
+        pagesLayer.paper = p.bg
+        pagesLayer.setNeedsDisplay()
         bar.setStandalone(standalone)
+        bar.setPaged(paged)
         // 画板：名字的真源此刻就是这张纸（`session.board` 要等下一拍落库时才跟上）
         bar.update(title: standalone ? (p.title.isEmpty ? L("Untitled Board") : p.title) : p.displayName(index: padIndex),
                    showPage: p.showPage,
@@ -272,6 +294,14 @@ final class ScratchPadNSView: NSView {
         bar.setHasContent(hasContent)
     }
 
+    /// 分页画板的页变了（加页 / 插页 / 删页 / 改背景 / 改尺寸）：页面层重画，视口夹回页范围内。
+    private func pagesChanged() {
+        pagesLayer.pages = paged ? session.boardPages : []
+        pagesLayer.setNeedsDisplay()
+        padChanged()
+        if paged, didPlace { clampViewport(); viewportChanged() }
+    }
+
     private func refreshLive() {
         if let live = session.scratchLive, live.padId == padID { liveLayer.strokes = [live] } else { liveLayer.strokes = [] }
         liveLayer.setNeedsDisplay()
@@ -280,7 +310,7 @@ final class ScratchPadNSView: NSView {
 
     /// 空白纸的引导（有笔迹 / 垫着页面 / 正在写时不出）。
     private func refreshHint() {
-        let show = strokes.isEmpty && images.isEmpty && !showsPage && session.scratchLive == nil
+        let show = !paged && strokes.isEmpty && images.isEmpty && !showsPage && session.scratchLive == nil
         hint.isHidden = !show
         guard show else { return }
         hintTitle.stringValue = standalone ? L("Blank board") : L("Blank scratchpad")
@@ -293,7 +323,7 @@ final class ScratchPadNSView: NSView {
     }
 
     private func refreshMinimap() {
-        let show = showMinimap && hasContent
+        let show = showMinimap && hasContent && !paged   // 分页有页码，不要 minimap
         minimap.isHidden = !show
         guard show else { return }
         minimap.strokes = strokes
@@ -321,12 +351,20 @@ final class ScratchPadNSView: NSView {
         liveLayer.setNeedsDisplay()
         imagesLayer.viewport = vp
         imagesLayer.relayout()
+        pagesLayer.viewport = vp
+        pagesLayer.setNeedsDisplay()
         layoutPage()
         refreshPageImage()
         refreshLasso()
         refreshEraserRing()
         refreshMinimap()
         bar.setZoom(vp.zoom)
+        if paged { bar.setPageLabel(currentPageIndex + 1, of: session.boardPages.count) }
+    }
+
+    /// 视口中心所在的页（0 起）。
+    private var currentPageIndex: Int {
+        session.boardPageIndex(forCanvasY: Double(vp.origin.y + bounds.height / (2 * vp.zoom)))
     }
 
     // MARK: 布局
@@ -337,8 +375,10 @@ final class ScratchPadNSView: NSView {
         let old = grid.frame.size
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for l in [grid, imagesLayer, inkLayer, liveLayer, lassoLayer, eraserRing] as [CALayer] { l.frame = b }
+        for l in [grid, pagesLayer, imagesLayer, inkLayer, liveLayer, lassoLayer, eraserRing] as [CALayer] { l.frame = b }
         CATransaction.commit()
+        let ps = pullHint.fittingSize
+        pullHint.frame = NSRect(x: (b.width - ps.width) / 2, y: b.height - 40, width: ps.width, height: ps.height)
         topBand.frame = NSRect(x: 0, y: 0, width: b.width, height: topInset)
         topBand.isHidden = topInset <= 0
         let bs = bar.fittingSize
@@ -348,9 +388,10 @@ final class ScratchPadNSView: NSView {
         hint.frame = NSRect(x: (b.width - min(hs.width, b.width - 40)) / 2, y: (b.height - hs.height) / 2,
                             width: min(hs.width, b.width - 40), height: hs.height)
         if !didPlace, b.width > 1, b.height > 1 {
-            // 打开 = 回到画布原点（「从该处显示」）
+            // 打开 = 回到画布原点（「从该处显示」）；分页 = 按页宽适配、停在第一页顶
             didPlace = true
-            vp = .centeredOnOrigin(viewport: b.size)
+            pagesLayer.pages = paged ? session.boardPages : []
+            vp = paged ? pageTop(0) : .centeredOnOrigin(viewport: b.size)
         } else if didPlace, old.width > 1, old.height > 1, old != b.size {
             // 窗口缩放：保持画布中心不动
             vp.origin.x += (old.width - b.width) / (2 * vp.zoom)
@@ -372,8 +413,48 @@ final class ScratchPadNSView: NSView {
                       ink: gridInk)
     }
 
-    private func clampViewport() {
-        vp = ScratchBounds.clamp(vp, content: contentBounds, viewport: bounds.size)
+    private func clampViewport() { vp = clamped(vp) }
+
+    /// 视口夹取：无限画布走软边界（`ScratchBounds`）；分页夹在页范围内——页比视口窄时水平居中，
+    /// 竖向上下各留一段边距（顶上多让出工具栏那段）。
+    private func clamped(_ v: ScratchViewport) -> ScratchViewport {
+        guard paged, let pb = session.boardLayout.bounds else {
+            return ScratchBounds.clamp(v, content: contentBounds, viewport: bounds.size)
+        }
+        var out = v
+        let z = max(v.zoom, 0.0001), visW = bounds.width / z, visH = bounds.height / z
+        let margin = 24 / z, top = (topInset + 56) / z
+        if pb.width + 2 * margin <= visW {
+            out.origin.x = pb.midX - visW / 2
+        } else {
+            out.origin.x = min(max(v.origin.x, pb.minX - margin), pb.maxX + margin - visW)
+        }
+        let minY = pb.minY - top, maxY = max(minY, pb.maxY + margin * 2 - visH)
+        out.origin.y = min(max(v.origin.y, minY), maxY)
+        return out
+    }
+
+    /// 分页：第 i 页页顶、按页宽适配（缩放上限 2，页再窄也不放太大）。
+    private func pageTop(_ i: Int) -> ScratchViewport {
+        let l = session.boardLayout, s = bounds.size
+        let z = min(max((s.width - 48) / CGFloat(l.width), ScratchViewport.zoomMin), 2)
+        let r = l.rect(min(max(0, i), max(0, l.count - 1)))
+        let v = ScratchViewport(origin: CGPoint(x: r.midX - s.width / (2 * z), y: r.minY - (topInset + 56) / z), zoom: z)
+        return clamped(v)
+    }
+
+    /// 分页到底后继续往下滚 / 拖：累计超出的屏幕距离；超过阈值就在末尾加一页（一次手势只加一页）。
+    /// `over` = 这一下想走但被夹掉的距离（屏幕点，正 = 往下）。
+    private func notePull(_ over: CGFloat, ended: Bool) {
+        guard paged else { return }
+        if over > 0 { pullOver += over } else if over < 0 { pullOver = 0 }
+        pullHint.isHidden = !(pullOver > 12 && !pullFired)
+        if !pullFired, pullOver >= Self.pullThreshold {
+            pullFired = true
+            pullHint.isHidden = true
+            session.appendBoardPages(1)
+        }
+        if ended { pullOver = 0; pullFired = false; pullHint.isHidden = true }
     }
 
     // MARK: 页面底图（走阅读区同一个渲染引擎；一律不反色；像素宽按缩放折进几档，跨档才重渲）
@@ -416,11 +497,21 @@ final class ScratchPadNSView: NSView {
 
     private func buildToolbar() {
         bar.onRename = { [weak self] t in self?.commitRename(t) }
-        bar.onRecenter = { [weak self] in self?.animateViewport(to: .centeredOnOrigin(viewport: self?.bounds.size ?? .zero)) }
+        bar.onRecenter = { [weak self] in
+            guard let self else { return }
+            // 分页：回到当前页页顶（按页宽）；无限画布：回画布原点
+            self.animateViewport(to: self.paged ? self.pageTop(self.currentPageIndex)
+                                                : .centeredOnOrigin(viewport: self.bounds.size))
+        }
         bar.onFit = { [weak self] in
             guard let self else { return }
+            if self.paged {   // 分页：适配页宽，停在当前页
+                self.animateViewport(to: self.pageTop(self.currentPageIndex))
+                return
+            }
             self.animateViewport(to: ScratchBounds.fit(content: self.contentBounds, viewport: self.bounds.size))
         }
+        bar.onPages = { [weak self] anchor in self?.showPagesPanel(from: anchor) }
         bar.onToggleMinimap = { [weak self] in
             guard let self else { return }
             self.showMinimap.toggle()
@@ -559,20 +650,34 @@ final class ScratchPadNSView: NSView {
             guard dy != 0, event.momentumPhase == [] else { return }
             let factor = min(max(exp(-dy * 0.008), 0.5), 2)   // 手感旋钮同阅读区 ⌘滚轮
             let anchor = convert(event.locationInWindow, from: nil)
-            vp = ScratchBounds.clamp(vp.zoomed(by: factor, anchorScreen: anchor), content: contentBounds, viewport: bounds.size)
+            vp = clamped(vp.zoomed(by: factor, anchorScreen: anchor))
             viewportChanged()
             return
         }
-        guard dx != 0 || dy != 0 else { return }
-        vp.origin = CGPoint(x: vp.origin.x - dx / vp.zoom, y: vp.origin.y - dy / vp.zoom)
+        // 分页「到底上拉加页」：手指在触控板上的这段手势才算（惯性甩出去的不算，免得一甩就多一页）；
+        // 普通滚轮没有手势阶段，停手 0.6s 后重新计。
+        if event.phase.contains(.began) || (event.phase == [] && event.momentumPhase == []
+                                            && CACurrentMediaTime() - lastPullAt > 0.6) {
+            notePull(0, ended: true)
+        }
+        guard dx != 0 || dy != 0 else {
+            if event.phase.contains(.ended) || event.phase.contains(.cancelled) { notePull(0, ended: true) }
+            return
+        }
+        let wantY = vp.origin.y - dy / vp.zoom
+        vp.origin = CGPoint(x: vp.origin.x - dx / vp.zoom, y: wantY)
         clampViewport()
+        if paged, event.momentumPhase == [] {
+            lastPullAt = CACurrentMediaTime()
+            notePull((wantY - vp.origin.y) * vp.zoom, ended: false)
+        }
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) { notePull(0, ended: true) }
         viewportChanged()
     }
 
     override func magnify(with event: NSEvent) {
         let anchor = convert(event.locationInWindow, from: nil)
-        vp = ScratchBounds.clamp(vp.zoomed(by: 1 + event.magnification, anchorScreen: anchor),
-                                 content: contentBounds, viewport: bounds.size)
+        vp = clamped(vp.zoomed(by: 1 + event.magnification, anchorScreen: anchor))
         viewportChanged()
     }
 
@@ -614,8 +719,13 @@ final class ScratchPadNSView: NSView {
         cursor = p
         switch drag {
         case .pan(let start, let mouse):
-            vp.origin = CGPoint(x: start.x - (p.x - mouse.x) / vp.zoom, y: start.y - (p.y - mouse.y) / vp.zoom)
+            let wantY = start.y - (p.y - mouse.y) / vp.zoom
+            vp.origin = CGPoint(x: start.x - (p.x - mouse.x) / vp.zoom, y: wantY)
             clampViewport()
+            if paged {   // 拖着纸往上拉过了底：拉够一段就加一页（这次拖动只加一页）
+                pullOver = 0
+                notePull((wantY - vp.origin.y) * vp.zoom, ended: false)
+            }
             viewportChanged()
         case .ink:
             let c = vp.toCanvas(p)
@@ -647,6 +757,8 @@ final class ScratchPadNSView: NSView {
             session.scratchUndo.seal()                          // 抬笔 = 这一组擦除封口
         case .lasso(let mode):
             lassoEnded(mode)
+        case .pan:
+            notePull(0, ended: true)
         default:
             break
         }
@@ -669,6 +781,7 @@ final class ScratchPadNSView: NSView {
                     m.addItem(ClosureMenuItem(L("View Image"), action: { [weak self] in self?.showLargeImage(im) }))
                 }
             }
+            if paged, let c = cursor { addPageItems(to: m, at: c) }
         }
         if lassoSel != nil {
             m.addItem(ClosureMenuItem(L("Cut"), action: { [weak self] in self?.cutLassoSelection() }))
@@ -679,6 +792,79 @@ final class ScratchPadNSView: NSView {
             m.addItem(paste)
         }
         return m
+    }
+}
+
+// MARK: - 分页画板：页的右键菜单与「页面」面板（`BOARD-NOTE-PLAN.md §9.4`）
+
+extension ScratchPadNSView {
+    /// 右键点在第 i 页上：前 / 后插页、删页、这一页的背景、所有页的背景。
+    fileprivate func addPageItems(to m: NSMenu, at p: CGPoint) {
+        let i = session.boardPageIndex(forCanvasY: Double(vp.toCanvas(p).y))
+        guard session.boardPages.indices.contains(i) else { return }
+        m.addItem(.separator())
+        let head = NSMenuItem(title: String(format: L("Page %d"), i + 1), action: nil, keyEquivalent: "")
+        head.isEnabled = false
+        m.addItem(head)
+        m.addItem(ClosureMenuItem(L("Insert Page Before"), action: { [weak self] in self?.session.insertBoardPage(at: i) }))
+        m.addItem(ClosureMenuItem(L("Insert Page After"), action: { [weak self] in self?.session.insertBoardPage(at: i + 1) }))
+        let one = NSMenu()
+        for t in BoardTemplate.allCases {
+            let item = ClosureMenuItem(t.label, action: { [weak self] in self?.session.setBoardTemplate(t, pages: [i]) })
+            item.state = session.boardPages[i].template == t ? .on : .off
+            one.addItem(item)
+        }
+        let bg = NSMenuItem(title: L("Page Background"), action: nil, keyEquivalent: "")
+        bg.submenu = one
+        m.addItem(bg)
+        let all = NSMenu()
+        for t in BoardTemplate.allCases {
+            all.addItem(ClosureMenuItem(t.label, action: { [weak self] in
+                guard let self else { return }
+                self.session.setBoardTemplate(t, pages: Set(self.session.boardPages.indices))
+            }))
+        }
+        let bgAll = NSMenuItem(title: L("Background for All Pages"), action: nil, keyEquivalent: "")
+        bgAll.submenu = all
+        m.addItem(bgAll)
+        let del = ClosureMenuItem(L("Delete Page…"), action: { [weak self] in self?.confirmDeletePages([i]) })
+        if session.boardPages.count <= 1 { del.action = nil }
+        m.addItem(del)
+    }
+
+    /// 删页：页上有内容就先问一句（删页不进撤销栈——位置都变了）。
+    fileprivate func confirmDeletePages(_ idx: Set<Int>) {
+        let del = idx.filter { session.boardPages.indices.contains($0) }
+        guard !del.isEmpty, del.count < session.boardPages.count else { NSSound.beep(); return }
+        let hasContent = session.scratchStrokes.contains { del.contains(session.boardPageIndex(of: $0)) }
+            || session.boardImages.contains { del.contains(session.boardPageIndex(of: $0)) }
+        guard hasContent, let win = window else { session.deleteBoardPages(del); return }
+        let a = NSAlert()
+        a.messageText = del.count == 1 ? L("Delete this page?") : String(format: L("Delete %d pages?"), del.count)
+        a.informativeText = L("The strokes and images on it are deleted too. This cannot be undone.")
+        let b = a.addButton(withTitle: L("Delete"))
+        b.hasDestructiveAction = true
+        a.addButton(withTitle: L("Cancel"))
+        a.beginSheetModal(for: win) { [weak self] r in
+            if r == .alertFirstButtonReturn { self?.session.deleteBoardPages(del) }
+        }
+    }
+
+    /// 工具条「页面」：整本尺寸（预设 + 横竖）、纸色、页列表多选 → 批量背景 / 插页 / 删页。
+    fileprivate func showPagesPanel(from anchor: NSView) {
+        let panel = BoardPagesPanel(session: session)
+        panel.onDelete = { [weak self] idx in self?.confirmDeletePages(idx) }
+        panel.onJump = { [weak self] i in
+            guard let self else { return }
+            self.animateViewport(to: self.pageTop(i))
+        }
+        let vc = NSViewController()
+        vc.view = panel
+        let pop = NSPopover()
+        pop.contentViewController = vc
+        pop.behavior = .transient
+        pop.contentSize = panel.frame.size
+        pop.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
 }
 
@@ -1116,7 +1302,10 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
     var onPaper: (NSView) -> Void = { _ in }
     var onClose: () -> Void = {}
     var onInsertImage: () -> Void = {}
+    var onPages: (NSView) -> Void = { _ in }
     private(set) var renaming = false
+    private var pagesBtn: NSButton!
+    private let pageLabel = NSTextField(labelWithString: "")
     private var closeBtn: NSButton!
     private var closeDivider: NSView!
     private var imageBtn: NSButton!
@@ -1175,8 +1364,16 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
         closeDivider = divider()
         imageBtn = icon("photo.badge.plus", L("Insert Image…")) { [weak self] in self?.onInsertImage() }
         imageBtn.isHidden = true
-        for v in [titleButton, titleField, divider(), recenter, fit, minimapBtn, pageBtn, imageBtn, paperBtn, zoomLabel,
-                  closeDivider, close] as [NSView] {
+        pagesBtn = icon("doc.on.doc", L("Page List")) { [weak self] in
+            guard let self else { return }
+            self.onPages(self.pagesBtn)
+        }
+        pagesBtn.isHidden = true
+        pageLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        pageLabel.textColor = .labelColor
+        pageLabel.isHidden = true
+        for v in [titleButton, titleField, divider(), pageLabel, recenter, fit, minimapBtn, pageBtn, pagesBtn, imageBtn,
+                  paperBtn, zoomLabel, closeDivider, close] as [NSView] {
             stack.addArrangedSubview(v)
         }
         stack.spacing = 8
@@ -1239,6 +1436,22 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
     }
 
     func setHasContent(_ v: Bool) { fit.isEnabled = v }
+
+    /// 分页画板：多一个页码读数与「页面」按钮，没有 minimap。
+    func setPaged(_ on: Bool) {
+        guard pagesBtn.isHidden == on else { return }
+        pagesBtn.isHidden = !on
+        pageLabel.isHidden = !on
+        minimapBtn.isHidden = on
+        needsLayoutInSuperview()
+    }
+
+    func setPageLabel(_ i: Int, of n: Int) {
+        let text = String(format: L("Page %d of %d"), i, n)
+        guard pageLabel.stringValue != text else { return }
+        pageLabel.stringValue = text
+        needsLayoutInSuperview()
+    }
 
     /// 画板笔记：没有「关闭」与「页面底图」，多一个「插入图片」。
     func setStandalone(_ on: Bool) {

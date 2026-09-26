@@ -33,7 +33,10 @@ extension DocTabModel {
     }
 
     private func loadBoard(_ b: BoardNote) {
-        let (strokes, images) = workspace.boardContents(id: b.id)
+        let pages = workspace.boardPages(id: b.id)
+        let (strokes, images) = workspace.boardContents(id: b.id, pages: pages)
+        session.persistedBoardPages = Dictionary(uniqueKeysWithValues: pages.map { ($0.id, $0) })
+        session.boardPages = pages
         session.scratchUndo.reset()
         session.inkUndo.reset()
         session.store = workspace.store
@@ -60,12 +63,14 @@ extension DocTabModel {
     func leaveBoard() {
         guard boardID != nil else { return }
         if session.isBoard {
-            persistBoardRow(); persistBoardStrokes(); persistBoardImages()
+            persistBoardRow(); persistBoardPages(); persistBoardStrokes(); persistBoardImages()
         }
         boardID = nil
         staged = false
         session.persistedBoard = nil
         session.board = nil
+        session.persistedBoardPages = [:]
+        session.boardPages = []
         session.persistedBoardImages = [:]
         session.boardImages = []
         clearScratch()
@@ -78,6 +83,8 @@ extension DocTabModel {
         // 已经不在库里了：别再落库（对账会把它当新增写回去），直接清状态。
         session.persistedBoard = nil
         session.board = nil
+        session.persistedBoardPages = [:]
+        session.boardPages = []
         boardID = nil
         staged = false
         session.persistedBoardImages = [:]
@@ -107,12 +114,27 @@ extension DocTabModel {
         let current = session.scratchStrokes
         let currentIDs = Set(current.map(\.id))
         for st in current where session.persistedScratchStrokes[st.id] != st {
-            workspace.saveBoardStroke(boardId: bid, st)
+            // 分页画板：按第一个点归页、存页内坐标（`BOARD-NOTE-PLAN.md §9.1`）
+            workspace.saveBoardStroke(boardId: bid, st, page: session.boardPageRef(index: session.boardPageIndex(of: st)))
         }
         for goneID in session.persistedScratchStrokes.keys where !currentIDs.contains(goneID) {
             workspace.deleteBoardItem(id: goneID)
         }
         session.persistedScratchStrokes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    }
+
+    /// 分页画板的页 ↔ `board_page`（v17）。删掉的页：它上面的条目在页操作里已经从数组摘掉，由另外两个对账删行。
+    func persistBoardPages() {
+        guard let bid = session.board?.id else { return }
+        let current = session.boardPages
+        let currentIDs = Set(current.map(\.id))
+        for p in current where session.persistedBoardPages[p.id] != p {
+            workspace.saveBoardPage(boardId: bid, p)
+        }
+        for goneID in session.persistedBoardPages.keys where !currentIDs.contains(goneID) {
+            workspace.deleteBoardPage(id: goneID)
+        }
+        session.persistedBoardPages = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     /// 画板图片 ↔ `board_item` kind=2；删的那张要对账图片引用（最后一处引用没了 → 进待删除）。
@@ -121,7 +143,7 @@ extension DocTabModel {
         let current = session.boardImages
         let currentIDs = Set(current.map(\.id))
         for im in current where session.persistedBoardImages[im.id] != im {
-            workspace.saveBoardImage(boardId: bid, im)
+            workspace.saveBoardImage(boardId: bid, im, page: session.boardPageRef(index: session.boardPageIndex(of: im)))
         }
         for (goneID, old) in session.persistedBoardImages where !currentIDs.contains(goneID) {
             workspace.deleteBoardImage(id: goneID, image: old.image)

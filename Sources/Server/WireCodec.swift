@@ -45,6 +45,8 @@ enum WireCodec {
         static let clip: UInt8 = 0x51
         /// 画板笔记（v16，`PROTOCOL.md §4.8`）
         static let boards: UInt8 = 0x52, boardOpen: UInt8 = 0x53, boardAdd: UInt8 = 0x54, boardImages: UInt8 = 0x55
+        /// 分页画板（v17，`BOARD-NOTE-PLAN.md §9.5`）
+        static let boardPages: UInt8 = 0x56, boardPageAdd: UInt8 = 0x57, boardPageTemplate: UInt8 = 0x58
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -395,7 +397,21 @@ enum WireCodec {
             w.u16(list.count)
             for b in list { w.str(strOf(b["id"])); w.str(strOf(b["title"])) }
         case "boardOpen": w.u8(Op.boardOpen); w.str(strOf(o["id"]))
-        case "boardAdd": w.u8(Op.boardAdd)
+        case "boardAdd":
+            w.u8(Op.boardAdd)
+            // 可选尾部（v17）：分页画板的参数。无限画布 / 老客户端 = 空 payload（字节不变）
+            if intOf(o["mode"]) == 1 {
+                w.u8(1); w.f32(num(o["w"])); w.f32(num(o["h"]))
+                w.u8(UInt8(clamping: intOf(o["template"]))); w.u16(intOf(o["count"]))
+            }
+        case "boardPages":
+            w.u8(Op.boardPages); w.f32(num(o["w"])); w.f32(num(o["h"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for p in list { w.str(strOf(p["id"])); w.u8(UInt8(clamping: intOf(p["template"]))) }
+        case "boardPageAdd": w.u8(Op.boardPageAdd); w.u16(intOf(o["count"]))
+        case "boardPageTemplate":
+            w.u8(Op.boardPageTemplate); w.u16(intOf(o["index"])); w.u8(UInt8(clamping: intOf(o["template"])))
         case "boardImages":
             w.u8(Op.boardImages)
             let list = o["list"] as? [[String: Any]] ?? []
@@ -652,7 +668,22 @@ enum WireCodec {
             for _ in 0..<n { let id = r.str(), title = r.str(); list.append(["id": id, "title": title]) }
             out = ["type": "boards", "kind": NSNumber(value: kind), "current": current, "list": list]
         case Op.boardOpen: out = ["type": "boardOpen", "id": r.str()]
-        case Op.boardAdd: out = ["type": "boardAdd"]
+        case Op.boardAdd:
+            out = ["type": "boardAdd"]
+            if r.remaining >= 1 {   // 可选尾部（v17）：mode · w · h · template · count
+                let mode = r.u8(), w = r.f32(), h = r.f32(), t = r.u8(), n = r.u16()
+                out = ["type": "boardAdd", "mode": NSNumber(value: mode), "w": NSNumber(value: w),
+                       "h": NSNumber(value: h), "template": NSNumber(value: t), "count": NSNumber(value: n)]
+            }
+        case Op.boardPages:
+            let w = r.f32(), h = r.f32(), n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n { let id = r.str(); list.append(["id": id, "template": NSNumber(value: r.u8())]) }
+            out = ["type": "boardPages", "w": NSNumber(value: w), "h": NSNumber(value: h), "list": list]
+        case Op.boardPageAdd: out = ["type": "boardPageAdd", "count": NSNumber(value: r.u16())]
+        case Op.boardPageTemplate:
+            let i = r.u16(), t = r.u8()
+            out = ["type": "boardPageTemplate", "index": NSNumber(value: i), "template": NSNumber(value: t)]
         case Op.boardImages:
             let n = r.u16()
             var list = [[String: Any]](); list.reserveCapacity(n)

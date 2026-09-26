@@ -107,6 +107,13 @@ export const S = $state({
   boards: [] as { id: string; title: string }[],   // 当前工作区的画板笔记（按最近打开排序，标题已兜底）
   boardList: false,        // 画板笔记列表弹层开关
   boardRenaming: false,    // 工具条上正在改画板名（行内输入框）
+  boardPaged: false,       // 跟随的是分页画板（v17）
+  boardPageCount: 0,
+  boardCurPage: 0,         // 视口中心所在页（0 起）：页码读数与「这一页的背景」
+  boardCurTemplate: 0,
+  boardTplPanel: false,    // 「这一页的背景」面板开关
+  boardNewPanel: false,    // 画板列表里「新建」展开成选模式的小表单
+  pullHint: false,         // 「继续上拉添加新页」提示
   // ---- 参考窗（只读小窗，`../../REF-WINDOW-PLAN.md`）----
   // 🔴 **整组都是本端私有**：不落库、不上线（开着没有 / 看的哪本 / 滚到哪，都没有跨端真源可言）。
   // 位置与尺寸另存 localStorage，见 RefWindow.svelte。

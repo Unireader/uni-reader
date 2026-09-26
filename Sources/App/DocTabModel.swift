@@ -243,6 +243,10 @@ final class DocTabModel: ObservableObject, Identifiable {
             s.persistScratchStrokes()    // 草稿纸上落笔/擦除时增量落库（scratchLive 变化不触发）
             s.app.broadcastScratchStrokes()
         }
+        on(session.$boardPages) { s in
+            s.persistBoardPages()        // 分页画板加页 / 插页 / 删页 / 改背景 / 改尺寸时增量落库
+            s.app.broadcastBoardPages()
+        }
         on(session.$boardImages) { s in
             s.persistBoardImages()       // 画板上加图 / 挪图 / 删图时增量落库
             s.app.broadcastBoardImages()
@@ -307,6 +311,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         persistScratchPads()
         persistScratchStrokes()
         persistBoardImages()
+        persistBoardPages()
     }
 
     // MARK: - 工作区快照

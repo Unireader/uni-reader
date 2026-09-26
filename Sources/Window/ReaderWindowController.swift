@@ -364,7 +364,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
         on(.newTabRequested) { $0.tabs.docPickerPresented = true }
         on(.newMarkdownNoteRequested) { $0.newMarkdownNote() }
-        on(.newBoardRequested) { $0.tabs.newBoard() }
+        on(.newBoardRequested) { $0.presentNewBoard() }
         on(.importMarkdownRequested) { $0.importMarkdownFolder() }
         on(.openMarkdownNote) { c, note in
             guard let key = note.userInfo?["id"] as? String,
@@ -400,7 +400,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .sink { [weak self] req in
                 guard let self, self.tabs.owns(req.sessionID) else { return }
                 self.app.padBoardRequest = nil
-                let tab = req.boardID.map { self.tabs.openBoard($0) } ?? self.tabs.newBoard()
+                let spec = WorkspaceManager.BoardSpec(paged: req.paged.map {
+                    (CGSize(width: $0.width, height: $0.height), $0.template, $0.count)
+                })
+                let tab = req.boardID.map { self.tabs.openBoard($0) } ?? self.tabs.newBoard(spec: spec)
                 if let tab { self.app.padFollowBoardTab(tab.session) }
             }
             .store(in: &bag)
@@ -430,6 +433,19 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                 self.app.broadcastDocs()
             }
             .store(in: &bag)
+    }
+
+    /// 新建画板笔记：先弹一张选模式的表（无限画布 / 分页 + 页面大小 / 背景 / 页数，`BOARD-NOTE-PLAN.md §9.4`）。
+    func presentNewBoard() {
+        guard let win = window, win.attachedSheet == nil else { return }
+        let vc = NewBoardSheetController()
+        let sheet = NSWindow(contentViewController: vc)
+        vc.onCancel = { [weak win, weak sheet] in if let sheet { win?.endSheet(sheet) } }
+        vc.onCreate = { [weak self, weak win, weak sheet] spec in
+            if let sheet { win?.endSheet(sheet) }
+            self?.tabs.newBoard(spec: spec)
+        }
+        win.beginSheet(sheet)
     }
 
     func toggleInspector() { setInspector(open: inspectorItem.isCollapsed) }

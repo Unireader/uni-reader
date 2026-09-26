@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 16
+    static let schemaVersion = 17
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -252,6 +252,20 @@ final class LibraryStore {
           updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_board_item_board ON board_item(board_id);
+        -- v17：分页画板的页（`BOARD-NOTE-PLAN.md §9`）。一个画板有页 = 分页模式，没有页 = 无限画布。
+        -- 分页画板上的条目在 payload 里带 "page"（这里的 id），点与 x/y/w/h 是**页内坐标**。
+        -- sort_key = 小数排序键（插页取前后两页中点）；width/height 整本统一（每页存同一个值、一起改）；
+        -- template = 背景模板（blank / lined / grid / dots / cornell / twoColumn）。
+        CREATE TABLE IF NOT EXISTS board_page (
+          id TEXT PRIMARY KEY,
+          board_id TEXT NOT NULL REFERENCES board_note(id) ON DELETE CASCADE,
+          sort_key REAL NOT NULL,
+          width REAL NOT NULL, height REAL NOT NULL,
+          template TEXT NOT NULL DEFAULT 'blank',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -282,6 +296,7 @@ final class LibraryStore {
         // v13 → v14 只新增 page_align 表（同上，无需 ALTER）。
         // v14 → v15 只新增 md_doc 表（同上，无需 ALTER）。Markdown 笔记正文在文件里，不动其它表。
         // v15 → v16 只新增 board_note / board_item 两张表（同上，无需 ALTER）。
+        // v16 → v17 只新增 board_page 表（同上，无需 ALTER）；页内坐标的 "page" 键在 payload 里，不动 board_item 结构。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -824,6 +839,22 @@ final class LibraryStore {
     }
     func deleteBoardItem(id: String) throws { try db.run("DELETE FROM board_item WHERE id=?", [.text(id)]) }
 
+    // 分页画板的页（board_page，v17；`BOARD-NOTE-PLAN.md §9`）
+    func boardPages(boardId: String) throws -> [LibBoardPage] {
+        try db.query("SELECT * FROM board_page WHERE board_id=? ORDER BY sort_key ASC, created_at ASC",
+                     [.text(boardId)]).map(Self.boardPage)
+    }
+    func upsertBoardPage(_ p: LibBoardPage) throws {
+        try db.run("""
+        INSERT INTO board_page(id,board_id,sort_key,width,height,template,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET sort_key=excluded.sort_key, width=excluded.width, height=excluded.height,
+          template=excluded.template, updated_at=excluded.updated_at
+        """, [.text(p.id), .text(p.boardId), .double(p.sortKey), .double(p.width), .double(p.height),
+              .text(p.template), .text(ISO.string(p.createdAt)), .text(ISO.string(p.updatedAt))])
+    }
+    func deleteBoardPage(id: String) throws { try db.run("DELETE FROM board_page WHERE id=?", [.text(id)]) }
+
     // MARK: - 图片本体（image，v13；`IMAGE-NOTE-PLAN.md §2~3`）
 
     /// 图片笔记的 note kind。定义在 Store 层而不是 App 层：引用计数是 SQL 算的，这个数字 DAO 自己要用。
@@ -1102,6 +1133,14 @@ final class LibraryStore {
                      rect: CGRect(x: r["x"] as? Double ?? 0, y: r["y"] as? Double ?? 0,
                                   width: r["w"] as? Double ?? 0, height: r["h"] as? Double ?? 0),
                      payload: r["payload"] as? Data ?? Data(),
+                     createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                     updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
+    private static func boardPage(_ r: [String: Any]) -> LibBoardPage {
+        LibBoardPage(id: r["id"] as? String ?? "", boardId: r["board_id"] as? String ?? "",
+                     sortKey: r["sort_key"] as? Double ?? 0,
+                     width: r["width"] as? Double ?? 595, height: r["height"] as? Double ?? 842,
+                     template: r["template"] as? String ?? "blank",
                      createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                      updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
     }

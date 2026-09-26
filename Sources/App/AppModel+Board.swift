@@ -15,6 +15,7 @@ extension AppModel {
         let list: [[String: Any]] = s.workspaceBoards.map { ["id": $0.id.uuidString, "title": $0.displayName] }
         server.broadcast(["type": "boards", "kind": followKind(s),
                           "current": s.board?.id.uuidString ?? "", "list": list])
+        broadcastBoardPages()   // 跟随的会话一变，页也跟着换（不是分页画板 = 空表）
     }
 
     /// 当前画板上的图（不是画板会话时发空表）。图片本体客户端按 `GET /image?h=<sha>` 自取。
@@ -45,10 +46,38 @@ extension AppModel {
         padBoardRequest = PadBoardRequest(sessionID: cur.id, boardID: id)
     }
 
-    /// 平板 `boardAdd`：新建一篇并打开。
-    func applyBoardAdd() {
+    /// 平板 `boardAdd`：新建一篇并打开。带可选尾部（`mode = 1`）= 分页画板（`BOARD-NOTE-PLAN.md §9.5`）。
+    func applyBoardAdd(_ obj: [String: Any] = [:]) {
         guard let cur = padSession else { return }
-        padBoardRequest = PadBoardRequest(sessionID: cur.id, boardID: nil)
+        var req = PadBoardRequest(sessionID: cur.id, boardID: nil)
+        if (obj["mode"] as? NSNumber)?.intValue == 1 {
+            let w = (obj["w"] as? NSNumber)?.doubleValue ?? 595, h = (obj["h"] as? NSNumber)?.doubleValue ?? 842
+            req.paged = .init(width: w > 1 ? w : 595, height: h > 1 ? h : 842,
+                              template: BoardTemplate(code: (obj["template"] as? NSNumber)?.intValue ?? 0),
+                              count: max(1, min((obj["count"] as? NSNumber)?.intValue ?? 1, 100)))
+        }
+        padBoardRequest = req
+    }
+
+    /// 分页画板的页（不是分页画板时发 `n = 0`）。客户端按布局契约（`§9.2`）自己排页、画背景。
+    func broadcastBoardPages() {
+        guard server.hasClients, let s = padSession else { return }
+        let pages = s.isPagedBoard ? s.boardPages : []
+        let l = BoardLayout(pages: pages)
+        server.broadcast(["type": "boardPages", "w": l.width, "h": l.height,
+                          "list": pages.map { ["id": $0.id.uuidString, "template": Int($0.template.code)] }])
+    }
+
+    /// 平板 `boardPageAdd`：在末尾加页（到底上拉）。
+    func applyBoardPageAdd(_ obj: [String: Any], to s: DocSession) {
+        guard s.isPagedBoard else { return }
+        s.appendBoardPages((obj["count"] as? NSNumber)?.intValue ?? 1)
+    }
+
+    /// 平板 `boardPageTemplate`：改某一页的背景（index 越界整帧丢弃）。
+    func applyBoardPageTemplate(_ obj: [String: Any], to s: DocSession) {
+        guard s.isPagedBoard, let i = (obj["index"] as? NSNumber)?.intValue, s.boardPages.indices.contains(i) else { return }
+        s.setBoardTemplate(BoardTemplate(code: (obj["template"] as? NSNumber)?.intValue ?? 0), pages: [i])
     }
 
     /// 窗口替平板开好了画板标签之后调：平板若锁定在某个会话上（没在「跟随 Mac」），就把它锁到新标签。

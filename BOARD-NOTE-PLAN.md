@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_board_item_board ON board_item(board_id);
 
 - Mac：`migrate()` 里加上面两段，`schemaVersion = 16`。
 - 安卓：`Schema.kt` 逐字抄同两段；并且**打开工作区时若没有这两张表就用同样的语句补建**
-  （用户 2026-09-24 同意的一次例外，只限这两张表；其它表照旧「Mac 先改，安卓不动结构」）。
+  （用户 2026-09-24 同意；2026-09-26 用户撤销了「安卓不改表结构」的规定，安卓与 Mac 一样正常迁移，见 `android/AGENTS.md`）。
   `meta.schema_version` 安卓仍然不写。
 
 ## 3. Mac
@@ -231,8 +231,101 @@ CREATE INDEX IF NOT EXISTS idx_board_item_board ON board_item(board_id);
 - Inspector「笔记 › 草稿纸」在画板标签里只显示一句说明——否则会把画板本身当成一张草稿纸列出来，删它等于删掉整篇画板的笔迹。
 - 网页在 Mac 看 Markdown 笔记时（`boards.kind = 1`）显示空状态，修掉「停在上一篇 PDF」的老问题；安卓模式2 同。
 
-### 8.3 已知遗留
+### 8.3 已知遗留（分页模式见 §9）
 
 - 从 PDF ⌥⇧ 拖截图直接放进画板笔记（截图菜单加一项）——本轮没做。
 - 平板上不能加图 / 挪图 / 删图（方案既定）。
 - 画板没有分组界面（`group_name` 列已预留）。
+
+## 9. 分页模式（2026-09-26 定）
+
+用户原话：「画板做一下模式支持，一个是现在的无限画布模式，另外一个就是分页模式，一页一页的，可以预先创建 N 页，
+也可以到底后上拉滚动添加页。分页支持设置页面大小，比如屏幕尺寸，A4 等等，然后分页支持各种草稿纸格式的底，
+比如 cornell，两栏等等布局格式的背景图，允许单页使用不同的背景，也可以批量设置」。
+同日拍板：**页面大小整本统一**；背景**只做内置模板**（程序画，不用图片）；平板（网页 + 模式2）= **书写 + 到底加页 +
+改当前页背景**，插页 / 删页 / 批量设置只在 Mac 与安卓模式1；安卓照常建表（同日撤销了「安卓不改表结构」的规定）。
+
+### 9.1 数据（schema v16 → v17）
+
+```sql
+-- v17：分页画板的页（BOARD-NOTE-PLAN.md §9）。一个画板有页 = 分页模式，没有页 = 无限画布（模式建画板时定，之后不转换）。
+CREATE TABLE IF NOT EXISTS board_page (
+  id TEXT PRIMARY KEY,
+  board_id TEXT NOT NULL REFERENCES board_note(id) ON DELETE CASCADE,
+  sort_key REAL NOT NULL,                 -- 页序：小数排序键，插页取前后两页的中点，不用改其它页
+  width REAL NOT NULL, height REAL NOT NULL,   -- 页面尺寸（画布点）；整本统一 = 每页都存同一个值、一起改
+  template TEXT NOT NULL DEFAULT 'blank', -- 背景模板，见 9.3
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key);
+```
+
+- **分页画板上的条目（笔迹 / 图片）存「页内坐标」**：payload 多一个键 `"page": "<board_page.id>"`，
+  点与 `x/y/w/h` 都相对该页左上角（画布点）。无限画布的条目没有这个键、照旧是画布坐标。
+  这样**插页 / 删页 / 改尺寸都不用改别的页的条目**（离线镜像也不会因为插了一页就满屏「改过」）。
+- 条目归哪一页：按它**第一个点**落在哪页定（页间空隙归上面那页，超出首末页的归首 / 末页）；笔迹可以画出页边，不裁。
+- `page` 指向的页已不存在（镜像合并里一边删了页）→ 这条不显示（同草稿纸孤儿笔迹）。
+
+### 9.2 布局契约（三端一致）
+
+页按 `sort_key` 升序竖着排，**水平居中于画布 x = 0**：第 i 页（0 起）矩形 = `(-W/2, i × (H + 24), W, H)`，
+页间距 **24** 画布点。运行时与线上一律用这个画布坐标（草稿纸整条链路照旧），只在落库 / 读库时与页内坐标互换。
+
+页面尺寸预设（画布点，竖版；横版 = 宽高对调）：A4 595×842、A5 420×595、Letter 612×792、「当前屏幕」= 创建那台设备
+屏幕的逻辑尺寸（Mac 取主屏可见区，平板取屏幕 dp）。
+
+### 9.3 背景模板（三端一致，线上 u8）
+
+`0 blank` 空白 · `1 lined` 横线 · `2 grid` 方格 · `3 dots` 点阵 · `4 cornell` 康奈尔 · `5 twoColumn` 两栏（只许尾部追加，
+未知值按空白画）。几何全用页内画布点（与页面大小无关的固定间距，A4 与屏幕尺寸观感一致）：
+
+| 模板 | 画法 |
+|---|---|
+| lined | 横线间距 28，自顶 72 起到底 36 止，左右各留 36 |
+| grid | 20 × 20 方格铺满整页 |
+| dots | 20 × 20 点阵铺满整页，点径 2 |
+| cornell | 顶部标题区高 = 页高 12%（下边一条粗线）；底部总结区高 = 页高 20%（上边一条粗线）；中间左侧提示栏宽 = 页宽 30%（一条竖粗线）；中间区域加横线（间距 28） |
+| twoColumn | 中线一条竖粗线（上下各留 48）；两栏各加横线（间距 28，中线两侧各留 12） |
+
+线色由纸色明度推（同草稿纸底纹）：细线 alpha 0.14、粗线 alpha 0.30，线宽 1 / 1.5（画布点，随缩放）。
+页面底色 = 画板纸色；页外（空隙与四周）= 窗口底色，页边一条淡描边。
+
+### 9.4 交互
+
+- **新建画板**时选模式：无限画布 / 分页；分页再选页面大小（含横竖）、背景模板、初始页数（1~100）。
+- 分页视口：竖向滚动、横向夹在页宽内，打开时按页宽适配、停在第一页顶；工具条显示「第 i / N 页」，回中 = 回到当前页顶、
+  适应内容 = 适配页宽；没有 minimap。
+- **到底加页**：滚到最后一页底部后继续往上拉（Mac 触控板 / 滚轮继续往下滚），超过一段距离松手即在末尾加一页
+  （沿用最后一页的背景），过程中底部有一行「继续上拉添加新页」的提示。
+- Mac：页右键 = 在前面 / 后面插一页、删掉这一页（有内容要确认）、背景 ▸ 模板（这一页）；工具条「页面」弹层 =
+  页列表多选 → 批量设背景 / 删除，整本页面大小（横竖、预设）。改尺寸 / 插页 / 删页后撤销栈清空（位置都变了）。
+- 平板（网页 / 模式2）：书写、到底加页、改**当前页**背景（当前页 = 视口中心所在页）。
+- 安卓模式1：与 Mac 相同（插页 / 删页 / 批量 / 改尺寸都有）。
+
+### 9.5 协议（0x56~0x58）
+
+| opcode | 名称 | 方向 | payload |
+|---|---|---|---|
+| `0x56` | `boardPages` | S→C | `f32 w` · `f32 h` · `u16 n` · `n ×( str id, u8 template )`（`n = 0` = 不是分页画板） |
+| `0x57` | `boardPageAdd` | C→S | `u16 count`（在末尾加 count 页，沿用末页背景） |
+| `0x58` | `boardPageTemplate` | C→S | `u16 index` · `u8 template` |
+
+- `boardAdd`（0x54）尾部加**可选**字段：`u8 mode`（0 无限 / 1 分页）· `f32 w` · `f32 h` · `u8 template` · `u16 count`；
+  老客户端发空 payload = 无限画布（行为不变）。
+- 笔迹、图片仍走 `scratchStrokes` / `boardImages` 的画布坐标（Mac 按 9.2 换算），客户端按 9.2 自己排页画背景。
+
+### 9.6 实现记录（2026-09-26，Mac + 网页 + 安卓两模式）
+
+- Mac：`App/BoardModel.swift`（`BoardTemplate` / `BoardPage` / `BoardPageSize` / `BoardLayout` / `BoardTemplateGeometry`）、
+  `App/DocSession+BoardPages.swift`（加页 / 插页 / 删页 / 改背景 / 改尺寸 + 连同对账快照一起平移）、`DocTabModel+Board`（页对账、
+  条目按页换页内坐标落库）、`Reader/Scratch/BoardPagesPanel.swift`（「页面」弹层）、`Window/Sheets/NewBoardSheet.swift`（新建选模式）、
+  `ScratchPadNSView`（`paged`：页面层 `BoardPagesCALayer`、夹取 `clamped`、`pageTop`、上拉加页 `notePull`、页右键菜单）。
+- 网页：`web/src/lib/scratch.ts`（页绘制 / 模板几何 / 夹取 / 上拉加页 / 当前页背景）、`PadBar.svelte`（页码、背景面板、新建表单）。
+- 安卓：`shared/BoardPaging.kt`（契约 Kotlin 版）+ `ScratchCanvas.setPages`、`shared/NewBoardSheet.kt`、模式1 `BoardController`
+  「页面」弹层、模式2 `PadScratch`；**安卓改为正常迁移到 v17**（`Schema.migrate`，同日用户撤销了「安卓不改表结构」）。
+- 测试：`spike/board-store-test.swift` 59 项（含布局 / 页内坐标换算 / 模板几何 / 回收站带页）；编解码向量 +5（Swift / JS / 安卓一致）；
+  镜像指纹向量第 29 条 `row board_page`；安卓 `BoardPagingTest` 与 Mac 那几条逐条对应。
+- 与方案的出入：安卓模式1 没有「页上长按菜单」，页操作都在「页面」弹层里、作用于视口中心那一页；安卓画板本来没有撤销栈
+  （记在 `TODO.md` 模式1 对齐一条）；分页画板的纸样面板只保留纸色（底纹归每页模板）。
+

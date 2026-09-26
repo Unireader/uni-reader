@@ -100,8 +100,11 @@ check(MirrorFp.spec("note")?.columns.map(\.name) ==
       ["id", "document_id", "kind", "page", "anchor_x", "anchor_y", "anchor_w", "anchor_h",
        "payload", "created_at", "updated_at"], "note 列表")
 check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc",
-                                     "board_note", "board_item", "meta"],
-      "参与同步的表恰好 9 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张）")
+                                     "board_note", "board_page", "board_item", "meta"],
+      "参与同步的表恰好 10 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页）")
+check(MirrorFp.spec("board_page")?.columns.map(\.name) ==
+      ["id", "board_id", "sort_key", "width", "height", "template", "created_at", "updated_at"],
+      "board_page 列表（v17）")
 check(MirrorFp.spec("board_note")?.columns.map(\.name) ==
       ["id", "title", "bg", "pattern", "group_name", "created_at", "updated_at"],
       "board_note 列表（v16；**不含 last_opened_at**，同 document）")
@@ -169,6 +172,12 @@ let tableCases: [(String, [String: Any])] = [
     ("document", docRow), ("note", noteRow), ("ink_layer", layerRow),
     ("scratch_pad", padRow), ("variant", variantRow), ("meta", metaRow),
     ("board_note", boardRow), ("board_item", boardItemRow),
+    ("board_page", [
+        "id": "88888888-8888-4888-8888-888888888888",
+        "board_id": "66666666-6666-4666-8666-666666666666",
+        "sort_key": 1.5, "width": 595.0, "height": 842.0, "template": "cornell",
+        "created_at": "2026-09-26T09:00:00Z", "updated_at": "2026-09-26T09:05:00Z",
+    ] as [String: Any]),
 ]
 for (t, row) in tableCases {
     guard let sp = MirrorFp.spec(t) else { check(false, "\(t) 有 spec"); continue }

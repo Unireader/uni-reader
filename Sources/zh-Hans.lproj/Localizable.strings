@@ -812,3 +812,32 @@
 "Board name" = "画板笔记名称";
 "Delete…" = "删除…";
 "Boards have no scratchpads." = "画板笔记里没有草稿纸。";
+
+/* 分页画板（v17，BOARD-NOTE-PLAN.md §9） */
+"New Board…" = "新建画板笔记…";
+"Infinite Canvas" = "无限画布";
+"Paged" = "分页";
+"Page Count" = "页数";
+"Page List" = "页面";
+"Page Size" = "页面大小";
+"Portrait" = "竖版";
+"Landscape" = "横版";
+"Background" = "背景";
+"Blank" = "空白";
+"Lined" = "横线";
+"Square Grid" = "方格";
+"Cornell" = "康奈尔";
+"Two Columns" = "两栏";
+"Current Screen" = "当前屏幕";
+"Keep pulling to add a page" = "继续上拉添加新页";
+"Page %d of %d" = "第 %d / %d 页";
+"Insert Page Before" = "在前面插入一页";
+"Insert Page After" = "在后面插入一页";
+"Insert Page" = "插入一页";
+"Page Background" = "这一页的背景";
+"Background for All Pages" = "所有页的背景";
+"Delete Page…" = "删除这一页…";
+"Delete this page?" = "删除这一页？";
+"Delete %d pages?" = "删除这 %d 页？";
+"The strokes and images on it are deleted too. This cannot be undone." = "页上的笔迹和图片会一起删除，不能撤销。";
+"Select several pages with ⌘ or ⇧ to change them together." = "按住 ⌘ 或 ⇧ 选中多页，可以一起修改。";

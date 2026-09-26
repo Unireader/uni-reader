@@ -115,6 +115,9 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x53` | boardOpen | C→S | 可靠 |
 | `0x54` | boardAdd | C→S | 可靠 |
 | `0x55` | boardImages | S→C | 可靠 |
+| `0x56` | boardPages | S→C | 可靠 |
+| `0x57` | boardPageAdd | C→S | 可靠 |
+| `0x58` | boardPageTemplate | C→S | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
 
@@ -594,6 +597,26 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
   叠放序 = 列表顺序（先画的在下）。层序：纸色 → 底纹 → **图片** → 笔迹。
   图片本体由客户端按 `GET /image?h=<sha>` 取（与 `/page.png` 同级不校验 token；Mac 只认当前跟随画板上登记过的 sha），
   客户端按 sha 缓存。**平板只看不改图片**（本轮平板上不能加图 / 挪图 / 删图，框选只作用于笔迹）。
+
+#### 分页画板（v17 起，0x56~0x58，`BOARD-NOTE-PLAN.md §9`）
+
+| opcode | payload | 对象形状 |
+|---|---|---|
+| `boardPages` | `f32 w` · `f32 h` · `u16 n` · `n ×( str id, u8 template )` | `{type:"boardPages", w, h, list:[{id,template},…]}` |
+| `boardPageAdd` | `u16 count` | `{type:"boardPageAdd", count}` |
+| `boardPageTemplate` | `u16 index` · `u8 template` | `{type:"boardPageTemplate", index, template}` |
+| `boardAdd`（可选尾部） | `u8 mode` · `f32 w` · `f32 h` · `u8 template` · `u16 count` | `{type:"boardAdd", mode, w, h, template, count}` |
+
+- `boardPages`：被跟随画板的页（**全量镜像**；不是分页画板时 `n = 0`）。随 `boards` 一起发，页有任何变化再发。
+  🔴 **布局契约**：第 i 页（0 起）的画布矩形 = `(-w/2, i × (h + 24), w, h)`——客户端按它排页、画背景；
+  笔迹与图片照旧走 `scratchStrokes` / `boardImages` 的**画布坐标**（Mac 在库里存的是页内坐标，线上一律换算好）。
+- `template`：`0 blank · 1 lined · 2 grid · 3 dots · 4 cornell · 5 twoColumn`（只许尾部追加，未知值按空白画）。
+  几何（页内画布点）：横线间距 28、自顶 72 到底 36、左右留 36；方格 / 点阵步长 20、点径 2；康奈尔 = 顶部 12% 与底部 20% 各一条粗线、
+  左侧 30% 一条竖粗线（两粗线之间），中间区域横线间距 28；两栏 = 中间一条竖粗线（上下留 48），两栏各自横线（中线两侧留 12）。
+  线色由纸色明度推：细线 α0.14 宽 1、粗线 α0.30 宽 1.5、点 α0.30（画布点，随缩放）。页底色 = 纸色，页外 = 界面底色，页边一圈淡描边。
+- `boardPageAdd`：在末尾加 `count` 页（沿用末页背景）——平板「到底上拉加页」发这条。
+- `boardPageTemplate`：改第 `index` 页的背景（index 越界整帧丢弃）——平板只改**当前页**（视口中心所在页）。
+- `boardAdd` 尾部：`mode = 1` = 新建分页画板（页面大小 `w × h` 画布点、背景、初始页数 1~100）；没有尾部 = 无限画布（老客户端行为不变）。
 
 ## 5. 兼容与版本
 

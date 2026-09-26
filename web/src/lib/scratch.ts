@@ -122,25 +122,174 @@ export function initScratch(refs: CaptureRefs): void {
     cx.restore();
   }
 
+  // ---- 分页画板（v17，PROTOCOL.md §4.8 / BOARD-NOTE-PLAN.md §9）----
+
+  const PAGE_GAP = 24;
+  const PULL_THRESHOLD = 110;   // 到底后再上拉多少屏幕 px 算「要加一页」（同 Mac）
+  function paged(): boolean { return G.boardKind === 2 && G.boardPages.list.length > 0; }
+  function pageRect(i: number): [number, number, number, number] {
+    const W = G.boardPages.w, H = G.boardPages.h;
+    return [-W / 2, i * (H + PAGE_GAP), W, H];
+  }
+  function pagesBox(): [number, number, number, number] | null {
+    const n = G.boardPages.list.length;
+    if (!n) return null;
+    const W = G.boardPages.w, H = G.boardPages.h;
+    return [-W / 2, 0, W, n * (H + PAGE_GAP) - PAGE_GAP];
+  }
+  /// 画布 y 落在哪一页（空隙归上面那页，首之上 / 末之下夹住）——与 Mac `BoardLayout.index` 同一条规则。
+  function pageIndexAt(y: number): number {
+    const n = G.boardPages.list.length;
+    if (!n) return 0;
+    return clamp(Math.floor(y / (G.boardPages.h + PAGE_GAP)), 0, n - 1);
+  }
+  function curPageIndex(): number { return pageIndexAt(G.padVp.oy + vh() / (2 * G.padVp.z)); }
+
+  /// 第 i 页页顶、按页宽适配（缩放上限 2）。
+  function pageTop(i: number): void {
+    const W = G.boardPages.w;
+    const z = clamp((vw() - 32) / W, MINZ, 2);
+    const r = pageRect(clamp(i, 0, Math.max(0, G.boardPages.list.length - 1)));
+    G.padVp.z = z;
+    G.padVp.ox = r[0] + r[2] / 2 - vw() / (2 * z);
+    G.padVp.oy = r[1] - 56 / z;   // 顶上让出草稿纸工具条那段
+    padClamp();
+  }
+
+  /// 背景模板几何（页内画布 px，**三端契约**，与 Mac `BoardTemplateGeometry` 逐条一致）。
+  type Seg = [number, number, number, number];
+  const tplCache = new Map<string, { thin: Seg[]; bold: Seg[]; dots: [number, number][] }>();
+  function tplShape(t: number, w: number, h: number): { thin: Seg[]; bold: Seg[]; dots: [number, number][] } {
+    const key = t + "@" + w + "x" + h;
+    const hit = tplCache.get(key);
+    if (hit) return hit;
+    const s = { thin: [] as Seg[], bold: [] as Seg[], dots: [] as [number, number][] };
+    const GAP = 28, STEP = 20;
+    const hLines = (y0: number, y1: number, x0: number, x1: number): void => {
+      for (let y = y0; y <= y1 + 0.001; y += GAP) s.thin.push([x0, y, x1, y]);
+    };
+    if (t === 1) hLines(72, h - 36, 36, w - 36);                         // lined
+    else if (t === 2) {                                                   // grid
+      for (let x = STEP; x < w - 0.001; x += STEP) s.thin.push([x, 0, x, h]);
+      for (let y = STEP; y < h - 0.001; y += STEP) s.thin.push([0, y, w, y]);
+    } else if (t === 3) {                                                 // dots
+      for (let y = STEP; y < h - 0.001; y += STEP) for (let x = STEP; x < w - 0.001; x += STEP) s.dots.push([x, y]);
+    } else if (t === 4) {                                                 // cornell
+      const y1 = Math.round(h * 0.12), y2 = Math.round(h * 0.8), cxl = Math.round(w * 0.3);
+      s.bold.push([0, y1, w, y1], [0, y2, w, y2], [cxl, y1, cxl, y2]);
+      hLines(y1 + GAP, y2 - 8, 0, w);
+    } else if (t === 5) {                                                 // twoColumn
+      const mid = Math.round(w / 2);
+      s.bold.push([mid, 48, mid, h - 48]);
+      hLines(72, h - 36, 36, mid - 12);
+      hLines(72, h - 36, mid + 12, w - 36);
+    }
+    tplCache.set(key, s);
+    return s;
+  }
+
+  /// 页：纸色 + 模板 + 一圈淡描边。只画看得见的那几页。页外是界面底色（drawScratch 先铺）。
+  function drawPages(pad: { bg: string } | undefined): void {
+    const n = G.boardPages.list.length;
+    const z = G.padVp.z, W = window.innerWidth, H = window.innerHeight;
+    const bg = pad ? pad.bg : "rgba(255,255,255,1)";
+    const dark = inkIsDark(bg), ink = dark ? "0,0,0" : "255,255,255";
+    const first = pageIndexAt(G.padVp.oy), last = pageIndexAt(G.padVp.oy + (H - BAR) / z);
+    cx.save();
+    cx.beginPath(); cx.rect(0, BAR, W, H - BAR); cx.clip();
+    for (let i = first; i <= last && i < n; i++) {
+      const r = pageRect(i);
+      const x = (r[0] - G.padVp.ox) * z, y = BAR + (r[1] - G.padVp.oy) * z, w = r[2] * z, h = r[3] * z;
+      if (x > W || y > H || x + w < 0 || y + h < BAR) continue;
+      cx.fillStyle = bg;
+      cx.fillRect(x, y, w, h);
+      const s = tplShape(G.boardPages.list[i].template, r[2], r[3]);
+      cx.save();
+      cx.beginPath(); cx.rect(x, y, w, h); cx.clip();
+      if (s.thin.length) {
+        cx.strokeStyle = "rgba(" + ink + ",.14)"; cx.lineWidth = Math.max(0.5, z);
+        cx.beginPath();
+        for (const g of s.thin) { cx.moveTo(x + g[0] * z, y + g[1] * z); cx.lineTo(x + g[2] * z, y + g[3] * z); }
+        cx.stroke();
+      }
+      if (s.bold.length) {
+        cx.strokeStyle = "rgba(" + ink + ",.30)"; cx.lineWidth = Math.max(0.75, 1.5 * z);
+        cx.beginPath();
+        for (const g of s.bold) { cx.moveTo(x + g[0] * z, y + g[1] * z); cx.lineTo(x + g[2] * z, y + g[3] * z); }
+        cx.stroke();
+      }
+      if (s.dots.length) {
+        cx.fillStyle = "rgba(" + ink + ",.30)";
+        const d = Math.max(1, 2 * z);
+        for (const p of s.dots) {
+          const px = x + p[0] * z, py = y + p[1] * z;
+          if (px < -d || py < BAR - d || px > W + d || py > H + d) continue;
+          cx.fillRect(px - d / 2, py - d / 2, d, d);
+        }
+      }
+      cx.restore();
+      cx.strokeStyle = "rgba(128,128,128,.35)"; cx.lineWidth = 1;
+      cx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    }
+    cx.restore();
+  }
+
+  /// 视口停下来之后同步页码 / 当前页背景给工具条。
+  function syncPageHud(): void {
+    if (!paged()) { S.boardPaged = false; return }
+    const i = curPageIndex();
+    S.boardPaged = true;
+    S.boardPageCount = G.boardPages.list.length;
+    S.boardCurPage = i;
+    S.boardCurTemplate = G.boardPages.list[i] ? G.boardPages.list[i].template : 0;
+  }
+
+  /// 到底之后还在往上拉（`over` = 这一下被夹掉的屏幕 px，正 = 往下）：够一段就发 boardPageAdd，一次手势只发一次。
+  function notePull(over: number, ended: boolean): void {
+    if (!paged()) return;
+    if (over > 0) G.pullOver += over; else if (over < 0) G.pullOver = 0;
+    S.pullHint = G.pullOver > 12 && !G.pullFired;
+    if (!G.pullFired && G.pullOver >= PULL_THRESHOLD) {
+      G.pullFired = true; S.pullHint = false;
+      G.send({ type: "boardPageAdd", count: 1 });
+    }
+    if (ended) { G.pullOver = 0; G.pullFired = false; S.pullHint = false; }
+  }
+
   /// 软边界：真无限会让人一路滑进空无一物的远方再也找不回来（用户明确要求避免）。
   /// 规则一条——可视区必须与「内容包围盒 ± SLACK 屏」相交；越界即拉回。空纸就只能在原点附近晃。
-  function padClamp(): void {
+  /// 分页画板：夹在页范围内（页比视口窄就水平居中，上下留边距）。返回竖向被夹掉的画布量（正 = 想往下）。
+  function padClamp(): number {
+    if (paged()) {
+      const pb = pagesBox()!;
+      const z = G.padVp.z, visW = vw() / z, visH = vh() / z, m = 24 / z, top = 56 / z;
+      if (pb[2] + 2 * m <= visW) G.padVp.ox = pb[0] + pb[2] / 2 - visW / 2;
+      else G.padVp.ox = clamp(G.padVp.ox, pb[0] - m, pb[0] + pb[2] + m - visW);
+      const minY = pb[1] - top, maxY = Math.max(minY, pb[1] + pb[3] + 2 * m - visH);
+      const want = G.padVp.oy;
+      G.padVp.oy = clamp(want, minY, maxY);
+      return want - G.padVp.oy;
+    }
     const z = G.padVp.z, visW = vw() / z, visH = vh() / z;
     const b = contentBox() || [0, 0, 0, 0];
     const sx = visW * SLACK, sy = visH * SLACK;
     G.padVp.ox = clamp(G.padVp.ox, b[0] - sx - visW, b[0] + b[2] + sx);
     G.padVp.oy = clamp(G.padVp.oy, b[1] - sy - visH, b[1] + b[3] + sy);
+    return 0;
   }
 
   /// 回中：画布原点（= 这张纸当初创建的位置）回到视口正中，缩放复位。
+  /// 分页画板：回到当前页页顶（按页宽）。
   function padRecenter(): void {
+    if (paged()) { pageTop(curPageIndex()); drawScratch(); return; }
     G.padVp.z = 1;
     G.padVp.ox = -vw() / 2; G.padVp.oy = -vh() / 2;
     drawScratch();
   }
 
-  /// 适应内容：把全部笔迹装进视口；空纸退化为回中。
+  /// 适应内容：把全部笔迹装进视口；空纸退化为回中。分页画板：适配页宽、停在当前页。
   function padFit(): void {
+    if (paged()) { pageTop(curPageIndex()); drawScratch(); return; }
     const b = contentBox();
     if (!b) { padRecenter(); return; }
     const z = clamp(Math.min((vw() - 80) / Math.max(b[2], 1), (vh() - 80) / Math.max(b[3], 1)), MINZ, MAXZ);
@@ -163,7 +312,9 @@ export function initScratch(refs: CaptureRefs): void {
 
   function padPanBy(dx: number, dy: number): void {
     G.padVp.ox += dx / G.padVp.z; G.padVp.oy += dy / G.padVp.z;
-    padClamp(); drawScratch();
+    const over = padClamp();
+    if (paged()) notePull(over * G.padVp.z, false);   // 分页：到底后继续上拉 → 加一页
+    drawScratch();
   }
 
   // ---- 绘制 ----
@@ -193,9 +344,16 @@ export function initScratch(refs: CaptureRefs): void {
     cx.clearRect(0, 0, W, H);
     // 纸面（顶栏之下整块）。底色由 Mac 下发，默认纯白；夜间模式不反色——草稿纸是「一张纸」。
     const pad = G.pads[G.padOpen];
-    cx.fillStyle = pad ? pad.bg : "rgba(255,255,255,1)";
-    cx.fillRect(0, BAR, W, H - BAR);
-    drawPattern(pad);
+    if (paged()) {
+      // 分页画板：页外是界面底色，纸色只铺在页上，底纹归每页的模板
+      cx.fillStyle = "#0d1117";
+      cx.fillRect(0, BAR, W, H - BAR);
+      drawPages(pad);
+    } else {
+      cx.fillStyle = pad ? pad.bg : "rgba(255,255,255,1)";
+      cx.fillRect(0, BAR, W, H - BAR);
+      drawPattern(pad);
+    }
     drawPageUnder(pad);   // 底纹之上、笔迹之下（页图只是参照物，墨永远在最上面）
     drawBoardImages();    // 画板笔记上的图：同样在笔迹之下
     // 视口外的笔迹裁掉（画布是全文档级的一大坨，不裁就是每帧把整张纸重画一遍）
@@ -214,7 +372,8 @@ export function initScratch(refs: CaptureRefs): void {
       cx.arc(G.eraserRingAt.x, G.eraserRingAt.y, G.eraserSize * PAD_ERASER_REF_W * z, 0, Math.PI * 2);
       cx.stroke(); cx.restore();
     }
-    if (G.padMini) drawMinimap();
+    if (G.padMini && !paged()) drawMinimap();   // 分页有页码，不要 minimap
+    syncPageHud();
   }
 
   /// 底纹（无 / 点阵 / 小格）：无限画布的定位参照。纯白纸平移时看不出自己在动，缩放时也看不出
@@ -515,12 +674,13 @@ export function initScratch(refs: CaptureRefs): void {
       if (G.touchOrder.length === 1) {
         G.panId = G.touchOrder[0];
         const t = G.touches[G.panId]; G.lastPanX = t.x; G.lastPanY = t.y;
-      } else if (!G.touchOrder.length) { G.panId = null; }
+      } else if (!G.touchOrder.length) { G.panId = null; notePull(0, true); }   // 手指全抬起 = 这次上拉手势结束
       return true;
     }
     if (e.pointerId !== G.activeId) return true;
     if (G.penMode === "padink") { padFlush("ink"); G.send({ type: "ink", phase: "end" }); }
     else if (G.penMode === "paderase") { padFlush("erase"); G.send({ type: "erase", phase: "end" }); }
+    else if (G.penMode === "padpan") notePull(0, true);
     G.activeId = null; G.penMode = "";
     return true;
   }
@@ -640,7 +800,7 @@ export function initScratch(refs: CaptureRefs): void {
       G.drawLive();
       G.activeId = null; G.penMode = ""; G.padPinch = null; G.padMiniDrag = false;
       G.touches = {}; G.touchOrder = []; G.panId = null;
-      if (nowId) padRecenter();
+      if (nowId) { placedBoard = ""; if (paged()) placeIfNewBoard(); else padRecenter(); }
     }
     if (!nowId) { cv.style.display = "none"; G.drawAll(); }
     else {
@@ -670,9 +830,12 @@ export function initScratch(refs: CaptureRefs): void {
     S.boardKind = G.boardKind;
     S.boardCurrent = o.current || "";
     S.boards = o.list || [];
-    if (G.boardKind !== 2) { S.boardRenaming = false; G.boardImages = []; }
-    else S.padList = false;   // 画板上没有「别的草稿纸」可切
-    if (padActive()) { padClamp(); drawScratch(); }
+    if (G.boardKind !== 2) {
+      S.boardRenaming = false; G.boardImages = []; G.boardPages = { w: 595, h: 842, list: [] };
+      S.boardTplPanel = false;
+    } else S.padList = false;   // 画板上没有「别的草稿纸」可切
+    placeIfNewBoard();
+    if (padActive()) { padClamp(); drawScratch(); } else syncPageHud();
   }
 
   /// Mac 下发的 `boardImages`：当前画板上的图（全量镜像，平板只看不改）。
@@ -681,8 +844,32 @@ export function initScratch(refs: CaptureRefs): void {
     if (padActive()) drawScratch();
   }
 
+  /// Mac 下发的 `boardPages`：分页画板的页（全量镜像，不是分页画板时为空表）。
+  /// 换到一篇新的分页画板时停在第一页页顶（按页宽）；同一篇的页变了（加页 / 改背景）只重画、视口不动。
+  let placedBoard = "";
+  function applyBoardPages(o: { w?: number; h?: number; list?: { id: string; template: number }[] }): void {
+    G.boardPages = { w: o.w || 595, h: o.h || 842, list: o.list || [] };
+    placeIfNewBoard();
+    if (padActive()) { padClamp(); drawScratch(); } else syncPageHud();
+  }
+  function placeIfNewBoard(): void {
+    if (!paged()) { if (G.boardKind !== 2) placedBoard = ""; return; }
+    if (placedBoard === S.boardCurrent) return;
+    placedBoard = S.boardCurrent;
+    pageTop(0);
+  }
+
   function boardOpen(id: string): void { G.send({ type: "boardOpen", id }); }
-  function boardAdd(): void { G.send({ type: "boardAdd" }); }
+  /// 新建画板：不带参数 = 无限画布；带 spec = 分页（`boardAdd` 可选尾部，PROTOCOL.md §4.8）。
+  function boardAdd(spec?: { w: number; h: number; template: number; count: number }): void {
+    if (!spec) { G.send({ type: "boardAdd" }); return; }
+    G.send({ type: "boardAdd", mode: 1, w: spec.w, h: spec.h, template: spec.template, count: spec.count });
+  }
+  /// 改当前页（视口中心所在页）的背景。
+  function boardSetPageTemplate(t: number): void {
+    if (!paged()) return;
+    G.send({ type: "boardPageTemplate", index: curPageIndex(), template: t });
+  }
 
   window.addEventListener("resize", function () { sizeCanvas(); if (padActive()) drawScratch(); });
   sizeCanvas();
@@ -696,16 +883,20 @@ export function initScratch(refs: CaptureRefs): void {
       padZoomAt(Math.exp(-e.deltaY * unit * 0.008), e.clientX, e.clientY);
     } else {
       padPanBy(e.deltaX * unit, e.deltaY * unit);
+      // 滚轮没有「手势结束」：停手 0.6s 就算这次上拉结束（下次再拉可以再加一页）
+      if (wheelIdle) clearTimeout(wheelIdle);
+      wheelIdle = setTimeout(function () { notePull(0, true); }, 600);
     }
     e.preventDefault();
   }, { passive: false });
+  let wheelIdle: ReturnType<typeof setTimeout> | null = null;
 
   Object.assign(G, {
     padActive, drawScratch, padRecenter, padFit, padClamp,
     padPointerDown, padPointerMove, padPointerUp, padFlush,
     padOpenIndex, padClose, padAdd, padSetPaper, padSetShowPage, padDelete, padRename,
     applyScratchPads, applyScratchStrokes,
-    applyBoards, applyBoardImages, boardOpen, boardAdd,
+    applyBoards, applyBoardImages, applyBoardPages, boardOpen, boardAdd, boardSetPageTemplate,
   });
 }
 

@@ -490,7 +490,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .noteSection(let source, _):
             buildNoteSectionMenu(menu, source: source)
         case .boardSection:
-            menu.addItem(ClosureMenuItem(L("New Board")) { [weak self] in self?.tabs.newBoard() })
+            menu.addItem(ClosureMenuItem(L("New Board…")) { NotificationCenter.default.post(name: .newBoardRequested, object: nil) })
         case .board(let b):
             buildBoardMenu(menu, board: b)
         case .noteFolder(let source, let folder):
@@ -546,7 +546,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// 画板笔记的右键菜单：新建 / 改名 / 删除（进回收站，可从「文件 › 最近删除」恢复）。
     private func buildBoardMenu(_ m: NSMenu, board b: BoardNote) {
-        m.addItem(ClosureMenuItem(L("New Board")) { [weak self] in self?.tabs.newBoard() })
+        m.addItem(ClosureMenuItem(L("New Board…")) { NotificationCenter.default.post(name: .newBoardRequested, object: nil) })
         m.addItem(.separator())
         m.addItem(ClosureMenuItem(L("Rename…")) { [weak self] in
             self?.textPrompt(title: L("Rename Board"), placeholder: L("Board name"), initial: b.title) { name in

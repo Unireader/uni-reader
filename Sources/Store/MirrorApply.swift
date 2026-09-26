@@ -148,7 +148,7 @@ enum MirrorApply {
                     continue
                 }
                 // 画板条目同理：一边删了整篇画板、另一边又在上面写了几笔 → 那几笔跳过并计数（外键会让整次同步失败）
-                if table == "board_item", let b = row["board_id"] as? String, !liveBoards.contains(b) {
+                if table == "board_item" || table == "board_page", let b = row["board_id"] as? String, !liveBoards.contains(b) {
                     result.orphansSkipped += 1
                     continue
                 }

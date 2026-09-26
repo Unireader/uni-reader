@@ -66,7 +66,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     padVp: { ox: 0, oy: 0, z: 1 }, padMini: true, padMiniDrag: false, padPinch: null,
     // 图钉页内拖动（见 shared.ts 字段注释）
     pinDragIndex: -1, pinDragMoved: false, pinGhost: null,
-    boardKind: 0, boardImages: [],
+    boardKind: 0, boardImages: [], boardPages: { w: 595, h: 842, list: [] }, pullOver: 0, pullFired: false,
     // 页宽上报去重
     lastGeomW: -1,
     // WebSocket
@@ -231,7 +231,10 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     // ---- 画板笔记（v16）----
     toggleBoardList() { S.boardList = !S.boardList; if (S.boardList) S.padList = false; },
     openBoard(id: string) { G.boardOpen(id); S.boardList = false; },
-    addBoard() { G.boardAdd(); S.boardList = false; },
+    addBoard(spec?: { w: number; h: number; template: number; count: number }) {
+      G.boardAdd(spec); S.boardList = false; S.boardNewPanel = false;
+    },
+    setPageTemplate(t: number) { G.boardSetPageTemplate(t); S.boardTplPanel = false; },
     renameBoard(title: string) { G.padRename(0, title); S.boardRenaming = false; },
     toggleFull() {
       if (!document.fullscreenElement) {

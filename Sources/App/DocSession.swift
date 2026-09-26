@@ -362,6 +362,12 @@ final class DocSession: ObservableObject, Identifiable {
     var persistedBoardImages: [UUID: BoardImage] = [:]
     /// 画板落库的对账快照（`board_note` 那一行）。
     var persistedBoard: BoardNote?
+    /// 分页画板的页（v17，按顺序；空 = 无限画布）。条目在会话里一律是画布坐标，落库时才按页换成页内坐标。
+    @Published var boardPages: [BoardPage] = []
+    var persistedBoardPages: [UUID: BoardPage] = [:]
+    /// 是不是分页画板。
+    var isPagedBoard: Bool { isBoard && !boardPages.isEmpty }
+    var boardLayout: BoardLayout { BoardLayout(pages: boardPages) }
     /// 是不是画板标签（平板 `boards.kind`、窗格装配、笔架都看它）。
     var isBoard: Bool { board != nil }
     /// 本会话所属工作区的画板列表快照（平板 `boards` 广播用；App 级的 `AppModel` 够不着窗口级的

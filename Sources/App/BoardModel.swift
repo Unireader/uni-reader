@@ -58,6 +58,153 @@ struct BoardImage: Identifiable, Equatable {
     static let defaultMaxSide: CGFloat = 400
 }
 
+// MARK: - 分页模式（v17，`BOARD-NOTE-PLAN.md §9`）
+
+/// 分页画板的背景模板（**三端契约**，线上 u8：只许尾部追加，未知值按空白画）。几何见 `BoardTemplateGeometry`。
+enum BoardTemplate: String, CaseIterable, Codable {
+    case blank, lined, grid, dots, cornell, twoColumn
+
+    var code: UInt8 { UInt8(Self.allCases.firstIndex(of: self) ?? 0) }
+    init(code: Int) { self = code >= 0 && code < Self.allCases.count ? Self.allCases[code] : .blank }
+    init(raw: String) { self = BoardTemplate(rawValue: raw) ?? .blank }
+
+    var label: String {
+        switch self {
+        case .blank: return L("Blank")
+        case .lined: return L("Lined")
+        case .grid: return L("Square Grid")   // 不用草稿纸底纹那个「Grid」（中文译作「小格」），分页模板统一叫「方格」
+        case .dots: return L("Dots")
+        case .cornell: return L("Cornell")
+        case .twoColumn: return L("Two Columns")
+        }
+    }
+}
+
+/// 分页画板的一页。尺寸整本统一（`BoardLayout.size` 取第一页的，改尺寸时每页一起改）。
+struct BoardPage: Identifiable, Equatable {
+    var id: UUID = UUID()
+    var sortKey: Double
+    var width: Double
+    var height: Double
+    var template: BoardTemplate = .blank
+    var createdAt: Date = .now
+    var updatedAt: Date = .now
+}
+
+/// 页面尺寸预设（画布点，竖版；横版宽高对调）。「当前屏幕」由调用方现取。
+enum BoardPageSize: String, CaseIterable {
+    case a4, a5, letter, screen
+
+    var label: String {
+        switch self {
+        case .a4: return "A4"
+        case .a5: return "A5"
+        case .letter: return "Letter"
+        case .screen: return L("Current Screen")
+        }
+    }
+    /// 竖版尺寸；`screen` 需要调用方传进屏幕逻辑尺寸。
+    func portrait(screen: CGSize) -> CGSize {
+        switch self {
+        case .a4: return CGSize(width: 595, height: 842)
+        case .a5: return CGSize(width: 420, height: 595)
+        case .letter: return CGSize(width: 612, height: 792)
+        case .screen:
+            let w = max(1, min(screen.width, screen.height)), h = max(1, max(screen.width, screen.height))
+            return CGSize(width: w.rounded(), height: h.rounded())
+        }
+    }
+}
+
+/// 分页布局契约（`BOARD-NOTE-PLAN.md §9.2`，三端一致）：页竖排、水平居中于 x = 0，
+/// 第 i 页 = `(-W/2, i × (H + gap), W, H)`。运行时 / 线上用画布坐标，落库是页内坐标。
+struct BoardLayout: Equatable {
+    static let gap: Double = 24
+    var width: Double
+    var height: Double
+    var count: Int
+
+    init(pages: [BoardPage]) {
+        width = pages.first?.width ?? 595
+        height = pages.first?.height ?? 842
+        count = pages.count
+    }
+    init(width: Double, height: Double, count: Int) {
+        self.width = width; self.height = height; self.count = count
+    }
+
+    var stride: Double { height + Self.gap }
+    func origin(_ i: Int) -> CGPoint { CGPoint(x: -width / 2, y: Double(i) * stride) }
+    func rect(_ i: Int) -> CGRect { CGRect(origin: origin(i), size: CGSize(width: width, height: height)) }
+    /// 全部页的包围盒（没有页 → nil）。
+    var bounds: CGRect? {
+        count > 0 ? CGRect(x: -width / 2, y: 0, width: width, height: Double(count) * stride - Self.gap) : nil
+    }
+    /// 画布 y 落在哪一页：页间空隙归上面那页，首页之上 / 末页之下夹到首 / 末页。
+    func index(forY y: Double) -> Int {
+        guard count > 0 else { return 0 }
+        return min(max(0, Int((y / stride).rounded(.down))), count - 1)
+    }
+}
+
+/// 背景模板的几何（**三端契约**，`BOARD-NOTE-PLAN.md §9.3`）：全部是页内画布点、与页面大小无关的固定间距。
+/// 渲染方只管把这些线段 / 点映到屏幕（线宽细 1、粗 1.5 画布点随缩放；颜色由纸色明度推，细 α0.14、粗 α0.30）。
+enum BoardTemplateGeometry {
+    typealias Seg = (CGPoint, CGPoint)
+    struct Shape { var thin: [Seg] = []; var bold: [Seg] = []; var dots: [CGPoint] = [] }
+    static let lineGap: Double = 28, gridStep: Double = 20, dotSize: Double = 2
+
+    static func shape(_ t: BoardTemplate, width w: Double, height h: Double) -> Shape {
+        var s = Shape()
+        func hLines(from y0: Double, to y1: Double, x0: Double, x1: Double) {
+            var y = y0
+            while y <= y1 + 0.001 { s.thin.append((CGPoint(x: x0, y: y), CGPoint(x: x1, y: y))); y += lineGap }
+        }
+        switch t {
+        case .blank:
+            break
+        case .lined:
+            hLines(from: 72, to: h - 36, x0: 36, x1: w - 36)
+        case .grid:
+            var x = gridStep
+            while x < w - 0.001 { s.thin.append((CGPoint(x: x, y: 0), CGPoint(x: x, y: h))); x += gridStep }
+            var y = gridStep
+            while y < h - 0.001 { s.thin.append((CGPoint(x: 0, y: y), CGPoint(x: w, y: y))); y += gridStep }
+        case .dots:
+            var y = gridStep
+            while y < h - 0.001 {
+                var x = gridStep
+                while x < w - 0.001 { s.dots.append(CGPoint(x: x, y: y)); x += gridStep }
+                y += gridStep
+            }
+        case .cornell:
+            let y1 = (h * 0.12).rounded(), y2 = (h * 0.80).rounded(), cx = (w * 0.30).rounded()
+            s.bold.append((CGPoint(x: 0, y: y1), CGPoint(x: w, y: y1)))
+            s.bold.append((CGPoint(x: 0, y: y2), CGPoint(x: w, y: y2)))
+            s.bold.append((CGPoint(x: cx, y: y1), CGPoint(x: cx, y: y2)))
+            hLines(from: y1 + lineGap, to: y2 - 8, x0: 0, x1: w)
+        case .twoColumn:
+            let mid = (w / 2).rounded()
+            s.bold.append((CGPoint(x: mid, y: 48), CGPoint(x: mid, y: h - 48)))
+            hLines(from: 72, to: h - 36, x0: 36, x1: mid - 12)
+            hLines(from: 72, to: h - 36, x0: mid + 12, x1: w - 36)
+        }
+        return s
+    }
+}
+
+extension BoardPage {
+    init?(row: LibBoardPage) {
+        guard let id = UUID(uuidString: row.id) else { return nil }
+        self.init(id: id, sortKey: row.sortKey, width: row.width, height: row.height,
+                  template: BoardTemplate(raw: row.template), createdAt: row.createdAt, updatedAt: row.updatedAt)
+    }
+    func toRow(boardId: String) -> LibBoardPage {
+        LibBoardPage(id: id.uuidString, boardId: boardId, sortKey: sortKey, width: width, height: height,
+                     template: template.rawValue, createdAt: createdAt, updatedAt: updatedAt)
+    }
+}
+
 // MARK: - 持久化
 
 extension BoardNote {
@@ -79,6 +226,8 @@ private struct BoardImagePayload: Codable {
     var image: String
     var caption: String?
     var source: Src?
+    /// 分页画板（v17）：所属页 id，此时 x/y/w/h 是页内坐标。
+    var page: String?
     struct Src: Codable {
         var kind: String         // 目前只有 "file"
         var name: String?
@@ -86,18 +235,27 @@ private struct BoardImagePayload: Codable {
 }
 
 extension BoardImage {
-    func toItem(boardId: String) -> LibBoardItem? {
-        let p = BoardImagePayload(image: image, caption: caption, source: .init(kind: "file", name: sourceName))
+    /// `page` 非 nil = 分页画板：写页 id，矩形换成页内坐标（`BOARD-NOTE-PLAN.md §9.1`）。
+    func toItem(boardId: String, page: (id: UUID, origin: CGPoint)? = nil) -> LibBoardItem? {
+        let p = BoardImagePayload(image: image, caption: caption, source: .init(kind: "file", name: sourceName),
+                                  page: page?.id.uuidString)
         guard let data = try? JSONEncoder().encode(p) else { return nil }
-        return LibBoardItem(id: id.uuidString, boardId: boardId, kind: Self.itemKind, rect: rect,
+        let r = page.map { rect.offsetBy(dx: -$0.origin.x, dy: -$0.origin.y) } ?? rect
+        return LibBoardItem(id: id.uuidString, boardId: boardId, kind: Self.itemKind, rect: r,
                             payload: data, createdAt: createdAt, updatedAt: updatedAt)
     }
 
-    init?(item: LibBoardItem) {
+    /// `origin` = 分页画板上「页 id → 该页左上角」；带 `page` 而那页不在（孤儿）→ nil。
+    init?(item: LibBoardItem, origin: (String) -> CGPoint? = { _ in nil }) {
         guard item.kind == Self.itemKind, let uuid = UUID(uuidString: item.id),
               let p = try? JSONDecoder().decode(BoardImagePayload.self, from: item.payload),
               !p.image.isEmpty else { return nil }
-        self.init(id: uuid, image: p.image, rect: item.rect, caption: p.caption ?? "",
+        var r = item.rect
+        if let pg = p.page {
+            guard let o = origin(pg.uppercased()) else { return nil }
+            r = r.offsetBy(dx: o.x, dy: o.y)
+        }
+        self.init(id: uuid, image: p.image, rect: r, caption: p.caption ?? "",
                   sourceName: p.source?.name ?? "", createdAt: item.createdAt, updatedAt: item.updatedAt)
     }
 

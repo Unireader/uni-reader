@@ -121,7 +121,9 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   （不挂 PDF），占一个标签页；表 `board_note` + `board_item`（kind 1 笔迹 / 2 图片）。🔴 **运行时 = 会话里一张永远开着的
   草稿纸**（`session.board` + `scratchPads = [board.asPad]` + `openPadID = board.id`），草稿纸整条链路原样复用，
   落库由 `DocTabModel+Board` 改写到新表；协议只多 `boards` / `boardOpen` / `boardAdd` / `boardImages`（0x52~0x55）+
-  `GET /image`。代码 / 协议里一律叫 **board**——`canvas` 已是 PDF「画板模式」（页边可写）。§8 是实现记录
+  `GET /image`。代码 / 协议里一律叫 **board**——`canvas` 已是 PDF「画板模式」（页边可写）。§8 是实现记录。
+  **分页模式（v17，§9）**：有 `board_page` 行 = 分页画板；条目 payload 带 `"page"`、存**页内坐标**，会话里仍是画布坐标
+  （第 i 页 = `(-W/2, i×(H+24), W, H)`，三端契约），插页 / 删页 / 改尺寸时会话内容连同对账快照一起平移、库里不重写
 
 ### 子目录可以自带 AGENTS.md（`android/` 就是这么做的）
 

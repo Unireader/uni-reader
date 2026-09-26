@@ -176,7 +176,7 @@ extension WorkspaceManager {
             lastError = String(format: L("Could not archive “%@”, so nothing was deleted."), title)
             return false
         }
-        let shas = Set(boardContents(id: id).images.map(\.image))
+        let shas = Set(boardContents(id: id, pages: boardPages(id: id)).images.map(\.image))
         try? store.deleteBoard(id: id.uuidString)
         if !shas.isEmpty { try? store.reconcileImageOrphans(only: shas) }
         refreshBoards()

@@ -124,6 +124,70 @@ final class ScratchPageCALayer: QuietLayer {
     }
 }
 
+// MARK: - 分页画板的页（v17，`BOARD-NOTE-PLAN.md §9`）
+
+/// 分页画板：页面（纸色 + 背景模板 + 一圈淡描边），画在图片与笔迹之下。页外是窗口底色（由宿主视图铺）。
+/// 只画视口里看得见的那几页；模板几何按（模板，尺寸）缓存。
+final class BoardPagesCALayer: QuietLayer {
+    var viewport = ScratchViewport()
+    var pages: [BoardPage] = []
+    var paper: InkColor = .paper
+    private var shapes: [String: BoardTemplateGeometry.Shape] = [:]
+
+    override func draw(in ctx: CGContext) {
+        guard !pages.isEmpty else { return }
+        yDown(ctx)
+        let layout = BoardLayout(pages: pages)
+        let o = viewport.origin, z = viewport.zoom
+        let vis = CGRect(origin: .zero, size: bounds.size)
+        let dark = (0.299 * paper.r + 0.587 * paper.g + 0.114 * paper.b) / 255 > 0.5
+        let ink: CGFloat = dark ? 0 : 1
+        let first = layout.index(forY: Double(o.y)), last = layout.index(forY: Double(o.y + vis.height / z))
+        for i in first...max(first, last) where pages.indices.contains(i) {
+            let r = layout.rect(i)
+            let sr = CGRect(x: (r.minX - o.x) * z, y: (r.minY - o.y) * z, width: r.width * z, height: r.height * z)
+            guard sr.intersects(vis) else { continue }
+            ctx.setFillColor(paper.nsColor.cgColor)
+            ctx.fill(sr)
+            let key = "\(pages[i].template.rawValue)@\(r.width)x\(r.height)"
+            let shape = shapes[key] ?? {
+                let s = BoardTemplateGeometry.shape(pages[i].template, width: Double(r.width), height: Double(r.height))
+                shapes[key] = s
+                return s
+            }()
+            func map(_ p: CGPoint) -> CGPoint { CGPoint(x: sr.minX + p.x * z, y: sr.minY + p.y * z) }
+            ctx.saveGState()
+            ctx.clip(to: sr)
+            if !shape.thin.isEmpty {
+                ctx.setStrokeColor(CGColor(gray: ink, alpha: 0.14))
+                ctx.setLineWidth(max(0.5, 1 * z))
+                for (a, b) in shape.thin { ctx.move(to: map(a)); ctx.addLine(to: map(b)) }
+                ctx.strokePath()
+            }
+            if !shape.bold.isEmpty {
+                ctx.setStrokeColor(CGColor(gray: ink, alpha: 0.30))
+                ctx.setLineWidth(max(0.75, 1.5 * z))
+                for (a, b) in shape.bold { ctx.move(to: map(a)); ctx.addLine(to: map(b)) }
+                ctx.strokePath()
+            }
+            if !shape.dots.isEmpty {
+                ctx.setFillColor(CGColor(gray: ink, alpha: 0.30))
+                let d = max(1, BoardTemplateGeometry.dotSize * z)
+                for p in shape.dots {
+                    let q = map(p)
+                    if q.x < -d || q.y < -d || q.x > vis.width + d || q.y > vis.height + d { continue }
+                    ctx.addRect(CGRect(x: q.x - d / 2, y: q.y - d / 2, width: d, height: d))
+                }
+                ctx.fillPath()
+            }
+            ctx.restoreGState()
+            ctx.setStrokeColor(CGColor(gray: 0.5, alpha: 0.35))
+            ctx.setLineWidth(1)
+            ctx.stroke(sr.insetBy(dx: 0.5, dy: 0.5))
+        }
+    }
+}
+
 // MARK: - 画板笔记上的图（v16，`BOARD-NOTE-PLAN.md §3.3`）
 
 /// 画板上的图：每张一个子图层，按画布矩形映到视口。层序在笔迹之下、底纹之上。

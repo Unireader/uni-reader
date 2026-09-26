@@ -56,8 +56,10 @@ export interface Actions {
   toggleBoardList(): void;
   /// 请 Mac 在它跟随的窗口里打开这篇画板。
   openBoard(id: string): void;
-  /// 请 Mac 新建一篇画板并打开。
-  addBoard(): void;
+  /// 请 Mac 新建一篇画板并打开：不带参数 = 无限画布；带参数 = 分页（页面大小 / 背景 / 页数）。
+  addBoard(spec?: { w: number; h: number; template: number; count: number }): void;
+  /// 分页画板：改当前页（视口中心所在页）的背景。
+  setPageTemplate(t: number): void;
   /// 改当前画板的名字（走 scratchRename index=0，画板在会话里就是那张纸）。
   renameBoard(title: string): void;
 }

@@ -135,6 +135,18 @@ struct LibBoardItem: Identifiable, Equatable {
     var updatedAt: Date
 }
 
+/// 分页画板的一页（`board_page` 表，v17，`BOARD-NOTE-PLAN.md §9`）。尺寸整本统一（每页存同一个值）。
+struct LibBoardPage: Identifiable, Equatable {
+    var id: String              // UUID
+    var boardId: String
+    var sortKey: Double
+    var width: Double
+    var height: Double
+    var template: String
+    var createdAt: Date
+    var updatedAt: Date
+}
+
 /// 一张图片本体（`image` 表，v13）。**主键就是内容 SHA-256**：同一张图导两次只有一行一文件；
 /// 两端各自导入同一张图在离线镜像合并时也天然合一。文件在 `<工作区>/Images/<sha256>.<ext>`。
 /// 引用 = `note` 表 kind=6 的 payload 里 `image` 键指向这里，**不存计数列**（数出来的永远对，

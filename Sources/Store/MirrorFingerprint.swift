@@ -117,6 +117,12 @@ enum MirrorFp {
             Column("id", .text), Column("title", .text), Column("bg", .text), Column("pattern", .text),
             Column("group_name", .text), Column("created_at", .text), Column("updated_at", .text),
         ], lww: "updated_at"),
+        // v17：分页画板的页（`BOARD-NOTE-PLAN.md §9`），在 board_note 之后、board_item 之前（外键序）。
+        TableSpec(table: "board_page", key: "id", columns: [
+            Column("id", .text), Column("board_id", .text), Column("sort_key", .real),
+            Column("width", .real), Column("height", .real), Column("template", .text),
+            Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
         TableSpec(table: "board_item", key: "id", columns: [
             Column("id", .text), Column("board_id", .text), Column("kind", .int),
             Column("x", .real), Column("y", .real), Column("w", .real), Column("h", .real),

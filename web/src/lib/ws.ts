@@ -151,6 +151,7 @@ export function initWs(): void {
     // 画板笔记（v16，PROTOCOL.md §4.8）：列表 + 跟随的会话类型 / 画板上的图。
     else if (o.type === "boards") { G.applyBoards(o); }
     else if (o.type === "boardImages") { G.applyBoardImages(o); }
+    else if (o.type === "boardPages") { G.applyBoardPages(o); }
     // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
   }
 

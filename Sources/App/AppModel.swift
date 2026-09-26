@@ -52,6 +52,9 @@ final class AppModel: ObservableObject {
         let id = UUID()
         let sessionID: UUID
         let boardID: UUID?
+        /// 新建时的分页参数（`boardAdd` 可选尾部，`BOARD-NOTE-PLAN.md §9.5`）；nil = 无限画布
+        var paged: PagedSpec? = nil
+        struct PagedSpec: Equatable { var width: Double; var height: Double; var template: BoardTemplate; var count: Int }
     }
     @Published var padBoardRequest: PadBoardRequest?
     /// 平板发起 `openDoc` 后等待就位的库文档 id：新窗口装好它就把平板锁过去（见 `sessionDocumentChanged`）。
@@ -566,7 +569,11 @@ final class AppModel: ObservableObject {
         case "boardOpen":
             applyBoardOpen(obj)
         case "boardAdd":
-            applyBoardAdd()
+            applyBoardAdd(obj)
+        case "boardPageAdd":
+            applyBoardPageAdd(obj, to: s)
+        case "boardPageTemplate":
+            applyBoardPageTemplate(obj, to: s)
         default:
             break
         }

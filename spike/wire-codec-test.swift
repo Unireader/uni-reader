@@ -186,6 +186,14 @@ let canonical: [[String: Any]] = [
     ["type": "boardAdd"],
     ["type": "boardImages", "list": [[String: Any]]()],
     ["type": "boardImages", "list": [["id": "I1", "sha": "abcdef", "x": -120.5, "y": 40.25, "w": 400.0, "h": 300.0]]],
+    // —— 分页画板（v17，BOARD-NOTE-PLAN.md §9.5）：boardPages(0x56 S→C) / boardPageAdd(0x57) / boardPageTemplate(0x58)
+    //    + boardAdd 的可选尾部（mode=1 分页）——
+    ["type": "boardPages", "w": 595.0, "h": 842.0, "list": [[String: Any]]()],
+    ["type": "boardPages", "w": 595.0, "h": 842.0,
+     "list": [["id": "P1", "template": 0], ["id": "P2", "template": 4], ["id": "P3", "template": 5]]],
+    ["type": "boardPageAdd", "count": 1],
+    ["type": "boardPageTemplate", "index": 2, "template": 1],
+    ["type": "boardAdd", "mode": 1, "w": 842.0, "h": 595.0, "template": 4, "count": 10],
 ]
 
 var pass = 0, fail = 0

@@ -38,6 +38,28 @@
     { key: "green", css: "rgba(233,243,234,1.0)" },
     { key: "blue",  css: "rgba(234,241,250,1.0)" },
   ];
+  // —— 分页画板（v17）：背景模板（线上 u8，与 Mac `BoardTemplate` 同序）与页面大小预设（画布 px，竖版）——
+  const TEMPLATES = [
+    { code: 0, label: "空白" }, { code: 1, label: "横线" }, { code: 2, label: "方格" },
+    { code: 3, label: "点阵" }, { code: 4, label: "康奈尔" }, { code: 5, label: "两栏" },
+  ];
+  const SIZES = [
+    { key: "a4", label: "A4", w: 595, h: 842 },
+    { key: "a5", label: "A5", w: 420, h: 595 },
+    { key: "letter", label: "Letter", w: 612, h: 792 },
+    { key: "screen", label: "当前屏幕", w: 0, h: 0 },
+  ];
+  let nPaged = $state(false), nSize = $state("a4"), nLand = $state(false), nTpl = $state(1), nCount = $state(1);
+  function createBoard(): void {
+    if (!nPaged) { actions.addBoard(); return; }
+    const sz = SIZES.find((s) => s.key === nSize) || SIZES[0];
+    // 当前屏幕 = 这台平板的逻辑尺寸（竖版取短边为宽）
+    let w = sz.w, h = sz.h;
+    if (sz.key === "screen") { w = Math.min(screen.width, screen.height); h = Math.max(screen.width, screen.height); }
+    if (nLand) { const t = w; w = h; h = t; }
+    actions.addBoard({ w, h, template: nTpl, count: Math.min(100, Math.max(1, Math.round(nCount || 1))) });
+  }
+
   /// 线上颜色串的写法可能有细微差异（"1" vs "1.0"），比对时按数值归一。
   const sameColor = (a: string, b: string) => {
     const n = (c: string) => (/rgba?\(([^)]+)\)/.exec(c || "")?.[1] || "")
@@ -67,9 +89,17 @@
       <button title="草稿纸列表" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
       <span id="padName">{name(S.pads[S.padOpen])}</span>
     {/if}
-    <button title="回中" onclick={() => actions.padRecenter()}><Icon name="scope" /></button>
-    <button title="适应内容" onclick={() => actions.padFit()}><Icon name="fit" /></button>
-    <button class:on={S.padMini} title="缩略图" onclick={() => actions.togglePadMini()}><Icon name="map" /></button>
+    {#if S.boardPaged}
+      <!-- 分页画板（v17）：页码读数 + 这一页的背景（插页 / 删页 / 批量设置在 Mac 上做） -->
+      <span id="pageNo">第 {S.boardCurPage + 1} / {S.boardPageCount} 页</span>
+      <button class:on={S.boardTplPanel} title="这一页的背景" onclick={() => (S.boardTplPanel = !S.boardTplPanel)}>
+        <Icon name="doc" /></button>
+    {/if}
+    <button title={S.boardPaged ? "回到本页页顶" : "回中"} onclick={() => actions.padRecenter()}><Icon name="scope" /></button>
+    <button title={S.boardPaged ? "适配页宽" : "适应内容"} onclick={() => actions.padFit()}><Icon name="fit" /></button>
+    {#if !S.boardPaged}
+      <button class:on={S.padMini} title="缩略图" onclick={() => actions.togglePadMini()}><Icon name="map" /></button>
+    {/if}
     {#if S.boardKind !== 2}
       <!-- 页面底图（v10）：把这张纸锚定的那一页垫在纸下面。跟着纸走、跨端同步 -->
       <button class:on={S.padShowPage} title="显示所在页面" onclick={() => actions.togglePadPage()}><Icon name="doc" /></button>
@@ -94,10 +124,61 @@
         <button class="popen" onclick={() => actions.openBoard(b.id)}><span class="pt">{b.title}</span></button>
       </div>
     {/each}
-    <button class="prow padd" onclick={() => actions.addBoard()}>
-      <Icon name="plus" /><span class="pt">新建画板笔记</span>
-    </button>
+    {#if !S.boardNewPanel}
+      <button class="prow padd" onclick={() => (S.boardNewPanel = true)}>
+        <Icon name="plus" /><span class="pt">新建画板笔记</span>
+      </button>
+    {:else}
+      <!-- 新建：先选模式（建好之后不再转换）。分页再选页面大小 / 横竖 / 背景 / 页数 -->
+      <div class="pnew">
+        <div class="pnrow">
+          <button class="pbtn" class:cur={!nPaged} onclick={() => (nPaged = false)}>无限画布</button>
+          <button class="pbtn" class:cur={nPaged} onclick={() => (nPaged = true)}>分页</button>
+        </div>
+        {#if nPaged}
+          <div class="pnrow">
+            {#each SIZES as sz (sz.key)}
+              <button class="pbtn" class:cur={nSize === sz.key} onclick={() => (nSize = sz.key)}>{sz.label}</button>
+            {/each}
+          </div>
+          <div class="pnrow">
+            <button class="pbtn" class:cur={!nLand} onclick={() => (nLand = false)}>竖版</button>
+            <button class="pbtn" class:cur={nLand} onclick={() => (nLand = true)}>横版</button>
+          </div>
+          <div class="pnrow">
+            {#each TEMPLATES as t (t.code)}
+              <button class="pbtn" class:cur={nTpl === t.code} onclick={() => (nTpl = t.code)}>{t.label}</button>
+            {/each}
+          </div>
+          <div class="pnrow">
+            <span class="pt">页数</span>
+            <input class="pcount" type="number" min="1" max="100" bind:value={nCount} aria-label="页数" />
+          </div>
+        {/if}
+        <div class="pnrow">
+          <button class="pbtn" onclick={() => (S.boardNewPanel = false)}>取消</button>
+          <button class="pbtn primary" onclick={createBoard}>创建</button>
+        </div>
+      </div>
+    {/if}
   </div>
+{/if}
+
+{#if S.boardTplPanel && S.boardPaged}
+  <button id="padPaperMask" aria-label="关闭背景面板" onclick={() => (S.boardTplPanel = false)}></button>
+  <div id="padpaper">
+    <div class="phead">第 {S.boardCurPage + 1} 页的背景</div>
+    <div class="prow2 pwrap">
+      {#each TEMPLATES as t (t.code)}
+        <button class="pbtn" class:cur={S.boardCurTemplate === t.code} onclick={() => actions.setPageTemplate(t.code)}>
+          {t.label}</button>
+      {/each}
+    </div>
+  </div>
+{/if}
+
+{#if S.pullHint}
+  <div id="pullHint">继续上拉添加新页</div>
 {/if}
 
 {#if S.boardKind === 1}

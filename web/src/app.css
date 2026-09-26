@@ -219,6 +219,18 @@ canvas { position:fixed; inset:0; }
   font:15px/1.5 -apple-system,'PingFang SC',system-ui,sans-serif; }
 #mdEmpty .mt { font-size:18px; font-weight:600; }
 #mdEmpty .md { color:#c9d1d9; max-width:420px; }
+/* 分页画板（v17）：页码读数、新建表单、背景按钮换行、上拉加页提示 */
+#pageNo { padding:0 6px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+#padlist .pnew { border-top:1px solid #30363d; margin-top:4px; padding:8px 4px 2px; display:flex; flex-direction:column; gap:8px; }
+#padlist .pnrow { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+#padlist .pbtn.cur, #padpaper .pbtn.cur { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+#padlist .pbtn.primary { background:#238636; border-color:#238636; color:#fff; }
+#padlist .pcount { width:72px; padding:7px; border-radius:6px; border:1px solid #30363d; background:#0d1117; color:#e6edf3; }
+#padpaper .pwrap { flex-wrap:wrap; }
+#padpaper .pbtn { flex:none; padding:7px 12px; border:1px solid #30363d; border-radius:7px; background:transparent; color:inherit; }
+#pullHint { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:13; padding:8px 14px;
+  border-radius:999px; background:rgba(22,27,34,.92); border:1px solid #30363d; color:#e6edf3;
+  font:14px/1.2 -apple-system,'PingFang SC',system-ui,sans-serif; }
 #padListMask { position:fixed; inset:0; z-index:19; margin:0; padding:0; border:0; background:transparent; cursor:default; }
 #padlist { position:fixed; right:8px; top:52px; z-index:20; width:240px; max-height:60vh; overflow:auto;
   padding:6px; border:1px solid #30363d; border-radius:10px; background:rgba(22,27,34,.96); color:#e6edf3;

@@ -180,6 +180,13 @@ const canonical = [
   { type: "boardAdd" },
   { type: "boardImages", list: [] },
   { type: "boardImages", list: [{ id: "I1", sha: "abcdef", x: -120.5, y: 40.25, w: 400, h: 300 }] },
+  // —— 分页画板（v17）——
+  { type: "boardPages", w: 595, h: 842, list: [] },
+  { type: "boardPages", w: 595, h: 842,
+    list: [{ id: "P1", template: 0 }, { id: "P2", template: 4 }, { id: "P3", template: 5 }] },
+  { type: "boardPageAdd", count: 1 },
+  { type: "boardPageTemplate", index: 2, template: 1 },
+  { type: "boardAdd", mode: 1, w: 842, h: 595, template: 4, count: 10 },
 ];
 
 let pass = 0, fail = 0;

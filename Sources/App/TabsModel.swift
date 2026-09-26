@@ -155,8 +155,8 @@ final class TabsModel: ObservableObject {
 
     /// 新建一篇画板笔记并打开（侧栏「＋」/ 菜单 / 平板 `boardAdd`）。
     @discardableResult
-    func newBoard() -> DocTabModel? {
-        guard let b = workspace.createBoard() else { return nil }
+    func newBoard(spec: WorkspaceManager.BoardSpec = .infinite) -> DocTabModel? {
+        guard let b = workspace.createBoard(spec: spec) else { return nil }
         return openBoard(b.id)
     }
 
