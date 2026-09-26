@@ -71,8 +71,8 @@
    图钉改看一个显式的锚点），三端协议/payload 要一起定（`anchor` 语义从「行框包围盒」变成「图钉位置」得有兼容方案，
    老数据无显式锚点仍按包围盒推）。点注解（无行框）本来就是锚点即图钉，同一套拖拽顺带覆盖。
 
-5. **Sparkle 自动更新：一次性密钥设置 + 首次真实发布验证**（2026-09-18 加，代码/脚本已落地，见 `AGENTS.md`
-   「发布到 GitHub」一节 + `Sources/App/UpdaterService.swift`）。还差：
+5. **Sparkle 自动更新：一次性密钥设置 + 首次真实发布验证**（2026-09-18 加，代码/脚本已落地，见 `docs/agents/BUILD-DETAILS.md`
+   「发布到 GitHub」一节（自 `AGENTS.md` 拆出）+ `Sources/App/UpdaterService.swift`）。还差：
    - 用户在本机生成 EdDSA 密钥对（`generate_keys`），把公钥填进 `Sources/Info.plist` 的 `SUPublicEDKey`；
    - 跑一次带这次改动的正式发布，验证 `release.sh` 的签名/appcast 流程和 App 里「检查更新」→「发现新版本」
      这条完整路径（之前只能验证到菜单/设置页接进了 Sparkle，appcast 还没推上 GitHub 没法测到真的发现更新）。

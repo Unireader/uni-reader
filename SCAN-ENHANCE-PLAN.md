@@ -13,7 +13,7 @@
 
 ## 2. 算法版（已落地）
 
-实现与注意事项写在 `AGENTS.md`「结构要点」的「扫描页增强」一条和 `Sources/App/ScanEnhance.swift` 文件头，这里只记取舍过程。
+实现与注意事项写在 `docs/agents/STRUCTURE.md` 的「扫描页增强」一条（`AGENTS.md`「结构要点」速览的指针）和 `Sources/App/ScanEnhance.swift` 文件头，这里只记取舍过程。
 
 - 滤镜链（Core Image）：降噪 → 估纸色（邻域取最亮 + 模糊）→ 原图 ÷ 纸色 → 软色阶（五点色调曲线）→ 轻锐化 → 可选去色；
   「精细处理」时以上都在 2 倍分辨率上做再缩回。
