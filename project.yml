@@ -25,11 +25,15 @@ settings:
 #       - UniReader **不在 sandbox**，所以不需要 Installer XPC service 或额外 entitlements。
 packages:
   MarkdownEngine:
-    url: https://github.com/nodes-app/swift-markdown-engine
+    # 2026-09-26 起用自家 fork（上游 nodes-app/swift-markdown-engine）：上游把智能引号写死为开，
+    # 笔记里的 ' 会变成 ’；fork 在 `unireader` 分支给 SpellCheckingPolicy 加了 automaticQuoteSubstitution。
+    # 改 fork：在 fork 里改、`swift test` 过、打 `<上游版本>-unireader.N` 新 tag，再改这里的版本号；
+    # 跟上游升级 = 把 `unireader` 分支 rebase 到上游新 tag 上再打 tag。
+    url: https://github.com/Unireader/swift-markdown-engine
     # 2026-09-21 从 0.9.0 升到 0.13.0：0.9.0 每敲一个字都按整篇算账（17K 字的笔记 56ms/字、
     # 52K 字 159ms/字，一帧才 16.7ms），0.13.0 把增量做对了——恒定 9~11ms/字，不再随全文长度涨。
     # 量法见 `spike/markdown-relayout-cost.swift`。升级只动版本号，App 代码一行没改。
-    exactVersion: 0.13.0
+    exactVersion: 0.13.0-unireader.1
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle.git
     from: "2.9.1"

@@ -254,6 +254,8 @@ struct MarkdownNoteEditor: View {
         c.overscroll = OverscrollPolicy(percent: 0, maxPoints: 8, minPoints: 8)
         c.scrollers = .vertical
         c.textInsets = TextInsets(horizontal: 6, vertical: 6)
+        // 写的是 Markdown / LaTeX 源码：`'` `"` 必须原样，不能被系统智能引号换成 ’ ”（自家 fork 加的开关）
+        c.spellChecking.automaticQuoteSubstitution = false
         Self.applyNoteTypography(&c)
         return c
     }()

@@ -48,6 +48,8 @@ struct MarkdownDocEditor: View {
         var c = MarkdownEditorConfiguration.default
         c.scrollers = .vertical
         c.textInsets = TextInsets(horizontal: inset, vertical: inset)
+        // 同 `MarkdownNoteEditor.baseConfiguration`：源码里的 `'` `"` 不许被换成智能引号
+        c.spellChecking.automaticQuoteSubstitution = false
         c.services.latex = NoteLatexRenderer.shared
         return c
     }()
