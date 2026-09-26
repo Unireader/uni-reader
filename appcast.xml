@@ -9,6 +9,34 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.2.5</title>
+      <pubDate>Sat, 26 Sep 2026 03:52:11 +0000</pubDate>
+      <sparkle:version>39</sparkle:version>
+      <sparkle:shortVersionString>0.2.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>修复</h4>
+<ul>
+<li>Markdown 笔记里输入的英文单引号 <code>'</code> 和双引号 <code>"</code> 不会再被自动换成中文弯引号 <code>’</code> <code>”</code>，公式（如 <code>$f'(x)$</code>）里也一样。</li>
+<li>笔记小窗比较窄时，笔记内容会按窗口宽度折行，不会再有超出窗口、看不到的部分。</li>
+<li>Agent 请求权限时，请求说明和选项按钮不会再挤在同一行、叠在一起；面板较窄时，按钮会改为上下排列。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.5">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Fixes</h4>
+<ul>
+<li>Straight quotes <code>'</code> and <code>"</code> typed in Markdown notes are no longer turned into curly quotes <code>’</code> <code>”</code>, including inside formulas such as <code>$f'(x)$</code>.</li>
+<li>In a narrow note window, note text now wraps to the window width instead of running off the edge.</li>
+<li>When the Agent asks for permission, the request and the option buttons no longer pile up on one line; in a narrow panel the buttons stack vertically.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.2.5">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.2.5/UniReader-0.2.5.zip" length="13251105" type="application/octet-stream" sparkle:edSignature="CS3NAardYjb/OGxKdeFZkpixgEislpEBexUNfS68AoV4kQdbSH/aiWYF3rWoP6xHElly4M2PR+hInojkoO95Dg==" />
+    </item>
+    <item>
       <title>v0.2.4</title>
       <pubDate>Thu, 24 Sep 2026 02:52:14 +0000</pubDate>
       <sparkle:version>38</sparkle:version>
