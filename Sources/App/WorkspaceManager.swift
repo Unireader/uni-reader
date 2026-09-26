@@ -192,6 +192,22 @@ final class WorkspaceManager: ObservableObject {
         purgeExpiredTrash()                      // 回收站：清掉过了保留期的条目（`BACKUP-PLAN.md §2.6`）
         reconcileAndPurgeImages()                // 图片本体：对账待删除 + 清掉到期的（方案 §3 触发时机 ①）
         BackupService.shared.scheduleOpenBackup(for: self)   // 资料库快照（`BACKUP-PLAN.md §3.2`）
+        startInkPointsCompaction()               // 笔迹点集转二进制并摘掉 JSON 点（`BINARY-INK-PLAN.md §5`）
+    }
+
+    /// 后台整理笔迹行：点集转二进制、payload 里的 JSON 点摘掉（用户定：默认就做，不留兼容副本、不备份）。
+    /// 可中断、可重入：关工作区后库退化成 no-op，这一轮自然停下，下次打开接着整理。
+    private func startInkPointsCompaction() {
+        guard let store else { return }
+        let box = StoreBox(store: store)
+        let name = folder?.lastPathComponent ?? "?"
+        DispatchQueue.global(qos: .utility).async {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let n = box.store.compactInkPoints(jsonPoints: InkStroke.jsonPoints(payload:))
+            if n > 0 {
+                wsLog("笔迹转二进制：\(name) 整理了 \(n) 行，\(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000))ms")
+            }
+        }
     }
 
     /// **彻底放手这个工作区**：关掉 SQLite 连接并置空 `store`，之后所有读写自动退化成 no-op。

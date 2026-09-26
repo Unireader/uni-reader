@@ -1008,17 +1008,13 @@ extension ScratchPadNSView {
         return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
     }
 
+    // 画布上的平移 / 缩放与平板框选（`AppModel+Scratch` 的 lassoMove / lassoScale）同一份算法
     private func shifted(_ s: InkStroke, dx: Double, dy: Double) -> InkStroke {
-        var t = s
-        t.points = s.points.map { InkPoint($0.dx + dx, $0.dy + dy, $0.dz) }
-        return t
+        InkEdit.canvasTranslated(s, dx: dx, dy: dy)
     }
 
     private func scaled(_ s: InkStroke, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> InkStroke {
-        var t = s
-        t.points = s.points.map { InkPoint(a.x + ($0.dx - a.x) * sx, a.y + ($0.dy - a.y) * sy, $0.dz) }
-        t.width = min(40, max(0.5, s.width * (sx * sy).squareRoot()))
-        return t
+        InkEdit.canvasScaled(s, anchor: a, sx: sx, sy: sy)
     }
 
     private func commitLassoMove(_ t: CGSize) {

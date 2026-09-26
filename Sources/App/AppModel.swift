@@ -715,8 +715,7 @@ final class AppModel: ObservableObject {
         let page = (obj["page"] as? NSNumber)?.intValue ?? s.currentPageIndex
         if op == "paste" { applyClipPaste(obj, to: s, page: page); return }
 
-        // 草稿纸开着时，选区/坐标都是画布坐标，跟页内这套命中对不上 —— 直接不理（平板那边也不会给入口）。
-        guard s.openPadID == nil else { PadLog.log("平板 clip \(op)：草稿纸开着，忽略"); return }
+        // 草稿纸开着时到不了这里：`handleScratchInput` 先把 clip 截走，按画布坐标处理（`applyScratchClip`）。
         let (hitS, hitN) = lassoHits(obj, in: s, page: page)
         guard !hitS.isEmpty || !hitN.isEmpty else { PadLog.log("平板 clip \(op)：零命中"); return }
         let strokes = hitS.map { s.strokes[$0] }
@@ -735,23 +734,13 @@ final class AppModel: ObservableObject {
     }
 
     /// 粘贴：落点 = 平板给的页内归一化点（内容包围盒中心对齐到它）。摆放数学走 `InkPaste`
-    /// （与 Mac 本机 ⌘V 同一份纯函数）。草稿纸开着时粘到纸上（画布坐标，另一条）。
+    /// （与 Mac 本机 ⌘V 同一份纯函数）。只管页内；纸开着时走 `AppModel+Scratch.applyScratchClip`。
     private func applyClipPaste(_ obj: [String: Any], to s: DocSession, page: Int) {
         guard let clip = InkClipboard.read() else { PadLog.log("平板 clip paste：剪贴板空"); return }
         s.inkEnsureLoaded?(page)   // 粘贴进未装载的页：先把那页读进来，新笔迹才按「后画在上」排在库批之后
         let nx = (obj["nx"] as? NSNumber)?.doubleValue ?? 0.5
         let ny = (obj["ny"] as? NSNumber)?.doubleValue ?? 0.5
-        if let padID = s.openPadID {
-            // 纸上：落点是**画布坐标**——平板发的是页内归一化，这里没有它的视口可换算，
-            // 故一律落在画布原点附近（纸打开时视口就居中在原点）。够用：粘完就能拖着摆。
-            let out = InkPaste.placeOnCanvas(strokes: clip.strokes, space: clip.space,
-                                             sourceAspect: clip.aspect, pad: padID, center: nil)
-            guard !out.isEmpty else { return }
-            s.scratchEdit("Paste", kind: .paste) { s.scratchStrokes.append(contentsOf: out) }
-            PadLog.log("平板 clip paste：纸上 \(out.count) 条")
-            if s.id == padSession?.id { broadcastScratchStrokes() }
-            return
-        }
+        // 纸上的粘贴不走这里（`applyScratchClip`，落点是平板视口正中的画布坐标）
         let xr = CanvasMargin.xRange(margin: s.canvasMode ? CanvasMargin.limit : 0)
         let out = InkPaste.place(
             strokes: clip.strokes, notes: clip.notes, space: clip.space, sourceAspect: clip.aspect,

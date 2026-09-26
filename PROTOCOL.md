@@ -500,6 +500,17 @@ Mac 是「当前打开哪张草稿纸」的唯一真源（`scratchpads.open`）�
 于是加草稿纸没有动 RT 流的任何字节。代价是两端必须对「开着哪张」有一致认知——靠 `scratchpads`
 这条可靠通道的全量镜像保证，且开/关纸时 Mac 会先 `inkCancel` 丢掉在飞的半截笔。
 
+**纸上的框选与剪贴板（2026-09-26 起，同一规则，线格式同样一个字节没改）**：纸开着时（含画板会话），
+`lassoMove` / `lassoScale` / `clip` 的坐标一律按**画布坐标**解释，`page` 作废（编 0）：
+- `lassoMove`：多边形尾部、`x0..y1`、`dx,dy` 都是画布坐标；`lassoScale` 的 `ax,ay` 也是，`sx,sy` 照旧是比值。
+  Mac 在 `scratchStrokes`（这张纸上的）复判命中——笔迹任一点落多边形内，**只作用于笔迹**（画板上的图片不动）；
+  平移 / 缩放不夹取（画布无界），线宽 ×√(sx·sy) 夹 0.5…40（`InkEdit.canvasTranslated/canvasScaled`）。
+  进纸的撤销栈，**零命中也回传 `scratchStrokes`**（平板提交后在等回推结算本地预览，同页内）。
+- `clip copy/cut`：尾部多边形 = 画布坐标选区，复判规则同上；剪贴板空间记为画布（粘回页里时 Mac 按目标页折算）。
+  `cut` 平板会先乐观删掉，零命中时 Mac 同样回传镜像把它们送回来。
+- `clip paste`：`nx,ny` = **平板视口正中的画布坐标**，剪贴板内容的包围盒中心对齐到这一点。
+老客户端在纸开着时不会发框选；它的「粘贴」发的是页内归一化点（0…1），被当成画布坐标 = 落在原点附近，无害。
+
 #### 🔴 纸样（v9）：底色 × 底纹
 
 `bg` = **自由 CSS rgba 串**（不是枚举，各端 UI 给的备选项互不约束，加减颜色不影响解码）。
@@ -569,7 +580,7 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 
 - `scratchpads`：`open = 0`，`list` 只有这一张（`page = 0`、`nx = ny = 0.5`、`showPage = 0`，`title` = 画板名原文，可能是空串——客户端标题一律取 `boards.list` 里已兜底的显示名）；
   `scratchStrokes` = 画板上的全部笔迹。
-- 上行 `ink` / `erase` 照 §4.4「纸开着」的规则走画布坐标；`scratchPaper` / `scratchRename`（`index = 0`）
+- 上行 `ink` / `erase` / `lassoMove` / `lassoScale` / `clip` 照 §4.4「纸开着」的规则走画布坐标；`scratchPaper` / `scratchRename`（`index = 0`）
   改的是这篇画板；`undo` 走草稿纸那条栈。
 - `scratchOpen` / `scratchAdd` / `scratchMove` / `scratchPageShow` / `scratchDelete` 在画板会话上**整帧丢弃**
   （画板不能关、不能再建一张纸、没有锚点和页面底图、删画板只在 Mac 侧栏做）。

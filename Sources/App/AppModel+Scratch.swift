@@ -42,9 +42,93 @@ extension AppModel {
             // 草稿纸上不做长按环形选笔盘：那套判定（`beginLongPressWatch`）全建立在页内归一化坐标
             // 与 `padPageWidth` 上，喂画布坐标进去阈值会整个失真。平板侧同样不呼盘。
             return true
+        case "lassoMove", "lassoScale":
+            // 纸上的框选（`PROTOCOL.md §4.4`）：选区多边形 / 位移 / 锚点都是画布坐标，`page` 作废
+            applyScratchLasso(obj, in: s, pad: padId)
+            return true
+        case "clip":
+            applyScratchClip(obj, in: s, pad: padId)
+            return true
         default:
             return false
         }
+    }
+
+    // MARK: - 平板上行：纸上的框选移动 / 缩放与剪贴板（画布坐标）
+
+    /// 按消息里的选区在真源上复判命中：纸上这张的笔迹，任一点落在多边形内（无多边形尾部时退回 x0..y1 矩形）。
+    /// 与 Mac 本机 `ScratchPadNSView.finishLassoSelect` 的笔迹那一半同一口径；平板上的框选只作用于笔迹，不碰图片。
+    private func scratchLassoHits(_ obj: [String: Any], in s: DocSession, pad: UUID) -> [Int] {
+        var poly: [SIMD2<Double>]?
+        if let flat = obj["poly"] as? [Any], flat.count >= 6 {
+            let v = flat.map { ($0 as? NSNumber)?.doubleValue ?? 0 }
+            poly = stride(from: 0, to: v.count - v.count % 2, by: 2).map { SIMD2(v[$0], v[$0 + 1]) }
+        }
+        let x0 = (obj["x0"] as? NSNumber)?.doubleValue ?? 0, y0 = (obj["y0"] as? NSNumber)?.doubleValue ?? 0
+        let x1 = (obj["x1"] as? NSNumber)?.doubleValue ?? 0, y1 = (obj["y1"] as? NSNumber)?.doubleValue ?? 0
+        let rect = CGRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
+        func hit(_ p: InkPoint) -> Bool {
+            if let poly { return InkEdit.pointInPolygon(SIMD2(p.dx, p.dy), polygon: poly) }
+            return rect.contains(CGPoint(x: p.dx, y: p.dy))
+        }
+        return s.scratchStrokes.indices.filter { i in
+            s.scratchStrokes[i].padId == pad && s.scratchStrokes[i].points.contains(where: hit)
+        }
+    }
+
+    /// `lassoMove` / `lassoScale` 落在纸上：复判命中 → 平移 / 缩放（`InkEdit.canvasTranslated/canvasScaled`，
+    /// 与 Mac 本机框选同一份）→ 进撤销栈 → 广播。**零命中也回传镜像**：平板提交后在等回推结算本地预览。
+    private func applyScratchLasso(_ obj: [String: Any], in s: DocSession, pad: UUID) {
+        let isScale = obj["type"] as? String == "lassoScale"
+        let hits = scratchLassoHits(obj, in: s, pad: pad)
+        if isScale {
+            let a = SIMD2((obj["ax"] as? NSNumber)?.doubleValue ?? 0, (obj["ay"] as? NSNumber)?.doubleValue ?? 0)
+            let sx = (obj["sx"] as? NSNumber)?.doubleValue ?? 1, sy = (obj["sy"] as? NSNumber)?.doubleValue ?? 1
+            if !hits.isEmpty, sx > 0, sy > 0, sx != 1 || sy != 1 {
+                s.scratchEdit("Resize", kind: .scale) {
+                    for i in hits { s.scratchStrokes[i] = InkEdit.canvasScaled(s.scratchStrokes[i], anchor: a, sx: sx, sy: sy) }
+                }
+            }
+        } else {
+            let dx = (obj["dx"] as? NSNumber)?.doubleValue ?? 0, dy = (obj["dy"] as? NSNumber)?.doubleValue ?? 0
+            if !hits.isEmpty, dx != 0 || dy != 0 {
+                s.scratchEdit("Move", kind: .move) {
+                    for i in hits { s.scratchStrokes[i] = InkEdit.canvasTranslated(s.scratchStrokes[i], dx: dx, dy: dy) }
+                }
+            }
+        }
+        PadLog.log("纸上框选\(isScale ? "缩放" : "移动") 命中 \(hits.count) 条")
+        broadcastScratchStrokes()
+    }
+
+    /// 纸上的剪切 / 复制 / 粘贴。剪贴板是 Mac 系统剪贴板（`space = .canvas`，粘回页里时由 `InkPaste` 折算）；
+    /// 粘贴落点 `nx/ny` 是平板视口正中的**画布坐标**。
+    private func applyScratchClip(_ obj: [String: Any], in s: DocSession, pad: UUID) {
+        let op = obj["op"] as? String ?? "copy"
+        if op == "paste" {
+            guard let clip = InkClipboard.read() else { PadLog.log("平板 clip paste：剪贴板空"); return }
+            let center = CGPoint(x: (obj["nx"] as? NSNumber)?.doubleValue ?? 0, y: (obj["ny"] as? NSNumber)?.doubleValue ?? 0)
+            let out = InkPaste.placeOnCanvas(strokes: clip.strokes, space: clip.space,
+                                             sourceAspect: clip.aspect, pad: pad, center: center)
+            guard !out.isEmpty else { return }
+            s.scratchEdit("Paste", kind: .paste) { s.scratchStrokes.append(contentsOf: out) }
+            PadLog.log("平板 clip paste：纸上 \(out.count) 条")
+            broadcastScratchStrokes()
+            return
+        }
+        let hits = scratchLassoHits(obj, in: s, pad: pad)
+        guard !hits.isEmpty else {
+            PadLog.log("平板 clip \(op)：纸上零命中")
+            if op == "cut" { broadcastScratchStrokes() }   // 平板剪切时已乐观删掉，零命中要把它们送回去
+            return
+        }
+        let picked = hits.map { s.scratchStrokes[$0] }
+        InkClipboard.write(strokes: picked, space: .canvas)
+        PadLog.log("平板 clip \(op)：纸上 \(picked.count) 条")
+        guard op == "cut" else { return }
+        let gone = Set(picked.map(\.id))
+        s.scratchEdit("Delete", kind: .delete) { s.scratchStrokes.removeAll { gone.contains($0.id) } }
+        broadcastScratchStrokes()
     }
 
     /// 线上点集 → 画布坐标点（与页内的 `points(_:)` 同结构，只是不再是 0~1）。

@@ -92,6 +92,10 @@ CREATE TABLE sync_base (
 
 配套：`spike/mirror-fp-test.swift` + 安卓 `MirrorFpTest`，**共用一组跨端向量**（同 `wire-cross-test` 的既有纪律）。
 
+**v18 的 `note.points` / `points_at`、`board_item.points` / `points_at` 刻意不进指纹**（`BINARY-INK-PLAN.md §6`）：
+点集的任何实质变化都伴随 `updated_at` 变化，指纹照样看得到。开库时的整理会把 payload 里的 JSON 点摘成 `[]`（指纹会变），
+但两边各自整理完字节相同，合并里是「两边改成同一个值」。合并按两边库的列取交集写，新列自动带过去。
+
 ---
 
 ## 4. 哪些表同步、哪些是设备本地事实

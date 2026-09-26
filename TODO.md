@@ -121,6 +121,11 @@
 
 ### 真 Bug（未修）
 
+- **模式1 打开笔迹多的画板慢**（2026-09-26 用户报，「英语草稿纸」1640 条 / 16.8 万点打开 2.6s，其中解析 JSON 点 2.4s）。
+  已做：安卓点集手写快读（去掉 Kotlin `toDoubleOrNull` 的正则校验）+ 画板内容少读一遍库 → 1.4s（解析 1.1s，十进制转浮点本身的开销）。
+  **随后改存二进制（schema v18，`BINARY-INK-PLAN.md`）**：第一轮兼容模式实测 1.4s → 约 0.45s；用户手动清理后「速度很快」，
+  随即定为默认清掉 JSON 点（不留副本、不备份）。**待用户实测**：Mac 与安卓打开老工作区后自动整理，笔迹完整、打开快。
+  ⚠️ 整理后没更新的旧版 App 读这些工作区笔迹为空（用户已知并接受）。
 - **画板笔记三处问题**（2026-09-26 用户报；方案文档 `BOARD-NOTE-PLAN.md`）：
   - [ ] macOS 端新建画板的表单很乱（固定 420×240 → 分页时控件溢出、无限画布时大块空白）。
     **已改、待用户实测**：`NewBoardSheet.swift` 尺寸由内容撑出，无限画布时分页各行禁用而不隐藏。
@@ -129,13 +134,13 @@
     （本页背景模板、前后插页、删本页；所有页 = 尺寸 + 页列表批量）；图标 `doc.on.doc` → `book.pages`；
     分页时「纸样」弹层只剩纸色。页面尺寸（新建表单 + 弹层）支持手输宽 × 高（pt，100~10000，
     `BoardPageSizeControl`）。离屏布局检查过边距。
-  - [ ] 安卓模式2 下画板（和草稿纸）不能框选笔迹。**不是回归，是从没实现**：`shared/ScratchCanvas.kt`
-    没有框选（注释写明框选在纸上「退化为平移」，`Tools` 无 lasso 字段，`PadActivity.kt` 组 Tools 时没传框选）；
-    用户说模式1 框选正常（子代理读代码的结论是模式1 也没有，**以用户实测为准，动手前再核对一次**）。Mac 端 `AppModel+Scratch.handleScratchInput` 也不认 `lassoMove/lassoScale`——纸开着时平板若发
-    这两条，会落进页内路径拿画布坐标去匹配页内笔迹（潜在误命中）；`applyClip` 纸开着时忽略 copy/cut。
-    要做得动三处：安卓 `ScratchCanvas` 加框选 + 协议（`PROTOCOL.md §4.4/§4.8`，倾向「纸开着时 lassoMove/lassoScale
-    按画布坐标解释」而不新开 op）+ Mac `handleScratchInput` 复判命中（`ScratchPadNSView` 的 `shifted`/`scaled`
-    挪到共享处）。**改协议，动手前先与用户确认方案。**
+  - [ ] 安卓画板 / 草稿纸不能框选笔迹（模式1 与模式2 都没有，从没实现过；框选在纸上退化为平移）。
+    **已做、待用户真机实测**：`ScratchCanvas` 加框选（圈选 / 移动 / 手柄缩放，只作用于笔迹），两模式共用；
+    模式1 写回走新的 `updateScratchStrokes` / `updateBoardStrokes`；模式2 发 `lassoMove` / `lassoScale`，
+    协议定为「纸开着时按画布坐标解释」（`PROTOCOL.md §4.4`，线格式没改），Mac `AppModel+Scratch.applyScratchLasso`
+    复判执行（与本机框选共用 `InkEdit.canvasTranslated/canvasScaled`）。顺带：顶栏剪切 / 复制 / 粘贴在纸上可用了
+    （模式2 走 Mac 系统剪贴板，模式1 `InkClipLocal` 加画布空间）。实测要看：模式1 / 模式2 × 草稿纸 / 无限画板 / 分页画板
+    （跨页拖动后重开还在新位置）、缩放后线宽、剪切粘贴、Mac 上同时看得到移动结果。
 - **笔记小窗（`NoteWindowController`）拖不到别的显示器**（2026-09-24 用户报，根因已查清，
   **用户定先记录不修**）：`show(attachedTo:)` 用 `host.addChildWindow` 把小窗做成阅读窗的真 AppKit
   子窗口，而子窗口有条系统限制——只能停在父窗口所在那块显示器，拖到第二块屏会被弹回来 / 拖不动。

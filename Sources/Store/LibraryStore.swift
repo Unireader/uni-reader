@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 17
+    static let schemaVersion = 18
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -137,7 +137,8 @@ final class LibraryStore {
           document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
           kind INTEGER NOT NULL, page INTEGER NOT NULL,
           anchor_x REAL NOT NULL, anchor_y REAL NOT NULL, anchor_w REAL NOT NULL, anchor_h REAL NOT NULL,
-          payload BLOB NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+          payload BLOB NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          points BLOB, points_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_note_document_page ON note(document_id, page);
         -- 2026-09-10：按类读（`notes(documentId:kind:)` / 笔迹按页窗口 `inkRows(pages:)`）走这条。
@@ -249,7 +250,8 @@ final class LibraryStore {
           x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL,
           payload BLOB NOT NULL,
           created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+          updated_at TEXT NOT NULL,
+          points BLOB, points_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_board_item_board ON board_item(board_id);
         -- v17：分页画板的页（`BOARD-NOTE-PLAN.md §9`）。一个画板有页 = 分页模式，没有页 = 无限画布。
@@ -297,6 +299,13 @@ final class LibraryStore {
         // v14 → v15 只新增 md_doc 表（同上，无需 ALTER）。Markdown 笔记正文在文件里，不动其它表。
         // v15 → v16 只新增 board_note / board_item 两张表（同上，无需 ALTER）。
         // v16 → v17 只新增 board_page 表（同上，无需 ALTER）；页内坐标的 "page" 键在 payload 里，不动 board_item 结构。
+        // v17 → v18：笔迹点集改存二进制（`BINARY-INK-PLAN.md`）。points = `InkPointsBlob`，points_at = 写它那一刻
+        // 这一行的 updated_at（不相等 = 旧版 App 之后改过这一行，二进制已过期，读 JSON）。payload 一个键不删。
+        // 🔴 顺序与安卓 `Schema.ADD_COLUMNS` 一致。
+        try addColumnIfMissing("note", "points", "BLOB")
+        try addColumnIfMissing("note", "points_at", "TEXT")
+        try addColumnIfMissing("board_item", "points", "BLOB")
+        try addColumnIfMissing("board_item", "points_at", "TEXT")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -649,10 +658,18 @@ final class LibraryStore {
     /// 排序与 `notes(documentId:kind:)` 一致（页 → 落库时间 = 绘制叠放序）。
     /// 开文档最热的一条读（`DocTabModel.loadInk`），在后台线程调；一条语句一把锁，与主线程互不干扰。
     func inkRows(documentId: String, kind: Int) throws -> [LibInkRow] {
-        try db.query("SELECT id, kind, page, payload FROM note WHERE document_id=? AND kind=? ORDER BY page ASC, created_at ASC",
+        try db.query("SELECT id, kind, page, payload, points, points_at IS updated_at FROM note WHERE document_id=? AND kind=? ORDER BY page ASC, created_at ASC",
                      [.text(documentId), .int(Int64(kind))]) { r in
-            LibInkRow(id: r.text(0), kind: Int(r.int64(1)), page: Int(r.int64(2)), payload: r.blob(3))
+            Self.inkRow(r)
         }
+    }
+
+    /// `SELECT id, kind, page, payload, points, points_at IS updated_at` 的一行（v18：第 5 列二进制点集，
+    /// 第 6 列「二进制是否最新」——`IS` 让两边都是 NULL 时也为真，但那时 points 为空、不会被用）。
+    private static func inkRow(_ r: SQLiteDB.Row) -> LibInkRow {
+        let pts = r.blob(4)
+        return LibInkRow(id: r.text(0), kind: Int(r.int64(1)), page: Int(r.int64(2)), payload: r.blob(3),
+                         points: pts.isEmpty ? nil : pts, pointsValid: r.int64(5) != 0)
     }
 
     // MARK: 页内笔迹按页窗口装载（`INK-PAGING-PLAN.md §4`）——下面这几条都不读 payload 里的点
@@ -660,10 +677,10 @@ final class LibraryStore {
     /// 某页区间的页内笔迹行（kind=2），排序同上。走 `idx_note_document_page`；`kind` 在几十行里过滤。
     func inkRows(documentId: String, kind: Int, pages: ClosedRange<Int>) throws -> [LibInkRow] {
         try db.query("""
-        SELECT id, kind, page, payload FROM note
+        SELECT id, kind, page, payload, points, points_at IS updated_at FROM note
         WHERE document_id=? AND kind=? AND page BETWEEN ? AND ? ORDER BY page ASC, created_at ASC
         """, [.text(documentId), .int(Int64(kind)), .int(Int64(pages.lowerBound)), .int(Int64(pages.upperBound))]) { r in
-            LibInkRow(id: r.text(0), kind: Int(r.int64(1)), page: Int(r.int64(2)), payload: r.blob(3))
+            Self.inkRow(r)
         }
     }
 
@@ -736,15 +753,24 @@ final class LibraryStore {
         return (row.1, row.2)
     }
     func upsertNote(_ n: LibNote) throws {
+        let up = ISO.string(n.updatedAt)
         try db.run("""
-        INSERT INTO note(id,document_id,kind,page,anchor_x,anchor_y,anchor_w,anchor_h,payload,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO note(id,document_id,kind,page,anchor_x,anchor_y,anchor_w,anchor_h,payload,created_at,updated_at,points,points_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, page=excluded.page,
           anchor_x=excluded.anchor_x, anchor_y=excluded.anchor_y, anchor_w=excluded.anchor_w, anchor_h=excluded.anchor_h,
-          payload=excluded.payload, updated_at=excluded.updated_at
+          payload=excluded.payload, updated_at=excluded.updated_at, points=excluded.points, points_at=excluded.points_at
         """, [.text(n.id), .text(n.documentId), .int(Int64(n.kind)), .int(Int64(n.page)),
               .double(n.anchor.origin.x), .double(n.anchor.origin.y), .double(n.anchor.size.width), .double(n.anchor.size.height),
-              .blob(n.payload), .text(ISO.string(n.createdAt)), .text(ISO.string(n.updatedAt))])
+              .blob(inkPayloadForWrite(n.payload, points: n.points)), .text(ISO.string(n.createdAt)), .text(up),
+              n.points.map { .blob($0) } ?? .null, n.points == nil ? .null : .text(up)])
+    }
+
+    /// 写库前的笔迹 payload（`BINARY-INK-PLAN.md §4`）：这一行带二进制 → 把 JSON 点摘成 `[]`（点只存二进制）。
+    /// 所有写口（页内 / 草稿纸 / 画板）都经这里；上层照旧产出带点的完整 JSON（剪贴板等别处要用）。
+    private func inkPayloadForWrite(_ payload: Data, points: Data?) -> Data {
+        guard points != nil else { return payload }
+        return InkPayloadFast.stripPoints(payload)?.rest ?? payload
     }
     func deleteNote(id: String) throws { try db.run("DELETE FROM note WHERE id=?", [.text(id)]) }
 
@@ -828,16 +854,77 @@ final class LibraryStore {
         return Dictionary(rows, uniquingKeysWith: +)
     }
     func upsertBoardItem(_ i: LibBoardItem) throws {
+        let up = ISO.string(i.updatedAt)
         try db.run("""
-        INSERT INTO board_item(id,board_id,kind,x,y,w,h,payload,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO board_item(id,board_id,kind,x,y,w,h,payload,created_at,updated_at,points,points_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, x=excluded.x, y=excluded.y, w=excluded.w, h=excluded.h,
-          payload=excluded.payload, updated_at=excluded.updated_at
+          payload=excluded.payload, updated_at=excluded.updated_at, points=excluded.points, points_at=excluded.points_at
         """, [.text(i.id), .text(i.boardId), .int(Int64(i.kind)),
               .double(i.rect.origin.x), .double(i.rect.origin.y), .double(i.rect.width), .double(i.rect.height),
-              .blob(i.payload), .text(ISO.string(i.createdAt)), .text(ISO.string(i.updatedAt))])
+              .blob(inkPayloadForWrite(i.payload, points: i.points)), .text(ISO.string(i.createdAt)), .text(up),
+              i.points.map { .blob($0) } ?? .null, i.points == nil ? .null : .text(up)])
     }
     func deleteBoardItem(id: String) throws { try db.run("DELETE FROM board_item WHERE id=?", [.text(id)]) }
+
+    // MARK: - 笔迹点集二进制（v18，`BINARY-INK-PLAN.md`）
+
+    /// 装笔迹的两张表与各自的笔迹 kind
+    private static let inkTables: [(table: String, kinds: String)] = [("note", "2,4"), ("board_item", "1")]
+
+    /// 打开工作区时的整理（§5，用户 2026-09-26 定：**默认就清掉 JSON 点，不要兼容模式、不要备份**）：
+    /// 找出「二进制缺失 / 过期，或 payload 里还带 JSON 点」的笔迹行，一行一次写好——
+    ///  · 二进制有效（`points_at == updated_at`）→ 以二进制为准，只摘 JSON 点；
+    ///  · 否则以 JSON 点为准（旧版 App 写的 / 改过的 / v17 的老行）→ 编成二进制，同时摘 JSON 点。
+    /// `updated_at` 不动（`points_at` 仍等于它）；payload 变了，离线镜像两边各自整理完字节相同。
+    /// 按 id 翻页（解不出点的行不会让它原地打转），每批一个事务；写时再核一次 `updated_at`
+    /// （批与批之间主线程改过这一行就跳过，下次打开再整理）。后台线程调，返回整理了几行。
+    /// `jsonPoints` = 从 payload 读 JSON 点（App 层传带 `JSONDecoder` 兜底的那版，默认只用字节快读——存储层不依赖 App 层）。
+    @discardableResult
+    func compactInkPoints(batch: Int = 400,
+                          jsonPoints: (Data) -> [SIMD3<Float>]? = { InkPayloadFast.splitPoints($0)?.points }) -> Int {
+        var total = 0
+        for (table, kinds) in Self.inkTables {
+            var after = ""
+            while true {
+                // LIKE 在 BLOB 上按文本比；`[` 不是 LIKE 的通配符。两端写 JSON 都是紧凑形态（`"points":[[`）
+                let rows = (try? db.query("""
+                SELECT id, payload, updated_at, points, points_at IS updated_at FROM \(table)
+                WHERE kind IN (\(kinds)) AND id > ?
+                  AND (points IS NULL OR points_at IS NOT updated_at OR payload LIKE '%"points":[[%')
+                ORDER BY id LIMIT ?
+                """, [.text(after), .int(Int64(batch))]) { r -> (String, Data, String, Data, Bool) in
+                    (r.text(0), r.blob(1), r.text(2), r.blob(3), r.int64(4) != 0)
+                }) ?? []
+                guard let last = rows.last else { break }
+                after = last.0
+                let fills = rows.compactMap { row -> (id: String, blob: Data, payload: Data, up: String)? in
+                    let (id, payload, up, blob, valid) = row
+                    if valid, !blob.isEmpty, InkPointsBlob.decode(blob) != nil {
+                        guard let s = InkPayloadFast.stripPoints(payload), s.hadPoints else { return nil }
+                        return (id, blob, s.rest, up)
+                    }
+                    guard let pts = jsonPoints(payload), !pts.isEmpty else { return nil }
+                    return (id, InkPointsBlob.encode(pts), InkPayloadFast.stripPoints(payload)?.rest ?? payload, up)
+                }
+                guard !fills.isEmpty else { continue }
+                do {
+                    try db.transaction {
+                        for f in fills {
+                            try db.run("""
+                            UPDATE \(table) SET points=?, points_at=updated_at, payload=? WHERE id=? AND updated_at=?
+                            """, [.blob(f.blob), .blob(f.payload), .text(f.id), .text(f.up)])
+                        }
+                    }
+                    total += fills.count
+                } catch {
+                    NSLog("[InkBlob] 整理 \(table) 一批失败：\(error)")
+                    break
+                }
+            }
+        }
+        return total
+    }
 
     // 分页画板的页（board_page，v17；`BOARD-NOTE-PLAN.md §9`）
     func boardPages(boardId: String) throws -> [LibBoardPage] {
@@ -1098,7 +1185,18 @@ final class LibraryStore {
                                width: r["anchor_w"] as? Double ?? 0, height: r["anchor_h"] as? Double ?? 0),
                 payload: r["payload"] as? Data ?? Data(),
                 createdAt: ISO.date(r["created_at"] as? String) ?? .now,
-                updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+                updatedAt: ISO.date(r["updated_at"] as? String) ?? .now,
+                points: pointsBlob(r), pointsValid: pointsValid(r))
+    }
+    /// v18 二进制点集列（空 / NULL = 没有）
+    private static func pointsBlob(_ r: [String: Any]) -> Data? {
+        guard let d = r["points"] as? Data, !d.isEmpty else { return nil }
+        return d
+    }
+    /// 二进制是否最新：`points_at` 与 `updated_at` 的**原始字符串**相等（两端时间戳写法不必一致）
+    private static func pointsValid(_ r: [String: Any]) -> Bool {
+        guard let at = r["points_at"] as? String, let up = r["updated_at"] as? String else { return false }
+        return at == up
     }
     private static func inkLayer(_ r: [String: Any]) -> LibInkLayer {
         LibInkLayer(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String ?? "",
@@ -1134,7 +1232,8 @@ final class LibraryStore {
                                   width: r["w"] as? Double ?? 0, height: r["h"] as? Double ?? 0),
                      payload: r["payload"] as? Data ?? Data(),
                      createdAt: ISO.date(r["created_at"] as? String) ?? .now,
-                     updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+                     updatedAt: ISO.date(r["updated_at"] as? String) ?? .now,
+                     points: pointsBlob(r), pointsValid: pointsValid(r))
     }
     private static func boardPage(_ r: [String: Any]) -> LibBoardPage {
         LibBoardPage(id: r["id"] as? String ?? "", boardId: r["board_id"] as? String ?? "",

@@ -30,6 +30,8 @@
 3. **零闪烁纪律不破**：滚动中不许因装载/淘汰而每帧写 `@Published`（`reader-perframe-published-fanout` 教训）；
    装载/淘汰只在 settle 时提交，一次窗口变化最多一次 `strokes` 赋值。
 4. 落库语义不变：schema 不动、payload 格式不动（`[x, y, pressure]` 三端契约）、线格式不动。
+   （2026-09-26 起点集另有二进制列 `note.points`，见 `BINARY-INK-PLAN.md`——那是后来的决定，不属于本方案；
+   `inkRows` 两条窄查询顺带多取了 `points` 与「二进制是否最新」两列。）
 5. 编辑路径（擦除 / 框选 / 粘贴 / 撤销 / 图层）在窗口内行为与现在逐字节一致；窗口外的整篇操作
    （删整层 / 删整页 / 计数）结果与现在一致。
 
@@ -136,7 +138,7 @@ Mac 的装载窗口（实化 ± pad）⊇ 平板可见页。做法：**窗口变
 ## 5. 不做的事
 
 - 不改 schema、不加 `kind` 进索引（`BETWEEN page` 已走 `(document_id, page)`；kind 过滤在几十行里做）。
-- 不改 payload 格式、不做二进制 payload。
+- 不改 payload 格式、不做二进制 payload（本方案范围内；2026-09-26 用户另定点集改存二进制，见 `BINARY-INK-PLAN.md`）。
 - 不做逐笔懒解码（窗口内笔迹全解，解码已经很快）。
 - 不做平板端分页协议（整替够用；将来窗口真大了再谈 `strokesPages`）。
 - 不动安卓。

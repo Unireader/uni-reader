@@ -152,6 +152,21 @@ enum InkEdit {
         return t
     }
 
+    /// 草稿纸 / 画板上的平移（**画布坐标**，可负无界 → 不夹）。Mac 本机框选与平板框选（`lassoMove`）共用。
+    static func canvasTranslated(_ s: InkStroke, dx: Double, dy: Double) -> InkStroke {
+        var t = s
+        t.points = s.points.map { InkPoint($0.dx + dx, $0.dy + dy, $0.dz) }
+        return t
+    }
+
+    /// 草稿纸 / 画板上的缩放（画布坐标不夹；线宽规则同 `scaled`）。安卓 `ScratchCanvas` 的本地预览是同一份算法。
+    static func canvasScaled(_ s: InkStroke, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> InkStroke {
+        var t = s
+        t.points = s.points.map { InkPoint(a.x + ($0.dx - a.x) * sx, a.y + ($0.dy - a.y) * sy, $0.dz) }
+        t.width = min(40, max(0.5, s.width * (sx * sy).squareRoot()))
+        return t
+    }
+
     /// 文字注解缩放（⑤ 框选缩放）：anchor 与每个 rect 绕 anchor 点按轴缩放，各角 clamp 到 0...1
     /// （字号不缩——注解是文字不是图形；bump updatedAt 让 persistTextNotes 值快照识别为变更）。
     static func scaled(_ n: TextNote, anchor a: SIMD2<Double>, sx: Double, sy: Double) -> TextNote {

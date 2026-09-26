@@ -146,32 +146,62 @@ extension InkStroke {
                                        padId: padId)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         let scratch = padId != nil
+        // JSON 点照旧写（兼容模式）；已清理时由 `LibraryStore.upsertNote` 摘掉。二进制总是写（v18）。
         return LibNote(id: id.uuidString, documentId: documentId,
                        kind: scratch ? Self.scratchNoteKind : Self.noteKind,
                        page: scratch ? 0 : page, anchor: normalizedBounds, payload: data,
-                       createdAt: now, updatedAt: now)
+                       createdAt: now, updatedAt: now, points: InkPointsBlob.encode(points))
     }
 
     /// 从一条 ink 笔记复原（id/page 取 note 列，其余取 payload）。类型不符或损坏返回 nil。
     /// kind=2（页内）与 kind=4（草稿纸）都接：草稿纸笔迹的 `padId` 在 payload 里，
     /// 缺 `padId` 的 kind=4 行是坏数据（无处可归的孤儿笔迹），当损坏丢弃。
     init?(note: LibNote) {
-        self.init(id: note.id, kind: note.kind, page: note.page, payload: note.payload)
+        self.init(id: note.id, kind: note.kind, page: note.page, payload: note.payload,
+                  blob: note.points, blobValid: note.pointsValid)
     }
 
     /// 同上，吃窄查询的行（`LibraryStore.inkRows`）——开文档走这条，整行 `LibNote` 那条留给零星读。
     init?(row: LibInkRow) {
-        self.init(id: row.id, kind: row.kind, page: row.page, payload: row.payload)
+        self.init(id: row.id, kind: row.kind, page: row.page, payload: row.payload,
+                  blob: row.points, blobValid: row.pointsValid)
     }
 
-    /// 两个入口共用的解码本体：一条笔迹真正要用的就这四样。
-    private init?(id: String, kind: Int, page: Int, payload data: Data) {
+    /// 两个入口共用的解码本体。
+    private init?(id: String, kind: Int, page: Int, payload data: Data, blob: Data?, blobValid: Bool) {
         guard kind == InkStroke.noteKind || kind == InkStroke.scratchNoteKind,
-              let uuid = UUID(uuidString: id) else { return nil }
-        // 快路：points 用字节扫描（`InkPayloadFast`），其余字段照旧 JSONDecoder——开文档时的
-        // 「笔迹」段从半秒降到几十毫秒。形态不认识时回落到整段 JSONDecoder，结果逐位相同。
+              let uuid = UUID(uuidString: id),
+              let (payload, pts) = InkStrokePayload.read(data, blob: blob, blobValid: blobValid) else { return nil }
+        if kind == InkStroke.scratchNoteKind && payload.padId == nil { return nil }
+        self.init(id: uuid, page: page, color: payload.color, width: payload.width, type: payload.type,
+                  points: pts, layerId: payload.layerId, padId: payload.padId)
+    }
+}
+
+extension InkStroke {
+    /// 只读 payload 里的 **JSON 点**（v18 迁移用：把它编成二进制补进 `points` 列）。解不出 → nil。
+    static func jsonPoints(payload data: Data) -> [InkPoint]? {
+        if let fast = InkPayloadFast.splitPoints(data) { return fast.points }
+        guard let p = try? JSONDecoder().decode(InkStrokePayload.self, from: data) else { return nil }
+        return p.points.map { InkPoint($0.count > 0 ? $0[0] : 0, $0.count > 1 ? $0[1] : 0, $0.count > 2 ? $0[2] : 0.5) }
+    }
+}
+
+extension InkStrokePayload {
+    /// 一行笔迹的 payload + 点集，按 `BINARY-INK-PLAN.md §3` 决定点从哪来（安卓 `InkPayload.readStroke` 同一份规则）：
+    ///  1. 二进制有效（`points_at == updated_at`）→ 用二进制，JSON 里的点不解（只摘掉、解其余小字段）；
+    ///  2. 否则 JSON 里有点 → 用 JSON（旧版 App 写的 / 改过的 / 还没迁移的）；
+    ///  3. 否则有二进制 → 用二进制（已清理兼容数据：JSON 点是空的）；
+    ///  4. 都没有 → 空点集（调用方照旧处理）。
+    /// JSON 那条仍走 `InkPayloadFast` 快路，形态不认识回落整段 `JSONDecoder`，结果逐位相同。
+    fileprivate static func read(_ data: Data, blob: Data?, blobValid: Bool) -> (InkStrokePayload, [InkPoint])? {
+        if blobValid, let blob, let bp = InkPointsBlob.decode(blob),
+           let s = InkPayloadFast.stripPoints(data),
+           let p = try? JSONDecoder().decode(InkStrokePayload.self, from: s.rest) {
+            return (p, bp)
+        }
         let payload: InkStrokePayload
-        let pts: [InkPoint]
+        var pts: [InkPoint]
         if let fast = InkPayloadFast.splitPoints(data),
            let p = try? JSONDecoder().decode(InkStrokePayload.self, from: fast.rest) {
             payload = p
@@ -186,9 +216,8 @@ extension InkStroke {
                 return InkPoint(x, y, z)
             }
         }
-        if kind == InkStroke.scratchNoteKind && payload.padId == nil { return nil }
-        self.init(id: uuid, page: page, color: payload.color, width: payload.width, type: payload.type,
-                  points: pts, layerId: payload.layerId, padId: payload.padId)
+        if pts.isEmpty, let blob, let bp = InkPointsBlob.decode(blob) { pts = bp }
+        return (payload, pts)
     }
 }
 
@@ -213,8 +242,10 @@ extension InkStroke {
                                        points: s.points.map { [$0.x, $0.y, $0.z] }, layerId: layerId,
                                        padId: nil, page: page?.id.uuidString)
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
+        // 二进制与 JSON 点同一个坐标系（分页画板 = 页内坐标）
         return LibBoardItem(id: id.uuidString, boardId: boardId, kind: Self.boardItemKind,
-                            rect: s.normalizedBounds, payload: data, createdAt: createdAt, updatedAt: now)
+                            rect: s.normalizedBounds, payload: data, createdAt: createdAt, updatedAt: now,
+                            points: InkPointsBlob.encode(s.points))
     }
 
     /// 从一条画板笔迹复原。`padId` = 这篇画板在会话里扮演的那张「永远开着的草稿纸」的 id
@@ -222,16 +253,14 @@ extension InkStroke {
     /// `origin` = 分页画板上「页 id → 该页在画布上的左上角」；payload 带 `page` 而那页不在（孤儿）→ nil。
     init?(boardItem it: LibBoardItem, padId: UUID, origin: (String) -> CGPoint? = { _ in nil }) {
         guard it.kind == Self.boardItemKind, let uuid = UUID(uuidString: it.id),
-              let p = try? JSONDecoder().decode(InkStrokePayload.self, from: it.payload) else { return nil }
+              let (p, raw) = InkStrokePayload.read(it.payload, blob: it.points, blobValid: it.pointsValid)
+        else { return nil }
         var ox = 0.0, oy = 0.0
         if let pg = p.page {
             guard let o = origin(pg.uppercased()) else { return nil }
             ox = Double(o.x); oy = Double(o.y)
         }
-        let pts = p.points.map { p -> InkPoint in
-            InkPoint(Double(p.count > 0 ? p[0] : 0) + ox, Double(p.count > 1 ? p[1] : 0) + oy,
-                     Double(p.count > 2 ? p[2] : 0.5))
-        }
+        let pts = ox == 0 && oy == 0 ? raw : raw.map { InkPoint($0.dx + ox, $0.dy + oy, $0.dz) }
         self.init(id: uuid, page: 0, color: p.color, width: p.width, type: p.type,
                   points: pts, layerId: p.layerId, padId: padId)
     }
@@ -258,94 +287,5 @@ extension InkStroke {
     }
 }
 
-// MARK: - points 快速解析
-
-/// 笔迹 payload 的 `points` 快速解析（2026-09-10 打开耗时账本量出来的：一篇 2616 笔的文档
-/// 「笔迹」段 506ms，几乎全在 `JSONDecoder` 解 `[[Double]]`——Codable 逐元素走一遍容器协议，
-/// 一个数要 1~2µs，二十几万个点就是半秒）。
-///
-/// 做法：在原始字节里找到 `"points"` 那个数组的起止，数字按 Double 解（正确舍入）再 `Float(d)`
-/// 存进 `InkPoint`；其余字段（color/width/type/layerId/padId，加起来百来字节）
-/// 把数组换成 `[]` 后照旧交给 `JSONDecoder`。**语义不变**：解出来的 Float 与「`JSONDecoder` 解
-/// `[[Double]]` 再 `Float(d)`」逐位相同（`spike/ink-payload-fast-test.swift` 逐点比对），
-/// 任何看不懂的形态返回 nil、调用方回落到原路径。
-///
-/// 不改 payload 格式：`[x, y, pressure]` 显式数组是三端共用的落库契约（安卓/Windows 要能读）。
-enum InkPayloadFast {
-    /// 返回 (去掉 points 的 payload, 点数组)；形态不认识时 nil。
-    static func splitPoints(_ data: Data) -> (rest: Data, points: [InkPoint])? {
-        // 结构用裸字节扫（`[UInt8]` 下标是最快的），数字交给 Swift 自己的 `Double(String)`
-        // （正确舍入、locale 无关）。**别用 `strtod`**：2026-09-10 实测它在多线程下不伸缩
-        // （300k 次：1 线程 10ms、8 线程 20ms），而 `Double(String)` 同样的活 8 线程 2ms——
-        // `decodeAll` 的并行解码全靠这一点。也别用 String.Index 逐字符推进：一个 payload 十几 KB，
-        // `index(after:)` 每步十几 ns，比裸字节慢四倍。
-        let b = [UInt8](data)
-        let n = b.count
-        guard let keyAt = find(b, key: Array("\"points\"".utf8)) else { return nil }
-        var i = keyAt + 8
-        @inline(__always) func skipWS() {
-            while i < n, b[i] == 0x20 || b[i] == 0x0A || b[i] == 0x0D || b[i] == 0x09 { i += 1 }
-        }
-        @inline(__always) func isNum(_ c: UInt8) -> Bool {
-            (c >= 0x30 && c <= 0x39) || c == 0x2D || c == 0x2B || c == 0x2E || c == 0x65 || c == 0x45   // 0-9 - + . e E
-        }
-        skipWS()
-        guard i < n, b[i] == UInt8(ascii: ":") else { return nil }
-        i += 1
-        skipWS()
-        guard i < n, b[i] == UInt8(ascii: "[") else { return nil }
-        let arrStart = i
-        i += 1
-        var pts: [InkPoint] = []
-        pts.reserveCapacity(64)
-        while true {
-            skipWS()
-            guard i < n else { return nil }
-            if b[i] == UInt8(ascii: "]") { break }                  // 外层数组结束
-            guard b[i] == UInt8(ascii: "[") else { return nil }      // 每个点必须是内层数组
-            i += 1
-            var v: [Double] = []   // 一个点最多三个数；多的忽略，少的按老规矩补
-            while true {
-                skipWS()
-                guard i < n else { return nil }
-                if b[i] == UInt8(ascii: "]") { i += 1; break }
-                let start = i
-                while i < n, isNum(b[i]) { i += 1 }
-                guard i > start, let d = Double(String(decoding: b[start..<i], as: UTF8.self)) else { return nil }
-                if v.count < 3 { v.append(d) }
-                skipWS()
-                guard i < n else { return nil }
-                if b[i] == UInt8(ascii: ",") { i += 1; continue }
-                guard b[i] == UInt8(ascii: "]") else { return nil }
-            }
-            pts.append(InkPoint(v.count > 0 ? v[0] : 0, v.count > 1 ? v[1] : 0, v.count > 2 ? v[2] : 0.5))
-            skipWS()
-            guard i < n else { return nil }
-            if b[i] == UInt8(ascii: ",") { i += 1; continue }
-            guard b[i] == UInt8(ascii: "]") else { return nil }
-        }
-        let arrEnd = i   // 指向外层 `]`
-        var rest = Data(capacity: n - (arrEnd - arrStart) + 2)
-        rest.append(data[0..<arrStart])
-        rest.append(contentsOf: [UInt8(ascii: "["), UInt8(ascii: "]")])
-        rest.append(data[(arrEnd + 1)..<n])
-        return (rest, pts)
-    }
-
-    /// 找键（含引号）第一次出现的位置。payload 里其它字符串值（笔型名、UUID）不可能含它。
-    private static func find(_ b: [UInt8], key: [UInt8]) -> Int? {
-        let n = b.count
-        guard n >= key.count else { return nil }
-        var i = 0
-        let first = key[0]
-        while i <= n - key.count {
-            if b[i] == first {
-                var j = 1
-                while j < key.count, b[i + j] == key[j] { j += 1 }
-                if j == key.count { return i }
-            }
-            i += 1
-        }
-        return nil
-    }
-}
+// `InkPayloadFast`（points 的字节级快读 / 摘除）住在 `Sources/Store/InkPayloadFast.swift`：
+// 存储层的迁移与清理也要用它，而存储层不依赖 App 层。

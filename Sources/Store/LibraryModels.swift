@@ -53,6 +53,11 @@ struct LibNote: Identifiable, Equatable {
     var payload: Data           // JSON
     var createdAt: Date
     var updatedAt: Date
+    /// 笔迹点集的二进制形态（v18 `points` 列，`InkPointsBlob`；非笔迹行 / 还没迁移 = nil）。
+    /// 写库时 `points_at` 自动取这一行的 `updated_at`（`BINARY-INK-PLAN.md §2`）。
+    var points: Data? = nil
+    /// 读出来时二进制是否最新（`points_at == updated_at`，库里直接比原始字符串）。写库时不看。
+    var pointsValid: Bool = false
 }
 
 /// 笔迹行的窄读法（`note` 表 kind=2 / 4）：只取 `InkStroke(row:)` 真正要用的四列，
@@ -63,6 +68,8 @@ struct LibInkRow {
     var kind: Int               // 2 页内 / 4 草稿纸
     var page: Int
     var payload: Data           // JSON
+    var points: Data? = nil     // v18 二进制点集（同 `LibNote.points`）
+    var pointsValid: Bool = false
 }
 
 /// 某页页内笔迹的汇总（`LibraryStore.inkPageSummaries`，一条 GROUP BY 出全篇）：
@@ -133,6 +140,8 @@ struct LibBoardItem: Identifiable, Equatable {
     var payload: Data
     var createdAt: Date
     var updatedAt: Date
+    var points: Data? = nil     // v18 二进制点集（笔迹条目才有，同 `LibNote.points`）
+    var pointsValid: Bool = false
 }
 
 /// 分页画板的一页（`board_page` 表，v17，`BOARD-NOTE-PLAN.md §9`）。尺寸整本统一（每页存同一个值）。

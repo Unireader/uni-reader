@@ -38,8 +38,10 @@ check(r == s1, "整体 InkStroke 相等")
 
 // 1b) 窄查询 inkRows（开文档走这条）：与整行读回解出来的一样；kind 筛得干净
 let rows = try store.inkRows(documentId: doc.id, kind: InkStroke.noteKind)
+// v18 起落库的 payload 摘掉了 JSON 点（点只存二进制 `points` 列，`BINARY-INK-PLAN.md`）
 check(rows.count == 1 && rows[0].id == s1.id.uuidString && rows[0].kind == 2 && rows[0].page == 3
-      && rows[0].payload == note.payload, "inkRows：id/kind/page/payload 四列与落库一致")
+      && rows[0].payload == InkPayloadFast.stripPoints(note.payload)?.rest
+      && rows[0].points == note.points && rows[0].pointsValid, "inkRows：id/kind/page/payload/points 与落库一致")
 check(rows.compactMap(InkStroke.init(row:)) == loaded, "inkRows → InkStroke(row:) 与 InkStroke(note:) 结果相同")
 check((try store.inkRows(documentId: doc.id, kind: InkStroke.scratchNoteKind)).isEmpty, "inkRows 按 kind 筛：kind=4 为空")
 

@@ -119,7 +119,7 @@ let oldBack = try? Trash.decode(oldData)
 check(oldBack?.counts.ink == 3 && oldBack?.counts.boardInk == 0, "老 manifest 缺新键也能解（缺的算 0）")
 
 print("⑦ 分页（v17）：board_page + 页内坐标 + 布局契约 + 模板几何")
-check(store.meta("schema_version") == "17", "schema_version = 17")
+check((Int(store.meta("schema_version") ?? "") ?? 0) >= 17, "schema_version ≥ 17")
 let pb = BoardNote(title: "分页", createdAt: t0, updatedAt: t0, lastOpenedAt: t0)
 try store.upsertBoard(pb.row)
 let pgA = BoardPage(sortKey: 1, width: 595, height: 842, template: .cornell, createdAt: t0, updatedAt: t0)

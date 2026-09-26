@@ -4,7 +4,7 @@
 //      points 排在最前或最后 / 整数写法；
 //   ③ 坏形态一律 nil（调用方回落）；
 //   ④ 计时：2616 笔 × 100 点，JSONDecoder 整段 vs 快路 + 小段 JSONDecoder。
-// 运行（`InkPayloadFast` 住在 InkModel.swift 里，带上它的依赖，与 ink-store-test 同一套；
+// 运行（`InkPayloadFast` 2026-09-26 起住在 `Sources/Store/InkPayloadFast.swift`，下面的命令照旧能编；
 // 本文件用 `@main`，**别**改名成 main.swift）：
 //   swiftc -O Sources/Store/*.swift Sources/App/InkModel.swift Sources/App/InkLayerModel.swift \
 //     Sources/App/NoteTypeModel.swift Sources/App/PenPreset.swift Sources/Support/L.swift \
