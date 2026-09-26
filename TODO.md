@@ -121,6 +121,21 @@
 
 ### 真 Bug（未修）
 
+- **画板笔记三处问题**（2026-09-26 用户报；方案文档 `BOARD-NOTE-PLAN.md`）：
+  - [ ] macOS 端新建画板的表单很乱（固定 420×240 → 分页时控件溢出、无限画布时大块空白）。
+    **已改、待用户实测**：`NewBoardSheet.swift` 尺寸由内容撑出，无限画布时分页各行禁用而不隐藏。
+  - [ ] Mac 端分页画板的「纸样」弹层只有底纹（分页时根本不画）+ 纸色，看上去只能改颜色。
+    **已改、待用户实测**：「页面」弹层重做（`BoardPagesPanel`）——底部分段切「本页 / 所有页」，默认本页
+    （本页背景模板、前后插页、删本页；所有页 = 尺寸 + 页列表批量）；图标 `doc.on.doc` → `book.pages`；
+    分页时「纸样」弹层只剩纸色。页面尺寸（新建表单 + 弹层）支持手输宽 × 高（pt，100~10000，
+    `BoardPageSizeControl`）。离屏布局检查过边距。
+  - [ ] 安卓模式2 下画板（和草稿纸）不能框选笔迹。**不是回归，是从没实现**：`shared/ScratchCanvas.kt`
+    没有框选（注释写明框选在纸上「退化为平移」，`Tools` 无 lasso 字段，`PadActivity.kt` 组 Tools 时没传框选）；
+    用户说模式1 框选正常（子代理读代码的结论是模式1 也没有，**以用户实测为准，动手前再核对一次**）。Mac 端 `AppModel+Scratch.handleScratchInput` 也不认 `lassoMove/lassoScale`——纸开着时平板若发
+    这两条，会落进页内路径拿画布坐标去匹配页内笔迹（潜在误命中）；`applyClip` 纸开着时忽略 copy/cut。
+    要做得动三处：安卓 `ScratchCanvas` 加框选 + 协议（`PROTOCOL.md §4.4/§4.8`，倾向「纸开着时 lassoMove/lassoScale
+    按画布坐标解释」而不新开 op）+ Mac `handleScratchInput` 复判命中（`ScratchPadNSView` 的 `shifted`/`scaled`
+    挪到共享处）。**改协议，动手前先与用户确认方案。**
 - **笔记小窗（`NoteWindowController`）拖不到别的显示器**（2026-09-24 用户报，根因已查清，
   **用户定先记录不修**）：`show(attachedTo:)` 用 `host.addChildWindow` 把小窗做成阅读窗的真 AppKit
   子窗口，而子窗口有条系统限制——只能停在父窗口所在那块显示器，拖到第二块屏会被弹回来 / 拖不动。

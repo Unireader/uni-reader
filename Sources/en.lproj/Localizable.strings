@@ -839,3 +839,9 @@
 "Delete %d pages?" = "Delete %d pages?";
 "The strokes and images on it are deleted too. This cannot be undone." = "The strokes and images on it are deleted too. This cannot be undone.";
 "Select several pages with ⌘ or ⇧ to change them together." = "Select several pages with ⌘ or ⇧ to change them together.";
+"This Page" = "This Page";
+"All Pages" = "All Pages";
+"Custom Size" = "Custom";
+"Page Width" = "Width";
+"Page Height" = "Height";
+"Page Settings" = "Page Settings";

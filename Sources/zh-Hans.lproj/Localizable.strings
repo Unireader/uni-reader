@@ -841,3 +841,9 @@
 "Delete %d pages?" = "删除这 %d 页？";
 "The strokes and images on it are deleted too. This cannot be undone." = "页上的笔迹和图片会一起删除，不能撤销。";
 "Select several pages with ⌘ or ⇧ to change them together." = "按住 ⌘ 或 ⇧ 选中多页，可以一起修改。";
+"This Page" = "本页";
+"All Pages" = "所有页";
+"Custom Size" = "自定义";
+"Page Width" = "宽";
+"Page Height" = "高";
+"Page Settings" = "页面设置";

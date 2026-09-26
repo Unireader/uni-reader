@@ -582,9 +582,10 @@ final class ScratchPadNSView: NSView {
     private var paperPopover: NSPopover?
 
     /// 纸样选择器：底纹（无 / 点阵 / 小格）× 底色（一组预设纸色）。
+    /// 分页画板：只给纸色（底纹分页时不画；每页背景在「页面」面板）。
     private func showPaperPicker(from anchor: NSView) {
         guard let p = pad else { return }
-        let root = PaperPickerView(bg: p.bg, pattern: p.pattern)
+        let root = PaperPickerView(bg: p.bg, pattern: p.pattern, showsPattern: !paged)
         root.onPattern = { [weak self] pat in self?.setPaper(pattern: pat) }
         root.onColor = { [weak self] c in self?.setPaper(bg: c) }
         let vc = NSViewController()
@@ -850,9 +851,10 @@ extension ScratchPadNSView {
         }
     }
 
-    /// 工具条「页面」：整本尺寸（预设 + 横竖）、纸色、页列表多选 → 批量背景 / 插页 / 删页。
+    /// 工具条「页面」：底部分段切「本页」（视口中心所在页的背景 / 插页 / 删页）与「所有页」
+    /// （整本尺寸、页列表多选 → 批量背景 / 插页 / 删页）。
     fileprivate func showPagesPanel(from anchor: NSView) {
-        let panel = BoardPagesPanel(session: session)
+        let panel = BoardPagesPanel(session: session, currentPage: currentPageIndex)
         panel.onDelete = { [weak self] idx in self?.confirmDeletePages(idx) }
         panel.onJump = { [weak self] i in
             guard let self else { return }
@@ -864,6 +866,7 @@ extension ScratchPadNSView {
         pop.contentViewController = vc
         pop.behavior = .transient
         pop.contentSize = panel.frame.size
+        panel.onResize = { [weak pop] s in pop?.contentSize = s }
         pop.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
 }
@@ -1364,7 +1367,7 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
         closeDivider = divider()
         imageBtn = icon("photo.badge.plus", L("Insert Image…")) { [weak self] in self?.onInsertImage() }
         imageBtn.isHidden = true
-        pagesBtn = icon("doc.on.doc", L("Page List")) { [weak self] in
+        pagesBtn = icon("book.pages", L("Page Settings")) { [weak self] in
             guard let self else { return }
             self.onPages(self.pagesBtn)
         }
@@ -1513,16 +1516,18 @@ final class PaperPickerView: NSView {
 
     override var isFlipped: Bool { true }
 
-    init(bg: InkColor, pattern: ScratchPattern) {
+    /// `showsPattern = false`（分页画板）：只给纸色——分页时画布底纹不画，每页背景在「页面」面板里改。
+    init(bg: InkColor, pattern: ScratchPattern, showsPattern: Bool = true) {
         let patterns = ScratchPattern.allCases, colors = ScratchPad.paperPalette
         let width = max(CGFloat(patterns.count) * 60, CGFloat(colors.count) * 34) + 20
-        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 170))
+        let top: CGFloat = showsPattern ? 92 : 0   // 底纹一栏占的高度
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 78 + top))
         let h1 = NSTextField(labelWithString: L("Pattern"))
         h1.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold)
         h1.textColor = .secondaryLabelColor
         h1.frame = NSRect(x: 14, y: 14, width: width - 28, height: 18)
-        addSubview(h1)
-        for (i, pat) in patterns.enumerated() {
+        if showsPattern { addSubview(h1) }
+        for (i, pat) in patterns.enumerated() where showsPattern {
             let sw = PaperSwatchView(frame: NSRect(x: 14 + CGFloat(i) * 60, y: 38, width: 52, height: 38))
             let cap = NSTextField(labelWithString: pat.label)
             cap.font = .preferredFont(forTextStyle: .caption1)
@@ -1535,10 +1540,10 @@ final class PaperPickerView: NSView {
         let h2 = NSTextField(labelWithString: L("Paper Color"))
         h2.font = h1.font
         h2.textColor = .secondaryLabelColor
-        h2.frame = NSRect(x: 14, y: 106, width: width - 28, height: 18)
+        h2.frame = NSRect(x: 14, y: 14 + top, width: width - 28, height: 18)
         addSubview(h2)
         for (i, item) in colors.enumerated() {
-            let sw = PaperSwatchView(frame: NSRect(x: 14 + CGFloat(i) * 34, y: 130, width: 26, height: 26))
+            let sw = PaperSwatchView(frame: NSRect(x: 14 + CGFloat(i) * 34, y: 38 + top, width: 26, height: 26))
             sw.pattern = .plain
             sw.bg = item.color
             sw.toolTip = L(item.name)
