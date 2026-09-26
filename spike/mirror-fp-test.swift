@@ -99,8 +99,15 @@ check(MirrorFp.spec("document")?.columns.map(\.name) ==
 check(MirrorFp.spec("note")?.columns.map(\.name) ==
       ["id", "document_id", "kind", "page", "anchor_x", "anchor_y", "anchor_w", "anchor_h",
        "payload", "created_at", "updated_at"], "note 列表")
-check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc", "meta"],
-      "参与同步的表恰好 7 张（location 不在其中 —— 它是设备本地事实）")
+check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc",
+                                     "board_note", "board_item", "meta"],
+      "参与同步的表恰好 9 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张）")
+check(MirrorFp.spec("board_note")?.columns.map(\.name) ==
+      ["id", "title", "bg", "pattern", "group_name", "created_at", "updated_at"],
+      "board_note 列表（v16；**不含 last_opened_at**，同 document）")
+check(MirrorFp.spec("board_item")?.columns.map(\.name) ==
+      ["id", "board_id", "kind", "x", "y", "w", "h", "payload", "created_at", "updated_at"],
+      "board_item 列表（v16）")
 check(MirrorFp.spec("md_doc")?.columns.map(\.name) ==
       ["id", "title", "rel_path", "group_name", "sort_order", "created_at", "updated_at"],
       "md_doc 列表（v15；**不含 last_opened_at**，同 document）")
@@ -143,9 +150,25 @@ let variantRow: [String: Any] = [
 ]
 let metaRow: [String: Any] = ["key": "workspace_name", "value": "考研"]
 
+let boardRow: [String: Any] = [
+    "id": "66666666-6666-4666-8666-666666666666", "title": "极限草稿",
+    "bg": "rgba(252,247,235,1.0)", "pattern": "grid", "group_name": "",
+    "created_at": "2026-09-24T09:00:00Z", "updated_at": "2026-09-24T09:30:00Z",
+    "last_opened_at": "2026-09-24T10:00:00Z",
+]
+let boardItemRow: [String: Any] = [
+    "id": "77777777-7777-4777-8777-777777777777",
+    "board_id": "66666666-6666-4666-8666-666666666666",
+    "kind": Int64(1), "x": -120.5, "y": 40.25, "w": 300.0, "h": 88.0,
+    "payload": Data("{\"width\":2}".utf8),
+    "created_at": "2026-09-24T09:10:00Z", "updated_at": "2026-09-24T09:10:00Z",
+]
+
+// 🔴 只许在末尾追加（向量序号就是这里的顺序）
 let tableCases: [(String, [String: Any])] = [
     ("document", docRow), ("note", noteRow), ("ink_layer", layerRow),
     ("scratch_pad", padRow), ("variant", variantRow), ("meta", metaRow),
+    ("board_note", boardRow), ("board_item", boardItemRow),
 ]
 for (t, row) in tableCases {
     guard let sp = MirrorFp.spec(t) else { check(false, "\(t) 有 spec"); continue }

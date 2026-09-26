@@ -31,8 +31,10 @@ struct InkPatch {
     var notes: [UUID: Change<TextNote>]
     /// 图片笔记（kind=6）。撤销一次删除把它加回来 = 引用回来，落库对账会把那张图从待删除里捞回。
     var images: [UUID: Change<ImageNote>] = [:]
+    /// 画板笔记上的图（`BoardImage`，只进草稿纸那条栈）。
+    var boardImages: [UUID: Change<BoardImage>] = [:]
 
-    var isEmpty: Bool { strokes.isEmpty && notes.isEmpty && images.isEmpty }
+    var isEmpty: Bool { strokes.isEmpty && notes.isEmpty && images.isEmpty && boardImages.isEmpty }
 
     /// 把**更晚**的一次变更并进本条（连续擦除批次合成一步）：`before` 保留最早那份、
     /// `after` 换成最新那份 —— 复合之后这一条仍是「一步到位」的正确增量。
@@ -49,7 +51,11 @@ struct InkPatch {
         // 来回擦成原样的条目（before == after）留着只会让撤销白写一遍，清掉。
         strokes = strokes.filter { $0.value.before != $0.value.after }
         notes = notes.filter { $0.value.before != $0.value.after }
+        for (id, c) in newer.boardImages {
+            if var old = boardImages[id] { old.after = c.after; boardImages[id] = old } else { boardImages[id] = c }
+        }
         images = images.filter { $0.value.before != $0.value.after }
+        boardImages = boardImages.filter { $0.value.before != $0.value.after }
         at = newer.at
     }
 }
@@ -157,12 +163,14 @@ final class InkUndoStack {
     func record(label: String, kind: InkPatch.Kind,
                 strokesBefore: [InkStroke] = [], strokesAfter: [InkStroke] = [],
                 notesBefore: [TextNote] = [], notesAfter: [TextNote] = [],
-                imagesBefore: [ImageNote] = [], imagesAfter: [ImageNote] = []) {
+                imagesBefore: [ImageNote] = [], imagesAfter: [ImageNote] = [],
+                boardImagesBefore: [BoardImage] = [], boardImagesAfter: [BoardImage] = []) {
         guard !applying else { return }
         let patch = InkPatch(label: label, kind: kind, at: CFAbsoluteTimeGetCurrent(),
                              strokes: InkDelta.diff(strokesBefore, strokesAfter),
                              notes: InkDelta.diff(notesBefore, notesAfter),
-                             images: InkDelta.diff(imagesBefore, imagesAfter))
+                             images: InkDelta.diff(imagesBefore, imagesAfter),
+                             boardImages: InkDelta.diff(boardImagesBefore, boardImagesAfter))
         push(patch)
     }
 

@@ -20,6 +20,12 @@ final class ScratchPadNSView: NSView {
     let docKey: String
     /// 玻璃工具栏的高度：那一条铺回阅读区底色（白纸压在玻璃工具栏底下，深色外观的白图标就看不见了）。
     var topInset: CGFloat = 0 { didSet { if oldValue != topInset { needsLayout = true } } }
+    /// 画板笔记用：取图 / 存图（窗格装配时给；草稿纸用不到）。
+    weak var workspace: WorkspaceManager?
+
+    /// 画板笔记（v16，`BOARD-NOTE-PLAN.md §3.3`）：这张纸就是一整篇画板，占一个标签页——
+    /// 不能关（关 = 关标签）、没有页面底图，但能放图。
+    private var standalone: Bool { session.isBoard && session.board?.id == padID }
 
     private var vp = ScratchViewport()
     private var didPlace = false
@@ -28,6 +34,7 @@ final class ScratchPadNSView: NSView {
 
     private let grid = ScratchGridCALayer()
     private let pageLayer = ScratchPageCALayer()
+    private let imagesLayer = BoardImagesCALayer()
     private let inkLayer = ScratchInkCALayer()
     private let liveLayer = ScratchInkCALayer()
     private let lassoLayer = ScratchLassoCALayer()
@@ -69,7 +76,8 @@ final class ScratchPadNSView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = true
-        for l in [grid, pageLayer, inkLayer, liveLayer, lassoLayer] as [CALayer] { layer?.addSublayer(l) }
+        for l in [grid, pageLayer, imagesLayer, inkLayer, liveLayer, lassoLayer] as [CALayer] { layer?.addSublayer(l) }
+        registerForDraggedTypes([.fileURL, .png, .tiff])
         eraserRing.fillColor = nil
         eraserRing.lineWidth = 1.5
         layer?.addSublayer(eraserRing)
@@ -123,8 +131,14 @@ final class ScratchPadNSView: NSView {
         guard let p = pad else { return false }
         return p.showPage && session.pdf?.page(at: p.anchorPage) != nil
     }
-    private var contentBounds: CGRect? { ScratchBounds.contentBounds(strokes, page: showsPage ? pageCanvasRect : nil) }
-    private var hasContent: Bool { !strokes.isEmpty || showsPage }
+    /// 画板上的图（草稿纸上恒为空）。
+    private var images: [BoardImage] { standalone ? session.boardImages : [] }
+    private var contentBounds: CGRect? {
+        var r = ScratchBounds.contentBounds(strokes, page: showsPage ? pageCanvasRect : nil)
+        for im in images { r = r.map { $0.union(im.rect) } ?? im.rect }
+        return r
+    }
+    private var hasContent: Bool { !strokes.isEmpty || showsPage || !images.isEmpty }
 
     private func installObservers() {
         session.$scratchStrokes.receive(on: DispatchQueue.main)
@@ -133,6 +147,8 @@ final class ScratchPadNSView: NSView {
             .sink { [weak self] _ in self?.refreshLive() }.store(in: &bag)
         session.$scratchPads.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.padChanged() }.store(in: &bag)
+        session.$boardImages.receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.imagesChanged() }.store(in: &bag)
         app.$pointerTool.receive(on: DispatchQueue.main)
             .sink { [weak self] t in
                 guard let self else { return }
@@ -185,6 +201,7 @@ final class ScratchPadNSView: NSView {
             switch event.keyCode {
             case 53:
                 if self.clearLassoSelection() { return nil }
+                if self.standalone { return event }   // 画板不能「关」（关 = 关标签，走 ⌘W）
                 self.close()
                 return nil
             case 51, 117:
@@ -202,6 +219,7 @@ final class ScratchPadNSView: NSView {
     private func refreshAll() {
         padChanged()
         strokesChanged()
+        imagesChanged()
         refreshLive()
         topBand.layer?.backgroundColor = voidColor.cgColor
     }
@@ -212,7 +230,10 @@ final class ScratchPadNSView: NSView {
         grid.pattern = p.pattern
         grid.ink = gridInk
         grid.setNeedsDisplay()
-        bar.update(title: p.displayName(index: padIndex), showPage: p.showPage,
+        bar.setStandalone(standalone)
+        // 画板：名字的真源此刻就是这张纸（`session.board` 要等下一拍落库时才跟上）
+        bar.update(title: standalone ? (p.title.isEmpty ? L("Untitled Board") : p.title) : p.displayName(index: padIndex),
+                   showPage: p.showPage,
                    pageEnabled: session.pdf?.page(at: p.anchorPage) != nil, anchorPage: p.anchorPage,
                    showMinimap: showMinimap, hasContent: hasContent, zoom: vp.zoom)
         refreshPageImage()
@@ -224,10 +245,27 @@ final class ScratchPadNSView: NSView {
     private func strokesChanged() {
         inkLayer.strokes = strokes
         inkLayer.setNeedsDisplay()
-        if let sel = lassoSel {   // 选中项可能已被擦除 / 撤销
-            let alive = Set(strokes.map(\.id)).intersection(sel.ids)
+        pruneSelection()
+        refreshLasso()
+        refreshHint()
+        refreshMinimap()
+        bar.setHasContent(hasContent)
+    }
+
+    /// 选中项可能已被擦除 / 撤销 / 删掉：只留还活着的（笔迹与图片的 id 放在同一个集合里）。
+    private func pruneSelection() {
+        if let sel = lassoSel {
+            let alive = Set(strokes.map(\.id) + images.map(\.id)).intersection(sel.ids)
             if alive.isEmpty { lassoSel = nil } else if alive.count != sel.ids.count { lassoSel = (alive, sel.bounds) }
         }
+    }
+
+    /// 画板上的图变了（加 / 挪 / 缩放 / 删 / 撤销）：子图层重排，缺像素的去后台解码。
+    private func imagesChanged() {
+        let list = images
+        imagesLayer.sync(list)
+        loadMissingImages(list)
+        pruneSelection()
         refreshLasso()
         refreshHint()
         refreshMinimap()
@@ -242,9 +280,10 @@ final class ScratchPadNSView: NSView {
 
     /// 空白纸的引导（有笔迹 / 垫着页面 / 正在写时不出）。
     private func refreshHint() {
-        let show = strokes.isEmpty && !showsPage && session.scratchLive == nil
+        let show = strokes.isEmpty && images.isEmpty && !showsPage && session.scratchLive == nil
         hint.isHidden = !show
         guard show else { return }
+        hintTitle.stringValue = standalone ? L("Blank board") : L("Blank scratchpad")
         hintBody.stringValue = app.pointerTool == .ink
             ? L("Draw anywhere. Drag with the hand tool to pan, pinch to zoom.")
             : L("Pick the pen in the pen rack to write. Drag to pan, pinch to zoom.")
@@ -261,6 +300,7 @@ final class ScratchPadNSView: NSView {
         minimap.viewport = vp
         minimap.viewSize = bounds.size
         minimap.pageRect = showsPage ? pageCanvasRect : nil
+        minimap.imageRects = images.map(\.rect)
     }
 
     private func refreshEraserRing() {
@@ -279,6 +319,8 @@ final class ScratchPadNSView: NSView {
         inkLayer.setNeedsDisplay()
         liveLayer.viewport = vp
         liveLayer.setNeedsDisplay()
+        imagesLayer.viewport = vp
+        imagesLayer.relayout()
         layoutPage()
         refreshPageImage()
         refreshLasso()
@@ -295,7 +337,7 @@ final class ScratchPadNSView: NSView {
         let old = grid.frame.size
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for l in [grid, inkLayer, liveLayer, lassoLayer, eraserRing] as [CALayer] { l.frame = b }
+        for l in [grid, imagesLayer, inkLayer, liveLayer, lassoLayer, eraserRing] as [CALayer] { l.frame = b }
         CATransaction.commit()
         topBand.frame = NSRect(x: 0, y: 0, width: b.width, height: topInset)
         topBand.isHidden = topInset <= 0
@@ -387,6 +429,7 @@ final class ScratchPadNSView: NSView {
         bar.onTogglePage = { [weak self] in self?.togglePage() }
         bar.onPaper = { [weak self] anchor in self?.showPaperPicker(from: anchor) }
         bar.onClose = { [weak self] in self?.close() }
+        bar.onInsertImage = { [weak self] in self?.chooseImageFile() }
     }
 
     private var viewportAnim: (from: ScratchViewport, to: ScratchViewport, start: CFTimeInterval)?
@@ -470,6 +513,7 @@ final class ScratchPadNSView: NSView {
     }
 
     private func close() {
+        guard !standalone else { return }
         app.scratchInkCancel(in: session)
         session.openPadID = nil
     }
@@ -539,6 +583,11 @@ final class ScratchPadNSView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         dragStartView = p
         cursor = p
+        // 画板上双击一张图 = 看大图（落墨工具下双击仍是写字）
+        if event.clickCount == 2, app.pointerTool != .ink, let im = image(atView: p) {
+            showLargeImage(im)
+            return
+        }
         switch app.pointerTool {
         case .ink:
             drag = .ink
@@ -611,7 +660,16 @@ final class ScratchPadNSView: NSView {
         cursor = convert(event.locationInWindow, from: nil)
         let m = NSMenu()
         let paste = ClosureMenuItem(L("Paste"), action: { [weak self] in self?.pasteInk() })
-        if !InkClipboard.hasInk() { paste.action = nil }
+        if !InkClipboard.hasInk() && !(standalone && NSImage.canInit(with: .general)) { paste.action = nil }
+        defer {
+            if standalone {
+                m.addItem(.separator())
+                m.addItem(ClosureMenuItem(L("Insert Image…"), action: { [weak self] in self?.chooseImageFile() }))
+                if let c = cursor, let im = image(atView: c) {
+                    m.addItem(ClosureMenuItem(L("View Image"), action: { [weak self] in self?.showLargeImage(im) }))
+                }
+            }
+        }
         if lassoSel != nil {
             m.addItem(ClosureMenuItem(L("Cut"), action: { [weak self] in self?.cutLassoSelection() }))
             m.addItem(ClosureMenuItem(L("Copy"), action: { [weak self] in self?.copyLassoSelection() }))
@@ -661,6 +719,12 @@ extension ScratchPadNSView {
                 return .scale(h)
             }
             if box.insetBy(dx: -8, dy: -8).contains(p) { return .move }
+        }
+        // 点在一张图上 = 直接选中它并拖动（不必先圈一圈）
+        if let im = image(atView: p) {
+            lassoSel = ([im.id], im.rect)
+            refreshLasso()
+            return .move
         }
         lassoSel = nil
         lassoPath = [p]
@@ -730,8 +794,29 @@ extension ScratchPadNSView {
             ids.insert(st.id)
             bbox = bbox.union(strokeBounds(st))
         }
+        // 图：四角或中心有一个落在圈里，或圈的某一点落在图里，就算选中
+        for im in images {
+            let r = im.rect
+            let probes = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY),
+                          CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.midX, y: r.midY)]
+            let hit = probes.contains { InkEdit.pointInPolygon(SIMD2(Double($0.x), Double($0.y)), polygon: poly) }
+                || poly.contains { r.contains(CGPoint(x: $0.x, y: $0.y)) }
+            if hit { ids.insert(im.id); bbox = bbox.union(r) }
+        }
         guard !ids.isEmpty else { return }
         lassoSel = (ids, bbox)
+    }
+
+    /// 视图坐标下最上面那张图（后加的叠在上面，所以倒着找）。
+    fileprivate func image(atView p: CGPoint) -> BoardImage? {
+        let c = vp.toCanvas(p)
+        return images.last { $0.rect.contains(c) }
+    }
+
+    /// 图的移动 / 缩放（与笔迹同一个变换：矩形的两个对角各自变换，再取包围盒）。
+    private func transformed(_ r: CGRect, _ f: (CGPoint) -> CGPoint) -> CGRect {
+        let a = f(CGPoint(x: r.minX, y: r.minY)), b = f(CGPoint(x: r.maxX, y: r.maxY))
+        return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
     }
 
     private func shifted(_ s: InkStroke, dx: Double, dy: Double) -> InkStroke {
@@ -757,6 +842,15 @@ extension ScratchPadNSView {
                 session.scratchStrokes[i] = shifted(session.scratchStrokes[i], dx: dx, dy: dy)
                 changed = true
             }
+            if standalone {
+                var arr = session.boardImages
+                for i in arr.indices where sel.ids.contains(arr[i].id) {
+                    arr[i].rect = arr[i].rect.offsetBy(dx: dx, dy: dy)
+                    arr[i].updatedAt = .now
+                    changed = true
+                }
+                if arr != session.boardImages { session.boardImages = arr }
+            }
         }
         lassoSel = changed ? (sel.ids, sel.bounds.offsetBy(dx: dx, dy: dy)) : nil
     }
@@ -773,6 +867,17 @@ extension ScratchPadNSView {
                 session.scratchStrokes[i] = scaled(session.scratchStrokes[i], anchor: a, sx: sx, sy: sy)
                 changed = true
             }
+            if standalone {
+                var arr = session.boardImages
+                for i in arr.indices where sel.ids.contains(arr[i].id) {
+                    arr[i].rect = transformed(arr[i].rect) {
+                        CGPoint(x: a.x + (Double($0.x) - a.x) * sx, y: a.y + (Double($0.y) - a.y) * sy)
+                    }
+                    arr[i].updatedAt = .now
+                    changed = true
+                }
+                if arr != session.boardImages { session.boardImages = arr }
+            }
         }
         guard changed else { lassoSel = nil; return }
         let b = sel.bounds
@@ -787,8 +892,17 @@ extension ScratchPadNSView {
     func copyLassoSelection() -> Bool {
         guard let sel = lassoSel else { return false }
         let picked = strokes.filter { sel.ids.contains($0.id) }
-        guard !picked.isEmpty else { return false }
-        InkClipboard.write(strokes: picked, space: .canvas)
+        if !picked.isEmpty {
+            InkClipboard.write(strokes: picked, space: .canvas)
+            return true
+        }
+        // 只选中了图：把（最上面那张）图的原文件放进系统剪贴板，别的 App 也能粘
+        guard let im = images.last(where: { sel.ids.contains($0.id) }),
+              let url = workspace?.imageInfo(sha256: im.image)?.url,
+              let img = NSImage(contentsOf: url) else { return false }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects([img])
         return true
     }
 
@@ -799,7 +913,10 @@ extension ScratchPadNSView {
 
     /// 粘贴到纸上：落点 = 指针处（没有指针就落视口正中）；从页里抄来的先按源页纵横比折成画布点。粘完即选中 + 切到框选。
     func pasteInk() {
-        guard let clip = InkClipboard.read(), !clip.strokes.isEmpty else { return }
+        guard let clip = InkClipboard.read(), !clip.strokes.isEmpty else {
+            if standalone { pasteImage() }   // 画板上 ⌘V 一张图 = 放一张图
+            return
+        }
         let src = clip.space == .page ? InkClipboard.scaled(clip.strokes, toCanvas: true, aspect: clip.aspect) : clip.strokes
         var box = CGRect.null
         for st in src { box = box.union(strokeBounds(st)) }
@@ -828,6 +945,9 @@ extension ScratchPadNSView {
         guard let sel = lassoSel else { return }
         session.scratchEdit("Delete", kind: .delete) {
             session.scratchStrokes.removeAll { sel.ids.contains($0.id) }
+            if standalone, session.boardImages.contains(where: { sel.ids.contains($0.id) }) {
+                session.boardImages.removeAll { sel.ids.contains($0.id) }
+            }
         }
         clearLassoSelection()
     }
@@ -859,6 +979,12 @@ extension ScratchPadNSView {
                     ? CGFloat(st.type.strokeWidth(pressure: st.points[0].dz, base: st.width)) * z + 5
                     : CGFloat(st.width) * z + 5
                 return (pts, w)
+            } + images.filter { sel.ids.contains($0.id) }.map { im in
+                // 图的光晕 = 沿图边的一圈（同样跟着 ghost 变换）
+                let r = im.rect
+                let corners = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
+                               CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.minX, y: r.minY)]
+                return (corners.map { ghostPoint(CGPoint(x: ($0.x - o.x) * z, y: ($0.y - o.y) * z), in: box) }, CGFloat(4))
             }
             let pts = LassoHandle.allCases.map { ghostPoint($0.point(in: box), in: box) }
             let lo = pts.reduce(pts[0]) { CGPoint(x: min($0.x, $1.x), y: min($0.y, $1.y)) }
@@ -875,6 +1001,110 @@ extension ScratchPadNSView {
     }
 }
 
+// MARK: - 画板笔记上的图（加图 / 解码 / 看大图，`BOARD-NOTE-PLAN.md §3.3`）
+
+extension ScratchPadNSView {
+    /// 显示用的解码上限（长边像素）：画板上缩放到 8× 也够清楚，又不至于把 4096 的原图整张摊进内存。
+    private static let displayMaxPixel = 2048
+
+    /// 缺像素的图去后台解码，好了按 sha 填回图层。
+    fileprivate func loadMissingImages(_ list: [BoardImage]) {
+        guard let ws = workspace else { return }
+        var seen = Set<String>()
+        for im in list where !imagesLayer.hasImage(im.image) && seen.insert(im.image).inserted {
+            guard let url = ws.imageInfo(sha256: im.image)?.url else { continue }
+            let sha = im.image
+            Task.detached(priority: .userInitiated) { [weak self] in
+                guard let cg = ImageAssets.load(url, maxPixel: Self.displayMaxPixel) else { return }
+                await MainActor.run { [weak self] in self?.imagesLayer.setImage(cg, sha: sha) }
+            }
+        }
+    }
+
+    /// 工具条 / 右键「插入图片…」。
+    fileprivate func chooseImageFile() {
+        guard standalone, let win = window else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = true
+        panel.beginSheetModal(for: win) { [weak self] resp in
+            guard resp == .OK, let self else { return }
+            let center = self.vp.toCanvas(CGPoint(x: self.bounds.midX, y: self.bounds.midY))
+            self.insertImages(panel.urls.compactMap { url in (try? Data(contentsOf: url)).map { ($0, url.lastPathComponent) } },
+                              at: center)
+        }
+    }
+
+    /// ⌘V 一张图（系统剪贴板里的图片，截图 / 别的 App 复制来的）。
+    fileprivate func pasteImage() {
+        let pb = NSPasteboard.general
+        let data = pb.data(forType: .png) ?? pb.data(forType: .tiff)
+            ?? (pb.readObjects(forClasses: [NSImage.self]) as? [NSImage])?.first?.tiffRepresentation
+        guard let data else { return }
+        insertImages([(data, "")], at: vp.toCanvas(cursor ?? CGPoint(x: bounds.midX, y: bounds.midY)))
+    }
+
+    /// 把几张图存进工作区并摆到画板上（多张时依次向右下错开）。一次操作 = 一步撤销，放完即选中。
+    fileprivate func insertImages(_ items: [(data: Data, name: String)], at center: CGPoint) {
+        guard standalone, let ws = workspace, !items.isEmpty else { return }
+        var added: [BoardImage] = []
+        for (i, it) in items.enumerated() {
+            guard let prep = ImageAssets.prepare(it.data), let stored = ws.storeImage(prep) else { continue }
+            let c = CGPoint(x: center.x + CGFloat(i) * 24, y: center.y + CGFloat(i) * 24)
+            added.append(BoardImage(image: stored.sha256,
+                                    rect: BoardImage.placed(width: stored.width, height: stored.height, center: c),
+                                    sourceName: it.name))
+        }
+        guard !added.isEmpty else { NSSound.beep(); return }
+        session.scratchEdit("Insert Image", kind: .paste) {
+            session.boardImages.append(contentsOf: added)
+        }
+        app.pointerTool = .lasso
+        var box = CGRect.null
+        for im in added { box = box.union(im.rect) }
+        lassoSel = (Set(added.map(\.id)), box)
+        refreshLasso()
+    }
+
+    fileprivate func showLargeImage(_ im: BoardImage) {
+        guard let win = window, win.attachedSheet == nil, let url = workspace?.imageInfo(sha256: im.image)?.url else { return }
+        // 看大图面板认的是图片笔记；借它的壳，页码 / 锚点在这里没有意义
+        let note = ImageNote(page: 0, anchor: .zero, image: im.image, caption: im.caption, source: .file(name: im.sourceName))
+        var sheet: NSWindow?
+        let vc = ImageViewerController(note: note, url: url, onClose: { [weak win] in
+            if let s = sheet { win?.endSheet(s) }
+        })
+        sheet = NSWindow(contentViewController: vc)
+        win.beginSheet(sheet!)
+    }
+
+    // MARK: 拖图进来
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        standalone && acceptsDrag(sender) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard standalone else { return false }
+        let pb = sender.draggingPasteboard
+        var items: [(Data, String)] = []
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+            for u in urls { if let d = try? Data(contentsOf: u) { items.append((d, u.lastPathComponent)) } }
+        }
+        if items.isEmpty, let d = pb.data(forType: .png) ?? pb.data(forType: .tiff) { items.append((d, "")) }
+        guard !items.isEmpty else { return false }
+        insertImages(items, at: vp.toCanvas(convert(sender.draggingLocation, from: nil)))
+        return true
+    }
+
+    private func acceptsDrag(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        if pb.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true,
+                                                               .urlReadingContentsConformToTypes: ["public.image"]]) { return true }
+        return pb.data(forType: .png) != nil || pb.data(forType: .tiff) != nil
+    }
+}
+
 // MARK: - 工具条（浮在纸上的胶囊：名字（点击改名）| 回中 · 适应内容 · minimap · 页面底图 · 纸样 · 缩放读数 | 关闭）
 
 final class ScratchToolbarView: NSView, NSTextFieldDelegate {
@@ -885,7 +1115,11 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
     var onTogglePage: () -> Void = {}
     var onPaper: (NSView) -> Void = { _ in }
     var onClose: () -> Void = {}
+    var onInsertImage: () -> Void = {}
     private(set) var renaming = false
+    private var closeBtn: NSButton!
+    private var closeDivider: NSView!
+    private var imageBtn: NSButton!
 
     private let capsule = CapsuleMaterialView()
     private let stack = NSStackView()
@@ -937,7 +1171,12 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
         zoomLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         zoomLabel.textColor = .labelColor   // 读数不是装饰：材质底上别用次要色
         let close = icon("xmark", L("Close Scratchpad (Esc)")) { [weak self] in self?.onClose() }
-        for v in [titleButton, titleField, divider(), recenter, fit, minimapBtn, pageBtn, paperBtn, zoomLabel, divider(), close] as [NSView] {
+        closeBtn = close
+        closeDivider = divider()
+        imageBtn = icon("photo.badge.plus", L("Insert Image…")) { [weak self] in self?.onInsertImage() }
+        imageBtn.isHidden = true
+        for v in [titleButton, titleField, divider(), recenter, fit, minimapBtn, pageBtn, imageBtn, paperBtn, zoomLabel,
+                  closeDivider, close] as [NSView] {
             stack.addArrangedSubview(v)
         }
         stack.spacing = 8
@@ -1000,6 +1239,16 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
     }
 
     func setHasContent(_ v: Bool) { fit.isEnabled = v }
+
+    /// 画板笔记：没有「关闭」与「页面底图」，多一个「插入图片」。
+    func setStandalone(_ on: Bool) {
+        guard closeBtn.isHidden != on else { return }
+        closeBtn.isHidden = on
+        closeDivider.isHidden = on
+        pageBtn.isHidden = on
+        imageBtn.isHidden = !on
+        needsLayoutInSuperview()
+    }
 
     /// 缩放读数只在不是 100% 时出现（常驻一个「100%」是纯噪音）。
     func setZoom(_ z: CGFloat) {

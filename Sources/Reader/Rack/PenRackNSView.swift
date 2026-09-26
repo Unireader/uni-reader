@@ -398,6 +398,8 @@ final class PenRackNSView: NSView {
     }
 
     private func showLayers() {
+        // 画板笔记不分图层（同草稿纸）；图层面板管的是 PDF 页内笔迹，在画板上打开只会是一张空表
+        guard !session.isBoard else { NSSound.beep(); return }
         let v = LayerManagerNSView(session: session)
         v.onSizeChange = { [weak self] s in self?.popover?.contentSize = s }
         present(v, size: v.preferredSize, from: layersCell)

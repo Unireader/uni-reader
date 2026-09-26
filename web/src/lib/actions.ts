@@ -52,6 +52,14 @@ export interface Actions {
   deletePad(i: number): void;
   /// 改第 i 张纸的名字（空串 = 回到「草稿纸 N」兜底名）。
   renamePad(i: number, title: string): void;
+  // ---- 画板笔记（v16，PROTOCOL.md §4.8）：都只发请求，Mac 开标签 / 落库后回推 boards ----
+  toggleBoardList(): void;
+  /// 请 Mac 在它跟随的窗口里打开这篇画板。
+  openBoard(id: string): void;
+  /// 请 Mac 新建一篇画板并打开。
+  addBoard(): void;
+  /// 改当前画板的名字（走 scratchRename index=0，画板在会话里就是那张纸）。
+  renameBoard(title: string): void;
 }
 
 export const actions = {} as Actions;

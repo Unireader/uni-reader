@@ -66,6 +66,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     padVp: { ox: 0, oy: 0, z: 1 }, padMini: true, padMiniDrag: false, padPinch: null,
     // 图钉页内拖动（见 shared.ts 字段注释）
     pinDragIndex: -1, pinDragMoved: false, pinGhost: null,
+    boardKind: 0, boardImages: [],
     // 页宽上报去重
     lastGeomW: -1,
     // WebSocket
@@ -217,7 +218,7 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     openPad(i: number) { G.padOpenIndex(i); S.padList = false; },
     closePad() { G.padClose(); },
     addPad() { G.padAdd(); S.padList = false; },
-    togglePadList() { S.padList = !S.padList; },
+    togglePadList() { S.padList = !S.padList; if (S.padList) S.boardList = false; },
     padRecenter() { G.padRecenter(); },
     padFit() { G.padFit(); },
     togglePadMini() { G.padMini = !G.padMini; S.padMini = G.padMini; G.drawScratch(); },
@@ -227,6 +228,11 @@ export function startCapture(refs: CaptureRefs, config: StartConfig): void {
     togglePadPage() { G.padSetShowPage(!S.padShowPage); },
     deletePad(i: number) { G.padDelete(i); S.padDeleting = -1; },
     renamePad(i: number, title: string) { G.padRename(i, title); S.padRenaming = -1; },
+    // ---- 画板笔记（v16）----
+    toggleBoardList() { S.boardList = !S.boardList; if (S.boardList) S.padList = false; },
+    openBoard(id: string) { G.boardOpen(id); S.boardList = false; },
+    addBoard() { G.boardAdd(); S.boardList = false; },
+    renameBoard(title: string) { G.padRename(0, title); S.boardRenaming = false; },
     toggleFull() {
       if (!document.fullscreenElement) {
         const root = document.documentElement;

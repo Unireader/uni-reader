@@ -143,6 +143,7 @@ extension AppModel {
     /// 平板请求打开第 `index` 张（-1 = 关闭）。Mac 是真源：应用后 `openPadID` 的 @Published 变化
     /// 会被 ContentView 的 onChange 捕获 → 回推 `scratchpads` + `scratchStrokes`，两端自然一致。
     func applyScratchOpen(_ obj: [String: Any], to s: DocSession) {
+        guard !s.isBoard else { return }   // 画板那张纸永远开着（`BOARD-NOTE-PLAN.md §4.1`）
         let idx = (obj["index"] as? NSNumber)?.intValue ?? -1
         scratchInkCancel(in: s)
         if idx < 0 || !s.scratchPads.indices.contains(idx) {
@@ -168,7 +169,7 @@ extension AppModel {
     /// 与 `applyScratchPaper` 同套路：改完 `scratchPads` 的 @Published 变化被 ContentView 的 onChange
     /// 捕获 → 落库 + 回推 `scratchpads`；本机 UI 的图钉位置同一条链路自动刷新（无需显式通知）。
     func applyScratchMove(_ obj: [String: Any], to s: DocSession) {
-        guard let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
+        guard !s.isBoard, let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
         let nx = min(max(0, (obj["nx"] as? NSNumber)?.doubleValue ?? 0.5), 1)
         let ny = min(max(0, (obj["ny"] as? NSNumber)?.doubleValue ?? 0.5), 1)
         guard s.scratchPads[i].anchorX != nx || s.scratchPads[i].anchorY != ny else { return }
@@ -180,7 +181,7 @@ extension AppModel {
     /// 平板请求开/关第 index 张纸的**页面底图**（把它锚定的那一页垫在纸下面）。
     /// 与 `applyScratchPaper` 同套路：只改真源，落库 + 回推由 ContentView 的 onChange 接手。
     func applyScratchPageShow(_ obj: [String: Any], to s: DocSession) {
-        guard let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
+        guard !s.isBoard, let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
         let show = (obj["show"] as? Bool) ?? ((obj["show"] as? NSNumber)?.boolValue ?? false)
         guard s.scratchPads[i].showPage != show else { return }
         s.scratchPads[i].showPage = show
@@ -189,7 +190,7 @@ extension AppModel {
 
     /// 平板请求删掉第 index 张纸（连同纸上笔迹）。与 Inspector 里的删除是同一条路径。
     func applyScratchDelete(_ obj: [String: Any], to s: DocSession) {
-        guard let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
+        guard !s.isBoard, let i = (obj["index"] as? NSNumber)?.intValue, s.scratchPads.indices.contains(i) else { return }
         removeScratchPad(in: s, id: s.scratchPads[i].id)
     }
 
@@ -204,6 +205,7 @@ extension AppModel {
 
     /// 平板请求在某页某处新建一张草稿纸并打开它。
     func applyScratchAdd(_ obj: [String: Any], to s: DocSession) {
+        guard !s.isBoard else { return }
         let maxPage = max(0, (s.pdf?.pageCount ?? 1) - 1)
         let page = min(max(0, (obj["page"] as? NSNumber)?.intValue ?? 0), maxPage)
         let nx = min(max(0, (obj["nx"] as? NSNumber)?.doubleValue ?? 0.5), 1)
@@ -214,6 +216,7 @@ extension AppModel {
     /// 新建一张草稿纸并立刻打开（Mac 右键菜单、侧栏按钮、平板 `scratchAdd` 共用）。返回新纸。
     @discardableResult
     func addScratchPad(in s: DocSession, page: Int, nx: Double, ny: Double) -> ScratchPad {
+        if s.isBoard, let pad = s.openPad { return pad }   // 画板上没有「再建一张纸」这回事
         scratchInkCancel(in: s)
         let pad = ScratchPad(anchorPage: page, anchorX: nx, anchorY: ny)
         s.scratchPads.append(pad)
@@ -223,6 +226,7 @@ extension AppModel {
 
     /// 删除一张草稿纸：连同纸上的笔迹一起摘掉（两个数组各自的 onChange 对账会把库里也清干净）。
     func removeScratchPad(in s: DocSession, id: UUID) {
+        guard !s.isBoard else { return }   // 删画板走侧栏（进回收站），不走这里
         if s.openPadID == id { scratchInkCancel(in: s); s.openPadID = nil }
         s.scratchPads.removeAll { $0.id == id }
         s.scratchStrokes.removeAll { $0.padId == id }

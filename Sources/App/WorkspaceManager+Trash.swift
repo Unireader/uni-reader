@@ -71,6 +71,28 @@ extension Trash {
         }
     }
 
+    /// 把一篇画板笔记归档（那一行 + 上面的笔迹与图）。**调用方随后才可以删库行。**
+    @discardableResult
+    static func archiveBoard(store: LibraryStore, boardId: UUID, title: String) -> URL? {
+        let workspace = store.workspaceFolder
+        guard let dir = makeDir(in: workspace, title: title) else { return nil }
+        do {
+            let a = try store.archiveBoard(id: boardId.uuidString, to: dir.appendingPathComponent(snapshotName).path)
+            var m = Manifest()
+            m.kind = .board
+            m.title = title
+            m.counts = a.counts
+            m.images = a.images
+            try encode(m).write(to: dir.appendingPathComponent(manifestName))
+            wsLog("[TRASH] 画板已移入回收站：\(title)（\(m.counts.total) 条）")
+            return dir
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            wsLog("[TRASH] ⚠️ 画板归档失败，删除已放弃：\(title) — \(error)")
+            return nil
+        }
+    }
+
     /// 建一个空的条目目录（名字不撞）。
     private static func makeDir(in workspace: URL, title: String) -> URL? {
         let fm = FileManager.default
@@ -142,6 +164,22 @@ extension WorkspaceManager {
             return false
         }
         delete(documentId: id)
+        return true
+    }
+
+    /// 删画板笔记：同样**先归档，成功了才删**（`board_item` 随外键级联删掉），再对账图片引用。
+    @discardableResult
+    func trashBoard(id: UUID) -> Bool {
+        guard let store else { return false }
+        let title = board(id: id)?.displayName ?? L("Untitled Board")
+        guard Trash.archiveBoard(store: store, boardId: id, title: title) != nil else {
+            lastError = String(format: L("Could not archive “%@”, so nothing was deleted."), title)
+            return false
+        }
+        let shas = Set(boardContents(id: id).images.map(\.image))
+        try? store.deleteBoard(id: id.uuidString)
+        if !shas.isEmpty { try? store.reconcileImageOrphans(only: shas) }
+        refreshBoards()
         return true
     }
 

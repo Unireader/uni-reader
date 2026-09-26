@@ -7,7 +7,7 @@
 // 分工同页内笔迹：Mac 是唯一真源（`scratchStrokes` 全量镜像），本地只即时回显正在写的这一笔。
 // 「当前开着哪张纸」也由 Mac 定（`scratchpads.open`），本地只发 scratchOpen/scratchAdd 请求。
 import { G, BAR, clamp, curMode, curPen, rulerSnap } from "./shared.js";
-import type { CaptureRefs, Pad, Stroke } from "./shared.js";
+import type { BoardImg, CaptureRefs, Pad, Stroke } from "./shared.js";
 import { S } from "./hud.svelte.js";
 
 /// 橡皮半径的画布换算基准，**必须与 Mac 端 `ScratchPad.eraserRefWidth` 是同一个数**：
@@ -78,7 +78,48 @@ export function initScratch(refs: CaptureRefs): void {
       x0 = Math.min(x0, pb[0]); y0 = Math.min(y0, pb[1]);
       x1 = Math.max(x1, pb[0] + pb[2]); y1 = Math.max(y1, pb[1] + pb[3]);
     }
+    // 画板上的图也算内容（同 Mac `ScratchBounds.contentBounds(_:images:)`）
+    for (const im of boardImgs()) {
+      any = true;
+      x0 = Math.min(x0, im.x); y0 = Math.min(y0, im.y);
+      x1 = Math.max(x1, im.x + im.w); y1 = Math.max(y1, im.y + im.h);
+    }
     return any ? [x0, y0, x1 - x0, y1 - y0] : null;
+  }
+
+  // ---- 画板笔记（v16，PROTOCOL.md §4.8）----
+
+  /// 画板上的图（只有 Mac 跟随的是画板时才有；草稿纸上恒为空）。
+  function boardImgs(): BoardImg[] { return G.boardKind === 2 ? G.boardImages : []; }
+
+  /// 图本体缓存（按内容 sha；同一张图贴几次只取一次）。到了就重画一次。
+  const imgCache = new Map<string, HTMLImageElement>();
+  function boardImage(sha: string): HTMLImageElement | null {
+    let im = imgCache.get(sha);
+    if (!im) {
+      im = new Image();
+      im.onload = function () { if (padActive()) drawScratch(); };
+      im.src = "/image?h=" + encodeURIComponent(sha);
+      imgCache.set(sha, im);
+    }
+    return im.complete && im.naturalWidth > 0 ? im : null;
+  }
+
+  /// 图层：纸色 → 底纹 → **图** → 笔迹（笔迹永远能写在图上）。没到的图先铺一块淡灰占位。
+  function drawBoardImages(): void {
+    const list = boardImgs();
+    if (!list.length) return;
+    const z = G.padVp.z, W = window.innerWidth, H = window.innerHeight;
+    cx.save();
+    cx.beginPath(); cx.rect(0, BAR, W, H - BAR); cx.clip();   // 别画进顶栏
+    for (const b of list) {
+      const x = (b.x - G.padVp.ox) * z, y = BAR + (b.y - G.padVp.oy) * z, w = b.w * z, h = b.h * z;
+      if (x > W || y > H || x + w < 0 || y + h < BAR) continue;
+      const im = boardImage(b.sha);
+      if (im) cx.drawImage(im, x, y, w, h);
+      else { cx.fillStyle = "rgba(128,128,128,.12)"; cx.fillRect(x, y, w, h); }
+    }
+    cx.restore();
   }
 
   /// 软边界：真无限会让人一路滑进空无一物的远方再也找不回来（用户明确要求避免）。
@@ -156,6 +197,7 @@ export function initScratch(refs: CaptureRefs): void {
     cx.fillRect(0, BAR, W, H - BAR);
     drawPattern(pad);
     drawPageUnder(pad);   // 底纹之上、笔迹之下（页图只是参照物，墨永远在最上面）
+    drawBoardImages();    // 画板笔记上的图：同样在笔迹之下
     // 视口外的笔迹裁掉（画布是全文档级的一大坨，不裁就是每帧把整张纸重画一遍）
     const z = G.padVp.z, x0 = G.padVp.ox, y0 = G.padVp.oy;
     const x1 = x0 + W / z, y1 = y0 + (H - BAR) / z;
@@ -314,6 +356,9 @@ export function initScratch(refs: CaptureRefs): void {
       cx.strokeStyle = "rgba(255,255,255,.45)"; cx.lineWidth = 1;
       cx.strokeRect(MX(pb[0]), MY(pb[1]), pb[2] * f.s, pb[3] * f.s);
     }
+    // 画板上的图：淡色块（同 Mac minimap）
+    cx.fillStyle = "rgba(255,255,255,.16)";
+    for (const b of boardImgs()) cx.fillRect(MX(b.x), MY(b.y), b.w * f.s, b.h * f.s);
     // 骨架线即可（minimap 不必还原笔型/压感）
     cx.strokeStyle = "rgba(255,255,255,.7)"; cx.lineWidth = 1;
     const all = G.padCur ? G.padStrokes.concat([G.padCur]) : G.padStrokes;
@@ -531,7 +576,10 @@ export function initScratch(refs: CaptureRefs): void {
   // ---- 开/关/新建（本地只发请求，Mac 判定后回推 scratchpads + scratchStrokes）----
 
   function padOpenIndex(i: number): void { G.send({ type: "scratchOpen", index: i }); }
-  function padClose(): void { G.send({ type: "scratchOpen", index: -1 }); }
+  function padClose(): void {
+    if (G.boardKind === 2) return;   // 画板那张纸不能「关」（关 = 在 Mac 上关标签），Mac 也会丢这一帧
+    G.send({ type: "scratchOpen", index: -1 });
+  }
   /// 在当前视口中心所在的页面位置新建一张（锚点＝那一处，Mac 据此画图钉）。
   /// 改当前这张纸的纸样（底色 / 底纹，各自可单独改）。只发请求，Mac 判定后回推 scratchpads。
   function padSetPaper(bg: string | null, pattern: string | null): void {
@@ -614,6 +662,28 @@ export function initScratch(refs: CaptureRefs): void {
     if (padActive()) drawScratch();
   }
 
+  /// Mac 下发的 `boards`：画板列表 + 跟随的会话是什么（v16）。
+  /// kind=2 时那张纸由 `scratchpads` 开着（Mac 把画板当成一张永远开着的纸），这里只管界面上的差异；
+  /// kind=1（Markdown 笔记）由 App 显示空状态，免得停在上一篇 PDF 的页面上。
+  function applyBoards(o: { kind?: number; current?: string; list?: { id: string; title: string }[] }): void {
+    G.boardKind = o.kind || 0;
+    S.boardKind = G.boardKind;
+    S.boardCurrent = o.current || "";
+    S.boards = o.list || [];
+    if (G.boardKind !== 2) { S.boardRenaming = false; G.boardImages = []; }
+    else S.padList = false;   // 画板上没有「别的草稿纸」可切
+    if (padActive()) { padClamp(); drawScratch(); }
+  }
+
+  /// Mac 下发的 `boardImages`：当前画板上的图（全量镜像，平板只看不改）。
+  function applyBoardImages(o: { list?: BoardImg[] }): void {
+    G.boardImages = o.list || [];
+    if (padActive()) drawScratch();
+  }
+
+  function boardOpen(id: string): void { G.send({ type: "boardOpen", id }); }
+  function boardAdd(): void { G.send({ type: "boardAdd" }); }
+
   window.addEventListener("resize", function () { sizeCanvas(); if (padActive()) drawScratch(); });
   sizeCanvas();
   cv.style.display = "none";
@@ -635,6 +705,7 @@ export function initScratch(refs: CaptureRefs): void {
     padPointerDown, padPointerMove, padPointerUp, padFlush,
     padOpenIndex, padClose, padAdd, padSetPaper, padSetShowPage, padDelete, padRename,
     applyScratchPads, applyScratchStrokes,
+    applyBoards, applyBoardImages, boardOpen, boardAdd,
   });
 }
 

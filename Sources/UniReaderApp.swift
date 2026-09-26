@@ -633,6 +633,8 @@ extension Notification.Name {
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
     /// 新建一篇 Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md`）。
     static let newMarkdownNoteRequested = Notification.Name("com.xvan.UniReader.newMarkdownNoteRequested")
+    /// 新建一篇画板笔记（v16，`BOARD-NOTE-PLAN.md`）。
+    static let newBoardRequested = Notification.Name("com.xvan.UniReader.newBoardRequested")
     /// 把一个现有笔记目录（Obsidian vault 或它的子目录）**复制**进工作区。
     static let importMarkdownRequested = Notification.Name("com.xvan.UniReader.importMarkdownRequested")
     /// **引用**一个外部笔记目录（不复制，直接在那儿编辑）。

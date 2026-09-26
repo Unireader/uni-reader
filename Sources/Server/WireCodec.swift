@@ -43,6 +43,8 @@ enum WireCodec {
         static let undo: UInt8 = 0x4F
         static let nack: UInt8 = 0x50
         static let clip: UInt8 = 0x51
+        /// 画板笔记（v16，`PROTOCOL.md §4.8`）
+        static let boards: UInt8 = 0x52, boardOpen: UInt8 = 0x53, boardAdd: UInt8 = 0x54, boardImages: UInt8 = 0x55
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -385,6 +387,23 @@ enum WireCodec {
         case "layerSelect": w.u8(Op.layerSelect); w.u16(intOf(o["index"]))
         case "layerVisible": w.u8(Op.layerVisible); w.u16(intOf(o["index"])); w.u8(boolOf(o["visible"]) ? 1 : 0)
         case "layerAdd": w.u8(Op.layerAdd)
+        // 画板笔记（v16，`PROTOCOL.md §4.8`）
+        case "boards":
+            // kind：0=PDF（或空标签）1=Markdown 笔记 2=画板笔记；current = kind=2 时是哪一篇
+            w.u8(Op.boards); w.u8(UInt8(clamping: intOf(o["kind"]))); w.str(strOf(o["current"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for b in list { w.str(strOf(b["id"])); w.str(strOf(b["title"])) }
+        case "boardOpen": w.u8(Op.boardOpen); w.str(strOf(o["id"]))
+        case "boardAdd": w.u8(Op.boardAdd)
+        case "boardImages":
+            w.u8(Op.boardImages)
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for im in list {
+                w.str(strOf(im["id"])); w.str(strOf(im["sha"]))
+                w.f32(num(im["x"])); w.f32(num(im["y"])); w.f32(num(im["w"])); w.f32(num(im["h"]))
+            }
         case "scroll": w.u8(Op.scroll); w.u32(intOf(o["page"])); w.f32(num(o["frac"])); w.f64(num(o["t"]))
         case "hover":
             w.u8(Op.hover)
@@ -627,6 +646,23 @@ enum WireCodec {
         case Op.scratchOpen:
             let idx = r.u16()
             out = ["type": "scratchOpen", "index": NSNumber(value: idx == scratchNoOpen ? -1 : idx)]
+        case Op.boards:
+            let kind = r.u8(), current = r.str(), n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n { let id = r.str(), title = r.str(); list.append(["id": id, "title": title]) }
+            out = ["type": "boards", "kind": NSNumber(value: kind), "current": current, "list": list]
+        case Op.boardOpen: out = ["type": "boardOpen", "id": r.str()]
+        case Op.boardAdd: out = ["type": "boardAdd"]
+        case Op.boardImages:
+            let n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n {
+                let id = r.str(), sha = r.str()
+                let x = r.f32(), y = r.f32(), w = r.f32(), h = r.f32()
+                list.append(["id": id, "sha": sha, "x": NSNumber(value: x), "y": NSNumber(value: y),
+                             "w": NSNumber(value: w), "h": NSNumber(value: h)])
+            }
+            out = ["type": "boardImages", "list": list]
         case Op.scratchAdd:
             out = ["type": "scratchAdd", "page": NSNumber(value: r.u32()),
                    "nx": NSNumber(value: r.f32()), "ny": NSNumber(value: r.f32())]

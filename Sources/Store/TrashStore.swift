@@ -19,6 +19,8 @@ enum TrashStore {
     /// 父行先就位：note / ink_layer / scratch_pad 都 `REFERENCES document(id)`，
     /// location 则 `REFERENCES variant(id)`。
     static let documentTables = ["document", "variant", "location", "ink_layer", "scratch_pad", "note"]
+    /// 画板笔记条目（v16）要搬的表，同样父表在前（`board_item REFERENCES board_note(id)`）。
+    static let boardTables = ["board_note", "board_item"]
 
     /// 页内笔迹的 note.kind（与 `InkStroke.noteKind` 同值，这里不引 App 层的类型）。
     private static let inkKind = 2
@@ -35,9 +37,23 @@ enum TrashStore {
         var scratchInk = 0   // 草稿纸笔迹 kind=4
         var inkLayer = 0
         var scratchPad = 0
+        /// 画板笔记上的笔迹 / 图（v16，`board_item` kind 1 / 2）。
+        var boardInk = 0
+        var boardImage = 0
 
         /// 「一共多少条会跟着一起没」——确认框里那个数。
-        var total: Int { ink + text + highlight + bookmark + image + aiThread + scratchInk }
+        var total: Int { ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage }
+
+        init() {}
+        /// 老条目的 manifest 没有新加的键：逐个 `decodeIfPresent`，缺了就是 0（读不出来的条目会凭空消失）。
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            func v(_ k: CodingKeys) -> Int { (try? c.decodeIfPresent(Int.self, forKey: k)) ?? 0 }
+            ink = v(.ink); text = v(.text); highlight = v(.highlight); bookmark = v(.bookmark)
+            image = v(.image); aiThread = v(.aiThread); scratchInk = v(.scratchInk)
+            inkLayer = v(.inkLayer); scratchPad = v(.scratchPad)
+            boardInk = v(.boardInk); boardImage = v(.boardImage)
+        }
     }
 
     /// 归档的产物：写进 manifest 的那几样。
@@ -94,6 +110,15 @@ enum TrashStore {
         }
     }
 
+    /// 把一篇画板笔记（那一行 + 上面的全部条目）搬进快照库。
+    static func archiveBoard(_ db: SQLiteDB, boardId: String, to path: String) throws -> Archived {
+        try withAttached(db, path: path) { t in
+            try db.run("CREATE TABLE \(t).board_note AS SELECT * FROM main.board_note WHERE id=?", [.text(boardId)])
+            try db.run("CREATE TABLE \(t).board_item AS SELECT * FROM main.board_item WHERE board_id=?", [.text(boardId)])
+            return try summarize(db, schema: t)
+        }
+    }
+
     // MARK: - 恢复
 
     /// 恢复前的探路：这份快照里的 PDF **是不是已经被重新导入过**（方案 §2.5 的情形 B）。
@@ -134,11 +159,12 @@ enum TrashStore {
             let present = try tableNames(db, schema: t)
             var written = 0
             try db.transaction {
-                for table in documentTables where present.contains(table) {
+                for table in documentTables + boardTables where present.contains(table) {
                     if remapDocumentId != nil, ["document", "variant", "location"].contains(table) { continue }
                     let cols = try columnNames(db, schema: t, table: table)
                     guard !cols.isEmpty else { continue }
-                    let conflict = ["document", "variant"].contains(table) ? "OR IGNORE" : "OR REPLACE"
+                    // board_note 同 document：有 CASCADE 子表（board_item），REPLACE 会把子行连根删掉
+                    let conflict = ["document", "variant", "board_note"].contains(table) ? "OR IGNORE" : "OR REPLACE"
                     let select = cols.map { $0 == "document_id" && remapDocumentId != nil ? "?" : "\"\($0)\"" }
                     let names = cols.map { "\"\($0)\"" }.joined(separator: ",")
                     let params: [SQLiteDB.Value] = remapDocumentId.map { id in
@@ -221,6 +247,16 @@ enum TrashStore {
             out.images = try db.query("""
             SELECT DISTINCT json_extract(payload, '$.image') FROM \(t).note WHERE kind=6
             """, row: { $0.text(0) }).filter { !$0.isEmpty }.sorted()
+        }
+        if present.contains("board_item") {
+            for (kind, n) in try db.query("SELECT kind, COUNT(*) FROM \(t).board_item GROUP BY kind",
+                                          row: { r in (Int(r.int64(0)), Int(r.int64(1))) }) {
+                if kind == 1 { out.counts.boardInk = n } else if kind == 2 { out.counts.boardImage = n }
+            }
+            let imgs = try db.query("""
+            SELECT DISTINCT json_extract(payload, '$.image') FROM \(t).board_item WHERE kind=2
+            """, row: { $0.text(0) }).filter { !$0.isEmpty }
+            out.images = Array(Set(out.images + imgs)).sorted()
         }
         if present.contains("ink_layer") { out.counts.inkLayer = try count(db, schema: t, table: "ink_layer") }
         if present.contains("scratch_pad") { out.counts.scratchPad = try count(db, schema: t, table: "scratch_pad") }

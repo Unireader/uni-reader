@@ -821,6 +821,10 @@ final class InspectorViewController: NSViewController {
 
     private func scratchRows() -> InspectorRows {
         let s = session
+        // 画板笔记标签：会话里那张「纸」就是画板本身，不能在这里当草稿纸列出来（删它 = 删掉整篇画板的笔迹）
+        if s.isBoard {
+            return InspectorRows(head: [sectionTitle(L("Scratchpads")), hint(L("Boards have no scratchpads."))])
+        }
         var head: [NSView] = [sectionTitle("\(L("Scratchpads")) · \(s.scratchPads.count)")]
         guard !s.scratchPads.isEmpty else {
             head.append(hint(L("No scratchpads yet. Right-click in the page to add one.")))

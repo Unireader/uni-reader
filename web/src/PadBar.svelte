@@ -13,6 +13,8 @@
   import Icon from "./Icon.svelte";
 
   const name = (p: { title: string; index: number }) => p.title || "草稿纸 " + (p.index + 1);
+  /// 画板名：取 boards 列表里已兜底的显示名（纸那边的 title 可能是空串）。
+  const boardName = () => S.boards.find((b) => b.id === S.boardCurrent)?.title || "未命名画板";
 
   /// 行内改名的草稿（只在「正在改名的那一行」有意义；提交/取消后由 S.padRenaming 归位）。
   let draft = $state("");
@@ -46,15 +48,63 @@
 
 {#if S.padOpen >= 0 && S.pads[S.padOpen]}
   <div id="padbar">
-    <button title="草稿纸列表" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
-    <span id="padName">{name(S.pads[S.padOpen])}</span>
+    {#if S.boardKind === 2}
+      <!-- 画板笔记（v16）：这张纸就是整篇画板——没有列表 / 页面底图 / 关闭（关 = 在 Mac 上关标签），
+           名字取 boards 列表里已兜底的显示名，改名走 scratchRename index=0 -->
+      <button title="画板笔记列表" onclick={() => actions.toggleBoardList()}><Icon name="board" /></button>
+      {#if S.boardRenaming}
+        <!-- svelte-ignore a11y_autofocus -->
+        <input id="boardNameInput" bind:value={draft} autofocus aria-label="画板笔记名字"
+          onkeydown={(e) => { if (e.key === "Enter") actions.renameBoard(draft.trim());
+                              if (e.key === "Escape") S.boardRenaming = false; }} />
+        <button title="确定" onclick={() => actions.renameBoard(draft.trim())}><Icon name="check" /></button>
+      {:else}
+        <span id="padName">{boardName()}</span>
+        <button title="改名" onclick={() => { draft = S.pads[S.padOpen]?.title || ""; S.boardRenaming = true; }}>
+          <Icon name="pencil" /></button>
+      {/if}
+    {:else}
+      <button title="草稿纸列表" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
+      <span id="padName">{name(S.pads[S.padOpen])}</span>
+    {/if}
     <button title="回中" onclick={() => actions.padRecenter()}><Icon name="scope" /></button>
     <button title="适应内容" onclick={() => actions.padFit()}><Icon name="fit" /></button>
     <button class:on={S.padMini} title="缩略图" onclick={() => actions.togglePadMini()}><Icon name="map" /></button>
-    <!-- 页面底图（v10）：把这张纸锚定的那一页垫在纸下面。跟着纸走、跨端同步 -->
-    <button class:on={S.padShowPage} title="显示所在页面" onclick={() => actions.togglePadPage()}><Icon name="doc" /></button>
+    {#if S.boardKind !== 2}
+      <!-- 页面底图（v10）：把这张纸锚定的那一页垫在纸下面。跟着纸走、跨端同步 -->
+      <button class:on={S.padShowPage} title="显示所在页面" onclick={() => actions.togglePadPage()}><Icon name="doc" /></button>
+    {/if}
     <button class:on={S.padPaper} title="纸样" onclick={() => actions.togglePadPaper()}><Icon name="palette" /></button>
-    <button title="关闭草稿纸（Esc）" onclick={() => actions.closePad()}><Icon name="x" /></button>
+    {#if S.boardKind !== 2}
+      <button title="关闭草稿纸（Esc）" onclick={() => actions.closePad()}><Icon name="x" /></button>
+    {/if}
+  </div>
+{/if}
+
+{#if S.boardList && !S.padList}
+  <!-- 画板笔记列表：与草稿纸列表共用一套样式（两个弹层互斥，同一时刻只会有一个 #padlist） -->
+  <button id="padListMask" aria-label="关闭画板笔记列表" onclick={() => actions.toggleBoardList()}></button>
+  <div id="padlist">
+    <div class="phead">画板笔记</div>
+    {#if !S.boards.length}
+      <div class="pempty">还没有画板笔记</div>
+    {/if}
+    {#each S.boards as b (b.id)}
+      <div class="prow" class:cur={S.boardKind === 2 && b.id === S.boardCurrent}>
+        <button class="popen" onclick={() => actions.openBoard(b.id)}><span class="pt">{b.title}</span></button>
+      </div>
+    {/each}
+    <button class="prow padd" onclick={() => actions.addBoard()}>
+      <Icon name="plus" /><span class="pt">新建画板笔记</span>
+    </button>
+  </div>
+{/if}
+
+{#if S.boardKind === 1}
+  <!-- Mac 正在看 Markdown 笔记：平板不参与 md 笔记，给个说明，别停在上一篇 PDF 的页面上 -->
+  <div id="mdEmpty">
+    <div class="mt">Mac 正在看 Markdown 笔记</div>
+    <div class="md">平板暂不显示 Markdown 笔记。在 Mac 上切到 PDF 或画板笔记，或从顶栏打开一篇画板笔记。</div>
   </div>
 {/if}
 

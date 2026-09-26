@@ -44,6 +44,8 @@
     paste: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
     // 画板模式：中间一页 + 两侧向外的箭头（页面两侧的空白也能写字 = 横向摊开）
     canvas: '<rect x="9" y="4" width="6" height="16" rx="1"/><path d="M6 12H2m0 0 2.5-2.5M2 12l2.5 2.5"/><path d="M18 12h4m0 0-2.5-2.5M22 12l-2.5 2.5"/>',
+    // 画板笔记：一块板 + 板上一道随手画的波浪线
+    board: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 14c1.5-3 3-3 4 0s2.5 3 4 0 2-2 2-2"/>',
   } as const;
   let { name }: { name: keyof typeof ICONS } = $props();
 </script>

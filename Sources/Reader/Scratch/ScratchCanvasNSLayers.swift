@@ -124,6 +124,62 @@ final class ScratchPageCALayer: QuietLayer {
     }
 }
 
+// MARK: - 画板笔记上的图（v16，`BOARD-NOTE-PLAN.md §3.3`）
+
+/// 画板上的图：每张一个子图层，按画布矩形映到视口。层序在笔迹之下、底纹之上。
+/// 图本体由调用方按 sha 喂进来（`setImage`，后台解码好的 CGImage），没到之前铺一块淡灰占位。
+final class BoardImagesCALayer: QuietLayer {
+    var viewport = ScratchViewport()
+    private var subs: [UUID: QuietLayer] = [:]
+    private var items: [BoardImage] = []
+    private var bitmaps: [String: CGImage] = [:]
+
+    /// 换一批图（增删 / 挪动 / 缩放后）：子图层按新顺序重排，多余的撤掉。
+    func sync(_ images: [BoardImage]) {
+        items = images
+        let live = Set(images.map(\.id))
+        for (id, l) in subs where !live.contains(id) { l.removeFromSuperlayer(); subs[id] = nil }
+        for (i, im) in images.enumerated() {
+            let l = subs[im.id] ?? {
+                let n = QuietLayer()
+                n.contentsGravity = .resize
+                n.minificationFilter = .trilinear
+                n.backgroundColor = CGColor(gray: 0.5, alpha: 0.12)
+                subs[im.id] = n
+                return n
+            }()
+            if l.superlayer !== self || (sublayers?.firstIndex(of: l) ?? -1) != i { insertSublayer(l, at: UInt32(i)) }
+            l.contents = bitmaps[im.image]
+            if l.contents != nil { l.backgroundColor = nil }
+        }
+        relayout()
+    }
+
+    /// 某张图的像素到了（同一张图在画板上贴了几次就填几处）。
+    func setImage(_ img: CGImage, sha: String) {
+        bitmaps[sha] = img
+        for im in items where im.image == sha {
+            subs[im.id]?.contents = img
+            subs[im.id]?.backgroundColor = nil
+        }
+    }
+
+    func hasImage(_ sha: String) -> Bool { bitmaps[sha] != nil }
+
+    /// 视口变了：只改子图层 frame（位图不重画），视口外的藏起来。
+    func relayout() {
+        let o = viewport.origin, z = viewport.zoom
+        let vis = CGRect(origin: .zero, size: bounds.size).insetBy(dx: -40, dy: -40)
+        for im in items {
+            guard let l = subs[im.id] else { continue }
+            let r = CGRect(x: (im.rect.minX - o.x) * z, y: (im.rect.minY - o.y) * z,
+                           width: im.rect.width * z, height: im.rect.height * z)
+            l.isHidden = !vis.intersects(r)
+            if !l.isHidden { l.frame = r }
+        }
+    }
+}
+
 // MARK: - 框选装饰（选中光晕 + 高亮框 / 手柄 + 进行中的虚线路径，全是视图坐标）
 
 final class ScratchLassoCALayer: QuietLayer {
@@ -194,6 +250,8 @@ final class ScratchMinimapView: NSView {
     var viewport = ScratchViewport() { didSet { if oldValue != viewport { needsDisplay = true } } }
     var viewSize: CGSize = .zero { didSet { if oldValue != viewSize { needsDisplay = true } } }
     var pageRect: CGRect? { didSet { if oldValue != pageRect { needsDisplay = true } } }
+    /// 画板笔记上的图（画布矩形）：画成淡框，也计入装框范围。
+    var imageRects: [CGRect] = [] { didSet { if oldValue != imageRects { needsDisplay = true } } }
     var onJump: (CGPoint) -> Void = { _ in }
 
     private let shell = NSVisualEffectView()
@@ -249,7 +307,9 @@ final class ScratchMinimapView: NSView {
 
     fileprivate func fit() -> Fit {
         let vis = viewport.visibleRect(viewport: viewSize)
-        var w = ScratchBounds.contentBounds(strokes, page: pageRect).map { $0.union(vis) } ?? vis
+        var content = ScratchBounds.contentBounds(strokes, page: pageRect)
+        for r in imageRects { content = content.map { $0.union(r) } ?? r }
+        var w = content.map { $0.union(vis) } ?? vis
         if w.width < 1 || w.height < 1 { w = CGRect(x: -400, y: -300, width: 800, height: 600) }
         w = w.insetBy(dx: -w.width * 0.08, dy: -w.height * 0.08)
         let box = bounds.size
@@ -284,6 +344,12 @@ private final class MinimapCanvas: NSView {
             ctx.setStrokeColor(ink.withAlphaComponent(0.3).cgColor)
             ctx.setLineWidth(0.75)
             ctx.stroke(box)
+        }
+        for ir in o.imageRects {
+            let tl = f.map(Double(ir.minX), Double(ir.minY))
+            let box = CGRect(x: tl.x, y: tl.y, width: ir.width * f.s, height: ir.height * f.s)
+            ctx.setFillColor(ink.withAlphaComponent(0.12).cgColor)
+            ctx.fill(box)
         }
         // 骨架线即可（不必还原笔型 / 压感）
         ctx.setStrokeColor(ink.withAlphaComponent(0.62).cgColor)

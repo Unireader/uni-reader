@@ -74,7 +74,12 @@
       onclick={() => actions.clipCopy(false)}><Icon name="copy" /></button>
     <button id="clipPaste" title="粘贴到视口中央" onclick={() => actions.clipPaste()}><Icon name="paste" /></button>
   {/if}
-  <button id="padBtn" class:on={S.padOpen >= 0 || S.padList} title="草稿纸" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
+  {#if S.boardKind !== 2}
+    <button id="padBtn" class:on={S.padOpen >= 0 || S.padList} title="草稿纸" onclick={() => actions.togglePadList()}><Icon name="scratch" /></button>
+  {/if}
+  <!-- 画板笔记（v16）：列出 / 打开 / 新建都请 Mac 开标签，任何时候都能用 -->
+  <button id="boardBtn" class:on={S.boardKind === 2 || S.boardList} title="画板笔记"
+    onclick={() => actions.toggleBoardList()}><Icon name="board" /></button>
   <button id="canvasBtn" class:on={S.canvasOn} title="画板模式（页面两侧的空白也能写）"
     onclick={() => actions.toggleCanvas()}><Icon name="canvas" /></button>
   <button id="eye" title="显示/隐藏页面" onclick={() => actions.toggleEye()}><Icon name={S.showPage ? "eye" : "eye-off"} /></button>

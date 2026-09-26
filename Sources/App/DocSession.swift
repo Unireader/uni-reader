@@ -349,6 +349,27 @@ final class DocSession: ObservableObject, Identifiable {
     /// 草稿纸上正在书写的那一笔（与页内的 `liveStroke` 分开，免得两条链路互相看见对方的半成品）。
     @Published var scratchLive: InkStroke?
 
+    // MARK: 画板笔记（board_note / board_item，v16，`BOARD-NOTE-PLAN.md`）
+    //
+    // 画板标签的会话没有 PDF，只有一张永远开着的草稿纸（`scratchPads = [board.asPad]`、`openPadID = board.id`），
+    // 草稿纸那条链路原样复用；落库由 `DocTabModel+Board` 改写到画板两张表。
+
+    /// 本会话显示的画板笔记（nil = 不是画板标签）。与 `pdf` 互斥。
+    @Published var board: BoardNote?
+    /// 画板上的图（`board_item` kind=2），按叠放序。
+    @Published var boardImages: [BoardImage] = []
+    /// 已落库的画板图片快照（id → 值），增量对账用，非 @Published。
+    var persistedBoardImages: [UUID: BoardImage] = [:]
+    /// 画板落库的对账快照（`board_note` 那一行）。
+    var persistedBoard: BoardNote?
+    /// 是不是画板标签（平板 `boards.kind`、窗格装配、笔架都看它）。
+    var isBoard: Bool { board != nil }
+    /// 本会话所属工作区的画板列表快照（平板 `boards` 广播用；App 级的 `AppModel` 够不着窗口级的
+    /// `WorkspaceManager`，同 `libraryDocs` 的做法，由 `DocTabModel.syncWorkspaceSnapshot` 拷进来）。
+    var workspaceBoards: [BoardNote] = []
+    /// 本标签正显示着 Markdown 笔记（平板 `boards.kind = 1`，客户端据此显示空状态）。
+    var showsMarkdown = false
+
     var openPad: ScratchPad? { scratchPads.first { $0.id == openPadID } }
     /// 某张草稿纸上的笔迹（按原顺序）。
     func strokes(pad: UUID) -> [InkStroke] { scratchStrokes.filter { $0.padId == pad } }

@@ -110,11 +110,21 @@ enum MirrorApply {
         return live
     }
 
+    /// 合并之后目标库里还活着的画板 id（同 `livingDocuments`，给 `board_item` 的 upsert 过滤用）。
+    static func livingBoards(_ db: SQLiteDB, changes: [MirrorDiff.Change]) -> Set<String> {
+        var live = Set(((try? db.query("SELECT id FROM board_note")) ?? []).compactMap { $0["id"] as? String })
+        for c in changes where c.table == "board_note" {
+            if c.op == .upsert { live.insert(c.rowId) } else { live.remove(c.rowId) }
+        }
+        return live
+    }
+
     /// 把一批改动写进一个库（**调用方负责包事务**）。
     @discardableResult
     static func write(_ db: SQLiteDB, _ changes: [MirrorDiff.Change],
                       result: inout Result, side: MirrorDiff.Side) throws -> Int {
         let live = livingDocuments(db, changes: changes)
+        let liveBoards = livingBoards(db, changes: changes)
         let order = MirrorFp.specs.map(\.table)
 
         // ① 先删，后插。反过来会撞 `variant.content_hash` 的 UNIQUE：
@@ -134,6 +144,11 @@ enum MirrorApply {
                 guard let row = c.row else { continue }
                 if table != "document", table != "meta", let doc = row["document_id"] as? String,
                    !live.contains(doc) {
+                    result.orphansSkipped += 1
+                    continue
+                }
+                // 画板条目同理：一边删了整篇画板、另一边又在上面写了几笔 → 那几笔跳过并计数（外键会让整次同步失败）
+                if table == "board_item", let b = row["board_id"] as? String, !liveBoards.contains(b) {
                     result.orphansSkipped += 1
                     continue
                 }

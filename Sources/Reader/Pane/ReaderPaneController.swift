@@ -256,7 +256,13 @@ final class ReaderPaneController: NSViewController {
                 mdView?.removeFromSuperview()
                 mdView = nil
             }
-            readerPart(s)
+            if s.isBoard || tab.boardID != nil {
+                // 画板笔记（v16）：整个窗格就是那张纸（`syncScratchPad` 装），没有阅读区也不要占位提示
+                readerView?.removeFromSuperview(); readerView = nil
+                placeholder.isHidden = true
+            } else {
+                readerPart(s)
+            }
         }
         syncScratchPad()
         finishRefresh(s)
@@ -292,7 +298,7 @@ final class ReaderPaneController: NSViewController {
 
     /// 阅读区 / 笔记区之外的那一堆（笔架 / 查找条 / 角标 / 标签栏…），两种内容都要跑。
     private func finishRefresh(_ s: DocSession) {
-        if readerView != nil {
+        if readerView != nil || s.isBoard {   // 画板上也要笔架（落墨 / 橡皮 / 框选全靠它切）
             if let rack = penRack {
                 rack.bind(s)
             } else {
@@ -334,12 +340,13 @@ final class ReaderPaneController: NSViewController {
             badge.isHidden = true
         }
 
-        // 标签栏（≥2 个标签才显示；草稿纸开着时不显示——它自带工具条）
-        let showTabs = tabs.tabs.count > 1 && s.openPadID == nil
+        // 标签栏（≥2 个标签才显示；草稿纸开着时不显示——它自带工具条。画板笔记本身就是一个标签，照常显示）
+        let showTabs = tabs.tabs.count > 1 && (s.openPadID == nil || s.isBoard)
         tabBar.isHidden = !showTabs
         if showTabs {
             tabBar.update(items: tabs.tabs.map {
-                TabBarItem(id: $0.id, title: $0.tabTitle, padFollowing: $0.id == app.padSession?.id, hasDocument: $0.docID != nil)
+                TabBarItem(id: $0.id, title: $0.tabTitle, padFollowing: $0.id == app.padSession?.id,
+                           hasDocument: $0.docID != nil || $0.boardID != nil)
             }, activeID: tabs.activeID, style: tabBarStyle)
         }
         // 参考窗 / 跳转历史：草稿纸开着时隐去（它盖满阅读区）
@@ -356,9 +363,11 @@ final class ReaderPaneController: NSViewController {
     /// 草稿纸：换一张 = 全新视口（新建一个视图）；开 / 关淡入淡出 0.16s。
     private func syncScratchPad() {
         let s = session
-        let want = readerView != nil ? s.openPadID : nil
+        let want = (readerView != nil || s.isBoard) ? s.openPadID : nil
+        // 画板没有阅读区，身份键另起（切来切去同一篇不重建）
+        let key = s.board.map { BoardNote.rowPrefix + $0.id.uuidString } ?? readerView?.docKey ?? ""
         // 阅读区重建过（换了显示身份）也要重建：新阅读区是插在最底下那一层之上的，旧纸会被它盖住
-        if let cur = scratchPad, cur.padID == want, cur.session === s, cur.docKey == readerView?.docKey { return }
+        if let cur = scratchPad, cur.padID == want, cur.session === s, cur.docKey == key { return }
         if let old = scratchPad {
             scratchPad = nil
             NSAnimationContext.runAnimationGroup({ ctx in
@@ -366,10 +375,15 @@ final class ReaderPaneController: NSViewController {
                 old.animator().alphaValue = 0
             }, completionHandler: { old.removeFromSuperview() })
         }
-        guard let id = want, let r = readerView else { return }
-        let v = ScratchPadNSView(app: app, session: s, padID: id, docKey: r.docKey)
+        guard let id = want, readerView != nil || s.isBoard else { return }
+        let v = ScratchPadNSView(app: app, session: s, padID: id, docKey: key)
+        v.workspace = workspace
         v.alphaValue = 0
-        view.addSubview(v, positioned: .above, relativeTo: r)
+        if let r = readerView {
+            view.addSubview(v, positioned: .above, relativeTo: r)
+        } else {
+            view.addSubview(v, positioned: .below, relativeTo: placeholder)
+        }
         scratchPad = v
         layoutChrome()
         NSAnimationContext.runAnimationGroup { ctx in

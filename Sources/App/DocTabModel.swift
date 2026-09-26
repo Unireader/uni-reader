@@ -28,8 +28,8 @@ final class DocTabModel: ObservableObject, Identifiable {
     let id: UUID
     let session: DocSession
 
-    private let app: AppModel
-    private let workspace: WorkspaceManager
+    let app: AppModel
+    let workspace: WorkspaceManager
     private var bag = Set<AnyCancellable>()
 
     /// 本标签当前显示的库文档 id（原 `ContentView.selectedDocID`）。
@@ -39,7 +39,17 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 🔴 **与 `docID` 互斥**：开 md 笔记前先 `select(nil)` 把 PDF 那边清干净。这样全项目
     /// 所有按 PDF 记账的地方（平板 `docs` 广播 / 工作区打开集 / MCP / 参考窗 / 笔架 / 草稿纸）
     /// 看到的就是一个**空标签**——那是它们本来就支持的状态，一行都不用改。
-    @Published private(set) var noteRef: NoteRef?
+    @Published private(set) var noteRef: NoteRef? {
+        didSet {
+            guard (oldValue == nil) != (noteRef == nil) else { return }
+            session.showsMarkdown = noteRef != nil
+            app.broadcastBoards()   // 平板据 `boards.kind` 显示「Mac 正在看 Markdown 笔记」
+        }
+    }
+    /// 本标签当前显示的**画板笔记**（v16，`BOARD-NOTE-PLAN.md`）。与 `docID` / `noteRef` 三者互斥，
+    /// 同 Markdown 的做法：开画板前先 `select(nil)` 把 PDF 那边清干净。会话里的状态在 `session.board`。
+    /// `staged` 为真时只记了身份、还没装（冷启动恢复的后台标签）。
+    @Published var boardID: UUID?
     /// 选中但所有路径失效 → 显示重定位提示。
     @Published var missingDoc: LibDocument?
     /// 同路径内容被替换（hash 与入库版本不符）待确认。
@@ -53,7 +63,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 一篇 586 页、3506 条笔记的书要 0.33s（冷盘上还要再加 0.6s，见 `HISTORY.md` 同日那条剖析），
     /// 而冷启动 `restoreTabs` 会一口气恢复一组标签——**一扇窗里只有一个看得见**，其余全是白装。
     /// 现在只装活动那一个，其余等切过去再装（同安卓模式1 早就有的懒装载）。
-    private(set) var staged = false
+    var staged = false
 
     /// 本标签是不是窗口里**正显示着**的那个（由 `TabsModel` 维护）。
     /// 🔴 `load()` 只在自己是活动标签时才 `app.setActive` —— 否则冷启动恢复一组标签时，
@@ -63,14 +73,23 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 标签栏上显示的标题：会话标题为空（空标签 / 路径失效）时退回库里的文档名，再退回「新标签页」。
     var tabTitle: String {
         if let ref = noteRef { return ref.title }
+        if let b = session.board { return b.displayName }
+        if let bid = boardID { return workspace.boards.first { $0.id == bid }?.displayName ?? L("Untitled Board") }
         if !session.title.isEmpty { return session.title }
         if let d = missingDoc { return d.title }
         if let id = docID, let d = workspace.document(id: id) { return d.title }
         return L("New Tab")
     }
 
+    /// 什么都没装的空标签（PDF / Markdown / 画板都没有）：打开新内容时就地复用它。
+    var isEmptyTab: Bool { docID == nil && noteRef == nil && boardID == nil }
+
     /// 侧栏 / 标签栏用的选中键（PDF 与 md 笔记在同一张表里列，得能区分）。
-    var rowID: String? { noteRef.map { "md:" + $0.key } ?? docID }
+    var rowID: String? {
+        if let ref = noteRef { return "md:" + ref.key }
+        if let bid = boardID { return BoardNote.rowPrefix + bid.uuidString }
+        return docID
+    }
 
     /// 「同路径换内容」待确认：文件存在但 hash 与入库版本不符（用户原地覆盖了 PDF）。
     struct HashMismatch: Identifiable {
@@ -80,7 +99,7 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     private var lastProgressSave = Date.distantPast
     private var progressSaveTask: Task<Void, Never>?   // 节流窗内被丢变化的尾随补存
-    private var closed = false
+    private(set) var closed = false
     /// 本次装载完成时 `session.scrollAnchor` 的序号（进度排查用，见 `ProgressLog`）。
     /// 存进度时用的锚点若 **≤ 这个数**，说明它是**上一篇**留下来的——换文档时 `scrollAnchor`
     /// 没人清，而新文档的库里进度若正好是 p1 顶端（`load` 里那条 `page > 0 || frac > 0` 不成立）
@@ -224,6 +243,10 @@ final class DocTabModel: ObservableObject, Identifiable {
             s.persistScratchStrokes()    // 草稿纸上落笔/擦除时增量落库（scratchLive 变化不触发）
             s.app.broadcastScratchStrokes()
         }
+        on(session.$boardImages) { s in
+            s.persistBoardImages()       // 画板上加图 / 挪图 / 删图时增量落库
+            s.app.broadcastBoardImages()
+        }
         on(session.$openPadID) { s in
             // 打开/关闭草稿纸 = 平板跟着切过去（笔迹共享、视图各自独立）；同时把纸上的笔迹推过去。
             s.app.broadcastScratchPads()
@@ -273,7 +296,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     }
 
     /// 把可能还排在异步队列里的落库同步补齐（见 `close()` 的红线）。全部幂等。
-    private func flushPersist() {
+    func flushPersist() {
         persistInk()
         persistInkLayers()
         persistTextNotes()
@@ -283,6 +306,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         persistAIThreads()
         persistScratchPads()
         persistScratchStrokes()
+        persistBoardImages()
     }
 
     // MARK: - 工作区快照
@@ -295,6 +319,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.workspaceFolder = workspace.folder
         // 书库没变就别重建参考索引：那次遍历要逐篇查 location + variant 两张表，而本方法的触发点
         // 很密（换文档 / 开关窗口 / 工作区改名都会调）。
+        session.workspaceBoards = workspace.boards
         if session.libraryDocs != workspace.documents {
             session.libraryDocs = workspace.documents
             session.libraryRefIndex = workspace.refDocIndex()
@@ -310,8 +335,9 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 切到另一篇文档（原 `ContentView.onChange(of: selectedDocID)` 那一整块）。
     func select(_ id: String?) {
-        guard id != docID || noteRef != nil else { return }
+        guard id != docID || noteRef != nil || boardID != nil else { return }
         noteRef = nil       // PDF 与 md 笔记互斥
+        leaveBoard()        // 与画板也互斥（先结清画板的落库再清状态）
         // 打开耗时账本从这一刻起算（用户点下去 = 这里）。上一本还没齐的按中断结账。
         session.openTrace?.finish("中断：换文档")
         session.openTrace = id.map { OpenTrace(title: workspace.document(id: $0)?.title ?? $0, reason: "打开") }
@@ -385,7 +411,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// （平板广播等仍只认 PDF）；Markdown 标签由 `TabsModel` 的混合标签组单独持久化。
     func openMarkdown(_ ref: NoteRef) {
         guard noteRef != ref else { return }
-        if docID != nil { select(nil) }
+        if docID != nil || boardID != nil { select(nil) }
         noteRef = ref
         staged = false
         workspace.noteWasOpened(ref)
@@ -423,6 +449,7 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 真正装载（切到这个标签时调）。已经装过、或本来就没 stage 过 → 空操作。
     func realize() {
+        if staged, let bid = boardID { realizeBoard(bid); return }
         guard staged, let id = docID else { return }
         // `select` 按「id 没变就早退」设计，这里先把 `docID` 抹掉，让它把这次当成「从空态开一篇」。
         // 同一轮同步跑完，界面看不到中间那一下。
@@ -1165,7 +1192,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 加载文档时清空内存草稿纸/纸上笔迹与两份对账集（无文档 / 路径失效时用）。
     /// ⚠️ 与 `clearInk` 同一条纪律：对账集必须**先于**列表赋值，否则订阅会拿旧文档的
     /// 快照对账新（空）列表，把上一篇的草稿纸整个从库里删掉。
-    private func clearScratch() {
+    func clearScratch() {
         session.openPadID = nil
         session.scratchLive = nil
         session.persistedScratchPads = [:]
@@ -1209,6 +1236,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 内存草稿纸 ↔ 库对账：新增/改名/改底色 upsert；已删除的 delete（纸上笔迹由下面那个函数
     /// 一并对账掉——删纸时调用方要同时把它的笔迹从 `scratchStrokes` 里摘掉）。
     private func persistScratchPads() {
+        if session.isBoard { persistBoardRow(); return }   // 画板：那张「纸」就是画板本身
         guard let id = session.documentId else { return }
         let current = session.scratchPads
         let currentIDs = Set(current.map(\.id))
@@ -1223,6 +1251,7 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 内存草稿纸笔迹 ↔ 库对账（与 `persistInk` 同套路，只是走 kind=4）。
     private func persistScratchStrokes() {
+        if session.isBoard { persistBoardStrokes(); return }   // 画板：写 board_item kind=1
         guard let id = session.documentId else { return }
         let current = session.scratchStrokes
         let currentIDs = Set(current.map(\.id))

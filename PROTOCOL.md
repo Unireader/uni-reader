@@ -111,6 +111,10 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x4F` | undo | C→S | 可靠 |
 | `0x50` | nack | S→C | 可靠 |
 | `0x51` | clip | C→S | 可靠 |
+| `0x52` | boards | S→C | 可靠 |
+| `0x53` | boardOpen | C→S | 可靠 |
+| `0x54` | boardAdd | C→S | 可靠 |
+| `0x55` | boardImages | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
 
@@ -550,6 +554,46 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 
 **视口不上线**：每一端的滚动/缩放/minimap 各自独立（用户明确要求），打开一律回到画布原点。
 库里也不存视口——存了就会变成「谁最后关谁说了算」的跨端争用。
+
+### 4.8 画板笔记（v16 起，0x52~0x55，`BOARD-NOTE-PLAN.md`）
+
+画板笔记 = 工作区里一篇**独立的无限白板**（不挂 PDF），在 Mac 上占一个标签页。
+画布坐标系、笔宽、橡皮 ×800、网格步长、纸样**全部沿用 §4.4**。
+
+#### 🔴 复用草稿纸的通道（一个字节没改）
+
+被跟随会话是画板标签时，Mac 把它当成「一张永远开着的草稿纸」：
+
+- `scratchpads`：`open = 0`，`list` 只有这一张（`page = 0`、`nx = ny = 0.5`、`showPage = 0`，`title` = 画板名原文，可能是空串——客户端标题一律取 `boards.list` 里已兜底的显示名）；
+  `scratchStrokes` = 画板上的全部笔迹。
+- 上行 `ink` / `erase` 照 §4.4「纸开着」的规则走画布坐标；`scratchPaper` / `scratchRename`（`index = 0`）
+  改的是这篇画板；`undo` 走草稿纸那条栈。
+- `scratchOpen` / `scratchAdd` / `scratchMove` / `scratchPageShow` / `scratchDelete` 在画板会话上**整帧丢弃**
+  （画板不能关、不能再建一张纸、没有锚点和页面底图、删画板只在 Mac 侧栏做）。
+
+#### 消息
+
+| opcode | payload | 对象形状 |
+|---|---|---|
+| `boards` | `u8 kind` · `str current` · `u16 n` · `n ×( str id, str title )` | `{type:"boards", kind, current, list:[{id,title},…]}` |
+| `boardOpen` | `str id` | `{type:"boardOpen", id}` |
+| `boardAdd` | 空 | `{type:"boardAdd"}` |
+| `boardImages` | `u16 n` · `n ×( str id, str sha, f32 x, f32 y, f32 w, f32 h )` | `{type:"boardImages", list:[{id,sha,x,y,w,h},…]}` |
+
+- `boards`：**全量镜像**。`kind` = 被跟随会话是什么：`0` = PDF（或空标签）、`1` = Markdown 笔记、`2` = 画板笔记；
+  `current` = `kind = 2` 时是哪一篇的 id，否则空串；`list` = 被跟随会话所属工作区的全部画板（按最近打开排序，
+  `title` 已兜底成显示名）。**发送时机**：客户端接入、跟随的会话变化、画板增删改名、标签在 PDF / Markdown / 画板之间切换。
+  - `kind = 2`：客户端隐藏 PDF 页面视图，整屏显示草稿纸画布；纸样面板里去掉「关闭 / 页面底图 / 其它草稿纸 / 删除」。
+  - `kind = 1`：客户端显示「Mac 正在看 Markdown 笔记」的空状态（Mac 不会为 md 标签发 `layout`，
+    不处理的话客户端会停在上一篇 PDF 的页面上）。
+  - 老客户端不认识这条，照旧丢弃（§5）；它们看到的就是一张打开着的草稿纸，也能写。
+- `boardOpen`：请 Mac 在被跟随的那扇窗口里打开这篇（已经开着就切过去）。客户端若锁定在某个会话上
+  （没选「跟随 Mac」），Mac 会把它锁到新标签。
+- `boardAdd`：请 Mac 新建一篇空画板并打开（同上）。
+- `boardImages`：当前画板上的图（**不是画板会话时发空表**）。`x/y/w/h` = 画布坐标矩形（左上原点），
+  叠放序 = 列表顺序（先画的在下）。层序：纸色 → 底纹 → **图片** → 笔迹。
+  图片本体由客户端按 `GET /image?h=<sha>` 取（与 `/page.png` 同级不校验 token；Mac 只认当前跟随画板上登记过的 sha），
+  客户端按 sha 缓存。**平板只看不改图片**（本轮平板上不能加图 / 挪图 / 删图，框选只作用于笔迹）。
 
 ## 5. 兼容与版本
 

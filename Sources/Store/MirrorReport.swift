@@ -35,6 +35,9 @@ enum MirrorReport {
         case "variant": return "文档版本"
         case "ink_layer": return "笔迹图层"
         case "scratch_pad": return "草稿纸"
+        case "md_doc": return "Markdown 笔记"
+        case "board_note": return "画板笔记"
+        case "board_item": return "画板笔记内容"
         case "meta": return "工作区设置"
         default: return table
         }

@@ -201,7 +201,11 @@ final class TrashSheetController: StackPanelController, NSTableViewDataSource, N
                 ? "\(e.manifest.title) — \(e.manifest.documentTitle)"
                 : e.manifest.title
         case "kind":
-            text = e.manifest.kind == .document ? L("Document") : L("Ink Layer")
+            switch e.manifest.kind {
+            case .document: text = L("Document")
+            case .inkLayer: text = L("Ink Layer")
+            case .board: text = L("Board")
+            }
         case "when":
             text = e.deletedAt == .distantPast
                 ? "—"

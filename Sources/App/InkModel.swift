@@ -187,6 +187,37 @@ extension InkStroke {
     }
 }
 
+// MARK: - 画板笔记（board_item kind=1，v16）
+
+extension InkStroke {
+    /// 画板笔记上笔迹条目的 kind（`board_item.kind`；2 = 图片，见 `BoardImage.itemKind`）。
+    static let boardItemKind = 1
+
+    /// 序列化为画板笔记的一条笔迹。payload 与草稿纸 kind=4 **同一份 JSON**，只是不写 `padId`
+    /// （归属在 `board_item.board_id` 列上，`BOARD-NOTE-PLAN.md §2.2`）。空笔画返回 nil。
+    func toBoardItem(boardId: String, createdAt: Date, now: Date = .now) -> LibBoardItem? {
+        guard !points.isEmpty else { return nil }
+        let payload = InkStrokePayload(color: color, width: width, type: type,
+                                       points: points.map { [$0.x, $0.y, $0.z] }, layerId: layerId,
+                                       padId: nil)
+        guard let data = try? JSONEncoder().encode(payload) else { return nil }
+        return LibBoardItem(id: id.uuidString, boardId: boardId, kind: Self.boardItemKind,
+                            rect: normalizedBounds, payload: data, createdAt: createdAt, updatedAt: now)
+    }
+
+    /// 从一条画板笔迹复原。`padId` = 这篇画板在会话里扮演的那张「永远开着的草稿纸」的 id
+    /// （= 画板笔记 id），于是草稿纸那整条链路（渲染 / 擦除 / 撤销 / 平板下行）原样可用。
+    init?(boardItem it: LibBoardItem, padId: UUID) {
+        guard it.kind == Self.boardItemKind, let uuid = UUID(uuidString: it.id),
+              let p = try? JSONDecoder().decode(InkStrokePayload.self, from: it.payload) else { return nil }
+        let pts = p.points.map { p -> InkPoint in
+            InkPoint(p.count > 0 ? p[0] : 0, p.count > 1 ? p[1] : 0, p.count > 2 ? p[2] : 0.5)
+        }
+        self.init(id: uuid, page: 0, color: p.color, width: p.width, type: p.type,
+                  points: pts, layerId: p.layerId, padId: padId)
+    }
+}
+
 extension InkStroke {
     /// 一批笔迹行 → 笔迹，**多核并行**、保持原顺序（顺序 = 落库序 = 绘制叠放序）。
     /// 开文档时在后台线程调（`DocTabModel.loadInk`）；行数少就直接顺序解，不值得起线程。

@@ -113,6 +113,10 @@ export interface Pad {
   showPage: boolean;
 }
 
+/// 画板笔记上的一张图（Mac `boardImages` 广播元素，v16，PROTOCOL.md §4.8）。
+/// `x/y/w/h` = 画布坐标矩形；图本体按 `/image?h=<sha>` 取。平板只看不改。
+export interface BoardImg { id: string; sha: string; x: number; y: number; w: number; h: number }
+
 /// 草稿纸视口（本端私有，不上线也不落库：三端各自独立缩放滚动）。
 /// `ox/oy` = 视口左上角对应的画布坐标，`z` = 画布→屏幕倍率。
 export interface PadViewport { ox: number; oy: number; z: number }
@@ -228,6 +232,11 @@ export interface GState {
   pinDragIndex: number;            // 按住时命中的图钉下标（-1 = 无）
   pinDragMoved: boolean;           // 已越过死区 → 本次是拖动而非单击
   pinGhost: { index: number; nx: number; ny: number } | null;
+  // ---- 画板笔记（v16，PROTOCOL.md §4.8）----
+  // boardKind = Mac 跟随的会话是什么：0 PDF / 1 Markdown 笔记 / 2 画板笔记（`boards` 广播）。
+  // 画板时那张草稿纸永远开着（走上面 pads/padStrokes 那套），这里只多一层图。
+  boardKind: number;
+  boardImages: BoardImg[];
   // 页宽上报去重
   lastGeomW: number;
   // WebSocket
@@ -314,6 +323,10 @@ export interface GState {
   padRename(i: number, title: string): void;
   applyScratchPads(o: WireMsg): void;
   applyScratchStrokes(o: WireMsg): void;
+  applyBoards(o: WireMsg): void;
+  applyBoardImages(o: WireMsg): void;
+  boardOpen(id: string): void;
+  boardAdd(): void;
   // capture.ts（键盘侧键走 G，input.ts 的 keydown 调用）
   cycleMode(): void;
   cyclePen(): void;

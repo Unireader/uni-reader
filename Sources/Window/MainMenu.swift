@@ -113,6 +113,7 @@ enum MainMenu {
         m.addItem(post(L("New Tab"), .newTabRequested, key: "t"))
         m.addItem(.separator())
         m.addItem(post(L("New Markdown Note"), .newMarkdownNoteRequested, key: "n", mods: [.command, .shift]))
+        m.addItem(post(L("New Board"), .newBoardRequested, key: "n", mods: [.command, .control]))
         m.addItem(post(L("Import Notes Folder…"), .importMarkdownRequested))
         m.addItem(post(L("Reference Notes Folder…"), .referenceMarkdownRequested))
         m.addItem(.separator())

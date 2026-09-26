@@ -20,12 +20,13 @@ extension DocSession {
         return r
     }
 
-    /// 同上，草稿纸那张画布（只有笔迹，没有注解）。
+    /// 同上，草稿纸那张画布（笔迹；画板笔记还有图片）。
     @discardableResult
     func scratchEdit<R>(_ label: String, kind: InkPatch.Kind, _ body: () -> R) -> R {
-        let s0 = scratchStrokes
+        let s0 = scratchStrokes, b0 = boardImages
         let r = body()
-        scratchUndo.record(label: label, kind: kind, strokesBefore: s0, strokesAfter: scratchStrokes)
+        scratchUndo.record(label: label, kind: kind, strokesBefore: s0, strokesAfter: scratchStrokes,
+                           boardImagesBefore: b0, boardImagesAfter: boardImages)
         return r
     }
 
@@ -56,10 +57,16 @@ extension DocSession {
     func applyScratchUndo(redo: Bool) -> Bool {
         guard let patch = scratchUndo.pop(redo: redo) else { return false }
         scratchUndo.whileApplying {
-            guard !patch.strokes.isEmpty else { return }
-            var arr = scratchStrokes
-            InkDelta.apply(patch.strokes, to: &arr, undo: !redo)
-            scratchStrokes = arr
+            if !patch.strokes.isEmpty {
+                var arr = scratchStrokes
+                InkDelta.apply(patch.strokes, to: &arr, undo: !redo)
+                scratchStrokes = arr
+            }
+            if !patch.boardImages.isEmpty {
+                var arr = boardImages
+                InkDelta.apply(patch.boardImages, to: &arr, undo: !redo)
+                boardImages = arr
+            }
         }
         return true
     }

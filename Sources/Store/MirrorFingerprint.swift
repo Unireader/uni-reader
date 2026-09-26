@@ -110,6 +110,18 @@ enum MirrorFp {
             Column("created_at", .text), Column("updated_at", .text),
             // `last_opened_at` 同 `document`：刻意不进指纹（翻开过一次就满屏「改过」）。
         ], lww: "updated_at"),
+        // v16：画板笔记（`BOARD-NOTE-PLAN.md §6`）。父表在前（`board_item.board_id` 指向它），两张都按
+        // `updated_at` 取新；`board_item` 一条一行，两边各加的笔迹 / 图自然并起来。
+        // `last_opened_at` 同 `document` / `md_doc`：刻意不进指纹。
+        TableSpec(table: "board_note", key: "id", columns: [
+            Column("id", .text), Column("title", .text), Column("bg", .text), Column("pattern", .text),
+            Column("group_name", .text), Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
+        TableSpec(table: "board_item", key: "id", columns: [
+            Column("id", .text), Column("board_id", .text), Column("kind", .int),
+            Column("x", .real), Column("y", .real), Column("w", .real), Column("h", .real),
+            Column("payload", .blob), Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),
         ]),

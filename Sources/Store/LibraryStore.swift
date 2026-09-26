@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 15
+    static let schemaVersion = 16
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -77,6 +77,9 @@ final class LibraryStore {
     /// 把一篇文档的全部行归档进 [path] 的新快照库。🔴 **归档成功之后才允许调 `deleteDocument`**。
     func archiveDocument(id: String, to path: String) throws -> TrashStore.Archived {
         try TrashStore.archiveDocument(db, documentId: id, to: path)
+    }
+    func archiveBoard(id: String, to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveBoard(db, boardId: id, to: path)
     }
 
     /// 把一个笔迹图层连同它那些笔画归档。判定与 `deleteInkStrokes` 同一套（默认层含无 `layerId` 的老行）。
@@ -224,6 +227,31 @@ final class LibraryStore {
           last_opened_at TEXT NOT NULL
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_md_doc_path ON md_doc(rel_path);
+        -- v16：画板笔记（`BOARD-NOTE-PLAN.md §2`，跨端契约）。工作区里一篇独立的无限白板，**不挂 document**。
+        -- 纸样两列与 scratch_pad 同语义；group_name 预留一级分组（同 document.group_name）。
+        -- 🔴 安卓模式1 在没有这两张表的库上会用**逐字相同**的语句补建（方案 §2.4），改这里必须同步 `Schema.kt`。
+        CREATE TABLE IF NOT EXISTS board_note (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL DEFAULT '',
+          bg TEXT NOT NULL DEFAULT 'rgba(255,255,255,1.0)',
+          pattern TEXT NOT NULL DEFAULT 'dots',
+          group_name TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_opened_at TEXT
+        );
+        -- 画板上的东西，一条一行（离线镜像按行合并）：kind 1 = 笔迹（payload 同草稿纸 kind=4，不带 padId）、
+        -- 2 = 图片（payload {image,caption,source}）。x/y/w/h = 画布坐标包围盒（左上原点，逻辑点）。
+        CREATE TABLE IF NOT EXISTS board_item (
+          id TEXT PRIMARY KEY,
+          board_id TEXT NOT NULL REFERENCES board_note(id) ON DELETE CASCADE,
+          kind INTEGER NOT NULL,
+          x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL,
+          payload BLOB NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_board_item_board ON board_item(board_id);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -253,6 +281,7 @@ final class LibraryStore {
         // 图片笔记复用 note 表（kind=6），故 note 也不用改结构。
         // v13 → v14 只新增 page_align 表（同上，无需 ALTER）。
         // v14 → v15 只新增 md_doc 表（同上，无需 ALTER）。Markdown 笔记正文在文件里，不动其它表。
+        // v15 → v16 只新增 board_note / board_item 两张表（同上，无需 ALTER）。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -744,6 +773,57 @@ final class LibraryStore {
         try db.run("DELETE FROM scratch_pad WHERE id=?", [.text(id)])
     }
 
+    // MARK: - 画板笔记（board_note / board_item，v16；`BOARD-NOTE-PLAN.md §2`）
+
+    /// 画板笔记里的图片条目 kind（同 `imageNoteKind`：引用计数的 SQL 要用）。
+    static let boardImageKind = 2
+
+    func boards() throws -> [LibBoard] {
+        try db.query("SELECT * FROM board_note ORDER BY COALESCE(last_opened_at, created_at) DESC").map(Self.board)
+    }
+    func board(id: String) throws -> LibBoard? {
+        try db.query("SELECT * FROM board_note WHERE id=?", [.text(id)]).map(Self.board).first
+    }
+    func upsertBoard(_ b: LibBoard) throws {
+        try db.run("""
+        INSERT INTO board_note(id,title,bg,pattern,group_name,created_at,updated_at,last_opened_at)
+        VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, bg=excluded.bg, pattern=excluded.pattern,
+          group_name=excluded.group_name, updated_at=excluded.updated_at, last_opened_at=excluded.last_opened_at
+        """, [.text(b.id), .text(b.title), .text(b.bg), .text(b.pattern), .text(b.groupName),
+              .text(ISO.string(b.createdAt)), .text(ISO.string(b.updatedAt)),
+              b.lastOpenedAt.map { .text(ISO.string($0)) } ?? .null])
+    }
+    /// 只记「最近打开」（不动 `updated_at`——打开不算改动，否则离线镜像会把没改过的画板当成改过）。
+    func touchBoardOpened(id: String, at: Date = .now) throws {
+        try db.run("UPDATE board_note SET last_opened_at=? WHERE id=?", [.text(ISO.string(at)), .text(id)])
+    }
+    /// 删一篇画板笔记，连同上面的全部条目（外键 CASCADE）。归档进回收站由上层先做。
+    func deleteBoard(id: String) throws {
+        try db.run("DELETE FROM board_note WHERE id=?", [.text(id)])
+    }
+    func boardItems(boardId: String) throws -> [LibBoardItem] {
+        try db.query("SELECT * FROM board_item WHERE board_id=? ORDER BY created_at ASC",
+                     [.text(boardId)]).map(Self.boardItem)
+    }
+    func boardItemCounts() throws -> [String: Int] {
+        let rows = try db.query("SELECT board_id, COUNT(*) FROM board_item GROUP BY board_id") { r in
+            (r.text(0), Int(r.int64(1)))
+        }
+        return Dictionary(rows, uniquingKeysWith: +)
+    }
+    func upsertBoardItem(_ i: LibBoardItem) throws {
+        try db.run("""
+        INSERT INTO board_item(id,board_id,kind,x,y,w,h,payload,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, x=excluded.x, y=excluded.y, w=excluded.w, h=excluded.h,
+          payload=excluded.payload, updated_at=excluded.updated_at
+        """, [.text(i.id), .text(i.boardId), .int(Int64(i.kind)),
+              .double(i.rect.origin.x), .double(i.rect.origin.y), .double(i.rect.width), .double(i.rect.height),
+              .blob(i.payload), .text(ISO.string(i.createdAt)), .text(ISO.string(i.updatedAt))])
+    }
+    func deleteBoardItem(id: String) throws { try db.run("DELETE FROM board_item WHERE id=?", [.text(id)]) }
+
     // MARK: - 图片本体（image，v13；`IMAGE-NOTE-PLAN.md §2~3`）
 
     /// 图片笔记的 note kind。定义在 Store 层而不是 App 层：引用计数是 SQL 算的，这个数字 DAO 自己要用。
@@ -770,21 +850,29 @@ final class LibraryStore {
         try db.run("DELETE FROM image WHERE sha256=?", [.text(sha256)])
     }
 
-    /// 每张图当前被几条图片笔记引用（**数出来的**：`note` kind=6 的 payload `image` 键）。没被引用的图不在结果里。
-    /// 图片笔记一篇文档几十条顶天，`json_extract` 这点开销可忽略。
+    /// 每张图当前被引用几次（**数出来的**：`note` kind=6 + `board_item` kind=2 的 payload `image` 键）。
+    /// 没被引用的图不在结果里。图片条目几十条顶天，`json_extract` 这点开销可忽略。
+    /// 🔴 画板上的图（v16）必须一起数，否则会被当成没人用、30 天后删掉（`BOARD-NOTE-PLAN.md §2.3`）。
     func imageRefCounts() throws -> [String: Int] {
         var out: [String: Int] = [:]
         for (sha, n) in try db.query("""
-        SELECT json_extract(payload, '$.image'), COUNT(*) FROM note WHERE kind=?
-        GROUP BY json_extract(payload, '$.image')
-        """, [.int(Int64(Self.imageNoteKind))], row: { r in (r.text(0), Int(r.int64(1))) }) where !sha.isEmpty {
+        SELECT img, COUNT(*) FROM (
+          SELECT json_extract(payload, '$.image') AS img FROM note WHERE kind=?
+          UNION ALL
+          SELECT json_extract(payload, '$.image') AS img FROM board_item WHERE kind=?
+        ) GROUP BY img
+        """, [.int(Int64(Self.imageNoteKind)), .int(Int64(Self.boardImageKind))],
+             row: { r in (r.text(0), Int(r.int64(1))) }) where !sha.isEmpty {
             out[sha] = n
         }
         return out
     }
     func imageRefCount(sha256: String) throws -> Int {
-        let r = try db.query("SELECT COUNT(*) FROM note WHERE kind=? AND json_extract(payload, '$.image')=?",
-                             [.int(Int64(Self.imageNoteKind)), .text(sha256)]) { r in Int(r.int64(0)) }
+        let r = try db.query("""
+        SELECT (SELECT COUNT(*) FROM note WHERE kind=? AND json_extract(payload, '$.image')=?)
+             + (SELECT COUNT(*) FROM board_item WHERE kind=? AND json_extract(payload, '$.image')=?)
+        """, [.int(Int64(Self.imageNoteKind)), .text(sha256),
+              .int(Int64(Self.boardImageKind)), .text(sha256)]) { r in Int(r.int64(0)) }
         return r.first ?? 0
     }
 
@@ -998,6 +1086,24 @@ final class LibraryStore {
                       showPage: (r["show_page"] as? Int64 ?? 0) != 0,
                       createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                       updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
+    private static func board(_ r: [String: Any]) -> LibBoard {
+        LibBoard(id: r["id"] as? String ?? "", title: r["title"] as? String ?? "",
+                 bg: r["bg"] as? String ?? "rgba(255,255,255,1.0)",
+                 pattern: r["pattern"] as? String ?? "dots",
+                 groupName: r["group_name"] as? String ?? "",
+                 createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                 updatedAt: ISO.date(r["updated_at"] as? String) ?? .now,
+                 lastOpenedAt: ISO.date(r["last_opened_at"] as? String))
+    }
+    private static func boardItem(_ r: [String: Any]) -> LibBoardItem {
+        LibBoardItem(id: r["id"] as? String ?? "", boardId: r["board_id"] as? String ?? "",
+                     kind: Int(r["kind"] as? Int64 ?? 0),
+                     rect: CGRect(x: r["x"] as? Double ?? 0, y: r["y"] as? Double ?? 0,
+                                  width: r["w"] as? Double ?? 0, height: r["h"] as? Double ?? 0),
+                     payload: r["payload"] as? Data ?? Data(),
+                     createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                     updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
     }
     private static func image(_ r: [String: Any]) -> LibImage {
         LibImage(sha256: r["sha256"] as? String ?? "", ext: r["ext"] as? String ?? "png",

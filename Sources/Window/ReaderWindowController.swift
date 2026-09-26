@@ -364,6 +364,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
         on(.newTabRequested) { $0.tabs.docPickerPresented = true }
         on(.newMarkdownNoteRequested) { $0.newMarkdownNote() }
+        on(.newBoardRequested) { $0.tabs.newBoard() }
         on(.importMarkdownRequested) { $0.importMarkdownFolder() }
         on(.openMarkdownNote) { c, note in
             guard let key = note.userInfo?["id"] as? String,
@@ -389,6 +390,31 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                 guard let self, self.tabs.owns(req.sessionID) else { return }
                 self.app.padOpenDocRequest = nil
                 _ = self.tabs.open(req.docId)
+            }
+            .store(in: &bag)
+
+        // 平板请求打开 / 新建画板笔记 → 在它跟随的那扇窗口里开标签（`BOARD-NOTE-PLAN.md §4.2`）
+        app.$padBoardRequest
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] req in
+                guard let self, self.tabs.owns(req.sessionID) else { return }
+                self.app.padBoardRequest = nil
+                let tab = req.boardID.map { self.tabs.openBoard($0) } ?? self.tabs.newBoard()
+                if let tab { self.app.padFollowBoardTab(tab.session) }
+            }
+            .store(in: &bag)
+
+        // 画板笔记增删改名 → 标签标题 / 被删的标签 / 平板的画板列表跟着变
+        workspace.$boards
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.tabs.syncWorkspaceSnapshot()
+                self.tabs.pruneMissingBoards()
+                self.app.broadcastBoards()
+                self.app.broadcastDocs()   // 标签名可能刚改
             }
             .store(in: &bag)
 

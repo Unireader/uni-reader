@@ -171,6 +171,15 @@ const canonical = [
   { type: "clip", op: "copy", page: 3, nx: 0, ny: 0, poly: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6] },
   { type: "clip", op: "cut", page: 0, nx: 0, ny: 0 },
   { type: "clip", op: "paste", page: 41, nx: 0.25, ny: 0.75 },
+  // —— 画板笔记（v16，PROTOCOL.md §4.8）——
+  { type: "boards", kind: 0, current: "", list: [] },
+  { type: "boards", kind: 2, current: "B-1",
+    list: [{ id: "B-1", title: "极限草稿" }, { id: "B-2", title: "Untitled" }] },
+  { type: "boards", kind: 1, current: "", list: [{ id: "B-1", title: "极限草稿" }] },
+  { type: "boardOpen", id: "B-2" },
+  { type: "boardAdd" },
+  { type: "boardImages", list: [] },
+  { type: "boardImages", list: [{ id: "I1", sha: "abcdef", x: -120.5, y: 40.25, w: 400, h: 300 }] },
 ];
 
 let pass = 0, fail = 0;

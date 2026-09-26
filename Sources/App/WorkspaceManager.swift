@@ -25,6 +25,8 @@ final class WorkspaceManager: ObservableObject {
     /// 由 `refreshNotes()` 重扫目录得到。
     /// 🔴 同上：**只许 `refreshNotes()` 写**。
     @Published var noteTrees: [NoteTreeSection] = []
+    /// 画板笔记列表（v16，按最近打开排序）。🔴 只许 `refreshBoards()` 写（放开是为了同模块扩展能写）。
+    @Published var boards: [BoardNote] = []
     @Published var lastError: String?
     /// 笔记源的外部改动监听与它的记账（`WorkspaceManager+Markdown` 的「盯外部改动」一节用；
     /// 扩展里放不了存储属性，故放这里）。🔴 同 `noteTrees`：只许那一节和 `refreshNotes()` 写。
@@ -302,6 +304,7 @@ final class WorkspaceManager: ObservableObject {
     func refresh() {
         documents = (try? store?.allDocuments()) ?? []
         refreshNotes()          // 笔记：重扫目录 + 与库对账 + 重建 `[[…]]` 索引
+        refreshBoards()
         refreshLocalFileFlags()
     }
 

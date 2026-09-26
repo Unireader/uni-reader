@@ -177,6 +177,15 @@ let canonical: [[String: Any]] = [
     ["type": "clip", "op": "copy", "page": 3, "nx": 0.0, "ny": 0.0, "poly": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]],
     ["type": "clip", "op": "cut", "page": 0, "nx": 0.0, "ny": 0.0],
     ["type": "clip", "op": "paste", "page": 41, "nx": 0.25, "ny": 0.75],
+    // —— 画板笔记（v16，PROTOCOL.md §4.8）：boards(0x52 S→C) / boardOpen(0x53) / boardAdd(0x54) / boardImages(0x55 S→C) ——
+    ["type": "boards", "kind": 0, "current": "", "list": [[String: Any]]()],
+    ["type": "boards", "kind": 2, "current": "B-1",
+     "list": [["id": "B-1", "title": "极限草稿"], ["id": "B-2", "title": "Untitled"]]],
+    ["type": "boards", "kind": 1, "current": "", "list": [["id": "B-1", "title": "极限草稿"]]],
+    ["type": "boardOpen", "id": "B-2"],
+    ["type": "boardAdd"],
+    ["type": "boardImages", "list": [[String: Any]]()],
+    ["type": "boardImages", "list": [["id": "I1", "sha": "abcdef", "x": -120.5, "y": 40.25, "w": 400.0, "h": 300.0]]],
 ]
 
 var pass = 0, fail = 0

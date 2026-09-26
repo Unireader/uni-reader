@@ -46,6 +46,14 @@ final class AppModel: ObservableObject {
         let on: Bool
     }
     @Published var padCanvasRequest: PadCanvasRequest?
+    /// 平板请求打开 / 新建画板笔记（`boardOpen` / `boardAdd` 上行，`BOARD-NOTE-PLAN.md §4.2`）：
+    /// 由 `sessionID` 那扇窗口认领（在那扇窗口里开标签）。`boardID == nil` = 新建一篇。
+    struct PadBoardRequest: Equatable {
+        let id = UUID()
+        let sessionID: UUID
+        let boardID: UUID?
+    }
+    @Published var padBoardRequest: PadBoardRequest?
     /// 平板发起 `openDoc` 后等待就位的库文档 id：新窗口装好它就把平板锁过去（见 `sessionDocumentChanged`）。
     private var pendingPadFollowDocId: String?
     /// `library`/`toc` 广播去重签名（内容没变就不重发，同 `pushedLayoutKey`）。
@@ -179,6 +187,7 @@ final class AppModel: ObservableObject {
                     self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)
                     self?.broadcastBookmarks()
                     self?.broadcastScratchPads(); self?.broadcastScratchStrokes()
+                    self?.broadcastBoards(); self?.broadcastBoardImages()
                     self?.broadcastCanvas()   // 画板模式：新起的服务也要把当前状态交代一遍
                 }
             }
@@ -197,6 +206,7 @@ final class AppModel: ObservableObject {
                 self?.broadcastLibrary(force: true); self?.broadcastTOC(force: true)   // 新客户端要补书库 + 目录
                 self?.broadcastBookmarks()                                             // 书签与目录合并显示，一起补
                 self?.broadcastScratchPads(); self?.broadcastScratchStrokes()          // 草稿纸列表 + 开着那张的笔迹
+                self?.broadcastBoards(); self?.broadcastBoardImages()                  // 画板笔记列表 + 跟随会话类型 + 画板上的图
                 // 画板模式（PROTOCOL.md `canvas`）：Mac 是唯一真源，但只在切开关/跳档时广播 ——
                 // 新客户端不补这一发就永远收不到（`pushStrokesIfDocChanged` 那处被 pushedStrokesKey
                 // 挡住，同一本书不会再触发）。表现：Mac 开着画板，平板/安卓模式2 连上来仍是页宽布局，
@@ -240,6 +250,11 @@ final class AppModel: ObservableObject {
         // 方案 B：平板按需取任意页图（带缓存，服务 queue 上调用）。
         server.pageProvider = { [weak self] req in self?.renderPage(req) }
         server.docMetaProvider = { [weak self] id in self?.refDocMeta(id) }
+        server.imageProvider = { [weak self] sha in
+            guard let self else { return nil }
+            self.renderLock.lock(); defer { self.renderLock.unlock() }
+            return self.boardImageFiles[sha]
+        }
 
         // 方案 B：平板本地滚动 → 落为平板当前会话的锚点（origin=pad），驱动 Mac PDFView 跟随。
         server.onScroll = { [weak self] page, frac, t in
@@ -315,6 +330,12 @@ final class AppModel: ObservableObject {
     /// 库文档 id → 路径/哈希/标题/进度。主线程注入（`WorkspaceManager` 是 `@MainActor`，
     /// 服务 queue 够不着它），由 `push()` 顺带从会话快照捎带过来。
     private var refIndex: [String: RefDocInfo] = [:]
+    /// 平板 `/image?h=` 能取的图：当前跟随的画板上的那几张（sha → 文件）。主线程注入、服务 queue 读，
+    /// 同 `refIndex` 用 `renderLock` 护着（`AppModel+Board.broadcastBoardImages` 写）。
+    private var boardImageFiles: [String: URL] = [:]
+    func setBoardImageFiles(_ m: [String: URL]) {
+        renderLock.lock(); boardImageFiles = m; renderLock.unlock()
+    }
 
     /// 服务 queue 上按 id 取参考文档的渲染实例。**必须在 `renderLock` 内调用。**
     private func refDocLocked(_ docId: String) -> (PDFDocument?, String, ScanAlignTable?) {
@@ -541,6 +562,11 @@ final class AppModel: ObservableObject {
             applyScratchDelete(obj, to: s)
         case "scratchRename":
             applyScratchRename(obj, to: s)
+        // 画板笔记（`BOARD-NOTE-PLAN.md §4.2`）：请 Mac 在跟随的那扇窗口里开 / 新建。
+        case "boardOpen":
+            applyBoardOpen(obj)
+        case "boardAdd":
+            applyBoardAdd()
         default:
             break
         }
@@ -1269,6 +1295,7 @@ final class AppModel: ObservableObject {
         broadcastDocs()
         broadcastLibrary(); broadcastTOC(); broadcastBookmarks()   // 接班会话可能属于另一个工作区、装着另一本书
         broadcastScratchPads(); broadcastScratchStrokes()   // 草稿纸挂文档，换会话即换一整套
+        broadcastBoards(); broadcastBoardImages()
         releasePadRenderIfUnused()           // 被关掉的那本若已无人在看 → 放掉平板那份 PDF 副本
     }
 
@@ -1284,6 +1311,7 @@ final class AppModel: ObservableObject {
         if followedSwitched {
             broadcastLibrary(); broadcastTOC(); broadcastBookmarks()                   // 跟随模式换窗口 = 可能换工作区/换书
             broadcastScratchPads(); broadcastScratchStrokes()    // …连草稿纸也是另一篇文档的那套
+            broadcastBoards(); broadcastBoardImages()            // …以及跟随的是不是画板
         }
     }
 
@@ -1299,6 +1327,8 @@ final class AppModel: ObservableObject {
         push()
         broadcastDocs()
         broadcastLibrary(); broadcastTOC(); broadcastBookmarks()   // 换会话 = 可能换工作区、必然可能换书
+        broadcastScratchPads(); broadcastScratchStrokes()          // 草稿纸挂会话（画板会话里那张纸永远开着）
+        broadcastBoards(); broadcastBoardImages()
         pushCurrentViewport()   // 平板切文档后落到该文档在 Mac 端的当前进度
     }
 
@@ -1331,6 +1361,10 @@ final class AppModel: ObservableObject {
         broadcastLibrary()
         broadcastTOC()
         broadcastBookmarks()   // 换文档 = 换一套书签
+        if s.id == padSession?.id {
+            broadcastScratchPads(); broadcastScratchStrokes()   // 换成 / 换走画板时草稿纸那套整体换
+            broadcastBoards(); broadcastBoardImages()
+        }
     }
 
     /// 广播「平板跟随的那个窗口所属工作区」的书库给平板（平板据此打开尚未打开的文档）。

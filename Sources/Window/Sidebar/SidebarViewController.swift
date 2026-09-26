@@ -212,6 +212,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             sec.children = Self.noteChildren(section.source, section.root)
             r.append(sec)
         }
+        // 画板笔记（v16）：一段，按最近打开排序。**空的时候也列出段头**——新建入口就在段头右键上。
+        let boardSec = SidebarNode(kind: .boardSection)
+        boardSec.children = workspace.boards.map { SidebarNode(kind: .board($0)) }
+        r.append(boardSec)
         let keep = selectedRowIDs()
         roots = r
         syncingSelection = true
@@ -327,6 +331,23 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                             tip: here ? note.ref.relPath : L("The note file is missing."))
         case .noteFolder(_, let folder):
             return iconCell(symbol: "folder", title: folder.name, subtitle: nil, dim: false, tip: folder.path)
+        case .board(let b):
+            return iconCell(symbol: "scribble.variable", title: b.displayName, subtitle: nil, dim: false, tip: nil)
+        case .boardSection:
+            let cell = NSTableCellView()
+            let t = NSTextField(labelWithString: L("Boards"))
+            t.font = .preferredFont(forTextStyle: .subheadline)
+            t.textColor = .secondaryLabelColor
+            t.toolTip = L("Right-click to create a board")
+            t.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(t)
+            cell.textField = t
+            NSLayoutConstraint.activate([
+                t.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                t.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+                t.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
         case .noteSection(let source, let folder):
             // 段头：内建源就叫「笔记」，引用源多一枚链接图标 + 完整路径当提示
             let cell = NSTableCellView()
@@ -417,6 +438,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         syncingSelection = true
         if id.hasPrefix("md:"), let ref = NoteRef(key: String(id.dropFirst(3))) {
             tabs.openMarkdown(ref)
+        } else if id.hasPrefix(BoardNote.rowPrefix) {
+            if let bid = UUID(uuidString: String(id.dropFirst(BoardNote.rowPrefix.count))) { tabs.openBoard(bid) }
         } else if !id.hasPrefix("md:") {
             _ = tabs.open(id)
         }
@@ -466,6 +489,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             buildNoteMenu(menu, note: note)
         case .noteSection(let source, _):
             buildNoteSectionMenu(menu, source: source)
+        case .boardSection:
+            menu.addItem(ClosureMenuItem(L("New Board")) { [weak self] in self?.tabs.newBoard() })
+        case .board(let b):
+            buildBoardMenu(menu, board: b)
         case .noteFolder(let source, let folder):
             menu.addItem(ClosureMenuItem(L("New Note Here")) { [weak self] in
                 guard let self, let ref = self.workspace.createNote(title: L("Untitled Note"),
@@ -515,6 +542,48 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             self.workspace.deleteNote(note.ref)
             for t in self.tabs.tabs { t.closeMarkdownIfGone() }
         })
+    }
+
+    /// 画板笔记的右键菜单：新建 / 改名 / 删除（进回收站，可从「文件 › 最近删除」恢复）。
+    private func buildBoardMenu(_ m: NSMenu, board b: BoardNote) {
+        m.addItem(ClosureMenuItem(L("New Board")) { [weak self] in self?.tabs.newBoard() })
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem(L("Rename…")) { [weak self] in
+            self?.textPrompt(title: L("Rename Board"), placeholder: L("Board name"), initial: b.title) { name in
+                self?.renameBoard(b.id, to: name)
+            }
+        })
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem(L("Delete…")) { [weak self] in
+            guard let self else { return }
+            let a = NSAlert()
+            a.messageText = String(format: L("Delete “%@”?"), b.displayName)
+            a.informativeText = L("They go to Recently Deleted and can be put back from File ▸ Recently Deleted.")
+            let del = a.addButton(withTitle: L("Delete"))
+            del.hasDestructiveAction = true
+            a.addButton(withTitle: L("Cancel"))
+            let finish: (NSApplication.ModalResponse) -> Void = { [weak self] resp in
+                guard let self, resp == .alertFirstButtonReturn else { return }
+                // 开着它的标签先把没落库的结清，再归档 → 删除（顺序见 `trashBoard`）
+                for t in self.tabs.tabs where t.boardID == b.id { t.flushPersist() }
+                self.workspace.trashBoard(id: b.id)
+            }
+            if let win = self.view.window { a.beginSheetModal(for: win, completionHandler: finish) } else { finish(a.runModal()) }
+        })
+    }
+
+    /// 改名：开着它的标签里那张「纸」的名字是会话里的真源（落库时会写回），所以两边都改。
+    private func renameBoard(_ id: UUID, to name: String) {
+        let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var touched = false
+        for tab in tabs.tabs where tab.session.board?.id == id {
+            if let i = tab.session.scratchPads.firstIndex(where: { $0.id == id }), tab.session.scratchPads[i].title != t {
+                tab.session.scratchPads[i].title = t
+                tab.session.scratchPads[i].updatedAt = .now
+            }
+            touched = true
+        }
+        if !touched { workspace.renameBoard(id: id, title: t) }
     }
 
     /// 笔记段头的右键菜单：新建、在访达里显示；引用源还能改名 / 取消引用。
@@ -911,6 +980,9 @@ final class SidebarNode: NSObject {
         case noteFolder(source: NoteRoot, folder: NoteFolder)
         /// 一个笔记源的段头（内建 `Notes/` 或引用进来的外部目录）。
         case noteSection(source: NoteRoot, folder: NoteFolder)
+        /// 画板笔记（v16，`BOARD-NOTE-PLAN.md`）与它们的段头。
+        case board(BoardNote)
+        case boardSection
     }
     let kind: Kind
     var children: [SidebarNode] = []
@@ -919,19 +991,24 @@ final class SidebarNode: NSObject {
 
     var isSection: Bool {
         switch kind {
-        case .section, .noteSection: return true
+        case .section, .noteSection, .boardSection: return true
         default: return false
         }
     }
     /// 展开后默认摊开的层（段头与子目录）。
     var isExpandable: Bool {
         switch kind {
-        case .section, .noteSection, .noteFolder: return true
+        case .section, .noteSection, .noteFolder, .boardSection: return true
         default: return false
         }
     }
     var docID: String? { if case .doc(let d) = kind { return d.id } else { return nil } }
     var note: NoteItem? { if case .md(let n) = kind { return n } else { return nil } }
-    /// 选中键（两类条目在同一张表里，得能区分）。与 `DocTabModel.rowID` 同口径。
-    var rowID: String? { note.map { "md:" + $0.ref.key } ?? docID }
+    var board: BoardNote? { if case .board(let b) = kind { return b } else { return nil } }
+    /// 选中键（三类条目在同一张表里，得能区分）。与 `DocTabModel.rowID` 同口径。
+    var rowID: String? {
+        if let n = note { return "md:" + n.ref.key }
+        if let b = board { return BoardNote.rowPrefix + b.id.uuidString }
+        return docID
+    }
 }

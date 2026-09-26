@@ -210,6 +210,15 @@ canvas { position:fixed; inset:0; }
 #padbar button.on { background:#1f6feb; color:#fff; }
 #padbar button svg { width:18px; height:18px; display:block; }
 #padName { padding:0 8px; max-width:38vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 画板笔记（v16）：工具条上的行内改名框 + Mac 在看 Markdown 笔记时的空状态 */
+#boardNameInput { width:160px; padding:6px 8px; border-radius:6px; border:1px solid #30363d;
+  background:#0d1117; color:#e6edf3; font:inherit; }
+#mdEmpty { position:fixed; left:0; right:0; top:46px; bottom:0; z-index:11;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+  background:#0d1117; color:#e6edf3; text-align:center; padding:0 24px;
+  font:15px/1.5 -apple-system,'PingFang SC',system-ui,sans-serif; }
+#mdEmpty .mt { font-size:18px; font-weight:600; }
+#mdEmpty .md { color:#c9d1d9; max-width:420px; }
 #padListMask { position:fixed; inset:0; z-index:19; margin:0; padding:0; border:0; background:transparent; cursor:default; }
 #padlist { position:fixed; right:8px; top:52px; z-index:20; width:240px; max-height:60vh; overflow:auto;
   padding:6px; border:1px solid #30363d; border-radius:10px; background:rgba(22,27,34,.96); color:#e6edf3;

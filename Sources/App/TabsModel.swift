@@ -99,7 +99,7 @@ final class TabsModel: ObservableObject {
             activate(hit.id)
             return hit
         }
-        if active.docID == nil && active.noteRef == nil {
+        if active.isEmptyTab {
             active.select(docID)
             persist()
             return active
@@ -117,7 +117,7 @@ final class TabsModel: ObservableObject {
             activate(hit.id)
             return hit
         }
-        if active.docID == nil && active.noteRef == nil {
+        if active.isEmptyTab {
             active.openMarkdown(ref)
             persist()
             return active
@@ -129,6 +129,44 @@ final class TabsModel: ObservableObject {
         activate(t.id)
         persist()
         return t
+    }
+
+    /// 开一篇画板笔记（v16，`BOARD-NOTE-PLAN.md §3.1`）。规矩同上：开着就切过去，当前标签空着就就地开，
+    /// 否则新开一个标签。
+    @discardableResult
+    func openBoard(_ id: UUID) -> DocTabModel {
+        if let hit = tabs.first(where: { $0.boardID == id }) {
+            activate(hit.id)
+            return hit
+        }
+        if active.isEmptyTab {
+            active.openBoard(id)   // 装载末尾自己会 `setActive`（活动标签）
+            persist()
+            return active
+        }
+        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
+        tabs.append(t)
+        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
+        t.openBoard(id)
+        activate(t.id)
+        persist()
+        return t
+    }
+
+    /// 新建一篇画板笔记并打开（侧栏「＋」/ 菜单 / 平板 `boardAdd`）。
+    @discardableResult
+    func newBoard() -> DocTabModel? {
+        guard let b = workspace.createBoard() else { return nil }
+        return openBoard(b.id)
+    }
+
+    /// 画板被删掉 / 镜像合并掉 → 开着它的标签退回空态（只剩一个标签时不关，同 `pruneMissing`）。
+    func pruneMissingBoards() {
+        let live = Set(workspace.boards.map(\.id))
+        for t in tabs where t.boardID != nil && !live.contains(t.boardID!) {
+            if tabs.count > 1 { close(t.id) } else { t.closeBoardIfGone() }
+        }
+        persist()
     }
 
     /// 标签栏的 `+` / ⌘T 不再开空标签，而是弹本工作区的选文档弹窗（`DocPickerView`，用户 2026-09-17 定），
@@ -265,11 +303,13 @@ final class TabsModel: ObservableObject {
     private enum StoredTab: Equatable {
         case pdf(String)
         case markdown(NoteRef)
+        case board(UUID)
 
         var key: String {
             switch self {
             case .pdf(let id): return "pdf:" + id
             case .markdown(let ref): return "md:" + ref.key
+            case .board(let id): return BoardNote.rowPrefix + id.uuidString
             }
         }
 
@@ -278,6 +318,9 @@ final class TabsModel: ObservableObject {
                 let id = String(key.dropFirst(4))
                 guard !id.isEmpty else { return nil }
                 self = .pdf(id)
+            } else if key.hasPrefix(BoardNote.rowPrefix),
+                      let id = UUID(uuidString: String(key.dropFirst(BoardNote.rowPrefix.count))) {
+                self = .board(id)
             } else if key.hasPrefix("md:"),
                       let ref = NoteRef(key: String(key.dropFirst(3))) {
                 self = .markdown(ref)
@@ -289,6 +332,7 @@ final class TabsModel: ObservableObject {
 
     private func storedTab(_ tab: DocTabModel) -> StoredTab? {
         if let ref = tab.noteRef { return .markdown(ref) }
+        if let id = tab.boardID { return .board(id) }
         if let id = tab.docID { return .pdf(id) }
         return nil
     }
@@ -297,6 +341,7 @@ final class TabsModel: ObservableObject {
         switch item {
         case .pdf(let id): return workspace.document(id: id) != nil
         case .markdown(let ref): return workspace.note(ref: ref) != nil
+        case .board(let id): return workspace.boards.contains { $0.id == id }
         }
     }
 
@@ -346,7 +391,7 @@ final class TabsModel: ObservableObject {
         // Markdown 没有 PDF 装载成本，只把 `noteRef` 放进标签；编辑器仍只为活动标签创建。
         for item in restoring {
             let target: DocTabModel
-            if active.docID == nil && active.noteRef == nil && tabs.count == 1 {
+            if active.isEmptyTab && tabs.count == 1 {
                 target = active
             } else {
                 target = appendTab(docID: nil)
@@ -354,6 +399,7 @@ final class TabsModel: ObservableObject {
             switch item {
             case .pdf(let id): target.stage(id)
             case .markdown(let ref): target.stageMarkdown(ref)
+            case .board(let id): target.stageBoard(id)
             }
         }
         if let wantActive, restoring.contains(wantActive),

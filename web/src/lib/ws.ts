@@ -148,6 +148,9 @@ export function initWs(): void {
     else if (o.type === "noteNew") { openNoteAt(o); }
     // 当前那张纸上的全量笔迹（画布坐标，与页内笔迹不是一套坐标系，见 PROTOCOL.md §4.4）。
     else if (o.type === "scratchStrokes") { G.applyScratchStrokes(o); }
+    // 画板笔记（v16，PROTOCOL.md §4.8）：列表 + 跟随的会话类型 / 画板上的图。
+    else if (o.type === "boards") { G.applyBoards(o); }
+    else if (o.type === "boardImages") { G.applyBoardImages(o); }
     // 旧 `page` 消息在方案 B 下忽略（布局改由 layout 驱动）。
   }
 

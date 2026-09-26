@@ -101,6 +101,12 @@ export const S = $state({
   padShowPage: false,      // 当前那张纸是否垫着锚定页（v10，工具条按钮激活态回显）
   padRenaming: -1,         // 列表里正在改名的是第几张（-1 = 没有；行内输入框）
   padDeleting: -1,         // 列表里正在等确认删除的是第几张（-1 = 没有；两步删，防误触）
+  // ---- 画板笔记（v16，PROTOCOL.md §4.8；Mac `boards` 广播镜像）----
+  boardKind: 0,            // Mac 跟随的会话：0 PDF / 1 Markdown 笔记 / 2 画板笔记
+  boardCurrent: "",        // kind=2 时是哪一篇
+  boards: [] as { id: string; title: string }[],   // 当前工作区的画板笔记（按最近打开排序，标题已兜底）
+  boardList: false,        // 画板笔记列表弹层开关
+  boardRenaming: false,    // 工具条上正在改画板名（行内输入框）
   // ---- 参考窗（只读小窗，`../../REF-WINDOW-PLAN.md`）----
   // 🔴 **整组都是本端私有**：不落库、不上线（开着没有 / 看的哪本 / 滚到哪，都没有跨端真源可言）。
   // 位置与尺寸另存 localStorage，见 RefWindow.svelte。

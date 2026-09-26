@@ -56,6 +56,9 @@ final class LANServer: ObservableObject {
     var pageProvider: ((PageImageRequest) -> Data?)?
     /// 参考窗要的文档元信息 JSON（库文档 id → 页尺寸表/页数/进度）。同样在服务 queue 上调用。
     var docMetaProvider: ((String) -> Data?)?
+    /// 画板笔记上的图（`/image?h=<sha>`，`PROTOCOL.md §4.8`）：sha → 图片文件。同样在服务 queue 上调用，
+    /// 只认 App 这边登记过的 sha（不拿请求里的字符串拼路径）。
+    var imageProvider: ((String) -> URL?)?
 
     /// 一次页图请求（`/page.png` 的 query 解析结果）。
     struct PageImageRequest {
@@ -281,6 +284,21 @@ final class LANServer: ObservableObject {
                 return ("404 Not Found", "text/plain; charset=utf-8", Data("no doc".utf8))
             }
             return ("200 OK", "application/json; charset=utf-8", data)
+        case "/image":
+            // 画板笔记上的图（v16）：按内容 sha 取原文件。只给 App 登记过的 sha（当前跟随的画板上的图），
+            // 与 `/page.png` 同级不校验 token。
+            guard let sha = query["h"], !sha.isEmpty, let url = imageProvider?(sha),
+                  let data = try? Data(contentsOf: url), !data.isEmpty else {
+                return ("404 Not Found", "text/plain; charset=utf-8", Data("no image".utf8))
+            }
+            let type: String
+            switch url.pathExtension.lowercased() {
+            case "jpg", "jpeg": type = "image/jpeg"
+            case "gif": type = "image/gif"
+            case "webp": type = "image/webp"
+            default: type = "image/png"
+            }
+            return ("200 OK", type, data)
         case "/health":
             return ("200 OK", "text/plain; charset=utf-8", Data("ok".utf8))
         case "/info":

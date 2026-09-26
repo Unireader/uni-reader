@@ -117,6 +117,12 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   修改正文可以写；不自动修链接。
   `md_doc`（v15）只是内建源的**扫描缓存**，真源永远是文件
 
+- **`BOARD-NOTE-PLAN.md`** — 画板笔记（v16，2026-09-24 拍板、09-26 四端落地）：工作区里一篇**独立的无限白板**
+  （不挂 PDF），占一个标签页；表 `board_note` + `board_item`（kind 1 笔迹 / 2 图片）。🔴 **运行时 = 会话里一张永远开着的
+  草稿纸**（`session.board` + `scratchPads = [board.asPad]` + `openPadID = board.id`），草稿纸整条链路原样复用，
+  落库由 `DocTabModel+Board` 改写到新表；协议只多 `boards` / `boardOpen` / `boardAdd` / `boardImages`（0x52~0x55）+
+  `GET /image`。代码 / 协议里一律叫 **board**——`canvas` 已是 PDF「画板模式」（页边可写）。§8 是实现记录
+
 ### 子目录可以自带 AGENTS.md（`android/` 就是这么做的）
 
 `android/` 是**独立 git 仓库**（根仓库 `.gitignore` 忽略了它，安卓改动在那边单独提交），所以安卓端的规则

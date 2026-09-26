@@ -23,7 +23,8 @@
     bookmarks: 0x4D, bookmarkEdit: 0x4E,   // 书签（REQUIREMENTS.md §1.9）
     undo: 0x4F,                            // 撤销/重做（栈在 Mac，PROTOCOL.md §4.1）
     nack: 0x50,
-    clip: 0x51                             // 剪切/复制/粘贴（剪贴板在 Mac）
+    clip: 0x51,                            // 剪切/复制/粘贴（剪贴板在 Mac）
+    boards: 0x52, boardOpen: 0x53, boardAdd: 0x54, boardImages: 0x55   // 画板笔记（v16，PROTOCOL.md §4.8）
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
@@ -295,6 +296,26 @@
         // 改第 index 张纸的名字（0x49，C→S）。空串 = 回到「草稿纸 N」兜底名。
         w.u8(OP.scratchRename); w.u16(o.index || 0); w.str(o.title || "");
         break;
+      // 画板笔记（v16，PROTOCOL.md §4.8）
+      case "boards": {
+        // kind：0=PDF（或空标签）1=Markdown 笔记 2=画板笔记；current = kind=2 时是哪一篇
+        w.u8(OP.boards); w.u8(o.kind || 0); w.str(o.current || "");
+        var BL = o.list || []; w.u16(BL.length);
+        for (var bl = 0; bl < BL.length; bl++) { w.str(BL[bl].id || ""); w.str(BL[bl].title || ""); }
+        break;
+      }
+      case "boardOpen": w.u8(OP.boardOpen); w.str(o.id || ""); break;
+      case "boardAdd": w.u8(OP.boardAdd); break;
+      case "boardImages": {
+        w.u8(OP.boardImages);
+        var BI = o.list || []; w.u16(BI.length);
+        for (var bi = 0; bi < BI.length; bi++) {
+          var im = BI[bi];
+          w.str(im.id || ""); w.str(im.sha || "");
+          w.f32(im.x || 0); w.f32(im.y || 0); w.f32(im.w || 0); w.f32(im.h || 0);
+        }
+        break;
+      }
       case "noteNew":
         // Mac 在环形盘提交「新建文字笔记」后下发（0x3F，S→C）：平板在该页内锚点打开编辑器。
         w.u8(OP.noteNew); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
@@ -509,6 +530,22 @@
         return { type: "scratchDelete", index: r.u16() };
       case OP.scratchRename:
         return { type: "scratchRename", index: r.u16(), title: r.str() };
+      case OP.boards: {
+        var bdKind = r.u8(), bdCur = r.str(), bdn = r.u16(), bdl = new Array(bdn);
+        for (var bdi = 0; bdi < bdn; bdi++) { var bdId = r.str(); bdl[bdi] = { id: bdId, title: r.str() }; }
+        return { type: "boards", kind: bdKind, current: bdCur, list: bdl };
+      }
+      case OP.boardOpen: return { type: "boardOpen", id: r.str() };
+      case OP.boardAdd: return { type: "boardAdd" };
+      case OP.boardImages: {
+        var bin = r.u16(), bil = new Array(bin);
+        for (var bii = 0; bii < bin; bii++) {
+          var biId = r.str(), biSha = r.str();
+          var bx = r.f32(), by = r.f32(), bw = r.f32(), bh = r.f32();
+          bil[bii] = { id: biId, sha: biSha, x: bx, y: by, w: bw, h: bh };
+        }
+        return { type: "boardImages", list: bil };
+      }
       case OP.noteNew:
         return { type: "noteNew", page: r.u32(), nx: r.f32(), ny: r.f32() };
       case OP.inkCancel: return { type: "inkCancel" };

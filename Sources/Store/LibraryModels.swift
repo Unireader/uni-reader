@@ -110,6 +110,31 @@ struct LibScratchPad: Identifiable, Equatable {
     var updatedAt: Date
 }
 
+/// 一篇画板笔记（`board_note` 表，v16，`BOARD-NOTE-PLAN.md §2`）。独立于 PDF，挂在工作区。
+/// 纸样 `bg` / `pattern` 与 `LibScratchPad` 同语义。`lastOpenedAt` 只给侧栏排序（打开不改 `updatedAt`）。
+struct LibBoard: Identifiable, Equatable {
+    var id: String              // UUID
+    var title: String
+    var bg: String
+    var pattern: String
+    var groupName: String
+    var createdAt: Date
+    var updatedAt: Date
+    var lastOpenedAt: Date?
+}
+
+/// 画板笔记上的一条东西（`board_item` 表，v16）：kind 1 = 笔迹、2 = 图片。
+/// `rect` = 画布坐标包围盒（逻辑点，左上原点）；`payload` = JSON（笔迹同草稿纸 kind=4 的 payload，图片见方案 §2.3）。
+struct LibBoardItem: Identifiable, Equatable {
+    var id: String              // UUID
+    var boardId: String
+    var kind: Int
+    var rect: CGRect
+    var payload: Data
+    var createdAt: Date
+    var updatedAt: Date
+}
+
 /// 一张图片本体（`image` 表，v13）。**主键就是内容 SHA-256**：同一张图导两次只有一行一文件；
 /// 两端各自导入同一张图在离线镜像合并时也天然合一。文件在 `<工作区>/Images/<sha256>.<ext>`。
 /// 引用 = `note` 表 kind=6 的 payload 里 `image` 键指向这里，**不存计数列**（数出来的永远对，
