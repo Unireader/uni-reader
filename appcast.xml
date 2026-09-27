@@ -9,6 +9,34 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.1</title>
+      <pubDate>Sun, 27 Sep 2026 02:44:17 +0000</pubDate>
+      <sparkle:version>42</sparkle:version>
+      <sparkle:shortVersionString>0.3.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能和改进</h4>
+<ul>
+<li>新增「书写锁定」：打开后只能在当前这支笔和橡皮之间切换，不会误切到别的笔。可以在笔架上的锁形开关、菜单或快捷键 ⌥⌘L 开关，平板上的开关与 Mac 同步。</li>
+<li>新增「相对粗细」模式：开启后，落笔时按当前缩放折算笔的粗细——放大后写字，缩回原尺寸看，粗细和放大前一致。笔架上和笔的编辑面板里都能开关，平板与 Mac 同步。</li>
+<li>画板会记住上次看到的位置和缩放，重新打开时回到离开时的地方，而不是画布原点。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.1">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New features &amp; improvements</h4>
+<ul>
+<li>New Writing Lock: while it's on, you can only switch between the current pen and the eraser, so you won't pick another pen by accident. Toggle it from the lock switch on the pen rack, the menu, or ⌥⌘L; the setting stays in sync with the tablet.</li>
+<li>New Relative ink width: when on, pen thickness is scaled to the current zoom as you write — write zoomed in, and it looks the same once you zoom back out. Toggle it on the pen rack or in the pen editor; the setting stays in sync with the tablet.</li>
+<li>Boards remember where you left off: reopening a board returns to the last position and zoom instead of the canvas origin.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.1">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.1/UniReader-0.3.1.zip" length="13601431" type="application/octet-stream" sparkle:edSignature="Vw1mY8s9Tf2SnQkfNgx8e+LrD7KHo8nmMF3ChaRjUr+bpAll7xYrsvjfRHDNJ0+zfMyQW8rIxHXgUT472AUwCA==" />
+    </item>
+    <item>
       <title>v0.3.0</title>
       <pubDate>Sat, 26 Sep 2026 15:04:01 +0000</pubDate>
       <sparkle:version>41</sparkle:version>
