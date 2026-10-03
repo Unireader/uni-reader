@@ -9,6 +9,32 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.2</title>
+      <pubDate>Sat, 03 Oct 2026 10:45:52 +0000</pubDate>
+      <sparkle:version>43</sparkle:version>
+      <sparkle:shortVersionString>0.3.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能和改进</h4>
+<ul>
+<li>Agent 读取页面文字、搜索、添加高亮和笔记时，改为优先使用 UniReader 自己的 OCR 识别结果，没有识别过的页才用 PDF 自带的文字。扫描版书籍自带的文字常有错字、位置也不准；现在 Agent 加的高亮和你手动划的一样贴合文字，不会再高出一截、压到上下行。</li>
+<li>Agent 现在可以删除高亮、文字笔记、书签和图片笔记（需要在「设置 ▸ Agent」里打开「允许 Agent 写入」）。Agent 一次删掉的内容会作为一条记录进回收站，可以从「文件 ▸ 回收站」放回来；放回时那篇文档如果正开着，会立刻显示出来。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.2">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New features &amp; improvements</h4>
+<ul>
+<li>When an agent reads page text, searches, or adds highlights and notes, it now uses UniReader's own OCR text first, and the PDF's built-in text only on pages that haven't been recognized. The built-in text in scanned books often has typos and inaccurate positions; highlights added by an agent now fit the text just like the ones you make by hand, instead of spilling onto the lines above and below.</li>
+<li>Agents can now delete highlights, text notes, bookmarks and image notes (turn on "Allow agents to write" in Settings ▸ Agent). Everything an agent deletes in one go becomes a single item in Recently Deleted, which you can put back from File ▸ Recently Deleted; if that document is open, the restored items show up right away.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.2">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.2/UniReader-0.3.2.zip" length="13547334" type="application/octet-stream" sparkle:edSignature="y5/qmnWYRkJBMzQnre+IYI73kKmxCV8EGeEKIIC4N3odCit333cVpk774W55sWFx5DK78xWu5hsEegn69woPBw==" />
+    </item>
+    <item>
       <title>v0.3.1</title>
       <pubDate>Sun, 27 Sep 2026 02:44:17 +0000</pubDate>
       <sparkle:version>42</sparkle:version>
