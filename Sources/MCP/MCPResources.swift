@@ -28,7 +28,7 @@ enum MCPResources {
         ["uriTemplate": "unireader://doc/{document_id}/toc", "name": "Document outline", "mimeType": "application/json",
          "description": "Outline tree with 1-based pages."],
         ["uriTemplate": "unireader://doc/{document_id}/page/{page}", "name": "Page text", "mimeType": "text/plain",
-         "description": "Text of one page (PDF text, or cached OCR text for scanned pages)."],
+         "description": "Text of one page (cached OCR text, or the PDF's own text where there is none)."],
         ["uriTemplate": "unireader://doc/{document_id}/page/{page}/image", "name": "Page image", "mimeType": "image/jpeg",
          "description": "The page rendered as a 1080px-wide JPEG."],
     ]

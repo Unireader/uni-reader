@@ -69,6 +69,10 @@
 **图层级**（`kind = "inkLayer"`）：`ink_layer` 那一行 + 该层的 `note`（kind=2）。
 默认图层还要带上 payload 里没有 `layerId` 键的老行（与 `LibraryStore.deleteInkStrokes` 同一套判定）。
 
+**批注级**（`kind = "annotations"`，2026-10-03 随 MCP `delete_annotations` 加，见 `MCP-PLAN.md §21`）：
+同一篇文档里指定 id 的几条 `note`（高亮 / 文字笔记 / 书签 / 图片笔记），一次调用一条条目。归档到的条数对不上就不删。
+放回后发 `Trash.annotationsRestored`，开着这篇的标签从库里重装批注。界面上手动删单条批注**仍不进回收站**（照旧，文字/图片笔记靠 ⌘Z）。
+
 **刻意不存的**：
 
 - `ocr_page` / `page_geom` / `page_align` —— 它们按 **content_hash** 存，删文档根本不会删它们

@@ -163,29 +163,34 @@ final class MCPDocReader {
         }
     }
 
-    /// 在某一页上找一段原文（批 3 `add_note` / `add_highlight` 的锚点）：先原生 `findString`，
-    /// 没有再在 OCR 缓存的行里找（整行包含就算）。返回归一化行框；找不到 → nil，**不猜**。
+    /// 在某一页上找一段原文（批 3 `add_note` / `add_highlight` 的锚点）：**先在 OCR 缓存的行里找**，
+    /// 没有再原生 `findString`。返回归一化行框；找不到 → nil，**不猜**。
+    ///
+    /// 🔴 OCR 优先（2026-10-03 用户拍板「Agent 优先用 App 的 OCR，而不是 PDF 的文字层」）：阅读区有 OCR 缓存就自动开 OCR，
+    /// 手动划字走的是 OCR 行框；扫描书自带的隐形文字层字框普遍偏大（实测单行上下多出 5~10px、行尾超出版心），
+    /// 原来原生优先时 Agent 建的高亮比手动的高一截，多行时压到相邻行。
     func locate(path: String, store: LibraryStore?, contentHash: String, index: Int, quote: String,
                 align: ScanAlignTable?) async throws -> [CGRect]? {
-        let native: [CGRect]? = try await withDocument(path: path) { doc in
+        if let store, !contentHash.isEmpty {
+            let ocr: [CGRect]? = await withCheckedContinuation { cont in
+                queue.async {
+                    let book = self.ocrBook(store: store, contentHash: contentHash)
+                    guard let runs = book.pages[index] else { cont.resume(returning: nil); return }
+                    let mask = OCRWatermark.mask(runs: runs, profile: book.profile)
+                    let visible = zip(runs, mask).compactMap { $1 ? nil : $0 }
+                    // 🔴 按字符裁剪，不给整行（整行的末端是行末，图钉会跑到最右边；见 `MCPQuoteLocator`）
+                    cont.resume(returning: MCPQuoteLocator.locate(quote: quote, in: visible))
+                }
+            }
+            if let ocr { return ocr }
+        }
+        return try await withDocument(path: path) { doc in
             for sel in doc.findString(quote, withOptions: [.caseInsensitive, .diacriticInsensitive]) {
                 guard let page = sel.pages.first, doc.index(for: page) == index else { continue }
                 let rects = PageGeometry.normalizedLineRects(of: sel, in: doc, align: { align?.page($0) })[index] ?? []
                 if !rects.isEmpty { return rects }
             }
             return nil
-        }
-        if let native { return native }
-        guard let store, !contentHash.isEmpty else { return nil }
-        return await withCheckedContinuation { cont in
-            queue.async {
-                let book = self.ocrBook(store: store, contentHash: contentHash)
-                guard let runs = book.pages[index] else { cont.resume(returning: nil); return }
-                let mask = OCRWatermark.mask(runs: runs, profile: book.profile)
-                let visible = zip(runs, mask).compactMap { $1 ? nil : $0 }
-                // 🔴 按字符裁剪，不给整行（整行的末端是行末，图钉会跑到最右边；见 `MCPQuoteLocator`）
-                cont.resume(returning: MCPQuoteLocator.locate(quote: quote, in: visible))
-            }
         }
     }
 

@@ -187,6 +187,17 @@ final class DocTabModel: ObservableObject, Identifiable {
             // 缩放变化也存（含 restore 后手动缩放）
             s.saveProgressThrottled(s.session.scrollAnchor, why: "缩放")
         }
+        // 回收站放回了本篇的批注（MCP `delete_annotations` 删的那类条目）：恢复只写库，开着的标签得重新装载才看得见
+        NotificationCenter.default.publisher(for: Trash.annotationsRestored, object: workspace)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] n in
+                MainActor.assumeIsolated {
+                    guard let self, !self.closed, let id = n.userInfo?["documentId"] as? String,
+                          id == self.session.documentId else { return }
+                    self.reloadAnnotations()
+                }
+            }
+            .store(in: &bag)
         on(session.$strokes) { s in
             s.persistInk()               // 笔画完成/擦除/框选移动时增量落库（liveStroke 变化不触发）
         }
@@ -297,6 +308,17 @@ final class DocTabModel: ObservableObject, Identifiable {
         WorkspaceRegistry.shared.noteWindow(session.id, path: nil)
         app.unregister(session)
         session.teardown()       // 放掉本标签持有的 PDF / 库引用（不然移动硬盘弹不出去）
+    }
+
+    /// 从库里重新装载文字笔记 / 高亮 / 书签 / 图片笔记（回收站放回批注之后——恢复只写库）。
+    /// 先 `flushPersist()` 把本标签还没落库的改动补齐，免得重装把它们冲掉；各 `load*` 都是对账集先于列表赋值。
+    func reloadAnnotations() {
+        guard let id = session.documentId else { return }
+        flushPersist()
+        loadTextNotes(documentId: id)
+        loadHighlights(documentId: id)
+        loadBookmarks(documentId: id)
+        loadImageNotes(documentId: id)
     }
 
     /// 把可能还排在异步队列里的落库同步补齐（见 `close()` 的红线）。全部幂等。

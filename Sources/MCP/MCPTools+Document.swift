@@ -225,7 +225,7 @@ extension MCPTools {
         MCPTool(
             name: "search_text",
             title: "Search text in a document",
-            description: "Find a phrase in a document (case-insensitive). Searches the PDF's own text like ⌘F, and cached OCR text on scanned pages. Returns page numbers, a snippet with context, and the highlight rectangles.",
+            description: "Find a phrase in a document (case-insensitive). Searches the OCR text UniReader has cached first, and the PDF's own text on pages where OCR finds nothing (pages not OCR'd yet, or a phrase that runs across lines). Returns page numbers, a snippet with context, and the highlight rectangles.",
             inputSchema: MCPSchema.object(targetProperties.merging([
                 "query": MCPSchema.string("Text to find"),
                 "pages": ["anyOf": [["type": "integer"], ["type": "string"]], "description": "Limit to these pages, e.g. \"1-50\". Default: whole document."],
@@ -253,15 +253,18 @@ extension MCPTools {
             var pageSet: Set<Int>? = nil
             if let spec = try args.pages("pages") { pageSet = Set(try PageNo.parse(spec, pageCount: pageCount, limit: Int.max)) }
 
-            var hits = try await reader.searchNative(path: target.path, query: query, pages: pageSet, context: 80,
-                                                     maxHits: maxHits + 1, align: target.align)
+            // OCR 缓存优先（2026-10-03 用户拍板，理由见 `MCPDocReader.locate`）；OCR 是逐行匹配，跨行的词组
+            // 和没识别的页还得靠原生补
+            var hits: [MCPDocReader.Hit] = []
             if let store = target.store {
-                let nativePages = Set(hits.map(\.index))
-                let ocr = await reader.searchOCR(store: store, contentHash: target.contentHash, query: query, pages: pageSet, maxHits: maxHits + 1)
-                    .filter { !nativePages.contains($0.index) }   // 同一页两层都有就只报原生的，别重复
-                hits = (hits + ocr).sorted { a, b in
-                    a.index != b.index ? a.index < b.index : (a.rects.first?.minY ?? 0) < (b.rects.first?.minY ?? 0)
-                }
+                hits = await reader.searchOCR(store: store, contentHash: target.contentHash, query: query, pages: pageSet, maxHits: maxHits + 1)
+            }
+            let ocrPages = Set(hits.map(\.index))
+            let native = try await reader.searchNative(path: target.path, query: query, pages: pageSet, context: 80,
+                                                       maxHits: maxHits + 1, align: target.align)
+                .filter { !ocrPages.contains($0.index) }   // 同一页两层都有就只报 OCR 的，别重复
+            hits = (hits + native).sorted { a, b in
+                a.index != b.index ? a.index < b.index : (a.rects.first?.minY ?? 0) < (b.rects.first?.minY ?? 0)
             }
             let truncated = hits.count > maxHits
             if truncated { hits = Array(hits.prefix(maxHits)) }
@@ -317,10 +320,10 @@ extension MCPTools {
         MCPTool(
             name: "read_pages",
             title: "Read page text",
-            description: "Text of one or more pages. Uses the PDF's own text; for scanned pages falls back to OCR text cached by UniReader. Pages with neither come back empty with a hint. At most \(PageNo.maxPagesPerCall) pages per call.",
+            description: "Text of one or more pages. Uses the OCR text UniReader has cached for a page (it is what the user selects and highlights in the app, and usually more accurate than the hidden text layer of a scanned book); pages without OCR text use the PDF's own text. Pages with neither come back empty with a hint. At most \(PageNo.maxPagesPerCall) pages per call.",
             inputSchema: MCPSchema.object(targetProperties.merging([
                 "pages": MCPSchema.pageSpec,
-                "prefer": MCPSchema.enumeration(["auto", "native", "ocr"], "auto = PDF text, OCR only where the page has none; native = PDF text only; ocr = cached OCR only", default: "auto"),
+                "prefer": MCPSchema.enumeration(["auto", "native", "ocr"], "auto = cached OCR text, PDF text only where the page has no OCR; native = PDF text only; ocr = cached OCR only", default: "auto"),
                 "max_chars": MCPSchema.integer("Stop after this many characters in total (the last page is cut and truncated=true).", min: 1000, max: 2_000_000),
             ]) { a, _ in a }),
             outputSchema: MCPSchema.object([
@@ -354,12 +357,9 @@ extension MCPTools {
             }
 
             let native = try await reader.nativeTexts(path: target.path, pages: pages)
-            var wantOCR: [Int] = []
-            switch prefer {
-            case "ocr": wantOCR = pages
-            case "native": wantOCR = []
-            default: wantOCR = native.filter { $0.native.count < MCPDocReader.nativeMinChars }.map(\.index)
-            }
+            // auto 也是 OCR 缓存优先（2026-10-03 用户拍板，理由见 `MCPDocReader.locate`）：
+            // Agent 从这里抄的引文要能在 OCR 行里定位，两边得是同一份文字
+            let wantOCR = prefer == "native" ? [] : pages
             var ocr: [Int: String] = [:]
             if !wantOCR.isEmpty, let store = target.store {
                 ocr = await reader.ocrTexts(store: store, contentHash: target.contentHash, pages: wantOCR)
@@ -373,8 +373,8 @@ extension MCPTools {
             for p in native {
                 var source = "none"
                 var body = ""
-                if prefer != "ocr", p.native.count >= MCPDocReader.nativeMinChars { source = "native"; body = p.native }
-                else if let o = ocr[p.index] { source = "ocr"; body = o }
+                if let o = ocr[p.index] { source = "ocr"; body = o }
+                else if prefer != "ocr", p.native.count >= MCPDocReader.nativeMinChars { source = "native"; body = p.native }
                 else if prefer == "native", !p.native.isEmpty { source = "native"; body = p.native }
                 let external = PageNo.external(p.index)
                 var cut = false

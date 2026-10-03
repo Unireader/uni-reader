@@ -143,7 +143,8 @@ final class MCPServer: ObservableObject {
     Never edit files inside a .unrd package directly. \
     Most PDF tools default to the document in the key window when no target is given. \
     document_id is a stable UUID inside a workspace; file paths may change. \
-    read_pages returns the PDF's own text, or cached OCR text for scanned pages (empty with a hint when neither exists).
+    read_pages returns the OCR text UniReader has cached for a page, or the PDF's own text where there is none \
+    (empty with a hint when neither exists); copy quotes for add_highlight / add_note from it.
     """
 
     /// 本机能访问到的端点（面板展示 + 配置片段）。

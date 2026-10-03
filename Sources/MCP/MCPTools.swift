@@ -36,11 +36,13 @@ enum MCPTools {
     }
 
     /// 批 3：写入（书签 / 笔记 / 高亮 / 导入 / 建工作区 / 触发 OCR）。全部 `.write`，受设置里的开关管（方案 §9）。
+    /// 2026-10-03 加删批注（`.delete`，同受写入开关管，删的先进回收站；方案 §21）。
     static func registerBatch3(into server: MCPServer) {
         let c = server.catalog
         c.register(addBookmark())
         c.register(addNote())
         c.register(addHighlight())
+        c.register(deleteAnnotations())
         c.register(editMarkdown())
         c.register(updateMarkdown())
         c.register(importPDFTool())

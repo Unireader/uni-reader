@@ -287,6 +287,7 @@ NWListener(127.0.0.1 或 0.0.0.0 : port) ──serial queue "mcp.net"──▶ �
 
 按协议的 `annotations` 如实标：读取类 `readOnlyHint: true`；导航类 `readOnlyHint: false, destructiveHint: false, idempotentHint: true`；
 写入类 `destructiveHint: false`（批 3 不提供删除）。客户端会据此决定要不要向用户确认。
+（2026-10-03 加了 `.delete` 级，只有 `delete_annotations`，`destructiveHint: true`，见 §21。）
 
 ---
 
@@ -384,7 +385,7 @@ Markdown 活动标签时返回编辑器的实时正文（包括尚未自动保�
 入参 `{ document_id?: string, path?: string, pages?: string, prefer?: "auto"|"native"|"ocr" = "auto", max_chars?: int = 200000 }`。
 `pages` 省略 = 该文档当前页（开着）或第 1 页。**上限 40 页/次**，超了直接失败让 Agent 分次。
 
-每页取文本的规则（`auto`）：
+每页取文本的规则（`auto`；⚠️ 2026-10-03 起 1、2 两步对调为 **OCR 优先**，见 §20）：
 1. 原生：`PDFPage.string`（私有 `PDFDocument`，`mcp.doc` 队列）。字符数 ≥ 8 就用它，`source: "native"`。
 2. 否则查 OCR 缓存：`ocrPages(contentHash:provider:)`，按行 y→x 排、同行按 x 拼，行间换行；
    用 `OCRWatermark.buildProfile/mask`（纯函数）滤掉平铺水印——与阅读区 `ocrVisibleRuns` 同一条判据。`source: "ocr"`, 带 `provider`。
@@ -459,6 +460,7 @@ Markdown 活动标签时返回编辑器的实时正文（包括尚未自动保�
 | `run_ocr` | `document_id?, pages` | `session.enqueueOCR`（文档必须开着，OCR 走会话的队列） | 立即返回 `{queued: n}`；Agent 之后再 `read_pages` |
 
 **不做**：删除任何东西、写笔迹、改阅读进度、改工作区/文档名。真要删让用户自己动手。
+（2026-10-03 起可以删四类批注，进回收站，见 §21；其余照旧不做。）
 
 ---
 
@@ -650,7 +652,7 @@ curl -si http://<本机IP>:8773/mcp -H 'Content-Type: application/json' -H 'Auth
 6. 🔴 页码换算只在 `MCPModels.PageNo` 一处；对外 1 起。
 7. 🔴 每次调用有上限（40 页 / 200k 字符 / 一张页图 / 4 MB 请求体），不做取消。
 8. 🔴 设置页文案双语、系统控件、`.primary` 颜色。
-9. 🔴 不提供删除类工具。
+9. ~~🔴 不提供删除类工具。~~ 2026-10-03 用户推翻：加了 `delete_annotations`（只删四类批注、先进回收站），见 §21。
 
 ---
 
@@ -710,7 +712,7 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 
 | 东西 | 在哪 | 要点 |
 |---|---|---|
-| `search_text` | `MCPTools+Document.swift` + `MCPDocReader.searchNative/searchOCR` | 原生走 `PDFDocument.findString`（与 ⌘F 同路），摘要 = 选区两头各扩 80 字符再压平；OCR 缓存逐行包含匹配，**同一页两层都有只报原生**；`pages` 筛选、`max_hits` 默认 50 |
+| `search_text` | `MCPTools+Document.swift` + `MCPDocReader.searchNative/searchOCR` | 原生走 `PDFDocument.findString`（与 ⌘F 同路），摘要 = 选区两头各扩 80 字符再压平；OCR 缓存逐行包含匹配，**同一页两层都有只报原生**（2026-10-03 改为只报 OCR，见 §20）；`pages` 筛选、`max_hits` 默认 50 |
 | `render_page` | 同上 + `MCPDocReader.render` | `PageBitmap.render` + `PageRenderer.encode`（与 `/page.png` 同一条原语），宽度归 `pageWidthSteps` 档、上限 2160；返回 `image` 内容 + 尺寸 |
 | `get_current_view` | `MCPTools+Reader.swift` + `MCPFacade.currentView` | 页/页内比例取 `scrollAnchor`；`chapter` 用 `TOCEntry.chapterLabel`；`selection` 取 `DocSession.currentSelection` |
 | `goto` | 同上 + `MCPFacade.goto` | `session.jump(kind: .list, label: "Agent", origin: "mcp")`，进跳转历史；**默认不抢焦点**（`activate=false`，与 `open_document` 相反——翻页时用户多半正在终端里打字） |
@@ -738,7 +740,7 @@ open build/dev/Build/Products/Debug/UniReader.app     # 在 worktree 目录下
 | 写入开关 | 设置 › Agent「允许 Agent 写入」（`mcpAllowWrites`，默认关）| 关着时写入工具照常列出、调用时拦（D6）；`get_state.app.writes_enabled` 报出来 |
 | 来源标记 | `NoteSource.agentKind = "agent"` + `isAgent`；Inspector 笔记行加 `terminal` 图标（悬停显示客户端名）| `provider` = `initialize` 的 `clientInfo.name`，`url` 空串；payload 零迁移 |
 | `add_bookmark` | `MCPTools+Notes.swift` + `MCPFacade.addBookmark` | 名字必填（`Bookmark.validTitle`）；开着 → `session.addBookmark`，没开 → `ws.saveBookmark` |
-| `add_note` | 同上 + `MCPFacade.addNote` | 锚点三选一：`quote`（`MCPDocReader.locate`：先 `findString`、再 OCR 行；找不到**报错不猜**）> `rect` > 页顶横条；`type` 按名字对 `noteTypes`，不存在就报错并列出可用的；开着时经 `session.inkEdit` 进撤销栈 |
+| `add_note` | 同上 + `MCPFacade.addNote` | 锚点三选一：`quote`（`MCPDocReader.locate`：先 `findString`、再 OCR 行——2026-10-03 起反过来先 OCR，见 §20；找不到**报错不猜**）> `rect` > 页顶横条；`type` 按名字对 `noteTypes`，不存在就报错并列出可用的；开着时经 `session.inkEdit` 进撤销栈 |
 | `add_highlight` | 同上 + `MCPFacade.addHighlight` | `quote` 必填、必须找得到；颜色收色板名或 `#RRGGBB`；`style` 收 fill / underline / box（2026-09-16），`list_annotations` 的高亮 DTO 回 `style`、笔记 DTO 回 `style` + 设了才有的 `color` |
 | `update_markdown`（2026-09-21；2026-09-24 移到 `MCPTools+Markdown.swift`、可按 `note_ref` 指定任意一篇，并新增局部修改 `edit_markdown`，见 §19） | `MCPTools+Notes.swift` + `MCPFacade.updateMarkdown` | 只改目标窗口的活动 Markdown 标签；先用 `get_current_view.markdown.revision` 做乐观锁，再原子写完整正文并同步所有正在显示该笔记的编辑器。用户在读取后有新编辑或多窗口存在不同未保存正文时拒绝覆盖 |
 | `import_pdf` / `open_document(path:)` | `MCPTools+Document.swift` + **`WorkspaceManager.importPDF(at:)`**（新，面板/拖拽/MCP 三处共用，`ReaderWindowController.ingest` 改为调它）| 按 hash 去重，返回 `imported` 是否新建；`open_document` 带 `path` 时虽是导航级工具也按写入开关拦 |
@@ -810,3 +812,42 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 - 纯逻辑 `MCPMarkdownText`（分行口径：结尾换行不多算一行、`\r` 原样留在行内；匹配失败时「忽略空白」再找一遍**只拿来写提示**，
   另能认出「把行号前缀也抄进来了」这种常见错误）。测试 `spike/mcp-markdown-text-test.swift`（43 项）；
   `spike/mcp-schema-audit.py` 补了 `list_markdown_notes` 与 `read_markdown` 三种模式。
+
+## 20. 2026-10-03 Agent 取文字改为 OCR 优先
+
+用户报「AI 选中高亮的区域往往超过了文字区域，多行很容易超过文字区域」，随后拍板：**Agent 优先用 App 的 OCR，而不是 PDF 的文字层**。
+
+- **根因**：阅读区有 OCR 缓存就自动开 OCR（`DocSession.reloadOCRState`），手动划字和 ⌘F 都走 OCR 行框；而 `MCPDocReader.locate`
+  原来是原生 `findString` 优先。扫描书常自带别的工具生成的隐形文字层，字框偏大——实测《软件工程 2024张琼声》第 142/143 页
+  （1440px 宽页图）：字形高约 27px、行距 43px，原生行框高 38~42px（上多 4~6px、下多 6~10px），行尾还有超出版心 50~95px 的；
+  同位置的 OCR 行框上下误差 ≤ 4px。所以 Agent 建的高亮比手动的高一截，多行时压到相邻行。
+  这层文字本身也有识别错字（「入口」记成「人口」、漏「关键」二字）。
+- **改法**（覆盖 §7.7 / §7.8 / §17.1 原来「原生优先」的口径）：
+  - `read_pages` 的 `auto`：页有 OCR 缓存就给 OCR 文本，没有才用原生；`native` / `ocr` 不变。
+  - `search_text`：先搜 OCR 缓存，原生只补「这一页 OCR 没命中」的（没识别的页、跨行词组——OCR 是逐行匹配）。
+  - `add_highlight` / `add_note` 的 `quote` 定位（`MCPDocReader.locate`）：先在 OCR 可见行里按字裁剪（`MCPQuoteLocator`，与手动划字同框），
+    对不上再用原生 `findString`。引文抄自 `read_pages`，两边是同一份文字，正常都能在 OCR 里定位。
+  - 工具说明 / 服务器 instructions / 资源说明同步改口径。
+- **没做**：已经建好的 Agent 高亮不回改（旧框照旧，要的话删了让 Agent 重建）；原生兜底命中时仍是原生的大框。
+
+## 21. 2026-10-03 删除批注：`delete_annotations`
+
+用户要求「mcp 添加删除功能」，**推翻 §14 第 9 条「不提供删除类工具」**（§6.5 / §7 批 3「不做」那两处同时作废）。
+用户拍板：能删 **高亮 / 文字笔记 / 书签 / 图片笔记** 四类；删的东西**进回收站**（红线 11：先归档再删）。
+
+- **工具**：`delete_annotations { ids: [string], document_id?, workspace? }`，一次最多 200 个 id。id 取自 `list_annotations`，
+  完整 UUID 或它文字输出里那 8 位前缀都认（前缀撞了报错让传全 id）；`list_annotations` 文字输出顺带给书签 / 图片笔记补上了 id 前缀。
+  **有一个 id 对不上就整批不动**（报出是哪几个）。笔迹、文档、Markdown 笔记不在范围内。
+- **级别**：新增 `MCPToolTier.delete`——`destructiveHint: true`（客户端据此提示用户确认），与 `.write` 一样受「允许 Agent 写入」开关管
+  （`tier.writes`）。设置页说明从「Agent 永远不能删除任何东西」改为「删掉的东西会进回收站」。
+- **流程**（`MCPFacade.deleteAnnotations`，主线程）：
+  1. 显示这篇的所有标签（按工作区筛，离线镜像里文档 id 相同）先 `flushPersist()`——批注改动是异步对账落库的，
+     Agent 刚建的那条可能还没进库，不补齐就归档不到；
+  2. 以库为准查出每个 id 是哪类；
+  3. `Trash.archiveNotes` 把这些 `note` 行整批归档成**一条**回收站条目（新 `Trash.Kind.annotations`，名字取第一条的引文/标题
+     「“…”及另外 N 条」）；归档到的条数对不上也算失败 → **一条都不删**；
+  4. 每个标签从数组里拿掉（文字 / 图片笔记走 `inkEdit` 进撤销栈，同界面删除）→ 再 `flushPersist()` 同步落库；
+     最后按 id 直接删一遍库行兜底（幂等）。
+- **放回**：回收站界面照常「放回」（`TrashStore.restore`，`note` 行 OR REPLACE）；放回 `.annotations` 条目后发
+  `Trash.annotationsRestored` 通知，开着这篇的标签 `DocTabModel.reloadAnnotations()` 从库里重装批注（恢复只写库，不重装看不见）。
+- 测试：`spike/trash-test.swift` 加「5c 批注级」8 项 + kind 编解码 1 项（共 71 项全过）。界面与 MCP 调用待用户实测。

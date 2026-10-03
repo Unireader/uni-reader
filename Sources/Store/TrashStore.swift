@@ -110,6 +110,18 @@ enum TrashStore {
         }
     }
 
+    /// 把一篇文档里指定的几条批注（`note` 行，按 id）搬进快照库（MCP `delete_annotations`，2026-10-03）。
+    /// 只搬 `note` 表——批注没有子表；恢复走同一个 `restore`（`note` 用 OR REPLACE，重复恢复幂等）。
+    static func archiveNotes(_ db: SQLiteDB, documentId: String, ids: [String], to path: String) throws -> Archived {
+        try withAttached(db, path: path) { t in
+            let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+            try db.run("""
+            CREATE TABLE \(t).note AS SELECT * FROM main.note WHERE document_id=? AND id IN (\(marks))
+            """, [.text(documentId)] + ids.map { .text($0) })
+            return try summarize(db, schema: t)
+        }
+    }
+
     /// 把一篇画板笔记（那一行 + 上面的全部条目）搬进快照库。
     static func archiveBoard(_ db: SQLiteDB, boardId: String, to path: String) throws -> Archived {
         try withAttached(db, path: path) { t in

@@ -82,7 +82,7 @@ struct MCPSettingsView: View {
         } header: {
             Text(L("Writing"))
         } footer: {
-            Text(L("Lets agents add bookmarks, text notes and highlights, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Agents can never delete anything."))
+            Text(L("Lets agents add bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Whatever an agent deletes goes to Recently Deleted and can be put back from File ▸ Recently Deleted."))
         }
     }
 

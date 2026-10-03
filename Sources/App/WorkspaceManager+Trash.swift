@@ -93,6 +93,37 @@ extension Trash {
         }
     }
 
+    /// 把一篇文档里的几条批注（`note` 行，按 id）归档（MCP `delete_annotations`）。**调用方随后才可以删。**
+    /// 归档到的条数对不上 `ids`（库里少了）也算失败——那几条删了就找不回来。
+    @discardableResult
+    static func archiveNotes(store: LibraryStore, documentId: String, documentTitle: String,
+                             ids: [UUID], title: String) -> URL? {
+        let workspace = store.workspaceFolder
+        guard let dir = makeDir(in: workspace, title: title) else { return nil }
+        do {
+            let a = try store.archiveNotes(documentId: documentId, ids: ids.map(\.uuidString),
+                                           to: dir.appendingPathComponent(snapshotName).path)
+            guard a.counts.total == ids.count else {
+                throw NSError(domain: "UniReader", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "archived \(a.counts.total) of \(ids.count) rows"])
+            }
+            var m = Manifest()
+            m.kind = .annotations
+            m.title = title
+            m.documentId = documentId
+            m.documentTitle = documentTitle
+            m.counts = a.counts
+            m.images = a.images
+            try encode(m).write(to: dir.appendingPathComponent(manifestName))
+            wsLog("[TRASH] 批注已移入回收站：\(title)（《\(documentTitle)》\(ids.count) 条）")
+            return dir
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            wsLog("[TRASH] ⚠️ 批注归档失败，删除已放弃：\(title) — \(error)")
+            return nil
+        }
+    }
+
     /// 建一个空的条目目录（名字不撞）。
     private static func makeDir(in workspace: URL, title: String) -> URL? {
         let fm = FileManager.default
@@ -213,6 +244,10 @@ extension WorkspaceManager {
         try? FileManager.default.removeItem(at: entry.url)
         refresh()
         reconcileAndPurgeImages()   // 图片的待删除标记要跟着摘掉
+        if entry.manifest.kind == .annotations {
+            NotificationCenter.default.post(name: Trash.annotationsRestored, object: self,
+                                            userInfo: ["documentId": entry.manifest.documentId])
+        }
         return true
     }
 

@@ -89,6 +89,11 @@ final class LibraryStore {
                                        isDefaultLayer: isDefaultLayer, to: path)
     }
 
+    /// 把一篇文档里指定的几条批注（`note` 行，按 id）归档。
+    func archiveNotes(documentId: String, ids: [String], to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveNotes(db, documentId: documentId, ids: ids, to: path)
+    }
+
     /// 恢复前探路：这份快照的 PDF 已经被重新导入过吗（返回要并入的那篇文档 id）。
     func trashMergeTarget(snapshot path: String) throws -> String? {
         try TrashStore.mergeTarget(db, snapshot: path)

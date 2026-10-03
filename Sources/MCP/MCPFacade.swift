@@ -729,7 +729,7 @@ final class MCPFacade {
                  "created_at": MCPJSON.iso(b.createdAt), "link": link(ws, doc: id, note: b.id)]
             }
             lines.append("Bookmarks (\(bs.count)):")
-            lines += bs.map { "- p.\(PageNo.external($0.page)) \($0.title)" }
+            lines += bs.map { "- p.\(PageNo.external($0.page)) [\($0.id.uuidString.prefix(8))] \($0.title)" }
         }
         if kinds.contains("image_note") {
             let ims = (s?.imageNotes ?? ws.imageNotes(documentId: id)).filter { inPages($0.page) }
@@ -746,7 +746,7 @@ final class MCPFacade {
                 return o
             }
             lines.append("Image notes (\(ims.count)):")
-            lines += ims.map { "- p.\(PageNo.external($0.page)) \($0.caption.isEmpty ? "(no caption)" : $0.caption.prefix(80))" }
+            lines += ims.map { "- p.\(PageNo.external($0.page)) [\($0.id.uuidString.prefix(8))] \($0.caption.isEmpty ? "(no caption)" : $0.caption.prefix(80))" }
         }
         if kinds.contains("ai_thread") {
             let ts = (s?.aiThreads ?? ws.aiThreads(documentId: id)).filter { inPages($0.page) }.sorted { $0.page < $1.page }
@@ -882,6 +882,80 @@ final class MCPFacade {
         if let s = t.session { s.highlights.append(h) } else { t.ws.saveHighlight(documentId: t.id, h) }
         return ["id": h.id.uuidString, "document_id": t.id, "page": page, "rect": Self.rectArray(h.anchor),
                 "color": colorName, "style": style.rawValue, "via": t.session == nil ? "library" : "session"]
+    }
+
+    /// 删批注：高亮 / 文字笔记 / 书签 / 图片笔记，按 id（完整 UUID，或 `list_annotations` 文字输出里那 8 位前缀）。
+    /// 2026-10-03 用户要求加，推翻方案 §14 第 9 条「不提供删除」，见 §21。
+    ///
+    /// 🔴 **先整批归档进回收站、成功了才删**（红线 11）；有一个 id 对不上就整批不动。
+    /// 🔴 开着的标签先 `flushPersist()`：刚建的批注可能还排在异步对账里没进库，不补齐就归档不到。
+    /// 删时**每个**显示这篇的标签都要从数组里拿掉（只删库的话，还拿着它的标签一改它就又写回去了），
+    /// 按工作区筛——离线镜像里文档 id 相同。最后再按 id 直接删一遍库行（幂等），兜住没有标签拿着的那些。
+    func deleteAnnotations(_ t: WriteTarget, ids raw: [String]) throws -> MCPObject {
+        guard let store = t.ws.store else { throw MCPToolError("the workspace is not open") }
+        let tabs = controllers.flatMap { $0.tabs.tabs }.filter { $0.docID == t.id && $0.workspace === t.ws }
+        tabs.forEach { $0.flushPersist() }
+
+        struct Item { let id: UUID; let kind: String; let page: Int; let label: String; let image: String? }
+        var all: [Item] = []
+        all += t.ws.textNotes(documentId: t.id).map {
+            Item(id: $0.id, kind: "note", page: $0.page, label: $0.quote.isEmpty ? $0.text : $0.quote, image: nil)
+        }
+        all += t.ws.highlights(documentId: t.id).map { Item(id: $0.id, kind: "highlight", page: $0.page, label: $0.quote, image: nil) }
+        all += t.ws.bookmarks(documentId: t.id).map { Item(id: $0.id, kind: "bookmark", page: $0.page, label: $0.title, image: nil) }
+        all += t.ws.imageNotes(documentId: t.id).map {
+            Item(id: $0.id, kind: "image_note", page: $0.page, label: $0.caption, image: $0.image)
+        }
+
+        var picked: [Item] = [], missing: [String] = [], ambiguous: [String] = []
+        for r in raw {
+            let key = r.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            let hits = key.count >= 8 ? all.filter { $0.id.uuidString.hasPrefix(key) } : []
+            if hits.isEmpty { missing.append(r) }
+            else if hits.count > 1 { ambiguous.append(r) }
+            else if !picked.contains(where: { $0.id == hits[0].id }) { picked.append(hits[0]) }
+        }
+        if !missing.isEmpty {
+            throw MCPToolError("not found in “\(t.title)”: \(missing.joined(separator: ", ")). Take ids from list_annotations; only highlights, text notes, bookmarks and image notes can be deleted. Nothing was deleted.")
+        }
+        if !ambiguous.isEmpty {
+            throw MCPToolError("these id prefixes match more than one annotation: \(ambiguous.joined(separator: ", ")); pass the full ids. Nothing was deleted.")
+        }
+        guard !picked.isEmpty else { throw MCPInvalidParams("ids must not be empty") }
+
+        let head = String(picked[0].label.flattenedQuote.prefix(24))
+        let title = head.isEmpty ? L("Annotations")
+            : picked.count == 1 ? "“\(head)”" : String(format: L("“%@” and %d more"), head, picked.count - 1)
+        guard Trash.archiveNotes(store: store, documentId: t.id, documentTitle: t.title,
+                                 ids: picked.map(\.id), title: title) != nil else {
+            throw MCPToolError("could not move them to Recently Deleted, so nothing was deleted")
+        }
+
+        let gone = Set(picked.map(\.id))
+        for tab in tabs {
+            let s = tab.session
+            if s.textNotes.contains(where: { gone.contains($0.id) }) || s.imageNotes.contains(where: { gone.contains($0.id) }) {
+                s.inkEdit("Delete", kind: .delete) {   // 同界面删笔记：进撤销栈
+                    s.textNotes.removeAll { gone.contains($0.id) }
+                    s.imageNotes.removeAll { gone.contains($0.id) }
+                }
+            }
+            if s.highlights.contains(where: { gone.contains($0.id) }) { s.highlights.removeAll { gone.contains($0.id) } }
+            if s.bookmarks.contains(where: { gone.contains($0.id) }) { s.bookmarks.removeAll { gone.contains($0.id) } }
+            tab.flushPersist()   // 删除同步落库，应答时库里已经没了
+        }
+        for it in picked {
+            switch it.kind {
+            case "note": t.ws.deleteTextNote(id: it.id)
+            case "highlight": t.ws.deleteHighlight(id: it.id)
+            case "bookmark": t.ws.deleteBookmark(id: it.id)
+            default: t.ws.deleteImageNote(id: it.id, image: it.image ?? "")
+            }
+        }
+        return ["document_id": t.id, "count": picked.count, "trash_item": title,
+                "deleted": picked.map { ["id": $0.id.uuidString, "kind": $0.kind, "page": PageNo.external($0.page),
+                                         "label": String($0.label.flattenedQuote.prefix(80))] as MCPObject },
+                "via": tabs.isEmpty ? "library" : "session"]
     }
 
     /// 导入前的解析：目标工作区（显式路径 > key 窗口的）。

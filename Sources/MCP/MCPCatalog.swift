@@ -30,16 +30,20 @@ enum AgentFollow {
 
 /// 工具分级（方案 §1 / §6.5）：读取 / 导航（改界面不改数据）/ 写入（受设置里的开关管）。
 enum MCPToolTier {
-    case read, navigate, write
+    /// `delete`：删除类（2026-10-03 起只有 `delete_annotations`，删的先进回收站）。与 `write` 同受写入开关管。
+    case read, navigate, write, delete
 
-    /// 协议 `annotations`：客户端据此决定要不要向用户确认。批 3 不提供删除，`destructiveHint` 恒 false。
+    /// 协议 `annotations`：客户端据此决定要不要向用户确认。只有 `delete` 标 `destructiveHint: true`。
     var annotations: MCPObject {
         switch self {
         case .read:     return ["readOnlyHint": true, "openWorldHint": false]
         case .navigate: return ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
         case .write:    return ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false]
+        case .delete:   return ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false]
         }
     }
+
+    var writes: Bool { self == .write || self == .delete }
 }
 
 /// 工具返回：`text` 给模型读，`structured` 给程序用，两份并存（方案 §6.4）；`image` 是页图那类。
@@ -142,7 +146,7 @@ final class MCPCatalog {
             throw MCPInvalidParams("unknown tool '\(name)'")
         }
         try Self.checkRequired(tool.inputSchema, arguments)
-        if tool.tier == .write, !context.writesEnabled {
+        if tool.tier.writes, !context.writesEnabled {
             return MCPToolResult.failure("writes are disabled in UniReader › Settings › Agent; ask the user to enable them").json()
         }
         do {

@@ -186,6 +186,27 @@ do {
     eq(try store.inkCount(documentId: reimported.id), inkBefore, "老行也回得来")
 }
 
+print("\n— 5c) 批注级（MCP delete_annotations）：按 id 归档 → 删 → 恢复 —")
+do {
+    let picks = try [0, 3, 5, 6].compactMap { try store.notes(documentId: reimported.id, kind: $0).first?.id }
+    eq(picks.count, 4, "笔记 / 高亮 / 书签 / 图片笔记各挑一条")
+    let snap = tmp.appendingPathComponent("notes-snapshot.sqlite").path
+    let a = try store.archiveNotes(documentId: reimported.id, ids: picks, to: snap)
+    eq(a.counts.text + a.counts.highlight + a.counts.bookmark + a.counts.image, 4, "四类各 1 条进了快照")
+    eq(a.counts.total, 4, "别的一条都没带上（笔迹 / 草稿纸笔迹为 0）")
+    check(a.images == ["sha-of-a-picture"], "图片笔记引用的图记进护身符")
+    let before = noteCount(reimported.id)
+    for id in picks { try store.deleteNote(id: id) }
+    eq(noteCount(reimported.id), before - 4, "库里少了 4 条")
+    _ = try store.restoreTrash(snapshot: snap, remapDocumentId: nil)
+    eq(noteCount(reimported.id), before, "4 条都回来了")
+    _ = try store.restoreTrash(snapshot: snap, remapDocumentId: nil)
+    eq(noteCount(reimported.id), before, "重复恢复不多出来")
+    let otherSnap = tmp.appendingPathComponent("notes-other.sqlite").path
+    let b = try store.archiveNotes(documentId: other.id, ids: picks, to: otherSnap)
+    eq(b.counts.total, 0, "id 是别篇的 → 一条不收（只认这一篇）")
+}
+
 // MARK: - 6) 条目文件层（Trash 模型）
 
 print("\n— 6) 条目目录名与 manifest —")
@@ -209,6 +230,10 @@ do {
     check(round.counts == m.counts && round.images == m.images && round.kind == m.kind
           && round.title == m.title, "字段一个不少地回来")
     check(abs(round.deletedAt.timeIntervalSince(m.deletedAt)) < 1, "时间戳只差不到一秒（写的是 ISO8601 整秒）")
+    var ma = Trash.Manifest()
+    ma.kind = .annotations
+    ma.documentTitle = "高等数学"
+    check(try Trash.decode(Trash.encode(ma)).kind == .annotations, "批注级条目的 kind 编解码回环")
 }
 
 print("\n— 7) 到期判定 —")

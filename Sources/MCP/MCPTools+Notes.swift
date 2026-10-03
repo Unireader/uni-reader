@@ -103,7 +103,7 @@ extension MCPTools {
         return MCPTool(
             name: "add_highlight",
             title: "Highlight a passage",
-            description: "Highlight a passage on a page. `quote` must be the exact text on that page (copy it from read_pages); it is located with the same engine as ⌘F, so line breaks inside the passage are fine. `style` picks how it is drawn: fill (highlighter, default), underline, or box (outline only). Fails, rather than guessing, when the text is not found.",
+            description: "Highlight a passage on a page. `quote` must be the exact text on that page (copy it from read_pages); it is located in UniReader's OCR text when the page has it (same boxes as a highlight the user makes by hand), otherwise in the PDF's own text like ⌘F, so line breaks inside the passage are fine. `style` picks how it is drawn: fill (highlighter, default), underline, or box (outline only). Fails, rather than guessing, when the text is not found.",
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "page": MCPSchema.integer("Page, 1-based", min: 1),
                 "quote": MCPSchema.string("Exact passage to highlight"),
@@ -146,6 +146,50 @@ extension MCPTools {
             return MCPToolResult(text: "Highlighted “\(quote.prefix(60))\(quote.count > 60 ? "…" : "")” on page \(page) · id \(r["id"] ?? "")", structured: r)
         }
     }
+
+    /// 删批注（2026-10-03 用户要求加；方案 §21）。`.delete` 级：`destructiveHint: true`，同受写入开关管。
+    static func deleteAnnotations() -> MCPTool {
+        MCPTool(
+            name: "delete_annotations",
+            title: "Delete annotations",
+            description: "Delete highlights, text notes, bookmarks or image notes from one document by id. Take the ids from list_annotations (the full id, or the 8-character prefix shown in its text output). Everything deleted in one call goes to UniReader's Recently Deleted as one item the user can put back; if any id is not found, nothing is deleted. Handwriting, documents and Markdown notes cannot be deleted with this tool.",
+            inputSchema: MCPSchema.object(writeTargetProperties.merging([
+                "ids": MCPSchema.array(of: MCPSchema.string("annotation id"), "Ids to delete (at most \(maxDeleteIds))"),
+            ]) { a, _ in a }, required: ["ids"]),
+            outputSchema: MCPSchema.object([
+                "document_id": MCPSchema.string("document"), "count": MCPSchema.integer("how many were deleted"),
+                "trash_item": MCPSchema.string("name of the Recently Deleted item they went into"),
+                "deleted": MCPSchema.array(of: MCPSchema.object([
+                    "id": MCPSchema.string("id"),
+                    "kind": MCPSchema.enumeration(["note", "highlight", "bookmark", "image_note"], "what it was"),
+                    "page": MCPSchema.integer("1-based"), "label": MCPSchema.string("quote, note text, bookmark title or caption")])),
+                "via": MCPSchema.enumeration(["session", "library"], "removed from the open tab(s) or straight from the library"),
+            ]),
+            tier: .delete
+        ) { _, args in
+            guard let list = args.raw["ids"] as? [Any], !list.isEmpty else {
+                throw MCPInvalidParams("ids must be a non-empty array of strings")
+            }
+            let ids = try list.map { v -> String in
+                guard let s = v as? String else { throw MCPInvalidParams("ids must be strings") }
+                return s
+            }
+            guard ids.count <= maxDeleteIds else { throw MCPInvalidParams("at most \(maxDeleteIds) ids per call") }
+            let docId = try args.string("document_id"), wsPath = try args.string("workspace")
+            let r = try await MainActor.run {
+                let t = try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath)
+                return try MCPFacade.shared.deleteAnnotations(t, ids: ids)
+            }
+            let n = r["count"] as? Int ?? 0
+            let lines = ((r["deleted"] as? [MCPObject]) ?? []).map {
+                "- p.\($0["page"] ?? "") \($0["kind"] ?? "") [\(($0["id"] as? String ?? "").prefix(8))] \($0["label"] ?? "")"
+            }
+            return MCPToolResult(text: (["Deleted \(n) annotation(s); they are in Recently Deleted as “\(r["trash_item"] ?? "")”."] + lines)
+                                    .joined(separator: "\n"), structured: r)
+        }
+    }
+
+    static let maxDeleteIds = 200
 
     /// `#RRGGBB` → `InkColor`（a = 1）。
     static func parseHex(_ s: String) -> InkColor? {

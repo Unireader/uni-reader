@@ -16,12 +16,17 @@ enum Trash {
         workspace.appendingPathComponent("UniReader/\(dirName)", isDirectory: true)
     }
 
+    /// 放回了一条 `.annotations` 条目（object = 那个 `WorkspaceManager`，userInfo["documentId"]）。
+    /// 开着这篇的标签据此重新装载批注（`DocTabModel.reloadAnnotations`）。
+    static let annotationsRestored = Notification.Name("UniReaderTrashAnnotationsRestored")
+
     // MARK: - 条目
 
     enum Kind: String, Codable {
         case document   // 整篇文档
         case inkLayer   // 一个笔迹图层
         case board      // 一篇画板笔记（v16）
+        case annotations   // 一篇文档里的几条批注（高亮 / 文字笔记 / 书签 / 图片笔记），MCP `delete_annotations` 删的
     }
 
     /// `manifest.json` 的内容。**新增字段一律给默认值**：老条目的 manifest 少字段也要读得出来，
