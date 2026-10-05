@@ -46,17 +46,24 @@ struct AgentReaderContext: Equatable {
             lines.append(s + ".")
             lines.append("Use the unireader read_markdown tool to read the note's current live text (outline / search / line ranges for long notes). To modify it, use edit_markdown with exact old_text copied from read_markdown; use update_markdown only to rewrite the whole note. Never edit the file directly.")
             lines.append("link \(markdown.link)")
+            lines.append(Self.noteKinds + " The current tab is a Markdown note, so \"note\" (笔记) without a kind means a Markdown note, most likely this one.")
         } else if let documentId {
             var s = "Current document: \"\(docTitle)\" (document_id \(documentId)), page \(page + 1) of \(pageCount)"
             if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
             if let windowId { s += ", window_id \(windowId.uuidString)" }
             lines.append(s + ".")
+            lines.append(Self.noteKinds + " The current tab is a PDF, so \"note\" (笔记) without a kind means a text note on this document.")
         } else {
             lines.append("No document is open in the reader right now.")
+            lines.append(Self.noteKinds + " If the user says \"note\" (笔记) without a kind, ask which one.")
         }
         lines.append(AgentTranscript.contextClose)
         return lines.joined(separator: "\n")
     }
+
+    /// 两种笔记的区别（2026-10-05 用户：Agent 要分清文字笔记和 Markdown 笔记）。只说「笔记」时按当前标签页猜（用户定），
+    /// 上面按标签页各接一句。MCP 的 `instructions` 里也写了一遍，但不是每个 Agent 都读它，这里再带上。
+    private static let noteKinds = "UniReader has two kinds of notes: a text note (批注 / 文字笔记) is pinned to a spot on a PDF page — the user makes one with right-click › Add Note Here, or by selecting text and adding a note (tools: add_note, list_annotations, delete_annotations); a Markdown note (Markdown 笔记) is a separate .md file opened in its own tab (tools: list_markdown_notes, read_markdown, edit_markdown)."
 }
 
 /// Agent 发来的一次权限请求，等用户在面板里点选项。

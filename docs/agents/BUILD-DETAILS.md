@@ -37,11 +37,15 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 
 ## 第三方包（SPM）
 
-目前三个：
+目前四个：
 
 - **`swift-markdown-engine`**（2026-09-26 起用自家 fork `Unireader/swift-markdown-engine` 的 `unireader` 分支——
   上游把智能引号写死为开，笔记里 `'` 会变 `’`，fork 加了 `SpellCheckingPolicy.automaticQuoteSubstitution`，两处编辑区都关掉；
-  `project.yml` 里 `exactVersion` 钉死，现 **0.13.0-unireader.1**，改 fork 的做法写在 `project.yml` 注释里；
+  `project.yml` 里 `exactVersion` 钉死，现 **0.13.0-unireader.2**（2026-10-05 修代码块选中：折行行底色盖住选区、
+  围栏选中时露出来，见 `docs/agents/PITFALLS.md`），改 fork 的做法写在 `project.yml` 注释里；本地克隆在
+  `../swift-markdown-engine`（`unireader` 分支），改它时用 `git worktree` 另开目录，别动那个克隆当前检出的分支；
+  在 worktree 里跑 `swift test` 不联网的办法：`swift package config set-mirror` 把 HighlighterSwift / SwiftMath
+  指到 `build/dev/SourcePackages/repositories/` 里现成的仓库（`.swiftpm/` 别提交）；
   🔴 **升级前后都跑一遍 `spike/markdown-relayout-cost.swift`**——0.9.0 每敲一个字按整篇算账，17K 字的笔记 56ms/字、
   52K 字 159ms/字（一帧才 16.7ms），0.13.0 恒定 9~12ms/字不随全文长度涨；量的是主线程 CPU 时间，用法见文件头，
   改动前后对比一眼就知道有没有退步）——笔记编辑器 sheet（`MarkdownNoteEditor`）与气泡正文只读渲染
@@ -49,7 +53,13 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `MarkdownEngineLatex`（2026-09-16 加，笔记里的 `$…$` / `$$…$$` 公式；传递依赖 **SwiftMath**，MIT，
   带 ~7MB 数学字体进 app 包）。公式渲染器 = `NoteLatexRenderer`（套在引擎的 `SwiftMathBridge` 外面：
   `$$` 块加 `\displaystyle` 按块排版 + 缓存封顶）；某条公式能不能渲染，用 `spike/latex-look.swift` 出样张看
-  （SwiftMath 不支持的命令会原样显示源码）。
+  （SwiftMath 不支持的命令会原样显示源码）。引擎的第三个产品 `MarkdownEngineCodeBlocks`（代码着色桥接层）**不取**，
+  原因见下一条。
+- **HighlighterSwift**（`exactVersion: 3.1.0`，2026-10-05 加，MIT）——Agent 面板代码块按语言着色
+  （`AgentCodeHighlighter`，`ACP-AGENT-PLAN.md §7.1`）。它本来就是引擎的传递依赖（早已解析在 Package.resolved），
+  改为直接依赖是为了绕开引擎桥接层「没写语言 / 不认识的语言就让 highlight.js 挨个猜」（60 行 0.35~0.6 秒）。
+  highlight.js 跑在 JavaScriptCore 里，带 ~1MB 脚本 + 主题 CSS 进 app 包（`Highlighter_Highlighter.bundle`）。
+  Debug 包里它每遇到主题没定义的样式类就 `print` 一行 `WARNING MISSING STYLE`（包里的 `#if DEBUG`），无害。
 - **Sparkle**（`from: "2.9.1"`，2026-09-18 加）——`Sources/App/UpdaterService.swift` 薄封装
   `SPUStandardUpdaterController`，菜单「UniReader › 检查更新…」与设置 ›「通用」的「更新」区块共用它；
   UniReader 不在 sandbox，不需要 Installer XPC service 或额外 entitlements。

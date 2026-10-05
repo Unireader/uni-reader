@@ -91,6 +91,14 @@ Agent 要读时调用 get_current_view，拿编辑器里的实时正文与 revis
 （2026-09-24 起上下文里改为指引 read_markdown 读取、edit_markdown 局部修改，update_markdown 只用于整篇重写，见 `MCP-PLAN.md §19`。）
 Agent 仍不得绕过 MCP 直接修改文件。
 
+**两种笔记**（2026-10-05 用户：「需要 Agent 区分文字笔记和 Markdown 笔记，文字笔记是右键添加或者选中文字的那个
+Add Note Here」）：上下文块最后多一行（`AgentReaderContext.noteKinds`），说清**文字笔记**（批注 / 文字笔记 =
+钉在 PDF 页面某处，右键「在此添加批注」或选中文字后添加；工具 add_note / list_annotations / delete_annotations）
+与 **Markdown 笔记**（独立的 .md 文件、在自己的标签页里打开；工具 *_markdown）。用户只说「笔记」没讲哪种时
+**按当前标签页猜**（用户定）：PDF 标签 = 这篇文档上的文字笔记，Markdown 笔记标签 = Markdown 笔记（多半就是这篇），
+都没开 = 问用户。MCP 的 `instructions` 与 add_note / list_annotations / list_markdown_notes 三个工具说明里
+也写了同样的区分（外部 Agent 也受益）；上下文块里再写一遍，是因为不是每个 Agent 都读 `instructions`。
+
 - 🔴 **用户的话放第一块、上下文块放后面**：Kimi 拿第一块文字给会话起标题（spike 实测），反过来历史列表里
   每条都叫「<unireader-context>」。
 - 回放历史时 `AgentTranscript.stripHidden` 按标签对把它从「用户说的话」里剔掉（Kimi 自己注入的
@@ -155,8 +163,8 @@ Agent 的回复从前只解析行内语法（`AttributedString(markdown:)` 的 `
 标题 / 列表 / 代码块 / 表格 / 公式全是原样的源码。现在改成与笔记同一个引擎（`swift-markdown-engine`）的
 只读渲染：`Sources/Window/AI/AgentMarkdownView.swift`。
 
-- **谁用**：Agent 回复（13pt）与思考过程（折叠块里，12pt）。**工具输出不用**——那是 JSON / diff 这类
-  原样的东西，照旧等宽纯文本；用户自己发的话也照旧是纯文本气泡。
+- **谁用**：Agent 回复（13pt）与思考过程（折叠块里，12pt）；2026-10-05 起**用户自己发的话**也是（气泡里，
+  13pt，见下面「用户消息气泡」）。**工具输出不用**——那是 JSON / diff 这类原样的东西，照旧等宽纯文本。
 - **配置**（`AgentMarkdown.configuration`）：`heightBehavior = .fitsContent`（高度由内容定，滚轮交给
   对话记录那个滚动视图）、不要自带滚动条与留白、不做拼写检查；标题 / 列表缩进的尺度与公式渲染器
   跟笔记共用一套（`MarkdownNoteEditor.applyNoteTypography`）。主题用引擎默认的——`bodyText` 就是
@@ -181,8 +189,36 @@ Agent 的回复从前只解析行内语法（`AttributedString(markdown:)` 的 `
   卡在角上，竖的横的都一样（2026-09-20 踩过）。
 - **SwiftUI**：引擎只公开了 SwiftUI 包装，这里同样用 `NSHostingView` 托管——与笔记气泡 / 编辑弹窗 /
   整篇编辑区同属「Markdown 引擎」那条例外，界面其余部分仍是 AppKit。
-- **没做**：代码块语法高亮（要另取引擎的 `MarkdownEngineCodeBlocks` 产品 + `HighlighterSwift` 依赖，
-  改 `project.yml` 要先跟用户确认）；裸 URL 不会自动变成链接（引擎只认 Markdown 语法写的链接）。
+- **没做**：裸 URL 不会自动变成链接（引擎只认 Markdown 语法写的链接）；`~~删除线~~` 引擎也是选配扩展，没开。
+
+### 7.1 用户消息气泡 + 两种高亮（2026-10-05）
+
+用户原话：「用户输入到 agent 的也展示为 markdown」「输出添加高亮支持」（问过：两种高亮都做）。
+
+- **用户消息**（`Window/AI/AgentUserMessageView`）：气泡正文换成 `AgentMarkdownView`（同回复的字号、配置），
+  回放时分片推回来的同一句话就地换文字（`AgentItemViews.update` 认 `.user`）。气泡**按内容收窄、靠右**：
+  引擎只按给定宽度报高度、不报「最窄要多宽」，所以按原文逐行量宽估（`AgentMarkdown.fittingWidth`）——引擎是
+  「原文就地加样式」，换行照原文、标记藏起来，量原文大致就是排出来的宽度；量不准的块级结构（标题 / 列表 /
+  引用 / 代码块 / 表格 / 块公式 / 图片）直接撑到上限（条目宽 − 48）；含行内代码 / 公式的行按等宽字体量（宁宽勿窄）。
+  🔴 两条「想要多宽」的约束压在优先级 240（低于分栏 250、窗口 500），见 `docs/agents/PITFALLS.md`。
+- **`==荧光笔==`**：开引擎自带的 `HighlightExtension`（默认不开），底色是引擎主题的 `highlightColor`。
+  只开在 Agent 面板，笔记那边没动。已知：引擎的 `==` 不要求贴着文字，正文里裸写的 `a == b 和 c == d`
+  会把中间那段当高亮（反引号里的代码不受影响）。
+- **代码块着色**（`AgentCodeHighlighter`）：直接依赖 HighlighterSwift（highlight.js 跑在 JavaScriptCore），
+  **不用**引擎的 `MarkdownEngineCodeBlocks` 桥接层——它在没写语言 / 不认识的语言时让 highlight.js 挨个猜，
+  实测 60 行 0.35~0.6 秒卡主线程（用户选了「直接链接 HighlighterSwift」）。规矩：只着围栏上写了、且
+  highlight.js 认得的语言（别名它自己认），绝不猜；GitHub 浅 / 深两套主题各着一遍合成动态颜色（切外观不重排）；
+  代码块底色浅 0.96 / 深 0.08、必须不透明。开销：首次建两份 highlight.js 约 90ms，之后约 0.35ms/行，
+  每块只在围栏闭合那一刻着一次（引擎不把没闭合的围栏当代码块），之后走缓存。
+- **代码块选中**（同日用户截图：折行的代码行底色盖住选区、围栏 ```fortran 露出来）：是引擎的两处毛病，
+  代码块有了不透明底色才暴露。用户选了「保留底色、修引擎 fork」→ `0.13.0-unireader.2`（细节 `docs/agents/PITFALLS.md`）。
+- **右键「复制表格 / 复制代码」**（同日用户：「table 表格支持右键复制表格，代码块也是」；另报「直接右键表格会出现
+  错误的高亮选中」）：走引擎的 `onBuildContextMenu`，`AgentMarkdownView.contextMenu` 按右键坐标换算出点中的字符、
+  `AgentMarkdownBlocks` 认出所在的块，在系统菜单顶上加一项（系统原有的项不动）。复制表格 = 纯文本放 Markdown 原文 +
+  HTML 放渲染好的表格（贴进 Numbers / Excel / Pages 是真表格）；复制代码 = 两行围栏之间的代码。右键表格时把落在
+  表格里的选区收成插入点（那是右键自动选中的隐藏源码，蓝框错位盖住半张表）。用户消息气泡里的表格 / 代码块同样有。
+- 离屏验证：`spike/agent-user-bubble-test.swift`（编真代码，115 项 + 浅 / 深两张样张 + 代码块整块选中样张；跑法在文件头）、
+  `spike/agent-markdown-blocks-test.swift`（认块纯逻辑 26 项）。
 
 ## 8. 输入框 `@` 选文件（2026-09-24）
 

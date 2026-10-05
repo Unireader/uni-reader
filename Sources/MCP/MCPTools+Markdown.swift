@@ -18,7 +18,7 @@ extension MCPTools {
         MCPTool(
             name: "list_markdown_notes",
             title: "List Markdown notes",
-            description: "List the workspace's Markdown notes (built-in Notes folder and referenced external folders) with their note_ref, for read_markdown / edit_markdown.",
+            description: "List the workspace's Markdown notes — separate .md files in the built-in Notes folder and referenced external folders, each opened in its own tab — with their note_ref, for read_markdown / edit_markdown. Text notes pinned on PDF pages are a different kind: see list_annotations.",
             inputSchema: MCPSchema.object([
                 "workspace": MCPSchema.string("Workspace .unrd path. Default: the key window's workspace."),
                 "source": MCPSchema.string("Only this note source (id or name, see sources in the result)"),

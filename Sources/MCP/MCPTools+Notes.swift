@@ -53,7 +53,7 @@ extension MCPTools {
         MCPTool(
             name: "add_note",
             title: "Add a text note",
-            description: "Add a text note (annotation) to a page. Anchor it to a passage by giving `quote` (the exact text on that page; it is located and the note pins to it), or to an area with `rect`, or to the top of the page with neither. Notes written this way are marked as coming from an agent.",
+            description: "Add a text note to a PDF page: an annotation pinned to a spot on the page, the same thing the user makes with right-click › Add Note Here or by selecting text and adding a note (批注 / 文字笔记 in the UI). Not for Markdown notes, which are separate .md files — write those with edit_markdown. Anchor it to a passage by giving `quote` (the exact text on that page; it is located and the note pins to it), or to an area with `rect`, or to the top of the page with neither. Notes written this way are marked as coming from an agent.",
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "page": MCPSchema.integer("Page, 1-based", min: 1),
                 "text": MCPSchema.string("The note body (Markdown is rendered in the bubble). Math: $…$ inline, $$…$$ on its own line for a block; \\(…\\) and \\[…\\] are NOT rendered. Required unless quote is given."),

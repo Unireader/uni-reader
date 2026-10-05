@@ -223,6 +223,7 @@ final class AgentChatNSView: NSView {
         for (_, entry) in itemViews {
             (entry.view as? AgentMarkdownView)?.flushNow()
             (entry.view as? AgentDisclosureView)?.markdown?.flushNow()
+            (entry.view as? AgentUserMessageView)?.markdown?.flushNow()
         }
         syncScroll()
         keepBottom()   // 正文是排完版才异步报高度的，下一拍再对一次滚动条
@@ -373,6 +374,7 @@ final class AgentChatNSView: NSView {
                 let v = AgentItemViews.make(item)
                 if let md = v as? AgentMarkdownView { md.onHeightChange = { [weak self] in self?.keepBottom() } }
                 if let d = v as? AgentDisclosureView { d.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
+                if let u = v as? AgentUserMessageView { u.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
                 itemViews[item.id] = (item.kind, v)
                 views.append(v)
                 fresh.append(v)
@@ -619,7 +621,7 @@ enum AgentMenus {
 enum AgentItemViews {
     static func make(_ item: AgentItem) -> NSView {
         switch item.kind {
-        case .user(let s, let images): return user(s, images)
+        case .user(let s, let images): return AgentUserMessageView(text: s, images: images, id: item.id)
         case .agent(let s): return agent(s, id: item.id)
         case .thought(let s): return thought(s, id: item.id)
         case .tool(let call): return tool(call)
@@ -640,42 +642,13 @@ enum AgentItemViews {
             guard let v = view as? AgentDisclosureView, v.markdown != nil else { return false }
             v.update(text: s)
             return true
+        case .user(let s, let images):
+            // 回放时同一句话可能分几片推回来：图片没变、正文还在，就地换文字
+            guard let v = view as? AgentUserMessageView, v.images == images else { return false }
+            return v.update(text: s)
         default:
             return false
         }
-    }
-
-    private static func user(_ s: String, _ images: [AgentImage]) -> NSView {
-        let col = NSStackView()
-        col.orientation = .vertical
-        col.alignment = .trailing
-        col.spacing = 6
-        if !images.isEmpty {
-            let row = NSStackView(views: images.map { AgentImageThumbView(image: $0, side: 56) })
-            row.spacing = 6
-            col.addArrangedSubview(row)
-        }
-        if !s.isEmpty {
-            let t = NSTextField(wrappingLabelWithString: s)
-            t.isSelectable = true
-            t.textColor = .labelColor
-            let bubble = NSView()
-            bubble.wantsLayer = true
-            bubble.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-            bubble.layer?.cornerRadius = 12
-            bubble.layer?.cornerCurve = .continuous
-            t.translatesAutoresizingMaskIntoConstraints = false
-            bubble.addSubview(t)
-            NSLayoutConstraint.activate([
-                t.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 12),
-                t.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -12),
-                t.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 7),
-                t.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -7),
-            ])
-            col.addArrangedSubview(bubble)
-            bubble.widthAnchor.constraint(lessThanOrEqualTo: col.widthAnchor, constant: -48).isActive = true
-        }
-        return col
     }
 
     /// Agent 的回复：Markdown 引擎只读渲染（标题 / 列表 / 代码块 / 表格 / 公式，`AgentMarkdownView`）。

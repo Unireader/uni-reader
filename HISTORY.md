@@ -3,6 +3,24 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ Agent 面板：用户消息走 Markdown + 两种高亮 + 分清两种笔记（2026-10-05）
+
+- 用户提三件：「用户输入到 agent 的也展示为 markdown」「输出添加高亮支持」「需要 agent 区分文字笔记和 Markdown 笔记，
+  文字笔记是右键添加或者选中文字的那个 Add Note Here」。问过两处：高亮 = `==荧光笔==` 与代码块着色**两种都做**；
+  只说「笔记」时**按当前标签页猜**。
+- 用户消息气泡正文改用回复那套 Markdown 引擎（新文件 `Window/AI/AgentUserMessageView`），气泡按原文估宽收窄、
+  块级结构撑满；「想要多宽」的约束压在 240，绝不撑大面板（离屏验证抓到 750 时把窗口撑到 1 万多 pt）。
+- `==荧光笔==`：开引擎自带的 `HighlightExtension`。代码块着色：**直接依赖 HighlighterSwift**（`project.yml`，3.1.0），
+  自写 `AgentCodeHighlighter`，只着写了且认得的语言、绝不猜（引擎桥接层会猜，60 行 0.35~0.6 秒卡主线程；
+  用户在「直接链接 / 白名单 / 原样」里选了直接链接）；GitHub 浅 / 深主题合成动态颜色，代码块底色不透明。
+- 两种笔记：MCP `instructions` + add_note / list_annotations / list_markdown_notes 说明 + Agent 上下文块各写清楚。
+- 细节：`ACP-AGENT-PLAN.md §3.2 / §7.1`、`MCP-PLAN.md §22`、`docs/agents/PITFALLS.md`（两条着色坑 + 约束优先级）。
+  离屏验证 `spike/agent-user-bubble-test.swift` 105 项全过 + 浅 / 深样张看过；**界面待用户实测**。
+- 同日第二轮（用户实测截图）：① 代码块选中时折行行的底色盖住选区、围栏露出来——引擎 fork 修掉，升到
+  `0.13.0-unireader.2`（用户选「保留底色、修引擎」；引擎 503 项测试全过，已推 GitHub）；② 右键表格出现错位的蓝框
+  + 要「右键复制表格，代码块也是」——正文右键在表格 / 代码块上加「复制表格 / 复制代码」，右键表格不再留错位选区。
+  spike 增到 115 项 + 认块纯逻辑 `agent-markdown-blocks-test.swift` 26 项，全过。
+
 ## ✅ MCP：删除批注 `delete_annotations`（2026-10-03）
 
 - 用户要求「mcp 添加删除功能」，推翻 `MCP-PLAN.md §14` 第 9 条「不提供删除」；拍板范围 = 高亮 / 文字笔记 / 书签 / 图片笔记，删的进回收站。

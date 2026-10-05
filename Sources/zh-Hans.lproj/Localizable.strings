@@ -485,6 +485,8 @@
 "Image file is missing (not in this copy, or already cleaned up)." = "图片文件不在（这份副本没带它，或已被清理）。";
 "View Full Size" = "查看原图";
 "Copy Image" = "复制图片";
+"Copy Table" = "复制表格";
+"Copy Code" = "复制代码";
 "Import Image Here…" = "在此导入图片…";
 "Choose images to add as notes on this page" = "选择要加到这一页上的图片";
 "Saving image note…" = "正在保存图片笔记…";

@@ -12,6 +12,24 @@
   传一个**身份固定**的中转闭包进去，目标随后再填。
 - Markdown 引擎升级前后的重排代价回归：跑 `spike/markdown-relayout-cost.swift`，见
   `docs/agents/BUILD-DETAILS.md`「第三方包」。
+- **代码着色绝不能让 highlight.js 猜语言**（2026-10-05 实测）：`hljs.highlightAuto` 把 190 多种语言挨个试，
+  60 行要 0.35~0.6 秒、卡主线程；写了语言的约 0.35ms/行。引擎自带的桥接层（`MarkdownEngineCodeBlocks` 的
+  `HighlighterSwiftBridge`）在「没写语言」和「不认识的语言」时都退回去猜，所以不用它，Agent 面板用自己的
+  `AgentCodeHighlighter`（直接依赖 HighlighterSwift）。引擎只把**闭合了**的围栏当代码块，流式时还在长的那块
+  不会来问着色器，每块只在闭合那一刻着一次。
+- **代码块底色必须不透明**（同日）：引擎在代码块整行画一遍 `backgroundColor()`、TextKit 又在字形底下按
+  `.backgroundColor` 属性画一遍，半透明会叠出一道道深色条；它还按 RGB（容差 0.03、不看透明度）比这个颜色
+  来认哪几行是代码块。`textBackgroundColor` 在 Tahoe 深色下和面板底几乎同色、纯白在浅色白面板上看不见。
+- **代码块底色一不透明，引擎的两处选中毛病就露出来**（同日用户截图，引擎 fork `0.13.0-unireader.2` 修掉）：
+  ① 整行底色按偶奇规则挖掉选区，但每段选区都被拉到整段高度，一行代码折成两行时两块挖空重叠、互相抵消，
+  底色盖住了选区——改为每块只盖自己那一行、首末行才贴到底色上下边；② 围栏 ``` 与语言名只靠透明色隐藏，
+  选中时系统按「选中文字色」重画就露出来——改为同其他标记一样按近零字号隐藏。App 这边绕不干净：
+  把 `selectedTextAttributes` 去掉字色能保住围栏与语法颜色，但字形底下的代码底色又会盖住选区（离屏实测）。
+- **右键点在表格上会选中一块错位的蓝框**（同日）：表格是整张画成的图，宽表格再套一层横向滚动视图
+  （引擎 `WideTableOverlay`），图本身没有菜单，右键一路传给文本视图，它选中了表格隐藏源码的一个字符
+  （开头的 `|`），那个字符的框是一大块。`AgentMarkdownView.contextMenu` 在点中表格时把这种选区收成插入点。
+  点中哪一块按右键事件坐标换算（`characterIndexForInsertion`），认块规则在 `AgentMarkdownBlocks`，
+  🔴 必须与引擎 `BlockParser` 一致（行首 ``` 才算围栏、没收尾的不算；表格要紧跟分隔行）。
 
 ## App / 窗口生命周期
 
@@ -77,6 +95,11 @@
   旧宽度，所以面板要 `clipsToBounds`。排滚动条的问题别再猜，`touch ~/Library/Logs/UniReader-agent-scroll.log`
   开几何打点（`AgentScrollLog`，默认关）。离屏验证 `spike/agent-transcript-test.swift`（42 项：增量结果、
   零操作、约束只加一次、约束激活顺序）。
+- **「内容想要多宽」的约束优先级必须低于 250**（2026-10-05 离屏验证抓到）：用户消息气泡按内容收窄时，
+  起初用 750 的「正文宽 = 估的宽」+ 常数 10000 表示撑满，结果窗口被撑到 1 万多 pt——窗口保持尺寸只有 500、
+  `NSSplitView` 默认保持优先级 250，高过它们的偏好约束会反过来把容器撑宽。现在压在 240，撑满改用相对约束
+  （气泡左边 = 条目左边 + 48），气泡也不再放进 `NSStackView`（它的贴边约束会抢）。
+  离屏验证 `spike/agent-user-bubble-test.swift`（105 项 + 浅 / 深两张样张）。
 
 ## 隐藏视图的布局代价
 

@@ -483,6 +483,8 @@
 "Image file is missing (not in this copy, or already cleaned up)." = "Image file is missing (not in this copy, or already cleaned up).";
 "View Full Size" = "View Full Size";
 "Copy Image" = "Copy Image";
+"Copy Table" = "Copy Table";
+"Copy Code" = "Copy Code";
 "Import Image Here…" = "Import Image Here…";
 "Choose images to add as notes on this page" = "Choose images to add as notes on this page";
 "Saving image note…" = "Saving image note…";

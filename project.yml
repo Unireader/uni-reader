@@ -10,12 +10,16 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.3.2"
     CURRENT_PROJECT_VERSION: "43"
-# 第三方包（SPM），目前两个：
+# 第三方包（SPM），下面三个 + 文件后面单列的 ACP：
 #   - 笔记的 Markdown 引擎（TextKit 2 + AppKit；编辑器 sheet + 气泡正文只读渲染，
 #     后者是「阅读区纯 SwiftUI」红线的唯一例外）。pre-1.0，**钉死版本**，升级要手动改这里再解析。
 #     取两个产品：核心 `MarkdownEngine`（零外部依赖）+ `MarkdownEngineLatex`（2026-09-16 加，公式渲染；
 #     传递依赖 SwiftMath，MIT，版本由引擎的 `from: 1.7.0` 解析、钉在 Package.resolved，带 ~7MB 数学字体资源）。
-#     代码高亮那个产品（带 HighlighterSwift）仍没取，用到再加。
+#     引擎的代码着色产品 `MarkdownEngineCodeBlocks` **不取**：它的桥接层遇到没写语言 / 不认识的语言会让
+#     highlight.js 挨个猜（实测 60 行 0.35~0.6 秒，卡主线程），见下面 HighlighterSwift 一条。
+#   - HighlighterSwift（2026-10-05 加，MIT）：Agent 面板代码块按语言着色（`AgentCodeHighlighter`，自己写的
+#     着色器，只着写了且认得的语言，绝不猜）。它本来就是引擎的传递依赖、早已解析在 Package.resolved 里，
+#     这里改为直接依赖、钉同一版本。内部用 JavaScriptCore 跑 highlight.js，带 ~1MB 脚本 + 主题 CSS。
 #   - Sparkle 2 自动更新框架（2026-09-18 加，参考同作者 Perch 项目的集成）。装好后：
 #       - `Sources/App/UpdaterService.swift` 用 `SPUStandardUpdaterController` 驱动整条更新流程
 #         （拉 appcast、EdDSA 校验、下载、out-of-process 安装、重启），用 Sparkle 自带的标准 UI，
@@ -27,13 +31,18 @@ packages:
   MarkdownEngine:
     # 2026-09-26 起用自家 fork（上游 nodes-app/swift-markdown-engine）：上游把智能引号写死为开，
     # 笔记里的 ' 会变成 ’；fork 在 `unireader` 分支给 SpellCheckingPolicy 加了 automaticQuoteSubstitution。
+    # `.2`（2026-10-05）：代码块有不透明底色后暴露的两处——折行代码行的底色盖住选区（逐行挖空互相抵消）、
+    # 选中时围栏 ``` 与语言名露出来（只靠透明色隐藏，被选中字色重画）。fork 提交 1824f35。
     # 改 fork：在 fork 里改、`swift test` 过、打 `<上游版本>-unireader.N` 新 tag，再改这里的版本号；
     # 跟上游升级 = 把 `unireader` 分支 rebase 到上游新 tag 上再打 tag。
     url: https://github.com/Unireader/swift-markdown-engine
     # 2026-09-21 从 0.9.0 升到 0.13.0：0.9.0 每敲一个字都按整篇算账（17K 字的笔记 56ms/字、
     # 52K 字 159ms/字，一帧才 16.7ms），0.13.0 把增量做对了——恒定 9~11ms/字，不再随全文长度涨。
     # 量法见 `spike/markdown-relayout-cost.swift`。升级只动版本号，App 代码一行没改。
-    exactVersion: 0.13.0-unireader.1
+    exactVersion: 0.13.0-unireader.2
+  HighlighterSwift:
+    url: https://github.com/smittytone/HighlighterSwift
+    exactVersion: 3.1.0
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle.git
     from: "2.9.1"
@@ -53,6 +62,8 @@ targets:
         product: MarkdownEngine
       - package: MarkdownEngine
         product: MarkdownEngineLatex
+      - package: HighlighterSwift
+        product: Highlighter
       - package: Sparkle
         product: Sparkle
       - package: ACP

@@ -105,7 +105,7 @@ extension MCPTools {
         MCPTool(
             name: "list_annotations",
             title: "List notes, highlights and bookmarks",
-            description: "Everything the user has added to a document: text notes (with the quoted passage and the note text), highlights, bookmarks, image notes, AI chat threads, scratch pads, and how many handwritten strokes are on each page (counts only). Every item carries a `link` (unireader://…) that opens UniReader at that exact spot — paste it into notes written elsewhere (Obsidian etc.). Defaults to the document in the key window.",
+            description: "Everything the user has added to a document: text notes (pinned on its pages, with the quoted passage and the note text; Markdown notes are separate files, see list_markdown_notes), highlights, bookmarks, image notes, AI chat threads, scratch pads, and how many handwritten strokes are on each page (counts only). Every item carries a `link` (unireader://…) that opens UniReader at that exact spot — paste it into notes written elsewhere (Obsidian etc.). Defaults to the document in the key window.",
             inputSchema: MCPSchema.object([
                 "document_id": MCPSchema.string("Library document id. Omit for the key window's document."),
                 "workspace": MCPSchema.string("Workspace .unrd path, only when the id is ambiguous."),

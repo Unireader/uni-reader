@@ -1,4 +1,5 @@
 import AppKit
+import Highlighter
 import MarkdownEngine
 import SwiftUI
 
@@ -20,6 +21,8 @@ enum AgentMarkdown {
     /// 不做拼写检查（显示的是别人写的文字，画红波浪线没意义）。
     /// 标题 / 列表缩进的尺度与公式渲染器跟笔记共用一套（`applyNoteTypography`）；
     /// 主题用引擎默认的——`bodyText` 就是 `labelColor`，跟着系统外观走（气泡那套是钉死浅色的，不能拿来用）。
+    /// 高亮两种（2026-10-05 用户要的「输出添加高亮支持」，两种都做）：`==文字==` 荧光笔底色（引擎自带扩展，
+    /// 默认不开）+ 代码块按语言着色（`AgentCodeHighlighter`）。只开在 Agent 面板，笔记那边没动。
     static let configuration: MarkdownEditorConfiguration = {
         var c = MarkdownEditorConfiguration.default
         c.heightBehavior = .fitsContent
@@ -29,8 +32,133 @@ enum AgentMarkdown {
         c.spellChecking = SpellCheckingPolicy(continuousSpellChecking: false, grammarChecking: false,
                                               automaticSpellingCorrection: false)
         MarkdownNoteEditor.applyNoteTypography(&c)
+        c.extensions = [HighlightExtension()]
+        c.services.syntaxHighlighter = AgentCodeHighlighter.shared
         return c
     }()
+
+    /// 用户消息气泡按内容收窄时，正文要多宽（不含气泡内边距）；nil = 撑满气泡上限。
+    ///
+    /// 引擎是「原文就地加样式」的渲染：换行照原文、标记符号藏起来，所以**按原文逐行量宽**大致就是排出来的宽度——
+    /// 藏掉的 `**` 之类让实际更窄，加粗略宽一点由余量兜。量不准的块级结构（标题字号更大、列表 / 引用有缩进、
+    /// 代码块 / 表格 / 块公式 / 图片要整行宽）直接撑满。含行内代码或行内公式的行按等宽字体量（宁宽勿窄：
+    /// 窄了会多折一行，宽了只是气泡右边多点空）。
+    static func fittingWidth(of text: String, fontSize: CGFloat) -> CGFloat? {
+        let body = NSFont.systemFont(ofSize: fontSize)
+        let mono = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        var widest: CGFloat = 0
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let s = String(line)
+            if s.range(of: blockLine, options: .regularExpression) != nil || s.contains("![") { return nil }
+            let font = s.contains("`") || s.contains("$") ? mono : body
+            widest = max(widest, (s as NSString).size(withAttributes: [.font: font]).width)
+        }
+        return ceil(widest) + 4
+    }
+
+    /// 块级结构的行首：缩进代码、标题、引用、列表、代码围栏、表格、块公式。
+    private static let blockLine = #"^(\t| {4}| {0,3}(#{1,6}(\s|$)|>|[-*+]\s|\d{1,9}[.)]\s|```|~~~|\||\$\$))"#
+
+    /// 右键「复制表格」：纯文本放表格的 Markdown 原文（贴进笔记 / Obsidian），HTML 放渲染好的表格
+    /// （贴进 Numbers / Excel / Pages / Word 是一张真表格）。各 App 自己挑认得的那种。
+    static func copyTable(_ markdown: String, to pb: NSPasteboard = .general) {
+        let html = MarkdownHTMLRenderer.html(from: markdown, extensions: [HighlightExtension()])
+        pb.clearContents()
+        pb.declareTypes([.string, .html], owner: nil)
+        pb.setString(markdown, forType: .string)
+        // 不声明编码的 HTML 片段有的 App 按 Latin-1 读，中文成乱码
+        pb.setString("<meta charset=\"utf-8\">" + html, forType: .html)
+    }
+
+    /// 右键「复制代码」：只要两行围栏之间的代码，不带 ``` 与语言名。
+    static func copyCode(_ code: String, to pb: NSPasteboard = .general) {
+        pb.clearContents()
+        pb.setString(code, forType: .string)
+    }
+}
+
+/// Agent 面板代码块的着色（highlight.js，经 HighlighterSwift 在 JavaScriptCore 里跑）。
+///
+/// 🔴 **只着围栏上写了、而且 highlight.js 认得的语言，绝不猜**：没写语言 / 不认识的语言让 highlight.js
+/// 把全部语言挨个试一遍（`highlightAuto`），实测 60 行 0.35~0.6 秒、卡主线程——引擎自带的桥接层
+/// （`MarkdownEngineCodeBlocks`）正是这么退的，所以不用它（`project.yml` 注释）。何况没标语言的多半是
+/// 命令输出 / 路径 / 纯文字，猜出来的颜色反而乱。别名（sh / py / ts / yml / html …）highlight.js 自己认。
+///
+/// 开销：写了语言的约 0.35ms/行（一半 JS、一半转属性串），**每块只着一次**——引擎只把**闭合了的**围栏当代码块
+/// （`BlockParser.fenceCloseIndex`），流式回复里还在长的那块是普通段落、不会来问；闭合那一刻整块着一次，
+/// 之后每次重排都走缓存。
+///
+/// 颜色：GitHub 浅 / 深两套主题（选择器分组完全一致，对比度好）同一段代码各着一遍，合成**跟着外观变的动态颜色**，
+/// 切深浅色时系统画字自己挑，不用让引擎重排——所以 `appearanceDidChangeNotification` 是 nil。
+/// 底色（`codeBackground`）：🔴 **必须不透明**——引擎在代码块整行画一遍底色、字形底下又按 `.backgroundColor`
+/// 画一遍，半透明会叠出一道道深色条；它也认这个颜色来判断哪几行是代码块（比 RGB）。
+/// 浅色 0.96 灰、深色 0.08 近黑：在面板底上、在用户气泡（面板再叠一层灰）里都分得出来（离屏样张看过）。
+/// 试过的两种都不行：`textBackgroundColor` 深色下和面板底几乎同色；纯白在 Tahoe 浅色的白面板上看不见。
+final class AgentCodeHighlighter: SyntaxHighlighter, @unchecked Sendable {
+    static let shared = AgentCodeHighlighter()
+
+    /// 两份 highlight.js，各钉一套主题（初始化一份约 30ms，第一次着色时才建）。
+    /// 引擎在主线程排版，只在主线程用。
+    private lazy var light: Highlighter? = Self.make(theme: "github")
+    private lazy var dark: Highlighter? = Self.make(theme: "github-dark")
+    /// (语言, 代码) → 着好色的结果。
+    private let cache = NSCache<NSString, NSAttributedString>()
+    /// highlight.js 不认识的语言：下次直接跳过，连 JS 都不进。
+    private var unknownLanguages: Set<String> = []
+    /// (浅色, 深色) → 合成的动态颜色：一个主题就十几种颜色，别每个片段新建一个。
+    private var dynamicColors: [String: NSColor] = [:]
+
+    private init() {
+        cache.countLimit = 256
+        cache.totalCostLimit = 2_000_000
+    }
+
+    private static func make(theme: String) -> Highlighter? {
+        guard let h = Highlighter(), h.setTheme(theme) else { return nil }
+        h.ignoreIllegals = true   // 示例代码常带 `...` 之类的占位，别因为一处不合语法整块不着色
+        return h
+    }
+
+    private static let codeBackground = NSColor(name: nil) {
+        NSColor(white: $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 0.08 : 0.96, alpha: 1)
+    }
+
+    func codeFont(size: CGFloat) -> NSFont { .monospacedSystemFont(ofSize: size, weight: .regular) }
+    func backgroundColor() -> NSColor { Self.codeBackground }
+    var appearanceDidChangeNotification: Notification.Name? { nil }
+
+    func highlight(code: String, language: String?) -> NSAttributedString? {
+        guard let lang = language?.trimmingCharacters(in: .whitespaces).lowercased(), !lang.isEmpty,
+              !unknownLanguages.contains(lang) else { return nil }
+        let key = "\(lang)\n\(code)" as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let light, let dark else { return nil }
+        guard let l = light.highlight(code, as: lang), let d = dark.highlight(code, as: lang) else {
+            unknownLanguages.insert(lang)
+            return nil
+        }
+        // 引擎按下标把颜色贴回代码块，长度对不上宁可不着色，别把颜色贴错位
+        let n = (code as NSString).length
+        guard l.length == n, d.length == n else { return nil }
+        let out = NSMutableAttributedString(string: code)
+        l.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: n)) { lv, lr, _ in
+            // 两套主题分组一致，片段边界本该重合；不重合也照深色那边再切一刀
+            d.enumerateAttribute(.foregroundColor, in: lr) { dv, dr, _ in
+                guard let lc = lv as? NSColor, let dc = dv as? NSColor else { return }
+                out.addAttribute(.foregroundColor, value: dynamicColor(light: lc, dark: dc), range: dr)
+            }
+        }
+        cache.setObject(out, forKey: key, cost: n)
+        return out
+    }
+
+    private func dynamicColor(light: NSColor, dark: NSColor) -> NSColor {
+        let key = "\(light)|\(dark)"
+        if let c = dynamicColors[key] { return c }
+        let c = NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light }
+        dynamicColors[key] = c
+        return c
+    }
 }
 
 /// 托管进 `NSHostingView` 的那一层：排完版把真实高度报回给 AppKit（同 `BubbleMarkdownHost` 的做法）。
@@ -40,6 +168,8 @@ struct AgentMarkdownHost: View {
     let fontSize: CGFloat
     let documentId: String
     let onHeight: (CGFloat) -> Void
+    /// 右键菜单（`AgentMarkdownView.contextMenu`）。引擎每次 `updateNSView` 都会换上新的，不像 `onLinkClick` 只认第一次。
+    let onContextMenu: (NSMenu, NSRange) -> NSMenu
 
     var body: some View {
         NoteLatexRenderer.shared.registerBlocks(in: text)   // 块公式按块排版：须先于引擎排版登记
@@ -47,7 +177,8 @@ struct AgentMarkdownHost: View {
                                      configuration: AgentMarkdown.configuration.fittingLatex(to: width),
                                      fontSize: fontSize,
                                      documentId: documentId,
-                                     isEditable: false)
+                                     isEditable: false,
+                                     onBuildContextMenu: onContextMenu)
             .frame(width: width)
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onHeight($0) }
@@ -184,8 +315,9 @@ final class AgentMarkdownView: NSView {
     }
 
     private func rebuildRoot() {
-        let root = AgentMarkdownHost(text: text, width: max(hostWidth, 0), fontSize: fontSize,
-                                     documentId: documentId) { [weak self] in self?.setHeight($0) }
+        let root = AgentMarkdownHost(text: text, width: max(hostWidth, 0), fontSize: fontSize, documentId: documentId,
+                                     onHeight: { [weak self] in self?.setHeight($0) },
+                                     onContextMenu: { [weak self] menu, sel in self?.contextMenu(menu, selection: sel) ?? menu })
         if let host {
             host.rootView = root
         } else {
@@ -203,6 +335,58 @@ final class AgentMarkdownView: NSView {
         invalidateIntrinsicContentSize()
         needsLayout = true
         onHeightChange?()
+    }
+
+    // MARK: 右键菜单
+
+    /// 我们加的菜单项（菜单若是被复用的同一个对象，下次先摘掉这些，别越加越多）。
+    private static let menuItemID = NSUserInterfaceItemIdentifier("agent.markdown.copyBlock")
+
+    /// 引擎在 `NSHostingView` 里建的那个文本视图（右键要用它换算点击位置、改选区）。
+    private var textView: NSTextView? { host.flatMap(Self.firstTextView(in:)) }
+
+    private static func firstTextView(in v: NSView) -> NSTextView? {
+        if let t = v as? NSTextView { return t }
+        for s in v.subviews { if let t = firstTextView(in: s) { return t } }
+        return nil
+    }
+
+    /// 右键菜单（引擎把系统默认菜单 + 当前选区交给这里，`onBuildContextMenu`）：点在表格 / 代码块上时，
+    /// 顶上加一项「复制表格」/「复制代码」（2026-10-05 用户要的）；系统原有的项不动。
+    ///
+    /// 🔴 表格是整张画成一张图的（宽的再套一层横向滚动），右键点在图上，事件一路传给底下的文本视图，
+    /// 它按「点中的词」选中了表格隐藏源码里的一个字符——那个字符的框是一大块，蓝色选区就盖住了半张表
+    /// （同日用户截图，离屏复现：选区 = 表格开头的 `|`）。所以点在表格上时把这种落在表格里的选区收成插入点；
+    /// 用户先拖出来、跨出表格的选区不动。
+    private func contextMenu(_ menu: NSMenu, selection: NSRange) -> NSMenu {
+        for item in menu.items where item.identifier == Self.menuItemID { menu.removeItem(item) }
+        let tv = textView
+        let source = tv?.string ?? text
+        // 点中的位置：按这次右键的坐标算（已有的选区可能是用户早先拖出来的，不在点击处）
+        var index = selection.location
+        if let tv, let ev = NSApp.currentEvent, ev.window === tv.window,
+           ev.type == .rightMouseDown || ev.type == .leftMouseDown {
+            index = tv.characterIndexForInsertion(at: tv.convert(ev.locationInWindow, from: nil))
+        }
+        guard let block = AgentMarkdownBlock.block(at: index, in: source) else { return menu }
+        let content = (source as NSString).substring(with: block.content)
+        let item: NSMenuItem
+        switch block.kind {
+        case .table:
+            if let tv, selection.length > 0, selection.location >= block.range.location,
+               NSMaxRange(selection) <= NSMaxRange(block.range) + 1 {
+                tv.setSelectedRange(NSRange(location: block.range.location, length: 0))
+            }
+            item = ClosureMenuItem(L("Copy Table")) { AgentMarkdown.copyTable(content) }
+        case .code:
+            item = ClosureMenuItem(L("Copy Code")) { AgentMarkdown.copyCode(content) }
+        }
+        let separator = NSMenuItem.separator()
+        item.identifier = Self.menuItemID
+        separator.identifier = Self.menuItemID
+        menu.insertItem(separator, at: 0)
+        menu.insertItem(item, at: 0)
+        return menu
     }
 }
 

@@ -137,6 +137,11 @@ final class MCPServer: ObservableObject {
     UniReader is a PDF and Markdown note reader with per-workspace libraries. Pages are 1-based. \
     Call get_state first to learn which workspace and tab the user is looking at. \
     get_current_view returns the active PDF position or the active Markdown note's live text and revision. \
+    There are two different kinds of notes; keep them apart. A text note (批注 / 文字笔记 in the UI) is pinned to a spot \
+    on a PDF page — what the user makes with right-click › Add Note Here, or by selecting text and adding a note; \
+    use add_note / list_annotations / delete_annotations. A Markdown note (Markdown 笔记) is a separate .md file \
+    opened in its own tab; use the *_markdown tools. When the user just says "note" (笔记) without saying which, \
+    go by the active tab: a PDF tab means a text note on that document, a Markdown note tab means a Markdown note. \
     For Markdown notes: list_markdown_notes gives note_ref values; read_markdown reads any note by line range \
     (with line numbers), by search, or as a heading outline; edit_markdown changes part of a note by exact \
     old_text replacement or line insertion — prefer it over update_markdown, which replaces the whole text. \

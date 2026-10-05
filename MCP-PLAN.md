@@ -851,3 +851,13 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 - **放回**：回收站界面照常「放回」（`TrashStore.restore`，`note` 行 OR REPLACE）；放回 `.annotations` 条目后发
   `Trash.annotationsRestored` 通知，开着这篇的标签 `DocTabModel.reloadAnnotations()` 从库里重装批注（恢复只写库，不重装看不见）。
 - 测试：`spike/trash-test.swift` 加「5c 批注级」8 项 + kind 编解码 1 项（共 71 项全过）。界面与 MCP 调用待用户实测。
+
+## 22. 2026-10-05 说明里分清两种笔记
+
+- 用户：「需要 Agent 区分文字笔记和 Markdown 笔记，文字笔记是右键添加或者选中文字的那个 Add Note Here」。
+  只说「笔记」没讲哪种时**按当前标签页猜**（用户定）：PDF 标签 = 这篇的文字笔记，Markdown 笔记标签 = Markdown 笔记。
+- 只改说明文字，不改任何工具的参数与返回（schema 不动）：服务器 `instructions` 加一段两种笔记的定义 + 按标签页猜的规矩；
+  `add_note`（钉在 PDF 页面上的批注，不是 Markdown 笔记）、`list_annotations`（文字笔记钉在页上，Markdown 笔记见
+  list_markdown_notes）、`list_markdown_notes`（独立 .md 文件，钉在页上的是另一种，见 list_annotations）三处说明互相指路。
+  说明里带上界面的中文叫法（批注 / 文字笔记、Markdown 笔记），用户用中文说时模型对得上。
+- App 内的 Agent 面板在上下文块里也写了一遍（`ACP-AGENT-PLAN.md §3.2`「两种笔记」）。
