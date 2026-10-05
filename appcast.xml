@@ -9,6 +9,46 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.3</title>
+      <pubDate>Mon, 05 Oct 2026 07:08:25 +0000</pubDate>
+      <sparkle:version>44</sparkle:version>
+      <sparkle:shortVersionString>0.3.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能和改进</h4>
+<ul>
+<li>Agent 面板里你发出的话也按 Markdown 显示：粗体、列表、行内代码、公式、表格等和 Agent 的回复一样排版；短句的气泡按文字长短收窄。</li>
+<li>Agent 回复里的代码块按语言着色（代码块开头写了语言名才着色，例如 swift、python），浅色和深色外观各有一套配色，代码块也有了底色。<code>==文字==</code> 显示为荧光笔高亮。</li>
+<li>在 Agent 面板里右键表格，可以「复制表格」：贴进笔记是 Markdown 原文，贴进 Numbers、Excel、Pages 是一张表格。右键代码块，可以「复制代码」，只复制代码本身。</li>
+<li>Agent 能分清两种笔记：文字笔记（右键「在此添加批注」或选中文字后添加、钉在页面上的那种）和 Markdown 笔记。你只说「笔记」时，正在看 PDF 就按文字笔记理解，正在看 Markdown 笔记就按 Markdown 笔记理解。通过 MCP 连接的外部 Agent 同样适用。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>在 Agent 面板里右键表格时，不再出现盖住半张表的错位蓝色选中框。</li>
+<li>选中代码块时，不再露出代码块首尾的围栏标记和语言名。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.3">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New features &amp; improvements</h4>
+<ul>
+<li>In the Agent panel, what you send is now shown as Markdown too: bold, lists, inline code, math, tables and so on are laid out just like the agent's replies, and short messages get a bubble that fits the text.</li>
+<li>Code blocks in agent replies are colored by language (when the code block names its language, such as swift or python), with separate colors for light and dark appearance, and code blocks now have a background. <code>==text==</code> shows as a highlighter mark.</li>
+<li>Right-click a table in the Agent panel and choose Copy Table: it pastes as Markdown into notes and as a real table into Numbers, Excel or Pages. Right-click a code block and choose Copy Code to copy just the code.</li>
+<li>Agents now tell the two kinds of notes apart: text notes (the ones pinned on a page, added with right-click ▸ Add Note Here or by selecting text) and Markdown notes. When you just say "note", an agent takes it as a text note if you are looking at a PDF, and as a Markdown note if you are looking at a Markdown note. This also applies to external agents connected over MCP.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Right-clicking a table in the Agent panel no longer shows a misplaced blue selection covering half the table.</li>
+<li>Selecting a code block no longer reveals the code fence markers and language name.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.3">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.3/UniReader-0.3.3.zip" length="14180512" type="application/octet-stream" sparkle:edSignature="xglMztiCdXV5aK9QXh23+1/OCPeJ0JmM/ffZfA9Pm3udUsjHr2F9YLNC8EwPXWXUA9HtyAPgzeAAE2Etguu6AQ==" />
+    </item>
+    <item>
       <title>v0.3.2</title>
       <pubDate>Sat, 03 Oct 2026 10:45:52 +0000</pubDate>
       <sparkle:version>43</sparkle:version>
