@@ -18,6 +18,8 @@ struct MCPSettingsView: View {
     /// 口令的界面镜像（本体在 Keychain，`MCPToken`）。
     @State private var token: String? = MCPToken.current()
 
+    /// 「启动时在后台加载」开关的本体在模型里（打开要让各阅读窗口当场预加载，`@AppStorage` 做不到）
+    @ObservedObject private var agentPanel = AgentPanelModel.shared
     @AppStorage(AgentConfig.commandKey) private var agentCommand = ""
     @AppStorage(AgentConfig.argumentsKey) private var agentArguments = AgentConfig.defaultArguments
     /// 命令解析出来的绝对路径（按登录 shell 的 PATH 找；nil = 没找到）。
@@ -68,10 +70,15 @@ struct MCPSettingsView: View {
             LabeledContent(L("Resolved")) {
                 Text(agentResolved ?? L("Not found")).textSelection(.enabled)
             }
+            Toggle(L("Load in the background at launch"),
+                   isOn: Binding(get: { agentPanel.preloadAtLaunch }, set: { agentPanel.setPreloadAtLaunch($0) }))
         } header: {
             Text(L("Agent Panel"))
         } footer: {
-            Text(L("The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats."))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L("The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats."))
+                Text(L("With background loading on, each reading window starts the agent as soon as it has a workspace, so the Agent page is ready when you open it. The agent keeps running even if you never open the page."))
+            }
         }
         .task(id: agentCommand) {
             agentResolved = try? await AgentConfig.resolveExecutable(AgentConfig.command)

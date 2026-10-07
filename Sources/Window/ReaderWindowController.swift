@@ -108,6 +108,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         bindTitle()
         observeToolbarStates()
         observeMenuCommands()
+        observeAgentPreload()
         decideInitialContent(launchDocId: launchDocId)
 
         // ⚠️ `NSWindowController.shouldCascadeWindows` 默认 true，`showWindow` 时会**覆盖**
@@ -352,6 +353,20 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .sink { [weak self] note in
                 guard let self, self.isKey else { return }
                 action(self, note)
+            }
+            .store(in: &bag)
+    }
+
+    /// 设置 › Agent ›「启动时在后台加载」：这扇窗一有工作区（启动时打开 / 换工作区）、或开关刚打开，
+    /// 就替它把 Agent 对话建好（`AgentPanelModel.preloadChat`）。`receive(on:)` 推到下一拍再读：
+    /// `@Published` 在 willSet 发出，当场读 `workspace.folder` 还是旧值。
+    private func observeAgentPreload() {
+        let agent = AgentPanelModel.shared
+        Publishers.CombineLatest3(workspace.$folder, agent.$enabled, agent.$preloadAtLaunch)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] folder, enabled, preload in
+                guard let self, folder != nil, enabled, preload else { return }
+                agent.preloadChat(for: self)
             }
             .store(in: &bag)
     }

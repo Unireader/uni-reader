@@ -27,6 +27,7 @@ final class AgentPanelModel: ObservableObject {
 
     private init() {
         enabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
+        preloadAtLaunch = UserDefaults.standard.bool(forKey: Self.preloadKey)
     }
 
     // MARK: - 总开关
@@ -43,6 +44,31 @@ final class AgentPanelModel: ObservableObject {
         guard !on else { return }
         // 关掉就当场放掉：对话与 Agent 进程一并结束
         teardownAll()
+    }
+
+    // MARK: - 后台预加载
+
+    private static let preloadKey = "agentPreloadAtLaunch"
+    /// 设置 › Agent ›「启动时在后台加载」（用户 2026-10-07：「启动 app 自动加载 agent（后台），这样不用点开才加载了」）。
+    /// 开着时阅读窗口一有工作区（启动时打开 / 之后换工作区）就替它建好对话：拉起进程、握手、建会话，
+    /// 切到 Agent 页时已经连上。默认关：开着就是每个工作目录常驻一个 Agent 进程，哪怕从没打开过 Agent 页。
+    @Published private(set) var preloadAtLaunch = false
+
+    /// 打开后各阅读窗口经自己的订阅（`ReaderWindowController`）各自预加载；关掉不收已经建好的对话——
+    /// 和打开过 Agent 页一样，关窗 / 换工作区 / 退出时才结束。
+    func setPreloadAtLaunch(_ on: Bool) {
+        guard on != preloadAtLaunch else { return }
+        preloadAtLaunch = on
+        UserDefaults.standard.set(on, forKey: Self.preloadKey)
+    }
+
+    /// 替这扇阅读窗口预先建好 Agent 对话（总开关与预加载都开着、窗口已开工作区时）。Inspector 的 Agent 页之后拿到的
+    /// 是同一份（`chat(for:cwd:)` 按窗口 + 工作目录复用），视图进窗口时的 `start()` 见已有会话 / 正在连就什么都不做。
+    func preloadChat(for c: ReaderWindowController) {
+        guard enabled, preloadAtLaunch, let ctx = Self.context(of: c) else { return }
+        readers[c.tabs.windowID] = WeakReader(controller: c)   // 对话的上下文 / `@` 候选按窗口登记表取
+        agentLog("后台预加载 Agent · cwd=\(ctx.cwd.path)")
+        chat(for: c.tabs.windowID, cwd: ctx.cwd).start()
     }
 
     func setFollow(_ on: Bool) {

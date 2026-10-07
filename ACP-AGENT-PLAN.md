@@ -67,6 +67,11 @@ Sources/Window/AgentWindowController.swift  独立窗口（全 App 一扇，跟�
 ### 3.1 生命周期
 
 - 进程**懒启动**：面板第一次出现且有工作区时拉起、握手、建会话（建会话才拿得到模式 / 模型列表）。
+  **例外：设置 › Agent ›「启动时在后台加载」**（2026-10-07 用户：「启动 app 自动加载 agent（后台），这样不用点开才加载了」，
+  默认关）：开着时阅读窗口一有工作区（启动时打开 / 换工作区 / 开关刚打开）就替它建好对话
+  （`ReaderWindowController.observeAgentPreload` → `AgentPanelModel.preloadChat`），Inspector 的 Agent 页之后拿到同一份对话，
+  视图进窗口时的 `start()` 见已有会话就不再建。关掉开关不收已建好的对话（与打开过 Agent 页一样，关窗 / 退出才结束）。
+  启动时 MCP 服务先于第一扇窗口开（`applicationDidFinishLaunching` 里的顺序），所以预加载的会话也带得上 unireader 工具。
 - 同一工作目录下的对话（浮窗 + 各窗口内置面板）**共用一个进程**，各自是 Agent 里的一个 session。
 - 最后一段对话走了（关窗 / 换会话 / 关浮窗）就关进程（`releaseIdleConnections`）。
 - 进程意外退出：SDK 结束通知流 → 对话里显示「Agent 进程已退出」，点「重试 / 新对话」重开一个。

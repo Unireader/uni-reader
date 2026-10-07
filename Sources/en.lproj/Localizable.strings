@@ -675,6 +675,8 @@
 "Resolved" = "Resolved";
 "Not found" = "Not found";
 "The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats." = "The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats.";
+"Load in the background at launch" = "Load in the background at launch";
+"With background loading on, each reading window starts the agent as soon as it has a workspace, so the Agent page is ready when you open it. The agent keeps running even if you never open the page." = "With background loading on, each reading window starts the agent as soon as it has a workspace, so the Agent page is ready when you open it. The agent keeps running even if you never open the page.";
 
 /* Snip → Agent / Web AI (2026-09-19) */
 "Web AI" = "Web AI";

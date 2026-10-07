@@ -677,6 +677,8 @@
 "Resolved" = "实际路径";
 "Not found" = "未找到";
 "The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats." = "Agent 面板通过 Agent Client Protocol（ACP）与本机的 Agent 通信，并自动把本 MCP 服务交给它使用。Agent 需要你自己在终端里安装并登录（Kimi 为“kimi login”）。修改后对新建的对话生效。";
+"Load in the background at launch" = "启动时在后台加载";
+"With background loading on, each reading window starts the agent as soon as it has a workspace, so the Agent page is ready when you open it. The agent keeps running even if you never open the page." = "开启后台加载后，阅读窗口一打开工作区就启动 Agent，切到 Agent 页时已经连好。即使从没打开过 Agent 页，Agent 也会一直在运行。";
 
 /* 框选截图 → Agent / 网页 AI（2026-09-19） */
 "Web AI" = "网页 AI";
