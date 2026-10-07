@@ -148,6 +148,8 @@ export function initWs(): void {
     else if (o.type === "noteNew") { openNoteAt(o); }
     // 当前那张纸上的全量笔迹（画布坐标，与页内笔迹不是一套坐标系，见 PROTOCOL.md §4.4）。
     else if (o.type === "scratchStrokes") { G.applyScratchStrokes(o); }
+    // 纸上笔迹的追加（0x5D）：同 strokesAppend 之于 strokes，只把新收的几笔接在末尾。
+    else if (o.type === "scratchStrokesAppend") { G.applyScratchStrokesAppend(o); }
     // 画板笔记（v16，PROTOCOL.md §4.8）：列表 + 跟随的会话类型 / 画板上的图。
     else if (o.type === "boards") { G.applyBoards(o); }
     else if (o.type === "boardImages") { G.applyBoardImages(o); }

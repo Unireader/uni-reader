@@ -557,6 +557,7 @@ final class ScratchPadNSView: NSView {
         let a = (page: page, frac: p - Double(page))
         session.boardScrollAnchor = a
         app.boardAnchorLine = anchorLine   // 标签没激活时 AppModel 换算平板位置要用
+        app.boardAnchorMoved(session)      // 滚出平板那份笔迹的几页了就换一份
         let same = lastSentAnchor.map { $0.page == a.page && abs($0.frac - a.frac) < 1e-5 } ?? false
         // 跟随平板时（及收敛后那 0.1s）不回发；这时的位置平板本来就知道，记成「已发」，免得之后原样回声一次
         if followDriving || follower.isSuppressing { lastSentAnchor = a; return }

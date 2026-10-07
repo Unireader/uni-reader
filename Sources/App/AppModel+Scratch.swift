@@ -13,7 +13,10 @@ extension AppModel {
     /// 草稿纸打开时的 `ink`/`erase`/`probe`。返回 true = 已消费（调用方不要再按页内笔迹处理）。
     func handleScratchInput(_ obj: [String: Any], to s: DocSession) -> Bool {
         guard let padId = s.openPadID else { return false }
-        switch obj["type"] as? String {
+        let type = obj["type"] as? String
+        // 攒着的擦除点先落地，后面的消息（落笔、框选、剪贴板…）才能看到擦过的样子，与逐条处理时的先后一致
+        if type != "erase" { flushScratchErase() }
+        switch type {
         case "ink":
             let phase = obj["phase"] as? String ?? ""
             if phase == "begin" {
@@ -36,7 +39,11 @@ extension AppModel {
             return true
         case "erase":
             if obj["phase"] as? String == "move" {
-                scratchErase(scratchPoints(obj["pts"]), in: s)
+                scratchPadErasing = true
+                armScratchEraseIdle()
+                queueScratchErase(scratchPoints(obj["pts"]), in: s)
+            } else if obj["phase"] as? String == "end" {
+                finishScratchPadErase()   // 里面先把攒着的点擦掉
             }
             return true
         case "probe":
@@ -189,23 +196,61 @@ extension AppModel {
                              strokesBefore: before, strokesAfter: s.scratchStrokes)
     }
 
+    /// 平板上行的擦除点：先攒着，主线程这一轮已经排着的消息都收进来以后再一起擦一遍。
+    /// 为什么：平板每 8ms 发一批，而每擦一遍都要把整块画板过好几遍（找命中、撤销记账、落库对账、出图对账），
+    /// 画板写到近万条笔迹时一遍就远超 8ms，逐批处理会在主线程越积越多 → Mac 转彩虹圈、停手后才慢慢缓过来
+    /// （2026-10-07 用户报「只要用橡皮擦 Mac 就卡死」，采样实测主线程全在找命中，Debug 包一批 117ms）。
+    /// 攒着擦的话，处理慢了一批里的点就多些，遍数不会越积越多（修好后实测一遍收 12~42 个点）。
+    private func queueScratchErase(_ pts: [InkPoint], in s: DocSession) {
+        guard !pts.isEmpty else { return }
+        if let p = scratchErasePending, p.session !== s { flushScratchErase() }
+        if scratchErasePending == nil {
+            scratchErasePending = (s, pts)
+            DispatchQueue.main.async { [weak self] in self?.flushScratchErase() }
+        } else {
+            scratchErasePending?.pts.append(contentsOf: pts)
+        }
+    }
+
+    /// 把攒着的平板擦除点擦掉。凡是要看到「擦过以后」的地方先调它：别的上行消息、抬笔、发全量。
+    func flushScratchErase() {
+        guard let p = scratchErasePending else { return }
+        scratchErasePending = nil
+        scratchErase(p.pts, in: p.session)
+    }
+
     private func eraseScratchNear(_ pts: [InkPoint], in s: DocSession) {
         guard let padId = s.openPadID, !pts.isEmpty else { return }
         let r = eraserRadius * ScratchPad.eraserRefWidth
         let r2 = Float(r * r)
+        // 预筛：擦除点的外框四周各放出 r。一个点都不在框里的笔迹不可能被擦到，整条原样留下，
+        // 不用拿它的每个点去跟每个擦除点算距离（画板近万条、擦除只碰到几条）
+        let rf = Float(r)
+        var lo = SIMD2<Float>(.greatestFiniteMagnitude, .greatestFiniteMagnitude)
+        var hi = -lo
+        for e in pts { lo = pointwiseMin(lo, SIMD2(e.x, e.y)); hi = pointwiseMax(hi, SIMD2(e.x, e.y)) }
+        let x0 = lo.x - rf, y0 = lo.y - rf, x1 = hi.x + rf, y1 = hi.y + rf
+        func near(_ st: InkStroke) -> Bool {
+            st.points.withUnsafeBufferPointer { b in
+                for p in b where p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 { return true }
+                return false
+            }
+        }
         if eraserMode == .stroke {
-            let before = s.scratchStrokes.count
-            s.scratchStrokes.removeAll { st in
-                guard st.padId == padId else { return false }
+            let kept = s.scratchStrokes.filter { st in
+                guard st.padId == padId, near(st) else { return true }
                 for sp in st.points {
                     for e in pts {
                         let dx = sp.x - e.x, dy = sp.y - e.y
-                        if dx * dx + dy * dy <= r2 { return true }
+                        if dx * dx + dy * dy <= r2 { return false }
                     }
                 }
-                return false
+                return true
             }
-            if s.scratchStrokes.count == before { return }   // 没擦到就别写 @Published（免得空刷一帧）
+            // 没擦到就别写 @Published（免得空刷一帧）。🔴 别在 `s.scratchStrokes` 上就地 `removeAll`：
+            // 那样不管删没删都会发一次变化，下游（落库对账、出图对账、平板镜像）整块画板白过一遍
+            guard kept.count != s.scratchStrokes.count else { return }
+            s.scratchStrokes = kept
             return
         }
         // 局部擦除：`splitStroke` 用 z 槽位区分「不同页不串」，草稿纸只有一张画布 → 恒填 0。
@@ -214,7 +259,7 @@ extension AppModel {
         out.reserveCapacity(s.scratchStrokes.count)
         var changed = false
         for st in s.scratchStrokes {
-            guard st.padId == padId else { out.append(st); continue }
+            guard st.padId == padId, near(st) else { out.append(st); continue }
             let parts = InkEdit.splitStroke(st, erasePts: eps, r: r)
             if parts.count != 1 || parts.first != st { changed = true }
             out.append(contentsOf: parts)
@@ -331,15 +376,130 @@ extension AppModel {
         server.broadcast(["type": "scratchpads", "open": open, "list": list])
     }
 
-    /// **当前打开的那张纸**上的全部笔迹（画布坐标）。没开纸就发空表——平板据此清掉本地残留。
-    /// 与 `broadcastStrokes` 同款全量镜像语义（Mac 唯一真源，平板不落库），`ackRel` 由
-    /// `LANServer.rawSend` 按收件人补（平板靠它分辨中途快照，见 PROTOCOL.md §4.2）。
-    func broadcastScratchStrokes() {
-        guard server.hasClients, let s = padSession else { return }
-        let list: [[String: Any]] = (s.openPadID.map { s.strokes(pad: $0) } ?? []).map { st in
+    /// 平板那份草稿纸 / 画板笔迹镜像此刻对应的状态：哪个会话、哪张纸、这张纸上的全部笔迹
+    /// （全量发出去时的，之后每发一次追加跟着长），以及分页画板的全量发的是哪几页、以哪一页为中心。
+    struct ScratchMirror {
+        let sessionID: UUID
+        let padID: UUID?
+        var all: [InkStroke]
+        let window: ClosedRange<Int>?
+        let center: Int
+    }
+
+    /// 分页画板的全量只发平板所在页前后各 `boardWindowRadius` 页（`PROTOCOL.md §4.8`）。
+    /// 擦除 / 撤销 / 框选这类改动没法用追加表达、只能发全量，而一整个画板几千笔就是好几 MB
+    /// （2026-10-07 实测 9214 笔 ≈ 8MB），每擦一下整份发一次照样塞满 WiFi。
+    static let boardWindowRadius = 3
+
+    /// 这次全量该发哪几页；nil = 不分窗口（草稿纸、无限画板，全发）。中心 = 同步位置所在页（还没有就第 0 页）。
+    private func boardWindow(_ s: DocSession) -> (pages: ClosedRange<Int>, center: Int)? {
+        guard s.isPagedBoard else { return nil }
+        let n = s.boardPages.count
+        let p = min(max(s.boardScrollAnchor?.page ?? 0, 0), n - 1)
+        let r = Self.boardWindowRadius
+        return (max(0, p - r)...min(n - 1, p + r), p)
+    }
+
+    private func scratchDicts(_ strokes: [InkStroke]) -> [[String: Any]] {
+        strokes.map { st in
             ["pen": ["color": st.color.cssRGBA, "w": st.width, "t": st.type.rawValue],
              "pts": st.points.map { [$0.x, $0.y, $0.z] }]
         }
-        server.broadcast(["type": "scratchStrokes", "list": list])
+    }
+
+    /// **当前打开的那张纸**上的全部笔迹（画布坐标）。没开纸就发空表——平板据此清掉本地残留。
+    /// 与 `broadcastStrokes` 同款全量镜像语义（Mac 唯一真源，平板不落库），`ackRel` 由
+    /// `LANServer.rawSend` 按收件人补（平板靠它分辨中途快照，见 PROTOCOL.md §4.2）。
+    /// 分页画板只发平板附近那几页（`boardWindow`），同 `strokes` 只发 Mac 装载窗口的口径。
+    func broadcastScratchStrokes() {
+        // 回推带的 ackRel 已经算上了收到的擦除帧，攒着没擦的点必须先擦掉，平板才不会拿到「说擦了其实没擦」的一份
+        flushScratchErase()
+        guard server.hasClients, let s = padSession else { scratchMirror = nil; return }
+        let all = s.openPadID.map { s.strokes(pad: $0) } ?? []
+        let window = boardWindow(s)
+        let sent = window.map { w in all.filter { w.pages.contains(s.boardPageIndex(of: $0)) } } ?? all
+        scratchMirror = ScratchMirror(sessionID: s.id, padID: s.openPadID, all: all,
+                                      window: window?.pages, center: window?.center ?? 0)
+        server.broadcast(["type": "scratchStrokes", "list": scratchDicts(sent)])
+    }
+
+    /// 草稿纸 / 画板笔迹变了（`DocTabModel` 的订阅）：原有的一条没动、只在末尾多了几条 → 只发新增的
+    /// （`scratchStrokesAppend`，同 `broadcastStrokeAppended` 之于页内笔迹）；否则（擦除、框选移动 / 缩放、
+    /// 撤销、换纸、从前面插入…）照旧发全量。
+    /// 为什么：从前一律发全量，每写一笔整份重建、重发一次。分页画板写到近万笔时一份 ≈ 8MB
+    /// （2026-10-07 实测 9214 笔），Debug 包里光在 Mac 主线程上建这一份就要几百毫秒（窗口内 1351 条 ≈ 60ms）。
+    func scratchStrokesChanged(in s: DocSession) {
+        guard server.hasClients, s.id == padSession?.id else { return }
+        let all = s.openPadID.map { s.strokes(pad: $0) } ?? []
+        if let m = scratchMirror, m.sessionID == s.id, m.padID == s.openPadID,
+           all.count > m.all.count, all.prefix(m.all.count).elementsEqual(m.all) {
+            let added = Array(all[m.all.count...])
+            scratchMirror?.all = all
+            server.broadcast(["type": "scratchStrokesAppend", "list": scratchDicts(added)])
+            return
+        }
+        // 跟平板手上那份一模一样：框选 / 粘贴 / 撤销这些地方自己已经直接发过全量，这是同一处改动迟到的订阅，
+        // 再发就是同样几百 KB 连发两遍
+        if let m = scratchMirror, m.sessionID == s.id, m.padID == s.openPadID,
+           all.count == m.all.count, all.elementsEqual(m.all) { return }
+        // 平板擦除手势进行中：擦到了笔迹就得发全量（节流后也是每 0.2s 一份、每份约 1MB），而平板在擦除手势里
+        // 本来就**一律信本地、不收全量**（安卓 `PadScratch.applyStrokes` 的 `erasing` 闸），这期间发的全是白发。
+        // 先欠着，抬笔补一份。
+        if scratchPadErasing { scratchFullDeferred = true; return }
+        requestScratchFull()
+    }
+
+    /// 改动 / 换窗口引起的全量走这里：最多每 0.2s 发一份，期间再有改动就排一份、到点按那时最新的状态现建。
+    /// Mac 本机拖着橡皮擦时每个拖动事件都改一次笔迹，不节流就是每秒几十份；也兜住哪条路径出了岔子连着要全量
+    /// （2026-10-07 `boardAnchorMoved` 没夹页号时就是每 26ms 一份 ≈ 1MB）。
+    /// 换会话、新客户端接入这些照旧直接 `broadcastScratchStrokes`（少见，且要立刻对上）。
+    private func requestScratchFull() {
+        guard scratchFullPending == nil else { return }   // 已经排着一份，到点会带上这次的改动
+        let wait = scratchFullSentAt + 0.2 - CFAbsoluteTimeGetCurrent()
+        if wait <= 0 {
+            scratchFullSentAt = CFAbsoluteTimeGetCurrent()
+            broadcastScratchStrokes()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.scratchFullPending = nil
+            self.scratchFullSentAt = CFAbsoluteTimeGetCurrent()
+            self.broadcastScratchStrokes()
+        }
+        scratchFullPending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: work)
+    }
+
+    /// 平板的一次擦除还在继续：擦除点停了 0.5s 也当它抬笔了（`erase end` 万一没到，别让平板一直等不到结果）。
+    private func armScratchEraseIdle() {
+        scratchEraseIdle?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.finishScratchPadErase() }
+        scratchEraseIdle = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// 平板抬笔结束擦除：欠着的全量现在补发一份（按此刻最新的笔迹现建，`ackRel` 已盖过整次擦除）。
+    /// 订阅是异步的，最后一批的改动若在这之后才到，那时 `scratchPadErasing` 已经是 false，照常立刻发。
+    func finishScratchPadErase() {
+        flushScratchErase()
+        scratchEraseIdle?.cancel()
+        scratchEraseIdle = nil
+        guard scratchPadErasing else { return }
+        scratchPadErasing = false
+        if scratchFullDeferred {
+            scratchFullDeferred = false
+            requestScratchFull()
+        }
+    }
+
+    /// 分页画板的同步位置变了（平板滚 / 本机滚）：离上次全量的中心页已经 2 页了，就按新位置重发一份全量，
+    /// 免得平板滚进还没发过的那几页时是空白（窗口 ±3 页，屏幕上一般露 1~2 页，提前 1 页换）。
+    /// 🔴 比的是 `boardWindow` 夹过的中心页：平板拉到最后一页下面（上拉加页那块）时报上来的页号比最后一页还大，
+    /// 拿没夹过的页号比，跟夹过的中心永远差 2 页以上 → 每报一次位置就整份重发一次（2026-10-07 实测每 26ms 一份 ≈ 1MB）。
+    func boardAnchorMoved(_ s: DocSession) {
+        guard server.hasClients, s.id == padSession?.id, let m = scratchMirror, m.sessionID == s.id,
+              m.window != nil, let w = boardWindow(s), abs(w.center - m.center) >= 2 else { return }
+        requestScratchFull()
     }
 }

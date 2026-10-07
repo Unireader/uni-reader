@@ -59,6 +59,18 @@ final class AppModel: ObservableObject {
     @Published var padBoardRequest: PadBoardRequest?
     /// 画板标签没激活时，平板滚动位置的节流写库（`AppModel+Board.scheduleDetachedBoardSave`）。
     var detachedBoardSave: DispatchWorkItem?
+    /// 平板手上那份草稿纸 / 画板笔迹镜像此刻对应的状态（`AppModel+Scratch.scratchStrokesChanged`）：
+    /// 笔迹的变化若只是在它末尾多了几条，就只发追加。
+    var scratchMirror: ScratchMirror?
+    /// 平板在纸上的擦除手势进行中：这期间全量先欠着，抬笔（或擦除点停了一会儿）补发一份（`finishScratchPadErase`）。
+    var scratchPadErasing = false
+    var scratchFullDeferred = false
+    var scratchEraseIdle: DispatchWorkItem?
+    /// 平板擦除点攒着、主线程这一轮排着的都收齐了再一起擦一遍（`AppModel+Scratch.queueScratchErase`）。
+    var scratchErasePending: (session: DocSession, pts: [InkPoint])?
+    /// 画板全量的节流（`AppModel+Scratch.requestScratchFull`）：上次发的时刻 / 排着的那一份。
+    var scratchFullSentAt: CFAbsoluteTime = 0
+    var scratchFullPending: DispatchWorkItem?
     /// 画板视图的同步锚线离视图顶多远（屏幕点，`ScratchPadNSView.anchorLine`）：没有视图时把平板位置换算成视口要用。
     /// 视图每次报位置时更新；默认值 = 常见的工具栏高度 52 + 56。
     var boardAnchorLine: CGFloat = 108

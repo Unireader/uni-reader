@@ -54,6 +54,9 @@ enum WireCodec {
         static let boardViewport: UInt8 = 0x5B
         /// 分页画板同步滚动（双向，`BOARD-NOTE-PLAN.md §12`）：`str id · u32 page · f32 frac · f64 t`。
         static let boardScroll: UInt8 = 0x5C
+        /// 草稿纸 / 画板笔迹的追加（S→C）：payload 与 `scratchStrokes` 逐字节相同，语义是「追加到镜像末尾」
+        /// （同 `strokesAppend` 之于 `strokes`，`PROTOCOL.md §4.4`）。
+        static let scratchStrokesAppend: UInt8 = 0x5D
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -310,10 +313,11 @@ enum WireCodec {
                 w.u8(patternCode(strOf(p["pattern"])))   // 底纹（v9）
                 w.u8(boolOf(p["showPage"]) ? 1 : 0)      // 页面底图开关（v10）
             }
-        case "scratchStrokes":
+        case "scratchStrokes", "scratchStrokesAppend":
             // 当前打开那张纸上的全量笔迹。**没有 page 字段**——画布不属于任何一页，点集是画布坐标
             // （逻辑点，可负无界，见 ScratchPad 坐标系契约）。ackRel 语义同 `strokes`。
-            w.u8(Op.scratchStrokes)
+            // 追加帧 payload 逐字节相同，只是语义换成「追加」。
+            w.u8(type == "scratchStrokes" ? Op.scratchStrokes : Op.scratchStrokesAppend)
             w.u32(intOf(o["ackRel"]))
             let list = o["list"] as? [[String: Any]] ?? []
             w.u32(list.count)
@@ -671,7 +675,7 @@ enum WireCodec {
             }
             out = ["type": "scratchpads",
                    "open": NSNumber(value: openRaw == scratchNoOpen ? -1 : openRaw), "list": list]
-        case Op.scratchStrokes:
+        case Op.scratchStrokes, Op.scratchStrokesAppend:
             let ackRel = r.u32()
             let n = r.u32()
             var list = [[String: Any]](); list.reserveCapacity(max(0, n))
@@ -679,7 +683,8 @@ enum WireCodec {
                 let pen = r.pen(); let pts = r.pts(3)
                 list.append(["pen": pen, "pts": pts])
             }
-            out = ["type": "scratchStrokes", "ackRel": NSNumber(value: ackRel), "list": list]
+            out = ["type": op == Op.scratchStrokes ? "scratchStrokes" : "scratchStrokesAppend",
+                   "ackRel": NSNumber(value: ackRel), "list": list]
         case Op.scratchOpen:
             let idx = r.u16()
             out = ["type": "scratchOpen", "index": NSNumber(value: idx == scratchNoOpen ? -1 : idx)]

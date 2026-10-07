@@ -252,7 +252,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         }
         on(session.$scratchStrokes) { s in
             s.persistScratchStrokes()    // 草稿纸上落笔/擦除时增量落库（scratchLive 变化不触发）
-            s.app.broadcastScratchStrokes()
+            s.app.scratchStrokesChanged(in: s.session)   // 纯追加只发新增的几条，其余发全量
         }
         on(session.$boardPages) { s in
             s.persistBoardPages()        // 分页画板加页 / 插页 / 删页 / 改背景 / 改尺寸时增量落库

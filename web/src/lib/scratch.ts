@@ -822,6 +822,14 @@ export function initScratch(refs: CaptureRefs): void {
     if (padActive()) drawScratch();
   }
 
+  /// Mac 下发的 `scratchStrokesAppend`（0x5D）：只把新收的这几笔接在末尾。Mac 只在纯追加（收笔）时发，
+  /// 擦除 / 框选 / 撤销 / 换纸仍发全量——画板几千笔时全量一份好几 MB，每写一笔都整份重发会把 WiFi 塞满。
+  function applyScratchStrokesAppend(o: { list?: Stroke[] }): void {
+    for (const s of o.list || []) G.padStrokes.push({ page: 0, pen: s.pen, pts: s.pts });
+    if (G.activeId === null) G.padCur = null;   // 同全量：已进真源，撤掉本地那一笔
+    if (padActive()) drawScratch();
+  }
+
   /// Mac 下发的 `boards`：画板列表 + 跟随的会话是什么（v16）。
   /// kind=2 时那张纸由 `scratchpads` 开着（Mac 把画板当成一张永远开着的纸），这里只管界面上的差异；
   /// kind=1（Markdown 笔记）由 App 显示空状态，免得停在上一篇 PDF 的页面上。
@@ -895,7 +903,7 @@ export function initScratch(refs: CaptureRefs): void {
     padActive, drawScratch, padRecenter, padFit, padClamp,
     padPointerDown, padPointerMove, padPointerUp, padFlush,
     padOpenIndex, padClose, padAdd, padSetPaper, padSetShowPage, padDelete, padRename,
-    applyScratchPads, applyScratchStrokes,
+    applyScratchPads, applyScratchStrokes, applyScratchStrokesAppend,
     applyBoards, applyBoardImages, applyBoardPages, boardOpen, boardAdd, boardSetPageTemplate,
   });
 }

@@ -576,7 +576,7 @@ final class LANServer: ObservableObject {
         if let family = Self.mirrorFamily(type) {
             let oid = ObjectIdentifier(conn)
             let key = MirrorKey(conn: oid, family: family)
-            let isFull = type != "strokesAppend"
+            let isFull = type != "strokesAppend" && type != "scratchStrokesAppend"
             if isFull {
                 mirrorSynced.insert(key)
             } else if !mirrorSynced.contains(key) {
@@ -641,7 +641,7 @@ final class LANServer: ObservableObject {
     private static func mirrorFamily(_ type: String) -> String? {
         switch type {
         case "strokes", "strokesAppend": return "strokes"
-        case "scratchStrokes": return "scratchStrokes"
+        case "scratchStrokes", "scratchStrokesAppend": return "scratchStrokes"
         default: return nil
         }
     }

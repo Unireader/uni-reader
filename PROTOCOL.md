@@ -122,6 +122,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x5A` | relInk | 双向 | 可靠 |
 | `0x5B` | boardViewport | 双向 | 可靠 |
 | `0x5C` | boardScroll | 双向 | C→S 实时不保证送达（同 `scroll`）/ S→C 可靠 |
+| `0x5D` | scratchStrokesAppend | S→C | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
 
@@ -296,6 +297,7 @@ Mac 收到后：该文档已在本工作区某个窗口打开 → 等价于 `sel
 | `bookmarks` | `str docId` · `u16 n` · `n ×( str id, u32 page, f32 frac, str title )` |
 | `scratchpads` | `u16 open` · `u16 n` · `n ×( str id, str title, u32 page, f32 nx, f32 ny, u8 r, u8 g, u8 b, f32 a, u8 pattern, u8 showPage )` |
 | `scratchStrokes` | `u32 ackRel` · `u32 n` · `n ×( pen, u16 m, m × pt3 )` |
+| `scratchStrokesAppend` | 与 `scratchStrokes` **逐字节相同**，只是语义是「追加」而非「整表替换」 |
 | `noteNew` | `u32 page` · `f32 nx` · `f32 ny` |
 | `canvas` | `u8 on` · `f32 margin` |
 | `nack` | `u16 n` · `n × u32 seq`（UDP REL 重传请求，见 §6；浏览器收到忽略）|
@@ -567,6 +569,12 @@ Mac 是「当前打开哪张草稿纸」的唯一真源（`scratchpads.open`）�
   **发送时机**：客户端接入、服务启动、草稿纸增删改、开/关纸、平板跟随的会话变化（换窗口＝换文档＝换一整套）。
 - `scratchStrokes`：**当前打开那张纸**上的全量笔迹（没开纸就发 `n=0`，客户端据此清掉本地残留）。
   **没有 `page` 字段**。`ackRel` 语义与 `strokes` 完全一致（按收件人填，客户端靠它分辨中途快照）。
+- `scratchStrokesAppend`（0x5D，2026-10-07 加）：payload 与 `scratchStrokes` 逐字节相同，语义是「把这几条追加到你的镜像末尾」，
+  与 `strokesAppend` 之于 `strokes`（§4.2）**规则一字不差**：Mac 只在纯追加（收笔）时发——判据是这张纸上原有的笔迹一条没动、
+  只在末尾多了几条（`AppModel.scratchStrokesChanged`）；擦除、框选移动 / 缩放、撤销、换纸、新客户端接入一律照旧发全量。
+  客户端收到后在同一次操作里先追加、再按 `ackRel` 销账乐观笔迹，**不走**擦除那道整份丢弃闸。发送端合帧同 §4.2 两条（同一家族：
+  一份全量 + 其后若干追加，新的全量清空整条队列）。
+  为什么要有它：画板写到几千笔时全量一份好几 MB（实测 9214 笔 ≈ 8MB），从前每写一笔都整份重建、重发一次。
 - `scratchOpen`：平板请求开/关。Mac 判定后回推 `scratchpads`+`scratchStrokes`，两端自然一致。
 - `scratchAdd`：平板请求新建一张并打开（锚在它给的页与页内位置）。
 - `scratchPaper`：平板请求改第 `index` 张纸的纸样。Mac 判定 + 落库后回推 `scratchpads`。
@@ -595,7 +603,9 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 被跟随会话是画板标签时，Mac 把它当成「一张永远开着的草稿纸」：
 
 - `scratchpads`：`open = 0`，`list` 只有这一张（`page = 0`、`nx = ny = 0.5`、`showPage = 0`，`title` = 画板名原文，可能是空串——客户端标题一律取 `boards.list` 里已兜底的显示名）；
-  `scratchStrokes` = 画板上的全部笔迹。
+  `scratchStrokes` = 画板上的全部笔迹；**分页画板只发平板所在页前后各 3 页**（2026-10-07，同 `strokes` 只发 Mac 装载窗口的口径，
+  **不保证全篇**）：所在页 = 同步位置（`boardScroll`）那一页，离上次发的中心页 2 页了 Mac 就按新位置重发一份。
+  追加帧（`scratchStrokesAppend`）不受窗口限制，在哪页写的就发哪条。
 - 上行 `ink` / `erase` / `lassoMove` / `lassoScale` / `clip` 照 §4.4「纸开着」的规则走画布坐标；`scratchPaper` / `scratchRename`（`index = 0`）
   改的是这篇画板；`undo` 走草稿纸那条栈。
 - `scratchOpen` / `scratchAdd` / `scratchMove` / `scratchPageShow` / `scratchDelete` 在画板会话上**整帧丢弃**

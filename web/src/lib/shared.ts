@@ -331,6 +331,7 @@ export interface GState {
   padRename(i: number, title: string): void;
   applyScratchPads(o: WireMsg): void;
   applyScratchStrokes(o: WireMsg): void;
+  applyScratchStrokesAppend(o: WireMsg): void;
   applyBoards(o: WireMsg): void;
   applyBoardImages(o: WireMsg): void;
   applyBoardPages(o: WireMsg): void;

@@ -39,6 +39,7 @@ extension AppModel {
         guard frac.isFinite else { return }
         // 先记在会话上：标签没激活时没有画板视图接这条，切回来按它摆、补发也发它（不然会把平板拽回旧位置）
         s.boardScrollAnchor = (page, frac)
+        boardAnchorMoved(s)   // 平板滚出它那份笔迹的几页了就换一份（`AppModel+Scratch.boardWindow`）
         s.boardScrollFromPad.send((page, frac, t))
         if s.boardView == nil { scheduleDetachedBoardSave(s) }
     }

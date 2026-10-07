@@ -27,7 +27,8 @@
     boards: 0x52, boardOpen: 0x53, boardAdd: 0x54, boardImages: 0x55,  // 画板笔记（v16，PROTOCOL.md §4.8）
     boardPages: 0x56, boardPageAdd: 0x57, boardPageTemplate: 0x58,     // 分页画板（v17，PROTOCOL.md §4.8）
     boardViewport: 0x5B,                   // 画板视口（双向，v19；网页端暂不收发，只保编解码一致）
-    boardScroll: 0x5C                      // 分页画板同步滚动（双向；网页端暂不收发，只保编解码一致）
+    boardScroll: 0x5C,                     // 分页画板同步滚动（双向；网页端暂不收发，只保编解码一致）
+    scratchStrokesAppend: 0x5D             // 草稿纸 / 画板笔迹追加：与 scratchStrokes 逐字节相同，语义是「追加」
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
@@ -257,10 +258,11 @@
         }
         break;
       }
-      case "scratchStrokes": {
+      case "scratchStrokes": case "scratchStrokesAppend": {
         // 当前打开那张纸上的全量笔迹。**无 page 字段**——画布不属于任何一页，点集是画布坐标
         // （逻辑点，可负无界，见 PROTOCOL.md 的草稿纸坐标系）。ackRel 语义同 strokes。
-        w.u8(OP.scratchStrokes); w.u32(o.ackRel || 0);
+        // 追加帧 payload 逐字节相同，只是语义换成「追加」。
+        w.u8(o.type === "scratchStrokes" ? OP.scratchStrokes : OP.scratchStrokesAppend); w.u32(o.ackRel || 0);
         var SS = o.list || []; w.u32(SS.length);
         for (var ss = 0; ss < SS.length; ss++) { w.pen(SS[ss].pen); w.pts(SS[ss].pts, 3); }
         break;
@@ -526,10 +528,10 @@
         }
         return { type: "scratchpads", open: spOpen === NO_PAD ? -1 : spOpen, list: splist };
       }
-      case OP.scratchStrokes: {
+      case OP.scratchStrokes: case OP.scratchStrokesAppend: {
         var ssack = r.u32(), ssn = r.u32(), sslist = new Array(ssn);
         for (var ssi = 0; ssi < ssn; ssi++) sslist[ssi] = { pen: r.pen(), pts: r.pts(3) };
-        return { type: "scratchStrokes", ackRel: ssack, list: sslist };
+        return { type: op === OP.scratchStrokes ? "scratchStrokes" : "scratchStrokesAppend", ackRel: ssack, list: sslist };
       }
       case OP.scratchOpen: {
         var soIdx = r.u16();

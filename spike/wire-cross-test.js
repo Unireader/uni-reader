@@ -193,6 +193,10 @@ const canonical = [
   // —— 分页画板同步滚动 ——
   { type: "boardScroll", id: "B-1", page: 3, frac: 0.25, t: 123456.5 },
   { type: "boardScroll", id: "B-1", page: 0, frac: -0.0625, t: 0 },
+  // —— 草稿纸 / 画板笔迹追加（0x5D）：与上面那条 scratchStrokes 同一份 list，除首字节外逐字节相同 ——
+  { type: "scratchStrokesAppend", ackRel: 7,
+    list: [{ pen: { color: "rgba(20,20,20,1.0)", w: 10.0, t: "pencil" },
+             pts: [[-120.5, 64.25, 0.5], [512.0, -8.125, 1.0]] }] },
 ];
 
 let pass = 0, fail = 0;
