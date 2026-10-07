@@ -1,7 +1,8 @@
 import Foundation
 
 /// 画板笔记的平板同步（`BOARD-NOTE-PLAN.md §4`）。笔迹那部分走草稿纸的 `scratchpads` / `scratchStrokes`
-/// （画板会话里那张纸永远开着），这里只多两条下行（`boards` / `boardImages`）与两条上行（`boardOpen` / `boardAdd`）。
+/// （画板会话里那张纸永远开着），这里只多两条下行（`boards` / `boardImages`）与两条上行（`boardOpen` / `boardAdd`），
+/// 外加分页画板那几条（§9.5）与双向的视口 `boardViewport`（§10.1）。
 extension AppModel {
 
     /// 被跟随会话是什么（`boards.kind`）：0 = PDF（或空标签）、1 = Markdown 笔记、2 = 画板笔记。
@@ -16,6 +17,28 @@ extension AppModel {
         server.broadcast(["type": "boards", "kind": followKind(s),
                           "current": s.board?.id.uuidString ?? "", "list": list])
         broadcastBoardPages()   // 跟随的会话一变，页也跟着换（不是分页画板 = 空表）
+        broadcastBoardViewport(s)
+    }
+
+    /// 被跟随画板在库里存的视口（`BOARD-NOTE-PLAN.md §10.1`），紧跟 `boards` / `boardPages` 发；客户端只在刚打开
+    /// 这一篇、用户还没动过视口时复位一次。读库而不读 `s.board?.viewport`：那是装载时的快照，之后 Mac 本机与
+    /// 平板写回的都不在里面。没存过发 `zoom = 0`。
+    private func broadcastBoardViewport(_ s: DocSession) {
+        guard let id = s.board?.id else { return }
+        let row = (try? s.store?.board(id: id.uuidString)) ?? nil
+        server.broadcast(["type": "boardViewport", "id": id.uuidString,
+                          "x": row?.viewportX ?? 0, "y": row?.viewportY ?? 0, "zoom": row?.viewportZoom ?? 0])
+    }
+
+    /// 平板 `boardViewport`：平板上动过视口后回传。按 id 只写库里那三列（不动 `updated_at`、不广播，Mac 这边
+    /// 开着的同一篇也不跟着挪——视口各端各自的）。不要求这篇此刻还开着：平板切走那一刻补发的那份到达时，
+    /// Mac 多半已经换到下一篇了。
+    func applyBoardViewport(_ obj: [String: Any], to s: DocSession) {
+        guard let id = UUID(uuidString: obj["id"] as? String ?? ""),
+              let x = (obj["x"] as? NSNumber)?.doubleValue, let y = (obj["y"] as? NSNumber)?.doubleValue,
+              let z = (obj["zoom"] as? NSNumber)?.doubleValue,
+              x.isFinite, y.isFinite, z.isFinite, z > 0 else { return }
+        try? s.store?.saveBoardViewport(id: id.uuidString, x: x, y: y, zoom: z)
     }
 
     /// 当前画板上的图（不是画板会话时发空表）。图片本体客户端按 `GET /image?h=<sha>` 自取。

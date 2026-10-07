@@ -194,6 +194,9 @@ let canonical: [[String: Any]] = [
     ["type": "boardPageAdd", "count": 1],
     ["type": "boardPageTemplate", "index": 2, "template": 1],
     ["type": "boardAdd", "mode": 1, "w": 842.0, "h": 595.0, "template": 4, "count": 10],
+    // —— 画板视口（v19，BOARD-NOTE-PLAN.md §10.1）：boardViewport(0x5B 双向) 存过的 / 没存过（zoom=0）——
+    ["type": "boardViewport", "id": "B-1", "x": -120.5, "y": 1688.25, "zoom": 1.5],
+    ["type": "boardViewport", "id": "B-2", "x": 0.0, "y": 0.0, "zoom": 0.0],
 ]
 
 var pass = 0, fail = 0

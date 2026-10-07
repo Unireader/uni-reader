@@ -347,6 +347,28 @@ CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key
   立即 flush 一次。
 - 安卓：`BoardNote.viewportX/Y/Zoom`（`local/store` 层，直接就是 DB 行模型，没有分两层）；`LibraryStore.saveBoardViewport`；
   `ScratchCanvas.openSession(restore:)` + `currentViewport()`；`BoardController` 节流 0.6s 写回（`postDelayed`/`removeCallbacks`），
-  `close()`/宿主 `onPause()` 立即 flush。模式2（连 Mac 的输入板）没有本机库，不在这次范围内——视口仍是「各端各自维护、
-  不上线」，见 `TODO.md` 第 8 条已知差距。
+  `close()`/宿主 `onPause()` 立即 flush。模式2（连 Mac 的输入板）没有本机库，当时不在范围内——见 §10.1（2026-10-07 补上）。
+
+### 10.1 模式2 也记住（协议 `boardViewport` 0x5B，2026-10-07）
+
+用户报：模式2 打开分页画板每次都停在第一页，要手动翻回上次的位置。问过存哪：用户选**经 Mac 写进工作区库、三端同步**
+（另一个选项是只记在平板本机）。于是位置仍是 `board_note.viewport_*` 那一份，模式2 经线协议读写它：
+
+- **协议**：`boardViewport` 0x5B，双向同一个 opcode，`str id · f32 x · f32 y · f32 zoom`（`PROTOCOL.md §4.8` 末尾「画板视口」）。
+  两个方向都带画板 id——切画板时 `boards` / `scratchpads` / `boardPages` 先后没有保证，平板离开上一篇时补发的那份
+  可能晚于 Mac 已切到下一篇，按 id 写就不会写错篇。网页端只加了编解码（向量一致），收发都没做。
+- **Mac**：`AppModel+Board.broadcastBoards` 末尾紧跟一条，**现读库**（`s.store.board(id:)`；`session.board.viewport` 是装载时的
+  快照，之后写回的都不在里面）；收到平板那条按 id 只写三列（`applyBoardViewport`，不广播、不挪 Mac 这边开着的视图）。
+- 🔴 **Mac 本机不再无条件写回**（`ScratchPadNSView.savedViewport`）：模式2 时 Mac 窗口也开着同一篇，原来离开时
+  （`viewDidMoveToWindow` 的 flush）照写一次 Mac 自己的视口，平板刚存进去的位置就被盖掉。现在记下「从库里读出 / 写进去的
+  是哪一份」，本端视口与它相同就不写；复位也改成现读库（顺带修了「Mac 上切到别的标签再切回来，回到的是装载时的位置」）。
+- **平板（`pad/PadScratch` 末尾「画板视口」）**：打开那一篇时手上已有位置就直接复位，没有就等紧跟 `boards` 的那条；
+  只复位一次（`awaitingViewport`），之后因改名等原因重发的不动。**用户动过视口才回传**（`ScratchCanvas.viewportTouched`：
+  手 / 笔落下、回中、适应内容、跳页），停手 0.6s 发，换篇 / 回 PDF / `onPause` 立即补发——只是打开看一眼不改库里的位置。
+- **`ScratchCanvas.restoreHold`（两模式共用）**：复位那一刻页和笔迹往往还没到（模式2 三条消息先后没保证；模式1 的笔迹是
+  复位之后才异步读进来的），按空纸夹会把位置拽回原点附近 / 首页顶、内容到齐后也回不去。现在用户动手之前每次夹取都从复位
+  的原值重新算，`setPages` 也不再把它摆回首页顶。**这顺带修了模式1 无限画板复位的同一个问题**（离原点远的位置会被夹回来）。
+- 缩放照搬：各端的缩放按各自屏幕定，跨设备复位时缩放原样用、横向由各端夹取规则收回（与 Mac ↔ 模式1 之间一贯如此）。
+- 验证：编解码向量 +2（Swift 114 项、JS 218 项全过；安卓 `WireCodecTest` 已补对应用例，当日本机缺 JDK 21 没能跑），
+  Mac 编译通过；复位与回传的手感待用户真机测。
 

@@ -43,6 +43,9 @@ final class ScratchPadNSView: NSView {
     private var didPlace = false
     /// 画板视口节流写回（离开/持续滚动缩放中不逐帧落库，停手 0.6s 后写一次；见 `viewportChanged`）。
     private var viewportSaveWork: DispatchWorkItem?
+    /// 库里那份视口是从这里读出 / 写进去的哪一个：本端没挪过就不写（`flushViewportSave`）。平板跟着同一篇时
+    /// 会把它那边的位置写进库里（`boardViewport`），Mac 这边离开时若照旧无条件写一次，就把平板的位置盖掉了。
+    private var savedViewport: ScratchViewport?
     private var showMinimap = true
     private var cursor: CGPoint?
 
@@ -378,8 +381,9 @@ final class ScratchPadNSView: NSView {
     }
     private func flushViewportSave() {
         viewportSaveWork?.cancel(); viewportSaveWork = nil
-        guard standalone else { return }
+        guard standalone, didPlace, vp != savedViewport else { return }
         workspace?.saveBoardViewport(id: padID, origin: vp.origin, zoom: vp.zoom)
+        savedViewport = vp
     }
 
     /// 视口中心所在的页（0 起）。
@@ -410,9 +414,12 @@ final class ScratchPadNSView: NSView {
         if !didPlace, b.width > 1, b.height > 1 {
             // 打开 = 回到画布原点（「从该处显示」）；分页 = 按页宽适配、停在第一页顶。
             // 画板笔记例外：存过视口（`viewport.zoom > 0`）就回到离开那一刻，不回原点/页顶。
+            // 现读库：`session.board` 是装载时的快照，之后本机切走再切回、平板回传的位置都只在库里。
             didPlace = true
             pagesLayer.pages = paged ? session.boardPages : []
-            if standalone, let saved = session.board?.viewport, saved.zoom > 0 {
+            let saved = standalone ? (workspace?.board(id: padID)?.viewport ?? session.board?.viewport) : nil
+            if let saved, saved.zoom > 0 {
+                savedViewport = saved
                 vp = saved
                 clampViewport()
             } else {

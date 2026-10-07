@@ -25,7 +25,8 @@
     nack: 0x50,
     clip: 0x51,                            // 剪切/复制/粘贴（剪贴板在 Mac）
     boards: 0x52, boardOpen: 0x53, boardAdd: 0x54, boardImages: 0x55,  // 画板笔记（v16，PROTOCOL.md §4.8）
-    boardPages: 0x56, boardPageAdd: 0x57, boardPageTemplate: 0x58      // 分页画板（v17，PROTOCOL.md §4.8）
+    boardPages: 0x56, boardPageAdd: 0x57, boardPageTemplate: 0x58,     // 分页画板（v17，PROTOCOL.md §4.8）
+    boardViewport: 0x5B                    // 画板视口（双向，v19；网页端暂不收发，只保编解码一致）
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
@@ -319,6 +320,9 @@
       }
       case "boardPageAdd": w.u8(OP.boardPageAdd); w.u16(o.count || 0); break;
       case "boardPageTemplate": w.u8(OP.boardPageTemplate); w.u16(o.index || 0); w.u8(o.template || 0); break;
+      case "boardViewport":
+        w.u8(OP.boardViewport); w.str(o.id || ""); w.f32(o.x || 0); w.f32(o.y || 0); w.f32(o.zoom || 0);
+        break;
       case "boardImages": {
         w.u8(OP.boardImages);
         var BI = o.list || []; w.u16(BI.length);
@@ -563,6 +567,10 @@
       case OP.boardPageTemplate: {
         var bptI = r.u16();
         return { type: "boardPageTemplate", index: bptI, template: r.u8() };
+      }
+      case OP.boardViewport: {
+        var bvId = r.str(), bvX = r.f32(), bvY = r.f32();
+        return { type: "boardViewport", id: bvId, x: bvX, y: bvY, zoom: r.f32() };
       }
       case OP.boardImages: {
         var bin = r.u16(), bil = new Array(bin);

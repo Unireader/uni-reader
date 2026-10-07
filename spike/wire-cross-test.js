@@ -187,6 +187,9 @@ const canonical = [
   { type: "boardPageAdd", count: 1 },
   { type: "boardPageTemplate", index: 2, template: 1 },
   { type: "boardAdd", mode: 1, w: 842, h: 595, template: 4, count: 10 },
+  // —— 画板视口（v19）——
+  { type: "boardViewport", id: "B-1", x: -120.5, y: 1688.25, zoom: 1.5 },
+  { type: "boardViewport", id: "B-2", x: 0, y: 0, zoom: 0 },
 ];
 
 let pass = 0, fail = 0;

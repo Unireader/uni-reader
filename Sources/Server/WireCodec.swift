@@ -50,6 +50,8 @@ enum WireCodec {
         /// 书写锁定开关（双向，同 `eraser` 一个 opcode 两个方向都用）。
         static let lock: UInt8 = 0x59
         static let relInk: UInt8 = 0x5A
+        /// 画板视口（双向，`BOARD-NOTE-PLAN.md §10.1`）：S→C = 库里存的，C→S = 平板停手后回传。
+        static let boardViewport: UInt8 = 0x5B
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -419,6 +421,9 @@ enum WireCodec {
         case "boardPageAdd": w.u8(Op.boardPageAdd); w.u16(intOf(o["count"]))
         case "boardPageTemplate":
             w.u8(Op.boardPageTemplate); w.u16(intOf(o["index"])); w.u8(UInt8(clamping: intOf(o["template"])))
+        case "boardViewport":
+            w.u8(Op.boardViewport); w.str(strOf(o["id"]))
+            w.f32(num(o["x"])); w.f32(num(o["y"])); w.f32(num(o["zoom"]))
         case "boardImages":
             w.u8(Op.boardImages)
             let list = o["list"] as? [[String: Any]] ?? []
@@ -695,6 +700,10 @@ enum WireCodec {
         case Op.boardPageTemplate:
             let i = r.u16(), t = r.u8()
             out = ["type": "boardPageTemplate", "index": NSNumber(value: i), "template": NSNumber(value: t)]
+        case Op.boardViewport:
+            let id = r.str(), x = r.f32(), y = r.f32(), z = r.f32()
+            out = ["type": "boardViewport", "id": id, "x": NSNumber(value: x), "y": NSNumber(value: y),
+                   "zoom": NSNumber(value: z)]
         case Op.boardImages:
             let n = r.u16()
             var list = [[String: Any]](); list.reserveCapacity(n)

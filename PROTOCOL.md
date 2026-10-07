@@ -120,6 +120,7 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x58` | boardPageTemplate | C→S | 可靠 |
 | `0x59` | lock | 双向 | 可靠 |
 | `0x5A` | relInk | 双向 | 可靠 |
+| `0x5B` | boardViewport | 双向 | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
 
@@ -642,6 +643,22 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 - `boardPageAdd`：在末尾加 `count` 页（沿用末页背景）——平板「到底上拉加页」发这条。
 - `boardPageTemplate`：改第 `index` 页的背景（index 越界整帧丢弃）——平板只改**当前页**（视口中心所在页）。
 - `boardAdd` 尾部：`mode = 1` = 新建分页画板（页面大小 `w × h` 画布点、背景、初始页数 1~100）；没有尾部 = 无限画布（老客户端行为不变）。
+
+#### 画板视口（v19 起，0x5B，`BOARD-NOTE-PLAN.md §10.1`）
+
+| opcode | payload | 对象形状 |
+|---|---|---|
+| `boardViewport` | `str id` · `f32 x` · `f32 y` · `f32 zoom` | `{type:"boardViewport", id, x, y, zoom}` |
+
+「记住上次滚动位置」的线上那一半：`board_note.viewport_x/y/zoom`（画布坐标的视口左上角 + 缩放；`zoom <= 0` = 从没存过）。
+**双向，同一个 opcode**，`id` = 画板 id（与 `boards.current` 同串）——两个方向都带 id，切画板时的先后错位不会写错篇。
+
+- S→C：被跟随会话是画板时，**紧跟在 `boards` / `boardPages` 之后**发库里存的那份（每次 `boards` 广播都带一份，没存过发 `zoom = 0`）。
+  客户端只在**刚打开这一篇、用户还没动过视口**时复位一次；之后（改名等原因重发 `boards`）一律不动——视口是各端各自的，
+  这条消息只管「打开时回到上次离开的地方」，不做实时跟随。
+- C→S：客户端**用户动过视口之后**停手 0.6s 回传一次，离开这一篇（换篇 / 回 PDF / 退到后台）时立即补发；
+  Mac 按 `id` 只写这三列（不动 `updated_at`、不广播）。没动过不回传——只是打开看一眼不该改库里的位置。
+- 不进离线镜像指纹（同 `last_opened_at`）。各端的缩放按各自屏幕定，跨设备复位时缩放照搬、横向由各端的夹取规则收回。
 
 ## 5. 兼容与版本
 
