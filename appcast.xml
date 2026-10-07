@@ -9,6 +9,46 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.4</title>
+      <pubDate>Wed, 07 Oct 2026 05:04:25 +0000</pubDate>
+      <sparkle:version>45</sparkle:version>
+      <sparkle:shortVersionString>0.3.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能和改进</h4>
+<ul>
+<li>分页的画板笔记可以和平板同步滚动，和 PDF 一样：在平板上滚，Mac 跟着翻到同一页的同一位置；在 Mac 上滚，平板也跟过去。两边的缩放各自独立，各自按屏幕宽度适配页宽。需要平板端也更新到新版。</li>
+<li>平板打开画板笔记时回到上次离开的位置，位置与 Mac 共用同一份记录。</li>
+<li>「平板手写」面板：Mac 同时连着几个网络（Wi-Fi、有线、VPN 等）时，二维码默认用系统优先的那个网络的地址，也可以在二维码下面的菜单里临时换成别的地址；换网、插拔网线、开关 VPN 后，地址和二维码自动更新。</li>
+<li>Agent（MCP）服务的监听地址选「所有网络接口」时，Mac 的每个地址都能连上（以前只认 Wi-Fi 那一个）；设置页列出全部地址，「配置里用的地址」可以选；网络变化后自动更新。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>画板笔记上笔迹多时，在 Mac 上滚动和缩放很卡。</li>
+<li>在 Mac 上把画板笔记切到别的标签页再切回来，回到的是最初打开时的位置，而不是离开时的位置。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.4">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New features &amp; improvements</h4>
+<ul>
+<li>Paged boards now scroll in sync with the tablet, just like PDFs: scroll on the tablet and the Mac follows to the same spot on the same page; scroll on the Mac and the tablet follows. Each side keeps its own zoom and fits the page width to its own screen. The tablet app needs to be updated as well.</li>
+<li>Opening a board on the tablet returns to where you left off, using the same saved position as the Mac.</li>
+<li>Tablet Handwriting panel: when the Mac is on several networks at once (Wi-Fi, Ethernet, VPN and so on), the QR code uses the address of the network the system prefers, and the menu under the QR code lets you switch to another address for now. The address and QR code update by themselves when you change networks, plug or unplug a cable, or turn a VPN on or off.</li>
+<li>With the Agent (MCP) service set to listen on All network interfaces, every address of the Mac now works (it used to accept only the Wi-Fi one). Settings lists all addresses, lets you pick the Address in configuration, and updates when the network changes.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Scrolling and zooming a board with lots of handwriting was very slow on the Mac.</li>
+<li>Switching a board to another tab and back on the Mac returned to where the board was first opened instead of where you left it.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.4">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.4/UniReader-0.3.4.zip" length="14247544" type="application/octet-stream" sparkle:edSignature="FCt36xJPbEBjylO0DxSf633fSkzhBbWFq7HxGHUd13+NpVPx8wSPV6K9msPGopsLZwlVQeiGsjM3P6Tq4MeyCw==" />
+    </item>
+    <item>
       <title>v0.3.3</title>
       <pubDate>Mon, 05 Oct 2026 07:08:25 +0000</pubDate>
       <sparkle:version>44</sparkle:version>
