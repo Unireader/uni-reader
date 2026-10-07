@@ -33,6 +33,20 @@
   （给整行只有公式时撑住基线），选中时被系统按选中文字色重画、压在后一个字上——改为缩小字号隐藏，
   再给它一个「正文下行高度」的负基线偏移顶替原来的作用（引擎 `InlineLatexHiddenSourceTests` 量基线与行高）。
   🔴 引擎里任何「隐藏的源码字符」都要按近零字号隐藏，只设透明色一选中就会露出来（这是第二次栽在这上面）。
+  同日又修了三处（`0.13.0-unireader.4`）：③ `$y'$` `$y''$` 带撇号、`$0$` 纯数字也被防误判规则拒掉；
+  ④ **一条漏认，后面整句错配**：漏认那条的结尾 `$` 会当成开头，跨着中文句子配到下一个 `$`，把中文与里面的 `**` 当成公式
+  （SwiftMath 画不出公式里的中文，只剩一串 `*`）——现在 `$…$` 里有不在 `\text{}` 中的中文就不算公式；
+  ⑤ `"特征函数"**（` 加粗结束不了：引擎只把半角标点当标点，`**` 前是半角引号、后是全角括号时判成不能结束。
+  🔴 **别改成 CommonMark 原样的 Unicode 标点**——那会让 `的**“特征函数”**是`、`**（注）**1` 这类常见中文写法失效
+  （实测造 5376 条中文加粗写法对比：改成 Unicode 标点有 504 条原来能认的不认了）。做法是标点仍只算半角，
+  再加「`**` 一侧挨着中文 / 全角标点 / 弯引号 / ——  / …… 时，按挨着空白算」（只放宽不收紧：0 条退步，漏判 1852 → 456）。
+- **块公式 / 行内公式整条显示源码，而上面几条都不是**：多半是 SwiftMath 不认里面的某个命令，一个不认整条失败
+  （2026-10-07 用户报 `\big[`）。查法：`spike/latex-look.swift` 出样张。能一一对应的已在 App 侧 `LatexCompat` 换成同义写法
+  （`\big` 一组、`\dfrac`、`\dots`、`\leqslant`、`\lvert`、`\operatorname`、`\iint`、`\pmod`、`\not=`、`\implies`、
+  `\boldsymbol`、`\mathscr`、`\varnothing`、`\tag`；测试 `spike/latex-compat-test.swift`）。只能近似的
+  （`cases` / `array` / `align` / `gather` / `split` 环境、`\boxed`、`\overset`、`\underset`、`\stackrel`、`\xrightarrow`、
+  `\overbrace`、`\underbrace`、`\mathop`、`\limits`、`\because`、`\therefore`）用户定**不做**，改为写进给 Agent 的
+  规则（`MCPTools.mathWriting`）让它别用；分段函数让它写 `\left\{\begin{aligned}…\end{aligned}\right.`（实测能渲染）。
 - **右键点在表格上会选中一块错位的蓝框**（同日）：表格是整张画成的图，宽表格再套一层横向滚动视图
   （引擎 `WideTableOverlay`），图本身没有菜单，右键一路传给文本视图，它选中了表格隐藏源码的一个字符
   （开头的 `|`），那个字符的框是一大块。`AgentMarkdownView.contextMenu` 在点中表格时把这种选区收成插入点。

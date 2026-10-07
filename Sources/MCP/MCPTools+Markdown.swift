@@ -7,9 +7,11 @@ import Foundation
 /// - `update_markdown`：整篇替换（带 revision 乐观锁），只留给「真要重写全文」的场合。
 /// 纯逻辑在 `MCPMarkdownText`，碰 App 状态的在 `MCPFacade`（写入同一条路：原子写文件 + 推回所有编辑器）。
 extension MCPTools {
-    /// 笔记里公式怎么写（英文，给模型看）。MCP `instructions`、写笔记工具的正文字段、Agent 面板上下文共用这一句。
+    /// 笔记里公式怎么写（英文，给模型看）。MCP `instructions`、写笔记工具的正文字段、Agent 面板上下文共用这一段。
     /// 别把公式包进加粗 / 斜体：用户 2026-10-07「不要出现加粗和公式一起用」。
-    static let mathWriting = "Math in notes: $…$ inline, all on one line; $$…$$ on lines of their own for a block; \\(…\\) and \\[…\\] are NOT rendered. Never put a formula inside bold or italic (no **…$x$…**): emphasize the words around it and leave the formula outside the ** or *."
+    /// 后半句列的是 SwiftMath 不认、`LatexCompat` 也没换的写法（用户同日定：近似显示不做，让 Agent 别用）；
+    /// 名单来自 `spike/latex-look.swift` 普查，`LatexCompat` 新增替换时从这里删掉对应的。
+    static let mathWriting = "Math in notes: $…$ inline, all on one line; $$…$$ on lines of their own for a block; \\(…\\) and \\[…\\] are NOT rendered. Never put a formula inside bold or italic (no **…$x$…**): emphasize the words around it and leave the formula outside the ** or *. The renderer cannot draw \\boxed, \\overset, \\underset, \\stackrel, \\xrightarrow, \\overbrace, \\underbrace, \\mathop, \\limits, \\because, \\therefore, or the cases, array, align, gather and split environments — a formula using any of them shows as raw source. For a piecewise definition write \\left\\{\\begin{aligned} … \\end{aligned}\\right. and for multi-line equations use aligned."
 
     /// 三个工具共用的「哪一篇」参数。
     static var markdownTargetProperties: [String: MCPObject] {

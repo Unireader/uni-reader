@@ -20,7 +20,8 @@ import SwiftUI
 /// 这里只记（公式, 字号）出现过多少种，超过上限就整个清掉重新攒——清完屏上正显示的那几张会在下次排版时重画，代价很小。
 ///
 /// 编辑器与气泡共用一份（`shared`），同一条公式在两边字号相同时能复用。
-/// 语法写不对 / SwiftMath 不支持的命令 → bridge 返回 nil → 引擎原样显示源码，不会出空白。
+/// SwiftMath 不认、但有同义写法的命令先换掉（`LatexCompat`：`\big` 一组、`\dfrac`、`\implies` …）。
+/// 语法写不对 / 仍不支持的命令 → bridge 返回 nil → 引擎原样显示源码，不会出空白。
 /// 只认 `$` 定界：`\(…\)` / `\[…\]` 不渲染（引擎解析器不认）。
 /// 线程：引擎在主线程排版时调 `render`（bridge 自己也读 `NSApp.keyWindow`，同一前提）。
 final class NoteLatexRenderer: LatexRenderer, @unchecked Sendable {
@@ -57,7 +58,8 @@ final class NoteLatexRenderer: LatexRenderer, @unchecked Sendable {
             registerBlocks(in: tv.string)   // 编辑器里刚敲 / 粘贴的块（见类注释①）
             isBlock = isKnownBlock(body)
         }
-        let source = isBlock ? "\\displaystyle " + latex : latex
+        let compatible = LatexCompat.rewrite(latex)   // SwiftMath 不认的写法换成同义写法（`\big[` → `[` 等）
+        let source = isBlock ? "\\displaystyle " + compatible : compatible
 
         lock.lock()
         seen.insert(Key(latex: source, fontSize: fontSize))
