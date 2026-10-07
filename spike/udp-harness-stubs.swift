@@ -9,8 +9,9 @@ enum Pairing {
     static func resetToken() -> String { makeToken() }
 }
 
-enum NetInfo {
-    static func wifiIPv4() -> String? { nil }
+final class NetWatch {
+    static let shared = NetWatch()
+    func host(preferring preferred: String? = nil) -> String { "127.0.0.1" }
 }
 
 enum CapturePage {

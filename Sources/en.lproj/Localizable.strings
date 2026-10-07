@@ -12,6 +12,8 @@
 "Server stopped" = "Server stopped";
 "Open this URL in Firefox on your tablet:" = "Open this URL in Firefox on your tablet:";
 "Copy URL" = "Copy URL";
+"Address in the QR code" = "Address in the QR code";
+"VPN" = "VPN";
 "Reset pairing code" = "Reset pairing code";
 "Old code stops working immediately; paired tablets must scan again." = "Old code stops working immediately; paired tablets must scan again.";
 "File Changed" = "File Changed";
@@ -566,6 +568,7 @@
 "Listen on" = "Listen on";
 "This Mac only (127.0.0.1)" = "This Mac only (127.0.0.1)";
 "All network interfaces" = "All network interfaces";
+"Address in configuration" = "Address in configuration";
 "Port" = "Port";
 "Port must be between 1024 and 65535." = "Port must be between 1024 and 65535.";
 "Press Return to apply a port change." = "Press Return to apply a port change.";

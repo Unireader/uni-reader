@@ -112,9 +112,10 @@ final class LANServer: ObservableObject {
     private var pageH: Double = 0
     private var version = 0
 
-    var pageURL: String {
-        let host = NetInfo.wifiIPv4() ?? "127.0.0.1"
-        return "http://\(host):\(httpPort)/?token=\(token)"
+    /// 平板打开的地址。[host] = 用本机哪个 IP（面板上选的，见 `NetWatch`）；不给就用系统优先的那张网卡上的。
+    /// 服务在所有网卡上监听，换哪个地址都连得上，这里只决定二维码里写哪一个。
+    func pageURL(host: String? = nil) -> String {
+        "http://\(host ?? NetWatch.shared.host()):\(httpPort)/?token=\(token)"
     }
 
     init() {

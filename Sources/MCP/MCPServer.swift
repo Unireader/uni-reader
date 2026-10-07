@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Network
 
@@ -125,8 +126,10 @@ final class MCPServer: ObservableObject {
     var tokenProvider: () -> String? = { MCPToken.current() }
     /// 口令的服务队列副本（启动时读一次 Keychain；重置口令走 `restart()`）。只在 `queue` 上读。
     private var token: String?
-    /// 所有接口模式下额外放行的 Origin 主机（本机局域网地址）。只在 `queue` 上读。
+    /// 所有接口模式下额外放行的 Origin 主机（本机全部 IPv4，`NetWatch` 一变就更新）。只在 `queue` 上读写。
     private var localHosts: [String] = []
+    /// 所有接口模式下对 `NetWatch` 的订阅（主线程）；回环模式 / 停了 = nil。
+    private var netSub: AnyCancellable?
 
     static var appVersion: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
@@ -152,14 +155,15 @@ final class MCPServer: ObservableObject {
     (empty with a hint when neither exists); copy quotes for add_highlight / add_note from it.
     """
 
-    /// 本机能访问到的端点（面板展示 + 配置片段）。
-    var endpointURL: String {
-        let host: String
+    /// 能访问到的端点（面板展示）：回环模式只有 127.0.0.1；所有接口模式 = 本机每个 IP 各一个（`NetWatch`，
+    /// Wi-Fi / 有线 / VPN 都算，系统优先的那张网卡排第一）。
+    var endpointURLs: [String] {
+        let hosts: [String]
         switch effectiveBind {
-        case .loopback: host = "127.0.0.1"
-        case .all: host = NetInfo.wifiIPv4() ?? "127.0.0.1"
+        case .loopback: hosts = ["127.0.0.1"]
+        case .all: hosts = NetWatch.shared.addresses.map(\.ip)
         }
-        return "http://\(host):\(listeningPort)/mcp"
+        return (hosts.isEmpty ? ["127.0.0.1"] : hosts).map { "http://\($0):\(listeningPort)/mcp" }
     }
 
     // MARK: - 生命周期（主线程调用）
@@ -192,11 +196,18 @@ final class MCPServer: ObservableObject {
             mcpLog("启动失败：\(error)")
             return
         }
-        let hosts = bind == .all ? [NetInfo.wifiIPv4()].compactMap { $0 } : []
+        let hosts = bind == .all ? NetWatch.shared.addresses.map(\.ip) : []
         queue.async {
             self.token = tok
             self.localHosts = hosts
         }
+        // 所有接口模式：网络一变（换网 / 插拔网线 / 开关 VPN）放行的本机地址跟着换，面板上的地址列表也刷新
+        netSub = bind == .all ? NetWatch.shared.$addresses.dropFirst().sink { [weak self] list in
+            guard let self else { return }
+            let ips = list.map(\.ip)
+            self.queue.async { self.localHosts = ips }
+            self.objectWillChange.send()
+        } : nil
         listener.newConnectionHandler = { [weak self] conn in self?.serve(conn) }
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -221,6 +232,7 @@ final class MCPServer: ObservableObject {
 
     func stop() {
         listener?.cancel(); listener = nil
+        netSub = nil
         Task { await sessions.removeAll() }
         clients = []
         isRunning = false

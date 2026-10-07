@@ -5,6 +5,10 @@ import SwiftUI
 /// 系统标准控件，不自绘；material 底上的文字显式 `.primary`（红线）。
 struct MCPSettingsView: View {
     @ObservedObject var mcp: MCPServer
+    /// 本机全部 IP（网络一变自动刷新）：所有接口模式下的地址列表 / 配置片段用哪个地址
+    @ObservedObject private var net = NetWatch.shared
+    /// 配置片段里写哪个本机 IP（所有接口模式、本机不止一个地址时可选；不在了就退回首选的那个）
+    @AppStorage("mcpConfigHost") private var configHost = ""
 
     @AppStorage(MCPServer.autoStartKey) private var autoStart = false
     @AppStorage(MCPServer.bindKey) private var bindRaw = MCPServer.Bind.loopback.rawValue
@@ -24,7 +28,7 @@ struct MCPSettingsView: View {
 
     /// 按**当前设置**算出来的端点（服务没开也能给配置片段）。
     private var configuredURL: String {
-        let host = bind == .all ? (NetInfo.wifiIPv4() ?? "127.0.0.1") : "127.0.0.1"
+        let host = bind == .all ? net.host(preferring: configHost) : "127.0.0.1"
         return "http://\(host):\(portValid ? port : MCPServer.defaultPort)/mcp"
     }
 
@@ -96,7 +100,10 @@ struct MCPSettingsView: View {
                 }
             LabeledContent(L("Status")) {
                 if mcp.isRunning {
-                    Text(String(format: L("Running at %@"), mcp.endpointURL)).textSelection(.enabled)
+                    // 所有接口模式：本机每个 IP 一行（Wi-Fi / 有线 / VPN 都能连）
+                    Text(String(format: L("Running at %@"), mcp.endpointURLs.joined(separator: "\n")))
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
                 } else {
                     Text(L("Stopped"))
                 }
@@ -189,6 +196,16 @@ struct MCPSettingsView: View {
 
     private var configSection: some View {
         Section {
+            if bind == .all, net.addresses.count > 1 {
+                Picker(L("Address in configuration"), selection: Binding(
+                    get: { net.host(preferring: configHost) },
+                    set: { configHost = $0 }
+                )) {
+                    ForEach(net.addresses, id: \.ip) { a in
+                        Text("\(a.ip) — \(a.label)").tag(a.ip)
+                    }
+                }
+            }
             snippetRow(L("Claude Code"), cliSnippet)
             snippetRow(L("Generic JSON (mcpServers)"), jsonSnippet)
         } header: {

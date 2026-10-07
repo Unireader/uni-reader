@@ -184,8 +184,8 @@ MCP 在 2026-07-28 出了一版**去掉初始化握手**的「新版」协议（
   `NSLocalNetworkUsageDescription` 已在 `project.yml` 里（平板服务加的），无需再加。
 
 配置片段随模式变化（§10）：回环模式给 `http://127.0.0.1:<port>/mcp`；所有接口模式给
-`http://<本机局域网 IP>:<port>/mcp`（`NetInfo.wifiIPv4()`，与 `LANServer.pageURL` 同一来源）+
-`--header "Authorization: Bearer <口令>"`。
+`http://<本机 IP>:<port>/mcp` + `--header "Authorization: Bearer <口令>"`。本机 IP 取自 `NetWatch`（§23：本机全部
+IPv4，网络一变自动重扫；本机不止一个地址时设置页可选配置片段用哪个），与平板服务的二维码同一来源。
 
 ---
 
@@ -610,7 +610,7 @@ curl -si http://<本机IP>:8773/mcp -H 'Content-Type: application/json' -H 'Auth
 | 打开文档到标签 | `TabsModel.open(_:)` 现成（复用空标签 / 已开则激活） | 直接用 |
 | 导入 PDF | `ReaderWindowController.ingest(urls:)` 内联了 hash + 入库 + 开标签 | 批 3 再拆函数三处共用 |
 | 口令存储 | `Pairing.persistentToken()` / `resetToken()`（Keychain，`Sources/Support/Keychain.swift`） | 照抄成 `MCPToken`，另一个 Keychain 键 |
-| 本机局域网 IP | `NetInfo.wifiIPv4()`（`LANServer.pageURL` 在用） | 所有接口模式的配置片段直接用 |
+| 本机局域网 IP | `NetInfo.wifiIPv4()`（`LANServer.pageURL` 在用；2026-10-07 起换成 `NetWatch` 全部地址，见 §23） | 所有接口模式的配置片段直接用 |
 | 页文本 | `PDFPage.string`（PDFKit）；`NativePDFTextProvider.textLayer` 至今是 TODO 骨架 | 不动它，MCP 自己在 `MCPDocReader` 抽 |
 | OCR 缓存 | `LibraryStore.ocrPage(contentHash:page:provider:)` 单页；`OCRWatermark` 是纯函数 | 加批量读；水印过滤直接复用 |
 | 目录 | `TOCEntry.build(from:)`（`Sources/Views/TOCView.swift`）| 直接用（它住在 Views 里但不依赖视图；顺手挪不挪到 App/ 随意） |
@@ -861,3 +861,21 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
   list_markdown_notes）、`list_markdown_notes`（独立 .md 文件，钉在页上的是另一种，见 list_annotations）三处说明互相指路。
   说明里带上界面的中文叫法（批注 / 文字笔记、Markdown 笔记），用户用中文说时模型对得上。
 - App 内的 Agent 面板在上下文块里也写了一遍（`ACP-AGENT-PLAN.md §3.2`「两种笔记」）。
+
+## 23. 2026-10-07 所有接口模式认得本机全部 IP，网络变化自动更新
+
+- 用户：「做一下地址监听，监听到所有 ip」；问过范围，定为**平板服务与 MCP 两个都做**。
+- 原来的问题：两个服务本来就在所有网卡上监听，但程序只认得一个地址（`NetInfo.wifiIPv4()` 只取 en0/en1 的 IPv4）——
+  面板上只显示这一个；MCP 的 `Origin` 检查只放行这一个（从有线网卡 / VPN 地址打开的浏览器页面会被 403）；换网后也不刷新。
+- `Server/NetInfo.swift`：`NetInfo.ipv4Addresses()` 列出全部在用的 IPv4（不含回环），**按系统的优先顺序排**
+  （当前默认出口那张网卡第一，其余按系统设置 › 网络的服务顺序；取自 `SCDynamicStore` 的 `PrimaryInterface` / `ServiceOrder`；
+  VPN 隧道当了默认出口也不算第一；系统顺序里没有的排后面，169.254 自分配地址垫底）——第一个就是默认给出去的地址。
+  用户 2026-10-07 定「地址默认用优先的」：本机 en7（USB 有线）排在 en0（Wi-Fi）前面，原先写死 en0 优先就和系统不一致。
+  网卡名取系统设置里的叫法（`SCNetworkInterfaceGetLocalizedDisplayName`，VPN 隧道系统不给名字，记作 VPN）；
+  `NetWatch.shared`（主线程）用 `NWPathMonitor` 监视网络变化，当下 + 1s + 3s 各重扫一次（DHCP 要一会儿才配好地址）。
+- MCP：`localHosts`（`Origin` 放行表）= 全部地址，网络一变跟着换（`netSub`）；状态行每个地址一条（`endpointURLs`）；
+  配置片段的地址可选（`mcpConfigHost`，不在了退回首选）。
+- 平板服务面板：二维码默认用系统优先的那个地址；本机不止一个地址时出一个下拉框可临时换（**不记到下次**，
+  换的地址不在了也退回优先的那个），网络一变自动刷新。
+- 验证：`spike/mcp-server-test.swift` 改为逐个地址验「可达 + Origin 放行」，本机 3 个地址（Wi-Fi / USB 有线 / Tailscale）36 项全过。
+  只做 IPv4（平板扫码与配置片段都用 IPv4）。

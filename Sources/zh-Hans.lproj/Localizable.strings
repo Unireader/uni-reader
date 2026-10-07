@@ -12,6 +12,8 @@
 "Server stopped" = "服务已停止";
 "Open this URL in Firefox on your tablet:" = "在平板的 Firefox 中打开此地址：";
 "Copy URL" = "复制地址";
+"Address in the QR code" = "二维码里用的地址";
+"VPN" = "VPN";
 "Reset pairing code" = "重置配对码";
 "Old code stops working immediately; paired tablets must scan again." = "旧码立即失效，已配对的平板要重新扫码。";
 "File Changed" = "文件已变化";
@@ -568,6 +570,7 @@
 "Listen on" = "监听地址";
 "This Mac only (127.0.0.1)" = "仅限本机（127.0.0.1）";
 "All network interfaces" = "所有网络接口";
+"Address in configuration" = "配置里用的地址";
 "Port" = "端口";
 "Port must be between 1024 and 65535." = "端口必须在 1024 到 65535 之间。";
 "Press Return to apply a port change." = "改了端口后按回车生效。";

@@ -132,14 +132,17 @@ struct Main {
         check(await waitReady(base), "重启后回环仍可达")
         let lanOK = await MainActor.run { server.effectiveBind == .all && server.lastError == nil }
         check(lanOK, "effectiveBind=all，无错误")
-        if let ip = NetInfo.wifiIPv4() {
+        // 本机每个 IP（Wi-Fi / 有线 / VPN …）都要能连、都要被 Origin 检查放行，不只是 en0 那一个
+        let ips = await MainActor.run { NetWatch.shared.addresses.map(\.ip) }
+        if ips.isEmpty { print("  （没有局域网地址，跳过经局域网地址访问的各项）") }
+        for ip in ips {
             let viaLAN = await post("http://\(ip):\(port)/mcp", rpc("ping"), headers: ["Authorization": "Bearer lan-token"])
-            check(viaLAN.status == 200, "经本机局域网地址 \(ip) 可达")
+            check(viaLAN.status == 200, "经本机地址 \(ip) 可达")
             let lanOrigin = await post("http://\(ip):\(port)/mcp", rpc("ping"), headers: ["Authorization": "Bearer lan-token", "Origin": "http://\(ip):8080"])
-            check(lanOrigin.status == 200, "Origin 为本机局域网地址放行")
-        } else {
-            print("  （没有局域网地址，跳过经局域网地址访问的两项）")
+            check(lanOrigin.status == 200, "Origin 为本机地址 \(ip) 放行")
         }
+        let urls = await MainActor.run { server.endpointURLs }
+        check(urls.count == max(1, ips.count), "面板地址列表每个本机地址一条（\(urls.count)）")
         setArgs(port: port, bind: "loopback")
 
         await MainActor.run { server.stop() }

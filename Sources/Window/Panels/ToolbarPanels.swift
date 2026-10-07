@@ -266,15 +266,21 @@ final class OCRPanelController: StackPanelController {
 // MARK: - 平板手写服务
 
 /// 启停、二维码配对、地址（可复制）、换配对码、已连设备（逐个断开）、延迟 / 入站速率 / 最近消息。
+/// 本机有多个 IP（Wi-Fi + 有线 + VPN…）时多一个下拉框选二维码用哪个；网络一变（`NetWatch`）地址跟着刷新。
 final class ServerPanelController: StackPanelController {
     let server: LANServer
     private var bag = Set<AnyCancellable>()
     private var queued = false
+    /// 用户在下拉框里临时换的那个 IP。**不记到下次**：二维码默认永远用系统优先的那个（用户 2026-10-07 定），
+    /// 这个地址不在了（网络变了）也退回优先的那个。
+    private var pickedHost: String?
 
     private let startStop = NSButton(title: "", target: nil, action: nil)
     private let dot = NSView()
     private let stateLabel = NSTextField(labelWithString: "")
     private let running = NSStackView()
+    private let hostPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    private var shownAddresses: [NetInfo.Address] = []
     private let qr = NSImageView()
     private let url = NSTextField(wrappingLabelWithString: "")
     private let copy = NSButton()
@@ -322,6 +328,11 @@ final class ServerPanelController: StackPanelController {
         qr.widthAnchor.constraint(equalToConstant: 180).isActive = true
         qr.heightAnchor.constraint(equalToConstant: 180).isActive = true
         running.addArrangedSubview(qr)
+        hostPicker.target = self
+        hostPicker.action = #selector(hostChanged)
+        hostPicker.toolTip = L("Address in the QR code")
+        hostPicker.controlSize = .small
+        running.addArrangedSubview(row([hostPicker, spacer()]))
         let hint = caption(L("Open this URL in Firefox on your tablet:"))
         running.addArrangedSubview(row([hint, spacer()]))
         url.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular)
@@ -365,6 +376,9 @@ final class ServerPanelController: StackPanelController {
 
         server.objectWillChange.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.queueRefresh() }.store(in: &bag)
+        // 换网 / 插拔网线 / 开关 VPN：地址列表变了，二维码跟着换（willSet 发出，下一拍再读新值）
+        NetWatch.shared.$addresses
+            .sink { [weak self] _ in self?.queueRefresh() }.store(in: &bag)
         refresh()
     }
 
@@ -384,8 +398,18 @@ final class ServerPanelController: StackPanelController {
         stateLabel.stringValue = on ? L("Server running") : L("Server stopped")
         running.isHidden = !on
         if on {
-            if shownURL != server.pageURL {
-                shownURL = server.pageURL
+            let net = NetWatch.shared
+            if net.addresses != shownAddresses {
+                shownAddresses = net.addresses
+                hostPicker.removeAllItems()
+                for a in shownAddresses { hostPicker.addItem(withTitle: "\(a.ip) — \(a.label)") }
+            }
+            hostPicker.superview?.isHidden = shownAddresses.count < 2   // 只有一个地址就不用选
+            let host = net.host(preferring: pickedHost)
+            if let i = shownAddresses.firstIndex(where: { $0.ip == host }) { hostPicker.selectItem(at: i) }
+            let pageURL = server.pageURL(host: host)
+            if shownURL != pageURL {
+                shownURL = pageURL
                 url.stringValue = shownURL
                 qr.image = Pairing.qrImage(from: shownURL)
             }
@@ -439,10 +463,18 @@ final class ServerPanelController: StackPanelController {
     @objc private func toggleServer() { if server.isRunning { server.stop() } else { server.start() } }
     @objc private func resetToken() { server.resetToken() }
 
-    /// 复制地址：图标短暂变成 ✓。
+    /// 临时换二维码用的 IP（选回第一个 = 回到跟着系统优先的那个走）。
+    @objc private func hostChanged() {
+        let i = hostPicker.indexOfSelectedItem
+        guard shownAddresses.indices.contains(i) else { return }
+        pickedHost = i == 0 ? nil : shownAddresses[i].ip
+        refresh()
+    }
+
+    /// 复制地址（与二维码同一个）：图标短暂变成 ✓。
     @objc private func copyURL() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(server.pageURL, forType: .string)
+        NSPasteboard.general.setString(shownURL, forType: .string)
         setCopyIcon(copied: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.setCopyIcon(copied: false) }
     }
