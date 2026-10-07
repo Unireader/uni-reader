@@ -47,6 +47,14 @@
   （`cases` / `array` / `align` / `gather` / `split` 环境、`\boxed`、`\overset`、`\underset`、`\stackrel`、`\xrightarrow`、
   `\overbrace`、`\underbrace`、`\mathop`、`\limits`、`\because`、`\therefore`）用户定**不做**，改为写进给 Agent 的
   规则（`MCPTools.mathWriting`）让它别用；分段函数让它写 `\left\{\begin{aligned}…\end{aligned}\right.`（实测能渲染）。
+- **Debug 包渲染公式时崩在 SwiftMath `MTTypesetter.getInterElementSpace` 的 `assert`**（2026-10-07，引擎 fork `.5` 修掉）：
+  空白命令夹在关系符 / 括号 / 标点 / 运算符与加减号之间（`x = \; -1`、`(\,-1)`、`f(x)=x^2, \quad -1\le x`），
+  SwiftMath 只看紧挨着的前一个元素来决定加减号算不算二元运算符，看到空白就判错，排版时遇到无效组合触发断言。
+  正式版不检查断言（只是那一处间距为 0），所以只有 Debug 包崩；放宽公式识别后原来不渲染的公式开始渲染，才暴露出来。
+  修法在引擎桥接层 `SwiftMathBridge.settleBinarySigns`（自己解析、按 TeX 规则跳过空白定好再交给 SwiftMath），没 fork SwiftMath。
+  🔴 **验证别经过桥接层的 `render`**：它有磁盘缓存（`~/Library/Caches/MarkdownEngineLatex/`，与 App 共用，`clearCache()` 会删整个目录），
+  第二次跑直接读图不排版，改坏了也测不出；引擎测试 `SwiftMathBinarySpacingTests` 直接解析 + 排版。批量 / 随机测试每条包
+  `autoreleasepool`、设内存上限、用 `CFFIXED_USER_HOME=<临时目录>` 隔离缓存（2026-10-07 没做这三条，2 万条测试吃满用户内存）。
 - **右键点在表格上会选中一块错位的蓝框**（同日）：表格是整张画成的图，宽表格再套一层横向滚动视图
   （引擎 `WideTableOverlay`），图本身没有菜单，右键一路传给文本视图，它选中了表格隐藏源码的一个字符
   （开头的 `|`），那个字符的框是一大块。`AgentMarkdownView.contextMenu` 在点中表格时把这种选区收成插入点。
