@@ -39,7 +39,20 @@ final class AgentChatNSView: NSView {
     private let permissions = NSStackView()
     private let composer: AgentComposerView
     private var itemViews: [UUID: (kind: AgentItem.Kind, view: NSView)] = [:]
+    /// 上次刷新时的全部条目 id（不论建没建视图）。
     private var order: [UUID] = []
+    /// 只有 `chat.items[shownFrom...]` 建了视图：长对话先建最后一段，往上翻到离顶不足一屏再往前补一段
+    /// （`AgentTranscript.windowStart`）。
+    private var shownFrom = 0
+    private var earlierQueued = false
+    /// 没贴底时钉住的那条（视口里最上面露出来的条目）与它离视口顶的距离：它上面补进新条目、
+    /// 或上面的正文排完版变高时，照这个把滚动位置挪回去，眼前的内容不跳。
+    private var anchor: (view: NSView, offset: CGFloat)?
+    /// 我们自己在挪滚动位置（不是用户在滚）：这时别重新取钉住的条目。
+    private var adjustingScroll = false
+    /// 正文高度最后一次变化之后等这么久，再看上面是不是不足一屏、要不要往前补（高度是排完版异步报回来的，
+    /// 刚建出来每条只有一行高，当场判断会把整段对话一口气全补出来）。
+    private var settleTimer: Timer?
     private var spinner = NSProgressIndicator()
     private var bag = Set<AnyCancellable>()
     private var queued = false
@@ -346,23 +359,36 @@ final class AgentChatNSView: NSView {
     /// 而流式期间每个碎片都来一次——于是越说越卡。这里先算出这排视图**应该**是什么样，
     /// 再只动第一处不一样的位置往后那一段；最常见的情况（只是最后一条回复又长了一段）一动不动。
     private func refreshTranscript() {
+        // 回放中：Agent 把整段历史一条条推过来，这时一条视图都不建（长对话大半用不上），回放完再只建最后一段。
+        // 顶上「正在载入对话…」提示条照常显示。
+        if chat.phase == .loading {
+            if !order.isEmpty || !itemViews.isEmpty { clearTranscript() }
+            empty.isHidden = true
+            transcriptScroll.isHidden = false
+            return
+        }
         let isEmpty = chat.items.isEmpty && chat.phase == .idle && chat.sessionId != nil
         empty.isHidden = !isEmpty
         transcriptScroll.isHidden = isEmpty
         let ids = chat.items.map(\.id)
-        // 条目只在末尾追加 = 同一段对话往下说；否则是换了一段（新对话 / 回放 / 清空）
-        let appended = ids.count >= order.count && Array(ids.prefix(order.count)) == order
+        // 条目只在末尾追加 = 同一段对话往下说；否则是换了一段（新对话 / 回放完 / 清空）。
+        // 上次一条都没有也算换了一段：回放完第一次刷新就是这样，要从最后一段建起。
+        let appended = !order.isEmpty && ids.count >= order.count && Array(ids.prefix(order.count)) == order
+        let resetAt: Date? = appended ? nil : Date()
         if !appended {
             let keep = Set(ids)
             for (id, v) in itemViews where !keep.contains(id) { v.view.removeFromSuperview(); itemViews.removeValue(forKey: id) }
+            shownFrom = AgentTranscript.windowStart(chat.items, before: ids.count, budget: AgentTranscript.initialBudget)
+            anchor = nil
         }
+        shownFrom = min(shownFrom, ids.count)
         var views: [NSView] = []
-        views.reserveCapacity(chat.items.count + 1)
+        views.reserveCapacity(ids.count - shownFrom + 1)
         // 🔴 这一轮新建的条目视图。宽度约束**必须等它进了 stack 再激活**：约束两端要有共同祖先，
         // 刚 `make` 出来的视图还没有父视图，当场激活 = Auto Layout 抛异常、进程 abort
         // （2026-09-21 实测，一点历史对话就崩）。
         var fresh: [NSView] = []
-        for item in chat.items {
+        for item in chat.items[shownFrom...] {
             if let cur = itemViews[item.id], cur.kind == item.kind {
                 views.append(cur.view)
             } else if let cur = itemViews[item.id], AgentItemViews.update(cur.view, to: item.kind) {
@@ -371,11 +397,7 @@ final class AgentChatNSView: NSView {
                 views.append(cur.view)
             } else {
                 itemViews[item.id]?.view.removeFromSuperview()
-                let v = AgentItemViews.make(item)
-                if let md = v as? AgentMarkdownView { md.onHeightChange = { [weak self] in self?.keepBottom() } }
-                if let d = v as? AgentDisclosureView { d.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
-                if let u = v as? AgentUserMessageView { u.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
-                itemViews[item.id] = (item.kind, v)
+                let v = makeItemView(item)
                 views.append(v)
                 fresh.append(v)
             }
@@ -393,14 +415,86 @@ final class AgentChatNSView: NSView {
             v.widthAnchor.constraint(equalTo: transcript.widthAnchor, constant: -28).isActive = true
         }
         order = ids
+        if let t0 = resetAt, shownFrom > 0 {
+            agentLog(String(format: "对话记录 %d 条，先建最后 %d 条，%.0fms",
+                            ids.count, ids.count - shownFrom, Date().timeIntervalSince(t0) * 1000))
+        }
         // 🔴 **用户自己往上翻过就别再把他拽回底下**：原来只要条目数组变了就无条件滚到底，
         // 而回答期间新条目（工具调用 / 新一段回复）不断冒出来，表现就是「回答时根本滚不上去」
         // （2026-09-21 用户实测）。只有换了一段对话（回放 / 新对话）才强制回底。
         if !appended {
             DispatchQueue.main.async { [weak self] in self?.scrollToBottom() }
+            armSettle()   // 最后一段要是没有会报高度的正文（全是工具调用这类），也得看一眼满不满一屏
         } else if moved {
             keepBottom()   // 这排视图变了 = 内容高度会变，滚动条得重新判断（滚不滚由 `stickBottom` 定）
         }
+    }
+
+    /// 给一条条目建视图并登记（正文排完版报高度时让对话记录重新对齐滚动位置）。还没进 stack，宽度约束由调用方进了再加。
+    private func makeItemView(_ item: AgentItem) -> NSView {
+        let v = AgentItemViews.make(item)
+        if let md = v as? AgentMarkdownView { md.onHeightChange = { [weak self] in self?.keepBottom() } }
+        if let d = v as? AgentDisclosureView { d.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
+        if let u = v as? AgentUserMessageView { u.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
+        itemViews[item.id] = (item.kind, v)
+        return v
+    }
+
+    /// 回放开始：旧对话的视图全部摘掉。
+    private func clearTranscript() {
+        for (_, v) in itemViews { v.view.removeFromSuperview() }
+        itemViews.removeAll()
+        order = []
+        shownFrom = 0
+        anchor = nil
+    }
+
+    /// 视口顶离对话记录顶不足一屏、前面还有没建的条目：下一拍往前补一段。
+    private func loadEarlierIfNeeded() {
+        guard shownFrom > 0, !earlierQueued, chat.phase != .loading, !transcriptScroll.isHidden,
+              window != nil, !isHiddenOrHasHiddenAncestor else { return }
+        let clip = transcriptScroll.contentView
+        guard clip.bounds.minY < clip.bounds.height else { return }
+        earlierQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.earlierQueued = false
+            self.loadEarlier()
+        }
+    }
+
+    /// 在最上面补建更早的一段。直接插到这排视图的最前面（不走 `applyTranscriptViews`：
+    /// 它从第一处不同往后整排重装，开头一变等于全部拆了重装）。
+    private func loadEarlier() {
+        guard shownFrom > 0, chat.phase != .loading, shownFrom <= chat.items.count else { return }
+        let t0 = Date()
+        // 钉住眼前最上面那条：补进来的条目和它们之后排完版长高，都不许把它推走（贴底时由贴底管）
+        if !stickBottom, anchor == nil { anchor = topVisibleItem() }
+        let from = AgentTranscript.windowStart(chat.items, before: shownFrom, budget: AgentTranscript.earlierBudget)
+        var fresh: [NSView] = []
+        for (k, item) in chat.items[from..<shownFrom].enumerated() {
+            let v = itemViews[item.id]?.view ?? makeItemView(item)
+            transcript.insertArrangedSubview(v, at: k)
+            fresh.append(v)
+        }
+        // 同 `refreshTranscript`：进了 stack 再激活宽度约束
+        for v in fresh where v.superview != nil {
+            v.widthAnchor.constraint(equalTo: transcript.widthAnchor, constant: -28).isActive = true
+        }
+        shownFrom = from
+        agentLog(String(format: "对话记录往前补 %d 条（还剩 %d 条没建），%.0fms",
+                        fresh.count, from, Date().timeIntervalSince(t0) * 1000))
+        syncScroll()
+        armSettle()   // 补进来的要是没有会报高度的正文，同样得再看一眼
+    }
+
+    /// 视口里最上面露出来的那条，与它的顶离视口顶的距离。
+    private func topVisibleItem() -> (view: NSView, offset: CGFloat)? {
+        let top = transcriptScroll.contentView.bounds.minY
+        for v in transcript.arrangedSubviews where v.frame.maxY > top {
+            return (v, v.frame.minY - top)
+        }
+        return nil
     }
 
     /// 把这排视图摆成 `views`：从第一处不一样的位置往后重装，前面原样不动。
@@ -425,11 +519,15 @@ final class AgentChatNSView: NSView {
     private func noteScrolled() {
         let clip = transcriptScroll.contentView
         stickBottom = clip.bounds.maxY >= transcript.frame.height - 40
+        guard !adjustingScroll else { return }   // 我们自己挪的：钉住的条目不变
+        anchor = stickBottom ? nil : topVisibleItem()
+        loadEarlierIfNeeded()                    // 用户往上翻到离顶不足一屏：马上往前补
     }
 
     /// 正文排完版高度变了（Markdown 渲染是异步报回来的）：本来贴着底就继续贴着，没贴底的也得让滚动视图重算一遍。
     /// 推到下一拍再做：这个回调是在排版过程中来的，当场 `layoutSubtreeIfNeeded` 等于在布局里再布局一次。
     private func keepBottom() {
+        armSettle()
         guard !bottomQueued else { return }
         bottomQueued = true
         DispatchQueue.main.async { [weak self] in
@@ -437,6 +535,20 @@ final class AgentChatNSView: NSView {
             self.bottomQueued = false
             self.syncScroll()
         }
+    }
+
+    /// 高度停止变化一会儿之后，再看上面是不是不足一屏（见 `settleTimer`）。
+    private func armSettle() {
+        settleTimer?.invalidate()
+        guard shownFrom > 0 else { return }
+        let t = Timer(timeInterval: 0.25, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.settleTimer = nil
+                self?.loadEarlierIfNeeded()
+            }
+        }
+        settleTimer = t
+        RunLoop.main.add(t, forMode: .common)
     }
 
     /// 内容高度变了之后把滚动视图对齐：滚到该在的位置 + 重算滚动条。
@@ -448,8 +560,14 @@ final class AgentChatNSView: NSView {
         transcript.layoutSubtreeIfNeeded()
         let clip = transcriptScroll.contentView
         let maxY = max(0, transcript.frame.height - clip.bounds.height)
+        adjustingScroll = true
+        defer { adjustingScroll = false }
         if toBottom || stickBottom {
             clip.scroll(to: NSPoint(x: 0, y: maxY))
+        } else if let a = anchor, a.view.superview === transcript {
+            // 没贴底：钉住的那条留在视口里原来的位置（它上面补进条目 / 排完版变高都不许把它推走）
+            let y = min(maxY, max(0, a.view.frame.minY - a.offset))
+            if abs(y - clip.bounds.origin.y) > 0.5 { clip.scroll(to: NSPoint(x: 0, y: y)) }
         } else if clip.bounds.origin.y > maxY {
             clip.scroll(to: NSPoint(x: 0, y: maxY))   // 内容变矮了，原来的位置已经超出去
         }

@@ -177,7 +177,10 @@ final class AgentChat: ObservableObject {
                 let c = try connectionOrNew()
                 attach(info.sessionId.value, to: c)   // 先登记：回放的通知会先于响应到
                 let mcp = mcpServers()
+                let t0 = Date()
                 let r = try await c.loadSession(info.sessionId.value, mcp: mcp)
+                // Agent 推完整段历史用了多久（面板建视图的耗时另记，见 `AgentChatNSView.refreshTranscript`）
+                agentLog(String(format: "回放完成 %d 条，%.1fs", items.count, Date().timeIntervalSince(t0)))
                 missingMCP = mcp.isEmpty
                 applyModes(r.modes)
                 applyConfigs(r.configOptions)

@@ -1,13 +1,17 @@
 import AppKit
 
-/// 离屏验证 Agent 面板对话记录的**增量重排**（`AgentChatNSView.refreshTranscript` /
-/// `applyTranscriptViews`）。跑：`swift spike/agent-transcript-test.swift`
+/// 离屏验证 Agent 面板对话记录的**增量重排**与**分段建视图**（`AgentChatNSView.refreshTranscript` /
+/// `applyTranscriptViews` / `loadEarlier` / `syncScroll` 的钉住条目，`AgentTranscript.windowStart`）。
+/// 跑：`swift spike/agent-transcript-test.swift`
 ///
-/// 这里是同款算法的第二份实现（视图那边改了要同步这边）。盯三件事：
+/// 这里是同款算法的第二份实现（视图那边改了要同步这边）。盯这几件事：
 ///  1. **宽度约束必须等视图进了 stack 再激活**——刚建出来的视图没有父视图，当场激活
 ///     Auto Layout 直接抛异常、进程 abort（2026-09-21 实测：一点历史对话就崩）。
 ///  2. **同样的条目再刷一次要零操作**——每次都把整排拆下来装回去就是「回答长了变卡」的根因。
 ///  3. 条目只在末尾追加 vs. 换了一段对话（回放 / 新对话），这决定要不要把用户拽回底部。
+///  4. **长对话只建最后一段**，往上翻再往前补（用户 2026-10-07：长对话要渲染好几秒）；补的时候插在最前面、
+///     不重装已有视图；回放中一条都不建。
+///  5. **没贴底时钉住视口里最上面那条**：上面补进条目、上面的正文变高，它在视口里的位置都不动。
 
 _ = NSApplication.shared
 
@@ -19,60 +23,69 @@ func check(_ ok: Bool, _ what: String) {
 }
 
 /// 一条条目。`inPlace` = 内容变了能就地换文字（回复 / 思考），否则要重建视图（工具调用 / 计划…）。
+/// `weight` = 建视图的分量（真代码里按字数，见 `AgentTranscript.weight`）。
 struct Item {
     let id: Int
     var kind: String
     var inPlace: Bool = true
+    var weight: Int = 100
 }
 
+/// 同 `AgentTranscript.windowStart`。
+func windowStart(_ items: [Item], before end: Int, budget: Int) -> Int {
+    var start = end, sum = 0
+    while start > 0, sum < budget || start == end {
+        start -= 1
+        sum += items[start].weight
+    }
+    return start
+}
+
+let initialBudget = 4000, earlierBudget = 3000
+
+final class FlippedStack: NSStackView { override var isFlipped: Bool { true } }
+
 final class Harness {
-    let stack = NSStackView()
+    let stack = FlippedStack()
     let spinner = NSProgressIndicator()
     private var itemViews: [Int: (kind: String, view: NSView)] = [:]
     private(set) var order: [Int] = []
+    private(set) var shownFrom = 0
     /// 每个视图激活过几次宽度约束（应当只有一次）。
     private(set) var activations: [ObjectIdentifier: Int] = [:]
     /// 新建过几个视图（流式就地更新时不该涨）。
     private(set) var made = 0
+    /// 条目视图的高度（几何测试用；没给的按 0 高，由 stack 间距撑开）。
+    var heights: [Int: CGFloat] = [:]
+    private var heightConstraints: [Int: NSLayoutConstraint] = [:]
+    let widthAnchorTarget: NSLayoutDimension
 
-    init() {
+    init(widthTarget: NSLayoutDimension? = nil) {
         stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        if let widthTarget {
+            widthAnchorTarget = widthTarget
+        } else {
+            stack.widthAnchor.constraint(equalToConstant: 300).isActive = true
+            widthAnchorTarget = stack.widthAnchor
+        }
     }
 
-    /// 同 `refreshTranscript`。
-    /// - Returns: (这排视图动过没有, 是不是「只在末尾追加」)
-    @discardableResult
-    func refresh(_ items: [Item], running: Bool = false) -> (moved: Bool, appended: Bool) {
-        let ids = items.map(\.id)
-        let appended = ids.count >= order.count && Array(ids.prefix(order.count)) == order
-        if !appended {
-            let keep = Set(ids)
-            for (id, v) in itemViews where !keep.contains(id) {
-                v.view.removeFromSuperview()
-                itemViews.removeValue(forKey: id)
-            }
+    private func make(_ item: Item) -> NSView {
+        let v = NSView()
+        made += 1
+        if let h = heights[item.id] {
+            let c = v.heightAnchor.constraint(equalToConstant: h)
+            c.isActive = true
+            heightConstraints[item.id] = c
         }
-        var views: [NSView] = []
-        var fresh: [NSView] = []
-        for item in items {
-            if let cur = itemViews[item.id], cur.kind == item.kind {
-                views.append(cur.view)
-            } else if let cur = itemViews[item.id], item.inPlace {
-                itemViews[item.id] = (item.kind, cur.view)   // 就地换文字
-                views.append(cur.view)
-            } else {
-                itemViews[item.id]?.view.removeFromSuperview()
-                let v = NSView()
-                made += 1
-                itemViews[item.id] = (item.kind, v)
-                views.append(v)
-                fresh.append(v)
-            }
-        }
-        if running { views.append(spinner) }
-        let moved = apply(views)
+        itemViews[item.id] = (item.kind, v)
+        return v
+    }
+
+    private func activateWidth(_ fresh: [NSView]) {
         for v in fresh {
             // 🔴 这道检查就是上面第 1 条：顺序错了这里先报出来（真代码里是直接 abort）
             check(v.superview != nil, "新建的条目视图激活宽度约束前必须已经进了 stack")
@@ -80,8 +93,73 @@ final class Harness {
             v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true
             activations[ObjectIdentifier(v), default: 0] += 1
         }
+    }
+
+    /// 同 `refreshTranscript`。
+    /// - Returns: (这排视图动过没有, 是不是「只在末尾追加」)
+    @discardableResult
+    func refresh(_ items: [Item], running: Bool = false, loading: Bool = false) -> (moved: Bool, appended: Bool) {
+        if loading {
+            if !order.isEmpty || !itemViews.isEmpty { clear() }
+            return (false, false)
+        }
+        let ids = items.map(\.id)
+        let appended = !order.isEmpty && ids.count >= order.count && Array(ids.prefix(order.count)) == order
+        if !appended {
+            let keep = Set(ids)
+            for (id, v) in itemViews where !keep.contains(id) {
+                v.view.removeFromSuperview()
+                itemViews.removeValue(forKey: id)
+            }
+            shownFrom = windowStart(items, before: ids.count, budget: initialBudget)
+        }
+        shownFrom = min(shownFrom, ids.count)
+        var views: [NSView] = []
+        var fresh: [NSView] = []
+        for item in items[shownFrom...] {
+            if let cur = itemViews[item.id], cur.kind == item.kind {
+                views.append(cur.view)
+            } else if let cur = itemViews[item.id], item.inPlace {
+                itemViews[item.id] = (item.kind, cur.view)   // 就地换文字
+                views.append(cur.view)
+            } else {
+                itemViews[item.id]?.view.removeFromSuperview()
+                let v = make(item)
+                views.append(v)
+                fresh.append(v)
+            }
+        }
+        if running { views.append(spinner) }
+        let moved = apply(views)
+        activateWidth(fresh)
         order = ids
         return (moved, appended)
+    }
+
+    /// 同 `clearTranscript`。
+    private func clear() {
+        for (_, v) in itemViews { v.view.removeFromSuperview() }
+        itemViews.removeAll()
+        order = []
+        shownFrom = 0
+    }
+
+    /// 同 `loadEarlier`（钉住条目那部分在 `ScrollRig`）。
+    /// - Returns: 补了几条。
+    @discardableResult
+    func loadEarlier(_ items: [Item]) -> Int {
+        guard shownFrom > 0 else { return 0 }
+        let from = windowStart(items, before: shownFrom, budget: earlierBudget)
+        var fresh: [NSView] = []
+        for (k, item) in items[from..<shownFrom].enumerated() {
+            let v = itemViews[item.id]?.view ?? make(item)
+            stack.insertArrangedSubview(v, at: k)
+            fresh.append(v)
+        }
+        activateWidth(fresh)
+        let n = shownFrom - from
+        shownFrom = from
+        return n
     }
 
     /// 同 `applyTranscriptViews`。
@@ -99,6 +177,7 @@ final class Harness {
         return true
     }
 
+    func setHeight(_ id: Int, _ h: CGFloat) { heightConstraints[id]?.constant = h }
     func view(_ id: Int) -> NSView? { itemViews[id]?.view }
     var arranged: [NSView] { stack.arrangedSubviews }
 }
@@ -110,7 +189,7 @@ let h = Harness()
 var items = [Item(id: 1, kind: "a"), Item(id: 2, kind: "b"), Item(id: 3, kind: "c")]
 var r = h.refresh(items)
 check(r.moved, "第一次填充算动过")
-check(r.appended, "从空开始填算「末尾追加」")
+check(!r.appended, "从空开始填算「换了一段」：要回到底部、从最后一段建起")
 check(h.arranged.count == 3, "三条条目 → 三个视图，实得 \(h.arranged.count)")
 check(h.arranged.allSatisfy { $0.superview === h.stack }, "每个条目视图都挂在 stack 上")
 check(h.activations.values.allSatisfy { $0 == 1 }, "每个视图只激活一次宽度约束")
@@ -175,7 +254,7 @@ check(all.allSatisfy { $0.superview == nil }, "旧对话的视图全部摘干净
 
 let replay = (10...14).map { Item(id: $0, kind: "r\($0)") }
 r = h.refresh(replay)
-check(h.arranged.count == 5, "回放 5 条")
+check(h.arranged.count == 5, "回放 5 条（短对话一次建完）")
 check(h.arranged.map(ObjectIdentifier.init) == replay.map { ObjectIdentifier(h.view($0.id)!) }, "回放顺序正确")
 
 r = h.refresh(Array(replay.prefix(3)))
@@ -193,6 +272,103 @@ NSLayoutConstraint.activate([
 ])
 holder.layoutSubtreeIfNeeded()
 check(h.arranged.allSatisfy { $0.frame.width > 0 }, "条目视图排出了宽度")
+
+// MARK: - 7. 长对话分段建视图
+
+print("7. 长对话分段")
+check(windowStart([Item(id: 1, kind: "x", weight: 99_999)], before: 1, budget: 10) == 0, "一条超过预算也至少建一条")
+check(windowStart([], before: 0, budget: 10) == 0, "没有条目时起点是 0")
+let long = (100..<160).map { Item(id: $0, kind: "k\($0)", weight: 1000) }   // 60 条，每条 1000
+let w = Harness()
+w.refresh([], loading: true)
+check(w.arranged.isEmpty && w.made == 0, "回放中一条视图都不建")
+r = w.refresh(long)
+check(!r.appended, "回放完第一次刷新 = 换了一段（回底）")
+check(w.shownFrom == 56 && w.arranged.count == 4, "先只建最后一段（4000 / 1000 = 4 条），实得 \(w.arranged.count) 条、起点 \(w.shownFrom)")
+check(w.made == 4, "只新建了 4 个视图，实得 \(w.made)")
+let tailViews = w.arranged
+let n1 = w.loadEarlier(long)
+check(n1 == 3 && w.shownFrom == 53, "往前补一段（3000 / 1000 = 3 条），实得 \(n1) 条、起点 \(w.shownFrom)")
+check(w.arranged.count == 7, "这排视图变成 7 条")
+check(Array(w.arranged.suffix(4)).map(ObjectIdentifier.init) == tailViews.map(ObjectIdentifier.init),
+      "🔴 原来那段视图原样留在后面（补的时候不重装）")
+check(w.arranged.prefix(3).map(ObjectIdentifier.init) == (53..<56).map { ObjectIdentifier(w.view(long[$0].id)!) },
+      "补进来的按顺序排在最前面")
+check(w.activations.values.allSatisfy { $0 == 1 }, "补进来的视图也只激活一次宽度约束")
+r = w.refresh(long)
+check(!r.moved, "补完再刷一次是零操作（refresh 认得已经补进来的条目）")
+var longer = long
+longer.append(Item(id: 999, kind: "new", weight: 1000))
+r = w.refresh(longer)
+check(r.appended && w.shownFrom == 53, "之后新来的条目照常追加，起点不变")
+while w.loadEarlier(longer) > 0 {}
+check(w.shownFrom == 0 && w.arranged.count == 61, "一路往上补到开头，实得 \(w.arranged.count) 条")
+w.refresh(longer, loading: true)
+check(w.arranged.isEmpty, "再回放一段：旧视图全部摘掉")
+
+// MARK: - 8. 钉住视口里的条目（真滚动视图）
+
+print("8. 往前补 / 上面变高时眼前的内容不跳")
+
+/// 同 `AgentChatNSView` 的滚动部分：`topVisibleItem` + `syncScroll` 的钉住分支。
+final class ScrollRig {
+    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 400))
+    let harness: Harness
+    var anchor: (view: NSView, offset: CGFloat)?
+
+    init() {
+        harness = Harness(widthTarget: nil)
+        scroll.documentView = harness.stack
+        harness.stack.widthAnchor.constraint(equalToConstant: 300).isActive = true
+    }
+    var clip: NSClipView { scroll.contentView }
+
+    func layout() { harness.stack.layoutSubtreeIfNeeded(); scroll.layoutSubtreeIfNeeded() }
+
+    func topVisibleItem() -> (view: NSView, offset: CGFloat)? {
+        let top = clip.bounds.minY
+        for v in harness.arranged where v.frame.maxY > top { return (v, v.frame.minY - top) }
+        return nil
+    }
+
+    func syncScroll() {
+        layout()
+        let maxY = max(0, harness.stack.frame.height - clip.bounds.height)
+        if let a = anchor, a.view.superview === harness.stack {
+            let y = min(maxY, max(0, a.view.frame.minY - a.offset))
+            clip.scroll(to: NSPoint(x: 0, y: y))
+        }
+    }
+
+    func scroll(to y: CGFloat) { layout(); clip.scroll(to: NSPoint(x: 0, y: y)); anchor = topVisibleItem() }
+
+    /// 钉住的条目此刻离视口顶多远。
+    var anchorOffsetNow: CGFloat? { anchor.map { $0.view.frame.minY - clip.bounds.minY } }
+}
+
+let rig = ScrollRig()
+let tall = (200..<230).map { Item(id: $0, kind: "t\($0)", weight: 1000) }   // 30 条，每条 150 高
+for it in tall { rig.harness.heights[it.id] = 150 }
+rig.harness.refresh(tall)
+rig.layout()
+check(rig.harness.arranged.count == 4, "先建最后 4 条，实得 \(rig.harness.arranged.count)")
+rig.scroll(to: 100)                                  // 没贴底，翻在中间
+let pinned = rig.anchor
+check(pinned != nil, "取到了视口里最上面那条")
+let pinnedID = rig.harness.arranged.firstIndex { $0 === pinned?.view }
+rig.harness.loadEarlier(tall)
+rig.syncScroll()
+check(abs((rig.anchorOffsetNow ?? 99) - (pinned?.offset ?? 0)) < 0.5,
+      "🔴 上面补进 3 条（450 高）后，钉住的条目离视口顶仍是 \(pinned?.offset ?? -1)，实得 \(rig.anchorOffsetNow ?? -1)")
+check(rig.clip.bounds.minY > 400, "滚动位置跟着往下挪了补进来的高度，实得 \(rig.clip.bounds.minY)")
+check(pinnedID != nil && rig.harness.arranged.firstIndex(where: { $0 === pinned?.view }) == pinnedID! + 3,
+      "钉住的还是同一条（往后移了 3 位）")
+
+check(pinned?.view === rig.harness.view(tall[26].id), "钉住的是原来那段的第一条（tall[26]）")
+rig.harness.setHeight(tall[24].id, 600)              // 它上面那条「排完版」变高 450
+rig.syncScroll()
+check(abs((rig.anchorOffsetNow ?? 99) - (pinned?.offset ?? 0)) < 0.5,
+      "🔴 上面那条变高 450 后，钉住的条目位置仍不动，实得 \(rig.anchorOffsetNow ?? -1)")
 
 print(failures == 0 ? "\n✅ \(checks) 项全过" : "\n❌ \(checks) 项里 \(failures) 项没过")
 exit(failures == 0 ? 0 : 1)

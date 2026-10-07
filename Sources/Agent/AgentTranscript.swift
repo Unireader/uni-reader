@@ -49,6 +49,34 @@ struct AgentPlanEntry: Equatable {
 
 /// 把 `session/update` 拼进条目数组的纯函数集合（不碰 UI、不碰网络）。
 enum AgentTranscript {
+    // MARK: 分段建视图
+
+    /// 长对话不一次建完（用户 2026-10-07：「长对话要渲染加载好几秒，可以一段一段，向上滚动的时候再加载吗」）：
+    /// 先只给最后一段建视图，往上翻再往前补。一段 = 从 `end` 往前取，攒够 `budget` 的分量就停（至少一条）。
+    /// 返回这一段的起点下标。分量按 `weight`，大致是要排版的字数——贵的是回复正文的 Markdown / 公式排版。
+    static func windowStart(_ items: [AgentItem], before end: Int, budget: Int) -> Int {
+        var start = end, sum = 0
+        while start > 0, sum < budget || start == end {
+            start -= 1
+            sum += weight(items[start].kind)
+        }
+        return start
+    }
+
+    /// 先建的那一段：大约两三屏。
+    static let initialBudget = 4000
+    /// 往上翻时每次往前补的一段。
+    static let earlierBudget = 3000
+
+    /// 一条要建多重的视图：正文按字数，另加一份固定开销（每条一个视图、一次排版）。
+    static func weight(_ kind: AgentItem.Kind) -> Int {
+        switch kind {
+        case .agent(let s), .thought(let s): return 200 + s.utf16.count
+        case .user(let s, let images): return 200 + s.utf16.count + 400 * images.count
+        case .tool, .plan, .notice: return 200
+        }
+    }
+
     /// 每次发给 Agent 的上下文块用这对标签包起来：回放历史时据此把它从「用户说的话」里剔掉。
     static let contextOpen = "<unireader-context>"
     static let contextClose = "</unireader-context>"
