@@ -9,6 +9,46 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.5</title>
+      <pubDate>Wed, 07 Oct 2026 09:34:05 +0000</pubDate>
+      <sparkle:version>46</sparkle:version>
+      <sparkle:shortVersionString>0.3.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能和改进</h4>
+<ul>
+<li>设置 › Agent ›「Agent 面板」新增「启动时在后台加载」：打开后，阅读窗口一打开工作区就在后台启动 Agent，切到 Agent 页时已经连好，不用再等。默认关闭；开着时即使从没打开过 Agent 页，Agent 也会一直在运行。</li>
+<li>给 Agent 的说明里加了写公式的要求：不要把公式放进加粗或斜体里，免得公式显示不出来。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>Markdown 笔记里的行内公式含有 <code>\,</code>、<code>\{</code>、<code>\|</code> 这类写法时整条不显示，只露出源码（反斜杠还会消失）。</li>
+<li><code>$u(x,y)$</code>、<code>$f(x)$</code> 这类没有运算符的函数写法被当成普通文字，不显示成公式。</li>
+<li>选中含公式的文字时，公式后面会冒出一个 <code>$</code>，压在后一个字上。</li>
+<li>画板笔记的标签页不在前台时，在平板上滚动，Mac 不记住位置，切回去还停在旧位置。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.5">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New features &amp; improvements</h4>
+<ul>
+<li>New option in Settings › Agent › Agent Panel: Load in the background at launch. When on, each reading window starts the agent as soon as it opens a workspace, so the Agent page is ready when you switch to it. Off by default; while it is on, the agent keeps running even if you never open the Agent page.</li>
+<li>The instructions UniReader gives agents now ask them not to put formulas inside bold or italic text when writing notes, so the formulas display properly.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Inline formulas in Markdown notes that used <code>\,</code>, <code>\{</code>, <code>\|</code> and similar did not display at all; the source showed instead, with the backslash missing.</li>
+<li>Function notation without an operator, such as <code>$u(x,y)$</code> or <code>$f(x)$</code>, was treated as plain text instead of a formula.</li>
+<li>Selecting text that contains a formula showed a stray <code>$</code> after the formula, drawn over the next character.</li>
+<li>Scrolling a board on the tablet while its tab was not in front on the Mac did not save the position; switching back showed the old position.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.5">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.5/UniReader-0.3.5.zip" length="14261077" type="application/octet-stream" sparkle:edSignature="zunrTQQnidivkr9ggyRA3R2DecQhPOEXVJQ4JluHGV/RYFCM/ZH2x3tkmREegyr4V8ZqsY0OhtrKGSJk/DTfAQ==" />
+    </item>
+    <item>
       <title>v0.3.4</title>
       <pubDate>Wed, 07 Oct 2026 05:04:25 +0000</pubDate>
       <sparkle:version>45</sparkle:version>
