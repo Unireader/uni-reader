@@ -222,7 +222,10 @@ final class ScratchPadNSView: NSView {
         super.viewDidMoveToWindow()
         if window != nil {
             installKeyMonitor()
+            if standalone { session.boardView = self }   // 有视图了：平板滚动由这里跟随、写库
         } else {
+            // 换视图时新的先挂上、旧的淡出后才摘，只摘自己挂的那个
+            if session.boardView === self { session.boardView = nil }
             if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
             // 关纸 / 切纸后这张页图不再需要：撤掉本端的 wanted 声明
             PageRenderEngine.shared.setWanted([], client: pageClientID)
@@ -450,6 +453,12 @@ final class ScratchPadNSView: NSView {
             } else {
                 vp = paged ? pageTop(0) : .centeredOnOrigin(viewport: b.size)
             }
+            // 分页画板：会话上记着的同步位置比库里新（标签没激活时平板滚过——那时没有视图接——或刚才在这一篇的
+            // 上一个视图里滚过），竖向按它摆；缩放与横向仍用上面那份
+            if paged, standalone, let a = session.boardScrollAnchor {
+                vp.origin.y = CGFloat((Double(a.page) + a.frac) * session.boardLayout.stride) - anchorLine / vp.zoom
+                clampViewport()
+            }
         } else if didPlace, old.width > 1, old.height > 1, old != b.size {
             // 窗口缩放：保持画布中心不动
             vp.origin.x += (old.width - b.width) / (2 * vp.zoom)
@@ -547,6 +556,7 @@ final class ScratchPadNSView: NSView {
         let page = min(max(Int(floor(p)), 0), l.count - 1)
         let a = (page: page, frac: p - Double(page))
         session.boardScrollAnchor = a
+        app.boardAnchorLine = anchorLine   // 标签没激活时 AppModel 换算平板位置要用
         let same = lastSentAnchor.map { $0.page == a.page && abs($0.frac - a.frac) < 1e-5 } ?? false
         // 跟随平板时（及收敛后那 0.1s）不回发；这时的位置平板本来就知道，记成「已发」，免得之后原样回声一次
         if followDriving || follower.isSuppressing { lastSentAnchor = a; return }

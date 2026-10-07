@@ -57,6 +57,11 @@ final class AppModel: ObservableObject {
         struct PagedSpec: Equatable { var width: Double; var height: Double; var template: BoardTemplate; var count: Int }
     }
     @Published var padBoardRequest: PadBoardRequest?
+    /// 画板标签没激活时，平板滚动位置的节流写库（`AppModel+Board.scheduleDetachedBoardSave`）。
+    var detachedBoardSave: DispatchWorkItem?
+    /// 画板视图的同步锚线离视图顶多远（屏幕点，`ScratchPadNSView.anchorLine`）：没有视图时把平板位置换算成视口要用。
+    /// 视图每次报位置时更新；默认值 = 常见的工具栏高度 52 + 56。
+    var boardAnchorLine: CGFloat = 108
     /// 平板发起 `openDoc` 后等待就位的库文档 id：新窗口装好它就把平板锁过去（见 `sessionDocumentChanged`）。
     private var pendingPadFollowDocId: String?
     /// `library`/`toc` 广播去重签名（内容没变就不重发，同 `pushedLayoutKey`）。

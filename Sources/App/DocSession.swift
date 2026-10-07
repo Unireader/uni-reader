@@ -371,8 +371,11 @@ final class DocSession: ObservableObject, Identifiable {
     /// 分页画板与平板同步滚动（`BOARD-NOTE-PLAN.md §12`）：平板滚到的位置（`boardScroll` C→S，页 + 页内比例 + 平板时钟毫秒），
     /// 开着这篇的画板视图订阅它、平滑跟过去（同 PDF 的 `scrollAnchor` origin=pad）。
     let boardScrollFromPad = PassthroughSubject<(page: Int, frac: Double, t: Double), Never>()
-    /// 本机画板视图此刻的同步位置（页 + 页内比例）：新平板接入 / 切到这篇时补发用。换篇时清掉（`DocTabModel+Board`）。
+    /// 这篇分页画板此刻的同步位置（页 + 页内比例）：画板视图在时是视图的位置；标签没激活（没有视图）时是平板最后滚到的位置
+    /// （`AppModel.applyBoardScroll` 记）。新平板接入 / 切到这篇时补发它，视图重新出现时按它摆。换篇时清掉（`DocTabModel+Board`）。
     var boardScrollAnchor: (page: Int, frac: Double)?
+    /// 正显示着这篇画板的视图（窗格只给激活的标签建画板视图，切走就拆）。nil = 没有视图，平板滚动由 AppModel 记位置、写库。
+    weak var boardView: AnyObject?
     /// 是不是画板标签（平板 `boards.kind`、窗格装配、笔架都看它）。
     var isBoard: Bool { board != nil }
     /// 本会话所属工作区的画板列表快照（平板 `boards` 广播用；App 级的 `AppModel` 够不着窗口级的

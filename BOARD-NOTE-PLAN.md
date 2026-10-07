@@ -413,3 +413,8 @@ CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key
   安卓：`ScratchCanvas.pageAnchor` / `followPageAnchor`，`PadScratch` 末尾「同步滚动」。网页端只加了编解码。
 - 验证：编解码向量 +2（Swift 116 项、JS 222 项、安卓 `WireCodecTest` 全过），Mac 与安卓都编译通过、APK 已装 Pad 6；
   **跟随的手感（延迟、平滑、两边谁领头）待用户真机测**。
+- **v0.3.4 发布后用户报：Mac 上画板标签没激活时，平板滚动 Mac 端不更新进度**（2026-10-07 修）。根因：窗格只给激活的标签建
+  画板视图、切走就拆，平板发来的位置只有视图在接，没有视图就丢了——切回标签停在旧位置，也没写库（PDF 没这个问题，它的位置记在会话上）。
+  修法：`applyBoardScroll` 先把位置记在会话上（`DocSession.boardScrollAnchor`，此后补发也发它，不会把平板拽回旧位置）；
+  没有视图时（`DocSession.boardView == nil`，视图进出窗口时挂 / 摘）停手 0.6s 由 AppModel 写库（沿用库里的缩放与横向、竖向按
+  视图上次用的锚线 `boardAnchorLine` 反推；库里没存过就只记会话）；视图重新出现时竖向按会话上的位置摆。

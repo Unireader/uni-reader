@@ -37,7 +37,27 @@ extension AppModel {
         let frac = (obj["frac"] as? NSNumber)?.doubleValue ?? 0
         let t = (obj["t"] as? NSNumber)?.doubleValue ?? 0
         guard frac.isFinite else { return }
+        // 先记在会话上：标签没激活时没有画板视图接这条，切回来按它摆、补发也发它（不然会把平板拽回旧位置）
+        s.boardScrollAnchor = (page, frac)
         s.boardScrollFromPad.send((page, frac, t))
+        if s.boardView == nil { scheduleDetachedBoardSave(s) }
+    }
+
+    /// 画板标签没激活时平板在滚：停手 0.6s 把位置写进库，免得没切回这个标签就退出 / 关标签、进度丢了。
+    /// 库里存的是 Mac 视图的视口（原点 + 缩放），这里沿用库里那份的缩放与横向，竖向按同步锚线反推
+    /// （锚线取画板视图上次用的，`boardAnchorLine`）。库里从没存过（缩放 ≤ 0）就不写，切回标签时按会话上的位置摆。
+    func scheduleDetachedBoardSave(_ s: DocSession) {
+        detachedBoardSave?.cancel()
+        let work = DispatchWorkItem { [weak self, weak s] in
+            guard let self, let s, s.boardView == nil, s.isPagedBoard, let id = s.board?.id,
+                  let a = s.boardScrollAnchor, let store = s.store,
+                  let row = (try? store.board(id: id.uuidString)) ?? nil, row.viewportZoom > 0 else { return }
+            let z = row.viewportZoom
+            let y = (Double(a.page) + a.frac) * s.boardLayout.stride - Double(self.boardAnchorLine) / z
+            try? store.saveBoardViewport(id: id.uuidString, x: row.viewportX, y: y, zoom: z)
+        }
+        detachedBoardSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
     /// 被跟随画板在库里存的视口（`BOARD-NOTE-PLAN.md §10.1`），紧跟 `boards` / `boardPages` 发；客户端只在刚打开
