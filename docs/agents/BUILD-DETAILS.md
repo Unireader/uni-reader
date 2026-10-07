@@ -41,8 +41,9 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 
 - **`swift-markdown-engine`**（2026-09-26 起用自家 fork `Unireader/swift-markdown-engine` 的 `unireader` 分支——
   上游把智能引号写死为开，笔记里 `'` 会变 `’`，fork 加了 `SpellCheckingPolicy.automaticQuoteSubstitution`，两处编辑区都关掉；
-  `project.yml` 里 `exactVersion` 钉死，现 **0.13.0-unireader.2**（2026-10-05 修代码块选中：折行行底色盖住选区、
-  围栏选中时露出来，见 `docs/agents/PITFALLS.md`），改 fork 的做法写在 `project.yml` 注释里；本地克隆在
+  `project.yml` 里 `exactVersion` 钉死，现 **0.13.0-unireader.3**（`.2` 2026-10-05 修代码块选中：折行行底色盖住选区、
+  围栏选中时露出来；`.3` 2026-10-07 修行内公式：`\,` 与 `u(x,y)` 不认、选中时结尾 `$` 露出来；都见
+  `docs/agents/PITFALLS.md`），改 fork 的做法写在 `project.yml` 注释里；本地克隆在
   `../swift-markdown-engine`（`unireader` 分支），改它时用 `git worktree` 另开目录，别动那个克隆当前检出的分支；
   在 worktree 里跑 `swift test` 不联网的办法：`swift package config set-mirror` 把 HighlighterSwift / SwiftMath
   指到 `build/dev/SourcePackages/repositories/` 里现成的仓库（`.swiftpm/` 别提交）；

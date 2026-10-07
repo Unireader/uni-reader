@@ -7,6 +7,10 @@ import Foundation
 /// - `update_markdown`：整篇替换（带 revision 乐观锁），只留给「真要重写全文」的场合。
 /// 纯逻辑在 `MCPMarkdownText`，碰 App 状态的在 `MCPFacade`（写入同一条路：原子写文件 + 推回所有编辑器）。
 extension MCPTools {
+    /// 笔记里公式怎么写（英文，给模型看）。MCP `instructions`、写笔记工具的正文字段、Agent 面板上下文共用这一句。
+    /// 别把公式包进加粗 / 斜体：用户 2026-10-07「不要出现加粗和公式一起用」。
+    static let mathWriting = "Math in notes: $…$ inline, all on one line; $$…$$ on lines of their own for a block; \\(…\\) and \\[…\\] are NOT rendered. Never put a formula inside bold or italic (no **…$x$…**): emphasize the words around it and leave the formula outside the ** or *."
+
     /// 三个工具共用的「哪一篇」参数。
     static var markdownTargetProperties: [String: MCPObject] {
         ["note_ref": MCPSchema.string("Which note: note_ref from list_markdown_notes / get_state (also accepts the note's name). Omit for the active note in the key window (including a note mini-window)."),
@@ -116,7 +120,7 @@ extension MCPTools {
         // 单条修改的四个字段：顶层直接用（最常见的一处修改），也是 edits 数组每一项的形状
         let editFields: [String: MCPObject] = [
             "old_text": MCPSchema.string("Exact text to replace, copied from read_markdown without the line-number prefix. Must match exactly one place (include a few surrounding words or lines to make it unique) unless replace_all."),
-            "new_text": MCPSchema.string("Replacement text (empty string deletes old_text), or the lines to insert with insert_line."),
+            "new_text": MCPSchema.string("Replacement text (empty string deletes old_text), or the lines to insert with insert_line. \(mathWriting)"),
             "replace_all": MCPSchema.boolean("Replace every occurrence of old_text (default false)", default: false),
             "insert_line": MCPSchema.integer("Instead of old_text: insert new_text as whole lines after this line (0 = at the very top, line_count = at the end)", min: 0),
         ]
@@ -180,7 +184,7 @@ extension MCPTools {
             description: "Replace the complete body of a Markdown note. Prefer edit_markdown for anything short of a full rewrite — it is much faster and cannot drop text by accident. Pass the revision from read_markdown (or get_current_view) as expected_revision; the update is refused if the note changed after you read it. Preserve all text that should remain, including existing [[wiki links]], aliases, anchors and embeds.",
             inputSchema: MCPSchema.object(markdownTargetProperties.merging([
                 "expected_revision": MCPSchema.string("revision from read_markdown or get_current_view"),
-                "text": MCPSchema.string("Complete new Markdown body. Existing content is not preserved automatically."),
+                "text": MCPSchema.string("Complete new Markdown body. Existing content is not preserved automatically. \(mathWriting)"),
             ]) { a, _ in a }, required: ["expected_revision", "text"]),
             outputSchema: MCPSchema.object([
                 "ref": MCPSchema.string("updated note_ref"),

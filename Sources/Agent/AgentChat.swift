@@ -57,6 +57,7 @@ struct AgentReaderContext: Equatable {
             lines.append("No document is open in the reader right now.")
             lines.append(Self.noteKinds + " If the user says \"note\" (笔记) without a kind, ask which one.")
         }
+        lines.append(MCPTools.mathWriting)   // 同 `noteKinds`：MCP 说明里有，但不是每个 Agent 都读
         lines.append(AgentTranscript.contextClose)
         return lines.joined(separator: "\n")
     }
