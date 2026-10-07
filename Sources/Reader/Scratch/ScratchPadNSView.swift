@@ -52,7 +52,15 @@ final class ScratchPadNSView: NSView {
     private let grid = ScratchGridCALayer()
     private let pageLayer = ScratchPageCALayer()
     private let imagesLayer = BoardImagesCALayer()
-    private let inkLayer = ScratchInkCALayer()
+    /// 已落的笔迹：分块位图，平移只挪块不重画（`ScratchInkTiles.swift`）。正在写的那一笔仍在 `liveLayer` 里直接画。
+    private let inkLayer = ScratchInkTilesLayer()
+    /// minimap 手上的笔迹过期了（笔迹变了才重新交给它，别每帧都塞一遍全集）
+    private var minimapStrokesStale = true
+    /// 分页画板跟随平板滚动（`followPad`）：平滑器 + 帧驱动 + 「这一下是跟随挪的」标记 + 上次广播出去的位置
+    private let follower = ScrollFollower()
+    private var followLink: CADisplayLink?
+    private var followDriving = false
+    private var lastSentAnchor: (page: Int, frac: Double)?
     private let liveLayer = ScratchInkCALayer()
     private let lassoLayer = ScratchLassoCALayer()
     private let eraserRing = QuietShapeLayer()
@@ -114,6 +122,7 @@ final class ScratchPadNSView: NSView {
         buildToolbar()
         minimap.onJump = { [weak self] center in
             guard let self else { return }
+            self.stopFollow()
             self.vp.origin = CGPoint(x: center.x - self.bounds.width / (2 * self.vp.zoom),
                                      y: center.y - self.bounds.height / (2 * self.vp.zoom))
             self.clampViewport()
@@ -133,6 +142,8 @@ final class ScratchPadNSView: NSView {
     private var pad: ScratchPad? { session.scratchPads.first { $0.id == padID } }
     private var padIndex: Int { session.scratchPads.firstIndex { $0.id == padID } ?? 0 }
     private var strokes: [InkStroke] { session.strokes(pad: padID) }
+    /// 屏幕倍率（笔迹分块按像素切，换到倍率不同的屏幕要换一套块）
+    private var backingScale: CGFloat { window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2 }
     private var isErasing: Bool { app.pointerTool == .ink && app.padMode == "erase" }
     private var eraserCanvasRadius: Double { app.eraserRadius * ScratchPad.eraserRefWidth }
     /// 这张纸是不是该认领菜单 / 键盘发来的动作：本窗口在前台，且开着的正是这张。
@@ -173,6 +184,8 @@ final class ScratchPadNSView: NSView {
             .sink { [weak self] _ in self?.imagesChanged() }.store(in: &bag)
         session.$boardPages.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.pagesChanged() }.store(in: &bag)
+        session.boardScrollFromPad.receive(on: DispatchQueue.main)
+            .sink { [weak self] a in self?.followPad(page: a.page, frac: a.frac, t: a.t) }.store(in: &bag)
         app.$pointerTool.receive(on: DispatchQueue.main)
             .sink { [weak self] t in
                 guard let self else { return }
@@ -214,7 +227,15 @@ final class ScratchPadNSView: NSView {
             // 关纸 / 切纸后这张页图不再需要：撤掉本端的 wanted 声明
             PageRenderEngine.shared.setWanted([], client: pageClientID)
             flushViewportSave()   // 画板笔记：离开前把节流中的视口立即写一次，别等 0.6s
+            inkLayer.release()    // 还没开始画的笔迹块作废
+            stopFollow()
         }
+    }
+
+    /// 挪到倍率不同的屏幕：笔迹块按新倍率重出（`update` 发现块缩放对不上会自己换）
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        if didPlace { viewportChanged() }
     }
 
     /// Esc = 先清框选选中，没有选中就关纸；⌫ / ⌦ = 删掉框选选中的笔迹（没选中就放行）。
@@ -274,8 +295,9 @@ final class ScratchPadNSView: NSView {
     }
 
     private func strokesChanged() {
-        inkLayer.strokes = strokes
-        inkLayer.setNeedsDisplay()
+        inkLayer.setStrokes(strokes)
+        if didPlace { inkLayer.update(viewport: vp, size: bounds.size, scale: backingScale) }
+        minimapStrokesStale = true
         pruneSelection()
         refreshLasso()
         refreshHint()
@@ -335,7 +357,10 @@ final class ScratchPadNSView: NSView {
         let show = showMinimap && hasContent && !paged   // 分页有页码，不要 minimap
         minimap.isHidden = !show
         guard show else { return }
-        minimap.strokes = strokes
+        if minimapStrokesStale {
+            minimap.strokes = strokes
+            minimapStrokesStale = false
+        }
         minimap.viewport = vp
         minimap.viewSize = bounds.size
         minimap.pageRect = showsPage ? pageCanvasRect : nil
@@ -354,8 +379,7 @@ final class ScratchPadNSView: NSView {
     private func viewportChanged() {
         grid.viewport = vp
         grid.setNeedsDisplay()
-        inkLayer.viewport = vp
-        inkLayer.setNeedsDisplay()
+        inkLayer.update(viewport: vp, size: bounds.size, scale: backingScale)
         liveLayer.viewport = vp
         liveLayer.setNeedsDisplay()
         imagesLayer.viewport = vp
@@ -370,6 +394,7 @@ final class ScratchPadNSView: NSView {
         bar.setZoom(vp.zoom)
         if paged { bar.setPageLabel(currentPageIndex + 1, of: session.boardPages.count) }
         if standalone { scheduleViewportSave() }
+        if paged, standalone { reportBoardScroll() }
     }
 
     /// 画板视口写回，节流到停手 0.6s 后一次（滚动/缩放中每帧都调 `viewportChanged`，不能逐帧落库）。
@@ -472,8 +497,62 @@ final class ScratchPadNSView: NSView {
         let l = session.boardLayout, s = bounds.size
         let z = min(max((s.width - 48) / CGFloat(l.width), ScratchViewport.zoomMin), 2)
         let r = l.rect(min(max(0, i), max(0, l.count - 1)))
-        let v = ScratchViewport(origin: CGPoint(x: r.midX - s.width / (2 * z), y: r.minY - (topInset + 56) / z), zoom: z)
+        let v = ScratchViewport(origin: CGPoint(x: r.midX - s.width / (2 * z), y: r.minY - anchorLine / z), zoom: z)
         return clamped(v)
+    }
+
+    /// 「页顶该摆的那条线」离视图顶的距离（屏幕点）：停在某页页顶时那一页的页顶就在这里。
+    /// 也是与平板同步滚动的锚点（安卓 `ScratchCanvas.PAGED_TOP` 同为 56，`PROTOCOL.md` boardScroll）。
+    private var anchorLine: CGFloat { topInset + 56 }
+
+    // MARK: 与平板同步滚动（分页画板，`BOARD-NOTE-PLAN.md §12`）
+
+    /// 平板滚 → 这里平滑跟过去（同 PDF 阅读区那套 `ScrollFollower`：只跟随、不外推，带平板时间戳插值）
+    private func followPad(page: Int, frac: Double, t: Double) {
+        guard paged, standalone, didPlace else { return }
+        follower.pageCount = session.boardPages.count
+        follower.apply(ScrollAnchor(page: page, frac: frac, seq: 0, origin: "pad", senderT: t))
+        if followLink == nil {
+            let link = displayLink(target: self, selector: #selector(followTick))
+            link.add(to: .main, forMode: .common)
+            followLink = link
+        }
+    }
+
+    @objc private func followTick() {
+        if let p = follower.step(now: CACurrentMediaTime()), paged {
+            vp.origin.y = CGFloat(p * session.boardLayout.stride) - anchorLine / vp.zoom
+            clampViewport()
+            followDriving = true
+            viewportChanged()
+            followDriving = false
+        }
+        if !follower.isActive { followLink?.invalidate(); followLink = nil }
+    }
+
+    /// 本机动了视口（滚轮 / 捏合 / 拖动 / 点击 / 回中 / minimap）：不再跟平板，此后本机领头。
+    private func stopFollow() {
+        guard follower.isActive || follower.isSuppressing || followLink != nil else { return }
+        follower.reset()
+        followLink?.invalidate()
+        followLink = nil
+    }
+
+    /// 记下此刻的同步位置；是本机自己动的（不是在跟平板）就广播给平板。
+    /// 位置 = 锚线落在画布的 y，折成「第几页 + 在这一页（页高 + 页缝）里的比例」，页与页之间连续。
+    private func reportBoardScroll() {
+        let l = session.boardLayout
+        guard l.count > 0, didPlace, vp.zoom > 0 else { return }
+        let p = Double(vp.origin.y + anchorLine / vp.zoom) / l.stride
+        let page = min(max(Int(floor(p)), 0), l.count - 1)
+        let a = (page: page, frac: p - Double(page))
+        session.boardScrollAnchor = a
+        let same = lastSentAnchor.map { $0.page == a.page && abs($0.frac - a.frac) < 1e-5 } ?? false
+        // 跟随平板时（及收敛后那 0.1s）不回发；这时的位置平板本来就知道，记成「已发」，免得之后原样回声一次
+        if followDriving || follower.isSuppressing { lastSentAnchor = a; return }
+        guard !same else { return }
+        lastSentAnchor = a
+        app.broadcastBoardScroll(session)
     }
 
     /// 分页到底后继续往下滚 / 拖：累计超出的屏幕距离；超过阈值就在末尾加一页（一次手势只加一页）。
@@ -561,6 +640,7 @@ final class ScratchPadNSView: NSView {
 
     /// 回中 / 适应内容：0.18s 缓出过渡（逐帧改视口，整层重画）。
     private func animateViewport(to target: ScratchViewport) {
+        stopFollow()
         viewportAnim = (vp, target, CACurrentMediaTime())
         if animLink == nil {
             let link = displayLink(target: self, selector: #selector(animStep))
@@ -678,6 +758,7 @@ final class ScratchPadNSView: NSView {
     // MARK: 滚轮 / 捏合
 
     override func scrollWheel(with event: NSEvent) {
+        stopFollow()
         var dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         if !event.hasPreciseScrollingDeltas { dx *= 10; dy *= 10 }
         if event.modifierFlags.contains(.command) {
@@ -710,6 +791,7 @@ final class ScratchPadNSView: NSView {
     }
 
     override func magnify(with event: NSEvent) {
+        stopFollow()
         let anchor = convert(event.locationInWindow, from: nil)
         vp = clamped(vp.zoomed(by: 1 + event.magnification, anchorScreen: anchor))
         viewportChanged()
@@ -718,6 +800,7 @@ final class ScratchPadNSView: NSView {
     // MARK: 拖动（平移 / 落墨 / 框选）
 
     override func mouseDown(with event: NSEvent) {
+        stopFollow()
         window?.makeFirstResponder(self)
         let p = convert(event.locationInWindow, from: nil)
         dragStartView = p

@@ -52,6 +52,8 @@ enum WireCodec {
         static let relInk: UInt8 = 0x5A
         /// 画板视口（双向，`BOARD-NOTE-PLAN.md §10.1`）：S→C = 库里存的，C→S = 平板停手后回传。
         static let boardViewport: UInt8 = 0x5B
+        /// 分页画板同步滚动（双向，`BOARD-NOTE-PLAN.md §12`）：`str id · u32 page · f32 frac · f64 t`。
+        static let boardScroll: UInt8 = 0x5C
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -424,6 +426,9 @@ enum WireCodec {
         case "boardViewport":
             w.u8(Op.boardViewport); w.str(strOf(o["id"]))
             w.f32(num(o["x"])); w.f32(num(o["y"])); w.f32(num(o["zoom"]))
+        case "boardScroll":
+            w.u8(Op.boardScroll); w.str(strOf(o["id"]))
+            w.u32(intOf(o["page"])); w.f32(num(o["frac"])); w.f64(num(o["t"]))
         case "boardImages":
             w.u8(Op.boardImages)
             let list = o["list"] as? [[String: Any]] ?? []
@@ -704,6 +709,10 @@ enum WireCodec {
             let id = r.str(), x = r.f32(), y = r.f32(), z = r.f32()
             out = ["type": "boardViewport", "id": id, "x": NSNumber(value: x), "y": NSNumber(value: y),
                    "zoom": NSNumber(value: z)]
+        case Op.boardScroll:
+            let id = r.str(), page = r.u32(), frac = r.f32(), t = r.f64()
+            out = ["type": "boardScroll", "id": id, "page": NSNumber(value: page), "frac": NSNumber(value: frac),
+                   "t": NSNumber(value: t)]
         case Op.boardImages:
             let n = r.u16()
             var list = [[String: Any]](); list.reserveCapacity(n)

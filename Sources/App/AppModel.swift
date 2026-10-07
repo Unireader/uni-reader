@@ -629,6 +629,8 @@ final class AppModel: ObservableObject {
             applyBoardPageTemplate(obj, to: s)
         case "boardViewport":
             applyBoardViewport(obj, to: s)
+        case "boardScroll":
+            applyBoardScroll(obj, to: s)
         default:
             break
         }

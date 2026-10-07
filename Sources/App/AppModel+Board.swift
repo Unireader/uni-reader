@@ -18,6 +18,26 @@ extension AppModel {
                           "current": s.board?.id.uuidString ?? "", "list": list])
         broadcastBoardPages()   // 跟随的会话一变，页也跟着换（不是分页画板 = 空表）
         broadcastBoardViewport(s)
+        broadcastBoardScroll(s)   // 分页画板：平板接入 / 切到这篇时对齐到 Mac 此刻的位置
+    }
+
+    /// 分页画板 Mac 这边滚到的位置（`BOARD-NOTE-PLAN.md §12`）：画板视图本机滚动 / 打开摆好时调，
+    /// 平板跟随过去。跟随平板的过程中视图不调（防回环）。还没摆好（`boardScrollAnchor == nil`）不发。
+    func broadcastBoardScroll(_ s: DocSession) {
+        guard server.hasClients, s.id == padSession?.id, s.isPagedBoard,
+              let id = s.board?.id, let a = s.boardScrollAnchor else { return }
+        server.broadcast(["type": "boardScroll", "id": id.uuidString, "page": a.page, "frac": a.frac,
+                          "t": ProcessInfo.processInfo.systemUptime * 1000])
+    }
+
+    /// 平板 `boardScroll`：平板在分页画板上滚到的位置，交给开着这篇的画板视图平滑跟过去。不是这篇就丢。
+    func applyBoardScroll(_ obj: [String: Any], to s: DocSession) {
+        guard s.isPagedBoard, let id = obj["id"] as? String, id == s.board?.id.uuidString else { return }
+        let page = (obj["page"] as? NSNumber)?.intValue ?? 0
+        let frac = (obj["frac"] as? NSNumber)?.doubleValue ?? 0
+        let t = (obj["t"] as? NSNumber)?.doubleValue ?? 0
+        guard frac.isFinite else { return }
+        s.boardScrollFromPad.send((page, frac, t))
     }
 
     /// 被跟随画板在库里存的视口（`BOARD-NOTE-PLAN.md §10.1`），紧跟 `boards` / `boardPages` 发；客户端只在刚打开

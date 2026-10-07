@@ -46,6 +46,7 @@ extension DocTabModel {
         session.persistedScratchPads = [b.id: b.asPad]
         session.persistedScratchStrokes = Dictionary(uniqueKeysWithValues: strokes.map { ($0.id, $0) })
         session.persistedBoardImages = Dictionary(uniqueKeysWithValues: images.map { ($0.id, $0) })
+        session.boardScrollAnchor = nil   // 上一篇的同步位置别补发给平板（这一篇的等画板视图摆好再报）
         session.board = b
         session.title = b.displayName
         session.scratchLive = nil
@@ -69,6 +70,7 @@ extension DocTabModel {
         staged = false
         session.persistedBoard = nil
         session.board = nil
+        session.boardScrollAnchor = nil
         session.persistedBoardPages = [:]
         session.boardPages = []
         session.persistedBoardImages = [:]

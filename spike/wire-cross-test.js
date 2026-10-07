@@ -190,6 +190,9 @@ const canonical = [
   // —— 画板视口（v19）——
   { type: "boardViewport", id: "B-1", x: -120.5, y: 1688.25, zoom: 1.5 },
   { type: "boardViewport", id: "B-2", x: 0, y: 0, zoom: 0 },
+  // —— 分页画板同步滚动 ——
+  { type: "boardScroll", id: "B-1", page: 3, frac: 0.25, t: 123456.5 },
+  { type: "boardScroll", id: "B-1", page: 0, frac: -0.0625, t: 0 },
 ];
 
 let pass = 0, fail = 0;
