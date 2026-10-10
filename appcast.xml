@@ -9,6 +9,38 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.7</title>
+      <pubDate>Sat, 10 Oct 2026 01:30:30 +0000</pubDate>
+      <sparkle:version>48</sparkle:version>
+      <sparkle:shortVersionString>0.3.7</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>改进</h4>
+<ul>
+<li>PDF 反复放大、缩小时更流畅：缩放过程中批注图钉和气泡只跟着移动、不再反复重画；笔迹改在后台按新的清晰度重画，画好再换上。缩放停下后笔迹会先模糊一下再变清楚；缩放过程中新露出来的页面上的气泡，停下后才出现。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>用平板连接 Mac 时，在平板的标签栏里点开一个 Mac 上没在前台的分页画板，总是回到第一页；这时在平板上一滚，原来记住的位置还会被覆盖。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.7">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Improvements</h4>
+<ul>
+<li>Zooming a PDF in and out repeatedly is smoother: during zoom, note pins and bubbles just move along instead of being redrawn over and over, and ink is redrawn at the new sharpness in the background, then swapped in. After zooming stops, ink looks blurry for a moment before it turns sharp; bubbles on pages that come into view during zoom appear once zooming stops.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>With a tablet connected, opening a paged board from the tablet's tab bar always went back to the first page if that board's tab was not in front on the Mac; scrolling on the tablet then also overwrote the saved position.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.7">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.7/UniReader-0.3.7.zip" length="14314190" type="application/octet-stream" sparkle:edSignature="FN0ba/6tncdr1K9RXOfshhY5/yU0m5QdtSMMa9dK5oKRgqveoctotyq4yjm+ehKuJUrHuPJ0JD2YmszCW+wHDg==" />
+    </item>
+    <item>
       <title>v0.3.6</title>
       <pubDate>Sat, 10 Oct 2026 00:38:46 +0000</pubDate>
       <sparkle:version>47</sparkle:version>
