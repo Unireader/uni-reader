@@ -545,10 +545,13 @@ final class ReaderView: NSView {
             keepRange = max(0, range.lowerBound - keepMargin)...(range.upperBound + keepMargin)
         }
         if range != realized || !didRealize {
+            let old: ClosedRange<Int>? = didRealize ? realized : nil
             didRealize = true
             realize(range, evict: !zooming)
             kickBaseRenders()
-            refreshMarks()
+            // 标记层只补新进来的页：原来就在的页内容没变。缩放中尤其不能整排重画——范围每隔几帧就扩一次，
+            // 每次都把所有页的高亮按当前倍率在主线程上重画一遍（停下后 `settleRender` 会按新倍率统一重画）
+            refreshMarks(pages: old.map { o in Set(range.filter { !o.contains($0) }) })
             if session.ocrEnabled { session.enqueueOCR(Array(range)) }
         }
         // 顶端页 → 当前页（程序化滚动 / 缩放期间停更，平板与进度依赖它）
@@ -578,7 +581,7 @@ final class ReaderView: NSView {
             g.place(frame: pageFrame(i), margin: m)
             g.image.contents = images[i]
             if let t = tiles[i] { g.setTile(t.normRect, image: t.image) }
-            configureInkLayer(g.ink, strokes: strokes[i] ?? [])
+            configureInkLayer(g.ink, strokes: strokes[i] ?? [], background: isZooming)
             configureInkLayer(g.live, strokes: live.flatMap { $0.page == i ? [$0] : nil } ?? [])
             docView.layer?.addSublayer(g)
             groups[i] = g
@@ -601,13 +604,19 @@ final class ReaderView: NSView {
         return max(1, min(want, cap))
     }
 
-    func configureInkLayer(_ l: PageInkLayer, strokes: [InkStroke]) {
+    /// - background: 在后台画好再换上（缩放中新露出来的页：当场画会在动画里掉帧）。落笔 / 擦除这些要立刻看到的走默认的当场画。
+    func configureInkLayer(_ l: PageInkLayer, strokes: [InkStroke], background: Bool = false) {
         let scale = inkContentsScale(for: l.bounds.size)
         var dirty = false
         if l.strokes != strokes { l.strokes = strokes; dirty = true }
-        if abs(l.contentsScale - scale) > 0.01 { l.contentsScale = scale; dirty = true }
-        if dirty {
-            if strokes.isEmpty { l.contents = nil } else { l.setNeedsDisplay() }
+        if abs(l.targetScale - scale) > 0.01 { dirty = true }
+        guard dirty else { return }
+        if strokes.isEmpty {
+            l.clear(scale: scale)
+        } else if background {
+            l.redrawInBackground(scale: scale)
+        } else {
+            l.redraw(scale: scale)
         }
     }
 
@@ -638,14 +647,20 @@ final class ReaderView: NSView {
         CATransaction.commit()
     }
 
-    /// 缩放停下后：笔迹层按新倍率重画一次（由糊变清）。
+    /// 缩放停下后：笔迹层按新倍率重画一次（由糊变清）。已落的笔迹在后台画、画好再换（先糊一会儿，见
+    /// `PageInkLayer.redrawInBackground`），从当前页往两边排；正在写的那一笔只有一条，照旧当场画。
     func refreshInkScale() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for g in groups.values {
-            for l in [g.ink, g.live] where !l.strokes.isEmpty {
-                let s = inkContentsScale(for: l.bounds.size)
-                if abs(l.contentsScale - s) > 0.01 { l.contentsScale = s; l.setNeedsDisplay() }
+        for i in Self.centerOutOrder(center: session.currentPageIndex, bounds: realized) {
+            guard let g = groups[i] else { continue }
+            if !g.ink.strokes.isEmpty {
+                let s = inkContentsScale(for: g.ink.bounds.size)
+                if abs(g.ink.targetScale - s) > 0.01 { g.ink.redrawInBackground(scale: s) }
+            }
+            if !g.live.strokes.isEmpty {
+                let s = inkContentsScale(for: g.live.bounds.size)
+                if abs(g.live.targetScale - s) > 0.01 { g.live.redraw(scale: s) }
             }
         }
         CATransaction.commit()

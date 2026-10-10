@@ -111,6 +111,14 @@ class ReaderCardView: NSView {
     /// 子类按当前输入（含 `live`）重排自己。
     func relayout() {}
 
+    /// 只挪位置、大小与内容不动（缩放中逐帧调，停下后由 `update` 整个重排一次）。
+    func move(pageRect: CGRect, pin: CGPoint) {
+        guard pageRect != self.pageRect || pin != self.pin else { return }
+        self.pageRect = pageRect
+        self.pin = pin
+        placeCard(w: frameInPage.width, h: frameInPage.height)
+    }
+
     // MARK: 命中：全部收归卡片（正文不吃鼠标）；子类可放行按钮
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -206,6 +214,8 @@ final class NoteBubbleNSView: ReaderCardView {
     private(set) var text = ""
     private var documentId = ""
     private var hasEdit = false
+    /// 铅笔图标是按哪个字号做的：字号没变就别换（每换一次按钮都要重新量尺寸，连带整窗重新布局）
+    private var editIconSize: CGFloat = 0
     var onEdit: (() -> Void)?
     var onCopyLink: (() -> Void)?
     /// 正文里的 `[[…]]` 被点中（参数 = 目标 md 笔记 id）。由阅读区接到标签上。
@@ -246,6 +256,15 @@ final class NoteBubbleNSView: ReaderCardView {
 
     func update(text: String, documentId: String, metrics m: NoteBubble.Metrics, pageRect: CGRect, pin: CGPoint,
                 card: NoteCard?, interactive: Bool, hasEdit: Bool) {
+        // 排版要用的全没变（正文 / 字号 / 卡片尺寸 / 页面大小 / 铅笔）：只挪位置。滚动、缩放停下时每个气泡都会被
+        // 调一遍，从前每次都重量一遍字宽和高度（2026-10-07 采样：反复缩放掉帧里有它）
+        let sameLayout = self.text == text && self.documentId == documentId && self.metrics == m
+            && self.hasEdit == hasEdit && (live != nil || self.card == card) && self.pageRect.size == pageRect.size
+        self.interactive = interactive
+        if sameLayout {
+            move(pageRect: pageRect, pin: pin)
+            return
+        }
         if self.text != text { bodyH = nil }
         self.text = text
         self.documentId = documentId
@@ -294,9 +313,12 @@ final class NoteBubbleNSView: ReaderCardView {
 
         editButton.isHidden = !hasEdit
         if hasEdit {
-            let cfg = NSImage.SymbolConfiguration(pointSize: m.fs * 0.95, weight: .medium)
-            editButton.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: L("Edit note"))?
-                .withSymbolConfiguration(cfg)
+            if editIconSize != m.fs {
+                editIconSize = m.fs
+                let cfg = NSImage.SymbolConfiguration(pointSize: m.fs * 0.95, weight: .medium)
+                editButton.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: L("Edit note"))?
+                    .withSymbolConfiguration(cfg)
+            }
             editButton.frame = NSRect(x: w - edit - m.pad * 0.4, y: m.pad * 0.4, width: edit, height: edit)
         }
         window?.invalidateCursorRects(for: self)

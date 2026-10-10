@@ -37,6 +37,15 @@ final class ReaderPinView: NSView {
         }
     }
 
+    /// 悬停文字是按哪些原文算的：原文没变就不重算、不重设。笔记正文转纯文字要解析一遍 Markdown，
+    /// 而滚动 / 缩放停下时每枚图钉都要重摆一遍（2026-10-07 采样：缩放卡顿里有它一份）。
+    private var tipSource: [String]?
+    func setToolTip(source: [String], _ make: () -> String?) {
+        guard source != tipSource else { return }
+        tipSource = source
+        toolTip = make()
+    }
+
     private var downWindow: NSPoint?
     private var dragging = false
     private var restFrame: NSRect = .zero
@@ -45,8 +54,56 @@ final class ReaderPinView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func draw(_ dirtyRect: NSRect) {
-        let b = bounds
+    // MARK: 外观：按样式画好一张图、缓存起来，作为图层内容
+
+    /// 🔴 不用 `draw(_:)`：那样图钉每挪一下位置 AppKit 都要它重画一遍（2026-10-07 离屏实测，
+    /// 有没有自己的图层、redrawPolicy 设成什么都一样），缩放时一页几十枚图钉逐帧重画，动画掉帧。
+    /// 改成交一张现成的图给图层，挪动时一次都不重画。
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        let scale = window?.backingScaleFactor ?? 2
+        layer?.contentsGravity = .resize
+        layer?.contentsScale = scale
+        layer?.contents = Self.image(kind, size: bounds.size, scale: scale)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed { needsDisplay = true }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsDisplay = true   // 换到不同倍率的屏幕：按新倍率取图
+    }
+
+    /// 同一种样式（图标 + 颜色 + 尺寸 + 屏幕倍率）只画一次。
+    private static var imageCache: [String: CGImage] = [:]
+
+    private static func image(_ kind: Kind, size: CGSize, scale: CGFloat) -> CGImage? {
+        let w = Int((size.width * scale).rounded()), h = Int((size.height * scale).rounded())
+        guard w > 0, h > 0 else { return nil }
+        let key = "\(kind)|\(w)x\(h)"
+        if let img = imageCache[key] { return img }
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                      | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
+        // 与从前在 flipped 视图里 `draw(_:)` 同一套坐标：左上原点、y 向下，单位 = 点
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: scale, y: -scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        paint(kind, in: CGRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        let img = ctx.makeImage()
+        imageCache[key] = img
+        return img
+    }
+
+    private static func paint(_ kind: Kind, in b: CGRect) {
         switch kind {
         case .bookmark:
             let notch: CGFloat = 5
@@ -63,17 +120,17 @@ final class ReaderPinView: NSView {
             p.lineWidth = 0.5
             p.stroke()
         case .note(let symbol, let color):
-            drawDisc(fill: color, symbol: symbol, pointSize: 11)
+            drawDisc(in: b, fill: color, symbol: symbol, pointSize: 11)
         case .image:
-            drawDisc(fill: ReaderMarkColors.imageMarker, symbol: "photo", pointSize: 11)
+            drawDisc(in: b, fill: ReaderMarkColors.imageMarker, symbol: "photo", pointSize: 11)
         case .scratch:
-            drawDisc(fill: ReaderMarkColors.scratchMarker, symbol: "square.and.pencil", pointSize: 10)
+            drawDisc(in: b, fill: ReaderMarkColors.scratchMarker, symbol: "square.and.pencil", pointSize: 10)
         }
     }
 
-    private func drawDisc(fill: NSColor, symbol: String, pointSize: CGFloat) {
-        let d = min(bounds.width, bounds.height)
-        let r = NSRect(x: bounds.midX - d / 2, y: bounds.midY - d / 2, width: d, height: d).insetBy(dx: 0.25, dy: 0.25)
+    private static func drawDisc(in b: CGRect, fill: NSColor, symbol: String, pointSize: CGFloat) {
+        let d = min(b.width, b.height)
+        let r = NSRect(x: b.midX - d / 2, y: b.midY - d / 2, width: d, height: d).insetBy(dx: 0.25, dy: 0.25)
         let circle = NSBezierPath(ovalIn: r)
         fill.setFill()
         circle.fill()
@@ -85,7 +142,7 @@ final class ReaderPinView: NSView {
         guard let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg) else { return }
         let s = img.size
-        img.draw(in: NSRect(x: bounds.midX - s.width / 2, y: bounds.midY - s.height / 2, width: s.width, height: s.height))
+        img.draw(in: NSRect(x: b.midX - s.width / 2, y: b.midY - s.height / 2, width: s.width, height: s.height))
     }
 
     // MARK: 鼠标

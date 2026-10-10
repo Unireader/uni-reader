@@ -108,6 +108,10 @@
   挡不住这中间的自发上报，所以有 `ReaderView.relayouting` 这道门；新增任何「重排 + 钉回」的事务都要包上它。
   查阅读进度的问题别再猜，`touch ~/Library/Logs/UniReader-progress.log` 开 `ProgressLog`（`[PROG]`，
   覆盖全部会改 `document.read_*` 的路径，含离线镜像合并那条）。
+- 缩放中逐帧走的路径（`updateRealized` / 浮层摆放）只许挪位置，别重设内容（2026-10-07 采样）：图钉的 `draw(_:)`
+  **每挪一下 AppKit 都会重画**（有没有自己的图层、`redrawPolicy` 设成什么都一样，离屏实测）→ 图钉改 `wantsUpdateLayer`
+  + 按样式缓存的图；悬停文字、气泡正文、编辑图标都是「原文没变就不重设」。笔迹层按新倍率重画放后台
+  （`PageInkLayer.redrawInBackground`，旧图留着、只替换不清空）。改这几处时别把逐帧重设内容加回去。
 
 ## Agent 面板（NSStackView / 流式刷新）
 

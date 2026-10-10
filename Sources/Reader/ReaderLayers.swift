@@ -40,13 +40,80 @@ final class PageInkLayer: QuietLayer {
     /// 缩放 / 平板拖动中的快速描边（整页分组绘制）。只有「正在写的那一笔」之外的场合才可能用到，
     /// 默认关：AppKit 版缩放时不重画，快速路径主要留给以后的实时路径。
     var fast = false
+    /// 这层的内容该是哪个清晰度：已经画好的，或后台正在画的（`contentsScale` 要等图落位才换）。
+    private(set) var targetScale: CGFloat = 1
+    private var pending: Operation?
+
+    /// 笔迹后台出图的队列（两路并行：一页最多约 64MB，别让好几页同时攥着）。
+    private static let renderQueue: OperationQueue = {
+        let q = OperationQueue()
+        q.name = "PageInkLayer.render"
+        q.maxConcurrentOperationCount = 2
+        q.qualityOfService = .userInitiated
+        return q
+    }()
 
     override func draw(in ctx: CGContext) {
         guard !strokes.isEmpty else { return }
         yDown(ctx)
-        let pw = bounds.width - margin * 2, ph = bounds.height
+        Self.paint(strokes, in: ctx, size: bounds.size, margin: margin, fast: fast)
+    }
+
+    /// 当场重画（下一次提交时画）：落笔、擦除、换页这些要立刻看到的。
+    func redraw(scale: CGFloat) {
+        targetScale = scale
+        if abs(contentsScale - scale) > 0.01 { contentsScale = scale }
+        setNeedsDisplay()
+    }
+
+    /// 没有笔迹了：后台在画的作废，不留位图（别走 `setNeedsDisplay`，那会分配一整页的空白位图）。
+    func clear(scale: CGFloat) {
+        pending?.cancel()
+        pending = nil
+        targetScale = scale
+        if abs(contentsScale - scale) > 0.01 { contentsScale = scale }
+        contents = nil
+    }
+
+    /// 在后台按 `scale` 画好再换上，画好之前屏幕上留着原来那张（拉伸着，只替换不清空）。
+    /// 为什么：缩放停下后每页都要按新倍率重画一遍，一页几百万像素、在主线程上画会卡住好几百毫秒
+    /// （2026-10-07 采样实测，点一下放大 / 缩小就掉一串帧）。图回来时笔迹 / 尺寸 / 页边变了就扔掉。
+    func redrawInBackground(scale: CGFloat) {
+        pending?.cancel()
+        targetScale = scale
+        let strokes = self.strokes, size = bounds.size, margin = self.margin, fast = self.fast
+        let op = BlockOperation()
+        op.addExecutionBlock { [weak self, weak op] in
+            guard let op, !op.isCancelled else { return }
+            let img = Self.renderImage(strokes, size: size, margin: margin, scale: scale, fast: fast)
+            DispatchQueue.main.async {
+                guard let self, !op.isCancelled, self.pending === op else { return }
+                self.pending = nil
+                guard let img, self.strokes == strokes, self.bounds.size == size, self.margin == margin else { return }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                self.contentsScale = scale
+                self.contents = img
+                CATransaction.commit()
+            }
+        }
+        pending = op
+        Self.renderQueue.addOperation(op)
+    }
+
+    /// 当场重画盖过还在后台画的那张（不然它晚到会把新内容换回旧的）。
+    override func setNeedsDisplay() {
+        pending?.cancel()
+        pending = nil
+        targetScale = contentsScale
+        super.setNeedsDisplay()
+    }
+
+    /// 一页笔迹画进上下文（左上原点、y 向下，单位 = 文档点）。`draw(in:)` 与后台出图共用这一份。
+    private static func paint(_ strokes: [InkStroke], in ctx: CGContext, size: CGSize, margin: CGFloat, fast: Bool) {
+        let pw = size.width - margin * 2, ph = size.height
         guard pw > 1, ph > 1 else { return }
-        let map: (InkPoint) -> CGPoint = { [margin] in
+        let map: (InkPoint) -> CGPoint = {
             CGPoint(x: CGFloat($0.x) * pw + margin, y: CGFloat($0.y) * ph)
         }
         // 线宽基准：fit 页宽下与采集端一致（SwiftUI 版 `inkScale = zoom`，页宽 = fitBasis × zoom；
@@ -56,6 +123,21 @@ final class PageInkLayer: QuietLayer {
         } else {
             for st in strokes { InkRenderCG.drawStroke(st, in: ctx, inkScale: 1, map: map) }
         }
+    }
+
+    /// 后台出图：与 `draw(in:)` 同一份画法，位图 = 图层尺寸 × `scale`，sRGB（同窗口色彩空间，红线 5）。
+    private static func renderImage(_ strokes: [InkStroke], size: CGSize, margin: CGFloat,
+                                    scale: CGFloat, fast: Bool) -> CGImage? {
+        let w = Int((size.width * scale).rounded(.up)), h = Int((size.height * scale).rounded(.up))
+        guard !strokes.isEmpty, w > 0, h > 0,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                      | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: scale, y: -scale)
+        paint(strokes, in: ctx, size: size, margin: margin, fast: fast)
+        return ctx.makeImage()
     }
 }
 
@@ -108,7 +190,9 @@ final class PageLayerGroup: QuietLayer {
         if ink.frame != wide || ink.margin != margin {
             ink.frame = wide
             ink.margin = margin
-            ink.setNeedsDisplay()
+            // 复用池刚取出来的组笔迹是空的：别在这里要求当场画，内容交给随后的 `configureInkLayer`
+            // （缩放中它走后台出图；这里一标记，下次提交照样当场画一遍）
+            if !ink.strokes.isEmpty { ink.setNeedsDisplay() }
         }
         live.frame = wide
         live.margin = margin
@@ -132,7 +216,7 @@ final class PageLayerGroup: QuietLayer {
         image.contents = nil
         setTile(nil, image: nil)
         ink.strokes = []
-        ink.contents = nil
+        ink.clear(scale: ink.contentsScale)   // 连同后台还在画的那张一起作废
         live.strokes = []
         live.contents = nil
         marks.contents = nil

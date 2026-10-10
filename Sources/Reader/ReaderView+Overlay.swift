@@ -65,20 +65,42 @@ extension ReaderView {
         var wantNotes = Set<UUID>()
         var wantImages = Set<UUID>()
         let types = session.noteTypes
+        // 缩放中（每帧都走这里）：已有的图钉 / 气泡只挪位置——图标、悬停文字、气泡正文都不随缩放变，
+        // 逐帧重设一遍（正文转纯文字、量字宽、换图标）会把动画拖掉帧（2026-10-07 采样实测）。
+        // 新露出来的页上的气泡等停下再建（`settleRender` 会再排一次），图钉照常建。
+        let zooming = isZooming
+        // 保留范围（同页图的 `keepRange`）：出了实化范围、还在这里面的页，已有的图钉 / 气泡留着（挪到屏幕外），
+        // 不拆。为什么：从前一出实化范围就拆，放大停下拆掉、缩小停下又整个新建，气泡的 Markdown 正文
+        // 新建一次要排好几遍版（2026-10-07 采样：反复缩放时掉帧的大头）。这里面没建过的不新建。
+        let keep = min(range.lowerBound, keepRange.lowerBound)...max(range.upperBound, keepRange.upperBound)
 
         // 草稿纸盖着时页面上的图钉 / 气泡都不显示（纸归纸）
         if !padOpen {
-            for n in session.textNotes where range.contains(n.page) {
-                let pr = displayPageRect(n.page)
+            for n in session.textNotes where keep.contains(n.page) {
                 let key = "n-\(n.id.uuidString)"
+                let inRange = range.contains(n.page)
+                if zooming || !inRange, let pin = overlay.pins[key] {
+                    let pr = displayPageRect(n.page)
+                    wantPins.insert(key)
+                    let c = Self.notePinCenter(n, size: pr.size)
+                    place(pin, center: c, in: pr)
+                    if let b = overlay.noteBubbles[n.id], bubbleVisible(n) {
+                        wantNotes.insert(n.id)
+                        b.move(pageRect: pr, pin: c)
+                    }
+                    continue
+                }
+                guard inRange else { continue }   // 保留范围里没建过的不新建
+                let pr = displayPageRect(n.page)
                 wantPins.insert(key)
                 let typed = n.typeId != nil
                 let t = NoteType.resolve(n.typeId, in: types)
                 let pin = pinView(key)
                 pin.kind = .note(symbol: typed ? t.icon : "note.text", color: typed ? t.nsColor : ReaderMarkColors.noteMarker)
                 place(pin, center: Self.notePinCenter(n, size: pr.size), in: pr)
-                pin.toolTip = n.display == .hover && !n.text.isEmpty ? nil
-                    : (n.text.isEmpty ? n.quote : NoteMarkdown.plain(n.text))
+                pin.setToolTip(source: [n.display == .hover ? "h" : "", n.text, n.quote]) {
+                    n.display == .hover && !n.text.isEmpty ? nil : (n.text.isEmpty ? n.quote : NoteMarkdown.plain(n.text))
+                }
                 let id = n.id
                 pin.onClick = { [weak self] in self?.notePinClicked(id) }
                 pin.onHover = { [weak self] inside in self?.pinHover(id, inside) }
@@ -90,7 +112,7 @@ extension ReaderView {
                     pin.clampDrag = nil
                     pin.onDragEnd = nil
                 }
-                if bubbleVisible(n) {
+                if bubbleVisible(n), !zooming {
                     wantNotes.insert(n.id)
                     let b = noteBubble(n.id)
                     let m = bubbleMetrics(pageWidth: pr.width)
@@ -103,21 +125,36 @@ extension ReaderView {
                              interactive: interactive && n.display != .hover, hasEdit: n.display != .hover)
                 }
             }
-            for n in session.imageNotes where range.contains(n.page) {
-                let pr = displayPageRect(n.page)
+            for n in session.imageNotes where keep.contains(n.page) {
                 let key = "i-\(n.id.uuidString)"
+                let inRange = range.contains(n.page)
+                if zooming || !inRange, let pin = overlay.pins[key] {   // 同上：缩放中 / 出了实化范围的只挪位置
+                    let pr = displayPageRect(n.page)
+                    wantPins.insert(key)
+                    let c = Self.imagePinCenter(n, size: pr.size)
+                    place(pin, center: c, in: pr)
+                    if let b = overlay.imageBubbles[n.id], imageBubbleVisible(n) {
+                        wantImages.insert(n.id)
+                        b.move(pageRect: pr, pin: c)
+                    }
+                    continue
+                }
+                guard inRange else { continue }
+                let pr = displayPageRect(n.page)
                 wantPins.insert(key)
                 let pin = pinView(key)
                 pin.kind = .image
                 place(pin, center: Self.imagePinCenter(n, size: pr.size), in: pr)
-                pin.toolTip = n.display == .hover ? nil : (n.caption.isEmpty ? n.sourceLabel : NoteMarkdown.plain(n.caption))
+                pin.setToolTip(source: [n.display == .hover ? "h" : "", n.caption, n.sourceLabel]) {
+                    n.display == .hover ? nil : (n.caption.isEmpty ? n.sourceLabel : NoteMarkdown.plain(n.caption))
+                }
                 let id = n.id
                 pin.onClick = { [weak self] in self?.imagePinClicked(id) }
                 pin.onHover = { [weak self] inside in self?.pinHover(id, inside) }
                 pin.menuProvider = nil
                 pin.clampDrag = { [weak self] t in self?.clampPinDrag(id, t) ?? t }
                 pin.onDragEnd = { [weak self] t in self?.commitPinDrag(id, translation: t) }
-                if imageBubbleVisible(n) {
+                if imageBubbleVisible(n), !zooming {
                     wantImages.insert(n.id)
                     let b = imageBubble(n.id)
                     let sticky = n.display != .hover

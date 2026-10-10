@@ -49,8 +49,22 @@ enum PaddleOCR {
         return key.isEmpty ? nil : Config(apiKey: key)
     }
 
+    /// API key 的内存副本。Keychain 是同步读、一次几十毫秒，而翻页 / 缩放每露出一页都要在主线程上问一次
+    /// 「OCR 配好没有」（`configFromDefaults`；2026-10-07 采样：缩放时一次 36ms，连着几次就掉帧）。
+    /// key 只经 `setApiKey` 改，改时一起更新这份。
+    private static let keyLock = NSLock()
+    private static var cachedKey: String?
+
     /// 读 API key：Keychain 为唯一下落；UserDefaults 里的旧明文一次性迁入 Keychain 并清除。
     static func apiKey() -> String {
+        keyLock.lock(); defer { keyLock.unlock() }
+        if let k = cachedKey { return k }
+        let k = loadApiKey()
+        cachedKey = k
+        return k
+    }
+
+    private static func loadApiKey() -> String {
         if let k = Keychain.read(apiKeyKey)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !k.isEmpty { return k }
         let legacy = (UserDefaults.standard.string(forKey: apiKeyKey) ?? "")
@@ -64,7 +78,9 @@ enum PaddleOCR {
 
     /// 设置页写入（去首尾空白）；空串 = 从 Keychain 删除。
     static func setApiKey(_ key: String) {
-        Keychain.write(apiKeyKey, key.trimmingCharacters(in: .whitespacesAndNewlines))
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        Keychain.write(apiKeyKey, k)
+        keyLock.lock(); cachedKey = k; keyLock.unlock()
     }
 
     // MARK: 识别一页

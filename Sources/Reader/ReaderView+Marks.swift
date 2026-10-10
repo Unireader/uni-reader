@@ -53,7 +53,8 @@ extension ReaderView {
     // MARK: 标记层
 
     /// 按会话数据重画已实化各页的标记层。数据量小（只看实化窗口里的页），整批重算就行。
-    func refreshMarks() {
+    /// - pages: 只重画这几页（nil = 全部）。实化范围变了只补新进来的页，见 `updateRealized`。
+    func refreshMarks(pages only: Set<Int>? = nil) {
         guard didSetup, !groups.isEmpty else { return }
         let range = realized
         var highlights: [Int: [Highlight]] = [:]
@@ -69,7 +70,7 @@ extension ReaderView {
         let showOCR = session.showOCRBlocks
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for (i, g) in groups {
+        for (i, g) in groups where only?.contains(i) ?? true {
             let l = g.marks
             var marks: [PageMarksLayer.Mark] = []
             for h in highlights[i] ?? [] {
