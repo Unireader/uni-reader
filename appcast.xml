@@ -9,6 +9,38 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.8</title>
+      <pubDate>Sat, 10 Oct 2026 15:08:27 +0000</pubDate>
+      <sparkle:version>49</sparkle:version>
+      <sparkle:shortVersionString>0.3.8</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能</h4>
+<ul>
+<li>平板能自动找到局域网里的 Mac：Mac 上开着平板服务时，平板端「连接 Mac」页面的「局域网里的 Mac」一栏会列出同一局域网里的 Mac。连过的点一下就能连上，Mac 换了 IP 地址也认得出；没连过或配对码已重置的，仍需扫码。需要平板端 App 也更新到带这项功能的版本。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>Agent 连续干活（比如一直在记笔记）时，整个窗口越来越卡，要等 Agent 停下才恢复。现在 Agent 面板往对话记录里加内容快了很多；对话很长时，停在底部往下看，最上面较早的内容会先移出，往上翻会自动补回来。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.8">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New</h4>
+<ul>
+<li>The tablet can find Macs on the local network by itself: while the tablet service is on, the "Macs on This Network" section of the tablet's "Connect to Mac" page lists the Macs on the same network. A Mac you have connected before connects with one tap, even if its IP address changed; for a Mac you have never connected to, or whose pairing code was reset, you still scan the QR code. The tablet app needs to be updated to a version with this feature too.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>While the Agent kept working (for example, taking notes for a long time), the whole window got slower and slower and only recovered after the Agent stopped. Adding to the Agent panel's conversation is now much faster; in a long conversation, when you stay at the bottom, the earliest content at the top is removed for now and comes back automatically when you scroll up.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.8">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.8/UniReader-0.3.8.zip" length="14322242" type="application/octet-stream" sparkle:edSignature="9ysHPikMW26h1mCbETs15eiCubaZbIs3+BqV/I/L0hdugk3ai3TCzNkSA2jkz5O4e79bKTw1/Iv8BcEqOpjEDg==" />
+    </item>
+    <item>
       <title>v0.3.7</title>
       <pubDate>Sat, 10 Oct 2026 01:30:30 +0000</pubDate>
       <sparkle:version>48</sparkle:version>
