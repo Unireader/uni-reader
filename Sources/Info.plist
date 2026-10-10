@@ -52,6 +52,12 @@
 			</array>
 		</dict>
 	</array>
+	<!-- 局域网发现（2026-10-10 加，PROTOCOL.md §8）：平板服务开着时在 HTTP 端口上广播这个 Bonjour 类型，
+	     安卓启动页据此列出「局域网里的 Mac」。本地网络权限的系统弹窗只认这里声明过的类型。 -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_unireader._tcp</string>
+	</array>
 	<!-- Sparkle 2 自动更新（2026-09-18 加，见 project.yml 顶部注释与 AGENTS.md「发布到 GitHub」一节）。
 	     appcast 托管在仓库 main 分支的 appcast.xml，release.sh 每次发布 push 更新。 -->
 	<key>SUFeedURL</key>

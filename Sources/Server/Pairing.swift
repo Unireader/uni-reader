@@ -1,6 +1,7 @@
 import Foundation
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import CryptoKit
 import AppKit
 
 enum Pairing {
@@ -29,6 +30,15 @@ enum Pairing {
         let t = makeToken()
         UserDefaults.standard.set(t, forKey: tokenKey)
         return t
+    }
+
+    /// 配对码的**指纹**：SHA-256(token 的 UTF-8) 十六进制前 8 位，随 Bonjour 广播（`PROTOCOL.md §8`）。
+    /// 平板拿它比对本机存的那份配对码还对不对，「已重置、要重扫」不必等连上被 authFail 才知道。
+    /// 32 bit 反推不出 128 bit 的码，广播出去不等于公开配对码。
+    /// 跨端向量（安卓 `MacDiscoveryTest` 同两条）：`0123456789abcdef0123456789abcdef` → `3eb1bd43`，
+    /// `ffffffffffffffffffffffffffffffff` → `35230248`。
+    static func fingerprint(_ token: String) -> String {
+        SHA256.hash(data: Data(token.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
     }
 
     /// 由配对 URL 生成二维码图片，供平板扫码打开采集页。

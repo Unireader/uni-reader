@@ -210,8 +210,35 @@ final class LANServer: ObservableObject {
         params.allowLocalEndpointReuse = true
         let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: httpPort)!)
         listener.newConnectionHandler = { [weak self] conn in self?.serveHTTP(conn) }
+        advertise(on: listener)
         listener.start(queue: queue)
         httpListener = listener
+    }
+
+    // MARK: - 局域网发现（Bonjour，契约见 PROTOCOL.md §8）
+
+    /// 服务类型。安卓 `MacDiscovery.SERVICE_TYPE` 是同一个字符串；Info.plist 的 `NSBonjourServices` 也要列它。
+    static let bonjourType = "_unireader._tcp"
+
+    /// 让平板不扫码也能看到这台 Mac：服务开着就广播，`stop()` 取消监听器即撤下。
+    ///
+    /// 挂在 **HTTP 监听器**上，服务端口 = `httpPort`（平板拿到地址后照旧按 8770/8771/8772 连）。
+    /// 名字传 nil = 用系统的「电脑名称」，局域网里重名由 Bonjour 自动加序号。
+    /// TXT 只放配对码的**指纹**（`Pairing.fingerprint`），不放配对码本身：没配过的平板看得到、连不上，
+    /// 仍要扫码（2026-10-10 用户定）。读 [token] 是在主线程——`start()` 的调用方都在主线程，
+    /// 「重置配对码」也是先换 [token] 再排队重启，所以重启后广播的一定是新码的指纹。
+    private func advertise(on listener: NWListener) {
+        var txt = NWTXTRecord()
+        txt["v"] = "1"
+        txt["tk"] = Pairing.fingerprint(token)
+        listener.service = NWListener.Service(name: nil, type: Self.bonjourType, domain: nil, txtRecord: txt)
+        listener.serviceRegistrationUpdateHandler = { change in
+            switch change {
+            case .add(let ep): NSLog("Bonjour 广播上线：\(ep)")
+            case .remove(let ep): NSLog("Bonjour 广播撤下：\(ep)")
+            @unknown default: break
+            }
+        }
     }
 
     private func serveHTTP(_ conn: NWConnection) {

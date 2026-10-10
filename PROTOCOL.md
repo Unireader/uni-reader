@@ -730,3 +730,21 @@ RT 流（scroll/hover/ink/erase/probe）在原生客户端上改走 UDP，消除
 
 - `spike/wire-codec-test.swift`：Swift 端全消息 encode→decode round-trip。**新消息一律追加在 canonical 表末尾**——安卓 `WireCodecTest.kt` 硬编码了该表向量并按行号索引，往中间插会静默错位掉整套跨语言凭据。
 - `spike/wire-cross-test.js`：node 加载 `wire.js` 做 JS round-trip，并读 Swift 导出的 canonical 字节向量 `spike/wire-vectors-swift.txt`，逐字节比对，证明 **Swift 与 JS 编码结果字节级一致**（canonical 消息用 f32 精确值：0.5/0.25/整数，避免浮点表示差异）。
+
+## 8. 局域网发现（Bonjour，2026-10-10，不走线格式）
+
+平板不扫码也能看到同一网络里开着平板服务的 Mac。只是「谁在、在哪」的公告，**不改任何帧**，鉴权照旧 `auth`（§4.1）。
+
+- **服务类型** `_unireader._tcp`，Mac 挂在 HTTP 监听器上广播 → 服务端口 = `httpPort`（8770）；平板拿到地址后照旧按 8770 / 8771 / 8772 连。
+  Mac：`LANServer.advertise`（平板服务开着就广播，停服务即撤下；Info.plist `NSBonjourServices` 声明同一类型）。
+  安卓：`pad/MacDiscovery`（`NsdManager`，只收 IPv4）。
+- **服务名** = Mac 的「电脑名称」（重名由 Bonjour 自动加序号）。有的安卓版本交回来的名字带 DNS-SD 转义（`\032`、`\231\154\132`），按字节还原再 UTF-8 解码（`MacDiscovery.unescapeName`）。
+- **TXT**：
+
+  | 键 | 值 | 说明 |
+  |---|---|---|
+  | `v` | `1` | 发现公告的版本，与线格式版本无关 |
+  | `tk` | 8 位小写十六进制 | 配对码指纹 = SHA-256(token 的 UTF-8) 前 4 字节。**不放配对码本身**（2026-10-10 用户定）：没配过的平板看得到、连不上，仍要扫码 |
+
+- **平板怎么用 `tk`**（`MacDiscovery.match`）：本机存的某条配对码指纹 = `tk` → 直接用那条配对码连广播里的新地址（IP 换过也认得出）；指纹都对不上、但 IP 相同 → Mac 重置过配对码，要重扫；都没有 → 没配过，去扫码。
+- **指纹跨端向量**：`0123456789abcdef0123456789abcdef` → `3eb1bd43`；`ffffffffffffffffffffffffffffffff` → `35230248`。Mac `spike/pairing-fp-test.swift` ↔ 安卓 `MacDiscoveryTest.fingerprintVectors`，改算法两边一起改。
