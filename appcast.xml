@@ -9,6 +9,62 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.6</title>
+      <pubDate>Sat, 10 Oct 2026 00:38:46 +0000</pubDate>
+      <sparkle:version>47</sparkle:version>
+      <sparkle:shortVersionString>0.3.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>请注意</h4>
+<ul>
+<li><strong>用安卓平板连接 Mac 的话，平板请同时更新到安卓版 0.3.9 或更新</strong>。旧版平板收不到新写的笔迹，草稿纸和画板上刚写的字会显示不出来。下载：<a href="https://github.com/Unireader/uni-reader-android/releases/tag/2026-10-10-1">https://github.com/Unireader/uni-reader-android/releases/tag/2026-10-10-1</a></li>
+</ul>
+<h4>新功能和改进</h4>
+<ul>
+<li>Agent 面板打开很长的对话时更快：先只显示最近的一段，往上翻时再接着显示更早的内容，翻动时眼前的内容不会跳。</li>
+<li>Markdown 笔记里能显示更多公式写法：<code>\big</code> 一类的括号大小、<code>\dfrac</code>、<code>\tfrac</code>、<code>\cfrac</code>、<code>\dots</code>、<code>\leqslant</code>、<code>\lvert</code>、<code>\operatorname</code>、<code>\iint</code>、<code>\pmod</code>、<code>\not=</code>、<code>\implies</code>、<code>\boldsymbol</code>、<code>\mathscr</code>、<code>\varnothing</code>、<code>\tag</code>；<code>$y'$</code> 这类带撇号的写法和 <code>$0$</code> 这类纯数字也显示成公式。</li>
+<li>平板在画板和草稿纸上写字时，Mac 每写完一笔只把新写的那几笔发给平板，分页画板也只发平板所在页附近的几页，不再每次把整块画板重发一遍。</li>
+<li>一次显示大量公式时，内存占用大幅下降。</li>
+<li>给 Agent 的说明里补充了目前还显示不了的公式写法（如 <code>\boxed</code>、<code>\overset</code>、<code>cases</code>），分段函数改用 <code>aligned</code> 来写。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>用平板在分页画板上使用橡皮擦时，Mac 卡住、一直转彩虹圈。</li>
+<li>画板页数多、笔迹多时，平板写几笔就卡住，刚写的笔迹显示不出来。</li>
+<li>一句中文里出现两个 <code>$</code> 时，中间的中文被误当成公式。</li>
+<li>加粗紧挨着中文、全角括号或中文标点时不生效，<code>**</code> 原样显示出来。</li>
+<li>公式里空白命令紧挨着加减号时（如 <code>x = \; -1</code>），间距不对。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.6">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Please note</h4>
+<ul>
+<li><strong>If you use an Android tablet with your Mac, update the tablet to UniReader for Android 0.3.9 or later at the same time.</strong> Older tablet versions miss the new strokes, so what you just wrote on a scratch pad or board does not show up on the tablet. Download: <a href="https://github.com/Unireader/uni-reader-android/releases/tag/2026-10-10-1">https://github.com/Unireader/uni-reader-android/releases/tag/2026-10-10-1</a></li>
+</ul>
+<h4>New features &amp; improvements</h4>
+<ul>
+<li>Long conversations open faster in the Agent panel: only the most recent part is shown at first, and earlier messages load as you scroll up, without the content in view jumping.</li>
+<li>Markdown notes can display more formula notation: <code>\big</code> and related bracket sizes, <code>\dfrac</code>, <code>\tfrac</code>, <code>\cfrac</code>, <code>\dots</code>, <code>\leqslant</code>, <code>\lvert</code>, <code>\operatorname</code>, <code>\iint</code>, <code>\pmod</code>, <code>\not=</code>, <code>\implies</code>, <code>\boldsymbol</code>, <code>\mathscr</code>, <code>\varnothing</code>, <code>\tag</code>. Primes such as <code>$y'$</code> and plain numbers such as <code>$0$</code> now display as formulas too.</li>
+<li>When writing on a board or scratch pad from the tablet, the Mac now sends only the new strokes after each stroke, and for paged boards only the pages near where the tablet is, instead of resending the whole board every time.</li>
+<li>Much lower memory use when many formulas are displayed at once.</li>
+<li>The instructions UniReader gives agents now list the formula notation that cannot be displayed yet (such as <code>\boxed</code>, <code>\overset</code> and <code>cases</code>), and ask for piecewise functions to be written with <code>aligned</code>.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Using the eraser on a paged board from the tablet made the Mac hang with the spinning wait cursor.</li>
+<li>On a board with many pages and a lot of ink, the tablet froze after a few strokes and the new strokes did not appear.</li>
+<li>When a Chinese sentence contained two <code>$</code> signs, the text between them was mistaken for a formula.</li>
+<li>Bold did not work when it was right next to Chinese text, full-width brackets or Chinese punctuation; the <code>**</code> showed as-is.</li>
+<li>Wrong spacing in formulas where a spacing command sat right next to a plus or minus sign (such as <code>x = \; -1</code>).</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.6">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.6/UniReader-0.3.6.zip" length="14297274" type="application/octet-stream" sparkle:edSignature="PHL7Lc77dB+RcgLM30SNRwFGEMWvXJOxBAxTlE73O48Rc1Ymx83kGIDdFrNsRI9FCTZm2WQrMnYuM9Sa5q1kBg==" />
+    </item>
+    <item>
       <title>v0.3.5</title>
       <pubDate>Wed, 07 Oct 2026 09:34:05 +0000</pubDate>
       <sparkle:version>46</sparkle:version>
