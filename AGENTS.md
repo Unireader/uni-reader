@@ -51,6 +51,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `URL-SCHEME-PLAN.md` — `unireader://open?…` 链接（Obsidian / Agent 点回某页某条笔记）；导出 Obsidian 不做进 App，按 `skills/unireader-obsidian-export/SKILL.md` 做
 - **`MARKDOWN-NOTES-PLAN.md`** — 工作区 Markdown 笔记（内建 `Notes/` + 引用的外部目录；侧栏多级树；标签页编辑自动保存）
 - **`BOARD-NOTE-PLAN.md`** — 画板笔记（v16 无限白板 + v17 分页模式）：运行时 = 会话里一张永远开着的草稿纸；协议 0x52~0x55；§8/§9 是实现记录
+- `REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
 - `docs/agents/BUILD-DETAILS.md` · `docs/agents/STRUCTURE.md` · `docs/agents/PITFALLS.md` — 本文件拆出的三份细节
 - 子目录可自带 `AGENTS.md`（`android/` 即独立 git 仓库 + 自带规则）；新子工程照此办理，跨端契约仍留根目录，见 `docs/agents/BUILD-DETAILS.md`
 
