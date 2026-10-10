@@ -12,6 +12,9 @@ import AppKit
 ///  4. **长对话只建最后一段**，往上翻再往前补（用户 2026-10-07：长对话要渲染好几秒）；补的时候插在最前面、
 ///     不重装已有视图；回放中一条都不建。
 ///  5. **没贴底时钉住视口里最上面那条**：上面补进条目、上面的正文变高，它在视口里的位置都不动。
+///  6. **贴着底往下说时这排视图不许越攒越多**（2026-10-10 Agent 记笔记整窗卡住）：建了视图的那段超过 `liveBudget`
+///     就从顶上摘（`trimTop`），只摘离视口顶两屏以外的、最后 `initialBudget` 那段不动；没贴底不摘；
+///     摘完剩下的视图原样不动（不拆了重装）；往上翻照样补回来。
 
 _ = NSApplication.shared
 
@@ -41,7 +44,14 @@ func windowStart(_ items: [Item], before end: Int, budget: Int) -> Int {
     return start
 }
 
-let initialBudget = 4000, earlierBudget = 3000
+let initialBudget = 4000, earlierBudget = 3000, liveBudget = 8000
+
+/// 对话记录视口（`trimTop` 要看贴没贴底、视口在哪）。
+struct Viewport {
+    var stuck: Bool
+    var top: CGFloat
+    var height: CGFloat
+}
 
 final class FlippedStack: NSStackView { override var isFlipped: Bool { true } }
 
@@ -98,10 +108,11 @@ final class Harness {
     /// 同 `refreshTranscript`。
     /// - Returns: (这排视图动过没有, 是不是「只在末尾追加」)
     @discardableResult
-    func refresh(_ items: [Item], running: Bool = false, loading: Bool = false) -> (moved: Bool, appended: Bool) {
+    func refresh(_ items: [Item], running: Bool = false, loading: Bool = false,
+                 viewport: Viewport? = nil) -> (moved: Bool, appended: Bool, trimmed: Bool) {
         if loading {
             if !order.isEmpty || !itemViews.isEmpty { clear() }
-            return (false, false)
+            return (false, false, false)
         }
         let ids = items.map(\.id)
         let appended = !order.isEmpty && ids.count >= order.count && Array(ids.prefix(order.count)) == order
@@ -114,6 +125,7 @@ final class Harness {
             shownFrom = windowStart(items, before: ids.count, budget: initialBudget)
         }
         shownFrom = min(shownFrom, ids.count)
+        let trimmed = appended && viewport.map { trimTop(items, $0) } == true
         var views: [NSView] = []
         var fresh: [NSView] = []
         for item in items[shownFrom...] {
@@ -133,7 +145,24 @@ final class Harness {
         let moved = apply(views)
         activateWidth(fresh)
         order = ids
-        return (moved, appended)
+        return (moved, appended, trimmed)
+    }
+
+    /// 同 `AgentChatNSView.trimTop`（贴没贴底、视口位置由调用方给）。
+    private func trimTop(_ items: [Item], _ vp: Viewport) -> Bool {
+        guard vp.stuck, shownFrom < items.count else { return false }
+        let live = items[shownFrom...].reduce(0) { $0 + $1.weight }
+        guard live > liveBudget else { return false }
+        let keepFrom = windowStart(items, before: items.count, budget: initialBudget)
+        let limit = vp.top - 2 * vp.height
+        var to = shownFrom
+        while to < keepFrom, let v = itemViews[items[to].id]?.view, v.superview === stack, v.frame.maxY < limit {
+            to += 1
+        }
+        guard to > shownFrom else { return false }
+        for item in items[shownFrom..<to] { itemViews.removeValue(forKey: item.id)?.view.removeFromSuperview() }
+        shownFrom = to
+        return true
     }
 
     /// 同 `clearTranscript`。
@@ -369,6 +398,92 @@ rig.harness.setHeight(tall[24].id, 600)              // 它上面那条「排完
 rig.syncScroll()
 check(abs((rig.anchorOffsetNow ?? 99) - (pinned?.offset ?? 0)) < 0.5,
       "🔴 上面那条变高 450 后，钉住的条目位置仍不动，实得 \(rig.anchorOffsetNow ?? -1)")
+
+// MARK: - 9. 贴着底往下说：顶上摘视图
+
+print("9. 贴着底往下说时顶上摘视图")
+let t = Harness()
+let tHolder = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 600))
+tHolder.addSubview(t.stack)
+NSLayoutConstraint.activate([
+    t.stack.topAnchor.constraint(equalTo: tHolder.topAnchor),
+    t.stack.leadingAnchor.constraint(equalTo: tHolder.leadingAnchor),
+])
+/// 工具调用那种条目：分量 200、高 30。
+func tool(_ id: Int) -> Item {
+    t.heights[id] = 30
+    return Item(id: id, kind: "tool\(id)", inPlace: false, weight: 200)
+}
+/// 此刻的视口：贴底时视口顶 = 内容高 − 视口高。
+func viewport(height: CGFloat = 300, stuck: Bool = true) -> Viewport {
+    tHolder.layoutSubtreeIfNeeded()
+    return Viewport(stuck: stuck, top: max(0, t.stack.frame.height - height), height: height)
+}
+func live(_ items: [Item]) -> Int { items[t.shownFrom...].reduce(0) { $0 + $1.weight } }
+
+var conv = (0..<60).map(tool)
+t.refresh(conv)
+check(t.shownFrom == 40 && t.arranged.count == 20, "打开时只建最后 20 条（4000 / 200），实得 \(t.arranged.count) 条")
+var trimmedAt: [Int] = []
+var maxShown = 0
+for k in 0..<30 {
+    let vp = viewport()
+    let before = t.arranged
+    let madeBefore = t.made
+    conv.append(tool(1000 + k))
+    let r = t.refresh(conv, viewport: vp)
+    if r.trimmed {
+        trimmedAt.append(k)
+        let survivors = before.filter { $0.superview === t.stack }
+        check(survivors.count < before.count, "第 \(k + 1) 条：摘掉了顶上的视图")
+        check(Array(t.arranged.prefix(survivors.count)).map(ObjectIdentifier.init) == survivors.map(ObjectIdentifier.init),
+              "🔴 第 \(k + 1) 条：摘完剩下的视图原样留着、顺序不变（没有整排拆了重装）")
+        check(t.made == madeBefore + 1, "第 \(k + 1) 条：只新建了新来的那一条，实得 \(t.made - madeBefore) 个")
+        check(t.arranged.first === t.view(conv[t.shownFrom].id), "第 \(k + 1) 条：排在最前的就是 shownFrom 那条")
+    }
+    maxShown = max(maxShown, t.arranged.count)
+}
+check(trimmedAt.first == 20, "第 21 条来时（41 条 × 200 > 8000）才第一次摘，实得第 \(trimmedAt.first.map { $0 + 1 } ?? -1) 条")
+check(trimmedAt.count >= 2, "一路往下说会反复摘，实得 \(trimmedAt.count) 次")
+check(maxShown <= 41, "🔴 建了视图的条目不再越攒越多（最多 41 条），实得 \(maxShown)")
+check(t.activations.values.allSatisfy { $0 == 1 }, "摘过之后每个视图仍只激活一次宽度约束")
+var again = t.refresh(conv, viewport: viewport())
+check(!again.moved && !again.trimmed, "摘完再刷一次是零操作")
+
+let shownBeforeScroll = t.arranged.count
+for k in 0..<15 {
+    conv.append(tool(1100 + k))
+    again = t.refresh(conv, viewport: viewport(stuck: false))
+    check(!again.trimmed, "没贴底（往上翻着）第 \(k + 1) 条：不摘")
+}
+check(t.arranged.count == shownBeforeScroll + 15, "没贴底：一条都不摘，眼前的内容不动")
+check(live(conv) > liveBudget, "这时建了视图的那段已经超过分量上限（等回到底再摘）")
+conv.append(tool(2000))
+again = t.refresh(conv, viewport: viewport())
+check(again.trimmed, "回到底再来一条：摘")
+check(t.shownFrom <= windowStart(conv, before: conv.count, budget: initialBudget), "最后 4000 分量那段一条不摘")
+
+// 视口很高：两屏以外没有东西，超了分量也不摘（不然刚摘完 `loadEarlierIfNeeded` 就会补回来）
+for k in 0..<25 {
+    conv.append(tool(3000 + k))
+    again = t.refresh(conv, viewport: viewport(height: 5000))
+    check(!again.trimmed, "视口高 5000、第 \(k + 1) 条：视口顶两屏以外没有条目，不摘")
+}
+check(live(conv) > liveBudget, "这时同样超过分量上限，但几何上不该摘")
+// 视口高 0（极端）：分量上限之外的全摘，但最后那段一条不动
+conv.append(tool(4000))
+again = t.refresh(conv, viewport: Viewport(stuck: true, top: viewport().top + 300, height: 0))
+check(again.trimmed && t.shownFrom == windowStart(conv, before: conv.count, budget: initialBudget),
+      "视口高 0：摘到最后 4000 分量那段为止，实得起点 \(t.shownFrom)")
+
+// 往上翻：摘掉的照样补回来
+let madeBeforeEarlier = t.made
+let headBefore = t.arranged.first
+let n2 = t.loadEarlier(conv)
+check(n2 > 0 && t.made == madeBeforeEarlier + n2, "往上翻：摘掉的条目重新建视图补回来，补了 \(n2) 条")
+check(t.arranged[n2] === headBefore, "补进来的排在原来最前那条前面")
+check(t.arranged.prefix(n2).map(ObjectIdentifier.init) == (t.shownFrom..<t.shownFrom + n2).map { ObjectIdentifier(t.view(conv[$0].id)!) },
+      "补进来的按顺序排")
 
 print(failures == 0 ? "\n✅ \(checks) 项全过" : "\n❌ \(checks) 项里 \(failures) 项没过")
 exit(failures == 0 ? 0 : 1)

@@ -394,19 +394,30 @@ final class AgentMarkdownView: NSView {
 ///
 /// 原来是个构造函数，改成类是为了**思考过程也能就地更新**（它同样是流式来的，见 `AgentMarkdownView`），
 /// 顺带把「展开着又来了新内容」时被折回去的毛病一起解决了。
+///
+/// 🔴 **折着时整条在约束引擎里只占它自己一个视图**（2026-10-10，见 `AgentRowView`）：Agent 记笔记时对话记录里
+/// 绝大多数是这种条目（每次工具调用、每段思考各一条），原来每条套三层 `NSStackView`，条目一多每来一条都要
+/// 重新求解一大片约束，整窗卡住。现在表头那一行按 frame 摆、高度按固有尺寸报；正文（工具输出最长 4000 字、
+/// 思考过程的 Markdown）点开才装上、用约束接在表头下面，收起就摘掉，它身上的约束跟着一起摘。
+/// 思考过程折着时照旧攒着流式文本，装上时由 `AgentMarkdownView.viewDidMoveToWindow` 补排。
 @MainActor
 final class AgentDisclosureView: NSView {
-    private let toggle = NSButton()
+    private let toggle: NSButton
     private let body: NSView
     /// 正文是 Markdown 渲染的那一种（思考过程）；工具输出是等宽纯文本，这里是 nil。
     let markdown: AgentMarkdownView?
-    private let column = NSStackView()
+    /// 折叠箭头 + 表头，按 frame 摆在顶上。
+    private let row: AgentRowView
+    private var expanded: Bool { body.superview === self }
 
     /// - Parameter header: 表头那一行（折叠箭头右边的东西）。
     /// - Parameter body: 展开后显示的正文。
     init(header: NSView, body: NSView, markdown: AgentMarkdownView? = nil) {
         self.body = body
         self.markdown = markdown
+        let toggle = NSButton()
+        self.toggle = toggle
+        row = AgentRowView([toggle, header], spacing: 2)
         super.init(frame: .zero)
         toggle.bezelStyle = .disclosure
         toggle.setButtonType(.pushOnPushOff)
@@ -414,32 +425,41 @@ final class AgentDisclosureView: NSView {
         toggle.state = .off
         toggle.target = self
         toggle.action = #selector(toggled)
-        body.isHidden = true
-
-        let row = NSStackView(views: [toggle, header])
-        row.spacing = 2
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.spacing = 4
-        column.addArrangedSubview(row)
-        column.addArrangedSubview(body)
-        column.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(column)
-        // 正文铺满整行宽（引擎要靠这个宽度排版；wrapping label 也靠它折行）。
-        // 999 而不是 required：折叠起来时 stack 自己那套约束说了算，别为此吵起来。
-        let bodyWidth = body.widthAnchor.constraint(equalTo: column.widthAnchor)
-        bodyWidth.priority = .init(999)
-        NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor),
-            column.topAnchor.constraint(equalTo: topAnchor),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor),
-            bodyWidth,
-        ])
+        body.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
-    @objc private func toggled() { body.isHidden = toggle.state != .on }
+    override var isFlipped: Bool { true }
+
+    /// 折着：高度就是表头一行。展开：高度由正文那几条约束定，这里不报。
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: expanded ? NSView.noIntrinsicMetric : row.intrinsicContentSize.height)
+    }
+
+    override func layout() {
+        super.layout()
+        let s = row.intrinsicContentSize
+        row.frame = NSRect(x: 0, y: 0, width: min(s.width, bounds.width), height: s.height)
+    }
+
+    @objc private func toggled() {
+        let open = toggle.state == .on
+        guard open != expanded else { return }
+        if open {
+            addSubview(body)
+            // 正文铺满整行宽（引擎要靠这个宽度排版；wrapping label 也靠它折行），接在表头下面 4pt
+            NSLayoutConstraint.activate([
+                body.topAnchor.constraint(equalTo: topAnchor, constant: row.intrinsicContentSize.height + 4),
+                body.leadingAnchor.constraint(equalTo: leadingAnchor),
+                body.trailingAnchor.constraint(equalTo: trailingAnchor),
+                body.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+        } else {
+            body.removeFromSuperview()   // 它身上那几条约束跟着摘掉
+        }
+        invalidateIntrinsicContentSize()
+    }
 
     /// 思考过程的新文本（流式）。
     func update(text: String) { markdown?.update(text: text) }
@@ -449,8 +469,6 @@ final class AgentDisclosureView: NSView {
         let l = NSTextField(labelWithString: title)
         l.font = .preferredFont(forTextStyle: .callout)
         let i = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
-        let s = NSStackView(views: [i, l])
-        s.spacing = 4
-        return s
+        return AgentRowView([i, l], spacing: 4)
     }
 }

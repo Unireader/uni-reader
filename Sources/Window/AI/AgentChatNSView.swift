@@ -42,7 +42,7 @@ final class AgentChatNSView: NSView {
     /// 上次刷新时的全部条目 id（不论建没建视图）。
     private var order: [UUID] = []
     /// 只有 `chat.items[shownFrom...]` 建了视图：长对话先建最后一段，往上翻到离顶不足一屏再往前补一段
-    /// （`AgentTranscript.windowStart`）。
+    /// （`AgentTranscript.windowStart`）；贴着底往下说、攒多了再从顶上摘（`trimTop`）。
     private var shownFrom = 0
     private var earlierQueued = false
     /// 没贴底时钉住的那条（视口里最上面露出来的条目）与它离视口顶的距离：它上面补进新条目、
@@ -382,6 +382,9 @@ final class AgentChatNSView: NSView {
             anchor = nil
         }
         shownFrom = min(shownFrom, ids.count)
+        // 贴着底往下说：顶上远处的旧条目视图摘掉，这排视图不许越攒越多。要在下面算这排视图之前摘，
+        // 摘完 stack 里剩下的正好是新序列的开头，`applyTranscriptViews` 才不会把整排拆了重装。
+        let trimmed = appended && trimTop()
         var views: [NSView] = []
         views.reserveCapacity(ids.count - shownFrom + 1)
         // 🔴 这一轮新建的条目视图。宽度约束**必须等它进了 stack 再激活**：约束两端要有共同祖先，
@@ -425,9 +428,39 @@ final class AgentChatNSView: NSView {
         if !appended {
             DispatchQueue.main.async { [weak self] in self?.scrollToBottom() }
             armSettle()   // 最后一段要是没有会报高度的正文（全是工具调用这类），也得看一眼满不满一屏
-        } else if moved {
+        } else if moved || trimmed {
+            // 顶上摘掉了一截：当场回底，等下一拍再滚，中间那一帧眼前的内容会往上跳一下
+            if trimmed { syncScroll() }
             keepBottom()   // 这排视图变了 = 内容高度会变，滚动条得重新判断（滚不滚由 `stickBottom` 定）
         }
+    }
+
+    /// 贴着底往下说的时候，把顶上远处的旧条目视图摘掉（往上翻时 `loadEarlier` 照常补回来）。
+    ///
+    /// 🔴 **这排视图不能只增不减**（2026-10-10 采样：Agent 连着记了几个钟头笔记，主线程被约束求解占满、整窗卡）：
+    /// 整个窗口共用一个约束引擎，条目视图越多，每来一条新条目（一次工具调用一来一回就是好几次刷新）要重新求解的规模越大，
+    /// 离屏实测（原来套三层 `NSStackView` 的工具调用条目）40 条时追加一条 26ms、200 条 630ms；条目拍平之后
+    /// （`AgentRowView`）200 条也还要 15ms，照样不能无限攒。打开时只建最后一段（`windowStart`），之后往下说的
+    /// 也得按同一个分量收着：建了视图的那段超过 `liveBudget` 就从顶上摘，最后 `initialBudget` 那段不动，
+    /// 而且只摘离视口顶两屏以外的——`loadEarlierIfNeeded` 是不足一屏就补，留两屏才不会摘了马上又补回来。
+    /// 用户往上翻着（没贴底）不摘：眼前的内容不能动，等回到底再摘。
+    /// - Returns: 摘过。
+    private func trimTop() -> Bool {
+        guard stickBottom, shownFrom < chat.items.count else { return false }
+        let live = chat.items[shownFrom...].reduce(0) { $0 + AgentTranscript.weight($1.kind) }
+        guard live > AgentTranscript.liveBudget else { return false }
+        let keepFrom = AgentTranscript.windowStart(chat.items, before: chat.items.count, budget: AgentTranscript.initialBudget)
+        let clip = transcriptScroll.contentView
+        let limit = clip.bounds.minY - 2 * clip.bounds.height
+        var to = shownFrom
+        while to < keepFrom, let v = itemViews[chat.items[to].id]?.view, v.superview === transcript, v.frame.maxY < limit {
+            to += 1
+        }
+        guard to > shownFrom else { return false }
+        for item in chat.items[shownFrom..<to] { itemViews.removeValue(forKey: item.id)?.view.removeFromSuperview() }
+        agentLog("对话记录顶上摘掉 \(to - shownFrom) 条视图（前面共 \(to) 条没建）")
+        shownFrom = to
+        return true
     }
 
     /// 给一条条目建视图并登记（正文排完版报高度时让对话记录重新对齐滚动位置）。还没进 stack，宽度约束由调用方进了再加。
@@ -803,8 +836,8 @@ enum AgentItemViews {
         t.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .regular)
         t.lineBreakMode = .byTruncatingMiddle
         t.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let label = NSStackView(views: [status, t])
-        label.spacing = 6
+        // 不用 NSStackView：对话记录条目里套 stack 是 Agent 记笔记时整窗卡住的根因之一（见 `AgentRowView`）
+        let label = AgentRowView([status, t], spacing: 6)
         guard !call.output.isEmpty else { return label }
         let out = call.output.count > 4000 ? String(call.output.prefix(4000)) + "…" : call.output
         // 工具输出是 JSON / diff 这类原样的东西，不当 Markdown 渲染：等宽照原样显示

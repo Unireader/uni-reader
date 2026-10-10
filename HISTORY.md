@@ -3,6 +3,21 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 修：Agent 记笔记时整窗卡住（2026-10-10）
+
+- 用户报：Agent 在记笔记期间 UniReader 很卡，Agent 停下就好了。现场采样（`/Applications` 的 0.3.6，CPU 一直 95%~100%，
+  Agent 停后降到 5%）：主线程几乎全在 Auto Layout 约束求解，入口是对话记录那列的 `NSStackView updateConstraints`。
+- 根因（离屏实测）：整个窗口共用一个约束引擎，每往对话记录里加一条，要重新求解的规模随已有条目数近似平方增长；
+  工具调用 / 思考过程的折叠块每条套三层 `NSStackView`，仿真 200 条时追加一条 630ms；而一次会话里新来的条目视图只增不减。
+- 改法：① `AgentRowView`（新文件）：行内小件按 frame 摆、只报固有尺寸；`AgentDisclosureView` 折着时整条在引擎里只占
+  它自己，正文点开才装上、收起摘掉。追加一条：40 条时 26ms → 1.3ms，200 条时 630ms → 15ms；外观与原版逐个子视图对位置一致。
+  ② `AgentChatNSView.trimTop`：贴着底往下说时，建了视图的那段超过 `AgentTranscript.liveBudget`（8000，约 40 条工具调用）
+  就从顶上摘，只摘视口顶两屏以外的、最后一段不动、没贴底不摘；往上翻照旧由 `loadEarlier` 补回。
+- 没处理：采样里还有一路是某个动画每帧调 `NSWindow layoutIfNeeded`（正式版没符号，猜是转圈指示器），
+  约束变便宜之后这一路的开销跟着降，暂不处理。
+- 验证：Debug 编译通过；`spike/agent-flat-row-test.swift` 65 项、`spike/agent-transcript-test.swift` 302 项全过。
+  手感**待用户实测**（Debug 包跑 Agent 连续记笔记）。坑记在 `docs/agents/PITFALLS.md`「Agent 面板」。
+
 ## ✅ 平板自动发现局域网里的 Mac（2026-10-10）
 
 - 用户要：平板不扫码也能看到局域网里开着的 UniReader。契约 `PROTOCOL.md §8`（Bonjour `_unireader._tcp`，不改线格式）。

@@ -67,6 +67,9 @@ enum AgentTranscript {
     static let initialBudget = 4000
     /// 往上翻时每次往前补的一段。
     static let earlierBudget = 3000
+    /// 贴着底往下说的时候，建了视图的那段最多这么重，超了从顶上摘回 `initialBudget`（`AgentChatNSView.trimTop`）。
+    /// 取两倍：摘一次能撑好一阵，别每来一条就摘一条。工具调用每条 200，即最多四十来条。
+    static let liveBudget = 8000
 
     /// 一条要建多重的视图：正文按字数，另加一份固定开销（每条一个视图、一次排版）。
     static func weight(_ kind: AgentItem.Kind) -> Int {

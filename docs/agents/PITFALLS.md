@@ -129,6 +129,16 @@
   旧宽度，所以面板要 `clipsToBounds`。排滚动条的问题别再猜，`touch ~/Library/Logs/UniReader-agent-scroll.log`
   开几何打点（`AgentScrollLog`，默认关）。离屏验证 `spike/agent-transcript-test.swift`（42 项：增量结果、
   零操作、约束只加一次、约束激活顺序）。
+- **对话记录条目里别套 `NSStackView`，这排视图也别只增不减**（2026-10-10 采样 + 离屏实测）：整个窗口共用一个
+  约束引擎，往对话记录里加一条，要重新求解的规模随已有条目数涨（近似平方）。Agent 连着记了几个钟头笔记（每次工具
+  调用一来一回就是好几次刷新），主线程被 `NSStackView updateConstraints` / `NSISEngine optimize` 占满、整窗卡。
+  原来工具调用 / 思考过程的折叠块每条套三层 `NSStackView`：仿真 40 条时追加一条 26ms、200 条 630ms；**拍平但仍用约束
+  只快不到一倍**，非得让行内小件彻底不进引擎——`AgentRowView` 按 frame 摆、只报固有尺寸，折叠块折着时整条在引擎里
+  只有它自己一个视图、正文点开才装上——之后 40 条 1.3ms、200 条 15ms。同时贴着底往下说时从顶上摘视图
+  （`AgentChatNSView.trimTop`：超过 `AgentTranscript.liveBudget` 才摘，只摘视口顶两屏以外的，最后 `initialBudget`
+  那段不动，没贴底不摘）。新加条目类型照此办。正文长高（固有高度变）只要 0.1ms，不是问题；转圈放不放在 stack 里
+  也几乎没差别。离屏验证 `spike/agent-flat-row-test.swift`（65 项：与原版逐个子视图对位置、展开收起、放进对话记录不被拉伸、性能对比 + 样张）、
+  `spike/agent-transcript-test.swift` 第 9 节。
 - **「内容想要多宽」的约束优先级必须低于 250**（2026-10-05 离屏验证抓到）：用户消息气泡按内容收窄时，
   起初用 750 的「正文宽 = 估的宽」+ 常数 10000 表示撑满，结果窗口被撑到 1 万多 pt——窗口保持尺寸只有 500、
   `NSSplitView` 默认保持优先级 250，高过它们的偏好约束会反过来把容器撑宽。现在压在 240，撑满改用相对约束
