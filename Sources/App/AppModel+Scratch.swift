@@ -395,7 +395,7 @@ extension AppModel {
     private func boardWindow(_ s: DocSession) -> (pages: ClosedRange<Int>, center: Int)? {
         guard s.isPagedBoard else { return nil }
         let n = s.boardPages.count
-        let p = min(max(s.boardScrollAnchor?.page ?? 0, 0), n - 1)
+        let p = min(max(boardSyncAnchor(s)?.page ?? 0, 0), n - 1)
         let r = Self.boardWindowRadius
         return (max(0, p - r)...min(n - 1, p + r), p)
     }

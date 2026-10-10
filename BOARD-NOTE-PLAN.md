@@ -418,3 +418,9 @@ CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key
   修法：`applyBoardScroll` 先把位置记在会话上（`DocSession.boardScrollAnchor`，此后补发也发它，不会把平板拽回旧位置）；
   没有视图时（`DocSession.boardView == nil`，视图进出窗口时挂 / 摘）停手 0.6s 由 AppModel 写库（沿用库里的缩放与横向、竖向按
   视图上次用的锚线 `boardAnchorLine` 反推；库里没存过就只记会话）；视图重新出现时竖向按会话上的位置摆。
+- **v0.3.6 后用户报：平板在标签栏点一个 Mac 上没激活的分页画板，总是回到第一页**（2026-10-10 修）。平板日志（`UniReader/BoardSync`）
+  实测：`boards` / `boardPages` 都到了，`boardScroll` 一条没来。根因：会话上的同步位置只由画板视图摆好时报、或平板滚动时记，
+  这个标签自 Mac 启动以来没显示过就两样都没有，`broadcastBoardScroll` 直接不发；平板停在首页顶，一滚还会经
+  `scheduleDetachedBoardSave` 把首页附近写回库、盖掉原来的位置。修法：`AppModel.boardSyncAnchor`——没有位置、也没有视图时
+  按库里的视口折算一份记在会话上（锚线取 `boardAnchorLine`，同上一条反推的逆运算）；`broadcastBoardScroll` 与笔迹窗口中心
+  （`boardWindow`）都经它，所以先发的那份笔迹也是平板要去的那几页。库里没存过仍不发（首页顶，与平板默认一致）。

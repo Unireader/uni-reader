@@ -22,12 +22,29 @@ extension AppModel {
     }
 
     /// 分页画板 Mac 这边滚到的位置（`BOARD-NOTE-PLAN.md §12`）：画板视图本机滚动 / 打开摆好时调，
-    /// 平板跟随过去。跟随平板的过程中视图不调（防回环）。还没摆好（`boardScrollAnchor == nil`）不发。
+    /// 平板跟随过去。跟随平板的过程中视图不调（防回环）。还没有位置（见 `boardSyncAnchor`）不发。
     func broadcastBoardScroll(_ s: DocSession) {
         guard server.hasClients, s.id == padSession?.id, s.isPagedBoard,
-              let id = s.board?.id, let a = s.boardScrollAnchor else { return }
+              let id = s.board?.id, let a = boardSyncAnchor(s) else { return }
         server.broadcast(["type": "boardScroll", "id": id.uuidString, "page": a.page, "frac": a.frac,
                           "t": ProcessInfo.processInfo.systemUptime * 1000])
+    }
+
+    /// 分页画板的同步位置：会话上记着的那份；还没有、也没有画板视图（标签自启动以来没在 Mac 上显示过，平板也没滚过）
+    /// 就按库里存的视口折算一份记上（锚线同 `scheduleDetachedBoardSave` 取 `boardAnchorLine`）。
+    /// 2026-10-10 用户报：平板在标签栏点一个 Mac 上没激活的分页画板，总是回到第一页——那时没人报过位置，
+    /// 平板收不到 `boardScroll` 只能停在首页顶，一滚还会把这个位置写回库、盖掉原来的。
+    /// 有视图就等它摆好自己报；库里没存过就没有位置（首页顶，与平板默认一致）。
+    func boardSyncAnchor(_ s: DocSession) -> (page: Int, frac: Double)? {
+        if let a = s.boardScrollAnchor { return a }
+        let l = s.boardLayout
+        guard s.isPagedBoard, s.boardView == nil, l.count > 0, let id = s.board?.id, let store = s.store,
+              let row = (try? store.board(id: id.uuidString)) ?? nil, row.viewportZoom > 0 else { return nil }
+        let p = (row.viewportY + Double(boardAnchorLine) / row.viewportZoom) / l.stride
+        let page = min(max(Int(floor(p)), 0), l.count - 1)
+        let a = (page: page, frac: p - Double(page))
+        s.boardScrollAnchor = a
+        return a
     }
 
     /// 平板 `boardScroll`：平板在分页画板上滚到的位置，交给开着这篇的画板视图平滑跟过去。不是这篇就丢。
