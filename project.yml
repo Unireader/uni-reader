@@ -42,13 +42,16 @@ packages:
     # `.5`（同日）：空白命令挨着加减号（`x = \; -1`、`, \quad -1`）时 SwiftMath 判错符号类型、触发断言，
     # Debug 包崩溃（正式版只是间距不对）——桥接层先自己解析，按 TeX 规则跳过空白定好加减号再排版；
     # 每条公式渲染完就释放临时对象（一次排版连续渲染 500 条从 334MB 降到 18MB，没有泄漏）。fork 提交 efca117。
-    # 改 fork：在 fork 里改、`swift test` 过、打 `<上游版本>-unireader.N` 新 tag，再改这里的版本号；
-    # 跟上游升级 = 把 `unireader` 分支 rebase 到上游新 tag 上再打 tag。
-    url: https://github.com/Unireader/swift-markdown-engine
+    # 2026-10-11 换成 xVanTuring fork 的 `xvan` 分支（和 Perch 共用；Unireader 那个 fork 不再维护，
+    # 旧的 0.13.0-unireader.1~5 tag 已一并推到 xVanTuring fork 留档）：上游 main（0.14.0 之后 3 个提交）
+    # + 上面 `.2`~`.5` 的修复 + Perch 的链接 / 图片 id 修复。智能引号开关上游已经合并（#189），不再自带。
+    # 改 fork：在 fork 的 `xvan` 分支改、`swift test` 过、打 `<上游版本>-xvan.N` 新 tag，再改这里的版本号；
+    # 跟上游升级 = 把 `xvan` 分支 rebase 到上游新版本上再打 tag。
+    url: https://github.com/xVanTuring/swift-markdown-engine
     # 2026-09-21 从 0.9.0 升到 0.13.0：0.9.0 每敲一个字都按整篇算账（17K 字的笔记 56ms/字、
     # 52K 字 159ms/字，一帧才 16.7ms），0.13.0 把增量做对了——恒定 9~11ms/字，不再随全文长度涨。
     # 量法见 `spike/markdown-relayout-cost.swift`。升级只动版本号，App 代码一行没改。
-    exactVersion: 0.13.0-unireader.5
+    exactVersion: 0.14.0-xvan.1
   HighlighterSwift:
     url: https://github.com/smittytone/HighlighterSwift
     exactVersion: 3.1.0
