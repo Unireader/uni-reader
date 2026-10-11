@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// 一个习题标签练的那一组题 + 练到哪了（`EXERCISE-PLAN.md §4.2`）。练习 / 列表两个视图共用这一份。
 ///
@@ -7,9 +8,29 @@ import Foundation
 ///
 /// 切标签时窗格会把整个视图拆掉、切回来再建（同 Markdown 笔记），练到第几题、这一轮答过什么不能跟着丢，
 /// 所以这份按「工作区 + 范围」存在 `shared` 里，App 活着期间一直在。
+///
+/// 平板（模式2，`EXERCISE-PLAN.md §10.4`）开同一组题用的也是**这一份**：两边开着同一组时作答 / 第几题 / 筛选
+/// 天然同步。每次变化发 `changed`——平板同步据它推给平板，平板发来的改动由开着这份的 Mac 标签据它重画。
 @MainActor
 final class ExerciseDeck {
     enum Mode: Int { case practice = 0, list = 1 }
+
+    /// 谁改的：Mac 本机（练习页 / 列表）还是平板（`AppModel+Exercise`）。
+    enum Origin { case mac, pad }
+    /// 改了什么：只换了第几题（平板那边只发 `exIndex`），还是别的（重发整份 `exDeck`）。
+    enum Change { case index, content }
+    /// 这一份变了。Mac 本机的改动，标签视图自己已经画过了（订阅方按 `origin` 挑着处理）。
+    static let changed = PassthroughSubject<(deck: ExerciseDeck, origin: Origin, change: Change), Never>()
+    private var origin: Origin = .mac
+
+    /// 以平板的名义改：`body` 里的每一次变化都标成 `.pad`。
+    func asPad(_ body: () -> Void) {
+        origin = .pad
+        body()
+        origin = .mac
+    }
+
+    private func notify(_ c: Change) { Self.changed.send((self, origin, c)) }
 
     /// 一道题显示的作答：选了什么、对不对（nil = 题目没答案、没法判）。
     /// 这一轮答的优先；这一轮没答、以前做过的，显示以前那次（用户 2026-10-11 定：做过的题直接显示上次结果）。
@@ -25,7 +46,7 @@ final class ExerciseDeck {
     private(set) var items: [Exercise] = []
     private(set) var stats: [String: ExerciseAttemptStats] = [:]
     var mode: Mode = .practice
-    var index = 0
+    var index = 0 { didSet { if index != oldValue { notify(.index) } } }
     private(set) var answers: [String: Answer] = [:]
     /// 这一轮点过「再做一次」的题：以前的作答不再显示，等重新答。
     private var redoing: Set<String> = []
@@ -34,17 +55,20 @@ final class ExerciseDeck {
 
     private static var decks: [String: ExerciseDeck] = [:]
 
-    /// 这个工作区、这个范围的那一份（没有就建）。拿到时顺手刷新一遍。
-    static func shared(scope: ExerciseScope, workspace: WorkspaceManager) -> ExerciseDeck {
+    /// 这个工作区、这个范围的那一份（没有就建）。拿到时顺手刷新一遍（`reload: false` = 不刷，平板同步每次推送前取它用）。
+    static func shared(scope: ExerciseScope, workspace: WorkspaceManager, reload: Bool = true) -> ExerciseDeck {
         let key = (workspace.folder?.path ?? "") + "|" + scope.key
         if let d = decks[key], d.workspace === workspace {
-            d.reload()
+            if reload { d.reload() }
             return d
         }
         let d = ExerciseDeck(scope: scope, workspace: workspace)
         decks[key] = d
         return d
     }
+
+    /// 这一份属于哪个工作区（平板同步按它认「是不是平板开着的那组」）。
+    var owner: WorkspaceManager? { workspace }
 
     private init(scope: ExerciseScope, workspace: WorkspaceManager) {
         self.scope = scope
@@ -65,6 +89,7 @@ final class ExerciseDeck {
         stats = ws.exerciseAttemptStats()
         items = ws.exercises(in: scope).filter(passes)
         index = curId.flatMap { id in items.firstIndex { $0.id == id } } ?? 0
+        notify(.content)
     }
 
     /// 库里变了：已在快照里的就地换成新内容（被删的去掉），新进范围、过得了筛选的接在末尾。
@@ -87,6 +112,7 @@ final class ExerciseDeck {
         items = next
         if let curId, let i = items.firstIndex(where: { $0.id == curId }) { index = i }
         index = min(index, max(0, items.count - 1))
+        notify(.content)
     }
 
     /// 这道题要显示的作答（nil = 还没答，等着作答）：这一轮答的，否则以前那次（`Exercise.earlierAnswer`）。
@@ -96,10 +122,12 @@ final class ExerciseDeck {
         return Answer(chosen: p.chosen, correct: p.correct, earlier: p.from)
     }
 
-    /// 交卷：判题、记一次作答（答错进错题本由库那边同一个事务做）。
+    /// 交卷：判题、记一次作答（答错进错题本由库那边同一个事务做）。`id` = 交哪一道（平板交的是它屏幕上那道，
+    /// 不一定是这一份此刻的当前题）；nil = 当前题。不在这一组里的题不收。
     @discardableResult
-    func submit(_ chosen: Set<String>, elapsedMs: Int) -> Answer? {
-        guard let e = current, !chosen.isEmpty, let ws = workspace else { return nil }
+    func submit(_ chosen: Set<String>, elapsedMs: Int, id: String? = nil) -> Answer? {
+        let target = id.map { i in items.first { $0.id == i } } ?? current
+        guard let e = target, !chosen.isEmpty, let ws = workspace else { return nil }
         let a = Answer(chosen: chosen, correct: e.judge(chosen))
         answers[e.id] = a
         ws.recordExerciseAttempt(id: e.id, chosen: chosen, correct: a.correct, elapsedMs: elapsedMs)
@@ -110,6 +138,7 @@ final class ExerciseDeck {
         s.lastAnswer = Exercise.answerString(chosen)
         s.lastAt = .now
         stats[e.id] = s
+        notify(.content)
         return a
     }
 
@@ -126,6 +155,7 @@ final class ExerciseDeck {
             answers[id] = nil
             redoing.insert(id)
         }
+        notify(.content)
     }
 
     /// 这一组里有没有正显示着作答的题（「全部重做」能不能点）。

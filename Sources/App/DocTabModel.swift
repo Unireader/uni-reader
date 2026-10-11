@@ -52,7 +52,14 @@ final class DocTabModel: ObservableObject, Identifiable {
     @Published var boardID: UUID?
     /// 本标签当前显示的**习题**（v20，`EXERCISE-PLAN.md §4.1`）：练哪一组题。与 `docID` / `noteRef` / `boardID`
     /// 四者互斥，同画板的做法（开之前 `select(nil)`），会话里 `pdf == nil`、所有按 PDF 记账的地方看到的是空标签。
-    @Published private(set) var exerciseScope: ExerciseScope?
+    @Published private(set) var exerciseScope: ExerciseScope? {
+        didSet {
+            let key = exerciseScope?.key ?? ""
+            guard key != session.exerciseScopeKey else { return }
+            session.exerciseScopeKey = key
+            app.broadcastBoards()   // 平板据 `boards.kind = 3` 跟随显示这一组（`EXERCISE-PLAN.md §10.4`）
+        }
+    }
     /// 习题标签是**单独开的**（侧栏右键「在新标签页中打开」）：侧栏点别的范围不会换掉它。
     /// 只在 `exerciseScope != nil` 时有意义（每次 `openExercises` 都重设，不会带着旧值）。
     @Published private(set) var exerciseSeparate = false

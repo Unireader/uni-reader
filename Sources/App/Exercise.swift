@@ -469,6 +469,61 @@ struct ExerciseChapterTree: Equatable {
     }
 }
 
+// MARK: - 侧栏 / 平板抽屉的分组（`EXERCISE-PLAN.md §4.1 / §10.1`）
+
+/// 「习题」一段里的一行：一个范围 + 显示名 + 数 + 底下的几行。Mac 侧栏和平板抽屉（经 `exGroups` 下发）
+/// 用的是**同一份**规则，安卓模式1 的 `ExerciseGroups.build` 逐条照抄这里。
+struct ExerciseGroupNode: Equatable {
+    var scope: ExerciseScope
+    var title: String
+    var count: Int
+    var children: [ExerciseGroupNode] = []
+
+    /// 建整段。`documents` = 书库顺序的（id, 书名）；`title` 给全部 / 错题本 / 收藏三行起名；
+    /// `noChapter` = 「未分章节」那一行的名字。没有题 → 空（这一段不出现）。
+    /// 全部 / 错题本 / 收藏三行恒在；错题本底下是有错题的书 → 章节树（数的是错题）；之后每本有题的书一行，底下章节树。
+    static func build(_ s: ExerciseSummary, documents: [(id: String, title: String)],
+                      title: (ExerciseScope) -> String, noChapter: String) -> [ExerciseGroupNode] {
+        guard s.total > 0 else { return [] }
+        var rows = [ExerciseScope.all, .wrong, .starred].map { ExerciseGroupNode(scope: $0, title: title($0), count: s.count($0)) }
+        rows[1].children = documents.filter { s.count(.wrongDocument($0.id)) > 0 }.map { d in
+            ExerciseGroupNode(scope: .wrongDocument(d.id), title: d.title, count: s.count(.wrongDocument(d.id)),
+                              children: chapters(docId: d.id, stats: s.mistakeChapters(d.id), mistakes: true, noChapter: noChapter))
+        }
+        rows += documents.filter { (s.byDocument[$0.id] ?? 0) > 0 }.map { d in
+            ExerciseGroupNode(scope: .document(d.id), title: d.title, count: s.byDocument[d.id] ?? 0,
+                              children: chapters(docId: d.id, stats: s.chapters[d.id] ?? [:], mistakes: false, noChapter: noChapter))
+        }
+        return rows
+    }
+
+    /// 一本书底下的章节树：一道题都没设章节 → 不展开（书那一行就够了）；有设有没设 → 末尾多一行「未分章节」。
+    /// `mistakes` = 错题本底下那棵（`stats` 已只剩有错题的章节、数是错题数，见 `ExerciseSummary.mistakeChapters`）。
+    static func chapters(docId: String, stats: [[String]: ExerciseChapterStat], mistakes: Bool,
+                         noChapter: String) -> [ExerciseGroupNode] {
+        guard stats.keys.contains(where: { !$0.isEmpty }) else { return [] }
+        func scope(_ path: [String]) -> ExerciseScope { mistakes ? .wrongChapter(docId, path) : .chapter(docId, path) }
+        func make(_ t: ExerciseChapterTree) -> ExerciseGroupNode {
+            ExerciseGroupNode(scope: scope(t.path), title: t.label, count: t.count, children: t.children.map(make))
+        }
+        var out = ExerciseChapterTree.build(stats).map(make)
+        if let none = stats[[]], none.count > 0 {
+            out.append(ExerciseGroupNode(scope: scope([]), title: noChapter, count: none.count))
+        }
+        return out
+    }
+
+    /// 摊平成一列（先父后子），`depth` = 缩进层级（0 起）。平板抽屉就按这一列画（`exGroups`）。
+    static func flatten(_ nodes: [ExerciseGroupNode], depth: Int = 0) -> [(scope: ExerciseScope, title: String, count: Int, depth: Int)] {
+        var out: [(scope: ExerciseScope, title: String, count: Int, depth: Int)] = []
+        for n in nodes {
+            out.append((n.scope, n.title, n.count, depth))
+            out += flatten(n.children, depth: depth + 1)
+        }
+        return out
+    }
+}
+
 // MARK: - 标签页里的筛选
 
 /// 习题标签顶上的筛选（用户 2026-10-11 要的：可以组合出「第二章的错题」「还没做过的题」）。

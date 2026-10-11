@@ -285,19 +285,9 @@ final class ReaderPaneController: NSViewController {
         finishRefresh(s)
     }
 
-    /// 习题的「到 PDF 原页」：🔴 显示文档只走 `AppDelegate.showDocument` 一份（开着就切过去，没开就开新标签），
-    /// 再跳到题目所在那一页（有题目框就停在框的上沿）。
+    /// 习题的「到 PDF 原页」（与平板那条共用 `AppDelegate.showExerciseSource`）。
     private func openExerciseSource(_ e: Exercise) {
-        guard let docId = e.documentId, let page = e.page, let delegate = AppDelegate.shared else { return }
-        do {
-            let (c, tab) = try delegate.showDocument(docId, in: workspace, activate: true)
-            let frac = e.payload.region.map { max(0, $0[1] - 0.02) } ?? 0
-            tab.session.jump(page: page, frac: frac, kind: .list, label: L("Exercise"), origin: "exercise")
-            c.window?.makeKeyAndOrderFront(nil)
-        } catch {
-            wsLog("[EX] 到原页失败：\(error)")
-            NSSound.beep()
-        }
+        AppDelegate.shared?.showExerciseSource(e, in: workspace)
     }
 
     /// 阅读区本体（有 PDF 就建 / 复用 `ReaderView`，没有就是占位）。

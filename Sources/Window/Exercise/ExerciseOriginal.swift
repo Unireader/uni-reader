@@ -7,7 +7,7 @@ import PDFKit
 /// 这里**另开一份**、只缓存最近那一本，绝不碰阅读区的 `session.pdf`。
 @MainActor
 enum ExerciseOriginal {
-    private static let queue = DispatchQueue(label: "unireader.exercise.original", qos: .userInitiated)
+    nonisolated private static let queue = DispatchQueue(label: "unireader.exercise.original", qos: .userInitiated)
     /// 只在 `queue` 上读写。
     nonisolated(unsafe) private static var openDoc: (path: String, pdf: PDFDocument)?
     private static let cache = NSCache<NSString, NSImage>()
@@ -53,9 +53,27 @@ enum ExerciseOriginal {
         return d
     }
 
+    /// 平板模式2 的「看原题」（`/exercise.png`，`EXERCISE-PLAN.md §10.4`）：同一块、同一份 PDF 实例，出 JPEG 字节。
+    /// 在调用方线程（`LANServer` 的服务 queue）上**同步**等本队列渲完——PDF 实例只许本队列碰，纪律不变。
+    nonisolated static func jpeg(_ src: ExerciseImageSource, pixelWidth: Int) -> Data? {
+        let cg = queue.sync {
+            renderCG(path: src.path, index: src.page, region: src.region, align: src.align, pixelWidth: pixelWidth)
+        }
+        guard let cg else { return nil }
+        return NSBitmapImageRep(cgImage: cg).representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+    }
+
     /// 只在 `queue` 上跑。
     nonisolated private static func render(path: String, index: Int, region: [Double]?, align: PageAlign?,
                                            pixelWidth: Int) -> NSImage? {
+        guard let cg = renderCG(path: path, index: index, region: region, align: align, pixelWidth: pixelWidth) else { return nil }
+        // 点尺寸 = 像素的一半（Retina 上按 2x 显示，图不糊）
+        return NSImage(cgImage: cg, size: NSSize(width: CGFloat(cg.width) / 2, height: CGFloat(cg.height) / 2))
+    }
+
+    /// 只在 `queue` 上跑：题目那一块（四周放 1.5% 页宽；没有框 = 整页）。
+    nonisolated private static func renderCG(path: String, index: Int, region: [Double]?, align: PageAlign?,
+                                             pixelWidth: Int) -> CGImage? {
         guard let page = pdf(at: path)?.page(at: index) else { return nil }
         let disp = PageBitmap.displaySize(page, align: align)
         guard disp.width > 0, disp.height > 0 else { return nil }
@@ -69,8 +87,6 @@ enum ExerciseOriginal {
             guard sub.width > 1, sub.height > 1 else { return nil }
         }
         let scale = min(CGFloat(pixelWidth) / sub.width, 4)
-        guard let cg = PageBitmap.renderTile(page: page, subRect: sub, scale: scale, align: align) else { return nil }
-        // 点尺寸 = 像素的一半（Retina 上按 2x 显示，图不糊）
-        return NSImage(cgImage: cg, size: NSSize(width: CGFloat(cg.width) / 2, height: CGFloat(cg.height) / 2))
+        return PageBitmap.renderTile(page: page, subRect: sub, scale: scale, align: align)
     }
 }

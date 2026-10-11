@@ -114,6 +114,7 @@ CREATE TABLE sync_base (
 | **`location`** | ❌ **绝不同步** | **「文件在哪」是设备本地事实**。镜像把外部文件内化成 `PDFs/xxx.pdf`，这条路径在源盘上毫无意义；反过来源盘的绝对路径在平板上必然失效。同步它 = 制造大批假的"路径失效" |
 | `ocr_page` | ✅ 双向 `INSERT OR IGNORE` | 按 `content_hash` 缓存、纯 additive、两端算出的内容等价 → **不需要 base**，直接互补即可 |
 | `page_align`（v14） | ✅ 双向，**按 `updated_at` 整行取新** | 扫描页对齐的参数 + 开关，按 `content_hash`（`SCAN-ALIGN-PLAN.md §5`）。不进 base、删除不传播；但它是**用户设置**且决定页面坐标，所以写入硬盘方向与普通改动一样**要人工确认**（见 §4.2） |
+| `exercise` / `exercise_attempt`（v20 习题，2026-10-11 起） | ✅ | 题目按 `updated_at` 取新（收藏 / 错题本 / 章节都改它）；作答一次一行、两边各做的并起来，没有修改时间 → 冲突保留源盘。题已删、另一边还做了它 → 那几次作答跳过并计数（`MirrorApply.livingExercises`，同画板）。`EXERCISE-PLAN.md §10.3` |
 | `meta.note_types` | ✅ LWW | 工作区级配置 |
 | `meta.workspace_name` | ✅ LWW | 小事 |
 | `meta.open_documents` | ❌ | 「本机开着哪几篇」，设备本地 |

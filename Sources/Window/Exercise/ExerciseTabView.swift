@@ -90,6 +90,19 @@ final class ExerciseTabView: NSView {
                 self.syncHeader()
             }
             .store(in: &bag)
+
+        // 平板开着同一组题（`EXERCISE-PLAN.md §10.4`）：平板那边答了 / 翻了 / 重做了 / 换了筛选，这边跟着重画。
+        // Mac 本机的改动这边自己已经画过了，不重复。
+        ExerciseDeck.changed
+            .filter { [weak self] in $0.origin == .pad && $0.deck === self?.deck }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.filterPopup.selectItem(withTag: self.deck.filter.rawValue)
+                self.practice.show()
+                self.list.reload()
+                self.syncHeader()
+            }
+            .store(in: &bag)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 

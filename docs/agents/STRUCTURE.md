@@ -49,7 +49,13 @@
   🔴 错题本规则（用户定）：答错进（库里与作答同一个事务），**只能手动移出**，答对不动它；答案变了重判作答，判错照样进。
   章节 `exercise.chapter`（目录路径，`ExerciseChapter.path` 按页查 PDF 自带目录、不用书签；侧栏章节树 `ExerciseChapterTree`
   按最早页码排）、书上的作答（`exercise_attempt.source = mark`，每题至多一条）、标签顶上的筛选 `ExerciseFilter`。
-  `render_page include_marks` 在 `MCP/MCPPageMarks`。测试 `spike/exercise-test.swift`（149 项）
+  `render_page include_marks` 在 `MCP/MCPPageMarks`。测试 `spike/exercise-test.swift`（156 项）。
+  侧栏「习题」一段的行与顺序只在 `ExerciseGroupNode.build` 一份（平板抽屉 `exGroups` 也用它）。
+  **平板同步**（模式2，`EXERCISE-PLAN.md §10.4`，`PROTOCOL.md §4.9`）：`App/AppModel+Exercise`——平板开一组题 = 用 Mac 上
+  同一份 `ExerciseDeck`（`exOpen` 记在 `AppModel.padExercise`），`ExerciseDeck.changed`（带 `origin` mac / pad、`change` index / content）
+  推给平板；平板改的由开着同一组的 `ExerciseTabView` 据它重画。`DocSession.exerciseScopeKey` 让 `boards.kind = 3`；
+  原题图 `/exercise.png` 走 `ExerciseOriginal.jpeg`（同一条渲染队列）。离线镜像：两张表进 `MirrorFp.specs`，
+  `MirrorApply.livingExercises` 挡孤儿作答
 - OCR 文本层：消费方（选择/复制/⌘A/OCR 搜索/分组/调试上色）一律走 `DocSession.ocrVisibleRuns(page:)`——它已滤掉扫描件的平铺水印块（`OCRWatermark`，几何 + 跨页重复判定，不认具体文字）；`ocrRuns` 是真源，只给落库与建指纹用，**别直接消费**（`ocrGroups` 的下标是按可见行算的，混用即错位）。
 - 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：纯逻辑 `App/ScanAlign`（变换 / 参数表 / 测量 / 定中心，spike `scan-align-test.swift`；真 PDF 出对比图用 `scan-align-real.swift`）+ `App/ScanAlignRunner`（多份 `PDFDocument` 并行测全书）。🔴 **「页面」在开着对齐时就是对齐后的那张**：`PageBitmap.displaySize/render/renderTile` 的 `align` 参数**刻意不给默认值**，新增出图口必须传 `session.pageAlign(i)`（漏一处就是那一处的页图和笔迹对不上）；页图缓存键 / 阅读区 `.id` / 平板 `layout.v` 一律用 `DocSession.displayKey`，别用 `contentHash`；与 PDF 原生页坐标互转（选字 / 搜索 / 目录）走 `PageGeometry` 带 `align` 的重载。开关切换 = 清这份内容的 OCR + 整篇重载（`DocTabModel.applyScanAlign`）
 - 扫描页增强（2026-09-23 加，**只在出图时处理、不改 PDF**）：`App/ScanEnhance`（参数 + Core Image 滤镜链：降噪 → 估纸色 → 原图÷纸色 → 软色阶 → 轻锐化 / 去色，可选 2 倍超采样）+ `PageBitmap.renderEnhanced/renderTileEnhanced`（贴片外扩 `marginPt` 再裁回，防接缝）。开关**按内容哈希记在本机 UserDefaults**（「视图 › 增强扫描页」，不进库、不同步），参数在设置 ›「阅读」。缓存键在页号后插 `#e<参数签名>`（`PageRenderEngine.baseKey/tileKey` 的 `enhance`），**不动 `displayKey`**。🔴 本版**只作用于阅读区**（`ReaderView`）；参考窗 / 缩略图 / 草稿纸 / 平板 / MCP / OCR 仍是原图。参数一变屏幕上的旧图记进 `staleImages/staleTiles`，只替换不清空。🔴 **软色阶不能改回硬切**（`(x-lo)/(hi-lo)` 那种）：用户实测嫌颗粒感，根因就是字边灰度被切成非黑即白。样张 + 贴片一致性检查 `spike/scan-enhance-look.swift`；取舍与 AI 调研见 `SCAN-ENHANCE-PLAN.md`

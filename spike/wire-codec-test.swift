@@ -205,6 +205,31 @@ let canonical: [[String: Any]] = [
     ["type": "scratchStrokesAppend", "ackRel": 7,
      "list": [["pen": ["color": "rgba(20,20,20,1.0)", "w": 10.0, "t": "pencil"],
                "pts": [[-120.5, 64.25, 0.5], [512.0, -8.125, 1.0]]]]],
+    // —— 习题（2026-10-11，PROTOCOL.md §4.9）：分组 / 开哪组（含关掉）/ 一组全量（含空）/ 第几题 / 操作 ——
+    ["type": "exGroups", "list": [
+        ["key": "all", "title": "全部习题", "count": 12, "depth": 0],
+        ["key": "wrong", "title": "错题本", "count": 3, "depth": 0],
+        ["key": "wrong:doc:D-1", "title": "高数", "count": 3, "depth": 1],
+        ["key": "chap:D-1:[\"第二章 导数\"]", "title": "第二章 导数", "count": 5, "depth": 1],
+    ]],
+    ["type": "exOpen", "scope": "chap:D-1:[\"第二章 导数\"]"],
+    ["type": "exOpen", "scope": ""],
+    ["type": "exDeck", "scope": "doc:D-1", "title": "高数", "filter": 2, "index": 1, "done": 2, "right": 1,
+     "list": [
+        ["id": "E-1", "number": "5", "page": 12, "kind": 0, "flags": 11, "chapter": "第二章 › 2.3",
+         "section": "习题 2-3", "stem": "设 $f(x)=x^2$，则 $f'(1)=$",
+         "options": [["key": "A", "text": "$0$"], ["key": "B", "text": "$1$"], ["key": "C", "text": "$2$"]],
+         "answer": "C", "explanation": "求导", "shown": 2, "chosen": "B", "correct": 2,
+         "lastAt": 1760000000000.0, "tries": 3, "rights": 1, "marked": "A", "markedCorrect": 2],
+        ["id": "E-2", "number": "", "page": 0, "kind": 1, "flags": 16, "chapter": "", "section": "",
+         "stem": "多选", "options": [["key": "A", "text": "甲"], ["key": "B", "text": "乙"]],
+         "answer": "", "explanation": "", "shown": 0, "chosen": "", "correct": 0,
+         "lastAt": 0.0, "tries": 0, "rights": 0, "marked": "", "markedCorrect": 0],
+     ]],
+    ["type": "exDeck", "scope": "", "title": "", "filter": 0, "index": 0, "done": 0, "right": 0, "list": [[String: Any]]()],
+    ["type": "exIndex", "scope": "wrong", "index": 7],
+    ["type": "exAct", "scope": "doc:D-1", "act": 0, "id": "E-1", "arg": "AC", "num": 4200, "ids": [String]()],
+    ["type": "exAct", "scope": "starred", "act": 3, "id": "", "arg": "", "num": 2, "ids": ["E-1", "E-2"]],
 ]
 
 var pass = 0, fail = 0

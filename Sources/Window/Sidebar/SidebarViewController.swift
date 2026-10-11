@@ -227,24 +227,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         r.append(boardSec)
         // 习题（v20）：**有题才出现**（题是 Agent 导进来的，侧栏上没有新建入口，空段没意义）。
         // 全部 / 错题本 / 收藏三行恒在，后面每篇有题的文档一行，顺序同书库。
-        let ex = workspace.exerciseSummary
-        if ex.total > 0 {
+        // 错题本也按书 → 章展开（用户 2026-10-11 要的），数的是错题；点哪一级都在那一个错题标签里换。
+        // 哪几行、什么顺序只在 `ExerciseGroupNode.build` 一份（平板抽屉的 `exGroups` 也用它）。
+        let groups = ExerciseGroupNode.build(workspace.exerciseSummary, documents: docs.map { ($0.id, $0.title) },
+                                             title: workspace.exerciseScopeTitle, noChapter: L("No Chapter"))
+        if !groups.isEmpty {
             let sec = SidebarNode(kind: .exerciseSection)
-            var rows: [SidebarNode] = [ExerciseScope.all, .wrong, .starred].map {
-                SidebarNode(kind: .exercise($0, title: workspace.exerciseScopeTitle($0), count: ex.count($0)))
+            func make(_ g: ExerciseGroupNode) -> SidebarNode {
+                let n = SidebarNode(kind: .exercise(g.scope, title: g.title, count: g.count))
+                n.children = g.children.map(make)
+                return n
             }
-            // 错题本也按书 → 章展开（用户 2026-10-11 要的），数的是错题；点哪一级都在那一个错题标签里换
-            rows[1].children = docs.filter { ex.count(.wrongDocument($0.id)) > 0 }.map { d in
-                let node = SidebarNode(kind: .exercise(.wrongDocument(d.id), title: d.title, count: ex.count(.wrongDocument(d.id))))
-                node.children = Self.chapterNodes(docId: d.id, stats: ex.mistakeChapters(d.id), mistakes: true)
-                return node
-            }
-            rows += docs.filter { (ex.byDocument[$0.id] ?? 0) > 0 }.map { d in
-                let node = SidebarNode(kind: .exercise(.document(d.id), title: d.title, count: ex.byDocument[d.id] ?? 0))
-                node.children = Self.chapterNodes(docId: d.id, stats: ex.chapters[d.id] ?? [:])
-                return node
-            }
-            sec.children = rows
+            sec.children = groups.map(make)
             r.append(sec)
         }
         let keep = selectedRowIDs()
@@ -257,25 +251,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         restoringExpansion = false
         select(ids: keep.isEmpty ? Set([tabs.active.rowID].compactMap { $0 }) : keep)
         syncingSelection = false
-    }
-
-    /// 一本书底下的章节树（v20，用户 2026-10-11 定「按目录整棵树」）：点哪一级就练那一级下面的全部题。
-    /// 一道题都没设章节 → 不展开（书那一行就够了）；有设有没设 → 末尾多一行「未分章节」。
-    /// `mistakes` = 错题本底下那棵（`stats` 已只剩有错题的章节、数是错题数，见 `ExerciseSummary.mistakeChapters`）。
-    private static func chapterNodes(docId: String, stats: [[String]: ExerciseChapterStat],
-                                     mistakes: Bool = false) -> [SidebarNode] {
-        guard stats.keys.contains(where: { !$0.isEmpty }) else { return [] }
-        func scope(_ path: [String]) -> ExerciseScope { mistakes ? .wrongChapter(docId, path) : .chapter(docId, path) }
-        func make(_ t: ExerciseChapterTree) -> SidebarNode {
-            let n = SidebarNode(kind: .exercise(scope(t.path), title: t.label, count: t.count))
-            n.children = t.children.map(make)
-            return n
-        }
-        var out = ExerciseChapterTree.build(stats).map(make)
-        if let none = stats[[]], none.count > 0 {
-            out.append(SidebarNode(kind: .exercise(scope([]), title: L("No Chapter"), count: none.count)))
-        }
-        return out
     }
 
     /// 一层目录底下的节点：子目录在前、笔记在后（顺序由 `NoteFolder` 排好）。

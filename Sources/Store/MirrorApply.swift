@@ -119,12 +119,26 @@ enum MirrorApply {
         return live
     }
 
+    /// 合并之后目标库里还活着的习题 id（同 `livingBoards`，给 `exercise_attempt` 的 upsert 过滤用，
+    /// `EXERCISE-PLAN.md §10.3`）。老库没有这张表 → 空集（那边本来也不会有作答要写）。
+    /// 🔴 本批里因为「父文档已删」被跳过的题也不算活着——否则它的作答照写、撞外键整次失败。
+    static func livingExercises(_ db: SQLiteDB, changes: [MirrorDiff.Change], liveDocs: Set<String>) -> Set<String> {
+        var live = Set(((try? db.query("SELECT id FROM exercise")) ?? []).compactMap { $0["id"] as? String })
+        for c in changes where c.table == "exercise" {
+            if c.op == .delete { live.remove(c.rowId); continue }
+            if let doc = c.row?["document_id"] as? String, !liveDocs.contains(doc) { live.remove(c.rowId) }
+            else { live.insert(c.rowId) }
+        }
+        return live
+    }
+
     /// 把一批改动写进一个库（**调用方负责包事务**）。
     @discardableResult
     static func write(_ db: SQLiteDB, _ changes: [MirrorDiff.Change],
                       result: inout Result, side: MirrorDiff.Side) throws -> Int {
         let live = livingDocuments(db, changes: changes)
         let liveBoards = livingBoards(db, changes: changes)
+        let liveExercises = livingExercises(db, changes: changes, liveDocs: live)
         let order = MirrorFp.specs.map(\.table)
 
         // ① 先删，后插。反过来会撞 `variant.content_hash` 的 UNIQUE：
@@ -149,6 +163,11 @@ enum MirrorApply {
                 }
                 // 画板条目同理：一边删了整篇画板、另一边又在上面写了几笔 → 那几笔跳过并计数（外键会让整次同步失败）
                 if table == "board_item" || table == "board_page", let b = row["board_id"] as? String, !liveBoards.contains(b) {
+                    result.orphansSkipped += 1
+                    continue
+                }
+                // 作答同理：一边删了这道题（或它那本书）、另一边又做了它 → 那几次作答跳过并计数
+                if table == "exercise_attempt", let x = row["exercise_id"] as? String, !liveExercises.contains(x) {
                     result.orphansSkipped += 1
                     continue
                 }

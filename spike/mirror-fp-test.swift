@@ -100,8 +100,16 @@ check(MirrorFp.spec("note")?.columns.map(\.name) ==
       ["id", "document_id", "kind", "page", "anchor_x", "anchor_y", "anchor_w", "anchor_h",
        "payload", "created_at", "updated_at"], "note 列表")
 check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc",
-                                     "board_note", "board_page", "board_item", "meta"],
-      "参与同步的表恰好 10 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页）")
+                                     "board_note", "board_page", "board_item", "exercise", "exercise_attempt", "meta"],
+      "参与同步的表恰好 12 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张）")
+check(MirrorFp.spec("exercise")?.columns.map(\.name) ==
+      ["id", "document_id", "page", "seq", "kind", "number", "section", "payload", "starred", "wrong", "source",
+       "created_at", "updated_at", "chapter"] && MirrorFp.spec("exercise")?.lww == "updated_at",
+      "exercise 列表（v20，章节在表尾）+ 按 updated_at 取新")
+check(MirrorFp.spec("exercise_attempt")?.columns.map(\.name) ==
+      ["id", "exercise_id", "answer", "correct", "elapsed_ms", "created_at", "source"]
+      && MirrorFp.spec("exercise_attempt")?.lww == nil,
+      "exercise_attempt 列表（v20）+ 没有修改时间（冲突保留源盘）")
 check(MirrorFp.spec("board_page")?.columns.map(\.name) ==
       ["id", "board_id", "sort_key", "width", "height", "template", "created_at", "updated_at"],
       "board_page 列表（v17）")
@@ -177,6 +185,22 @@ let tableCases: [(String, [String: Any])] = [
         "board_id": "66666666-6666-4666-8666-666666666666",
         "sort_key": 1.5, "width": 595.0, "height": 842.0, "template": "cornell",
         "created_at": "2026-09-26T09:00:00Z", "updated_at": "2026-09-26T09:05:00Z",
+    ] as [String: Any]),
+    // v20 习题（2026-10-11）：page 有值 / correct 为 NULL（没答案时的作答）各覆盖一次
+    ("exercise", [
+        "id": "99999999-9999-4999-8999-999999999999",
+        "document_id": "11111111-1111-4111-8111-111111111111",
+        "page": Int64(11), "seq": Int64(2), "kind": Int64(1), "number": "5", "section": "习题 2-3",
+        "payload": Data("{\"answer\":[\"A\",\"C\"],\"options\":[],\"stem\":\"设 $f(x)=x^2$\"}".utf8),
+        "starred": Int64(1), "wrong": Int64(0), "source": "kimi",
+        "created_at": "2026-10-10T09:00:00.000Z", "updated_at": "2026-10-11T08:00:00.000Z",
+        "chapter": "[\"第二章 导数\",\"2.3 求导法则\"]",
+    ] as [String: Any]),
+    ("exercise_attempt", [
+        "id": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "exercise_id": "99999999-9999-4999-8999-999999999999",
+        "answer": "AC", "correct": NSNull(), "elapsed_ms": Int64(4200),
+        "created_at": "2026-10-11T08:00:00.000Z", "source": "",
     ] as [String: Any]),
 ]
 for (t, row) in tableCases {

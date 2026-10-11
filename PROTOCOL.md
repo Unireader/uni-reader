@@ -123,6 +123,11 @@ opcode 单字节，全局唯一（收发同用一张表；某 opcode 由哪端�
 | `0x5B` | boardViewport | 双向 | 可靠 |
 | `0x5C` | boardScroll | 双向 | C→S 实时不保证送达（同 `scroll`）/ S→C 可靠 |
 | `0x5D` | scratchStrokesAppend | S→C | 可靠 |
+| `0x5E` | exGroups | S→C | 可靠 |
+| `0x5F` | exOpen | C→S | 可靠 |
+| `0x60` | exDeck | S→C | 可靠 |
+| `0x61` | exIndex | 双向 | 可靠 |
+| `0x62` | exAct | C→S | 可靠 |
 
 （`C`=客户端/平板，`S`=服务端/Mac。`RT`=高频实时流，UDP 阶段可改走 UDP。）
 
@@ -620,7 +625,8 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 | `boardAdd` | 空 | `{type:"boardAdd"}` |
 | `boardImages` | `u16 n` · `n ×( str id, str sha, f32 x, f32 y, f32 w, f32 h )` | `{type:"boardImages", list:[{id,sha,x,y,w,h},…]}` |
 
-- `boards`：**全量镜像**。`kind` = 被跟随会话是什么：`0` = PDF（或空标签）、`1` = Markdown 笔记、`2` = 画板笔记；
+- `boards`：**全量镜像**。`kind` = 被跟随会话是什么：`0` = PDF（或空标签）、`1` = Markdown 笔记、`2` = 画板笔记、
+  `3` = 习题（2026-10-11 起，`current` = 那一组的范围键，见 §4.9；老客户端不认识 3，按「不是 PDF」把页面视图藏起来）；
   `current` = `kind = 2` 时是哪一篇的 id，否则空串；`list` = 被跟随会话所属工作区的全部画板（按最近打开排序，
   `title` 已兜底成显示名）。**发送时机**：客户端接入、跟随的会话变化、画板增删改名、标签在 PDF / Markdown / 画板之间切换。
   - `kind = 2`：客户端隐藏 PDF 页面视图，整屏显示草稿纸画布；纸样面板里去掉「关闭 / 页面底图 / 其它草稿纸 / 删除」。
@@ -692,6 +698,75 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 - S→C：Mac 本机滚动（及打开时摆好位置、平板新接入、切到这篇）时广播当前位置，走 WS（有序，客户端不必比 `t`；
   `t` = Mac 单调时钟毫秒，仅供排查）。客户端在用户正碰着画布（手指 / 笔落着）或惯性滑动中时忽略，同 PDF「书写中忽略 viewport」；
   跟过去的那一下不回发。客户端只在用户动过视口之后才发 C→S——刚打开时由 Mac 领头。
+
+### 4.9 习题（2026-10-11，0x5E~0x62，`EXERCISE-PLAN.md §10.4`）
+
+题目与作答**只在 Mac**；平板显示 Mac 算好的结果，操作发回 Mac。平板开一组题 = 用 Mac 上同一份进度
+（`ExerciseDeck`，按「工作区 + 范围」一份），所以两端开着同一组时作答 / 第几题 / 筛选自然同步；平板开的那组
+**不必**是 Mac 当前标签（用户 2026-10-11 定：「tab 页可以不一样」）。工作区 = 被跟随会话所属的那个。
+
+范围键 = Mac `ExerciseScope.key`：`all` / `wrong` / `starred` / `doc:<文档 id>` / `chap:<文档 id>:<章节路径 JSON>` /
+`wrong:doc:<文档 id>` / `wrong:chap:<文档 id>:<章节路径 JSON>`。客户端把它当不透明的串，原样存、原样发回。
+
+| opcode | payload | 对象形状 |
+|---|---|---|
+| `exGroups` | `u16 n` · `n ×( str key, str title, u16 count, u8 depth )` | `{type:"exGroups", list:[{key,title,count,depth},…]}` |
+| `exOpen` | `str scope` | `{type:"exOpen", scope}` |
+| `exDeck` | `str scope` · `str title` · `u8 filter` · `u16 index` · `u16 done` · `u16 right` · `u16 n` · `n × 题` | `{type:"exDeck", scope, title, filter, index, done, right, list:[题,…]}` |
+| `exIndex` | `str scope` · `u16 index` | `{type:"exIndex", scope, index}` |
+| `exAct` | `str scope` · `u8 act` · `str id` · `str arg` · `u32 num` · `u16 n` · `n × str id` | `{type:"exAct", scope, act, id, arg, num, ids:[…]}` |
+
+一道题（`exDeck.list` 的一项）：
+
+```
+str id · str number · u32 page · u8 kind · u8 flags · str chapter · str section · str stem
+· u8 m · m ×( str key, str text ) · str answer · str explanation
+· u8 shown · str chosen · u8 correct · f64 lastAt · u16 tries · u16 rights · str marked · u8 markedCorrect
+```
+对象形状 `{id, number, page, kind, flags, chapter, section, stem, options:[{key,text},…], answer, explanation,
+shown, chosen, correct, lastAt, tries, rights, marked, markedCorrect}`。
+
+| 字段 | 含义 |
+|---|---|
+| `page` | 出处页，**1 起**；`0` = 不知道 |
+| `kind` | `0` 单选 · `1` 多选 |
+| `flags` | bit0 收藏 · bit1 在错题本里 · bit2 带图（默认摆出原题）· bit3 有出处页（能看原题 / 到原页）· bit4 答案是 Agent 推算的 |
+| `chapter` | 显示用的章节（「第二章 › 2.3」），空 = 没设 |
+| `stem` / `options[].text` / `explanation` | Markdown + `$…$` 公式，原样 |
+| `answer` | 正确答案的选项键按字母序拼起来（`"C"` / `"AC"`），空 = 还没有答案 |
+| `shown` | 这道题现在该显示哪次作答：`0` 等着作答 · `1` 这一轮刚答的 · `2` 以前在 App 里练的最近一次 · `3` 书上的作答（`EXERCISE-PLAN.md §4.2`） |
+| `chosen` / `correct` | `shown > 0` 时选了什么（键拼起来）/ 对不对：`0` 没法判（没答案）· `1` 对 · `2` 错 |
+| `lastAt` | `shown = 2` 时那次的时间（Unix 毫秒），其余 `0` |
+| `tries` / `rights` | 一共做过几次 / 对几次（含书上那条） |
+| `marked` / `markedCorrect` | 书上的作答（空 = 没有）/ 它对不对（同 `correct` 的取值） |
+
+- `exGroups`：**全量镜像**，被跟随会话所属工作区的习题分组，按 Mac 侧栏的顺序摊平成一列：
+  全部 / 错题本（底下有错题的书 → 章节树）/ 收藏 / 每本有题的书（底下章节树，有题没设章节时末尾一行「未分章节」）。
+  `depth` = 缩进层级（0 起），子项紧跟在父项后面；`title` 是 Mac 那边的显示名（已按 Mac 的语言）。
+  `n = 0` = 这个工作区没有题，客户端不显示这一段。发送时机：客户端接入、跟随的会话变化、习题有任何增删改。
+- `exOpen`：客户端现在显示哪一组（空串 = 不在习题上）。Mac 记下（工作区取此刻被跟随会话的），立刻回一份 `exDeck`；
+  之后这一组有任何变化（谁答的、谁翻的、库里刷新）都再发。工作区关了 / 范围键不认识 / 那本书没了 → 回 `scope` 为空串的 `exDeck`，
+  客户端据此关掉自己的习题页。
+- `exDeck`：客户端正开着那一组的**全量**（题目内容 + 该显示的作答 + 统计）。`index` = 现在在第几题（0 起），
+  `done` / `right` = 这一轮做了几道、对几道；`filter` `0` 全部 · `1` 没做过 · `2` 错题 · `3` 收藏。
+  题的顺序就是练习顺序；`scope` 不是客户端当前开着的那组就丢（切组时的先后错位）。
+- `exIndex`：只换了第几题（不重发整份）。C→S：平板翻题，Mac 把那一组的进度挪过去（Mac 开着同一组的标签跟着翻）；
+  S→C：Mac 本机翻题。`scope` 对不上就丢。
+- `exAct`：平板的操作，Mac 做完回 `exDeck`。`scope` 不是平板开着的那一组整帧丢弃。
+
+  | `act` | 用到的字段 | 做什么 |
+  |---|---|---|
+  | `0` 交卷 | `id`、`arg` = 选的键（`"AC"`）、`num` = 用时毫秒 | 判题、记一次作答（答错进错题本）；`id` 不是这一组里的题就丢 |
+  | `1` 收藏 | `id`、`num` = 1 收藏 / 0 取消 | |
+  | `2` 移出错题本 | `id` | |
+  | `3` 重做 | `ids` = 这几道当作没答过（这一轮）、`num` = 从第几题练起 | 同 Mac「全部重做」/「重做这 N 道题」 |
+  | `4` 筛选 | `num` = 筛选值 | 按新条件重取这一组，尽量停在原来那题 |
+  | `5` 到原页 | `id` | Mac 打开那篇、跳到题目所在页，并把平板锁到那个标签 |
+
+  其余 `act` 值丢弃（只许尾部追加）。
+- **原题图**不走线格式：`GET /exercise.png?id=<题 id>&w=<像素宽>`（与 `/page.png` 同级不校验 token），
+  Mac 渲那道题的框（四周放 1.5% 页宽；没有框渲整页），只认客户端此刻开着的那一组里的题，别的 id 回 404。
+- 老客户端不认识这几条，照旧丢弃（§5）；老 Mac 收不到 `exOpen`，新客户端的「习题」一段就一直是空的。
 
 ## 5. 兼容与版本
 

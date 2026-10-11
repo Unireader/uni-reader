@@ -2,7 +2,8 @@
 
 > 状态：**2026-10-10 定方案并落地（Mac）**，实现记录见 §9。本轮只做**选择题**（单选 / 多选）。
 > 三条拍板（用户 2026-10-10 选的）：① 练习界面 = **主窗口标签页**（侧栏加「习题」一段）；
-> ② 本轮**只做 Mac**，安卓只按 schema 契约同步建表（`Schema.kt` 升 v20），平板练习 / 离线镜像同步习题放下一轮；
+> ② 本轮**只做 Mac**，安卓只按 schema 契约同步建表（`Schema.kt` 升 v20），平板练习 / 离线镜像同步习题放下一轮
+> （**第二轮 2026-10-11 已做：安卓模式1 + 模式2 + 离线镜像，§10**）；
 > ③ 错题本 = **答错自动进，只能手动移出**。
 > **2026-10-11 第二批**（用户追加）：④ **章节**——按「课本 + 章节」练，章节从 PDF 目录自动取、可手动设，
 > 侧栏按**目录整棵树**展开（§2.3）；⑤ **导入书上已有的作答**（用户「选择题一般高亮作答，部分手写」，§2.4）+
@@ -219,10 +220,9 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   `exercise` 有级联子表，恢复用 `OR IGNORE`（同 `document` / `board_note` 的理由）。删习题新增一种条目
   `Trash.Kind.exercises`（`archiveExercises`）。`Counts` 加 `exercise`。
 - **关联为同一文档**（`mergeDocument`）：`exercise.document_id` 跟着改到目标文档，否则会被级联删掉。
-- **离线镜像**：本轮**不进** `MirrorFp.specs`（Mac 独有，镜像合并不碰这两张表；平板上看不到习题）。
-  下一轮做安卓练习时再进同步表，届时要补「父题已删」的过滤（同 `livingBoards`）。
+- **离线镜像**：~~本轮不进 `MirrorFp.specs`~~ → 2026-10-11 第二轮起进（§10.2）。
 - **备份**：`VACUUM INTO` 整库，自动包含。
-- **安卓**：`Schema.kt` 加同样 DDL、`VERSION = 20`；不读不写这两张表。
+- **安卓**：`Schema.kt` 加同样 DDL、`VERSION = 20`；~~不读不写这两张表~~ → 两种模式都能练（§10）。
 
 ## 6. 代码落点
 
@@ -239,7 +239,7 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
 
 ## 7. 验证
 
-- `spike/exercise-test.swift`（149 项）：建表 / 导入校验（各种不合格输入）/ 去重更新不冲掉收藏与错题 / 判题 /
+- `spike/exercise-test.swift`（156 项）：建表 / 导入校验（各种不合格输入）/ 去重更新不冲掉收藏与错题 / 判题 /
   作答记录与错题本规则 / 删文档级联 / 回收站归档与恢复 / `mergeDocument` 带走习题；第二批：目录查页 / 章节列回环 /
   章节范围与计数与建树 / 书上的作答只留一条 / 重判 / `user_answer`·`chapter` 校验 / 筛选 / 开发包老库补列；
   做过的题显示哪一次（App 里最近一次优先、书上的作答兜底、按现在的答案判）；错题本按书 / 按章（计数、建树、范围键回环）。
@@ -249,7 +249,7 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
 
 ## 8. 本轮不做
 
-判断 / 填空 / 解答题；平板（安卓模式1 / 网页）练习与离线镜像同步；乱序 / 计时 / 正确率统计图表；
+判断 / 填空 / 解答题；~~平板（安卓模式1 / 网页）练习与离线镜像同步~~（安卓两种模式 + 离线镜像见 §10，网页采集页仍不做）；乱序 / 计时 / 正确率统计图表；
 「连续答对 N 次自动移出错题本」（用户选了只能手动出）；页面上标出已识别的题（PDF 上的框）；题目笔记。
 
 ## 9. 实现记录（2026-10-10）
@@ -307,3 +307,100 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
       某本书删掉 → 开着它（或它某一章）的习题标签跟着退。
   19. 错题本展开：底下是有错题的书 → 章节树，数是错题数；点书 / 章都在同一个错题标签里换，和练习的公用标签互不影响；
       书 / 章右键「在新标签页中打开」单独开；移出错题本后侧栏的数跟着减，这一轮标签里那道题还在。
+
+## 10. 安卓：模式1 + 模式2 + 离线镜像（2026-10-11 第二轮）
+
+用户原话：「平板上两个都做吧」。两条拍板：
+
+- **模式2**：「mac 和 pad 同步，但是 tab 页可以不一样，比如 macOS 显示 pdf，pad 显示练习题，也是可以的」。
+  → 数据只有 Mac 一份；平板可以自己开一组题，Mac 不跟着换；两边开着**同一组**题时，答了什么、翻到第几题、筛选都同步。
+- **公式**：「安卓自带控件画」→ Markwon + JLaTeXMath（`android/app/build.gradle.kts`，依赖由用户下载）。
+  题干 / 选项 / 解析画在普通 `TextView` 里；`$…$` 行内、单独成行的 `$$…$$` 成块（同 Mac 引擎的写法）。
+
+### 10.1 共用的界面（`android/…/shared/exercise/`）
+
+- 只认一份中立数据 `ExCard`（一道题的内容 + 该显示的作答 + 统计）/ `ExDeckView`（一组题 + 第几题 + 筛选 + 这一轮做了几道），
+  操作经宿主接口 `ExHost` 交出去：**模式1 本机算、写本机库；模式2 由 Mac 算好发来、操作发回 Mac**。界面一行不分叉。
+  `ExCard` 的字段与线上 `exDeck`（`PROTOCOL.md §4.9`）一一对应——Mac 怎么算「该显示哪次作答」，模式1 就照同一份规则在本机算。
+- 顶栏：范围名 + 进度 + 筛选（全部 / 没做过 / 错题 / 收藏）+ 全部重做 + 练习 / 列表。
+- 练习：同 Mac §4.2（单选点即判、多选勾完提交、判完对错标记 + 结果那行 + 「上次作答」时间与次数 + Agent 推算提示 +
+  书上的作答 + 解析、再做一次、移出错题本、收藏、看原题、到 PDF 原页、上一题 / 下一题、左右滑翻题）。
+- 列表：一行一题（题号 / 题干一行 / 章节 / 页 / 我的答案 / 次数）；点一行从这题练；长按进多选，底下「重做这 N 道题」
+  （模式1 另有「设置章节…」）；单行长按菜单：收藏、移出错题本、到 PDF 原页。
+- 抽屉多一页「习题」（目录 / 书库之后，`ReaderDrawer.setExercises`，两模式共用；**工作区有题才出现**，同 Mac）：
+  同 Mac 侧栏——全部 / 错题本（按书 → 章展开）/ 收藏 / 每本书 → 章节树，行尾是数，可展开收起（默认收起，当前那组的上级自动展开）。
+  不塞进书库页：章节树一长，书库那几行就被挤到下面去了。
+  摊平成「一行一个范围 + 缩进层级」的一列（`ExGroup`），模式1 本机建、模式2 是 Mac 下发的 `exGroups`。
+  建这一列的规则只有一份（Mac `ExerciseGroupNode.build`，侧栏也改用它），安卓模式1 `ExGroupNode.build` 逐条照抄。
+
+### 10.2 模式1（平板本机打开工作区）
+
+- 纯逻辑 `local/exercise/Exercise.kt`：逐条对应 Mac `Exercise.swift` 里练习要用的那部分（payload 解码、判题、范围键与
+  `includes`、筛选、章节树、`earlierAnswer`、侧栏分组）；JVM 单测 `ExerciseTest` 对应 `spike/exercise-test.swift` 的同名几段。
+- 读写在 `local/store/LibraryStore`（经 `StoreQueue`），SQL 与 Mac 逐字一致：作答一行 = 大写 UUID + ISO 毫秒 UTC 时间；
+  答错同一个事务进错题本；收藏 / 移出错题本 / 设章节都改 `updated_at`。
+- 一组题的进度（`LocalExerciseDeck`）照 Mac `ExerciseDeck`：按「工作区 + 范围」存在进程里，快照、这一轮的作答、
+  再做一次、筛选、库变了就地刷新，规则全同。
+- 标签页：docId 存 `ex:<范围键>`（公用）/ `exs:<范围键>`（单独开的），同 Mac `StoredTab`：抽屉里点哪组都在公用标签里换，
+  错题本那一支另一个；长按「在新标签页中打开」单独开。
+- 看原题：本机 Pdfium 渲那一块（四周放 1.5% 页宽，同 Mac）。到 PDF 原页：开那篇的标签、跳到题目框上沿。
+  设置章节：按页码自动 / 不设 / 目录里一节 / 手填（「›」分级），目录取那本书的 PDF 自带目录（`PdfSource.toc`）。
+- **不做**：删习题（安卓没有回收站，删只在 Mac 做，红线 11）；导入（识别是 Agent 在 Mac 上做的）。
+
+### 10.3 离线镜像
+
+- `exercise`、`exercise_attempt` 进 `MirrorFp.specs`（Mac `MirrorFingerprint.swift` ↔ 安卓 `MirrorFp.kt`，列序 = 建表顺序，
+  向量表 `spike/mirror-fp-vectors.txt` 尾部追加）。`exercise` 按 `updated_at` 取新；`exercise_attempt` 没有修改时间，
+  两边都改了同一条（只有 Mac 重判会改它）→ 保留源盘那份。
+- 两边各做的题、各自的作答**按行并起来**，不会互相覆盖（这正是 §2.2 把作答单独成表的理由）。
+- 父题已删的作答不写（同画板的 `livingBoards`），否则外键挡下整次同步。
+
+### 10.4 模式2（平板连 Mac）
+
+- **一份进度两边共用**：平板开某一组题 = 用 Mac 上**同一个** `ExerciseDeck`（工作区 + 范围）。所以两边开着同一组时，
+  作答、第几题、筛选天然同步；Mac 在看 PDF 时平板照样能做题。平板上的「练习 / 列表」切换各管各的。
+- 入口：
+  - 抽屉「习题」一段（Mac 下发 `exGroups`：被跟随会话所在工作区的分组）；点一行 = **平板自己的习题标签**
+    （标签栏末尾一个，可以关；再点别的组就在这个标签里换），Mac 不切。
+  - Mac 当前标签就是习题（`boards.kind = 3`，`current` = 范围键）：平板跟随时显示那一组（同 PDF / 画板的跟随）。
+  - 点标签栏上 Mac 的标签 = 回到跟随 Mac；平板自己的习题标签留在栏上，点回来接着做。
+- 看原题：`GET /exercise.png?id=<题 id>&w=<像素宽>`，Mac 渲（同 Mac 本机那块），只认平板正开着的那组里的题。
+- 到 PDF 原页：发给 Mac，Mac 打开那篇、跳到那页，并把平板锁到那个标签。
+- 协议 `PROTOCOL.md §4.9`（`exGroups` 0x5E / `exOpen` 0x5F / `exDeck` 0x60 / `exIndex` 0x61 / `exAct` 0x62）。
+- Mac 侧：`AppModel+Exercise.swift`（下发 / 收操作）；`ExerciseDeck` 每次变化发 `ExerciseDeck.changed`，
+  平板发来的改动由开着同一组的 Mac 标签据它重画，Mac 本机的改动由它推给平板。
+
+### 10.5 代码落点（第二轮）
+
+| 端 | 文件 |
+|---|---|
+| Mac | `App/Exercise.swift`（`ExerciseGroupNode`）、`Window/Exercise/ExerciseDeck.swift`（变化通知、按 id 交卷）、`ExerciseTabView.swift`（平板改动后重画）、`App/AppModel+Exercise.swift`（新）、`App/AppModel.swift`（分发 + `/exercise.png`）、`App/AppModel+Board.swift`（`boards.kind = 3`）、`App/DocSession.swift` / `DocTabModel.swift`（会话记着习题范围）、`Server/LANServer.swift`、`Server/WireCodec.swift`、`Resources/wire.js`、`Store/MirrorFingerprint.swift`、`Store/MirrorDiff.swift` / `MirrorApply.swift` |
+| 安卓共用 | `shared/exercise/*`（`ExModel` 中立数据 + `ExHost` / `ExerciseScreen` 顶栏 + 练习页 + 列表页 / `MathText` 公式）、`shared/ReaderDrawer.kt`（「习题」页）、`shared/DocTabsBar.kt`（逐个标签能不能关）、`tools/icons/gen.py`（`exercise` / `star` / `image`） |
+| 安卓模式1 | `local/exercise/*`（`Exercise.kt` 纯逻辑 + `LocalExerciseDeck`）、`local/ExerciseController.kt`（`ExHost` 实现：写库 / 原题图 / 设章节）、`local/store/LibraryStore.kt`、`local/ReaderActivity.kt`、`local/TabSet.kt`、`local/store/MirrorFp.kt` + `local/mirror/*` |
+| 安卓模式2 | `pad/WireCodec.kt`、`pad/MacClient.kt`、`pad/PadActivity.kt`、`pad/RemoteExHost.kt`（新） |
+| 测试 | Mac `spike/exercise-test.swift`（分组）、`spike/wire-codec-test.swift` + 向量、`spike/mirror-fp-test.swift` + 向量、`spike/mirror-apply-test.swift`（⑤b 习题）；安卓 `ExerciseTest` / `WireCodecTest` / `MirrorFpTest` |
+
+### 10.6 实现记录与验证（2026-10-11）
+
+- 与方案的出入：抽屉里「习题」单独成一页（不塞进书库页，§10.1）；`ExHost.loadOriginal` 模式1 是「本机出整页再裁框」，
+  框四周放 1.5% 页宽，与 Mac 同；列表页的单行操作并进了长按多选的底栏（选中一道时多出收藏 / 移出错题本 / 到 PDF 原页）。
+- Mac：Debug 编译通过；`spike/exercise-test.swift` 156 项全过（新加分组 7 项）；`spike/wire-codec-test.swift` 125 项 +
+  `spike/wire-cross-test.js` 240 项全过（向量 112 → 120 条，前 112 条一个字节没变）；`spike/mirror-fp-test.swift` 62 项全过
+  （向量 29 → 31 条，尾部追加）；`spike/mirror-apply-test.swift` 55 过 1 不过——不过的是「上次打开取了较晚的那个」，
+  **改动之前就不过**（基线 49 过 1 不过），与这次无关、没碰。
+- 安卓：`assembleDebug` 通过；JVM 单测全过（`ExerciseTest` 14、`WireCodecTest` 12、`MirrorFpTest` 6，其余原有的照旧）。
+  数据层（`LibraryStore` 习题一节）只能在设备上验，**没写插桩测试、没在设备上跑过**。
+- 公式库 Markwon 4.6.2 + ext-latex + inline-parser（传递依赖 JLaTeXMath），由用户下载（代理 IP 会让 Maven 中央仓库回 403）。
+- 🔴 界面全部没实际跑过，手感 / 观感由用户实测。
+
+实测清单（用户）：
+
+  20. 模式1：开一个有题的工作区 → 抽屉多出「习题」一页，分组、数、章节树与 Mac 侧栏一致；点哪组都在一个习题标签里换，
+      错题本那一支另一个；长按一组「在新标签页中打开」；退出重开标签还在。
+  21. 模式1 练习：公式显示（行内 / 单独成行）、单选点即判、多选提交、左右划翻题、做过的题直接显示上次结果、再做一次、
+      全部重做、筛选、收藏、移出错题本、看原题（框得准不准）、到 PDF 原页（跳到题目那一处）。
+  22. 模式1 列表：点一行从这题练；长按多选 → 重做这 N 道题 / 设置章节（按页码自动 / 不设 / 目录里一节 / 手填）。
+  23. 离线副本：平板上做题 + 收藏，接回 Mac 同步 → Mac 上作答次数、上次作答、收藏、错题本都对；两边各做过的都在。
+  24. 模式2：Mac 看 PDF，平板抽屉「习题」点一组 → 平板标签栏末尾多一个习题标签，Mac 不动；点回 Mac 的标签回到跟随；× 能关。
+  25. 模式2 同步：Mac 也开同一组 → 两边翻题互相跟、在平板答的 Mac 上马上显示、筛选两边一起变；Mac 切到习题标签时平板跟随显示。
+  26. 模式2：看原题图、到 PDF 原页（Mac 打开那一篇、平板回到跟随并停在那一页）。

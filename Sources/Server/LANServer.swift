@@ -59,6 +59,9 @@ final class LANServer: ObservableObject {
     /// 画板笔记上的图（`/image?h=<sha>`，`PROTOCOL.md §4.8`）：sha → 图片文件。同样在服务 queue 上调用，
     /// 只认 App 这边登记过的 sha（不拿请求里的字符串拼路径）。
     var imageProvider: ((String) -> URL?)?
+    /// 习题的原题图（`/exercise.png?id=<题 id>&w=<像素宽>`，`PROTOCOL.md §4.9`）：JPEG 字节。服务 queue 上调用，
+    /// 只认 App 这边登记过的题（平板开着那组里的）。
+    var exerciseImageProvider: ((String, Int) -> Data?)?
 
     /// 一次页图请求（`/page.png` 的 query 解析结果）。
     struct PageImageRequest {
@@ -327,6 +330,14 @@ final class LANServer: ObservableObject {
             default: type = "image/png"
             }
             return ("200 OK", type, data)
+        case "/exercise.png":
+            // 习题的原题图（2026-10-11）：题目在页上那一块，Mac 现渲。与 `/page.png` 同级不校验 token。
+            // 名字带 .png 是为了与页图同一族好认，内容是 JPEG（Content-Type 照实写）。
+            let width = min(1600, max(320, query["w"].flatMap(Int.init) ?? 1080))
+            guard let id = query["id"], !id.isEmpty, let data = exerciseImageProvider?(id, width), !data.isEmpty else {
+                return ("404 Not Found", "text/plain; charset=utf-8", Data("no exercise".utf8))
+            }
+            return ("200 OK", "image/jpeg", data)
         case "/health":
             return ("200 OK", "text/plain; charset=utf-8", Data("ok".utf8))
         case "/info":

@@ -204,6 +204,47 @@ check(res3.orphansSkipped >= 1,
 check(identical(mirror3, store3) == nil, "孤儿丢掉之后两端仍然一致：\(identical(mirror3, store3) ?? "是")")
 
 // ============================================================
+print("⑤b 习题（v20，EXERCISE-PLAN.md §10.3）：两边各做的题并起来；题删了，另一边的作答不炸整次同步")
+// ============================================================
+let (srcX, storeX, dstX, mirrorX, docX, _) = makePair("X")
+func exRow(_ id: String) -> LibExercise {
+    LibExercise(id: id, documentId: docX, page: 3, seq: 0, kind: 0, number: id, section: "",
+                payload: Data("{\"answer\":[\"B\"],\"options\":[{\"key\":\"A\",\"text\":\"a\"},{\"key\":\"B\",\"text\":\"b\"}],\"stem\":\"s\"}".utf8),
+                starred: false, wrong: false, source: "kimi",
+                createdAt: ISO.date("2026-10-10T09:00:00.000Z")!, updatedAt: ISO.date("2026-10-10T09:00:00.000Z")!,
+                chapter: ["第一章"])
+}
+try! storeX.upsertExercises([exRow("EX-1"), exRow("EX-2")])
+_ = try! MirrorApply.apply(plan: planOf(mirrorX, storeX), mirrorFolder: dstX, mirrorStore: mirrorX,
+                           sourceFolder: srcX, sourceStore: storeX,
+                           resolveMirror: resolver(dstX), resolveSource: resolver(srcX))
+check(try! mirrorX.exercise(id: "EX-1") != nil && identical(mirrorX, storeX) == nil, "源盘导进来的题拉进副本")
+// 离线期间：副本上做错一次 + 收藏；源盘上做对一次
+try! mirrorX.recordExerciseAttempt(LibExerciseAttempt(id: "AT-M", exerciseId: "EX-1", answer: "A", correct: false,
+                                                      elapsedMs: 900, createdAt: ISO.date("2026-10-11T08:00:00.000Z")!))
+try! mirrorX.setExerciseStarred(id: "EX-1", true, at: ISO.date("2026-10-11T08:00:01.000Z")!)
+try! storeX.recordExerciseAttempt(LibExerciseAttempt(id: "AT-S", exerciseId: "EX-1", answer: "B", correct: true,
+                                                     elapsedMs: 700, createdAt: ISO.date("2026-10-11T07:00:00.000Z")!))
+// 源盘上删掉第二道题，副本上又做了它
+try! storeX.deleteExercises(ids: ["EX-2"])
+try! mirrorX.recordExerciseAttempt(LibExerciseAttempt(id: "AT-O", exerciseId: "EX-2", answer: "B", correct: true,
+                                                      elapsedMs: 500, createdAt: ISO.date("2026-10-11T08:10:00.000Z")!))
+let planX = planOf(mirrorX, storeX)
+check(planX.changes.contains { $0.table == "exercise_attempt" && $0.rowId == "AT-M" && $0.side == .source }
+      && planX.changes.contains { $0.table == "exercise_attempt" && $0.rowId == "AT-S" && $0.side == .mirror },
+      "两边各做的那次作答各往对面推一条")
+let resX = try! MirrorApply.apply(plan: planX, mirrorFolder: dstX, mirrorStore: mirrorX,
+                                  sourceFolder: srcX, sourceStore: storeX,
+                                  resolveMirror: resolver(dstX), resolveSource: resolver(srcX))
+check(Set(try! storeX.exerciseAttempts(exerciseId: "EX-1").map(\.id)) == ["AT-M", "AT-S"], "源盘上两次作答都在")
+let ex1 = try! storeX.exercise(id: "EX-1")
+check(ex1?.starred == true && ex1?.wrong == true, "副本上的收藏、进错题本带回源盘（按 updated_at 取新）")
+let ex2Gone = try! storeX.exercise(id: "EX-2") == nil
+check(resX.orphansSkipped >= 1 && ex2Gone,
+      "🔴 题在源盘上删了 → 副本上它的作答跳过并计数（\(resX.orphansSkipped) 条），整次同步照常")
+check(identical(mirrorX, storeX) == nil, "合并后两端逐行一致：\(identical(mirrorX, storeX) ?? "是")")
+
+// ============================================================
 print("⑥ 文件补齐：镜像上新加的书，PDF 拷回源盘")
 // ============================================================
 let (src4, store4, dst4, mirror4, _, _) = makePair("D")

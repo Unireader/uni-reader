@@ -28,7 +28,9 @@
     boardPages: 0x56, boardPageAdd: 0x57, boardPageTemplate: 0x58,     // 分页画板（v17，PROTOCOL.md §4.8）
     boardViewport: 0x5B,                   // 画板视口（双向，v19；网页端暂不收发，只保编解码一致）
     boardScroll: 0x5C,                     // 分页画板同步滚动（双向；网页端暂不收发，只保编解码一致）
-    scratchStrokesAppend: 0x5D             // 草稿纸 / 画板笔迹追加：与 scratchStrokes 逐字节相同，语义是「追加」
+    scratchStrokesAppend: 0x5D,            // 草稿纸 / 画板笔迹追加：与 scratchStrokes 逐字节相同，语义是「追加」
+    // 习题（PROTOCOL.md §4.9；网页端暂不收发，只保编解码一致）
+    exGroups: 0x5E, exOpen: 0x5F, exDeck: 0x60, exIndex: 0x61, exAct: 0x62
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
@@ -339,6 +341,41 @@
         }
         break;
       }
+      // 习题（PROTOCOL.md §4.9）
+      case "exGroups": {
+        w.u8(OP.exGroups);
+        var EG = o.list || []; w.u16(EG.length);
+        for (var eg = 0; eg < EG.length; eg++) {
+          w.str(EG[eg].key || ""); w.str(EG[eg].title || ""); w.u16(EG[eg].count || 0); w.u8(EG[eg].depth || 0);
+        }
+        break;
+      }
+      case "exOpen": w.u8(OP.exOpen); w.str(o.scope || ""); break;
+      case "exDeck": {
+        w.u8(OP.exDeck); w.str(o.scope || ""); w.str(o.title || "");
+        w.u8(o.filter || 0); w.u16(o.index || 0); w.u16(o.done || 0); w.u16(o.right || 0);
+        var ED = o.list || []; w.u16(ED.length);
+        for (var ed = 0; ed < ED.length; ed++) {
+          var ex = ED[ed];
+          w.str(ex.id || ""); w.str(ex.number || ""); w.u32(ex.page || 0);
+          w.u8(ex.kind || 0); w.u8(ex.flags || 0);
+          w.str(ex.chapter || ""); w.str(ex.section || ""); w.str(ex.stem || "");
+          var EO = ex.options || []; w.u8(EO.length);
+          for (var eo = 0; eo < EO.length; eo++) { w.str(EO[eo].key || ""); w.str(EO[eo].text || ""); }
+          w.str(ex.answer || ""); w.str(ex.explanation || "");
+          w.u8(ex.shown || 0); w.str(ex.chosen || ""); w.u8(ex.correct || 0); w.f64(ex.lastAt || 0);
+          w.u16(ex.tries || 0); w.u16(ex.rights || 0); w.str(ex.marked || ""); w.u8(ex.markedCorrect || 0);
+        }
+        break;
+      }
+      case "exIndex": w.u8(OP.exIndex); w.str(o.scope || ""); w.u16(o.index || 0); break;
+      case "exAct": {
+        w.u8(OP.exAct); w.str(o.scope || ""); w.u8(o.act || 0);
+        w.str(o.id || ""); w.str(o.arg || ""); w.u32(o.num || 0);
+        var EI = o.ids || []; w.u16(EI.length);
+        for (var ei = 0; ei < EI.length; ei++) w.str(EI[ei] || "");
+        break;
+      }
       case "noteNew":
         // Mac 在环形盘提交「新建文字笔记」后下发（0x3F，S→C）：平板在该页内锚点打开编辑器。
         w.u8(OP.noteNew); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
@@ -590,6 +627,43 @@
           bil[bii] = { id: biId, sha: biSha, x: bx, y: by, w: bw, h: bh };
         }
         return { type: "boardImages", list: bil };
+      }
+      // 习题（PROTOCOL.md §4.9）
+      case OP.exGroups: {
+        var egn = r.u16(), egl = new Array(egn);
+        for (var egi = 0; egi < egn; egi++) {
+          var egKey = r.str(), egTitle = r.str(), egCount = r.u16();
+          egl[egi] = { key: egKey, title: egTitle, count: egCount, depth: r.u8() };
+        }
+        return { type: "exGroups", list: egl };
+      }
+      case OP.exOpen: return { type: "exOpen", scope: r.str() };
+      case OP.exDeck: {
+        var edScope = r.str(), edTitle = r.str(), edFilter = r.u8(), edIndex = r.u16();
+        var edDone = r.u16(), edRight = r.u16(), edn = r.u16(), edl = new Array(edn);
+        for (var edi = 0; edi < edn; edi++) {
+          var e = {};
+          e.id = r.str(); e.number = r.str(); e.page = r.u32(); e.kind = r.u8(); e.flags = r.u8();
+          e.chapter = r.str(); e.section = r.str(); e.stem = r.str();
+          var eom = r.u8(); e.options = new Array(eom);
+          for (var eoi = 0; eoi < eom; eoi++) { var eoKey = r.str(); e.options[eoi] = { key: eoKey, text: r.str() }; }
+          e.answer = r.str(); e.explanation = r.str();
+          e.shown = r.u8(); e.chosen = r.str(); e.correct = r.u8(); e.lastAt = r.f64();
+          e.tries = r.u16(); e.rights = r.u16(); e.marked = r.str(); e.markedCorrect = r.u8();
+          edl[edi] = e;
+        }
+        return { type: "exDeck", scope: edScope, title: edTitle, filter: edFilter, index: edIndex,
+                 done: edDone, right: edRight, list: edl };
+      }
+      case OP.exIndex: {
+        var exiScope = r.str();
+        return { type: "exIndex", scope: exiScope, index: r.u16() };
+      }
+      case OP.exAct: {
+        var eaScope = r.str(), eaAct = r.u8(), eaId = r.str(), eaArg = r.str(), eaNum = r.u32();
+        var ean = r.u16(), eal = new Array(ean);
+        for (var eai = 0; eai < ean; eai++) eal[eai] = r.str();
+        return { type: "exAct", scope: eaScope, act: eaAct, id: eaId, arg: eaArg, num: eaNum, ids: eal };
       }
       case OP.noteNew:
         return { type: "noteNew", page: r.u32(), nx: r.f32(), ny: r.f32() };

@@ -130,6 +130,20 @@ enum MirrorFp {
             Column("x", .real), Column("y", .real), Column("w", .real), Column("h", .real),
             Column("payload", .blob), Column("created_at", .text), Column("updated_at", .text),
         ], lww: "updated_at"),
+        // v20：习题（`EXERCISE-PLAN.md §10.3`，2026-10-11 起同步）。父表在前（`exercise_attempt.exercise_id` 指向它）。
+        // `exercise` 按 `updated_at` 取新（收藏 / 进出错题本 / 设章节都改它）；`exercise_attempt` 一次作答一行、
+        // 两边各做的自然并起来，没有修改时间（只有 Mac 重判会改 `correct`）→ 冲突保留源盘。
+        // 列序 = 全新库 `CREATE TABLE` 的顺序（`chapter` / `source` 在表尾）。
+        TableSpec(table: "exercise", key: "id", columns: [
+            Column("id", .text), Column("document_id", .text), Column("page", .int), Column("seq", .int),
+            Column("kind", .int), Column("number", .text), Column("section", .text), Column("payload", .blob),
+            Column("starred", .int), Column("wrong", .int), Column("source", .text),
+            Column("created_at", .text), Column("updated_at", .text), Column("chapter", .text),
+        ], lww: "updated_at"),
+        TableSpec(table: "exercise_attempt", key: "id", columns: [
+            Column("id", .text), Column("exercise_id", .text), Column("answer", .text), Column("correct", .int),
+            Column("elapsed_ms", .int), Column("created_at", .text), Column("source", .text),
+        ]),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),
         ]),

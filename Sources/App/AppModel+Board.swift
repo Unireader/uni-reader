@@ -5,20 +5,24 @@ import Foundation
 /// 外加分页画板那几条（§9.5）与双向的视口 `boardViewport`（§10.1）。
 extension AppModel {
 
-    /// 被跟随会话是什么（`boards.kind`）：0 = PDF（或空标签）、1 = Markdown 笔记、2 = 画板笔记。
+    /// 被跟随会话是什么（`boards.kind`）：0 = PDF（或空标签）、1 = Markdown 笔记、2 = 画板笔记、3 = 习题。
     private func followKind(_ s: DocSession) -> Int {
-        s.isBoard ? 2 : (s.showsMarkdown ? 1 : 0)
+        s.isBoard ? 2 : (s.showsMarkdown ? 1 : (s.exerciseScopeKey.isEmpty ? 0 : 3))
     }
 
     /// 画板列表 + 被跟随会话的类型。客户端接入、跟随的会话变化、画板增删改名时发。
+    /// `current`：画板 = 那一篇的 id；习题 = 那一组的范围键（`PROTOCOL.md §4.9`）。
     func broadcastBoards() {
         guard server.hasClients, let s = padSession else { return }
         let list: [[String: Any]] = s.workspaceBoards.map { ["id": $0.id.uuidString, "title": $0.displayName] }
-        server.broadcast(["type": "boards", "kind": followKind(s),
-                          "current": s.board?.id.uuidString ?? "", "list": list])
+        let kind = followKind(s)
+        server.broadcast(["type": "boards", "kind": kind,
+                          "current": kind == 3 ? s.exerciseScopeKey : (s.board?.id.uuidString ?? ""), "list": list])
         broadcastBoardPages()   // 跟随的会话一变，页也跟着换（不是分页画板 = 空表）
         broadcastBoardViewport(s)
         broadcastBoardScroll(s)   // 分页画板：平板接入 / 切到这篇时对齐到 Mac 此刻的位置
+        // 习题分组跟着「被跟随会话所在的工作区」走：凡是会发 `boards` 的时机（接入 / 换会话 / 换工作区）都补一份
+        broadcastExerciseGroups()
     }
 
     /// 分页画板 Mac 这边滚到的位置（`BOARD-NOTE-PLAN.md §12`）：画板视图本机滚动 / 打开摆好时调，

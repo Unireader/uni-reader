@@ -305,6 +305,25 @@ check(ExerciseScope.wrong.isMistakes && ExerciseScope.wrongChapter(d3.id, []).is
       && !ExerciseScope.all.isMistakes, "错题那一支（公用错题标签管的）")
 check(ExerciseScope.wrongChapter(d3.id, ["x"]).documentId == d3.id, "错题范围也认得是哪本书（删书时标签跟着退）")
 
+print("— 侧栏 / 平板抽屉的分组（ExerciseGroupNode，安卓模式1 逐条照抄）")
+let gdocs: [(id: String, title: String)] = [("nodoc", "没题的书"), (d3.id, "书三")]
+let groups = ExerciseGroupNode.build(sumW, documents: gdocs, title: { $0.key }, noChapter: "未分章节")
+check(groups.map(\.scope) == [.all, .wrong, .starred, .document(d3.id)], "全部 / 错题本 / 收藏恒在，之后只列有题的书")
+check(groups.map(\.count) == [4, 2, 0, 4] && groups[0].title == "all" && groups[3].title == "书三", "各行的数与名字")
+check(groups[1].children.map(\.scope) == [.wrongDocument(d3.id)]
+      && groups[1].children[0].children.map(\.title) == wtree.map(\.label), "错题本底下：有错题的书 → 错题章节树")
+check(groups[1].children[0].children[0].children.map(\.scope) == [.wrongChapter(d3.id, ["第一章 函数", "1.1 映射"])],
+      "错题本底下的章节是错题范围")
+let gnone = statsW[[]].map { $0.count > 0 } ?? false
+check(groups[3].children.map(\.title) == ExerciseChapterTree.build(statsW).map(\.label) + (gnone ? ["未分章节"] : []),
+      "书底下的章节树（有没设章节的题时末尾一行「未分章节」）")
+let flat = ExerciseGroupNode.flatten(groups)
+func countNodes(_ ns: [ExerciseGroupNode]) -> Int { ns.reduce(0) { $0 + 1 + countNodes($1.children) } }
+check(flat.count == countNodes(groups) && flat[0].depth == 0 && flat[1].scope == .wrong && flat[2].depth == 1
+      && flat[2].scope == .wrongDocument(d3.id) && flat[3].depth == 2, "摊平：先父后子、depth 是缩进层级")
+check(ExerciseGroupNode.build(ExerciseSummary(), documents: gdocs, title: { $0.key }, noChapter: "x").isEmpty,
+      "没有题 → 整段不出现")
+
 print("— 书上的作答（source = mark）")
 let m = ok(input("m", answer: "B", src: "book", number: "9"))!
 let rm = row(m, doc: d3.id)

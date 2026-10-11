@@ -31,7 +31,11 @@ final class WorkspaceManager: ObservableObject {
     @Published var exerciseSummary = ExerciseSummary()
     /// 习题**内容**变了就加一（导入 / 改 / 删 / 收藏 / 进出错题本；记作答不算）：开着的习题标签据此重读。
     /// 🔴 只许 `WorkspaceManager+Exercise` 写。
-    @Published var exerciseRevision = 0
+    /// 每次变都发一条 `.exercisesDidChange`（object = 本工作区）：平板同步（`AppModel+Exercise`）够不着
+    /// `@MainActor` 的工作区实例，靠它知道「平板开着的那组题 / 抽屉分组」该重发了。
+    @Published var exerciseRevision = 0 {
+        didSet { NotificationCenter.default.post(name: .exercisesDidChange, object: self) }
+    }
     @Published var lastError: String?
     /// 笔记源的外部改动监听与它的记账（`WorkspaceManager+Markdown` 的「盯外部改动」一节用；
     /// 扩展里放不了存储属性，故放这里）。🔴 同 `noteTrees`：只许那一节和 `refreshNotes()` 写。

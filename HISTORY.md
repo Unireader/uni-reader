@@ -3,6 +3,21 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 习题：安卓两种模式 + 离线镜像同步（2026-10-11）
+
+- 用户「平板上两个都做吧」。两条拍板：模式2「mac 和 pad 同步，但是 tab 页可以不一样，比如 macOS 显示 pdf，pad 显示练习题」；
+  公式用「安卓自带控件画」（Markwon + JLaTeXMath）。方案与实现记录 `EXERCISE-PLAN.md §10`，协议 `PROTOCOL.md §4.9`（0x5E~0x62）。
+- 两模式共用一份习题界面（`android/…/shared/exercise/`）：顶栏筛选 / 全部重做 / 练习·列表，练习页左右划翻题，列表长按多选；
+  抽屉第三页「习题」（有题才出现，分组规则与 Mac 侧栏同一份 `ExerciseGroupNode`）。
+- 模式1：纯逻辑照抄 Mac（`local/exercise/Exercise.kt`）+ 一组题的进度 `LocalExerciseDeck` + 本机库读写；标签规则同 Mac
+  （公用一个、错题本一个、长按单独开）；看原题本机 Pdfium 出图裁框；设章节读 PDF 目录。不做删除（安卓没有回收站）。
+- 模式2：平板开一组题 = 用 Mac 上同一份 `ExerciseDeck`，两边开着同一组时作答 / 第几题 / 筛选天然同步；平板可以自己开一组
+  （标签栏末尾能关的标签），Mac 不切；Mac 当前标签是习题时平板跟随（`boards.kind = 3`）。原题图 `GET /exercise.png`。
+- 离线镜像：`exercise` / `exercise_attempt` 进 `MirrorFp.specs`（两端，向量 #30/#31），题已删时另一边的作答跳过不炸。
+- 验证：Mac Debug 编译、习题 spike 156 项、线格式 Swift 125 / JS 240（向量 120 条，前 112 条不变）、镜像指纹 62 项、
+  镜像合并 55 过 1 不过（「上次打开取较晚」那一项改动前就不过）；安卓 `assembleDebug`、JVM 单测全过（`ExerciseTest` 14 /
+  `WireCodecTest` 12 / `MirrorFpTest` 6）。界面没实际跑过，实测清单 `EXERCISE-PLAN.md §10.6` 第 20~26 项。
+
 ## ✅ 习题：做过的题显示自己的答案（2026-10-11，Mac）
 
 - 用户要「已经做过的题目要显示自己的答案」；用户定：翻到做过的题**直接显示上次结果**（选项勾上、对错、答案、解析），

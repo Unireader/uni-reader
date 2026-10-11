@@ -57,6 +57,9 @@ enum WireCodec {
         /// 草稿纸 / 画板笔迹的追加（S→C）：payload 与 `scratchStrokes` 逐字节相同，语义是「追加到镜像末尾」
         /// （同 `strokesAppend` 之于 `strokes`，`PROTOCOL.md §4.4`）。
         static let scratchStrokesAppend: UInt8 = 0x5D
+        /// 习题（2026-10-11，`PROTOCOL.md §4.9`）：分组 / 平板开哪组 / 一组的全量 / 第几题（双向）/ 平板的操作。
+        static let exGroups: UInt8 = 0x5E, exOpen: UInt8 = 0x5F, exDeck: UInt8 = 0x60
+        static let exIndex: UInt8 = 0x61, exAct: UInt8 = 0x62
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -441,6 +444,42 @@ enum WireCodec {
                 w.str(strOf(im["id"])); w.str(strOf(im["sha"]))
                 w.f32(num(im["x"])); w.f32(num(im["y"])); w.f32(num(im["w"])); w.f32(num(im["h"]))
             }
+        // 习题（`PROTOCOL.md §4.9`）
+        case "exGroups":
+            w.u8(Op.exGroups)
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for g in list {
+                w.str(strOf(g["key"])); w.str(strOf(g["title"]))
+                w.u16(intOf(g["count"])); w.u8(UInt8(clamping: intOf(g["depth"])))
+            }
+        case "exOpen": w.u8(Op.exOpen); w.str(strOf(o["scope"]))
+        case "exDeck":
+            w.u8(Op.exDeck); w.str(strOf(o["scope"])); w.str(strOf(o["title"]))
+            w.u8(UInt8(clamping: intOf(o["filter"]))); w.u16(intOf(o["index"]))
+            w.u16(intOf(o["done"])); w.u16(intOf(o["right"]))
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for e in list {
+                w.str(strOf(e["id"])); w.str(strOf(e["number"])); w.u32(intOf(e["page"]))
+                w.u8(UInt8(clamping: intOf(e["kind"]))); w.u8(UInt8(clamping: intOf(e["flags"])))
+                w.str(strOf(e["chapter"])); w.str(strOf(e["section"])); w.str(strOf(e["stem"]))
+                let opts = e["options"] as? [[String: Any]] ?? []
+                w.u8(UInt8(clamping: opts.count))
+                for op in opts.prefix(255) { w.str(strOf(op["key"])); w.str(strOf(op["text"])) }
+                w.str(strOf(e["answer"])); w.str(strOf(e["explanation"]))
+                w.u8(UInt8(clamping: intOf(e["shown"]))); w.str(strOf(e["chosen"]))
+                w.u8(UInt8(clamping: intOf(e["correct"]))); w.f64(num(e["lastAt"]))
+                w.u16(intOf(e["tries"])); w.u16(intOf(e["rights"]))
+                w.str(strOf(e["marked"])); w.u8(UInt8(clamping: intOf(e["markedCorrect"])))
+            }
+        case "exIndex": w.u8(Op.exIndex); w.str(strOf(o["scope"])); w.u16(intOf(o["index"]))
+        case "exAct":
+            w.u8(Op.exAct); w.str(strOf(o["scope"])); w.u8(UInt8(clamping: intOf(o["act"])))
+            w.str(strOf(o["id"])); w.str(strOf(o["arg"])); w.u32(intOf(o["num"]))
+            let ids = (o["ids"] as? [Any] ?? []).map { strOf($0) }
+            w.u16(ids.count)
+            for s in ids { w.str(s) }
         case "scroll": w.u8(Op.scroll); w.u32(intOf(o["page"])); w.f32(num(o["frac"])); w.f64(num(o["t"]))
         case "hover":
             w.u8(Op.hover)
@@ -842,6 +881,49 @@ enum WireCodec {
             var seqs = [NSNumber](); seqs.reserveCapacity(n)
             if r.need(n * 4) { for _ in 0..<n { seqs.append(NSNumber(value: r.u32raw())) } }
             out = ["type": "nack", "seqs": seqs]
+        // 习题（`PROTOCOL.md §4.9`）
+        case Op.exGroups:
+            let n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n {
+                let key = r.str(), title = r.str(), count = r.u16(), depth = r.u8()
+                list.append(["key": key, "title": title, "count": NSNumber(value: count), "depth": NSNumber(value: depth)])
+            }
+            out = ["type": "exGroups", "list": list]
+        case Op.exOpen: out = ["type": "exOpen", "scope": r.str()]
+        case Op.exDeck:
+            let scope = r.str(), title = r.str(), filter = r.u8(), index = r.u16(), done = r.u16(), right = r.u16()
+            let n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n where r.ok {
+                let id = r.str(), number = r.str(), page = r.u32(), kind = r.u8(), flags = r.u8()
+                let chapter = r.str(), section = r.str(), stem = r.str()
+                let m = r.u8()
+                var opts = [[String: Any]](); opts.reserveCapacity(Int(m))
+                for _ in 0..<m { let k = r.str(), t = r.str(); opts.append(["key": k, "text": t]) }
+                let answer = r.str(), explanation = r.str()
+                let shown = r.u8(), chosen = r.str(), correct = r.u8(), lastAt = r.f64()
+                let tries = r.u16(), rights = r.u16(), marked = r.str(), markedCorrect = r.u8()
+                list.append(["id": id, "number": number, "page": NSNumber(value: page), "kind": NSNumber(value: kind),
+                             "flags": NSNumber(value: flags), "chapter": chapter, "section": section, "stem": stem,
+                             "options": opts, "answer": answer, "explanation": explanation,
+                             "shown": NSNumber(value: shown), "chosen": chosen, "correct": NSNumber(value: correct),
+                             "lastAt": NSNumber(value: lastAt), "tries": NSNumber(value: tries),
+                             "rights": NSNumber(value: rights), "marked": marked,
+                             "markedCorrect": NSNumber(value: markedCorrect)])
+            }
+            out = ["type": "exDeck", "scope": scope, "title": title, "filter": NSNumber(value: filter),
+                   "index": NSNumber(value: index), "done": NSNumber(value: done), "right": NSNumber(value: right),
+                   "list": list]
+        case Op.exIndex:
+            let scope = r.str(), index = r.u16()
+            out = ["type": "exIndex", "scope": scope, "index": NSNumber(value: index)]
+        case Op.exAct:
+            let scope = r.str(), act = r.u8(), id = r.str(), arg = r.str(), num = r.u32(), n = r.u16()
+            var ids = [String](); ids.reserveCapacity(n)
+            for _ in 0..<n where r.ok { ids.append(r.str()) }
+            out = ["type": "exAct", "scope": scope, "act": NSNumber(value: act), "id": id, "arg": arg,
+                   "num": NSNumber(value: num), "ids": ids]
         default: return nil   // 未知 opcode：丢弃
         }
         return r.ok ? out : nil

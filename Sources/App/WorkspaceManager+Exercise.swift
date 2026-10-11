@@ -12,6 +12,11 @@ extension ExerciseChapterNode {
     }
 }
 
+extension Notification.Name {
+    /// 某个工作区的习题内容变了（`WorkspaceManager.exerciseRevision` 每次加一都发，object = 那个工作区）。
+    static let exercisesDidChange = Notification.Name("UniReader.exercisesDidChange")
+}
+
 /// 习题的执行层（`EXERCISE-PLAN.md`）：`exercise` / `exercise_attempt` 两张表的读写 + 侧栏的数。
 /// 习题不进 `DocSession`（阅读区不画它），所以只有这一条写路径——MCP 与练习界面都走这里。
 extension WorkspaceManager {

@@ -39,6 +39,8 @@ enum MirrorReport {
         case "board_note": return "画板笔记"
         case "board_item": return "画板笔记内容"
         case "board_page": return "画板笔记的页"
+        case "exercise": return "习题"
+        case "exercise_attempt": return "做题记录"
         case "meta": return "工作区设置"
         default: return table
         }

@@ -59,6 +59,11 @@ final class AppModel: ObservableObject {
     @Published var padBoardRequest: PadBoardRequest?
     /// 画板标签没激活时，平板滚动位置的节流写库（`AppModel+Board.scheduleDetachedBoardSave`）。
     var detachedBoardSave: DispatchWorkItem?
+    /// 习题的平板同步（`AppModel+Exercise`，`EXERCISE-PLAN.md §10.4`）：平板此刻开着哪一组（`exOpen`），nil = 不在习题上。
+    var padExercise: PadExerciseSub?
+    /// 整份 `exDeck` 已排着待发（同一轮里多次变化只发一次）。
+    var exerciseDeckPushScheduled = false
+    var exerciseSyncBag = Set<AnyCancellable>()
     /// 平板手上那份草稿纸 / 画板笔迹镜像此刻对应的状态（`AppModel+Scratch.scratchStrokesChanged`）：
     /// 笔迹的变化若只是在它末尾多了几条，就只发追加。
     var scratchMirror: ScratchMirror?
@@ -315,6 +320,13 @@ final class AppModel: ObservableObject {
             self.renderLock.lock(); defer { self.renderLock.unlock() }
             return self.boardImageFiles[sha]
         }
+        // 习题的原题图（`/exercise.png?id=&w=`，`PROTOCOL.md §4.9`）：只认平板开着那组里的题
+        server.exerciseImageProvider = { [weak self] id, width in
+            guard let src = self?.exerciseImageSource(id) else { return nil }
+            return ExerciseOriginal.jpeg(src, pixelWidth: width)
+        }
+        // 习题的平板同步：盯 `ExerciseDeck.changed` 与各工作区的习题变化（`AppModel+Exercise`）
+        DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.startExerciseSync() } }
 
         // 方案 B：平板本地滚动 → 落为平板当前会话的锚点（origin=pad），驱动 Mac PDFView 跟随。
         server.onScroll = { [weak self] page, frac, t in
@@ -395,6 +407,16 @@ final class AppModel: ObservableObject {
     private var boardImageFiles: [String: URL] = [:]
     func setBoardImageFiles(_ m: [String: URL]) {
         renderLock.lock(); boardImageFiles = m; renderLock.unlock()
+    }
+    /// 平板 `/exercise.png?id=` 能取的题：平板开着那组里有出处页的题（id → 渲染要的东西）。
+    /// 主线程写（`AppModel+Exercise.pushExerciseDeck`）、服务 queue 读，同样用 `renderLock` 护着。
+    private var exerciseImageIndex: [String: ExerciseImageSource] = [:]
+    func setExerciseImages(_ m: [String: ExerciseImageSource]) {
+        renderLock.lock(); exerciseImageIndex = m; renderLock.unlock()
+    }
+    func exerciseImageSource(_ id: String) -> ExerciseImageSource? {
+        renderLock.lock(); defer { renderLock.unlock() }
+        return exerciseImageIndex[id]
     }
 
     /// 服务 queue 上按 id 取参考文档的渲染实例。**必须在 `renderLock` 内调用。**
@@ -529,6 +551,8 @@ final class AppModel: ObservableObject {
             relativeInkWidth = (obj["on"] as? NSNumber)?.boolValue ?? false
             return
         }
+        // 习题（`AppModel+Exercise`）：只认工作区，不挂被跟随会话的文档；也别让草稿纸那道拦截碰到它们
+        if handleExerciseMessage(obj) { return }
         guard let s = padSession else { return }
         // 草稿纸打开时，笔只能落在草稿纸上（功能定义，用户要求）：`ink`/`erase`/`probe` 整条拦下改走
         // 画布坐标那套（见 `AppModel+Scratch`）。线格式没改——Mac 是「哪张纸开着」的唯一真源。
