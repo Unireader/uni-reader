@@ -50,6 +50,12 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 同 Markdown 的做法：开画板前先 `select(nil)` 把 PDF 那边清干净。会话里的状态在 `session.board`。
     /// `staged` 为真时只记了身份、还没装（冷启动恢复的后台标签）。
     @Published var boardID: UUID?
+    /// 本标签当前显示的**习题**（v20，`EXERCISE-PLAN.md §4.1`）：练哪一组题。与 `docID` / `noteRef` / `boardID`
+    /// 四者互斥，同画板的做法（开之前 `select(nil)`），会话里 `pdf == nil`、所有按 PDF 记账的地方看到的是空标签。
+    @Published private(set) var exerciseScope: ExerciseScope?
+    /// 习题标签是**单独开的**（侧栏右键「在新标签页中打开」）：侧栏点别的范围不会换掉它。
+    /// 只在 `exerciseScope != nil` 时有意义（每次 `openExercises` 都重设，不会带着旧值）。
+    @Published private(set) var exerciseSeparate = false
     /// 选中但所有路径失效 → 显示重定位提示。
     @Published var missingDoc: LibDocument?
     /// 同路径内容被替换（hash 与入库版本不符）待确认。
@@ -73,6 +79,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 标签栏上显示的标题：会话标题为空（空标签 / 路径失效）时退回库里的文档名，再退回「新标签页」。
     var tabTitle: String {
         if let ref = noteRef { return ref.title }
+        if let sc = exerciseScope { return workspace.exerciseScopeTitle(sc) }
         if let b = session.board { return b.displayName }
         if let bid = boardID { return workspace.boards.first { $0.id == bid }?.displayName ?? L("Untitled Board") }
         if !session.title.isEmpty { return session.title }
@@ -81,13 +88,21 @@ final class DocTabModel: ObservableObject, Identifiable {
         return L("New Tab")
     }
 
-    /// 什么都没装的空标签（PDF / Markdown / 画板都没有）：打开新内容时就地复用它。
-    var isEmptyTab: Bool { docID == nil && noteRef == nil && boardID == nil }
+    /// 什么都没装的空标签（PDF / Markdown / 画板 / 习题都没有）：打开新内容时就地复用它。
+    var isEmptyTab: Bool { docID == nil && noteRef == nil && boardID == nil && exerciseScope == nil }
+
+    /// **公用的**习题标签（用户 2026-10-11 定）：侧栏点哪组题都在它里面换，不另开标签。右键单独开的不算。
+    /// 公用的有两个、各管一支：错题本那一支（错题本和它按书 / 按章展开的几级）一个，其余一个（`ExerciseScope.isMistakes`）。
+    func isSharedExerciseTab(for scope: ExerciseScope) -> Bool {
+        guard let sc = exerciseScope, !exerciseSeparate else { return false }
+        return sc.isMistakes == scope.isMistakes
+    }
 
     /// 侧栏 / 标签栏用的选中键（PDF 与 md 笔记在同一张表里列，得能区分）。
     var rowID: String? {
         if let ref = noteRef { return "md:" + ref.key }
         if let bid = boardID { return BoardNote.rowPrefix + bid.uuidString }
+        if let sc = exerciseScope { return sc.rowID }
         return docID
     }
 
@@ -362,8 +377,9 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 切到另一篇文档（原 `ContentView.onChange(of: selectedDocID)` 那一整块）。
     func select(_ id: String?) {
-        guard id != docID || noteRef != nil || boardID != nil else { return }
+        guard id != docID || noteRef != nil || boardID != nil || exerciseScope != nil else { return }
         noteRef = nil       // PDF 与 md 笔记互斥
+        exerciseScope = nil // 与习题也互斥（习题标签没有要结清的东西：作答当场就落库了）
         leaveBoard()        // 与画板也互斥（先结清画板的落库再清状态）
         // 打开耗时账本从这一刻起算（用户点下去 = 这里）。上一本还没齐的按中断结账。
         session.openTrace?.finish("中断：换文档")
@@ -438,10 +454,32 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// （平板广播等仍只认 PDF）；Markdown 标签由 `TabsModel` 的混合标签组单独持久化。
     func openMarkdown(_ ref: NoteRef) {
         guard noteRef != ref else { return }
-        if docID != nil || boardID != nil { select(nil) }
+        if docID != nil || boardID != nil || exerciseScope != nil { select(nil) }
         noteRef = ref
         staged = false
         workspace.noteWasOpened(ref)
+    }
+
+    /// 开一组习题（v20，`EXERCISE-PLAN.md §4.1`）。规矩同 `openMarkdown`：先把 PDF / md / 画板收干净。
+    /// 冷启动恢复也走这里——习题标签没有要懒装的东西（题目由练习视图现读）。
+    /// `separate` = 单独开的（见 `exerciseSeparate`）。
+    func openExercises(_ scope: ExerciseScope, separate: Bool = false) {
+        if exerciseSeparate != separate { exerciseSeparate = separate }
+        guard exerciseScope != scope else { return }
+        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil { select(nil) }
+        exerciseScope = scope
+        staged = false
+        session.title = workspace.exerciseScopeTitle(scope)   // 窗口标题读它（同画板）
+        app.sessionDocumentChanged(session)
+    }
+
+    /// 这组题的来源文档被删了 → 标签退回空态（全部 / 错题本 / 收藏三个范围永远在，空了只是没题）。
+    /// 某本书的某一章也算（`documentId` 管 `.document` 和 `.chapter` 两种）。
+    func closeExercisesIfGone() {
+        guard let id = exerciseScope?.documentId, workspace.document(id: id) == nil else { return }
+        exerciseScope = nil
+        session.title = ""
+        app.sessionDocumentChanged(session)
     }
 
     /// 冷启动恢复 Markdown 标签：只恢复身份，不改「最近打开」时间。

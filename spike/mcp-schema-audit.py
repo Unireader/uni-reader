@@ -82,6 +82,9 @@ READ_CALLS = [
     ("search_text", {"document_id": doc, "query": "the"}), ("list_annotations", {"document_id": doc}),
     ("render_page", {"document_id": doc, "page": 1}),
     ("list_markdown_notes", {}),
+    # 习题（EXERCISE-PLAN.md §3）：单篇 + 整个工作区两种列法
+    ("list_exercises", {"document_id": doc}), ("list_exercises", {"all_documents": True, "limit": 5}),
+    ("render_page", {"document_id": doc, "page": 1, "include_marks": True}),
 ]
 # Markdown 读取的三种模式（工作区里至少要有一篇 Markdown 笔记）
 md = (rpc("tools/call", {"name": "list_markdown_notes", "arguments": {"limit": 1}})

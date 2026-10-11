@@ -284,15 +284,20 @@ extension MCPTools {
         MCPTool(
             name: "render_page",
             title: "Render a page image",
-            description: "Render one page as an image (JPEG by default) so a vision-capable model can look at figures, formulas or layout. Page content only, no ink or highlights.",
+            description: "Render one page as an image (JPEG by default) so a vision-capable model can look at figures, formulas or layout. By default it is the page content only; pass include_marks to also draw the user's handwriting and highlights on it (e.g. to see which options the user circled or highlighted).",
             inputSchema: MCPSchema.object(targetProperties.merging([
                 "page": MCPSchema.integer("Page to render, 1-based", min: 1),
                 "width": MCPSchema.integer("Pixel width; snapped to \(LANServer.pageWidthSteps.map(String.init).joined(separator: "/")), max 2160", min: 240, max: 2160),
                 "format": MCPSchema.enumeration(["jpeg", "png"], "image format", default: "jpeg"),
+                "include_marks": MCPSchema.boolean("Also draw the user's handwriting (visible layers) and highlights on the page", default: false),
             ]) { a, _ in a }, required: ["page"]),
             outputSchema: MCPSchema.object([
                 "page": MCPSchema.integer("1-based"), "width": MCPSchema.integer("pixels"), "height": MCPSchema.integer("pixels"),
                 "mime": MCPSchema.string("image/jpeg or image/png"), "bytes": MCPSchema.integer("encoded size"),
+                "marks": MCPSchema.object([
+                    "strokes": MCPSchema.integer("handwritten strokes drawn"),
+                    "highlights": MCPSchema.integer("highlights drawn"),
+                ], description: "only with include_marks"),
             ]),
             tier: .read
         ) { _, args in
@@ -305,14 +310,20 @@ extension MCPTools {
             let fmt = try args.string("format") ?? "jpeg"
             guard fmt == "jpeg" || fmt == "png" else { throw MCPInvalidParams("format must be jpeg or png") }
             let format: PageRenderer.Format = fmt == "png" ? .png : .jpeg(quality: PageRenderer.defaultJPEGQuality)
+            let withMarks = try args.bool("include_marks", default: false)
             let reader = MCPDocReader.shared
             let pageCount = try await reader.withDocument(path: target.path) { $0.pageCount }
             let idx = try PageNo.index(page, pageCount: pageCount)
+            let marks = withMarks ? await MainActor.run { MCPFacade.shared.pageMarks(target, index: idx) } : nil
             let img = try await reader.render(path: target.path, index: idx, pixelWidth: width, format: format,
-                                              align: target.align)
-            let r: MCPObject = ["page": page, "width": img.width, "height": img.height, "mime": img.mime, "bytes": img.data.count]
-            return MCPToolResult(text: "Page \(page) of “\(target.title)” · \(img.width)×\(img.height) \(fmt)",
-                                 structured: r, image: (img.data, img.mime))
+                                              align: target.align, marks: marks)
+            var r: MCPObject = ["page": page, "width": img.width, "height": img.height, "mime": img.mime, "bytes": img.data.count]
+            var text = "Page \(page) of “\(target.title)” · \(img.width)×\(img.height) \(fmt)"
+            if let marks {
+                r["marks"] = ["strokes": marks.strokes.count, "highlights": marks.highlights.count] as MCPObject
+                text += " · with \(marks.strokes.count) handwritten stroke(s) and \(marks.highlights.count) highlight(s)"
+            }
+            return MCPToolResult(text: text, structured: r, image: (img.data, img.mime))
         }
     }
 

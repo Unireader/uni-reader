@@ -879,3 +879,27 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
   换的地址不在了也退回优先的那个），网络一变自动刷新。
 - 验证：`spike/mcp-server-test.swift` 改为逐个地址验「可达 + Origin 放行」，本机 3 个地址（Wi-Fi / USB 有线 / Tailscale）36 项全过。
   只做 IPv4（平板扫码与配置片段都用 IPv4）。
+
+## 24. 2026-10-10 批 4：习题（`import_exercises` / `list_exercises` / `update_exercises` / `delete_exercises`）
+
+- 用户要：Agent 识别 PDF 上的习题（先做选择题），按固定标准导入工作区，方便练习、记错题、收藏。方案全文 **`EXERCISE-PLAN.md`**，
+  这里只记 MCP 这一层。「固定标准」= `import_exercises` 的输入结构（§3.1 那张表），Agent 操作说明 `skills/unireader-exercise-import/SKILL.md`。
+- 文件：`MCP/MCPTools+Exercises.swift`（四个工具 + 共用的 `exerciseOutputSchema`）+ `MCP/MCPFacade+Exercises.swift`；
+  `MCPFacade.keyController` / `manager(workspacePath:)` 为此从 `private` 放开到模块内（别的文件的扩展要用）。
+- 写路径：习题不进 `DocSession`，**只有一条**——`WorkspaceManager+Exercise`，写完它自己通知侧栏与开着的习题标签（§9.3 那两条路在这里不适用）。
+- `import_exercises`：一次 ≤50 道，**逐条校验**、不合格的带原因退回、其余照写（`results[i].status = created / updated / rejected`）；
+  页码越界也是逐条退回。同页 + 章节 + 题号相同（没题号按题干去空白）= 同一道 → 更新内容、收藏 / 错题 / 作答不动。
+  有 `answer` 就必须给 `answer_source`（`book` / `agent`），后者在练习时明说「未经核对」。
+- `update_exercises`：整批先全部校验，**一道不合格就一道都不改**；改了 `answer` 必须重给 `answer_source`（沿用旧值会把 Agent 解的冒充成书上的）。
+- `delete_exercises`：`.delete` 级，先归档进回收站（新条目种类 `Trash.Kind.exercises`）再删；有一个 id 不对就一道都不删。
+- id：完整或 ≥8 位前缀；没给 `workspace` 时在所有开着的工作区里找。
+- `list_exercises` 已加进 `spike/mcp-schema-audit.py` 的 `READ_CALLS`（单篇 + 整个工作区两种）。
+- `MCPServer.instructions` 与 Agent 面板的上下文串（`AgentChat.exercises`）各补一句「识别习题用哪几个工具」。
+- 没做：`get_state` 的标签 `content_type` 仍只有 pdf / markdown / empty，习题标签报成 empty。
+- **2026-10-11 第二批**（`EXERCISE-PLAN.md §2.3 / §2.4`）：
+  - `import_exercises` / `update_exercises` 加 `chapter`（目录路径数组；导入时不给 = App 按页码查 PDF 自带目录，
+    读目录走 `MCPDocReader.withDocument`）与 `user_answer`（用户在书上已经做过的作答，存成 `source = mark` 的一条作答、判错进错题本）。
+    答案变了 → 这道题的作答全部重判。
+  - `list_exercises` 加 `chapter` 筛选；每道题的输出多 `chapter` / `user_answer` / `user_answer_correct`（后两个没有就不出现）。
+  - `render_page` 加 `include_marks`（`MCP/MCPPageMarks.swift`）：可见图层的笔迹 + 高亮叠画在页图上，输出多一个 `marks {strokes, highlights}`。
+    `MCPFacade.sessionsShowing` 为此从 `private` 放开（要先 `flushPersist()`，Agent 才看得到刚写的那一笔）。

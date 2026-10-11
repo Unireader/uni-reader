@@ -124,6 +124,32 @@ extension Trash {
         }
     }
 
+    /// 把几道习题（连同作答记录）归档。**调用方随后才可以删。** 归档到的题数对不上 `ids` 同样算失败。
+    @discardableResult
+    static func archiveExercises(store: LibraryStore, ids: [String], documentTitle: String, title: String) -> URL? {
+        let workspace = store.workspaceFolder
+        guard let dir = makeDir(in: workspace, title: title) else { return nil }
+        do {
+            let a = try store.archiveExercises(ids: ids, to: dir.appendingPathComponent(snapshotName).path)
+            guard a.counts.exercise == ids.count else {
+                throw NSError(domain: "UniReader", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "archived \(a.counts.exercise) of \(ids.count) exercises"])
+            }
+            var m = Manifest()
+            m.kind = .exercises
+            m.title = title
+            m.documentTitle = documentTitle
+            m.counts = a.counts
+            try encode(m).write(to: dir.appendingPathComponent(manifestName))
+            wsLog("[TRASH] 习题已移入回收站：\(title)（\(ids.count) 道）")
+            return dir
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            wsLog("[TRASH] ⚠️ 习题归档失败，删除已放弃：\(title) — \(error)")
+            return nil
+        }
+    }
+
     /// 建一个空的条目目录（名字不撞）。
     private static func makeDir(in workspace: URL, title: String) -> URL? {
         let fm = FileManager.default
@@ -177,6 +203,9 @@ extension WorkspaceManager {
         add(5, "%d bookmark(s)")
         add(6, "%d image note(s)")
         add(4, "%d scratch stroke(s)")
+        if let n = exerciseSummary.byDocument[documentId], n > 0 {
+            parts.append(String(format: L("%d exercise(s)"), n))
+        }
         guard !parts.isEmpty else { return "" }
         let title = document(id: documentId)?.title ?? ""
         return title.isEmpty ? parts.joined(separator: "、")

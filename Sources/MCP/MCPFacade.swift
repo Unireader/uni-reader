@@ -14,7 +14,7 @@ final class MCPFacade {
     private var controllers: [ReaderWindowController] { AppDelegate.shared?.readerWindowControllers ?? [] }
 
     /// key 窗口；没有 key 的（App 不在前台）取最靠前那扇；一扇都没有 → nil。
-    private var keyController: ReaderWindowController? {
+    var keyController: ReaderWindowController? {
         let all = controllers
         if let k = all.first(where: { $0.window?.isKeyWindow == true }) { return k }
         let order = NSApp.orderedWindows
@@ -35,7 +35,7 @@ final class MCPFacade {
     }
 
     /// 目标工作区：给了路径就要它（必须已开着，方案 §7.4 红线）；没给 = key 窗口的那个。
-    private func manager(workspacePath: String?) throws -> WorkspaceManager {
+    func manager(workspacePath: String?) throws -> WorkspaceManager {
         if let p = workspacePath, !p.isEmpty {
             let url = URL(fileURLWithPath: (p as NSString).expandingTildeInPath)
             guard let m = WorkspaceRegistry.shared.openManager(at: url) else {
@@ -344,7 +344,7 @@ final class MCPFacade {
     }
 
     /// 哪些标签正显示这篇（跨所有窗口）。
-    private func sessionsShowing(_ documentId: String) -> [DocTabModel] {
+    func sessionsShowing(_ documentId: String) -> [DocTabModel] {
         controllers.flatMap { $0.tabs.tabs }.filter { $0.docID == documentId }
     }
 

@@ -161,6 +161,56 @@ struct LibBoardPage: Identifiable, Equatable {
     var updatedAt: Date
 }
 
+/// 一道习题（`exercise` 表，v20，`EXERCISE-PLAN.md §2`）。题目内容在 `payload`（JSON，解码走 App 层的
+/// `ExercisePayload`）；`starred` / `wrong` 是用户状态，重导题目不动它们。
+struct LibExercise: Identifiable, Equatable {
+    var id: String              // UUID
+    var documentId: String?
+    var page: Int?              // 0 起
+    var seq: Int
+    var kind: Int               // 0 单选 / 1 多选
+    var number: String
+    var section: String
+    var payload: Data
+    var starred: Bool
+    var wrong: Bool
+    var source: String
+    var createdAt: Date
+    var updatedAt: Date
+    /// 所属章节在目录里的路径（顶层 → 最深一级）；空 = 没设。库里存 JSON 字符串数组（`EXERCISE-PLAN.md §2.3`）。
+    var chapter: [String] = []
+}
+
+/// 一次作答（`exercise_attempt` 表，v20）。`answer` = 选中的选项键按字母序拼起来；`correct` nil = 题目没答案、没法判。
+struct LibExerciseAttempt: Identifiable, Equatable {
+    var id: String              // UUID
+    var exerciseId: String
+    var answer: String
+    var correct: Bool?
+    var elapsedMs: Int
+    var createdAt: Date
+    /// '' = 在 App 里练的；`markSource` = 从用户在文档上的作答认出来的（每道题至多一条）。
+    var source: String = ""
+
+    static let markSource = "mark"
+}
+
+/// 一道题的作答统计（列表 / 练习界面显示用，一条 GROUP BY 算出来）。
+struct ExerciseAttemptStats: Equatable {
+    var attempts = 0
+    var correct = 0
+    var wrong = 0
+    /// 最近一次的结果（nil = 没做过或最近一次没法判）。
+    var lastCorrect: Bool?
+    /// 书上的作答（从高亮 / 手写认出来的那一条，`source = mark`）：选了什么、对不对（nil = 没法判）。
+    var markedAnswer: String?
+    var markedCorrect: Bool?
+    /// 在 App 里练的最近一次（不含书上的作答）：选了什么、什么时候。练习页翻到做过的题时显示它（「上次作答」）。
+    /// 不拿书上那条算「最近」：它的时间是导入那一刻，重导一次就会盖过真正后做的练习。
+    var lastAnswer: String?
+    var lastAt: Date?
+}
+
 /// 一张图片本体（`image` 表，v13）。**主键就是内容 SHA-256**：同一张图导两次只有一行一文件；
 /// 两端各自导入同一张图在离线镜像合并时也天然合一。文件在 `<工作区>/Images/<sha256>.<ext>`。
 /// 引用 = `note` 表 kind=6 的 payload 里 `image` 键指向这里，**不存计数列**（数出来的永远对，

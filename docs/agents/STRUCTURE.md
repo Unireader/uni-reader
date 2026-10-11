@@ -39,6 +39,17 @@
   停手 0.8 秒 / 视图离开窗口 / App 退出。存正文**刻意不调 `refreshNotes()`**（打字时每 0.8 秒重扫一遍目录
   + 侧栏整棵树重建，代价完全不对等）。侧栏在 `SidebarNode` 的 `md` / `noteFolder` / `noteSection` 三个 case，
   选中键 `rowID`（`"md:"+NoteRef.key`，与 PDF 的 `docID` 区分开）
+- 习题（`EXERCISE-PLAN.md`，schema v20）：纯逻辑 `App/Exercise`（payload 编解码 / 导入校验与规整 / 去重键 / 判题 /
+  标签范围 `ExerciseScope`，只依赖 Foundation）+ 执行层 `App/WorkspaceManager+Exercise`（**唯一**写路径：MCP 与练习界面都走它，
+  写完 `exerciseRevision` 加一通知开着的习题标签；习题不进 `DocSession`，所以没有「文档开没开」两条路）。
+  标签：`DocTabModel.exerciseScope`（第四种，与 `docID` / `noteRef` / `boardID` 互斥，选中键 `"ex:"+scope.key`）；
+  窗格 `ReaderPaneController.exView` 托管 `Window/Exercise/ExerciseTabView`（练习 `ExercisePracticeView` / 列表
+  `ExerciseListView`，练到哪了在 `ExerciseDeck.shared` 里，切标签拆掉重建不丢）；「原题」现渲 `ExerciseOriginal`（自己一份
+  `PDFDocument` + 串行队列，传 `pageAlign`）。MCP `MCPTools+Exercises` / `MCPFacade+Exercises`（批 4）。
+  🔴 错题本规则（用户定）：答错进（库里与作答同一个事务），**只能手动移出**，答对不动它；答案变了重判作答，判错照样进。
+  章节 `exercise.chapter`（目录路径，`ExerciseChapter.path` 按页查 PDF 自带目录、不用书签；侧栏章节树 `ExerciseChapterTree`
+  按最早页码排）、书上的作答（`exercise_attempt.source = mark`，每题至多一条）、标签顶上的筛选 `ExerciseFilter`。
+  `render_page include_marks` 在 `MCP/MCPPageMarks`。测试 `spike/exercise-test.swift`（149 项）
 - OCR 文本层：消费方（选择/复制/⌘A/OCR 搜索/分组/调试上色）一律走 `DocSession.ocrVisibleRuns(page:)`——它已滤掉扫描件的平铺水印块（`OCRWatermark`，几何 + 跨页重复判定，不认具体文字）；`ocrRuns` 是真源，只给落库与建指纹用，**别直接消费**（`ocrGroups` 的下标是按可见行算的，混用即错位）。
 - 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：纯逻辑 `App/ScanAlign`（变换 / 参数表 / 测量 / 定中心，spike `scan-align-test.swift`；真 PDF 出对比图用 `scan-align-real.swift`）+ `App/ScanAlignRunner`（多份 `PDFDocument` 并行测全书）。🔴 **「页面」在开着对齐时就是对齐后的那张**：`PageBitmap.displaySize/render/renderTile` 的 `align` 参数**刻意不给默认值**，新增出图口必须传 `session.pageAlign(i)`（漏一处就是那一处的页图和笔迹对不上）；页图缓存键 / 阅读区 `.id` / 平板 `layout.v` 一律用 `DocSession.displayKey`，别用 `contentHash`；与 PDF 原生页坐标互转（选字 / 搜索 / 目录）走 `PageGeometry` 带 `align` 的重载。开关切换 = 清这份内容的 OCR + 整篇重载（`DocTabModel.applyScanAlign`）
 - 扫描页增强（2026-09-23 加，**只在出图时处理、不改 PDF**）：`App/ScanEnhance`（参数 + Core Image 滤镜链：降噪 → 估纸色 → 原图÷纸色 → 软色阶 → 轻锐化 / 去色，可选 2 倍超采样）+ `PageBitmap.renderEnhanced/renderTileEnhanced`（贴片外扩 `marginPt` 再裁回，防接缝）。开关**按内容哈希记在本机 UserDefaults**（「视图 › 增强扫描页」，不进库、不同步），参数在设置 ›「阅读」。缓存键在页号后插 `#e<参数签名>`（`PageRenderEngine.baseKey/tileKey` 的 `enhance`），**不动 `displayKey`**。🔴 本版**只作用于阅读区**（`ReaderView`）；参考窗 / 缩略图 / 草稿纸 / 平板 / MCP / OCR 仍是原图。参数一变屏幕上的旧图记进 `staleImages/staleTiles`，只替换不清空。🔴 **软色阶不能改回硬切**（`(x-lo)/(hi-lo)` 那种）：用户实测嫌颗粒感，根因就是字边灰度被切成非黑即白。样张 + 贴片一致性检查 `spike/scan-enhance-look.swift`；取舍与 AI 调研见 `SCAN-ENHANCE-PLAN.md`

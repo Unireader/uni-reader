@@ -155,11 +155,20 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         "\(source.id):\(folder.path)"
     }
 
+    /// 要记住展开状态的节点用什么键：笔记子目录 = 源 + 路径；习题的书 / 章节（v20）= 选中键（与笔记目录同存一张表，
+    /// 前缀不同不会撞）。其余节点不记。
+    private static func expansionKey(_ node: SidebarNode) -> String? {
+        switch node.kind {
+        case .noteFolder(let src, let folder): return folderKey(src, folder)
+        case .exercise(let scope, _, _) where !node.children.isEmpty: return scope.rowID
+        default: return nil
+        }
+    }
+
     /// 按记忆把该展开的目录展开（递归；父目录没展开时子目录也没法展开，所以自顶向下走）。
     private func restoreExpansion(_ nodes: [SidebarNode]) {
         for node in nodes {
-            if case .noteFolder(let src, let folder) = node.kind,
-               expandedFolders.contains(Self.folderKey(src, folder)) {
+            if let k = Self.expansionKey(node), expandedFolders.contains(k) {
                 outline.expandItem(node)
             }
             restoreExpansion(node.children)
@@ -169,16 +178,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func outlineViewItemDidExpand(_ notification: Notification) {
         guard !restoringExpansion,
               let node = notification.userInfo?["NSObject"] as? SidebarNode,
-              case .noteFolder(let src, let folder) = node.kind else { return }
-        expandedFolders.insert(Self.folderKey(src, folder))
+              let k = Self.expansionKey(node) else { return }
+        expandedFolders.insert(k)
         saveExpanded()
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
         guard !restoringExpansion,
               let node = notification.userInfo?["NSObject"] as? SidebarNode,
-              case .noteFolder(let src, let folder) = node.kind else { return }
-        expandedFolders.remove(Self.folderKey(src, folder))
+              let k = Self.expansionKey(node) else { return }
+        expandedFolders.remove(k)
         saveExpanded()
     }
 
@@ -216,6 +225,28 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let boardSec = SidebarNode(kind: .boardSection)
         boardSec.children = workspace.boards.map { SidebarNode(kind: .board($0)) }
         r.append(boardSec)
+        // 习题（v20）：**有题才出现**（题是 Agent 导进来的，侧栏上没有新建入口，空段没意义）。
+        // 全部 / 错题本 / 收藏三行恒在，后面每篇有题的文档一行，顺序同书库。
+        let ex = workspace.exerciseSummary
+        if ex.total > 0 {
+            let sec = SidebarNode(kind: .exerciseSection)
+            var rows: [SidebarNode] = [ExerciseScope.all, .wrong, .starred].map {
+                SidebarNode(kind: .exercise($0, title: workspace.exerciseScopeTitle($0), count: ex.count($0)))
+            }
+            // 错题本也按书 → 章展开（用户 2026-10-11 要的），数的是错题；点哪一级都在那一个错题标签里换
+            rows[1].children = docs.filter { ex.count(.wrongDocument($0.id)) > 0 }.map { d in
+                let node = SidebarNode(kind: .exercise(.wrongDocument(d.id), title: d.title, count: ex.count(.wrongDocument(d.id))))
+                node.children = Self.chapterNodes(docId: d.id, stats: ex.mistakeChapters(d.id), mistakes: true)
+                return node
+            }
+            rows += docs.filter { (ex.byDocument[$0.id] ?? 0) > 0 }.map { d in
+                let node = SidebarNode(kind: .exercise(.document(d.id), title: d.title, count: ex.byDocument[d.id] ?? 0))
+                node.children = Self.chapterNodes(docId: d.id, stats: ex.chapters[d.id] ?? [:])
+                return node
+            }
+            sec.children = rows
+            r.append(sec)
+        }
         let keep = selectedRowIDs()
         roots = r
         syncingSelection = true
@@ -226,6 +257,25 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         restoringExpansion = false
         select(ids: keep.isEmpty ? Set([tabs.active.rowID].compactMap { $0 }) : keep)
         syncingSelection = false
+    }
+
+    /// 一本书底下的章节树（v20，用户 2026-10-11 定「按目录整棵树」）：点哪一级就练那一级下面的全部题。
+    /// 一道题都没设章节 → 不展开（书那一行就够了）；有设有没设 → 末尾多一行「未分章节」。
+    /// `mistakes` = 错题本底下那棵（`stats` 已只剩有错题的章节、数是错题数，见 `ExerciseSummary.mistakeChapters`）。
+    private static func chapterNodes(docId: String, stats: [[String]: ExerciseChapterStat],
+                                     mistakes: Bool = false) -> [SidebarNode] {
+        guard stats.keys.contains(where: { !$0.isEmpty }) else { return [] }
+        func scope(_ path: [String]) -> ExerciseScope { mistakes ? .wrongChapter(docId, path) : .chapter(docId, path) }
+        func make(_ t: ExerciseChapterTree) -> SidebarNode {
+            let n = SidebarNode(kind: .exercise(scope(t.path), title: t.label, count: t.count))
+            n.children = t.children.map(make)
+            return n
+        }
+        var out = ExerciseChapterTree.build(stats).map(make)
+        if let none = stats[[]], none.count > 0 {
+            out.append(SidebarNode(kind: .exercise(scope([]), title: L("No Chapter"), count: none.count)))
+        }
+        return out
     }
 
     /// 一层目录底下的节点：子目录在前、笔记在后（顺序由 `NoteFolder` 排好）。
@@ -294,7 +344,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 段头不要那个展开小三角（它们恒展开，同书库那边的老规矩）；**笔记子目录要有**，
     /// 否则用户没法收起层级很深的目录。
     func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
-        if case .noteFolder = (item as? SidebarNode)?.kind { return true }
+        guard let node = item as? SidebarNode else { return false }
+        if case .noteFolder = node.kind { return true }
+        if case .exercise = node.kind { return !node.children.isEmpty }   // 有章节的书 / 有小节的章
         return false
     }
 
@@ -333,6 +385,31 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             return iconCell(symbol: "folder", title: folder.name, subtitle: nil, dim: false, tip: folder.path)
         case .board(let b):
             return iconCell(symbol: "scribble.variable", title: b.displayName, subtitle: nil, dim: false, tip: nil)
+        case .exercise(let scope, let title, let count):
+            let symbol: String
+            switch scope {
+            case .all: symbol = "checklist"
+            case .wrong: symbol = "xmark.circle"
+            case .starred: symbol = "star"
+            case .document, .wrongDocument: symbol = "doc.questionmark"
+            case .chapter(_, let path), .wrongChapter(_, let path):
+                symbol = path.isEmpty ? "questionmark.folder" : "list.bullet.indent"
+            }
+            return countCell(symbol: symbol, title: title, count: count)
+        case .exerciseSection:
+            let cell = NSTableCellView()
+            let t = NSTextField(labelWithString: L("Exercises"))
+            t.font = .preferredFont(forTextStyle: .subheadline)
+            t.textColor = .secondaryLabelColor
+            t.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(t)
+            cell.textField = t
+            NSLayoutConstraint.activate([
+                t.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                t.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+                t.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
         case .boardSection:
             let cell = NSTableCellView()
             let t = NSTextField(labelWithString: L("Boards"))
@@ -428,6 +505,35 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return cell
     }
 
+    /// 习题那几行：图标 + 名字 + 行尾的题数（同「邮件」侧栏的未读数，颜色用 `labelColor`——侧栏是玻璃底，红线 ④）。
+    private func countCell(symbol: String, title: String, count: Int) -> NSView {
+        let cell = NSTableCellView()
+        let img = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
+        let t = NSTextField(labelWithString: title)
+        t.lineBreakMode = .byTruncatingTail
+        t.textColor = .labelColor
+        let n = NSTextField(labelWithString: count > 0 ? String(count) : "")
+        n.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        n.textColor = .labelColor
+        n.setContentCompressionResistancePriority(.required, for: .horizontal)
+        n.setContentHuggingPriority(.required, for: .horizontal)
+        t.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        cell.imageView = img
+        cell.textField = t
+        for v in [img, t, n] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(v) }
+        NSLayoutConstraint.activate([
+            img.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            img.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            img.widthAnchor.constraint(equalToConstant: 16),
+            t.leadingAnchor.constraint(equalTo: img.trailingAnchor, constant: 6),
+            t.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            n.leadingAnchor.constraint(greaterThanOrEqualTo: t.trailingAnchor, constant: 6),
+            n.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            n.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
     // MARK: 选中 / 点击
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -436,7 +542,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let ids = selectedRowIDs()
         guard ids.count == 1, let id = ids.first, id != tabs.active.rowID else { return }
         syncingSelection = true
-        if id.hasPrefix("md:"), let ref = NoteRef(key: String(id.dropFirst(3))) {
+        if let scope = ExerciseScope(rowID: id) {
+            tabs.openExercises(scope)
+        } else if id.hasPrefix("md:"), let ref = NoteRef(key: String(id.dropFirst(3))) {
             tabs.openMarkdown(ref)
         } else if id.hasPrefix(BoardNote.rowPrefix) {
             if let bid = UUID(uuidString: String(id.dropFirst(BoardNote.rowPrefix.count))) { tabs.openBoard(bid) }
@@ -493,6 +601,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(ClosureMenuItem(L("New Board…")) { NotificationCenter.default.post(name: .newBoardRequested, object: nil) })
         case .board(let b):
             buildBoardMenu(menu, board: b)
+        case .exercise(let scope, _, _) where scope != .wrong:
+            // 习题默认都在公用标签里换（`TabsModel.openExercises`）；想并排留着就单独开。
+            // 错题本那一行本身没有这一项（它就是错题标签的入口）；它底下按书 / 按章的几级有
+            menu.addItem(item(L("Open in New Tab"), "plus.square.on.square") { [weak self] in
+                self?.tabs.openExercises(scope, newTab: true)
+            })
         case .noteFolder(let source, let folder):
             menu.addItem(ClosureMenuItem(L("New Note Here")) { [weak self] in
                 guard let self, let ref = self.workspace.createNote(title: L("Untitled Note"),
@@ -983,6 +1097,9 @@ final class SidebarNode: NSObject {
         /// 画板笔记（v16，`BOARD-NOTE-PLAN.md`）与它们的段头。
         case board(BoardNote)
         case boardSection
+        /// 习题（v20，`EXERCISE-PLAN.md §4.1`）：一个范围一行（全部 / 错题本 / 收藏 / 每篇有题的文档），行尾是题数。
+        case exercise(ExerciseScope, title: String, count: Int)
+        case exerciseSection
     }
     let kind: Kind
     var children: [SidebarNode] = []
@@ -991,14 +1108,15 @@ final class SidebarNode: NSObject {
 
     var isSection: Bool {
         switch kind {
-        case .section, .noteSection, .boardSection: return true
+        case .section, .noteSection, .boardSection, .exerciseSection: return true
         default: return false
         }
     }
     /// 展开后默认摊开的层（段头与子目录）。
     var isExpandable: Bool {
         switch kind {
-        case .section, .noteSection, .noteFolder, .boardSection: return true
+        case .section, .noteSection, .noteFolder, .boardSection, .exerciseSection: return true
+        case .exercise: return !children.isEmpty
         default: return false
         }
     }
@@ -1009,6 +1127,7 @@ final class SidebarNode: NSObject {
     var rowID: String? {
         if let n = note { return "md:" + n.ref.key }
         if let b = board { return BoardNote.rowPrefix + b.id.uuidString }
+        if case .exercise(let scope, _, _) = kind { return scope.rowID }
         return docID
     }
 }

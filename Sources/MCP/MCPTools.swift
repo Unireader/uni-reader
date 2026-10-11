@@ -8,6 +8,16 @@ enum MCPTools {
         registerBatch1(into: server)
         registerBatch2(into: server)
         registerBatch3(into: server)
+        registerBatch4(into: server)
+    }
+
+    /// 批 4：习题（`EXERCISE-PLAN.md §3`，2026-10-10）。列表是 `.read`，导入 / 改是 `.write`，删是 `.delete`（先进回收站）。
+    static func registerBatch4(into server: MCPServer) {
+        let c = server.catalog
+        c.register(importExercisesTool())
+        c.register(listExercisesTool())
+        c.register(updateExercisesTool())
+        c.register(deleteExercisesTool())
     }
 
     /// 批 1：读取类 + 打开工作区/文档两个导航动作。

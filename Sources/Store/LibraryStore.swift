@@ -6,7 +6,7 @@ import CoreGraphics
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 19
+    static let schemaVersion = 20
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -92,6 +92,11 @@ final class LibraryStore {
     /// 把一篇文档里指定的几条批注（`note` 行，按 id）归档。
     func archiveNotes(documentId: String, ids: [String], to path: String) throws -> TrashStore.Archived {
         try TrashStore.archiveNotes(db, documentId: documentId, ids: ids, to: path)
+    }
+
+    /// 把几道习题（连同作答记录）归档。
+    func archiveExercises(ids: [String], to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveExercises(db, ids: ids, to: path)
     }
 
     /// 恢复前探路：这份快照的 PDF 已经被重新导入过吗（返回要并入的那篇文档 id）。
@@ -276,6 +281,40 @@ final class LibraryStore {
           updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key);
+        -- v20：习题（`EXERCISE-PLAN.md §2`）。一行一道题；题目内容在 payload（JSON），可筛选 / 排序的放列。
+        -- page 0 起（可空）；seq = 同页内的先后；kind 0 单选 / 1 多选；starred 收藏；wrong 在错题本里。
+        -- chapter = 所属章节在目录里的路径，JSON 字符串数组（从顶层到最深一级，`["第二章 导数","2.3 求导法则"]`），
+        -- 空串 = 没设章节（§2.3）。
+        -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
+        CREATE TABLE IF NOT EXISTS exercise (
+          id TEXT PRIMARY KEY,
+          document_id TEXT REFERENCES document(id) ON DELETE CASCADE,
+          page INTEGER,
+          seq INTEGER NOT NULL DEFAULT 0,
+          kind INTEGER NOT NULL DEFAULT 0,
+          number TEXT NOT NULL DEFAULT '',
+          section TEXT NOT NULL DEFAULT '',
+          payload BLOB NOT NULL,
+          starred INTEGER NOT NULL DEFAULT 0,
+          wrong INTEGER NOT NULL DEFAULT 0,
+          source TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          chapter TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_exercise_doc ON exercise(document_id, page, seq);
+        -- 每次作答一行。answer = 选中的选项键按字母序拼起来（"B" / "AC"）；correct 1 对 / 0 错 / NULL 没答案没法判。
+        -- source '' = 在 App 里练的；'mark' = 从用户在文档上的作答（高亮 / 手写）认出来的，每道题至多一条（§2.4）。
+        CREATE TABLE IF NOT EXISTS exercise_attempt (
+          id TEXT PRIMARY KEY,
+          exercise_id TEXT NOT NULL REFERENCES exercise(id) ON DELETE CASCADE,
+          answer TEXT NOT NULL,
+          correct INTEGER,
+          elapsed_ms INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_id, created_at);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -320,6 +359,11 @@ final class LibraryStore {
         try addColumnIfMissing("board_note", "viewport_x", "REAL NOT NULL DEFAULT 0")
         try addColumnIfMissing("board_note", "viewport_y", "REAL NOT NULL DEFAULT 0")
         try addColumnIfMissing("board_note", "viewport_zoom", "REAL NOT NULL DEFAULT 0")
+        // v19 → v20 新增 exercise / exercise_attempt 两张表（上面 CREATE TABLE IF NOT EXISTS 已覆盖）。
+        // 下面两列是 v20 发布前补的（2026-10-11，章节 + 书上作答）：开发包里已经建过这两张表的库靠它们补上。
+        // 🔴 顺序与安卓 `Schema.ADD_COLUMNS` 一致。
+        try addColumnIfMissing("exercise", "chapter", "TEXT NOT NULL DEFAULT ''")
+        try addColumnIfMissing("exercise_attempt", "source", "TEXT NOT NULL DEFAULT ''")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -623,6 +667,7 @@ final class LibraryStore {
             try db.run("UPDATE note SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("UPDATE ink_layer SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("UPDATE scratch_pad SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
+            try db.run("UPDATE exercise SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("DELETE FROM document WHERE id=?", [.text(sourceId)])
         }
         return true
@@ -1051,6 +1096,199 @@ final class LibraryStore {
         return r.first ?? (0, 0, 0)
     }
 
+    // MARK: - 习题（exercise / exercise_attempt，v20；`EXERCISE-PLAN.md §2`）
+
+    /// 习题，按「文档 → 页 → 页内先后」排（练习顺序）。`documentId` nil = 整个工作区。
+    func exercises(documentId: String? = nil) throws -> [LibExercise] {
+        if let documentId {
+            return try db.query("SELECT * FROM exercise WHERE document_id=? ORDER BY page, seq, created_at",
+                                [.text(documentId)]).map(Self.exercise)
+        }
+        return try db.query("SELECT * FROM exercise ORDER BY document_id, page, seq, created_at").map(Self.exercise)
+    }
+    func exercise(id: String) throws -> LibExercise? {
+        try db.query("SELECT * FROM exercise WHERE id=?", [.text(id)]).map(Self.exercise).first
+    }
+    /// 同一篇文档同一页的习题（导入去重时拿来比，`EXERCISE-PLAN.md §2.1`）。`page` nil = 不知道页的那些。
+    func exercises(documentId: String, page: Int?) throws -> [LibExercise] {
+        if let page {
+            return try db.query("SELECT * FROM exercise WHERE document_id=? AND page=?",
+                                [.text(documentId), .int(Int64(page))]).map(Self.exercise)
+        }
+        return try db.query("SELECT * FROM exercise WHERE document_id=? AND page IS NULL",
+                            [.text(documentId)]).map(Self.exercise)
+    }
+    /// 写一道题的**内容**。已存在（同 id）时只覆盖内容列，`starred` / `wrong` / `created_at` 一个不动——
+    /// 那是用户状态，Agent 重导题目不能把收藏和错题本冲掉。
+    /// 章节也在这里写（它是题的归属，不是用户状态；要不要沿用旧值由上层定，见 `WorkspaceManager.importExercises`）。
+    func upsertExercise(_ e: LibExercise) throws {
+        try db.run("""
+        INSERT INTO exercise(id,document_id,page,seq,kind,number,section,payload,starred,wrong,source,created_at,updated_at,chapter)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET document_id=excluded.document_id, page=excluded.page, seq=excluded.seq,
+          kind=excluded.kind, number=excluded.number, section=excluded.section, payload=excluded.payload,
+          source=excluded.source, updated_at=excluded.updated_at, chapter=excluded.chapter
+        """, [.text(e.id), e.documentId.map { .text($0) } ?? .null, e.page.map { .int(Int64($0)) } ?? .null,
+              .int(Int64(e.seq)), .int(Int64(e.kind)), .text(e.number), .text(e.section), .blob(e.payload),
+              .int(e.starred ? 1 : 0), .int(e.wrong ? 1 : 0), .text(e.source),
+              .text(ISO.string(e.createdAt)), .text(ISO.string(e.updatedAt)), .text(Self.chapterText(e.chapter))])
+    }
+
+    /// 章节路径 ↔ 库里那一列（JSON 字符串数组；空路径存空串，便于 `chapter=''` 直接筛）。
+    static func chapterText(_ path: [String]) -> String {
+        guard !path.isEmpty, let d = try? JSONSerialization.data(withJSONObject: path, options: [.withoutEscapingSlashes]),
+              let s = String(data: d, encoding: .utf8) else { return "" }
+        return s
+    }
+    static func chapterPath(_ text: String) -> [String] {
+        guard !text.isEmpty, let d = text.data(using: .utf8),
+              let a = try? JSONSerialization.jsonObject(with: d) as? [String] else { return [] }
+        return a
+    }
+
+    /// 改几道题的章节（列表右键「设置章节…」）。
+    func setExerciseChapter(ids: [String], _ path: [String], at: Date = .now) throws {
+        try db.transaction {
+            for id in ids {
+                try db.run("UPDATE exercise SET chapter=?, updated_at=? WHERE id=?",
+                           [.text(Self.chapterText(path)), .text(ISO.string(at)), .text(id)])
+            }
+        }
+    }
+
+    /// 每篇文档每个章节几道题、最早在第几页、几道在错题本里（侧栏的章节树用：数 + 排序；一条 GROUP BY，不读 payload）。
+    /// 没页码的题不参与「最早」（全没页码 → `Int.max`）。
+    func exerciseChapterCounts() throws -> [(documentId: String, chapter: [String], count: Int, firstPage: Int, wrong: Int)] {
+        try db.query("""
+        SELECT document_id, chapter, COUNT(*), MIN(page), SUM(wrong) FROM exercise WHERE document_id IS NOT NULL
+        GROUP BY document_id, chapter
+        """, row: { r in (r.text(0), Self.chapterPath(r.text(1)), Int(r.int64(2)), r.isNull(3) ? Int.max : Int(r.int64(3)),
+                          Int(r.int64(4))) })
+    }
+    /// 一批题一个事务（MCP `import_exercises` 一次几十道，中途出错整批不落）。
+    func upsertExercises(_ rows: [LibExercise]) throws {
+        try db.transaction { for e in rows { try upsertExercise(e) } }
+    }
+    /// 侧栏要的几个数：总数 / 错题本 / 收藏 / 每篇文档几道（一条 GROUP BY）。
+    func exerciseCounts() throws -> (total: Int, wrong: Int, starred: Int, byDocument: [String: Int]) {
+        var total = 0, wrong = 0, starred = 0
+        var byDoc: [String: Int] = [:]
+        for (doc, n, w, s) in try db.query("""
+        SELECT COALESCE(document_id, ''), COUNT(*), SUM(wrong), SUM(starred) FROM exercise GROUP BY document_id
+        """, row: { r in (r.text(0), Int(r.int64(1)), Int(r.int64(2)), Int(r.int64(3))) }) {
+            total += n; wrong += w; starred += s
+            if !doc.isEmpty { byDoc[doc] = n }
+        }
+        return (total, wrong, starred, byDoc)
+    }
+    func setExerciseStarred(id: String, _ on: Bool, at: Date = .now) throws {
+        try db.run("UPDATE exercise SET starred=?, updated_at=? WHERE id=?",
+                   [.int(on ? 1 : 0), .text(ISO.string(at)), .text(id)])
+    }
+    func setExerciseWrong(id: String, _ on: Bool, at: Date = .now) throws {
+        try db.run("UPDATE exercise SET wrong=?, updated_at=? WHERE id=?",
+                   [.int(on ? 1 : 0), .text(ISO.string(at)), .text(id)])
+    }
+    /// 删几道题（作答记录随外键级联删掉）。归档进回收站由上层先做。
+    func deleteExercises(ids: [String]) throws {
+        guard !ids.isEmpty else { return }
+        let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        try db.run("DELETE FROM exercise WHERE id IN (\(marks))", ids.map { .text($0) })
+    }
+
+    /// 记一次作答；答错（`correct == false`）时同一个事务里把题放进错题本（`EXERCISE-PLAN.md` 拍板 ③：
+    /// 答错进、只能手动出，所以答对**不**动 `wrong`）。
+    func recordExerciseAttempt(_ a: LibExerciseAttempt) throws {
+        try db.transaction { try insertAttempt(a) }
+    }
+
+    /// 一批书上的作答（`source = mark`）一个事务。每道题至多一条：先删这道题旧的那条再写，重导不会越记越多。
+    func recordMarkedAttempts(_ list: [LibExerciseAttempt]) throws {
+        try db.transaction { for a in list { try insertAttempt(a) } }
+    }
+
+    /// 撤掉一道题书上的作答（`update_exercises` 给 `user_answer: ""`）。错题本不跟着动（只能手动出）。
+    func deleteMarkedAttempt(exerciseId: String) throws {
+        try db.run("DELETE FROM exercise_attempt WHERE exercise_id=? AND source=?",
+                   [.text(exerciseId), .text(LibExerciseAttempt.markSource)])
+    }
+
+    /// 不开事务（调用方包）。书上的作答先删旧的；答错同时进错题本。
+    private func insertAttempt(_ a: LibExerciseAttempt) throws {
+        if a.source == LibExerciseAttempt.markSource { try deleteMarkedAttempt(exerciseId: a.exerciseId) }
+        try db.run("""
+        INSERT INTO exercise_attempt(id,exercise_id,answer,correct,elapsed_ms,created_at,source) VALUES(?,?,?,?,?,?,?)
+        """, [.text(a.id), .text(a.exerciseId), .text(a.answer),
+              a.correct.map { .int($0 ? 1 : 0) } ?? .null, .int(Int64(a.elapsedMs)), .text(ISO.string(a.createdAt)),
+              .text(a.source)])
+        if a.correct == false {
+            try db.run("UPDATE exercise SET wrong=1, updated_at=? WHERE id=? AND wrong=0",
+                       [.text(ISO.string(.now)), .text(a.exerciseId)])
+        }
+    }
+
+    /// 答案补上 / 改了之后把这道题的作答**全部重判**（`judge` 拿作答串给出对错，nil = 仍没法判）。
+    /// 重判出错的那道题进错题本；重判成对的**不**移出（拍板 ③：只能手动出）。返回改了几条。
+    @discardableResult
+    func rejudgeExerciseAttempts(exerciseId: String, judge: (String) -> Bool?) throws -> Int {
+        var changed = 0
+        try db.transaction {
+            var anyWrong = false
+            for a in try exerciseAttempts(exerciseId: exerciseId) {
+                let c = judge(a.answer)
+                if c == false { anyWrong = true }
+                guard c != a.correct else { continue }
+                try db.run("UPDATE exercise_attempt SET correct=? WHERE id=?",
+                           [c.map { .int($0 ? 1 : 0) } ?? .null, .text(a.id)])
+                changed += 1
+            }
+            if anyWrong {
+                try db.run("UPDATE exercise SET wrong=1, updated_at=? WHERE id=? AND wrong=0",
+                           [.text(ISO.string(.now)), .text(exerciseId)])
+            }
+        }
+        return changed
+    }
+
+    func exerciseAttempts(exerciseId: String) throws -> [LibExerciseAttempt] {
+        try db.query("SELECT * FROM exercise_attempt WHERE exercise_id=? ORDER BY created_at",
+                     [.text(exerciseId)]).map(Self.exerciseAttempt)
+    }
+    /// 每道做过的题的作答统计（一条 GROUP BY + 一条取最近一次 + 一条取书上的作答）。没做过的题不在结果里。
+    func exerciseAttemptStats() throws -> [String: ExerciseAttemptStats] {
+        var out: [String: ExerciseAttemptStats] = [:]
+        for (id, n, ok, bad) in try db.query("""
+        SELECT exercise_id, COUNT(*), SUM(correct=1), SUM(correct=0) FROM exercise_attempt GROUP BY exercise_id
+        """, row: { r in (r.text(0), Int(r.int64(1)), Int(r.int64(2)), Int(r.int64(3))) }) {
+            out[id] = ExerciseAttemptStats(attempts: n, correct: ok, wrong: bad)
+        }
+        for (id, ans, c) in try db.query("SELECT exercise_id, answer, correct FROM exercise_attempt WHERE source=?",
+                                         [.text(LibExerciseAttempt.markSource)],
+                                         row: { r -> (String, String, Int64?) in (r.text(0), r.text(1), r.isNull(2) ? nil : r.int64(2)) }) {
+            out[id]?.markedAnswer = ans
+            out[id]?.markedCorrect = c.map { $0 != 0 }
+        }
+        // 最近一次：同一道题按 created_at 取最大那行（ISO 毫秒串，字典序 = 时间序）
+        for (id, last) in try db.query("""
+        SELECT a.exercise_id, a.correct FROM exercise_attempt a
+        JOIN (SELECT exercise_id, MAX(created_at) AS t FROM exercise_attempt GROUP BY exercise_id) m
+          ON a.exercise_id = m.exercise_id AND a.created_at = m.t
+        """, row: { r -> (String, Int64?) in (r.text(0), r.isNull(1) ? nil : r.int64(1)) }) {
+            out[id]?.lastCorrect = last.map { $0 != 0 }
+        }
+        // App 里练的最近一次（书上那条除外）：练习页「上次作答」
+        let mark = SQLiteDB.Value.text(LibExerciseAttempt.markSource)
+        for (id, ans, at) in try db.query("""
+        SELECT a.exercise_id, a.answer, a.created_at FROM exercise_attempt a
+        JOIN (SELECT exercise_id, MAX(created_at) AS t FROM exercise_attempt WHERE source<>? GROUP BY exercise_id) m
+          ON a.exercise_id = m.exercise_id AND a.created_at = m.t AND a.source<>?
+        """, [mark, mark], row: { r in (r.text(0), r.text(1), r.text(2)) }) {
+            out[id]?.lastAnswer = ans
+            out[id]?.lastAt = ISO.date(at)
+        }
+        return out
+    }
+
     // MARK: - 页面几何缓存（page_geom）
 
     /// 某内容的每页高度（文档单位）；没缓存或页数对不上 → nil（上层按 PDF 现算并回填）。
@@ -1266,6 +1504,26 @@ final class LibraryStore {
                      template: r["template"] as? String ?? "blank",
                      createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                      updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
+    private static func exercise(_ r: [String: Any]) -> LibExercise {
+        LibExercise(id: r["id"] as? String ?? "", documentId: r["document_id"] as? String,
+                    page: (r["page"] as? Int64).map(Int.init),
+                    seq: Int(r["seq"] as? Int64 ?? 0), kind: Int(r["kind"] as? Int64 ?? 0),
+                    number: r["number"] as? String ?? "", section: r["section"] as? String ?? "",
+                    payload: r["payload"] as? Data ?? Data(),
+                    starred: (r["starred"] as? Int64 ?? 0) != 0, wrong: (r["wrong"] as? Int64 ?? 0) != 0,
+                    source: r["source"] as? String ?? "",
+                    createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                    updatedAt: ISO.date(r["updated_at"] as? String) ?? .now,
+                    chapter: chapterPath(r["chapter"] as? String ?? ""))
+    }
+    private static func exerciseAttempt(_ r: [String: Any]) -> LibExerciseAttempt {
+        LibExerciseAttempt(id: r["id"] as? String ?? "", exerciseId: r["exercise_id"] as? String ?? "",
+                           answer: r["answer"] as? String ?? "",
+                           correct: (r["correct"] as? Int64).map { $0 != 0 },
+                           elapsedMs: Int(r["elapsed_ms"] as? Int64 ?? 0),
+                           createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                           source: r["source"] as? String ?? "")
     }
     private static func image(_ r: [String: Any]) -> LibImage {
         LibImage(sha256: r["sha256"] as? String ?? "", ext: r["ext"] as? String ?? "png",

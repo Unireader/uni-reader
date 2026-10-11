@@ -153,7 +153,12 @@ final class MCPServer: ObservableObject {
     Most PDF tools default to the document in the key window when no target is given. \
     document_id is a stable UUID inside a workspace; file paths may change. \
     read_pages returns the OCR text UniReader has cached for a page, or the PDF's own text where there is none \
-    (empty with a hint when neither exists); copy quotes for add_highlight / add_note from it.
+    (empty with a hint when neither exists); copy quotes for add_highlight / add_note from it. \
+    Exercises (习题) are multiple-choice questions saved for the user to practice: when asked to recognize or \
+    import the exercises on some pages, look at them with render_page and read_pages, transcribe each question \
+    exactly, and save them with import_exercises; answers the user already marked on the page (a highlighted option \
+    from list_annotations, or handwriting seen with render_page include_marks) go in user_answer; fill in answers \
+    later from an answer key with list_exercises + update_exercises.
     """
 
     /// 能访问到的端点（面板展示）：回环模式只有 127.0.0.1；所有接口模式 = 本机每个 IP 各一个（`NetWatch`，

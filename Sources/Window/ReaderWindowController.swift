@@ -442,6 +442,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             .sink { [weak self] docs in
                 guard let self else { return }
                 self.tabs.pruneMissing(docs)
+                self.tabs.pruneMissingExerciseScopes()   // 某篇的习题标签：那篇没了就跟着退
                 self.tabs.syncWorkspaceSnapshot()
                 self.app.broadcastLibrary()
                 // `docs` 每项带工作区名（客户端按它分组），而那个名字就是刚 sync 进去的快照

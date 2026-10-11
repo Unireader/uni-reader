@@ -131,6 +131,8 @@ final class SQLiteDB {
         fileprivate let stmt: OpaquePointer?
         func int64(_ i: Int32) -> Int64 { sqlite3_column_int64(stmt, i) }
         func double(_ i: Int32) -> Double { sqlite3_column_double(stmt, i) }
+        /// 这一列是不是 NULL（上面几个读法把 NULL 读成 0 / ""，分不出「没有」和「是 0」时先问它）。
+        func isNull(_ i: Int32) -> Bool { sqlite3_column_type(stmt, i) == SQLITE_NULL }
         func text(_ i: Int32) -> String {
             guard let p = sqlite3_column_text(stmt, i) else { return "" }
             return String(cString: p)

@@ -10,7 +10,7 @@ extension DocTabModel {
     /// 在本标签里打开一篇画板（侧栏点选 / 新建 / 平板 `boardOpen`）。已经开着它 → 空操作。
     func openBoard(_ id: UUID) {
         guard session.board?.id != id || staged else { return }
-        if docID != nil || noteRef != nil || boardID != nil { select(nil) }   // 先把上一篇（PDF / md / 画板）结清
+        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil { select(nil) }   // 先把上一篇（PDF / md / 画板 / 习题）结清
         guard let b = workspace.board(id: id) else { return }
         staged = false
         loadBoard(b)

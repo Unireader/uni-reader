@@ -197,7 +197,7 @@ final class TrashSheetController: StackPanelController, NSTableViewDataSource, N
         let text: String
         switch col {
         case "item":
-            text = [.inkLayer, .annotations].contains(e.manifest.kind) && !e.manifest.documentTitle.isEmpty
+            text = [.inkLayer, .annotations, .exercises].contains(e.manifest.kind) && !e.manifest.documentTitle.isEmpty
                 ? "\(e.manifest.title) — \(e.manifest.documentTitle)"
                 : e.manifest.title
         case "kind":
@@ -206,6 +206,7 @@ final class TrashSheetController: StackPanelController, NSTableViewDataSource, N
             case .inkLayer: text = L("Ink Layer")
             case .board: text = L("Board")
             case .annotations: text = L("Annotations")
+            case .exercises: text = L("Exercises")
             }
         case "when":
             text = e.deletedAt == .distantPast

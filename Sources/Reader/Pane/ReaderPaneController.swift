@@ -22,6 +22,8 @@ final class ReaderPaneController: NSViewController {
     /// 当前标签开的是 Markdown 笔记时的整篇编辑区（v15）。
     /// 与 `readerView` 互斥——标签里 `docID` 与 `mdID` 本来就互斥。
     private var mdView: MarkdownDocView?
+    /// 当前标签开的是习题时的练习 / 列表页（v20，`EXERCISE-PLAN.md §4`）。与阅读区、`mdView` 互斥。
+    private var exView: ExerciseTabView?
     private let placeholder = PlaceholderView()
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
@@ -230,6 +232,20 @@ final class ReaderPaneController: NSViewController {
     func refresh() {
         bindSession()
         let s = session
+        // 习题标签（v20）：换一组就重建（练到哪了在 `ExerciseDeck.shared` 里，拆了不丢）
+        if let scope = tab.exerciseScope {
+            if exView?.scope != scope {
+                exView?.removeFromSuperview()
+                let v = ExerciseTabView(scope: scope, workspace: workspace)
+                v.onOpenSource = { [weak self] e in self?.openExerciseSource(e) }
+                view.addSubview(v, positioned: .below, relativeTo: placeholder)
+                exView = v
+                view.needsLayout = true
+            }
+        } else if exView != nil {
+            exView?.removeFromSuperview()
+            exView = nil
+        }
         // Markdown 笔记标签（v15）：换一篇就重建（旧那份离开窗口时自己补存）。
         // 🔴 **不能在这里早退**——后面还有查找条 / 角标 / **标签栏**要刷，早退一次就是一个
         // 「开了笔记之后标签栏不更新」的 bug。
@@ -256,8 +272,9 @@ final class ReaderPaneController: NSViewController {
                 mdView?.removeFromSuperview()
                 mdView = nil
             }
-            if s.isBoard || tab.boardID != nil {
-                // 画板笔记（v16）：整个窗格就是那张纸（`syncScratchPad` 装），没有阅读区也不要占位提示
+            if s.isBoard || tab.boardID != nil || tab.exerciseScope != nil {
+                // 画板笔记（v16）：整个窗格就是那张纸（`syncScratchPad` 装）；习题（v20）：整个窗格是 `exView`。
+                // 都没有阅读区，也不要占位提示
                 readerView?.removeFromSuperview(); readerView = nil
                 placeholder.isHidden = true
             } else {
@@ -266,6 +283,21 @@ final class ReaderPaneController: NSViewController {
         }
         syncScratchPad()
         finishRefresh(s)
+    }
+
+    /// 习题的「到 PDF 原页」：🔴 显示文档只走 `AppDelegate.showDocument` 一份（开着就切过去，没开就开新标签），
+    /// 再跳到题目所在那一页（有题目框就停在框的上沿）。
+    private func openExerciseSource(_ e: Exercise) {
+        guard let docId = e.documentId, let page = e.page, let delegate = AppDelegate.shared else { return }
+        do {
+            let (c, tab) = try delegate.showDocument(docId, in: workspace, activate: true)
+            let frac = e.payload.region.map { max(0, $0[1] - 0.02) } ?? 0
+            tab.session.jump(page: page, frac: frac, kind: .list, label: L("Exercise"), origin: "exercise")
+            c.window?.makeKeyAndOrderFront(nil)
+        } catch {
+            wsLog("[EX] 到原页失败：\(error)")
+            NSSound.beep()
+        }
     }
 
     /// 阅读区本体（有 PDF 就建 / 复用 `ReaderView`，没有就是占位）。
@@ -444,6 +476,10 @@ final class ReaderPaneController: NSViewController {
         if let md = mdView {
             md.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
             md.topInset = si.top
+        }
+        if let ex = exView {
+            ex.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
+            ex.topInset = si.top
         }
         if let pad = scratchPad {
             pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧 Inspector 让位

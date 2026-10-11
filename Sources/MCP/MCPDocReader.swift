@@ -209,16 +209,20 @@ final class MCPDocReader {
     }
 
     /// 渲一页（与平板 `/page.png` 同一条原语：`PageBitmap.render` + `PageRenderer.encode`）。
+    /// `marks` 非空 = 把用户的笔迹与高亮叠画上去（`render_page` 的 `include_marks`）。
     func render(path: String, index: Int, pixelWidth: Int, format: PageRenderer.Format,
-                align: ScanAlignTable?) async throws -> Rendered {
+                align: ScanAlignTable?, marks: MCPPageMarks? = nil) async throws -> Rendered {
         try await withDocument(path: path) { doc in
             guard let page = doc.page(at: index) else { throw MCPToolError("page \(index + 1) not found") }
             let pa = align?.page(index)
             let disp = PageBitmap.displaySize(page, align: pa)
             guard disp.width > 0, disp.height > 0 else { throw MCPToolError("page \(index + 1) has no size") }
             let px = Int(min(CGFloat(pixelWidth), disp.width * 4).rounded())
-            guard px > 0, let cg = PageBitmap.render(page: page, pixelWidth: px, align: pa),
-                  let data = PageRenderer.encode(cg, format: format) else {
+            guard px > 0, let base = PageBitmap.render(page: page, pixelWidth: px, align: pa) else {
+                throw MCPToolError("cannot render page \(index + 1)")
+            }
+            let cg = (marks.flatMap { $0.isEmpty ? nil : $0.draw(over: base) }) ?? base
+            guard let data = PageRenderer.encode(cg, format: format) else {
                 throw MCPToolError("cannot render page \(index + 1)")
             }
             return Rendered(data: data, width: cg.width, height: cg.height, mime: format.contentType)

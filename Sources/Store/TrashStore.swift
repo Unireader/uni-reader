@@ -18,7 +18,10 @@ enum TrashStore {
     /// 文档级快照要搬的表，**顺序就是恢复时的写入顺序**——外键（`foreign_keys=ON`）要求
     /// 父行先就位：note / ink_layer / scratch_pad 都 `REFERENCES document(id)`，
     /// location 则 `REFERENCES variant(id)`。
-    static let documentTables = ["document", "variant", "location", "ink_layer", "scratch_pad", "note"]
+    /// 习题（v20，`EXERCISE-PLAN.md §5`）排在最后：`exercise REFERENCES document(id)`，作答记录再挂在题下面。
+    /// 删习题那种条目（`archiveExercises`）只有后两张表，恢复走同一个循环。
+    static let documentTables = ["document", "variant", "location", "ink_layer", "scratch_pad", "note",
+                                 "exercise", "exercise_attempt"]
     /// 画板笔记条目（v16）要搬的表，同样父表在前（`board_item REFERENCES board_note(id)`）。
     static let boardTables = ["board_note", "board_page", "board_item"]
 
@@ -40,9 +43,11 @@ enum TrashStore {
         /// 画板笔记上的笔迹 / 图（v16，`board_item` kind 1 / 2）。
         var boardInk = 0
         var boardImage = 0
+        /// 习题（v20）。作答记录跟着题走，不单独计数。
+        var exercise = 0
 
         /// 「一共多少条会跟着一起没」——确认框里那个数。
-        var total: Int { ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage }
+        var total: Int { ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage + exercise }
 
         init() {}
         /// 老条目的 manifest 没有新加的键：逐个 `decodeIfPresent`，缺了就是 0（读不出来的条目会凭空消失）。
@@ -53,6 +58,7 @@ enum TrashStore {
             image = v(.image); aiThread = v(.aiThread); scratchInk = v(.scratchInk)
             inkLayer = v(.inkLayer); scratchPad = v(.scratchPad)
             boardInk = v(.boardInk); boardImage = v(.boardImage)
+            exercise = v(.exercise)
         }
     }
 
@@ -87,6 +93,25 @@ enum TrashStore {
                        [.text(documentId)])
             try db.run("CREATE TABLE \(t).note AS SELECT * FROM main.note WHERE document_id=?",
                        [.text(documentId)])
+            try db.run("CREATE TABLE \(t).exercise AS SELECT * FROM main.exercise WHERE document_id=?",
+                       [.text(documentId)])
+            try db.run("""
+            CREATE TABLE \(t).exercise_attempt AS SELECT * FROM main.exercise_attempt
+            WHERE exercise_id IN (SELECT id FROM main.exercise WHERE document_id=?)
+            """, [.text(documentId)])
+            return try summarize(db, schema: t)
+        }
+    }
+
+    /// 把几道习题连同它们的作答记录搬进快照库（练习界面 / MCP `delete_exercises`，`EXERCISE-PLAN.md §5`）。
+    static func archiveExercises(_ db: SQLiteDB, ids: [String], to path: String) throws -> Archived {
+        try withAttached(db, path: path) { t in
+            let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+            let params = ids.map { SQLiteDB.Value.text($0) }
+            try db.run("CREATE TABLE \(t).exercise AS SELECT * FROM main.exercise WHERE id IN (\(marks))", params)
+            try db.run("""
+            CREATE TABLE \(t).exercise_attempt AS SELECT * FROM main.exercise_attempt WHERE exercise_id IN (\(marks))
+            """, params)
             return try summarize(db, schema: t)
         }
     }
@@ -176,8 +201,10 @@ enum TrashStore {
                     if remapDocumentId != nil, ["document", "variant", "location"].contains(table) { continue }
                     let cols = try columnNames(db, schema: t, table: table)
                     guard !cols.isEmpty else { continue }
-                    // board_note 同 document：有 CASCADE 子表（board_item），REPLACE 会把子行连根删掉
-                    let conflict = ["document", "variant", "board_note"].contains(table) ? "OR IGNORE" : "OR REPLACE"
+                    // board_note / exercise 同 document：有 CASCADE 子表（board_item / exercise_attempt），
+                    // REPLACE 会把子行连根删掉
+                    let conflict = ["document", "variant", "board_note", "exercise"].contains(table)
+                        ? "OR IGNORE" : "OR REPLACE"
                     let select = cols.map { $0 == "document_id" && remapDocumentId != nil ? "?" : "\"\($0)\"" }
                     let names = cols.map { "\"\($0)\"" }.joined(separator: ",")
                     let params: [SQLiteDB.Value] = remapDocumentId.map { id in
@@ -271,6 +298,7 @@ enum TrashStore {
             """, row: { $0.text(0) }).filter { !$0.isEmpty }
             out.images = Array(Set(out.images + imgs)).sorted()
         }
+        if present.contains("exercise") { out.counts.exercise = try count(db, schema: t, table: "exercise") }
         if present.contains("ink_layer") { out.counts.inkLayer = try count(db, schema: t, table: "ink_layer") }
         if present.contains("scratch_pad") { out.counts.scratchPad = try count(db, schema: t, table: "scratch_pad") }
         if present.contains("variant") {

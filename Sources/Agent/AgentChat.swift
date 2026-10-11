@@ -58,12 +58,16 @@ struct AgentReaderContext: Equatable {
             lines.append(Self.noteKinds + " If the user says \"note\" (笔记) without a kind, ask which one.")
         }
         lines.append(MCPTools.mathWriting)   // 同 `noteKinds`：MCP 说明里有，但不是每个 Agent 都读
+        lines.append(Self.exercises)
         lines.append(AgentTranscript.contextClose)
         return lines.joined(separator: "\n")
     }
 
     /// 两种笔记的区别（2026-10-05 用户：Agent 要分清文字笔记和 Markdown 笔记）。只说「笔记」时按当前标签页猜（用户定），
     /// 上面按标签页各接一句。MCP 的 `instructions` 里也写了一遍，但不是每个 Agent 都读它，这里再带上。
+    /// 习题（`EXERCISE-PLAN.md §3.2`）：用户说「识别习题 / 把这几页的题导进来」时 Agent 该用哪几个工具。理由同上。
+    private static let exercises = "Exercises (习题) are multiple-choice questions saved for the user to practice (练习 / 错题本 / 收藏). To recognize the exercises on some pages: look at each page with render_page (and read_pages for the text), transcribe every question exactly without rewording, and save them with import_exercises (page, number, stem, options, plus answer + answer_source only when the answer is printed or you are sure). The chapter is filled in from the PDF's table of contents automatically. If the user already answered on the page — usually by highlighting an option (list_annotations, kinds highlight) or by circling / writing a letter (render_page with include_marks) — pass it as user_answer. Fill in answers later from an answer key with list_exercises + update_exercises."
+
     private static let noteKinds = "UniReader has two kinds of notes: a text note (批注 / 文字笔记) is pinned to a spot on a PDF page — the user makes one with right-click › Add Note Here, or by selecting text and adding a note (tools: add_note, list_annotations, delete_annotations); a Markdown note (Markdown 笔记) is a separate .md file opened in its own tab (tools: list_markdown_notes, read_markdown, edit_markdown)."
 }
 
