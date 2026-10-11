@@ -910,9 +910,9 @@
 "this round: %d done, %d right" = "this round: %d done, %d right";
 /* 习题：章节 / 筛选 / 书上的作答（2026-10-11） */
 "No Chapter" = "No Chapter";
-"All" = "All";
-"Not Done Yet" = "Not Done Yet";
-"No questions match this filter." = "No questions match this filter.";
+"Not Done Only" = "Not Done Only";
+"Show only the questions you haven’t done yet." = "Show only the questions you haven’t done yet.";
+"You’ve done every question here." = "You’ve done every question here.";
 "right" = "right";
 "wrong" = "wrong";
 "not judged" = "not judged yet";

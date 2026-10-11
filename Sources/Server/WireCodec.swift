@@ -473,6 +473,7 @@ enum WireCodec {
                 w.u16(intOf(e["tries"])); w.u16(intOf(e["rights"]))
                 w.str(strOf(e["marked"])); w.u8(UInt8(clamping: intOf(e["markedCorrect"])))
             }
+            w.u8(UInt8(clamping: intOf(o["noFilter"])))   // 尾部（2026-10-11）：1 = 这一组没有「只看没做过」
         case "exIndex": w.u8(Op.exIndex); w.str(strOf(o["scope"])); w.u16(intOf(o["index"]))
         case "exAct":
             w.u8(Op.exAct); w.str(strOf(o["scope"])); w.u8(UInt8(clamping: intOf(o["act"])))
@@ -912,9 +913,10 @@ enum WireCodec {
                              "rights": NSNumber(value: rights), "marked": marked,
                              "markedCorrect": NSNumber(value: markedCorrect)])
             }
+            let noFilter = r.remaining >= 1 ? r.u8() : 0   // 可选尾部：老 Mac 不发 = 有筛选
             out = ["type": "exDeck", "scope": scope, "title": title, "filter": NSNumber(value: filter),
                    "index": NSNumber(value: index), "done": NSNumber(value: done), "right": NSNumber(value: right),
-                   "list": list]
+                   "list": list, "noFilter": NSNumber(value: noFilter)]
         case Op.exIndex:
             let scope = r.str(), index = r.u16()
             out = ["type": "exIndex", "scope": scope, "index": NSNumber(value: index)]

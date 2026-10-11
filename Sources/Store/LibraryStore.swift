@@ -1156,14 +1156,15 @@ final class LibraryStore {
         }
     }
 
-    /// 每篇文档每个章节几道题、最早在第几页、几道在错题本里（侧栏的章节树用：数 + 排序；一条 GROUP BY，不读 payload）。
+    /// 每篇文档每个章节几道题、最早在第几页、几道在错题本里、几道收藏了（侧栏的章节树用：数 + 排序；一条 GROUP BY，不读 payload）。
     /// 没页码的题不参与「最早」（全没页码 → `Int.max`）。
-    func exerciseChapterCounts() throws -> [(documentId: String, chapter: [String], count: Int, firstPage: Int, wrong: Int)] {
+    func exerciseChapterCounts() throws -> [(documentId: String, chapter: [String], count: Int, firstPage: Int, wrong: Int,
+                                             starred: Int)] {
         try db.query("""
-        SELECT document_id, chapter, COUNT(*), MIN(page), SUM(wrong) FROM exercise WHERE document_id IS NOT NULL
+        SELECT document_id, chapter, COUNT(*), MIN(page), SUM(wrong), SUM(starred) FROM exercise WHERE document_id IS NOT NULL
         GROUP BY document_id, chapter
         """, row: { r in (r.text(0), Self.chapterPath(r.text(1)), Int(r.int64(2)), r.isNull(3) ? Int.max : Int(r.int64(3)),
-                          Int(r.int64(4))) })
+                          Int(r.int64(4)), Int(r.int64(5))) })
     }
     /// 一批题一个事务（MCP `import_exercises` 一次几十道，中途出错整批不落）。
     func upsertExercises(_ rows: [LibExercise]) throws {

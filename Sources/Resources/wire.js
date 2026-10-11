@@ -366,6 +366,7 @@
           w.u8(ex.shown || 0); w.str(ex.chosen || ""); w.u8(ex.correct || 0); w.f64(ex.lastAt || 0);
           w.u16(ex.tries || 0); w.u16(ex.rights || 0); w.str(ex.marked || ""); w.u8(ex.markedCorrect || 0);
         }
+        w.u8(o.noFilter || 0);   // 尾部（2026-10-11）：1 = 这一组没有「只看没做过」
         break;
       }
       case "exIndex": w.u8(OP.exIndex); w.str(o.scope || ""); w.u16(o.index || 0); break;
@@ -653,7 +654,7 @@
           edl[edi] = e;
         }
         return { type: "exDeck", scope: edScope, title: edTitle, filter: edFilter, index: edIndex,
-                 done: edDone, right: edRight, list: edl };
+                 done: edDone, right: edRight, list: edl, noFilter: r.left() >= 1 ? r.u8() : 0 };
       }
       case OP.exIndex: {
         var exiScope = r.str();

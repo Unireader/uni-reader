@@ -912,9 +912,9 @@
 "this round: %d done, %d right" = "本轮已做 %d 题，对 %d 题";
 /* 习题：章节 / 筛选 / 书上的作答（2026-10-11） */
 "No Chapter" = "未分章节";
-"All" = "全部";
-"Not Done Yet" = "没做过";
-"No questions match this filter." = "没有符合筛选条件的题。";
+"Not Done Only" = "只看没做过";
+"Show only the questions you haven’t done yet." = "只显示还没做过的题。";
+"You’ve done every question here." = "这里的题都做过了。";
 "right" = "对";
 "wrong" = "错";
 "not judged" = "暂时没法判";

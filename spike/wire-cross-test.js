@@ -206,7 +206,7 @@ const canonical = [
   ] },
   { type: "exOpen", scope: "chap:D-1:[\"第二章 导数\"]" },
   { type: "exOpen", scope: "" },
-  { type: "exDeck", scope: "doc:D-1", title: "高数", filter: 2, index: 1, done: 2, right: 1, list: [
+  { type: "exDeck", scope: "doc:D-1", title: "高数", filter: 1, index: 1, done: 2, right: 1, list: [
     { id: "E-1", number: "5", page: 12, kind: 0, flags: 11, chapter: "第二章 › 2.3", section: "习题 2-3",
       stem: "设 $f(x)=x^2$，则 $f'(1)=$",
       options: [{ key: "A", text: "$0$" }, { key: "B", text: "$1$" }, { key: "C", text: "$2$" }],
@@ -221,6 +221,9 @@ const canonical = [
   { type: "exIndex", scope: "wrong", index: 7 },
   { type: "exAct", scope: "doc:D-1", act: 0, id: "E-1", arg: "AC", num: 4200, ids: [] },
   { type: "exAct", scope: "starred", act: 3, id: "", arg: "", num: 2, ids: ["E-1", "E-2"] },
+  // —— 习题顶栏只剩「只看没做过」（2026-10-11）：exDeck 尾部 noFilter = 1（错题本那一支没有这个开关）——
+  { type: "exDeck", scope: "wrong:doc:D-1", title: "错题本 · 高数", filter: 0, index: 0, done: 0, right: 0,
+    list: [], noFilter: 1 },
 ];
 
 let pass = 0, fail = 0;
@@ -237,6 +240,15 @@ const jsHex = canonical.map(function (msg, i) {
   else pass++;
   return h1;
 });
+
+// exDeck 尾部 noFilter 可选：老 Mac 发的帧没有它，照样解得出、按 0（有「只看没做过」）
+(function () {
+  const full = Wire.encode(canonical[canonical.length - 1]);
+  const dec = function (u8) { return Wire.decode(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)); };
+  const a = dec(full), b = dec(full.subarray(0, full.length - 1));
+  if (a && a.noFilter === 1 && b && b.noFilter === 0) pass++;
+  else { console.log("✗ exDeck 尾部 noFilter 可选"); fail++; }
+})();
 
 // 与 Swift 向量比对
 const vpath = path.join(__dirname, "wire-vectors-swift.txt");

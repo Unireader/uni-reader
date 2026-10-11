@@ -169,7 +169,8 @@ extension AppModel {
         setExerciseImages(images)
         let s = d.sessionSummary
         server.broadcast(["type": "exDeck", "scope": sub.scope.key, "title": ws.exerciseScopeTitle(sub.scope),
-                          "filter": d.filter.rawValue, "index": d.index, "done": s.done, "right": s.correct, "list": list])
+                          "filter": d.filter.rawValue, "index": d.index, "done": s.done, "right": s.correct, "list": list,
+                          "noFilter": d.offersUnansweredFilter ? 0 : 1])
     }
 
     // MARK: - 上行
@@ -237,7 +238,7 @@ extension AppModel {
                 d.redo(ids)
                 d.index = min(max(0, num), max(0, d.items.count - 1))
             }
-        case 4:   // 筛选
+        case 4:   // 筛选（只认 0 / 1；老平板发来的 2 错题 / 3 收藏已不用，丢掉）
             guard let f = ExerciseFilter(rawValue: num) else { return }
             d.asPad { d.setFilter(f) }
         case 5:   // 到 PDF 原页：Mac 打开那篇、跳过去，并把平板锁到那个标签

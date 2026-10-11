@@ -227,7 +227,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         r.append(boardSec)
         // 习题（v20）：**有题才出现**（题是 Agent 导进来的，侧栏上没有新建入口，空段没意义）。
         // 全部 / 错题本 / 收藏三行恒在，后面每篇有题的文档一行，顺序同书库。
-        // 错题本也按书 → 章展开（用户 2026-10-11 要的），数的是错题；点哪一级都在那一个错题标签里换。
+        // 错题本、收藏也按书 → 章展开（用户 2026-10-11 要的），数的是错题 / 收藏；错题本点哪一级都在那一个错题标签里换。
         // 哪几行、什么顺序只在 `ExerciseGroupNode.build` 一份（平板抽屉的 `exGroups` 也用它）。
         let groups = ExerciseGroupNode.build(workspace.exerciseSummary, documents: docs.map { ($0.id, $0.title) },
                                              title: workspace.exerciseScopeTitle, noChapter: L("No Chapter"))
@@ -366,8 +366,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .all: symbol = "checklist"
             case .wrong: symbol = "xmark.circle"
             case .starred: symbol = "star"
-            case .document, .wrongDocument: symbol = "doc.questionmark"
-            case .chapter(_, let path), .wrongChapter(_, let path):
+            case .document, .wrongDocument, .starredDocument: symbol = "doc.questionmark"
+            case .chapter(_, let path), .wrongChapter(_, let path), .starredChapter(_, let path):
                 symbol = path.isEmpty ? "questionmark.folder" : "list.bullet.indent"
             }
             return countCell(symbol: symbol, title: title, count: count)

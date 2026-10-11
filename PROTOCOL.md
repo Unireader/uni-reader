@@ -706,13 +706,14 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 **不必**是 Mac 当前标签（用户 2026-10-11 定：「tab 页可以不一样」）。工作区 = 被跟随会话所属的那个。
 
 范围键 = Mac `ExerciseScope.key`：`all` / `wrong` / `starred` / `doc:<文档 id>` / `chap:<文档 id>:<章节路径 JSON>` /
-`wrong:doc:<文档 id>` / `wrong:chap:<文档 id>:<章节路径 JSON>`。客户端把它当不透明的串，原样存、原样发回。
+`wrong:doc:<文档 id>` / `wrong:chap:<文档 id>:<章节路径 JSON>` / `starred:doc:<文档 id>` / `starred:chap:<文档 id>:<章节路径 JSON>`
+（最后两种 2026-10-11 第三次调整加的：收藏也按书 → 章展开）。客户端把它当不透明的串，原样存、原样发回。
 
 | opcode | payload | 对象形状 |
 |---|---|---|
 | `exGroups` | `u16 n` · `n ×( str key, str title, u16 count, u8 depth )` | `{type:"exGroups", list:[{key,title,count,depth},…]}` |
 | `exOpen` | `str scope` | `{type:"exOpen", scope}` |
-| `exDeck` | `str scope` · `str title` · `u8 filter` · `u16 index` · `u16 done` · `u16 right` · `u16 n` · `n × 题` | `{type:"exDeck", scope, title, filter, index, done, right, list:[题,…]}` |
+| `exDeck`（可选尾部） | `str scope` · `str title` · `u8 filter` · `u16 index` · `u16 done` · `u16 right` · `u16 n` · `n × 题` · `u8 noFilter` | `{type:"exDeck", scope, title, filter, index, done, right, list:[题,…], noFilter}` |
 | `exIndex` | `str scope` · `u16 index` | `{type:"exIndex", scope, index}` |
 | `exAct` | `str scope` · `u8 act` · `str id` · `str arg` · `u32 num` · `u16 n` · `n × str id` | `{type:"exAct", scope, act, id, arg, num, ids:[…]}` |
 
@@ -741,14 +742,17 @@ shown, chosen, correct, lastAt, tries, rights, marked, markedCorrect}`。
 | `marked` / `markedCorrect` | 书上的作答（空 = 没有）/ 它对不对（同 `correct` 的取值） |
 
 - `exGroups`：**全量镜像**，被跟随会话所属工作区的习题分组，按 Mac 侧栏的顺序摊平成一列：
-  全部 / 错题本（底下有错题的书 → 章节树）/ 收藏 / 每本有题的书（底下章节树，有题没设章节时末尾一行「未分章节」）。
+  全部 / 错题本（底下有错题的书 → 章节树）/ 收藏（底下有收藏的书 → 章节树）/ 每本有题的书（底下章节树，有题没设章节时末尾一行「未分章节」）。
   `depth` = 缩进层级（0 起），子项紧跟在父项后面；`title` 是 Mac 那边的显示名（已按 Mac 的语言）。
   `n = 0` = 这个工作区没有题，客户端不显示这一段。发送时机：客户端接入、跟随的会话变化、习题有任何增删改。
 - `exOpen`：客户端现在显示哪一组（空串 = 不在习题上）。Mac 记下（工作区取此刻被跟随会话的），立刻回一份 `exDeck`；
   之后这一组有任何变化（谁答的、谁翻的、库里刷新）都再发。工作区关了 / 范围键不认识 / 那本书没了 → 回 `scope` 为空串的 `exDeck`，
   客户端据此关掉自己的习题页。
 - `exDeck`：客户端正开着那一组的**全量**（题目内容 + 该显示的作答 + 统计）。`index` = 现在在第几题（0 起），
-  `done` / `right` = 这一轮做了几道、对几道；`filter` `0` 全部 · `1` 没做过 · `2` 错题 · `3` 收藏。
+  `done` / `right` = 这一轮做了几道、对几道；`filter` `0` 全部 · `1` 只看没做过（`2` 错题 · `3` 收藏 是 2026-10-11
+  第三次调整前的值，已不用、不许再分配：Mac 不再发，收到 `exAct` 4 带这两个值就丢；客户端收到按 `0` 显示）。
+  **尾部 `noFilter`**（可选，2026-10-11 加，同 `gotoPage.frac` 先例）：`1` = 这一组没有「只看没做过」（错题本那一支：
+  错题都做过），客户端不显示那个开关；没有尾部（老 Mac）按 `0`。由 Mac 判定、不让客户端去解析范围键。
   题的顺序就是练习顺序；`scope` 不是客户端当前开着的那组就丢（切组时的先后错位）。
 - `exIndex`：只换了第几题（不重发整份）。C→S：平板翻题，Mac 把那一组的进度挪过去（Mac 开着同一组的标签跟着翻）；
   S→C：Mac 本机翻题。`scope` 对不上就丢。
@@ -760,7 +764,7 @@ shown, chosen, correct, lastAt, tries, rights, marked, markedCorrect}`。
   | `1` 收藏 | `id`、`num` = 1 收藏 / 0 取消 | |
   | `2` 移出错题本 | `id` | |
   | `3` 重做 | `ids` = 这几道当作没答过（这一轮）、`num` = 从第几题练起 | 同 Mac「全部重做」/「重做这 N 道题」 |
-  | `4` 筛选 | `num` = 筛选值 | 按新条件重取这一组，尽量停在原来那题 |
+  | `4` 筛选 | `num` = 筛选值（`0` / `1`） | 按新条件重取这一组，尽量停在原来那题；这一组 `noFilter = 1` 时只认 `0` |
   | `5` 到原页 | `id` | Mac 打开那篇、跳到题目所在页，并把平板锁到那个标签 |
 
   其余 `act` 值丢弃（只许尾部追加）。

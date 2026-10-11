@@ -305,15 +305,49 @@ check(ExerciseScope.wrong.isMistakes && ExerciseScope.wrongChapter(d3.id, []).is
       && !ExerciseScope.all.isMistakes, "错题那一支（公用错题标签管的）")
 check(ExerciseScope.wrongChapter(d3.id, ["x"]).documentId == d3.id, "错题范围也认得是哪本书（删书时标签跟着退）")
 
+print("— 收藏按书 / 按章展开（同错题本）")
+try store.setExerciseStarred(id: c2.id, true)
+try store.setExerciseStarred(id: c4.id, true)
+let cs = try store.exerciseChapterCounts().filter { $0.documentId == d3.id }
+check(cs.first { $0.chapter == ["第一章 函数", "1.2 极限"] }?.starred == 1 && cs.first { $0.chapter == ["第一章 函数", "1.1 映射"] }?.starred == 0,
+      "章节计数带收藏数")
+var statsS: [[String]: ExerciseChapterStat] = [:]
+for r in cs { statsS[r.chapter] = ExerciseChapterStat(count: r.count, firstPage: r.firstPage, wrong: r.wrong, starred: r.starred) }
+let sumS = ExerciseSummary(total: 4, wrong: 2, starred: 2, byDocument: [d3.id: 4], chapters: [d3.id: statsS])
+check(sumS.count(.starredDocument(d3.id)) == 2 && sumS.count(.starredChapter(d3.id, ["第一章 函数"])) == 1
+      && sumS.count(.wrongChapter(d3.id, ["第一章 函数"])) == 1, "一本书 / 一章的收藏数（错题数不受影响）")
+let sch = sumS.starredChapters(d3.id)
+check(Set(sch.keys) == [["第一章 函数", "1.2 极限"], ["第三章"]] && sch.values.allSatisfy { $0.count == 1 },
+      "收藏的章节分布：只留有收藏的章节，数是收藏数")
+let es2 = Exercise(row: try store.exercise(id: c2.id)!)!, es1 = Exercise(row: try store.exercise(id: c1.id)!)!
+check(ExerciseScope.starredChapter(d3.id, ["第一章 函数"]).includes(es2) && !ExerciseScope.starredChapter(d3.id, ["第一章 函数"]).includes(es1),
+      "收藏按章：只含这一章里收藏了的")
+check(ExerciseScope.starredDocument(d3.id).includes(es2) && !ExerciseScope.starredDocument("other").includes(es2), "收藏按书")
+for sc in [ExerciseScope.starredDocument(d3.id), .starredChapter(d3.id, ["第一章 函数", "1.1: 冒号"]), .starredChapter(d3.id, [])] {
+    check(ExerciseScope(rowID: sc.rowID) == sc, "收藏范围键回环：\(sc.key)")
+}
+check(ExerciseScope(key: "starred:all") == nil && ExerciseScope(key: "starred") == .starred
+      && ExerciseScope(key: "starred:doc:" + d3.id) == .starredDocument(d3.id), "收藏前缀只接书 / 章，「starred」本身仍是收藏")
+check(!ExerciseScope.starredChapter(d3.id, []).isMistakes && ExerciseScope.starredChapter(d3.id, ["x"]).documentId == d3.id,
+      "收藏那一支在公用标签里换、认得是哪本书")
+
 print("— 侧栏 / 平板抽屉的分组（ExerciseGroupNode，安卓模式1 逐条照抄）")
 let gdocs: [(id: String, title: String)] = [("nodoc", "没题的书"), (d3.id, "书三")]
-let groups = ExerciseGroupNode.build(sumW, documents: gdocs, title: { $0.key }, noChapter: "未分章节")
+let groups = ExerciseGroupNode.build(sumS, documents: gdocs, title: { $0.key }, noChapter: "未分章节")
 check(groups.map(\.scope) == [.all, .wrong, .starred, .document(d3.id)], "全部 / 错题本 / 收藏恒在，之后只列有题的书")
-check(groups.map(\.count) == [4, 2, 0, 4] && groups[0].title == "all" && groups[3].title == "书三", "各行的数与名字")
+check(groups.map(\.count) == [4, 2, 2, 4] && groups[0].title == "all" && groups[3].title == "书三", "各行的数与名字")
 check(groups[1].children.map(\.scope) == [.wrongDocument(d3.id)]
       && groups[1].children[0].children.map(\.title) == wtree.map(\.label), "错题本底下：有错题的书 → 错题章节树")
 check(groups[1].children[0].children[0].children.map(\.scope) == [.wrongChapter(d3.id, ["第一章 函数", "1.1 映射"])],
       "错题本底下的章节是错题范围")
+check(groups[2].children.map(\.scope) == [.starredDocument(d3.id)] && groups[2].children[0].count == 2
+      && groups[2].children[0].children.map(\.title) == ["第一章 函数", "第三章"]
+      && groups[2].children[0].children[0].children.map(\.scope) == [.starredChapter(d3.id, ["第一章 函数", "1.2 极限"])],
+      "收藏底下：有收藏的书 → 收藏章节树，章节是收藏范围")
+check(ExerciseGroupNode.build(sumW, documents: gdocs, title: { $0.key }, noChapter: "x")[2].children.isEmpty,
+      "没有收藏 → 收藏那一行不展开")
+try store.setExerciseStarred(id: c2.id, false)
+try store.setExerciseStarred(id: c4.id, false)
 let gnone = statsW[[]].map { $0.count > 0 } ?? false
 check(groups[3].children.map(\.title) == ExerciseChapterTree.build(statsW).map(\.label) + (gnone ? ["未分章节"] : []),
       "书底下的章节树（有没设章节的题时末尾一行「未分章节」）")
@@ -385,7 +419,9 @@ check(ok(input("c"))?.chapter == nil, "没给 chapter → nil（让 App 按目�
 print("— 筛选")
 let fe = Exercise(row: try store.exercise(id: rq.id)!)!
 check(ExerciseFilter.unanswered.includes(fe, attempts: 0) && !ExerciseFilter.unanswered.includes(fe, attempts: 1), "没做过")
-check(ExerciseFilter.wrong.includes(fe, attempts: 2) && !ExerciseFilter.starred.includes(fe, attempts: 2), "错题 / 收藏")
+check(ExerciseFilter.all.includes(fe, attempts: 2) && ExerciseFilter.allCases == [.all, .unanswered]
+      && ExerciseFilter(rawValue: 2) == nil && ExerciseFilter(rawValue: 3) == nil,
+      "只剩全部 / 只看没做过（老平板发来的 2 错题 / 3 收藏不认）")
 
 print("— 做过的题显示以前的作答")
 var pe = Exercise(row: try store.exercise(id: rm.id)!)!      // 答案 B

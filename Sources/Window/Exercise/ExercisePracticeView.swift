@@ -130,7 +130,7 @@ final class ExercisePracticeView: NSView {
         guard let e = deck.current else {
             shownId = ""; shownContent = nil; shownKind = nil
             for v in doc.subviews { v.isHidden = v !== emptyLabel }
-            emptyLabel.stringValue = deck.filter != .all ? L("No questions match this filter.")
+            emptyLabel.stringValue = deck.filter == .unanswered ? L("You’ve done every question here.")
                 : L("No exercises here yet. Ask the Agent to recognize the exercises in a PDF.")
             needsLayout = true
             onChange()

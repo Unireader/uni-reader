@@ -48,8 +48,9 @@
   `PDFDocument` + 串行队列，传 `pageAlign`）。MCP `MCPTools+Exercises` / `MCPFacade+Exercises`（批 4）。
   🔴 错题本规则（用户定）：答错进（库里与作答同一个事务），**只能手动移出**，答对不动它；答案变了重判作答，判错照样进。
   章节 `exercise.chapter`（目录路径，`ExerciseChapter.path` 按页查 PDF 自带目录、不用书签；侧栏章节树 `ExerciseChapterTree`
-  按最早页码排）、书上的作答（`exercise_attempt.source = mark`，每题至多一条）、标签顶上的筛选 `ExerciseFilter`。
-  `render_page include_marks` 在 `MCP/MCPPageMarks`。测试 `spike/exercise-test.swift`（156 项）。
+  按最早页码排）、书上的作答（`exercise_attempt.source = mark`，每题至多一条）、标签顶上的「只看没做过」`ExerciseFilter`
+  （只剩这一个开关，错题本那一支没有；「哪一组题」都在侧栏选，错题本、收藏都按书 → 章展开，`EXERCISE-PLAN.md §9.5`）。
+  `render_page include_marks` 在 `MCP/MCPPageMarks`。测试 `spike/exercise-test.swift`（168 项）。
   侧栏「习题」一段的行与顺序只在 `ExerciseGroupNode.build` 一份（平板抽屉 `exGroups` 也用它）。
   **平板同步**（模式2，`EXERCISE-PLAN.md §10.4`，`PROTOCOL.md §4.9`）：`App/AppModel+Exercise`——平板开一组题 = 用 Mac 上
   同一份 `ExerciseDeck`（`exOpen` 记在 `AppModel.padExercise`），`ExerciseDeck.changed`（带 `origin` mac / pad、`change` index / content）

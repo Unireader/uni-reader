@@ -31,7 +31,7 @@ extension WorkspaceManager {
         var chapters: [String: [[String]: ExerciseChapterStat]] = [:]
         for row in (try? store?.exerciseChapterCounts()) ?? [] {
             chapters[row.documentId, default: [:]][row.chapter] = ExerciseChapterStat(count: row.count, firstPage: row.firstPage,
-                                                                                      wrong: row.wrong)
+                                                                                      wrong: row.wrong, starred: row.starred)
         }
         let s = ExerciseSummary(total: c.total, wrong: c.wrong, starred: c.starred, byDocument: c.byDocument,
                                 chapters: chapters)
@@ -87,6 +87,10 @@ extension WorkspaceManager {
             return L("Mistakes") + " · " + exerciseScopeTitle(.document(id))
         case .wrongChapter(let id, let path):
             return L("Mistakes") + " · " + exerciseScopeTitle(.chapter(id, path))
+        case .starredDocument(let id):
+            return L("Starred") + " · " + exerciseScopeTitle(.document(id))
+        case .starredChapter(let id, let path):
+            return L("Starred") + " · " + exerciseScopeTitle(.chapter(id, path))
         }
     }
 

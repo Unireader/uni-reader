@@ -365,23 +365,35 @@ struct ExerciseSummary: Equatable {
             return (chapters[id] ?? [:]).values.reduce(0) { $0 + $1.wrong }
         case .wrongChapter(let id, let path):
             return (chapters[id] ?? [:]).reduce(0) { $0 + (ExerciseScope.chapterContains(path, $1.key) ? $1.value.wrong : 0) }
+        case .starredDocument(let id):
+            return (chapters[id] ?? [:]).values.reduce(0) { $0 + $1.starred }
+        case .starredChapter(let id, let path):
+            return (chapters[id] ?? [:]).reduce(0) { $0 + (ExerciseScope.chapterContains(path, $1.key) ? $1.value.starred : 0) }
         }
     }
 
     /// 错题本里一本书的章节分布：只留有错题的章节，`count` 换成错题数（`ExerciseChapterTree.build` 直接拿去建树）。
     /// `firstPage` 仍是这一节所有题里最早的那页——排序按书里的先后，和书底下那棵树一致。
-    func mistakeChapters(_ documentId: String) -> [[String]: ExerciseChapterStat] {
+    func mistakeChapters(_ documentId: String) -> [[String]: ExerciseChapterStat] { marked(documentId, \.wrong) }
+
+    /// 收藏里一本书的章节分布（同错题本那棵，数的是收藏）。
+    func starredChapters(_ documentId: String) -> [[String]: ExerciseChapterStat] { marked(documentId, \.starred) }
+
+    private func marked(_ documentId: String, _ n: KeyPath<ExerciseChapterStat, Int>) -> [[String]: ExerciseChapterStat] {
         (chapters[documentId] ?? [:]).compactMapValues {
-            $0.wrong > 0 ? ExerciseChapterStat(count: $0.wrong, firstPage: $0.firstPage, wrong: $0.wrong) : nil
+            $0[keyPath: n] > 0
+                ? ExerciseChapterStat(count: $0[keyPath: n], firstPage: $0.firstPage, wrong: $0.wrong, starred: $0.starred)
+                : nil
         }
     }
 }
 
-/// 挂在某个章节路径上的题：几道、最早在第几页（0 起；全没页码 = `Int.max`）、其中几道在错题本里。
+/// 挂在某个章节路径上的题：几道、最早在第几页（0 起；全没页码 = `Int.max`）、其中几道在错题本里、几道收藏了。
 struct ExerciseChapterStat: Equatable {
     var count: Int
     var firstPage: Int
     var wrong: Int = 0
+    var starred: Int = 0
 }
 
 // MARK: - 章节（`EXERCISE-PLAN.md §2.3`）
@@ -481,28 +493,34 @@ struct ExerciseGroupNode: Equatable {
 
     /// 建整段。`documents` = 书库顺序的（id, 书名）；`title` 给全部 / 错题本 / 收藏三行起名；
     /// `noChapter` = 「未分章节」那一行的名字。没有题 → 空（这一段不出现）。
-    /// 全部 / 错题本 / 收藏三行恒在；错题本底下是有错题的书 → 章节树（数的是错题）；之后每本有题的书一行，底下章节树。
+    /// 全部 / 错题本 / 收藏三行恒在；错题本、收藏底下各是有错题 / 有收藏的书 → 章节树（数的是错题 / 收藏）；
+    /// 之后每本有题的书一行，底下章节树。
     static func build(_ s: ExerciseSummary, documents: [(id: String, title: String)],
                       title: (ExerciseScope) -> String, noChapter: String) -> [ExerciseGroupNode] {
         guard s.total > 0 else { return [] }
         var rows = [ExerciseScope.all, .wrong, .starred].map { ExerciseGroupNode(scope: $0, title: title($0), count: s.count($0)) }
         rows[1].children = documents.filter { s.count(.wrongDocument($0.id)) > 0 }.map { d in
             ExerciseGroupNode(scope: .wrongDocument(d.id), title: d.title, count: s.count(.wrongDocument(d.id)),
-                              children: chapters(docId: d.id, stats: s.mistakeChapters(d.id), mistakes: true, noChapter: noChapter))
+                              children: chapters(stats: s.mistakeChapters(d.id), noChapter: noChapter) { .wrongChapter(d.id, $0) })
+        }
+        // 收藏也按书 → 章展开（用户 2026-10-11 定，同错题本：标签顶上不再有「错题 / 收藏」筛选，组合都在侧栏里点）
+        rows[2].children = documents.filter { s.count(.starredDocument($0.id)) > 0 }.map { d in
+            ExerciseGroupNode(scope: .starredDocument(d.id), title: d.title, count: s.count(.starredDocument(d.id)),
+                              children: chapters(stats: s.starredChapters(d.id), noChapter: noChapter) { .starredChapter(d.id, $0) })
         }
         rows += documents.filter { (s.byDocument[$0.id] ?? 0) > 0 }.map { d in
             ExerciseGroupNode(scope: .document(d.id), title: d.title, count: s.byDocument[d.id] ?? 0,
-                              children: chapters(docId: d.id, stats: s.chapters[d.id] ?? [:], mistakes: false, noChapter: noChapter))
+                              children: chapters(stats: s.chapters[d.id] ?? [:], noChapter: noChapter) { .chapter(d.id, $0) })
         }
         return rows
     }
 
     /// 一本书底下的章节树：一道题都没设章节 → 不展开（书那一行就够了）；有设有没设 → 末尾多一行「未分章节」。
-    /// `mistakes` = 错题本底下那棵（`stats` 已只剩有错题的章节、数是错题数，见 `ExerciseSummary.mistakeChapters`）。
-    static func chapters(docId: String, stats: [[String]: ExerciseChapterStat], mistakes: Bool,
-                         noChapter: String) -> [ExerciseGroupNode] {
+    /// `scope` = 章节路径在这一支里是哪个范围（书底下 / 错题本底下 / 收藏底下）；错题本、收藏那两棵的 `stats`
+    /// 已只剩有错题 / 有收藏的章节、数是错题数 / 收藏数（`ExerciseSummary.mistakeChapters` / `starredChapters`）。
+    static func chapters(stats: [[String]: ExerciseChapterStat], noChapter: String,
+                         scope: ([String]) -> ExerciseScope) -> [ExerciseGroupNode] {
         guard stats.keys.contains(where: { !$0.isEmpty }) else { return [] }
-        func scope(_ path: [String]) -> ExerciseScope { mistakes ? .wrongChapter(docId, path) : .chapter(docId, path) }
         func make(_ t: ExerciseChapterTree) -> ExerciseGroupNode {
             ExerciseGroupNode(scope: scope(t.path), title: t.label, count: t.count, children: t.children.map(make))
         }
@@ -526,20 +544,19 @@ struct ExerciseGroupNode: Equatable {
 
 // MARK: - 标签页里的筛选
 
-/// 习题标签顶上的筛选（用户 2026-10-11 要的：可以组合出「第二章的错题」「还没做过的题」）。
+/// 习题标签顶上的筛选：只剩「只看没做过」一个开关（用户 2026-10-11 定）。
+/// 侧栏管「哪一组题」（全部 / 错题本 / 收藏 / 书 / 章，错题本和收藏都能按书 → 章展开），顶栏只管做题进度；
+/// 原先的「错题 / 收藏」两项和侧栏重复（同一组题两条路能到）、在错题本里又毫无意义，已去掉。
+/// 值即线上 `exDeck.filter`；`2` / `3` 是去掉的那两项，不再用（`PROTOCOL.md §4.9`）。
 enum ExerciseFilter: Int, CaseIterable {
     case all = 0
     case unanswered = 1
-    case wrong = 2
-    case starred = 3
 
     /// `attempts` = 这道题一共做过几次（含书上的作答）。
     func includes(_ e: Exercise, attempts: Int) -> Bool {
         switch self {
         case .all: return true
         case .unanswered: return attempts == 0
-        case .wrong: return e.wrong
-        case .starred: return e.starred
         }
     }
 }
@@ -557,10 +574,14 @@ enum ExerciseScope: Hashable {
     /// 错题本按书 / 按章展开的那几级（用户 2026-10-11 要的）：这本书 / 这一章里**在错题本里**的题。
     case wrongDocument(String)
     case wrongChapter(String, [String])
+    /// 收藏按书 / 按章展开的那几级（同错题本）：这本书 / 这一章里收藏了的题。
+    case starredDocument(String)
+    case starredChapter(String, [String])
 
     /// 侧栏 / 标签页选中键的前缀（同 `BoardNote.rowPrefix` 的口径）。
     static let rowPrefix = "ex:"
     private static let wrongPrefix = "wrong:"
+    private static let starredPrefix = "starred:"
 
     var key: String {
         switch self {
@@ -572,6 +593,8 @@ enum ExerciseScope: Hashable {
         case .chapter(let id, let path): return "chap:" + id + ":" + LibraryStore.chapterText(path)
         case .wrongDocument(let id): return Self.wrongPrefix + Self.document(id).key
         case .wrongChapter(let id, let path): return Self.wrongPrefix + Self.chapter(id, path).key
+        case .starredDocument(let id): return Self.starredPrefix + Self.document(id).key
+        case .starredChapter(let id, let path): return Self.starredPrefix + Self.chapter(id, path).key
         }
     }
     init?(key: String) {
@@ -580,10 +603,11 @@ enum ExerciseScope: Hashable {
         case "wrong": self = .wrong
         case "starred": self = .starred
         default:
-            if key.hasPrefix(Self.wrongPrefix) {
-                switch ExerciseScope(key: String(key.dropFirst(Self.wrongPrefix.count))) {
-                case .document(let id)?: self = .wrongDocument(id)
-                case .chapter(let id, let path)?: self = .wrongChapter(id, path)
+            // 错题本 / 收藏底下的几级 = 前缀 + 书 / 章的键
+            for (prefix, wrong) in [(Self.wrongPrefix, true), (Self.starredPrefix, false)] where key.hasPrefix(prefix) {
+                switch ExerciseScope(key: String(key.dropFirst(prefix.count))) {
+                case .document(let id)?: self = wrong ? .wrongDocument(id) : .starredDocument(id)
+                case .chapter(let id, let path)?: self = wrong ? .wrongChapter(id, path) : .starredChapter(id, path)
                 default: return nil
                 }
                 return
@@ -609,7 +633,9 @@ enum ExerciseScope: Hashable {
     /// 这个范围属于哪本书（全部 / 错题本 / 收藏不属于某一本）。
     var documentId: String? {
         switch self {
-        case .document(let id), .chapter(let id, _), .wrongDocument(let id), .wrongChapter(let id, _): return id
+        case .document(let id), .chapter(let id, _), .wrongDocument(let id), .wrongChapter(let id, _),
+             .starredDocument(let id), .starredChapter(let id, _):
+            return id
         default: return nil
         }
     }
@@ -631,6 +657,8 @@ enum ExerciseScope: Hashable {
         case .chapter(let id, let path): return e.documentId == id && Self.chapterContains(path, e.chapter)
         case .wrongDocument(let id): return e.wrong && e.documentId == id
         case .wrongChapter(let id, let path): return e.wrong && e.documentId == id && Self.chapterContains(path, e.chapter)
+        case .starredDocument(let id): return e.starred && e.documentId == id
+        case .starredChapter(let id, let path): return e.starred && e.documentId == id && Self.chapterContains(path, e.chapter)
         }
     }
 

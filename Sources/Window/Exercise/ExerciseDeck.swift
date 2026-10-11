@@ -50,8 +50,11 @@ final class ExerciseDeck {
     private(set) var answers: [String: Answer] = [:]
     /// 这一轮点过「再做一次」的题：以前的作答不再显示，等重新答。
     private var redoing: Set<String> = []
-    /// 顶上的筛选（全部 / 没做过 / 错题 / 收藏）。换了就按它重取一份快照（`setFilter`）。
+    /// 顶上的「只看没做过」。换了就按它重取一份快照（`setFilter`）。
     private(set) var filter: ExerciseFilter = .all
+
+    /// 这一组有没有「只看没做过」：错题本那一支没有（进了错题本的题一定做过，筛出来永远是空的）。
+    var offersUnansweredFilter: Bool { !scope.isMistakes }
 
     private static var decks: [String: ExerciseDeck] = [:]
 
@@ -83,7 +86,7 @@ final class ExerciseDeck {
 
     /// 换筛选：按新条件重取一份快照，尽量停在原来那道题上。这一轮答过什么不丢。
     func setFilter(_ f: ExerciseFilter) {
-        guard f != filter, let ws = workspace else { return }
+        guard f != filter, f == .all || offersUnansweredFilter, let ws = workspace else { return }
         filter = f
         let curId = current?.id
         stats = ws.exerciseAttemptStats()
@@ -93,7 +96,7 @@ final class ExerciseDeck {
     }
 
     /// 库里变了：已在快照里的就地换成新内容（被删的去掉），新进范围、过得了筛选的接在末尾。
-    /// 移出错题本 / 取消收藏 / 刚做过（「没做过」筛选下）的题这一轮都还留着——不会在眼前突然消失。
+    /// 移出错题本 / 取消收藏 / 刚做过（「只看没做过」开着）的题这一轮都还留着——不会在眼前突然消失。
     func reload() {
         guard let ws = workspace else { return }
         stats = ws.exerciseAttemptStats()
@@ -149,6 +152,7 @@ final class ExerciseDeck {
     }
 
     /// 批量重做（用户 2026-10-11 要的：列表多选右键 / 顶栏「全部重做」）：同「再做一次」，一次几道。
+    /// 重练错题 = 在错题本（或它底下某本书 / 某一章）里点「全部重做」。
     /// 只管这一轮（App 开着期间），退出重开后做过的题照旧显示上次结果。
     func redo(_ ids: [String]) {
         for id in ids {
