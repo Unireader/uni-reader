@@ -668,7 +668,10 @@ final class DocTabModel: ObservableObject, Identifiable {
     }
 
     /// 「文件已变化」→ 关联为新版本（改库，OCR 缓存键跟实际内容走）。
+    /// 🔴 第一件事先清 `hashMismatch`：窗格每次同步都看它决定弹不弹（`ReaderPaneController.syncAlerts`），
+    /// 不清就会反复弹；而且必须赶在下面改 `session` 之前——那些改动会触发同步，届时它还在就又弹一次。
     func linkAsNewVersion(_ m: HashMismatch) {
+        hashMismatch = nil
         workspace.rekeyLocation(documentId: m.docId, absolutePath: m.path,
                                 newHash: m.newHash, pageCount: session.pdf?.pageCount ?? 0)
         session.contentHash = m.newHash
@@ -678,6 +681,7 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 「文件已变化」→ 仍打开（不改库：本次按实际内容打开，下次打开仍会提示）。
     func openAnyway(_ m: HashMismatch) {
+        hashMismatch = nil   // 同上，先清
         session.contentHash = m.newHash
         refreshScanAlignForCurrentContent()
         session.reloadOCRState()
