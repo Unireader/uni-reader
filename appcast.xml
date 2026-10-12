@@ -9,6 +9,46 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.10</title>
+      <pubDate>Mon, 12 Oct 2026 07:36:13 +0000</pubDate>
+      <sparkle:version>51</sparkle:version>
+      <sparkle:shortVersionString>0.3.10</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能</h4>
+<ul>
+<li>文字识别（OCR）多了一个「本机 OCR 服务（PP-OCRv6）」选项：在「设置 › 阅读」里选中后，识别在你自己的 Mac 上完成，不需要 API Key，也不用联网。需要先启动本机 OCR 服务（项目主页：<a href="https://github.com/xVanTuring/ocr-services">https://github.com/xVanTuring/ocr-services</a> ），设置页和 OCR 面板里都有可点的链接，设置页还能查看服务是否在线。本机服务和云端的识别结果分开保存，切换引擎后需要按新引擎重新识别。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>整本识别完成后重启 App，OCR 面板里的进度显示成「3 of 14 pages recognized」（只数了当前已载入的页），现在显示实际识别的页数。</li>
+</ul>
+<h4>其他</h4>
+<ul>
+<li>Markdown 笔记的渲染引擎更新：编辑区滚到顶部或底部时不再回弹，源码模式不再把代码块当作独立区块。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.10">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New</h4>
+<ul>
+<li>Text recognition (OCR) has a new "Local OCR Service (PP-OCRv6)" option. Select it in Settings › Reading and recognition runs on your own Mac, with no API key and no internet needed. Start the local OCR service first (project page: <a href="https://github.com/xVanTuring/ocr-services);">https://github.com/xVanTuring/ocr-services);</a> the Settings page and the OCR panel both have a clickable link, and Settings shows whether the service is online. Results from the local service and the cloud are stored separately, so after switching engines pages are recognized again with the new one.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>After recognizing a whole book and restarting the app, the OCR panel showed something like "3 of 14 pages recognized" (it only counted the pages loaded so far). It now shows the number of pages actually recognized.</li>
+</ul>
+<h4>Other</h4>
+<ul>
+<li>The Markdown note rendering engine was updated: the editor no longer bounces when scrolled to the top or bottom, and source mode no longer reports code blocks as separate blocks.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.10">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.10/UniReader-0.3.10.zip" length="14874921" type="application/octet-stream" sparkle:edSignature="bvsZLD+XeMxPPX5GiWfvntgq9krrwpNQDcJ9bBAvjmQqQRGeagTk3f7qfwMgFTIyQy17dR5kDvtv2in+g27TAQ==" />
+    </item>
+    <item>
       <title>v0.3.9</title>
       <pubDate>Sun, 11 Oct 2026 08:55:10 +0000</pubDate>
       <sparkle:version>50</sparkle:version>
