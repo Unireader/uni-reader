@@ -3,54 +3,96 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// PaddleOCR 云 API 客户端（模型 **PP-OCRv6**，逐页图片提交）。
-/// 异步 job：`POST /api/v2/ocr/jobs`(multipart 上传页图) → 轮询 `GET .../{jobId}` 到 `done` → 下 JSONL。
+/// PP-OCRv6 异步 job 客户端（逐页图片提交）。两个后端共用这一套：
+/// · **Paddle 云 API**（`cloudConfig(apiKey:)`，要 API key）
+/// · **本机 OCR 服务**（`LocalOCR.config()`，免 key，接口与云端一致，见该仓库 `docs/API.md`）
+///
+/// 流程：`POST .../api/v2/ocr/jobs`(multipart 上传页图) → 轮询 `GET .../{jobId}` 到 `done` → 下 JSONL。
 /// PP-OCRv6 的结果里逐行文本在 `result.ocrResults[].prunedResult.rec_texts`、行框在 `rec_boxes`
 /// （输入图**像素坐标、左上原点**）——正好和页图（`PageBitmap.render` 出的显示朝向图，top-origin）同坐标系，
 /// 直接按图宽高归一化成 `TextRun`（0~1 左上原点），无需 rotation 变换。
 ///
-/// 提交时带 `returnWordBox: true`（**文档没列这个字段，2026-09-03 实测云端认**），结果多出
+/// 提交时带 `returnWordBox: true`（**云端文档没列这个字段，2026-09-03 实测云端认**），结果多出
 /// `text_word` + `text_word_boxes` 两列单字框——`TextRun.chars` 就是它换算来的，文字选择靠它才不切半个字。
-/// 引擎选择存 UserDefaults；API key 存 **Keychain**（本机密钥，不进工作区共享文件夹、不落 plist 明文）。
+/// 引擎选择存 UserDefaults（取值归 `OCRBackend`）；云端 API key 存 **Keychain**（本机密钥，不进工作区共享文件夹、不落 plist 明文）。
 enum PaddleOCR {
-    static let jobURL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
+    static let cloudJobURL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
     static let model = "PP-OCRv6"
     /// ⚠️ 缓存键的一部分（`ocr_page.provider`）。**改了它 = 旧 OCR 缓存全部失效、按需重跑**。
     /// `-w` 这一版起 payload 里带单字框（`TextRun.chars`）；老缓存没有，靠 bump 让它重跑一遍，
     /// 免得同一本书一半行能精确选、一半行还在按权重猜（旧行还留在表里，不占逻辑、只占点空间）。
     static let providerID = "paddle-ppocrv6-w"
 
-    /// UserDefaults 键（引擎选择；与 `SettingsView` / `ContentView` 共用）。
-    static let engineKey = "ocrEngine"        // "off" | "paddle"
+    /// UserDefaults 键（引擎选择；与 `SettingsView` / `OCRBackend` 共用）。
+    static let engineKey = "ocrEngine"        // "off" | "paddle" | "local"
     /// API key 的 Keychain account；同时也是 UserDefaults 里的**旧**键（仅迁移用，见 `apiKey()`）。
     static let apiKeyKey = "ocrPaddleKey"
 
-    struct Config { var apiKey: String }
+    /// 一个后端的全部差异。构造只有两处：`cloudConfig(apiKey:)`（云端）与 `LocalOCR.config()`
+    /// （本机服务）；下面的请求代码只认这个结构，不再各自比引擎字符串。
+    struct Config {
+        /// 提交任务的 jobs 接口（两边路径相同，只差主机与端口）。
+        var endpoint: URL
+        /// 云端的 API key；本机服务不校验，空串 = 连 `Authorization` 头都不发。
+        var apiKey: String
+        /// 缓存键（`ocr_page.provider`）：两个引擎识别结果不同，各存各的。
+        var providerID: String
+        /// 随提交一起发的 `optionalPayload`（JSON 字符串）。
+        var optionalPayload: String
+        /// **单个请求**的超时（提交、查询、下载各自一次往返）。两个后端提交都只是入队，不等识别完。
+        var requestTimeout: TimeInterval
+        /// 轮询任务状态的间隔。本机识别一页几百毫秒，查得勤一点更跟手；云端排队慢，2.5 秒够了。
+        var pollInterval: TimeInterval
+        /// 等一个任务到 `done` 的**总**预算（`docs/API.md` §6.4：本机第一个任务含模型加载，要放宽）。
+        var pollBudget: TimeInterval
+        /// true = 结果地址取响应里的 `resultUrl.jsonUrl`（云端是**带签名的临时地址**，只能照它取）；
+        /// false = 忽略响应里的地址，按固定路径 `.../{jobId}/result.jsonl` 从 `endpoint` 拼——
+        /// 本机服务回的绝对地址是它自己监听的那个，用户改过 host/端口就指不回去。
+        var followServerResultURL: Bool
+        /// 连不上时补的一句办法（本机服务 = 怎么把它启动起来；云端留空）。
+        var unreachableHint: String
+    }
 
     enum OCRError: LocalizedError {
-        case notConfigured, encodeFailed, http(Int), badResponse, jobFailed(String), timeout
+        case notConfigured, encodeFailed, http(Int, String?), badResponse, jobFailed(String), timeout
+        case unreachable(String, String)
         var errorDescription: String? {
             switch self {
-            case .notConfigured: return "OCR 未配置（设置里选 Paddle 并填 key）"
+            case .notConfigured: return "OCR 未配置（设置里选引擎；选云端还要填 key）"
             case .encodeFailed:  return "页图编码失败"
-            case .http(let c):   return "HTTP \(c)"
+            case .http(let c, let detail):
+                guard let detail, !detail.isEmpty else { return "HTTP \(c)" }
+                return "HTTP \(c)：\(detail)"
             case .badResponse:   return "响应格式异常"
             case .jobFailed(let m): return "识别失败：\(m)"
             case .timeout:       return "识别超时"
+            case .unreachable(let why, let hint):
+                // 系统的失败原因常自带句号（还是英文的），去掉再接中文那句，免得出现「.。」。
+                var reason = why.trimmingCharacters(in: .whitespacesAndNewlines)
+                while let last = reason.last, last == "." || last == "。" { reason.removeLast() }
+                return hint.isEmpty ? "连不上 OCR 服务：\(reason)" : "连不上 OCR 服务：\(reason)。\(hint)"
             }
         }
     }
 
-    /// 引擎=paddle 且 key 非空 → 返回配置，否则 nil（用于「是否已配置 OCR」判断）。
-    static func configFromDefaults() -> Config? {
-        let d = UserDefaults.standard
-        guard d.string(forKey: engineKey) == "paddle" else { return nil }
-        let key = apiKey()
-        return key.isEmpty ? nil : Config(apiKey: key)
+    /// 云端那一套配置（本机服务的对应物见 `LocalOCR.config()`）。
+    /// key 为空 = 没配好，调用方（`OCRBackend`）负责判。
+    static func cloudConfig(apiKey: String) -> Config {
+        Config(
+            endpoint: URL(string: cloudJobURL)!,
+            apiKey: apiKey,
+            providerID: providerID,
+            // optionalPayload 作为一个 form 字段（JSON 字符串），与 SKILL 的 Local File Mode 一致。
+            optionalPayload: #"{"useDocOrientationClassify":false,"useDocUnwarping":false,"useTextlineOrientation":false,"returnWordBox":true}"#,
+            requestTimeout: 60,
+            pollInterval: 2.5,
+            pollBudget: 300,
+            followServerResultURL: true,
+            unreachableHint: "")
     }
 
     /// API key 的内存副本。Keychain 是同步读、一次几十毫秒，而翻页 / 缩放每露出一页都要在主线程上问一次
-    /// 「OCR 配好没有」（`configFromDefaults`；2026-10-07 采样：缩放时一次 36ms，连着几次就掉帧）。
+    /// 「OCR 配好没有」（`OCRBackend.current.config`；2026-10-07 采样：缩放时一次 36ms，连着几次就掉帧）。
     /// key 只经 `setApiKey` 改，改时一起更新这份。
     private static let keyLock = NSLock()
     private static var cachedKey: String?
@@ -90,44 +132,91 @@ enum PaddleOCR {
         guard let png = pngData(image) else { throw OCRError.encodeFailed }
         let jobId = try await submit(png: png, config: config)
         let jsonlURL = try await poll(jobId: jobId, config: config)
-        let (data, _) = try await URLSession.shared.data(from: jsonlURL)
+        let (data, _) = try await send(request(to: jsonlURL, config: config), config: config)
         return parse(jsonl: data, imageSize: CGSize(width: image.width, height: image.height))
     }
 
     // MARK: HTTP
 
+    /// 组装一个请求：地址、超时、`Authorization`（本机服务不校验 key，空串就整个头都不发）。
+    private static func request(to url: URL, config: Config) -> URLRequest {
+        var req = URLRequest(url: url)
+        req.timeoutInterval = config.requestTimeout
+        if !config.apiKey.isEmpty { req.setValue("bearer \(config.apiKey)", forHTTPHeaderField: "Authorization") }
+        return req
+    }
+
+    /// 发一个请求。「连不上」单独翻一句：本机服务最常见的失败就是进程没起来，
+    /// 光丢一句系统文案用户没法照着办。
+    private static func send(_ req: URLRequest, config: Config) async throws -> (Data, URLResponse) {
+        do {
+            return try await URLSession.shared.data(for: req)
+        } catch let e as URLError {
+            switch e.code {
+            case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet:
+                throw OCRError.unreachable(e.localizedDescription, config.unreachableHint)
+            case .timedOut:
+                throw OCRError.timeout
+            default:
+                throw e
+            }
+        }
+    }
+
     private static func submit(png: Data, config: Config) async throws -> String {
         let boundary = "----unireader-\(UUID().uuidString)"
-        var req = URLRequest(url: URL(string: jobURL)!)
-        req.httpMethod = "POST"
-        req.setValue("bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        // optionalPayload 作为一个 form 字段（JSON 字符串），与 SKILL 的 Local File Mode 一致。
-        let optional = #"{"useDocOrientationClassify":false,"useDocUnwarping":false,"useTextlineOrientation":false,"returnWordBox":true}"#
         var body = Data()
         body.appendStr("--\(boundary)\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n\(model)\r\n")
-        body.appendStr("--\(boundary)\r\nContent-Disposition: form-data; name=\"optionalPayload\"\r\n\r\n\(optional)\r\n")
+        body.appendStr("--\(boundary)\r\nContent-Disposition: form-data; name=\"optionalPayload\"\r\n\r\n\(config.optionalPayload)\r\n")
         body.appendStr("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"page.png\"\r\nContent-Type: image/png\r\n\r\n")
         body.append(png)
         body.appendStr("\r\n--\(boundary)--\r\n")
-        req.httpBody = body
 
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse else { throw OCRError.badResponse }
-        guard http.statusCode == 200 else { throw OCRError.http(http.statusCode) }
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let d = obj["data"] as? [String: Any],
-              let jobId = (d["jobId"] as? String) ?? (d["jobId"] as? NSNumber).map({ $0.stringValue })
-        else { throw OCRError.badResponse }
-        return jobId
+        // 排队满（本机 `OCR_MAX_PENDING`，默认 32）返回 503 + `Retry-After`，照它给的秒数等一会儿再投
+        // （`docs/API.md` §4）。重试几次还不行才报错——那是真投不进去。
+        for attempt in 0...3 {
+            var req = request(to: config.endpoint, config: config)
+            req.httpMethod = "POST"
+            req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            req.httpBody = body
+            let (data, resp) = try await send(req, config: config)
+            guard let http = resp as? HTTPURLResponse else { throw OCRError.badResponse }
+            if http.statusCode == 503, attempt < 3 {
+                try await Task.sleep(nanoseconds: UInt64(retryAfter(http) * 1_000_000_000))
+                continue
+            }
+            guard http.statusCode == 200 else { throw OCRError.http(http.statusCode, errorDetail(data)) }
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let d = obj["data"] as? [String: Any],
+                  let jobId = (d["jobId"] as? String) ?? (d["jobId"] as? NSNumber).map({ $0.stringValue })
+            else { throw OCRError.badResponse }
+            return jobId
+        }
+        throw OCRError.timeout
     }
 
-    /// 轮询到 `done`（返回结果 JSONL 的预签名 URL）；`failed` 抛错；~最多 5 分钟超时。
+    /// `Retry-After` 头（秒），没有或不像就按 5 秒；钳在 1~30 秒，别被一个怪值挂住整页。
+    private static func retryAfter(_ http: HTTPURLResponse) -> Double {
+        guard let v = http.value(forHTTPHeaderField: "Retry-After"), let s = Double(v) else { return 5 }
+        return min(max(s, 1), 30)
+    }
+
+    /// 出错响应里的说明文字：两个后端都用 `{"detail": "…"}`（本机服务 `docs/API.md` §4）。
+    private static func errorDetail(_ data: Data) -> String? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let detail = obj["detail"] as? String else { return nil }
+        return detail.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 轮询到 `done`，返回结果 JSONL 的地址；`failed` 抛错；总时长不超过 `config.pollBudget`。
+    /// 两个后端都是**提交即入队**（识别在后台跑），所以这里要真等：`pending` / `running` 隔
+    /// `pollInterval` 再查一次（`docs/API.md` §2.2）。本机第一个任务还包含模型加载，会等上几十秒。
     private static func poll(jobId: String, config: Config) async throws -> URL {
-        var req = URLRequest(url: URL(string: "\(jobURL)/\(jobId)")!)
-        req.setValue("bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        for _ in 0..<120 {
-            let (data, resp) = try await URLSession.shared.data(for: req)
+        let url = config.endpoint.appendingPathComponent(jobId)
+        let req = request(to: url, config: config)
+        let until = Date().addingTimeInterval(config.pollBudget)
+        while Date() < until {
+            let (data, resp) = try await send(req, config: config)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let d = obj["data"] as? [String: Any],
@@ -135,13 +224,18 @@ enum PaddleOCR {
             else { throw OCRError.badResponse }
             switch state {
             case "done":
+                guard config.followServerResultURL else {
+                    // 不跟响应里的绝对地址（那是服务自己监听的那个，用户改过 host/端口就指不回去），
+                    // 按固定路径拼：`docs/API.md` §2.3。
+                    return url.appendingPathComponent("result.jsonl")
+                }
                 guard let ru = d["resultUrl"] as? [String: Any],
                       let s = ru["jsonUrl"] as? String, let u = URL(string: s) else { throw OCRError.badResponse }
                 return u
             case "failed":
-                throw OCRError.jobFailed((d["errorMsg"] as? String) ?? "unknown")
+                throw OCRError.jobFailed((d["errorMsg"] as? String) ?? errorDetail(data) ?? "unknown")
             default:   // pending / running
-                try await Task.sleep(nanoseconds: 2_500_000_000)
+                try await Task.sleep(nanoseconds: UInt64(config.pollInterval * 1_000_000_000))
             }
         }
         throw OCRError.timeout

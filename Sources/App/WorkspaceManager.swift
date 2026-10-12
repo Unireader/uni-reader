@@ -542,7 +542,7 @@ final class WorkspaceManager: ObservableObject {
     /// 切换前弹窗要的两个数：挂在页面坐标上的批注条数、已识别的 OCR 页数。
     func scanAlignImpact(documentId: String, contentHash: String) -> (notes: Int, ocrPages: Int) {
         let notes = (try? store?.pageAnchoredNoteCount(documentId: documentId)) ?? 0
-        let ocr = (try? store?.ocrPageCount(contentHash: contentHash, provider: PaddleOCR.providerID)) ?? 0
+        let ocr = (try? store?.ocrPageCount(contentHash: contentHash, provider: OCRBackend.current.providerID)) ?? 0
         return (notes, ocr)
     }
 

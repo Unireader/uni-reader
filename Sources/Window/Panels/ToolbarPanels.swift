@@ -142,6 +142,12 @@ final class OCRPanelController: StackPanelController {
     private let main = NSStackView()
     private let useOCR = NSButton(checkboxWithTitle: L("Use OCR text for this document"), target: nil, action: nil)
     private var status: NSTextField!
+    /// 未就绪时的提示（文案跟着所选引擎变）。
+    private var hintLabel: NSTextField!
+    /// 挂在提示区与面板正文两处（两块互斥显示）：本机服务是另一个进程，没启动时要能一眼看到去哪装。
+    private var hintRepoLink: NSButton!
+    /// 引擎=本机服务时显示的一行说明 + 仓库链接。
+    private var mainLocalNote: NSStackView!
     private let spinner = NSProgressIndicator()
     private let recognizeAll = NSButton(title: L("Recognize all pages"), target: nil, action: nil)
     private let watermark = NSButton(checkboxWithTitle: L("Ignore tiled watermark blocks"), target: nil, action: nil)
@@ -165,7 +171,10 @@ final class OCRPanelController: StackPanelController {
         setupHint.orientation = .vertical
         setupHint.alignment = .leading
         setupHint.spacing = 10
-        setupHint.addArrangedSubview(caption(L("Enable API OCR in Settings (⌘,) and paste your key first.")))
+        hintLabel = caption(L("Enable API OCR in Settings (⌘,) and paste your key first."), color: .labelColor)
+        setupHint.addArrangedSubview(hintLabel)
+        hintRepoLink = repoLink()
+        setupHint.addArrangedSubview(hintRepoLink)
         let open = NSButton(title: L("Open Settings…"), target: self, action: #selector(openSettings))
         setupHint.addArrangedSubview(open)
         stack.addArrangedSubview(setupHint)
@@ -188,7 +197,15 @@ final class OCRPanelController: StackPanelController {
         grouping.target = self
         grouping.action = #selector(groupingChanged)
         errorLabel = caption("", color: .systemRed)
-        for v in [useOCR, status, spinner, recognizeAll, separator(), watermark,
+        // 本机服务是另一个进程：面板里留一行「哪来的 + 去哪看用法」，地址可点，直接开浏览器。
+        let localNote = NSStackView()
+        localNote.orientation = .vertical
+        localNote.alignment = .leading
+        localNote.spacing = 2
+        localNote.addArrangedSubview(caption(L("Recognizing on this Mac with the local OCR service."), color: .labelColor))
+        localNote.addArrangedSubview(repoLink())
+        mainLocalNote = localNote
+        for v in [useOCR, status, spinner, recognizeAll, localNote, separator(), watermark,
                   caption(L("Scanned books often carry a tiled diagonal watermark; OCR turns it into big blocks that break text selection. Detected by geometry and cross-page repetition, not by wording.")),
                   separator(), debugBlocks,
                   caption(L("Colors each recognized text block to inspect layout/selection accuracy; ignored watermark blocks show as grey dashed outlines.")),
@@ -229,9 +246,16 @@ final class OCRPanelController: StackPanelController {
 
     private func refresh() {
         let s = session
-        let ready = (UserDefaults.standard.string(forKey: "ocrEngine") ?? "off") == "paddle"
+        let backend = OCRBackend.current
+        let ready = backend.isReady
         setupHint.isHidden = ready
         main.isHidden = !ready
+        // 本机服务是独立进程，两处都把仓库地址挂成可点的链接（只有选它时显示）。
+        hintLabel.stringValue = backend == .local
+            ? L("Start the local OCR service, then select it in Settings (⌘,).")
+            : L("Enable API OCR in Settings (⌘,) and paste your key first.")
+        hintRepoLink.isHidden = backend != .local
+        mainLocalNote.isHidden = backend != .local
         if ready {
             useOCR.state = s.ocrEnabled ? .on : .off
             let done = s.ocrDoneCount, total = s.ocrTotalPages
@@ -255,7 +279,18 @@ final class OCRPanelController: StackPanelController {
         resize()
     }
 
+    /// 服务仓库地址做成可点的链接。面板是玻璃底：按红线④显式上主色，不用无边框的淡样式。
+    private func repoLink() -> NSButton {
+        let b = NSButton(title: LocalOCR.repoLabel, target: self, action: #selector(openRepo))
+        b.isBordered = false
+        b.font = .preferredFont(forTextStyle: .caption1)
+        b.contentTintColor = .controlAccentColor
+        b.toolTip = L("Open the local OCR service page on GitHub")
+        return b
+    }
+
     @objc private func openSettings() { SettingsWindowController.show() }
+    @objc private func openRepo() { LocalOCR.openRepo() }
     @objc private func toggleUse() { session.setOCREnabled(useOCR.state == .on) }
     @objc private func runAll() { session.ocrAllPages() }
     @objc private func toggleWatermark() { session.ocrIgnoreWatermark = watermark.state == .on }

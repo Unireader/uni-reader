@@ -992,7 +992,7 @@ final class MCPFacade {
         guard let s = t.session, s.pdf != nil else {
             throw MCPToolError("document must be open in a tab to run OCR; call open_document first")
         }
-        guard PaddleOCR.configFromDefaults() != nil else {
+        guard OCRBackend.current.isReady else {
             throw MCPToolError("no OCR engine is configured in UniReader › Settings › Reading")
         }
         let want = pages ?? Array(0..<s.ocrTotalPages)

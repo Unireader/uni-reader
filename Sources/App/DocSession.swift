@@ -648,9 +648,10 @@ final class DocSession: ObservableObject, Identifiable {
              label: searchQuery.trimmingCharacters(in: .whitespacesAndNewlines), origin: "search")
     }
 
-    // MARK: OCR（T3，Paddle PP-OCRv6）——逐页按需 + 手动全量；结果=准确文本层，选择/复制/搜索改用它。
-    // 数据流：可见页 → 查 ocr_page 缓存(命中即用) → miss 则渲页图上传 Paddle → 回填缓存 → ocrRuns 刷新。
-    // 缓存键 = (内容 hash, 页, provider)，随内容走、换机复用；网络任务并发上限 3。
+    // MARK: OCR（T3，PP-OCRv6：云端 Paddle API 或本机 OCR 服务，二选一，见 `OCRBackend`）
+    // ——逐页按需 + 手动全量；结果=准确文本层，选择/复制/搜索改用它。
+    // 数据流：可见页 → 查 ocr_page 缓存(命中即用) → miss 则渲页图上传引擎 → 回填缓存 → ocrRuns 刷新。
+    // 缓存键 = (内容 hash, 页, provider)；provider 按引擎分开，随内容走、换机复用；网络任务并发上限 3。
 
     @Published var ocrEnabled = false                     // 本文档启用 OCR 文本层
     /// 页 → 已识别的行级文本框（阅读顺序）。**这是真源**（落库、建水印指纹都用它）；
@@ -721,7 +722,7 @@ final class DocSession: ObservableObject, Identifiable {
         guard let store, !contentHash.isEmpty else { return }
         let hash = contentHash
         Task.detached(priority: .utility) { [weak self] in
-            guard let raw = try? store.allOCRPayloads(contentHash: hash, provider: PaddleOCR.providerID),
+            guard let raw = try? store.allOCRPayloads(contentHash: hash, provider: OCRBackend.current.providerID),
                   !raw.isEmpty else { return }
             let dec = JSONDecoder()
             var pages: [Int: [TextRun]] = [:]
@@ -769,7 +770,10 @@ final class DocSession: ObservableObject, Identifiable {
         return d
     }
 
-    var ocrDoneCount: Int { ocrRuns.count }
+    /// 库里这本书（当前引擎）已识别的页数。`ocrRuns` 只含已读进内存的页（重启后按可见页懒加载），
+    /// 面板进度要按库里的数算，否则全量识别完重启后显示成「3 of 14」。
+    @Published private(set) var ocrStoredCount = 0
+    var ocrDoneCount: Int { max(ocrRuns.count, ocrStoredCount) }
     var ocrTotalPages: Int { pdf?.pageCount ?? 0 }
     var ocrPendingCount: Int { ocrQueue.count + ocrActivePages.count }
     var ocrRunning: Bool { ocrPendingCount > 0 }
@@ -783,8 +787,10 @@ final class DocSession: ObservableObject, Identifiable {
         ocrEnabled = false
         ocrRenderPDF = nil   // 换文档 → 丢弃旧的 OCR 渲染副本，下次用时按新 pdf 懒建
         invalidateOCRDerived(); wmProfile = OCRWatermark.Profile(); wmProfilePages = 0
+        ocrStoredCount = 0
         guard let store, !contentHash.isEmpty else { return }
-        if let c = try? store.ocrPageCount(contentHash: contentHash, provider: PaddleOCR.providerID), c > 0 {
+        if let c = try? store.ocrPageCount(contentHash: contentHash, provider: OCRBackend.current.providerID), c > 0 {
+            ocrStoredCount = c
             ocrEnabled = true
             rebuildWatermarkProfile()   // 库里已有整本的识别结果 → 第一页就能按跨页统计滤水印
         }
@@ -818,11 +824,12 @@ final class DocSession: ObservableObject, Identifiable {
         ocrCacheLoading.formUnion(want)
         guard let store else { ocrCacheLoading.subtract(want); return }
         let hash = contentHash
+        let provider = OCRBackend.current.providerID   // 一次入队问一次引擎，别每页各读各的
         Task.detached(priority: .userInitiated) { [weak self] in
             var found: [Int: [TextRun]] = [:]
             let dec = JSONDecoder()
             for p in want {
-                if let row = try? store.ocrPage(contentHash: hash, page: p, provider: PaddleOCR.providerID),
+                if let row = try? store.ocrPage(contentHash: hash, page: p, provider: provider),
                    let payload = try? dec.decode(OCRPagePayload.self, from: row.payload) {
                     found[p] = payload.runs
                 }
@@ -837,7 +844,7 @@ final class DocSession: ObservableObject, Identifiable {
                     self.ocrRuns = runs      // 一次写 = 一次整窗重算，而不是一页一次
                     self.openTrace?.mark("OCR缓存到位", "\(found.count)页 后台")
                 }
-                if PaddleOCR.configFromDefaults() != nil {
+                if OCRBackend.current.isReady {
                     for p in want where found[p] == nil && self.ocrRuns[p] == nil
                         && !self.ocrActivePages.contains(p) && !self.ocrQueue.contains(p) {
                         self.ocrQueue.append(p)
@@ -857,7 +864,7 @@ final class DocSession: ObservableObject, Identifiable {
     }
 
     private func startNetworkOCR(_ page: Int) {
-        guard let pdf = ocrRenderDocument(), let config = PaddleOCR.configFromDefaults() else { return }
+        guard let pdf = ocrRenderDocument(), let config = OCRBackend.current.config else { return }
         let hash = contentHash
         // 开着扫描页对齐：识别对齐后的页面，行框天然落在「页面坐标」上（切换开关时这份内容的 OCR 结果会清掉重跑）
         let align = pageAlign(page)
@@ -883,7 +890,7 @@ final class DocSession: ObservableObject, Identifiable {
                 self.ocrTasks.removeValue(forKey: page)
                 if let runs {
                     self.ocrRuns[page] = runs
-                    self.saveCachedOCR(page: page, runs: runs, imgW: imgW, imgH: imgH)
+                    self.saveCachedOCR(page: page, runs: runs, imgW: imgW, imgH: imgH, provider: config.providerID)
                 } else if let err {
                     self.ocrLastError = err
                 }
@@ -904,12 +911,13 @@ final class DocSession: ObservableObject, Identifiable {
     }
 
 
-    private func saveCachedOCR(page: Int, runs: [TextRun], imgW: Double, imgH: Double) {
+    private func saveCachedOCR(page: Int, runs: [TextRun], imgW: Double, imgH: Double, provider: String) {
         guard let store,
               let data = try? JSONEncoder().encode(OCRPagePayload(w: imgW, h: imgH, runs: runs)) else { return }
         try? store.upsertOCRPage(OCRPage(contentHash: contentHash, page: page,
-                                         provider: PaddleOCR.providerID, payload: data,
+                                         provider: provider, payload: data,
                                          lang: nil, createdAt: Date()))
+        if let c = try? store.ocrPageCount(contentHash: contentHash, provider: provider) { ocrStoredCount = c }
         // 边跑边识别的新书：每多攒够一批页就重建一次水印指纹（样本越多越准；
         // 样本不足时 `OCRWatermark.mask` 只靠同页伙伴那条判据兜着）。
         if ocrRuns.count >= wmProfilePages + OCRWatermark.minRepeatPages { rebuildWatermarkProfile() }

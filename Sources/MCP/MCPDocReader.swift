@@ -263,7 +263,7 @@ final class MCPDocReader {
         guard !contentHash.isEmpty else { return 0 }
         return await withCheckedContinuation { cont in
             queue.async {
-                cont.resume(returning: (try? store.ocrPageCount(contentHash: contentHash, provider: PaddleOCR.providerID)) ?? 0)
+                cont.resume(returning: (try? store.ocrPageCount(contentHash: contentHash, provider: OCRBackend.current.providerID)) ?? 0)
             }
         }
     }
@@ -275,7 +275,7 @@ final class MCPDocReader {
             return b
         }
         var pages: [Int: [TextRun]] = [:]
-        if let raw = try? store.allOCRPayloads(contentHash: contentHash, provider: PaddleOCR.providerID) {
+        if let raw = try? store.allOCRPayloads(contentHash: contentHash, provider: OCRBackend.current.providerID) {
             let dec = JSONDecoder()
             for (page, data) in raw {
                 if let payload = try? dec.decode(OCRPagePayload.self, from: data) { pages[page] = payload.runs }

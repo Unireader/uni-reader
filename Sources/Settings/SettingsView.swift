@@ -46,8 +46,12 @@ struct SettingsView: View {
     @AppStorage("autoNightMode") private var autoNightMode = false
     @AppStorage("scrollInterp") private var scrollInterp = true      // true=时间戳插值 / false=纯低通
     @AppStorage("autoStartServer") private var autoStartServer = false
-    @AppStorage("ocrEngine") private var ocrEngine = "off"          // "off" | "paddle"
-    @State private var ocrPaddleKey = ""   // Paddle API key：存 Keychain（不进 UserDefaults），见 PaddleOCR.apiKey()
+    @AppStorage("ocrEngine") private var ocrEngine = OCRBackend.off   // 取值见 `OCRBackend`；键与 `PaddleOCR.engineKey` 一致
+    @State private var ocrPaddleKey = ""   // Paddle API key：存 Keychain（不进 UserDefaults），见 `PaddleOCR.apiKey()`
+    /// 本机 OCR 服务地址：空 = 用 `LocalOCR.defaultAddress`。键与读取方 `LocalOCR.storedAddress` 必须同一把。
+    @AppStorage(LocalOCR.addressKey) private var ocrLocalAddress = ""
+    @State private var ocrLocalStatus: String?
+    @State private var ocrLocalChecking = false
     /// 页图缓存上限（MB，= 真实占用；计费系数见 `PageRenderEngine.copiesPerImage`）。
     /// ⚠️ 默认值与 `ContentView` 启动时那句 `?? 256` **必须一致**，改一处要改两处。
     @AppStorage("renderCacheMB") private var renderCacheMB = 256
@@ -472,22 +476,81 @@ struct SettingsView: View {
 
             Section {
                 Picker(L("OCR Engine"), selection: $ocrEngine) {
-                    Text(L("Off")).tag("off")
-                    Text(L("Paddle OCR (API)")).tag("paddle")
+                    Text(L("Off")).tag(OCRBackend.off)
+                    Text(L("Paddle OCR (API)")).tag(OCRBackend.paddle)
+                    Text(L("Local OCR Service (PP-OCRv6)")).tag(OCRBackend.local)
                 }
-                if ocrEngine == "paddle" {
+                if ocrEngine == .paddle {
                     SecureField(L("Paddle API Key"), text: $ocrPaddleKey)
                         .textFieldStyle(.roundedBorder)
                         .onAppear { ocrPaddleKey = PaddleOCR.apiKey() }
                         .onChange(of: ocrPaddleKey) { _, v in PaddleOCR.setApiKey(v) }
                 }
+                if ocrEngine == .local {
+                    // 地址留空 = 用默认（`LocalOCR.defaultAddress`），键与读取方 `LocalOCR.storedAddress` 同一把。
+                    TextField(L("Service Address"), text: $ocrLocalAddress, prompt: Text(LocalOCR.defaultAddress))
+                        .textFieldStyle(.roundedBorder)
+                    LabeledContent {
+                        // 值整组靠右（与上面的地址框、下面的 GitHub 链接同一条右边界）；状态词短到不会
+                        // 被右边的按钮挤成省略号（`.fixedSize` 兜底），慢的原因与启动方法都写在 footer。
+                        HStack(spacing: 8) {
+                            Spacer(minLength: 8)
+                            if ocrLocalChecking { ProgressView().controlSize(.small) }
+                            Text(ocrLocalChecking ? L("Checking…")
+                                : (ocrLocalStatus ?? L("Not checked yet")))
+                                .lineLimit(1)
+                                .fixedSize()
+                            Button(L("Check Now")) { checkLocalOCR() }.disabled(ocrLocalChecking)
+                        }
+                    } label: {
+                        Text(L("Service Status"))
+                    }
+                    // 备注服务仓库：装它、启它、接口说明都在那儿，点着跳过去。
+                    LabeledContent {
+                        Link(LocalOCR.repoLabel, destination: LocalOCR.repoURL)
+                    } label: {
+                        Text(L("Project Page (GitHub)"))
+                    }
+                }
             } header: {
                 Text(L("Text Recognition (OCR)"))
             } footer: {
-                Text(L("For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored in this Mac's Keychain."))
+                VStack(alignment: .leading, spacing: 4) {
+                    if ocrEngine == .local {
+                        Text(L("Recognizes pages on this Mac with PP-OCRv6 on Apple Silicon. Runs as a separate local service — start it first, then press Check Now."))
+                        Text(L("It needs no API key. Recognition is serial, and the first page after an idle period reloads the model and takes longer."))
+                        Text(L("Results from this engine are cached separately from the cloud engine's."))
+                    } else {
+                        Text(L("For scanned or bad-text PDFs, use API OCR for accurate selectable/searchable text. The key is stored in this Mac's Keychain."))
+                    }
+                }
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// 本机 OCR 服务的健康检查（`GET /healthz`）：只看服务起没起，**不会**触发模型加载。
+    /// 结果只在设置窗活着的时候留着，不落盘。
+    private func checkLocalOCR() {
+        ocrLocalChecking = true
+        ocrLocalStatus = nil
+        Task {
+            let text = localHealthText(await LocalOCR.checkHealth())
+            await MainActor.run {
+                ocrLocalStatus = text
+                ocrLocalChecking = false
+            }
+        }
+    }
+
+    private func localHealthText(_ h: LocalOCR.Health) -> String {
+        // 状态词要短：这一行右边还挂着按钮，长了就被压成省略号（为什么慢、怎么启服务都在 footer 说）。
+        switch h {
+        case .badAddress:    return L("Bad address")
+        case .offline:       return L("Service not running")
+        case .online(true):  return L("Running · model loaded")
+        case .online(false): return L("Running · model unloaded")
+        }
     }
 
     /// 真实内存台账（`MemoryDiag`）：进程总量 → 页位图（存活 / 缓存 / 各窗口持有）→ 堆。

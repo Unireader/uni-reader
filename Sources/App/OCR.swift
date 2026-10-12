@@ -4,6 +4,10 @@ import Foundation
 /// OCR 引擎抽象：给一页的位图，返回归一化文本框（喂给 `PageTextLayer`）。**可插拔**。
 /// 结果由上层按 `(content_hash, page, provider)` 缓存进工作区 SQLite（`ocr_page` 表，跨平台、换机复用）。
 ///
+/// ⚠️ 下面这套是最初的骨架，**至今没接进运行路径**：真正在用的引擎选择与入口是 `OCRBackend`
+/// （`OCRBackend.swift`），两个后端（云端 Paddle、本机 OCR 服务）都走 `PaddleOCR` 那个 PP-OCRv6 客户端。
+/// 这个文件里只有 `OCRPagePayload`（落库的 payload 结构）是活的。
+///
 /// 两类实现：
 ///  · `VisionOCRProvider`  系统 Vision，离线、免配置。
 ///  · `HTTPOCRProvider`    用户配置的远端 API（PaddleOCR 兼容 / 通用），具体请求响应契约后面再定。

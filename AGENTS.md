@@ -82,6 +82,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - Agent 面板：只住 Inspector「Agent」页；流式碎片只就地换文字、不重建视图；与咨询 AI（`Sources/AI/`）别混。
 - Markdown 笔记：`DocTabModel.noteRef` 与 `docID` 互斥；`WorkspaceWikiIndex` 一个工作区一个；存正文刻意不调 `refreshNotes()`。
 - OCR：消费方一律 `DocSession.ocrVisibleRuns(page:)`（已滤水印块），`ocrRuns` 只给落库、别直接消费。
+- OCR 引擎：选择只在 `OCRBackend`（云端与本机服务共用 `PaddleOCR` 那套 job 客户端），缓存 provider 按引擎分开，别在调用处比 `"paddle"` 字面量。
 - 扫描页对齐：新增出图口必须传 `session.pageAlign(i)`；显示身份用 `displayKey` 别用 `contentHash`。
 - Inspector：真分栏、不叠在阅读区上（工具栏带 `.inspectorTrackingSeparator`）。
 

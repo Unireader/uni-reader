@@ -397,7 +397,7 @@ extension MCPTools {
                 if source == "none" { missing.append(external) }
                 var item: MCPObject = ["page": external, "source": source, "chars": body.count, "text": body]
                 if let l = p.label { item["label"] = l }
-                if source == "ocr" { item["provider"] = PaddleOCR.providerID }
+                if source == "ocr" { item["provider"] = OCRBackend.current.providerID }
                 if cut { item["truncated"] = true }
                 items.append(item)
                 var header = "--- Page \(external)"
