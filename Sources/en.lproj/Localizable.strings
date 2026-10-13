@@ -690,7 +690,7 @@
 "Arguments" = "Arguments";
 "Resolved" = "Resolved";
 "Not found" = "Not found";
-"The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats." = "The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats.";
+"The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (Kimi: “kimi login”; Qwen Code: “qwen” then sign in). Changes apply to new chats." = "The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (Kimi: “kimi login”; Qwen Code: “qwen” then sign in). Changes apply to new chats.";
 "Load in the background at launch" = "Load in the background at launch";
 "With background loading on, each reading window starts the agent as soon as it has a workspace, so the Agent page is ready when you open it. The agent keeps running even if you never open the page." = "With background loading on, each reading window starts the agent as soon as it has a workspace, so the Agent page is ready when you open it. The agent keeps running even if you never open the page.";
 
@@ -958,3 +958,8 @@
 "Open in New Tab" = "Open in New Tab";
 "Redo %d Questions" = "Redo %d Questions";
 "Do every question in this list again. Your earlier answers stay in the practice history." = "Do every question in this list again. Your earlier answers stay in the practice history.";
+"Custom" = "Custom";
+"Approve Edits" = "Approve Edits";
+"File edits are approved automatically; commands still ask." = "File edits are approved automatically; commands still ask.";
+"Approve Everything" = "Approve Everything";
+"Every tool runs without asking." = "Every tool runs without asking.";

@@ -62,9 +62,24 @@ struct MCPSettingsView: View {
 
     // MARK: - 内置 Agent（ACP）
 
+    /// 选预设 = 同时写命令与参数；选「自定义」不动现有值（接着在下面两个框里改）。
+    private var agentPresetBinding: Binding<AgentConfig.Preset?> {
+        Binding(
+            get: { AgentConfig.preset(command: agentCommand, arguments: agentArguments) },
+            set: { p in
+                guard let p else { return }
+                agentCommand = p.command
+                agentArguments = p.arguments
+            })
+    }
+
     /// Agent 面板启动哪条命令（`ACP-AGENT-PLAN.md`）。首批只接 Kimi（`kimi acp`）。
     private var agentSection: some View {
         Section {
+            Picker(L("Agent"), selection: agentPresetBinding) {
+                ForEach(AgentConfig.Preset.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
+                Text(L("Custom")).tag(AgentConfig.Preset?.none)
+            }
             TextField(L("Command"), text: $agentCommand, prompt: Text(AgentConfig.defaultCommand))
             TextField(L("Arguments"), text: $agentArguments, prompt: Text(AgentConfig.defaultArguments))
             LabeledContent(L("Resolved")) {
@@ -76,7 +91,7 @@ struct MCPSettingsView: View {
             Text(L("Agent Panel"))
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
-                Text(L("The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats."))
+                Text(L("The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (Kimi: “kimi login”; Qwen Code: “qwen” then sign in). Changes apply to new chats."))
                 Text(L("With background loading on, each reading window starts the agent as soon as it has a workspace, so the Agent page is ready when you open it. The agent keeps running even if you never open the page."))
             }
         }

@@ -14,6 +14,21 @@ enum AgentConfig {
     static let defaultCommand = "kimi"
     static let defaultArguments = "acp"
 
+    /// 设置页的快捷选项：都是「命令 + 参数」，协议层与 Kimi 完全一致（Qwen Code 0.25.1 实测：
+    /// 握手 / `session/new` 带 modes + configOptions / `session/list` 带标题 / 流式更新，客户端一行不用改）。
+    enum Preset: String, CaseIterable {
+        case kimi, qwen
+        var command: String { self == .kimi ? "kimi" : "qwen" }
+        var arguments: String { self == .kimi ? "acp" : "--acp" }
+        var title: String { self == .kimi ? "Kimi" : "Qwen Code" }
+    }
+
+    static func preset(command: String, arguments: String) -> Preset? {
+        let c = command.trimmingCharacters(in: .whitespaces)
+        let a = arguments.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return Preset.allCases.first { ($0.command == c || (c.isEmpty && $0 == .kimi)) && $0.arguments == a }
+    }
+
     static var command: String {
         let s = UserDefaults.standard.string(forKey: commandKey)?.trimmingCharacters(in: .whitespaces) ?? ""
         return s.isEmpty ? defaultCommand : s

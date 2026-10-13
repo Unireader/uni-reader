@@ -137,6 +137,16 @@ MCP 服务没开 → 不带，面板顶部提示「开启并重新连接」（**
   **以后给 MCP 工具加返回字段，schema 必须同步加。** 只读工具对着运行中的 App 自动比对：`python3 spike/mcp-schema-audit.py`
   （`tools/list` 取 schema → 逐个调用只读工具 → 递归检查多余键 / 缺 required / 类型；写入 / 导航类只列出来提醒人工比对）。
 
+## 4.0 Qwen Code 支持（2026-10-13，`qwen` 0.25.1，`qwen --acp`）
+
+协议层与 Kimi 一致，客户端没改：握手 `loadSession` / `list` / `resume`、`mcpCapabilities.http`、图片 / 嵌入上下文都支持；
+`session/new` 同时给 `modes` 与 `configOptions`（mode + model）；`session/list` 带标题；流式有 `agent_thought_chunk` / `usage_update`。
+- 模式五档：`plan` / `default` / `auto-edit` / `auto` / `yolo`（默认进来是 `auto`）。`default`/`plan`/`auto` 复用 Kimi 的本地化文案，
+  `auto-edit`、`yolo` 在 `AgentMenus.modeInfo` 里新增。
+- 认证：`authMethods` 只给 `openai`（环境变量 `OPENAI_API_KEY`，终端式）；用户先在终端跑一次 `qwen` 配好。
+- 设置页 › Agent 加了「Agent」预设选择（Kimi → `kimi acp` / Qwen Code → `qwen --acp` / 自定义），选预设 = 同时写命令与参数。
+- 未实测：权限卡片（`default` 模式下的工具批准）、MCP 工具调用、会话回放——待用户实测。
+
 ## 4.1 踩过的坑
 
 - **「新对话」把马上要用的进程关了**（2026-09-18 用户实测：报「The file couldn't be saved」，接着「Agent 进程已退出」）：

@@ -761,6 +761,8 @@ enum AgentMenus {
         case "default": return (L("Ask Every Time"), L("Tools run only after you approve them."), "hand.raised")
         case "plan": return (L("Plan Only"), L("Read-only: the agent plans but runs no tools."), "list.bullet.clipboard")
         case "auto": return (L("Approve for Me"), L("Safe operations are approved automatically."), "checkmark.shield")
+        case "auto-edit": return (L("Approve Edits"), L("File edits are approved automatically; commands still ask."), "pencil.line")
+        case "yolo": return (L("Approve Everything"), L("Every tool runs without asking."), "exclamationmark.shield")
         default: return (m.name, m.description ?? "", "slider.horizontal.3")
         }
     }

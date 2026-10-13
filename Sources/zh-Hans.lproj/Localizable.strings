@@ -692,7 +692,7 @@
 "Arguments" = "参数";
 "Resolved" = "实际路径";
 "Not found" = "未找到";
-"The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (for Kimi: “kimi login”). Changes apply to new chats." = "Agent 面板通过 Agent Client Protocol（ACP）与本机的 Agent 通信，并自动把本 MCP 服务交给它使用。Agent 需要你自己在终端里安装并登录（Kimi 为“kimi login”）。修改后对新建的对话生效。";
+"The Agent panel talks to a local agent over the Agent Client Protocol (ACP) and hands it this MCP service automatically. Install and sign in to the agent in Terminal yourself (Kimi: “kimi login”; Qwen Code: “qwen” then sign in). Changes apply to new chats." = "Agent 面板通过 Agent Client Protocol（ACP）与本机的 Agent 通信，并自动把本 MCP 服务交给它使用。Agent 需要你自己在终端里安装并登录（Kimi 为“kimi login”，Qwen Code 为运行“qwen”后登录）。修改后对新建的对话生效。";
 "Load in the background at launch" = "启动时在后台加载";
 "With background loading on, each reading window starts the agent as soon as it has a workspace, so the Agent page is ready when you open it. The agent keeps running even if you never open the page." = "开启后台加载后，阅读窗口一打开工作区就启动 Agent，切到 Agent 页时已经连好。即使从没打开过 Agent 页，Agent 也会一直在运行。";
 
@@ -960,3 +960,8 @@
 "Open in New Tab" = "在新标签页中打开";
 "Redo %d Questions" = "重做这 %d 道题";
 "Do every question in this list again. Your earlier answers stay in the practice history." = "这一组的题全部重新作答。以前的作答记录都保留。";
+"Custom" = "自定义";
+"Approve Edits" = "自动批准编辑";
+"File edits are approved automatically; commands still ask." = "文件编辑自动批准，执行命令仍会询问。";
+"Approve Everything" = "全部自动批准";
+"Every tool runs without asking." = "所有工具都不再询问直接执行。";
