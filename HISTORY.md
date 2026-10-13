@@ -3,6 +3,18 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 图片笔记：Inspector 定位居中 + 看大图按原尺寸（2026-10-13，Mac）
+
+- 用户：「从 inspect 定位图片笔记时需要居中在 pdf 页而不是在顶部」「图片笔记点开后显示的太大了」（问过：指「查看原图」窗口，不是页面气泡）。
+- 定位：`ScrollAnchor` 加 `centerSpan`（页内比例的一段，只给阅读区用、不上线），`DocSession.jump` 透传；`ReaderView.incomingAnchor`
+  与搜索命中共用一段居中逻辑——段中线对准视口中线、段比视口高就贴顶。视口高改为只算工具栏下沿以下那块
+  （原先搜索按整个 clip 高算，命中会偏下约半个工具栏高，顺带一起修正）。Inspector 图片条目点击走它；文字笔记 / 高亮仍是贴顶。
+- 看大图：原先窗口固定占屏幕 70%，PDF 节选又是按最高 4 倍渲染的，按「像素 ÷ 屏幕倍率」显示 = 页面上的 2 倍。
+  改为 `ImageNote.viewerSize` 算「原尺寸」：节选 = 框在页面上那么大（宽按来源页显示宽，高按图的长宽比）；导入的图 = 像素 ÷ 屏幕倍率。
+  `ImageViewerController` 窗口跟图走（上限仍是屏幕 70%，放不下等比缩小；下限宽 420、图区高 120，标题和按钮摆得下）。画板里看大图同一个窗口一并受益。
+- 验证：Debug 编译；`spike/ink-undo-test` 40/40（编进了 `ImageNoteModel.swift`）。`spike/follower-step-test` 改动前后都编不过
+  （`DocSession.swift` 依赖早已超出它列的源文件，206 个错误，非本次引入）。界面没实际跑过。
+
 ## ✅ OCR：接入本机 OCR 服务（2026-10-12，Mac）
 
 - 用户给本地文档 `/Users/xvan/agent-home/ocr-services`（PP-OCRv6 跑在 MLX 上，独立进程），要求接入 + 「app 上可以备注 github 地址点击跳过去」。接口与 Paddle 云端一致，所以不另起一套客户端：`PaddleOCR` 从「云端客户端」改成「PP-OCRv6 job 通用客户端」，`Config` 装两个后端的全部差异；新增 `App/OCRBackend`（引擎选择，原先散在 5 处的 `== "paddle"` 硬判收成一个枚举）与 `App/LocalOCR`（地址、缓存标识、`/healthz`、仓库链接）。

@@ -55,11 +55,15 @@ extension ReaderView {
         follower.interpEnabled = interpEnabled
         let cur = layout.locate(docY: topDocY)
         var target = a
-        if a.origin == "search" {
-            // 搜索命中落在视口**中间**而不是贴顶（贴顶常被工具栏 / 查找条挡住，用户 2026-09-17）
-            let matchDocY = layout.docY(page: a.page, frac: a.frac)
-            let halfViewport = (clipView.bounds.height / max(0.0001, ds)) / 2
-            let centered = layout.locate(docY: matchDocY - halfViewport)
+        if a.origin == "search" || a.centerSpan != nil {
+            // 搜索命中落在视口**中间**而不是贴顶（贴顶常被工具栏 / 查找条挡住，用户 2026-09-17）；
+            // 带 `centerSpan` 的是一段（Inspector 定位图片笔记，用户 2026-10-13）：段中线对准视口中线，
+            // 段比视口高就贴顶露出段首。视口只算工具栏下沿以下那块（`topDocY` 也是从那儿量的）。
+            let startDocY = layout.docY(page: a.page, frac: a.frac)
+            let page = min(max(0, a.page), layout.pageCount - 1)
+            let span = CGFloat(a.centerSpan ?? 0) * layout.heights[page]
+            let visible = max(0, clipView.bounds.height - insetTopDoc) / max(0.0001, ds)
+            let centered = layout.locate(docY: max(0, startDocY + min(span - visible, 0) / 2))
             target.page = centered.page
             target.frac = centered.frac
         }

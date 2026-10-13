@@ -10,6 +10,9 @@ struct ScrollAnchor: Equatable {
     var seq: Int
     var origin: String   // "mac" | "pad" | "toc" | "search" | "restore"
     var senderT: Double = 0   // 发送端单调时钟(ms)，>0 启用时间戳插值；0=本地(sim/mac)走低通
+    /// 落位方式：nil = `frac` 贴视口顶边；非 nil = 页内从 `frac` 起、高这么多（页内比例）的一段摆到视口**中间**，
+    /// 段比视口还高就贴顶露出段首（Inspector 定位图片笔记，用户 2026-10-13）。只给阅读区用，不上线。
+    var centerSpan: Double? = nil
 
     /// 起步方式：true = 从当前位置起步、交给 `ScrollFollower` 的低通滤波器动画飞过去
     /// （想要「看得见」的跳转，目前只有搜索切换命中）；false = 首帧当帧对齐、瞬间到位
@@ -472,10 +475,10 @@ final class DocSession: ObservableObject, Identifiable {
     private var anchorSeq = 0
     /// 上一条记进 `[PROG]` 日志的位置（页 + 页内比例合成的连续进度），用来只记「跳变」的本机滚动。
     private var lastLoggedAnchor: Double = -1
-    func emitAnchor(page: Int, frac: Double, origin: String, senderT: Double = 0) {
+    func emitAnchor(page: Int, frac: Double, origin: String, senderT: Double = 0, centerSpan: Double? = nil) {
         anchorSeq += 1
         let a = ScrollAnchor(page: page, frac: min(max(0, frac), 1), seq: anchorSeq,
-                             origin: origin, senderT: senderT)
+                             origin: origin, senderT: senderT, centerSpan: centerSpan)
         // 进度排查（默认关，见 `ProgressLog`）：别处发来的锚点一律记；本机滚动每帧一条会把日志冲没，
         // 只记**跳变**（一次跨过大半页以上 —— 正常滚动做不到，那就是位置算飞了）。
         if ProgressLog.enabled {
@@ -516,11 +519,13 @@ final class DocSession: ObservableObject, Identifiable {
     ///
     /// 连续滚动（origin `"mac"`/`"pad"`）与开文档/切标签的恢复（`"restore"`）**不走这里**——
     /// 那些不是「跳转」，记进历史只会把轨迹淹掉。
-    func jump(page: Int, frac: Double, kind: JumpKind, label: String = "", origin: String = "toc") {
+    /// `centerSpan` 见 `ScrollAnchor.centerSpan`（历史里仍按 `frac` 贴顶记）。
+    func jump(page: Int, frac: Double, kind: JumpKind, label: String = "", origin: String = "toc",
+              centerSpan: Double? = nil) {
         jumps.record(leaving: currentMark,
                      to: JumpMark(page: page, frac: frac, kind: kind, label: label))
         currentPageIndex = page
-        emitAnchor(page: page, frac: frac, origin: origin)
+        emitAnchor(page: page, frac: frac, origin: origin, centerSpan: centerSpan)
     }
 
     /// 历史内导航（后退/前进/点浮窗列表）：跳过去，但**不再记新历史**——

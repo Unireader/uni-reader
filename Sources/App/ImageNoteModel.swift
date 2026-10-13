@@ -40,6 +40,19 @@ struct ImageNote: Identifiable, Equatable {
             return name.isEmpty ? L("Pasted image") : name
         }
     }
+
+    /// 看大图按多大显示（pt）=「原尺寸」。PDF 节选 = 框在页面上那么大（宽 = 框宽 × 来源页显示宽，高按图的长宽比，
+    /// 跨页拼接的也对）——节选按最高 4 倍渲染，按像素显示会比页面上大一倍（用户 2026-10-13 嫌太大）。
+    /// 导入的图 / 拿不到来源页宽 = 像素 ÷ 屏幕倍率。
+    func viewerSize(pixelSize: CGSize, sourcePageWidth: CGFloat?, backingScale: CGFloat) -> CGSize {
+        guard pixelSize.width > 0, pixelSize.height > 0 else { return .zero }
+        if case .pdf(_, let rect, _) = source, let pw = sourcePageWidth, pw > 0, rect.width > 0 {
+            let w = rect.width * pw
+            return CGSize(width: w, height: w * pixelSize.height / pixelSize.width)
+        }
+        let s = max(1, backingScale)
+        return CGSize(width: pixelSize.width / s, height: pixelSize.height / s)
+    }
 }
 
 // MARK: - 持久化（note 表，kind=6）

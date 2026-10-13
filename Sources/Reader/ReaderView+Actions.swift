@@ -258,7 +258,13 @@ extension ReaderView {
     func openImageViewer(_ id: UUID) {
         guard let n = session.imageNotes.first(where: { $0.id == id }) else { return }
         if let info = workspace.imageInfo(sha256: n.image) {
-            presentSheet(ImageViewerController(note: n, url: info.url, onClose: { [weak self] in self?.dismissSheet() }))
+            var pageW: CGFloat?
+            if case .pdf(let p, _, _) = n.source, let page = session.pdf?.page(at: p) {
+                pageW = PageBitmap.displaySize(page, align: session.pageAlign(p)).width
+            }
+            let size = n.viewerSize(pixelSize: info.size, sourcePageWidth: pageW, backingScale: window?.backingScaleFactor ?? 2)
+            presentSheet(ImageViewerController(note: n, url: info.url, displaySize: size,
+                                               onClose: { [weak self] in self?.dismissSheet() }))
         } else {
             let alert = NSAlert()
             alert.messageText = L("Image file is missing (not in this copy, or already cleaned up).")

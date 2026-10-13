@@ -733,7 +733,10 @@ final class InspectorViewController: NSViewController {
         let card = InspectorCard(content: hstack([thumb, vstack([title, sub], spacing: 2)], alignment: .top, spacing: 8),
                                  buttons: [iconButton("pencil.circle.fill", L("Edit this image note"), tint: .labelColor) { req(.imageNoteEdit) },
                                            iconButton("xmark.circle.fill", L("Delete this image note"), action: delete)])
-        card.onTap = { [weak self] in self?.jump(n.page, max(0, Double(n.anchor.minY) - 0.03)) }
+        // 图片笔记摆到视口中间（贴顶看不全图，用户 2026-10-13）；导入的是点锚，高 0 = 对准落点
+        card.onTap = { [weak self] in
+            self?.session.jump(page: n.page, frac: Double(n.anchor.minY), kind: .list, centerSpan: Double(n.anchor.height))
+        }
         card.menuProvider = {
             let m = NSMenu()
             m.addItem(ClosureMenuItem(L("Edit…")) { req(.imageNoteEdit) })

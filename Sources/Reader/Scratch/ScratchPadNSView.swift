@@ -1381,11 +1381,12 @@ extension ScratchPadNSView {
     }
 
     fileprivate func showLargeImage(_ im: BoardImage) {
-        guard let win = window, win.attachedSheet == nil, let url = workspace?.imageInfo(sha256: im.image)?.url else { return }
+        guard let win = window, win.attachedSheet == nil, let info = workspace?.imageInfo(sha256: im.image) else { return }
         // 看大图面板认的是图片笔记；借它的壳，页码 / 锚点在这里没有意义
         let note = ImageNote(page: 0, anchor: .zero, image: im.image, caption: im.caption, source: .file(name: im.sourceName))
+        let size = note.viewerSize(pixelSize: info.size, sourcePageWidth: nil, backingScale: win.backingScaleFactor)
         var sheet: NSWindow?
-        let vc = ImageViewerController(note: note, url: url, onClose: { [weak win] in
+        let vc = ImageViewerController(note: note, url: info.url, displaySize: size, onClose: { [weak win] in
             if let s = sheet { win?.endSheet(s) }
         })
         sheet = NSWindow(contentViewController: vc)

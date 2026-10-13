@@ -598,10 +598,16 @@ final class ImageNoteEditorController: StackPanelController {
 
 // MARK: - 看大图
 
-/// 原图等比铺满（窗口 = 屏幕的 70%，图小于窗口时按原像素显示不放大）+ 复制图片 / 在访达中显示 / 关闭。
+/// 原图按 `displaySize`（「原尺寸」，见 `ImageNote.viewerSize`）显示，窗口跟着图的大小走、最大到屏幕的 70%
+/// （放不下等比缩小，不放大）+ 复制图片 / 在访达中显示 / 关闭。
 final class ImageViewerController: NSViewController {
+    /// 窗口下限：一个小公式那么大的图，标题和三个按钮也得摆得下。
+    private static let minWidth: CGFloat = 420
+    private static let minImageHeight: CGFloat = 120
+
     private let note: ImageNote
     private let url: URL
+    private let displaySize: CGSize
     private let onClose: () -> Void
     private let imageView = NSImageView()
     private let sizeLabel = SheetKit.secondary("")
@@ -609,18 +615,16 @@ final class ImageViewerController: NSViewController {
     private var image: CGImage?
     private var copyButton: NSButton!
 
-    init(note: ImageNote, url: URL, onClose: @escaping () -> Void) {
+    init(note: ImageNote, url: URL, displaySize: CGSize, onClose: @escaping () -> Void) {
         self.note = note
         self.url = url
+        self.displaySize = displaySize
         self.onClose = onClose
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
     override func loadView() {
-        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1200, height: 800)
-        let size = NSSize(width: screen.width * 0.7, height: screen.height * 0.7)
-        let root = NSView(frame: NSRect(origin: .zero, size: size))
         let title = SheetKit.headline(note.caption.isEmpty ? note.sourceLabel : note.caption)
         title.lineBreakMode = .byTruncatingTail
         title.setContentCompressionResistancePriority(.init(1), for: .horizontal)
@@ -634,6 +638,17 @@ final class ImageViewerController: NSViewController {
         close.keyEquivalent = "\u{1b}"
         let top = NSStackView(views: [title, SheetKit.spacer(), sizeLabel])
         let bottom = NSStackView(views: [copyButton, finder, SheetKit.spacer(), close])
+
+        // 窗口 = 图 + 上下两条栏（边距 16、栏与图间隔 10，同下面的约束）；超出屏幕 70% 就把图等比缩进去
+        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1200, height: 800)
+        let chromeW: CGFloat = 32
+        let chromeH = 16 + top.fittingSize.height + 10 + 10 + bottom.fittingSize.height + 16
+        let maxImg = CGSize(width: max(1, screen.width * 0.7 - chromeW), height: max(1, screen.height * 0.7 - chromeH))
+        let want = displaySize.width > 0 && displaySize.height > 0 ? displaySize : maxImg
+        let k = min(1, maxImg.width / want.width, maxImg.height / want.height)
+        let size = NSSize(width: max(Self.minWidth, bottom.fittingSize.width + chromeW, want.width * k + chromeW).rounded(.up),
+                          height: (max(Self.minImageHeight, want.height * k) + chromeH).rounded(.up))
+        let root = NSView(frame: NSRect(origin: .zero, size: size))
         for v in [top, imageView, spinner, bottom] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
@@ -668,7 +683,9 @@ final class ImageViewerController: NSViewController {
         image = img
         guard let img else { return }
         let scale = view.window?.backingScaleFactor ?? 2
-        imageView.image = NSImage(cgImage: img, size: NSSize(width: CGFloat(img.width) / scale, height: CGFloat(img.height) / scale))
+        let size = displaySize.width > 0 && displaySize.height > 0
+            ? displaySize : NSSize(width: CGFloat(img.width) / scale, height: CGFloat(img.height) / scale)
+        imageView.image = NSImage(cgImage: img, size: size)
         sizeLabel.stringValue = "\(img.width) × \(img.height)"
         copyButton.isEnabled = true
     }
