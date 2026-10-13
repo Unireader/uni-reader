@@ -79,6 +79,9 @@
 
 - `@Published` 在 `willSet` 发出：AppKit 这边用 Combine 订阅模型时，回调里读到的还是旧值——一律
   `.receive(on: DispatchQueue.main)` 推到下一拍再读，多个来源的刷新合并成一次（`queueRefresh` 那种写法）。
+- `ImageThumbCache.image(url:maxPixel:)` 未命中时**只发起后台解码、当场返回 nil**，解好了靠 `objectWillChange` 通知。
+  只取一次不订阅 = 永远停在占位图标上（AppKit 改写后 Inspector 图片条目就这样，2026-10-13 用户报；现由 `InspectorImageThumb` 自己订阅）。
+  新加缩略图消费方照气泡 / 编辑器 / `InspectorImageThumb` 的写法订阅。
 
 ## 滚动条（NSScrollView）
 

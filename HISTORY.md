@@ -3,6 +3,13 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 图片笔记：Inspector 条目显示缩略图（2026-10-13，Mac）
+
+- 用户截图：Inspector「图片」条目左边一直是占位图标，「这里要支持预览」。根因：`ImageThumbCache` 头一次取图只发起后台解码、返回 nil，
+  解好了发通知；页面气泡和编辑器都订阅了，Inspector 条目（AppKit 改写时搬过来的）只取一次，于是永远停在占位上。
+- 新增 `Window/Inspector/InspectorImageThumb`（自己订阅缓存，换上真图就退订），`imageCard` 改用它。坑记进 `docs/agents/PITFALLS.md`「Combine / 模型订阅」。
+- 验证：Debug 编译；离屏测试 6/6（首次占位 → 后台解好自动换上 256 档真图；二次直接命中；文件不在 / 解不出来留占位）。
+
 ## ✅ Agent 面板：设置里换 Agent 后点「新对话」即生效（2026-10-13，Mac）
 
 - 用户报：「设置切换 agent 后底部 agent 对话控件没有变化，需要重启才变化」。根因与改法记在 `ACP-AGENT-PLAN.md §4.1` 末条：

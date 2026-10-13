@@ -700,23 +700,11 @@ final class InspectorViewController: NSViewController {
         return InspectorRows(head: head, items: lazyItems(s.imageNotes) { me, n in me.imageCard(n) })
     }
 
-    /// 缩略图在这里才读盘 / 才解码——分页之后没滚到的图片笔记就不读（`ImageThumbCache` 仍然负责缓存）。
+    /// 缩略图在这里才读盘 / 才解码——分页之后没滚到的图片笔记就不读（`ImageThumbCache` 仍然负责缓存，
+    /// 解好了 `InspectorImageThumb` 自己换上）。
     private func imageCard(_ n: ImageNote) -> NSView {
         let info = workspace.imageInfo(sha256: n.image)
-        let thumb = NSImageView()
-        thumb.wantsLayer = true
-        thumb.layer?.cornerRadius = 4
-        thumb.layer?.masksToBounds = true
-        thumb.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.6).cgColor
-        thumb.imageScaling = .scaleProportionallyUpOrDown
-        if let info, let cg = ImageThumbCache.shared.image(url: info.url, maxPixel: 96) {
-            thumb.image = NSImage(cgImage: cg, size: .zero)
-        } else {
-            thumb.image = NSImage(systemSymbolName: info == nil ? "photo.badge.exclamationmark" : "photo", accessibilityDescription: nil)
-            thumb.contentTintColor = .labelColor
-        }
-        thumb.widthAnchor.constraint(equalToConstant: 48).isActive = true
-        thumb.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        let thumb = InspectorImageThumb(url: info?.url, side: 48)
         let title = multiline(n.caption.isEmpty ? n.sourceLabel : NoteMarkdown.plain(n.caption), .callout, lines: 2)
         let sub = label(n.caption.isEmpty ? String(format: L("Page %d"), n.page + 1)
                                           : "\(String(format: L("Page %d"), n.page + 1)) · \(n.sourceLabel)", .caption1)
