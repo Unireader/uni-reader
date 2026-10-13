@@ -46,11 +46,24 @@ enum AgentConfig {
         return s.split(whereSeparator: \.isWhitespace).map(String.init)
     }
 
-    /// 面板上显示的 Agent 名字：取命令的文件名（`kimi` → Kimi）。
-    static var displayName: String {
-        let base = (command as NSString).lastPathComponent
-        return base.prefix(1).uppercased() + base.dropFirst()
+    /// 一次启动用的「命令 + 参数」。进程按它启动、池子按它认：设置里换了 Agent，正在跑的进程和设置对不上，
+    /// 点「新对话」才换到按新设置起的进程上（用户 2026-10-13 定），还在旧进程上的对话照旧聊。
+    struct Launch: Equatable {
+        var command: String
+        var arguments: [String]
+
+        /// 面板上显示的 Agent 名字：取命令的文件名（`kimi` → Kimi）。
+        var displayName: String {
+            let base = (command as NSString).lastPathComponent
+            return base.prefix(1).uppercased() + base.dropFirst()
+        }
     }
+
+    /// 设置里现在选的。
+    static var current: Launch { Launch(command: command, arguments: arguments) }
+
+    /// 设置里现在选的那个 Agent 的名字（还没连上时用；连上了以 `AgentChat.agentName` 为准）。
+    static var displayName: String { current.displayName }
 
     enum ResolveError: LocalizedError {
         case notFound(String)

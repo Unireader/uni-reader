@@ -84,7 +84,8 @@ extension ReaderView {
         let web = AIPanelModel.shared.currentProvider
         var ask: [(SnipTarget, String, String?, String)] = []
         if AgentPanelModel.shared.canAttach(from: session.windowID) {
-            ask.append((.agent, String(format: L("Ask %@"), AgentConfig.displayName), L("Agent"), "sparkles"))
+            ask.append((.agent, String(format: L("Ask %@"), AgentPanelModel.shared.agentName(for: session.windowID)),
+                        L("Agent"), "sparkles"))
         }
         if AIPanelModel.shared.enabled {
             ask.append((.consult, String(format: L("Ask %@"), web?.name ?? L("AI")), L("Web AI"),
@@ -155,10 +156,11 @@ extension ReaderView {
             guard let self else { return }
             guard let shot else { self.showToast(.fail, L("Could not capture that area.")); return }
             let img = AgentImage(data: shot.data, mimeType: "image/jpeg", caption: caption, note: note)
+            let name = AgentPanelModel.shared.agentName(for: windowID)
             if AgentPanelModel.shared.attach(img, from: windowID) {
-                self.showToast(.ok, String(format: L("Added to %@"), AgentConfig.displayName))
+                self.showToast(.ok, String(format: L("Added to %@"), name))
             } else {
-                self.showToast(.fail, String(format: L("%@ does not accept images."), AgentConfig.displayName))
+                self.showToast(.fail, String(format: L("%@ does not accept images."), name))
             }
         }
     }

@@ -129,6 +129,10 @@ final class AgentChat: ObservableObject {
 
     var isBusy: Bool { phase == .running || phase == .connecting || phase == .loading }
 
+    /// 在跟谁说话：连着的进程按什么起的就是什么；还没连上 = 设置里现在选的。
+    private var launch: AgentConfig.Launch { connection?.launch ?? AgentConfig.current }
+    var agentName: String { launch.displayName }
+
     // MARK: - 会话
 
     /// 面板出现时调：还没有会话就建一个（建会话才拿得到模式 / 模型列表）。
@@ -140,14 +144,29 @@ final class AgentChat: ObservableObject {
     private var isFailed: Bool { if case .failed = phase { return true } else { return false } }
 
     /// 新对话：丢掉当前这段（Agent 那边照样留着，历史里还能找回来），重新建一个。
+    /// 设置里换了 Agent（连着的进程不是按现在的设置起的）：新对话换到新 Agent 上——**只有这里换**，
+    /// 正在聊的那段不打断（用户 2026-10-13 定）。
     func newChat() {
+        let switching = connection.map { $0.launch != AgentConfig.current } ?? false
         // 眼前这段还一句没说：它就是新的，别再建一个（空会话 Agent 也会记着，多了历史里一堆空条目）
-        if sessionId != nil, items.isEmpty, phase == .idle { return }
+        if sessionId != nil, items.isEmpty, phase == .idle, !switching { return }
         if phase == .running, let id = sessionId, let c = connection { Task { await c.cancel(id) } }
         detach()
         items = []
         title = nil
-        Task { await openNewSession() }
+        if switching {
+            // 模式 / 模型 / 历史都是旧 Agent 的，连新的这几秒里别还挂着
+            connection = nil
+            modes = []
+            currentMode = nil
+            configs = []
+            history = []
+        }
+        Task {
+            await openNewSession()
+            // 旧进程上没有对话了就关掉（`detach` 刻意不关，见那里；这时新会话已经建在新进程上）
+            if switching { AgentPanelModel.shared.releaseIdleConnections() }
+        }
     }
 
     private func openNewSession() async {
@@ -158,6 +177,9 @@ final class AgentChat: ObservableObject {
             let r = try await c.newSession(mcp: mcp)
             attach(r.sessionId.value, to: c)
             missingMCP = mcp.isEmpty
+            // 新会话以它报上来的为准：没给模式 / 配置就不显示（进程死后重连到别家 Agent 时不留旧的那套）
+            if r.modes == nil { modes = []; currentMode = nil }
+            if r.configOptions == nil { configs = [] }
             applyModes(r.modes)
             applyConfigs(r.configOptions)
             phase = .idle
@@ -228,7 +250,7 @@ final class AgentChat: ObservableObject {
     func attachFiles(_ urls: [URL]) {
         if acceptsImages == false {
             items.append(AgentItem(kind: .notice(
-                String(format: L("%@ does not accept images."), AgentConfig.displayName), isError: true)))
+                String(format: L("%@ does not accept images."), agentName), isError: true)))
             return
         }
         Task {
@@ -254,7 +276,7 @@ final class AgentChat: ObservableObject {
         // 握手说不收图：图片留在输入框上，这句话不发，提示一下（发出去 Agent 会整条报错）
         if !attachments.isEmpty, acceptsImages == false {
             items.append(AgentItem(kind: .notice(
-                String(format: L("%@ does not accept images. Remove the image to send."), AgentConfig.displayName),
+                String(format: L("%@ does not accept images. Remove the image to send."), agentName),
                 isError: true)))
             return
         }
@@ -301,8 +323,8 @@ final class AgentChat: ObservableObject {
                 refreshHistory()   // 标题 / 更新时间变了，历史菜单跟上
             } catch {
                 guard sessionId == id else { return }
-                items.append(AgentItem(kind: .notice(Self.describe(error), isError: true)))
-                phase = connection == nil ? .failed(Self.describe(error)) : .idle
+                items.append(AgentItem(kind: .notice(describe(error), isError: true)))
+                phase = connection == nil ? .failed(describe(error)) : .idle
             }
         }
     }
@@ -460,20 +482,20 @@ final class AgentChat: ObservableObject {
 
     private func fail(_ error: Error) {
         agentLog("失败：\(error)")
-        phase = .failed(Self.describe(error))
+        phase = .failed(describe(error))
     }
 
     private func note(_ error: Error) {
-        items.append(AgentItem(kind: .notice(Self.describe(error), isError: true)))
+        items.append(AgentItem(kind: .notice(describe(error), isError: true)))
     }
 
-    /// 错误说成人话。ACP 规定未登录是 `auth_required`（-32000）：告诉用户去终端登录。
-    static func describe(_ error: Error) -> String {
+    /// 错误说成人话。ACP 规定未登录是 `auth_required`（-32000）：告诉用户去终端登录（登录哪个看这段对话连的是谁）。
+    private func describe(_ error: Error) -> String {
         if let e = error as? ClientError {
             switch e {
             case .agentError(let rpc):
                 if rpc.code == -32000 {
-                    return String(format: L("Not signed in. Run “%@ login” in Terminal, then start a new chat."), AgentConfig.command)
+                    return String(format: L("Not signed in. Run “%@ login” in Terminal, then start a new chat."), launch.command)
                 }
                 return rpc.message
             case .processNotRunning, .connectionClosed:

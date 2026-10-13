@@ -4,6 +4,7 @@ import Foundation
 
 /// 一个 ACP Agent 子进程（`ACP-AGENT-PLAN.md`）。**一个工作目录一个进程**，同目录下的几个对话
 /// （浮窗那一份 + 各阅读窗口内置面板各一份）共用它，各自是 Agent 里的一个 session。
+/// 设置里换了 Agent 后，同目录下可以暂时有新旧两个进程（`launch` 不同），旧的那个最后一段对话走了就关。
 ///
 /// 工作目录 = 工作区 `.unrd` 包**所在的目录**（包的上一级，用户 2026-09-18 定），所以同一目录下的
 /// 几个工作区也共用一个进程；Kimi 按工作目录记历史会话（`session/list` 带 `cwd` 过滤），
@@ -14,6 +15,8 @@ import Foundation
 @MainActor
 final class AgentConnection {
     let cwd: URL
+    /// 建池子条目那一刻的设置（懒启动时也按它起，不再读设置——否则建好之后、启动之前改了设置会对不上号）。
+    let launch: AgentConfig.Launch
 
     private let client = Client()
     private let delegate = AgentClientDelegate()
@@ -29,8 +32,9 @@ final class AgentConnection {
 
     private struct WeakChat { weak var chat: AgentChat? }
 
-    init(cwd: URL) {
+    init(cwd: URL, launch: AgentConfig.Launch) {
         self.cwd = cwd
+        self.launch = launch
         delegate.connection = self
     }
 
@@ -55,10 +59,10 @@ final class AgentConnection {
     }
 
     private func launch() async throws -> InitializeResponse {
-        let exe = try await AgentConfig.resolveExecutable(AgentConfig.command)
-        agentLog("启动 \(exe) \(AgentConfig.arguments.joined(separator: " ")) · cwd=\(cwd.path)")
+        let exe = try await AgentConfig.resolveExecutable(launch.command)
+        agentLog("启动 \(exe) \(launch.arguments.joined(separator: " ")) · cwd=\(cwd.path)")
         await client.setDelegate(delegate)
-        try await client.launch(agentPath: exe, arguments: AgentConfig.arguments, workingDirectory: cwd.path)
+        try await client.launch(agentPath: exe, arguments: launch.arguments, workingDirectory: cwd.path)
         pgid = await client.processGroupIdentifier()
         startPump()
         let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"

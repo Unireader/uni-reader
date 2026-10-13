@@ -178,6 +178,9 @@ final class AgentPanelModel: ObservableObject {
     /// 这扇阅读窗口能不能把东西发给 Agent（已开工作区 = 有工作目录）。框选截图松手时据此决定菜单里有没有 Agent 那一项。
     func canAttach(from window: UUID) -> Bool { enabled && context(for: window) != nil }
 
+    /// 这扇窗的 Agent 页在跟谁说话（设置里换了 Agent、还没点「新对话」时仍是旧的那个）。
+    func agentName(for window: UUID) -> String { chats[window]?.agentName ?? AgentConfig.displayName }
+
     /// 框选截图投给 Agent（`ReaderView+Snip`）：这扇窗的 Inspector 切到 Agent 页，图片挂到那段对话的输入框上，
     /// 等用户写一句话一起发。返回 false = 发不了（没开工作区，或 Agent 已声明不收图片）。
     @discardableResult
@@ -193,10 +196,13 @@ final class AgentPanelModel: ObservableObject {
 
     // MARK: - 进程池
 
+    /// 按设置里现在选的 Agent 取（或起）这个工作目录的进程。池子的键带上启动配置：换了 Agent 时新旧进程各占一格，
+    /// 还在旧进程上聊的对话不受影响，旧进程没人用了照常由 `releaseIdleConnections` 关掉。
     func connection(for cwd: URL) -> AgentConnection {
-        let key = cwd.standardizedFileURL.path
+        let launch = AgentConfig.current
+        let key = ([cwd.standardizedFileURL.path, launch.command] + launch.arguments).joined(separator: "\u{1}")
         if let c = connections[key], !c.isDead { return c }
-        let c = AgentConnection(cwd: cwd)
+        let c = AgentConnection(cwd: cwd, launch: launch)
         c.onExit = { [weak self, weak c] in
             guard let self, let c, self.connections[key] === c else { return }
             self.connections.removeValue(forKey: key)
@@ -209,7 +215,7 @@ final class AgentPanelModel: ObservableObject {
     func releaseIdleConnections() {
         for (key, c) in connections where !c.hasChats {
             connections.removeValue(forKey: key)
-            agentLog("关闭空闲 Agent · cwd=\(key)")
+            agentLog("关闭空闲 Agent \(c.launch.command) · cwd=\(c.cwd.path)")
             Task { await c.terminate() }
         }
     }

@@ -36,6 +36,8 @@ final class AgentChatNSView: NSView {
     private let transcriptScroll = NSScrollView()
     private let transcript = FlippedStackView()
     private let empty = NSStackView()
+    /// 空对话页上的「问 Kimi」：设置里换了 Agent 后点新对话，名字要跟着换（`refresh` 里落实）。
+    private let emptyTitle = NSTextField(labelWithString: "")
     private let permissions = NSStackView()
     private let composer: AgentComposerView
     private var itemViews: [UUID: (kind: AgentItem.Kind, view: NSView)] = [:]
@@ -147,7 +149,7 @@ final class AgentChatNSView: NSView {
         let icon = NSImageView(image: NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil) ?? NSImage())
         icon.symbolConfiguration = .init(pointSize: 30, weight: .regular)
         icon.contentTintColor = .labelColor
-        let t = NSTextField(labelWithString: String(format: L("Ask %@"), AgentConfig.displayName))
+        let t = emptyTitle
         t.font = .systemFont(ofSize: 17, weight: .bold)
         t.textColor = .labelColor
         let d = NSTextField(wrappingLabelWithString: L("It can read and edit the Markdown note you are looking at, find PDF pages, and add PDF notes, highlights and bookmarks."))
@@ -254,6 +256,8 @@ final class AgentChatNSView: NSView {
     }
 
     private func refresh() {
+        let ask = String(format: L("Ask %@"), chat.agentName)
+        if emptyTitle.stringValue != ask { emptyTitle.stringValue = ask }
         refreshHeader()
         refreshBanners()
         refreshTranscript()
@@ -264,10 +268,10 @@ final class AgentChatNSView: NSView {
 
     private func refreshHeader() {
         guard showsHeader else { return }
-        let key = "\(chat.title ?? "")\u{1}\(workspaceName)"
+        let key = "\(chat.title ?? "")\u{1}\(workspaceName)\u{1}\(chat.agentName)"
         guard key != headerKey else { return }
         headerKey = key
-        header.configure(icon: "sparkles", title: chat.title ?? AgentConfig.displayName, subtitle: workspaceName, buttons: [
+        header.configure(icon: "sparkles", title: chat.title ?? chat.agentName, subtitle: workspaceName, buttons: [
             .init(symbol: "clock.arrow.circlepath", tip: L("Earlier Chats"), menu: { [weak self] in self?.historyMenu() ?? NSMenu() }),
             .init(symbol: "ellipsis", tip: L("More"), menu: { AgentMenus.options() }),
             .init(symbol: "square.and.pencil", tip: L("New Chat"), action: { [weak self] in self?.chat.newChat() }),
@@ -277,7 +281,7 @@ final class AgentChatNSView: NSView {
     func historyMenu() -> NSMenu { AgentMenus.history(chat) }
 
     private func refreshBanners() {
-        let key = "\(chat.missingMCP)\u{1}\(chat.phase)"
+        let key = "\(chat.missingMCP)\u{1}\(chat.phase)\u{1}\(chat.agentName)"
         guard key != bannerKey else { return }
         bannerKey = key
         for v in banners.arrangedSubviews { banners.removeArrangedSubview(v); v.removeFromSuperview() }
@@ -290,7 +294,7 @@ final class AgentChatNSView: NSView {
         }
         switch chat.phase {
         case .connecting:
-            banners.addArrangedSubview(bannerRow(nil, String(format: L("Starting %@…"), AgentConfig.displayName)))
+            banners.addArrangedSubview(bannerRow(nil, String(format: L("Starting %@…"), chat.agentName)))
         case .loading:
             banners.addArrangedSubview(bannerRow(nil, L("Loading chat…")))
         case .failed(let msg):
@@ -1100,7 +1104,7 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     private func refreshAttachments() {
         defer {
             stripScroll.isHidden = chat.attachments.isEmpty
-            let hint = chat.attachments.isEmpty ? String(format: L("Ask %@…"), AgentConfig.displayName)
+            let hint = chat.attachments.isEmpty ? String(format: L("Ask %@…"), chat.agentName)
                                                 : L("Ask about the image…")
             if placeholder.stringValue != hint { placeholder.stringValue = hint }
         }
