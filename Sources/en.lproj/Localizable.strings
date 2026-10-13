@@ -963,3 +963,5 @@
 "File edits are approved automatically; commands still ask." = "File edits are approved automatically; commands still ask.";
 "Approve Everything" = "Approve Everything";
 "Every tool runs without asking." = "Every tool runs without asking.";
+"Never Ask" = "Never Ask";
+"Only pre-approved tools run; everything else is denied." = "Only pre-approved tools run; everything else is denied.";

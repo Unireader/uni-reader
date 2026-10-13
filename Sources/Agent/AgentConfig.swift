@@ -17,10 +17,16 @@ enum AgentConfig {
     /// 设置页的快捷选项：都是「命令 + 参数」，协议层与 Kimi 完全一致（Qwen Code 0.25.1 实测：
     /// 握手 / `session/new` 带 modes + configOptions / `session/list` 带标题 / 流式更新，客户端一行不用改）。
     enum Preset: String, CaseIterable {
-        case kimi, qwen
-        var command: String { self == .kimi ? "kimi" : "qwen" }
-        var arguments: String { self == .kimi ? "acp" : "--acp" }
-        var title: String { self == .kimi ? "Kimi" : "Qwen Code" }
+        case kimi, qwen, claude
+        var command: String {
+            switch self { case .kimi: "kimi"; case .qwen: "qwen"; case .claude: "claude-agent-acp" }
+        }
+        var arguments: String {
+            switch self { case .kimi: "acp"; case .qwen: "--acp"; case .claude: "" }
+        }
+        var title: String {
+            switch self { case .kimi: "Kimi"; case .qwen: "Qwen Code"; case .claude: "Claude Code" }
+        }
     }
 
     static func preset(command: String, arguments: String) -> Preset? {

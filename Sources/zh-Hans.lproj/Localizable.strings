@@ -965,3 +965,5 @@
 "File edits are approved automatically; commands still ask." = "文件编辑自动批准，执行命令仍会询问。";
 "Approve Everything" = "全部自动批准";
 "Every tool runs without asking." = "所有工具都不再询问直接执行。";
+"Never Ask" = "不再询问";
+"Only pre-approved tools run; everything else is denied." = "只执行已预先批准的工具，其余一律拒绝。";

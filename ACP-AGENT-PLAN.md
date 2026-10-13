@@ -147,6 +147,15 @@ MCP 服务没开 → 不带，面板顶部提示「开启并重新连接」（**
 - 设置页 › Agent 加了「Agent」预设选择（Kimi → `kimi acp` / Qwen Code → `qwen --acp` / 自定义），选预设 = 同时写命令与参数。
 - 未实测：权限卡片（`default` 模式下的工具批准）、MCP 工具调用、会话回放——待用户实测。
 
+## 4.0.1 Claude Code 支持（2026-10-13，`claude-agent-acp`，npm 包 `@agentclientprotocol/claude-agent-acp`）
+
+用户自己 `npm i -g` 装好（它是 Node 程序，D2 的「不引入 Node」改为：App 不带 Node、用户自装的适配器可选接）。
+实测握手：`loadSession` / `list` / `resume` / `fork` / `close` / `delete`，`mcpCapabilities.http`，图片 + 嵌入上下文；`authMethods` 为空（读 Claude Code 自己的登录）。
+`session/new` 给 `modes` + `configOptions`；`session/list` 带标题；发话 / 流式 / `usage_update` 都正常。
+- 模式六档：`auto`（默认）/ `default` / `acceptEdits` / `plan` / `dontAsk` / `bypassPermissions`；`acceptEdits`、`bypassPermissions` 复用 Qwen 那两条文案，`dontAsk` 新增。
+- 设置页预设多一项「Claude Code」= 命令 `claude-agent-acp`、参数留空（按登录 shell 的 PATH 找，nvm 装的也找得到）。
+- 未实测：权限卡片、MCP 工具调用、会话回放——待用户实测。
+
 ## 4.1 踩过的坑
 
 - **「新对话」把马上要用的进程关了**（2026-09-18 用户实测：报「The file couldn't be saved」，接着「Agent 进程已退出」）：
