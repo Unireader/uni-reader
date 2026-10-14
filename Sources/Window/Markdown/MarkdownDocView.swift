@@ -23,6 +23,8 @@ final class MarkdownDocView: NSView {
     private let separator = NSBox()
     private var bag = Set<AnyCancellable>()
     private var observers: [NSObjectProtocol] = []
+    /// 正文里 ```grapher 图形块的实时视图（点一下可旋转、改参数，见 `GRAPHER-BLOCK-PLAN.md`）。
+    private var grapherOverlay: GrapherBlockOverlay?
     /// 已经落盘的那一版。与 `box.text` 相同 = 没有待存的改动。
     private var savedText: String
     /// 顶部让开工具栏的高度（由窗格设）。
@@ -118,6 +120,15 @@ final class MarkdownDocView: NSView {
             .debounce(for: .milliseconds(800), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in self?.save() }
             .store(in: &bag)
+        let overlay = GrapherBlockOverlay(host: host)
+        grapherOverlay = overlay
+        overlay.start()
+        // 正文被换掉（外部改动、MCP 写入）不一定发文字视图的变更通知，这里也提醒一声。
+        box.$text
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak overlay] _ in overlay?.scheduleRefresh() }
+            .store(in: &bag)
         // 正文编辑后，仍开着查找就按新文本重算。推到下一拍，等引擎先把最新 storage text
         // 同步成编辑器里的 display text（wiki link 两者长度可能不同）。
         box.$text
@@ -157,7 +168,10 @@ final class MarkdownDocView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
-    deinit { for o in observers { NotificationCenter.default.removeObserver(o) } }
+    deinit {
+        for o in observers { NotificationCenter.default.removeObserver(o) }
+        MainActor.assumeIsolated { grapherOverlay?.tearDown() }
+    }
 
     /// 立刻把待存的改动写下去（切标签 / 关窗 / 退出 / 导出前都要叫一次）。
     func flush() { save() }

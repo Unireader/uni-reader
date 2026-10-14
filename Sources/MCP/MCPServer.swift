@@ -150,6 +150,7 @@ final class MCPServer: ObservableObject {
     old_text replacement or line insertion — prefer it over update_markdown, which replaces the whole text. \
     Never edit files inside a .unrd package directly. \
     \(MCPTools.mathWriting) \
+    \(MCPTools.graphWriting) \
     Most PDF tools default to the document in the key window when no target is given. \
     document_id is a stable UUID inside a workspace; file paths may change. \
     read_pages returns the OCR text UniReader has cached for a page, or the PDF's own text where there is none \

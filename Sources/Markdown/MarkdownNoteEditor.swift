@@ -139,6 +139,7 @@ extension MarkdownEditorConfiguration {
         let w = containerWidth.rounded(.down)
         c.services.latex = FittedLatexRenderer(maxWidth: w)
         c.services.images = WidthKeyedImageProvider(width: Int(w))
+        c.services.fencedBlocks = GrapherFencedRenderer(containerWidth: w)   // ```grapher 块的静态图按同一宽度排
         return c
     }
 }

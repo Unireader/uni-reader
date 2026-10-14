@@ -13,6 +13,10 @@ extension MCPTools {
     /// 名单来自 `spike/latex-look.swift` 普查，`LatexCompat` 新增替换时从这里删掉对应的。
     static let mathWriting = "Math in notes: $…$ inline, all on one line; $$…$$ on lines of their own for a block; \\(…\\) and \\[…\\] are NOT rendered. Never put a formula inside bold or italic (no **…$x$…**): emphasize the words around it and leave the formula outside the ** or *. The renderer cannot draw \\boxed, \\overset, \\underset, \\stackrel, \\xrightarrow, \\overbrace, \\underbrace, \\mathop, \\limits, \\because, \\therefore, or the cases, array, align, gather and split environments — a formula using any of them shows as raw source. For a piecewise definition write \\left\\{\\begin{aligned} … \\end{aligned}\\right. and for multi-line equations use aligned."
 
+    /// 笔记里怎么放函数图形（英文，给模型看）。格式本身由 Grapher NG 的 MCP 说明（`get_text_reference` / `render_text`），
+    /// 这里只讲放在哪、怎么写进去。方案见 `GRAPHER-BLOCK-PLAN.md`；MCP `instructions` 与 Agent 面板上下文共用。
+    static let graphWriting = "Graphs in Markdown notes (not in PDF text notes): a fenced block whose language is grapher, a few lines of text with one layer per line, draws a function graph the reader can rotate and tune with sliders. Write it with edit_markdown like any other text. If a grapher-ng MCP server is connected, read its get_text_reference first and check the block with render_text before writing it (it reports errors by line); otherwise keep to simple lines such as `surface: sin(x)*cos(y)`. Leave an existing grapher block's view: and param lines alone unless asked: the reader saves them by hand."
+
     /// 三个工具共用的「哪一篇」参数。
     static var markdownTargetProperties: [String: MCPObject] {
         ["note_ref": MCPSchema.string("Which note: note_ref from list_markdown_notes / get_state (also accepts the note's name). Omit for the active note in the key window (including a note mini-window)."),
