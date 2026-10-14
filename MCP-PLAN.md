@@ -903,3 +903,9 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
   - `list_exercises` 加 `chapter` 筛选；每道题的输出多 `chapter` / `user_answer` / `user_answer_correct`（后两个没有就不出现）。
   - `render_page` 加 `include_marks`（`MCP/MCPPageMarks.swift`）：可见图层的笔迹 + 高亮叠画在页图上，输出多一个 `marks {strokes, highlights}`。
     `MCPFacade.sessionsShowing` 为此从 `private` 放开（要先 `flushPersist()`，Agent 才看得到刚写的那一笔）。
+- **2026-10-13 第三批：填空 / 主观题与批改**（`EXERCISE-PLAN.md §11.4`）：
+  - `import_exercises` / `update_exercises` 的 `type` 多 `fill` / `subjective`，填空给 `blanks: [{answer, accept}]`、书上的作答 `user_blanks`；
+    主观题的参考答案写 `answer`、书上的作答（转写的文字）写 `user_answer`；`options` 不再必填。`list_exercises` 每道题多 `blanks` / `user_blanks` / `ungraded`。
+  - 新工具三个：`list_exercise_attempts`（read，作答一览：题干 + 参考答案 + 作答 + 每空对不对得上 + 有没有手写 + 对错与谁判的 + 评语）、
+    `render_exercise_answer`（read，手写作答出 PNG）、`grade_exercise_attempts`（write，写回对错与评语，后判的为准，选择题不收）。
+  - `list_exercise_attempts` 两种列法加进 `spike/mcp-schema-audit.py`；`render_exercise_answer` 要工作区里有手写作答才校验。

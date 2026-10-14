@@ -181,7 +181,8 @@ struct LibExercise: Identifiable, Equatable {
     var chapter: [String] = []
 }
 
-/// 一次作答（`exercise_attempt` 表，v20）。`answer` = 选中的选项键按字母序拼起来；`correct` nil = 题目没答案、没法判。
+/// 一次作答（`exercise_attempt` 表，v20）。`answer`：选择题 = 选中的选项键按字母序拼起来；填空 = JSON 字符串数组（每空一格）；
+/// 主观题 = 写的文字（`ExerciseResponse.answerString`）。`correct` nil = 还没判（没答案没法判 / 等自己判或 Agent 判）。
 struct LibExerciseAttempt: Identifiable, Equatable {
     var id: String              // UUID
     var exerciseId: String
@@ -191,6 +192,12 @@ struct LibExerciseAttempt: Identifiable, Equatable {
     var createdAt: Date
     /// '' = 在 App 里练的；`markSource` = 从用户在文档上的作答认出来的（每道题至多一条）。
     var source: String = ""
+    /// v21：手写（`ExerciseInk` 的 JSON），nil = 没写。
+    var ink: Data? = nil
+    /// v21：谁判的（`ExerciseJudge`：'' 程序判或还没判 / `self` / `agent`）。
+    var judgedBy: String = ""
+    /// v21：Agent 批改时写的评语（Markdown），空 = 没有。
+    var feedback: String = ""
 
     static let markSource = "mark"
 }
@@ -209,6 +216,15 @@ struct ExerciseAttemptStats: Equatable {
     /// 不拿书上那条算「最近」：它的时间是导入那一刻，重导一次就会盖过真正后做的练习。
     var lastAnswer: String?
     var lastAt: Date?
+    /// v21（填空 / 主观题要用）：上面那次的 id、库里记的对错、谁判的。选择题的对错仍按现在的答案现判，用不着这几个。
+    var lastId: String?
+    var lastPracticedCorrect: Bool?
+    var lastJudgedBy: String = ""
+    /// v21：书上那条的 id、谁判的。
+    var markedId: String?
+    var markedJudgedBy: String = ""
+    /// v21：还没判的作答有几次（填空 / 主观题等自己判或 Agent 判的）。
+    var ungraded = 0
 }
 
 /// 一张图片本体（`image` 表，v13）。**主键就是内容 SHA-256**：同一张图导两次只有一行一文件；

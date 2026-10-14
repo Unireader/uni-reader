@@ -107,9 +107,9 @@ check(MirrorFp.spec("exercise")?.columns.map(\.name) ==
        "created_at", "updated_at", "chapter"] && MirrorFp.spec("exercise")?.lww == "updated_at",
       "exercise 列表（v20，章节在表尾）+ 按 updated_at 取新")
 check(MirrorFp.spec("exercise_attempt")?.columns.map(\.name) ==
-      ["id", "exercise_id", "answer", "correct", "elapsed_ms", "created_at", "source"]
+      ["id", "exercise_id", "answer", "correct", "elapsed_ms", "created_at", "source", "ink", "judged_by", "feedback"]
       && MirrorFp.spec("exercise_attempt")?.lww == nil,
-      "exercise_attempt 列表（v20）+ 没有修改时间（冲突保留源盘）")
+      "exercise_attempt 列表（v21：表尾多手写 / 谁判的 / 评语）+ 没有修改时间（冲突保留源盘）")
 check(MirrorFp.spec("board_page")?.columns.map(\.name) ==
       ["id", "board_id", "sort_key", "width", "height", "template", "created_at", "updated_at"],
       "board_page 列表（v17）")
@@ -196,11 +196,20 @@ let tableCases: [(String, [String: Any])] = [
         "created_at": "2026-10-10T09:00:00.000Z", "updated_at": "2026-10-11T08:00:00.000Z",
         "chapter": "[\"第二章 导数\",\"2.3 求导法则\"]",
     ] as [String: Any]),
+    // 🔴 v21 起这一行按 10 列编码（新三列缺 = NULL），#31 的编码 / fp 因列规格变了而变（2026-10-13，`EXERCISE-PLAN.md §11.5`）
     ("exercise_attempt", [
         "id": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
         "exercise_id": "99999999-9999-4999-8999-999999999999",
         "answer": "AC", "correct": NSNull(), "elapsed_ms": Int64(4200),
         "created_at": "2026-10-11T08:00:00.000Z", "source": "",
+    ] as [String: Any]),
+    // v21 主观题作答：手写（blob）+ Agent 判了 + 评语
+    ("exercise_attempt", [
+        "id": "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
+        "exercise_id": "99999999-9999-4999-8999-999999999999",
+        "answer": "设 $\\sqrt2=p/q$", "correct": Int64(0), "elapsed_ms": Int64(91000),
+        "created_at": "2026-10-13T08:00:00.000Z", "source": "",
+        "ink": Data("{\"height\":280,\"strokes\":[],\"width\":600}".utf8), "judged_by": "agent", "feedback": "少了**互质**的假设",
     ] as [String: Any]),
 ]
 for (t, row) in tableCases {

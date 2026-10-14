@@ -3,25 +3,35 @@ import Foundation
 /// 习题的纯逻辑（`EXERCISE-PLAN.md`）：payload 编解码、导入校验与规整、去重、判题、标签范围。
 /// **只依赖 Foundation**——`spike/exercise-test.swift` 把它和 `Sources/Store/*` 一起直接编。
 
-/// 题型（`exercise.kind`）。本轮只有选择题两种，以后的判断 / 填空 / 解答接着往后排。
+/// 题型（`exercise.kind`）。2 留给以后的判断题；3 填空 / 4 主观题 2026-10-13 加（`EXERCISE-PLAN.md §11`）。
+/// 不认识的值（以后的新题型）各端都跳过那一行，所以只许往后加。
 enum ExerciseKind: Int, CaseIterable {
     case single = 0
     case multiple = 1
+    case fill = 3
+    case subjective = 4
 
     /// MCP 里的写法（对模型最不容易写错的英文词）。
     var wireName: String {
         switch self {
         case .single: return "single"
         case .multiple: return "multiple"
+        case .fill: return "fill"
+        case .subjective: return "subjective"
         }
     }
     init?(wire: String) {
         switch wire.trimmingCharacters(in: .whitespaces).lowercased() {
         case "single": self = .single
         case "multiple": self = .multiple
+        case "fill": self = .fill
+        case "subjective": self = .subjective
         default: return nil
         }
     }
+
+    /// 选择题（单选 / 多选）：点选项作答、程序判对错。
+    var isChoice: Bool { self == .single || self == .multiple }
 }
 
 /// 答案从哪来：书上印的，还是 Agent 自己解的（后者练习时要明说「未经核对」）。
@@ -39,7 +49,8 @@ struct ExerciseOption: Codable, Equatable {
 struct ExercisePayload: Codable, Equatable {
     var stem: String
     var options: [ExerciseOption]
-    /// 正确选项的键（空 = 还没有答案）。
+    /// 答案（空 = 还没有）：选择题 = 正确选项的键；填空题 = 每空一个参考答案（按空的先后）；
+    /// 主观题 = 恰一个元素，参考答案正文（Markdown + 公式）。
     var answer: [String]
     /// `book` / `agent`；没有答案时为 nil。
     var answerSource: String?
@@ -48,15 +59,21 @@ struct ExercisePayload: Codable, Equatable {
     var region: [Double]?
     /// 带图 / 表：练习时默认显示原题截图。
     var figure: Bool
+    /// 填空题有几个空（只有填空题有；没答案时靠它知道摆几个输入框）。
+    var blanks: Int?
+    /// 填空题每空**另外**认可的写法（与 `answer` 等长；没有就不写这个键）。判题时参考答案和这些都算对。
+    var accept: [[String]]?
 
     init(stem: String, options: [ExerciseOption], answer: [String] = [], answerSource: String? = nil,
-         explanation: String? = nil, region: [Double]? = nil, figure: Bool = false) {
+         explanation: String? = nil, region: [Double]? = nil, figure: Bool = false,
+         blanks: Int? = nil, accept: [[String]]? = nil) {
         self.stem = stem; self.options = options; self.answer = answer; self.answerSource = answerSource
         self.explanation = explanation; self.region = region; self.figure = figure
+        self.blanks = blanks; self.accept = accept
     }
 
     enum CodingKeys: String, CodingKey {
-        case stem, options, answer, explanation, region, figure
+        case stem, options, answer, explanation, region, figure, blanks, accept
         case answerSource = "answer_source"
     }
 
@@ -69,6 +86,8 @@ struct ExercisePayload: Codable, Equatable {
         explanation = try c.decodeIfPresent(String.self, forKey: .explanation)
         region = try c.decodeIfPresent([Double].self, forKey: .region)
         figure = try c.decodeIfPresent(Bool.self, forKey: .figure) ?? false
+        blanks = try c.decodeIfPresent(Int.self, forKey: .blanks)
+        accept = try c.decodeIfPresent([[String]].self, forKey: .accept)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -80,6 +99,8 @@ struct ExercisePayload: Codable, Equatable {
         try c.encodeIfPresent(explanation, forKey: .explanation)
         try c.encodeIfPresent(region, forKey: .region)
         if figure { try c.encode(true, forKey: .figure) }
+        try c.encodeIfPresent(blanks, forKey: .blanks)
+        if let accept, accept.contains(where: { !$0.isEmpty }) { try c.encode(accept, forKey: .accept) }
     }
 
     func data() -> Data {
@@ -126,17 +147,70 @@ struct Exercise: Identifiable, Equatable {
                     chapter: chapter)
     }
 
-    var hasAnswer: Bool { !payload.answer.isEmpty }
+    var hasAnswer: Bool { payload.answer.contains { !$0.isEmpty } }
     var answerFromAgent: Bool { hasAnswer && payload.answerSource == ExerciseAnswerSource.agent.rawValue }
 
     /// 判题：选中的键与答案**完全相同**才算对（多选少选、多选都算错）。没有答案 → nil（没法判）。
+    /// 只管选择题；填空 / 主观题走 `autoJudge`。
     func judge(_ chosen: Set<String>) -> Bool? {
-        guard hasAnswer else { return nil }
+        guard kind.isChoice, hasAnswer else { return nil }
         return chosen == Set(payload.answer)
     }
 
     /// 作答记录里存的那串：选中的键按字母序拼起来。
     static func answerString(_ keys: Set<String>) -> String { keys.sorted().joined() }
+
+    // MARK: 填空 / 主观题（`EXERCISE-PLAN.md §11`）
+
+    /// 填空题有几个空（别的题型 0）。
+    var blankCount: Int { kind == .fill ? max(payload.blanks ?? 0, payload.answer.count) : 0 }
+
+    /// 主观题的参考答案（没有 → nil）。
+    var referenceText: String? {
+        guard kind == .subjective, let t = payload.answer.first, !t.isEmpty else { return nil }
+        return t
+    }
+
+    /// 第 `i` 空认可的写法：参考答案 + `accept` 里的（原样，没规整）。
+    func acceptedForms(blank i: Int) -> [String] {
+        var out: [String] = []
+        if payload.answer.indices.contains(i) { out.append(payload.answer[i]) }
+        if let a = payload.accept, a.indices.contains(i) { out += a[i] }
+        return out.filter { !$0.isEmpty }
+    }
+
+    /// 填空每一空对不对得上参考答案（规整后一字不差，`normalizeBlank`）。没有答案的空 = false。
+    func blankMatches(_ blanks: [String]) -> [Bool] {
+        (0..<blankCount).map { i in
+            let mine = blanks.indices.contains(i) ? Self.normalizeBlank(blanks[i]) : ""
+            return !mine.isEmpty && acceptedForms(blank: i).contains { Self.normalizeBlank($0) == mine }
+        }
+    }
+
+    /// 程序判题（用户 2026-10-13 定）：选择题同 `judge`；填空题**每空都对得上才判对**，有对不上的（或写在画板上的）
+    /// 交给人判——`1/2` 和 `0.5` 这类等价写法程序认不出，所以不直接判错；主观题一律 nil（自己判 / Agent 判）。
+    func autoJudge(_ r: ExerciseResponse) -> Bool? {
+        switch kind {
+        case .single, .multiple: return judge(r.keys)
+        case .fill:
+            guard hasAnswer, blankCount > 0 else { return nil }
+            return blankMatches(r.blanks).allSatisfy { $0 } ? true : nil
+        case .subjective: return nil
+        }
+    }
+
+    /// 填空比对前的规整：全角转半角（NFKC）、去掉 `$` 和全部空白、几个只管排版的 LaTeX 写法、句末标点。
+    /// 只做「肯定等价」的变换——宁可没认出来交给人判，也不能把错的判成对。
+    static func normalizeBlank(_ s: String) -> String {
+        var t = s.precomposedStringWithCompatibilityMapping
+        for (a, b) in [("\\dfrac", "\\frac"), ("\\tfrac", "\\frac"), ("\\left", ""), ("\\right", ""),
+                       ("\\,", ""), ("\\;", ""), ("\\!", ""), ("\\ ", ""), ("$", "")] {
+            t = t.replacingOccurrences(of: a, with: b)
+        }
+        t = t.filter { !$0.isWhitespace }
+        while let last = t.last, "。.，,；;".contains(last) { t.removeLast() }
+        return t
+    }
 
     /// 以前的作答从哪来。
     enum Earlier: Equatable {
@@ -150,6 +224,7 @@ struct Exercise: Identifiable, Equatable {
     /// 没练过再拿书上的作答。对错按**现在的**答案现判——答案后来补上 / 改过，库里也已重判，
     /// 这里现判只是保证和选项旁的 ✓ ✗ 对得上。没做过 → nil。
     func earlierAnswer(_ s: ExerciseAttemptStats?) -> (chosen: Set<String>, correct: Bool?, from: Earlier)? {
+        guard kind.isChoice else { return nil }
         func keys(_ raw: String?) -> Set<String>? {
             guard let raw, let k = ExerciseImport.parseAnswer(raw), !k.isEmpty else { return nil }
             return Set(k)
@@ -159,11 +234,133 @@ struct Exercise: Identifiable, Equatable {
         return nil
     }
 
+    /// 填空 / 主观题以前做过的那次（规则同 `earlierAnswer`：App 里练的最近一次优先，没有再拿书上的作答）。
+    /// 对错**用库里记的**——自己判 / Agent 判的没法现算；程序判的那部分答案一改库里已重判（`rejudgeAttempts`）。
+    /// 手写不在这里（统计里不带笔迹），显示时按 `attemptId` 另取。
+    func earlierResponse(_ s: ExerciseAttemptStats?)
+        -> (response: ExerciseResponse, correct: Bool?, judgedBy: String, attemptId: String, from: Earlier)? {
+        guard !kind.isChoice, let s else { return nil }
+        if let id = s.lastId, let raw = s.lastAnswer {
+            return (ExerciseResponse.decode(kind, answer: raw), s.lastPracticedCorrect, s.lastJudgedBy, id, .practiced(s.lastAt))
+        }
+        if let id = s.markedId, let raw = s.markedAnswer {
+            return (ExerciseResponse.decode(kind, answer: raw), s.markedCorrect, s.markedJudgedBy, id, .book)
+        }
+        return nil
+    }
+
     /// 列表里一行显示的题干：去掉换行、并掉连续空白（公式源码原样留着）。
     var plainStem: String { Self.collapse(payload.stem) }
 
     static func collapse(_ s: String) -> String {
         s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+}
+
+// MARK: - 一次作答的内容（`EXERCISE-PLAN.md §11.2`）
+
+/// 一次作答写了什么。库里：`exercise_attempt.answer` 存文字那部分（`answerString`），手写另存 `ink` 列。
+struct ExerciseResponse: Equatable {
+    /// 选择题：选中的键。
+    var keys: Set<String> = []
+    /// 填空题：每空一格（没填的是空串），按空的先后。
+    var blanks: [String] = []
+    /// 主观题：写的文字（Markdown + `$…$`）。
+    var text: String = ""
+    /// 手写（填空 / 主观题都能用）。
+    var ink: ExerciseInk? = nil
+
+    /// `answer` 列里的串：选择题 = 键按字母序拼起来（同以前）；填空 = JSON 字符串数组；主观题 = 原文。
+    func answerString(_ kind: ExerciseKind) -> String {
+        switch kind {
+        case .single, .multiple: return Exercise.answerString(keys)
+        case .fill:
+            let e = JSONEncoder()
+            e.outputFormatting = [.withoutEscapingSlashes]
+            return (try? e.encode(blanks)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        case .subjective: return text
+        }
+    }
+
+    /// 从库里还原。认不出的填空串（不是 JSON 数组）当成只填了一空。
+    static func decode(_ kind: ExerciseKind, answer: String, ink: Data? = nil) -> ExerciseResponse {
+        var r = ExerciseResponse(ink: ExerciseInk.decode(ink))
+        switch kind {
+        case .single, .multiple: r.keys = Set(ExerciseImport.parseAnswer(answer) ?? [])
+        case .fill:
+            if let list = try? JSONDecoder().decode([String].self, from: Data(answer.utf8)) { r.blanks = list }
+            else if !answer.isEmpty { r.blanks = [answer] }
+        case .subjective: r.text = answer
+        }
+        return r
+    }
+
+    /// 什么都没写（这样的不收）。
+    func isEmpty(_ kind: ExerciseKind) -> Bool {
+        let noInk = ink?.isEmpty ?? true
+        switch kind {
+        case .single, .multiple: return keys.isEmpty
+        case .fill: return noInk && blanks.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        case .subjective: return noInk && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    /// 一行摘要（列表「我的答案」、MCP 的文字说明）：选择题 `AC`；填空 `2 / 1/2`；主观题并成一行的正文。
+    /// 只有手写、没写字时是空串，调用方另标「手写」。
+    func summary(_ kind: ExerciseKind) -> String {
+        switch kind {
+        case .single, .multiple: return Exercise.answerString(keys)
+        case .fill:
+            return blanks.contains(where: { !$0.isEmpty })
+                ? blanks.map { $0.isEmpty ? "—" : Exercise.collapse($0) }.joined(separator: " / ") : ""
+        case .subjective: return Exercise.collapse(text)
+        }
+    }
+}
+
+/// 谁判的对错（`exercise_attempt.judged_by`）：空串 = 程序判（或还没判）；`self` 自己判；`agent` Agent 判。
+/// 同一次作答只留一个结论，后判的为准（用户 2026-10-13 定）。
+enum ExerciseJudge {
+    static let byProgram = ""
+    static let bySelf = "self"
+    static let byAgent = "agent"
+}
+
+/// 手写作答（内置小画板，`exercise_attempt.ink`）。JSON、点是显式数组（红线 6：跨平台 payload 用显式 JSON 数组）。
+/// 坐标 = 画板的逻辑坐标（点，左上原点）：宽恒为 `canvasWidth`，界面按实际宽度等比缩放；高随「加高」变。
+struct ExerciseInk: Codable, Equatable {
+    var width: Double
+    var height: Double
+    var strokes: [Stroke]
+
+    struct Stroke: Codable, Equatable {
+        /// 笔宽（逻辑点）。
+        var width: Double
+        /// 每点 `[x, y, 压感 0~1]`。
+        var points: [[Float]]
+    }
+
+    static let canvasWidth: Double = 600
+    static let defaultHeight: Double = 280
+    static let maxHeight: Double = 1800
+
+    init(width: Double = ExerciseInk.canvasWidth, height: Double = ExerciseInk.defaultHeight, strokes: [Stroke] = []) {
+        self.width = width; self.height = height; self.strokes = strokes
+    }
+
+    var isEmpty: Bool { strokes.isEmpty }
+
+    func data() -> Data {
+        let e = JSONEncoder()
+        e.outputFormatting = [.sortedKeys]
+        return (try? e.encode(self)) ?? Data()
+    }
+
+    /// 空 / 坏数据 / 没有笔画 → nil。
+    static func decode(_ d: Data?) -> ExerciseInk? {
+        guard let d, !d.isEmpty, let ink = try? JSONDecoder().decode(ExerciseInk.self, from: d),
+              ink.width > 0, ink.height > 0, !ink.strokes.isEmpty else { return nil }
+        return ink
     }
 }
 
@@ -181,8 +378,16 @@ struct ExerciseDraft: Equatable {
     var chapter: [String]? = nil
     /// 按页码从 PDF 目录查出来的章节（MCP 层填，`ExerciseChapter.path`）。
     var autoChapter: [String] = []
-    /// 用户在文档上的作答（高亮 / 手写认出来的选项键，排好序）。nil = 没给；空 = 撤掉原来那条。
+    /// 用户在文档上的作答（高亮 / 手写认出来的选项键，排好序）。nil = 没给；空 = 撤掉原来那条。只管选择题。
     var userAnswer: [String]? = nil
+    /// 填空 / 主观题书上的作答（Agent 转写的文字）。nil = 没给；`isEmpty` = 撤掉原来那条。
+    var userResponse: ExerciseResponse? = nil
+
+    /// 书上的作答，统一成一份（nil = 没给；空 = 撤掉）。
+    var userMark: ExerciseResponse? {
+        if kind.isChoice { return userAnswer.map { ExerciseResponse(keys: Set($0)) } }
+        return userResponse
+    }
 }
 
 /// 导入的一道题的原始输入（MCP 那边从 JSON 里拆出来，什么都还没校验）。
@@ -200,6 +405,10 @@ struct ExerciseInput {
     var figure: Bool?
     var chapter: [String]? = nil
     var userAnswer: String? = nil
+    /// 填空题的空：每空一个参考答案（可空）+ 另外认可的写法。nil = 没给。
+    var blanks: [(answer: String?, accept: [String])]? = nil
+    /// 填空题书上的作答（每空一格）。nil = 没给；全空 = 撤掉。
+    var userBlanks: [String]? = nil
 }
 
 enum ExerciseImport {
@@ -231,11 +440,27 @@ enum ExerciseImport {
         init(stringLiteral value: String) { reason = value }
     }
 
+    /// 填空题最多几个空。
+    static let maxBlanks = 20
+
     /// 校验并规整一道题。
     static func validate(_ i: ExerciseInput, seq: Int) -> Result<ExerciseDraft, Rejected> {
         let stem = (i.stem ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !stem.isEmpty else { return .failure("stem is empty") }
         let figure = i.figure ?? false
+        // 题型：写了按写的；没写时给了空 → 填空，否则按选择题（由答案几个字母推单选 / 多选）
+        var declared: ExerciseKind?
+        if let t = i.type, !t.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let k = ExerciseKind(wire: t) else {
+                return .failure("type must be \"single\", \"multiple\", \"fill\" or \"subjective\"")
+            }
+            declared = k
+        } else if i.blanks != nil {
+            declared = .fill
+        }
+        if let k = declared, !k.isChoice { return validateFree(i, kind: k, stem: stem, figure: figure, seq: seq) }
+        if i.blanks != nil { return .failure("blanks are only for fill questions") }
+        if i.userBlanks != nil { return .failure("user_blanks is only for fill questions") }
         guard i.options.count >= 2 else { return .failure("a choice question needs at least 2 options") }
         guard i.options.count <= maxOptions else { return .failure("at most \(maxOptions) options (A–H)") }
         var options: [ExerciseOption] = []
@@ -262,29 +487,19 @@ enum ExerciseImport {
             }
             answer = a.sorted()
         }
-        let kind: ExerciseKind
-        if let t = i.type, !t.isEmpty {
-            guard let k = ExerciseKind(wire: t) else { return .failure("type must be \"single\" or \"multiple\"") }
-            kind = k
-        } else {
-            kind = answer.count > 1 ? .multiple : .single
-        }
+        let kind = declared ?? (answer.count > 1 ? .multiple : .single)
         if kind == .single && answer.count > 1 {
             return .failure("a single-choice question has exactly one answer; got \(answer.joined())")
         }
-        var source: String?
-        if !answer.isEmpty {
-            guard let s = i.answerSource, let src = ExerciseAnswerSource(rawValue: s.lowercased()) else {
-                return .failure("answer_source is required with answer: \"book\" if the answer is printed in the document, \"agent\" if you worked it out")
-            }
-            source = src.rawValue
+        let source: String?
+        switch answerSource(i, hasAnswer: !answer.isEmpty) {
+        case .failure(let why): return .failure(why)
+        case .success(let s): source = s
         }
-        var region: [Double]?
-        if let r = i.region {
-            guard r.count == 4, r.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }), r[2] > 0, r[3] > 0 else {
-                return .failure("region must be [x, y, w, h] with values 0–1 (top-left origin) and w, h > 0")
-            }
-            region = r
+        let region: [Double]?
+        switch validRegion(i.region) {
+        case .failure(let why): return .failure(why)
+        case .success(let r): region = r
         }
         // 书上的作答：只认得选项字母；单选题圈了两个也照收（那就是用户当时的作答，判错）
         var userAnswer: [String]?
@@ -302,10 +517,8 @@ enum ExerciseImport {
                 userAnswer = a.sorted()
             }
         }
-        let explanation = i.explanation?.trimmingCharacters(in: .whitespacesAndNewlines)
         let payload = ExercisePayload(stem: stem, options: options, answer: answer, answerSource: source,
-                                      explanation: explanation?.isEmpty == false ? explanation : nil,
-                                      region: region, figure: figure)
+                                      explanation: cleanExplanation(i.explanation), region: region, figure: figure)
         return .success(ExerciseDraft(page: i.page, seq: seq, kind: kind,
                                       number: (i.number ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                                       section: (i.section ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
@@ -313,13 +526,119 @@ enum ExerciseImport {
                                       userAnswer: userAnswer))
     }
 
+    /// 填空 / 主观题（`EXERCISE-PLAN.md §11.1`）：没有选项。填空的参考答案在 `blanks[].answer`（要么每空都给、要么都不给），
+    /// 主观题的参考答案在 `answer`（正文）。书上的作答：填空 `user_blanks`、主观题 `user_answer`（Agent 转写的文字）。
+    private static func validateFree(_ i: ExerciseInput, kind: ExerciseKind, stem: String, figure: Bool,
+                                     seq: Int) -> Result<ExerciseDraft, Rejected> {
+        guard i.options.isEmpty else {
+            return .failure("a \(kind.wireName) question has no options; leave options out")
+        }
+        func trim(_ s: String?) -> String { (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        var answer: [String] = []
+        var blanks: Int?
+        var accept: [[String]]?
+        var user: ExerciseResponse?
+        if kind == .fill {
+            guard let list = i.blanks, !list.isEmpty else {
+                return .failure("a fill question needs blanks: one entry per blank in order, e.g. [{\"answer\": \"2\"}, {\"answer\": \"$\\\\frac{1}{2}$\"}]; leave answer out if unknown")
+            }
+            guard list.count <= maxBlanks else { return .failure("at most \(maxBlanks) blanks") }
+            guard trim(i.answer).isEmpty else {
+                return .failure("for a fill question put each blank's answer in blanks[].answer, not in answer")
+            }
+            guard trim(i.userAnswer).isEmpty else {
+                return .failure("for a fill question put what the user wrote in user_blanks (one string per blank)")
+            }
+            let given = list.map { trim($0.answer) }
+            let known = given.filter { !$0.isEmpty }.count
+            guard known == 0 || known == list.count else {
+                return .failure("give an answer for every blank or for none (\(known) of \(list.count) given)")
+            }
+            blanks = list.count
+            if known > 0 {
+                answer = given
+                let extra = zip(list, given).map { b, a in
+                    b.accept.map { trim($0) }.filter { !$0.isEmpty && $0 != a }
+                }
+                accept = extra.contains { !$0.isEmpty } ? extra : nil
+            } else if list.contains(where: { !$0.accept.isEmpty }) {
+                return .failure("blanks[].accept needs blanks[].answer")
+            }
+            if let ub = i.userBlanks {
+                let t = ub.map { trim($0) }
+                if t.allSatisfy(\.isEmpty) {
+                    user = ExerciseResponse()          // 全空 = 撤掉
+                } else {
+                    guard t.count == list.count else {
+                        return .failure("user_blanks has \(t.count) entries but the question has \(list.count) blanks")
+                    }
+                    user = ExerciseResponse(blanks: t)
+                }
+            }
+        } else {
+            if i.blanks != nil { return .failure("blanks are only for fill questions") }
+            if i.userBlanks != nil { return .failure("user_blanks is only for fill questions; use user_answer") }
+            let a = trim(i.answer)
+            if !a.isEmpty { answer = [a] }
+            if let raw = i.userAnswer { user = ExerciseResponse(text: trim(raw)) }   // 空 = 撤掉
+        }
+        let source: String?
+        switch answerSource(i, hasAnswer: !answer.isEmpty) {
+        case .failure(let why): return .failure(why)
+        case .success(let s): source = s
+        }
+        let region: [Double]?
+        switch validRegion(i.region) {
+        case .failure(let why): return .failure(why)
+        case .success(let r): region = r
+        }
+        let payload = ExercisePayload(stem: stem, options: [], answer: answer, answerSource: source,
+                                      explanation: cleanExplanation(i.explanation), region: region, figure: figure,
+                                      blanks: blanks, accept: accept)
+        return .success(ExerciseDraft(page: i.page, seq: seq, kind: kind, number: trim(i.number), section: trim(i.section),
+                                      payload: payload, chapter: i.chapter.map(ExerciseChapter.clean),
+                                      userResponse: user))
+    }
+
+    private static func answerSource(_ i: ExerciseInput, hasAnswer: Bool) -> Result<String?, Rejected> {
+        guard hasAnswer else { return .success(nil) }
+        guard let s = i.answerSource, let src = ExerciseAnswerSource(rawValue: s.lowercased()) else {
+            return .failure("answer_source is required with answer: \"book\" if the answer is printed in the document, \"agent\" if you worked it out")
+        }
+        return .success(src.rawValue)
+    }
+
+    private static func validRegion(_ r: [Double]?) -> Result<[Double]?, Rejected> {
+        guard let r else { return .success(nil) }
+        guard r.count == 4, r.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }), r[2] > 0, r[3] > 0 else {
+            return .failure("region must be [x, y, w, h] with values 0–1 (top-left origin) and w, h > 0")
+        }
+        return .success(r)
+    }
+
+    private static func cleanExplanation(_ s: String?) -> String? {
+        let t = s?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t?.isEmpty == false ? t : nil
+    }
+
     /// `update_exercises` 的起点：把已有的一道题还原成输入，覆盖给出的字段后再整题走一遍 `validate`。
     static func input(from e: Exercise) -> ExerciseInput {
-        ExerciseInput(page: e.page, type: e.kind.wireName, number: e.number, section: e.section,
-                      stem: e.payload.stem, options: e.payload.options.map { (key: $0.key, text: $0.text) },
-                      answer: e.payload.answer.joined(), answerSource: e.payload.answerSource,
-                      explanation: e.payload.explanation, region: e.payload.region, figure: e.payload.figure,
-                      chapter: e.chapter)
+        var i = ExerciseInput(page: e.page, type: e.kind.wireName, number: e.number, section: e.section,
+                              stem: e.payload.stem, options: e.payload.options.map { (key: $0.key, text: $0.text) },
+                              answer: e.kind.isChoice ? e.payload.answer.joined() : e.referenceText,
+                              answerSource: e.payload.answerSource,
+                              explanation: e.payload.explanation, region: e.payload.region, figure: e.payload.figure,
+                              chapter: e.chapter)
+        if e.kind == .fill { i.blanks = blankInputs(of: e) }
+        return i
+    }
+
+    /// 一道填空题现有的空，还原成输入的形状（参考答案 + 另外认可的写法）。
+    static func blankInputs(of e: Exercise) -> [(answer: String?, accept: [String])] {
+        (0..<e.blankCount).map { k in
+            (answer: e.payload.answer.indices.contains(k) ? e.payload.answer[k] : nil,
+             accept: e.payload.accept.flatMap { $0.indices.contains(k) ? $0[k] : nil } ?? [])
+        }
     }
 
     /// 题干规整（去掉全部空白）：没有题号时拿它认「同一道题」。

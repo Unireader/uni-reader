@@ -194,6 +194,20 @@ final class AgentPanelModel: ObservableObject {
         return true
     }
 
+    /// 往这扇窗的 Agent 输入框里放一句话（输入框里已有字就接在后面），图片挂上，`note` 进下一次发送的隐藏上下文块；
+    /// 面板亮出来，等用户点发送（习题「让 Agent 批改」，`EXERCISE-PLAN.md §11.4`）。Agent 不收图片时只放文字。
+    /// 返回 false = 发不了（Agent 关着 / 没开工作区）。
+    @discardableResult
+    func prepare(text: String, note: String?, images: [AgentImage], from window: UUID) -> Bool {
+        guard enabled, let ctx = context(for: window) else { return false }
+        let chat = chat(for: window, cwd: ctx.cwd)
+        if chat.acceptsImages != false { for img in images { chat.addAttachment(img) } }
+        if let note { chat.addContextNote(note) }
+        chat.requestDraft(text)
+        readers[window]?.controller?.showAgentTab()
+        return true
+    }
+
     // MARK: - 进程池
 
     /// 按设置里现在选的 Agent 取（或起）这个工作目录的进程。池子的键带上启动配置：换了 Agent 时新旧进程各占一格，

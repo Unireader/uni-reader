@@ -36,7 +36,7 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             case .chapter: return 140
             case .page: return 48
             case .type: return 64
-            case .mine: return 76
+            case .mine: return 110
             case .tries: return 110
             case .status: return 56
             }
@@ -102,12 +102,24 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             cell.textField?.stringValue = e.chapter.last ?? ""
             cell.toolTip = e.chapter.isEmpty ? nil : ExerciseChapter.display(e.chapter)
         case .page: cell.textField?.stringValue = e.page.map { String($0 + 1) } ?? ""
-        case .type: cell.textField?.stringValue = e.kind == .multiple ? L("Multiple") : L("Single")
+        case .type:
+            switch e.kind {
+            case .single: cell.textField?.stringValue = L("Single")
+            case .multiple: cell.textField?.stringValue = L("Multiple")
+            case .fill: cell.textField?.stringValue = L("Fill-in")
+            case .subjective: cell.textField?.stringValue = L("Subjective")
+            }
         case .mine:
             // 和练习页显示的是同一份：这一轮答的，否则上次作答，再否则书上的作答
             let a = deck.answer(for: e)
-            let mine = a.map { Exercise.answerString($0.chosen) } ?? ""
-            cell.textField?.stringValue = a?.correct.map { String(format: L("%@ (%@)"), mine, $0 ? L("right") : L("wrong")) } ?? mine
+            var mine = a.map { $0.response.summary(e.kind) } ?? ""
+            if a != nil, mine.isEmpty, !e.kind.isChoice { mine = L("Handwritten") }   // 空的作答不收，那就是只写在画板上
+            if let a, !e.kind.isChoice, a.correct == nil {
+                cell.textField?.stringValue = String(format: L("%@ (%@)"), mine, L("not marked"))
+            } else {
+                cell.textField?.stringValue = a?.correct.map { String(format: L("%@ (%@)"), mine, $0 ? L("right") : L("wrong")) } ?? mine
+            }
+            cell.textField?.toolTip = mine.count > 12 ? mine : nil
             switch a?.earlier {
             case .book?: cell.toolTip = L("Marked in the book")
             case .practiced?: cell.toolTip = L("Last time")

@@ -11,6 +11,8 @@
 > **同日第三次调整**（用户：「选了错题后还显示分类筛选就有点问题了」，§9.5）：侧栏管「哪一组题」（收藏也像错题本那样
 > 按书 → 章展开），顶栏的筛选只剩**「只看没做过」**一个开关，错题本那一支不显示。
 > 两列（`exercise.chapter`、`exercise_attempt.source`）在 v20 发布前补进同一版（开发包已建过表的库靠 `ADD COLUMN` 补）。
+> **2026-10-13 第三轮：填空 / 主观题**（schema v21，§11）：填空能程序判对的直接判、对不上的交给人判；主观题只给参考答案、
+> 用户自己判对错；可以打字也可以在内置小画板上手写；Agent 能读作答（含手写图）并批改。本轮只做 Mac，平板只显示题干。
 
 ## 1. 需求
 
@@ -71,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_
 | `document_id` | 出处那篇 PDF（逻辑文档 UUID）。**可空**：给以后「不来自 PDF 的题」留口子；本轮写入一律有值 |
 | `page` | 出处页，**0 起**（对外 1 起，换算只在 `PageNo`）；可空 = 不知道在哪页 |
 | `seq` | 同一页内的先后（Agent 按阅读顺序给的下标）。练习顺序 = 文档 → 页 → `seq` |
-| `kind` | 0 单选 / 1 多选（以后：2 判断 / 3 填空 / 4 解答，本轮不认） |
+| `kind` | 0 单选 / 1 多选 / 3 填空 / 4 主观题（v21，§11）；2 留给以后的判断题。不认识的值各端整行跳过 |
 | `number` / `section` | 书上印的题号（原样，如 `"5"`、`"例 3"`）/ 章节或套卷名 |
 | `starred` | 收藏 |
 | `wrong` | 在错题本里。**答错置 1；只有用户手动「移出错题本」置 0**（拍板 ③）；答对不动它 |
@@ -259,7 +261,7 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
 
 ## 8. 本轮不做
 
-判断 / 填空 / 解答题；~~平板（安卓模式1 / 网页）练习与离线镜像同步~~（安卓两种模式 + 离线镜像见 §10，网页采集页仍不做）；乱序 / 计时 / 正确率统计图表；
+判断题；~~填空 / 解答题~~（2026-10-13 做了，§11）；~~平板（安卓模式1 / 网页）练习与离线镜像同步~~（安卓两种模式 + 离线镜像见 §10，网页采集页仍不做）；乱序 / 计时 / 正确率统计图表；
 「连续答对 N 次自动移出错题本」（用户选了只能手动出）；页面上标出已识别的题（PDF 上的框）；题目笔记。
 
 ## 9. 实现记录（2026-10-10）
@@ -439,3 +441,148 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   24. 模式2：Mac 看 PDF，平板抽屉「习题」点一组 → 平板标签栏末尾多一个习题标签，Mac 不动；点回 Mac 的标签回到跟随；× 能关。
   25. 模式2 同步：Mac 也开同一组 → 两边翻题互相跟、在平板答的 Mac 上马上显示、筛选两边一起变；Mac 切到习题标签时平板跟随显示。
   26. 模式2：看原题图、到 PDF 原页（Mac 打开那一篇、平板回到跟随并停在那一页）。
+
+## 11. 第三轮：填空题 + 主观题（2026-10-13，schema v21）
+
+用户原话：「开始给习题练习识别做一下填空支持，以及主观题支持，主观题只提供参考答案，不对比正确，用户自己选答对了还是错了，
+支持填写答案，支持手写（一个内置小画板）支持 agent 读取，然后 agent 可以判断用户答案。」
+
+四条拍板（用户 2026-10-13 选的，都是推荐项）：
+
+1. **填空能自动判就自动判**：每空规整后与参考答案（可给几种等价写法）一致 → 直接判对；有对不上的空 → 亮出参考答案，
+   由用户点「对 / 错」。**不直接判错**——`1/2` 和 `0.5` 这类等价写法程序认不出。
+2. **本轮只做 Mac**：安卓只同步表结构（`Schema.kt` v21 + 镜像列规格），平板上新题型只显示题干、提示到 Mac 上作答；
+   平板上作答与手写放下一轮。
+3. **练习页加「让 Agent 批改」按钮**：把题号这句话放进这扇窗 Agent 页的输入框（手写附成图片），用户自己点发送。
+4. **后判的为准**：一次作答只留一个结论，Agent 判了覆盖自己判的（带评语），用户不同意可以再改判；判错照旧进错题本。
+
+### 11.1 数据（v20 → v21，跨端契约）
+
+- `exercise.kind`：`3` 填空 · `4` 主观题（`2` 留给判断题）。老版本 App 读到不认识的题型整行跳过，不会出错。
+- `exercise.payload`（新键都可选，选择题的 payload 一个字节不变）：
+
+  | 题型 | `answer` | 新键 |
+  |---|---|---|
+  | 填空 | 每空一个参考答案（按空的先后），空 = 还没有 | `blanks`：空数（没答案时靠它摆输入框）；`accept`：每空**另外**认可的写法（与 `answer` 等长，全空不写这个键） |
+  | 主观题 | 恰一个元素：参考答案正文（Markdown + 公式），空 = 还没有 | — |
+
+  填空的参考答案「要么每空都给、要么都不给」（MCP 校验）；`answer_source` 规则同选择题。
+- `exercise_attempt` 表尾加三列（`addColumnIfMissing`，安卓 `ADD_COLUMNS` 同序；也是 `MirrorFp.specs` 的列序）：
+
+  ```sql
+  ink BLOB,                                -- 手写（ExerciseInk JSON），没写 = NULL
+  judged_by TEXT NOT NULL DEFAULT '',      -- '' 程序判（或还没判）/ 'self' 自己判 / 'agent' Agent 判
+  feedback TEXT NOT NULL DEFAULT ''        -- Agent 批改的评语（Markdown）
+  ```
+
+  `answer` 列：选择题照旧（键拼起来）；填空 = JSON 字符串数组（每空一格，没填的是空串）；主观题 = 写的文字。
+  `correct` NULL 的含义扩成「还没判」（没答案没法判，或等自己判 / Agent 判）。
+- 手写 `ExerciseInk`：`{"width":600,"height":280,"strokes":[{"width":2.6,"points":[[x,y,压感],…]},…]}`——
+  **逻辑坐标**（宽恒 600，界面按实际宽度等比缩放；高随「加高」每次 +200，最多 1800），点是显式数组（红线 6）。
+  一道题的笔画少，不走 v18 的二进制点集。
+- **重判**（答案改了）：只重判 `judged_by = ''` 的作答（程序判的那部分）；自己判 / Agent 判过的保持原结论。
+  填空原来程序判对的、答案改了对不上 → 回到「还没判」。
+- 书上的作答（§2.4）照旧每题至多一条：填空走 `user_blanks`（每空一格）、主观题 `user_answer`（Agent 转写的文字），
+  程序能判的判上，其余等自己判或 Agent 批改。
+
+### 11.2 Mac 练习页
+
+- 选项那一块换成作答区 `Window/Exercise/ExerciseFreeAnswerView`：
+  - **填空**：每空一行「第 N 空 + 输入框」，回车跳下一空、最后一空回车 = 提交；交卷后锁住，对得上参考答案的空标绿勾，
+    最终判错时对不上的标红叉。
+  - **主观题**：多行输入框（`$…$` 写公式，随内容长高到 320 点），⌘Return 提交；交卷后换成渲染好的「你的作答」。
+  - **手写**（两种题型都有）：「手写」开关 → 笔 / 橡皮（整笔擦）/ 撤销 / 清空 / 加高 + 白纸小画板
+    （`ExerciseInkPad`：鼠标 / 触控板按压感 0.5 画，数位板用真实压感）。开没开记在本机，下一题照旧。
+  - 没交的输入按题存在 `ExerciseDeck.drafts`：翻到别的题、切标签再回来，写了一半的还在。
+  - 交卷后亮出参考答案（填空每空一行，另外认可的写法跟在后面）。
+- 判题与结果那一行：程序判对 →「每个空都和参考答案一致，正确」；还没判 → 说清楚为什么、该怎么办
+  （填空有空对不上 / 主观题请对照参考答案 / 还没有参考答案），下面 **「答对了」「答错了」**；判过的 → 「你判为… / Agent 判为…」，
+  下面 **「改判为错误 / 正确」**。有 Agent 评语就在下面显示（Markdown）。做过的题照旧直接显示上次那次（§4.2），
+  对错用库里记的（自己判 / Agent 判的没法现算）。
+- **「让 Agent 批改」**（Agent 开着、这扇窗开了工作区才有）：`AgentPanelModel.prepare` 往这扇窗 Agent 页的输入框放一句
+  「请批改我这道题的作答（第 N 题）：判断对错，并说明哪里需要改进。」，手写附成 PNG，题目 / 作答的 id 放进**隐藏上下文块**
+  （`AgentChat.contextNotes`，随下一次发送带走）；Agent 页亮出来，用户点发送。
+- 列表：「题型」列多「填空 / 主观题」；「我的答案」列填空显示 `2 / 1/2`、主观题显示正文一行、只手写的显示「手写」，
+  还没判的标「（未判）」。
+
+### 11.3 判定的规则（`Exercise.autoJudge` / `ExerciseDeck.judge` / `LibraryStore.judgeExerciseAttempt`）
+
+- 填空的规整（`Exercise.normalizeBlank`，**只做肯定等价的变换**）：NFKC（全角转半角）、去掉 `$` 和全部空白、
+  `\dfrac` / `\tfrac` → `\frac`、去掉 `\left` `\right` 与 `\,` `\;` `\!` `\ `、去掉句末标点；**不并大小写**
+  （宁可交给人判，也不把错的判成对）。每空与「参考答案 + accept」任一个一致即对得上；全对得上 → 判对，否则还没判。
+  只写在画板上的一律交给人判。
+- 自己判 / Agent 判都是改**那一条作答**（`correct` + `judged_by`，Agent 还写 `feedback`）；自己改判时 Agent 的评语保留。
+  判错的同一个事务进错题本；判对不移出（拍板 ③）。
+- 这一轮答过的题，标签视图刷新时按库里的对错重读一遍（`ExerciseDeck.refreshRoundVerdicts`）：Agent 批改完、答案补上重判了，
+  眼前的结果跟着变。
+
+### 11.4 MCP（`MCPTools+Exercises` / `MCPFacade+Exercises`）
+
+| 工具 | 层级 | 变化 |
+|---|---|---|
+| `import_exercises` | write | `type` 多 `fill` / `subjective`；填空给 `blanks: [{answer, accept}]`，主观题的参考答案写 `answer`；书上的作答：填空 `user_blanks`、主观题 `user_answer`；`options` 不再必填 |
+| `list_exercises` | read | 每道题多 `blanks`、`user_blanks`、`ungraded`（还没判的作答次数）；主观题的 `answer` = 参考答案 |
+| `update_exercises` | write | 同上可改 `blanks` / `user_blanks`；换了一类题（选择 ↔ 填空 ↔ 主观）时原来的选项 / 空 / 答案没另给就丢掉 |
+| `list_exercise_attempts`（新） | read | 作答一览，新的在前：题干、参考答案（一行文字）、作答（文字 / 每空 + 每空对不对得上）、`has_handwriting`、对错与谁判的（`app` / `user` / `agent`）、评语；按 `exercise_ids` / `document_id` 缩小，`ungraded_only` = 只要还没判的填空 / 主观题 |
+| `render_exercise_answer`（新） | read | 手写作答出 PNG（白底黑字，默认 1200 像素宽） |
+| `grade_exercise_attempts`（新） | write | `[{attempt_id, correct, feedback}]`（≤50），整批先校验、一条不对就都不写；**选择题不收**（程序自己判）；没给评语 = 清掉旧评语 |
+
+- 作答 id 同题目 id：完整或 8 位以上前缀（`LibraryStore.exerciseAttemptPage(prefix:)`）。
+- 新的读工具加进 `spike/mcp-schema-audit.py` 的 `READ_CALLS`（`render_exercise_answer` 要工作区里有手写作答才校验得到）。
+- `MCPServer.instructions`、Agent 面板上下文串（`AgentChat.exercises`）、`skills/unireader-exercise-import/SKILL.md` 都补了
+  填空 / 主观题的导入写法与批改流程。
+
+### 11.5 离线镜像 / 回收站 / 备份
+
+- `exercise_attempt` 的 `MirrorFp.specs` 表尾加三列（Mac ↔ 安卓同序）。向量表 **#31 的编码与 fp 变了**
+  （同一行在 10 列规格下多三个 NULL 列，`…1f031f001f001f00`），这是列规格本身变了，不是数据含义变了；新加 #32（主观题作答：
+  手写 + Agent 判 + 评语）。⚠️ 旧版 App 借出的离线副本用新版同步时，作答行的基线指纹对不上 → 两边都算「改过」→ 按规则保留源盘，
+  安卓本轮不改作答，所以不丢东西。
+- 回收站 / 备份按列通用复制，自动带上新列（`trash-test` 71 项照过）。
+
+### 11.6 安卓（本轮只跟契约）
+
+- `Schema.kt` v21（DDL 逐字 + `ADD_COLUMNS` 同序）、`MirrorFp.kt` 列规格、`MirrorFpTest` 向量 #31 / #32。
+- 模式1 读得出 3 / 4 两种题（`LibraryStore.exercise`），`ExCard.kind` 带上题型；练习页显示题干 + 「填空题和主观题暂时请在 Mac 上作答。」，
+  不能交卷（`LocalExerciseDeck.submit` 挡掉），不显示以前的作答。
+- 模式2：Mac 照常在 `exDeck` 里发这两种题（`kind` 3 / 4），但**选项、答案、解析、作答、书上的作答一律不发**（`shown = 0`），
+  `exAct` 0 交卷遇到这两种题丢掉。平板同上显示题干 + 提示。线格式没变（`PROTOCOL.md §4.9` 只补了 `kind` 的取值）。
+- 下一轮：平板上作答 + 手写（模式1 本机画板；模式2 要扩协议把笔迹 / 文字发回 Mac）。
+
+### 11.7 代码落点
+
+| 层 | 文件 |
+|---|---|
+| 纯逻辑 | `App/Exercise.swift`（题型、payload 新键、`ExerciseResponse` / `ExerciseInk` / `ExerciseJudge`、`autoJudge` / `normalizeBlank` / `earlierResponse`、导入校验 `validateFree`） |
+| 存储 | `Store/LibraryStore.swift`（v21 列、`judgeExerciseAttempt`、`exerciseAttemptPage`、统计多 `lastId` 等）、`Store/LibraryModels.swift`、`Store/MirrorFingerprint.swift` |
+| 执行层 | `App/WorkspaceManager+Exercise.swift`（记作答返回 id、判一次作答、书上作答按题型） |
+| 界面 | `Window/Exercise/ExerciseFreeAnswerView.swift`（新）、`ExerciseInkPad.swift`（新，含出图 `ExerciseInkRender`）、`ExercisePracticeView.swift`、`ExerciseDeck.swift`、`ExerciseListView.swift`、`ExerciseTabView.swift`、`Reader/Pane/ReaderPaneController.swift` |
+| Agent | `Agent/AgentPanelModel.swift`（`prepare`）、`Agent/AgentChat.swift`（`draftRequest` / `contextNotes`）、`Window/AI/AgentChatNSView.swift`（输入框取走那句话） |
+| MCP | `MCP/MCPTools+Exercises.swift`、`MCP/MCPFacade+Exercises.swift`、`MCP/MCPTools.swift`、`MCP/MCPServer.swift` |
+| 平板下发 | `App/AppModel+Exercise.swift` |
+| 安卓 | `local/store/Schema.kt`、`local/store/MirrorFp.kt`、`local/store/LibraryStore.kt`、`local/exercise/Exercise.kt` / `LocalExerciseDeck.kt`、`shared/exercise/ExModel.kt` / `ExerciseScreen.kt`、`pad/WireCodec.kt`、`res/values*/strings.xml` |
+
+### 11.8 验证（2026-10-13）
+
+- `spike/exercise-test.swift` 258 项全过（新加 90 项：题型、填空 / 主观题校验、payload 编码不影响老题、规整与判题、
+  作答编解码、自己判 / Agent 判 / 改判、重判跳过人判过的、统计、作答一览、update 起点还原、老库补列）。
+- `spike/exercise-free-answer-test.swift`（新，离屏）48 项全过：画板（合成鼠标事件写 / 擦 / 撤销 / 清空 / 加高 / 只读）、出图、
+  填空作答区（草稿回填、回车跳空与提交、交卷后锁住与对错标记、参考答案）、主观题作答区（手写开关、交卷后的显示）、子视图不重叠；
+  出了浅色 / 深色样张自查过排版。
+- 回归：`mirror-fp-test` 63 项、`trash-test` 71 项、`store-test` 54 项全过；`mirror-apply-test` 55 过 1 不过（就是 TODO 里那条
+  「上次打开取了较晚的那个」，改动前就不过）。
+- Mac Debug 编译通过、无新警告；安卓 `assembleDebug` 通过，JVM 单测 158 项全过（`ExerciseTest` 新加一组、`MirrorFpTest` 向量跟上）。
+- 🔴 练习页整体、MCP 三个新工具、「让 Agent 批改」都没有在真 App 里跑过（不替用户实测），由用户实测。
+
+### 11.9 实测清单（用户）
+
+  30. 让 Agent 识别有填空题 / 计算题的几页 → 侧栏数对；列表「题型」列显示「填空 / 主观题」。
+  31. 填空：每空一个输入框，回车跳下一空、最后一空回车提交；全对 → 直接判对、空旁绿勾；写成另一种写法（如 `0.5`）→
+      显示参考答案，点「答对了 / 答错了」；判错进错题本。
+  32. 主观题：多行输入框写公式，⌘Return 提交；交卷后看到渲染好的「你的作答」+ 参考答案；点「答对了 / 答错了」；「改判」。
+  33. 手写：打开「手写」，鼠标 / 触控板 / 数位板写字、橡皮、撤销、清空、加高；下一题手写照开；交卷后画板只读显示。
+  34. 写了一半翻到别的题再翻回来（或切标签再回来），输入和手写都还在。
+  35. 「让 Agent 批改」：Agent 页亮出来，输入框里有那句话、手写附成图；点发送 → Agent 读作答、写回对错和评语 →
+      练习页当场显示「Agent 判为…」和评语；不同意可以改判。
+  36. 让 Agent「批改今天做的主观题」（不点按钮，直接在面板里说）→ 它用 `list_exercise_attempts ungraded_only` 找到并批改。
+  37. 平板（模式1 / 模式2）：新题型只显示题干 + 「填空题和主观题暂时请在 Mac 上作答。」，选择题照常。

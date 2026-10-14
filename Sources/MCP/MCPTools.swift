@@ -18,6 +18,9 @@ enum MCPTools {
         c.register(listExercisesTool())
         c.register(updateExercisesTool())
         c.register(deleteExercisesTool())
+        c.register(listExerciseAttemptsTool())
+        c.register(renderExerciseAnswerTool())
+        c.register(gradeExerciseAttemptsTool())
     }
 
     /// 批 1：读取类 + 打开工作区/文档两个导航动作。

@@ -66,7 +66,7 @@ struct AgentReaderContext: Equatable {
     /// 两种笔记的区别（2026-10-05 用户：Agent 要分清文字笔记和 Markdown 笔记）。只说「笔记」时按当前标签页猜（用户定），
     /// 上面按标签页各接一句。MCP 的 `instructions` 里也写了一遍，但不是每个 Agent 都读它，这里再带上。
     /// 习题（`EXERCISE-PLAN.md §3.2`）：用户说「识别习题 / 把这几页的题导进来」时 Agent 该用哪几个工具。理由同上。
-    private static let exercises = "Exercises (习题) are multiple-choice questions saved for the user to practice (练习 / 错题本 / 收藏). To recognize the exercises on some pages: look at each page with render_page (and read_pages for the text), transcribe every question exactly without rewording, and save them with import_exercises (page, number, stem, options, plus answer + answer_source only when the answer is printed or you are sure). The chapter is filled in from the PDF's table of contents automatically. If the user already answered on the page — usually by highlighting an option (list_annotations, kinds highlight) or by circling / writing a letter (render_page with include_marks) — pass it as user_answer. Fill in answers later from an answer key with list_exercises + update_exercises."
+    private static let exercises = "Exercises (习题) are questions saved for the user to practice (练习 / 错题本 / 收藏): single / multiple choice, fill in the blank (type fill, one entry in blanks per blank) and subjective questions (type subjective — calculation, proof, short answer; answer = the reference answer). To recognize the exercises on some pages: look at each page with render_page (and read_pages for the text), transcribe every question exactly without rewording, and save them with import_exercises (page, number, stem, options or blanks, plus answer + answer_source only when the answer is printed or you are sure). The chapter is filled in from the PDF's table of contents automatically. If the user already answered on the page — usually by highlighting an option (list_annotations, kinds highlight) or by circling / writing (render_page with include_marks) — pass it as user_answer (user_blanks for fill). Fill in answers later from an answer key with list_exercises + update_exercises. To grade the user's fill-in or subjective answers: list_exercise_attempts (ungraded_only, or the exercise_ids you were given), render_exercise_answer for handwriting, compare with the reference answer, then grade_exercise_attempts with correct + short feedback in the user's language."
 
     private static let noteKinds = "UniReader has two kinds of notes: a text note (批注 / 文字笔记) is pinned to a spot on a PDF page — the user makes one with right-click › Add Note Here, or by selecting text and adding a note (tools: add_note, list_annotations, delete_annotations); a Markdown note (Markdown 笔记) is a separate .md file opened in its own tab (tools: list_markdown_notes, read_markdown, edit_markdown)."
 }
@@ -120,6 +120,10 @@ final class AgentChat: ObservableObject {
     @Published private(set) var missingMCP = false
     /// 输入框上待发的图片（框选截图投进来的），随下一句话一起发出去。换会话不清——和没发出去的草稿一样留着。
     @Published private(set) var attachments: [AgentImage] = []
+    /// 等输入框取走的一句话（`requestDraft`，习题「让 Agent 批改」放进来的）。输入框视图在刷新时取走、清掉。
+    @Published var draftRequest: String?
+    /// 下一次发送时放进隐藏上下文块的说明（英文，给 Agent 看：题目 / 作答的 id 等）。发出去就清。
+    private(set) var contextNotes: [String] = []
 
     private var connection: AgentConnection?
     /// 上次随消息带过去的上下文。没变就不重复带（省 token，也免得对话里满是同一段）。
@@ -243,6 +247,11 @@ final class AgentChat: ObservableObject {
 
     func addAttachment(_ image: AgentImage) { attachments.append(image) }
 
+    func addContextNote(_ note: String) { if !contextNotes.contains(note) { contextNotes.append(note) } }
+
+    /// 往输入框里放一句话（视图取走；已有字就接在后面）。
+    func requestDraft(_ text: String) { draftRequest = text }
+
     func removeAttachment(_ id: UUID) { attachments.removeAll { $0.id == id } }
 
     /// 用户从磁盘选的图片（附件按钮 / 拖到输入框上）：后台解码、压到长边 2000 像素再挂上。
@@ -295,6 +304,8 @@ final class AgentChat: ObservableObject {
         }
         // 图片的来源（哪本书哪一页）放进隐藏块：Agent 要用 MCP 去读那一页时用得上，回放时剔掉
         let notes = images.enumerated().compactMap { i, img in img.note.map { "Attached image \(i + 1): \($0)" } }
+            + contextNotes
+        contextNotes = []
         if !notes.isEmpty {
             blocks.append(.text(TextContent(text: ([AgentTranscript.contextOpen] + notes + [AgentTranscript.contextClose])
                 .joined(separator: "\n"))))

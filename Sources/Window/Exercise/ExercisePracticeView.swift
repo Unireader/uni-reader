@@ -6,7 +6,10 @@ import AppKit
 /// 排版按 frame 手摆（同 `AgentRowView` 的做法）：一题里有好几块高度要等引擎排完才知道，
 /// 每块报回新高度就整列重摆一次，简单可控，也不用操心约束激活的先后。
 ///
-/// 键盘：A~H 选、Return 提交 / 下一题、← → 上一题 / 下一题。
+/// 填空 / 主观题（`EXERCISE-PLAN.md §11`）：选项那一块换成 `ExerciseFreeAnswerView`（输入框 + 手写小画板），
+/// 交卷后程序判不了的由用户点「答对了 / 答错了」，或「让 Agent 批改」；判过的可以改判，后判的为准。
+///
+/// 键盘：A~H 选、Return 提交 / 下一题、← → 上一题 / 下一题；填空 / 主观题 ⌘Return 提交。
 @MainActor
 final class ExercisePracticeView: NSView {
     private let deck: ExerciseDeck
@@ -15,6 +18,8 @@ final class ExercisePracticeView: NSView {
     var onOpenSource: (Exercise) -> Void = { _ in }
     /// 题号 / 作答变了（顶栏那行进度跟着刷）。
     var onChange: () -> Void = {}
+    /// 这扇阅读窗口的 id（「让 Agent 批改」往这扇窗的 Agent 页发；拿不到 = 不显示那个按钮）。
+    var agentWindow: () -> UUID? = { nil }
 
     private let scroll = NSScrollView()
     private let doc = FlippedDocView()
@@ -40,6 +45,17 @@ final class ExercisePracticeView: NSView {
     private let prevButton = NSButton()
     private let nextButton = NSButton()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
+    /// 填空 / 主观题的作答区（选择题时藏起来）。
+    private let freeView = ExerciseFreeAnswerView()
+    /// 自己判：还没判时「答对了 / 答错了」，判过了「改判为…」。
+    private let rightButton = NSButton()
+    private let wrongButton = NSButton()
+    private let flipButton = NSButton()
+    private let askAgentButton = NSButton()
+    /// Agent 批改的评语。
+    private let feedbackTitle = NSTextField(labelWithString: L("Agent Feedback"))
+    private let feedbackView = AgentMarkdownView(text: "", fontSize: 14, documentId: "exercise-feedback")
+    private var shownFeedback = ""
 
     /// 当前这道题正选着的（还没交）。
     private var picked: Set<String> = []
@@ -93,10 +109,20 @@ final class ExercisePracticeView: NSView {
         emptyLabel.alignment = .center
         emptyLabel.font = .preferredFont(forTextStyle: .body)
         emptyLabel.textColor = .labelColor
-        for v in [metaLabel, starButton, originalButton, sourceButton, stemView, originalImage, submitButton,
-                  resultIcon, resultLabel, historyNote, agentNote, markNote, explanationTitle, explanationView, retryButton, mistakeButton,
+        setup(rightButton, symbol: "checkmark.circle", title: L("I Got It Right"), action: #selector(markRight))
+        setup(wrongButton, symbol: "xmark.circle", title: L("I Got It Wrong"), action: #selector(markWrong))
+        setup(flipButton, symbol: "arrow.left.arrow.right", title: "", action: #selector(flipVerdict))
+        setup(askAgentButton, symbol: "sparkles", title: L("Ask the Agent to Grade"), action: #selector(askAgent))
+        feedbackTitle.font = .preferredFont(forTextStyle: .headline)
+        feedbackTitle.textColor = .labelColor
+        freeView.onHeightChange = { [weak self] in self?.needsLayout = true }
+        freeView.onEdit = { [weak self] in self?.freeEdited() }
+        freeView.onSubmit = { [weak self] in self?.submit() }
+        for v in [metaLabel, starButton, originalButton, sourceButton, stemView, originalImage, freeView, submitButton,
+                  resultIcon, resultLabel, historyNote, rightButton, wrongButton, flipButton, askAgentButton,
+                  feedbackTitle, feedbackView, agentNote, markNote, explanationTitle, explanationView, retryButton, mistakeButton,
                   prevButton, nextButton, emptyLabel] as [NSView] { doc.addSubview(v) }
-        for v in [stemView, explanationView] { v.onHeightChange = { [weak self] in self?.needsLayout = true } }
+        for v in [stemView, explanationView, feedbackView] { v.onHeightChange = { [weak self] in self?.needsLayout = true } }
         show()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
@@ -149,12 +175,14 @@ final class ExercisePracticeView: NSView {
             stemView.update(text: e.payload.stem)
             explanationView.update(text: e.payload.explanation ?? "")
             rebuildOptions(e)
+            if !e.kind.isChoice { freeView.begin(e, draft: deck.drafts[e.id]) }
         }
         refreshState()
     }
 
     private func rebuildOptions(_ e: Exercise) {
         for r in optionRows { r.removeFromSuperview() }
+        guard e.kind.isChoice else { optionRows = []; return }
         optionRows = e.payload.options.map { o in
             let r = ExerciseOptionRow(key: o.key, text: o.text, multiple: e.kind == .multiple)
             r.onToggle = { [weak self] in self?.toggle(o.key) }
@@ -172,7 +200,7 @@ final class ExercisePracticeView: NSView {
         var meta = [String(format: L("Question %d of %d"), deck.index + 1, deck.items.count)]
         if !e.number.isEmpty { meta.append(String(format: L("No. %@"), e.number)) }
         if let p = e.page { meta.append(String(format: L("Page %d"), p + 1)) }
-        meta.append(e.kind == .multiple ? L("Multiple choice") : L("Single choice"))
+        meta.append(Self.kindName(e.kind))
         if !e.section.isEmpty { meta.append(e.section) }
         if let c = e.chapter.last, c != e.section { meta.append(c) }
         metaLabel.stringValue = meta.joined(separator: " · ")
@@ -196,8 +224,19 @@ final class ExercisePracticeView: NSView {
                 r.mark = .none
             }
         }
-        submitButton.isHidden = judged || e.kind != .multiple
-        submitButton.isEnabled = !picked.isEmpty
+        let free = !e.kind.isChoice
+        freeView.isHidden = !free
+        // 填空 / 主观题：交过的锁住显示作答（笔迹在库里那条上，统计里不带），没交的照常输入
+        let row = free ? answer?.attemptId.flatMap { workspace?.exerciseAttempt(id: $0) } : nil
+        if free {
+            if let a = answer { freeView.showAnswered(e, answer: a, ink: ExerciseInk.decode(row?.ink)) }
+            else if freeView.isLocked { freeView.begin(e, draft: deck.drafts[e.id]) }
+        }
+        submitButton.isHidden = judged || e.kind == .single
+        submitButton.isEnabled = free ? !freeView.response.isEmpty(e.kind) : !picked.isEmpty
+        // 填空 / 主观题打字时 Return 是换行 / 下一空，提交用 ⌘Return；选择题的 Return 由 `keyDown` 管
+        submitButton.keyEquivalent = free && !judged ? "\r" : ""
+        submitButton.keyEquivalentModifierMask = free ? .command : []
 
         resultIcon.isHidden = !judged
         resultLabel.isHidden = !judged
@@ -214,8 +253,19 @@ final class ExercisePracticeView: NSView {
                 resultIcon.image = NSImage(systemSymbolName: "questionmark.circle", accessibilityDescription: nil)
                 resultIcon.contentTintColor = .labelColor
             }
-            resultLabel.stringValue = Self.resultText(a, truth: e.payload.answer.joined())
+            resultLabel.stringValue = free ? Self.freeResultText(a, e) : Self.resultText(a, truth: e.payload.answer.joined())
         }
+        // 自己判 / 改判 / 让 Agent 批改（只有填空 / 主观题；后判的为准）
+        let canJudge = free && answer?.attemptId != nil
+        rightButton.isHidden = !(canJudge && answer?.correct == nil)
+        wrongButton.isHidden = rightButton.isHidden
+        flipButton.isHidden = !(canJudge && answer?.correct != nil)
+        flipButton.title = answer?.correct == true ? L("Mark as Wrong") : L("Mark as Right")
+        askAgentButton.isHidden = !(canJudge && agentWindow().map { AgentPanelModel.shared.canAttach(from: $0) } == true)
+        let feedback = row?.feedback ?? ""
+        if feedback != shownFeedback { shownFeedback = feedback; feedbackView.update(text: feedback) }
+        feedbackTitle.isHidden = feedback.isEmpty
+        feedbackView.isHidden = feedback.isEmpty
         if case .practiced(let at)? = answer?.earlier {
             let counts = String(format: L("%d tries, %d right"), stat?.attempts ?? 0, stat?.correct ?? 0)
             historyNote.stringValue = at.map { Self.whenFormatter.string(from: $0) + " · " + counts } ?? counts
@@ -233,7 +283,10 @@ final class ExercisePracticeView: NSView {
             case false?: verdict = L("wrong")
             case nil: verdict = L("not judged")
             }
-            markNote.stringValue = String(format: L("In the book you chose %@ (%@)."), m, verdict)
+            markNote.stringValue = free
+                ? String(format: L("In the book you wrote: %@ (%@)."),
+                         ExerciseResponse.decode(e.kind, answer: m).summary(e.kind), verdict)
+                : String(format: L("In the book you chose %@ (%@)."), m, verdict)
             markNote.isHidden = false
         } else {
             markNote.isHidden = true
@@ -262,6 +315,37 @@ final class ExercisePracticeView: NSView {
         case (.book?, true?): return String(format: L("In the book you chose %@. Correct."), mine)
         case (.book?, false?): return String(format: L("In the book you chose %@. Wrong. The answer is %@."), mine, truth)
         case (.book?, nil): return String(format: L("In the book you chose %@. This question has no answer yet."), mine)
+        }
+    }
+
+    static func kindName(_ k: ExerciseKind) -> String {
+        switch k {
+        case .single: return L("Single choice")
+        case .multiple: return L("Multiple choice")
+        case .fill: return L("Fill in the blank")
+        case .subjective: return L("Subjective")
+        }
+    }
+
+    /// 填空 / 主观题结果那行：谁判的、判成什么；还没判的说清楚该怎么办。以前的作答前面标「上次作答 / 书上的作答」。
+    private static func freeResultText(_ a: ExerciseDeck.Answer, _ e: Exercise) -> String {
+        let verdict: String
+        switch (a.correct, a.judgedBy) {
+        case (nil, _):
+            if !e.hasAnswer { verdict = L("This question has no reference answer yet. Mark it yourself, or ask the Agent to grade it.") }
+            else if e.kind == .fill { verdict = L("Some blanks don’t match the reference answer (it may just be written differently). Compare and mark it yourself.") }
+            else { verdict = L("Compare with the reference answer and mark it yourself.") }
+        case (true?, ExerciseJudge.bySelf): verdict = L("You marked it right.")
+        case (false?, ExerciseJudge.bySelf): verdict = L("You marked it wrong.")
+        case (true?, ExerciseJudge.byAgent): verdict = L("The Agent marked it right.")
+        case (false?, ExerciseJudge.byAgent): verdict = L("The Agent marked it wrong.")
+        case (true?, _): verdict = L("Every blank matches the reference answer.")
+        case (false?, _): verdict = L("Wrong")
+        }
+        switch a.earlier {
+        case nil: return verdict
+        case .practiced?: return String(format: L("Last time: %@"), verdict)
+        case .book?: return String(format: L("In the book: %@"), verdict)
         }
     }
 
@@ -309,10 +393,65 @@ final class ExercisePracticeView: NSView {
     }
 
     @objc private func submit() {
-        guard let e = deck.current, deck.answer(for: e) == nil, !picked.isEmpty else { return }
-        deck.submit(picked, elapsedMs: Int(Date().timeIntervalSince(shownAt) * 1000))
-        picked = []
+        guard let e = deck.current, deck.answer(for: e) == nil else { return }
+        let ms = Int(Date().timeIntervalSince(shownAt) * 1000)
+        if e.kind.isChoice {
+            guard !picked.isEmpty else { return }
+            deck.submit(picked, elapsedMs: ms)
+            picked = []
+        } else {
+            let r = freeView.response
+            guard !r.isEmpty(e.kind) else { return }
+            deck.submit(r, elapsedMs: ms)
+            takeFocus()   // 交了之后输入框锁住，键盘交回给练习页（← → / Return 下一题）
+        }
         refreshState()
+    }
+
+    /// 填空 / 主观题输入变了：存草稿（翻走再回来还在），「提交」能不能点跟着变。
+    private func freeEdited() {
+        guard let e = deck.current, !e.kind.isChoice, deck.answer(for: e) == nil else { return }
+        let r = freeView.response
+        deck.drafts[e.id] = r.isEmpty(e.kind) ? nil : r
+        submitButton.isEnabled = !r.isEmpty(e.kind)
+    }
+
+    @objc private func markRight() { judgeCurrent(true) }
+    @objc private func markWrong() { judgeCurrent(false) }
+
+    @objc private func flipVerdict() {
+        guard let e = deck.current, let c = deck.answer(for: e)?.correct else { return }
+        judgeCurrent(!c)
+    }
+
+    private func judgeCurrent(_ correct: Bool) {
+        guard let e = deck.current else { return }
+        deck.judge(e, correct: correct)   // 判错进错题本；库变了 → 标签视图 reload → show()
+        refreshState()
+    }
+
+    /// 让 Agent 批改：把题号这句话放进这扇窗 Agent 页的输入框（手写附成图片），题目与作答的 id 放进隐藏说明，用户点发送。
+    /// Agent 按说明用 `list_exercise_attempts` 读作答、`grade_exercise_attempts` 写回对错与评语（`EXERCISE-PLAN.md §11.4`）。
+    @objc private func askAgent() {
+        guard let e = deck.current, let a = deck.answer(for: e), let aid = a.attemptId, let win = agentWindow() else { return }
+        var images: [AgentImage] = []
+        if let ink = ExerciseInk.decode(workspace?.exerciseAttempt(id: aid)?.ink) ?? a.response.ink,
+           let png = ExerciseInkRender.png(ink, pixelWidth: 1200) {
+            images.append(AgentImage(data: png, mimeType: "image/png", caption: L("Handwritten answer"),
+                                     note: "the user's handwritten answer to exercise \(e.id) (attempt_id \(aid))"))
+        }
+        let label = e.number.isEmpty ? Self.kindName(e.kind) : String(format: L("No. %@"), e.number)
+        let text = String(format: L("Please grade my answer to this question (%@): say whether it is right and what to improve."), label)
+        let note = "The user wants you to grade their answer. exercise_id \(e.id), attempt_id \(aid). "
+            + "Read the question, the reference answer and the user's answer with list_exercise_attempts (exercise_ids: [\"\(e.id)\"]); "
+            + "if it has handwriting, look at it with render_exercise_answer. Then save the verdict and feedback with "
+            + "grade_exercise_attempts — it replaces any verdict the user gave themselves."
+        let name = AgentPanelModel.shared.agentName(for: win)
+        if !AgentPanelModel.shared.prepare(text: text, note: note, images: images, from: win) {
+            let alert = NSAlert()
+            alert.messageText = String(format: L("%@ is not available."), name)
+            if let w = window { alert.beginSheetModal(for: w) } else { alert.runModal() }
+        }
     }
 
     @objc private func retry() {
@@ -426,6 +565,11 @@ final class ExercisePracticeView: NSView {
             r.frame = NSRect(x: x0, y: y, width: colW, height: h)
             y += h + 6
         }
+        if !freeView.isHidden {
+            let h = freeView.height(forWidth: colW)
+            freeView.frame = NSRect(x: x0, y: y, width: colW, height: h)
+            y += h + 4
+        }
         y += 10
 
         if !submitButton.isHidden {
@@ -445,6 +589,20 @@ final class ExercisePracticeView: NSView {
                 historyNote.frame = NSRect(x: x0 + 28, y: y - 4, width: lw, height: hh)
                 y = historyNote.frame.maxY + 10
             }
+        }
+        // 自己判 / 改判 / 让 Agent 批改
+        var jx = x0
+        for b in [rightButton, wrongButton, flipButton, askAgentButton] where !b.isHidden {
+            b.sizeToFit()
+            b.frame = NSRect(x: jx, y: y, width: b.frame.width, height: b.frame.height)
+            jx = b.frame.maxX + 8
+        }
+        if jx > x0 { y += 40 }
+        if !feedbackView.isHidden {
+            feedbackTitle.frame = NSRect(x: x0, y: y, width: colW, height: 20)
+            y = feedbackTitle.frame.maxY + 6
+            feedbackView.frame = NSRect(x: x0, y: y, width: colW, height: feedbackView.intrinsicContentSize.height)
+            y = feedbackView.frame.maxY + 12
         }
         for note in [agentNote, markNote] where !note.isHidden {
             let h = note.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: colW, height: 10_000)).height ?? 18

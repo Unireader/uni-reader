@@ -1089,6 +1089,14 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     // MARK: 刷新
 
     func refresh() {
+        // 别处放进来的一句话（习题「让 Agent 批改」）：输入框里已有字就接在后面
+        if let d = chat.draftRequest {
+            chat.draftRequest = nil
+            let has = !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            textView.string = has ? textView.string + "\n" + d : d
+            textDidChange(Notification(name: NSText.didChangeNotification))
+            window?.makeFirstResponder(textView)
+        }
         refreshAttachments()
         placeholder.isHidden = !textView.string.isEmpty
         textView.isEditable = chat.sessionId != nil

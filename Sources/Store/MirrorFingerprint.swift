@@ -140,9 +140,12 @@ enum MirrorFp {
             Column("starred", .int), Column("wrong", .int), Column("source", .text),
             Column("created_at", .text), Column("updated_at", .text), Column("chapter", .text),
         ], lww: "updated_at"),
+        // v21（`EXERCISE-PLAN.md §11`）表尾多三列：手写 / 谁判的 / Agent 评语。自己判、Agent 判都会改已有的行，
+        // 只在 Mac 上发生（安卓本轮不做填空 / 主观题），三方合并下单边改动照常取改了的那边。
         TableSpec(table: "exercise_attempt", key: "id", columns: [
             Column("id", .text), Column("exercise_id", .text), Column("answer", .text), Column("correct", .int),
             Column("elapsed_ms", .int), Column("created_at", .text), Column("source", .text),
+            Column("ink", .blob), Column("judged_by", .text), Column("feedback", .text),
         ]),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),

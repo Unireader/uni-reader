@@ -32,13 +32,20 @@ final class ExerciseDeck {
 
     private func notify(_ c: Change) { Self.changed.send((self, origin, c)) }
 
-    /// 一道题显示的作答：选了什么、对不对（nil = 题目没答案、没法判）。
+    /// 一道题显示的作答：写了什么、对不对（nil = 还没判：题目没答案没法判，或填空 / 主观题等自己判 / Agent 判）。
     /// 这一轮答的优先；这一轮没答、以前做过的，显示以前那次（用户 2026-10-11 定：做过的题直接显示上次结果）。
     struct Answer: Equatable {
-        var chosen: Set<String>
+        var response: ExerciseResponse
         var correct: Bool?
         /// nil = 这一轮答的；否则是以前的作答从哪来。
         var earlier: Exercise.Earlier? = nil
+        /// 库里那一条（自己判 / 改判 / 让 Agent 批改要用它）。
+        var attemptId: String? = nil
+        /// 谁判的（`ExerciseJudge`）。
+        var judgedBy: String = ""
+
+        /// 选择题选中的键。
+        var chosen: Set<String> { response.keys }
     }
 
     let scope: ExerciseScope
@@ -48,6 +55,8 @@ final class ExerciseDeck {
     var mode: Mode = .practice
     var index = 0 { didSet { if index != oldValue { notify(.index) } } }
     private(set) var answers: [String: Answer] = [:]
+    /// 填空 / 主观题还没交的输入（按题记）：翻到别的题再翻回来、切标签再切回来，写了一半的不丢。
+    var drafts: [String: ExerciseResponse] = [:]
     /// 这一轮点过「再做一次」的题：以前的作答不再显示，等重新答。
     private var redoing: Set<String> = []
     /// 顶上的「只看没做过」。换了就按它重取一份快照（`setFilter`）。
@@ -115,34 +124,77 @@ final class ExerciseDeck {
         items = next
         if let curId, let i = items.firstIndex(where: { $0.id == curId }) { index = i }
         index = min(index, max(0, items.count - 1))
+        refreshRoundVerdicts(ws)
         notify(.content)
     }
 
-    /// 这道题要显示的作答（nil = 还没答，等着作答）：这一轮答的，否则以前那次（`Exercise.earlierAnswer`）。
+    /// 这一轮答过的题按库里的对错刷一遍：Agent 批改了 / 答案补上重判了，眼前这一轮的结果跟着变。
+    private func refreshRoundVerdicts(_ ws: WorkspaceManager) {
+        let ids = answers.values.compactMap(\.attemptId)
+        guard !ids.isEmpty else { return }
+        let rows = Dictionary(ws.exerciseAttempts(ids: ids).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for (k, a) in answers {
+            guard let id = a.attemptId, let r = rows[id] else { continue }
+            answers[k]?.correct = r.correct
+            answers[k]?.judgedBy = r.judgedBy
+        }
+    }
+
+    /// 这道题要显示的作答（nil = 还没答，等着作答）：这一轮答的，否则以前那次
+    /// （选择题 `Exercise.earlierAnswer`，填空 / 主观题 `Exercise.earlierResponse`）。
     func answer(for e: Exercise) -> Answer? {
         if let a = answers[e.id] { return a }
-        guard !redoing.contains(e.id), let p = e.earlierAnswer(stats[e.id]) else { return nil }
-        return Answer(chosen: p.chosen, correct: p.correct, earlier: p.from)
+        guard !redoing.contains(e.id) else { return nil }
+        if e.kind.isChoice {
+            guard let p = e.earlierAnswer(stats[e.id]) else { return nil }
+            return Answer(response: ExerciseResponse(keys: p.chosen), correct: p.correct, earlier: p.from)
+        }
+        guard let p = e.earlierResponse(stats[e.id]) else { return nil }
+        return Answer(response: p.response, correct: p.correct, earlier: p.from, attemptId: p.attemptId, judgedBy: p.judgedBy)
+    }
+
+    /// 交卷（选择题）：见下面那个。平板只交选择题（`exAct` 0）。
+    @discardableResult
+    func submit(_ chosen: Set<String>, elapsedMs: Int, id: String? = nil) -> Answer? {
+        submit(ExerciseResponse(keys: chosen), elapsedMs: elapsedMs, id: id)
     }
 
     /// 交卷：判题、记一次作答（答错进错题本由库那边同一个事务做）。`id` = 交哪一道（平板交的是它屏幕上那道，
-    /// 不一定是这一份此刻的当前题）；nil = 当前题。不在这一组里的题不收。
+    /// 不一定是这一份此刻的当前题）；nil = 当前题。不在这一组里的题、什么都没写的不收。
+    /// 填空能程序判对的直接判（`Exercise.autoJudge`），其余的、主观题记成「还没判」等自己判或 Agent 判。
     @discardableResult
-    func submit(_ chosen: Set<String>, elapsedMs: Int, id: String? = nil) -> Answer? {
+    func submit(_ r: ExerciseResponse, elapsedMs: Int, id: String? = nil) -> Answer? {
         let target = id.map { i in items.first { $0.id == i } } ?? current
-        guard let e = target, !chosen.isEmpty, let ws = workspace else { return nil }
-        let a = Answer(chosen: chosen, correct: e.judge(chosen))
+        guard let e = target, !r.isEmpty(e.kind), let ws = workspace else { return nil }
+        let correct = e.autoJudge(r)
+        let aid = ws.recordExerciseAttempt(id: e.id, kind: e.kind, response: r, correct: correct, elapsedMs: elapsedMs)
+        let a = Answer(response: r, correct: correct, attemptId: aid)
         answers[e.id] = a
-        ws.recordExerciseAttempt(id: e.id, chosen: chosen, correct: a.correct, elapsedMs: elapsedMs)
+        drafts[e.id] = nil
         var s = stats[e.id] ?? ExerciseAttemptStats()
         s.attempts += 1
-        if a.correct == true { s.correct += 1 } else if a.correct == false { s.wrong += 1 }
-        s.lastCorrect = a.correct
-        s.lastAnswer = Exercise.answerString(chosen)
+        if correct == true { s.correct += 1 } else if correct == false { s.wrong += 1 } else { s.ungraded += 1 }
+        s.lastCorrect = correct
+        s.lastAnswer = r.answerString(e.kind)
         s.lastAt = .now
+        s.lastId = aid
+        s.lastPracticedCorrect = correct
+        s.lastJudgedBy = ExerciseJudge.byProgram
         stats[e.id] = s
         notify(.content)
         return a
+    }
+
+    /// 自己判 / 改判（填空 / 主观题，`EXERCISE-PLAN.md §11.3`）：判的是这道题眼下显示的那次作答，后判的为准，判错进错题本。
+    func judge(_ e: Exercise, correct: Bool) {
+        guard let a = answer(for: e), let aid = a.attemptId, let ws = workspace else { return }
+        guard ws.judgeExerciseAttempt(id: aid, correct: correct, by: ExerciseJudge.bySelf) else { return }
+        if answers[e.id] != nil {
+            answers[e.id]?.correct = correct
+            answers[e.id]?.judgedBy = ExerciseJudge.bySelf
+        }
+        stats = ws.exerciseAttemptStats()   // 显示的是以前那次时，对错在统计里
+        notify(.content)
     }
 
     /// 「再做一次」：这道题当作没答过重新来（这一轮的、以前的作答都先不显示），库里的记录不动。
@@ -157,6 +209,7 @@ final class ExerciseDeck {
     func redo(_ ids: [String]) {
         for id in ids {
             answers[id] = nil
+            drafts[id] = nil
             redoing.insert(id)
         }
         notify(.content)

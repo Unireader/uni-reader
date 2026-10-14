@@ -85,7 +85,16 @@ READ_CALLS = [
     # 习题（EXERCISE-PLAN.md §3）：单篇 + 整个工作区两种列法
     ("list_exercises", {"document_id": doc}), ("list_exercises", {"all_documents": True, "limit": 5}),
     ("render_page", {"document_id": doc, "page": 1, "include_marks": True}),
+    # 填空 / 主观题的作答（EXERCISE-PLAN.md §11.4）：整个工作区 + 只看没判的
+    ("list_exercise_attempts", {"limit": 5}), ("list_exercise_attempts", {"ungraded_only": True, "limit": 5}),
 ]
+# 手写作答出图：工作区里有带手写的作答才校验得到
+hw = [a for a in ((rpc("tools/call", {"name": "list_exercise_attempts", "arguments": {"limit": 100}})
+                   .get("result", {}).get("structuredContent") or {}).get("attempts") or []) if a.get("has_handwriting")]
+if hw:
+    READ_CALLS.append(("render_exercise_answer", {"attempt_id": hw[0]["id"]}))
+else:
+    print("⚠️ 工作区里没有手写作答：render_exercise_answer 没有校验")
 # Markdown 读取的三种模式（工作区里至少要有一篇 Markdown 笔记）
 md = (rpc("tools/call", {"name": "list_markdown_notes", "arguments": {"limit": 1}})
       .get("result", {}).get("structuredContent") or {}).get("notes") or []

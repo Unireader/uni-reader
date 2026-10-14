@@ -135,7 +135,9 @@ extension AppModel {
         func code(_ c: Bool?) -> Int { c == nil ? 0 : (c! ? 1 : 2) }
         for e in d.items {
             let stat = d.stats[e.id]
-            let a = d.answer(for: e)
+            // 填空 / 主观题平板本轮不能作答（`EXERCISE-PLAN.md §11.6`）：只发题干，作答与答案一概不发，平板显示「到 Mac 上作答」
+            let choice = e.kind.isChoice
+            let a = choice ? d.answer(for: e) : nil
             let hasOriginal = e.documentId != nil && e.page != nil
             var flags = 0
             if e.starred { flags |= 1 }
@@ -157,10 +159,11 @@ extension AppModel {
                 "flags": flags, "chapter": ExerciseChapter.display(e.chapter), "section": e.section,
                 "stem": e.payload.stem,
                 "options": e.payload.options.map { ["key": $0.key, "text": $0.text] },
-                "answer": e.payload.answer.joined(), "explanation": e.payload.explanation ?? "",
+                "answer": choice ? e.payload.answer.joined() : "", "explanation": choice ? e.payload.explanation ?? "" : "",
                 "shown": shown, "chosen": a.map { Exercise.answerString($0.chosen) } ?? "", "correct": code(a?.correct),
                 "lastAt": lastAt, "tries": stat?.attempts ?? 0, "rights": stat?.correct ?? 0,
-                "marked": stat?.markedAnswer ?? "", "markedCorrect": stat?.markedAnswer == nil ? 0 : code(stat?.markedCorrect),
+                "marked": choice ? stat?.markedAnswer ?? "" : "",
+                "markedCorrect": !choice || stat?.markedAnswer == nil ? 0 : code(stat?.markedCorrect),
             ])
             if hasOriginal, let docId = e.documentId, let page = e.page, let t = target(docId) {
                 images[e.id] = ExerciseImageSource(path: t.path, page: page, region: e.payload.region, align: t.align?.page(page))
@@ -223,7 +226,9 @@ extension AppModel {
         let e = d.items.first { $0.id == id }
         switch act {
         case 0:   // 交卷
-            guard e != nil, let keys = ExerciseImport.parseAnswer(obj["arg"] as? String ?? ""), !keys.isEmpty else { return }
+            // 填空 / 主观题平板不能交（本轮只在 Mac 上作答）
+            guard e?.kind.isChoice == true, let keys = ExerciseImport.parseAnswer(obj["arg"] as? String ?? ""),
+                  !keys.isEmpty else { return }
             d.asPad { _ = d.submit(Set(keys), elapsedMs: max(0, num), id: id) }
         case 1:   // 收藏 / 取消
             guard let e else { return }

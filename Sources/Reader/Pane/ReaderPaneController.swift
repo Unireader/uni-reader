@@ -238,6 +238,7 @@ final class ReaderPaneController: NSViewController {
                 exView?.removeFromSuperview()
                 let v = ExerciseTabView(scope: scope, workspace: workspace)
                 v.onOpenSource = { [weak self] e in self?.openExerciseSource(e) }
+                v.agentWindow = { [weak self] in self?.session.windowID }
                 view.addSubview(v, positioned: .below, relativeTo: placeholder)
                 exView = v
                 view.needsLayout = true

@@ -730,7 +730,7 @@ shown, chosen, correct, lastAt, tries, rights, marked, markedCorrect}`。
 | 字段 | 含义 |
 |---|---|
 | `page` | 出处页，**1 起**；`0` = 不知道 |
-| `kind` | `0` 单选 · `1` 多选 |
+| `kind` | `0` 单选 · `1` 多选 · `3` 填空 · `4` 主观题（2026-10-13，`EXERCISE-PLAN.md §11.6`）：后两种平板**本轮不能作答**——Mac 不发选项 / 答案 / 解析 / 作答 / 书上的作答（`shown = 0`），客户端只显示题干并提示到 Mac 上作答，`exAct` 0 交卷遇到这两种题 Mac 丢掉。老客户端按「不是多选 = 单选」画，没有选项可点，不会误交 |
 | `flags` | bit0 收藏 · bit1 在错题本里 · bit2 带图（默认摆出原题）· bit3 有出处页（能看原题 / 到原页）· bit4 答案是 Agent 推算的 |
 | `chapter` | 显示用的章节（「第二章 › 2.3」），空 = 没设 |
 | `stem` / `options[].text` / `explanation` | Markdown + `$…$` 公式，原样 |

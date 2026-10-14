@@ -114,7 +114,7 @@ extension WorkspaceManager {
         var rows: [LibExercise] = []
         var out: [ExerciseWrite] = []
         var rejudge: Set<String> = []          // 已有的题、这次答案变了 → 它的作答要重判
-        var marks: [String: [String]] = [:]    // 书上的作答（id → 选项键；空 = 撤掉）
+        var marks: [String: ExerciseResponse] = [:]    // 书上的作答（id → 作答；空 = 撤掉）
         let now = Date.now
         for d in drafts.sorted(by: { $0.seq < $1.seq }) {
             if byPage[d.page] == nil {
@@ -132,10 +132,10 @@ extension WorkspaceManager {
                                   payload: d.payload.data(), starred: hit?.starred ?? false, wrong: hit?.wrong ?? false,
                                   source: source, createdAt: hit?.createdAt ?? now, updatedAt: now, chapter: chapter)
             if let hit, let old = try? JSONDecoder().decode(ExercisePayload.self, from: hit.payload),
-               old.answer != d.payload.answer {
+               old.answer != d.payload.answer || old.accept != d.payload.accept || hit.kind != d.kind.rawValue {
                 rejudge.insert(hit.id)
             }
-            if let u = d.userAnswer { marks[row.id] = u }
+            if let u = d.userMark { marks[row.id] = u }
             if let i = rows.firstIndex(where: { $0.id == row.id }) {
                 rows[i] = row   // 同一批里又出现了一次：后一道覆盖前一道
             } else {
@@ -153,36 +153,40 @@ extension WorkspaceManager {
         return out
     }
 
-    /// 改一道题的内容（`update_exercises`）。收藏 / 错题不经这里改。答案变了 → 这道题的作答全部重判。
-    /// `userAnswer` 非 nil = 同时改书上的作答（空 = 撤掉）。
-    func saveExercise(_ e: Exercise, userAnswer: [String]? = nil) throws {
+    /// 改一道题的内容（`update_exercises`）。收藏 / 错题不经这里改。答案（或题型）变了 → 这道题的作答全部重判。
+    /// `userMark` 非 nil = 同时改书上的作答（空 = 撤掉）。
+    func saveExercise(_ e: Exercise, userMark: ExerciseResponse? = nil) throws {
         guard let store else { return }
         let old = exercise(id: e.id)
         var e = e
         e.updatedAt = .now
         try store.upsertExercise(e.toRow())
-        if let old, old.payload.answer != e.payload.answer { try rejudgeAttempts(e) }
-        if let u = userAnswer { try writeMarks([e.id: u], exercises: [e.id: e]) }
+        if let old, old.payload.answer != e.payload.answer || old.payload.accept != e.payload.accept || old.kind != e.kind {
+            try rejudgeAttempts(e)
+        }
+        if let u = userMark { try writeMarks([e.id: u], exercises: [e.id: e]) }
         exercisesChanged()
     }
 
     /// 按这道题现在的答案把它的作答全部重判（答错的进错题本，对的不移出——只能手动出）。
+    /// 自己判 / Agent 判过的不动（库那边按 `judged_by` 跳过）。
     private func rejudgeAttempts(_ e: Exercise) throws {
         try store?.rejudgeExerciseAttempts(exerciseId: e.id) { answer in
-            e.judge(Set(answer.map { String($0) }))
+            e.autoJudge(ExerciseResponse.decode(e.kind, answer: answer))
         }
     }
 
     /// 书上的作答（`EXERCISE-PLAN.md §2.4`）：每道题至多一条（`source = mark`），重写会替换旧的；空 = 撤掉。
     /// 判错照常进错题本。时间记成写入那一刻（书上作答的真实时间无从知道）。
-    private func writeMarks(_ marks: [String: [String]], exercises: [String: Exercise]) throws {
+    /// 填空 / 主观题的书上作答是 Agent 转写的文字：填空能程序判对的判上，其余等自己判或 Agent 判（`grade_exercise_attempts`）。
+    private func writeMarks(_ marks: [String: ExerciseResponse], exercises: [String: Exercise]) throws {
         guard let store, !marks.isEmpty else { return }
         var list: [LibExerciseAttempt] = []
-        for (id, keys) in marks {
-            if keys.isEmpty { try store.deleteMarkedAttempt(exerciseId: id); continue }
-            let chosen = Set(keys)
-            list.append(LibExerciseAttempt(id: UUID().uuidString, exerciseId: id, answer: Exercise.answerString(chosen),
-                                           correct: exercises[id]?.judge(chosen), elapsedMs: 0, createdAt: .now,
+        for (id, r) in marks {
+            guard let e = exercises[id] else { continue }
+            if r.isEmpty(e.kind) { try store.deleteMarkedAttempt(exerciseId: id); continue }
+            list.append(LibExerciseAttempt(id: UUID().uuidString, exerciseId: id, answer: r.answerString(e.kind),
+                                           correct: e.autoJudge(r), elapsedMs: 0, createdAt: .now,
                                            source: LibExerciseAttempt.markSource))
         }
         try store.recordMarkedAttempts(list)
@@ -219,12 +223,42 @@ extension WorkspaceManager {
         exercisesChanged()
     }
 
-    /// 记一次作答。答错时库里同一个事务把题放进错题本；这里再刷新侧栏的数。
-    func recordExerciseAttempt(id: String, chosen: Set<String>, correct: Bool?, elapsedMs: Int) {
-        let a = LibExerciseAttempt(id: UUID().uuidString, exerciseId: id, answer: Exercise.answerString(chosen),
-                                   correct: correct, elapsedMs: max(0, elapsedMs), createdAt: .now)
-        do { try store?.recordExerciseAttempt(a) } catch { lastError = "\(error)"; return }
+    /// 记一次作答，返回这一条的 id（写不进去 → nil）。答错时库里同一个事务把题放进错题本；这里再刷新侧栏的数。
+    @discardableResult
+    func recordExerciseAttempt(id: String, kind: ExerciseKind, response: ExerciseResponse, correct: Bool?,
+                               elapsedMs: Int) -> String? {
+        let ink = response.ink.flatMap { $0.isEmpty ? nil : $0.data() }
+        let a = LibExerciseAttempt(id: UUID().uuidString, exerciseId: id, answer: response.answerString(kind),
+                                   correct: correct, elapsedMs: max(0, elapsedMs), createdAt: .now, ink: ink)
+        do { try store?.recordExerciseAttempt(a) } catch { lastError = "\(error)"; return nil }
         if correct == false { exercisesChanged() }
+        return a.id
+    }
+
+    /// 判一次作答（`EXERCISE-PLAN.md §11.3`）：自己判（练习页「答对了 / 答错了」/「改判」）或 Agent 判（MCP
+    /// `grade_exercise_attempts`）。后判的为准；判错进错题本。`feedback` nil = 评语不动。
+    @discardableResult
+    func judgeExerciseAttempt(id: String, correct: Bool, by: String, feedback: String? = nil) -> Bool {
+        do {
+            guard try store?.judgeExerciseAttempt(id: id, correct: correct, by: by, feedback: feedback) != nil else { return false }
+        } catch { lastError = "\(error)"; return false }
+        exercisesChanged()
+        return true
+    }
+
+    func exerciseAttempt(id: String) -> LibExerciseAttempt? {
+        (try? store?.exerciseAttempt(id: id)) ?? nil
+    }
+
+    func exerciseAttempts(ids: [String]) -> [LibExerciseAttempt] {
+        (try? store?.exerciseAttempts(ids: ids)) ?? []
+    }
+
+    /// 作答一览（MCP `list_exercise_attempts` / 按 id 前缀认作答），见 `LibraryStore.exerciseAttemptPage`。
+    func exerciseAttemptPage(exerciseIds: [String]? = nil, documentId: String? = nil, ungradedOnly: Bool = false,
+                             prefix: String? = nil, offset: Int = 0, limit: Int = 50) -> (rows: [LibExerciseAttempt], total: Int) {
+        (try? store?.exerciseAttemptPage(exerciseIds: exerciseIds, documentId: documentId, ungradedOnly: ungradedOnly,
+                                         prefix: prefix, offset: offset, limit: limit)) ?? ([], 0)
     }
 
     /// 删几道题：**先归档，成功了才删**（红线 11）。归档失败 → 一道都不删，返回 false。

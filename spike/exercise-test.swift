@@ -44,7 +44,7 @@ func row(_ d: ExerciseDraft, doc: String, id: String = UUID().uuidString) -> Lib
 }
 
 print("— 建表")
-check(LibraryStore.schemaVersion == 20, "schema 版本 20")
+check(LibraryStore.schemaVersion == 21, "schema 版本 21（v21 = 填空 / 主观题，作答多三列）")
 check((try? store.exercises()) != nil, "exercise 表可查")
 
 print("— 校验与规整")
@@ -463,7 +463,211 @@ try oldStore.upsertExercise(orow)
 check(try oldStore.exercise(id: orow.id)?.chapter == ["补列后"], "exercise.chapter 补上了、能写能读")
 try oldStore.recordMarkedAttempts([mark(orow.id, "A", nil)])
 check(try oldStore.exerciseAttempts(exerciseId: orow.id).first?.source == "mark", "exercise_attempt.source 补上了")
+var oa = mark(orow.id, "A", nil); oa.source = ""; oa.ink = Data("{}".utf8); oa.judgedBy = "self"; oa.feedback = "f"
+try oldStore.recordExerciseAttempt(oa)
+let oaBack = try oldStore.exerciseAttempt(id: oa.id)
+check(oaBack?.ink == Data("{}".utf8) && oaBack?.judgedBy == "self" && oaBack?.feedback == "f",
+      "v21 三列（ink / judged_by / feedback）在老库上补上了、能写能读")
 oldStore.close()
+
+// MARK: - v21 填空 / 主观题（`EXERCISE-PLAN.md §11`）
+
+func freeInput(_ stem: String, type: String?, answer: String? = nil, src: String? = nil,
+               blanks: [(answer: String?, accept: [String])]? = nil, userAnswer: String? = nil,
+               userBlanks: [String]? = nil, opts: [(String?, String?)] = [], number: String? = nil) -> ExerciseInput {
+    var i = input(stem, opts, type: type, answer: answer, src: src, number: number)
+    i.blanks = blanks; i.userAnswer = userAnswer; i.userBlanks = userBlanks
+    return i
+}
+
+print("— v21 题型")
+check(ExerciseKind(wire: "fill") == .fill && ExerciseKind(wire: " Subjective ") == .subjective, "fill / subjective 认得")
+check(ExerciseKind.fill.rawValue == 3 && ExerciseKind.subjective.rawValue == 4, "库里 3 填空 / 4 主观题（2 留给判断题）")
+check(!ExerciseKind.fill.isChoice && ExerciseKind.multiple.isChoice, "isChoice")
+var k2 = row(ok(input("x"))!, doc: od.id); k2.kind = 2
+check(Exercise(row: k2) == nil, "不认识的题型（2）照旧跳过")
+
+print("— v21 填空校验")
+let fillD = ok(freeInput("$f'(1)=$____，$f'(2)=$____", type: "fill", src: "book",
+                         blanks: [(answer: "2", accept: ["2.0", " 2 "]), (answer: "4", accept: [])]))
+check(fillD?.kind == .fill, "填空题通过")
+check(fillD?.payload.blanks == 2 && fillD?.payload.answer == ["2", "4"], "空数 + 每空参考答案")
+check(fillD?.payload.accept == [["2.0"], []], "另外认可的写法：去空白、去掉与参考答案相同的")
+check(fillD?.payload.options.isEmpty == true, "填空没有选项")
+check(ok(freeInput("x", type: nil, blanks: [(answer: nil, accept: [])]))?.kind == .fill, "没写题型、给了 blanks → 填空")
+let fillNo = ok(freeInput("x", type: "fill", blanks: [(answer: nil, accept: []), (answer: "", accept: [])]))
+check(fillNo?.payload.blanks == 2 && fillNo?.payload.answer == [] && fillNo?.payload.answerSource == nil,
+      "填空没答案：只记空数")
+check(reason(freeInput("x", type: "fill"))?.contains("needs blanks") == true, "填空没给 blanks 退回")
+check(reason(freeInput("x", type: "fill", blanks: [(answer: "1", accept: [])], opts: [("A", "1"), ("B", "2")]))?
+        .contains("no options") == true, "填空带选项退回")
+check(reason(freeInput("x", type: "fill", src: "book", blanks: [(answer: "1", accept: []), (answer: nil, accept: [])]))?
+        .contains("every blank or for none") == true, "只给了一部分空的答案退回")
+check(reason(freeInput("x", type: "fill", answer: "1", src: "book", blanks: [(answer: nil, accept: [])]))?
+        .contains("blanks[].answer") == true, "填空把答案写在 answer 里退回")
+check(reason(freeInput("x", type: "fill", blanks: [(answer: "1", accept: [])]))?.contains("answer_source") == true,
+      "填空有答案没写来源退回")
+check(reason(freeInput("x", type: "fill", blanks: [(answer: nil, accept: ["1"])]))?.contains("accept needs") == true,
+      "只给 accept 不给答案退回")
+check(reason(freeInput("x", type: "fill", blanks: Array(repeating: (answer: nil, accept: []), count: 21)))?
+        .contains("at most 20") == true, "21 个空退回")
+check(reason(freeInput("x", type: "single", blanks: [(answer: nil, accept: [])], opts: [("A", "1"), ("B", "2")]))?
+        .contains("only for fill") == true, "选择题带 blanks 退回")
+let fillU = ok(freeInput("x", type: "fill", blanks: [(answer: nil, accept: []), (answer: nil, accept: [])],
+                         userBlanks: [" 3 ", ""]))
+check(fillU?.userResponse == ExerciseResponse(blanks: ["3", ""]) && fillU?.userMark == fillU?.userResponse,
+      "user_blanks → 书上的作答（去空白，空的空留空串）")
+check(ok(freeInput("x", type: "fill", blanks: [(answer: nil, accept: [])], userBlanks: [" "]))?.userResponse
+        .map { $0.isEmpty(.fill) } == true, "user_blanks 全空 = 撤掉")
+check(reason(freeInput("x", type: "fill", blanks: [(answer: nil, accept: [])], userBlanks: ["1", "2"]))?
+        .contains("user_blanks has 2") == true, "user_blanks 个数不对退回")
+check(reason(freeInput("x", type: "fill", blanks: [(answer: nil, accept: [])], userAnswer: "1"))?
+        .contains("user_blanks") == true, "填空把书上作答写在 user_answer 里退回")
+
+print("— v21 主观题校验")
+let subD = ok(freeInput("证明 $\\sqrt2$ 是无理数。", type: "subjective", answer: " 反证法：设 $\\sqrt2=p/q$… ", src: "book",
+                        userAnswer: " 设它是有理数 "))
+check(subD?.kind == .subjective && subD?.payload.answer == ["反证法：设 $\\sqrt2=p/q$…"], "主观题：参考答案去首尾空白")
+check(subD?.userResponse == ExerciseResponse(text: "设它是有理数"), "主观题书上的作答 = 文字")
+check(ok(freeInput("论述", type: "subjective"))?.payload.answer == [], "主观题可以没有参考答案")
+check(reason(freeInput("论述", type: "subjective", opts: [("A", "1"), ("B", "2")]))?.contains("no options") == true,
+      "主观题带选项退回")
+check(reason(freeInput("论述", type: "subjective", answer: "x"))?.contains("answer_source") == true, "参考答案没写来源退回")
+check(reason(freeInput("论述", type: "subjective", blanks: [(answer: nil, accept: [])]))?.contains("only for fill") == true,
+      "主观题带 blanks 退回")
+check(ok(freeInput("论述", type: "subjective", userAnswer: " "))?.userResponse.map { $0.isEmpty(.subjective) } == true,
+      "主观题 user_answer 空串 = 撤掉")
+
+print("— v21 payload 编码不影响老题")
+let choiceJSON = String(data: good!.payload.data(), encoding: .utf8) ?? ""
+check(!choiceJSON.contains("blanks") && !choiceJSON.contains("accept"), "选择题 payload 不多出新键")
+let fillJSON = String(data: fillD!.payload.data(), encoding: .utf8) ?? ""
+check(fillJSON.contains("\"blanks\":2") && fillJSON.contains("\"accept\""), "填空 payload 带空数与 accept")
+check(fillNo.map { String(data: $0.payload.data(), encoding: .utf8)?.contains("accept") == false } == true,
+      "accept 全空不写这个键")
+let fillBack = try JSONDecoder().decode(ExercisePayload.self, from: fillD!.payload.data())
+check(fillBack == fillD!.payload, "填空 payload 编解码回环")
+
+print("— v21 填空规整与判题")
+check(Exercise.normalizeBlank(" １／２ ") == "1/2", "全角转半角、去空白")
+check(Exercise.normalizeBlank("$\\dfrac{1}{2}$") == Exercise.normalizeBlank("\\frac {1}{2}"), "\\dfrac = \\frac，去 $ 与空白")
+check(Exercise.normalizeBlank("\\left( x \\right)。") == "(x)", "去 \\left \\right 与句末标点")
+check(Exercise.normalizeBlank("x") != Exercise.normalizeBlank("X"), "大小写不并（宁可交给人判）")
+let fillE = Exercise(row: row(fillD!, doc: od.id))!
+check(fillE.blankCount == 2 && fillE.hasAnswer, "空数 / 有答案")
+check(fillE.autoJudge(ExerciseResponse(blanks: ["2", "4"])) == true, "每空都对 → 判对")
+check(fillE.autoJudge(ExerciseResponse(blanks: ["2.0", " 4 "])) == true, "accept 里的写法、多了空白 → 判对")
+check(fillE.autoJudge(ExerciseResponse(blanks: ["2", "5"])) == nil, "有一空对不上 → 交给人判（nil，不判错）")
+check(fillE.blankMatches(["2", "5"]) == [true, false], "逐空对不对得上")
+check(fillE.blankMatches(["2"]) == [true, false], "少填的空 = 对不上")
+check(fillE.autoJudge(ExerciseResponse(ink: ExerciseInk(strokes: [.init(width: 2, points: [[1, 2, 0.5]])]))) == nil,
+      "只写在画板上 → 交给人判")
+check(fillE.judge(["A"]) == nil, "选择题的 judge 不管填空")
+let fillNoE = Exercise(row: row(fillNo!, doc: od.id))!
+check(fillNoE.blankCount == 2 && !fillNoE.hasAnswer && fillNoE.autoJudge(ExerciseResponse(blanks: ["1", "2"])) == nil,
+      "填空没答案：空数照旧、判不了")
+let subE = Exercise(row: row(subD!, doc: od.id))!
+check(subE.referenceText == "反证法：设 $\\sqrt2=p/q$…" && subE.autoJudge(ExerciseResponse(text: "反证法")) == nil,
+      "主观题：参考答案，程序不判")
+check(ex.autoJudge(ExerciseResponse(keys: ["C"])) == ex.judge(["C"]), "选择题 autoJudge = judge")
+
+print("— v21 作答编解码")
+let rf = ExerciseResponse(blanks: ["2", "a/b \"q\""])
+check(ExerciseResponse.decode(.fill, answer: rf.answerString(.fill)) == rf, "填空作答 JSON 回环（含引号、斜杠）")
+check(rf.answerString(.fill).contains("a/b"), "斜杠不转义")
+check(ExerciseResponse.decode(.fill, answer: "7").blanks == ["7"], "认不出的填空串当成一空")
+check(ExerciseResponse.decode(.subjective, answer: "多行\n正文").text == "多行\n正文", "主观题原文")
+check(ExerciseResponse.decode(.multiple, answer: "AC").keys == ["A", "C"], "选择题照旧")
+check(ExerciseResponse(blanks: ["", " "]).isEmpty(.fill) && !ExerciseResponse(blanks: ["", "1"]).isEmpty(.fill), "填空空不空")
+let inkOne = ExerciseInk(height: 400, strokes: [.init(width: 2.4, points: [[10, 20, 0.5], [11.5, 21, 0.6]])])
+check(ExerciseResponse(ink: inkOne).isEmpty(.subjective) == false && ExerciseResponse().isEmpty(.subjective), "只有手写也算作答")
+check(ExerciseInk.decode(inkOne.data()) == inkOne, "手写 JSON 回环")
+check(ExerciseInk.decode(Data("{}".utf8)) == nil && ExerciseInk.decode(nil) == nil
+        && ExerciseInk.decode(ExerciseInk().data()) == nil, "坏数据 / 没笔画 → nil")
+check(rf.summary(.fill) == "2 / a/b \"q\"" && ExerciseResponse(blanks: ["", "1"]).summary(.fill) == "— / 1", "填空摘要")
+check(ExerciseResponse(text: "a\n  b").summary(.subjective) == "a b" && ExerciseResponse(ink: inkOne).summary(.subjective) == "",
+      "主观题摘要并成一行；只有手写 = 空串")
+
+print("— v21 库：作答 / 自己判 / Agent 判 / 重判")
+let dv = doc("v21 习题", "hv21")
+let fillRow = row(fillD!, doc: dv.id); try store.upsertExercise(fillRow)
+let subRow = row(subD!, doc: dv.id); try store.upsertExercise(subRow)
+func attempt(_ ex: String, _ answer: String, _ c: Bool?, ink: Data? = nil, at: Date = .now) -> LibExerciseAttempt {
+    LibExerciseAttempt(id: UUID().uuidString, exerciseId: ex, answer: answer, correct: c, elapsedMs: 10, createdAt: at, ink: ink)
+}
+let fa1 = attempt(fillRow.id, ExerciseResponse(blanks: ["2", "4"]).answerString(.fill), true, at: Date(timeIntervalSinceNow: -30))
+let fa2 = attempt(fillRow.id, ExerciseResponse(blanks: ["2", "5"]).answerString(.fill), nil, at: Date(timeIntervalSinceNow: -20))
+try store.recordExerciseAttempt(fa1); try store.recordExerciseAttempt(fa2)
+check(try store.exercise(id: fillRow.id)?.wrong == false, "待判的作答不进错题本")
+let sa1 = attempt(subRow.id, "设它是有理数", nil, ink: inkOne.data())
+try store.recordExerciseAttempt(sa1)
+check(ExerciseInk.decode(try store.exerciseAttempt(id: sa1.id)?.ink) == inkOne, "手写落库读回")
+var fst = try store.exerciseAttemptStats()
+check(fst[subRow.id]?.ungraded == 1 && fst[fillRow.id]?.ungraded == 1, "还没判的次数")
+check(fst[fillRow.id]?.lastId == fa2.id && fst[fillRow.id]?.lastPracticedCorrect == nil
+        && fst[fillRow.id]?.lastJudgedBy == "", "最近一次的 id / 库里的对错 / 谁判的")
+
+check(try store.judgeExerciseAttempt(id: fa2.id, correct: false, by: ExerciseJudge.bySelf) == fillRow.id, "自己判 → 返回所属的题")
+var fa2b = try store.exerciseAttempt(id: fa2.id)
+check(fa2b?.correct == false && fa2b?.judgedBy == "self", "自己判错：对错 + 谁判的")
+check(try store.exercise(id: fillRow.id)?.wrong == true, "判错 → 进错题本")
+try store.judgeExerciseAttempt(id: fa2.id, correct: true, by: ExerciseJudge.byAgent, feedback: "**等价**写法，算对")
+fa2b = try store.exerciseAttempt(id: fa2.id)
+check(fa2b?.correct == true && fa2b?.judgedBy == "agent" && fa2b?.feedback == "**等价**写法，算对", "Agent 后判覆盖自己判，带评语")
+check(try store.exercise(id: fillRow.id)?.wrong == true, "判对不移出错题本（拍板 ③）")
+try store.judgeExerciseAttempt(id: fa2.id, correct: false, by: ExerciseJudge.bySelf)
+fa2b = try store.exerciseAttempt(id: fa2.id)
+check(fa2b?.judgedBy == "self" && fa2b?.feedback == "**等价**写法，算对", "再改判：评语不动")
+check(try store.judgeExerciseAttempt(id: "nope", correct: true, by: "self") == nil, "没有这一条 → nil")
+
+// 答案改了：程序判的那条重判，人判过的不动
+var fillE2 = Exercise(row: try store.exercise(id: fillRow.id)!)!
+fillE2.payload.answer = ["2", "5"]; fillE2.payload.accept = nil
+let rjFill = try store.rejudgeExerciseAttempts(exerciseId: fillRow.id) {
+    fillE2.autoJudge(ExerciseResponse.decode(.fill, answer: $0))
+}
+check(rjFill == 1, "只重判程序判的那条")
+check(try store.exerciseAttempt(id: fa1.id)?.correct == nil, "原来全对、答案改了对不上 → 待判")
+check(try store.exerciseAttempt(id: fa2.id)?.correct == false, "自己判过的不重判（仍是错）")
+
+fst = try store.exerciseAttemptStats()
+check(fst[fillRow.id]?.lastPracticedCorrect == false && fst[fillRow.id]?.lastJudgedBy == "self", "统计跟着判定变")
+let fillEx = Exercise(row: try store.exercise(id: fillRow.id)!)!
+let er = fillEx.earlierResponse(fst[fillRow.id])
+check(er?.attemptId == fa2.id && er?.response.blanks == ["2", "5"] && er?.correct == false && er?.judgedBy == "self",
+      "以前的作答：App 里练的最近一次，对错用库里的")
+check(fillEx.earlierAnswer(fst[fillRow.id]) == nil, "填空不走选择题那条")
+check(ex.earlierResponse(st[ra.id]) == nil, "选择题不走这条")
+
+try store.recordMarkedAttempts([LibExerciseAttempt(id: UUID().uuidString, exerciseId: subRow.id, answer: "书上写的",
+                                                   correct: nil, elapsedMs: 0, createdAt: .now, source: "mark")])
+let subEx = Exercise(row: subRow)!
+var sst = try store.exerciseAttemptStats()[subRow.id]
+check(sst?.markedId != nil && sst?.markedAnswer == "书上写的", "书上的作答 id")
+check(subEx.earlierResponse(sst)?.from == .practiced(sa1.createdAt) || subEx.earlierResponse(sst)?.attemptId == sa1.id,
+      "主观题：App 里练过 → 显示练的那次")
+sst?.lastId = nil; sst?.lastAnswer = nil
+check(subEx.earlierResponse(sst).map { $0.from == .book && $0.response.text == "书上写的" } == true, "没练过 → 书上的作答")
+
+print("— v21 作答一览（MCP list_exercise_attempts）")
+let pageAll = try store.exerciseAttemptPage(documentId: dv.id)
+check(pageAll.total >= 4 && pageAll.rows.first.map { $0.createdAt >= pageAll.rows.last!.createdAt } == true, "新的在前")
+let pageOpen = try store.exerciseAttemptPage(documentId: dv.id, ungradedOnly: true)
+check(Set(pageOpen.rows.map(\.exerciseId)) == [fillRow.id, subRow.id] && pageOpen.rows.allSatisfy { $0.correct == nil },
+      "只要还没判的填空 / 主观题（选择题没答案的不列）")
+check(try store.exerciseAttemptPage(exerciseIds: [subRow.id]).total == 2, "按题列")
+check(try store.exerciseAttemptPage(exerciseIds: []).total == 0, "空的 id 表 → 空")
+check(try store.exerciseAttemptPage(prefix: String(sa1.id.prefix(8)).lowercased()).rows.map(\.id) == [sa1.id], "按 8 位前缀认（不分大小写）")
+check(try store.exerciseAttemptPage(documentId: dv.id, limit: 1).rows.count == 1, "分页")
+
+print("— v21 update 的起点还原")
+let backF = ExerciseImport.input(from: fillE)
+check(backF.blanks?.count == 2 && backF.blanks?[0].answer == "2" && backF.blanks?[0].accept == ["2.0"] && backF.answer == nil,
+      "填空还原成 blanks（参考答案 + accept），answer 留空")
+if case .success(let d) = ExerciseImport.validate(backF, seq: 0) { check(d.payload == fillE.payload, "还原后再校验 = 原样") }
+else { check(false, "还原后再校验 = 原样") }
+let backS = ExerciseImport.input(from: subE)
+check(backS.answer == subE.referenceText && backS.blanks == nil, "主观题还原：answer = 参考答案")
 
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

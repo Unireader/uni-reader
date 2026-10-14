@@ -39,7 +39,7 @@
   停手 0.8 秒 / 视图离开窗口 / App 退出。存正文**刻意不调 `refreshNotes()`**（打字时每 0.8 秒重扫一遍目录
   + 侧栏整棵树重建，代价完全不对等）。侧栏在 `SidebarNode` 的 `md` / `noteFolder` / `noteSection` 三个 case，
   选中键 `rowID`（`"md:"+NoteRef.key`，与 PDF 的 `docID` 区分开）
-- 习题（`EXERCISE-PLAN.md`，schema v20）：纯逻辑 `App/Exercise`（payload 编解码 / 导入校验与规整 / 去重键 / 判题 /
+- 习题（`EXERCISE-PLAN.md`，schema v20 / v21）：纯逻辑 `App/Exercise`（payload 编解码 / 导入校验与规整 / 去重键 / 判题 /
   标签范围 `ExerciseScope`，只依赖 Foundation）+ 执行层 `App/WorkspaceManager+Exercise`（**唯一**写路径：MCP 与练习界面都走它，
   写完 `exerciseRevision` 加一通知开着的习题标签；习题不进 `DocSession`，所以没有「文档开没开」两条路）。
   标签：`DocTabModel.exerciseScope`（第四种，与 `docID` / `noteRef` / `boardID` 互斥，选中键 `"ex:"+scope.key`）；
@@ -50,6 +50,12 @@
   章节 `exercise.chapter`（目录路径，`ExerciseChapter.path` 按页查 PDF 自带目录、不用书签；侧栏章节树 `ExerciseChapterTree`
   按最早页码排）、书上的作答（`exercise_attempt.source = mark`，每题至多一条）、标签顶上的「只看没做过」`ExerciseFilter`
   （只剩这一个开关，错题本那一支没有；「哪一组题」都在侧栏选，错题本、收藏都按书 → 章展开，`EXERCISE-PLAN.md §9.5`）。
+  **填空 / 主观题**（v21，`EXERCISE-PLAN.md §11`）：作答内容 `ExerciseResponse`（`answer` 列 + `ink` 列）、手写 `ExerciseInk`（逻辑坐标，
+  宽恒 600）、谁判的 `ExerciseJudge`（`exercise_attempt.judged_by`，后判的为准）；填空程序判只判对、不判错（`Exercise.autoJudge`）。
+  练习页里选项那块换成 `Window/Exercise/ExerciseFreeAnswerView`（输入框 + 小画板 `ExerciseInkPad`，出图 `ExerciseInkRender`
+  给 MCP 和「让 Agent 批改」共用），没交的输入存 `ExerciseDeck.drafts`；「让 Agent 批改」走 `AgentPanelModel.prepare`
+  （输入框放一句话 + 隐藏上下文 `AgentChat.contextNotes`）。MCP 多 `list_exercise_attempts` / `render_exercise_answer` /
+  `grade_exercise_attempts`。离屏测试 `spike/exercise-free-answer-test.swift`（48 项）。🔴 重判只动 `judged_by = ''` 的作答。
   `render_page include_marks` 在 `MCP/MCPPageMarks`。测试 `spike/exercise-test.swift`（168 项）。
   侧栏「习题」一段的行与顺序只在 `ExerciseGroupNode.build` 一份（平板抽屉 `exGroups` 也用它）。
   **平板同步**（模式2，`EXERCISE-PLAN.md §10.4`，`PROTOCOL.md §4.9`）：`App/AppModel+Exercise`——平板开一组题 = 用 Mac 上
