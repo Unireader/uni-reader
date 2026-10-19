@@ -146,6 +146,11 @@
 "No matches" = "No matches";
 "Searching…" = "Searching…";
 "%d of %d" = "%d of %d";
+"Search Results" = "Search Results";
+"Search Results List" = "Search Results List";
+"Show Search Results" = "Show Search Results";
+"Hide Search Results" = "Hide Search Results";
+"%d matches on %d pages" = "%d matches on %d pages";
 
 /* OCR (T3, Paddle) */
 "Text Recognition (OCR)" = "Text Recognition (OCR)";

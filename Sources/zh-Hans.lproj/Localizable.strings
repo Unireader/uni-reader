@@ -148,6 +148,11 @@
 "No matches" = "无匹配";
 "Searching…" = "搜索中…";
 "%d of %d" = "第 %d 项，共 %d 项";
+"Search Results" = "搜索结果";
+"Search Results List" = "搜索结果列表";
+"Show Search Results" = "显示搜索结果列表";
+"Hide Search Results" = "隐藏搜索结果列表";
+"%d matches on %d pages" = "共 %d 处，分布在 %d 页";
 
 /* OCR (T3, Paddle) */
 "Text Recognition (OCR)" = "文字识别 (OCR)";

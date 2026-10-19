@@ -154,6 +154,7 @@ enum MainMenu {
                        target: MenuActions.shared))
         m.addItem(.separator())
         m.addItem(post(L("Find…"), .readerFind, key: "f"))
+        m.addItem(post(L("Search Results List"), .toggleSearchResults, key: "f", mods: [.command, .option]))
         return item0
     }
 

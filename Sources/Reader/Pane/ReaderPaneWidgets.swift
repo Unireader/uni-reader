@@ -27,17 +27,20 @@ class CapsuleMaterialView: NSVisualEffectView {
 
 // MARK: - 查找状态条（Safari 式：命中计数 + 上 / 下一个）
 
-/// 有搜索词时浮在阅读区顶部。输入框在工具栏（`NSSearchToolbarItem`），这里只补「导航」这一层。
+/// 有搜索词时浮在阅读区顶部。输入框在工具栏（`NSSearchToolbarItem`），这里只补「导航」这一层；
+/// 最右那枚开关搜索结果浮窗（`SearchResultsCard`，只有 PDF 有，Markdown 笔记标签下隐藏）。
 final class FindBannerView: CapsuleMaterialView {
     let label = NSTextField(labelWithString: "")
     let prev = NSButton()
     let next = NSButton()
+    let list = NSButton()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         label.font = .preferredFont(forTextStyle: .caption1)
         label.textColor = .labelColor
-        for (b, symbol, tip) in [(prev, "chevron.up", L("Previous")), (next, "chevron.down", L("Next"))] {
+        for (b, symbol, tip) in [(prev, "chevron.up", L("Previous Match")), (next, "chevron.down", L("Next Match")),
+                                 (list, "list.bullet", L("Search Results"))] {
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
             b.imagePosition = .imageOnly
             b.isBordered = false
@@ -46,7 +49,7 @@ final class FindBannerView: CapsuleMaterialView {
             b.widthAnchor.constraint(equalToConstant: 24).isActive = true
             b.heightAnchor.constraint(equalToConstant: 24).isActive = true
         }
-        let stack = NSStackView(views: [label, prev, next])
+        let stack = NSStackView(views: [label, prev, next, list])
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 3, left: 12, bottom: 3, right: 8)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -75,6 +78,13 @@ final class FindBannerView: CapsuleMaterialView {
         if label.stringValue != text { label.stringValue = text }
         prev.isEnabled = matchCount > 0
         next.isEnabled = matchCount > 0
+    }
+
+    /// 结果浮窗开关：`available` = 当前内容有浮窗（PDF）；开着时图标用强调色。
+    func setListToggle(available: Bool, on: Bool) {
+        list.isHidden = !available
+        list.contentTintColor = on ? .controlAccentColor : .labelColor
+        list.toolTip = on ? L("Hide Search Results") : L("Show Search Results")
     }
 }
 

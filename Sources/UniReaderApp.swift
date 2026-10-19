@@ -657,6 +657,8 @@ extension Notification.Name {
     static let nextTabRequested = Notification.Name("com.xvan.UniReader.nextTabRequested")
     static let prevTabRequested = Notification.Name("com.xvan.UniReader.prevTabRequested")
     static let readerFind = Notification.Name("com.xvan.UniReader.readerFind")
+    /// 搜索结果浮窗开关（⌥⌘F，key 窗口的阅读窗格认领）
+    static let toggleSearchResults = Notification.Name("com.xvan.UniReader.toggleSearchResults")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
     static let toggleCanvasMode = Notification.Name("com.xvan.UniReader.toggleCanvasMode")
     /// 书写锁定（设备级全局，直接改 `AppModel.writingLocked`，观察者装在 `AppModel.init` 里——

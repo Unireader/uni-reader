@@ -36,6 +36,8 @@ final class ReaderPaneController: NSViewController {
     /// 开着的草稿纸（盖满阅读区，笔架仍在它上面可用）。
     private var scratchPad: ScratchPadNSView?
     private var jumpCard: JumpHistoryCard!
+    /// 搜索结果浮窗（PDF 搜索命中多、散得开时按页列出来点着跳）。
+    private let searchCard = SearchResultsCard()
     private var docPicker: NSPopover?
     private var bookmarkSheet: NSWindow?
     private var alertShowing = false
@@ -75,11 +77,13 @@ final class ReaderPaneController: NSViewController {
         refCard.currentDocID = { [weak self] in self?.tab.docID }
         refCard.onGotoMain = { [weak self] page in self?.session.jump(page: page, frac: 0, kind: .list) }
         jumpCard = JumpHistoryCard(panel: jumpPanel)
-        for sub in [jumpCard.card, refCard.card, refCard.bubble] as [NSView] { floating.addSubview(sub) }
+        for sub in [searchCard.card, jumpCard.card, refCard.card, refCard.bubble] as [NSView] { floating.addSubview(sub) }
         floating.onLayout = { [weak self] size in
             self?.refCard.layout(in: size)
             self?.jumpCard.layout(in: size)
+            self?.searchCard.layout(in: size)
         }
+        searchCard.onOpenChange = { [weak self] in self?.queueRefresh() }
         findBanner.isHidden = true
         badge.isHidden = true
         tabBar.isHidden = true
@@ -87,6 +91,8 @@ final class ReaderPaneController: NSViewController {
         findBanner.prev.action = #selector(prevMatch)
         findBanner.next.target = self
         findBanner.next.action = #selector(nextMatch)
+        findBanner.list.target = self
+        findBanner.list.action = #selector(toggleSearchResults)
         tabBar.onSelect = { [weak self] in self?.tabs.activate($0) }
         tabBar.onClose = { [weak self] in self?.tabs.close($0) }
         tabBar.onCloseOthers = { [weak self] in self?.tabs.closeOthers(than: $0) }
@@ -154,6 +160,7 @@ final class ReaderPaneController: NSViewController {
             (.jumpBackRequested, { $0.session.jumpBack() }),
             (.jumpForwardRequested, { $0.session.jumpForward() }),
             (.toggleJumpHistory, { $0.jumpPanel.toggle() }),
+            (.toggleSearchResults, { $0.toggleSearchResults() }),
             (.addBookmarkRequested, { c in if c.session.documentId != nil { c.session.beginBookmarkAtCurrent() } }),
             (.gotoPageRequested, { $0.promptGotoPage() }),
             (.toggleScanAlign, { $0.tab.toggleScanAlign() }),
@@ -353,6 +360,12 @@ final class ReaderPaneController: NSViewController {
                 findBanner.update(s)
             }
         }
+        // 搜索结果浮窗只给 PDF（Markdown 笔记的查找由编辑器自己管）
+        let pdfSearch = mdView == nil && readerView != nil
+        findBanner.setListToggle(available: pdfSearch, on: searchCard.isOpen)
+        searchCard.bind(s)
+        searchCard.active = searching && pdfSearch
+        searchCard.suppressed = s.openPadID != nil
         if tab.isHashing {
             badge.set(symbol: "clock", text: L("Indexing…"))
             badge.isHidden = false
@@ -432,6 +445,15 @@ final class ReaderPaneController: NSViewController {
     }
     @objc private func nextMatch() {
         if let mdView { mdView.nextSearchMatch() } else { session.nextMatch() }
+    }
+
+    /// 查找条那枚按钮 / 编辑菜单「搜索结果列表」。打开时还没在搜，就顺手把焦点给工具栏搜索框。
+    @objc private func toggleSearchResults() {
+        searchCard.toggle()
+        if searchCard.isOpen, mdView == nil,
+           searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            NotificationCenter.default.post(name: .readerFind, object: nil)
+        }
     }
 
     // MARK: 布局

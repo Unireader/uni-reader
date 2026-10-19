@@ -83,6 +83,14 @@
   只取一次不订阅 = 永远停在占位图标上（AppKit 改写后 Inspector 图片条目就这样，2026-10-13 用户报；现由 `InspectorImageThumb` 自己订阅）。
   新加缩略图消费方照气泡 / 编辑器 / `InspectorImageThumb` 的写法订阅。
 
+## 文字框（NSTextField）
+
+- **要两行折行的标签别给 `.byTruncatingTail`**（2026-10-19 搜索结果浮窗离屏样张实测）：文字框的 `lineBreakMode`
+  一设成截断就退回单行，`maximumNumberOfLines = 2` 也没用。做法：`.byWordWrapping` + `maximumNumberOfLines` +
+  `cell.truncatesLastVisibleLine = true`（最后一行末尾省略），富文本里也别塞截断式段落样式。
+- 折行标签的**固有高度按 `preferredMaxLayoutWidth` 算**，不给就按单行宽度算 → 只用居中约束时被压成一行。
+  在所在视图的 `layout()` 里先按实际宽度设好它再 `super.layout()`（见 `SearchHitRowView`）。
+
 ## 滚动条（NSScrollView）
 
 - 内容高度**异步**变化（Markdown 排完版才报回来）时，滚动视图自己的 frame 没动就不会重排滚动条，竖滚动条

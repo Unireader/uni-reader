@@ -77,11 +77,14 @@ struct PressRing: Equatable {
 
 /// 一处全文搜索命中（T2）。可能跨行换行（`rects` 多个，均归一化 0~1 左上原点，页局部）；
 /// `frac` = 首行顶部 y，供 `emitAnchor` 精确跳转定位。
+/// `snippet` = 命中连同前后几个字的一行摘要（搜索结果浮窗列表用），`snippetHit` = 命中本身在摘要里的位置（UTF-16）。
 struct TextMatch: Identifiable, Equatable {
     let id = UUID()
     var page: Int
     var rects: [CGRect]
     var frac: Double
+    var snippet = ""
+    var snippetHit = NSRange(location: 0, length: 0)
 }
 
 /// 参考窗要的一条文档信息（`WorkspaceManager.refDocIndex()` 产出，随会话快照过一道）。
@@ -540,18 +543,23 @@ final class DocSession: ObservableObject, Identifiable {
     func jumpToMark(id: UUID) { if let m = jumps.go(to: id) { goToMark(m) } }
     func clearJumps() { jumps.reset() }
 
-    // MARK: 全文搜索（T2）——PDFKit `findString` 找命中，防抖后台跑，边打字边高亮+跳首个命中。
+    // MARK: 全文搜索（T2）——整本书的 OCR 文字 + PDF 自带文字一起搜（`TextSearch`），防抖后台跑，边打字边高亮+跳最近的命中。
 
     @Published var searchQuery = ""
     @Published var searchMatches: [TextMatch] = []
     @Published var currentMatchIndex: Int?
     @Published var isSearching = false
     private var searchTask: Task<Void, Never>?
+    /// 搜索语料（独立的 `PDFDocument` + 全书 OCR 文字与索引），只在 `TextSearch.queue` 上用。
+    /// 搜索框清空 / 换文档 / OCR 状态重置就丢——内存和文件句柄只在搜索期间占着。
+    private var searchCorpus: TextSearch.Corpus?
+    private var searchToken: TextSearch.Token?
 
     /// 输入防抖（250ms）触发搜索；由 UI 层在 `searchQuery` 变化时调用。
     func scheduleSearch() {
         let q = searchQuery
         searchTask?.cancel()
+        searchToken?.cancel()   // 上一轮的结果反正要作废，排在队列里的别再跑
         searchTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
@@ -561,23 +569,29 @@ final class DocSession: ObservableObject, Identifiable {
 
     private func performSearch(_ query: String) async {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchToken?.cancel()
         guard let pdf, !q.isEmpty else {
             searchMatches = []; currentMatchIndex = nil; isSearching = false
+            searchCorpus = nil
             return
         }
         isSearching = true
-        // OCR 已启用（文本更准）→ 搜已识别页的 OCR 文本（行级）；否则走 PDFKit 原生 findString。
-        let matches: [TextMatch]
-        if ocrEnabled, !ocrRuns.isEmpty {
-            matches = searchOCR(q)
-        } else {
-            let align = scanAlign
-            matches = await Task.detached(priority: .userInitiated) {
-                TextSearch.find(query: q, in: pdf, align: align)
-            }.value
+        if let c = searchCorpus, c.contentHash == contentHash, c.pdfID == ObjectIdentifier(pdf) {} else {
+            searchCorpus = TextSearch.Corpus(pdf: pdf, contentHash: contentHash)
         }
+        guard let corpus = searchCorpus else { return }
+        let token = TextSearch.Token()
+        searchToken = token
+        // OCR 开着 → 库里整本书的 OCR 文字也搜（内存里的 `ocrRuns` 只是最近翻过的页，拿它补刚识别完、
+        // 语料读库之后才落库的页）；没开就只搜 PDF 自带文字。
+        let ocr: TextSearch.OCRInput? = ocrEnabled
+            ? TextSearch.OCRInput(store: contentHash.isEmpty ? nil : store, provider: OCRBackend.current.providerID,
+                                  loaded: ocrRuns, profile: wmProfile, ignoreWatermark: ocrIgnoreWatermark)
+            : nil
+        let found = await corpus.search(TextSearch.Request(query: q, align: scanAlign, ocr: ocr), token: token)
         // 过期结果丢弃：搜索期间用户又改了词，只认最新一次。
-        guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
+        guard let matches = found, !token.isCancelled,
+              searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
         searchMatches = matches
         isSearching = false
         // 新一轮搜索的首个跳转目标不是文档里排最前的那个，是离当前阅读位置最近的那个
@@ -598,36 +612,10 @@ final class DocSession: ObservableObject, Identifiable {
         return best
     }
 
-    /// OCR 文本搜索：逐行匹配（大小写不敏感），只框住命中的那一段（有单字框数据时）。只覆盖已识别页。
-    /// 走**可见行**——不然搜书名里的字（扫描件水印常就是出版方名字）会命中满屏水印碎片。
-    private func searchOCR(_ q: String) -> [TextMatch] {
-        let ql = q.lowercased()
-        var out: [TextMatch] = []
-        for page in ocrRuns.keys {
-            guard let runs = ocrVisibleRuns(page: page) else { continue }
-            for r in runs {
-                let lowered = r.text.lowercased()
-                guard let range = lowered.range(of: ql) else { continue }
-                out.append(TextMatch(page: page, rects: [matchRect(r, range: range, in: lowered)], frac: r.y))
-            }
-        }
-        return out.sorted { $0.page != $1.page ? $0.page < $1.page : $0.frac < $1.frac }
-    }
-
-    /// 命中行里只框住匹配到的那一段，不是整行：有逐字符边界（`chars`，PP-OCRv6 单字框）就按字符
-    /// 比例精确截取；老缓存/无单字框数据时退回整行框（唯一能给的粒度）。
-    private func matchRect(_ r: TextRun, range: Range<String.Index>, in lowered: String) -> CGRect {
-        guard let chars = r.chars, chars.count == r.text.count + 1 else { return r.rect }
-        let start = lowered.distance(from: lowered.startIndex, to: range.lowerBound)
-        let end = lowered.distance(from: lowered.startIndex, to: range.upperBound)
-        guard chars.indices.contains(start), chars.indices.contains(end) else { return r.rect }
-        let x0 = r.x + chars[start] * r.w
-        let x1 = r.x + chars[end] * r.w
-        return CGRect(x: x0, y: r.y, width: max(0, x1 - x0), height: r.h)
-    }
-
     func clearSearch() {
         searchTask?.cancel()
+        searchToken?.cancel()
+        searchCorpus = nil
         searchQuery = ""
         searchMatches = []
         currentMatchIndex = nil
@@ -636,6 +624,8 @@ final class DocSession: ObservableObject, Identifiable {
 
     func nextMatch() { advanceMatch(by: 1) }
     func prevMatch() { advanceMatch(by: -1) }
+    /// 搜索结果浮窗里点了某一条。
+    func selectMatch(_ index: Int) { jumpToMatch(index) }
 
     private func advanceMatch(by delta: Int) {
         guard !searchMatches.isEmpty else { return }
@@ -791,6 +781,7 @@ final class DocSession: ObservableObject, Identifiable {
         ocrCacheLoading = []   // 在途的后台缓存读回来按 contentHash 核对，对不上就丢
         ocrEnabled = false
         ocrRenderPDF = nil   // 换文档 → 丢弃旧的 OCR 渲染副本，下次用时按新 pdf 懒建
+        searchCorpus = nil   // 搜索语料里存着上一份 / 上一个引擎的全书 OCR 文字，下次搜索重读
         invalidateOCRDerived(); wmProfile = OCRWatermark.Profile(); wmProfilePages = 0
         ocrStoredCount = 0
         guard let store, !contentHash.isEmpty else { return }

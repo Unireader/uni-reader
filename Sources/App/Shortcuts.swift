@@ -335,6 +335,7 @@ final class Shortcuts: ObservableObject {
             (KeyCombo("v", .command), L("Paste")),
             (KeyCombo("a", .command), L("Select All")),
             (KeyCombo("f", .command), L("Find…")),
+            (KeyCombo("f", [.command, .option]), L("Search Results List")),
             (KeyCombo(",", .command), L("Settings…")),
             (KeyCombo("h", .command), L("Hide UniReader")),
             (KeyCombo("h", [.command, .option]), L("Hide Others")),
