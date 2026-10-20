@@ -9,6 +9,71 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.11</title>
+      <pubDate>Tue, 20 Oct 2026 00:24:27 +0000</pubDate>
+      <sparkle:version>52</sparkle:version>
+      <sparkle:shortVersionString>0.3.11</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能</h4>
+<ul>
+<li>新增「搜索结果」浮窗：搜索（⌘F）时按页列出所有匹配（页码、所在章节、这一页有几处），每处带前后文摘要，点一下就跳过去；按上一个 / 下一个时列表跟着走。浮窗可以拖动、改大小，位置会记住。用查找条右侧的列表按钮或「编辑 › 搜索结果列表」（⌥⌘F）打开或关闭。</li>
+<li>习题支持填空题和主观题：练习时可以在输入框里作答，也可以用手写小画板写，然后自己判对错；还可以点「让 Agent 批改」，把题目和你的作答交给 Agent 批改。平板上暂时只显示这两类题的题干。</li>
+<li>Markdown 笔记支持 <code>`</code>grapher 函数图形块：笔记里的 grapher 代码块会显示成函数图形。在整篇笔记的编辑区里点一下图形，可以拖动旋转、调整参数，用图形工具条上的保存按钮把当前视角和参数存进笔记；笔记气泡里显示的是静态图。</li>
+<li>Markdown 笔记里的表格可以直接点格子编辑：回车在格子里换行，Tab 和方向键在格子之间移动。在格子里右键可以插入、删除、移动行和列，以及设置列的对齐方式；鼠标停在表格上会出现行和列的拖动手柄，可以选中整行、整列或拖动换位置。</li>
+<li>编辑 <code>$$…$$</code> 块公式时，源码下方会实时显示排好的公式。</li>
+<li>Agent 面板支持 Qwen Code 和 Claude Code：在「设置 › Agent」里可以直接选，也可以照旧填写自定义命令。</li>
+</ul>
+<h4>改进</h4>
+<ul>
+<li>搜索（⌘F）改为搜整本书：开了文字识别（OCR）时，原先只能搜到最近翻过的几页，现在会搜所有已识别的页面和 PDF 自带的文字；被换行断开的词也能搜到，一行里出现几次就算几处。</li>
+<li>Markdown 编辑：选中文字后输入 <code>(</code>、<code>[</code>、<code>*</code>、<code>$</code>、引号等符号，会把选中的文字包起来；在已有的右括号前再输入同样的右括号，光标会直接跳过去；在列表符号后输入 <code>[</code> 会自动补成待办方框。</li>
+<li>在 Inspector 里定位图片笔记时，图片会停在阅读区中间；「查看原图」按图片的原始尺寸显示。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>在「设置 › Agent」里换了 Agent 之后，点「新对话」仍然连着原来的 Agent，现在会用新选的那个。</li>
+<li>Inspector 里的图片笔记条目一直显示占位图标，现在显示缩略图。</li>
+<li>查找条上一个 / 下一个按钮的提示文字显示成了「上一题 / 下一题」，现在改为「上一个 / 下一个」。</li>
+</ul>
+<h4>其他</h4>
+<ul>
+<li>函数图形块用到了 Grapher NG（GPL-3.0-or-later）的组件。UniReader 本身采用 AGPL-3.0 许可证，两者合并后的整体按 AGPL-3.0 发布。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.11">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New</h4>
+<ul>
+<li>New "Search Results" panel: when you search (⌘F), it lists every match by page (page number, chapter, and how many matches are on that page), each with a short excerpt; click one to jump there. The list follows along as you go to the previous or next match. You can move and resize the panel, and it remembers where you put it. Turn it on or off with the list button at the right of the find bar or Edit › Search Results List (⌥⌘F).</li>
+<li>Exercises now support fill-in and subjective questions: answer in a text box or on a small handwriting pad, then mark it yourself, or click "Ask the Agent to Grade" to hand the question and your answer to the Agent. On the tablet, these two kinds show only the question for now.</li>
+<li>Markdown notes support <code>`</code>grapher function graph blocks: a grapher code block in a note is shown as a function graph. In the full note editor, click a graph to rotate it by dragging and adjust its parameters; the save button on the graph's toolbar stores the current view and parameters in the note. Note bubbles show a still image.</li>
+<li>Tables in Markdown notes can be edited right in their cells: Return starts a new line inside the cell, and Tab and the arrow keys move between cells. Right-click in a cell to insert, delete or move rows and columns, or set a column's alignment. Hovering over a table shows row and column handles that select a whole row or column or drag it to a new place.</li>
+<li>While you edit a <code>$$…$$</code> block formula, the typeset formula is shown right below its source and updates as you type.</li>
+<li>The Agent panel supports Qwen Code and Claude Code: pick one in Settings › Agent, or enter a custom command as before.</li>
+</ul>
+<h4>Improvements</h4>
+<ul>
+<li>Search (⌘F) now covers the whole book: with text recognition (OCR) on, it used to find only the few pages you had recently viewed; it now searches every recognized page plus the PDF's own text. Words broken across lines are found, and every occurrence on a line counts.</li>
+<li>Markdown editing: typing <code>(</code>, <code>[</code>, <code>*</code>, <code>$</code>, a quote or a similar mark over selected text wraps the selection in it; typing a closing bracket right before the same closing bracket moves past it; typing <code>[</code> after a list marker completes a to-do checkbox.</li>
+<li>Locating an image note from the Inspector now centers the image in the reading area, and "View Full Size" shows the image at its actual size.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>After switching the agent in Settings › Agent, "New Chat" still connected to the old agent. It now uses the newly selected one.</li>
+<li>Image notes in the Inspector always showed a placeholder icon. They now show a thumbnail.</li>
+</ul>
+<h4>Other</h4>
+<ul>
+<li>Graph blocks use components of Grapher NG (GPL-3.0-or-later). UniReader itself is licensed under AGPL-3.0, and the combined work is distributed under AGPL-3.0.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.11">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.11/UniReader-0.3.11.zip" length="16545917" type="application/octet-stream" sparkle:edSignature="myaBrNLUQS6hqqISwj0jcXMsZNMJa3UDspqz6sz/6SIeSik6OJ6ayOK5jji2wxy1TilTT+wJ2wNKvk9YuG+OBA==" />
+    </item>
+    <item>
       <title>v0.3.10</title>
       <pubDate>Mon, 12 Oct 2026 07:36:13 +0000</pubDate>
       <sparkle:version>51</sparkle:version>
