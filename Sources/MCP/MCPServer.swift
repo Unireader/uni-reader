@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import Network
@@ -113,7 +114,7 @@ final class MCPServer: ObservableObject {
     // MARK: 内部
 
     let catalog = MCPCatalog()
-    let sessions = MCPSessionStore()
+    let sessions: MCPSessionStore
     private lazy var dispatcher = MCPDispatcher(
         catalog: catalog,
         info: MCPServerInfo(name: "UniReader", version: Self.appVersion, instructions: Self.instructions),
@@ -122,6 +123,23 @@ final class MCPServer: ObservableObject {
 
     private let queue = DispatchQueue(label: "tech.xvanturing.unireader.mcp.net")
     private var listener: NWListener?
+
+    // 监听器自愈（主线程）。失败的 NWListener 不会自己恢复，原先 `.failed` 直接 `stop()`，之后一直停着、
+    // 客户端连过来就是拒绝连接，直到有人去设置页点「启动」。现在用户没手动停（`wanted`）就退避重开；
+    // 唤醒后和每 `healthInterval` 再自己连一下自己，连不上就重开（状态回调报不出来的那种死法）。
+    private var wanted = false
+    /// 每换一个监听器 +1，旧监听器迟到的回调据此丢掉。
+    private var listenerGen = 0
+    private var retryDelay: TimeInterval = 1
+    private var retryWork: DispatchWorkItem?
+    private var healthTimer: Timer?
+    private var wakeObserver: NSObjectProtocol?
+    private static let healthInterval: TimeInterval = 300
+
+    /// `sessions`：会话表默认把客户端名存进 UserDefaults；spike 传一个只在内存的，不写 plist。
+    init(sessions: MCPSessionStore = MCPSessionStore()) {
+        self.sessions = sessions
+    }
     /// 口令从哪来（默认 Keychain）。spike 换成固定值，免得测试碰真 Keychain。
     var tokenProvider: () -> String? = { MCPToken.current() }
     /// 口令的服务队列副本（启动时读一次 Keychain；重置口令走 `restart()`）。只在 `queue` 上读。
@@ -181,6 +199,16 @@ final class MCPServer: ObservableObject {
 
     func start() {
         guard !isRunning else { return }
+        wanted = true
+        retryWork?.cancel(); retryWork = nil
+        if wakeObserver == nil {
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                // 等网络栈缓一下再查
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self?.checkHealth(reason: "唤醒") }
+            }
+        }
         var bind = Self.bind
         let port = Self.port
         let tok = tokenProvider()
@@ -219,6 +247,8 @@ final class MCPServer: ObservableObject {
             self.queue.async { self.localHosts = ips }
             self.objectWillChange.send()
         } : nil
+        listenerGen += 1
+        let gen = listenerGen
         listener.newConnectionHandler = { [weak self] conn in self?.serve(conn) }
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -226,11 +256,17 @@ final class MCPServer: ObservableObject {
             case .failed(let e):
                 mcpLog("监听失败：\(e)")
                 DispatchQueue.main.async {
+                    guard gen == self.listenerGen else { return }
                     self.lastError = String(format: L("Cannot listen on port %d: %@"), Int(port), e.localizedDescription)
-                    self.stop()
+                    self.listenerDied()
                 }
             case .ready:
                 mcpLog("监听就绪 \(bind.rawValue):\(port) 口令=\(tok == nil ? "无" : "有")")
+                DispatchQueue.main.async {
+                    guard gen == self.listenerGen else { return }
+                    self.retryDelay = 1
+                    self.startHealthTimer()
+                }
             default: break
             }
         }
@@ -242,20 +278,83 @@ final class MCPServer: ObservableObject {
     }
 
     func stop() {
-        listener?.cancel(); listener = nil
-        netSub = nil
+        wanted = false
+        retryWork?.cancel(); retryWork = nil
+        if let o = wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(o); wakeObserver = nil }
+        closeListener()
         Task { await sessions.removeAll() }
         clients = []
-        isRunning = false
         mcpLog("已停止")
     }
 
     /// 改了监听地址/端口/口令后重启。`stop()` 是同步的，直接接 `start()` 即可
     /// （不像 `LANServer.resetToken` 那样要等主线程下一拍——这里 `isRunning` 在 `stop()` 里同步翻回去）。
+    /// 正在等重开的也算「开着」。
     func restart() {
-        let was = isRunning
+        let was = isRunning || wanted
         stop()
         if was { start() }
+    }
+
+    private func closeListener() {
+        listenerGen += 1
+        listener?.cancel(); listener = nil
+        netSub = nil
+        healthTimer?.invalidate(); healthTimer = nil
+        isRunning = false
+    }
+
+    /// 监听器没了（`.failed`，或健康检查连不上）：关掉它，用户没手动停就按 1、2、4…30 秒退避重开。
+    /// 会话表不动——客户端照常带着原来的会话 id 回来。
+    private func listenerDied() {
+        closeListener()
+        guard wanted else { return }
+        retryWork?.cancel()
+        let delay = retryDelay
+        retryDelay = min(retryDelay * 2, 30)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.wanted, !self.isRunning else { return }
+            self.start()
+        }
+        retryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        mcpLog("\(Int(delay)) 秒后重开监听")
+    }
+
+    private func startHealthTimer() {
+        healthTimer?.invalidate()
+        healthTimer = Timer.scheduledTimer(withTimeInterval: Self.healthInterval, repeats: true) { [weak self] _ in
+            self?.checkHealth(reason: "定时")
+        }
+    }
+
+    /// 自己连一下自己的端口（所有接口模式也绑着 127.0.0.1）；几秒内连不上，不管状态怎么说，监听都已经没了。
+    private func checkHealth(reason: String) {
+        guard wanted, isRunning, let port = NWEndpoint.Port(rawValue: listeningPort) else { return }
+        let gen = listenerGen
+        let conn = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
+        var settled = false   // 只在 queue 上读写
+        let finish: (Bool) -> Void = { [weak self] ok in
+            guard !settled else { return }
+            settled = true
+            conn.cancel()
+            guard !ok else { return }
+            DispatchQueue.main.async {
+                guard let self, self.wanted, gen == self.listenerGen else { return }
+                mcpLog("健康检查（\(reason)）：127.0.0.1:\(self.listeningPort) 没有响应，重开监听")
+                self.listenerDied()
+            }
+        }
+        conn.stateUpdateHandler = { state in
+            switch state {
+            case .ready: finish(true)
+            // 连接被拒时停在 .waiting(ECONNREFUSED)，不会进 .failed
+            case .waiting, .failed: finish(false)
+            default: break
+            }
+        }
+        conn.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + 3) { finish(false) }
     }
 
     // MARK: - 连接
@@ -332,12 +431,10 @@ final class MCPServer: ObservableObject {
             await sessions.sweep()
             var session: MCPSession?
             if let sessionID {
+                // 不认识的 id 也照常服务、不回 404：Claude Code 收到 404 不会重新握手，只会一直显示断开
+                // （见 `MCPSessionStore`）。被清出活跃表后又回来的客户端在面板上重新出现。
                 session = await sessions.touch(sessionID)
-                if session == nil {
-                    // 会话不存在/已过期 → 404，客户端会重新握手（协议规定）
-                    self.send(.json(404, ["error": "unknown or expired Mcp-Session-Id; send initialize again"]), on: conn)
-                    return
-                }
+                self.refreshClients()
             }
             let outcome = await dispatcher.dispatch(body: req.body, session: session,
                                                     inAppAgent: req.header(AgentFollow.header) != nil)

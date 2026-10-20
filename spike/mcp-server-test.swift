@@ -1,12 +1,19 @@
 // MCP 监听/HTTP/口令链路（`MCPServer` 在进程内起真服务，URLSession 打回环）。运行：
 //   cp spike/mcp-server-test.swift /tmp/main.swift && swiftc -parse-as-library Sources/MCP/MCPModels.swift Sources/MCP/MCPHTTP.swift Sources/MCP/MCPCatalog.swift Sources/MCP/MCPProtocol.swift Sources/MCP/MCPServer.swift Sources/Support/Keychain.swift Sources/Support/L.swift Sources/Server/NetInfo.swift /tmp/main.swift -o /tmp/mcpst && /tmp/mcpst -mcpPort 18773 -mcpBind loopback
 // （端口/监听地址走 `-key value` 参数域，不写任何 plist；口令走 `tokenProvider` 注入，不碰 Keychain）
-// 覆盖：/health、握手拿 Mcp-Session-Id、带会话调工具、错会话 404、GET 405、DELETE 清会话、外站 Origin 403、
-//       不支持的协议版本头 400、口令 401/200、重启后旧会话失效、所有接口模式无口令回落回环。
+// 覆盖：/health、握手拿 Mcp-Session-Id、带会话调工具、不认识的会话照常服务（不回 404）、GET 405、DELETE 会话、
+//       外站 Origin 403、不支持的协议版本头 400、口令 401/200、重启后旧会话照常可用且客户端名还在、
+//       所有接口模式无口令回落回环、端口被占时监听失败后自己重开。
 import Foundation
 
 var pass = 0, fail = 0
 func check(_ c: Bool, _ m: String) { if c { pass += 1; print("  ✅ \(m)") } else { fail += 1; print("  ❌ \(m)") } }
+
+/// `MCPServer.instructions` 引用了这两段（真身在 `MCPTools+Markdown.swift`，连着整个 App 编不进 spike）。
+enum MCPTools {
+    static let mathWriting = ""
+    static let graphWriting = ""
+}
 
 struct Reply { let status: Int; let headers: [String: String]; let body: MCPObject; let raw: String }
 
@@ -50,7 +57,7 @@ struct Main {
     static func main() async {
         let port = MCPServer.port
         let base = "http://127.0.0.1:\(port)"
-        let server = MCPServer()
+        let server = MCPServer(sessions: MCPSessionStore(defaultsKey: nil))   // 会话表不写 plist
         var token: String? = nil
         server.tokenProvider = { token }
         server.catalog.register(MCPTool(name: "echo", title: "Echo", description: "echo", inputSchema: MCPSchema.object(["msg": MCPSchema.string("m")], required: ["msg"]), tier: .read) { _, a in
@@ -79,7 +86,8 @@ struct Main {
         let noSession = await post(base + "/mcp", rpc("tools/list"))
         check(noSession.status == 200 && ((noSession.body["error"] as? MCPObject)?["code"] as? Int) == JSONRPCCode.notInitialized, "无会话头 → JSON-RPC -32002")
         let badSession = await post(base + "/mcp", rpc("tools/list"), headers: ["Mcp-Session-Id": "deadbeef"])
-        check(badSession.status == 404, "错会话 → 404（客户端会重新握手）")
+        check(badSession.status == 200 && (((badSession.body["result"] as? MCPObject)?["tools"] as? [MCPObject])?.count ?? 0) == 1,
+              "不认识的会话 id → 照常服务，不回 404（Claude Code 收到 404 不会重新握手）")
         let badVer = await post(base + "/mcp", rpc("tools/list"), headers: ["Mcp-Session-Id": sid, "MCP-Protocol-Version": "1999-01-01"])
         check(badVer.status == 400, "不支持的 MCP-Protocol-Version 头 → 400")
         let get = await post(base + "/mcp", [:], method: "GET")
@@ -96,7 +104,9 @@ struct Main {
         let del = await post(base + "/mcp", [:], headers: ["Mcp-Session-Id": sid], method: "DELETE")
         check(del.status == 200, "DELETE 会话 → 200")
         let afterDel = await post(base + "/mcp", rpc("tools/list"), headers: ["Mcp-Session-Id": sid])
-        check(afterDel.status == 404, "删掉后再用 → 404")
+        check(afterDel.status == 200, "删掉后再用 → 照常服务（按 unknown 接纳）")
+        let keep = await post(base + "/mcp", rpc("initialize", params: ["protocolVersion": "2025-11-25", "clientInfo": ["name": "keeper", "version": "1"]]))
+        let keepSid = keep.headers["mcp-session-id"] ?? ""
 
         // 面板账
         try? await Task.sleep(nanoseconds: 100_000_000)
@@ -115,6 +125,13 @@ struct Main {
         check(auth.status == 200 && (auth.body["result"] as? MCPObject) != nil, "对口令 → 200")
         let ini2 = await post(base + "/mcp", rpc("initialize", params: ["protocolVersion": "2025-06-18"]), headers: ["Authorization": "Bearer secret-token"])
         check(ini2.status == 200 && (ini2.headers["mcp-session-id"] ?? "").count == 64, "带口令握手成功")
+        let kept = await post(base + "/mcp", rpc("tools/call", params: ["name": "echo", "arguments": ["msg": "back"]]),
+                              headers: ["Authorization": "Bearer secret-token", "Mcp-Session-Id": keepSid])
+        check(kept.status == 200 && (((kept.body["result"] as? MCPObject)?["content"] as? [MCPObject])?.first?["text"] as? String) == "echo: back",
+              "重启前拿的会话 id，重启后照常可用")
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        let keptName = await MainActor.run { server.clients.contains { $0.name == "keeper" } }
+        check(keptName, "重启后面板上客户端名还是 keeper，不是 unknown")
 
         print("所有接口模式无口令 → 回落回环")
         token = nil
@@ -149,6 +166,33 @@ struct Main {
         try? await Task.sleep(nanoseconds: 100_000_000)
         let downStatus = await post(base + "/health", [:], method: "GET").status
         check(downStatus == -1, "stop 后连接被拒")
+
+        print("端口被占 → 监听失败后自己重开")
+        // 另一个程序占住同一个回环端口。SO_REUSEADDR 只是为了越过刚停的服务留下的 TIME_WAIT，
+        // 两个 socket 仍不能同时 listen 同一地址
+        let blocker = socket(AF_INET, SOCK_STREAM, 0)
+        var one: Int32 = 1
+        setsockopt(blocker, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(blocker, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        } == 0 && listen(blocker, 1) == 0
+        check(bound, "占住 127.0.0.1:\(port)")
+        await MainActor.run { server.start() }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        let failedNow = await MainActor.run { !server.isRunning && server.lastError != nil }
+        check(failedNow, "端口被占：监听失败，lastError 有说明")
+        close(blocker)
+        var back = false
+        for _ in 0..<100 where !back {   // 退避 1、2、4… 秒，最多等 10 秒
+            back = await post(base + "/health", [:], method: "GET").status == 200
+            if !back { try? await Task.sleep(nanoseconds: 100_000_000) }
+        }
+        check(back, "端口空出来后自己重开监听（没人点「启动」）")
+        await MainActor.run { server.stop() }
 
         print("\n\(pass) 通过, \(fail) 失败")
         exit(fail == 0 ? 0 : 1)

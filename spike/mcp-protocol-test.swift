@@ -3,7 +3,8 @@
 // （main.swift 里用 @main 入口跑 async，所以要 -parse-as-library）
 // 覆盖：HTTP 解析（头体分次到达 / Content-Length 不足 / 超限 / chunked / Origin / Bearer）、
 //       页码换算（1 起 ↔ 0 起、范围写法、越界文案、上限）、入参读取器的类型判定、
-//       JSON-RPC 调度（握手版本协商 / 通知 202 / 未握手拒绝 / tools/list schema / tools/call 两层错误 / 写入开关拦截 / 未知方法）。
+//       JSON-RPC 调度（握手版本协商 / 通知 202 / 未握手拒绝 / tools/list schema / tools/call 两层错误 / 写入开关拦截 / 未知方法）、
+//       短文字抄进 structuredContent.message + outputSchema 声明、会话表只管面板（过期/未知 id 照常接纳）。
 import Foundation
 
 var pass = 0, fail = 0
@@ -96,7 +97,7 @@ struct Main {
             MCPToolResult(text: "written")
         })
         var writes = false
-        let store = MCPSessionStore(maxIdle: 60)
+        let store = MCPSessionStore(maxIdle: 60, defaultsKey: nil)   // 不写 plist
         let d = MCPDispatcher(catalog: catalog, info: MCPServerInfo(name: "UniReader", version: "0.0", instructions: "hi"),
                               sessions: store, writesEnabled: { writes })
 
@@ -165,6 +166,7 @@ struct Main {
             let content = (res?["content"] as? [MCPObject])?.first
             check(content?["type"] as? String == "text" && content?["text"] as? String == "echo: hi", "content 文本")
             check((res?["structuredContent"] as? MCPObject)?["msg"] as? String == "hi" && res?["isError"] as? Bool == false, "structuredContent + isError=false")
+            check((res?["structuredContent"] as? MCPObject)?["message"] as? String == "echo: hi", "短文字同时抄进 structuredContent.message")
         } else { check(false, "echo 应有应答") }
         if case let .response(r) = await d.dispatch(body: rpc("tools/call", params: ["name": "echo", "arguments": [:]]), session: session) {
             check((r["error"] as? MCPObject)?["code"] as? Int == JSONRPCCode.invalidParams, "缺必填参数 → -32602")
@@ -239,9 +241,33 @@ struct Main {
             check((r["error"] as? MCPObject)?["code"] as? Int == JSONRPCCode.methodNotFound, "未知方法 → -32601")
         } else { check(false, "未知方法应有应答") }
 
-        // 会话过期
+        print("文字抄进结构化结果（Claude Code 只给模型看 structuredContent）")
+        let short = MCPToolResult(text: "Follow Agent is off", structured: [:]).json()
+        check((short["structuredContent"] as? MCPObject)?["message"] as? String == "Follow Agent is off", "短文字抄进 message（空结构化结果也抄）")
+        let long = MCPToolResult(text: String(repeating: "x", count: MCPToolResult.messageLimit + 1), structured: ["pages": [Any]()]).json()
+        check((long["structuredContent"] as? MCPObject)?["message"] == nil, "长文字（正文排版）不抄，免得 token 翻倍")
+        let own = MCPToolResult(text: "t", structured: ["message": "mine"]).json()
+        check((own["structuredContent"] as? MCPObject)?["message"] as? String == "mine", "结构化里已有 message 不覆盖")
+        let failed = MCPToolResult.failure("nope").json()
+        check(failed["structuredContent"] == nil, "失败结果仍不给 structuredContent")
+        let declared = MCPToolResult.declaringMessage(MCPSchema.object(["page": MCPSchema.integer("p")]))
+        check(((declared["properties"] as? MCPObject)?["message"] as? MCPObject)?["type"] as? String == "string"
+              && declared["additionalProperties"] as? Bool == false, "outputSchema 加上 message，additionalProperties:false 照旧")
+        let listed = MCPTool(name: "o", title: "O", description: "o", inputSchema: MCPSchema.object([:]),
+                             outputSchema: MCPSchema.object(["a": MCPSchema.string("a")]), tier: .read) { _, _ in MCPToolResult(text: "") }.listing()
+        check(((listed["outputSchema"] as? MCPObject)?["properties"] as? MCPObject)?["message"] != nil, "tools/list 的 outputSchema 声明 message")
+
+        print("会话：只管面板，不当门禁")
         await store.sweep(now: Date.now.addingTimeInterval(120))
-        check(await store.count == 0, "超过 maxIdle 的会话被清")
+        check(await store.count == 0, "超过 maxIdle 的会话从活跃表（面板）清掉")
+        if let sid = session?.id {
+            let back = await store.touch(sid)
+            check(back.id == sid && back.clientName == "spike", "清掉后再来：照常服务，找回原客户端名（写入来源标记不变成 unknown）")
+            await store.remove(sid)
+            check(await store.touch(sid).clientName == "unknown", "DELETE 后再来：按 unknown 接纳，不拒")
+        } else { check(false, "前面应有会话") }
+        check(await store.touch("deadbeef").clientName == "unknown", "从没见过的 id（App 重启前发的）→ 按 unknown 接纳，不回 404")
+        check(await store.count >= 2, "接纳的会话进活跃表，面板看得到")
 
         print("\n\(pass) 通过, \(fail) 失败")
         exit(fail == 0 ? 0 : 1)

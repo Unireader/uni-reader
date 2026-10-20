@@ -47,11 +47,22 @@ enum MCPToolTier {
 }
 
 /// 工具返回：`text` 给模型读，`structured` 给程序用，两份并存（方案 §6.4）；`image` 是页图那类。
+///
+/// 🔴 **Claude Code 有 `structuredContent` 时只把它给模型，`text` 整段丢掉**（不管有没有 `outputSchema`；
+/// 图片照给。2026-10-20 用一个文字、结构化各带不同标记的最小服务实测）。所以 text 里结构化数据没有的话——
+/// 「跟随 Agent 关着、视图没动」「已加入回收站」「稍后再调 read_pages」——原先模型根本看不到。
+/// 现在短文字（≤ `messageLimit`）抄进结构化结果的 `message` 键，每个 `outputSchema` 也在 `MCPTool.listing()`
+/// 里统一声明这个键（`additionalProperties: false`，不声明 Kimi 就判失败）。长文字不抄：那是 read_pages /
+/// read_markdown 一类把结构化数据排版成文的，正文本来就在结构化里，抄一遍 token 翻倍。
 struct MCPToolResult {
     var text: String
     var structured: MCPObject? = nil
     var image: (data: Data, mime: String)? = nil
     var isError = false
+
+    /// 文字抄进结构化结果用的键名，和多长以内才抄（见类型注释）。
+    static let messageKey = "message"
+    static let messageLimit = 500
 
     static func failure(_ message: String) -> MCPToolResult {
         MCPToolResult(text: message, isError: true)
@@ -67,8 +78,23 @@ struct MCPToolResult {
             content.append(["type": "text", "text": text])
         }
         var out: MCPObject = ["content": content, "isError": isError]
-        if let structured, !isError { out["structuredContent"] = structured }
+        if var structured, !isError {
+            if !text.isEmpty, text.count <= Self.messageLimit, structured[Self.messageKey] == nil {
+                structured[Self.messageKey] = text
+            }
+            out["structuredContent"] = structured
+        }
         return out
+    }
+
+    /// `outputSchema` 加上可选的 `message` 键（已有就不动）。
+    static func declaringMessage(_ schema: MCPObject) -> MCPObject {
+        guard var props = schema["properties"] as? MCPObject, props[messageKey] == nil else { return schema }
+        props[messageKey] = ["type": "string",
+                             "description": "What happened, in a sentence — notices and hints not repeated in the other fields"]
+        var s = schema
+        s["properties"] = props
+        return s
     }
 }
 
@@ -87,7 +113,7 @@ struct MCPTool {
     func listing() -> MCPObject {
         var o: MCPObject = ["name": name, "title": title, "description": description,
                             "inputSchema": inputSchema, "annotations": tier.annotations]
-        if let outputSchema { o["outputSchema"] = outputSchema }
+        if let outputSchema { o["outputSchema"] = MCPToolResult.declaringMessage(outputSchema) }
         return o
     }
 }

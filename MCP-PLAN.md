@@ -110,7 +110,7 @@ MCP 在 2026-07-28 出了一版**去掉初始化握手**的「新版」协议（
 | 通知（无 `id`） | `notifications/initialized` / `notifications/cancelled` 等一律 `202 Accepted` 空体，不处理取消（所有操作都有上限，见 §7） |
 | `GET /mcp` | `405 Method Not Allowed`（协议允许；表示我们不提供服务端推送流） |
 | `DELETE /mcp` | 删会话，`200` |
-| 会话 | `initialize` 成功时响应头发 `Mcp-Session-Id`（随机 32 字节十六进制）；之后请求带错/不带 → `404`（客户端会重新握手）。会话表在内存，记 `clientInfo`、协议版本、建立/最近时刻；30 分钟没动静就清 |
+| 会话 | `initialize` 成功时响应头发 `Mcp-Session-Id`（随机 32 字节十六进制）。~~之后请求带错 → `404`（客户端会重新握手）~~ **2026-10-20 改：不认识的 id 照常服务、不回 404**（Claude Code 收到 404 不会重新握手，见 §25）；不带 → `-32002`。活跃表记 `clientInfo`、协议版本、建立/最近时刻，30 分钟没动静从面板清掉；id → 客户端另存 UserDefaults 跨重启 |
 | `MCP-Protocol-Version` 头 | 读到就校验是否在支持列表，不在回 `400`；没带按 `2025-03-26` 处理（协议规定的兜底） |
 | `Origin` | 带了且不是 `http://localhost[:port]` / `http://127.0.0.1[:port]` / `http://<本机监听地址>[:port]` → `403`（防 DNS 重绑定，协议要求）。命令行 Agent 不带 `Origin`，只有浏览器里的客户端才带 |
 | 监听地址 | **可配置（D5）**：默认只绑 `127.0.0.1`（`NWParameters.requiredLocalEndpoint`）；设置里可切到「所有网络接口」（`0.0.0.0`），此时**必须有口令**，细则见 §4.6。IPv6 回环 `::1` 不绑——本机客户端一律用 `127.0.0.1` |
@@ -688,6 +688,7 @@ curl -si http://<本机IP>:8773/mcp -H 'Content-Type: application/json' -H 'Auth
 - `read_pages` 的 `auto`：原生文本 ≥ 8 字符就用它，否则查 OCR 缓存（`PaddleOCR.providerID`），行按 y 分行、x 排序拼段落，
   水印按 `OCRWatermark` 整本指纹过滤；都没有 → `source: "none"` + `hint`。
 - 会话表在 `restart()` / `stop()` 时清空，改口令/地址/端口后客户端要重新握手（旧版客户端收到 404 会自动做）。
+  **2026-10-20 已推翻**：客户端并不会自动重新握手，见 §25。
 
 ### 15.3 用户实测（按 §11.3；另加两条）
 
@@ -909,3 +910,25 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
   - 新工具三个：`list_exercise_attempts`（read，作答一览：题干 + 参考答案 + 作答 + 每空对不对得上 + 有没有手写 + 对错与谁判的 + 评语）、
     `render_exercise_answer`（read，手写作答出 PNG）、`grade_exercise_attempts`（write，写回对错与评语，后判的为准，选择题不收）。
   - `list_exercise_attempts` 两种列法加进 `spike/mcp-schema-audit.py`；`render_exercise_answer` 要工作区里有手写作答才校验。
+
+## 25. 2026-10-20 长时间不用就「断开」：会话不再回 404、监听器自愈、文字抄进结构化结果
+
+用户反馈「长时间会断开连接（本地连接）」。三处原因，一并改：
+
+- **会话 404**（主因）。§4.2 假设「客户端收到 404 会重新握手」，实测不成立：官方 TypeScript SDK（Claude Code 用的）的
+  Streamable HTTP 客户端收到 404 只抛错（它自己的测试就断言 `404 Session not found` 直接 reject）。于是 30 分钟没动静的清理、
+  App 重启（Sparkle 更新）、`restart()` 之后，Claude Code 一直显示断开，只能手动 `/mcp` 重连。
+  改：`MCPSessionStore.touch` 不认识的 id 一律接纳；活跃表仍按 30 分钟清（只影响面板）；id → 客户端另存 UserDefaults
+  `mcpSessions`（最多 100 条），跨重启找回客户端名，写入来源标记不会变成 unknown。DELETE 两份都删，再来按 unknown 接纳。
+- **监听器失败后一直停着**。原先 `.failed` 直接 `stop()`。改：用户没手动停（`wanted`）就按 1、2、4…30 秒退避重开；
+  `.ready` 后每 5 分钟、以及唤醒后 3 秒，自己连一下 `127.0.0.1:端口`，几秒连不上就重开（状态回调报不出来的那种死法）。
+  旧监听器迟到的回调靠 `listenerGen` 丢掉。
+- **Claude Code 有 `structuredContent` 时只给模型看它，`text` 整段丢掉**（不管有没有 `outputSchema`，图片照给；
+  用一个文字、结构化各带不同标记的最小服务实测）。原先「跟随 Agent 关着、视图没动」这类只写在 text 里的话模型看不到
+  （`goto` 返回的是空的 `{}`）。改：≤ 500 字的 text 抄进结构化结果的 `message` 键，`MCPTool.listing()` 给每个
+  `outputSchema` 统一声明它（`additionalProperties: false`，不声明 Kimi 就判失败）；长 text 是 read_pages 这类把结构化数据
+  排版成文的，不抄，免得 token 翻倍。
+- spike：`mcp-protocol-test.swift` 88 项、`mcp-server-test.swift` 37/39 项通过。`mcp-server-test` 自 `e2b6397` 起就编不过
+  （`MCPServer.instructions` 引用了 `MCPTools.mathWriting`），在 spike 里补了两段空串替身；新增「端口被占 → 自己重开」一项。
+  没过的 2 项是**原有问题**、与本次无关（改动前的版本同样失败）：所有接口模式下经 Tailscale 地址（100.x）连不上
+  `NWListener`，同一台机器上的普通 BSD socket 服务经同一地址可达——待查。

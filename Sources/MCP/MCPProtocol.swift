@@ -45,30 +45,74 @@ struct MCPSession {
 }
 
 /// 会话表。`actor`：请求从网络队列来、面板从主线程读，两边都要碰它。
+///
+/// 🔴 **不认识的会话 id 一律接纳，不回 404**（2026-10-20 改）。协议允许服务端让会话过期后回 404、由客户端重新
+/// `initialize`，但官方 TypeScript SDK（Claude Code 用的就是它）收到 404 只抛错、不重新握手。原先「30 分钟没动静
+/// 就清 + App 重启全丢」的结果就是：放一阵不用、电脑睡一觉、App 一更新，Claude Code 那边就一直显示断开，
+/// 只能手动 `/mcp` 重连。会话在这里不是门禁（门禁是口令），只用来记 `clientInfo`（写入来源标记要用），所以：
+/// - `sessions`（活跃表，面板「已连接的客户端」）照旧按 `maxIdle` 清，只影响面板；
+/// - 另记一份 `remembered`（id → 客户端），存进 UserDefaults 跨重启保留，最多 `rememberLimit` 条；
+/// - `touch` 先查活跃表、再查 `remembered`，都没有就按 "unknown" 客户端接纳。
 actor MCPSessionStore {
     private var sessions: [String: MCPSession] = [:]
-    /// 多久没动静就清（方案 §4.2：30 分钟）。
+    private var remembered: [String: MCPSession] = [:]
+    /// 多久没动静就从活跃表里清（方案 §4.2：30 分钟）。
     let maxIdle: TimeInterval
+    /// `remembered` 存在哪个 UserDefaults 键；nil = 只在内存（spike 用，不写 plist）。
+    private let defaultsKey: String?
+    static let rememberLimit = 100
 
-    init(maxIdle: TimeInterval = 30 * 60) { self.maxIdle = maxIdle }
+    init(maxIdle: TimeInterval = 30 * 60, defaultsKey: String? = "mcpSessions") {
+        self.maxIdle = maxIdle
+        self.defaultsKey = defaultsKey
+        guard let defaultsKey, let rows = UserDefaults.standard.array(forKey: defaultsKey) as? [[String: Any]] else { return }
+        for r in rows {
+            guard let id = r["id"] as? String, let client = r["client"] as? String else { continue }
+            let created = Date(timeIntervalSince1970: (r["created"] as? Double) ?? 0)
+            remembered[id] = MCPSession(id: id, protocolVersion: (r["protocol"] as? String) ?? MCPVersions.latest,
+                                        clientName: client, clientVersion: (r["version"] as? String) ?? "",
+                                        createdAt: created, lastSeen: created)
+        }
+    }
 
     func create(protocolVersion: String, clientName: String, clientVersion: String) -> MCPSession {
         let s = MCPSession(id: MCPSession.makeID(), protocolVersion: protocolVersion,
                            clientName: clientName, clientVersion: clientVersion, createdAt: .now, lastSeen: .now)
         sessions[s.id] = s
+        remembered[s.id] = s
+        persist()
         return s
     }
 
-    /// 取会话并刷新「最近见到」。
-    func touch(_ id: String) -> MCPSession? {
-        guard var s = sessions[id] else { return nil }
+    /// 取会话并刷新「最近见到」；不认识的 id 接纳（见类型注释），所以总有返回。
+    func touch(_ id: String) -> MCPSession {
+        var s = sessions[id] ?? remembered[id]
+            ?? MCPSession(id: id, protocolVersion: MCPVersions.latest, clientName: "unknown", clientVersion: "",
+                          createdAt: .now, lastSeen: .now)
         s.lastSeen = .now
         sessions[id] = s
         return s
     }
 
-    func remove(_ id: String) { sessions.removeValue(forKey: id) }
+    /// 客户端主动结束（DELETE）：两份都删。
+    func remove(_ id: String) {
+        sessions.removeValue(forKey: id)
+        if remembered.removeValue(forKey: id) != nil { persist() }
+    }
+
+    /// 停服务 / 改口令 / 改端口时清活跃表。`remembered` 留着：客户端回来时名字还在
+    /// （口令换了的话它先吃 401，跟会话无关）。
     func removeAll() { sessions.removeAll() }
+
+    private func persist() {
+        let kept = remembered.values.sorted { $0.createdAt > $1.createdAt }.prefix(Self.rememberLimit)
+        remembered = Dictionary(uniqueKeysWithValues: kept.map { ($0.id, $0) })
+        guard let defaultsKey else { return }
+        UserDefaults.standard.set(kept.map { s -> [String: Any] in
+            ["id": s.id, "client": s.clientName, "version": s.clientVersion,
+             "protocol": s.protocolVersion, "created": s.createdAt.timeIntervalSince1970]
+        }, forKey: defaultsKey)
+    }
 
     func sweep(now: Date = .now) {
         sessions = sessions.filter { now.timeIntervalSince($0.value.lastSeen) < maxIdle }
