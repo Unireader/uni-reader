@@ -1007,3 +1007,16 @@
 "Fill-in" = "填空";
 "Handwritten" = "手写";
 "not marked" = "未判";
+"Insert Row Above" = "在上方插入行";
+"Insert Row Below" = "在下方插入行";
+"Move Row Up" = "上移行";
+"Move Row Down" = "下移行";
+"Delete Row" = "删除行";
+"Insert Column Left" = "在左侧插入列";
+"Insert Column Right" = "在右侧插入列";
+"Move Column Left" = "左移列";
+"Move Column Right" = "右移列";
+"Delete Column" = "删除列";
+"Align Left" = "左对齐";
+"Align Center" = "居中对齐";
+"Align Right" = "右对齐";

@@ -26,7 +26,8 @@
   `WorkspaceWikiIndex.swift`（v15）= 引擎的两个服务：`[[…]]` 解析（`WikiLinkResolver`）+ `![[…]]` 图片（`EmbeddedImageProvider`）。
   🔴 **一个工作区一个**（`WorkspaceManager.wiki`，`refreshNotes()` 里换快照）——名字只在自己工作区里有意义，做成全局单例
   会把 A 工作区的 `[[极限]]` 连到 B 工作区同名那篇去。编辑器 / 气泡 / 整篇编辑区三处都由上层把它传进去；
-  `MarkdownDocEditor.swift` 是整篇笔记的编辑区（允许 SwiftUI 的第三处）
+  `MarkdownDocEditor.swift` 是整篇笔记的编辑区（允许 SwiftUI 的第三处）；
+  `TableEditMenu.swift` = 表格单元格右键菜单（引擎 `0.14.0-xvan.2` 起表格就地编辑、但菜单不自带，两处编辑器都接 `onTableCellContextMenu`）
 - Markdown 笔记（`MARKDOWN-NOTES-PLAN.md`）：纯逻辑在 `Sources/App/` —— `NoteTree`（`NoteRoot` 两种源 /
   `NoteRef` = 源+相对路径 = **笔记的身份** / `NoteFolder` 多级树 / `NoteIndex` 按名字解析）+
   `MarkdownLink`（**只扫描不改写**：保护区、`[[…]]` 目标名、图片引用、frontmatter 别名）+

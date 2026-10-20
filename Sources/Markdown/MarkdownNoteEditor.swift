@@ -286,6 +286,7 @@ struct MarkdownNoteEditor: View {
                                      configuration: Self.configuration(wiki: wiki).fittingLatex(to: containerWidth),
                                      fontSize: fontSize,
                                      documentId: documentId,
+                                     onTableCellContextMenu: TableEditMenu.decorate,
                                      placeholder: placeholder.isEmpty ? nil : NSAttributedString(
                                          string: placeholder,
                                          attributes: [.foregroundColor: NSColor.placeholderTextColor,

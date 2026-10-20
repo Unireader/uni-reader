@@ -1005,3 +1005,16 @@
 "Fill-in" = "Fill-in";
 "Handwritten" = "Handwritten";
 "not marked" = "not marked";
+"Insert Row Above" = "Insert Row Above";
+"Insert Row Below" = "Insert Row Below";
+"Move Row Up" = "Move Row Up";
+"Move Row Down" = "Move Row Down";
+"Delete Row" = "Delete Row";
+"Insert Column Left" = "Insert Column Left";
+"Insert Column Right" = "Insert Column Right";
+"Move Column Left" = "Move Column Left";
+"Move Column Right" = "Move Column Right";
+"Delete Column" = "Delete Column";
+"Align Left" = "Align Left";
+"Align Center" = "Align Center";
+"Align Right" = "Align Right";

@@ -3,6 +3,19 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ Markdown 引擎升到 0.14.0-xvan.7 + 表格右键菜单（2026-10-20，Mac）
+
+- 起因：发布前 grapher 图形块还指着本地引擎分支（`GRAPHER-BLOCK-PLAN.md §4`）。用户选「并进 xvan 最新再打 tag」：
+  `feat/fenced-block-renderer` 的 2 个提交 rebase 到 fork `xvan` 最新（无冲突，多带进 Perch 那边 `.2`~`.6` 的 24 个提交），
+  `swift test` 756 + 3 项全过，补一条 CHANGELOG，推送并打 `0.14.0-xvan.7`，`project.yml` 换回 `url` + `exactVersion`。
+- 带进来的默认行为变化：表格默认就地编辑（点格子改、拖动手柄、框选、Delete 先清后删）、`$$` 编辑时下方实时预览、
+  自动配对（跳过已有右括号、选中文字后输入符号包起来、列表后 `[` 补成 `- [ ] `）、智能引号默认关（本来就关）。
+  只读视图（气泡 / Agent 回复）不受影响——就地编辑要求可编辑。
+- 引擎不再自带表格右键菜单（交给 App 出、好跟 App 语言），新增 `Sources/Markdown/TableEditMenu.swift`（照 Perch 同名文件），
+  整篇编辑区与笔记编辑框都接 `onTableCellContextMenu`；13 条中英文标题。`spike/table-edit-menu-test.swift` 11/11。
+- `spike/markdown-relayout-cost.swift` 升级前后对比（17.7K / 52K 字）：首次排版、打字每字（7~12ms）、改宽度都在测量波动内，没变慢。
+- 顺带：工作目录改名后引擎 worktree 与克隆互相找不到，`git worktree repair` 修好（记进 `BUILD-DETAILS.md`）。用户实测 Debug 包通过。
+
 ## ✅ ⌘F 搜索改为全文 + 搜索结果浮窗（2026-10-19，Mac）
 
 - 用户报：「搜索没有全文去搜索」，并要一个「搜索悬浮框，匹配内容很多、跨度大的时候靠它跳转」。

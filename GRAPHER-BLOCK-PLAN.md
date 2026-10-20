@@ -30,7 +30,7 @@ tangent-plane: of=S; at=s, 0.5; color=orange
 | 仓库 | 改了什么 |
 |---|---|
 | `grapher-ng` | `GrapherKit`：`GrapherText`（文字 ↔ 文档、按行报错、`patch` 回写）；`GrapherRender`：`GraphSnapshot.image(text:…)`；新 framework `GrapherEmbed`：`GrapherBlockView`（见 `../grapher-ng/docs/embedding.md`）；MCP `get_text_reference` / `render_text` |
-| `swift-markdown-engine`（fork） | 本地分支 `feat/fenced-block-renderer`（基于 `0.14.0-xvan.1`）：`FencedBlockRenderer`（某种语言的围栏块画成图，光标进去露出源码）、`NSTextView.renderedBlockFrames`（查图画在哪，好盖实时视图） |
+| `swift-markdown-engine`（fork） | `FencedBlockRenderer`（某种语言的围栏块画成图，光标进去露出源码）、`NSTextView.renderedBlockFrames`（查图画在哪，好盖实时视图）；2026-10-20 并进 `xvan` 分支，tag `0.14.0-xvan.7` |
 | `uni-reader`（本仓库） | `Sources/Markdown/GrapherBlocks.swift`：`GrapherFencedRenderer`（静态图 + 缓存）、`GrapherBlockScan`（找块）、`GrapherBlockOverlay`（在编辑区每张图上盖 `GrapherBlockView`）；`MarkdownDocView` 挂上它；`fittingLatex` 顺带让批注框、气泡也显示静态图；MCP 说明加一句；技能 `skills/unireader-grapher-block` |
 
 ## 3. 实现要点
@@ -48,8 +48,8 @@ tangent-plane: of=S; at=s, 0.5; color=orange
 
 ## 4. 🔴 发布前必须做的事
 
-1. `project.yml` 里引擎依赖现在是**本地路径** `../swift-markdown-engine-worktrees/fenced-block`：把 fork 的 `feat/fenced-block-renderer`
-   合进 `xvan` 分支（`xvan` 比 `0.14.0-xvan.1` 多 24 个提交，合并后要 `swift test`）、推送、打新 tag（如 `0.14.0-xvan.2`），再把依赖换回 `url` + `exactVersion`。
+1. ~~引擎依赖是本地路径~~：2026-10-20 已做——`feat/fenced-block-renderer` 接到 `xvan` 最新之后（多带进 Perch 那边 24 个提交：
+   表格就地编辑等，App 补了表格右键菜单 `TableEditMenu`），`swift test` 759 项全过，推送并打 `0.14.0-xvan.7`，`project.yml` 已换回 `url` + `exactVersion`。
 2. `project.yml` 用工程引用 `../grapher-ng/GrapherNG.xcodeproj`：两个仓库必须在同一级目录。`scripts/package.sh` / `release.sh` 在干净机器上要先能构建 `grapher-ng`。
 3. **许可证**：Grapher NG 是 GPL-3.0-or-later，本项目 AGPL-3.0。两者可以合并（GPLv3 §13 / AGPLv3 §13），合并后的整体按 AGPL 发布；
    两个仓库版权人都是你。发布日志里写一句。

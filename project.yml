@@ -47,17 +47,16 @@ packages:
     # + 上面 `.2`~`.5` 的修复 + Perch 的链接 / 图片 id 修复。智能引号开关上游已经合并（#189），不再自带。
     # 改 fork：在 fork 的 `xvan` 分支改、`swift test` 过、打 `<上游版本>-xvan.N` 新 tag，再改这里的版本号；
     # 跟上游升级 = 把 `xvan` 分支 rebase 到上游新版本上再打 tag。
-    # 2026-10-14 开发期临时改成本地路径：```grapher 图形块要用引擎里新加的 `FencedBlockRenderer`（把某种语言的围栏代码块
-    # 画成图）与 `renderedBlockFrames`（查图画在哪，好盖一个可旋转的实时视图），都在 fork 的本地分支
-    # `feat/fenced-block-renderer`（基于 0.14.0-xvan.1，worktree 在 ../swift-markdown-engine-worktrees/fenced-block）上，
-    # **还没推送、没打 tag**。发布前必须：把这个分支并进 fork 的 `xvan` 分支、`swift test` 过、推送并打
-    # `0.14.0-xvan.2` 之类的新 tag，再把下面两行换回 `url` + `exactVersion`。
-    path: ../swift-markdown-engine-worktrees/fenced-block
-    # url: https://github.com/xVanTuring/swift-markdown-engine
+    # `.7`（2026-10-20，从 `.1` 直接跳过来；`.2`~`.6` 是 Perch 那边打的）：```grapher 图形块要用的
+    # `FencedBlockRenderer`（把某种语言的围栏代码块画成图）与 `renderedBlockFrames`（查图画在哪，好盖一个可旋转的
+    # 实时视图），fork 提交 0eb8b2f、78d77dd；顺带进来 Perch 那边的：表格默认就地编辑（右键菜单由 App 出，
+    # 见 `TableEditMenu`）、`$$…$$` 编辑时下方实时预览、自动配对（跳过已有的右括号、选中文字后输入符号包起来）、
+    # 智能引号默认关。升级前后 `spike/markdown-relayout-cost.swift` 对比：17.7K / 52K 字打字每字 7~12ms，与 `.1` 持平。
+    url: https://github.com/xVanTuring/swift-markdown-engine
     # 2026-09-21 从 0.9.0 升到 0.13.0：0.9.0 每敲一个字都按整篇算账（17K 字的笔记 56ms/字、
     # 52K 字 159ms/字，一帧才 16.7ms），0.13.0 把增量做对了——恒定 9~11ms/字，不再随全文长度涨。
     # 量法见 `spike/markdown-relayout-cost.swift`。升级只动版本号，App 代码一行没改。
-    # exactVersion: 0.14.0-xvan.1
+    exactVersion: 0.14.0-xvan.7
   HighlighterSwift:
     url: https://github.com/smittytone/HighlighterSwift
     exactVersion: 3.1.0

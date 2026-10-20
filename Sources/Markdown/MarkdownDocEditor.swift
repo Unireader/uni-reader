@@ -68,6 +68,7 @@ struct MarkdownDocEditor: View {
                                      fontSize: fontSize,
                                      documentId: documentId,
                                      onLinkClick: { onOpenNote($0) },
+                                     onTableCellContextMenu: TableEditMenu.decorate,
                                      placeholder: NSAttributedString(
                                          string: L("Write in Markdown. Type [[ to link another note."),
                                          attributes: [.foregroundColor: NSColor.placeholderTextColor,
