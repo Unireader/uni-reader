@@ -13,8 +13,18 @@ final class MCPDocReader {
     private var docs: [String: Entry] = [:]          // path → 文档（只在 queue 上碰）
     private let maxDocs = 4
 
-    /// OCR 文本层缓存：内容 hash → (各页行, 水印指纹)。读一本书的全部 OCR 页要几 MB，别每次调用都读。
-    private struct OCRBook { let pages: [Int: [TextRun]]; let profile: OCRWatermark.Profile; var lastUsed: CFAbsoluteTime }
+    /// OCR 文本层缓存：内容 hash + 引擎 → (各页行, 水印指纹, 读进来时库里的版本戳)。读一本书的全部 OCR 页要几 MB，别每次调用都读。
+    ///
+    /// 🔴 **每次用之前先核对版本戳**（`LibraryStore.ocrStamp`，一条 COUNT + MAX 的查询）：原先读进来就一直用，
+    /// Agent 先读了还没识别的页、再 `run_ocr`、再读，拿到的永远是识别之前那份——库里明明有字，`read_pages` 一直回
+    /// 「还没有 OCR 文字」，Agent 绕着 run_ocr / read_pages 转了几分钟（2026-10-11 Kimi 会话日志，用户 2026-10-27 报）。
+    /// 键里带上引擎：换了 OCR 引擎读的是另一份缓存。
+    private struct OCRBook {
+        let pages: [Int: [TextRun]]
+        let profile: OCRWatermark.Profile
+        let stamp: String
+        var lastUsed: CFAbsoluteTime
+    }
     private var ocrBooks: [String: OCRBook] = [:]
     private let maxOCRBooks = 2
 
@@ -270,22 +280,26 @@ final class MCPDocReader {
 
     private func ocrBook(store: LibraryStore, contentHash: String) -> OCRBook {
         let now = CFAbsoluteTimeGetCurrent()
-        if var b = ocrBooks[contentHash] {
-            b.lastUsed = now; ocrBooks[contentHash] = b
+        let provider = OCRBackend.current.providerID
+        let key = contentHash + "\u{1}" + provider
+        let stamp = (try? store.ocrStamp(contentHash: contentHash, provider: provider)) ?? ""
+        if var b = ocrBooks[key], b.stamp == stamp {
+            b.lastUsed = now; ocrBooks[key] = b
             return b
         }
+        ocrBooks.removeValue(forKey: key)   // 库里变了：整本重读（水印指纹也跟着重算）
         var pages: [Int: [TextRun]] = [:]
-        if let raw = try? store.allOCRPayloads(contentHash: contentHash, provider: OCRBackend.current.providerID) {
+        if let raw = try? store.allOCRPayloads(contentHash: contentHash, provider: provider) {
             let dec = JSONDecoder()
             for (page, data) in raw {
                 if let payload = try? dec.decode(OCRPagePayload.self, from: data) { pages[page] = payload.runs }
             }
         }
-        let book = OCRBook(pages: pages, profile: OCRWatermark.buildProfile(pages), lastUsed: now)
+        let book = OCRBook(pages: pages, profile: OCRWatermark.buildProfile(pages), stamp: stamp, lastUsed: now)
         if ocrBooks.count >= maxOCRBooks, let victim = ocrBooks.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key {
             ocrBooks.removeValue(forKey: victim)
         }
-        ocrBooks[contentHash] = book
+        ocrBooks[key] = book
         return book
     }
 

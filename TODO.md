@@ -96,6 +96,7 @@
    - 2026-10-27 第二批（已编译，**待用户实测**）：Agent 消息排队（回答中回车排队、答完逐条发，停止 / 出错 / 换会话退回输入框，
      `ACP-AGENT-PLAN.md §10`）；习题「上一题 / 下一题」钉在底部（Mac + 安卓，`EXERCISE-PLAN.md §4.2`）；
      多列 `aligned` 写的分段函数换成两列 `cases` 渲染（`LatexCompat.piecewise`，`spike/latex-compat-test.swift` 57 项）。
+   - 2026-10-27：内置 Agent 经 MCP 读 OCR「库里有字却读不到」已修（`MCPDocReader` 的整本 OCR 缓存从不刷新，`MCP-PLAN.md §5.3`），**待用户实测**。
    （A3 块级 Markdown 2026-09-20 已做：回复与思考正文改用笔记那套引擎只读渲染，`ACP-AGENT-PLAN.md §7`；
    A4 独立窗口吸附、两块内置面板改为与阅读区并排，2026-09-18 已做。）
 

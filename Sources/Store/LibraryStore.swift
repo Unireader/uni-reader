@@ -1485,6 +1485,15 @@ final class LibraryStore {
                                 [.text(contentHash), .text(provider)])
         return Int((rows.first?["c"] as? Int64) ?? 0)
     }
+    /// 某内容(hash) 某引擎 OCR 缓存的「版本戳」：页数 + 最近一次写入时间。新识别一页、重识别（`upsertOCRPage` 会刷新
+    /// `created_at`）、删掉（扫描页对齐开关 / 重关联）都会让它变。给整本读进内存的那份缓存核对还新不新鲜（`MCPDocReader`）。
+    func ocrStamp(contentHash: String, provider: String) throws -> String {
+        let rows = try db.query("SELECT COUNT(*) AS c, MAX(created_at) AS t FROM ocr_page WHERE content_hash=? AND provider=?",
+                                [.text(contentHash), .text(provider)])
+        let c = (rows.first?["c"] as? Int64) ?? 0
+        let t = (rows.first?["t"] as? String) ?? ""
+        return "\(c)|\(t)"
+    }
 
     // MARK: - 行 → 模型
 

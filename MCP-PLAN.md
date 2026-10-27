@@ -230,6 +230,10 @@ NWListener(127.0.0.1 或 0.0.0.0 : port) ──serial queue "mcp.net"──▶ �
 1. 🔴 **`session.pdf` 只许主线程碰**（现有纪律，OCR 渲染已经为此单开了 `ocrRenderPDF`）。MCP 读文本/渲页图
    一律在 `MCPDocReader` 里**按路径另开一份 `PDFDocument`**，LRU 缓存 4 份（键 = 路径 + 内容 hash），
    文档关闭/工作区关闭时不必同步清（它只读文件，不持有会话）。
+   OCR 文字同样整本读进 `MCPDocReader` 的内存（键 = 内容 hash + 引擎，留两本，水印指纹要跨页统计）。🔴 **每次用之前核对库里的版本戳**
+   （`LibraryStore.ocrStamp` = 页数 + 最近写入时间）：原先读进来就一直用，Agent 先读还没识别的页 → `run_ocr` → 再读，
+   拿到的永远是识别之前那份，库里有字却一直回「还没有 OCR 文字」（2026-10-11 / 10-07 的 Kimi 会话日志里都有，用户 2026-10-27 报）。
+   `add_highlight` / `add_note` 的引文定位与 `search_text` 用的是同一份，也一并修好。spike `ocr-store-test.swift` 第 8 节。
 2. 🔴 **不上 `LANServer` 的串行队列**。那条队列是平板取页图的热路径（`PadLog` 里「距上次页图请求结束」那笔账），
    一次 40 页文本抽取塞进去平板就卡半秒。MCP 自己两条队列（`mcp.net` / `mcp.doc`）。
 3. 🔴 **主线程只做拼装**：`MCPFacade` 里不许有循环遍历几千条笔迹、不许 `JSONEncoder` 大数组。

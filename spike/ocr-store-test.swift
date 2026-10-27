@@ -74,5 +74,22 @@ check(store2.meta("schema_version") == String(LibraryStore.schemaVersion),
       "重开触发迁移 → schema_version 回到 \(LibraryStore.schemaVersion)")
 check(try store2.ocrPage(contentHash: "hB", page: 1, provider: "vision") != nil, "迁移不丢已有 OCR 缓存")
 
+// 8) 版本戳 `ocrStamp`（MCP 整本读进内存的那份 OCR 缓存靠它判断还新不新鲜，2026-10-27）：
+//    新识别一页 / 重识别同一页 / 删掉都要变；别的引擎、别的内容不影响
+let s0 = try store2.ocrStamp(contentHash: "hS", provider: "paddle")
+check(s0 == "0|", "没有缓存：0|（\(s0)）")
+try store2.upsertOCRPage(OCRPage(contentHash: "hS", page: 0, provider: "paddle", payload: blob, lang: nil, createdAt: .now))
+let s1 = try store2.ocrStamp(contentHash: "hS", provider: "paddle")
+check(s1 != s0 && s1.hasPrefix("1|"), "新识别一页：变了（\(s1)）")
+try store2.upsertOCRPage(OCRPage(contentHash: "hS", page: 0, provider: "paddle", payload: blob2, lang: nil,
+                                 createdAt: Date().addingTimeInterval(1)))
+let s2 = try store2.ocrStamp(contentHash: "hS", provider: "paddle")
+check(s2 != s1 && s2.hasPrefix("1|"), "重识别同一页（页数不变）：也变了（\(s2)）")
+try store2.upsertOCRPage(OCRPage(contentHash: "hS", page: 0, provider: "vision", payload: blob, lang: nil, createdAt: .now))
+try store2.upsertOCRPage(OCRPage(contentHash: "hT", page: 0, provider: "paddle", payload: blob, lang: nil, createdAt: .now))
+check(try store2.ocrStamp(contentHash: "hS", provider: "paddle") == s2, "别的引擎 / 别的内容写入：不影响")
+try store2.deleteOCRPages(contentHash: "hS")
+check(try store2.ocrStamp(contentHash: "hS", provider: "paddle") == "0|", "删掉：回到 0|")
+
 print("\n\(pass) passed, \(fail) failed")
 exit(fail == 0 ? 0 : 1)
