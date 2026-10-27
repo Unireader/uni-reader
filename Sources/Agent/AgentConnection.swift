@@ -26,6 +26,11 @@ final class AgentConnection {
     private var pgid: Int32?
     private var pump: Task<Void, Never>?
     private var chats: [String: WeakChat] = [:]
+    /// 还没登记的会话先到的「会话状态」通知，登记时补交（`register`）。建会话的应答与紧跟着推来的命令列表
+    /// 走两条路到主线程（应答经 swift-acp 的 actor 再回主线程，通知直接进泵），谁先到不一定；Kimi 特意等应答
+    /// 发完才推命令列表，我们这边仍可能先处理通知——没人接就丢了，整段会话的命令列表都是空的。
+    /// 只留命令列表与上下文占用（各留最后一条）：正文碎片不能留，被取消的旧会话迟到的碎片会在下次回放它时混进去。
+    private var early: [String: [SessionUpdate]] = [:]
     private(set) var isDead = false
     /// 进程没了（崩溃 / 被杀 / 自己退出）。池子据此把它摘掉，下次用时重开。
     var onExit: (() -> Void)?
@@ -85,7 +90,7 @@ final class AgentConnection {
                 guard n.method == "session/update", let p = n.params,
                       let data = try? enc.encode(p),
                       let u = try? dec.decode(SessionUpdateNotification.self, from: data) else { continue }
-                self?.chats[u.sessionId.value]?.chat?.apply(u.update)
+                self?.deliver(u.update, to: u.sessionId.value)
             }
             self?.didExit()
         }
@@ -102,8 +107,25 @@ final class AgentConnection {
 
     // MARK: - 会话登记
 
-    func register(_ chat: AgentChat, sessionId: String) { chats[sessionId] = WeakChat(chat: chat) }
+    func register(_ chat: AgentChat, sessionId: String) {
+        chats[sessionId] = WeakChat(chat: chat)
+        for u in early.removeValue(forKey: sessionId) ?? [] { chat.apply(u) }
+    }
     func unregister(sessionId: String) { chats.removeValue(forKey: sessionId) }
+
+    private func deliver(_ update: SessionUpdate, to sessionId: String) {
+        if let chat = chats[sessionId]?.chat { chat.apply(update); return }
+        switch update {
+        case .availableCommandsUpdate, .usageUpdate:
+            if early[sessionId] == nil, early.count >= 8 { early.removeAll() }   // 只是兜个时序，别越攒越多
+            var list = early[sessionId] ?? []
+            list.removeAll { $0.sessionUpdateType == update.sessionUpdateType }
+            list.append(update)
+            early[sessionId] = list
+        default:
+            break
+        }
+    }
     var hasChats: Bool { chats.values.contains { $0.chat != nil } }
 
     fileprivate func chat(for sessionId: String) -> AgentChat? { chats[sessionId]?.chat }

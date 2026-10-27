@@ -153,6 +153,11 @@
   那段不动，没贴底不摘）。新加条目类型照此办。正文长高（固有高度变）只要 0.1ms，不是问题；转圈放不放在 stack 里
   也几乎没差别。离屏验证 `spike/agent-flat-row-test.swift`（65 项：与原版逐个子视图对位置、展开收起、放进对话记录不被拉伸、性能对比 + 样张）、
   `spike/agent-transcript-test.swift` 第 9 节。
+- **`NSBox` 别写 `box.contentView = stack`**（踩了两次：2026-09-26 权限卡片「元素全挤在一行」、2026-10-27 Kimi 的
+  二十来项待办整片叠在上面的条目上）：box 的内容视图走 autoresizing，里面的约束传不到 box 的高度上，`fittingSize`
+  只算出一行字高，内容溢出去盖住别的视图。权限卡片改成内容视图用约束钉在 box 四边；对话记录里的计划条目
+  （`Window/AI/AgentPlanView`）干脆按 frame 摆、对外只报高度（宽度变了重算、计划更新就地换内容），box 只当底。
+  离屏验证 `spike/agent-permission-card-test.swift`、`spike/agent-plan-view-test.swift`（33 项 + 浅 / 深样张）。
 - **「内容想要多宽」的约束优先级必须低于 250**（2026-10-05 离屏验证抓到）：用户消息气泡按内容收窄时，
   起初用 750 的「正文宽 = 估的宽」+ 常数 10000 表示撑满，结果窗口被撑到 1 万多 pt——窗口保持尺寸只有 500、
   `NSSplitView` 默认保持优先级 250，高过它们的偏好约束会反过来把容器撑宽。现在压在 240，撑满改用相对约束

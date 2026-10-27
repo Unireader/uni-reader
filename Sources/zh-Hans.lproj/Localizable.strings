@@ -711,6 +711,13 @@
 "Attach Images…" = "添加图片…";
 "Could not read “%@” as an image." = "无法把“%@”当作图片读取。";
 
+/* Agent 面板：上下文占用 / 压缩 / 粘贴图片（2026-10-26） */
+"Context: %1$@ of %2$@ tokens (%3$@)" = "上下文：已用 %1$@ / %2$@ token（%3$@）";
+"Compact Context" = "压缩上下文";
+"Replace the conversation so far with a summary to free up context." = "把之前的对话换成一份摘要，腾出上下文空间。";
+"Pasted Image" = "粘贴的图片";
+"Could not read the pasted image." = "无法读取粘贴的图片。";
+
 /* 设置 › 通用 › AI（2026-09-19） */
 "Web AI Panel" = "网页 AI 面板";
 "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed." = "关掉后，它的工具栏按钮不再显示、菜单项变灰，⌥ 拖截图也不会再发给它；已打开的面板和正在运行的 Agent 会被关闭。";

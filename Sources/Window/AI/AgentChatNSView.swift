@@ -473,6 +473,7 @@ final class AgentChatNSView: NSView {
         if let md = v as? AgentMarkdownView { md.onHeightChange = { [weak self] in self?.keepBottom() } }
         if let d = v as? AgentDisclosureView { d.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
         if let u = v as? AgentUserMessageView { u.markdown?.onHeightChange = { [weak self] in self?.keepBottom() } }
+        if let p = v as? AgentPlanView { p.onHeightChange = { [weak self] in self?.keepBottom() } }
         itemViews[item.id] = (item.kind, v)
         return v
     }
@@ -804,6 +805,11 @@ enum AgentItemViews {
             // 回放时同一句话可能分几片推回来：图片没变、正文还在，就地换文字
             guard let v = view as? AgentUserMessageView, v.images == images else { return false }
             return v.update(text: s)
+        case .plan(let entries):
+            // 计划每次推的都是完整清单：就地换内容，别整条重建
+            guard let v = view as? AgentPlanView else { return false }
+            v.update(entries)
+            return true
         default:
             return false
         }
@@ -854,32 +860,8 @@ enum AgentItemViews {
         return AgentDisclosureView(header: label, body: text)
     }
 
-    private static func plan(_ entries: [AgentPlanEntry]) -> NSView {
-        let box = NSBox()
-        box.title = L("Plan")
-        let rows = entries.map { e -> NSView in
-            let icon: String
-            switch e.status {
-            case .pending: icon = "circle"
-            case .inProgress: icon = "circle.lefthalf.filled"
-            case .completed: icon = "checkmark.circle"
-            case .cancelled: icon = "xmark.circle"
-            }
-            let i = NSImageView(image: NSImage(systemSymbolName: icon, accessibilityDescription: nil) ?? NSImage())
-            let l = NSTextField(wrappingLabelWithString: e.text)
-            l.font = .preferredFont(forTextStyle: .callout)
-            let s = NSStackView(views: [i, l])
-            s.alignment = .top
-            s.spacing = 6
-            return s
-        }
-        let stack = NSStackView(views: rows)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 4
-        box.contentView = stack
-        return box
-    }
+    /// 计划（Kimi 的待办）：`AgentPlanView`，就地更新。
+    private static func plan(_ entries: [AgentPlanEntry]) -> NSView { AgentPlanView(entries: entries) }
 
     private static func notice(_ s: String, _ isError: Bool) -> NSView {
         let i = NSImageView(image: NSImage(systemSymbolName: isError ? "exclamationmark.triangle" : "info.circle",
@@ -991,11 +973,70 @@ final class AgentImageThumbView: NSView {
     }
 }
 
+// MARK: - 上下文占用
+
+/// 上下文占用（`AgentContextUsage`）：输入框底行发送钮左边的「7%」，字号 / 颜色 / 高度同旁边的模型菜单；
+/// 悬停看具体数字，单击弹菜单：具体数字 +「压缩上下文」（Agent 报了压缩命令才有，`AgentChat.compactCommand`）。
+/// Agent 没报占用时藏起来（不自己估），由输入区管显隐。
+///
+/// 2026-10-27 用户实测嫌丑（截图）后改成只有百分比：原来左边还有一个系统圆形进度（确定进度的 spinning 样式），
+/// Tahoe 上画成细线圆圈里一块扇形，像个钟面；用户在纯百分比 / 容量条 / token 数三种离屏样张里选了这种。
+/// 百分比用无边框按钮而不是下拉按钮：下拉按钮自带箭头和留白，「5%」要占 100pt。
+@MainActor
+final class AgentUsageView: NSButton {
+    private var menuToShow = NSMenu()
+    /// 「值变了才重建」用的快照（同输入区那几个菜单）。
+    private var key: String?
+
+    init() {
+        super.init(frame: .zero)
+        title = ""
+        isBordered = false
+        target = self
+        action = #selector(showMenu)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    /// 摆在底行时要多宽。🔴 别用 `sizeToFit()` 量：它连高度一起改小，摆位时宽度没变就不会再设 frame，
+    /// 文字留在缩小后的框里、比旁边的模型菜单高出一截（2026-10-27 用户截图里的「7%」偏上就是这个）。
+    var preferredWidth: CGFloat { ceil(intrinsicContentSize.width) }
+
+    func update(_ usage: AgentContextUsage, compact: (() -> Void)?, canCompact: Bool) {
+        guard let short = usage.shortText, let detail = usage.detailText else { return }
+        let k = "\(usage.used)/\(usage.size)\u{1}\(compact != nil)\u{1}\(canCompact)"
+        guard k != key else { return }
+        key = k
+        // 字号同模型菜单（callout）；数字等宽，变了宽度不跳；颜色显式 labelColor（无边框按钮不设颜色会画得很淡）
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .regular)
+        attributedTitle = NSAttributedString(string: short, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+        setAccessibilityLabel(detail)
+        toolTip = detail
+        let menu = NSMenu()
+        menu.autoenablesItems = false   // 「压缩上下文」回答中要灰掉，不能交给自动校验
+        let info = NSMenuItem(title: detail, action: nil, keyEquivalent: "")
+        info.isEnabled = false
+        menu.addItem(info)
+        if let compact {
+            menu.addItem(.separator())
+            let i = ClosureMenuItem(L("Compact Context"), action: compact)
+            i.subtitle = L("Replace the conversation so far with a summary to free up context.")
+            i.isEnabled = canCompact
+            menu.addItem(i)
+        }
+        menuToShow = menu
+    }
+
+    /// 菜单贴着按钮下沿弹出（同底行那两个下拉菜单）。
+    @objc private func showMenu() {
+        menuToShow.popUp(positioning: nil, at: NSPoint(x: 0, y: isFlipped ? bounds.height + 2 : -2), in: self)
+    }
+}
+
 // MARK: - 输入区
 
-/// 输入区：一个圆角框，上面是待发图片，中间多行输入，下面一行「附件 / 模式 …… 模型 / 发送」。
+/// 输入区：一个圆角框，上面是待发图片，中间多行输入，下面一行「附件 / 模式 …… 模型 / 占用 / 发送」。
 /// **回车发送，⇧回车 / ⌥回车换行**；🔴 输入法组字时的回车是上屏，不是发送（中文用户，必须）。
-/// 默认约三行高，随内容长高，到上限后框内滚动。图片文件直接拖到框上也能附上。
+/// 默认约三行高，随内容长高，到上限后框内滚动。图片文件直接拖到框上、或 ⌘V 粘贴图片也能附上。
 @MainActor
 final class AgentComposerView: NSView, NSTextViewDelegate {
     private let chat: AgentChat
@@ -1007,6 +1048,7 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     private let attach = NSButton()
     private let modeMenu = NSPopUpButton(frame: .zero, pullsDown: true)
     private let configMenu = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let usageView = AgentUsageView()
     private let send = NSButton()
     private var textHeight: CGFloat = 56
     /// 「值变了才重建」用的快照（同 `AgentChatNSView`）：两个下拉菜单动辄几十项，
@@ -1047,6 +1089,7 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         textView.autoresizingMask = [.width]
         textView.onSend = { [weak self] in self?.sendTapped() }
         textView.onKey = { [weak self] in self?.handleMentionKey($0) ?? false }
+        textView.onPasteImage = { [weak self] in self?.pasteImages(from: $0) ?? false }
         mentionPopup.onPick = { [weak self] in self?.pickMention($0) }
         textScroll.documentView = textView
         textScroll.drawsBackground = false
@@ -1070,7 +1113,8 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         send.imagePosition = .imageOnly
         send.target = self
         send.action = #selector(sendTapped)
-        for v in [stripScroll, textScroll, placeholder, attach, modeMenu, configMenu, send] as [NSView] { addSubview(v) }
+        usageView.isHidden = true
+        for v in [stripScroll, textScroll, placeholder, attach, modeMenu, configMenu, usageView, send] as [NSView] { addSubview(v) }
         registerForDraggedTypes([.fileURL])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
@@ -1103,8 +1147,17 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         attach.isEnabled = chat.sessionId != nil
         refreshModeMenu()
         refreshConfigMenu()
+        refreshUsage()
         refreshSendButton()
         needsLayout = true
+    }
+
+    /// 上下文占用：Agent 报了才显示（新会话 / 发了压缩命令都会先收起，见 `AgentContextUsage`）。
+    private func refreshUsage() {
+        guard let u = chat.usage, u.percent != nil else { usageView.isHidden = true; return }
+        usageView.isHidden = false
+        let compact: (() -> Void)? = chat.compactCommand == nil ? nil : { [weak self] in self?.chat.compact() }
+        usageView.update(u, compact: compact, canCompact: chat.phase == .idle)
     }
 
     /// 待发图片。缩略图只在这排图片真的变了时重建；显隐与占位文字每次都要落实
@@ -1245,9 +1298,16 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         let rowY = b.height - 8 - 26
         attach.frame = NSRect(x: 10, y: rowY, width: 26, height: 26)
         send.frame = NSRect(x: b.width - 12 - 28, y: rowY - 1, width: 28, height: 28)
-        // 两个下拉菜单分「附图」与「发送」之间的宽度：放得下按原宽；放不下一起收窄（标题自动省略号截断），
+        // 占用紧挨着发送钮，按原宽摆（就几个字），两个下拉菜单再分剩下的
+        var right = send.frame.minX - 6
+        if !usageView.isHidden {
+            let w = usageView.preferredWidth
+            usageView.frame = NSRect(x: right - w, y: rowY, width: w, height: 26)
+            right = usageView.frame.minX - 4
+        }
+        // 两个下拉菜单分「附图」与「占用 / 发送」之间的宽度：放得下按原宽；放不下一起收窄（标题自动省略号截断），
         // 太窄就先让模式菜单让位——各按原宽摆会叠在一起（2026-09-19 用户报面板变窄后挤成一团）
-        let left = attach.frame.maxX + 4, right = send.frame.minX - 6
+        let left = attach.frame.maxX + 4
         let avail = max(0, right - left)
         let gap: CGFloat = 4
         modeMenu.sizeToFit()
@@ -1393,10 +1453,28 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         chat.attachFiles(urls)
         return true
     }
-    private func imageURLs(_ info: NSDraggingInfo) -> [URL] {
-        let urls = (info.draggingPasteboard.readObjects(forClasses: [NSURL.self],
-                                                       options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    private func imageURLs(_ info: NSDraggingInfo) -> [URL] { Self.imageURLs(info.draggingPasteboard) }
+
+    private static func imageURLs(_ pb: NSPasteboard) -> [URL] {
+        let urls = (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
         return urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
+    }
+
+    /// ⌘V：剪贴板里是图片就挂到输入框上（同附件按钮），否则返回 false 照常粘文字。怎么认见 `AgentPaste`。
+    private func pasteImages(from pb: NSPasteboard) -> Bool {
+        guard chat.sessionId != nil else { return false }
+        let urls = Self.imageURLs(pb)
+        switch AgentPaste.classify(types: (pb.types ?? []).map(\.rawValue), imageFileCount: urls.count) {
+        case .imageFiles:
+            chat.attachFiles(urls)
+            return true
+        case .bitmap(let type):
+            guard let data = pb.data(forType: NSPasteboard.PasteboardType(type)) else { return false }
+            chat.attachPasted(data)
+            return true
+        case .text:
+            return false
+        }
     }
 
     // 点框里空白处也进输入态
@@ -1408,6 +1486,21 @@ final class ComposerTextView: NSTextView {
     var onSend: () -> Void = {}
     /// 先给宿主看一眼（`@` 候选开着时要截 ↑↓ / 回车 / Tab / Esc）；返回 true = 已处理。组字中不问。
     var onKey: (NSEvent) -> Bool = { _ in false }
+    /// 粘贴前先给宿主看剪贴板：是图片就由它挂成附件（返回 true），否则照常粘文字。
+    var onPasteImage: (NSPasteboard) -> Bool = { _ in false }
+
+    override func paste(_ sender: Any?) {
+        if isEditable, onPasteImage(.general) { return }
+        super.paste(sender)
+    }
+
+    /// 纯文本输入框只认文字类型，剪贴板里只有图片时右键菜单的「粘贴」会是灰的；有位图就放行。
+    /// （编辑菜单那一项由 `MenuActions` 管，本来就一直可点。）
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), isEditable,
+           AgentPaste.bitmapType(in: (NSPasteboard.general.types ?? []).map(\.rawValue)) != nil { return true }
+        return super.validateUserInterfaceItem(item)
+    }
 
     override func keyDown(with event: NSEvent) {
         if !hasMarkedText(), onKey(event) { return }

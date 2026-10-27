@@ -115,6 +115,10 @@ final class AgentChat: ObservableObject {
     @Published private(set) var modes: [ModeInfo] = []
     @Published private(set) var currentMode: String?
     @Published private(set) var configs: [AgentConfigItem] = []
+    /// 上下文占用（Agent 推 `usage_update` 才有；不推的一直是 nil，面板上那块就不显示）。
+    @Published private(set) var usage: AgentContextUsage?
+    /// Agent 报上来的斜杠命令（`available_commands_update`；不推的 Agent 一直是空的）。
+    @Published private(set) var commands: [AgentCommand] = []
     @Published private(set) var permissions: [AgentPermissionAsk] = []
     @Published private(set) var history: [SessionInfo] = []
     /// 这段会话建立时 MCP 服务没开 → Agent 手上没有 unireader 工具。面板据此提示。
@@ -129,6 +133,8 @@ final class AgentChat: ObservableObject {
     private var connection: AgentConnection?
     /// 上次随消息带过去的上下文。没变就不重复带（省 token，也免得对话里满是同一段）。
     private var lastContextSent: String?
+    /// 上一轮回答什么时候结束的（收到 `session/prompt` 的应答）。认「轮次外推来的回复」用，见 `apply`。
+    private var turnEndedAt: Date?
 
     init(cwd: URL) { self.cwd = cwd }
 
@@ -248,6 +254,13 @@ final class AgentChat: ObservableObject {
 
     func addAttachment(_ image: AgentImage) { attachments.append(image) }
 
+    /// 握手说不收图：提示一句（附件按钮 / 拖进来 / 粘贴共用）。
+    private func refuseImages() -> Bool {
+        guard acceptsImages == false else { return false }
+        items.append(AgentItem(kind: .notice(String(format: L("%@ does not accept images."), agentName), isError: true)))
+        return true
+    }
+
     func addContextNote(_ note: String) { if !contextNotes.contains(note) { contextNotes.append(note) } }
 
     /// 往输入框里放一句话（视图取走；已有字就接在后面）。
@@ -258,11 +271,7 @@ final class AgentChat: ObservableObject {
     /// 用户从磁盘选的图片（附件按钮 / 拖到输入框上）：后台解码、压到长边 2000 像素再挂上。
     /// 读不了的文件（不是图片 / 已损坏）跳过并提示一句。
     func attachFiles(_ urls: [URL]) {
-        if acceptsImages == false {
-            items.append(AgentItem(kind: .notice(
-                String(format: L("%@ does not accept images."), agentName), isError: true)))
-            return
-        }
+        if refuseImages() { return }
         Task {
             let loaded = await Task.detached(priority: .userInitiated) {
                 urls.map { url in (url, AgentImageFile.load(url)) }
@@ -277,12 +286,33 @@ final class AgentChat: ObservableObject {
         }
     }
 
+    /// ⌘V 粘贴的位图（截图 / 从别的 App 复制的图）：同样后台摆正、压长边再挂上。
+    func attachPasted(_ data: Data) {
+        if refuseImages() { return }
+        Task {
+            let img = await Task.detached(priority: .userInitiated) { AgentImageFile.bitmap(data) }.value
+            if let img { attachments.append(img) }
+            else { items.append(AgentItem(kind: .notice(L("Could not read the pasted image."), isError: true))) }
+        }
+    }
+
     // MARK: - 发消息
 
     /// `mentions`：输入框里 `@` 选中的文件，各附一个 `resource_link`（只有名字和位置，不带内容）。
     func send(_ raw: String, mentions: [AgentMention] = []) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let id = sessionId, let c = connection, phase == .idle else { return }
+        // 🔴 斜杠命令（`/compact` 之类）**只发这一块文字**：三家 Agent 都只拿第一块文字认命令，其余的块
+        // 要么被扔掉（Kimi 执行内置命令只看命令名和参数——上下文块跟着丢了，`lastContextSent` 却记成已发，
+        // 下一句话就不再带上下文），要么跟着进了命令（Claude Code 把每块文字都交给 SDK）。
+        // 所以上下文块 / 图片 / `@` 文件都不带：图片和待发说明留着跟下一句话走，`lastContextSent` 不动。
+        if let cmd = AgentSlash.parse(text) {
+            // 压缩之后占用会大降，旧数字收起来，等 Agent 报新的（见 `AgentContextUsage`）
+            if AgentSlash.compactNames.contains(cmd.name) { usage = nil }
+            items.append(AgentItem(kind: .user(text, images: [])))
+            run([.text(TextContent(text: text))], session: id, on: c)
+            return
+        }
         // 握手说不收图：图片留在输入框上，这句话不发，提示一下（发出去 Agent 会整条报错）
         if !attachments.isEmpty, acceptsImages == false {
             items.append(AgentItem(kind: .notice(
@@ -319,11 +349,26 @@ final class AgentChat: ObservableObject {
             }
         }
         items.append(AgentItem(kind: .user(text, images: images)))
+        run(blocks, session: id, on: c)
+    }
+
+    /// 压缩上下文（占用菜单里那一项）：发 Agent 自己报的那条命令，和用户在输入框里打 `/compact` 一样。
+    func compact() {
+        guard let name = compactCommand else { return }
+        send("/" + name)
+    }
+
+    /// 这个 Agent 压缩上下文用哪条命令；它没报命令列表就是 nil（面板不给那一项）。
+    var compactCommand: String? { AgentSlash.compactCommand(in: commands) }
+
+    /// 发出去，等这一轮回答结束。
+    private func run(_ blocks: [ContentBlock], session id: String, on c: AgentConnection) {
         phase = .running
         Task {
             do {
                 let r = try await c.prompt(id, blocks)
                 guard sessionId == id else { return }   // 中途换了会话：这条结果不属于眼前这段
+                turnEndedAt = Date()
                 switch r.stopReason {
                 case .cancelled: items.append(AgentItem(kind: .notice(L("Stopped."), isError: false)))
                 case .maxTokens, .maxTurnRequests:
@@ -402,6 +447,16 @@ final class AgentChat: ObservableObject {
         switch update {
         case .currentModeUpdate(let m): currentMode = m
         case .configOptionUpdate(let opts): applyConfigs(opts)
+        case .usageUpdate(let u): usage = AgentContextUsage(used: u.used, size: u.size)
+        case .availableCommandsUpdate(let list):
+            commands = list.map { AgentCommand(name: $0.name, description: $0.description, hint: $0.input?.hint) }
+        case .agentMessageChunk(let b) where phase == .idle && (turnEndedAt.map { Date().timeIntervalSince($0) > 0.5 } ?? false):
+            // 这一轮早结束了还推来回复文字 = 轮次外的消息（Kimi 后台压缩上下文做完的回报，几秒后才来）：
+            // 单起一条，别接在上一条回复后面，否则两段话首尾相连。刚结束那半秒不算：通知和应答走两条路到主线程，
+            // 这一轮最后几片正文可能比应答晚到一点。单起之后清掉，同一条消息后面的碎片照常接上。
+            turnEndedAt = nil
+            guard let t = AgentTranscript.text(of: b)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return }
+            items.append(AgentItem(kind: .agent(t)))
         case .sessionInfoUpdate(let info):
             if let t = info.title {
                 let clean = AgentTranscript.stripHidden(t).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -441,6 +496,9 @@ final class AgentChat: ObservableObject {
     private func attach(_ id: String, to c: AgentConnection) {
         sessionId = id
         lastContextSent = nil
+        turnEndedAt = nil
+        usage = nil        // 占用是上一段会话的数字，换会话（新建 / 回放）都从零等 Agent 重新报
+        commands = []      // 同上；Agent 建会话 / 回放后会再推一遍（登记前先到的那条由连接补交，见 `register`）
         c.register(self, sessionId: id)
     }
 
@@ -547,12 +605,25 @@ enum AgentImageFile {
     static func load(_ url: URL) -> AgentImage? {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: Int(PageSnip.maxLongEdge),
-              ] as CFDictionary)
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return image(src, name: url.lastPathComponent,
+                     note: "an image file the user attached (\"\(url.lastPathComponent)\").")
+    }
+
+    /// 剪贴板里的位图（⌘V 贴的截图 / 从预览复制的图）：走同一条摆正 + 压长边的路子转成 JPEG / PNG，
+    /// 截图原生的 TIFF 是未压缩的，直接 base64 塞进消息能有几十 MB。
+    static func bitmap(_ data: Data) -> AgentImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let name = L("Pasted Image")
+        return image(src, name: name, note: "an image the user pasted from the clipboard.")
+    }
+
+    private static func image(_ src: CGImageSource, name: String, note: String) -> AgentImage? {
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(PageSnip.maxLongEdge),
+        ] as CFDictionary)
         else { return nil }
         let alpha: Bool
         switch cg.alphaInfo {
@@ -564,9 +635,8 @@ enum AgentImageFile {
         guard let dst = CGImageDestinationCreateWithData(out, type.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(dst, cg, alpha ? nil : [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
         guard CGImageDestinationFinalize(dst) else { return nil }
-        let name = url.lastPathComponent
         return AgentImage(data: out as Data, mimeType: type.preferredMIMEType ?? (alpha ? "image/png" : "image/jpeg"),
-                          caption: name, note: "an image file the user attached (\"\(name)\").")
+                          caption: name, note: note)
     }
 }
 

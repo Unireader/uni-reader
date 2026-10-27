@@ -276,3 +276,60 @@ Agent 的回复从前只解析行内语法（`AttributedString(markdown:)` 的 `
 - **浮窗**（`Window/AI/AgentMentionPopup`）：不会变成 key 的子窗口，菜单材质 + `.inset` 表格 + 系统文件图标，
   摆在 `@` 上方（放不下才放下方）。焦点始终留在输入框：↑↓ / ⌃P⌃N 选、回车 / Tab 确认、Esc 关（这个 `@`
   不再自己弹出，直到离开它）、鼠标单击也能选；组字中不动它、按键也不截。
+
+## 9. 上下文占用 / 压缩上下文 / 粘贴图片（2026-10-26）
+
+用户提的三件：「agent 页面上下文信息显示（token 占比）」「/compact 命令的支持」「agent ⌘V 图片粘贴」。
+2026-10-26 读本机三家 Agent 安装包的源码（Kimi 2.3.2 `~/.kimi-code/bin/kimi` 里打包的 JS、Qwen Code
+`~/.local/lib/qwen-code`、Claude Code 适配器 `claude-agent-acp`）定的做法。
+
+### 9.1 上下文占用（`Agent/AgentUsage.swift` + `AgentChatNSView.swift` 的 `AgentUsageView`）
+
+- 只用 Agent 推来的 `usage_update`（`used` / `size`）。🔴 **不按字数自己估**（用户定：估出来的和 Agent 真实上下文对不上，
+  不可靠的百分比比空着更糟）——没推就整块不显示。
+- 谁什么时候推：Kimi **每轮回答结束推一次**（`used` = 当前上下文 token 数，`size` = 模型窗口）；Claude Code 每轮结束推、
+  压缩完马上再推一次；Qwen Code 代码里有，但 2026-10-26 探针（`spike/acp-notify-probe.py`）一轮下来一条都没收到。
+- 换会话（新建 / 回放）清零等 Agent 重新报——回放的旧会话 Kimi 要说一句之后才有。发出压缩命令也清零（见 9.2）。
+- 界面：输入框底行发送钮左边**只有百分比**「7%」（无边框按钮，字号 / 颜色 / 高度同旁边的模型菜单，数字等宽）。
+  悬停 = 具体数字；单击弹菜单：具体数字 +「压缩上下文」（Agent 报了压缩命令才有，回答中灰掉）。
+  2026-10-27 用户实测嫌丑（截图）：原来左边还有系统圆形进度（`NSProgressIndicator` 确定进度的 spinning 样式），Tahoe 上画成
+  细线圆圈里一块扇形、像钟面；且「7%」比模型菜单的字高出一截——量宽度用了 `sizeToFit()`，它连高度一起改小，宽度没变时
+  不再重设 frame。用户在「纯百分比 / 容量条 + 百分比 / token 数」三种离屏样张里选了纯百分比；量宽度改用 `intrinsicContentSize`。
+  百分比不用下拉按钮：下拉按钮自带箭头与留白，「5%」要占 100pt。
+
+### 9.2 斜杠命令与压缩（`Agent/AgentCommand.swift`）
+
+- 三家都**只看第一块文字**认命令：`/` 开头，`/` 后到第一个空白是命令名，命令名里有 `/` 不算（路径）。
+  Kimi 内置 `compact` / `status` / `usage` / `mcp` / `tasks` / `help` + 技能（`skill:名字`），在本地执行、不走模型；
+  Claude Code 交给 SDK（`compact` 等）；Qwen Code 压缩叫 **`compress`**（别名 `summarize`）。
+- 🔴 **斜杠命令只发那一块文字**（`AgentChat.send`）：原来照常在后面挂上下文块，Kimi 执行内置命令时把其余块全扔了，
+  我们却把上下文记成「已发」，下一句话就不再带；Claude Code 则会把上下文块一起交给命令。现在命令不带上下文块 /
+  图片 / `@` 文件，图片和待发说明留着跟下一句话走，`lastContextSent` 不动。
+- 命令列表来自 `available_commands_update`（`AgentChat.commands`）。Kimi 特意等 `session/new` 的应答发完才推，但我们这边
+  应答经 swift-acp 的 actor 再回主线程、通知直接进泵，仍可能先处理通知、那时会话还没登记 → 丢。所以 `AgentConnection`
+  对还没登记的会话**只**暂存命令列表与占用两类（各留最后一条），登记时补交；正文碎片不暂存（被取消的旧会话迟到的碎片
+  会在下次回放它时混进去）。
+- 「压缩上下文」菜单项 = 发 Agent 报的那条命令（`compact` 或 `compress`），和用户自己打一样。
+- Kimi 的 `/compact` 在后台跑：先回一句「Context compaction started …」结束这一轮，几秒后**在轮次外**再推一条
+  「Compaction completed. Tokens before / after …」。轮次结束超过 0.5 秒还来的回复文字单起一条
+  （`AgentChat.apply`），不接在上一条后面；半秒内的仍算这一轮（通知与应答到主线程的先后不定）。
+- 没做：输入 `/` 时弹命令候选（像 `@` 那样）。命令列表已经拿到了，要做时复用 `AgentMentionPopup` 的做法。
+
+### 9.3 ⌘V 粘贴图片（`Agent/AgentPaste.swift` + `ComposerTextView.paste`）
+
+- 编辑菜单的「粘贴」先走响应者链（`MenuActions.route`），焦点在输入框时由 `ComposerTextView.paste` 先看剪贴板：
+  访达里复制的图片文件 → 按文件附上；只有位图（截图、预览、浏览器「拷贝图像」）→ 附上；其余照常粘文字。
+- 🔴 同时有文字和 RTF / HTML 的是**文档里复制的文字**（Pages / Word / Excel 复制文字都会另附一张渲染图）→ 粘文字；
+  访达里复制的不是图片的文件（带图标图）→ 粘文件名；剪贴板里的 PDF 不当位图。
+- 位图与选文件走同一条 `AgentImageFile`：摆正、长边压到 2000、转 JPEG / PNG（截图原生 TIFF 不压缩，直接 base64 能有几十 MB）。
+- 纯文本输入框只认文字类型，剪贴板只有图时右键菜单的「粘贴」原本是灰的，`validateUserInterfaceItem` 放行。
+- spike `agent-usage-test.swift` 38 项（占用显示 / 命令认法 / 剪贴板分类，含一块私有命名剪贴板核对 AppKit 类型名）。**待用户实测**。
+
+### 9.4 计划条目叠到别的条目上（2026-10-27 用户截图）
+
+Kimi 导习题时推来二十来项的待办（ACP `plan`），整片清单叠在上面的工具调用 / 思考条目上。原因是计划条目写成了
+`NSBox` + `box.contentView = stack`：box 的内容视图走 autoresizing，约束传不到 box 的高度上，box 只有一行字高
+（权限卡片 2026-09-26 栽过同一个坑）；另外条目里还套了两层 `NSStackView`，违反「对话记录条目里别套 stack」。
+现在是 `Window/AI/AgentPlanView`：分组框只当底，「计划」+ 每项「状态图标 + 会折行的文字」按 frame 摆、对外只报高度；
+宽度变了重算高度并让对话记录重新对齐滚动位置；Agent 每次推完整清单时就地换内容，不再整条重建。
+离屏验证 `spike/agent-plan-view-test.swift` 33 项 + 浅 / 深样张。**待用户实测**。

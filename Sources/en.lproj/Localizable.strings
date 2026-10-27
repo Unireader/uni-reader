@@ -709,6 +709,13 @@
 "Attach Images…" = "Attach Images…";
 "Could not read “%@” as an image." = "Could not read “%@” as an image.";
 
+/* Agent 面板：上下文占用 / 压缩 / 粘贴图片（2026-10-26） */
+"Context: %1$@ of %2$@ tokens (%3$@)" = "Context: %1$@ of %2$@ tokens (%3$@)";
+"Compact Context" = "Compact Context";
+"Replace the conversation so far with a summary to free up context." = "Replace the conversation so far with a summary to free up context.";
+"Pasted Image" = "Pasted Image";
+"Could not read the pasted image." = "Could not read the pasted image.";
+
 /* Settings › General › AI (2026-09-19) */
 "Web AI Panel" = "Web AI Panel";
 "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed." = "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed.";
