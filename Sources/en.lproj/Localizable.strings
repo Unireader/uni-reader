@@ -1031,3 +1031,13 @@
 "Align Left" = "Align Left";
 "Align Center" = "Align Center";
 "Align Right" = "Align Right";
+
+/* 习题：题目笔记 + 重做上次做错的（EXERCISE-PLAN.md §12） */
+"Add a Note" = "Add a Note";
+"Edit Note" = "Edit Note";
+"My Note" = "My Note";
+"Write a note for this question. Use $…$ for formulas." = "Write a note for this question. Use $…$ for formulas.";
+"Redo Last Wrong" = "Redo Last Wrong";
+"Practice only the questions you got wrong last time, all ready to answer again. Get one right and it won’t come back next time." = "Practice only the questions you got wrong last time, all ready to answer again. Get one right and it won’t come back next time.";
+"Wrong last time here: %d" = "Wrong last time here: %d";
+"No question here was wrong last time." = "No question here was wrong last time.";

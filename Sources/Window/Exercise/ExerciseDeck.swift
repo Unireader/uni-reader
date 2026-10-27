@@ -59,11 +59,17 @@ final class ExerciseDeck {
     var drafts: [String: ExerciseResponse] = [:]
     /// 这一轮点过「再做一次」的题：以前的作答不再显示，等重新答。
     private var redoing: Set<String> = []
-    /// 顶上的「只看没做过」。换了就按它重取一份快照（`setFilter`）。
+    /// 顶上的两个开关（「只看没做过」/「重做上次做错的」，至多开一个）。换了就按它重取一份快照（`setFilter`）。
     private(set) var filter: ExerciseFilter = .all
+    /// 这一组（不管筛选）有哪些题：「重做上次做错的」要按全组数一数有几道（开关能不能点）。
+    private var scopeItems: [Exercise] = []
 
     /// 这一组有没有「只看没做过」：错题本那一支没有（进了错题本的题一定做过，筛出来永远是空的）。
+    /// 「重做上次做错的」哪一组都有——错题本里正好用它挑出还没做对的。
     var offersUnansweredFilter: Bool { !scope.isMistakes }
+
+    /// 这一组里上一次做错的有几道（`Exercise.lastResultWrong`；按库里的统计，这一轮刚答的也算进去了）。
+    var lastWrongCount: Int { scopeItems.filter { $0.lastResultWrong(stats[$0.id]) }.count }
 
     private static var decks: [String: ExerciseDeck] = [:]
 
@@ -86,22 +92,44 @@ final class ExerciseDeck {
         self.scope = scope
         self.workspace = workspace
         stats = workspace.exerciseAttemptStats()
-        items = workspace.exercises(in: scope).filter(passes)
+        scopeItems = workspace.exercises(in: scope)
+        items = scopeItems.filter(passes)
     }
 
     var current: Exercise? { items.indices.contains(index) ? items[index] : nil }
 
-    private func passes(_ e: Exercise) -> Bool { filter.includes(e, attempts: stats[e.id]?.attempts ?? 0) }
+    private func passes(_ e: Exercise) -> Bool { filter.includes(e, stats: stats[e.id]) }
 
     /// 换筛选：按新条件重取一份快照，尽量停在原来那道题上。这一轮答过什么不丢。
+    /// 换成「重做上次做错的」= 开始重做一轮（`startLastWrongRound`）。
     func setFilter(_ f: ExerciseFilter) {
-        guard f != filter, f == .all || offersUnansweredFilter, let ws = workspace else { return }
+        guard f != filter, f != .unanswered || offersUnansweredFilter, workspace != nil else { return }
         filter = f
+        if f == .lastWrong { startLastWrongRound(); return }
         let curId = current?.id
-        stats = ws.exerciseAttemptStats()
-        items = ws.exercises(in: scope).filter(passes)
+        resnapshot()
         index = curId.flatMap { id in items.firstIndex { $0.id == id } } ?? 0
         notify(.content)
+    }
+
+    /// 重做上次做错的（用户 2026-10-27 要的）：按**此刻**的统计重挑一遍上次做错的题，这一轮在它们上答过的清掉，
+    /// 从第一道练起。以前的作答在这个开关下一律不显示（`answer(for:)`），所以挑出来的都等着重新作答。
+    /// 这一轮答对的照旧留在眼前（不会突然消失），下次再挑就不在了——「做对一次就不用再做」。
+    /// 开着这个开关时点「全部重做」也走这里（再挑一遍），而不是把这一轮答对的也拉回来重做。
+    func startLastWrongRound() {
+        guard filter == .lastWrong, workspace != nil else { return }
+        resnapshot()
+        for e in items { answers[e.id] = nil }
+        index = 0
+        notify(.content)
+    }
+
+    /// 按现在的筛选重取统计和快照。
+    private func resnapshot() {
+        guard let ws = workspace else { return }
+        stats = ws.exerciseAttemptStats()
+        scopeItems = ws.exercises(in: scope)
+        items = scopeItems.filter(passes)
     }
 
     /// 库里变了：已在快照里的就地换成新内容（被删的去掉），新进范围、过得了筛选的接在末尾。
@@ -110,6 +138,7 @@ final class ExerciseDeck {
         guard let ws = workspace else { return }
         stats = ws.exerciseAttemptStats()
         let fresh = ws.exercises(in: scope)
+        scopeItems = fresh
         let byId = Dictionary(fresh.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let curId = current?.id
         var next: [Exercise] = []
@@ -144,7 +173,8 @@ final class ExerciseDeck {
     /// （选择题 `Exercise.earlierAnswer`，填空 / 主观题 `Exercise.earlierResponse`）。
     func answer(for e: Exercise) -> Answer? {
         if let a = answers[e.id] { return a }
-        guard !redoing.contains(e.id) else { return nil }
+        // 「重做上次做错的」：这一组都是要重做的题，以前那次不显示
+        guard !redoing.contains(e.id), filter != .lastWrong else { return nil }
         if e.kind.isChoice {
             guard let p = e.earlierAnswer(stats[e.id]) else { return nil }
             return Answer(response: ExerciseResponse(keys: p.chosen), correct: p.correct, earlier: p.from)
@@ -220,6 +250,8 @@ final class ExerciseDeck {
 
     func setStarred(_ e: Exercise, _ on: Bool) { workspace?.setExerciseStarred(id: e.id, on) }
     func setWrong(_ e: Exercise, _ on: Bool) { workspace?.setExerciseWrong(id: e.id, on) }
+    /// 题目笔记（练习页「笔记」那一块）：空 = 删掉。
+    func setNote(id: String, _ text: String) { workspace?.setExerciseNote(id: id, text) }
 
     /// 这一轮做了几道、对几道（顶栏那行字）。
     var sessionSummary: (done: Int, correct: Int) {

@@ -13,6 +13,8 @@
 > 两列（`exercise.chapter`、`exercise_attempt.source`）在 v20 发布前补进同一版（开发包已建过表的库靠 `ADD COLUMN` 补）。
 > **2026-10-13 第三轮：填空 / 主观题**（schema v21，§11）：填空能程序判对的直接判、对不上的交给人判；主观题只给参考答案、
 > 用户自己判对错；可以打字也可以在内置小画板上手写；Agent 能读作答（含手写图）并批改。本轮只做 Mac，平板只显示题干。
+> **2026-10-27 第四轮：题目笔记 + 重做上次做错的**（schema v22，§12）：每道题能写一段自己的笔记（判完才显示）；
+> 顶栏加「重做上次做错的」开关，只练上一次结果是错的题、都重新作答，答对一次下次就不在了。本轮只做 Mac。
 
 ## 1. 需求
 
@@ -79,6 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_
 | `wrong` | 在错题本里。**答错置 1；只有用户手动「移出错题本」置 0**（拍板 ③）；答对不动它 |
 | `source` | 谁导入的（MCP 客户端名，同批注的 `NoteSource.provider`） |
 | `chapter` | 所属章节在目录里的路径，**JSON 字符串数组**（顶层 → 最深一级）；空串 = 没设（§2.3） |
+| `note` | 用户给这道题写的笔记（Markdown + `$…$`），空串 = 没写。用户状态，重导题目不动它（v22，§12） |
 | `exercise_attempt.source` | `''` = 在 App 里练的；`'mark'` = 从用户在文档上的作答（高亮 / 手写）认出来的，**每道题至多一条**（§2.4） |
 
 `payload`（JSON，键 snake_case，新键一律可选、`decodeIfPresent`，老行不迁移）：
@@ -266,7 +269,7 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
 ## 8. 本轮不做
 
 判断题；~~填空 / 解答题~~（2026-10-13 做了，§11）；~~平板（安卓模式1 / 网页）练习与离线镜像同步~~（安卓两种模式 + 离线镜像见 §10，网页采集页仍不做）；乱序 / 计时 / 正确率统计图表；
-「连续答对 N 次自动移出错题本」（用户选了只能手动出）；页面上标出已识别的题（PDF 上的框）；题目笔记。
+「连续答对 N 次自动移出错题本」（用户选了只能手动出）；页面上标出已识别的题（PDF 上的框）；~~题目笔记~~（2026-10-27 做了，§12）。
 
 ## 9. 实现记录（2026-10-10）
 
@@ -590,3 +593,84 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
       练习页当场显示「Agent 判为…」和评语；不同意可以改判。
   36. 让 Agent「批改今天做的主观题」（不点按钮，直接在面板里说）→ 它用 `list_exercise_attempts ungraded_only` 找到并批改。
   37. 平板（模式1 / 模式2）：新题型只显示题干 + 「填空题和主观题暂时请在 Mac 上作答。」，选择题照常。
+
+## 12. 第四轮：题目笔记 + 重做上次做错的（2026-10-27，schema v22）
+
+用户原话：「题目补充文字笔记（备注）：这样可以给错题补上笔记」「加一个 重做上一次做错的，这样可以继续做没有做对过的题，错题，
+以及做过一次正确的就可以不做」。
+
+三条拍板（用户 2026-10-27 选的，都是推荐项）：
+
+1. **挑「最近一次是错的」**：看每道题最近一次的结果（就是练习页上显示的「上次作答」）——错的进、对的不进。
+   答对一次下次就不再出现；答对过、后来又做错的也会进来。还没判对错的（主观题等自己判、题目没答案）不算错。
+   （另一个选项是「从来没答对过」，没选。）
+2. **本轮只做 Mac**：安卓只跟表结构（`Schema.kt` v22）+ 离线镜像把笔记带过去；平板上看不到笔记、没有这个开关，放下一轮。
+3. **笔记判完才显示**（同解析）：作答之前不显示，免得重做错题时笔记先把答案剧透了。
+
+### 12.1 题目笔记
+
+- **数据**：`exercise` 表尾加一列 `note TEXT NOT NULL DEFAULT ''`（`addColumnIfMissing`，安卓 `ADD_COLUMNS` 同序；也是 `MirrorFp.specs`
+  的列序）。一道题一段，Markdown + `$…$`，空串 = 没写。和收藏 / 错题一样是**用户状态**：`upsertExercise` 的 `ON CONFLICT` 不碰它，
+  Agent 重导题目冲不掉；只经 `LibraryStore.setExerciseNote` 写（同时改 `updated_at`，离线镜像按它取新）。
+- **练习页**（`Window/Exercise/ExerciseNoteView`）：判完后在解析下面——没写过只有「添加笔记」；写过是「笔记」标题 + 渲染好的笔记 +
+  「编辑笔记」。编辑 = 多行输入框（随内容长高到 320 点）+「完成」。**边写边存**（停手 0.8 秒存一次，没变不写），
+  「完成」/ ⌘Return / Esc 收起；输入框失去焦点、换题、「再做一次」、切走标签时都先存下。没有「取消」——字已经存了，改回去用 ⌘Z。
+- **列表**：多一列「笔记」（一行），同练习页的规则——显示着作答的题才露出笔记，「重做上次做错的」里还没重做的题这一列是空的。
+- **MCP**：`list_exercises` 每道题多 `note`（没写就不带这个键）；`update_exercises` 可以给 `note`（整段替换，空串 = 删掉），
+  说明里写明**只在用户要求时写**（`MCPServer.instructions`、Agent 面板上下文串、`skills/unireader-exercise-import/SKILL.md` 同）。
+  `import_exercises` 不收它。写入经 `WorkspaceManager.saveExercise`：笔记变了另调 `setExerciseNote`。
+- 它和 PDF 上的文字笔记（批注，`note` 表）是两回事：界面上叫「笔记」，英文键用 `Add a Note` / `Edit Note` / `My Note`
+  （`Add Note` / `Note` 已被批注占用、中文是「添加批注」「批注」）。
+
+### 12.2 重做上次做错的
+
+- **规则**（`Exercise.lastResultWrong`，纯函数，spike 覆盖）：选择题看 `earlierAnswer(stats).correct == false`，
+  填空 / 主观题看 `earlierResponse(stats).correct == false`——和练习页挑「上次作答」是同一份规则（App 里练的最近一次优先，
+  没练过才看书上的作答；选择题按现在的答案现判）。
+- **筛选值** `ExerciseFilter.lastWrong = 4`（`2` / `3` 是去掉的错题 / 收藏，不许再分配）。`includes` 改成收这道题的统计。
+- **顶栏**：「全部重做」右边多一个开关「重做上次做错的」（按下时高亮），与「只看没做过」至多开一个（同一个 `ExerciseDeck.filter`）。
+  **哪一组都有**，错题本里也有——错题本里的题只能手动移出，所以里面有答对过的；开这个开关正好挑出还没做对的。
+  这一组里一道上次做错的都没有时它是灰的（开着时总能关）；提示里写这一组有几道。
+- **开 = 重做一轮**（`ExerciseDeck.startLastWrongRound`）：按此刻的统计重挑一遍，这一轮在它们上答过的清掉，切到练习页、从第一道练起。
+  开着时以前的作答一律不显示（`answer(for:)`），所以挑出来的都等着重新作答。这一轮答对的照旧留在眼前（不会突然消失），
+  下次再挑就不在了。开着时点「全部重做」= 再挑一遍（不把这一轮答对的拉回来）。关掉 = 回到全部，这一轮答的照旧显示。
+- 只管 App 开着期间（同「全部重做」）；退出重开后开关是关着的。
+- **平板**：`exDeck.filter` 可能发 `4`；老平板只认 `1`，按「全部」显示开关状态，看到的是同一份挑出来的题（`PROTOCOL.md §4.9`）。
+  平板发 `exAct` 4 带 `0` / `1` 照旧，会把 Mac 这边的开关一起关掉。
+
+### 12.3 代码落点
+
+| 层 | 文件 |
+|---|---|
+| 存储 | `Store/LibraryStore.swift`（v22 列、`setExerciseNote`、`upsertExercise` 不碰笔记）、`Store/LibraryModels.swift`、`Store/MirrorFingerprint.swift` |
+| 纯逻辑 | `App/Exercise.swift`（`Exercise.note`、`lastResultWrong`、`ExerciseFilter.lastWrong`） |
+| 执行层 | `App/WorkspaceManager+Exercise.swift`（`setExerciseNote`、`saveExercise` 带笔记） |
+| 界面 | `Window/Exercise/ExerciseNoteView.swift`（新，离屏测试 `spike/exercise-note-test.swift`）、`ExercisePracticeView.swift`、`ExerciseDeck.swift`、`ExerciseTabView.swift`、`ExerciseListView.swift` |
+| MCP / Agent | `MCP/MCPTools+Exercises.swift`、`MCP/MCPFacade+Exercises.swift`、`MCP/MCPServer.swift`、`Agent/AgentChat.swift`、`skills/unireader-exercise-import/SKILL.md` |
+| 安卓 | `local/store/Schema.kt`（v22）、`local/store/MirrorFp.kt`、`MirrorFpTest`（向量 #30 改 / #33 新） |
+
+### 12.4 验证（2026-10-27）
+
+- `spike/exercise-test.swift` 280 项全过（新加 22 项：笔记列新建能写 / 重导不冲掉 / `setExerciseNote` 改 `updated_at` / 删掉 /
+  老库补列；「上一次的结果是错的」各种情形：没做过、错、错后对、对后错、只有书上的、书上错练对、没答案、答案改了、主观题判错 / 没判 / 判对、
+  库里真记几次作答；筛选值 0 / 1 / 4）。
+- `spike/mirror-fp-test.swift` 64 项全过；向量 33 → 34 条：**#30 的编码与 fp 变了**（同一行在 15 列规格下多一个 NULL 列，
+  末尾多 `1f00`），这是列规格本身变了，同 §11.5 的 #31；新加 #33（写了笔记的那一行）。⚠️ 旧版 App 借出的离线副本用新版同步时，
+  `exercise` 行的基线指纹对不上 → 两边都算「改过」→ 按 `updated_at` 取新，内容一样，不丢东西。
+- `spike/exercise-note-test.swift`（新，离屏）26 项全过：三种样子、边写边存（停手 0.8 秒存一次、没改不再存）、正在写时库里变了不动输入框、
+  「完成」/ Esc / 换题（按原来那道题的 id 存）/ 失去焦点 / 离开窗口都先存下、只写空白不存、输入框随内容长高、排版不重叠；
+  出了浅色 / 深色样张自查过（离屏截图画不出公式图，位置是留出来的）。
+- Mac Debug 编译通过、改动的文件没有新警告；回归 `trash-test` 71 项、`store-test` 54 项全过，`mirror-apply-test` 55 过 1 不过（TODO 里那条老的）。
+- 安卓 `assembleDebug` 通过，JVM 单测 158 项全过（`MirrorFpTest` 列表 + 向量 #30 / #33 跟上）。
+- 🔴 练习页的笔记、顶栏开关都没有在真 App 里跑过（不替用户实测），由用户实测。
+
+### 12.5 实测清单（用户）
+
+  38. 做完一道题（或翻到做过的题）：解析下面有「添加笔记」；写几行（含 `$…$` 公式）→ 停一下、点「完成」/ ⌘Return / Esc 收起，
+      显示渲染好的笔记 +「编辑笔记」；写到一半直接翻下一题 / 切标签再回来，写的还在。
+  39. 没作答的题（或点了「再做一次」）看不到笔记；列表「笔记」列只在显示着作答的题上有字。
+  40. 让 Agent「给这道错题写个笔记」→ 它用 `update_exercises` 的 `note` 写，练习页当场显示；Agent 重导题目后笔记还在。
+  41. 顶栏「重做上次做错的」：按下 → 只剩上次做错的题、都能重新作答、从第一道开始；答对几道后关掉再按一次 → 答对的不在了；
+      和「只看没做过」互斥；一道错题都没有时是灰的；错题本里也有这个开关。
+  42. 开着「重做上次做错的」点「全部重做」→ 重新挑一遍（这一轮答对的不再出现）。
+  43. 平板（模式2）开着同一组：Mac 按下开关后平板看到的也是挑出来的那几道、都等着作答；平板点「只看没做过」会把 Mac 的开关一起关掉。

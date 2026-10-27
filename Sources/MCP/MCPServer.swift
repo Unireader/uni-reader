@@ -181,7 +181,8 @@ final class MCPServer: ObservableObject {
     go in user_answer / user_blanks; fill in answers later from an answer key with list_exercises + update_exercises. \
     To grade the user's fill-in or subjective answers, read them with list_exercise_attempts (render_exercise_answer \
     for handwriting), compare with the reference answer, and save right / wrong plus feedback with \
-    grade_exercise_attempts.
+    grade_exercise_attempts. Each exercise can also carry the user's own note (note in list_exercises; it is not a \
+    text note on the PDF): change it with update_exercises note only when the user asks.
     """
 
     /// 能访问到的端点（面板展示）：回环模式只有 127.0.0.1；所有接口模式 = 本机每个 IP 各一个（`NetWatch`，

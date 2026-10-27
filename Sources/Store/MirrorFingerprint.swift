@@ -134,11 +134,13 @@ enum MirrorFp {
         // `exercise` 按 `updated_at` 取新（收藏 / 进出错题本 / 设章节都改它）；`exercise_attempt` 一次作答一行、
         // 两边各做的自然并起来，没有修改时间（只有 Mac 重判会改 `correct`）→ 冲突保留源盘。
         // 列序 = 全新库 `CREATE TABLE` 的顺序（`chapter` / `source` 在表尾）。
+        // v22（`EXERCISE-PLAN.md §12`）表尾多一列笔记 `note`；写笔记也改 `updated_at`，照样按它取新。
         TableSpec(table: "exercise", key: "id", columns: [
             Column("id", .text), Column("document_id", .text), Column("page", .int), Column("seq", .int),
             Column("kind", .int), Column("number", .text), Column("section", .text), Column("payload", .blob),
             Column("starred", .int), Column("wrong", .int), Column("source", .text),
             Column("created_at", .text), Column("updated_at", .text), Column("chapter", .text),
+            Column("note", .text),
         ], lww: "updated_at"),
         // v21（`EXERCISE-PLAN.md §11`）表尾多三列：手写 / 谁判的 / Agent 评语。自己判、Agent 判都会改已有的行，
         // 只在 Mac 上发生（安卓本轮不做填空 / 主观题），三方合并下单边改动照常取改了的那边。

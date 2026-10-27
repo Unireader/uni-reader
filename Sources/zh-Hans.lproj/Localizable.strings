@@ -1033,3 +1033,13 @@
 "Align Left" = "左对齐";
 "Align Center" = "居中对齐";
 "Align Right" = "右对齐";
+
+/* 习题：题目笔记 + 重做上次做错的（EXERCISE-PLAN.md §12） */
+"Add a Note" = "添加笔记";
+"Edit Note" = "编辑笔记";
+"My Note" = "笔记";
+"Write a note for this question. Use $…$ for formulas." = "给这道题写点笔记，公式用 $…$。";
+"Redo Last Wrong" = "重做上次做错的";
+"Practice only the questions you got wrong last time, all ready to answer again. Get one right and it won’t come back next time." = "只练上一次做错的题，都可以重新作答；答对一次，下次就不再出现。";
+"Wrong last time here: %d" = "这一组里上次做错的：%d 道";
+"No question here was wrong last time." = "这里没有上次做错的题。";

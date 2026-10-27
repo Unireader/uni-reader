@@ -62,6 +62,8 @@ final class ExercisePracticeView: NSView {
     private let feedbackTitle = NSTextField(labelWithString: L("Agent Feedback"))
     private let feedbackView = AgentMarkdownView(text: "", fontSize: 14, documentId: "exercise-feedback")
     private var shownFeedback = ""
+    /// 题目笔记（判完才显示，在解析下面，`EXERCISE-PLAN.md §12.1`）。
+    private let noteView = ExerciseNoteView()
 
     /// 当前这道题正选着的（还没交）。
     private var picked: Set<String> = []
@@ -125,10 +127,13 @@ final class ExercisePracticeView: NSView {
         freeView.onHeightChange = { [weak self] in self?.needsLayout = true }
         freeView.onEdit = { [weak self] in self?.freeEdited() }
         freeView.onSubmit = { [weak self] in self?.submit() }
+        noteView.onHeightChange = { [weak self] in self?.needsLayout = true }
+        noteView.onSave = { [weak self] id, text in self?.deck.setNote(id: id, text) }
+        noteView.onEndEditing = { [weak self] in self?.takeFocus() }
         for v in [metaLabel, starButton, originalButton, sourceButton, stemView, originalImage, freeView, submitButton,
                   resultIcon, resultLabel, historyNote, rightButton, wrongButton, flipButton, askAgentButton,
-                  feedbackTitle, feedbackView, agentNote, markNote, explanationTitle, explanationView, retryButton, mistakeButton,
-                  emptyLabel] as [NSView] { doc.addSubview(v) }
+                  feedbackTitle, feedbackView, agentNote, markNote, explanationTitle, explanationView, noteView,
+                  retryButton, mistakeButton, emptyLabel] as [NSView] { doc.addSubview(v) }
         navLine.boxType = .separator
         for v in [navLine, prevButton, nextButton] as [NSView] { addSubview(v) }
         for v in [stemView, explanationView, feedbackView] { v.onHeightChange = { [weak self] in self?.needsLayout = true } }
@@ -164,10 +169,14 @@ final class ExercisePracticeView: NSView {
     func show() {
         guard let e = deck.current else {
             shownId = ""; shownContent = nil; shownKind = nil
+            noteView.commit()
             for v in doc.subviews { v.isHidden = v !== emptyLabel }
             for v in [navLine, prevButton, nextButton] as [NSView] { v.isHidden = true }
-            emptyLabel.stringValue = deck.filter == .unanswered ? L("You’ve done every question here.")
-                : L("No exercises here yet. Ask the Agent to recognize the exercises in a PDF.")
+            switch deck.filter {
+            case .unanswered: emptyLabel.stringValue = L("You’ve done every question here.")
+            case .lastWrong: emptyLabel.stringValue = L("No question here was wrong last time.")
+            case .all: emptyLabel.stringValue = L("No exercises here yet. Ask the Agent to recognize the exercises in a PDF.")
+            }
             needsLayout = true
             onChange()
             return
@@ -305,6 +314,10 @@ final class ExercisePracticeView: NSView {
         let hasExplanation = !(e.payload.explanation ?? "").isEmpty
         explanationTitle.isHidden = !(judged && hasExplanation)
         explanationView.isHidden = !(judged && hasExplanation)
+        // 笔记同解析，判完才显示（「再做一次」后又藏起来：写着的先存下）
+        if !judged { noteView.commit() }
+        noteView.show(note: e.note, exerciseId: e.id)
+        noteView.isHidden = !judged
         retryButton.isHidden = !judged
         mistakeButton.isHidden = !e.wrong
         prevButton.isEnabled = deck.index > 0
@@ -632,6 +645,10 @@ final class ExercisePracticeView: NSView {
             y = explanationTitle.frame.maxY + 6
             explanationView.frame = NSRect(x: x0, y: y, width: colW, height: explanationView.intrinsicContentSize.height)
             y = explanationView.frame.maxY + 12
+        }
+        if !noteView.isHidden {
+            noteView.frame = NSRect(x: x0, y: y + 4, width: colW, height: noteView.height(forWidth: colW))
+            y = noteView.frame.maxY + 14
         }
         var ax = x0
         for b in [retryButton, mistakeButton] where !b.isHidden {

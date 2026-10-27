@@ -27,6 +27,8 @@ extension MCPFacade {
         var blanks: [(answer: String?, accept: [String])]? = nil
         /// 填空题书上的作答（全空 = 撤掉）。
         var userBlanks: [String]? = nil
+        /// 题目笔记（整段替换，"" = 删掉；v22，`EXERCISE-PLAN.md §12`）。用户状态，只在用户要求时写。
+        var note: String? = nil
     }
 
     /// `grade_exercise_attempts` 的一条。
@@ -129,6 +131,7 @@ extension MCPFacade {
         if let s = e.payload.answerSource { o["answer_source"] = s }
         if let x = e.payload.explanation { o["explanation"] = x }
         if let r = e.payload.region { o["region"] = r }
+        if !e.note.isEmpty { o["note"] = e.note }
         return o
     }
 
@@ -204,6 +207,7 @@ extension MCPFacade {
                 var n = e
                 n.kind = d.kind; n.number = d.number; n.section = d.section; n.payload = d.payload
                 n.chapter = d.chapter ?? e.chapter
+                if let v = p.note { n.note = v.trimmingCharacters(in: .whitespacesAndNewlines) }
                 next.append((n, d.userMark))
             }
         }

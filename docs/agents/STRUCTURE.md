@@ -40,7 +40,7 @@
   停手 0.8 秒 / 视图离开窗口 / App 退出。存正文**刻意不调 `refreshNotes()`**（打字时每 0.8 秒重扫一遍目录
   + 侧栏整棵树重建，代价完全不对等）。侧栏在 `SidebarNode` 的 `md` / `noteFolder` / `noteSection` 三个 case，
   选中键 `rowID`（`"md:"+NoteRef.key`，与 PDF 的 `docID` 区分开）
-- 习题（`EXERCISE-PLAN.md`，schema v20 / v21）：纯逻辑 `App/Exercise`（payload 编解码 / 导入校验与规整 / 去重键 / 判题 /
+- 习题（`EXERCISE-PLAN.md`，schema v20 / v21 / v22）：纯逻辑 `App/Exercise`（payload 编解码 / 导入校验与规整 / 去重键 / 判题 /
   标签范围 `ExerciseScope`，只依赖 Foundation）+ 执行层 `App/WorkspaceManager+Exercise`（**唯一**写路径：MCP 与练习界面都走它，
   写完 `exerciseRevision` 加一通知开着的习题标签；习题不进 `DocSession`，所以没有「文档开没开」两条路）。
   标签：`DocTabModel.exerciseScope`（第四种，与 `docID` / `noteRef` / `boardID` 互斥，选中键 `"ex:"+scope.key`）；
@@ -57,7 +57,11 @@
   给 MCP 和「让 Agent 批改」共用），没交的输入存 `ExerciseDeck.drafts`；「让 Agent 批改」走 `AgentPanelModel.prepare`
   （输入框放一句话 + 隐藏上下文 `AgentChat.contextNotes`）。MCP 多 `list_exercise_attempts` / `render_exercise_answer` /
   `grade_exercise_attempts`。离屏测试 `spike/exercise-free-answer-test.swift`（48 项）。🔴 重判只动 `judged_by = ''` 的作答。
-  `render_page include_marks` 在 `MCP/MCPPageMarks`。测试 `spike/exercise-test.swift`（168 项）。
+  `render_page include_marks` 在 `MCP/MCPPageMarks`。测试 `spike/exercise-test.swift`（280 项）。
+  **题目笔记 + 重做上次做错的**（v22，`EXERCISE-PLAN.md §12`）：`exercise.note`（用户状态，`upsertExercise` 不碰，只经
+  `setExerciseNote` 写）；练习页判完后解析下面一块 `Window/Exercise/ExerciseNoteView`（边写边存，换题 / 切标签先存）；
+  顶栏开关 `ExerciseFilter.lastWrong`（= 4，挑题规则 `Exercise.lastResultWrong`，开 = `ExerciseDeck.startLastWrongRound`
+  重挑一轮、以前的作答不显示）。离屏测试 `spike/exercise-note-test.swift`（26 项）。
   侧栏「习题」一段的行与顺序只在 `ExerciseGroupNode.build` 一份（平板抽屉 `exGroups` 也用它）。
   **平板同步**（模式2，`EXERCISE-PLAN.md §10.4`，`PROTOCOL.md §4.9`）：`App/AppModel+Exercise`——平板开一组题 = 用 Mac 上
   同一份 `ExerciseDeck`（`exOpen` 记在 `AppModel.padExercise`），`ExerciseDeck.changed`（带 `origin` mac / pad、`change` index / content）

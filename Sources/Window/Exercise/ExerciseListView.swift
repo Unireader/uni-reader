@@ -16,7 +16,7 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
     private let table = NSTableView()
 
     private enum Col: String, CaseIterable {
-        case number, stem, chapter, page, type, mine, tries, status
+        case number, stem, chapter, page, type, mine, tries, status, note
         var title: String {
             switch self {
             case .number: return L("No.")
@@ -27,6 +27,7 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             case .mine: return L("My Answer")
             case .tries: return L("Practiced")
             case .status: return L("Marks")
+            case .note: return L("My Note")
             }
         }
         var width: CGFloat {
@@ -39,6 +40,7 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             case .mine: return 110
             case .tries: return 110
             case .status: return 56
+            case .note: return 160
             }
         }
     }
@@ -146,6 +148,11 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             cell.textField?.stringValue = parts.joined(separator: " ")
             cell.toolTip = [e.starred ? L("Starred") : nil, e.wrong ? L("In Mistakes") : nil]
                 .compactMap { $0 }.joined(separator: " · ")
+        case .note:
+            // 同练习页：显示着作答的题才露出笔记（「重做上次做错的」里还没重做的题不剧透）
+            let shown = !e.note.isEmpty && deck.answer(for: e) != nil
+            cell.textField?.stringValue = shown ? Exercise.collapse(e.note) : ""
+            cell.textField?.toolTip = shown ? e.note : nil
         }
         return cell
     }

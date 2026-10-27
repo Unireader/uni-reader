@@ -104,8 +104,8 @@ check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer"
       "参与同步的表恰好 12 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张）")
 check(MirrorFp.spec("exercise")?.columns.map(\.name) ==
       ["id", "document_id", "page", "seq", "kind", "number", "section", "payload", "starred", "wrong", "source",
-       "created_at", "updated_at", "chapter"] && MirrorFp.spec("exercise")?.lww == "updated_at",
-      "exercise 列表（v20，章节在表尾）+ 按 updated_at 取新")
+       "created_at", "updated_at", "chapter", "note"] && MirrorFp.spec("exercise")?.lww == "updated_at",
+      "exercise 列表（v20 章节、v22 笔记在表尾）+ 按 updated_at 取新")
 check(MirrorFp.spec("exercise_attempt")?.columns.map(\.name) ==
       ["id", "exercise_id", "answer", "correct", "elapsed_ms", "created_at", "source", "ink", "judged_by", "feedback"]
       && MirrorFp.spec("exercise_attempt")?.lww == nil,
@@ -187,6 +187,7 @@ let tableCases: [(String, [String: Any])] = [
         "created_at": "2026-09-26T09:00:00Z", "updated_at": "2026-09-26T09:05:00Z",
     ] as [String: Any]),
     // v20 习题（2026-10-11）：page 有值 / correct 为 NULL（没答案时的作答）各覆盖一次
+    // 🔴 v22 起这一行按 15 列编码（笔记缺 = NULL），#30 的编码 / fp 因列规格变了而变（2026-10-27，`EXERCISE-PLAN.md §12`）
     ("exercise", [
         "id": "99999999-9999-4999-8999-999999999999",
         "document_id": "11111111-1111-4111-8111-111111111111",
@@ -210,6 +211,17 @@ let tableCases: [(String, [String: Any])] = [
         "answer": "设 $\\sqrt2=p/q$", "correct": Int64(0), "elapsed_ms": Int64(91000),
         "created_at": "2026-10-13T08:00:00.000Z", "source": "",
         "ink": Data("{\"height\":280,\"strokes\":[],\"width\":600}".utf8), "judged_by": "agent", "feedback": "少了**互质**的假设",
+    ] as [String: Any]),
+    // v22 题目笔记（2026-10-27）：同一道题写了笔记、更新时间跟着变
+    ("exercise", [
+        "id": "99999999-9999-4999-8999-999999999999",
+        "document_id": "11111111-1111-4111-8111-111111111111",
+        "page": Int64(11), "seq": Int64(2), "kind": Int64(1), "number": "5", "section": "习题 2-3",
+        "payload": Data("{\"answer\":[\"A\",\"C\"],\"options\":[],\"stem\":\"设 $f(x)=x^2$\"}".utf8),
+        "starred": Int64(1), "wrong": Int64(1), "source": "kimi",
+        "created_at": "2026-10-10T09:00:00.000Z", "updated_at": "2026-10-27T08:00:00.000Z",
+        "chapter": "[\"第二章 导数\",\"2.3 求导法则\"]",
+        "note": "别忘了 $f'(x)=2x$，**链式法则**",
     ] as [String: Any]),
 ]
 for (t, row) in tableCases {

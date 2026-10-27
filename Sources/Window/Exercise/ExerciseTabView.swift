@@ -1,8 +1,8 @@
 import AppKit
 import Combine
 
-/// 一个习题标签在阅读窗格里的样子（`EXERCISE-PLAN.md §4.2`）：顶上一条（进度 + 全部重做 + 只看没做过 +
-/// 「练习 / 列表」），下面是练习页或列表页。窗格切标签时整个拆掉重建，练到哪了在 `ExerciseDeck.shared` 里。
+/// 一个习题标签在阅读窗格里的样子（`EXERCISE-PLAN.md §4.2`）：顶上一条（进度 + 全部重做 + 重做上次做错的 +
+/// 只看没做过 + 「练习 / 列表」），下面是练习页或列表页。窗格切标签时整个拆掉重建，练到哪了在 `ExerciseDeck.shared` 里。
 /// 范围名不在这一条里写：窗口标题已经是它（`DocTabModel` 把它写进 `session.title`），再写一遍就重复了（用户 2026-10-11 指出）。
 @MainActor
 final class ExerciseTabView: NSView {
@@ -32,7 +32,11 @@ final class ExerciseTabView: NSView {
     /// （错题都做过，`ExerciseDeck.offersUnansweredFilter`）。
     private let unansweredButton = NSButton()
     /// 全部重做（用户 2026-10-11 要的批量重做）：当前这一组（范围 + 筛选）显示着作答的题都当没答过，从第一题练起。
+    /// 开着「重做上次做错的」时 = 按此刻的结果再挑一遍上次做错的（这一轮答对的不拉回来）。
     private let redoAllButton = NSButton()
+    /// 重做上次做错的（开关，用户 2026-10-27 要的）：只留上一次结果是错的题，这一轮都重新作答；答对一次下次就不在了。
+    /// 与「只看没做过」至多开一个（同一个 `ExerciseDeck.filter`）；哪一组都有，错题本里正好挑出还没做对的。
+    private let lastWrongButton = NSButton()
     private let separator = NSBox()
     private let practice: ExercisePracticeView
     private let list: ExerciseListView
@@ -67,8 +71,14 @@ final class ExerciseTabView: NSView {
         redoAllButton.toolTip = L("Do every question in this list again. Your earlier answers stay in the practice history.")
         redoAllButton.target = self
         redoAllButton.action = #selector(redoAll)
+        lastWrongButton.bezelStyle = .push
+        lastWrongButton.setButtonType(.pushOnPushOff)
+        lastWrongButton.title = L("Redo Last Wrong")
+        lastWrongButton.target = self
+        lastWrongButton.action = #selector(lastWrongToggled)
         separator.boxType = .separator
-        for v in [practice, list, header, progressLabel, redoAllButton, unansweredButton, modeControl, separator] as [NSView] {
+        for v in [practice, list, header, progressLabel, redoAllButton, lastWrongButton, unansweredButton, modeControl,
+                  separator] as [NSView] {
             addSubview(v)
         }
 
@@ -123,20 +133,44 @@ final class ExerciseTabView: NSView {
         progressLabel.stringValue = parts.joined(separator: " · ")
         redoAllButton.isEnabled = deck.hasShownAnswers
         unansweredButton.state = deck.filter == .unanswered ? .on : .off   // 平板那边换了，这边跟着
+        let wrongs = deck.lastWrongCount
+        lastWrongButton.state = deck.filter == .lastWrong ? .on : .off
+        lastWrongButton.isEnabled = deck.filter == .lastWrong || wrongs > 0   // 开着时总能关掉
+        lastWrongButton.toolTip = L("Practice only the questions you got wrong last time, all ready to answer again. Get one right and it won’t come back next time.")
+            + "\n" + String(format: L("Wrong last time here: %d"), wrongs)
     }
 
     @objc private func redoAll() {
+        // 开着「重做上次做错的」：再挑一遍上次做错的（这一轮答对的就不在了），而不是把答对的也拉回来重做
+        if deck.filter == .lastWrong {
+            deck.startLastWrongRound()
+            restartPractice()
+            return
+        }
         redo(deck.items.map(\.id), from: 0)
+    }
+
+    @objc private func lastWrongToggled() {
+        deck.setFilter(lastWrongButton.state == .on ? .lastWrong : .all)
+        if deck.filter == .lastWrong { restartPractice(); return }   // 开 = 重做一轮：到练习页，从第一道练起
+        practice.show()
+        list.reload()
+        syncHeader()
+    }
+
+    /// 重做一轮之后（`deck.index` 已挪到第一道）：切到练习页、从头计时重画。
+    private func restartPractice() {
+        setMode(.practice)
+        practice.restart()
+        list.reload()
+        syncHeader()
     }
 
     /// 重做这几道题，切到练习页、从第 `row` 题开始。
     private func redo(_ ids: [String], from row: Int) {
         deck.redo(ids)
         deck.index = min(row, max(0, deck.items.count - 1))
-        setMode(.practice)
-        practice.restart()
-        list.reload()
-        syncHeader()
+        restartPractice()
     }
 
     @objc private func unansweredToggled() {
@@ -173,18 +207,14 @@ final class ExerciseTabView: NSView {
         let mw = modeControl.frame.width
         modeControl.frame = NSRect(x: b.width - pad - mw, y: topInset + (headerH - modeControl.frame.height) / 2,
                                    width: mw, height: modeControl.frame.height)
-        var right = modeControl.frame.minX   // 往左依次排：只看没做过（错题本里不显示）、全部重做
-        if !unansweredButton.isHidden {
-            unansweredButton.sizeToFit()
-            let fw = unansweredButton.frame.width
-            unansweredButton.frame = NSRect(x: right - 10 - fw, y: topInset + (headerH - unansweredButton.frame.height) / 2,
-                                            width: fw, height: unansweredButton.frame.height)
-            right = unansweredButton.frame.minX
+        // 往左依次排：只看没做过（错题本里不显示）、重做上次做错的、全部重做
+        var right = modeControl.frame.minX
+        for b in [unansweredButton, lastWrongButton, redoAllButton] where !b.isHidden {
+            b.sizeToFit()
+            let bw = b.frame.width
+            b.frame = NSRect(x: right - 10 - bw, y: topInset + (headerH - b.frame.height) / 2, width: bw, height: b.frame.height)
+            right = b.frame.minX
         }
-        redoAllButton.sizeToFit()
-        let rw = redoAllButton.frame.width
-        redoAllButton.frame = NSRect(x: right - 10 - rw, y: topInset + (headerH - redoAllButton.frame.height) / 2,
-                                     width: rw, height: redoAllButton.frame.height)
         let tw = max(0, redoAllButton.frame.minX - pad * 2)
         let ph = progressLabel.intrinsicContentSize.height
         progressLabel.frame = NSRect(x: pad, y: topInset + (headerH - ph) / 2, width: tw, height: ph)

@@ -44,7 +44,7 @@ func row(_ d: ExerciseDraft, doc: String, id: String = UUID().uuidString) -> Lib
 }
 
 print("— 建表")
-check(LibraryStore.schemaVersion == 21, "schema 版本 21（v21 = 填空 / 主观题，作答多三列）")
+check(LibraryStore.schemaVersion == 22, "schema 版本 22（v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记）")
 check((try? store.exercises()) != nil, "exercise 表可查")
 
 print("— 校验与规整")
@@ -418,10 +418,12 @@ check(ok(input("c"))?.chapter == nil, "没给 chapter → nil（让 App 按目�
 
 print("— 筛选")
 let fe = Exercise(row: try store.exercise(id: rq.id)!)!
-check(ExerciseFilter.unanswered.includes(fe, attempts: 0) && !ExerciseFilter.unanswered.includes(fe, attempts: 1), "没做过")
-check(ExerciseFilter.all.includes(fe, attempts: 2) && ExerciseFilter.allCases == [.all, .unanswered]
-      && ExerciseFilter(rawValue: 2) == nil && ExerciseFilter(rawValue: 3) == nil,
-      "只剩全部 / 只看没做过（老平板发来的 2 错题 / 3 收藏不认）")
+check(ExerciseFilter.unanswered.includes(fe, stats: nil)
+      && !ExerciseFilter.unanswered.includes(fe, stats: ExerciseAttemptStats(attempts: 1)), "没做过")
+check(ExerciseFilter.all.includes(fe, stats: ExerciseAttemptStats(attempts: 2))
+      && ExerciseFilter.allCases == [.all, .unanswered, .lastWrong]
+      && ExerciseFilter(rawValue: 2) == nil && ExerciseFilter(rawValue: 3) == nil && ExerciseFilter(rawValue: 4) == .lastWrong,
+      "全部 / 只看没做过 / 重做上次做错的 = 0 / 1 / 4（老平板发来的 2 错题 / 3 收藏不认）")
 
 print("— 做过的题显示以前的作答")
 var pe = Exercise(row: try store.exercise(id: rm.id)!)!      // 答案 B
@@ -468,6 +470,8 @@ try oldStore.recordExerciseAttempt(oa)
 let oaBack = try oldStore.exerciseAttempt(id: oa.id)
 check(oaBack?.ink == Data("{}".utf8) && oaBack?.judgedBy == "self" && oaBack?.feedback == "f",
       "v21 三列（ink / judged_by / feedback）在老库上补上了、能写能读")
+try oldStore.setExerciseNote(id: orow.id, "老库补列")
+check(try oldStore.exercise(id: orow.id)?.note == "老库补列", "v22 exercise.note 在老库上补上了、能写能读")
 oldStore.close()
 
 // MARK: - v21 填空 / 主观题（`EXERCISE-PLAN.md §11`）
@@ -668,6 +672,70 @@ if case .success(let d) = ExerciseImport.validate(backF, seq: 0) { check(d.paylo
 else { check(false, "还原后再校验 = 原样") }
 let backS = ExerciseImport.input(from: subE)
 check(backS.answer == subE.referenceText && backS.blanks == nil, "主观题还原：answer = 参考答案")
+
+// MARK: - v22 题目笔记 + 重做上次做错的（`EXERCISE-PLAN.md §12`）
+
+print("— v22 题目笔记")
+let dn = doc("笔记书", "n1")
+var nrow = row(ok(input("笔记题", answer: "B", src: "book", number: "8"))!, doc: dn.id)
+check(Exercise(row: nrow)?.note == "", "没写笔记 = 空串")
+nrow.note = "新建时带的笔记"
+try store.upsertExercise(nrow)
+check(try store.exercise(id: nrow.id)?.note == "新建时带的笔记", "新建一道题时 note 写得进去")
+var nrow2 = nrow; nrow2.note = "重导不该冲掉"; nrow2.section = "改了题组"
+try store.upsertExercise(nrow2)
+check(try store.exercise(id: nrow.id).map { $0.note == "新建时带的笔记" && $0.section == "改了题组" } == true,
+      "已有的题重导：内容更新、笔记不动（同收藏 / 错题是用户状态）")
+let nBefore = try store.exercise(id: nrow.id)!.updatedAt
+try store.setExerciseNote(id: nrow.id, "**易错**：$f'(x)=2x$", at: nBefore.addingTimeInterval(5))
+let nBack = try store.exercise(id: nrow.id)!
+check(nBack.note == "**易错**：$f'(x)=2x$" && nBack.updatedAt > nBefore, "setExerciseNote 写笔记并改 updated_at（离线镜像按它取新）")
+let ne = Exercise(row: nBack)!
+check(ne.note == nBack.note && ne.toRow().note == nBack.note, "Exercise ↔ 库行带着笔记")
+try store.setExerciseNote(id: nrow.id, "")
+check(try store.exercise(id: nrow.id)?.note == "", "空串 = 删掉笔记")
+
+print("— v22 上一次的结果是错的（重做上次做错的）")
+let lw = Exercise(row: nBack)!     // 单选，答案 B
+check(!lw.lastResultWrong(nil), "没做过 → 不算")
+check(lw.lastResultWrong(ExerciseAttemptStats(attempts: 1, wrong: 1, lastAnswer: "A")), "最近一次选 A（错）→ 算")
+check(!lw.lastResultWrong(ExerciseAttemptStats(attempts: 2, correct: 1, wrong: 1, lastAnswer: "B")),
+      "错过、最近一次答对 → 不算（做对一次就不用再做）")
+check(lw.lastResultWrong(ExerciseAttemptStats(attempts: 2, correct: 1, wrong: 1, lastAnswer: "C")),
+      "答对过、最近一次又错 → 算（用户 2026-10-27 选的「最近一次是错的」）")
+check(lw.lastResultWrong(ExerciseAttemptStats(attempts: 1, markedAnswer: "A", markedCorrect: false)), "只有书上的作答、错 → 算")
+check(!lw.lastResultWrong(ExerciseAttemptStats(attempts: 2, markedAnswer: "A", markedCorrect: false, lastAnswer: "B")),
+      "书上错、App 里练对了 → 不算（同练习页：App 里最近一次优先）")
+var lwNo = lw; lwNo.payload.answer = []
+check(!lwNo.lastResultWrong(ExerciseAttemptStats(attempts: 1, lastAnswer: "A")), "题目没答案（没法判）→ 不算")
+var lwNow = lw; lwNow.payload.answer = ["A"]
+check(!lwNow.lastResultWrong(ExerciseAttemptStats(attempts: 1, wrong: 1, lastAnswer: "A")), "答案后来改了：按现在的答案判（同练习页）")
+let subLW = Exercise(row: row(ok(ExerciseInput(page: 0, type: "subjective", number: nil, section: nil, stem: "证明 $\\sqrt2$ 无理",
+                                                options: [], answer: "反证", answerSource: "book", explanation: nil,
+                                                region: nil, figure: nil))!, doc: dn.id))!
+check(subLW.lastResultWrong(ExerciseAttemptStats(attempts: 1, wrong: 1, lastAnswer: "x", lastId: "a1", lastPracticedCorrect: false)),
+      "主观题判了错 → 算")
+check(!subLW.lastResultWrong(ExerciseAttemptStats(attempts: 1, lastAnswer: "x", lastId: "a1", lastPracticedCorrect: nil)),
+      "主观题还没判 → 不算错")
+check(!subLW.lastResultWrong(ExerciseAttemptStats(attempts: 2, lastAnswer: "x", lastId: "a2", lastPracticedCorrect: true)),
+      "主观题最近一次判了对 → 不算")
+check(subLW.lastResultWrong(ExerciseAttemptStats(attempts: 1, markedAnswer: "y", markedCorrect: false, markedId: "m1")),
+      "主观题只有书上的作答、判了错 → 算")
+check(ExerciseFilter.lastWrong.includes(lw, stats: ExerciseAttemptStats(attempts: 1, wrong: 1, lastAnswer: "A"))
+      && !ExerciseFilter.lastWrong.includes(lw, stats: nil)
+      && !ExerciseFilter.lastWrong.includes(lw, stats: ExerciseAttemptStats(attempts: 1, correct: 1, lastAnswer: "B")),
+      "筛选 lastWrong = 上一次的结果是错的")
+// 库里真记几次作答再取统计：错 → 对 → 错，最近一次错
+let lwRow = try store.exercise(id: nrow.id)!
+for (k, ans) in ["A", "B", "D"].enumerated() {
+    try store.recordExerciseAttempt(LibExerciseAttempt(id: UUID().uuidString, exerciseId: lwRow.id, answer: ans,
+                                                       correct: ans == "B", elapsedMs: 0,
+                                                       createdAt: Date().addingTimeInterval(Double(k)), source: ""))
+}
+check(lw.lastResultWrong(try store.exerciseAttemptStats()[lwRow.id]), "库里 错 → 对 → 错：最近一次错 → 算")
+try store.recordExerciseAttempt(LibExerciseAttempt(id: UUID().uuidString, exerciseId: lwRow.id, answer: "B", correct: true,
+                                                   elapsedMs: 0, createdAt: Date().addingTimeInterval(10), source: ""))
+check(!lw.lastResultWrong(try store.exerciseAttemptStats()[lwRow.id]), "再答对一次 → 不算了（下次重做就不在里面）")
 
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

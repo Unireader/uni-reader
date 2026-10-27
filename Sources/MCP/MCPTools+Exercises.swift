@@ -33,6 +33,7 @@ extension MCPTools {
             "user_answer_correct": MCPSchema.boolean("whether that marked answer is right (absent when it is not judged yet)"),
             "starred": MCPSchema.boolean("starred by the user"),
             "in_mistakes": MCPSchema.boolean("in the user's mistake list"),
+            "note": MCPSchema.string("the user's own note on this question (Markdown + $math$); absent when there is none"),
             "attempts": MCPSchema.integer("times practiced"),
             "correct": MCPSchema.integer("times answered correctly"),
             "ungraded": MCPSchema.integer("attempts not judged yet (fill / subjective answers waiting for the user or an agent to grade; list them with list_exercise_attempts)"),
@@ -301,11 +302,12 @@ extension MCPTools {
             "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first; [] clears it"),
             "user_answer": MCPSchema.string("What the user wrote in the document: option letters (\"B\") for choice, transcribed text for subjective; replaces the earlier one; empty string removes it"),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "Fill questions: what the user wrote in the document, one string per blank; replaces the earlier one; all empty removes it"),
+            "note": MCPSchema.string("The user's own note on this question, shown under the explanation once they have answered it. Replaces the whole note; empty string removes it. Write it only when the user asks you to. \(mathWriting)"),
         ], required: ["id"])
         return MCPTool(
             name: "update_exercises",
             title: "Update exercises",
-            description: "Change saved exercises by id — most often to fill in answers and explanations after finding the answer key, to set the chapter, or to record the answer the user already wrote in the document (user_answer / user_blanks). Only the fields you pass change; the user's stars, mistakes and practice history are kept. When the answer changes, the user's earlier attempts at that question are judged again where the app can judge them (a wrong one goes into the mistake list); attempts the user or an agent already graded keep their verdict. Every change is checked first; if any one is invalid, nothing is changed.",
+            description: "Change saved exercises by id — most often to fill in answers and explanations after finding the answer key, to set the chapter, to record the answer the user already wrote in the document (user_answer / user_blanks), or, when the user asks, to write their note on a question (note). Only the fields you pass change; the user's stars, mistakes and practice history are kept. When the answer changes, the user's earlier attempts at that question are judged again where the app can judge them (a wrong one goes into the mistake list); attempts the user or an agent already graded keep their verdict. Every change is checked first; if any one is invalid, nothing is changed.",
             inputSchema: MCPSchema.object([
                 "workspace": MCPSchema.string("Workspace .unrd path, only when the ids could be in several open workspaces."),
                 "updates": MCPSchema.array(of: patch, "Changes, one per exercise (at most \(maxImportExercises))"),
@@ -333,7 +335,8 @@ extension MCPTools {
                     region: try regionArg(d["region"], at: path), figure: try boolField(d, "has_figure", at: path),
                     chapter: try chapterArg(d["chapter"], at: path), userAnswer: try stringField(d, "user_answer", at: path),
                     blanks: try blanksArg(d["blanks"], at: path),
-                    userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path))
+                    userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path),
+                    note: try stringField(d, "note", at: path))
             }
             let wsPath = try args.string("workspace")
             let r = try await MainActor.run { try MCPFacade.shared.updateExercises(patches, workspacePath: wsPath) }

@@ -154,13 +154,14 @@ extension WorkspaceManager {
     }
 
     /// 改一道题的内容（`update_exercises`）。收藏 / 错题不经这里改。答案（或题型）变了 → 这道题的作答全部重判。
-    /// `userMark` 非 nil = 同时改书上的作答（空 = 撤掉）。
+    /// `userMark` 非 nil = 同时改书上的作答（空 = 撤掉）。笔记（`e.note`）变了也一起写——`upsertExercise` 不碰它。
     func saveExercise(_ e: Exercise, userMark: ExerciseResponse? = nil) throws {
         guard let store else { return }
         let old = exercise(id: e.id)
         var e = e
         e.updatedAt = .now
         try store.upsertExercise(e.toRow())
+        if let old, old.note != e.note { try store.setExerciseNote(id: e.id, e.note, at: e.updatedAt) }
         if let old, old.payload.answer != e.payload.answer || old.payload.accept != e.payload.accept || old.kind != e.kind {
             try rejudgeAttempts(e)
         }
@@ -220,6 +221,15 @@ extension WorkspaceManager {
     /// 移出 / 放回错题本（拍板 ③：只有用户手动才会移出）。
     func setExerciseWrong(id: String, _ on: Bool) {
         try? store?.setExerciseWrong(id: id, on)
+        exercisesChanged()
+    }
+
+    /// 题目笔记（练习页「笔记」那一块，`EXERCISE-PLAN.md §12.1`）：去掉首尾空白，空 = 删掉。和库里一样就不写
+    /// （边写边存，停一下就存一次，没改的不该一遍遍刷新开着的标签）。
+    func setExerciseNote(id: String, _ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let e = exercise(id: id), e.note != t else { return }
+        do { try store?.setExerciseNote(id: id, t) } catch { lastError = "\(error)"; return }
         exercisesChanged()
     }
 

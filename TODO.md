@@ -97,6 +97,9 @@
      `ACP-AGENT-PLAN.md §10`）；习题「上一题 / 下一题」钉在底部（Mac + 安卓，`EXERCISE-PLAN.md §4.2`）；
      多列 `aligned` 写的分段函数换成两列 `cases` 渲染（`LatexCompat.piecewise`，`spike/latex-compat-test.swift` 57 项）。
    - 2026-10-27：内置 Agent 经 MCP 读 OCR「库里有字却读不到」已修（`MCPDocReader` 的整本 OCR 缓存从不刷新，`MCP-PLAN.md §5.3`），**待用户实测**。
+   - 2026-10-27 第三批（已编译，**待用户实测**）：习题**题目笔记**（schema v22 `exercise.note`，判完才显示，边写边存；MCP
+     `list_exercises` / `update_exercises` 带 `note`）+ 顶栏「**重做上次做错的**」（只练上一次结果是错的题、都重新作答，答对一次下次不在；
+     错题本里也有）。本轮只做 Mac，实测清单 `EXERCISE-PLAN.md §12.5`（38~43 条）。
    （A3 块级 Markdown 2026-09-20 已做：回复与思考正文改用笔记那套引擎只读渲染，`ACP-AGENT-PLAN.md §7`；
    A4 独立窗口吸附、两块内置面板改为与阅读区并排，2026-09-18 已做。）
 
@@ -127,6 +130,10 @@
      填空 / 主观题（只显示题干 + 「请在 Mac 上作答」），没有手写小画板、看不到参考答案与 Agent 评语、不能自己判。
      下一轮：模式1 本机做（作答区 + 画板照 Mac，`judgeExerciseAttempt` 等 SQL 照抄）；模式2 要扩 `exDeck` / `exAct`
      把文字与笔迹发回 Mac。
+   - 已知差距（2026-10-27 习题笔记 / 重做上次做错的时记下，用户定「先只做 Mac」，`EXERCISE-PLAN.md §12`）：平板两种模式都
+     **看不到、写不了题目笔记**（`exercise.note` 只建列、随离线镜像同步），**没有「重做上次做错的」开关**（模式2 收到 `filter = 4`
+     时显示的是 Mac 挑好的题，但开关状态显示不出来）。下一轮：模式1 照抄 `Exercise.lastResultWrong` + 笔记一块；模式2 要在
+     `exDeck` 带上笔记、`exAct` 加写笔记，平板顶栏加开关（`exAct 4` 发 `4`）。
    - 已知差距（2026-09-26 书写锁定/相对粗细时记下）：相对粗细模式网页端没做（网页端
      上行的笔宽仍是绝对粗细，也不认 `relInk`）；画板「记住上次滚动位置」网页端也没做（`boardViewport` 只加了编解码，
      2026-10-07 模式2 补上时记下，见 `BOARD-NOTE-PLAN.md §10.1`）；分页画板与 Mac 同步滚动网页端也没做（`boardScroll` 只加了编解码，§12）。

@@ -54,7 +54,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - **`EXERCISE-PLAN.md`** — 习题（schema v20 `exercise` / `exercise_attempt`）：Agent 识别 PDF 上的选择题经 MCP `import_exercises` 导入，
   第四种标签页里练习 / 错题本（答错进、只能手动出）/ 收藏；Agent 操作说明 `skills/unireader-exercise-import/SKILL.md`；
   §10 安卓两种模式（模式2 与 Mac 共用同一份进度，协议 `PROTOCOL.md §4.9`）+ 离线镜像同步习题；
-  §11 填空 / 主观题（v21：手写小画板、自己判、Agent 经 MCP 读作答并批改；本轮平板只显示题干）
+  §11 填空 / 主观题（v21：手写小画板、自己判、Agent 经 MCP 读作答并批改；本轮平板只显示题干）；
+  §12 题目笔记（v22 `exercise.note`，判完才显示）+ 顶栏「重做上次做错的」（只练上一次结果是错的题；本轮只做 Mac）
 - `REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
 - `docs/agents/BUILD-DETAILS.md` · `docs/agents/STRUCTURE.md` · `docs/agents/PITFALLS.md` — 本文件拆出的三份细节
 - 子目录可自带 `AGENTS.md`（`android/` 即独立 git 仓库 + 自带规则）；新子工程照此办理，跨端契约仍留根目录，见 `docs/agents/BUILD-DETAILS.md`

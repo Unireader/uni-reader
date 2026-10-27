@@ -179,6 +179,8 @@ struct LibExercise: Identifiable, Equatable {
     var updatedAt: Date
     /// 所属章节在目录里的路径（顶层 → 最深一级）；空 = 没设。库里存 JSON 字符串数组（`EXERCISE-PLAN.md §2.3`）。
     var chapter: [String] = []
+    /// v22：用户给这道题写的笔记（Markdown + `$…$`）；空 = 没写（`EXERCISE-PLAN.md §12`）。
+    var note: String = ""
 }
 
 /// 一次作答（`exercise_attempt` 表，v20）。`answer`：选择题 = 选中的选项键按字母序拼起来；填空 = JSON 字符串数组（每空一格）；

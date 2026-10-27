@@ -128,6 +128,8 @@ struct Exercise: Identifiable, Equatable {
     var updatedAt: Date
     /// 所属章节：目录里的路径（顶层 → 最深一级），空 = 没设（`EXERCISE-PLAN.md §2.3`）。
     var chapter: [String]
+    /// 用户给这道题写的笔记（Markdown + `$…$`），空 = 没写（v22，`EXERCISE-PLAN.md §12`）。
+    var note: String
 
     /// 库行解码。payload 坏了 / 题型不认识（以后的新题型）→ nil，调用方跳过这一行。
     init?(row: LibExercise) {
@@ -137,14 +139,14 @@ struct Exercise: Identifiable, Equatable {
         self.kind = kind; number = row.number; section = row.section; payload = p
         starred = row.starred; wrong = row.wrong; source = row.source
         createdAt = row.createdAt; updatedAt = row.updatedAt
-        chapter = row.chapter
+        chapter = row.chapter; note = row.note
     }
 
     func toRow() -> LibExercise {
         LibExercise(id: id, documentId: documentId, page: page, seq: seq, kind: kind.rawValue,
                     number: number, section: section, payload: payload.data(),
                     starred: starred, wrong: wrong, source: source, createdAt: createdAt, updatedAt: updatedAt,
-                    chapter: chapter)
+                    chapter: chapter, note: note)
     }
 
     var hasAnswer: Bool { payload.answer.contains { !$0.isEmpty } }
@@ -247,6 +249,14 @@ struct Exercise: Identifiable, Equatable {
             return (ExerciseResponse.decode(kind, answer: raw), s.markedCorrect, s.markedJudgedBy, id, .book)
         }
         return nil
+    }
+
+    /// 上一次的结果是错的（「重做上次做错的」挑的就是这些，用户 2026-10-27 定）：看的是练习页上显示的那次——
+    /// App 里练的最近一次，没练过才看书上的作答（`earlierAnswer` / `earlierResponse`）。答对过、后来又做错的也算；
+    /// 还没判的（等自己判 / Agent 判、题目没答案）不算错。
+    func lastResultWrong(_ s: ExerciseAttemptStats?) -> Bool {
+        if kind.isChoice { return earlierAnswer(s)?.correct == false }
+        return earlierResponse(s)?.correct == false
     }
 
     /// 列表里一行显示的题干：去掉换行、并掉连续空白（公式源码原样留着）。
@@ -863,19 +873,22 @@ struct ExerciseGroupNode: Equatable {
 
 // MARK: - 标签页里的筛选
 
-/// 习题标签顶上的筛选：只剩「只看没做过」一个开关（用户 2026-10-11 定）。
+/// 习题标签顶上的筛选：「只看没做过」「重做上次做错的」两个开关，至多开一个（用户 2026-10-11 / 10-27 定）。
 /// 侧栏管「哪一组题」（全部 / 错题本 / 收藏 / 书 / 章，错题本和收藏都能按书 → 章展开），顶栏只管做题进度；
 /// 原先的「错题 / 收藏」两项和侧栏重复（同一组题两条路能到）、在错题本里又毫无意义，已去掉。
-/// 值即线上 `exDeck.filter`；`2` / `3` 是去掉的那两项，不再用（`PROTOCOL.md §4.9`）。
+/// 值即线上 `exDeck.filter`；`2` / `3` 是去掉的那两项，不再用、不许再分配（`PROTOCOL.md §4.9`）。
 enum ExerciseFilter: Int, CaseIterable {
     case all = 0
     case unanswered = 1
+    /// 重做上次做错的（2026-10-27，`EXERCISE-PLAN.md §12.2`）：只留上一次结果是错的题，这一轮都当没答过。
+    case lastWrong = 4
 
-    /// `attempts` = 这道题一共做过几次（含书上的作答）。
-    func includes(_ e: Exercise, attempts: Int) -> Bool {
+    /// `s` = 这道题的作答统计（nil = 没做过；做过几次含书上的作答）。
+    func includes(_ e: Exercise, stats s: ExerciseAttemptStats?) -> Bool {
         switch self {
         case .all: return true
-        case .unanswered: return attempts == 0
+        case .unanswered: return (s?.attempts ?? 0) == 0
+        case .lastWrong: return e.lastResultWrong(s)
         }
     }
 }
