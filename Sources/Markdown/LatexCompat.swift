@@ -5,15 +5,16 @@ import Foundation
 /// 起因（用户 2026-10-07）：块公式 `$$… e^{-x}\big[…\big]$$` 整条显示成源码——SwiftMath 不认 `\big`，一个命令不认
 /// 整条公式就渲染失败。同一轮用 `spike/latex-look.swift` 普查了笔记里常见的写法，不认的里面凡是能一一对应的都在这里换掉：
 /// 只差括号大小（`\big` 一组、`\dfrac`）、字形变体（`\leqslant`、`\mathscr`）、同义命令（`\implies`、`\not=`）。
-/// 每个替换目标都实测能渲染（SwiftMath 1.7.3）。只能近似的（`cases` / `array` 环境、`\boxed`、`\overset`、`\xrightarrow`、
+/// 每个替换目标都实测能渲染（SwiftMath 1.7.3）。只能近似的（`array` 环境、`\boxed`、`\overset`、`\xrightarrow`、
 /// `\overbrace` …）**不在这里**：换了显示效果会和原意有出入，要不要做、怎么做由用户定（见 `docs/agents/PITFALLS.md`）。
+/// 结构上的一处：多列 `aligned` 写的分段函数换成两列 `cases`（`piecewise`，显示与原意一致）。
 ///
 /// 逐个扫命令而不用正则：`\\`（换行）要当一个整体跳过，正则分不清 `\\dots`（换行 + 文字 dots）和 `\dots`。
 /// 测试：`spike/latex-compat-test.swift`（替换结果 + 换完能不能渲染）。
 enum LatexCompat {
     static func rewrite(_ latex: String) -> String {
         guard latex.contains("\\") else { return latex }
-        let u = Array(latex.unicodeScalars)
+        let u = Array(piecewise(latex).unicodeScalars)
         var out = String.UnicodeScalarView()
         func emit(_ s: String) { out.append(contentsOf: s.unicodeScalars) }
         func isLetter(_ s: Unicode.Scalar) -> Bool { s.isASCII && s.properties.isAlphabetic }
@@ -101,6 +102,90 @@ enum LatexCompat {
             i = k
         }
         return String(out)
+    }
+
+    // MARK: - 分段函数
+
+    /// 分段函数 `\left\{\begin{aligned} &0, && n=0 \\ &1, && n>0 \end{aligned}\right.` → `\begin{cases} 0, & n=0 \\ 1, & n>0 \end{cases}`。
+    ///
+    /// 起因（用户 2026-10-27，习题题干）：Agent 照 MCP 说明用 `\left\{\begin{aligned}…\end{aligned}\right.` 写分段函数，
+    /// 又按 LaTeX 的惯用法用 `&&` 把条件对齐成第二列——`aligned` 一行四格（空、值、空、条件），而 SwiftMath 的 `aligned`
+    /// **只认两列**，整条渲染失败、显示源码。SwiftMath 认两列的 `cases`（左大括号 + 两列左对齐，和 LaTeX 的 `cases` 一样；
+    /// 2026-09-16 实测「`cases` 不认」用的是一列的样例，报的是「只能两列」）。所以：`aligned` 每两格（右对齐 + 左对齐那一对）
+    /// 并成一格，并完正好两列的换成 `cases`——显示与原意一致：值一列、条件一列，各自左对齐。
+    /// 只动这一种：两列以内的本来就能渲染不动；并完还多于两列、没有外面那对 `\left\{ … \right.`、格子里还套着环境的都不动。
+    static func piecewise(_ latex: String) -> String {
+        let beginTag = #"\begin{aligned}"#, endTag = #"\end{aligned}"#
+        guard latex.contains(beginTag) else { return latex }
+        var s = latex
+        var from = s.startIndex
+        while let begin = s.range(of: beginTag, range: from..<s.endIndex) {
+            from = begin.upperBound
+            guard let end = s.range(of: endTag, range: begin.upperBound..<s.endIndex) else { break }
+            // 前面紧挨着（可隔空白）`\left\{` / `\left\lbrace`，后面紧挨着 `\right.`
+            let head = s[..<begin.lowerBound]
+            var lead = head.endIndex
+            while lead > head.startIndex, head[head.index(before: lead)].isWhitespace { lead = head.index(before: lead) }
+            guard let left = [#"\left\{"#, #"\left\lbrace"#].lazy.compactMap({ open -> String.Index? in
+                head[..<lead].hasSuffix(open) ? head.index(lead, offsetBy: -open.count) : nil
+            }).first else { continue }
+            var tail = end.upperBound
+            while tail < s.endIndex, s[tail].isWhitespace { tail = s.index(after: tail) }
+            let close = #"\right."#
+            guard s[tail...].hasPrefix(close) else { continue }
+            let after = s.index(tail, offsetBy: close.count)
+            guard let body = casesBody(String(s[begin.upperBound..<end.lowerBound])) else { continue }
+            let replacement = #"\begin{cases}"# + body + #"\end{cases}"#
+            let offset = s.distance(from: s.startIndex, to: left) + replacement.count
+            s.replaceSubrange(left..<after, with: replacement)
+            from = s.index(s.startIndex, offsetBy: offset)
+        }
+        return s
+    }
+
+    /// `aligned` 的内容 → `cases` 的内容；不该换（两列以内 / 并完多于两列 / 套着环境）返回 nil。
+    private static func casesBody(_ body: String) -> String? {
+        guard !body.contains(#"\begin{"#) else { return nil }
+        var rows = split(body, rows: true).map { split($0, rows: false) }
+        while let last = rows.last, last.allSatisfy({ $0.trimmingCharacters(in: .whitespaces).isEmpty }) { rows.removeLast() }
+        guard (rows.map(\.count).max() ?? 0) > 2 else { return nil }
+        let merged = rows.map { row in
+            stride(from: 0, to: row.count, by: 2).map { k in
+                (row[k ..< min(k + 2, row.count)]).map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }.joined(separator: " ")
+            }
+        }
+        guard (merged.map(\.count).max() ?? 0) <= 2 else { return nil }
+        return " " + merged.map { $0.count == 2 ? "\($0[0]) & \($0[1])" : "\($0.first ?? "") &" }
+            .joined(separator: #" \\ "#) + " "
+    }
+
+    /// 按最外层（不在 `{…}` 里）的 `\\` 拆行（连同可选的 `[行距]`）或按 `&` 拆格；`\&` `\\` `\{` 这类转义整体跳过。
+    private static func split(_ s: String, rows: Bool) -> [String] {
+        let c = Array(s)
+        var parts: [String] = [], cur = "", depth = 0, i = 0
+        while i < c.count {
+            let ch = c[i]
+            if ch == "\\", i + 1 < c.count {
+                if rows, c[i + 1] == "\\", depth == 0 {
+                    parts.append(cur); cur = ""
+                    i += 2
+                    var p = i
+                    while p < c.count, c[p] == " " { p += 1 }
+                    if p < c.count, c[p] == "[", let q = c[p...].firstIndex(of: "]") { i = q + 1 }
+                    continue
+                }
+                cur.append(ch); cur.append(c[i + 1])
+                i += 2
+                continue
+            }
+            if ch == "{" { depth += 1 } else if ch == "}" { depth -= 1 }
+            if !rows, ch == "&", depth == 0 { parts.append(cur); cur = ""; i += 1; continue }
+            cur.append(ch)
+            i += 1
+        }
+        parts.append(cur)
+        return parts
     }
 
     /// 改括号大小的那一组：`\big` `\Big` `\bigg` `\Bigg`，各带 l / r / m 三种。`\bigcup` 这类大运算符不在里面。

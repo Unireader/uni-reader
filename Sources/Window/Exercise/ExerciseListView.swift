@@ -68,10 +68,20 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         table.menu = menu
         scroll.documentView = table
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true   // 「总是显示滚动条」时，不够一屏也别画一条
         scroll.automaticallyAdjustsContentInsets = false
         addSubview(scroll)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    /// 底下浮着的标签栏占的高度：列表照样铺满（行从胶囊后面透过去，同阅读区），最后几行能滚到它上面；滚动条止于它上沿。
+    var bottomInset: CGFloat = 0 {
+        didSet {
+            guard bottomInset != oldValue else { return }
+            scroll.contentInsets.bottom = bottomInset
+            scroll.scrollerInsets.bottom = bottomInset
+        }
+    }
 
     override func layout() {
         super.layout()

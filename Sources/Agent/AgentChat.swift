@@ -82,6 +82,14 @@ struct AgentPermissionAsk: Identifiable {
     fileprivate let resume: (RequestPermissionResponse) -> Void
 }
 
+/// 回答中按回车排上队的一句话（连同当时挂在输入框上的图片、`@` 的文件），这一轮答完依次发出去。
+struct AgentQueuedMessage: Identifiable {
+    let id = UUID()
+    var text: String
+    var mentions: [AgentMention]
+    var images: [AgentImage]
+}
+
 /// 会话里可调的一项配置（模型、推理强度……Agent 给什么就列什么）。
 struct AgentConfigItem: Identifiable {
     enum Kind {
@@ -127,6 +135,11 @@ final class AgentChat: ObservableObject {
     @Published private(set) var attachments: [AgentImage] = []
     /// 等输入框取走的一句话（`requestDraft`，习题「让 Agent 批改」放进来的）。输入框视图在刷新时取走、清掉。
     @Published var draftRequest: String?
+    /// 随 `draftRequest` 一起交还输入框的 `@` 文件（排队的话退回输入框时带着，发送时照样附上）。
+    var draftMentions: [AgentMention] = []
+    /// 回答中排上队的话（用户 2026-10-27：「要有消息队列，不能必需打断才能发消息」）。这一轮正常答完就发下一条，
+    /// 一轮一条、按先后；用户按了停止 / 出错 / 换会话就不发，全部退回输入框（连同图片），一句也不丢。
+    @Published private(set) var queued: [AgentQueuedMessage] = []
     /// 下一次发送时放进隐藏上下文块的说明（英文，给 Agent 看：题目 / 作答的 id 等）。发出去就清。
     private(set) var contextNotes: [String] = []
 
@@ -264,7 +277,7 @@ final class AgentChat: ObservableObject {
     func addContextNote(_ note: String) { if !contextNotes.contains(note) { contextNotes.append(note) } }
 
     /// 往输入框里放一句话（视图取走；已有字就接在后面）。
-    func requestDraft(_ text: String) { draftRequest = text }
+    func requestDraft(_ text: String) { draftRequest = draftRequest.map { $0 + "\n\n" + text } ?? text }
 
     func removeAttachment(_ id: UUID) { attachments.removeAll { $0.id == id } }
 
@@ -299,9 +312,61 @@ final class AgentChat: ObservableObject {
     // MARK: - 发消息
 
     /// `mentions`：输入框里 `@` 选中的文件，各附一个 `resource_link`（只有名字和位置，不带内容）。
+    /// 回答中调 = 排队（连同此刻挂在输入框上的图片），这一轮答完自动发（`queued`）。
     func send(_ raw: String, mentions: [AgentMention] = []) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let id = sessionId, let c = connection, phase == .idle else { return }
+        guard !text.isEmpty, sessionId != nil, connection != nil, phase == .idle || phase == .running else { return }
+        // 斜杠命令不带图片（见 `dispatch`）：图片留在输入框上
+        let command = AgentSlash.parse(text) != nil
+        // 握手说不收图：图片留在输入框上，这句话不发，提示一下（发出去 Agent 会整条报错）
+        if !command, !attachments.isEmpty, acceptsImages == false {
+            items.append(AgentItem(kind: .notice(
+                String(format: L("%@ does not accept images. Remove the image to send."), agentName),
+                isError: true)))
+            return
+        }
+        let message = AgentQueuedMessage(text: text, mentions: command ? [] : mentions, images: command ? [] : attachments)
+        if !command { attachments = [] }
+        if phase == .running {
+            queued.append(message)
+            return
+        }
+        dispatch(message)
+    }
+
+    /// 排着的那条不要了（输入区「移除」）。
+    func removeQueued(_ id: UUID) { queued.removeAll { $0.id == id } }
+
+    /// 排着的那条退回输入框改（输入区「编辑」）：话接在输入框里已有的后面，图片挂回输入框。
+    func editQueued(_ id: UUID) {
+        guard let i = queued.firstIndex(where: { $0.id == id }) else { return }
+        restore([queued.remove(at: i)])
+    }
+
+    /// 排着的全部退回输入框（停止 / 出错 / 换会话 / 进程退出）。
+    private func restoreQueue() {
+        guard !queued.isEmpty else { return }
+        let all = queued
+        queued = []
+        restore(all)
+    }
+
+    private func restore(_ messages: [AgentQueuedMessage]) {
+        requestDraft(messages.map(\.text).joined(separator: "\n\n"))
+        draftMentions += messages.flatMap(\.mentions)
+        attachments = messages.flatMap(\.images) + attachments
+    }
+
+    /// 这一轮正常答完：发排着的下一条。
+    private func sendNextQueued() {
+        guard phase == .idle, !queued.isEmpty, sessionId != nil, connection != nil else { return }
+        dispatch(queued.removeFirst())
+    }
+
+    /// 真正发出去（空闲时）。
+    private func dispatch(_ message: AgentQueuedMessage) {
+        guard let id = sessionId, let c = connection, phase == .idle else { return }
+        let text = message.text
         // 🔴 斜杠命令（`/compact` 之类）**只发这一块文字**：三家 Agent 都只拿第一块文字认命令，其余的块
         // 要么被扔掉（Kimi 执行内置命令只看命令名和参数——上下文块跟着丢了，`lastContextSent` 却记成已发，
         // 下一句话就不再带上下文），要么跟着进了命令（Claude Code 把每块文字都交给 SDK）。
@@ -313,15 +378,8 @@ final class AgentChat: ObservableObject {
             run([.text(TextContent(text: text))], session: id, on: c)
             return
         }
-        // 握手说不收图：图片留在输入框上，这句话不发，提示一下（发出去 Agent 会整条报错）
-        if !attachments.isEmpty, acceptsImages == false {
-            items.append(AgentItem(kind: .notice(
-                String(format: L("%@ does not accept images. Remove the image to send."), agentName),
-                isError: true)))
-            return
-        }
-        let images = attachments
-        attachments = []
+        let mentions = message.mentions
+        let images = message.images
         // 🔴 用户的话放**第一块**、上下文块跟在后面：Kimi 拿第一块文字给会话起标题（spike 实测），
         // 上下文在前的话历史列表里每条都叫「<unireader-context>」。图片夹在两者之间
         var blocks: [ContentBlock] = [.text(TextContent(text: text))]
@@ -370,7 +428,9 @@ final class AgentChat: ObservableObject {
                 guard sessionId == id else { return }   // 中途换了会话：这条结果不属于眼前这段
                 turnEndedAt = Date()
                 switch r.stopReason {
-                case .cancelled: items.append(AgentItem(kind: .notice(L("Stopped."), isError: false)))
+                case .cancelled:
+                    items.append(AgentItem(kind: .notice(L("Stopped."), isError: false)))
+                    restoreQueue()   // 用户按了停止：排着的不自动发，退回输入框
                 case .maxTokens, .maxTurnRequests:
                     items.append(AgentItem(kind: .notice(L("The agent stopped because it hit its length limit."), isError: true)))
                 case .refusal: items.append(AgentItem(kind: .notice(L("The agent declined to continue."), isError: true)))
@@ -378,10 +438,12 @@ final class AgentChat: ObservableObject {
                 }
                 phase = .idle
                 refreshHistory()   // 标题 / 更新时间变了，历史菜单跟上
+                sendNextQueued()   // 排着的下一条（停止时上面已经退回输入框，这里是空的）
             } catch {
                 guard sessionId == id else { return }
                 items.append(AgentItem(kind: .notice(describe(error), isError: true)))
                 phase = connection == nil ? .failed(describe(error)) : .idle
+                restoreQueue()     // 出错了别接着往下发：退回输入框，用户自己决定
             }
         }
     }
@@ -472,6 +534,7 @@ final class AgentChat: ObservableObject {
         connection = nil
         sessionId = nil
         lastContextSent = nil
+        restoreQueue()
         items.append(AgentItem(kind: .notice(L("The agent process exited. Start a new chat to reconnect."), isError: true)))
         phase = .failed(L("The agent process exited."))
     }
@@ -513,6 +576,7 @@ final class AgentChat: ObservableObject {
         if let id = sessionId { connection?.unregister(sessionId: id) }
         sessionId = nil
         lastContextSent = nil
+        restoreQueue()   // 排着的属于眼前这段：换会话不往新的那段里发，退回输入框（同没发出去的草稿）
     }
 
     /// 我们自己的 MCP 服务：走回环地址，带口令（设了的话）和「内置 Agent」标记头。

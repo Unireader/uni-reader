@@ -47,6 +47,10 @@
   （`cases` / `array` / `align` / `gather` / `split` 环境、`\boxed`、`\overset`、`\underset`、`\stackrel`、`\xrightarrow`、
   `\overbrace`、`\underbrace`、`\mathop`、`\limits`、`\because`、`\therefore`）用户定**不做**，改为写进给 Agent 的
   规则（`MCPTools.mathWriting`）让它别用；分段函数让它写 `\left\{\begin{aligned}…\end{aligned}\right.`（实测能渲染）。
+  🔴 **SwiftMath 的 `aligned` 只认两列**（2026-10-27 用户报习题题干）：Agent 照上面那句写分段函数，又按 LaTeX 惯用法用 `&&`
+  把条件对成第二列（`&0, && n=0`，一行四格），整条失败。SwiftMath **认两列的 `cases`**（2026-09-16 的「`cases` 不认」用的是
+  一列样例，报的是「只能两列」），所以 `LatexCompat.piecewise` 把「`\left\{` + 多于两列的 `aligned` + `\right.`」每两格并一格、
+  换成两列 `cases`，显示与 LaTeX 一致。查列数问题：`MTMathListBuilder.build(fromString:error:)` 的错误信息直接写着「can only have N columns」。
 - **Debug 包渲染公式时崩在 SwiftMath `MTTypesetter.getInterElementSpace` 的 `assert`**（2026-10-07，引擎 fork `.5` 修掉）：
   空白命令夹在关系符 / 括号 / 标点 / 运算符与加减号之间（`x = \; -1`、`(\,-1)`、`f(x)=x^2, \quad -1\le x`），
   SwiftMath 只看紧挨着的前一个元素来决定加减号算不算二元运算符，看到空白就判错，排版时遇到无效组合触发断言。
@@ -111,6 +115,13 @@
   （`ReaderView.retileIfScrollersOverlapContent`，实测全程 9000 多行日志只触发 5 次）——🔴 仅限常驻样式，
   覆盖式叠着是对的、也不能对它叫 `tile()`（见上一条）。排这类问题：`touch ~/Library/Logs/UniReader-scroller.log`
   开 `ScrollerLog`（默认关，记 clip / 滚动条 / 滑块 / 分栏各格的完整几何）。
+
+- **用户系统设置是「总是显示滚动条」（常驻样式）**（2026-10-27 用户截图：习题练习页题目不够一屏也有一条竖滚动条）：
+  新建的 `NSScrollView` 只设 `hasVerticalScroller = true` 的话，常驻样式下**不管内容多高都画一条**。内容可能不满一屏的
+  一律加 `autohidesScrollers = true`（对话记录、`@` 候选早就加了）。别拿覆盖式滚动条的开发机效果当准。
+- **浮动标签栏会盖住窗格底部**：两个以上标签时胶囊（或贴底整条）浮在窗格最底下，阅读区 / 画板之外的内容视图要自己让位——
+  让多少统一用窗格的 `tabBarInset + scrollerLift`（笔架、习题页都是这个数；常驻滚动条时标签栏还会抬高一条槽）。
+  钉在底部的控件（习题的「上一题 / 下一题」）摆在它上面；可滚动的列表照样铺满、用 `contentInsets.bottom` 让最后几行滚得上来。
 
 ## 阅读进度 / 缩放重排
 

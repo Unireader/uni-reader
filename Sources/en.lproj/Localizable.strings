@@ -716,6 +716,12 @@
 "Pasted Image" = "Pasted Image";
 "Could not read the pasted image." = "Could not read the pasted image.";
 
+/* Agent 面板：消息排队（2026-10-27） */
+"Queued — sent after this reply" = "Queued — sent after this reply";
+"%d images" = "%d images";
+"Edit" = "Edit";
+"Press Return to send after this reply…" = "Press Return to send after this reply…";
+
 /* Settings › General › AI (2026-09-19) */
 "Web AI Panel" = "Web AI Panel";
 "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed." = "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed.";

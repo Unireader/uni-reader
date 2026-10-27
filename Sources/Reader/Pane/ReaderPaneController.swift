@@ -493,6 +493,8 @@ final class ReaderPaneController: NSViewController {
         if let ex = exView {
             ex.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
             ex.topInset = si.top
+            // 底下浮着标签栏（胶囊 / 贴底整条）：习题页的「上一题 / 下一题」要摆在它上面，同笔架让位的高度
+            ex.bottomInset = tabBarInset + scrollerLift
         }
         if let pad = scratchPad {
             pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧 Inspector 让位

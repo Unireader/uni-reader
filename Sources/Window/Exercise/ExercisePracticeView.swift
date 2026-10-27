@@ -9,6 +9,10 @@ import AppKit
 /// 填空 / 主观题（`EXERCISE-PLAN.md §11`）：选项那一块换成 `ExerciseFreeAnswerView`（输入框 + 手写小画板），
 /// 交卷后程序判不了的由用户点「答对了 / 答错了」，或「让 Agent 批改」；判过的可以改判，后判的为准。
 ///
+/// 「上一题 / 下一题」在滚动区外面、钉在底部一条（用户 2026-10-27：「要固定位置，不能随着内容变化显示高度」——
+/// 原先排在题目内容最后，每题高度不同，按钮跟着上下跳）。底下浮着标签栏时摆在它上面（`bottomInset`，同日用户截图：
+/// 胶囊压在这一条上）。
+///
 /// 键盘：A~H 选、Return 提交 / 下一题、← → 上一题 / 下一题；填空 / 主观题 ⌘Return 提交。
 @MainActor
 final class ExercisePracticeView: NSView {
@@ -44,6 +48,8 @@ final class ExercisePracticeView: NSView {
     private let mistakeButton = NSButton()
     private let prevButton = NSButton()
     private let nextButton = NSButton()
+    /// 底部那条（上一题 / 下一题）上沿的分隔线。
+    private let navLine = NSBox()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     /// 填空 / 主观题的作答区（选择题时藏起来）。
     private let freeView = ExerciseFreeAnswerView()
@@ -75,6 +81,7 @@ final class ExercisePracticeView: NSView {
         self.workspace = workspace
         super.init(frame: .zero)
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true   // 「总是显示滚动条」时，题目不够一屏也别画一条（同日用户截图）
         scroll.drawsBackground = false
         scroll.automaticallyAdjustsContentInsets = false
         scroll.documentView = doc
@@ -121,7 +128,9 @@ final class ExercisePracticeView: NSView {
         for v in [metaLabel, starButton, originalButton, sourceButton, stemView, originalImage, freeView, submitButton,
                   resultIcon, resultLabel, historyNote, rightButton, wrongButton, flipButton, askAgentButton,
                   feedbackTitle, feedbackView, agentNote, markNote, explanationTitle, explanationView, retryButton, mistakeButton,
-                  prevButton, nextButton, emptyLabel] as [NSView] { doc.addSubview(v) }
+                  emptyLabel] as [NSView] { doc.addSubview(v) }
+        navLine.boxType = .separator
+        for v in [navLine, prevButton, nextButton] as [NSView] { addSubview(v) }
         for v in [stemView, explanationView, feedbackView] { v.onHeightChange = { [weak self] in self?.needsLayout = true } }
         show()
     }
@@ -156,6 +165,7 @@ final class ExercisePracticeView: NSView {
         guard let e = deck.current else {
             shownId = ""; shownContent = nil; shownKind = nil
             for v in doc.subviews { v.isHidden = v !== emptyLabel }
+            for v in [navLine, prevButton, nextButton] as [NSView] { v.isHidden = true }
             emptyLabel.stringValue = deck.filter == .unanswered ? L("You’ve done every question here.")
                 : L("No exercises here yet. Ask the Agent to recognize the exercises in a PDF.")
             needsLayout = true
@@ -163,6 +173,7 @@ final class ExercisePracticeView: NSView {
             return
         }
         for v in doc.subviews { v.isHidden = false }
+        for v in [navLine, prevButton, nextButton] as [NSView] { v.isHidden = false }
         emptyLabel.isHidden = true
         if e.id != shownId {
             picked = []
@@ -523,9 +534,16 @@ final class ExercisePracticeView: NSView {
 
     private var columnWidth: CGFloat { max(280, min(760, bounds.width - 48)) }
 
+    /// 底部那条（上一题 / 下一题）的高度。
+    private static let navHeight: CGFloat = 52
+    /// 底下浮着的标签栏占的高度（窗格经 `ExerciseTabView` 给）：底部那条摆在它上面，那一截留给标签栏。
+    var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { needsLayout = true } } }
+
     override func layout() {
         super.layout()
-        scroll.frame = bounds
+        let navShown = deck.current != nil
+        let navH = navShown ? Self.navHeight : 0
+        scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - bottomInset - navH))
         let w = scroll.contentSize.width
         let colW = max(280, min(760, w - 48))
         let x0 = max(24, (w - colW) / 2)
@@ -623,14 +641,18 @@ final class ExercisePracticeView: NSView {
         }
         if ax > x0 { y += 40 }
 
-        y += 12
-        prevButton.sizeToFit(); nextButton.sizeToFit()
-        prevButton.frame = NSRect(x: x0, y: y, width: max(100, prevButton.frame.width), height: prevButton.frame.height)
-        let nw = max(100, nextButton.frame.width)
-        nextButton.frame = NSRect(x: x0 + colW - nw, y: y, width: nw, height: nextButton.frame.height)
-        y = nextButton.frame.maxY + 32
+        y += 20
 
         doc.frame = NSRect(x: 0, y: 0, width: w, height: max(scroll.contentSize.height, y))
+
+        // 底部那条：位置只跟视图大小走，与这一题有多高无关；左右与题目那一栏对齐
+        let barY = bounds.height - bottomInset - navH
+        navLine.frame = NSRect(x: 0, y: barY, width: bounds.width, height: 1)
+        prevButton.sizeToFit(); nextButton.sizeToFit()
+        let ph = prevButton.frame.height, nh = nextButton.frame.height
+        prevButton.frame = NSRect(x: x0, y: barY + (navH - ph) / 2, width: max(100, prevButton.frame.width), height: ph)
+        let nw = max(100, nextButton.frame.width)
+        nextButton.frame = NSRect(x: x0 + colW - nw, y: barY + (navH - nh) / 2, width: nw, height: nh)
     }
 }
 

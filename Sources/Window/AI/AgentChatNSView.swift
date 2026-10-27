@@ -39,6 +39,8 @@ final class AgentChatNSView: NSView {
     /// 空对话页上的「问 Kimi」：设置里换了 Agent 后点新对话，名字要跟着换（`refresh` 里落实）。
     private let emptyTitle = NSTextField(labelWithString: "")
     private let permissions = NSStackView()
+    /// 回答中排上队的话（贴在输入框上方，`AgentChat.queued`）。
+    private let queueView = AgentQueueView()
     private let composer: AgentComposerView
     private var itemViews: [UUID: (kind: AgentItem.Kind, view: NSView)] = [:]
     /// 上次刷新时的全部条目 id（不论建没建视图）。
@@ -108,7 +110,10 @@ final class AgentChatNSView: NSView {
         permissions.orientation = .vertical
         permissions.alignment = .leading
         permissions.spacing = 8
-        for v in [header, headerLine, banners, transcriptScroll, empty, permissions, composer] as [NSView] { addSubview(v) }
+        queueView.isHidden = true
+        queueView.onEdit = { [weak chat] in chat?.editQueued($0) }
+        queueView.onRemove = { [weak chat] in chat?.removeQueued($0) }
+        for v in [header, headerLine, banners, transcriptScroll, empty, permissions, queueView, composer] as [NSView] { addSubview(v) }
         header.isHidden = !showsHeader
         headerLine.isHidden = !showsHeader
         transcriptScroll.contentView.postsBoundsChangedNotifications = true
@@ -196,6 +201,11 @@ final class AgentChatNSView: NSView {
         let ch = composer.preferredHeight
         composer.frame = NSRect(x: 12, y: b.height - 12 - ch, width: b.width - 24, height: ch)
         var bottom = composer.frame.minY - 4
+        if !queueView.isHidden {
+            let qh = queueView.preferredHeight
+            queueView.frame = NSRect(x: 12, y: bottom - 4 - qh, width: b.width - 24, height: qh)
+            bottom = queueView.frame.minY
+        }
         if !permissions.arrangedSubviews.isEmpty {
             fitPermissions(width: b.width - 24)
             let ph = permissions.fittingSize.height
@@ -262,6 +272,8 @@ final class AgentChatNSView: NSView {
         refreshBanners()
         refreshTranscript()
         refreshPermissions()
+        queueView.update(chat.queued.map { .init(id: $0.id, text: $0.text, images: $0.images.count) })
+        queueView.isHidden = chat.queued.isEmpty
         composer.refresh()
         needsLayout = true
     }
@@ -1087,7 +1099,7 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         textView.textContainer?.lineFragmentPadding = 5
         textView.isVerticallyResizable = true
         textView.autoresizingMask = [.width]
-        textView.onSend = { [weak self] in self?.sendTapped() }
+        textView.onSend = { [weak self] in self?.returnPressed() }
         textView.onKey = { [weak self] in self?.handleMentionKey($0) ?? false }
         textView.onPasteImage = { [weak self] in self?.pasteImages(from: $0) ?? false }
         mentionPopup.onPick = { [weak self] in self?.pickMention($0) }
@@ -1136,6 +1148,8 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         // 别处放进来的一句话（习题「让 Agent 批改」）：输入框里已有字就接在后面
         if let d = chat.draftRequest {
             chat.draftRequest = nil
+            pickedMentions += chat.draftMentions   // 排队的话退回来时带着它的 `@` 文件
+            chat.draftMentions = []
             let has = !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             textView.string = has ? textView.string + "\n" + d : d
             textDidChange(Notification(name: NSText.didChangeNotification))
@@ -1165,8 +1179,9 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     private func refreshAttachments() {
         defer {
             stripScroll.isHidden = chat.attachments.isEmpty
-            let hint = chat.attachments.isEmpty ? String(format: L("Ask %@…"), chat.agentName)
-                                                : L("Ask about the image…")
+            let hint = chat.phase == .running ? L("Press Return to send after this reply…")
+                : chat.attachments.isEmpty ? String(format: L("Ask %@…"), chat.agentName)
+                : L("Ask about the image…")
             if placeholder.stringValue != hint { placeholder.stringValue = hint }
         }
         let ids = chat.attachments.map(\.id)
@@ -1419,13 +1434,27 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         pickedMentions.append(m)
     }
 
+    /// 有字、有会话、空闲或正在回答（回答中发 = 排队，`AgentChat.queued`）。
     private var canSend: Bool {
-        chat.phase == .idle && chat.sessionId != nil && !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        (chat.phase == .idle || chat.phase == .running) && chat.sessionId != nil
+            && !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// 回车：有字就发（回答中 = 排队）。🔴 回答中输入框空着按回车什么都不做——原先回车和按钮走同一个
+    /// `sendTapped`，回答中一回车就把回答停了（用户 2026-10-27：「不能必需打断才能发消息」）。停止只走按钮 / ⌘.。
+    private func returnPressed() {
+        guard canSend else { return }
+        sendText()
+    }
+
+    /// 按钮：回答中是「停止」，否则是「发送」。
     @objc private func sendTapped() {
         if chat.phase == .running { chat.cancel(); return }
         guard canSend else { return }
+        sendText()
+    }
+
+    private func sendText() {
         let text = textView.string
         chat.send(text, mentions: AgentMention.stillReferenced(pickedMentions, in: text))
         pickedMentions = []

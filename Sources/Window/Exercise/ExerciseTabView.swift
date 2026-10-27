@@ -15,6 +15,14 @@ final class ExerciseTabView: NSView {
     var agentWindow: () -> UUID? = { nil }
     /// 顶部让开工具栏的高度（由窗格设）。
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
+    /// 底下浮着的标签栏占的高度（窗格给）：练习页的「上一题 / 下一题」摆在它上面，列表的最后几行能滚到它上面。
+    var bottomInset: CGFloat = 0 {
+        didSet {
+            guard bottomInset != oldValue else { return }
+            practice.bottomInset = bottomInset
+            list.bottomInset = bottomInset
+        }
+    }
 
     private let header = NSVisualEffectView()
     private let progressLabel = NSTextField(labelWithString: "")

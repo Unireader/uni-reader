@@ -43,6 +43,18 @@ let cases: [(String, String)] = [
     (#"x = 1 \tag{1}"#, #"x = 1 \qquad(1)"#),
     (#"x = 1 \tag*{(a)}"#, #"x = 1 \qquad (a)"#),
     (#"\frac{a}{b} + \sqrt{x}"#, #"\frac{a}{b} + \sqrt{x}"#),          // 认得的不动
+    // 分段函数：多列 aligned（`&&` 对齐条件）→ 两列 cases（2026-10-27 用户报的习题题干）
+    (#"F(n)=\left\{\begin{aligned} &0, && n=0 \\ &1, && n=1 \\ &F(n-1)+F(n-2), && n>1 \end{aligned}\right."#,
+     #"F(n)=\begin{cases} 0, & n=0 \\ 1, & n=1 \\ F(n-1)+F(n-2), & n>1 \end{cases}"#),
+    (#"f(x)=\left\lbrace \begin{aligned} &\dfrac{1}{x}, &&x\neq 0 \\[4pt] &0, &&x=0 \\ \end{aligned} \right."#,
+     #"f(x)=\begin{cases} \frac{1}{x}, & x\neq 0 \\ 0, & x=0 \end{cases}"#),     // \lbrace、行距、末尾多余换行、里面再换 \dfrac
+    (#"\left\{\begin{aligned} x+y &= 1, && \text{a \& b} \\ x &= 2 \end{aligned}\right."#,
+     #"\begin{cases} x+y = 1, & \text{a \& b} \\ x = 2 & \end{cases}"#),           // 一对里两格并成一格；\& 不拆；短行补空格
+    (#"\left\{\begin{aligned} &0, & n=0 \\ &1, & n=1 \end{aligned}\right."#,
+     #"\begin{cases} 0, & n=0 \\ 1, & n=1 \end{cases}"#),                            // 条件前只写一个 &：三列，SwiftMath 同样不认，照样换
+    (#"\left\{\begin{aligned} a &= b \\ c &= d \end{aligned}\right."#,
+     #"\left\{\begin{aligned} a &= b \\ c &= d \end{aligned}\right."#),           // 两列本来就能渲染：不动
+    (#"\begin{aligned} &0, && n=0 \end{aligned}"#, #"\begin{aligned} &0, && n=0 \end{aligned}"#),   // 外面没有 \left\{：不动
     ("x + y", "x + y"),
 ]
 for (input, want) in cases {
@@ -61,6 +73,8 @@ let samples = [
     #"\operatorname{sgn} x"#, #"\iint_D f"#, #"a \pmod{p}"#, #"a\bmod b"#,
     #"a\not= b"#, #"x\not\in A"#, #"a\implies b"#, #"\boldsymbol{\alpha}"#, #"\mathscr{F}"#,
     #"\varnothing"#, #"x \tag{1}"#,
+    #"F(n)=\left\{\begin{aligned} &0, && n=0 \\ &1, && n=1 \\ &F(n-1)+F(n-2), && n>1 \end{aligned}\right."#,
+    #"\displaystyle f(x)=\left\lbrace \begin{aligned} &\dfrac{1}{x}, &&x\neq 0 \\[4pt] &0, &&x=0 \\ \end{aligned} \right."#,
 ]
 for f in samples {
     let before = bridge.render(latex: f, fontSize: 18, theme: theme)

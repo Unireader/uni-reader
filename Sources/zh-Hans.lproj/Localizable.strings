@@ -718,6 +718,12 @@
 "Pasted Image" = "粘贴的图片";
 "Could not read the pasted image." = "无法读取粘贴的图片。";
 
+/* Agent 面板：消息排队（2026-10-27） */
+"Queued — sent after this reply" = "排队中：回答完后逐条发送";
+"%d images" = "%d 张图片";
+"Edit" = "编辑";
+"Press Return to send after this reply…" = "回答完再发：输入后按回车排队…";
+
 /* 设置 › 通用 › AI（2026-09-19） */
 "Web AI Panel" = "网页 AI 面板";
 "Turning one off hides its toolbar button and menu item, and ⌥-drag screenshots are no longer offered to it. Open panels and running agents are closed." = "关掉后，它的工具栏按钮不再显示、菜单项变灰，⌥ 拖截图也不会再发给它；已打开的面板和正在运行的 Agent 会被关闭。";
