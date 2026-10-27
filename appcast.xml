@@ -9,6 +9,60 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.12</title>
+      <pubDate>Tue, 27 Oct 2026 02:51:06 +0000</pubDate>
+      <sparkle:version>53</sparkle:version>
+      <sparkle:shortVersionString>0.3.12</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能</h4>
+<ul>
+<li>Agent 回答时可以接着发消息：输入后按回车先排队，这次回答完后逐条自动发出。排队的消息显示在输入框上方，可以编辑或移除；按「停止」、出错或换对话时，排队的消息会退回输入框，不会丢。原先回答中按回车会直接停止回答。</li>
+<li>Agent 面板显示上下文占用：发送按钮左边显示已用的百分比（Agent 报告了才显示），鼠标停在上面能看到具体的 token 数；点一下可以「压缩上下文」。</li>
+<li>Agent 输入框支持 ⌘V 粘贴图片：截图、从其他 App 复制的图片、在访达里复制的图片文件都可以直接粘贴。从文档里复制的文字照常粘贴为文字。</li>
+</ul>
+<h4>改进</h4>
+<ul>
+<li>习题练习页的「上一题 / 下一题」固定在页面底部，不再随题目长短上下移动；开着多个标签页时会让开底部的标签栏。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>在 Agent 里用 <code>/compact</code> 这类命令之后，下一条消息 Agent 会不知道你正在看哪篇文档、哪一页，已修复。</li>
+<li>Agent 列出的计划（待办清单）比较长时，会叠在上面的对话内容上，已修复。</li>
+<li>页面已经做过文字识别（OCR），Agent 读取时仍提示「还没有 OCR 文字」；在刚识别完的页面上让 Agent 添加高亮或批注，也可能提示找不到引文。已修复。</li>
+<li>外部 Agent（例如终端里的 Claude Code）连接 UniReader 时，闲置一段时间或 UniReader 重启后会一直显示断开，现在能继续使用；服务意外停止后也会自动重新开启。Claude Code 现在也能看到 UniReader 返回的提示文字。</li>
+<li>习题和笔记里，用 <code>&amp;&amp;</code> 对齐条件写的分段函数公式整条显示成源码，现在能正常显示。</li>
+<li>系统设置为「总是显示滚动条」时，习题页内容不满一屏也会显示滚动条，已修复；习题列表的最后几行也不会再被底部标签栏挡住。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.12">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New</h4>
+<ul>
+<li>You can keep sending messages while the Agent is answering: press Return to queue a message, and queued messages are sent one at a time after the current answer finishes. They are shown above the input box, where you can edit or remove them. If you press Stop, an error occurs, or you switch chats, queued messages go back into the input box so nothing is lost. Previously, pressing Return during an answer stopped it.</li>
+<li>The Agent panel shows how much of the context is used: a percentage to the left of the Send button (shown when the agent reports it). Hover over it for the exact token counts, or click it to compact the context.</li>
+<li>The Agent input box accepts images with ⌘V: screenshots, images copied from other apps, and image files copied in Finder. Text copied from documents is still pasted as text.</li>
+</ul>
+<h4>Improvements</h4>
+<ul>
+<li>The Previous / Next buttons in exercise practice now stay at the bottom of the page instead of moving with each question's length, and stay clear of the tab bar when several tabs are open.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>After a command such as <code>/compact</code> in the Agent panel, the agent lost track of which document and page you were viewing in the next message. Fixed.</li>
+<li>A long plan (to-do list) from the agent could overlap the conversation above it. Fixed.</li>
+<li>The agent could still report "no OCR text yet" for pages that had already been recognized, and adding a highlight or note on a page that had just been recognized could fail with "quote not found". Fixed.</li>
+<li>External agents (such as Claude Code in Terminal) connected to UniReader showed as disconnected after sitting idle for a while or after UniReader restarted. They now keep working, and the service restarts itself if it stops unexpectedly. Claude Code now also sees the messages UniReader returns with its tool results.</li>
+<li>Piecewise formulas that align their conditions with <code>&amp;&amp;</code> in exercises and notes were shown as raw source. They now display correctly.</li>
+<li>With "Show scroll bars: Always", exercise pages showed a scroll bar even when the content fit. Fixed, and the last rows of the exercise list are no longer hidden behind the tab bar.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.12">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.12/UniReader-0.3.12.zip" length="16621049" type="application/octet-stream" sparkle:edSignature="o7uHtygvN3Nj8pwwJ49bC86JDLPYrb18h/V3fqexX+vwBWJXccGIRgdz3TgfJ5yW2htQY+cWoArnIRGQclKOBg==" />
+    </item>
+    <item>
       <title>v0.3.11</title>
       <pubDate>Tue, 20 Oct 2026 00:24:27 +0000</pubDate>
       <sparkle:version>52</sparkle:version>
