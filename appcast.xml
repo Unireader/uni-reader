@@ -9,6 +9,68 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.14</title>
+      <pubDate>Thu, 29 Oct 2026 14:48:03 +0000</pubDate>
+      <sparkle:version>56</sparkle:version>
+      <sparkle:shortVersionString>0.3.14</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能：连接服务器（第一版）</h4>
+<ul>
+<li>可以把工作区放到自己的 UniReader 服务器上，多台设备共用一份。服务器是单独的程序，需要自己运行（源码在仓库的 <code>server/</code> 目录，支持 macOS 和 Linux）。</li>
+<li>在 设置 ›「服务器」里填地址和配对码连接服务器（在服务器上运行 <code>unireader-server pairing-code</code> 可以看到配对码）。同一网络里的服务器会列在「附近的服务器」里，点「填入」就行。</li>
+<li>工作区菜单里新增「上传到服务器…」：会上传资料库、用到的 PDF 与图片，以及 <code>Notes/</code> 里的笔记。上传后这个工作区留在原处，打开和关闭时自动和服务器同步；也可以点「立即上传改动」。</li>
+<li>工作区菜单里的「从服务器打开…」可以打开服务器上的工作区。这台 Mac 会先存一份本机缓存，之后就在缓存上阅读和书写，连不上服务器时也能照常用。不超过设定大小的 PDF 自动下载，更大的在打开时再下载（大小在 设置 ›「服务器」里改）。</li>
+<li>不想再同步的工作区，可以在工作区菜单里选「变回本地工作区…」，服务器上的那份不受影响。</li>
+<li>目前还不同步：上传后在 <code>Notes/</code> 里改的 Markdown 笔记。</li>
+</ul>
+<h4>新功能：启动页「工作区」</h4>
+<ul>
+<li>新增「工作区」窗口（文件 › 工作区…，⇧⌘O），列出这台 Mac 上打开过的工作区，以及每台已连接服务器上的工作区，也可以在这里新建、打开工作区或连接服务器。</li>
+<li>本机的工作区可以右键「在访达中显示」或「从列表中移除」（只是从列表里去掉，不删除文件夹）。</li>
+</ul>
+<h4>改进</h4>
+<ul>
+<li>启动时恢复上次退出时开着的工作区窗口。退出前把窗口都关掉了，下次启动只显示「工作区」窗口；没有窗口时点 Dock 图标也会显示它（原先是直接打开上次的工作区）。</li>
+<li>关掉某个工作区的最后一个窗口后，再打开它会是空窗口，不再自动打开上次的文档。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>在安卓 App 上单独使用时添加的文字笔记、笔迹图层和草稿纸，回到 Mac 上修改会多出一条，删除也删不掉，已修复。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.14">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New: Connect to a Server (first version)</h4>
+<ul>
+<li>You can put a workspace on your own UniReader server and share it across devices. The server is a separate program you run yourself (source in the repository's <code>server/</code> folder; runs on macOS and Linux).</li>
+<li>Connect in Settings › Servers with the server's address and pairing code (run <code>unireader-server pairing-code</code> on the server to see it). Servers on the same network are listed under Servers Nearby; click Fill In to use one.</li>
+<li>The workspace menu has a new "Upload to Server…" item. It uploads the library, the PDFs and images it uses, and the notes in <code>Notes/</code>. Afterwards the workspace stays where it is and syncs with the server when you open and close it; you can also choose "Upload Changes Now".</li>
+<li>"Open from Server…" in the workspace menu opens a workspace from the server. This Mac keeps a local copy and you read and write on it, so it still works when the server can't be reached. PDFs up to a set size download automatically and larger ones download when you open them (change the size in Settings › Servers).</li>
+<li>To stop syncing a workspace, choose "Convert to Local Workspace…" in the workspace menu. The copy on the server isn't touched.</li>
+<li>Not synced yet: changes to Markdown notes in <code>Notes/</code> after uploading.</li>
+</ul>
+<h4>New: Workspaces window</h4>
+<ul>
+<li>A new Workspaces window (File › Workspaces…, ⇧⌘O) lists the workspaces you've opened on this Mac and the workspaces on each connected server. You can also create or open a workspace or connect to a server from it.</li>
+<li>Right-click a workspace on this Mac to Show in Finder or Remove from List (this only removes it from the list; the folder isn't deleted).</li>
+</ul>
+<h4>Improvements</h4>
+<ul>
+<li>At launch UniReader reopens the workspace windows that were open when you quit. If you closed them all before quitting, only the Workspaces window appears; clicking the Dock icon with no windows open also shows it (previously it opened the last workspace).</li>
+<li>After you close a workspace's last window, opening it again starts with an empty window instead of reopening the last documents.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Text notes, ink layers and scratch pads added in the Android app on its own could not be edited or deleted properly on the Mac: editing one created a duplicate and deleting it did nothing. Fixed.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.14">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.14/UniReader-0.3.14.zip" length="17077271" type="application/octet-stream" sparkle:edSignature="SRPitkyKhIeHh6ITHgpI2ucE5vZQhFg2g1zZ144lOJCOKpUB15rmzh4YEkApUJp0xtQqSW/169Ju/ZG8q3kzBA==" />
+    </item>
+    <item>
       <title>v0.3.13</title>
       <pubDate>Tue, 27 Oct 2026 11:29:52 +0000</pubDate>
       <sparkle:version>54</sparkle:version>
