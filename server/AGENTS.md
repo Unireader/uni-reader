@@ -43,7 +43,7 @@ REMOTE=nas REMOTE_ADDR=192.168.1.160 REMOTE_DIR=/storage/data/98_Misc/unireader-
   `xcrun nm -A <SDK>/…/aarch64/usr/lib/libc.a | grep mimalloc.o`，有就别升。
 - Swift 6.2 读不了 Xcode 27 的 macOS SDK（各包的 `Package.swift` 按 Mac 编）：`build-linux.sh` 自动用 CommandLineTools 里的
   `MacOSX26*.sdk`（`SDKROOT`）；哪天命令行工具里没有 26 的 SDK 了，这一步会报错。
-- 静态 SDK **不带 XCTest / Swift Testing**：`--tests` 编不了测试。Linux 上的验证 = 上面那条远端端到端（48 项）。
+- 静态 SDK **不带 XCTest / Swift Testing**：`--tests` 编不了测试。Linux 上的验证 = 上面那条远端端到端（28 项）。
 - 局域网发现：Linux 上起 `avahi-publish-service` 子进程（要 `avahi-utils`）。服务器正常退出时一起停；被 `kill -9` 它会留下来，
   长期跑用 systemd（模板 `deploy/unireader-server.service`，装到 `/etc` 要用户点头）。组播不跨网段。
 - 用户的 NAS：`ssh nas`（root），程序 `/storage/app_bin/unireader-server/`，**正式数据 `/storage/data/22_Exam/Unireader`**，

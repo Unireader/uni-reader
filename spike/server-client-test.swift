@@ -32,15 +32,6 @@ func specState(_ folder: URL) throws -> [String: [String: String]] {
 }
 
 // ============================================================
-print("⓪ 哪些地址不走系统代理")
-for h in ["192.168.1.160", "10.0.0.2", "172.20.1.1", "100.95.183.82", "169.254.3.4", "127.0.0.1", "localhost",
-          "nas", "nas.local", "fd7a:115c:a1e0::1d01:b756", "[fe80::1]", "::1"] {
-    check(ServerClient.connectsDirectly(host: h), "\(h) 直连")
-}
-for h in ["example.com", "8.8.8.8", "172.32.0.1", "100.128.0.1", "192.169.0.1", "a.b.c.d", "2001:db8::1", ""] {
-    check(!ServerClient.connectsDirectly(host: h), "\(h.isEmpty ? "（空）" : h) 跟随系统代理")
-}
-
 print("① 配对")
 let paired = try await ServerClient.pair(baseURL: base, code: code, deviceName: "spike")
 let client = ServerClient(baseURL: base, token: paired.token)
@@ -156,7 +147,7 @@ req.setValue("Bearer \(paired.token)", forHTTPHeaderField: "Authorization")
 req.setValue("0", forHTTPHeaderField: "Upload-Offset")
 req.setValue(String(part.count), forHTTPHeaderField: "Upload-Length")
 let direct = URLSessionConfiguration.default
-direct.connectionProxyDictionary = [:]      // 同 ServerClient：局域网服务器不走系统代理
+direct.connectionProxyDictionary = [:]      // 同 ServerClient：连服务器不走系统代理
 let (_, r1) = try await URLSession(configuration: direct).upload(for: req, from: part.prefix(3 * 1024 * 1024))
 check((r1 as? HTTPURLResponse)?.statusCode == 202, "先传 3MB 就断：202")
 check(try await client.pdfSize(wid, hash: partHash) == nil, "服务器上还没有完整的")

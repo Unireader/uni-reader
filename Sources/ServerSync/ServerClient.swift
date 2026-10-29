@@ -133,38 +133,15 @@ struct ServerClient: Sendable {
 
     // MARK: - 收发
 
-    /// 局域网 / Tailscale 地址**不走系统代理**（2026-10-29 用户定）：系统代理多半没把局域网排除在外，
-    /// 经代理去连 192.168.x 的服务器只会失败（实测：代理 127.0.0.1:1087，请求全断）。公网域名照常跟随系统代理。
-    private var session: URLSession {
-        Self.connectsDirectly(host: baseURL.host ?? "") ? Self.directSession : .shared
-    }
+    /// 连服务器**一律不走系统代理**（2026-10-29 用户定）：服务器是自己搭的，用不着代理；经代理反而连不上——
+    /// 实测系统代理（127.0.0.1:1087）既不排除局域网（192.168.x 全断），也连不上只有 IPv6 地址的自家域名（TLS 握手失败）。
+    private var session: URLSession { Self.directSession }
 
     private static let directSession: URLSession = {
         let c = URLSessionConfiguration.default
         c.connectionProxyDictionary = [:]       // 空表 = 不用代理（nil 才是跟随系统设置）
         return URLSession(configuration: c)
     }()
-
-    /// 这个地址是不是本机 / 局域网 / Tailscale 里的：私有 IPv4、链路本地、100.64/10（Tailscale 用这段）、
-    /// IPv6 的 ULA（fc00::/7，Tailscale 的 fd7a:… 也在里面）与链路本地、`.local`、不带点的主机名（如 `nas`）。
-    static func connectsDirectly(host raw: String) -> Bool {
-        let host = raw.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        if host.isEmpty { return false }
-        if host == "localhost" || host.hasSuffix(".local") { return true }
-        if host.contains(":") {                 // IPv6
-            return host == "::1" || host.hasPrefix("fc") || host.hasPrefix("fd")
-                || host.hasPrefix("fe8") || host.hasPrefix("fe9") || host.hasPrefix("fea") || host.hasPrefix("feb")
-        }
-        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 4 else { return !host.contains(".") }      // 域名：只有不带点的算
-        let b = parts.compactMap { Int($0) }
-        guard b.count == 4, b.allSatisfy({ (0...255).contains($0) }) else { return false }
-        switch (b[0], b[1]) {
-        case (10, _), (127, _), (192, 168), (169, 254): return true
-        case (172, 16...31), (100, 64...127): return true
-        default: return false
-        }
-    }
 
     private func request(_ path: String, method: String = "GET", query: [URLQueryItem] = []) throws -> URLRequest {
         guard var c = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false) else {

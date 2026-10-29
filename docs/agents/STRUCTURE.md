@@ -15,7 +15,7 @@
   `NetInfo`/`NetWatch` = 本机全部 IPv4 + 网络变化自动重扫（平板二维码与 MCP 的地址 / `Origin` 放行表共用，`MCP-PLAN.md §23`）
 - `Sources/Sync/` + `Sources/ServerSync/` — 连接服务器（`SERVER-MODE-PLAN.md`，服务器在 `server/`）。`Sources/Sync/`（线格式 `SyncWire` /
   行工具 `SyncRows` / 客户端算法 `SyncClient`）**App 与服务器共用**（服务器经符号链接编它），只许 Foundation + Store 层；
-  `Sources/ServerSync/` 只给 App：`ServerClient`（HTTP，续传；局域网 / Tailscale 地址不走系统代理）、`ServerAccounts`（服务器列表 + Keychain 令牌）、`ServerSyncIO`（纯 IO，
+  `Sources/ServerSync/` 只给 App：`ServerClient`（HTTP，续传；连服务器一律不走系统代理）、`ServerAccounts`（服务器列表 + Keychain 令牌）、`ServerSyncIO`（纯 IO，
   spike `server-client-test.sh` 直接编）、`ServerDiscovery`（局域网发现，`NWBrowser`，契约见方案 §3.7）、`ServerSyncCoordinator`（`@MainActor` 调度：打开前同步 / 开着时只推不拉 / 关掉后同步）。
   🔴 有 `meta.srv_url` = 服务器工作区；开着时**不往开着的文档里写**服务器的改动（S4 才做），基线在主线程逐行写、不开事务；
   打开前先取消关掉后那一轮（临时连接与新窗口同时写违反「同一路径同一实例」）。界面：设置 ›「服务器」（`Settings/ServerSettingsView`）、

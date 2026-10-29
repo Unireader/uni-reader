@@ -503,8 +503,8 @@ App 加了 `Sources/Sync/` 之后 `xcodegen generate` + Debug 编译通过；Sto
 2. Swift 6.2.3 读不了 Xcode 27 的 macOS SDK（各包的 `Package.swift` 是按 Mac 编的，报 `unknown argument -target-arch-variant`）：
    `build-linux.sh` 自动改用 CommandLineTools 里的 macOS 26 SDK（`SDKROOT`）。
 3. 用户的 Mac 开着系统代理（HTTP/HTTPS → 127.0.0.1:1087，没有排除列表），App 连 192.168.1.160 的请求全被送进代理、连接中断。
-   用户定：**局域网 / Tailscale 地址直连，公网域名照常跟随系统代理**（`ServerClient.connectsDirectly`：私有 IPv4、169.254、100.64/10、
-   IPv6 ULA 与链路本地、`.local`、不带点的主机名）。
+   用户先定「局域网 / Tailscale 地址直连，公网域名照常跟随系统代理」；同日部署 HTTPS（`https://unireader.xvanturing.tech`，caddy）后
+   域名经代理 TLS 握手失败（域名只有 IPv6 地址，代理连不上），直连正常 → 用户改定：**App 连服务器一律不走系统代理**（`ServerClient.session`）。
 
 代码改动：`Sources/Store/` 的 `SQLite3` / `CryptoKit` / `CoreGraphics` / `ImageIO` 改成 `#if canImport`（App 行为不变）；`MirrorBuilder` 剩余空间
 Linux 上用 `attributesOfFileSystem`；`server/Package.swift` Linux 上接 `swift-crypto` 与 `swift-toolchain-sqlite`（用户拉取，1.0.13）；
@@ -527,4 +527,5 @@ Linux 上用 `attributesOfFileSystem`；`server/Package.swift` Linux 上接 `swi
 等「下载为本地工作区」（另存到用户选的位置）再说。推送途中会话被停掉（关窗 / 变回本地）就不再记基线。
 验证：服务器 `swift test` 新增一项（核心 20 + HTTP 5）；`spike/server-client-test.sh` 加 ⑥（变回后 App 认它是本地、「从服务器打开」不再把它当缓存、
 资料不少、服务器那份还在），本机与 NAS 远端各 48 项全绿；App Debug 编译通过。界面待用户实测。
+（之后改成一律直连，端到端里那 20 项地址判断随之删掉，现为 28 项。）
 
