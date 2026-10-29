@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 
 /// 一个工作区的持久层：`<工作区>/UniReader/library.sqlite`（自有 schema，跨平台可读）。
-/// 单一真相源；所有读写走这里。非线程安全，请在主线程使用。
+/// 单一真相源；所有读写走这里。非线程安全，请在主线程使用（`storedID` 那张小表自带锁：笔迹窄查在后台线程跑）。
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
@@ -15,6 +15,31 @@ final class LibraryStore {
         fileURL = dir.appendingPathComponent("library.sqlite")
         db = try SQLiteDB(path: fileURL.path)
         try migrate()
+    }
+
+    // MARK: - 别端写的非规范 id（安卓 2026-10-29 之前的小写 UUID）
+
+    /// 模型层把 `note` / `ink_layer` / `scratch_pad` 的 id 解析成 `UUID`、写回时用 `uuidString`（大写）。
+    /// 安卓 2026-10-29 之前建的行是**小写** UUID 串——直接按大写去 upsert / delete 会对不上（改了多出一行、删了删不掉）。
+    /// 所以读行时记下「大写 → 库里原样」，写 / 删时换回库里那份。**不改库里已有的 id**：改了会让离线镜像的基线
+    /// （`sync_base` 按 row id 记）对不上。行总是先被读进来才会被改 / 删，所以记到的一定够用。
+    private let idAliasLock = NSLock()
+    private var storedIDs: [String: String] = [:]
+
+    /// 读到一行：id 里有小写字母就记下来（规范的大写 UUID 一个字节都不多存）。
+    private func remember(_ id: String) {
+        guard id.utf8.contains(where: { $0 >= 0x61 && $0 <= 0x7A }) else { return }
+        idAliasLock.lock()
+        storedIDs[id.uppercased()] = id
+        idAliasLock.unlock()
+    }
+
+    /// 写 / 删时用的 id：读到过的非规范 id 换回库里原样，其余原样返回。
+    func storedID(_ id: String) -> String {
+        idAliasLock.lock()
+        defer { idAliasLock.unlock() }
+        if storedIDs.isEmpty { return id }
+        return storedIDs[id.uppercased()] ?? id
     }
 
     /// **显式**关闭底层连接（幂等）；之后所有读写自动退化成 no-op。
@@ -714,7 +739,7 @@ final class LibraryStore {
     }
 
     func notes(documentId: String) throws -> [LibNote] {
-        try db.query("SELECT * FROM note WHERE document_id=? ORDER BY page ASC, created_at ASC", [.text(documentId)]).map(Self.note)
+        try db.query("SELECT * FROM note WHERE document_id=? ORDER BY page ASC, created_at ASC", [.text(documentId)]).map(noteRow)
     }
     /// 只取某一类。**开文档必须用它**：`note` 表混着五类（文字注解 0 / AI 会话 1 / 页内笔迹 2 /
     /// 高亮 3 / 草稿纸笔迹 4），而 `load()` 里五个 loader 各要一类——都用上面那个不带 kind 的版本，
@@ -722,11 +747,11 @@ final class LibraryStore {
     /// 2026-09-02 实测（3506 行 / 13.9MB 的文档）：五次全表读 1090ms，换成五次窄查约 220ms。
     func notes(documentId: String, kind: Int) throws -> [LibNote] {
         try db.query("SELECT * FROM note WHERE document_id=? AND kind=? ORDER BY page ASC, created_at ASC",
-                     [.text(documentId), .int(Int64(kind))]).map(Self.note)
+                     [.text(documentId), .int(Int64(kind))]).map(noteRow)
     }
     func notes(documentId: String, page: Int) throws -> [LibNote] {
         try db.query("SELECT * FROM note WHERE document_id=? AND page=? ORDER BY created_at ASC",
-                     [.text(documentId), .int(Int64(page))]).map(Self.note)
+                     [.text(documentId), .int(Int64(page))]).map(noteRow)
     }
     /// 笔迹专用窄查询（kind=2 页内 / kind=4 草稿纸）：只取四列、按位置读、不走 `[String: Any]`。
     /// 排序与 `notes(documentId:kind:)` 一致（页 → 落库时间 = 绘制叠放序）。
@@ -734,8 +759,17 @@ final class LibraryStore {
     func inkRows(documentId: String, kind: Int) throws -> [LibInkRow] {
         try db.query("SELECT id, kind, page, payload, points, points_at IS updated_at FROM note WHERE document_id=? AND kind=? ORDER BY page ASC, created_at ASC",
                      [.text(documentId), .int(Int64(kind))]) { r in
-            Self.inkRow(r)
+            let row = Self.inkRow(r)
+            self.remember(row.id)
+            return row
         }
+    }
+
+    /// 读一行 note 并记下非规范 id（见 `storedID`）。
+    private func noteRow(_ r: [String: Any]) -> LibNote {
+        let n = Self.note(r)
+        remember(n.id)
+        return n
     }
 
     /// `SELECT id, kind, page, payload, points, points_at IS updated_at` 的一行（v18：第 5 列二进制点集，
@@ -754,7 +788,9 @@ final class LibraryStore {
         SELECT id, kind, page, payload, points, points_at IS updated_at FROM note
         WHERE document_id=? AND kind=? AND page BETWEEN ? AND ? ORDER BY page ASC, created_at ASC
         """, [.text(documentId), .int(Int64(kind)), .int(Int64(pages.lowerBound)), .int(Int64(pages.upperBound))]) { r in
-            Self.inkRow(r)
+            let row = Self.inkRow(r)
+            self.remember(row.id)
+            return row
         }
     }
 
@@ -834,7 +870,7 @@ final class LibraryStore {
         ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, page=excluded.page,
           anchor_x=excluded.anchor_x, anchor_y=excluded.anchor_y, anchor_w=excluded.anchor_w, anchor_h=excluded.anchor_h,
           payload=excluded.payload, updated_at=excluded.updated_at, points=excluded.points, points_at=excluded.points_at
-        """, [.text(n.id), .text(n.documentId), .int(Int64(n.kind)), .int(Int64(n.page)),
+        """, [.text(storedID(n.id)), .text(n.documentId), .int(Int64(n.kind)), .int(Int64(n.page)),
               .double(n.anchor.origin.x), .double(n.anchor.origin.y), .double(n.anchor.size.width), .double(n.anchor.size.height),
               .blob(inkPayloadForWrite(n.payload, points: n.points)), .text(ISO.string(n.createdAt)), .text(up),
               n.points.map { .blob($0) } ?? .null, n.points == nil ? .null : .text(up)])
@@ -846,12 +882,13 @@ final class LibraryStore {
         guard points != nil else { return payload }
         return InkPayloadFast.stripPoints(payload)?.rest ?? payload
     }
-    func deleteNote(id: String) throws { try db.run("DELETE FROM note WHERE id=?", [.text(id)]) }
+    func deleteNote(id: String) throws { try db.run("DELETE FROM note WHERE id=?", [.text(storedID(id))]) }
 
     // MARK: - 笔迹图层（ink_layer，v7）
 
     func inkLayers(documentId: String) throws -> [LibInkLayer] {
         try db.query("SELECT * FROM ink_layer WHERE document_id=? ORDER BY sort_order ASC", [.text(documentId)]).map(Self.inkLayer)
+            .map { l in remember(l.id); return l }
     }
     func upsertInkLayer(_ l: LibInkLayer) throws {
         try db.run("""
@@ -859,16 +896,17 @@ final class LibraryStore {
         VALUES(?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET name=excluded.name, color_key=excluded.color_key,
           sort_order=excluded.sort_order, visible=excluded.visible
-        """, [.text(l.id), .text(l.documentId), .text(l.name), .text(l.colorKey),
+        """, [.text(storedID(l.id)), .text(l.documentId), .text(l.name), .text(l.colorKey),
               .int(Int64(l.sortOrder)), .int(l.visible ? 1 : 0), .text(ISO.string(l.createdAt))])
     }
-    func deleteInkLayer(id: String) throws { try db.run("DELETE FROM ink_layer WHERE id=?", [.text(id)]) }
+    func deleteInkLayer(id: String) throws { try db.run("DELETE FROM ink_layer WHERE id=?", [.text(storedID(id))]) }
 
     // MARK: - 草稿纸（scratch_pad，v8）
 
     func scratchPads(documentId: String) throws -> [LibScratchPad] {
         try db.query("SELECT * FROM scratch_pad WHERE document_id=? ORDER BY created_at ASC",
                      [.text(documentId)]).map(Self.scratchPad)
+            .map { p in remember(p.id); return p }
     }
     func upsertScratchPad(_ p: LibScratchPad) throws {
         try db.run("""
@@ -877,7 +915,7 @@ final class LibraryStore {
         ON CONFLICT(id) DO UPDATE SET title=excluded.title, anchor_page=excluded.anchor_page,
           anchor_x=excluded.anchor_x, anchor_y=excluded.anchor_y, bg=excluded.bg,
           pattern=excluded.pattern, show_page=excluded.show_page, updated_at=excluded.updated_at
-        """, [.text(p.id), .text(p.documentId), .text(p.title), .int(Int64(p.anchorPage)),
+        """, [.text(storedID(p.id)), .text(p.documentId), .text(p.title), .int(Int64(p.anchorPage)),
               .double(p.anchorX), .double(p.anchorY), .text(p.bg), .text(p.pattern),
               .int(p.showPage ? 1 : 0),
               .text(ISO.string(p.createdAt)), .text(ISO.string(p.updatedAt))])
@@ -885,7 +923,7 @@ final class LibraryStore {
     /// 删除一张草稿纸。**纸上的笔迹（note kind=4）不在这里删**——它们由上层的 `session.scratchStrokes`
     /// 对账机制按 id 删除（与擦除同一条路径）。这里多删一次只会和对账重复。
     func deleteScratchPad(id: String) throws {
-        try db.run("DELETE FROM scratch_pad WHERE id=?", [.text(id)])
+        try db.run("DELETE FROM scratch_pad WHERE id=?", [.text(storedID(id))])
     }
 
     // MARK: - 画板笔记（board_note / board_item，v16；`BOARD-NOTE-PLAN.md §2`）
