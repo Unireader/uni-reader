@@ -1176,6 +1176,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private func buildWorkspaceMenu(_ menu: NSMenu) {
         menu.removeAllItems()
+        // 启动页（本机最近的 + 各台服务器上的工作区），同「文件 › 工作区…」⇧⌘O
+        add(menu, L("Workspaces…"), #selector(menuShowWorkspaces), symbol: "square.grid.2x2")
+        menu.addItem(.separator())
         add(menu, L("Open Workspace…"), #selector(menuOpenWorkspace), symbol: "folder")
         add(menu, L("New Workspace…"), #selector(menuNewWorkspace), symbol: "folder.badge.plus")
         add(menu, L("Rename Workspace…"), #selector(menuRenameWorkspace), symbol: "pencil")
@@ -1299,6 +1302,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     }
 
     @objc private func addPDF() { openPDF() }
+    @objc private func menuShowWorkspaces() { WorkspacesWindowController.show() }
     @objc private func menuOpenWorkspace() { chooseWorkspace() }
     @objc private func menuNewWorkspace() { createNewWorkspace() }
     @objc private func menuRenameWorkspace() {

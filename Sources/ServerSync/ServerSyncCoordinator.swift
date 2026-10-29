@@ -178,40 +178,98 @@ final class ServerSyncCoordinator: ObservableObject {
 
     // MARK: - PDF
 
+    /// 正在下载的书：工作区键 → 文档 id → 进度（0~1）。侧栏那一行与阅读区占位页都看它（2026-10-29 用户要求「下载进度显示在条目上」）。
+    @Published private(set) var downloads: [String: [String: Double]] = [:]
+    /// 同一本只下一趟：侧栏右键、占位页按钮、后台预取可能撞上同一本，后来的等先来的那一趟。键 = 工作区键 + 文档 id。
+    private var downloadTasks: [String: (token: UUID, task: Task<Bool, Error>)] = [:]
+
+    func downloadProgress(_ m: WorkspaceManager, documentId: String) -> Double? {
+        m.folder.flatMap { downloads[WorkspaceRegistry.key($0)]?[documentId] }
+    }
+
     /// 本机没文件的书：服务器上有、而且不大的，后台下载下来。
     private func prefetchSmallPDFs(_ m: WorkspaceManager) async {
         guard let folder = m.folder, let ep = endpoint(for: folder) else { return }
         for doc in m.documents where !m.hasLocalFile(doc.id) {
             if Task.isCancelled || m.store == nil { return }
-            for v in m.variants(documentId: doc.id) {
-                guard let size = try? await ep.client.pdfSize(ep.wid, hash: v.contentHash) else { continue }
-                if size <= Self.largePDFBytes { try? await fetchPDF(m, variant: v, folder: folder, ep: ep) }
-                break
-            }
+            _ = try? await fetchDocument(m, documentId: doc.id, folder: folder, ep: ep, maxBytes: Self.largePDFBytes)
         }
     }
 
-    /// 用户点「从服务器下载」：不管多大都下（第一个服务器上有的版本）。
+    /// 用户点「从服务器下载」（侧栏右键 / 占位页按钮）：不管多大都下（第一个服务器上有的版本）。
     func downloadPDF(_ m: WorkspaceManager, documentId: String) async throws {
         guard let folder = m.folder else { return }
         guard let ep = endpoint(for: folder) else { throw ServerSyncError.noAccount }
-        for v in m.variants(documentId: documentId) {
-            guard try await ep.client.pdfSize(ep.wid, hash: v.contentHash) != nil else { continue }
-            try await fetchPDF(m, variant: v, folder: folder, ep: ep)
+        guard try await fetchDocument(m, documentId: documentId, folder: folder, ep: ep, maxBytes: nil) else {
+            throw ServerSyncError.notOnServer
+        }
+    }
+
+    /// 下一本书：第一个服务器上有的版本；给了 [maxBytes] 就只下不超过它的（后台预取）。返回下了没有。
+    /// 用户点的那条（`maxBytes == nil`）一开始就记进 `downloads`，行上当场有反应；预取等真开始下了才记，免得大书闪一下。
+    private func fetchDocument(_ m: WorkspaceManager, documentId: String, folder: URL,
+                               ep: (client: ServerClient, wid: String), maxBytes: Int64?) async throws -> Bool {
+        let k = WorkspaceRegistry.key(folder)
+        let tk = k + "\n" + documentId
+        if let running = downloadTasks[tk] {
+            let done = try await running.task.value
+            // 撞上的是后台预取、而它嫌太大没下：用户要的这趟自己再下
+            if done || maxBytes != nil { return done }
+        }
+        let task = Task { @MainActor [weak self] () async throws -> Bool in
+            for v in m.variants(documentId: documentId) {
+                guard let size = try await ep.client.pdfSize(ep.wid, hash: v.contentHash) else { continue }
+                if let maxBytes, size > maxBytes { return false }
+                guard let self else { return false }
+                self.setDownload(k, documentId, 0)
+                try await self.fetchPDF(m, variant: v, folder: folder, ep: ep) { [weak self] got in
+                    let f = size > 0 ? min(1, Double(got) / Double(size)) : 0
+                    Task { @MainActor in self?.setDownload(k, documentId, f) }
+                }
+                return true
+            }
+            return false
+        }
+        let token = UUID()
+        downloadTasks[tk] = (token, task)
+        if maxBytes == nil { setDownload(k, documentId, 0) }
+        defer {
+            // 只收自己那一趟（等着它的人可能已经接着开了下一趟）
+            if downloadTasks[tk]?.token == token {
+                downloadTasks[tk] = nil
+                setDownload(k, documentId, nil)
+            }
+        }
+        return try await task.value
+    }
+
+    /// 进度只在整百分点变了才发（每次发都会让侧栏去找那一行）；完成 / 失败传 nil 清掉。
+    private func setDownload(_ k: String, _ documentId: String, _ fraction: Double?) {
+        guard let fraction else {
+            guard downloads[k]?[documentId] != nil else { return }
+            downloads[k]?[documentId] = nil
+            if downloads[k]?.isEmpty == true { downloads[k] = nil }
             return
         }
-        throw ServerSyncError.notOnServer
+        // 下完之后迟到的进度回调别把这一行又点亮
+        guard downloadTasks[k + "\n" + documentId] != nil else { return }
+        if let old = downloads[k]?[documentId], Int(old * 100) == Int(fraction * 100) { return }
+        downloads[k, default: [:]][documentId] = fraction
     }
 
     /// 下载一份 PDF：有工作区内的 location 但文件不在 → 下到那个路径；否则下到 `PDFs/<hash>.pdf` 并补一条 location。
+    /// 下完发 `.serverPDFDownloaded`，开着这本书（显示「还没有下载」）的标签据此重新载入。
     private func fetchPDF(_ m: WorkspaceManager, variant v: LibVariant, folder: URL,
-                          ep: (client: ServerClient, wid: String)) async throws {
+                          ep: (client: ServerClient, wid: String),
+                          progress: @escaping @Sendable (Int64) -> Void) async throws {
         let existing = m.locations(documentId: v.documentId).first { $0.variantId == v.id && $0.inWorkspace }
         let rel = existing?.path ?? "PDFs/\(v.contentHash).pdf"
-        try await ep.client.downloadPDF(ep.wid, hash: v.contentHash, to: folder.appendingPathComponent(rel))
+        try await ep.client.downloadPDF(ep.wid, hash: v.contentHash, to: folder.appendingPathComponent(rel),
+                                        progress: progress)
         guard let store = m.store else { return }
         if existing == nil { _ = try store.addLocation(variantId: v.id, path: rel, inWorkspace: true) }
         m.refreshLocalFileFlags()
+        NotificationCenter.default.post(name: .serverPDFDownloaded, object: m, userInfo: ["documentId": v.documentId])
     }
 
     // MARK: - 从服务器打开
@@ -306,6 +364,11 @@ final class ServerSyncCoordinator: ObservableObject {
         if let e = error as? ServerSyncError, e == .noAccount { return .noAccount }
         return .failed(error.localizedDescription)
     }
+}
+
+extension Notification.Name {
+    /// 服务器工作区里一本书下载完了（object = `WorkspaceManager`，userInfo `documentId`）。
+    static let serverPDFDownloaded = Notification.Name("com.xvan.UniReader.serverPDFDownloaded")
 }
 
 enum ServerSyncError: LocalizedError, Equatable {

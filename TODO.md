@@ -196,6 +196,7 @@
       mimalloc 在 ARMv8.0 上启动即崩）；用户的 NAS（`ssh nas`，arm64 Debian 11）上端到端 44 项全绿；Linux 广播走 avahi-publish-service；
       App 连服务器一律不走系统代理（用户定）。HTTPS：`https://unireader.xvanturing.tech`（caddy，域名只有 IPv6 地址）。NAS 上已 systemd 开机自启（数据 `/storage/data/22_Exam/Unireader`，8790，名字 NAS，
       等 `/storage` 挂好再启动）；HTTPS 用户自己用 caddy 反代。这台 Mac 与 NAS 不在一个网段，发现不了它，手填地址。
+    - ✅ 书库右键「从服务器下载」+ 进度显示在那一行；启动页从工具栏工作区菜单 / Dock 右键菜单也能叫出来（2026-10-29，用户要求，方案 §13.8）。界面待用户实测。
     - ✅ 「变回本地工作区…」（2026-10-29，方案 §13.6 末）：服务器工作区菜单里，去掉库里记的服务器、服务器那份不动；只给不在 App 缓存目录里的。
       **待用户实测**：SSD 上的「101学习区」变回本地 → 「上传到服务器…」传到 NAS。
     - ⚠️ 待补：移动硬盘上的工作区上传后要在本机另建缓存（用户的「101学习区」在 SSD 上、离线副本已删，SSD 不接时本机没有副本）。

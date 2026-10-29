@@ -1101,10 +1101,13 @@
 "Server %@ · sync failed: %@" = "服务器 %@ · 同步失败：%@";
 "Not signed in to this server (Settings › Servers)" = "没有这台服务器的登录信息（设置 › 服务器）";
 "Server %@" = "服务器 %@";
-"Downloading from the server…" = "正在从服务器下载…";
 "“%@” is on the server. Download it to read it on this Mac." = "「%@」在服务器上，下载后就能在这台 Mac 上阅读。";
 "Not Downloaded Yet" = "还没有下载";
 "Download from Server" = "从服务器下载";
+"Downloading from the server… %d%%" = "正在从服务器下载… %d%%";
+"On the server, not downloaded yet. Right-click to download it." = "在服务器上，还没有下载。右键可以下载。";
+"Couldn’t download “%@”" = "没能下载「%@」";
+"Some documents couldn’t be downloaded" = "有几本没能下载";
 
 /* 服务器的局域网发现（SERVER-MODE-PLAN.md §3.7，2026-10-29） */
 "Looking for servers on this network…" = "正在查找这个网络里的服务器…";

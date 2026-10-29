@@ -1099,10 +1099,13 @@
 "Server %@ · sync failed: %@" = "Server %@ · sync failed: %@";
 "Not signed in to this server (Settings › Servers)" = "Not signed in to this server (Settings › Servers)";
 "Server %@" = "Server %@";
-"Downloading from the server…" = "Downloading from the server…";
 "“%@” is on the server. Download it to read it on this Mac." = "“%@” is on the server. Download it to read it on this Mac.";
 "Not Downloaded Yet" = "Not Downloaded Yet";
 "Download from Server" = "Download from Server";
+"Downloading from the server… %d%%" = "Downloading from the server… %d%%";
+"On the server, not downloaded yet. Right-click to download it." = "On the server, not downloaded yet. Right-click to download it.";
+"Couldn’t download “%@”" = "Couldn’t download “%@”";
+"Some documents couldn’t be downloaded" = "Some documents couldn’t be downloaded";
 
 /* 服务器的局域网发现（SERVER-MODE-PLAN.md §3.7，2026-10-29） */
 "Looking for servers on this network…" = "Looking for servers on this network…";

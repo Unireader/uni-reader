@@ -4,6 +4,7 @@ import Combine
 /// 侧栏（AppKit 版，替代 SwiftUI `SidebarView`，行为逐条同原版）：
 ///  · 当前工作区的文档列表，`NSOutlineView` 源列表样式；有分组时按分组分段（未分组在前）；
 ///  · 多选（⌘ / ⇧ 点）；恰选一篇时打开它（已开着就切过去，没开就新建标签）；
+///  · 服务器工作区里没下载的书：右键「从服务器下载」，行尾显示进度（`DocRowCell`）；
 ///  · 右键：在新窗口打开 / 上移下移（同一分组段内、多选整批）/ 移到分组 / 在 Finder 显示 / 移出或拷进工作区 /
 ///    关联为同一文档 / 删除；分组段头右键：改名 / 删除分组；
 ///  · **行级拖拽一概没有**（2026-09-03 用户否决三版拖拽排序，理由与踩坑记在 SwiftUI 版注释里）；
@@ -94,6 +95,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         tabs.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.syncSelectionFromTabs() }
+            .store(in: &bag)
+        // 服务器工作区的书在下载：就地改那一行的进度，不重建列表
+        ServerSyncCoordinator.shared.$downloads
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] all in self?.showDownloads(all) }
             .store(in: &bag)
         workspace.$folder
             .dropFirst()
@@ -292,6 +298,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         syncingSelection = false
     }
 
+    /// 下载进度变了：可见的书那几行就地更新（行是按需建的，屏幕外的那几行建出来时自己读当前进度）。
+    private func showDownloads(_ all: [String: [String: Double]]) {
+        guard let folder = workspace.folder else { return }
+        let mine = all[WorkspaceRegistry.key(folder)] ?? [:]
+        for row in 0..<outline.numberOfRows {
+            guard let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? DocRowCell else { continue }
+            cell.setDownload(mine[cell.docID])
+        }
+    }
+
     // MARK: NSOutlineViewDataSource
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
@@ -345,11 +361,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             ])
             return cell
         case .doc(let doc):
-            // 镜像里没带 PDF 的书：灰一档 + 换个图标，不隐藏（隐藏了用户会以为笔记也没了）
+            // 镜像里没带 PDF 的书：灰一档 + 换个图标，不隐藏（隐藏了用户会以为笔记也没了）。
+            // 服务器工作区里没文件 = 还没下载（大 PDF 等用到再下），换成下载图标，右键能下
             let local = workspace.hasLocalFileCached(doc.id)
-            return iconCell(symbol: local ? "doc.richtext" : "doc.badge.ellipsis", title: doc.title,
-                            subtitle: nil, dim: !local,
-                            tip: local ? nil : L("Not available offline — reconnect the source drive to read it."))
+            let server = workspace.isServerWorkspace
+            let cell = DocRowCell(docID: doc.id,
+                                  symbol: local ? "doc.richtext" : server ? "icloud.and.arrow.down" : "doc.badge.ellipsis",
+                                  title: doc.title, dim: !local,
+                                  tip: local ? nil : server ? L("On the server, not downloaded yet. Right-click to download it.")
+                                      : L("Not available offline — reconnect the source drive to read it."))
+            cell.setDownload(ServerSyncCoordinator.shared.downloadProgress(workspace, documentId: doc.id))
+            return cell
         case .md(let note):
             // 文件被手动删了 / 引用的盘没挂上 → 灰一档 + 换图标（同 PDF 那条规矩）
             let here = workspace.noteURL(note.ref).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
@@ -722,6 +744,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func buildDocMenu(_ m: NSMenu, doc: LibDocument) {
         let targets = targets(for: doc.id)
         m.autoenablesItems = false
+        // 服务器工作区里还没下载的（多选时只算其中没下载的）；都在下了就灰掉
+        if workspace.isServerWorkspace {
+            let missing = workspace.documents.map(\.id).filter { targets.contains($0) && !workspace.hasLocalFileCached($0) }
+            if !missing.isEmpty {
+                let pending = missing.filter { ServerSyncCoordinator.shared.downloadProgress(workspace, documentId: $0) == nil }
+                let it = item(L("Download from Server"), "icloud.and.arrow.down") { [weak self] in self?.download(pending) }
+                it.isEnabled = !pending.isEmpty
+                m.addItem(it)
+                m.addItem(.separator())
+            }
+        }
         if targets.count == 1 {
             m.addItem(item(L("Open in New Window"), "macwindow.badge.plus") { [weak self] in self?.onOpenInNewWindow(doc.id) })
         }
@@ -777,6 +810,39 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         m.addItem(item(L("Delete"), "trash") { [weak self] in
             self?.confirmDelete(Array(targets))
         })
+    }
+
+    /// 从服务器下载（几本一起下）；进度显示在各自那一行上，没下成的最后一起说。
+    private func download(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        let ws = workspace
+        Task { @MainActor [weak self] in
+            var failed: [(title: String, message: String)] = []
+            await withTaskGroup(of: (title: String, message: String)?.self) { group in
+                for id in ids {
+                    group.addTask { @MainActor in
+                        do {
+                            try await ServerSyncCoordinator.shared.downloadPDF(ws, documentId: id)
+                            return nil
+                        } catch {
+                            return (ws.document(id: id)?.title ?? id, error.localizedDescription)
+                        }
+                    }
+                }
+                for await r in group { if let r { failed.append(r) } }
+            }
+            guard let self, !failed.isEmpty else { return }
+            let a = NSAlert()
+            if failed.count == 1, let f = failed.first {
+                a.messageText = String(format: L("Couldn’t download “%@”"), f.title)
+                a.informativeText = f.message
+            } else {
+                a.messageText = L("Some documents couldn’t be downloaded")
+                a.informativeText = failed.map { "\($0.title): \($0.message)" }.joined(separator: "\n")
+            }
+            a.addButton(withTitle: L("OK"))
+            if let win = self.view.window { a.beginSheetModal(for: win, completionHandler: nil) } else { a.runModal() }
+        }
     }
 
     /// 删除文档：**先确认，再移入回收站**（`BACKUP-PLAN.md §2.4`）。
@@ -1104,5 +1170,69 @@ final class SidebarNode: NSObject {
         if let b = board { return BoardNote.rowPrefix + b.id.uuidString }
         if case .exercise(let scope, _, _) = kind { return scope.rowID }
         return docID
+    }
+}
+
+/// 书库里一本书的那一行：图标 + 书名；服务器工作区里正在下载的书，行尾多一个圆形进度 + 百分比
+/// （2026-10-29 用户要求「下载进度显示在条目上」）。进度变了就地改（`setDownload`），不重建行。
+private final class DocRowCell: NSTableCellView {
+    let docID: String
+    private let ring = NSProgressIndicator()
+    private let percent = NSTextField(labelWithString: "")
+
+    init(docID: String, symbol: String, title: String, dim: Bool, tip: String?) {
+        self.docID = docID
+        super.init(frame: .zero)
+        let img = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
+        img.contentTintColor = dim ? .secondaryLabelColor : nil
+        let t = NSTextField(labelWithString: title)
+        t.lineBreakMode = .byTruncatingTail
+        t.textColor = dim ? .secondaryLabelColor : .labelColor
+        t.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        t.setContentHuggingPriority(.defaultLow, for: .horizontal)   // 书名撑满，进度靠行尾
+        imageView = img
+        textField = t
+        toolTip = tip
+        ring.style = .spinning
+        ring.isIndeterminate = false
+        ring.controlSize = .small
+        ring.minValue = 0
+        ring.maxValue = 1
+        // 玻璃底上的字一律 `labelColor`（红线 ④）
+        percent.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        percent.textColor = .labelColor
+        percent.alignment = .right
+        percent.stringValue = "100%"   // 按最宽的量好宽度，位数变了圆环不跟着挪
+        let percentWidth = ceil(percent.intrinsicContentSize.width)
+        for v in [ring, percent] as [NSView] {
+            v.setContentCompressionResistancePriority(.required, for: .horizontal)
+            v.setContentHuggingPriority(.required, for: .horizontal)
+        }
+        let stack = NSStackView(views: [img, t, ring, percent])
+        stack.distribution = .fill
+        stack.spacing = 6
+        stack.setCustomSpacing(4, after: ring)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            img.widthAnchor.constraint(equalToConstant: 16),
+            ring.widthAnchor.constraint(equalToConstant: 16),
+            ring.heightAnchor.constraint(equalToConstant: 16),
+            percent.widthAnchor.constraint(equalToConstant: percentWidth),
+        ])
+        setDownload(nil)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    /// nil = 没在下（进度与百分比都藏起来，书名占满整行）。
+    func setDownload(_ fraction: Double?) {
+        ring.isHidden = fraction == nil
+        percent.isHidden = fraction == nil
+        guard let fraction else { return }
+        ring.doubleValue = fraction
+        percent.stringValue = String(format: "%d%%", Int(fraction * 100))
     }
 }

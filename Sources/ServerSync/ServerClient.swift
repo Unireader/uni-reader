@@ -94,8 +94,10 @@ struct ServerClient: Sendable {
         try await headSize(request("v1/workspaces/\(ws)/pdf/\(hash)", method: "HEAD"))
     }
 
-    func downloadPDF(_ ws: String, hash: String, to dst: URL) async throws {
-        _ = try await download(request("v1/workspaces/\(ws)/pdf/\(hash)"), to: dst)
+    /// 下载一份 PDF 到 [dst]。[progress] 收到的是已下载的字节数（约每 0.15 秒一次，下完那一下必报）。
+    func downloadPDF(_ ws: String, hash: String, to dst: URL,
+                     progress: (@Sendable (Int64) -> Void)? = nil) async throws {
+        _ = try await download(request("v1/workspaces/\(ws)/pdf/\(hash)"), to: dst, progress: progress)
     }
 
     func uploadPDF(_ ws: String, hash: String, file: URL, progress: ((Int64, Int64) -> Void)? = nil) async throws {
@@ -168,10 +170,11 @@ struct ServerClient: Sendable {
         return (data, http)
     }
 
-    private func download(_ req: URLRequest, to dst: URL) async throws -> HTTPURLResponse {
+    private func download(_ req: URLRequest, to dst: URL,
+                          progress: (@Sendable (Int64) -> Void)? = nil) async throws -> HTTPURLResponse {
         var req = req
         req.timeoutInterval = 300
-        let (tmp, resp) = try await session.download(for: req)
+        let (tmp, resp) = try await session.download(for: req, delegate: progress.map(DownloadWatcher.init))
         guard let http = resp as? HTTPURLResponse else { throw Failure.badResponse }
         guard (200..<300).contains(http.statusCode) else {
             let data = (try? Data(contentsOf: tmp)) ?? Data()
@@ -265,5 +268,34 @@ struct ServerClient: Sendable {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         let msg = (obj?["error"] as? [String: Any])?["message"] as? String ?? ""
         return .http(status, msg)
+    }
+}
+
+/// 下载进度：系统新建任务时交给每任务的代理（`didCreateTask`），盯着任务的 `countOfBytesReceived` 报已收到的字节数。
+/// ⚠️ 别盯 `task.progress`：它的单位不是字节（实测总数是 100，报出来的是 5、100）。
+/// 按时间节流（KVO 每收一块就来一次），收满那一下必报，免得最后停在 9x%。
+private final class DownloadWatcher: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let report: @Sendable (Int64) -> Void
+    private let lock = NSLock()
+    private var observation: NSKeyValueObservation?
+    private var last: TimeInterval = 0
+
+    init(_ report: @escaping @Sendable (Int64) -> Void) { self.report = report }
+
+    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+        let o = task.observe(\.countOfBytesReceived) { [weak self] t, _ in
+            self?.changed(t.countOfBytesReceived, total: t.countOfBytesExpectedToReceive)
+        }
+        lock.withLock { observation = o }
+    }
+
+    private func changed(_ done: Int64, total: Int64) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let due: Bool = lock.withLock {
+            guard (total > 0 && done >= total) || now - last >= 0.15 else { return false }
+            last = now
+            return true
+        }
+        if due { report(done) }
     }
 }

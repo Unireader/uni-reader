@@ -151,6 +151,24 @@ final class ReaderPaneController: NSViewController {
                                         queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.queueRefresh() }
         })
+        // 服务器工作区的书在下载：占位页跟着显示百分比（只在当前标签就是那本时刷新）；下完了开着它的标签重新载入
+        ServerSyncCoordinator.shared.$downloads
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] all in
+                guard let self, let folder = self.workspace.folder, let id = self.tab.missingDoc?.id else { return }
+                let now = all[WorkspaceRegistry.key(folder)]?[id]
+                guard now != self.shownDownload else { return }
+                self.shownDownload = now
+                self.queueRefresh()
+            }
+            .store(in: &bag)
+        observers.append(nc.addObserver(forName: .serverPDFDownloaded, object: workspace, queue: .main) { [weak self] n in
+            MainActor.assumeIsolated {
+                guard let self, let id = n.userInfo?["documentId"] as? String else { return }
+                if self.serverDownloadError?.docId == id { self.serverDownloadError = nil }
+                for t in self.tabs.tabs where t.docID == id && t.missingDoc != nil { t.reload() }
+            }
+        })
         let commands: [(Notification.Name, (ReaderPaneController) -> Void)] = [
             (.toggleNightMode, { _ in
                 let d = UserDefaults.standard
@@ -298,23 +316,21 @@ final class ReaderPaneController: NSViewController {
         AppDelegate.shared?.showExerciseSource(e, in: workspace)
     }
 
-    /// 服务器工作区里正在下载 / 下载失败的那一本（占位页据此显示进度或错误）。
-    private var serverDownload: (docId: String, error: String?)?
+    /// 服务器工作区里下载失败的那一本（占位页显示错误）。正在下的进度看 `ServerSyncCoordinator.downloads`——
+    /// 侧栏右键下载与这里的按钮是同一趟，那一行和这一页显示同一个进度；下完了由 `.serverPDFDownloaded` 重新载入。
+    private var serverDownloadError: (docId: String, message: String)?
+    /// 占位页上一次显示的进度（下载进度每变一个百分点发一次，只有当前标签那本变了才刷新）。
+    private var shownDownload: Double?
 
     private func downloadFromServer(_ doc: LibDocument) {
-        serverDownload = (doc.id, nil)
-        refresh()
+        serverDownloadError = nil
         let ws = workspace
         Task { @MainActor [weak self] in
             do {
                 try await ServerSyncCoordinator.shared.downloadPDF(ws, documentId: doc.id)
-                guard let self else { return }
-                self.serverDownload = nil
-                ws.refresh()
-                if self.tab.docID == doc.id { self.tab.reload() }
             } catch {
                 guard let self else { return }
-                self.serverDownload = (doc.id, error.localizedDescription)
+                self.serverDownloadError = (doc.id, error.localizedDescription)
                 self.refresh()
             }
         }
@@ -340,12 +356,14 @@ final class ReaderPaneController: NSViewController {
             placeholder.isHidden = false
             if let doc = tab.missingDoc, workspace.isServerWorkspace {
                 // 服务器工作区：本机没这本的文件 = 还没下载（大 PDF 等点开再下，`SERVER-MODE-PLAN.md §4.1`）
-                let busy = serverDownload?.docId == doc.id && serverDownload?.error == nil
-                let detail = busy ? L("Downloading from the server…")
-                    : serverDownload?.docId == doc.id ? (serverDownload?.error ?? "")
-                    : String(format: L("“%@” is on the server. Download it to read it on this Mac."), doc.title)
+                let progress = ServerSyncCoordinator.shared.downloadProgress(workspace, documentId: doc.id)
+                let detail = progress.map { String(format: L("Downloading from the server… %d%%"), Int($0 * 100)) }
+                    ?? (serverDownloadError?.docId == doc.id ? serverDownloadError?.message : nil)
+                    ?? String(format: L("“%@” is on the server. Download it to read it on this Mac."), doc.title)
                 placeholder.set(symbol: "icloud.and.arrow.down", title: L("Not Downloaded Yet"), detail: detail,
-                                button: busy ? nil : L("Download from Server")) { [weak self] in self?.downloadFromServer(doc) }
+                                button: progress == nil ? L("Download from Server") : nil) { [weak self] in
+                    self?.downloadFromServer(doc)
+                }
             } else if let doc = tab.missingDoc {
                 placeholder.set(symbol: "questionmark.folder", title: L("File Not Found"),
                                 detail: String(format: L("All known paths for “%@” are unavailable. Re-link the file to continue."), doc.title),

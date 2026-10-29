@@ -121,6 +121,15 @@ try storeA.withMirrorDB { db in
 storeA.close()   // 完整一轮只在没有活连接时跑
 try await ServerSyncIO.closedRound(folder: a, client: client, wid: wid)
 check(try await client.pdfSize(wid, hash: bigHash) == Int64(big.count), "20MB 的 PDF 分块传上去了")
+// 侧栏那一行的下载进度靠这个回调（`ServerClient.DownloadWatcher`）
+final class Seen: @unchecked Sendable { let lock = NSLock(); var values: [Int64] = [] }
+let seen = Seen()
+let bigBack = root.appendingPathComponent("big-back.pdf")
+try await client.downloadPDF(wid, hash: bigHash, to: bigBack) { n in seen.lock.withLock { seen.values.append(n) } }
+let reported = seen.lock.withLock { seen.values }
+check((try? Data(contentsOf: bigBack)) == big, "20MB 带进度下载，逐字节一致")
+check(reported.last == Int64(big.count) && reported == reported.sorted(),
+      "进度回调单调递增、最后一次 = 文件大小（共 \(reported.count) 次）")
 let storeB = try LibraryStore(workspaceFolder: b)
 try storeB.withMirrorDB { db in
     try db.run("""

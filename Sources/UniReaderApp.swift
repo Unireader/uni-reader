@@ -649,20 +649,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// delegate），当时「app 激活凭空多出一个空窗口」正是 SwiftUI 自己开的、只能识别后关掉。
     /// 现在窗口全归我们：这里返回 false（自己开，不劳系统），凭空多窗那件事从根上不存在了。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // 没有窗口时点 Dock 图标 → 启动页（用户 2026-10-29 定；原先是直接开上次的工作区）
-        if !flag { WorkspacesWindowController.show() }
+        // 没有窗口时点 Dock 图标 → 启动页（用户 2026-10-29 定；原先是直接开上次的工作区）。
+        // 只开着设置窗 / Agent 窗这类、没有阅读窗口时也算（用户同日要求启动页「始终可以唤出」）
+        if !flag || readerWindows.isEmpty { WorkspacesWindowController.show() }
         return false
     }
 
-    /// Dock 图标右键菜单：最近打开的工作区。
+    /// Dock 图标右键菜单：「工作区…」（启动页，恒在）+ 最近打开的工作区。
     /// ⚠️ 这个方法**只在 app 运行时**被调用；app 未运行时 Dock 右键显示的是系统维护的
     /// 「最近使用的文稿」——那一份由 `NSDocumentController.noteNewRecentDocumentURL` 喂
     /// （见 `WorkspaceRegistry.rememberRecent`），点击后走 `application(_:open:)`。两者互补，
     /// 各管一半场景，所以两边都要接。
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        let recents = WorkspaceRegistry.shared.recents
-        guard !recents.isEmpty else { return nil }
         let menu = NSMenu()
+        let launch = NSMenuItem(title: L("Workspaces…"), action: #selector(MenuActions.openWorkspaces(_:)), keyEquivalent: "")
+        launch.target = MenuActions.shared
+        launch.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
+        menu.addItem(launch)
+        let recents = WorkspaceRegistry.shared.recents
+        guard !recents.isEmpty else { return menu }
+        menu.addItem(.separator())
         menu.addItem(.sectionHeader(title: L("Recent Workspaces")))
         for r in recents {
             let item = NSMenuItem(title: r.name,

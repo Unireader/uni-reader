@@ -6,7 +6,8 @@ import UniformTypeIdentifiers
 /// （2026-10-29 用户要求；视图在 `WorkspacesWelcomeView`，本文件只管数据与动作）。
 ///
 /// 用户定的出现时机：启动时**照旧**直接开上次的工作区；这扇窗从「文件 › 工作区…」（⇧⌘O）打开；
-/// 阅读窗口全关掉、或点 Dock 图标而没有窗口时也出现。从这里打开一个工作区后它自己关掉。
+/// 阅读窗口全关掉、或点 Dock 图标而没有阅读窗口时也出现。从这里打开一个工作区后它自己关掉。
+/// 「始终可以唤出」（用户同日要求）：阅读窗口工具栏的工作区菜单第一项、Dock 右键菜单第一项也都是它。
 @MainActor
 final class WorkspacesWindowController: NSWindowController {
     private static var shared: WorkspacesWindowController?
