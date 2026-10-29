@@ -1132,3 +1132,8 @@
 "Server workspace" = "服务器工作区";
 "Offline copy" = "离线副本";
 "Remove from List" = "从列表中移除";
+"Convert to Local Workspace…" = "变回本地工作区…";
+"Convert to Local Workspace" = "变回本地工作区";
+"Convert “%@” to a local workspace?" = "把「%@」变回本地工作区？";
+"It will stop syncing with the server. The copy on the server isn’t touched; changes you make here from now on stay on this Mac." = "它将不再与服务器同步。服务器上的那份不受影响，之后在这里做的改动只留在本机。";
+"%d PDFs aren’t on this Mac and won’t be downloaded from the server afterwards: %@" = "有 %d 本书的 PDF 不在本机，变回本地后也不会再从服务器下载：%@";

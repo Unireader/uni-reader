@@ -1188,6 +1188,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         if workspace.isServerWorkspace {
             menu.addItem(.sectionHeader(title: serverStatusLine))
             add(menu, L("Upload Changes Now"), #selector(menuPushNow), symbol: "arrow.up.circle")
+            // 就地变成缓存的原件（如移动硬盘上的）可以变回本地；App 缓存目录里的不给（变回了也还藏在 App 的数据目录里）
+            if let folder = workspace.folder, !ServerSyncCoordinator.isInCachesFolder(folder) {
+                add(menu, L("Convert to Local Workspace…"), #selector(menuConvertToLocal), symbol: "folder")
+            }
         } else if workspace.isMirror {
             add(menu, L("Sync to Source…"), #selector(menuSyncToSource),
                 symbol: "arrow.triangle.2.circlepath")
@@ -1263,6 +1267,35 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func menuPushNow() {
         let ws = workspace
         Task { await ServerSyncCoordinator.shared.push(ws) }
+    }
+    /// 「变回本地工作区…」：确认后停同步、去掉库里记的服务器（服务器上那份不动）。
+    /// 本机没有文件的书列出来：变回之后不会再从服务器下载（原本就缺文件的旧版本也在其中，所以只提示、不拦）。
+    @objc private func menuConvertToLocal() {
+        guard let win = window else { return }
+        let ws = workspace
+        let missing = ws.documents.filter { !ws.hasLocalFile($0.id) }.map(\.title)
+        let a = NSAlert()
+        a.messageText = String(format: L("Convert “%@” to a local workspace?"), ws.name.isEmpty ? L("Workspace") : ws.name)
+        var text = L("It will stop syncing with the server. The copy on the server isn’t touched; changes you make here from now on stay on this Mac.")
+        if !missing.isEmpty {
+            let names = missing.prefix(8).joined(separator: "、") + (missing.count > 8 ? "…" : "")
+            text += "\n\n" + String(format: L("%d PDFs aren’t on this Mac and won’t be downloaded from the server afterwards: %@"),
+                                    missing.count, names)
+        }
+        a.informativeText = text
+        a.addButton(withTitle: L("Convert to Local Workspace"))
+        a.addButton(withTitle: L("Cancel"))
+        a.beginSheetModal(for: win) { [weak self] resp in
+            guard resp == .alertFirstButtonReturn else { return }
+            Task { @MainActor in
+                do {
+                    try await ServerSyncCoordinator.shared.detach(ws)
+                    self?.refreshToolbarStates()    // 工具栏的工作区图标不跟工作区的变化刷，这里推一次
+                } catch {
+                    self?.presentError(error.localizedDescription)
+                }
+            }
+        }
     }
 
     @objc private func addPDF() { openPDF() }

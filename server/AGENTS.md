@@ -8,7 +8,7 @@ macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进�
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 19 项 + HTTP 5 项
+swift test  --disable-automatic-resolution   # 核心 20 项 + HTTP 5 项
 BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
 $BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
 $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）
@@ -43,11 +43,14 @@ REMOTE=nas REMOTE_ADDR=192.168.1.160 REMOTE_DIR=/storage/data/98_Misc/unireader-
   `xcrun nm -A <SDK>/…/aarch64/usr/lib/libc.a | grep mimalloc.o`，有就别升。
 - Swift 6.2 读不了 Xcode 27 的 macOS SDK（各包的 `Package.swift` 按 Mac 编）：`build-linux.sh` 自动用 CommandLineTools 里的
   `MacOSX26*.sdk`（`SDKROOT`）；哪天命令行工具里没有 26 的 SDK 了，这一步会报错。
-- 静态 SDK **不带 XCTest / Swift Testing**：`--tests` 编不了测试。Linux 上的验证 = 上面那条远端端到端（44 项）。
+- 静态 SDK **不带 XCTest / Swift Testing**：`--tests` 编不了测试。Linux 上的验证 = 上面那条远端端到端（48 项）。
 - 局域网发现：Linux 上起 `avahi-publish-service` 子进程（要 `avahi-utils`）。服务器正常退出时一起停；被 `kill -9` 它会留下来，
   长期跑用 systemd（模板 `deploy/unireader-server.service`，装到 `/etc` 要用户点头）。组播不跨网段。
-- 用户的 NAS：`ssh nas`（root），程序 `/storage/app_bin/unireader-server/`，测试数据 `/storage/data/98_Misc/unireader-server-test/`；
-  `/storage` 是 mergerfs，SQLite（WAL）在上面实测正常。正式数据目录用户还没定。
+- 用户的 NAS：`ssh nas`（root），程序 `/storage/app_bin/unireader-server/`，**正式数据 `/storage/data/22_Exam/Unireader`**，
+  测试用的临时目录 `/storage/data/98_Misc/unireader-server-test/`；`/storage` 是 mergerfs（`storage.mount`），SQLite（WAL）在上面实测正常。
+  开机自启：`/etc/systemd/system/unireader-server.service`（`RequiresMountsFor` 等 `/storage` 挂好；`--host 0.0.0.0 --name NAS`，端口 8790）。
+  换程序：`scp` 到 `.new` → `mv` 覆盖 → `systemctl restart unireader-server`；日志 `journalctl -u unireader-server`；
+  配对码 `unireader-server pairing-code --data /storage/data/22_Exam/Unireader`。对外 HTTPS 由用户用 caddy 反向代理（NAS 上已装）。
 
 ## 结构
 

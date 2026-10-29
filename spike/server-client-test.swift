@@ -3,7 +3,7 @@
 //   bash spike/server-client-test.sh
 //
 // ① 配对 ② 上传本地工作区（工作区外的 PDF 被收进去、图片、Notes/）③ 另一台设备建缓存、按需下载 PDF
-// ④ 两边各改一处后各跑一轮完整同步（含 20MB 的 PDF 分块上传）⑤ 上传中断后续传。
+// ④ 两边各改一处后各跑一轮完整同步（含 20MB 的 PDF 分块上传）⑤ 上传中断后续传 ⑥ 变回本地工作区。
 import Foundation
 
 func L(_ s: String) -> String { s }   // App 的 `L()` 走 Bundle 本地化，spike 里原样返回
@@ -165,6 +165,19 @@ check(try await client.pdfSize(wid, hash: partHash) == Int64(part.count), "续�
 let back = root.appendingPathComponent("back.pdf")
 try await client.downloadPDF(wid, hash: partHash, to: back)
 check((try? Data(contentsOf: back)) == part, "下载回来逐字节一致")
+
+// ============================================================
+print("⑥ 变回本地工作区（A 是就地变成缓存的原件）")
+let rowsBefore = try specState(a)
+do {
+    let s = try LibraryStore(workspaceFolder: a); defer { s.close() }
+    try s.withMirrorDB { try SyncClient.detach($0) }
+}
+check(ServerSyncIO.serverLink(of: a) == nil, "库里不再记服务器（App 当它是本地工作区）")
+check(ServerSyncIO.findCache(workspaceId: wid, root: root)?.resolvingSymlinksInPath().path == b.resolvingSymlinksInPath().path,
+      "「从服务器打开」不再把 A 当缓存，只认 B")
+check(try specState(a) == rowsBefore, "资料一行不少")
+check(try await client.workspaces().contains { $0.id == wid }, "服务器上那份还在")
 
 try? fm.removeItem(at: root)
 print("\n结果：\(pass) 过，\(fail) 不过")

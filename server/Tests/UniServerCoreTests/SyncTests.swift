@@ -63,6 +63,30 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(try f.serverState(ws), try a.specState(), "只是文件不认，行照常同步")
     }
 
+    /// 「变回本地工作区」：服务器的记录（地址 / 身份 / 修订号 / 基线）全部去掉，资料一行不少。
+    func testDetachMakesItLocalAgain() throws {
+        let f = try Fixture()
+        let a = try f.makeDevice("mac")
+        try Seed.addDoc(a, "D1", title: "书")
+        try Seed.addNote(a, "N1", doc: "D1", text: "笔记", at: 1)
+        let ws = try f.upload(a)
+        try a.store.setMeta(SyncClient.metaServerURL, "http://127.0.0.1:8790")
+        try a.store.setMeta(SyncClient.metaServerID, "SERVER-ID")
+        let before = try a.specState()
+
+        try a.db { try SyncClient.detach($0) }
+        for k in [SyncClient.metaServerURL, SyncClient.metaServerID, SyncClient.metaPulledRev] {
+            XCTAssertNil(a.store.meta(k), "\(k) 应该去掉")
+        }
+        try a.db { db in
+            XCTAssertTrue(try db.query("SELECT name FROM sqlite_master WHERE name='sync_base'").isEmpty)
+            XCTAssertEqual(SyncClient.pulledRev(db), 0)
+        }
+        XCTAssertEqual(try a.specState(), before, "资料不动")
+        XCTAssertEqual(try f.serverState(ws), before, "服务器上那份不动")
+        XCTAssertNoThrow(try a.db { try SyncClient.detach($0) }, "再来一次也不出错")
+    }
+
     // MARK: - 两台设备交错改动
 
     func testTwoDevicesConverge() throws {

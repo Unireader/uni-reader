@@ -61,6 +61,16 @@ enum SyncClient {
                    [.text(metaPulledRev), .text(String(v))])
     }
 
+    /// 「变回本地工作区」：去掉服务器地址 / 身份 / 拉到的修订号，删掉基线表——之后它就是普通的本地工作区，
+    /// 不再推也不再拉。服务器上那份不动。一个事务。
+    static func detach(_ db: SQLiteDB) throws {
+        try db.transaction {
+            try db.run("DELETE FROM meta WHERE key IN (?,?,?)",
+                       [.text(metaServerURL), .text(metaServerID), .text(metaPulledRev)])
+            try db.run("DROP TABLE IF EXISTS sync_base")
+        }
+    }
+
     static func setBase(_ db: SQLiteDB, _ k: Key, _ fp: String?) throws {
         if let fp {
             try db.run("""

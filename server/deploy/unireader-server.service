@@ -9,6 +9,8 @@
 # 停服务时 systemd 默认把整组进程一起停（KillMode=control-group），局域网发现的 avahi-publish-service 子进程跟着退出。
 [Unit]
 Description=UniReader server
+# 程序或数据目录在单独挂载的盘上时：等挂载好再启动（自动带上对应 .mount 的 Requires + After）。路径与 ExecStart 保持一致
+RequiresMountsFor=/opt/unireader /var/lib/unireader
 After=network-online.target avahi-daemon.service
 Wants=network-online.target
 

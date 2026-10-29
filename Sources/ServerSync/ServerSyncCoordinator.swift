@@ -167,11 +167,12 @@ final class ServerSyncCoordinator: ObservableObject {
             try await ServerSyncIO.uploadFiles(for: changes, db: db, folder: folder, client: ep.client, wid: ep.wid)
             let req = SyncWire.PushRequest(schemaVersion: LibraryStore.schemaVersion, changes: changes)
             let resp = try SyncWire.decodePushResponse(try await ep.client.push(ep.wid, body: SyncWire.encode(req)))
-            guard m.store != nil else { return }   // 推的时候窗口关了：关闭后那一轮会再推一次
+            // 推的时候窗口关了（关闭后那一轮会再推一次）、或变回了本地工作区（基线表已经删了）：不记
+            guard m.store != nil, sessions[k] === s else { return }
             try SyncClient.recordPushed(db, pushed: changes, response: resp)
             status[k] = .synced(Date())
         } catch {
-            status[k] = Self.classify(error)
+            if sessions[k] === s { status[k] = Self.classify(error) }
         }
     }
 
@@ -271,6 +272,28 @@ final class ServerSyncCoordinator: ObservableObject {
         status[WorkspaceRegistry.key(folder)] = .synced(Date())
         workspaceOpened(m)
         return (ws, plan.missingPDFs)
+    }
+
+    // MARK: - 变回本地工作区
+
+    /// 停掉同步、去掉库里记的服务器（`SyncClient.detach`），它就是普通的本地工作区了。服务器上那份不动，不连服务器也能做。
+    /// 只给不在缓存目录里的（就地变成缓存的原件，如移动硬盘上的）用：缓存目录里的变回本地也还藏在 App 的数据目录里。
+    func detach(_ m: WorkspaceManager) async throws {
+        guard let store = m.store, let folder = m.folder, m.isServerWorkspace else { throw ServerSyncError.notOpen }
+        let k = WorkspaceRegistry.key(folder)
+        stopSession(folder)
+        if let running = busy[k] {
+            running.task.cancel()
+            await running.task.value
+        }
+        try store.withMirrorDB { try SyncClient.detach($0) }
+        status[k] = nil
+        m.objectWillChange.send()
+    }
+
+    /// 这个文件夹是不是 App 自己建的缓存（`cachesRoot` 下面）。
+    nonisolated static func isInCachesFolder(_ folder: URL) -> Bool {
+        folder.standardizedFileURL.path.hasPrefix(ServerSyncIO.cachesRoot.standardizedFileURL.path + "/")
     }
 
     // MARK: - 错误

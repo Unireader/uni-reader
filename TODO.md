@@ -194,8 +194,10 @@
       「本机」右键「在访达中显示 / 从列表中移除」。启动改为只做窗口恢复（`REQUIREMENTS.md §8.1`）。界面待用户实测。
     - ✅ Linux 版（2026-10-29，方案 §13.6，`server/AGENTS.md`「Linux 版」）：Mac 上交叉编译成静态二进制（**钉 Swift 6.2.3**，新版静态 SDK 的
       mimalloc 在 ARMv8.0 上启动即崩）；用户的 NAS（`ssh nas`，arm64 Debian 11）上端到端 44 项全绿；Linux 广播走 avahi-publish-service；
-      App 连局域网 / Tailscale 地址不走系统代理（用户定）。测试服务器在 NAS 后台跑着（8790，名字 NAS）。
-      **待用户定：正式数据目录、开机自启（systemd 模板 `server/deploy/unireader-server.service`）**。这台 Mac 与 NAS 不在一个网段，发现不了它，手填地址。
+      App 连局域网 / Tailscale 地址不走系统代理（用户定）。NAS 上已 systemd 开机自启（数据 `/storage/data/22_Exam/Unireader`，8790，名字 NAS，
+      等 `/storage` 挂好再启动）；HTTPS 用户自己用 caddy 反代。这台 Mac 与 NAS 不在一个网段，发现不了它，手填地址。
+    - ✅ 「变回本地工作区…」（2026-10-29，方案 §13.6 末）：服务器工作区菜单里，去掉库里记的服务器、服务器那份不动；只给不在 App 缓存目录里的。
+      **待用户实测**：SSD 上的「101学习区」变回本地 → 「上传到服务器…」传到 NAS。
     - ⚠️ 待补：移动硬盘上的工作区上传后要在本机另建缓存（用户的「101学习区」在 SSD 上、离线副本已删，SSD 不接时本机没有副本）。
 
 ## 🐞 已知欠账（未修 / 刻意没做）
