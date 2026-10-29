@@ -3,6 +3,8 @@
 > Mac ↔ 平板（浏览器采集页 / 安卓输入板）之间的**唯一线格式契约**。
 > 三端实现必须字节级一致：Swift `Sources/Server/WireCodec.swift`、JS `Sources/Resources/wire.js`、（后续）Kotlin。
 > 改这里 = 改三端 + `spike/wire-codec-test.swift` + `spike/wire-cross-test.js`。
+>
+> **§9 是另一份契约**：App（Mac / 安卓模式1）↔ UniReader 服务器的同步线格式（HTTP 体，Swift / Kotlin 两份实现，向量 `spike/sync-wire-vectors.txt`）。
 
 ## 0. 为什么是二进制
 
@@ -829,3 +831,62 @@ RT 流（scroll/hover/ink/erase/probe）在原生客户端上改走 UDP，消除
 
 - **平板怎么用 `tk`**（`MacDiscovery.match`）：本机存的某条配对码指纹 = `tk` → 直接用那条配对码连广播里的新地址（IP 换过也认得出）；指纹都对不上、但 IP 相同 → Mac 重置过配对码，要重扫；都没有 → 没配过，去扫码。
 - **指纹跨端向量**：`0123456789abcdef0123456789abcdef` → `3eb1bd43`；`ffffffffffffffffffffffffffffffff` → `35230248`。Mac `spike/pairing-fp-test.swift` ↔ 安卓 `MacDiscoveryTest.fingerprintVectors`，改算法两边一起改。
+
+## 9. 连接服务器的同步线格式（2026-10-29，不走 WebSocket，`SERVER-MODE-PLAN.md §4`）
+
+App（Mac / 安卓模式1）与 UniReader 服务器（`server/`）之间 push / pull 的 **HTTP 请求体与响应体**。与 §1~§7 的帧格式无关
+（没有 opcode，一个 HTTP 体就是一个消息）。其余接口（配对、列表、文件、上传会话）是 JSON / 原始字节，接口全表在
+`server/Sources/UniServerHTTP/ServerApp.swift` 文件头。
+
+实现：Swift `Sources/Sync/SyncWire.swift`（App 与服务器共用同一份源文件）、Kotlin `android/…/local/server/SyncWire.kt`。
+**跨端向量** `spike/sync-wire-vectors.txt`：Mac `spike/sync-wire-test.swift` 生成并自检，安卓 `SyncWireTest` 在 Kotlin 里编同一组消息逐字节比对。
+🔴 canonical 消息表**只许在末尾追加**；改已有消息的字节 = 改线格式，三处一起改、`version` 加一。
+
+### 9.1 原语（全部小端）
+
+| 原语 | 布局 |
+|---|---|
+| `u8` / `u16` / `u32` / `u64` | 无符号整数 |
+| `i64` | 有符号整数（值里的 INTEGER） |
+| `f64` | IEEE754 双精度**原始位**（值里的 REAL，**不做任何规格化**，`-0.0` / NaN 原样搬运；与指纹 `MirrorFp` 的规格化不同） |
+| `str` | `u16` 字节数 + UTF-8（表名 / 行 id / 列名 / 指纹这类短串） |
+| `bytes` | `u32` 字节数 + 原字节（值里的 TEXT / BLOB） |
+| `value` | `u8` 标签（与 `MirrorFp` 同值）+ 内容：`0` NULL（无内容）/ `1` INTEGER（`i64`）/ `2` REAL（`f64`）/ `3` TEXT（`bytes`，UTF-8）/ `4` BLOB（`bytes`） |
+| `row` | `u16` 列数 + 每列（`str` 列名 + `value`），**列名按字典序**（列名都是 ASCII，同一行编出来的字节唯一） |
+
+值**按 SQLite 实际存储类搬运**，不按列的声明类型归一：服务器写回去的字节与客户端库里的一模一样（指纹在两端各自按声明类型归一，见 `OFFLINE-MIRROR-PLAN.md §3.3`）。
+
+### 9.2 消息
+
+每个消息以 `u8 版本`（当前 `1`）开头；解码时版本不对、截断、尾部多出字节一律报错。
+
+```
+PushRequest   （POST /v1/workspaces/:ws/push 的请求体）
+  u8 版本 · u32 客户端 schema 版本 · u32 条数
+  每条：str 表 · str 行 id · u8 op（0 upsert / 1 delete）· u8 有无基线 [· str 基线指纹] [· row（只有 upsert 有）]
+
+PushResponse  （上面的响应体）
+  u8 版本 · u64 head（服务器当前修订号）
+  · u32 条数 · 每条：str 表 · str 行 id · u8 outcome · u64 rev（这一行在服务器上的修订号，0 = 没有记录）
+  · u32 冲突数 · 每条：str 表 · str 行 id · u8 kind（0 两边都改 / 1 一删一改 / 2 两边都加）· u8 保留了服务器那份
+  · u32 行数 · 每条同 PullResponse 的一行（outcome = 1 的那些行在服务器上的现状）
+
+PullResponse  （GET /v1/workspaces/:ws/pull?since=&limit= 的响应体）
+  u8 版本 · u64 head · u8 还有没有下一页
+  · u32 行数 · 每条：str 表 · str 行 id · u64 rev · u8 已删除 [· row（没删除才有）]
+```
+
+**outcome**：`0` applied（写进服务器了）/ `1` keptServer（别的设备先改过、冲突规则判服务器赢，现状随响应带回）/
+`2` skippedOrphan（父行已删）/ `3` skippedClash（唯一键撞了：同一份 PDF 两边各自入库、同路径的 Markdown 笔记）/
+`4` unchanged（与服务器一致）/ `5` missingFile（图片本体还没传上来，传完再推）。
+
+### 9.3 行 id 与哪些表
+
+- 三方判定的表 = `MirrorFp.specs`（单列 TEXT 主键，行 id 就是主键值；`meta` 只认同步白名单里的键）。
+- 通道表：`image`（行 id = `sha256`）、`page_align`（= `content_hash`）、`ocr_page`（三列复合主键写成 `content_hash␟page␟provider`，`␟` = 0x1F）。
+- 客户端私有、**不上线**的：`sync_base` 表、`meta.srv_url` / `srv_id` / `srv_pulled_rev`；服务器私有的：`srv_rev` 表、`meta.srv_head_rev`。
+
+### 9.4 局域网发现
+
+`_unireader-srv._tcp`（TXT `v` / `id` / `ver` / `schema`，不放配对码），细则在 `SERVER-MODE-PLAN.md §3.7`。
+Mac `Sources/ServerSync/ServerDiscovery.swift`（`NWBrowser`）、安卓 `local/server/ServerDiscovery.kt`（`NsdManager`，只收 IPv4）。

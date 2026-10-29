@@ -2,8 +2,8 @@ import Foundation
 
 /// 连接服务器的同步线格式（方案 `SERVER-MODE-PLAN.md §3.3 / §4.2`）：push / pull 的 HTTP 请求体与响应体。
 ///
-/// 🔴 **跨端契约**：服务器（`server/`）、Mac（S2）、安卓（S3）三处字节一致。落地客户端前写进 `PROTOCOL.md`
-/// 新的一章并补跨端向量（同 `wire-cross-test` 的纪律）。本文件同时被 App 与服务器编译（服务器经符号链接
+/// 🔴 **跨端契约**（`PROTOCOL.md §9`）：服务器（`server/`）、Mac、安卓（`android/…/local/server/SyncWire.kt`）字节一致。
+/// 跨端向量 `spike/sync-wire-vectors.txt`（`spike/sync-wire-test.swift` 生成，安卓 `SyncWireTest` 比对）。本文件同时被 App 与服务器编译（服务器经符号链接
 /// `server/Sources/UniServerCore/Sync`），所以**只许依赖 Foundation 与 Store 层**。
 ///
 /// ## 原语（全部小端，同 `PROTOCOL.md §2`）

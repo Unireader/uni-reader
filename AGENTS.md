@@ -36,12 +36,14 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   App 侧客户端对着真服务器的端到端：`bash spike/server-client-test.sh`（自起临时服务器，端口 18790）。
   Linux 版在 Mac 上交叉编译（`server/scripts/build-linux.sh`，钉 Swift 6.2.3），**改了 `Sources/Store/` / `Sources/Sync/` 也要交叉编译一次**；
   Linux 上的验证用同一个端到端脚本的远端模式（`server/AGENTS.md`「Linux 版」）。
+  安卓客户端（`android/…/local/server/`）对着真服务器的端到端 + Mac ↔ 安卓互通：`bash spike/android-server-e2e.sh`（平板经 USB 接着）；
+  同步线格式是跨端契约（`PROTOCOL.md §9`，向量 `spike/sync-wire-vectors.txt`），**改 `Sources/Sync/SyncWire.swift` 要同步安卓 `SyncWire.kt`**。
 
 ## 文档地图（改代码前先读对应方案文档）
 
 - `TODO.md` — 交接状态速览 + 待办 + 已知坑，**第一优先**（只留进行中/待办）；`HISTORY.md` — 已完成事项归档（TODO 条目做完即迁入）
 - `REQUIREMENTS.md` — 需求与 §8 工作区持久化方案
-- `PROTOCOL.md` — 二进制线格式**唯一契约**（Mac / web / 安卓三端字节级一致），改协议先改它
+- `PROTOCOL.md` — 二进制线格式**唯一契约**（Mac / web / 安卓三端字节级一致），改协议先改它；§9 是连接服务器的同步线格式（App ↔ 服务器）
 - `PDF-VIEWER-REBUILD-PLAN.md` — 阅读区 v2（`PageStreamView`）的五条硬指标与零闪烁纪律
 - **`APPKIT-REWRITE-PLAN.md`** — 界面整体重写为 AppKit（含阅读区，2026-09-19 拍板，`appkit-rewrite` 分支）：§7.1 实测清单、§9 实现记录；`APPKIT-WINDOW-PLAN.md` 是被它取代的前身
 - `REF-WINDOW-PLAN.md` — 参考窗（只读浮窗）；`OFFLINE-MIRROR-PLAN.md` — 工作区离线镜像（Mac + 安卓模式1，三方合并）
@@ -62,7 +64,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   §11 填空 / 主观题（v21：手写小画板、自己判、Agent 经 MCP 读作答并批改；本轮平板只显示题干）；
   §12 题目笔记（v22 `exercise.note`，判完才显示）+ 顶栏「重做上次做错的」（只练上一次结果是错的题；本轮只做 Mac）
 - `REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
-- **`SERVER-MODE-PLAN.md`** — 连接服务器（独立 Swift 服务器程序，2026-10-29 定方案；服务器 S0 + S1 已落地，Mac 客户端 S2 第一轮已落地，Linux 版已在用户 NAS 上跑通）：工作区「从服务器打开 / 上传到服务器」，
+- **`SERVER-MODE-PLAN.md`** — 连接服务器（独立 Swift 服务器程序，2026-10-29 定方案；服务器 S0 + S1 已落地，Mac 客户端 S2 第一轮、安卓 S3 第一轮已落地，Linux 版已在用户 NAS 上跑通）：工作区「从服务器打开 / 上传到服务器」，
   各设备本机缓存全部、大 PDF 按需下载；以服务器为中心的同步沿用离线镜像的指纹与判定；本地工作区规则不变。
   子工程 `server/`（自带 `server/AGENTS.md`）
 - `docs/agents/BUILD-DETAILS.md` · `docs/agents/STRUCTURE.md` · `docs/agents/PITFALLS.md` — 本文件拆出的三份细节
