@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto          // Linux 上的服务器（swift-crypto，API 与 CryptoKit 相同）
+#endif
 
 /// 离线镜像三方合并的**行指纹**（方案见 `OFFLINE-MIRROR-PLAN.md` §3）。
 ///

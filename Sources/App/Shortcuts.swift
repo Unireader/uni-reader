@@ -322,6 +322,7 @@ final class Shortcuts: ObservableObject {
         [
             (KeyCombo("n", .command), L("New Window")),
             (KeyCombo("o", .command), L("Open PDF…")),
+            (KeyCombo("o", [.command, .shift]), L("Workspaces…")),
             (KeyCombo("t", .command), L("New Tab")),
             (KeyCombo("n", [.command, .control]), L("New Board")),
             (KeyCombo("w", .command), L("Close Tab")),

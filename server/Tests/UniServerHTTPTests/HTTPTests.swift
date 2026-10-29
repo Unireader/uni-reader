@@ -273,6 +273,29 @@ final class HTTPTests: XCTestCase {
         }
     }
 
+    // MARK: - 局域网发现与服务器身份
+
+    func testDiscoveryTXTAndServerIdentity() async throws {
+        XCTAssertEqual(DiscoveryAdvertiser.txtRecord([("v", "1"), ("id", "AB")]),
+                       [3] + Array("v=1".utf8) + [5] + Array("id=AB".utf8), "RFC 6763：每项 1 字节长度 + key=value")
+        XCTAssertEqual(DiscoveryAdvertiser.txtRecord([("k", String(repeating: "x", count: 300))]).count, 256, "超长截到 255")
+        let id = try store.serverId()
+        XCTAssertFalse(id.isEmpty)
+        XCTAssertEqual(try store.serverId(), id, "服务器身份不变")
+        let app = UniServerApp.application(host: host, store: store, name: "书房的 Mac", address: .hostname("127.0.0.1", port: 0))
+        try await app.test(.router) { client in
+            let body = ByteBuffer(string: #"{"code":"\#(try self.store.pairingCode())","deviceName":"平板"}"#)
+            let token = try await client.execute(uri: "/v1/pair", method: .post, headers: Self.json, body: body) { r in
+                XCTAssertTrue(String(buffer: r.body).contains(id), "配对响应带服务器身份")
+                return try self.decode(Paired.self, r).token
+            }
+            try await client.execute(uri: "/v1/info", method: .get, headers: self.auth(token)) { r in
+                let s = String(buffer: r.body)
+                XCTAssertTrue(s.contains(id) && s.contains("书房的 Mac"), "info 带服务器身份与名字：\(s)")
+            }
+        }
+    }
+
     func testParseRange() {
         XCTAssertEqual(UniServerApp.parseRange("bytes=0-0", size: 10), 0...0)
         XCTAssertEqual(UniServerApp.parseRange("bytes=5-", size: 10), 5...9)

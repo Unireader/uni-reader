@@ -247,7 +247,12 @@ enum MirrorBuilder {
     }
 
     private static func availableCapacity(_ dir: URL) -> Int64? {
+        #if os(macOS)
         (try? dir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
             .volumeAvailableCapacityForImportantUsage
+        #else
+        // Linux 上的服务器经符号链接也编这个文件：没有上面那个键，用文件系统的剩余空间
+        ((try? FileManager.default.attributesOfFileSystem(forPath: dir.path))?[.systemFreeSize] as? NSNumber)?.int64Value
+        #endif
     }
 }

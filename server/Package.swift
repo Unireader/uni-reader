@@ -19,11 +19,16 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.0.0"),
-        // 只在 Linux 上用（macOS 有 CryptoKit）。上 Linux 时再接到目标上。
+        // 下面两个只在 Linux 上接到目标：macOS 用系统的 CryptoKit 与 libsqlite3（App 也是这样）。
+        // Linux 静态编译（`scripts/build-linux.sh`）没有系统 SQLite 可链，SQLite 源码随包编进去。
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
+        .package(url: "https://github.com/swiftlang/swift-toolchain-sqlite.git", from: "1.0.0"),
     ],
     targets: [
-        .target(name: "UniServerCore", path: "Sources/UniServerCore"),
+        .target(name: "UniServerCore", dependencies: [
+            .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux])),
+            .product(name: "SwiftToolchainCSQLite", package: "swift-toolchain-sqlite", condition: .when(platforms: [.linux])),
+        ], path: "Sources/UniServerCore"),
         .target(name: "UniServerHTTP", dependencies: [
             "UniServerCore",
             .product(name: "Hummingbird", package: "hummingbird"),

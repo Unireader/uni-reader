@@ -26,8 +26,9 @@ public enum UniServerApp {
 
     static let revHeader = HTTPField.Name("X-UniReader-Rev")!
 
-    public static func router(host: WorkspaceHost, store: ServerStore) -> Router<ServerRequestContext> {
+    public static func router(host: WorkspaceHost, store: ServerStore, name: String = "UniReader") -> Router<ServerRequestContext> {
         let router = Router(context: ServerRequestContext.self)
+        let serverId = (try? store.serverId()) ?? ""
         router.add(middleware: ServerErrorMiddleware())
 
         // MARK: 配对（不要令牌）
@@ -39,7 +40,8 @@ public enum UniServerApp {
             let body = try await request.decode(as: PairRequest.self, context: context)
             do {
                 let (device, token) = try store.pair(code: body.code, deviceName: body.deviceName)
-                return PairResponse(deviceId: device.id, token: token, schemaVersion: ServerInfo.schemaVersion)
+                return PairResponse(deviceId: device.id, token: token, schemaVersion: ServerInfo.schemaVersion,
+                                    serverId: serverId, serverName: name)
             } catch ServerError.badPairingCode {
                 await limiter.recordFailure()
                 throw ServerError.badPairingCode
@@ -51,6 +53,7 @@ public enum UniServerApp {
 
         api.get("info") { _, context -> InfoResponse in
             InfoResponse(serverVersion: ServerInfo.version, schemaVersion: ServerInfo.schemaVersion,
+                         serverId: serverId, serverName: name,
                          deviceId: context.device?.id ?? "", deviceName: context.device?.name ?? "")
         }
 
@@ -188,9 +191,9 @@ public enum UniServerApp {
         return router
     }
 
-    public static func application(host: WorkspaceHost, store: ServerStore,
+    public static func application(host: WorkspaceHost, store: ServerStore, name: String = "UniReader",
                                    address: BindAddress) -> some ApplicationProtocol {
-        Application(router: router(host: host, store: store),
+        Application(router: router(host: host, store: store, name: name),
                     configuration: .init(address: address, serverName: "UniReader/\(ServerInfo.version)"))
     }
 
@@ -372,8 +375,13 @@ enum Resumable {
 // MARK: - JSON
 
 struct PairRequest: Decodable { let code: String; let deviceName: String }
-struct PairResponse: ResponseEncodable { let deviceId: String; let token: String; let schemaVersion: Int }
-struct InfoResponse: ResponseEncodable { let serverVersion: String; let schemaVersion: Int; let deviceId: String; let deviceName: String }
+struct PairResponse: ResponseEncodable {
+    let deviceId: String; let token: String; let schemaVersion: Int; let serverId: String; let serverName: String
+}
+struct InfoResponse: ResponseEncodable {
+    let serverVersion: String; let schemaVersion: Int; let serverId: String; let serverName: String
+    let deviceId: String; let deviceName: String
+}
 struct WorkspaceDTO: ResponseEncodable { let id: String; let name: String; let head: UInt64 }
 struct WorkspaceList: ResponseEncodable { let workspaces: [WorkspaceDTO] }
 struct UploadDTO: ResponseEncodable { let upload: String }

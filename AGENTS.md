@@ -33,6 +33,9 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - Android 端（`android/`）：构建 `cd android && ./gradlew assembleDebug`，打包 `android/pack.sh`。**其余规则、结构与坑全在 `android/AGENTS.md`（改安卓代码前先读它），本文件不重复。**
 - 服务器（`server/`，`SERVER-MODE-PLAN.md`）：`cd server && swift test`。它经符号链接直接编 `Sources/Store/`、`Sources/Sync/`、
   `Sources/App/BackupRetention.swift`——**改这几处要两边都验**。规则与结构在 `server/AGENTS.md`。
+  App 侧客户端对着真服务器的端到端：`bash spike/server-client-test.sh`（自起临时服务器，端口 18790）。
+  Linux 版在 Mac 上交叉编译（`server/scripts/build-linux.sh`，钉 Swift 6.2.3），**改了 `Sources/Store/` / `Sources/Sync/` 也要交叉编译一次**；
+  Linux 上的验证用同一个端到端脚本的远端模式（`server/AGENTS.md`「Linux 版」）。
 
 ## 文档地图（改代码前先读对应方案文档）
 
@@ -59,7 +62,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   §11 填空 / 主观题（v21：手写小画板、自己判、Agent 经 MCP 读作答并批改；本轮平板只显示题干）；
   §12 题目笔记（v22 `exercise.note`，判完才显示）+ 顶栏「重做上次做错的」（只练上一次结果是错的题；本轮只做 Mac）
 - `REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
-- **`SERVER-MODE-PLAN.md`** — 连接服务器（独立 Swift 服务器程序，2026-10-29 定方案；服务器 S0 + S1 已落地，客户端未动）：工作区「从服务器打开 / 上传到服务器」，
+- **`SERVER-MODE-PLAN.md`** — 连接服务器（独立 Swift 服务器程序，2026-10-29 定方案；服务器 S0 + S1 已落地，Mac 客户端 S2 第一轮已落地，Linux 版已在用户 NAS 上跑通）：工作区「从服务器打开 / 上传到服务器」，
   各设备本机缓存全部、大 PDF 按需下载；以服务器为中心的同步沿用离线镜像的指纹与判定；本地工作区规则不变。
   子工程 `server/`（自带 `server/AGENTS.md`）
 - `docs/agents/BUILD-DETAILS.md` · `docs/agents/STRUCTURE.md` · `docs/agents/PITFALLS.md` — 本文件拆出的三份细节
@@ -82,7 +85,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 
 ## 结构要点（速览）
 
-目录地图：`Sources/App/`（单例 + 渲染管线 + 笔迹纯函数 `InkEdit`/`InkUndo`/`InkWindow` 等）、`Sources/Store/`（工作区 SQLite）、`Sources/Sync/`（连接服务器的同步：线格式 + 客户端算法，App 与 `server/` 共用）、`Sources/Server/`（LAN WS + UDP，契约 `PROTOCOL.md §6`）、`Sources/MCP/`、`Sources/Agent/`、`Sources/Reader/`（阅读区 AppKit，`ReaderView` + 扩展 + `Pane/Ref/Rack/Scratch/`）、`Sources/Window/`、`Sources/Settings/`、`Sources/Markdown/`、`web/`（采集页前端）。**改哪个模块，先读 `docs/agents/STRUCTURE.md` 对应条目 + 该模块方案文档**（文件头还有各 spike 测试）。跨条目的硬约束已抄进上面的红线；其余不变量：
+目录地图：`Sources/App/`（单例 + 渲染管线 + 笔迹纯函数 `InkEdit`/`InkUndo`/`InkWindow` 等）、`Sources/Store/`（工作区 SQLite）、`Sources/Sync/`（连接服务器的同步：线格式 + 客户端算法，App 与 `server/` 共用）、`Sources/ServerSync/`（App 这一侧：HTTP 客户端 / 账号 / 调度，只给 App 用）、`Sources/Server/`（LAN WS + UDP，契约 `PROTOCOL.md §6`）、`Sources/MCP/`、`Sources/Agent/`、`Sources/Reader/`（阅读区 AppKit，`ReaderView` + 扩展 + `Pane/Ref/Rack/Scratch/`）、`Sources/Window/`、`Sources/Settings/`、`Sources/Markdown/`、`web/`（采集页前端）。**改哪个模块，先读 `docs/agents/STRUCTURE.md` 对应条目 + 该模块方案文档**（文件头还有各 spike 测试）。跨条目的硬约束已抄进上面的红线；其余不变量：
 
 - MCP：`MCPFacade` 是唯一碰 App 活状态处；页码对外 1 起、对内 0 起，换算只在 `PageNo`。
 - DeepLink/MCP：🔴 「让某篇显示出来」只有 `AppDelegate.showDocument` 一份，别在两边各写找标签/挑窗口。

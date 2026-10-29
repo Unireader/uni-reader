@@ -695,35 +695,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     /// 打开一个**已存在**的工作区包（`.unrd`）：只认真实工作区，不接受普通/空文件夹，
     /// 也不允许现场新建（那是 `createNewWorkspace()` 的职责）。
-    func chooseWorkspace() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.canCreateDirectories = false
-        panel.treatsFilePackagesAsDirectories = false
-        panel.allowedContentTypes = [UTType(exportedAs: "tech.xvanturing.unireader.workspace")]
-        panel.allowsMultipleSelection = false
-        panel.message = L("Choose an existing UniReader workspace (.unrd).")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        routeToWorkspace(url, strict: true)
-    }
+    /// 面板在 `WorkspacePanels`（与启动页共用）。
+    func chooseWorkspace() { WorkspacePanels.chooseExisting() }
 
-    /// 新建工作区：选位置 + 起名，创建全新 `.unrd` 包并开一扇窗。
-    func createNewWorkspace() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(exportedAs: "tech.xvanturing.unireader.workspace")]
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = L("Untitled Workspace")
-        panel.prompt = L("Create")
-        panel.message = L("Choose a location and name for the new workspace.")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        // 目标已经是工作区会在这里报错而非覆盖——不能因为面板弹过「替换」就删掉一整库笔记。
-        do { try WorkspaceManager.createWorkspace(at: url) } catch {
-            present(error.localizedDescription)
-            return
-        }
-        routeToWorkspace(url, strict: true)
-    }
+    /// 新建工作区：选位置 + 起名，创建全新 `.unrd` 包并开一扇窗（见 `WorkspacePanels.createNew`）。
+    func createNewWorkspace() { WorkspacePanels.createNew() }
 
     /// 「最近工作区」里的一项：已不存在或已不是真实工作区 → 提示 + 自动移除。
     func openRecentWorkspace(_ url: URL) {
@@ -1058,7 +1034,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // 「一眼认出这不是硬盘上那份」，不是一段说明）。
         let tip = workspace.name.isEmpty ? L("Workspace") : workspace.name
         if workspaceItem?.toolTip != tip { workspaceItem?.toolTip = tip }
-        let wsSymbol = workspace.isMirror ? "externaldrive.badge.timemachine" : "folder"
+        let wsSymbol = workspace.isServerWorkspace ? "server.rack"
+            : workspace.isMirror ? "externaldrive.badge.timemachine" : "folder"
         if let item = workspaceItem, workspaceSymbol != wsSymbol {
             wsLog("[TB] 工作区按钮图标 → \(wsSymbol)")
             workspaceSymbol = wsSymbol
@@ -1202,10 +1179,16 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         add(menu, L("Open Workspace…"), #selector(menuOpenWorkspace), symbol: "folder")
         add(menu, L("New Workspace…"), #selector(menuNewWorkspace), symbol: "folder.badge.plus")
         add(menu, L("Rename Workspace…"), #selector(menuRenameWorkspace), symbol: "pencil")
+        add(menu, L("Open from Server…"), #selector(menuOpenFromServer), symbol: "server.rack")
         menu.addItem(.separator())
+        // 服务器工作区（`SERVER-MODE-PLAN.md`）：本机缓存本身就是离线副本，不再给「保留离线副本」；
+        // 打开 / 关闭时自动同步，开着时只推不拉，这里给一个立即推送的入口和一行状态。
         // 镜像与源盘互斥：镜像不能再做镜像，源盘也没有「同步回去」这回事——
         // 两个入口只出现一个，不给用户做无效选择的机会（沿用迁移前的判断）。
-        if workspace.isMirror {
+        if workspace.isServerWorkspace {
+            menu.addItem(.sectionHeader(title: serverStatusLine))
+            add(menu, L("Upload Changes Now"), #selector(menuPushNow), symbol: "arrow.up.circle")
+        } else if workspace.isMirror {
             add(menu, L("Sync to Source…"), #selector(menuSyncToSource),
                 symbol: "arrow.triangle.2.circlepath")
         } else {
@@ -1214,6 +1197,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                            symbol: "externaldrive.badge.timemachine")
             keep.state = keptOffline ? .on : .off
             if keptOffline { menu.addItem(.sectionHeader(title: lastSyncedLine)) }
+            add(menu, L("Upload to Server…"), #selector(menuUploadToServer), symbol: "icloud.and.arrow.up")
         }
         let recents = WorkspaceRegistry.shared.recents
         if !recents.isEmpty {
@@ -1254,6 +1238,31 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             return L("Never synced back")
         }
         return String(format: L("Last synced %@"), d.formatted(date: .abbreviated, time: .shortened))
+    }
+
+    /// 服务器工作区的那一行状态（菜单打开时现算）。
+    private var serverStatusLine: String {
+        let host = workspace.serverURL.flatMap { URL(string: $0)?.host } ?? ""
+        switch ServerSyncCoordinator.shared.status(of: workspace.folder) {
+        case .synced(let d)?:
+            return String(format: L("Server %@ · synced %@"), host, d.formatted(date: .omitted, time: .shortened))
+        case .syncing?: return String(format: L("Server %@ · syncing…"), host)
+        case .offline?: return String(format: L("Server %@ · offline, using the local copy"), host)
+        case .failed(let m)?: return String(format: L("Server %@ · sync failed: %@"), host, m)
+        case .noAccount?: return L("Not signed in to this server (Settings › Servers)")
+        case nil: return String(format: L("Server %@"), host)
+        }
+    }
+
+    @objc private func menuOpenFromServer() {
+        window?.contentViewController?.presentAsSheet(OpenFromServerController())
+    }
+    @objc private func menuUploadToServer() {
+        window?.contentViewController?.presentAsSheet(UploadToServerController(workspace: workspace))
+    }
+    @objc private func menuPushNow() {
+        let ws = workspace
+        Task { await ServerSyncCoordinator.shared.push(ws) }
     }
 
     @objc private func addPDF() { openPDF() }

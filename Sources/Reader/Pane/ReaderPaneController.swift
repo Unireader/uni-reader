@@ -298,6 +298,28 @@ final class ReaderPaneController: NSViewController {
         AppDelegate.shared?.showExerciseSource(e, in: workspace)
     }
 
+    /// 服务器工作区里正在下载 / 下载失败的那一本（占位页据此显示进度或错误）。
+    private var serverDownload: (docId: String, error: String?)?
+
+    private func downloadFromServer(_ doc: LibDocument) {
+        serverDownload = (doc.id, nil)
+        refresh()
+        let ws = workspace
+        Task { @MainActor [weak self] in
+            do {
+                try await ServerSyncCoordinator.shared.downloadPDF(ws, documentId: doc.id)
+                guard let self else { return }
+                self.serverDownload = nil
+                ws.refresh()
+                if self.tab.docID == doc.id { self.tab.reload() }
+            } catch {
+                guard let self else { return }
+                self.serverDownload = (doc.id, error.localizedDescription)
+                self.refresh()
+            }
+        }
+    }
+
     /// 阅读区本体（有 PDF 就建 / 复用 `ReaderView`，没有就是占位）。
     private func readerPart(_ s: DocSession) {
         // 阅读区：会话 / 显示身份（扫描页对齐一切换就变）/ PDF 变了才重建
@@ -316,7 +338,15 @@ final class ReaderPaneController: NSViewController {
             readerView?.removeFromSuperview()
             readerView = nil
             placeholder.isHidden = false
-            if let doc = tab.missingDoc {
+            if let doc = tab.missingDoc, workspace.isServerWorkspace {
+                // 服务器工作区：本机没这本的文件 = 还没下载（大 PDF 等点开再下，`SERVER-MODE-PLAN.md §4.1`）
+                let busy = serverDownload?.docId == doc.id && serverDownload?.error == nil
+                let detail = busy ? L("Downloading from the server…")
+                    : serverDownload?.docId == doc.id ? (serverDownload?.error ?? "")
+                    : String(format: L("“%@” is on the server. Download it to read it on this Mac."), doc.title)
+                placeholder.set(symbol: "icloud.and.arrow.down", title: L("Not Downloaded Yet"), detail: detail,
+                                button: busy ? nil : L("Download from Server")) { [weak self] in self?.downloadFromServer(doc) }
+            } else if let doc = tab.missingDoc {
                 placeholder.set(symbol: "questionmark.folder", title: L("File Not Found"),
                                 detail: String(format: L("All known paths for “%@” are unavailable. Re-link the file to continue."), doc.title),
                                 button: L("Re-link File…")) { [weak self] in self?.onRelocate(doc) }

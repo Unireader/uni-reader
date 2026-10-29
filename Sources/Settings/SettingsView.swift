@@ -3,13 +3,14 @@ import SwiftUI
 
 /// 设置窗的标签页；顺序即标题栏里的顺序。图标/文案放这里，窗口壳（`SettingsTabController`）直接取用。
 enum SettingsTab: CaseIterable {
-    case general, tablet, reading, shortcuts, agent, diagnostics
+    case general, tablet, reading, servers, shortcuts, agent, diagnostics
 
     var title: String {
         switch self {
         case .general: return L("General")
         case .tablet: return L("Tablet")
         case .reading: return L("Reading")
+        case .servers: return L("Servers")
         case .shortcuts: return L("Shortcuts")
         case .agent: return L("Agent")
         case .diagnostics: return L("Diagnostics")
@@ -21,6 +22,7 @@ enum SettingsTab: CaseIterable {
         case .general: return "gear"
         case .tablet: return "ipad"
         case .reading: return "book"
+        case .servers: return "server.rack"
         case .shortcuts: return "keyboard"
         case .agent: return "terminal"
         case .diagnostics: return "stopwatch"
@@ -86,6 +88,7 @@ struct SettingsView: View {
         case .general: generalTab
         case .tablet: tabletTab
         case .reading: readingTab
+        case .servers: ServerSettingsView()
         case .shortcuts: ShortcutsSettings()
         case .agent: MCPSettingsView(mcp: app.mcp)
         case .diagnostics: diagnosticsTab

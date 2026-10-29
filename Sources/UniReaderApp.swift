@@ -396,7 +396,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.pendingDeepLinkURL = nil
             Self.deliverDeepLink(u)   // 此刻 didFinishLaunching 已置真，走的是直接路由那一支
         } else {
+            restoreWindowsAtLaunch()
+        }
+    }
+
+    // MARK: - 窗口恢复（用户 2026-10-29 定：只做窗口恢复）
+
+    /// 当前开着的工作区窗口（路径，去重保序）。每次开窗 / 关窗都写一次；**退出过程中不写**——
+    /// 退出时 `shutdown` 会逐扇关窗，那时再写就把记录清空了。崩溃也不丢（记录一直是最新的）。
+    static let openWindowsKey = "openWorkspaceWindows"
+
+    private func persistOpenWindows() {
+        guard !Self.isTerminating else { return }
+        var seen = Set<String>()
+        let paths = readerWindows.compactMap { $0.workspace.folder?.standardizedFileURL.path }.filter { seen.insert($0).inserted }
+        UserDefaults.standard.set(paths, forKey: Self.openWindowsKey)
+    }
+
+    /// 启动时：上次退出时开着哪几个工作区的窗口，就原样开回来（各自的标签由 `TabsModel.restoreTabs` 恢复）；
+    /// 退出前全关掉了 → 只显示启动页。还没有这条记录（老版本升级上来的第一次）→ 照旧开上次的工作区。
+    /// 服务器工作区经 `route` 先同步再开窗。
+    private func restoreWindowsAtLaunch() {
+        guard let saved = UserDefaults.standard.array(forKey: Self.openWindowsKey) as? [String] else {
+            openLastWorkspace()
+            return
+        }
+        var opened = 0
+        for path in saved {
+            guard let url = WorkspaceRegistry.shared.restorableFolder(path: path) else { continue }
+            if (try? WorkspaceRegistry.shared.route(to: url, strict: true)) != nil { opened += 1 }
+        }
+        if opened == 0 { WorkspacesWindowController.show() }
+    }
+
+    /// 旧行为：开「上次使用的工作区」（服务器工作区先同步一轮，最多等 2.5 秒）。
+    private func openLastWorkspace() {
+        let last = WorkspaceRegistry.shared.lastOrDefaultFolder()
+        guard ServerSyncCoordinator.serverURL(of: last) != nil else {
             openReaderWindow(workspacePath: nil, docId: nil)
+            return
+        }
+        Task { @MainActor in
+            await ServerSyncCoordinator.shared.prepareToOpen(last, timeout: 2.5)
+            self.openReaderWindow(workspacePath: nil, docId: nil)
         }
     }
 
@@ -442,6 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 w.setFrameTopLeftPoint(NSPoint(x: prev.frame.minX + 26, y: prev.frame.maxY - 26))
             }
             readerWindows.append(c)
+            persistOpenWindows()
             wsTime("上屏(showWindow)") { c.showWindow(nil) }
             if activate { NSApp.activate(ignoringOtherApps: true) }
             wsLog("开窗：\(folder.lastPathComponent) doc=\(docId ?? "nil")")
@@ -495,6 +538,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 窗口关掉了，放掉对 controller 的强引用。
     func forget(_ controller: ReaderWindowController) {
         readerWindows.removeAll { $0 === controller }
+        // 关掉的是这个工作区的最后一扇窗（不是退出）→ 下次打开它不再恢复文档（只做窗口恢复，用户 2026-10-29 定）
+        if !Self.isTerminating, let folder = controller.workspace.folder,
+           !WorkspaceRegistry.shared.wasEvacuated(folder),
+           !readerWindows.contains(where: { $0.workspace.folder?.standardizedFileURL == folder.standardizedFileURL }) {
+            TabsModel.clearSavedTabs(folder: folder)
+        }
+        persistOpenWindows()
+        // 阅读窗口全关掉了 → 出启动页（用户 2026-10-29 定）。稍等一拍再判：弹盘切副本、换工作区时是「先关后开」，
+        // 中间那一瞬没有窗口，别让启动页闪一下。
+        guard readerWindows.isEmpty, !Self.isTerminating else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self, self.readerWindows.isEmpty, !Self.isTerminating else { return }
+            WorkspacesWindowController.show()
+        }
     }
 
     /// 关掉全部窗口不退出 app（macOS 惯例；也与迁移前 SwiftUI 的行为一致）。
@@ -592,7 +649,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// delegate），当时「app 激活凭空多出一个空窗口」正是 SwiftUI 自己开的、只能识别后关掉。
     /// 现在窗口全归我们：这里返回 false（自己开，不劳系统），凭空多窗那件事从根上不存在了。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openReaderWindow(workspacePath: nil, docId: nil) }
+        // 没有窗口时点 Dock 图标 → 启动页（用户 2026-10-29 定；原先是直接开上次的工作区）
+        if !flag { WorkspacesWindowController.show() }
         return false
     }
 

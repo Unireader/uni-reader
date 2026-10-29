@@ -104,6 +104,14 @@ final class WorkspaceRegistry: ObservableObject {
         return WorkspaceManager.hasLibrary(URL(fileURLWithPath: m))
     }
 
+    /// 启动时恢复窗口用：记下的路径现在还能开吗——在就用它；不在（盘没插）就看最近列表里同一条记录有没有能用的副本。
+    func restorableFolder(path: String) -> URL? {
+        let url = URL(fileURLWithPath: path)
+        if WorkspaceManager.hasLibrary(url) { return url }
+        guard let r = recents.first(where: { $0.sourcePath == path || $0.mirrorPath == path }) else { return nil }
+        return Self.resolve(r)
+    }
+
     /// 解析不出来时**照旧交源路径**给调用方：让既有的「工作区不存在 → 提示 + 移出列表」原样生效。
     static func resolveOrSource(_ r: RecentWorkspace) -> URL {
         resolve(r) ?? URL(fileURLWithPath: r.sourcePath)
@@ -135,6 +143,7 @@ final class WorkspaceRegistry: ObservableObject {
             wsLog("acquire：复用实例 \(folder.lastPathComponent) retain=\(retain[k] ?? 0)")
             return m
         }
+        evacuated.remove(k)
         let m = try WorkspaceManager(folder: folder)
         // 迁移改名（旧式无扩展名工作区）后真实路径可能变了，按最终路径入池。
         let finalKey = m.folder.map(Self.key) ?? k
@@ -143,6 +152,7 @@ final class WorkspaceRegistry: ObservableObject {
         rememberRecent(m.folder ?? folder)
         UserDefaults.standard.set(finalKey, forKey: lastKey)
         wsLog("acquire：新建实例 \(folder.lastPathComponent) retain=\(retain[finalKey] ?? 0)")
+        ServerSyncCoordinator.shared.workspaceOpened(m)   // 服务器工作区：开着时只推不拉（`SERVER-MODE-PLAN.md §4.3`）
         return m
     }
 
@@ -194,7 +204,10 @@ final class WorkspaceRegistry: ObservableObject {
     private func maybeTeardown(_ k: String) {
         guard retain[k, default: 0] <= 0, !windowPaths.values.contains(k) else { return }
         guard let m = byPath.removeValue(forKey: k)?.manager else { return }
+        let wasServer = m.isServerWorkspace
         m.teardown()
+        // 服务器工作区：连接关了，用临时连接完整同步一轮（打开它之前会先取消这一轮，见 `ServerSyncCoordinator`）
+        if wasServer { ServerSyncCoordinator.shared.workspaceClosed(URL(fileURLWithPath: k)) }
         // 诊断：连接已关，弹盘不再受阻；实例本身若迟迟不释放说明别处还强引用着它（只记一笔，不影响功能）。
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak m] in
             if m != nil { wsLog("teardown：⚠️ manager 仍存活（连接已关，仅记录）\((k as NSString).lastPathComponent)") }
@@ -289,6 +302,17 @@ final class WorkspaceRegistry: ObservableObject {
             activateWindow(forWorkspace: url)
             return
         }
+        // 服务器工作区：开窗前先同步一轮（最多等几秒，连不上就照常开本机缓存）
+        if ServerSyncCoordinator.serverURL(of: url) != nil {
+            wsLog("route：服务器工作区，先同步再开窗 \(url.path)")
+            let path = url.standardizedFileURL.path
+            Task { @MainActor in
+                await ServerSyncCoordinator.shared.prepareToOpen(url, timeout: 3)
+                if self.hasWindow(forWorkspace: url) { self.activateWindow(forWorkspace: url); return }
+                AppDelegate.shared?.openReaderWindow(workspacePath: path, docId: nil)
+            }
+            return
+        }
         wsLog("route：开新窗口 \(url.path)")
         AppDelegate.shared?.openReaderWindow(workspacePath: url.standardizedFileURL.path, docId: nil)
     }
@@ -330,12 +354,18 @@ final class WorkspaceRegistry: ObservableObject {
     /// 视图状态上，随窗口关闭走既有的那条结清链路（`ContentView.onDisappear`）。
     func evacuate(_ folder: URL) {
         let k = Self.key(folder)
+        evacuated.insert(k)   // 这是 App 替用户关的窗：别当成「用户关了最后一扇窗」清掉它的标签（`AppDelegate.forget`）
         wsLog("evacuate：盘要弹了，撤离 \((k as NSString).lastPathComponent)")
         byPath[k]?.manager?.teardown()
         for (sid, path) in windowPaths where path == k {
             windowsBySession[sid]?.close()
         }
     }
+
+    /// 因为盘要弹而被 App 关掉窗口的工作区（再次打开时摘掉）。
+    private var evacuated: Set<String> = []
+
+    func wasEvacuated(_ folder: URL) -> Bool { evacuated.contains(Self.key(folder)) }
 
     /// 该工作区是否已有窗口在显示。
     func hasWindow(forWorkspace folder: URL) -> Bool {

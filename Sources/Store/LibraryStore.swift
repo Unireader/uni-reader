@@ -1,5 +1,7 @@
 import Foundation
-import CoreGraphics
+#if canImport(CoreGraphics)
+import CoreGraphics    // Linux 上 CGRect 等由 Foundation 提供（服务器经符号链接编这个文件）
+#endif
 
 /// 一个工作区的持久层：`<工作区>/UniReader/library.sqlite`（自有 schema，跨平台可读）。
 /// 单一真相源；所有读写走这里。非线程安全，请在主线程使用（`storedID` 那张小表自带锁：笔迹窄查在后台线程跑）。

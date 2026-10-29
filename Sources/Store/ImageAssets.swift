@@ -1,12 +1,19 @@
-import CoreGraphics
-import CryptoKit
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(ImageIO)
+import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
+#endif
 
 /// 图片本体的**文件层**（`IMAGE-NOTE-PLAN.md §2.1`）：`<工作区>/Images/<sha256>.<ext>`。
 ///
 /// 只认 Foundation + ImageIO，不碰库、不碰 UI —— `LibraryStore` 管行，这里管字节，
+/// （Linux 上的服务器也编这个文件但没有 ImageIO：只用文件层，解图 / 转码那几个在 `#if canImport(ImageIO)` 里），
 /// `spike/image-store-test.swift` 把两者拼起来测。所有写入都是「先 `.part` 再原子改名」
 /// （同 `MirrorBuilder.copyAtomically`）：中途拔盘只会留一个 `.part`，不会留一张只写了一半、
 /// 看着像好的图。
@@ -39,6 +46,7 @@ enum ImageAssets {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    #if canImport(ImageIO)
     // MARK: - 归一化
 
     /// 把任意能解的图片字节整理成可入库的形态：
@@ -98,6 +106,7 @@ enum ImageAssets {
         if t.conforms(to: .webP) { return "webp" }
         return nil
     }
+    #endif
 
     // MARK: - 文件读写
 
@@ -138,6 +147,7 @@ enum ImageAssets {
         try? FileManager.default.removeItem(at: url(in: workspace, sha256: sha256, ext: ext))
     }
 
+    #if canImport(ImageIO)
     /// 从盘上解一张图（原分辨率）。`maxPixel` 非 nil = 只要一张不超过该长边的缩略（气泡/列表用，省内存）。
     static func load(_ url: URL, maxPixel: Int? = nil) -> CGImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
@@ -152,4 +162,5 @@ enum ImageAssets {
         }
         return CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
     }
+    #endif
 }

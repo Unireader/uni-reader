@@ -35,6 +35,17 @@ public final class ServerStore: @unchecked Sendable {
 
     public func close() { db.close() }
 
+    // MARK: - 服务器身份
+
+    /// 服务器的稳定身份（首次启动生成，之后不变）。局域网发现的 TXT 与 `/v1/info` 都带它：
+    /// 服务器换了 IP，客户端靠它认出「还是那一台」（方案 §3.7）。
+    public func serverId() throws -> String {
+        if let id = meta("server_id"), !id.isEmpty { return id }
+        let id = UUID().uuidString
+        try setMeta("server_id", id)
+        return id
+    }
+
     // MARK: - 配对码
 
     /// 当前配对码；还没有就生成一个。

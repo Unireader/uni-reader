@@ -399,6 +399,13 @@ final class TabsModel: ObservableObject {
         }
     }
 
+    /// 关掉某工作区的最后一扇窗（不是退出 App）时调：写一条空的 v2 记录，下次打开这个工作区不再恢复文档
+    /// （只有「退出时开着的窗口」在下次启动时原样恢复，见 `AppDelegate.restoreWindowsAtLaunch`）。
+    static func clearSavedTabs(folder: URL) {
+        UserDefaults.standard.set(["version": 2, "items": [String](), "docs": [String](), "active": ""],
+                                  forKey: "tabs:" + folder.standardizedFileURL.path)
+    }
+
     private func persist() {
         guard let k = storeKey else { return }
         let items = tabs.compactMap(storedTab)
@@ -421,8 +428,10 @@ final class TabsModel: ObservableObject {
         var wantActive: StoredTab?
         if let k = storeKey,
            let d = UserDefaults.standard.dictionary(forKey: k),
-           let saved = d["items"] as? [String], !saved.isEmpty {
-            savedTabs = saved.compactMap(StoredTab.init(key:))
+           (d["version"] as? Int) == 2 {
+            // v2 记录在就以它为准，**空也算数**：关掉某工作区的最后一扇窗会写一条空记录（`clearSavedTabs`），
+            // 下次打开它就是空窗口——不能再退回库里的「打开集」把文档又开回来（用户 2026-10-29 定：只做窗口恢复）。
+            savedTabs = ((d["items"] as? [String]) ?? []).compactMap(StoredTab.init(key:))
             wantActive = (d["active"] as? String).flatMap(StoredTab.init(key:))
         } else if let k = storeKey,
                   let d = UserDefaults.standard.dictionary(forKey: k),

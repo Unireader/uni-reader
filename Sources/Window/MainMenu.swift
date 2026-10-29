@@ -123,6 +123,9 @@ enum MainMenu {
         recentMenu.delegate = MenuActions.shared.recentDelegate
         recent.submenu = recentMenu
         m.addItem(recent)
+        // 启动页：本机最近的 + 各台服务器上的工作区（`WorkspacesWindowController`）
+        m.addItem(item(L("Workspaces…"), #selector(MenuActions.openWorkspaces(_:)), key: "o",
+                       mods: [.command, .shift], target: MenuActions.shared))
         m.addItem(.separator())
         // 兜底那两套（`BACKUP-PLAN.md`）：误删找回来、库回到某个时间点。
         m.addItem(post(L("Recently Deleted…"), .workspaceTrashRequested))
@@ -331,6 +334,8 @@ final class MenuActions: NSObject {
     }
 
     @objc func clearRecents(_ sender: Any?) { WorkspaceRegistry.shared.clearRecents() }
+
+    @objc func openWorkspaces(_ sender: Any?) { WorkspacesWindowController.show() }
 }
 
 /// 撤销/重做两项的可用性与标题（系统在菜单展开、以及按下快捷键前会调）。其余项一律放行。

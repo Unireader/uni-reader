@@ -25,6 +25,14 @@ final class SettingsWindowController: NSWindowController {
 
     private static let frameName = "SettingsWindow"
 
+    /// 打开设置窗并切到某一页（例：没连服务器时「从服务器打开」面板上的「打开设置…」）。
+    static func show(tab: SettingsTab) {
+        show()
+        guard let tabs = shared?.window?.contentViewController as? NSTabViewController,
+              let i = SettingsTab.allCases.firstIndex(of: tab) else { return }
+        tabs.selectedTabViewItemIndex = i
+    }
+
     init(app: AppModel) {
         let win = NSWindow(contentViewController: SettingsTabController(app: app))
         win.title = L("Settings")   // 选中标签后换成标签名（系统设置窗的惯例），见 `SettingsTabController`

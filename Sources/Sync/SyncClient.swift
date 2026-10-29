@@ -14,6 +14,11 @@ enum SyncClient {
 
     /// 上次拉到的修订号（客户端私有的 meta 键，不在同步白名单里）。
     static let metaPulledRev = "srv_pulled_rev"
+    /// 这份工作区连的是哪台服务器（基础地址）。**有它 = 服务器工作区**（本机缓存或硬盘副本），没有 = 本地工作区。
+    /// 客户端私有（不在同步白名单里），跟着库文件走——拷到别处照样认得出自己是哪台服务器上的哪个工作区。
+    static let metaServerURL = "srv_url"
+    /// 服务器的稳定身份（`/v1/info` 的 `serverId`）。服务器换了 IP、本机改了它的地址之后，缓存靠它还认得出是哪台。客户端私有。
+    static let metaServerID = "srv_id"
 
     struct Key: Hashable { var table: String; var rowId: String }
 
@@ -21,12 +26,22 @@ enum SyncClient {
 
     /// 把基线设成「此刻与服务器一致」：建缓存之后、上传完成之后各调一次。
     static func resetBase(_ db: SQLiteDB, folder: URL, pulledRev: UInt64) throws {
-        try db.exec(MirrorStore.syncBaseDDL)
+        try writeBase(db, computeBase(db, folder: folder), pulledRev: pulledRev)
+    }
+
+    /// 算基线（只读）：三方判定表 + 通道表，`表名 → (row_id → fp)`。
+    /// 上传时对着**上传出去的那份快照**算（而不是此刻的活库）：上传期间本机又改的，基线里不该有，下一轮才会推上去。
+    static func computeBase(_ db: SQLiteDB, folder: URL) throws -> [String: [String: String]] {
         let spec = try SyncRows.specState(db)
-        let channels = try SyncRows.channelState(db, folder: folder)
+        return spec.merging(try SyncRows.channelState(db, folder: folder), uniquingKeysWith: { a, _ in a })
+    }
+
+    /// 写基线（整表替换 + 记下拉到的修订号），一个事务。
+    static func writeBase(_ db: SQLiteDB, _ base: [String: [String: String]], pulledRev: UInt64) throws {
+        try db.exec(MirrorStore.syncBaseDDL)
         try db.transaction {
             try db.run("DELETE FROM sync_base")
-            for (table, fps) in spec.merging(channels, uniquingKeysWith: { a, _ in a }) {
+            for (table, fps) in base {
                 for (rowId, fp) in fps {
                     try db.run("INSERT INTO sync_base(tbl,row_id,fp) VALUES(?,?,?)",
                                [.text(table), .text(rowId), .text(fp)])
@@ -96,23 +111,30 @@ enum SyncClient {
     @discardableResult
     static func applyPushResponse(_ db: SQLiteDB, folder: URL, pushed: [SyncWire.RowChange],
                                   response: SyncWire.PushResponse) throws -> PullReport {
+        try db.transaction { try recordPushed(db, pushed: pushed, response: response) }
+        return try applyPulled(db, folder: folder, rows: response.serverRows)
+    }
+
+    /// 只记基线：服务器收下的（或本来就一致的）行，基线改成推上去的样子。**不开事务、不写用户数据**。
+    ///
+    /// 工作区开着时（只推不拉）单独用它：那条连接 App 也在用，在别人的事务中途插进 BEGIN / ROLLBACK 会把别人的写
+    /// 一起带走；而基线一行一行写，写到一半断了也没事（没写上的行下一轮再推一次，服务器答「一致」再补上）。
+    /// 服务器保留自己那份的行（`serverRows`）这时不碰——等下次完整同步。
+    static func recordPushed(_ db: SQLiteDB, pushed: [SyncWire.RowChange], response: SyncWire.PushResponse) throws {
         var byKey: [Key: SyncWire.RowChange] = [:]
         for c in pushed { byKey[Key(table: c.table, rowId: c.rowId)] = c }
-        try db.transaction {
-            for r in response.results {
-                let k = Key(table: r.table, rowId: r.rowId)
-                guard let c = byKey[k], SyncRows.isSynced(table: c.table) else { continue }
-                switch r.outcome {
-                case .applied, .unchanged:
-                    let fp = c.op == .delete ? nil
-                        : SyncRows.fingerprint(table: c.table, row: c.row.map(SyncWire.sqliteRow))
-                    try setBase(db, k, fp)
-                case .keptServer, .skippedOrphan, .skippedClash, .missingFile:
-                    break
-                }
+        for r in response.results {
+            let k = Key(table: r.table, rowId: r.rowId)
+            guard let c = byKey[k], SyncRows.isSynced(table: c.table) else { continue }
+            switch r.outcome {
+            case .applied, .unchanged:
+                let fp = c.op == .delete ? nil
+                    : SyncRows.fingerprint(table: c.table, row: c.row.map(SyncWire.sqliteRow))
+                try setBase(db, k, fp)
+            case .keptServer, .skippedOrphan, .skippedClash, .missingFile:
+                break
             }
         }
-        return try applyPulled(db, folder: folder, rows: response.serverRows)
     }
 
     // MARK: - 拉下来的行
@@ -217,6 +239,35 @@ enum SyncClient {
             acc += page.rows
             if page.more, let last = page.rows.last { since = last.rev } else { since = max(since, page.head); break }
         }
+        rep.pull = try applyPulled(db, folder: folder, rows: acc)
+        rep.pulled = acc.count
+        try setPulledRev(db, since)
+        return rep
+    }
+
+    /// 同 `round`，传输是异步的（App 走 HTTP）。被取消时停在下一次网络等待上：推送成功而基线没记上的，
+    /// 下一轮再推一次、服务器答「一致」即补上；拉下来还没应用的，修订号没记，下一轮重拉。
+    static func roundAsync(_ db: SQLiteDB, folder: URL, schemaVersion: Int = LibraryStore.schemaVersion,
+                           beforePush: ([SyncWire.RowChange]) async throws -> Void = { _ in },
+                           push: (SyncWire.PushRequest) async throws -> SyncWire.PushResponse,
+                           pull: (UInt64) async throws -> SyncWire.PullResponse) async throws -> RoundReport {
+        var rep = RoundReport()
+        let changes = try localChanges(db, folder: folder)
+        if !changes.isEmpty {
+            try await beforePush(changes)
+            let resp = try await push(SyncWire.PushRequest(schemaVersion: schemaVersion, changes: changes))
+            try applyPushResponse(db, folder: folder, pushed: changes, response: resp)
+            rep.pushed = changes.count
+            rep.push = resp
+        }
+        var since = pulledRev(db)
+        var acc: [SyncWire.PulledRow] = []
+        while true {
+            let page = try await pull(since)
+            acc += page.rows
+            if page.more, let last = page.rows.last { since = last.rev } else { since = max(since, page.head); break }
+        }
+        try Task.checkCancellation()
         rep.pull = try applyPulled(db, folder: folder, rows: acc)
         rep.pulled = acc.count
         try setPulledRev(db, since)

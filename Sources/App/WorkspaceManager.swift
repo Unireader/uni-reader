@@ -268,7 +268,8 @@ final class WorkspaceManager: ObservableObject {
 
     /// 窗口关闭。三种情形：
     ///  · **cmd+q 退出中**（`AppDelegate.isTerminating`）→ 不动「打开集」，下次启动原样恢复所有窗口；
-    ///  · **关的是最后一个窗口** → 不动「打开集」，保留（下次仍恢复这最后一本）；
+    ///  · **关的是最后一个窗口** → 不动「打开集」，保留（平板书库的 open 标记用；2026-10-29 起**再打开这个工作区不再按它恢复文档**——
+    ///    关最后一扇窗会写一条空的标签记录，`TabsModel.restoreTabs` 以那条为准，只做窗口恢复）；
     ///  · 否则（**cmd+w 关掉多窗口之一**）→ 该文档若已无其它窗口在显示，就从「打开集」移除（逐个关 = 逐个移除）。
     func closeWindow(_ sessionId: UUID) {
         let closed = windowDocs[sessionId]
@@ -376,6 +377,8 @@ final class WorkspaceManager: ObservableObject {
         let pageCount = PDFDocument(url: url)?.pageCount ?? 0
         guard let doc = ingest(path: url.path, hash: hash,
                                title: url.deletingPathExtension().lastPathComponent, pageCount: pageCount) else { return nil }
+        // 服务器工作区加书一律拷进工作区（同离线副本 §7 的规则）：外部路径是本机事实，PDF 得在工作区里才传得上服务器
+        if isServerWorkspace { copyToWorkspace(documentId: doc.id) }
         return (doc, !existed)
     }
 

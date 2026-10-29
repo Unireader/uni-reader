@@ -1,5 +1,7 @@
 import Foundation
-import CoreGraphics
+#if canImport(CoreGraphics)
+import CoreGraphics    // Linux 上 CGRect 等由 Foundation 提供（服务器经符号链接编这个文件）
+#endif
 
 /// 工作区数据模型（纯值类型，映射 `library.sqlite` 的表；跨平台可读）。
 /// 与旧 SwiftData `@Model` 无关——工作区改用自有 schema 的 SQLite 单库。

@@ -1,0 +1,21 @@
+# UniReader 服务器的 systemd 服务（Linux 上长期运行用）。
+#
+# 装法（root）：
+#   1. 改下面 ExecStart 里的程序路径、--data（服务器数据目录）、--name（局域网发现里显示的名字）
+#   2. cp unireader-server.service /etc/systemd/system/
+#   3. systemctl daemon-reload && systemctl enable --now unireader-server
+# 看日志：journalctl -u unireader-server -f      配对码：<程序> pairing-code --data <同一个数据目录>
+#
+# 停服务时 systemd 默认把整组进程一起停（KillMode=control-group），局域网发现的 avahi-publish-service 子进程跟着退出。
+[Unit]
+Description=UniReader server
+After=network-online.target avahi-daemon.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/unireader/unireader-server serve --data /var/lib/unireader --host 0.0.0.0 --port 8790
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

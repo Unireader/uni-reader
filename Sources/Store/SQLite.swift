@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(SQLite3)
 import SQLite3
+#else
+import SwiftToolchainCSQLite   // Linux 上的服务器：静态编译没有系统 libsqlite3 可链，SQLite 随包编进去
+#endif
 
 // SQLite 要求 bind text/blob 时若不自带析构，需用 TRANSIENT 让其立即拷贝缓冲。
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

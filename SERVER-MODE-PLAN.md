@@ -12,8 +12,8 @@
 
 | 项 | 决定 |
 |---|---|
-| 服务器形态 | **独立的服务器程序**，不是 Mac App 的一个模式。**现阶段在 macOS 上跑**；Linux 环境用户之后提供，再上 Linux / Docker |
-| 语言 | **Swift**，复用 `Sources/Store/` 的建表 / 迁移 / 指纹 / 三方判定。能否在 Linux 上编译**要先验证**（§9） |
+| 服务器形态 | **独立的服务器程序**，不是 Mac App 的一个模式。macOS 上可跑；**Linux 已支持**（2026-10-29，在 Mac 上交叉编译成静态二进制，用户的 NAS 实测，§13.6） |
+| 语言 | **Swift**，复用 `Sources/Store/` 的建表 / 迁移 / 指纹 / 三方判定。Linux 上编译与运行已验证（§9 / §13.6） |
 | 入口 | **不做模式切换**。App 里「连接服务器」，之后可以「从服务器打开」工作区，也可以「上传到服务器」 |
 | 本机缓存 | **默认缓存全部**（库、图片、Markdown 笔记、OCR 结果、小 PDF），**大 PDF 按需下载**——省服务器带宽 |
 | 使用者 | 只有用户一个人，不做账号体系；每台设备一个令牌 |
@@ -154,6 +154,20 @@ push / pull 的行数据用二进制：列编码沿用指纹那套（镜像 §3.
 - 客户端 schema 高于服务器：拒绝推送，提示先升级服务器。上传的工作区版本高于服务器同理拒绝。
 - 🔴 **发布顺序**：凡是动 schema 的版本，**先升服务器、再发 App**（落地时写进 `docs/agents/BUILD-DETAILS.md`）。
 
+### 3.7 局域网发现（2026-10-29 用户要求加）
+
+🔴 **跨端契约**（Mac 已做；安卓 S3 用 `NsdManager` 照此实现；同步线格式写进 `PROTOCOL.md` 时一起搬过去）。
+
+- Bonjour（DNS-SD），服务类型 **`_unireader-srv._tcp`**（与 App 自己的平板服务 `_unireader._tcp` 分开，`PROTOCOL.md §8`），端口 = HTTP 端口。
+- 服务名 = 服务器名字（`--name`，默认本机名；重名 Bonjour 自动加序号）。
+- TXT：`v=1`（公告版本）、`id=<server_id>`（服务器的稳定身份，`server.sqlite` 首次启动生成）、`ver=<服务器版本>`、`schema=<数据版本>`。**不放配对码**。
+- 服务器只在监听非本机地址时广播（只听 127.0.0.1 时广播出去别人也连不上）；`--no-discovery` 关掉。
+  macOS 走系统 `dnssd`；Linux 上起一个 `avahi-publish-service` 子进程交给系统的 avahi-daemon（`avahi-utils` 包；静态二进制链不了 Avahi 的库）。
+  Docker 里还要 host 网络。⚠️ 组播只在同一网段里：客户端与服务器不在一个网段（经路由 / VPN 过去）时发现不了，手填地址。
+- `/v1/info` 与配对响应带 `serverId` / `serverName`。客户端账号记 `serverId`，服务器工作区的库记 `meta.srv_id`（客户端私有）：
+  **先按身份、再按地址找账号**——服务器换了 IP，账号地址一改，所有缓存照样找得到它。
+- 地址变了**要用户点「更新地址」才改**，不自动跟过去：自动改就等于谁广播同一个 id 都能把令牌骗走。
+
 ---
 
 ## 4. 同步
@@ -282,18 +296,18 @@ push / pull 的行数据用二进制：列编码沿用指纹那套（镜像 §3.
   ② 同一个模块里 internal 就够用，App 那边不用加一行 `public`，App 的构建也完全不变；
   ③ 实测 SwiftPM 认指向包外的符号链接目录（包括 `@testable import`）。
   `Sources/Store/` 整个链进去就能编（它本来就自成一体：spike 都是 `swiftc Sources/Store/*.swift` 单独编的），不用拆 `LibraryStore`。
-- `CryptoKit` → `swift-crypto`（同一套 API，`import Crypto`）：服务器自己的代码已按 `#if canImport(CryptoKit)` 写好；
-  链进来的 Store 层上 Linux 时再改。
+- `CryptoKit` → `swift-crypto`（同一套 API，`import Crypto`）、`SQLite3` → `swift-toolchain-sqlite`（SQLite 源码随包编进去）：
+  都按 `#if canImport(...)` 写，两个包只在 Linux 上接到目标，App 与 macOS 上的服务器照旧用系统的。
 - 网络：服务器**不能用 `Network.framework`**（只有苹果平台），改用 SwiftNIO 系的 HTTP 服务（Hummingbird）。
 - 第三方包 `swift-crypto` / `swift-nio` / `hummingbird`：按项目规矩**由用户执行拉取**，我给脚本。
 - **现阶段在 macOS 上跑**：`server/` 子工程（自己的 `Package.swift` + `AGENTS.md` + `CLAUDE.md` 软链，照
   `docs/agents/BUILD-DETAILS.md` 的子工程约定；与 `android/` 不同，它经符号链接编 App 的源文件，所以放在主仓库）。
   `swift run` 起服务；数据目录默认 `~/Library/Application Support/UniReaderServer/`（Linux 上 `/var/lib/unireader`）。
-- 🔴 **在 Linux 验证之前**，服务器和共享包只许用 Linux 上也有的 API：Foundation、SQLite3、Crypto、NIO；
-  不许 import AppKit / CoreGraphics / Network / PDFKit。macOS 上的 Foundation 会顺带把 `CGRect` 之类带进来，
-  编译通过不代表 Linux 能过——**以 Linux 实测为准**。
-- **Linux 验证**（用户之后提供环境）：编译共享包与服务器，跑共享包的测试（建表、迁移、指纹的跨端向量——与 Mac / 安卓同一组）。
-  过了才算复用成立。共享包用 `swift test`（Linux 上也能跑），不再是单文件 spike。
+- 🔴 服务器和链进来的共享代码只许用 Linux 上也有的 API：Foundation、SQLite、Crypto、NIO；苹果独有的一律包在
+  `#if canImport(...)` / `#if os(macOS)` 里（现有的：`ImageAssets` 的解图 / 转码、`MirrorBuilder` 的剩余空间、CoreGraphics 的 import）。
+  macOS 上编译通过不代表 Linux 能过——**改了 `Sources/Store/` / `Sources/Sync/` 要再交叉编译一次**（`server/scripts/build-linux.sh`）。
+- **Linux 验证**（2026-10-29 做了，§13.6）：静态 SDK 不带 XCTest，单元测试在 Linux 上跑不了；改为在 Linux 上起服务器、
+  从 Mac 跑 App 客户端的端到端（`spike/server-client-test.sh` 的远端模式），走遍配对 / 上传 / 快照 / 推拉 / 续传 / 下载。
 
 ---
 
@@ -303,12 +317,12 @@ push / pull 的行数据用二进制：列编码沿用指纹那套（镜像 §3.
 |---|---|---|
 | ✅ **S0** | ~~抽共享包~~ 改为符号链接（§9），App 不动 | 2026-10-29：App Debug 编译通过；Store 层 spike 基线与改动前一致 |
 | ✅ **S1** | 服务器骨架（macOS）：配对与令牌、工作区目录、上传（库 + 文件、续传、去重）、快照下载、push / pull、分级备份、删除先归档 | 2026-10-29：核心 + HTTP + 命令行落地，`swift test` 23 项全绿，本机起服务用 curl 走通（§13.1 / §13.2）；**Markdown 正文同步留到 S2 一起做** |
-| **S2** | Mac 客户端：连接服务器、从服务器打开、上传、下载为本地、打开前拉 / 关闭后推、PDF 按需下载与保持离线、同步状态与报告 | 本机起服务器 + 两份缓存交错改动的 spike（同 `mirror-multi-test` 的口径）；全量比对耗时实测 |
+| 🟡 **S2** | Mac 客户端：连接服务器、从服务器打开、上传、下载为本地、打开前拉 / 关闭后推、PDF 按需下载与保持离线、同步状态与报告 | 2026-10-29 第一轮落地（§13.3）：`spike/server-client-test.sh` 24 项对着真服务器全绿；**界面待用户实测**；下载为本地 / 保持离线 / 冲突报告 / Markdown 正文还没做 |
 | **S3** | 安卓模式1 客户端（同 S2） | JVM 单测 + 插桩测试；Mac ↔ 安卓经服务器互通 |
 | **S4** | 打开状态接收改动（§6）、在线几秒推送、`WS /events` 通知，Mac 与安卓 | 离屏 / 插桩：开着的文档收到远端增删改，对账不写回、不误删 |
 | **S5** | 硬盘副本：插上且在线时后台同步；按需下载先找硬盘副本 | — |
 | **S6** | 网页阅读器（只在线：阅读 + 手写 + 文字笔记）+ HTTPS 部署 | 三端页面尺寸逐页一致（安卓 §9.1 口径） |
-| **L** | Linux 验证与部署（环境到位后随时插入；S0 起代码就按可移植写） | §9 |
+| ✅ **L** | Linux 验证与部署 | 2026-10-29：静态交叉编译、用户的 NAS（arm64 Debian 11）上端到端 44 项全绿、局域网广播（§13.6）；**开机自启与正式数据目录待用户定** |
 
 ---
 
@@ -404,3 +418,104 @@ App 加了 `Sources/Sync/` 之后 `xcodegen generate` + Debug 编译通过；Sto
 
 **下一步**：S2 Mac 客户端（连接服务器 / 从服务器打开 / 上传 / 打开前拉、关闭后推 / PDF 按需下载），Markdown 正文同步随 S2 一起做；
 同步线格式那时写进 `PROTOCOL.md`。
+
+### 13.3 2026-10-29：S2 Mac 客户端第一轮（安卓 agent 提交 `1297482` 之后）
+
+开工前在安卓那次提交上重跑服务器测试 23 项全过（它改的 `LibraryStore.storedID` 只动模型层的读写，同步按原始行搬运，不受影响）。
+
+**文件**
+
+| 位置 | 内容 |
+|---|---|
+| `Sources/ServerSync/ServerClient.swift` | HTTP 客户端（URLSession）：配对、列表、推送 / 拉取、快照、PDF / 图片收发、上传会话；上传按 8MB 一块续传，断了先问偏移再接着传 |
+| `Sources/ServerSync/ServerAccounts.swift` | 连过的服务器（UserDefaults）+ 设备令牌（Keychain，与 API key 同一处） |
+| `Sources/ServerSync/ServerSyncIO.swift` | 纯 IO：完整一轮、建本机缓存、上传准备与上传、文件补齐。只依赖 Foundation + Store + `Sources/Sync` + 客户端，spike 能直接编 |
+| `Sources/ServerSync/ServerSyncCoordinator.swift` | 调度与状态（`@MainActor`）：打开前 / 开着时 / 关掉后三个时机、PDF 下载、从服务器打开、上传 |
+| `Sources/Sync/SyncClient.swift` | 加 `metaServerURL`（`srv_url`，有它 = 服务器工作区）、基线拆成「算」与「写」、只推不拉用的 `recordPushed`（不开事务）、`roundAsync` |
+| `Sources/Settings/ServerSettingsView.swift` | 设置 ›「服务器」：已连接列表 / 断开、用配对码连接、自动下载的 PDF 大小上限 |
+| `Sources/Window/Sheets/ServerSheets.swift` | 「从服务器打开」「上传到服务器」两张面板 |
+| 接入点 | `WorkspaceRegistry.route`（开窗前同步，最多 3 秒）/ `acquire`（起会话）/ `maybeTeardown`（关掉后同步）；冷启动开上次的服务器工作区先同步（最多 2.5 秒）；工作区菜单加「从服务器打开…」「上传到服务器…」「立即上传改动」+ 一行状态；阅读区占位页「还没有下载 · 从服务器下载」；服务器工作区导入 PDF 后拷进工作区 |
+
+**定下的几条**
+
+1. 有 `meta.srv_url` = 服务器工作区；它跟着库文件走（客户端私有，不同步）。工作区 id 用库里的 `workspace_id`。
+2. 开着时**只推不拉**：本地改动在后台读，基线在主线程逐行写、不开事务（那条连接 App 也在用，插进别人的事务会把别人的写一起带走）；
+   服务器保留自己那份的行留到关掉后那一轮。新加的 PDF / 图片在推送前先传（图片行要求文件已在）。
+3. 打开前、关掉后用临时连接跑完整一轮；**打开时先取消关掉后那一轮**再开窗（两条连接同时写违反红线）。取消停在网络等待上，安全。
+4. 上传：基线对着**上传出去的那份快照**算（上传期间本机又改的，下一轮照常推）；上传完原文件夹就地成为本机缓存（§5 内置盘的情形）。
+   有离线副本的工作区先拦下，提示先同步回来并删掉副本（§5 里「镜像直接改成缓存」留到之后）。
+5. 本机缓存放 `~/Library/Application Support/UniReader/Servers/<主机-端口>/<工作区名>.unrd`；同一个工作区再点「从服务器打开」直接用已有缓存。
+
+**验证**：App Debug 编译通过；服务器 `swift test` 23 项照旧；新增 `spike/server-client-test.sh`（起临时服务器、端口 18790）24 项全绿——
+配对与错误说明、上传（工作区外的 PDF 收进去、图片、`Notes/` 子目录）、另一台设备建缓存与按需下载、两边各改一处后完整同步、
+20MB 文件分块上传、中断续传、下载逐字节一致。**界面与调度没法自己验**（按用户规矩不替用户点界面），实测清单见下。
+
+**待用户实测**
+
+1. 设置 ›「服务器」：填地址（如 `127.0.0.1:8790`）+ 配对码连接；断开。
+2. 工作区菜单「上传到服务器…」：传一个小工作区，看进度与完成提示；之后菜单出现「服务器 … · 已同步」与「立即上传改动」。
+3. 「从服务器打开…」：列表、「本机已有」标记、打开后书和笔记都在；没下载的大 PDF 点开是「还没有下载 · 从服务器下载」。
+4. 两个缓存交替：在一个里加笔记 → 关掉那个工作区窗口 → 打开另一个，笔记应该在（打开前会同步）。
+5. 断网 / 停掉服务器时打开服务器工作区：最多等 3 秒照常打开，菜单显示「连不上，正在用本机缓存」。
+
+**没做（下一批）**：退出 App 时推一次（现在留到下次打开时推，改动不会丢）；Markdown 正文同步（**上传之后 `Notes/` 里的修改还不会同步**）；
+冲突报告界面；删得太多先问用户（§4.6）；下载为本地工作区；「保持离线」按书勾选；移动硬盘上的工作区上传后的副本处理（§5 / S5）；
+同步线格式写进 `PROTOCOL.md`。
+
+### 13.4 2026-10-29：局域网发现（用户要求）
+
+契约见 §3.7。服务器：`server/Sources/UniServerHTTP/Discovery.swift`（`DiscoveryAdvertiser`，系统 `dnssd` 注册，TXT 手工按 RFC 6763 编码）、
+`ServerStore.serverId()`、命令行 `--name` / `--no-discovery`、info 与配对响应带身份。Mac：`Sources/ServerSync/ServerDiscovery.swift`
+（`NWBrowser` 浏览 + 连一下拿对端 IPv4 地址）；设置 ›「服务器」加「附近的服务器」一栏（填入 / 已连接 / 更新地址；数据版本不同时标出来）；
+账号记 `serverId`，老账号打开设置页时问一次 info 补上；`Info.plist` 的 `NSBonjourServices` 加了新类型（文本替换，没用 PlistBuddy——它会冲掉注释）。
+
+验证：服务器 `swift test` 24 项（新增 TXT 编码与身份一项）；本机起临时服务器（`--host 0.0.0.0`）用系统 `dns-sd -B` / `-L` 看到服务名、端口和
+`v=1 id=… ver=0.1.0 schema=22`；`spike/server-client-test.sh` 24 项照旧；App Debug 编译通过。设置页那一栏的显示与点击待用户实测。
+
+### 13.5 2026-10-29：启动页「工作区」（用户要求：「否则没地方看到服务器上的工作区」）
+
+用户定：启动时**照旧**直接开上次的工作区；启动页从「文件 › 工作区…」（⇧⌘O）打开；阅读窗口全关掉、或点 Dock 图标而没有窗口时出现
+（原先没窗口点 Dock 是直接开上次的工作区）。布局：一个分段列表——「本机」一段（最近工作区，盘没接上的标出来），下面每台已连接的服务器一段
+（「本机已有 · 路径」/「还没有下载；打开时会先下载资料库」；连不上就写原因）；底部「新建工作区… / 打开工作区… / 连接服务器… / 打开」。
+从这里打开一个工作区后启动页自己关掉。实现：`Sources/Window/WorkspacesWindowController.swift`（数据与动作）+
+`Sources/Window/WorkspacesWelcomeView.swift`（视图：用户嫌第一版「太丑」后改成 macOS 欢迎窗的版式——左边 App 图标 / 名字 / 版本 / 三个大号按钮，
+右边侧栏材质上的分段列表；分组标题显式 `labelColor`（系统的侧栏分组样式是极淡的灰，红线④）、关掉浮动分组行；
+离屏样张 `spike/workspaces-welcome-look.swift` 亮 / 暗各一张自查过；「本机」一段右键「在访达中显示 / 从列表中移除」——只摘最近列表里那一条、不动文件夹，服务器那几段没有右键菜单）；
+「打开 / 新建工作区」两个面板挪进同文件的 `WorkspacePanels`，阅读窗口工作区菜单与启动页共用。App Debug 编译通过，**界面待用户实测**。
+
+同日用户实测上传了 SSD 上的「101学习区」：服务器上 6 本书都有可用的 PDF（另 2 个旧版本本机没文件，不影响阅读）、笔记 / 笔迹 / 高亮 / OCR / 习题齐全。
+⚠️ 它在移动硬盘上，按 §5 应「硬盘那份留作副本 + 本机另建缓存」，第一轮只做了就地变缓存（内置盘的情形），用户又删了离线副本——
+**SSD 不接时这台 Mac 上没有它的副本**。下一步补：移动硬盘上的工作区上传后在本机建缓存（直接从硬盘复制，不走网络）。
+
+同日（用户要求）：**启动只做窗口恢复**——退出时开着的工作区窗口下次原样开回来，退出前全关掉了就只显示启动页；关掉某工作区的最后一扇窗不再保留它的文档。
+细节记在 `REQUIREMENTS.md §8.1`「已知边界」那一条（改了它）。没有窗口时点 Dock → 启动页（原先是开上次的工作区）。
+
+### 13.6 2026-10-29：Linux 版（用户提供 NAS：`ssh nas`，程序放 `/storage/app_bin`，测试数据放 `/storage/data/98_Misc/`）
+
+目标机：FriendlyElec NanoPC-T4（RK3399，Cortex-A53/A72 = **ARMv8.0**，6 核 3.7GB），Debian 11 arm64（glibc 2.31），avahi-daemon 在跑。
+在上面编 Swift 太慢、内存也紧，**改在 Mac 上交叉编译**：swift.org 工具链 + Static Linux SDK（musl 静态链接，单个文件，目标机什么都不用装）。
+用户执行 `server/scripts/setup-linux-build.sh` 装工具链与 SDK（不改默认的 swift），`server/scripts/build-linux.sh [aarch64|x86_64]` 出二进制。
+
+踩到的三件事：
+1. 🔴 **6.2.4 起的静态 SDK（0.1.0）在 ARMv8.0 上一启动就 `Illegal instruction`**：它把 musl 的内存分配换成了 mimalloc
+   （直接合进 `libc.a` 的 `mimalloc.o`），mimalloc 用了 ARMv8.1 的原子指令（LSE：`ldadd` / `casal` …）且不做运行时检查。
+   我们的代码没用。用户定：**Linux 版钉在 Swift 6.2.3**（SDK 0.0.1，musl 自带的分配器）。升级前查新 SDK 的 aarch64 `libc.a` 里还有没有 `mimalloc.o`。
+2. Swift 6.2.3 读不了 Xcode 27 的 macOS SDK（各包的 `Package.swift` 是按 Mac 编的，报 `unknown argument -target-arch-variant`）：
+   `build-linux.sh` 自动改用 CommandLineTools 里的 macOS 26 SDK（`SDKROOT`）。
+3. 用户的 Mac 开着系统代理（HTTP/HTTPS → 127.0.0.1:1087，没有排除列表），App 连 192.168.1.160 的请求全被送进代理、连接中断。
+   用户定：**局域网 / Tailscale 地址直连，公网域名照常跟随系统代理**（`ServerClient.connectsDirectly`：私有 IPv4、169.254、100.64/10、
+   IPv6 ULA 与链路本地、`.local`、不带点的主机名）。
+
+代码改动：`Sources/Store/` 的 `SQLite3` / `CryptoKit` / `CoreGraphics` / `ImageIO` 改成 `#if canImport`（App 行为不变）；`MirrorBuilder` 剩余空间
+Linux 上用 `attributesOfFileSystem`；`server/Package.swift` Linux 上接 `swift-crypto` 与 `swift-toolchain-sqlite`（用户拉取，1.0.13）；
+`Discovery.swift` Linux 分支 = `avahi-publish-service -f <名字> _unireader-srv._tcp <端口> v=1 id=… ver=… schema=…` 子进程（正常退出时一起停；
+被 `kill -9` 会留下它，长期跑用 systemd，模板 `server/deploy/unireader-server.service`）。
+
+验证：静态 SDK 不带 XCTest，`swift test` 在 Linux 上跑不了；`spike/server-client-test.sh` 加了远端模式（`REMOTE=nas REMOTE_ADDR=… REMOTE_DIR=…`：
+交叉编译 → 拷到远端临时目录 → 起服务 → 本机跑客户端 → 删掉），对着 NAS 44 项全绿（原 24 项 + 新增 20 项地址判断），数据目录在 mergerfs 上 SQLite 正常；
+本机模式 44 项、macOS `swift test` 24 项、App Debug 编译照旧通过。局域网广播：NAS 上 `avahi-browse` 看到 eth1 上
+`192.168.1.160:8790` 与完整 TXT；**这台 Mac 在 192.168.31.x 网段、经 utun 隧道到 NAS，组播过不去，从 Mac 上发现不了**（网络结构所致，不是代码问题）。
+
+现状：测试服务器在 NAS 后台跑着（`nohup`，数据 `/storage/data/98_Misc/unireader-server-test/data`，端口 8790，名字 NAS，
+日志 / pid 在同目录）。**正式数据目录与开机自启（systemd，要写 `/etc`）待用户定**。
+

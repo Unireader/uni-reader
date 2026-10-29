@@ -618,9 +618,10 @@ applicationDidFinishLaunching   ← AppKit 保证 open 事件在它之前投递�
 
 ### 已知边界（不是 bug，是还没做／没定）
 
-- **重启只恢复最后一个工作区**：持久化的只有 `lastWorkspacePath` + 每个工作区自己的「打开集」。
-  A、B 两个工作区开着 ⌘Q，下次启动只回来 B（及其文档窗口）。对齐 Xcode/VS Code 的手感需要再存一份
-  「上次开着的工作区集合」，`didFinishLaunching` 后逐个开窗 —— **待定**。
+- ~~重启只恢复最后一个工作区~~ → **2026-10-29 改为窗口恢复**（用户定）：退出时开着哪几个工作区的窗口，下次启动就原样开回来
+  （UserDefaults `openWorkspaceWindows`，开窗 / 关窗时写、退出过程中不写；每个工作区一扇窗，标签由 `TabsModel.restoreTabs` 恢复）；
+  退出前全关掉了 → 只显示启动页「工作区」。**关掉某工作区的最后一扇窗不再保留它的文档**：再打开它是空窗口
+  （写一条空的标签记录，`TabsModel.clearSavedTabs`；因弹盘被 App 关掉的不算）。同一工作区开过多扇窗，恢复时只开一扇。
 - **同工作区开了多个窗口时，「已有窗口就激活它」激活的是任意一个**（`windowPaths.first(where:)` 走字典序）。
   应改成「最近成为 key 的那个」（key 变化 `ContentView` 已在追）。
 - **打不开的工作区给的是一个死胡同窗口**：`RootView` 的错误态只有一句说明，没有「打开其它工作区…」

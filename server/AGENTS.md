@@ -1,24 +1,53 @@
 # AGENTS.md — UniReader 服务器（`server/`）
 
 独立的 Swift 服务器程序（方案 `../SERVER-MODE-PLAN.md`）：工作区「从服务器打开 / 上传到服务器」，各设备本机缓存、只传改动。
-**现阶段在 macOS 上跑**；Linux 环境用户之后提供，再上 Linux / Docker。与 App 同一个 git 仓库（不像 `android/` 是独立仓库）。
+macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进制（下面「Linux 版」）。与 App 同一个 git 仓库（不像 `android/` 是独立仓库）。
 
 ## 构建与测试
 
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 19 项 + HTTP 4 项
-.build/debug/unireader-server serve --data <数据目录> --port 8790   # 默认只听 127.0.0.1；--help 看全部子命令
+swift test  --disable-automatic-resolution   # 核心 19 项 + HTTP 5 项
+BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
+$BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
+$BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）
 ```
 
+- ⚠️ 产物路径**问 `--show-bin-path` 要**，别写死 `.build/debug/`：Xcode 27 的 SwiftPM 放在 `.build/out/Products/Debug/`，
+  而 `.build/debug` 这个符号链接会被最近一次交叉编译改指到 Linux 的目录。
+
+- 改了接口或同步规则，再跑一次 App 侧客户端的端到端：仓库根目录 `bash spike/server-client-test.sh`
+  （自己起临时服务器、端口 18790，跑完关掉；编的是 App 的 `ServerClient` / `ServerSyncIO`）。
 - 产物在 `server/.build/`（根 `.gitignore` 的 `.build/` 已覆盖）。
 - 🔴 第三方包**由用户执行拉取**（`swift package resolve`），我不代跑。2026-10-29 用户已拉取：hummingbird 2.28.0、
-  swift-http-types 1.8.0、swift-crypto 3.15.1（及其依赖，版本钉在 `Package.resolved`）。
+  swift-http-types 1.8.0、swift-crypto 3.15.1、swift-toolchain-sqlite 1.0.13（及其依赖，版本钉在 `Package.resolved`；
+  后两个只在 Linux 上接到目标）。
   构建 / 测试一律带 `--disable-automatic-resolution`：依赖要变时它直接报错，不会悄悄去下载。
   加新依赖 = 改 `Package.swift` 后先让用户拉取，拉之前别构建。
 - 默认端口 8790（App 自己占了 8770~8773）。默认数据目录：macOS `~/Library/Application Support/UniReaderServer/`，
   Linux `/var/lib/unireader`。
+
+## Linux 版（方案 §13.6）
+
+```bash
+bash scripts/setup-linux-build.sh        # 一次性，用户跑：swift.org 工具链 + Static Linux SDK（不改默认的 swift）
+scripts/build-linux.sh aarch64           # 或 x86_64；最后一行打印产物路径（musl 静态链接，单个文件）
+scp <产物> nas:/storage/app_bin/unireader-server/unireader-server
+# Linux 上的验证（单元测试跑不了，见下）：在 NAS 上起临时服务器、从 Mac 跑客户端端到端，跑完删掉
+REMOTE=nas REMOTE_ADDR=192.168.1.160 REMOTE_DIR=/storage/data/98_Misc/unireader-server-test bash ../spike/server-client-test.sh
+```
+
+- 🔴 **钉在 Swift 6.2.3**（SDK 0.0.1）：6.2.4 起的静态 SDK 把 musl 的分配器换成 mimalloc（合进 `libc.a`），它用了 ARMv8.1 的原子指令，
+  在 ARMv8.0 的板子（用户 NAS 的 RK3399、树莓派 4）上一启动就 `Illegal instruction`。升级前先查：
+  `xcrun nm -A <SDK>/…/aarch64/usr/lib/libc.a | grep mimalloc.o`，有就别升。
+- Swift 6.2 读不了 Xcode 27 的 macOS SDK（各包的 `Package.swift` 按 Mac 编）：`build-linux.sh` 自动用 CommandLineTools 里的
+  `MacOSX26*.sdk`（`SDKROOT`）；哪天命令行工具里没有 26 的 SDK 了，这一步会报错。
+- 静态 SDK **不带 XCTest / Swift Testing**：`--tests` 编不了测试。Linux 上的验证 = 上面那条远端端到端（44 项）。
+- 局域网发现：Linux 上起 `avahi-publish-service` 子进程（要 `avahi-utils`）。服务器正常退出时一起停；被 `kill -9` 它会留下来，
+  长期跑用 systemd（模板 `deploy/unireader-server.service`，装到 `/etc` 要用户点头）。组播不跨网段。
+- 用户的 NAS：`ssh nas`（root），程序 `/storage/app_bin/unireader-server/`，测试数据 `/storage/data/98_Misc/unireader-server-test/`；
+  `/storage` 是 mergerfs，SQLite（WAL）在上面实测正常。正式数据目录用户还没定。
 
 ## 结构
 
@@ -36,9 +65,13 @@ server/
     HostedWorkspace+Files.swift   PDF / 图片本体 / 备份
     ServerTrash.swift         删除先归档（按天一个小库）
   Sources/UniServerHTTP/ServerApp.swift   HTTP 接口（Hummingbird）：路由表在文件头；令牌中间件、错误→状态码、续传、配对限流
+  Sources/UniServerHTTP/Discovery.swift   局域网发现（Bonjour `_unireader-srv._tcp`：macOS 系统 dnssd；Linux 起 avahi-publish-service 子进程）
   Sources/unireader-server/               命令行入口：serve / pairing-code / reset-pairing-code / devices / revoke；每小时备份有改动的工作区
   Tests/UniServerCoreTests/               核心（直接调 `HostedWorkspace` / `SyncClient`）
   Tests/UniServerHTTPTests/               HTTP（HummingbirdTesting 的 `.router`，进程内调路由、不开端口）
+  scripts/setup-linux-build.sh            一次性装 Linux 交叉编译的工具链与 SDK（用户跑）
+  scripts/build-linux.sh                  交叉编译 Linux 静态二进制
+  deploy/unireader-server.service         systemd 模板
 ```
 
 HTTP 层只用 `UniServerCore` 的 public 接口（字节进、字节出：`push(body:)` / `pull(since:)` / `snapshotFile()` / `storePDF` …），
@@ -61,10 +94,11 @@ HTTP 层只用 `UniServerCore` 的 public 接口（字节进、字节出：`push
 6. 一个工作区全进程只开一个 `HostedWorkspace`（`WorkspaceHost` 管），所有读写在它那把锁里。
 7. 安全：工作区 id 必须是 UUID（会拼进路径）；文件路径一律经 `HostedWorkspace.resolveInside`（`..`、符号链接越界不认）；
    PDF / 图片收下前校验 SHA-256。所有 HTTP 接口都要令牌，没有例外（`../REMOTE-ACCESS-PLAN.md §2` 的教训）。
-8. 只用 Linux 上也有的 API：Foundation、SQLite3、Crypto、NIO。**不 import** AppKit / CoreGraphics / Network / PDFKit。
-   ⚠️ 链进来的 Store 层目前还用到 `CryptoKit`（`MirrorFingerprint` / `ImageAssets`）、`CoreGraphics`（`LibraryModels` /
-   `LibraryStore` / `ImageAssets`）、`ImageIO`、`UniformTypeIdentifiers`、`SQLite3` 模块——上 Linux 时逐个加 `#if canImport`
-   或换实现，那时再以 Linux 实测为准（macOS 上编译通过不代表 Linux 能过）。
+8. 只用 Linux 上也有的 API：Foundation、SQLite、Crypto、NIO。**不 import** AppKit / Network / PDFKit。
+   链进来的 Store 层里苹果独有的都包在 `#if canImport(...)` / `#if os(macOS)` 里：`SQLite3`（Linux 用 `SwiftToolchainCSQLite`）、
+   `CryptoKit`（Linux 用 `Crypto`）、`CoreGraphics`（Linux 上 `CGRect` 由 Foundation 给）、`ImageAssets` 的解图 / 转码（Linux 上不编）、
+   `MirrorBuilder.availableCapacity`。🔴 **改了 `Sources/Store/` / `Sources/Sync/` 要再跑一次 `scripts/build-linux.sh`**——
+   macOS 上编译通过不代表 Linux 能过（Linux 的 Foundation 缺的键 / 方法只有交叉编译才报）。
 
 ## 同步要点（细节在方案 §4 与 §13）
 
