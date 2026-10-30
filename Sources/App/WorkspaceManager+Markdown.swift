@@ -6,8 +6,8 @@ import Foundation
 /// `MarkdownLink`（`spike/markdown-link-test.swift` 编的是那三个）。
 ///
 /// 🔴 **文件是真源**（红线 §6）。库里的 `md_doc` 只是**内建源的扫描缓存 + 记「上次打开」**；
-/// 引用源（外部目录）**一行都不进库**——外部路径是这台机器的事实，同 `location` 表的规矩，
-/// 也因此不会跟着离线镜像跑到别的机器上去指不到。
+/// 引用源（外部目录）里的笔记**一行都不进库**。引用源的列表（`meta.note_sources`）2026-10-29 起跟着工作区同步：
+/// 每个目录记几条路径（几台电脑各一条），每台电脑用本机存在的那条（`NoteRoot.localPath`）。
 ///
 /// 🔴 **谁都不许改笔记正文里的 `[[…]]`**（2026-09-20 用户定）。导入 = 整个目录原样复制。
 extension WorkspaceManager {
@@ -15,7 +15,7 @@ extension WorkspaceManager {
     // MARK: - 源
 
     /// 全部笔记源：内建的 `Notes/` 永远排第一，后面是用户引用进来的外部目录。
-    /// 引用列表存 `meta.note_sources`（**不在 `MirrorFp.syncedMetaKeys` 白名单里，故不同步**）。
+    /// 引用列表存 `meta.note_sources`（在 `MirrorFp.syncedMetaKeys` 白名单里，跟着工作区同步）。
     var noteSources: [NoteRoot] {
         [NoteRoot.workspaceRoot(name: L("Notes"))] + referencedNoteSources
     }
@@ -28,21 +28,58 @@ extension WorkspaceManager {
 
     func noteSource(id: String) -> NoteRoot? { noteSources.first { $0.id == id } }
 
-    /// 引用一个外部目录（不复制，直接在那儿编辑）。已经引用过的同一个目录 → 原样返回，不重复加。
+    /// 引用一个外部目录（不复制，直接在那儿编辑）。已经引用过的同一个目录（任何一条路径相同）→ 原样返回，不重复加。
     @discardableResult
     func addReferencedNotesFolder(_ url: URL) -> NoteRoot? {
         guard let store else { return nil }
         let path = url.standardizedFileURL.path
-        if let hit = referencedNoteSources.first(where: { $0.path == path }) { return hit }
-        // 引用工作区自己里面的目录没有意义（那就是内建源）
-        if let folder, path == folder.standardizedFileURL.path
-            || path.hasPrefix(folder.standardizedFileURL.path + "/") { return nil }
+        if let hit = referencedNoteSources.first(where: { $0.paths.contains(path) }) { return hit }
+        guard !isInsideWorkspace(path) else { return nil }
         var list = referencedNoteSources
-        list.append(NoteRoot(id: UUID().uuidString, kind: .reference, path: path,
-                               name: url.lastPathComponent))
+        list.append(NoteRoot(id: UUID().uuidString, kind: .reference, paths: [path],
+                             name: url.lastPathComponent))
         saveReferencedSources(list, store: store)
         refreshNotes()
         return list.last
+    }
+
+    /// 引用工作区自己里面的目录没有意义（那就是内建源）。
+    private func isInsideWorkspace(_ path: String) -> Bool {
+        guard let folder else { return false }
+        let ws = folder.standardizedFileURL.path
+        return path == ws || path.hasPrefix(ws + "/")
+    }
+
+    enum AddLocationResult { case added, alreadyThere, insideWorkspace, usedByOther(String) }
+
+    /// 给一个引用目录加一条**这台电脑上**的路径（同一份笔记由外部工具同步过来，在这台电脑上的位置不同）。
+    /// 加在最前面：这台电脑上要是有好几条都在，用刚选的这条。
+    @discardableResult
+    func addReferencedNotesLocation(id: String, url: URL) -> AddLocationResult {
+        guard let store else { return .alreadyThere }
+        let path = url.standardizedFileURL.path
+        guard !isInsideWorkspace(path) else { return .insideWorkspace }
+        var list = referencedNoteSources
+        guard let i = list.firstIndex(where: { $0.id == id }) else { return .alreadyThere }
+        if let other = list.first(where: { $0.id != id && $0.paths.contains(path) }) { return .usedByOther(other.name) }
+        if list[i].paths.first == path { return .alreadyThere }
+        list[i].paths.removeAll { $0 == path }
+        list[i].paths.insert(path, at: 0)
+        list[i].path = path
+        saveReferencedSources(list, store: store)
+        refreshNotes()
+        return .added
+    }
+
+    /// 去掉一个引用目录的某条路径（只是不再记它，目录本身一个字节都不动）。至少留一条。
+    func removeReferencedNotesLocation(id: String, path: String) {
+        guard let store else { return }
+        var list = referencedNoteSources
+        guard let i = list.firstIndex(where: { $0.id == id }), list[i].paths.count > 1 else { return }
+        list[i].paths.removeAll { $0 == path }
+        list[i].path = list[i].paths.first ?? ""
+        saveReferencedSources(list, store: store)
+        refreshNotes()
     }
 
     /// 取消引用。**只是不再列出来，外部目录一个字节都不动。**
@@ -62,7 +99,9 @@ extension WorkspaceManager {
     }
 
     private func saveReferencedSources(_ list: [NoteRoot], store: LibraryStore) {
-        let data = (try? JSONEncoder().encode(list)) ?? Data("[]".utf8)
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]   // 同 `MirrorDiff.mergeNoteSources` 的写法
+        let data = (try? enc.encode(list)) ?? Data("[]".utf8)
         try? store.setMeta("note_sources", String(data: data, encoding: .utf8) ?? "[]")
     }
 

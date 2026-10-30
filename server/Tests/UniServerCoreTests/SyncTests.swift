@@ -135,6 +135,41 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(try mac.specState(), try f.serverState(ws))
     }
 
+    /// 引用的笔记目录列表（`meta.note_sources`，2026-10-29 起同步）：两台电脑各给同一个目录加了自己的路径，
+    /// 经服务器后两边都是合并后的那份（路径取并集），不报冲突，再来一轮什么都不发生。
+    func testNoteSourcesMergePathsAcrossDevices() throws {
+        func sources(_ paths: [String]) -> String {
+            let o: [String: Any] = ["id": "R1", "kind": "reference", "name": "vault", "path": paths[0], "paths": paths]
+            return String(data: try! JSONSerialization.data(withJSONObject: [o], options: [.sortedKeys]), encoding: .utf8)!
+        }
+        func paths(_ d: Fixture.Device) -> [String] {
+            let v = d.store.meta("note_sources") ?? "[]"
+            let list = (try? JSONSerialization.jsonObject(with: Data(v.utf8))) as? [[String: Any]]
+            return list?.first?["paths"] as? [String] ?? []
+        }
+        let f = try Fixture()
+        let mac = try f.makeDevice("mac")
+        try mac.store.setMeta("note_sources", sources(["/Users/a/vault"]))
+        let ws = try f.upload(mac)
+        let other = try f.cache(ws, as: "other")
+        XCTAssertEqual(paths(other), ["/Users/a/vault"], "快照带着源列表")
+
+        try mac.store.setMeta("note_sources", sources(["/Users/a/vault", "/Volumes/SSD/vault"]))
+        try mac.sync(ws)
+        try other.store.setMeta("note_sources", sources(["/Users/b/vault", "/Users/a/vault"]))   // 还没拉过 mac 那次
+        let r = try other.sync(ws)
+        XCTAssertTrue(r.push.conflicts.isEmpty, "按目录合并路径，不算冲突")
+        try mac.sync(ws)
+
+        let want = Set(["/Users/a/vault", "/Volumes/SSD/vault", "/Users/b/vault"])
+        XCTAssertEqual(Set(paths(mac)), want)
+        XCTAssertEqual(Set(paths(other)), want)
+        XCTAssertEqual(try mac.specState(), try f.serverState(ws))
+        XCTAssertEqual(try other.specState(), try f.serverState(ws))
+        XCTAssertEqual(try mac.sync(ws).pushed, 0)
+        XCTAssertEqual(try other.sync(ws).pushed, 0)
+    }
+
     /// 拉取前本机又有没推上去的改动、而且比服务器那份新：本机赢，下一轮推上去（不能被拉取覆盖掉）。
     func testLocalPendingEditWinsWhenNewer() throws {
         let f = try Fixture()

@@ -166,7 +166,11 @@ enum MirrorFp {
     /// 刻意在外的：`schema_version`/`created_at`（库自身属性）、`open_documents`（本机开着哪几篇）、
     /// `workspace_id`/`mirror_*`/`offline_checkouts`（血缘元数据 —— 同步它们就是让两边互相
     /// 把对方的身份覆盖掉）。
-    static let syncedMetaKeys: Set<String> = ["workspace_name", "note_types"]
+    ///
+    /// `note_sources`（引用的笔记目录）2026-10-29 起同步：每个目录可以记几条路径、每台电脑用本机存在的那条
+    /// （`MARKDOWN-NOTES-PLAN.md §10`），两端都改了按目录合并路径（`MirrorDiff.mergeNoteSources`）。
+    /// ⚠️ 安卓 `MirrorFp.kt` 的白名单还没有它（平板上打不开外部目录）；哪天加上，合并也要照搬过去。
+    static let syncedMetaKeys: Set<String> = ["workspace_name", "note_types", "note_sources"]
 
     /// `document` 里纯粹表示「读到哪儿」的列。
     ///

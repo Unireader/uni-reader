@@ -117,6 +117,7 @@ CREATE TABLE sync_base (
 | `exercise` / `exercise_attempt`（v20 习题，2026-10-11 起） | ✅ | 题目按 `updated_at` 取新（收藏 / 错题本 / 章节都改它）；作答一次一行、两边各做的并起来，没有修改时间 → 冲突保留源盘。题已删、另一边还做了它 → 那几次作答跳过并计数（`MirrorApply.livingExercises`，同画板）。`EXERCISE-PLAN.md §10.3` |
 | `meta.note_types` | ✅ LWW | 工作区级配置 |
 | `meta.workspace_name` | ✅ LWW | 小事 |
+| `meta.note_sources` | ✅ 两端都改按目录合并路径（2026-10-29 起） | 引用的笔记目录，每个目录几条路径、每台电脑用本机存在的那条（`MARKDOWN-NOTES-PLAN.md §10`） |
 | `meta.open_documents` | ❌ | 「本机开着哪几篇」，设备本地 |
 | `meta.schema_version` / `created_at` | ❌ | 库自身属性 |
 | `meta.workspace_id` / `mirror_*` / `offline_checkouts` | ❌ | 血缘元数据，见 §5 |

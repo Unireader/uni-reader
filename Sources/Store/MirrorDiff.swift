@@ -33,6 +33,7 @@ enum MirrorDiff {
         case conflictNewer      // 两端都改 → 按 lww 取新的
         case conflictKeptSource // 两端都改但表没有时间戳列 → 保留源盘
         case conflictKeptEdit   // 一端删一端改 → 保留"改"（不丢数据优先）
+        case conflictMerged     // 两端都改、能逐项合并（目前只有 `meta.note_sources`）→ 两边都写成合并后的那份
     }
 
     struct Change {
@@ -290,12 +291,49 @@ enum MirrorDiff {
         }
     }
 
+    static let noteSourcesKey = "note_sources"
+
+    /// `meta.note_sources`（引用的笔记目录，JSON 数组，元素见 App 的 `NoteRoot`）两端都改了：按目录 `id` 合并，
+    /// 同一个目录的路径取并集（theirs 的在前），`path` 跟着改成第一条；名字等其余字段以 theirs（源盘 / 服务器）为准，
+    /// 只在 mine 里有的目录追加在后面。解不开 → nil，退回通用规则（保留源盘）。
+    /// 一边删了某个目录、另一边又给它加了路径，合并后它还在——宁可多留一个，不丢别的电脑上加的路径。
+    static func mergeNoteSources(mine: String, theirs: String) -> String? {
+        guard let m = (try? JSONSerialization.jsonObject(with: Data(mine.utf8))) as? [[String: Any]],
+              var out = (try? JSONSerialization.jsonObject(with: Data(theirs.utf8))) as? [[String: Any]] else { return nil }
+        func paths(_ o: [String: Any]) -> [String] {
+            let list = o["paths"] as? [String] ?? []
+            return list.isEmpty ? [o["path"] as? String].compactMap { $0 } : list
+        }
+        for item in m {
+            guard let id = item["id"] as? String else { continue }
+            guard let i = out.firstIndex(where: { $0["id"] as? String == id }) else { out.append(item); continue }
+            var merged = paths(out[i])
+            for p in paths(item) where !merged.contains(p) { merged.append(p) }
+            out[i]["paths"] = merged
+            if let first = merged.first { out[i]["path"] = first }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys, .withoutEscapingSlashes])
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// 两端都改了同一行：有时间戳列就取新的，没有就保留源盘（方案 §6）。
     private static func resolveBoth(spec: MirrorFp.TableSpec, id: String, kind: ConflictKind,
                                     mineRow: [String: Any]?, theirsRow: [String: Any]?,
                                     mk: (Op, Side, Reason, [String: Any]?) -> Change,
                                     into plan: inout Plan) {
         let t = spec.table
+        // 引用的笔记目录列表：每台电脑在自己那份上加了自己的路径，这不是冲突，按目录合并路径。
+        // 两边都写成合并后的那份；**`.mirror` 那条放在后面**——服务器推送按「一行一个结果」取最后一条，
+        // 于是服务器先写入合并结果、再把它当「保留服务器那份」带回客户端（`HostedWorkspace.pushLocked`）
+        if t == "meta", id == noteSourcesKey,
+           let mv = mineRow?["value"] as? String, var row = theirsRow, let tv = row["value"] as? String,
+           let merged = mergeNoteSources(mine: mv, theirs: tv) {
+            row["value"] = merged
+            plan.changes.append(mk(.upsert, .source, .conflictMerged, row))
+            plan.changes.append(mk(.upsert, .mirror, .conflictMerged, row))
+            return
+        }
         // 🔴 **只差「读到哪儿」不算冲突**：两端各翻过同一本书就会走到这里，但那是正常使用。
         // 照常按 lww 选一边写，只是**不报成冲突** —— 报了用户既判断不了也不该判断
         // （2026-09-01 用户实测："几乎什么都没动"却收到一条看不懂的冲突）。

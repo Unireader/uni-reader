@@ -122,8 +122,8 @@ check(MirrorFp.spec("board_item")?.columns.map(\.name) ==
 check(MirrorFp.spec("md_doc")?.columns.map(\.name) ==
       ["id", "title", "rel_path", "group_name", "sort_order", "created_at", "updated_at"],
       "md_doc 列表（v15；**不含 last_opened_at**，同 document）")
-check(MirrorFp.syncedMetaKeys.contains("note_sources") == false,
-      "🔴 note_sources 不同步：引用的外部目录是这台机器的事实（同 location 表）")
+check(MirrorFp.syncedMetaKeys.contains("note_sources"),
+      "note_sources 同步（2026-10-29 起）：每个引用目录记几条路径，每台电脑用本机存在的那条")
 check(MirrorFp.spec("location") == nil, "🔴 location 没有 spec：同步它就是制造满屏假『路径失效』")
 
 print("⑤ 真实表行（按 spec 取值算 fp）")

@@ -749,7 +749,15 @@
 "Copied into Notes/%@ — %d files in all, nothing was changed." = "已复制到 Notes/%@，共 %d 个文件；内容一个字都没改。";
 "%d [[links]] point at notes that are not here: %@" = "有 %d 个 [[链接]] 指向不在这里的笔记：%@";
 "The note file is missing." = "这篇笔记的文件不见了。";
-"Referenced folder · %d notes · %@" = "引用的目录 · %d 篇笔记 · %@";
+"Referenced folder · %d notes" = "引用的目录 · %d 篇笔记";
+"%@ ↗ (not on this Mac)" = "%@ ↗（不在这台电脑上）";
+"None of these folders is on this Mac. Right-click to add its location here." = "这台电脑上没有其中任何一个目录。右键「添加这台电脑上的位置…」。";
+"Add Location on This Mac…" = "添加这台电脑上的位置…";
+"Locations" = "位置";
+"%@ (not on this Mac)" = "%@（不在这台电脑上）";
+"Remove This Location" = "移除这个位置";
+"Choose where “%@” is on this Mac (the same folder, synced here by another app)." = "选择「%@」在这台电脑上的位置（同一个目录，由别的软件同步过来）。";
+"That folder is already referenced as “%@”." = "那个目录已经引用过了，叫「%@」。";
 "%d notes in this workspace" = "工作区里有 %d 篇笔记";
 "New Note Here" = "在这里新建笔记";
 "Move to Trash…" = "移到废纸篓…";

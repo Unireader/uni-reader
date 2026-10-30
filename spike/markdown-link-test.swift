@@ -167,10 +167,24 @@ print("\n— 9) 源 —")
 let wsRoot = NoteRoot.workspaceRoot(name: "笔记")
 check(wsRoot.id == "ws" && wsRoot.kind == .workspace, "内建源身份固定")
 check(wsRoot.rootURL(workspace: URL(fileURLWithPath: "/W/x.unrd"))?.path == "/W/x.unrd/Notes", "内建源根目录")
-let ext = NoteRoot(id: "E1", kind: .reference, path: "/Users/me/vault", name: "vault")
-check(ext.rootURL(workspace: nil)?.path == "/Users/me/vault", "引用源根目录 = 绝对路径")
+let ext = NoteRoot(id: "E1", kind: .reference, paths: ["/Users/me/vault"], name: "vault")
+check(ext.rootURL(workspace: nil)?.path == "/Users/me/vault", "引用源根目录 = 绝对路径（本机不在时给第一条）")
 let coded = try JSONDecoder().decode([NoteRoot].self, from: JSONEncoder().encode([ext]))
 check(coded == [ext], "源列表 JSON 回环（存 meta.note_sources 用）")
+// 多路径（2026-10-29）：同一个目录在几台电脑上各在各的位置，用本机存在的那条
+let legacy = try JSONDecoder().decode([NoteRoot].self, from: Data(#"[{"id":"E1","kind":"reference","path":"/old/vault","name":"v"}]"#.utf8))
+check(legacy.first?.paths == ["/old/vault"] && legacy.first?.path == "/old/vault", "老数据只有 path → 当作只有这一条")
+let multi = NoteRoot(id: "E2", kind: .reference, paths: ["/Users/a/vault", "/Users/b/vault"], name: "v")
+let json = String(data: try JSONEncoder().encode(multi), encoding: .utf8) ?? ""
+check(json.contains(#""path":"\/Users\/a\/vault""#) && json.contains(#""paths""#),
+      "写出来同时带 path（= 第一条，老版本认它）与 paths")
+check(multi.localPath { $0 == "/Users/b/vault" } == "/Users/b/vault", "本机只有第二条 → 用第二条")
+check(multi.localPath { _ in true } == "/Users/a/vault", "两条都在 → 用第一条")
+check(multi.localPath { _ in false } == nil, "一条都不在 → nil")
+let realDir = NSTemporaryDirectory()
+let mixed = NoteRoot(id: "E3", kind: .reference, paths: ["/没有这个目录/vault", realDir], name: "v")
+check(mixed.rootURL(workspace: nil)?.standardizedFileURL.path == URL(fileURLWithPath: realDir).standardizedFileURL.path,
+      "rootURL 跳过本机不存在的那条")
 
 print("\n— 10) 路径工具 —")
 var used = Set<String>()

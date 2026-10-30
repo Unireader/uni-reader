@@ -9,8 +9,8 @@ import Foundation
 /// | | 内建（`kind == .workspace`） | 引用（`kind == .reference`） |
 /// |---|---|---|
 /// | 文件在哪 | 工作区包里的 `Notes/` | 用户指的**外部绝对路径**，App 不搬动它 |
-/// | 进不进库 | 进（`md_doc` 当扫描缓存 + 记「上次打开」） | **不进**——外部路径是这台机器的事实，同 `location` 表的规矩 |
-/// | 离线镜像 | 跟着工作区走 | **不同步**（源列表存 `meta.note_sources`，不在同步白名单里） |
+/// | 进不进库 | 进（`md_doc` 当扫描缓存 + 记「上次打开」） | 笔记不进；源列表存 `meta.note_sources` |
+/// | 同步 | 跟着工作区走 | 源列表同步（2026-10-29 起），**每台电脑用本机存在的那条路径**；外部目录的内容由外部工具同步 |
 ///
 /// 两种源在界面上一视同仁：侧栏各占一段，底下按**真实目录层级**展开（多级）。
 enum NoteRootKind: String, Codable {
@@ -19,11 +19,18 @@ enum NoteRootKind: String, Codable {
 }
 
 /// 一个笔记源。
+///
+/// 引用源可以记**几条路径**（2026-10-29 用户要求）：同一个笔记目录由外部工具同步到几台电脑上、各在各的位置，
+/// 每台电脑把自己那条加进来，用的时候取**第一条在本机存在的**（`localPath`）。源列表跟着工作区同步，
+/// 两端都改了按目录合并路径（`MirrorDiff.mergeNoteSources`）。
 struct NoteRoot: Codable, Equatable, Identifiable {
     var id: String
     var kind: NoteRootKind
-    /// `workspace` 源：相对工作区的路径（恒为 `Notes`）。`reference` 源：绝对路径。
+    /// `workspace` 源：相对工作区的路径（恒为 `Notes`）。`reference` 源：`paths` 的第一条
+    /// （老版本只认这一个字段，写的时候跟着 `paths` 走）。
     var path: String
+    /// `reference` 源：各台电脑上的绝对路径（至少一条）。`workspace` 源不用。
+    var paths: [String]
     /// 侧栏上这一段叫什么（引用源默认取目录名）。
     var name: String
 
@@ -31,15 +38,56 @@ struct NoteRoot: Codable, Equatable, Identifiable {
     static let workspaceID = "ws"
     static let workspaceDir = "Notes"
 
-    static func workspaceRoot(name: String) -> NoteRoot {
-        NoteRoot(id: workspaceID, kind: .workspace, path: workspaceDir, name: name)
+    init(id: String, kind: NoteRootKind, paths: [String], name: String) {
+        self.id = id
+        self.kind = kind
+        self.paths = paths
+        self.path = paths.first ?? ""
+        self.name = name
     }
 
-    /// 这个源的根目录绝对路径。
+    static func workspaceRoot(name: String) -> NoteRoot {
+        NoteRoot(id: workspaceID, kind: .workspace, paths: [workspaceDir], name: name)
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, kind, path, paths, name }
+
+    /// 老数据只有 `path`：当作只有这一条。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(NoteRootKind.self, forKey: .kind)
+        name = try c.decode(String.self, forKey: .name)
+        let single = try c.decodeIfPresent(String.self, forKey: .path) ?? ""
+        let list = try c.decodeIfPresent([String].self, forKey: .paths) ?? []
+        paths = list.isEmpty ? (single.isEmpty ? [] : [single]) : list
+        path = paths.first ?? single
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(paths.first ?? path, forKey: .path)
+        try c.encode(paths, forKey: .paths)
+        try c.encode(name, forKey: .name)
+    }
+
+    /// 引用源在这台电脑上用哪条路径：第一条在本机存在的目录；一条都不在 = nil。
+    func localPath(isDirectory: (String) -> Bool = NoteRoot.directoryExists) -> String? {
+        paths.first(where: isDirectory)
+    }
+
+    static func directoryExists(_ path: String) -> Bool {
+        var dir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &dir) && dir.boolValue
+    }
+
+    /// 这个源的根目录绝对路径。引用源在这台电脑上一条路径都不在时给第一条（侧栏照常列出这一段，笔记显示为找不到）。
     func rootURL(workspace: URL?) -> URL? {
         switch kind {
         case .workspace: return workspace?.appendingPathComponent(path)
-        case .reference: return URL(fileURLWithPath: path)
+        case .reference: return URL(fileURLWithPath: localPath() ?? path)
         }
     }
 }

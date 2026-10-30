@@ -215,6 +215,43 @@ check(metaLine.hasPrefix("工作区设置："), "…直接说是哪张表的事�
 check(MirrorReport.summary(p, titles: [:]).first?.detail.first == "工作区设置 1 项",
       "…明细也按表名说，而不是一律扣「工作区级设置」的帽子")
 
+// 引用的笔记目录列表（2026-10-29 起同步）：两端都改了按目录合并路径，不报冲突，两边都写成合并后的那份
+func srcRow(_ v: String) -> [String: Any] { ["key": "note_sources", "value": v] }
+let srcBase = #"[{"id":"R1","kind":"reference","name":"vault","path":"/Users/a/vault","paths":["/Users/a/vault"]}]"#
+let srcMine = #"[{"id":"R1","kind":"reference","name":"vault","path":"/Users/b/vault","paths":["/Users/b/vault","/Users/a/vault"]},"#
+    + #"{"id":"R2","kind":"reference","name":"只在本机","path":"/x","paths":["/x"]}]"#
+let srcTheirs = #"[{"id":"R1","kind":"reference","name":"改了名","path":"/Volumes/C/vault","paths":["/Volumes/C/vault","/Users/a/vault"]}]"#
+p = MirrorDiff.compute(
+    base: ["meta": ["note_sources": MirrorFp.fingerprint(row: srcRow(srcBase), spec: metaSpec)]],
+    mine: ["meta": ["note_sources": srcRow(srcMine)]],
+    theirs: ["meta": ["note_sources": srcRow(srcTheirs)]])
+check(p.conflicts.isEmpty, "note_sources 两端都改：不报冲突")
+check(p.changes.map(\.side) == [.source, .mirror] && p.changes.allSatisfy { $0.reason == .conflictMerged },
+      "两边都写，mirror 那条在后（服务器推送取最后一条 → 带回客户端）")
+let mergedList = (try? JSONSerialization.jsonObject(with: Data(((p.changes.first?.row?["value"] as? String) ?? "").utf8)))
+    as? [[String: Any]] ?? []
+let r1 = mergedList.first { $0["id"] as? String == "R1" }
+check(r1?["paths"] as? [String] == ["/Volumes/C/vault", "/Users/a/vault", "/Users/b/vault"],
+      "同一个目录的路径取并集，theirs 的在前（\(r1?["paths"] ?? "-")）")
+check(r1?["path"] as? String == "/Volumes/C/vault" && r1?["name"] as? String == "改了名",
+      "path 跟着第一条，名字以 theirs 为准")
+check(mergedList.map { $0["id"] as? String ?? "" } == ["R1", "R2"], "只在本机的目录追加在后面")
+check(MirrorDiff.mergeNoteSources(mine: #"[{"id":"R1","path":"/a","kind":"reference","name":"v"}]"#,
+                                  theirs: #"[{"id":"R1","path":"/b","kind":"reference","name":"v"}]"#)
+        .map { $0.contains(#""paths":["/b","/a"]"#) } == true, "老格式（只有 path）也能合并")
+// 升级过渡：之前上传 / 建镜像时基线里没有这一项 → 两边都算「新增」，内容不同也合并，不把本机后来加的盖掉
+p = MirrorDiff.compute(base: ["meta": [:]],
+                       mine: ["meta": ["note_sources": srcRow(srcMine)]],
+                       theirs: ["meta": ["note_sources": srcRow(srcTheirs)]])
+check(p.conflicts.isEmpty && p.changes.count == 2 && p.changes.allSatisfy { $0.reason == .conflictMerged },
+      "基线里没有这一项（升级过渡）：两边都新增也按目录合并")
+p = MirrorDiff.compute(
+    base: ["meta": ["note_sources": MirrorFp.fingerprint(row: srcRow(srcBase), spec: metaSpec)]],
+    mine: ["meta": ["note_sources": srcRow("不是 JSON")]],
+    theirs: ["meta": ["note_sources": srcRow(srcTheirs)]])
+check(p.changes.count == 1 && p.changes[0].side == .mirror && p.conflicts.count == 1,
+      "解不开就退回通用规则：保留源盘、报冲突")
+
 // ============================================================
 // ⑤ 真库端到端
 // ============================================================

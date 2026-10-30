@@ -423,15 +423,21 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             ])
             return cell
         case .noteSection(let source, let folder):
-            // 段头：内建源就叫「笔记」，引用源多一枚链接图标 + 完整路径当提示
+            // 段头：内建源就叫「笔记」，引用源多一枚链接图标 + 各条路径当提示；
+            // 这台电脑上一条路径都不在 → 段名后面注明，右键「添加这台电脑上的位置…」
             let cell = NSTableCellView()
-            let t = NSTextField(labelWithString: source.kind == .reference
-                                ? "\(source.name) \u{2197}" : source.name)
+            let here = source.kind == .reference ? source.localPath() : nil
+            let title = source.kind != .reference ? source.name
+                : here == nil ? String(format: L("%@ ↗ (not on this Mac)"), source.name) : "\(source.name) \u{2197}"
+            let t = NSTextField(labelWithString: title)
             t.font = .preferredFont(forTextStyle: .subheadline)
             t.textColor = .secondaryLabelColor
             t.lineBreakMode = .byTruncatingTail
             t.toolTip = source.kind == .reference
-                ? String(format: L("Referenced folder · %d notes · %@"), folder.noteCount, source.path)
+                ? String(format: L("Referenced folder · %d notes"), folder.noteCount) + "\n"
+                    + source.paths.map { ($0 == here ? "✓ " : "    ") + ($0 as NSString).abbreviatingWithTildeInPath }
+                        .joined(separator: "\n")
+                    + (here == nil ? "\n" + L("None of these folders is on this Mac. Right-click to add its location here.") : "")
                 : String(format: L("%d notes in this workspace"), folder.noteCount)
             t.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(t)
@@ -699,15 +705,26 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// 笔记段头的右键菜单：新建、在访达里显示；引用源还能改名 / 取消引用。
     private func buildNoteSectionMenu(_ m: NSMenu, source: NoteRoot) {
-        m.addItem(ClosureMenuItem(L("New Note Here")) { [weak self] in
+        m.autoenablesItems = false
+        // 引用目录在这台电脑上一条路径都不在：新建 / 在访达里显示都没处去
+        let here = source.kind != .reference || source.localPath() != nil
+        let new = ClosureMenuItem(L("New Note Here")) { [weak self] in
             guard let self, let ref = self.workspace.createNote(title: L("Untitled Note"), in: source.id) else { return }
             self.tabs.openMarkdown(ref)
-        })
-        m.addItem(ClosureMenuItem(L("Show in Finder")) { [weak self] in
+        }
+        new.isEnabled = here
+        m.addItem(new)
+        let reveal = ClosureMenuItem(L("Show in Finder")) { [weak self] in
             guard let url = self?.workspace.noteRootURL(source) else { return }
             NSWorkspace.shared.activateFileViewerSelecting([url])
-        })
+        }
+        reveal.isEnabled = here
+        m.addItem(reveal)
         guard source.kind == .reference else { return }
+        m.addItem(.separator())
+        // 同一个目录在几台电脑上各在各的位置（内容由外部工具同步）：每台电脑把自己那条加进来，用本机存在的那条
+        m.addItem(ClosureMenuItem(L("Add Location on This Mac…")) { [weak self] in self?.addNotesLocation(source) })
+        m.addItem(locationsItem(source))
         m.addItem(.separator())
         m.addItem(ClosureMenuItem(L("Rename…")) { [weak self] in
             self?.textPrompt(title: L("Rename Folder"), placeholder: L("Display name"), initial: source.name) { name in
@@ -718,13 +735,66 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             guard let self else { return }
             let a = NSAlert()
             a.messageText = String(format: L("Stop showing “%@”?"), source.name)
-            a.informativeText = String(format: L("The folder itself is not touched:\n%@"), source.path)
+            a.informativeText = String(format: L("The folder itself is not touched:\n%@"),
+                                       source.paths.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: "\n"))
             a.addButton(withTitle: L("Remove"))
             a.addButton(withTitle: L("Cancel"))
             guard a.runModal() == .alertFirstButtonReturn else { return }
             self.workspace.removeReferencedNotesFolder(id: source.id)
             for t in self.tabs.tabs { t.closeMarkdownIfGone() }
         })
+    }
+
+    /// 「位置」子菜单：这个引用目录记着的每条路径，本机正在用的那条打勾；每条可以在访达里显示、移除（至少留一条）。
+    private func locationsItem(_ source: NoteRoot) -> NSMenuItem {
+        let here = source.localPath()
+        let sub = NSMenu()
+        sub.autoenablesItems = false
+        for p in source.paths {
+            let exists = NoteRoot.directoryExists(p)
+            let shown = (p as NSString).abbreviatingWithTildeInPath
+            let it = NSMenuItem(title: exists ? shown : String(format: L("%@ (not on this Mac)"), shown),
+                                action: nil, keyEquivalent: "")
+            it.state = p == here ? .on : .off
+            let actions = NSMenu()
+            actions.autoenablesItems = false
+            let reveal = ClosureMenuItem(L("Show in Finder")) {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+            }
+            reveal.isEnabled = exists
+            actions.addItem(reveal)
+            let remove = ClosureMenuItem(L("Remove This Location")) { [weak self] in
+                self?.workspace.removeReferencedNotesLocation(id: source.id, path: p)
+            }
+            remove.isEnabled = source.paths.count > 1
+            actions.addItem(remove)
+            it.submenu = actions
+            sub.addItem(it)
+        }
+        let parent = NSMenuItem(title: L("Locations"), action: nil, keyEquivalent: "")
+        parent.submenu = sub
+        return parent
+    }
+
+    /// 「添加这台电脑上的位置…」：选这台电脑上那份同步过来的目录。
+    private func addNotesLocation(_ source: NoteRoot) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = L("Add")
+        panel.message = String(format: L("Choose where “%@” is on this Mac (the same folder, synced here by another app)."),
+                               source.name)
+        let done: (NSApplication.ModalResponse) -> Void = { [weak self] resp in
+            guard let self, resp == .OK, let dir = panel.url else { return }
+            switch self.workspace.addReferencedNotesLocation(id: source.id, url: dir) {
+            case .added, .alreadyThere: break
+            case .insideWorkspace: self.presentNoteError(L("That folder is already inside this workspace."))
+            case .usedByOther(let name):
+                self.presentNoteError(String(format: L("That folder is already referenced as “%@”."), name))
+            }
+        }
+        if let win = view.window { panel.beginSheetModal(for: win, completionHandler: done) } else { done(panel.runModal()) }
     }
 
     private func presentNoteError(_ text: String) {

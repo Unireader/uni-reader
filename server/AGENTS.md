@@ -8,7 +8,7 @@ macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进�
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 20 项 + HTTP 5 项
+swift test  --disable-automatic-resolution   # 核心 21 项 + HTTP 5 项
 BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
 $BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
 $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）

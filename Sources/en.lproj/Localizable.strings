@@ -747,7 +747,15 @@
 "Copied into Notes/%@ — %d files in all, nothing was changed." = "Copied into Notes/%@ — %d files in all, nothing was changed.";
 "%d [[links]] point at notes that are not here: %@" = "%d [[links]] point at notes that are not here: %@";
 "The note file is missing." = "The note file is missing.";
-"Referenced folder · %d notes · %@" = "Referenced folder · %d notes · %@";
+"Referenced folder · %d notes" = "Referenced folder · %d notes";
+"%@ ↗ (not on this Mac)" = "%@ ↗ (not on this Mac)";
+"None of these folders is on this Mac. Right-click to add its location here." = "None of these folders is on this Mac. Right-click to add its location here.";
+"Add Location on This Mac…" = "Add Location on This Mac…";
+"Locations" = "Locations";
+"%@ (not on this Mac)" = "%@ (not on this Mac)";
+"Remove This Location" = "Remove This Location";
+"Choose where “%@” is on this Mac (the same folder, synced here by another app)." = "Choose where “%@” is on this Mac (the same folder, synced here by another app).";
+"That folder is already referenced as “%@”." = "That folder is already referenced as “%@”.";
 "%d notes in this workspace" = "%d notes in this workspace";
 "New Note Here" = "New Note Here";
 "Move to Trash…" = "Move to Trash…";
