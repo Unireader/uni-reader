@@ -49,7 +49,9 @@ REMOTE=nas REMOTE_ADDR=192.168.1.160 REMOTE_DIR=/storage/data/98_Misc/unireader-
 - 用户的 NAS：`ssh nas`（root），程序 `/storage/app_bin/unireader-server/`，**正式数据 `/storage/data/22_Exam/Unireader`**，
   测试用的临时目录 `/storage/data/98_Misc/unireader-server-test/`；`/storage` 是 mergerfs（`storage.mount`），SQLite（WAL）在上面实测正常。
   开机自启：`/etc/systemd/system/unireader-server.service`（`RequiresMountsFor` 等 `/storage` 挂好；`--host 0.0.0.0 --name NAS`，端口 8790）。
-  换程序：`scp` 到 `.new` → `mv` 覆盖 → `systemctl restart unireader-server`；日志 `journalctl -u unireader-server`；
+  换程序：`scp` 到 `.new` → 当前版本 `cp -p` 成 `.prev`（回退用）→ `mv` 覆盖 → `systemctl restart unireader-server`；
+  ⚠️ `/storage` 是 mergerfs，**`chmod` 报「Operation not supported」**——文件本来就带执行权限，别写进脚本（`set -e` 会在那一步停下）；
+  日志 `journalctl -u unireader-server`；
   配对码 `unireader-server pairing-code --data /storage/data/22_Exam/Unireader`。对外 HTTPS 由用户用 caddy 反向代理（NAS 上已装）。
 
 ## 结构
