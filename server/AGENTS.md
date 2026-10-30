@@ -1,6 +1,6 @@
 # AGENTS.md — UniReader 服务器（`server/`）
 
-独立的 Swift 服务器程序（方案 `../SERVER-MODE-PLAN.md`）：工作区「从服务器打开 / 上传到服务器」，各设备本机缓存、只传改动。
+独立的 Swift 服务器程序（方案 `../docs/SERVER-MODE-PLAN.md`）：工作区「从服务器打开 / 上传到服务器」，各设备本机缓存、只传改动。
 macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进制（下面「Linux 版」）。与 App 同一个 git 仓库（不像 `android/` 是独立仓库）。
 
 ## 构建与测试
@@ -99,7 +99,7 @@ HTTP 层只用 `UniServerCore` 的 public 接口（字节进、字节出：`push
    `reconcileCascades` 把服务器上连带删掉的子行补记成「已删除」。
 6. 一个工作区全进程只开一个 `HostedWorkspace`（`WorkspaceHost` 管），所有读写在它那把锁里。
 7. 安全：工作区 id 必须是 UUID（会拼进路径）；文件路径一律经 `HostedWorkspace.resolveInside`（`..`、符号链接越界不认）；
-   PDF / 图片收下前校验 SHA-256。所有 HTTP 接口都要令牌，没有例外（`../REMOTE-ACCESS-PLAN.md §2` 的教训）。
+   PDF / 图片收下前校验 SHA-256。所有 HTTP 接口都要令牌，没有例外（`../docs/REMOTE-ACCESS-PLAN.md §2` 的教训）。
 8. 只用 Linux 上也有的 API：Foundation、SQLite、Crypto、NIO。**不 import** AppKit / Network / PDFKit。
    链进来的 Store 层里苹果独有的都包在 `#if canImport(...)` / `#if os(macOS)` 里：`SQLite3`（Linux 用 `SwiftToolchainCSQLite`）、
    `CryptoKit`（Linux 用 `Crypto`）、`CoreGraphics`（Linux 上 `CGRect` 由 Foundation 给）、`ImageAssets` 的解图 / 转码（Linux 上不编）、

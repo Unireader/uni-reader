@@ -141,8 +141,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader \
 | `Sources/Agent/` | ACP Agent 面板 |
 | `spike/` | 独立验证脚本（`swift spike/<name>.swift`） |
 
-开发笔记与方案文档都在仓库根目录，入口是 `AGENTS.md`，其余文档（`REQUIREMENTS.md`、
-`PROTOCOL.md` 以及各功能的方案文档）的地图在它里面。
+开发笔记与方案文档都在 `docs/` 目录，入口是根目录的 `AGENTS.md`，其余文档（`docs/REQUIREMENTS.md`、
+`docs/PROTOCOL.md` 以及各功能的方案文档）的地图在它里面。
 
 ## 许可证
 

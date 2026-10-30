@@ -1,7 +1,7 @@
 // swift-tools-version:6.0
 import PackageDescription
 
-// UniReader 服务器（`../SERVER-MODE-PLAN.md`，规则见 `AGENTS.md`）。
+// UniReader 服务器（`../docs/SERVER-MODE-PLAN.md`，规则见 `AGENTS.md`）。
 //
 // `UniServerCore` 里有三个**符号链接**，指回 App 的源文件，与服务器自己的代码编成同一个模块：
 //   Store                 -> ../../../Sources/Store                （工作区库：建表 / 迁移 / 指纹 / 三方判定 / 行写入）

@@ -160,8 +160,8 @@ Swift packages used: [swift-markdown-engine](https://github.com/nodes-app/swift-
 | `Sources/Agent/` | The ACP agent panel |
 | `spike/` | Standalone verification scripts (`swift spike/<name>.swift`) |
 
-Development notes and design documents live at the top level; `AGENTS.md` is the
-entry point and carries the map of the rest (`REQUIREMENTS.md`, `PROTOCOL.md`, and
+Development notes and design documents live in `docs/`; `AGENTS.md` (top level) is the
+entry point and carries the map of the rest (`docs/REQUIREMENTS.md`, `docs/PROTOCOL.md`, and
 the per-feature plan documents). They are written in Chinese.
 
 ## License
