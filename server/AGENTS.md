@@ -8,7 +8,7 @@ macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进�
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 24 项 + HTTP 6 项
+swift test  --disable-automatic-resolution   # 核心 27 项 + HTTP 7 项
 BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
 $BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
 $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）
@@ -25,6 +25,11 @@ $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 
   后两个只在 Linux 上接到目标）。
   构建 / 测试一律带 `--disable-automatic-resolution`：依赖要变时它直接报错，不会悄悄去下载。
   加新依赖 = 改 `Package.swift` 后先让用户拉取，拉之前别构建。
+- 网页阅读器（`web/`，方案 `../docs/WEB-READER-PLAN.md`）：依赖由用户 `cd server/web && pnpm install`；
+  `scripts/build-web.sh`（类型检查 + `npm test` + 构建）出 `web/dist`，之后 `swift build` 时构建插件 `EmbedWebAssets` 自动把它编进程序（文件有变自动重新生成）。
+  没有 `web/dist` 照样能编、测试照样能跑，只是程序不带网页。开发：`serve --web-dir web/dist` 读磁盘，或 `cd web && npm run dev`（`/v1` 转发到本机 8790）。
+  网页的 node 测试（`cd web && npm test`，`web/test/`）：笔宽 / 锥度 / 铅笔抖动 / 扫描页对齐对 **Mac 代码生成**的向量 `../spike/web-ink-vectors.txt`
+  （`../spike/web-ink-vectors.swift` 生成，改了 `PenPreset.swift` / `ScanAlign.swift` 要重新生成）、点集解码对 `../spike/ink-blob-vectors.txt`、标记解析与图层规则。
 - 默认端口 8790（App 自己占了 8770~8773）。默认数据目录：macOS `~/Library/Application Support/UniReaderServer/`，
   Linux `/var/lib/unireader`。
 
@@ -68,15 +73,21 @@ server/
     WorkspaceHost.swift       全部工作区：列表、按 id 打开、登记上传、删除（整个挪进回收站）/ 找回 / 到期清理
     HostedWorkspace.swift     一个工作区：登记、推送、拉取、快照、改名、修订号
     HostedWorkspace+Files.swift   PDF / 图片本体 / 备份
+    HostedWorkspace+Web.swift     网页阅读器用的查询（书目、页上的标记、图层 / 笔记类型 / 对齐参数）
     ServerTrash.swift         删除先归档（按天一个小库）
   Sources/UniServerHTTP/ServerApp.swift   HTTP 接口（Hummingbird）：路由表在文件头；令牌中间件、错误→状态码、续传、配对限流
+  Sources/UniServerHTTP/WebFiles.swift    网页阅读器的静态文件（不要令牌）：编进程序的那份 / --web-dir
   Sources/UniServerHTTP/Discovery.swift   局域网发现（Bonjour `_unireader-srv._tcp`：macOS 系统 dnssd；Linux 起 avahi-publish-service 子进程）
   Sources/unireader-server/               命令行入口：serve / pairing-code / reset-pairing-code / devices / revoke / deleted / restore；
                                           每小时备份有改动的工作区、清 90 天前删掉的工作区
+  Sources/web-embed/                      构建插件用的生成器：web/dist → EmbeddedWeb.swift（每个文件一个 base64 字符串）
+  Plugins/EmbedWebAssets/                 构建插件（编 UniServerHTTP 时跑上面那个生成器）
+  web/                                    网页阅读器前端（Svelte 5 + Vite + TypeScript + pdf.js；node_modules / dist 不入 git）
   Tests/UniServerCoreTests/               核心（直接调 `HostedWorkspace` / `SyncClient`）
   Tests/UniServerHTTPTests/               HTTP（HummingbirdTesting 的 `.router`，进程内调路由、不开端口）
   scripts/setup-linux-build.sh            一次性装 Linux 交叉编译的工具链与 SDK（用户跑）
-  scripts/build-linux.sh                  交叉编译 Linux 静态二进制
+  scripts/build-linux.sh                  交叉编译 Linux 静态二进制（装了网页依赖就先跑 build-web.sh）
+  scripts/build-web.sh                    网页：类型检查 + 构建 → web/dist
   deploy/unireader-server.service         systemd 模板
 ```
 
@@ -99,7 +110,8 @@ HTTP 层只用 `UniServerCore` 的 public 接口（字节进、字节出：`push
    `reconcileCascades` 把服务器上连带删掉的子行补记成「已删除」。
 6. 一个工作区全进程只开一个 `HostedWorkspace`（`WorkspaceHost` 管），所有读写在它那把锁里。
 7. 安全：工作区 id 必须是 UUID（会拼进路径）；文件路径一律经 `HostedWorkspace.resolveInside`（`..`、符号链接越界不认）；
-   PDF / 图片收下前校验 SHA-256。所有 HTTP 接口都要令牌，没有例外（`../docs/REMOTE-ACCESS-PLAN.md §2` 的教训）。
+   PDF / 图片收下前校验 SHA-256。所有 HTTP 接口都要令牌（`../docs/REMOTE-ACCESS-PLAN.md §2` 的教训）；
+   唯一的例外是网页本身（`WebFiles` 的几条静态路由，不含任何数据）——**别往那几条路由里放数据**，网页要的数据走 `/v1`。
 8. 只用 Linux 上也有的 API：Foundation、SQLite、Crypto、NIO。**不 import** AppKit / Network / PDFKit。
    链进来的 Store 层里苹果独有的都包在 `#if canImport(...)` / `#if os(macOS)` 里：`SQLite3`（Linux 用 `SwiftToolchainCSQLite`）、
    `CryptoKit`（Linux 用 `Crypto`）、`CoreGraphics`（Linux 上 `CGRect` 由 Foundation 给）、`ImageAssets` 的解图 / 转码（Linux 上不编）、

@@ -250,6 +250,9 @@ final class HTTPTests: XCTestCase {
             }
             try await client.execute(uri: uri, method: .get, headers: self.auth(token)) {
                 XCTAssertEqual(String(buffer: $0.body), "0123456789")
+                // 网页里的 pdf.js 看这两个头决定改用分段下载（大书不必整本下完才显示）
+                XCTAssertEqual($0.headers[.contentLength], "10")
+                XCTAssertEqual($0.headers[.acceptRanges], "bytes")
             }
 
             // 内容和声明的哈希对不上 → 422，半截文件作废
@@ -340,6 +343,85 @@ final class HTTPTests: XCTestCase {
         XCTAssertEqual(deleted.map(\.id), [id])
         XCTAssertEqual(deleted.first?.name, "新名字")
         XCTAssertEqual(deleted.first?.device, "测试平板")
+    }
+
+    // MARK: - 网页阅读器
+
+    /// 网页本身不要令牌（带内容安全策略）；只认网页目录里的普通文件；书目接口照旧要令牌。
+    func testWebPageWithoutTokenAndDocuments() async throws {
+        let webDir = root.appendingPathComponent("web", isDirectory: true)
+        try FileManager.default.createDirectory(at: webDir.appendingPathComponent("assets"), withIntermediateDirectories: true)
+        try Data("<!doctype html><title>UniReader</title>".utf8).write(to: webDir.appendingPathComponent("index.html"))
+        try Data("console.log(1)".utf8).write(to: webDir.appendingPathComponent("assets/app-1.js"))
+        try Data("secret".utf8).write(to: webDir.appendingPathComponent("assets/.env"))
+
+        let dir = try host.newUploadFolder()
+        let lib = try LibraryStore(workspaceFolder: dir)
+        try lib.ensureWorkspaceId()
+        let pdf = Data("fake pdf".utf8), hash = ServerCrypto.sha256Hex(pdf)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("PDFs"), withIntermediateDirectories: true)
+        try pdf.write(to: dir.appendingPathComponent("PDFs/book.pdf"))
+        try lib.withMirrorDB { db in
+            try db.run("INSERT INTO document(id,title,page_count,added_at,last_opened_at) VALUES('D1','书',1,'t','t')")
+            try db.run("INSERT INTO variant(id,document_id,content_hash,page_count,added_at) VALUES('V1','D1',?,1,'t')", [.text(hash)])
+            try db.run("INSERT INTO location(id,variant_id,path,in_workspace) VALUES('L1','V1','PDFs/book.pdf',1)")
+        }
+        lib.close()
+        let ws = try host.install(uploaded: dir)
+
+        let app = UniServerApp.application(host: host, store: store, web: WebFiles(directory: webDir),
+                                           address: .hostname("127.0.0.1", port: 0))
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/", method: .get) { r in
+                XCTAssertEqual(r.status, .ok)
+                XCTAssertTrue(String(buffer: r.body).contains("UniReader"))
+                XCTAssertEqual(r.headers[.contentType], "text/html; charset=utf-8")
+                XCTAssertNotNil(r.headers[HTTPField.Name("Content-Security-Policy")!])
+            }
+            try await client.execute(uri: "/assets/app-1.js", method: .get) { r in
+                XCTAssertEqual(r.status, .ok)
+                XCTAssertEqual(r.headers[.contentType], "text/javascript; charset=utf-8")
+            }
+            for uri in ["/assets/.env", "/assets/nope.js", "/library.sqlite"] {
+                try await client.execute(uri: uri, method: .get) { XCTAssertEqual($0.status, .notFound, uri) }
+            }
+
+            let docs = "/v1/workspaces/\(ws.id)/documents"
+            try await client.execute(uri: docs, method: .get) { XCTAssertEqual($0.status, .unauthorized) }
+            let token = try await self.pair(client)
+            try await client.execute(uri: docs, method: .get, headers: self.auth(token)) { r in
+                XCTAssertEqual(r.status, .ok)
+                let body = String(buffer: r.body)
+                XCTAssertTrue(body.contains(hash), body)
+                XCTAssertTrue(body.contains(#""pageCount":1"#), body)
+            }
+
+            // W2：打开一本书 / 页上的标记 / 修订号
+            let book = "/v1/workspaces/\(ws.id)/documents/D1"
+            try await client.execute(uri: "\(book)/view?hash=\(hash)", method: .get) { XCTAssertEqual($0.status, .unauthorized) }
+            try await client.execute(uri: "\(book)/view?hash=\(hash)", method: .get, headers: self.auth(token)) { r in
+                XCTAssertEqual(r.status, .ok)
+                XCTAssertTrue(String(buffer: r.body).contains(#""layers":[]"#), String(buffer: r.body))
+            }
+            try await client.execute(uri: "\(book)/view?hash=..%2F", method: .get, headers: self.auth(token)) {
+                XCTAssertEqual($0.status, .badRequest)
+            }
+            try await client.execute(uri: "\(book)/marks?from=0&to=3", method: .get, headers: self.auth(token)) { r in
+                XCTAssertEqual(r.status, .ok)
+                XCTAssertEqual(String(buffer: r.body), #"{"marks":[]}"#)
+            }
+            for q in ["", "?from=2&to=1", "?from=-1&to=1", "?from=a&to=1"] {
+                try await client.execute(uri: "\(book)/marks\(q)", method: .get, headers: self.auth(token)) {
+                    XCTAssertEqual($0.status, .badRequest, q)
+                }
+            }
+            try await client.execute(uri: "/v1/workspaces/\(ws.id)/documents/nope/marks?from=0&to=1", method: .get,
+                                     headers: self.auth(token)) { XCTAssertEqual($0.status, .notFound) }
+            try await client.execute(uri: "/v1/workspaces/\(ws.id)/head", method: .get, headers: self.auth(token)) { r in
+                XCTAssertEqual(r.status, .ok)
+                XCTAssertTrue(String(buffer: r.body).hasPrefix(#"{"head":"#), String(buffer: r.body))
+            }
+        }
     }
 
     func testParseRange() {

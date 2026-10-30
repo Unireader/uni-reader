@@ -23,3 +23,8 @@ android
 
 # 笔迹绘制对比工具（spike/ink-cross/）的产物。唯一真源是 spike/ink-cross/vectors.json（run.sh 拷一份给 gradle 用）。
 spike/ink-cross/out/
+
+# 服务器自带的网页阅读器（server/web/）：依赖由用户 pnpm install，产物由构建插件编进服务器程序；.test-build 是 pnpm test 的中间产物
+server/web/node_modules/
+server/web/dist/
+server/web/.test-build/

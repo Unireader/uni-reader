@@ -19,6 +19,12 @@ import UniServerCore
 /// | `GET workspaces/:ws/pull?since=&limit=` | 拉取（`SyncWire` 二进制） |
 /// | `HEAD/GET/PUT workspaces/:ws/pdf/:hash` | PDF：查有没有 / 下载（支持 `Range`）/ 上传（可续传） |
 /// | `HEAD/GET/PUT workspaces/:ws/image/:sha.:ext` | 图片本体，同上 |
+/// | `GET workspaces/:ws/documents` | 书目（网页阅读器用）：书名 / 分组 / 页数 / 阅读进度 / 打开用哪份 PDF |
+/// | `GET workspaces/:ws/documents/:doc/view?hash=` | 打开一本书（网页）：笔迹图层、笔记类型、扫描页对齐参数（`hash` = 打开的那份 PDF） |
+/// | `GET workspaces/:ws/documents/:doc/marks?from=&to=` | 一段页（从 0 起，含两端）上的文字笔记 / 笔迹 / 高亮（网页）；笔迹点集一律二进制、base64 |
+/// | `GET workspaces/:ws/head` | 当前修订号（网页轮询，变了再重拉标记） |
+///
+/// `/v1` 之外是网页阅读器的静态文件（`WebFiles`：`/`、`assets/…`、`pdfjs/…`），**不要令牌**、不含任何数据。
 ///
 /// **续传**（上传会话里的文件、PDF、图片都一样）：请求头 `Upload-Offset`（从哪接着传）+ `Upload-Length`（总长）。
 /// 偏移对不上 → 409，响应头 `Upload-Offset` 是服务器上已有的字节数；没传完 → 202 + 新的 `Upload-Offset`；
@@ -28,10 +34,14 @@ public enum UniServerApp {
 
     static let revHeader = HTTPField.Name("X-UniReader-Rev")!
 
-    public static func router(host: WorkspaceHost, store: ServerStore, name: String = "UniReader") -> Router<ServerRequestContext> {
+    public static func router(host: WorkspaceHost, store: ServerStore, name: String = "UniReader",
+                              web: WebFiles = WebFiles()) -> Router<ServerRequestContext> {
         let router = Router(context: ServerRequestContext.self)
         let serverId = (try? store.serverId()) ?? ""
         router.add(middleware: ServerErrorMiddleware())
+
+        // MARK: 网页（不要令牌，不含数据）
+        web.addRoutes(to: router)
 
         // MARK: 配对（不要令牌）
         let limiter = PairingLimiter()
@@ -172,6 +182,35 @@ public enum UniServerApp {
             return Response(status: .created)
         }
 
+        // MARK: 网页阅读器
+        api.get("workspaces/:ws/documents") { _, context -> DocumentList in
+            let w = try workspace(context)
+            return DocumentList(documents: try await Blocking.run { try w.documents() }.map(DocumentDTO.init))
+        }
+
+        api.get("workspaces/:ws/documents/:doc/view") { request, context -> DocumentViewDTO in
+            let w = try workspace(context), doc = try context.parameters.require("doc")
+            let hash = request.uri.queryParameters.get("hash").map { String($0) }
+            if let hash, !ServerInfo.isContentHash(hash) { throw HTTPError(.badRequest, message: "内容哈希格式不对") }
+            return DocumentViewDTO(try await Blocking.run { try w.documentView(documentId: doc, contentHash: hash) })
+        }
+
+        api.get("workspaces/:ws/documents/:doc/marks") { request, context -> PageMarkList in
+            let w = try workspace(context), doc = try context.parameters.require("doc")
+            guard let from = request.uri.queryParameters.get("from").flatMap({ Int($0) }),
+                  let to = request.uri.queryParameters.get("to").flatMap({ Int($0) }), from >= 0, to >= from else {
+                throw HTTPError(.badRequest, message: "页范围 from / to 不对")
+            }
+            // 一次最多 200 页：网页只取视口附近几页
+            let marks = try await Blocking.run { try w.pageMarks(documentId: doc, from: from, to: min(to, from + 199)) }
+            return PageMarkList(marks: marks.map(PageMarkDTO.init))
+        }
+
+        api.get("workspaces/:ws/head") { _, context -> HeadDTO in
+            let w = try workspace(context)
+            return HeadDTO(head: try await Blocking.run { w.head })
+        }
+
         // MARK: 图片本体
         @Sendable func imageName(_ context: ServerRequestContext) throws -> (sha: String, ext: String) {
             let parts = try context.parameters.require("name").split(separator: ".")
@@ -209,8 +248,8 @@ public enum UniServerApp {
     }
 
     public static func application(host: WorkspaceHost, store: ServerStore, name: String = "UniReader",
-                                   address: BindAddress) -> some ApplicationProtocol {
-        Application(router: router(host: host, store: store, name: name),
+                                   web: WebFiles = WebFiles(), address: BindAddress) -> some ApplicationProtocol {
+        Application(router: router(host: host, store: store, name: name, web: web),
                     configuration: .init(address: address, serverName: "UniReader/\(ServerInfo.version)"))
     }
 
@@ -310,7 +349,7 @@ struct ServerErrorMiddleware: RouterMiddleware {
         case .badPairingCode: return .unauthorized
         case .notAWorkspace, .badRequest: return .badRequest
         case .workspaceSchemaTooNew, .alreadyHosted, .schemaMismatch: return .conflict
-        case .unknownWorkspace: return .notFound
+        case .unknownWorkspace, .unknownDocument: return .notFound
         case .badContentHash: return .unprocessableContent
         }
     }
@@ -403,3 +442,40 @@ struct InfoResponse: ResponseEncodable {
 struct WorkspaceDTO: ResponseEncodable { let id: String; let name: String; let head: UInt64 }
 struct WorkspaceList: ResponseEncodable { let workspaces: [WorkspaceDTO] }
 struct UploadDTO: ResponseEncodable { let upload: String }
+struct DocumentDTO: ResponseEncodable {
+    let id: String; let title: String; let group: String; let pageCount: Int
+    let readPage: Int; let readFrac: Double
+    /// 没有 = 服务器上还没有这本书的 PDF。
+    let contentHash: String?; let pdfBytes: Int64?
+
+    init(_ d: HostedWorkspace.DocumentInfo) {
+        id = d.id; title = d.title; group = d.group; pageCount = d.pageCount
+        readPage = d.readPage; readFrac = d.readFrac; contentHash = d.contentHash; pdfBytes = d.pdfBytes
+    }
+}
+struct DocumentList: ResponseEncodable { let documents: [DocumentDTO] }
+struct InkLayerDTO: ResponseEncodable { let id: String; let name: String; let colorKey: String; let sortOrder: Int; let visible: Bool }
+struct DocumentViewDTO: ResponseEncodable {
+    let layers: [InkLayerDTO]
+    /// JSON 文本原样（网页自己解）：笔记类型数组 / 扫描页对齐参数。没有 = 不出这个键。
+    let noteTypes: String?; let align: String?
+
+    init(_ v: HostedWorkspace.DocumentView) {
+        layers = v.layers.map { InkLayerDTO(id: $0.id, name: $0.name, colorKey: $0.colorKey, sortOrder: $0.sortOrder, visible: $0.visible) }
+        noteTypes = v.noteTypes; align = v.align
+    }
+}
+struct PageMarkDTO: ResponseEncodable {
+    let id: String; let kind: Int; let page: Int; let anchor: [Double]
+    /// `note.payload` 的 JSON 文本原样（笔迹的点已摘掉）。
+    let payload: String
+    /// 笔迹点集（`InkPointsBlob`）的 base64；非笔迹不出这个键。
+    let points: String?
+
+    init(_ m: HostedWorkspace.PageMark) {
+        id = m.id; kind = m.kind; page = m.page; anchor = m.anchor; payload = m.payload
+        points = m.points?.base64EncodedString()
+    }
+}
+struct PageMarkList: ResponseEncodable { let marks: [PageMarkDTO] }
+struct HeadDTO: ResponseEncodable { let head: UInt64 }

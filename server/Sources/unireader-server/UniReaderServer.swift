@@ -7,6 +7,7 @@ import UniServerHTTP
 ///
 /// ```
 /// unireader-server [serve] [--data <目录>] [--host 127.0.0.1] [--port 8790] [--name <名字>] [--no-discovery]
+///                          [--web-dir <目录>]   网页阅读器读这个目录（开发用；默认用编在程序里的那份）
 /// unireader-server pairing-code        显示配对码
 /// unireader-server reset-pairing-code  换一个配对码（已配对的设备不受影响）
 /// unireader-server devices             列出设备
@@ -28,6 +29,7 @@ struct UniReaderServerMain {
         var port = 8790
         var name = defaultName
         var discovery = true
+        var webDir: URL?
         var positional: [String] = []
         while !args.isEmpty {
             let a = args.removeFirst()
@@ -39,6 +41,7 @@ struct UniReaderServerMain {
                 port = p
             case "--name": name = try value(&args, a)
             case "--no-discovery": discovery = false
+            case "--web-dir": webDir = URL(fileURLWithPath: try value(&args, a), isDirectory: true)
             case "-h", "--help": usage(); return
             default: positional.append(a)
             }
@@ -49,6 +52,7 @@ struct UniReaderServerMain {
         switch positional.first ?? "serve" {
         case "serve":
             let workspaces = try WorkspaceHost(paths: paths)
+            let web = WebFiles(directory: webDir)
             print("""
             UniReader 服务器 \(ServerInfo.version)（数据版本 \(ServerInfo.schemaVersion)）
               数据目录：\(dataDir.path)
@@ -56,6 +60,7 @@ struct UniReaderServerMain {
               配对码：  \(try store.pairingCode())
               名字：    \(name)
               工作区：  \(workspaces.list().count) 个
+              网页：    \(web.sourceDescription)
             """)
             let loopback = ["127.0.0.1", "localhost", "::1"].contains(host)
             if !loopback {
@@ -80,7 +85,7 @@ struct UniReaderServerMain {
                     try? await Task.sleep(nanoseconds: 3600 * 1_000_000_000)
                 }
             }
-            let app = UniServerApp.application(host: workspaces, store: store, name: name,
+            let app = UniServerApp.application(host: workspaces, store: store, name: name, web: web,
                                                address: .hostname(host, port: port))
             try await app.runService()
             advertiser.stop()
@@ -137,6 +142,7 @@ struct UniReaderServerMain {
         print("""
         用法：
           unireader-server [serve] [--data <目录>] [--host 127.0.0.1] [--port 8790] [--name <名字>] [--no-discovery]
+                           [--web-dir <目录>]（网页阅读器读这个目录，开发用）
           unireader-server pairing-code | reset-pairing-code | devices | revoke <设备 id>
           unireader-server deleted | restore <工作区 id>
         默认数据目录：\(ServerPaths.defaultRoot.path)

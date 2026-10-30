@@ -56,6 +56,7 @@ public enum ServerError: Error, Equatable, CustomStringConvertible {
     case workspaceSchemaTooNew(workspace: Int, server: Int)
     case alreadyHosted(String)
     case unknownWorkspace(String)
+    case unknownDocument(String)
     /// 客户端与服务器的 schema 版本不同：低于服务器只能读，高于服务器要先升级服务器（方案 §3.6）。
     case schemaMismatch(client: Int, server: Int)
     case badContentHash
@@ -68,6 +69,7 @@ public enum ServerError: Error, Equatable, CustomStringConvertible {
         case .workspaceSchemaTooNew(let w, let s): return "工作区的数据版本（\(w)）比服务器（\(s)）新，请先升级服务器"
         case .alreadyHosted(let id): return "服务器上已经有这个工作区（\(id)）"
         case .unknownWorkspace(let id): return "服务器上没有这个工作区（\(id)）"
+        case .unknownDocument(let id): return "工作区里没有这本书（\(id)）"
         case .schemaMismatch(let c, let s):
             return c < s ? "App 的数据版本（\(c)）比服务器（\(s)）旧，请先升级 App"
                          : "App 的数据版本（\(c)）比服务器（\(s)）新，请先升级服务器"

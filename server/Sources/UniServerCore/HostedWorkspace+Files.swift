@@ -12,7 +12,7 @@ extension HostedWorkspace {
         return store.withMirrorDB { pdfFileLocked($0, contentHash: contentHash) }
     }
 
-    private func pdfFileLocked(_ db: SQLiteDB, contentHash: String) -> URL? {
+    func pdfFileLocked(_ db: SQLiteDB, contentHash: String) -> URL? {
         let fm = FileManager.default
         let paths = ((try? db.query("""
         SELECT l.path FROM location l JOIN variant v ON v.id=l.variant_id

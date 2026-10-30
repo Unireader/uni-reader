@@ -29,7 +29,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   背景与例外见 `docs/agents/BUILD-DETAILS.md`。
 - 发布到 GitHub（`scripts/release.sh` + 发布日志 + appcast/Sparkle）与 **SPM 第三方包**（`swift-markdown-engine` fork、Sparkle、`swift-acp`）：全流程与细则在 `docs/agents/BUILD-DETAILS.md`，**发布/升包前必读**。
 - 🔴 **App 不带网页**（2026-10-30 用户定）：原先的平板网页采集页（`web/`）已删除，Mac 的局域网服务 `GET /` 只回一句停用说明；
-  网页由独立服务器（`server/`）自己提供（方案 `docs/SERVER-MODE-PLAN.md` S6，**写好方案待用户确认，代码未动**）。别再往 App 里加 HTML 资源。
+  网页由独立服务器（`server/`）自己提供（方案 `docs/WEB-READER-PLAN.md`，工程在 `server/web/`，W1 已上 NAS，W2 显示笔迹已写、待用户实测）。别再往 App 里加 HTML 资源。
 - 项目级用户规则：不代用户执行安装（brew/pip/npm 一律给脚本让用户跑）；交流用中文或英文。
 - Android 端（`android/`）：构建 `cd android && ./gradlew assembleDebug`，打包 `android/pack.sh`。**其余规则、结构与坑全在 `android/AGENTS.md`（改安卓代码前先读它），本文件不重复。**
 - 服务器（`server/`，`docs/SERVER-MODE-PLAN.md`）：`cd server && swift test`。它经符号链接直接编 `Sources/Store/`、`Sources/Sync/`、
@@ -71,7 +71,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - **`docs/SERVER-MODE-PLAN.md`** — 连接服务器（独立 Swift 服务器程序，2026-10-29 定方案；服务器 S0 + S1 已落地，Mac 客户端 S2 第一轮、安卓 S3 第一轮已落地，Linux 版已在用户 NAS 上跑通）：工作区「从服务器打开 / 上传到服务器」，
   各设备本机缓存全部、大 PDF 按需下载；以服务器为中心的同步沿用离线镜像的指纹与判定；本地工作区规则不变。
   子工程 `server/`（自带 `server/AGENTS.md`）
-- **`docs/WEB-READER-PLAN.md`** — 服务器自带的网页阅读器（S6，2026-10-30 起草，**待用户确认**）；App 里的旧网页采集页同日删除（§10.1）
+- **`docs/WEB-READER-PLAN.md`** — 服务器自带的网页阅读器（S6，2026-10-30 开工；W1 阅读已上 NAS，W2 显示笔迹 / 高亮 / 文字笔记已写，W3 手写待做）；App 里的旧网页采集页同日删除（§10.1）
 - `docs/agents/BUILD-DETAILS.md` · `docs/agents/STRUCTURE.md` · `docs/agents/PITFALLS.md` — 本文件拆出的三份细节
 - 子目录可自带 `AGENTS.md`（`android/` 即独立 git 仓库 + 自带规则）；新子工程照此办理，跨端契约仍留根目录，见 `docs/agents/BUILD-DETAILS.md`
 

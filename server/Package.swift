@@ -9,6 +9,9 @@ import PackageDescription
 //   BackupRetention.swift -> ../../../Sources/App/BackupRetention.swift（备份保留策略，纯函数）
 // 不挪文件、不给 App 代码加 `public`：同一个模块里 internal 就够用（方案 §9）。
 //
+// 网页阅读器（`web/`，方案 `../docs/WEB-READER-PLAN.md`）：构建插件 `EmbedWebAssets` 把 `web/dist` 编进 `UniServerHTTP`，
+// 生成器是 `web-embed`。没有 `web/dist` 也能编（程序里不带网页）。
+//
 // 🔴 第三方包由用户执行 `swift package resolve` 拉取（项目规矩：不代用户安装依赖）。
 let package = Package(
     name: "UniReaderServer",
@@ -33,7 +36,10 @@ let package = Package(
             "UniServerCore",
             .product(name: "Hummingbird", package: "hummingbird"),
             .product(name: "HTTPTypes", package: "swift-http-types"),
-        ], path: "Sources/UniServerHTTP"),
+        ], path: "Sources/UniServerHTTP", plugins: ["EmbedWebAssets"]),
+        .executableTarget(name: "web-embed", path: "Sources/web-embed"),
+        .plugin(name: "EmbedWebAssets", capability: .buildTool(), dependencies: ["web-embed"],
+                path: "Plugins/EmbedWebAssets"),
         .executableTarget(name: "unireader-server", dependencies: [
             "UniServerCore", "UniServerHTTP",
             .product(name: "Hummingbird", package: "hummingbird"),

@@ -34,6 +34,12 @@ if [ "${2:-}" = "--tests" ]; then
     bin=$(swift build --disable-automatic-resolution --swift-sdk "$SDK" --show-bin-path)
     find "$bin" -maxdepth 1 -name '*PackageTests*' -type f -perm -u+x | head -1
 else
+    # 网页阅读器（web/）：装了依赖就先构建，产物由构建插件编进程序；没装就提醒一句，程序照样能编，只是不带网页
+    if [ -d web/node_modules ]; then
+        scripts/build-web.sh >&2
+    elif [ ! -f web/dist/index.html ]; then
+        echo "⚠️ web/dist 不存在，这次编出的程序不带网页（先 cd server/web && pnpm install，再重跑本脚本）" >&2
+    fi
     # -s：去掉符号表，体积小很多
     swift build -c release --disable-automatic-resolution --swift-sdk "$SDK" --product unireader-server -Xlinker -s
     echo "$(swift build -c release --disable-automatic-resolution --swift-sdk "$SDK" --show-bin-path)/unireader-server"
