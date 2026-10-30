@@ -3,7 +3,7 @@
 macOS 26+ PDF 阅读器（非沙盒，Tahoe 专属，不做低版本兼容）。Swift 5 / AppKit / xcodegen 管理；界面全部 AppKit，SwiftUI 只许出现在红线②列的两处（详见 `APPKIT-REWRITE-PLAN.md`）。
 
 > 本文件只留每次会话都要用的硬规则与索引；完整细节拆在 `docs/agents/`（同一条规则只在一处维护）：
-> `BUILD-DETAILS.md` 发布流程 / Sparkle 密钥 / SPM 包 / 采集页构建 / 子工程约定，
+> `BUILD-DETAILS.md` 发布流程 / Sparkle 密钥 / SPM 包 / 子工程约定，
 > `STRUCTURE.md` 各模块结构全文，`PITFALLS.md` 全部「关键坑」实录。
 
 ## 构建与验证
@@ -28,7 +28,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   给用户实测**别跑 `package.sh`**（Release + 公证 + 自动 bump 版本），Debug 包够用。
   背景与例外见 `docs/agents/BUILD-DETAILS.md`。
 - 发布到 GitHub（`scripts/release.sh` + 发布日志 + appcast/Sparkle）与 **SPM 第三方包**（`swift-markdown-engine` fork、Sparkle、`swift-acp`）：全流程与细则在 `docs/agents/BUILD-DETAILS.md`，**发布/升包前必读**。
-- 采集页前端 `web/` 改动后跑 `scripts/build-web.sh` 再编译 App（`capture.html` 是构建产物、不入 git）。
+- 🔴 **App 不带网页**（2026-10-30 用户定）：原先的平板网页采集页（`web/`）已删除，Mac 的局域网服务 `GET /` 只回一句停用说明；
+  网页由独立服务器（`server/`）自己提供（方案 `SERVER-MODE-PLAN.md` S6，**写好方案待用户确认，代码未动**）。别再往 App 里加 HTML 资源。
 - 项目级用户规则：不代用户执行安装（brew/pip/npm 一律给脚本让用户跑）；交流用中文或英文。
 - Android 端（`android/`）：构建 `cd android && ./gradlew assembleDebug`，打包 `android/pack.sh`。**其余规则、结构与坑全在 `android/AGENTS.md`（改安卓代码前先读它），本文件不重复。**
 - 服务器（`server/`，`SERVER-MODE-PLAN.md`）：`cd server && swift test`。它经符号链接直接编 `Sources/Store/`、`Sources/Sync/`、
@@ -43,7 +44,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 
 - `TODO.md` — 交接状态速览 + 待办 + 已知坑，**第一优先**（只留进行中/待办）；`HISTORY.md` — 已完成事项归档（TODO 条目做完即迁入）
 - `REQUIREMENTS.md` — 需求与 §8 工作区持久化方案
-- `PROTOCOL.md` — 二进制线格式**唯一契约**（Mac / web / 安卓三端字节级一致），改协议先改它；§9 是连接服务器的同步线格式（App ↔ 服务器）
+- `PROTOCOL.md` — 二进制线格式**唯一契约**（Mac / 安卓两端字节级一致；JS 版 `spike/wire.js` 只给 node 测试用），改协议先改它；§9 是连接服务器的同步线格式（App ↔ 服务器）
 - `PDF-VIEWER-REBUILD-PLAN.md` — 阅读区 v2（`PageStreamView`）的五条硬指标与零闪烁纪律
 - **`APPKIT-REWRITE-PLAN.md`** — 界面整体重写为 AppKit（含阅读区，2026-09-19 拍板，`appkit-rewrite` 分支）：§7.1 实测清单、§9 实现记录；`APPKIT-WINDOW-PLAN.md` 是被它取代的前身
 - `REF-WINDOW-PLAN.md` — 参考窗（只读浮窗）；`OFFLINE-MIRROR-PLAN.md` — 工作区离线镜像（Mac + 安卓模式1，三方合并）
@@ -67,6 +68,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - **`SERVER-MODE-PLAN.md`** — 连接服务器（独立 Swift 服务器程序，2026-10-29 定方案；服务器 S0 + S1 已落地，Mac 客户端 S2 第一轮、安卓 S3 第一轮已落地，Linux 版已在用户 NAS 上跑通）：工作区「从服务器打开 / 上传到服务器」，
   各设备本机缓存全部、大 PDF 按需下载；以服务器为中心的同步沿用离线镜像的指纹与判定；本地工作区规则不变。
   子工程 `server/`（自带 `server/AGENTS.md`）
+- **`WEB-READER-PLAN.md`** — 服务器自带的网页阅读器（S6，2026-10-30 起草，**待用户确认**）；App 里的旧网页采集页同日删除（§10.1）
 - `docs/agents/BUILD-DETAILS.md` · `docs/agents/STRUCTURE.md` · `docs/agents/PITFALLS.md` — 本文件拆出的三份细节
 - 子目录可自带 `AGENTS.md`（`android/` 即独立 git 仓库 + 自带规则）；新子工程照此办理，跨端契约仍留根目录，见 `docs/agents/BUILD-DETAILS.md`
 
@@ -82,12 +84,12 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 7. 滚动跟随**只跟随不预测**：纯临界阻尼低通，禁速度外推（WiFi 成批投递导致过冲闪回）。
 8. 重建 PDF 显示前**必须先与用户确认方案**，不要自行动手。
 9. Markdown 笔记**自动维护不许改正文**（用户原话「不要改 `[[]]` 现有的哪怕不兼容也不要改」）：导入/改名/挪目录/扫描都不动正文；`[[…]]` 按名字解析，断链是明确接受的代价、不自动修。只有用户显式编辑或明确要求走 MCP `edit_markdown`/`update_markdown` 才写。
-10. `InkEdit.splitStroke` 与 web 端 JS 版**同算法两份实现，改一边必须同步另一边**。
+10. ~~`InkEdit.splitStroke` 与 web 端 JS 版同算法两份实现~~——2026-10-30 网页采集页删除，此条作废（编号保留：别处按编号引用红线）。
 11. 删除类操作**先归档再删除，顺序不许反**（回收站；先删再存 = 中途失败就没了）。
 
 ## 结构要点（速览）
 
-目录地图：`Sources/App/`（单例 + 渲染管线 + 笔迹纯函数 `InkEdit`/`InkUndo`/`InkWindow` 等）、`Sources/Store/`（工作区 SQLite）、`Sources/Sync/`（连接服务器的同步：线格式 + 客户端算法，App 与 `server/` 共用）、`Sources/ServerSync/`（App 这一侧：HTTP 客户端 / 账号 / 调度，只给 App 用）、`Sources/Server/`（LAN WS + UDP，契约 `PROTOCOL.md §6`）、`Sources/MCP/`、`Sources/Agent/`、`Sources/Reader/`（阅读区 AppKit，`ReaderView` + 扩展 + `Pane/Ref/Rack/Scratch/`）、`Sources/Window/`、`Sources/Settings/`、`Sources/Markdown/`、`web/`（采集页前端）。**改哪个模块，先读 `docs/agents/STRUCTURE.md` 对应条目 + 该模块方案文档**（文件头还有各 spike 测试）。跨条目的硬约束已抄进上面的红线；其余不变量：
+目录地图：`Sources/App/`（单例 + 渲染管线 + 笔迹纯函数 `InkEdit`/`InkUndo`/`InkWindow` 等）、`Sources/Store/`（工作区 SQLite）、`Sources/Sync/`（连接服务器的同步：线格式 + 客户端算法，App 与 `server/` 共用）、`Sources/ServerSync/`（App 这一侧：HTTP 客户端 / 账号 / 调度，只给 App 用）、`Sources/Server/`（LAN WS + UDP，契约 `PROTOCOL.md §6`）、`Sources/MCP/`、`Sources/Agent/`、`Sources/Reader/`（阅读区 AppKit，`ReaderView` + 扩展 + `Pane/Ref/Rack/Scratch/`）、`Sources/Window/`、`Sources/Settings/`、`Sources/Markdown/`。**改哪个模块，先读 `docs/agents/STRUCTURE.md` 对应条目 + 该模块方案文档**（文件头还有各 spike 测试）。跨条目的硬约束已抄进上面的红线；其余不变量：
 
 - MCP：`MCPFacade` 是唯一碰 App 活状态处；页码对外 1 起、对内 0 起，换算只在 `PageNo`。
 - DeepLink/MCP：🔴 「让某篇显示出来」只有 `AppDelegate.showDocument` 一份，别在两边各写找标签/挑窗口。

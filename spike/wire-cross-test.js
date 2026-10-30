@@ -9,7 +9,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const Wire = require(path.join(__dirname, "../Sources/Resources/wire.js"));
+const Wire = require(path.join(__dirname, "wire.js"));
 
 function hex(u8) { return Buffer.from(u8).toString("hex"); }
 

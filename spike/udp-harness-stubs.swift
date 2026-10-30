@@ -1,5 +1,5 @@
 // udp-client-test.js 的 LANServer 依赖桩（仅 harness 编译用，勿进 App target）：
-// 真实 Pairing/NetInfo/CapturePage 依赖 AppKit/Bundle 资源，spike 里换成确定性最小实现。
+// 真实 Pairing/NetInfo 依赖 AppKit/Bundle 资源，spike 里换成确定性最小实现。
 import Foundation
 
 enum Pairing {
@@ -12,8 +12,4 @@ enum Pairing {
 final class NetWatch {
     static let shared = NetWatch()
     func host(preferring preferred: String? = nil) -> String { "127.0.0.1" }
-}
-
-enum CapturePage {
-    static func html(token: String, wsPort: UInt16) -> String { "" }
 }

@@ -1,17 +1,17 @@
 #!/bin/bash
-# 三端笔迹绘制对比工具 —— 一键驱动。
+# 笔迹绘制对比工具（Mac ↔ 安卓）—— 一键驱动。网页采集页 2026-10-30 删除，web 那一端随之去掉。
 #
-#   spike/ink-cross/run.sh              # 三端都跑 + 出报告
-#   spike/ink-cross/run.sh mac web      # 只跑这几端（省掉安卓那 30 秒）
+#   spike/ink-cross/run.sh              # 两端都跑 + 出报告
+#   spike/ink-cross/run.sh mac          # 只跑这几端（省掉安卓那 30 秒）
 #   spike/ink-cross/run.sh report       # 用已有的图重出报告
 #   spike/ink-cross/run.sh gen          # 重新生成向量（改了 gen-vectors.py 之后）
 #
-# 产物：`spike/ink-cross/out/{mac,web,android}/<笔画名>.png` + `out/report.html`（用浏览器打开）。
+# 产物：`spike/ink-cross/out/{mac,android}/<笔画名>.png` + `out/report.html`（用浏览器打开）。
 #
-# 三端出图的**共同口径**（改一处必须同时改另两处，否则比的是口径不是算法）：
+# 两端出图的**共同口径**（改一处必须同时改另一处，否则比的是口径不是算法）：
 #   · 位图 = canvas.w × canvas.h × canvas.scale 物理像素（当前 1800×1200）
 #   · 笔宽 = vectors 里的 width × canvas.scale 物理像素
-#     mac 走 `ImageRenderer.scale=2`；web 走 `wScale=scale`；android 走 `InkRenderer(scale)`
+#     mac 走 `ImageRenderer.scale=2`；android 走 `InkRenderer(scale)`
 #     （安卓那个参数名叫 density，但这里喂的是 scale，**不是设备真实 density**——见测试里的红线）
 #   · 白色不透明底，无缩放重采样
 #
@@ -28,7 +28,7 @@ PY="${INKCROSS_PY:-$HOME/.agents/_internal/_tmp/.venv/bin/python}"
 want() { case " $TARGETS " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 TARGETS="$*"
-[ -z "$TARGETS" ] && TARGETS="mac web android report"
+[ -z "$TARGETS" ] && TARGETS="mac android report"
 case "$TARGETS" in *gen*) ;; *) ;; esac
 
 mkdir -p "$OUT"
@@ -59,56 +59,6 @@ if want mac; then
     "$ROOT/Sources/Support/L.swift" \
     /tmp/inkcross-build/main.swift -o /tmp/inkcross-mac || { echo "✗ macOS 端编译失败"; exit 1; }
   /tmp/inkcross-mac "$VEC" "$OUT/mac" || exit 1
-fi
-
-# ---------- web ----------
-if want web; then
-  echo "▸ web 出图"
-  mkdir -p "$OUT/web"
-  rm -f "$OUT/web"/*.png
-  # 测试页 fetch 同目录下的向量；`web/ink-cross-vectors.json` 是拷贝件，已进 .gitignore
-  cp "$VEC" "$ROOT/web/ink-cross-vectors.json"
-
-  # chrome-headless-shell 来自 playwright 的浏览器缓存（**只用二进制，不装 npm 包**：
-  # `npx playwright` 会触发安装，而这个项目的规矩是不代用户装依赖）。
-  SHELL_BIN=""
-  for d in "$HOME/Library/Caches/ms-playwright"/chromium_headless_shell-*; do
-    for arch in mac-arm64 mac-x64; do
-      [ -x "$d/chrome-headless-shell-$arch/chrome-headless-shell" ] && \
-        SHELL_BIN="$d/chrome-headless-shell-$arch/chrome-headless-shell"
-    done
-  done
-  if [ -z "$SHELL_BIN" ]; then
-    echo "✗ 找不到 chrome-headless-shell（找过 ~/Library/Caches/ms-playwright/chromium_headless_shell-*）"
-    echo "  它随 playwright 的浏览器下载而来。装浏览器的命令交给用户跑，别自己装。"
-    exit 1
-  fi
-
-  # vite dev 负责转译 `src/lib/*.ts`——测试页 import 的是**产品代码本身**，不是复刻件。
-  ( cd "$ROOT/web" && npx vite --port 5199 --strictPort >/tmp/inkcross-vite.log 2>&1 & )
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    curl -s -o /dev/null "http://localhost:5199/ink-cross.html" && break
-    sleep 1
-  done
-
-  W=$(python3 -c "import json;c=json.load(open('$VEC'))['canvas'];print(int(c['w']*c['scale']))")
-  H=$(python3 -c "import json;c=json.load(open('$VEC'))['canvas'];print(int(c['h']*c['scale']))")
-  NAMES=$(python3 -c "import json;print('\n'.join(s['name'] for s in json.load(open('$VEC'))['strokes']))")
-  UDD=$(mktemp -d)
-  i=0
-  # 🔴 用 while read 而不是 `for n in $NAMES`：这个脚本常被人从 zsh 里拷去手跑，
-  # 而 zsh 默认**不做单词分割**，for 会把整串名字当成一个。
-  echo "$NAMES" | while IFS= read -r n; do
-    [ -z "$n" ] && continue
-    "$SHELL_BIN" --headless --disable-gpu --hide-scrollbars --force-device-scale-factor=1 \
-      --user-data-dir="$UDD" --no-first-run \
-      --screenshot="$OUT/web/$n.png" --window-size="$W,$H" --virtual-time-budget=5000 \
-      "http://localhost:5199/ink-cross.html?i=$i" >/dev/null 2>&1
-    i=$((i + 1))
-  done
-  rm -rf "$UDD"
-  pkill -f "vite --port 5199" 2>/dev/null
-  echo "  web 端出图 $(ls "$OUT/web" | wc -l | tr -d ' ') 张"
 fi
 
 # ---------- android ----------

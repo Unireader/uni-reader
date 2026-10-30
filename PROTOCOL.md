@@ -1,8 +1,11 @@
 # UniReader 通信协议（二进制线格式 v1）
 
-> Mac ↔ 平板（浏览器采集页 / 安卓输入板）之间的**唯一线格式契约**。
-> 三端实现必须字节级一致：Swift `Sources/Server/WireCodec.swift`、JS `Sources/Resources/wire.js`、（后续）Kotlin。
-> 改这里 = 改三端 + `spike/wire-codec-test.swift` + `spike/wire-cross-test.js`。
+> Mac ↔ 平板（安卓输入板）之间的**唯一线格式契约**。
+> 实现必须字节级一致：Swift `Sources/Server/WireCodec.swift`、Kotlin（安卓 `WireCodec.kt`）。
+> 改这里 = 改两端 + `spike/wire-codec-test.swift` + `spike/wire-cross-test.js`（JS 版 `spike/wire.js` 只给 node 测试用）。
+>
+> ⚠️ **浏览器采集页 2026-10-30 已删除**（App 不再带网页）。下文凡写「采集页」「JS」「浏览器」的地方是历史设计记录，
+> 线格式本身不变；浏览器那条路（只走 WS、不走 UDP）现在没有客户端了。
 >
 > **§9 是另一份契约**：App（Mac / 安卓模式1）↔ UniReader 服务器的同步线格式（HTTP 体，Swift / Kotlin 两份实现，向量 `spike/sync-wire-vectors.txt`）。
 

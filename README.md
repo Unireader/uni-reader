@@ -76,9 +76,9 @@ There is also a **scratch pad** (an infinite whiteboard over the document) and a
 
 ### Writing with a tablet stylus
 
-- The Mac runs a small LAN server. Pair a tablet by scanning a QR code and the
-  browser shows the current page image; you write on it with the stylus and the
-  ink lands on the Mac live
+- The Mac runs a small LAN server. Pair the UniReader Android app by scanning a QR
+  code and the tablet shows the current page image; you write on it with the stylus
+  and the ink lands on the Mac live
 - Ink is sent in normalized page coordinates over a binary protocol (WebSocket,
   plus UDP for the live stroke), so it stays in place whatever the Mac is zoomed to
 - Pen barrel button switches tools; a long press brings up the pen ring
@@ -121,20 +121,17 @@ Sparkle (UniReader › Check for Updates…, or Settings › General › Updates
 ## Build from source
 
 Requires Xcode 26 and [xcodegen](https://github.com/yonaskolb/XcodeGen)
-(`brew install xcodegen`), plus Node.js for the tablet capture page.
+(`brew install xcodegen`).
 
 ```bash
-# 1. Build the tablet capture page (generates Sources/Resources/capture.html)
-scripts/build-web.sh
-
-# 2. Generate the Xcode project (UniReader.xcodeproj is generated — do not edit it)
+# 1. Generate the Xcode project (UniReader.xcodeproj is generated — do not edit it)
 xcodegen generate
 
-# 3. Resolve the Swift packages once (needs network)
+# 2. Resolve the Swift packages once (needs network)
 xcodebuild -project UniReader.xcodeproj -scheme UniReader \
   -derivedDataPath build/dev -resolvePackageDependencies
 
-# 4. Build
+# 3. Build
 xcodebuild -project UniReader.xcodeproj -scheme UniReader \
   -destination 'platform=macOS' -configuration Debug \
   -derivedDataPath build/dev build CODE_SIGNING_ALLOWED=NO
@@ -161,7 +158,6 @@ Swift packages used: [swift-markdown-engine](https://github.com/nodes-app/swift-
 | `Sources/Server/` | LAN WebSocket server, QR pairing, UDP transport |
 | `Sources/MCP/` | The built-in MCP server |
 | `Sources/Agent/` | The ACP agent panel |
-| `web/` | The tablet capture page (Svelte + Vite, built into a single HTML file) |
 | `spike/` | Standalone verification scripts (`swift spike/<name>.swift`) |
 
 Development notes and design documents live at the top level; `AGENTS.md` is the

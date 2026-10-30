@@ -368,7 +368,7 @@ final class ServerPanelController: StackPanelController {
         hostPicker.toolTip = L("Address in the QR code")
         hostPicker.controlSize = .small
         running.addArrangedSubview(row([hostPicker, spacer()]))
-        let hint = caption(L("Open this URL in Firefox on your tablet:"))
+        let hint = caption(L("Scan the QR code with the UniReader app on your tablet:"))
         running.addArrangedSubview(row([hint, spacer()]))
         url.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular)
         url.isSelectable = true

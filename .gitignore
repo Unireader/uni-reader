@@ -16,18 +16,10 @@ UniReader.xcodeproj/
 # Playwright 调试产物
 .playwright-mcp/
 
-# 采集页前端工程（web/）的依赖与构建产物
-web/node_modules/
-web/dist/
-# capture.html 是 web/ 的构建产物（scripts/build-web.sh 生成，package.sh 打包前自动重建）
-Sources/Resources/capture.html
-
 reference
 
 
 android
 
-# 三端笔迹绘制对比工具（spike/ink-cross/）的产物与拷贝件。
-# 唯一真源是 spike/ink-cross/vectors.json，另两处是 run.sh 拷过去给 vite / gradle 用的。
+# 笔迹绘制对比工具（spike/ink-cross/）的产物。唯一真源是 spike/ink-cross/vectors.json（run.sh 拷一份给 gradle 用）。
 spike/ink-cross/out/
-web/ink-cross-vectors.json

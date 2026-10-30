@@ -15,7 +15,7 @@ if (typeof WebSocket === "undefined") {
 }
 
 const dgram = require("dgram");
-const Wire = require(path.join(__dirname, "../Sources/Resources/wire.js"));
+const Wire = require(path.join(__dirname, "wire.js"));
 
 const BIN = "/tmp/udp-harness";
 const TOKEN = "testtoken";

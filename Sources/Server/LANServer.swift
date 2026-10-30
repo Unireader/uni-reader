@@ -278,11 +278,10 @@ final class LANServer: ObservableObject {
         let (path, query) = LANServer.splitQuery(target)
         switch path {
         case "/", "/index.html":
-            let html = CapturePage.html(token: authToken, wsPort: wsPort)
-            return ("200 OK", "text/html; charset=utf-8", Data(html.utf8))
-        case "/wire.js":
-            // 二进制线格式编解码器（采集页与 Mac 共用同一份，见 PROTOCOL.md）。无秘密，不校验 token。
-            return ("200 OK", "application/javascript; charset=utf-8", LANServer.wireJS())
+            // 网页采集页 2026-10-30 起不再随 App 发布（用户定：网页由独立服务器自己提供）。
+            // 二维码里仍是这个地址——安卓 App 扫它取 IP 与配对码，不会真去打开它；只有拿相机 / 浏览器扫的人会走到这里。
+            return ("410 Gone", "text/plain; charset=utf-8",
+                    Data("UniReader：网页采集页已停用，请用平板上的 UniReader App 扫码连接。\n".utf8))
         case "/page.png":
             // 方案 B：`?i=N` 按页号取图；无 i 时回退当前页（兼容旧采集页）。
             // 两条都走 `pageProvider`（服务 queue 上跑、自带 NSCache）——兜底那条曾用主线程预渲染好的
@@ -362,13 +361,6 @@ final class LANServer: ObservableObject {
             "hostName": ProcessInfo.processInfo.hostName,
         ]
         return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data("{}".utf8)
-    }
-
-    /// 采集页共用的二进制编解码器 JS（Resources/wire.js）。
-    private static func wireJS() -> Data {
-        if let url = Bundle.main.url(forResource: "wire", withExtension: "js"),
-           let data = try? Data(contentsOf: url) { return data }
-        return Data("/* wire.js 资源缺失 */".utf8)
     }
 
     /// 取请求行的目标（含 query），例如 `/page.png?i=3&v=abc`。

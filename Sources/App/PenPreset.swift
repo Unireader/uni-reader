@@ -136,24 +136,9 @@ enum PenPresets {
         guard let data = try? JSONEncoder().encode(presets) else { return }
         UserDefaults.standard.set(data, forKey: key)
     }
-
-    /// 注入采集页的 JSON：`[{name, color(css rgba), w, t}]`（与 capture.html 的 PENS 结构一致）。
-    /// 只作启动兜底（首次 WS 消息到达前 pad 至少有支笔能画）；之后由 `AppModel.broadcastPens` 的 `"pens"`
-    /// 消息接管，作为运行时唯一同步源。
-    static func captureJSON() -> String {
-        let items = load().map { p in
-            "{\"name\":\(jsonString(p.name)),\"color\":\"\(p.color.cssRGBA)\",\"w\":\(p.width),\"t\":\"\(p.type.rawValue)\"}"
-        }
-        return "[" + items.joined(separator: ",") + "]"
-    }
-
-    private static func jsonString(_ s: String) -> String {
-        guard let data = try? JSONEncoder().encode(s), let str = String(data: data, encoding: .utf8) else { return "\"\"" }
-        return str
-    }
 }
 
 extension InkColor {
-    /// CSS `rgba(r,g,b,a)`（采集页/注入用）。
+    /// CSS `rgba(r,g,b,a)`：线格式里颜色的写法（安卓按它解析）。
     var cssRGBA: String { "rgba(\(Int(r)),\(Int(g)),\(Int(b)),\(a))" }
 }

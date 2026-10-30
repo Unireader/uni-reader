@@ -28,8 +28,8 @@ import sys
 import numpy as np
 from PIL import Image
 
-PLATS = ["mac", "web", "android"]
-PLAT_LABEL = {"mac": "macOS", "web": "web（采集页）", "android": "Android"}
+PLATS = ["mac", "android"]   # web（采集页）2026-10-30 删除
+PLAT_LABEL = {"mac": "macOS", "android": "Android"}
 # 墨判定阈值：低于它算纸。抗锯齿的半透明边缘因此不计入 bbox，位置指标才稳。
 INK_THR = 0.15
 

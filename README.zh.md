@@ -65,7 +65,7 @@ Markdown 笔记——不用再开另一个软件。
 
 ### 用平板触控笔写字
 
-- Mac 上跑一个局域网服务，平板扫二维码配对后，浏览器里显示当前页的图，
+- Mac 上跑一个局域网服务，平板上的 UniReader 安卓 App 扫二维码配对后显示当前页的图，
   用笔直接在上面写，笔迹实时落到 Mac 上
 - 笔迹按归一化页面坐标走二进制协议传输（WebSocket，当前这一笔走 UDP），
   所以 Mac 这边不管缩放成什么样，位置都对得上
@@ -103,20 +103,17 @@ Apple 公证。不支持更低的系统版本。
 ## 从源码构建
 
 需要 Xcode 26 和 [xcodegen](https://github.com/yonaskolb/XcodeGen)
-（`brew install xcodegen`），以及构建平板采集页用的 Node.js。
+（`brew install xcodegen`）。
 
 ```bash
-# 1. 构建平板采集页（生成 Sources/Resources/capture.html）
-scripts/build-web.sh
-
-# 2. 生成 Xcode 工程（UniReader.xcodeproj 是生成物，勿手改）
+# 1. 生成 Xcode 工程（UniReader.xcodeproj 是生成物，勿手改）
 xcodegen generate
 
-# 3. 解析 Swift 包，只需第一次（要联网）
+# 2. 解析 Swift 包，只需第一次（要联网）
 xcodebuild -project UniReader.xcodeproj -scheme UniReader \
   -derivedDataPath build/dev -resolvePackageDependencies
 
-# 4. 编译
+# 3. 编译
 xcodebuild -project UniReader.xcodeproj -scheme UniReader \
   -destination 'platform=macOS' -configuration Debug \
   -derivedDataPath build/dev build CODE_SIGNING_ALLOWED=NO
@@ -142,7 +139,6 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader \
 | `Sources/Server/` | 局域网 WebSocket 服务、二维码配对、UDP 传输 |
 | `Sources/MCP/` | 内置的 MCP 服务 |
 | `Sources/Agent/` | ACP Agent 面板 |
-| `web/` | 平板采集页前端（Svelte + Vite，构建成单个 HTML 文件） |
 | `spike/` | 独立验证脚本（`swift spike/<name>.swift`） |
 
 开发笔记与方案文档都在仓库根目录，入口是 `AGENTS.md`，其余文档（`REQUIREMENTS.md`、

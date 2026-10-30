@@ -1,5 +1,6 @@
-// UniReader 二进制线格式编解码器（浏览器采集页 + node 测试共用单一真源）。
-// 契约见 PROTOCOL.md。改这里必须同步 Sources/Server/WireCodec.swift。
+// UniReader 二进制线格式编解码器的 JS 版——**只给 node 测试用**（spike/wire-cross-test.js、spike/udp-client-test.js）。
+// 原先放在 Sources/Resources/ 随 App 发给浏览器采集页；采集页 2026-10-30 删除后挪到这里，不再随 App 发布。
+// 契约见 PROTOCOL.md。改协议时这里跟着改，上面两个测试才跑得动。
 // 全部小端。一个 WS 二进制帧 = [u8 opcode][payload]。
 (function (root, factory) {
   var mod = factory();

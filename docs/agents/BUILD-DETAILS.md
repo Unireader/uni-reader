@@ -1,4 +1,4 @@
-# 构建细则 — 发布 / 第三方包 / 采集页 / 子工程约定
+# 构建细则 — 发布 / 第三方包 / 子工程约定
 
 从 `AGENTS.md`「构建与验证」拆出的完整细节（2026-09-26 拆分）。主文件只留常用构建命令与产物纪律。
 
@@ -23,7 +23,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 - 公证全部通过后才打 tag、`git push --atomic` 推 main + tag，再 `gh release create --verify-tag`；中途失败远端不变，脚本会打印撤销命令。
 - appcast.xml 的提交/推送放在 `gh release create` **之后**（这样 appcast 里的下载链接一发布出去就能打开）；
   这一步失败时 release 本身已经发出去了，脚本会打印手动补推 appcast 的命令。
-- 编译走 `-derivedDataPath build/dev -disableAutomaticPackageResolution`，不联网拉包；采集页走 `build-web.sh --no-install`，不装依赖；
+- 编译走 `-derivedDataPath build/dev -disableAutomaticPackageResolution`，不联网拉包；
   Sparkle 的 `sign_update`/`generate_keys` 工具也是从 `build/dev/SourcePackages` 这份缓存里找，同样不现场拉包。
 - 公证配置名默认 `noticky-notary`，不同就 `NOTARY_PROFILE=<配置名> ./scripts/release.sh …`。
 - **`--prerelease` 版本不进 Sparkle 更新通道**（appcast.xml 只收录正式版）——本项目暂不做「预发布 beta
@@ -84,13 +84,10 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 `xcodebuild … -derivedDataPath build/dev -resolvePackageDependencies`（联网拉包 = 装依赖，
 **按用户规矩给命令让用户跑**，别自己跑）。升版本只改 `project.yml` 再解析。
 
-## 采集页前端（`web/`）
+## ~~采集页前端（`web/`）~~
 
-改动后跑 `scripts/build-web.sh`（npm install + 单文件构建 + 占位符自检 + 覆盖 `Sources/Resources/capture.html`），
-再重新编译 App。`capture.html` 是构建产物、**不入 git**——新克隆先跑一次 `build-web.sh`；
-`scripts/package.sh` 打包时会自动重建（`release.sh` 用 `--no-install` 只构建不装依赖）。
-
-工程本身的结构说明见 `AGENTS.md`「结构要点」的 `web/` 一条（全文在 `docs/agents/STRUCTURE.md`）。
+2026-10-30 删除：App 不再带网页（`capture.html` / `wire.js` 不再进 App 包，`scripts/build-web.sh` 一并删掉，
+发布与打包不再需要 npm）。网页由独立服务器自己提供（`SERVER-MODE-PLAN.md` S6）。
 
 ## 产物纪律补充（细则在 AGENTS.md 表格里，这里只留背景）
 

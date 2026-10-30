@@ -12,7 +12,6 @@
 #     + -disableAutomaticPackageResolution（SPM 包缓存就在那，发布时不联网拉包，Sparkle 的 sign_update/
 #     generate_keys 工具也从这份缓存里找，不会现场再解析一次）
 #   - 发布日志必须提前写好（--notes-file），不用 gh 自动生成；日志文件在仓库里时随版本号一起提交
-#   - 采集页走 build-web.sh --no-install（不代装依赖）
 #   - 公证全部通过之后才推送 main 和 tag：中途失败时远端什么都没变
 #   - --dry-run 不提交：检查 + 改版本号 + Debug 编译，跑完把 project.yml 还原
 #   - **`--prerelease` 版本不进 Sparkle 更新通道**：appcast.xml 只收录正式版。本项目暂不做 Perch 那种
@@ -24,7 +23,7 @@
 #   - notarytool 钥匙串配置：xcrun notarytool store-credentials <配置名> --apple-id <id> --team-id T8F5T6HKG8
 #     默认配置名 noticky-notary（与 package.sh 相同）；名字不同就 NOTARY_PROFILE=<配置名> ./scripts/release.sh ...
 #   - gh 已登录（gh auth status）
-#   - web/node_modules 已装（scripts/build-web.sh）、build/dev/SourcePackages 已解析（见 AGENTS.md）
+#   - build/dev/SourcePackages 已解析（见 AGENTS.md）
 #   - 正式版发布还需要：Sparkle 的 EdDSA 密钥已生成过一次（`Sources/Info.plist` 的 SUPublicEDKey 非空、
 #     登录钥匙串里有对应私钥）——第一次发布前跑：
 #       xcodegen generate
@@ -177,11 +176,10 @@ if [[ "$DRY_RUN" == true ]]; then echo "==> [dry-run] 演练模式"; fi
 # ── 发布前检查 ──────────────────────────────────────────────────────
 echo "==> 发布前检查"
 [[ -f "$PROJECT_YML" ]] || fail "找不到 $PROJECT_YML"
-for cmd in xcodegen xcodebuild gh npm hdiutil; do
+for cmd in xcodegen xcodebuild gh hdiutil; do
   command -v "$cmd" >/dev/null || fail "找不到命令 $cmd"
 done
 gh auth status >/dev/null 2>&1 || fail "gh 没登录，先跑 gh auth login"
-[[ -d web/node_modules ]] || fail "web/node_modules 不存在，先跑 scripts/build-web.sh 装依赖"
 [[ -d "$DERIVED_DATA/SourcePackages/checkouts" ]] \
   || fail "SPM 包缓存不存在，先跑：xcodegen generate && xcodebuild -project $PROJECT -scheme $SCHEME -derivedDataPath $DERIVED_DATA -resolvePackageDependencies"
 
@@ -262,9 +260,6 @@ echo "==> 版本号 $CURRENT_VERSION (build $CURRENT_BUILD) → $VERSION (build 
 STAGE=bumped
 sed -i '' -E "s/MARKETING_VERSION: \"[^\"]*\"/MARKETING_VERSION: \"$VERSION\"/" "$PROJECT_YML"
 sed -i '' -E "s/CURRENT_PROJECT_VERSION: \"[^\"]*\"/CURRENT_PROJECT_VERSION: \"$NEXT_BUILD\"/" "$PROJECT_YML"
-
-echo "==> 重建采集页（web/ → Sources/Resources/capture.html，不装依赖）"
-bash scripts/build-web.sh --no-install
 
 echo "==> xcodegen generate"
 xcodegen generate >/dev/null

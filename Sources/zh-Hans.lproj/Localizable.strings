@@ -10,7 +10,7 @@
 "Stop" = "停止";
 "Server running" = "服务运行中";
 "Server stopped" = "服务已停止";
-"Open this URL in Firefox on your tablet:" = "在平板的 Firefox 中打开此地址：";
+"Scan the QR code with the UniReader app on your tablet:" = "用平板上的 UniReader App 扫这个二维码：";
 "Copy URL" = "复制地址";
 "Address in the QR code" = "二维码里用的地址";
 "VPN" = "VPN";
