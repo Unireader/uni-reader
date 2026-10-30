@@ -1,6 +1,6 @@
 // 界面文字：英文原文当键，中文环境下查表（与 Mac App 的 Localizable.strings 同一个做法、同一套用词）。
 
-const zh = (navigator.language || "").toLowerCase().startsWith("zh");
+const zh = (typeof navigator === "undefined" ? "" : navigator.language || "").toLowerCase().startsWith("zh");
 
 export const lang = zh ? "zh-Hans" : "en";
 
@@ -44,6 +44,27 @@ const ZH: Record<string, string> = {
   "Zoom In": "放大",
   "Fit Width": "适合宽度",
   "Web": "网页",
+  // W3：书写与文字笔记（用词同 Mac App 的 Localizable.strings）
+  "Page Turn": "翻页",
+  "Write": "书写",
+  "Eraser": "橡皮",
+  "Add Text Note": "添加文字笔记",
+  "Undo": "撤销",
+  "Redo": "重做",
+  "Edit": "编辑",
+  "Delete": "删除",
+  "Confirm Delete": "确认删除",
+  "Save": "保存",
+  "Cancel": "取消",
+  "Blue": "蓝色",
+  "Red": "红色",
+  "Black": "黑色",
+  "Highlighter": "荧光笔",
+  "Saving…": "正在保存…",
+  "{0} changes not saved yet: cannot reach the server. Retrying…": "有 {0} 处改动还没存上：连不上服务器，正在重试…",
+  "This was changed on another device in the meantime. Reloaded the latest version.": "这期间别的设备改过这里，已重新载入最新的内容。",
+  "The server did not accept this change. Reloaded the latest version.": "服务器没有收下这处改动，已重新载入最新的内容。",
+  "Some changes are not saved to the server yet. Leave anyway?": "还有改动没存到服务器上，确定离开？",
 };
 
 /** 取一句界面文字；`{0}`、`{1}` 换成参数。 */

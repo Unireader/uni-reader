@@ -125,3 +125,127 @@ final class WebReaderMarksTests: XCTestCase {
         XCTAssertThrowsError(try ws.documentView(documentId: "nope", contentHash: nil))
     }
 }
+
+/// W3：网页写文字笔记 / 笔迹（`HostedWorkspace.webEdits`，方案 §3）。
+final class WebEditTests: XCTestCase {
+
+    private let s1 = "11111111-1111-1111-1111-111111111111"
+    private let n1 = "22222222-2222-2222-2222-222222222222"
+    private let hl = "33333333-3333-3333-3333-333333333333"
+
+    private func ink(_ id: String, page: Int = 0, base: String? = nil, created: String? = nil) -> HostedWorkspace.WebNoteUpsert {
+        .init(id: id, kind: 2, page: page, anchor: [0.1, 0.2, 0.3, 0.1],
+              payload: #"{"color":{"r":24,"g":90,"b":210,"a":0.95},"width":8,"type":"ballpoint","points":[],"layerId":"00000000-0000-0000-0000-000000000001"}"#,
+              points: InkPointsBlob.encode([[0.1, 0.2, 0.5], [0.4, 0.3, 0.5]]), baseUpdatedAt: base, createdAt: created)
+    }
+
+    private func note(_ id: String, text: String, base: String? = nil) -> HostedWorkspace.WebNoteUpsert {
+        .init(id: id, kind: 0, page: 1, anchor: [0.5, 0.5, 0, 0],
+              payload: #"{"quote":"","text":"\#(text)","rects":[],"style":"fill","display":"tap"}"#,
+              points: nil, baseUpdatedAt: base, createdAt: nil)
+    }
+
+    func testWriteEditDeleteLikeAPush() throws {
+        let f = try Fixture()
+        let mac = try f.makeDevice("mac")
+        try Seed.addDoc(mac, "D1", title: "甲")
+        try mac.db { db in
+            try db.run("""
+            INSERT INTO note(id,document_id,kind,page,anchor_x,anchor_y,anchor_w,anchor_h,payload,created_at,updated_at)
+            VALUES(?,'D1',3,0,0,0,0,0,'{}','t','t')
+            """, [.text(hl)])
+        }
+        let ws = try f.upload(mac)
+        let head0 = ws.head
+
+        // 新建一笔 + 一条文字笔记
+        let t1 = Date(timeIntervalSince1970: 1_800_000_000)
+        var r = try ws.webEdits(documentId: "D1", upserts: [ink(s1), note(n1, text: "第一版")], deletes: [], deviceName: "网页", now: t1)
+        XCTAssertEqual(r.results.map(\.outcome), [.applied, .applied])
+        XCTAssertGreaterThan(r.head, head0)
+        XCTAssertEqual(r.updatedAt, ISO.string(t1))
+        var marks = try ws.pageMarks(documentId: "D1", from: 0, to: 1)
+        let stroke = try XCTUnwrap(marks.first { $0.id == s1 })
+        XCTAssertEqual(stroke.points.flatMap(InkPointsBlob.decode), [[0.1, 0.2, 0.5], [0.4, 0.3, 0.5]])
+        XCTAssertEqual(stroke.createdAt, ISO.string(t1))
+        try ws.store.withMirrorDB { db in
+            let row = try XCTUnwrap(try db.query("SELECT points_at, updated_at, payload FROM note WHERE id=?", [.text(s1)]).first)
+            XCTAssertEqual(row["points_at"] as? String, row["updated_at"] as? String, "二进制有效（BINARY-INK-PLAN §3）")
+            XCTAssertTrue(String(decoding: row["payload"] as? Data ?? Data(), as: UTF8.self).contains(#""points":[]"#))
+        }
+
+        // Mac 拉得到网页写的两行，且读得出笔迹
+        try mac.sync(ws)
+        XCTAssertEqual(try mac.db { try $0.query("SELECT COUNT(*) AS n FROM note WHERE id IN (?,?)", [.text(s1), .text(n1)]) }.first?["n"] as? Int64, 2)
+        let macInk = try XCTUnwrap(try mac.db { try $0.query("SELECT points, points_at = updated_at AS ok FROM note WHERE id=?", [.text(s1)]) }.first)
+        XCTAssertEqual((macInk["points"] as? Data).flatMap(InkPointsBlob.decode), [[0.1, 0.2, 0.5], [0.4, 0.3, 0.5]])
+        XCTAssertEqual(macInk["ok"] as? Int64, 1, "Mac 那边二进制也有效")
+
+        // 改：带上看到的 updated_at → 写上，created_at 不变
+        let seen = try XCTUnwrap(marks.first { $0.id == n1 }?.updatedAt)
+        let t2 = t1.addingTimeInterval(60)
+        r = try ws.webEdits(documentId: "D1", upserts: [note(n1, text: "第二版", base: seen)], deletes: [], deviceName: "网页", now: t2)
+        XCTAssertEqual(r.results.first?.outcome, .applied)
+        marks = try ws.pageMarks(documentId: "D1", from: 0, to: 1)
+        let edited = try XCTUnwrap(marks.first { $0.id == n1 })
+        XCTAssertTrue(edited.payload.contains("第二版"))
+        XCTAssertEqual(edited.createdAt, ISO.string(t1))
+
+        // 再拿旧的 updated_at 改 / 删 → 别的设备改过了，不写
+        r = try ws.webEdits(documentId: "D1", upserts: [note(n1, text: "第三版", base: seen)],
+                            deletes: [.init(id: s1, baseUpdatedAt: "老的")], deviceName: "网页", now: t2)
+        XCTAssertEqual(r.results.map(\.outcome), [.stale, .stale])
+        XCTAssertTrue(try ws.pageMarks(documentId: "D1", from: 1, to: 1).first?.payload.contains("第二版") == true)
+
+        // 删：先进回收站，别的设备拉到删除
+        let headBeforeDelete = ws.head
+        r = try ws.webEdits(documentId: "D1", upserts: [], deletes: [.init(id: s1, baseUpdatedAt: stroke.updatedAt)],
+                            deviceName: "网页", now: t2)
+        XCTAssertEqual(r.results.first?.outcome, .applied)
+        XCTAssertNil(try ws.pageMarks(documentId: "D1", from: 0, to: 0).first { $0.id == s1 })
+        let trash = ServerTrash.dayFile(in: f.paths.trashFolder(ws.id), now: t2)
+        let t = try SQLiteDB(path: trash.path)
+        XCTAssertEqual(try t.query("SELECT srv_device FROM note WHERE id=?", [.text(s1)]).first?["srv_device"] as? String, "网页")
+        t.close()
+        XCTAssertTrue(try ws.pullRows(since: headBeforeDelete, limit: 10).rows.contains { $0.rowId == s1 && $0.deleted })
+        // 已经不在的再删一次（不核对）= 算删掉了；核对着删 = 别人删的，告诉网页
+        r = try ws.webEdits(documentId: "D1", upserts: [], deletes: [.init(id: s1, baseUpdatedAt: nil)], deviceName: "网页", now: t2)
+        XCTAssertEqual(r.results.first?.outcome, .applied)
+        r = try ws.webEdits(documentId: "D1", upserts: [ink(s1, base: stroke.updatedAt)], deletes: [], deviceName: "网页", now: t2)
+        XCTAssertEqual(r.results.first?.outcome, .stale, "改一条已被删掉的")
+
+        // 撤销删除：按原来的 created_at 补回去
+        r = try ws.webEdits(documentId: "D1", upserts: [ink(s1, created: ISO.string(t1))], deletes: [], deviceName: "网页", now: t2)
+        XCTAssertEqual(r.results.first?.outcome, .applied)
+        XCTAssertEqual(try ws.pageMarks(documentId: "D1", from: 0, to: 0).first { $0.id == s1 }?.createdAt, ISO.string(t1))
+
+        // 不是网页能碰的行（高亮）：不写
+        r = try ws.webEdits(documentId: "D1", upserts: [note(hl, text: "x")], deletes: [.init(id: hl, baseUpdatedAt: nil)],
+                            deviceName: "网页", now: t2)
+        XCTAssertEqual(r.results.map(\.outcome), [.rejected, .rejected])
+        XCTAssertEqual(try ws.pageMarks(documentId: "D1", from: 0, to: 0).first { $0.id == hl }?.kind, 3)
+    }
+
+    func testRejectsMalformedEdits() throws {
+        let f = try Fixture()
+        let a = try f.makeDevice("A")
+        try Seed.addDoc(a, "D1", title: "甲")
+        let ws = try f.upload(a)
+        let head = ws.head
+        var bad = ink(s1)
+        bad.points = InkPointsBlob.encode([])
+        var notJSON = note(n1, text: "x")
+        notJSON.payload = "坏了"
+        var wrongKind = note(n1, text: "x")
+        wrongKind.kind = 3
+        var badID = note(n1, text: "x")
+        badID.id = "../x"
+        for u in [bad, notJSON, wrongKind, badID] {
+            XCTAssertThrowsError(try ws.webEdits(documentId: "D1", upserts: [ink(n1), u], deletes: [], deviceName: "网页"))
+        }
+        XCTAssertEqual(ws.head, head, "整批不写")
+        XCTAssertThrowsError(try ws.webEdits(documentId: "nope", upserts: [ink(s1)], deletes: [], deviceName: "网页")) {
+            XCTAssertEqual($0 as? ServerError, .unknownDocument("nope"))
+        }
+    }
+}

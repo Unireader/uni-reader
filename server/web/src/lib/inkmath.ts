@@ -69,3 +69,45 @@ export function base64Bytes(b64: string): Uint8Array {
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
   return out;
 }
+
+/**
+ * ⇧ 画直线的吸附（Mac `InkEdit.rulerSnap`）：起点 → 当前点的角度离最近的 45° 倍数不超过 7° 就贴过去（长度不变）。
+ * 坐标是页内归一化的，[aspect] = 页高 / 页宽，先把 y 折成与 x 同尺度再量角，吸附的是「看上去」的角度。
+ */
+export function rulerSnap(sx: number, sy: number, cx: number, cy: number, aspect = 1, thresholdDeg = 7): [number, number] {
+  const a = aspect > 0 ? aspect : 1;
+  const dx = cx - sx, dy = (cy - sy) * a;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (!(len > 0)) return [cx, cy];
+  const step = Math.PI / 4;
+  const ang = Math.atan2(dy, dx);
+  const snapped = Math.round(ang / step) * step;
+  if (Math.abs(ang - snapped) > (thresholdDeg * Math.PI) / 180) return [cx, cy];
+  return [sx + len * Math.cos(snapped), sy + (len * Math.sin(snapped)) / a];
+}
+
+/** 页内笔迹的包围盒（归一化），写库时当 `note.anchor`（Mac `InkStroke.normalizedBounds`）。 */
+export function pointsBounds(pts: Float32Array): [number, number, number, number] {
+  if (pts.length < 3) return [0, 0, 0, 0];
+  let x0 = pts[0], x1 = pts[0], y0 = pts[1], y1 = pts[1];
+  for (let i = 3; i < pts.length; i += 3) {
+    x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]);
+    y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1]);
+  }
+  return [x0, y0, x1 - x0, y1 - y0];
+}
+
+/** 点集 → 二进制（`decodePoints` 的反向）。 */
+export function encodePoints(pts: Float32Array): Uint8Array {
+  const out = new Uint8Array(1 + pts.length * 4);
+  out[0] = 1;
+  const dv = new DataView(out.buffer);
+  for (let k = 0; k < pts.length; k++) dv.setFloat32(1 + k * 4, pts[k], true);
+  return out;
+}
+
+export function bytesBase64(b: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(s);
+}

@@ -23,6 +23,7 @@ import UniServerCore
 /// | `GET workspaces/:ws/documents/:doc/view?hash=` | 打开一本书（网页）：笔迹图层、笔记类型、扫描页对齐参数（`hash` = 打开的那份 PDF） |
 /// | `GET workspaces/:ws/documents/:doc/marks?from=&to=` | 一段页（从 0 起，含两端）上的文字笔记 / 笔迹 / 高亮（网页）；笔迹点集一律二进制、base64 |
 /// | `GET workspaces/:ws/head` | 当前修订号（网页轮询，变了再重拉标记） |
+/// | `POST workspaces/:ws/documents/:doc/edits` | 网页写文字笔记 / 笔迹（JSON：`upserts` / `deletes`）：当成一次「基线 = 服务器现状」的推送；带了 `baseUpdatedAt` 而服务器上已经变了的行不写（`stale`） |
 ///
 /// `/v1` 之外是网页阅读器的静态文件（`WebFiles`：`/`、`assets/…`、`pdfjs/…`），**不要令牌**、不含任何数据。
 ///
@@ -204,6 +205,25 @@ public enum UniServerApp {
             // 一次最多 200 页：网页只取视口附近几页
             let marks = try await Blocking.run { try w.pageMarks(documentId: doc, from: from, to: min(to, from + 199)) }
             return PageMarkList(marks: marks.map(PageMarkDTO.init))
+        }
+
+        api.post("workspaces/:ws/documents/:doc/edits") { request, context -> WebEditResponse in
+            let w = try workspace(context), doc = try context.parameters.require("doc")
+            let body = try await request.decode(as: WebEditRequest.self, context: context)
+            let upserts = try body.upserts.map { u in
+                var points: Data?
+                if let b64 = u.points {
+                    guard let d = Data(base64Encoded: b64) else { throw HTTPError(.badRequest, message: "点集不是 base64（\(u.id)）") }
+                    points = d
+                }
+                return HostedWorkspace.WebNoteUpsert(id: u.id, kind: u.kind, page: u.page, anchor: u.anchor, payload: u.payload,
+                                                     points: points, baseUpdatedAt: u.baseUpdatedAt, createdAt: u.createdAt)
+            }
+            let deletes = body.deletes.map { HostedWorkspace.WebNoteDelete(id: $0.id, baseUpdatedAt: $0.baseUpdatedAt) }
+            let device = context.device?.name ?? ""
+            let r = try await Blocking.run { try w.webEdits(documentId: doc, upserts: upserts, deletes: deletes, deviceName: device) }
+            return WebEditResponse(head: r.head, updatedAt: r.updatedAt,
+                                   results: r.results.map { WebEditResponse.Item(id: $0.id, outcome: $0.outcome.rawValue) })
         }
 
         api.get("workspaces/:ws/head") { _, context -> HeadDTO in
@@ -472,10 +492,26 @@ struct PageMarkDTO: ResponseEncodable {
     /// 笔迹点集（`InkPointsBlob`）的 base64；非笔迹不出这个键。
     let points: String?
 
+    /// 原样的时间字符串（网页改 / 删时带回 `updatedAt` 作核对）。
+    let createdAt: String; let updatedAt: String
+
     init(_ m: HostedWorkspace.PageMark) {
         id = m.id; kind = m.kind; page = m.page; anchor = m.anchor; payload = m.payload
         points = m.points?.base64EncodedString()
+        createdAt = m.createdAt; updatedAt = m.updatedAt
     }
+}
+struct WebEditRequest: Decodable {
+    struct Upsert: Decodable {
+        let id: String; let kind: Int; let page: Int; let anchor: [Double]; let payload: String
+        let points: String?; let baseUpdatedAt: String?; let createdAt: String?
+    }
+    struct Delete: Decodable { let id: String; let baseUpdatedAt: String? }
+    let upserts: [Upsert]; let deletes: [Delete]
+}
+struct WebEditResponse: ResponseEncodable {
+    struct Item: Encodable { let id: String; let outcome: String }
+    let head: UInt64; let updatedAt: String; let results: [Item]
 }
 struct PageMarkList: ResponseEncodable { let marks: [PageMarkDTO] }
 struct HeadDTO: ResponseEncodable { let head: UInt64 }

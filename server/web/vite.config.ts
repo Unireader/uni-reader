@@ -23,8 +23,21 @@ function pdfjsExtras(): Plugin {
   };
 }
 
+// KaTeX 的样式表每种字体列了 woff2 / woff / ttf 三种格式，构建时会把三种都打包（1.1MB）；
+// 现在的浏览器都认 woff2，只留它（约 300KB，服务器程序里也少带 800KB）。
+function katexWoff2Only(): Plugin {
+  return {
+    name: "katex-woff2-only",
+    enforce: "pre",
+    transform(code, id) {
+      if (!/katex(\.min)?\.css$/.test(id.split("?")[0])) return null;
+      return code.replace(/,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\("(?:woff|truetype)"\)/g, "");
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [svelte(), pdfjsExtras()],
+  plugins: [svelte(), pdfjsExtras(), katexWoff2Only()],
   build: {
     target: "es2022",
     assetsInlineLimit: 0,          // 不把文件内联成 data: 地址（内容安全策略不许 data: 脚本）

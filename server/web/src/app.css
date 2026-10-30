@@ -272,6 +272,99 @@ input {
 .pv-bubble.quote { color: var(--hint); }
 .pv-pin-wrap.left .pv-bubble { left: auto; right: 14px; }
 .pv-pin-wrap.open .pv-bubble, .pv-pin-wrap.hovering .pv-bubble { display: block; }
+.pv-pin-wrap.editing .pv-bubble { display: none; }
+.pv-bubble-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pv-bubble-text.md { white-space: normal; }
+.pv-bubble-text.md > :first-child { margin-top: 0; }
+.pv-bubble-text.md > :last-child { margin-bottom: 0; }
+.pv-bubble-text.md p, .pv-bubble-text.md ul, .pv-bubble-text.md ol, .pv-bubble-text.md pre, .pv-bubble-text.md blockquote { margin: 0 0 6px; }
+.pv-bubble-text.md ul, .pv-bubble-text.md ol { padding-left: 18px; }
+.pv-bubble-text.md h1, .pv-bubble-text.md h2, .pv-bubble-text.md h3,
+.pv-bubble-text.md h4, .pv-bubble-text.md h5, .pv-bubble-text.md h6 { font-size: 13px; margin: 0 0 4px; }
+.pv-bubble-text.md code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: var(--hover); border-radius: 3px; padding: 0 3px; }
+.pv-bubble-text.md pre { overflow-x: auto; background: var(--hover); border-radius: 4px; padding: 6px; }
+.pv-bubble-text.md pre code { background: none; padding: 0; }
+.pv-bubble-text.md blockquote { border-left: 3px solid var(--line); padding-left: 8px; color: var(--hint); }
+.pv-bubble-text.md a { color: var(--accent); }
+.pv-bubble-text.md table { border-collapse: collapse; margin-bottom: 6px; }
+.pv-bubble-text.md th, .pv-bubble-text.md td { border: 1px solid var(--line); padding: 2px 6px; }
+.pv-bubble-text.md .math-block { overflow-x: auto; overflow-y: hidden; margin: 0 0 6px; }
+.pv-bubble-text.md .katex { font-size: 1.05em; }
+.pv-bubble-text.quote { color: var(--hint); }
+.pv-bubble-actions, .pv-editor-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.pv-bubble-actions button, .pv-editor-actions button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.pv-bubble-actions button.danger { color: var(--danger); }
+.pv-bubble-actions button.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
+.pv-editor-actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+
+/* W3：书写 */
+.pv-page canvas.pv-live { z-index: 2; pointer-events: none; }
+.pv-editor {
+  position: absolute;
+  z-index: 5;
+  width: 260px;
+  margin: -9px 0 0 14px;
+  padding: 8px;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.pv-editor.left { margin-left: -274px; }
+.pv-editor textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 6px 8px;
+  outline-color: var(--accent);
+}
+.pv-eraser-ring {
+  display: none;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 50;
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.scroller.inking { cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.bar.tools { min-height: 44px; gap: 2px; overflow-x: auto; }
+.bar.tools .sep { width: 1px; align-self: stretch; margin: 6px 6px; background: var(--line); }
+.bar.tools .save-state { margin-left: 8px; font-size: 13px; color: var(--hint); white-space: nowrap; }
+.bar.tools .save-state.warn { color: var(--danger); }
+.pen-dot { width: 16px; height: 16px; border-radius: 50%; display: block; border: 1px solid rgba(0, 0, 0, 0.15); }
+.pen-dot.marker { width: 20px; height: 10px; border-radius: 3px; }
+.notice {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: min(90%, 520px);
+  padding: 8px 14px;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+}
 
 .outline-pane {
   flex: none;

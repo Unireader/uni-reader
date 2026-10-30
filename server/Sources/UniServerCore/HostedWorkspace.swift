@@ -192,7 +192,7 @@ public final class HostedWorkspace: @unchecked Sendable {
     struct Key: Hashable { var table: String; var rowId: String }
 
     // swiftlint:disable:next function_body_length
-    private func pushLocked(_ db: SQLiteDB, _ req: SyncWire.PushRequest,
+    func pushLocked(_ db: SQLiteDB, _ req: SyncWire.PushRequest,
                             deviceName: String, now: Date) throws -> SyncWire.PushResponse {
         // ① 整理：同一行推了两次以最后一次为准；不同步的表 / meta 里的本机键一律不收
         var order: [Key] = []

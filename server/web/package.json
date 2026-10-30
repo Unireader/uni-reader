@@ -7,13 +7,16 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "tsc --outDir .test-build --module commonjs --target es2022 --strict --skipLibCheck --lib es2022,dom src/lib/inkmath.ts src/lib/align.ts src/lib/marks.ts && node -e \"require('fs').writeFileSync('.test-build/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test test/"
+    "test": "tsc --outDir .test-build --module commonjs --target es2022 --strict --noImplicitAny false --skipLibCheck --esModuleInterop --lib es2022,dom src/lib/inkmath.ts src/lib/align.ts src/lib/marks.ts src/lib/markstore.ts src/lib/edits.ts src/lib/uuid.ts src/lib/markdown.ts && node -e \"require('fs').writeFileSync('.test-build/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test test/"
   },
   "dependencies": {
+    "katex": "0.16.22",
+    "markdown-it": "14.1.0",
     "pdfjs-dist": "5.4.624"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "5.1.1",
+    "@types/markdown-it": "14.1.2",
     "svelte": "5.56.8",
     "svelte-check": "4.7.6",
     "typescript": "5.9.3",

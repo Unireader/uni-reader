@@ -1,9 +1,11 @@
-// 页上的标记怎么摆（方案 §1 第 3 条，只读）：
+// 页上的标记怎么摆（方案 §1 第 3 条）：
 // - 高亮 / 文字笔记的选区：网页元素（位置用页的百分比，缩放时跟着页走，不用重画）。
 //   三种画法照 Mac `PageMarksLayer`：铺色（外扩 1pt × 0.5pt、圆角 2pt）、画线（行框底下，粗 max(1.5pt, 行高 × 7%)）、
 //   画框（外扩 1.5pt × 1pt、线宽 1.5pt）。这些「屏幕上固定几点」的量在网页里就是 CSS 像素。
 // - 笔迹：每页一块画布（只有这页有可见笔迹时才有），和页面图同样的像素、同时换上。
 // - 文字笔记的图钉：直径 18 像素，位置规则同 Mac `ReaderView.notePinCenter`；点它看正文。
+// - W3：气泡里能编辑、删除（删除点两次才算）；新建 / 编辑用页上的一个编辑框（`openEditor`）。
+// - 正文按 Markdown + 公式排版（`markdown.ts`，第一次用到时才加载；到之前先显示纯文字）。
 
 import { t } from "./i18n";
 import { drawPageInk } from "./ink";
@@ -12,12 +14,22 @@ import {
   type Color, type InkLayer, type MarkStyle, type NoteType, type PageMarks, type TextNote,
 } from "./marks";
 
+/** 文字笔记的编辑 / 删除交给谁（W3）；没有 = 只读。 */
+export interface NoteActions {
+  edit(page: number, note: TextNote): void;
+  remove(page: number, note: TextNote): void;
+}
+
 export class Decor {
   layers: InkLayer[] = [];
   types: NoteType[] = [];
+  actions: NoteActions | null = null;
   /** 展开着的笔记气泡（点开的；「始终展开」的笔记被点收起后记在 [closed]）。 */
   private open = new Set<string>();
   private closed = new Set<string>();
+  /** 正在编辑的笔记（它的气泡先收起来）与编辑框 */
+  private editingId: string | null = null;
+  private editor: { el: HTMLElement; cancel: () => void } | null = null;
 
   /** 画这一页的笔迹：没有可见笔迹 → null。[cw] × [ch] = 页面图的像素，[fw] × [fh] = 页在适合宽度下的尺寸。 */
   inkCanvas(marks: PageMarks | undefined, cw: number, ch: number, fw: number, fh: number): HTMLCanvasElement | null {
@@ -36,8 +48,8 @@ export class Decor {
     return canvas;
   }
 
-  /** 在页 [div] 里摆上高亮与图钉（再调 = 按新数据重摆）。 */
-  attach(div: HTMLDivElement, marks: PageMarks | undefined) {
+  /** 在页 [div]（第 [page] 页）里摆上高亮与图钉（再调 = 按新数据重摆）。 */
+  attach(div: HTMLDivElement, marks: PageMarks | undefined, page: number) {
     this.detach(div);
     if (!marks || (!marks.highlights.length && !marks.notes.length)) return;
     const layer = el("div", "pv-marks");
@@ -50,7 +62,7 @@ export class Decor {
     div.appendChild(layer);
     if (!marks.notes.length) return;
     const pins = el("div", "pv-pins");
-    for (const n of marks.notes) pins.appendChild(this.pin(n));
+    for (const n of marks.notes) pins.appendChild(this.pin(n, page));
     div.appendChild(pins);
   }
 
@@ -66,23 +78,80 @@ export class Decor {
     for (const b of root.querySelectorAll<HTMLElement>(".pv-pin-wrap.open:not(.always)")) b.classList.remove("open");
   }
 
+  /** 下次摆这条笔记时气泡开着（刚新建 / 刚改完）。 */
+  markOpen(id: string) {
+    this.open.add(id);
+    this.closed.delete(id);
+  }
+
+  /**
+   * 页上的编辑框：新建（[note] 为 null，放在 ([nx], [ny])）或编辑一条笔记（放在它的图钉处，气泡先收起）。
+   * 同一时刻只有一个，再开一个 = 先取消前一个。⌘ / Ctrl + 回车保存，Esc 取消。
+   */
+  openEditor(div: HTMLDivElement, note: TextNote | null, nx: number, ny: number,
+             onSave: (text: string) => void, onClose: () => void) {
+    this.editor?.cancel();
+    const box = el("div", "pv-editor");
+    const [x, y, left] = note ? pinPos(note) : [pct(nx), pct(ny), nx > 0.6];
+    box.style.left = `clamp(12px, ${x}, calc(100% - 12px))`;
+    box.style.top = `clamp(10px, ${y}, calc(100% - 10px))`;
+    if (left) box.classList.add("left");
+    const area = el("textarea", "") as HTMLTextAreaElement;
+    area.value = note?.text ?? "";
+    area.placeholder = t("Text Note");
+    area.rows = 4;
+    const row = el("div", "pv-editor-actions");
+    const cancel = button(t("Cancel"), "");
+    const save = button(t("Save"), "primary");
+    row.append(cancel, save);
+    box.append(area, row);
+    box.addEventListener("click", (e) => e.stopPropagation());
+    box.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+    const close = () => {
+      if (this.editor?.el !== box) return;
+      this.editor = null;
+      this.editingId = null;
+      box.remove();
+      div.querySelector(`.pv-pin-wrap[data-id="${note?.id ?? ""}"]`)?.classList.remove("editing");
+      onClose();
+    };
+    cancel.addEventListener("click", close);
+    save.addEventListener("click", () => {
+      const text = area.value;
+      close();
+      onSave(text);
+    });
+    area.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        save.click();
+      }
+    });
+    this.editor = { el: box, cancel: close };
+    this.editingId = note?.id ?? null;
+    div.querySelector<HTMLElement>(`.pv-pin-wrap[data-id="${note?.id ?? ""}"]`)?.classList.add("editing");
+    div.appendChild(box);
+    area.focus({ preventScroll: true });
+  }
+
   private isOpen(n: TextNote) {
     return n.display === "always" ? !this.closed.has(n.id) : this.open.has(n.id);
   }
 
-  private pin(n: TextNote): HTMLElement {
-    // 图钉中心：选区笔记在选区右上角外侧，点笔记在锚点处；钳在页内（同 Mac，单位是屏幕点）
-    const [ax, ay, aw] = n.anchor;
-    const hasRects = n.rects.length > 0;
-    const x = hasRects ? `calc(${pct(ax + aw)} + 9px)` : pct(ax);
-    const y = hasRects ? `calc(${pct(ay)} + 7px)` : pct(ay);
+  private pin(n: TextNote, page: number): HTMLElement {
+    const [x, y, left] = pinPos(n);
     const wrap = el("div", "pv-pin-wrap");
+    wrap.dataset.id = n.id;
     wrap.style.left = `clamp(12px, ${x}, calc(100% - 12px))`;
     wrap.style.top = `clamp(10px, ${y}, calc(100% - 10px))`;
-    // 图钉在页的右侧四成里时，气泡往左开
-    if ((hasRects ? ax + aw : ax) > 0.6) wrap.classList.add("left");
+    if (left) wrap.classList.add("left");
     if (n.display === "always") wrap.classList.add("always");
     if (this.isOpen(n)) wrap.classList.add("open");
+    if (this.editingId === n.id) wrap.classList.add("editing");
 
     const btn = el("button", "pv-pin") as HTMLButtonElement;
     btn.type = "button";
@@ -109,14 +178,100 @@ export class Decor {
     }
     wrap.appendChild(btn);
 
-    // 正文原样显示（Markdown 还没排版）；没写正文的显示原文
+    // 正文按 Markdown 排版；没写正文的显示原文（纯文字）
     const bubble = el("div", "pv-bubble");
-    bubble.textContent = n.text || n.quote;
-    if (!n.text) bubble.classList.add("quote");
+    const body = el("div", "pv-bubble-text");
+    if (n.text) fillMarkdown(body, n.text);
+    else {
+      body.textContent = n.quote;
+      body.classList.add("quote");
+    }
+    bubble.appendChild(body);
+    const actions = this.actions;
+    if (actions) {
+      const row = el("div", "pv-bubble-actions");
+      const edit = button(t("Edit"), "");
+      edit.addEventListener("click", () => actions.edit(page, n));
+      // 删除要点两次：第一次变成「确认删除」，3 秒内再点才删
+      const del = button(t("Delete"), "danger");
+      let armed = 0;
+      del.addEventListener("click", () => {
+        if (armed) {
+          clearTimeout(armed);
+          actions.remove(page, n);
+          return;
+        }
+        del.textContent = t("Confirm Delete");
+        del.classList.add("armed");
+        armed = window.setTimeout(() => {
+          armed = 0;
+          del.textContent = t("Delete");
+          del.classList.remove("armed");
+        }, 3000);
+      });
+      row.append(edit, del);
+      bubble.appendChild(row);
+    }
     bubble.addEventListener("click", (e) => e.stopPropagation());
     wrap.appendChild(bubble);
     return wrap;
   }
+}
+
+/** 图钉中心（CSS 的 left / top）与气泡是否往左开：选区笔记在选区右上角外侧，点笔记在锚点处（同 Mac，单位是屏幕点）。 */
+function pinPos(n: TextNote): [string, string, boolean] {
+  const [ax, ay, aw] = n.anchor;
+  const hasRects = n.rects.length > 0;
+  const x = hasRects ? `calc(${pct(ax + aw)} + 9px)` : pct(ax);
+  const y = hasRects ? `calc(${pct(ay)} + 7px)` : pct(ay);
+  // 图钉在页的右侧四成里时，气泡往左开
+  return [x, y, (hasRects ? ax + aw : ax) > 0.6];
+}
+
+// MARK: - 正文排版（按需加载）
+
+let render: ((text: string) => string) | null = null;
+let loading: Promise<void> | null = null;
+const waiting = new Map<HTMLElement, string>();
+const rendered = new Map<string, string>();   // 同一段正文只排一次（缩放、刷新时气泡会重建）
+
+function markdown(text: string): string {
+  let html = rendered.get(text);
+  if (html === undefined) {
+    html = render!(text);
+    if (rendered.size > 500) rendered.clear();
+    rendered.set(text, html);
+  }
+  return html;
+}
+
+function fillMarkdown(el: HTMLElement, text: string) {
+  if (render) {
+    el.innerHTML = markdown(text);
+    el.classList.add("md");
+    return;
+  }
+  el.textContent = text;
+  waiting.set(el, text);
+  loading ??= Promise.all([import("./markdown"), import("katex/dist/katex.min.css")]).then(([m]) => {
+    render = m.renderNote;
+    for (const [e, t] of waiting) {
+      if (!e.isConnected) continue;
+      e.innerHTML = markdown(t);
+      e.classList.add("md");
+    }
+    waiting.clear();
+  }).catch((e) => {
+    console.warn("排版模块没加载上，正文按纯文字显示", e);
+    loading = null;
+  });
+}
+
+function button(label: string, cls: string): HTMLButtonElement {
+  const b = el("button", cls) as HTMLButtonElement;
+  b.type = "button";
+  b.textContent = label;
+  return b;
 }
 
 const PIN_ICON =

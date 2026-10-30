@@ -107,6 +107,9 @@ extension HostedWorkspace {
         public let payload: String
         /// 笔迹的点集，一律是 `InkPointsBlob` 格式（`BINARY-INK-PLAN.md §2`）；非笔迹 = nil。
         public let points: Data?
+        /// 原样的时间字符串：网页改 / 删这一行时带回 [updatedAt]，服务器据此判断「看到的还是不是最新的」（W3）。
+        public let createdAt: String
+        public let updatedAt: String
     }
 
     static let pageMarkKinds = [0, 2, 3]
@@ -121,7 +124,8 @@ extension HostedWorkspace {
                 throw ServerError.unknownDocument(documentId)
             }
             return try db.query("""
-            SELECT id, kind, page, anchor_x, anchor_y, anchor_w, anchor_h, payload, points, points_at IS updated_at FROM note
+            SELECT id, kind, page, anchor_x, anchor_y, anchor_w, anchor_h, payload, points, points_at IS updated_at,
+                   created_at, updated_at FROM note
             WHERE document_id=? AND kind IN (0, 2, 3) AND page BETWEEN ? AND ? ORDER BY page ASC, created_at ASC
             """, [.text(documentId), .int(Int64(from)), .int(Int64(to))]) { r -> PageMark? in
                 let kind = Int(r.int64(1))
@@ -136,7 +140,8 @@ extension HostedWorkspace {
                 }
                 return PageMark(id: r.text(0), kind: kind, page: Int(r.int64(2)),
                                 anchor: [r.double(3), r.double(4), r.double(5), r.double(6)],
-                                payload: String(decoding: payload, as: UTF8.self), points: points)
+                                payload: String(decoding: payload, as: UTF8.self), points: points,
+                                createdAt: r.text(10), updatedAt: r.text(11))
             }.compactMap { $0 }
         }
     }
@@ -162,5 +167,144 @@ extension HostedWorkspace {
         }
         if pts.isEmpty, let blob, InkPointsBlob.decode(blob) != nil { return (rest, blob) }
         return (rest, InkPointsBlob.encode(pts))
+    }
+}
+
+// MARK: - W3：网页写笔迹 / 文字笔记（方案 `WEB-READER-PLAN.md §3`）
+
+extension HostedWorkspace {
+
+    /// 网页要写的一行（`note` 表；只收文字笔记 kind 0 与页内笔迹 kind 2）。
+    public struct WebNoteUpsert: Sendable {
+        public var id: String
+        public var kind: Int
+        public var page: Int
+        public var anchor: [Double]
+        /// JSON 文本；笔迹的点不在这里（写库时摘成 `"points":[]`），在 [points]。
+        public var payload: String
+        /// 笔迹点集（`InkPointsBlob`）；文字笔记 = nil。
+        public var points: Data?
+        /// 网页看到的这一行的 `updated_at`（新建 = nil）。服务器上的已经不是它了 = 别的设备改过，这一行不写。
+        public var baseUpdatedAt: String?
+        /// 行不在服务器上时用的 `created_at`（撤销删除时恢复原来的叠放顺序）；nil = 现在。
+        public var createdAt: String?
+
+        public init(id: String, kind: Int, page: Int, anchor: [Double], payload: String, points: Data?,
+                    baseUpdatedAt: String?, createdAt: String?) {
+            self.id = id; self.kind = kind; self.page = page; self.anchor = anchor; self.payload = payload
+            self.points = points; self.baseUpdatedAt = baseUpdatedAt; self.createdAt = createdAt
+        }
+    }
+
+    public struct WebNoteDelete: Sendable {
+        public var id: String
+        /// 网页看到的 `updated_at`；nil = 不核对。
+        public var baseUpdatedAt: String?
+        public init(id: String, baseUpdatedAt: String?) { self.id = id; self.baseUpdatedAt = baseUpdatedAt }
+    }
+
+    public enum WebEditOutcome: String, Sendable {
+        /// 写上了（删除：删掉了，或本来就不在）
+        case applied
+        /// 网页看到的不是最新的（别的设备改过 / 删过）：没写，网页重新取
+        case stale
+        /// 没写成（推送判定没让写，比如书已经删了）：网页重新取
+        case rejected
+    }
+
+    public struct WebEditResult: Sendable {
+        public let head: UInt64
+        /// 这一批写上的行的 `updated_at`（新建的 `created_at` 也是它）：网页记下来，下次改 / 删时带回核对。
+        public let updatedAt: String
+        public let results: [(id: String, outcome: WebEditOutcome)]
+    }
+
+    /// 网页的一批改动：当成一次「基线 = 服务器现状」的推送交给 `pushLocked`——
+    /// 删除先归档、修订号、外键带走的子行、三方判定全是推送那一份代码（方案 §3 🔴）。
+    /// 格式不对（kind / id / 坐标 / payload / 点集）→ `badRequest`，整批不写。
+    public func webEdits(documentId: String, upserts: [WebNoteUpsert], deletes: [WebNoteDelete],
+                         deviceName: String, now: Date = .now) throws -> WebEditResult {
+        for u in upserts { try Self.validate(u) }
+        for d in deletes where UUID(uuidString: d.id) == nil { throw ServerError.badRequest("笔记 id 不是 UUID：\(d.id)") }
+        lock.lock(); defer { lock.unlock() }
+        try checkOpen()
+        return try store.withMirrorDB { db in
+            guard try !db.query("SELECT 1 FROM document WHERE id=?", [.text(documentId)]).isEmpty else {
+                throw ServerError.unknownDocument(documentId)
+            }
+            let stamp = ISO.string(now)
+            var changes: [SyncWire.RowChange] = []
+            var outcomes: [String: WebEditOutcome] = [:]
+            var order: [String] = []
+
+            /// 服务器上这一行（只认这本书的文字笔记 / 页内笔迹，别的一律当「不能碰」）。
+            func current(_ id: String) throws -> (row: [String: Any]?, ok: Bool) {
+                guard let row = try SyncRows.fetch(db, table: "note", rowId: id) else { return (nil, true) }
+                let kind = row["kind"] as? Int64 ?? -1
+                return (row, row["document_id"] as? String == documentId && (kind == 0 || kind == 2))
+            }
+
+            for u in upserts {
+                order.append(u.id)
+                let (old, ok) = try current(u.id)
+                guard ok else { outcomes[u.id] = .rejected; continue }
+                if let old, old["updated_at"] as? String != u.baseUpdatedAt { outcomes[u.id] = .stale; continue }
+                if old == nil, u.baseUpdatedAt != nil { outcomes[u.id] = .stale; continue }   // 看到过、现在没了 = 别人删了
+                var payload = Data(u.payload.utf8)
+                if u.kind == 2, let s = InkPayloadFast.stripPoints(payload) { payload = s.rest }
+                let row: [String: Any] = [
+                    "id": u.id, "document_id": documentId, "kind": Int64(u.kind), "page": Int64(u.page),
+                    "anchor_x": u.anchor[0], "anchor_y": u.anchor[1], "anchor_w": u.anchor[2], "anchor_h": u.anchor[3],
+                    "payload": payload,
+                    "created_at": old?["created_at"] as? String ?? u.createdAt ?? stamp,
+                    "updated_at": stamp,
+                    "points": u.kind == 2 ? (u.points ?? Data()) as Any : NSNull(),
+                    "points_at": u.kind == 2 ? stamp as Any : NSNull(),
+                ]
+                changes.append(SyncWire.RowChange(table: "note", rowId: u.id, op: .upsert,
+                                                  baseFp: SyncRows.fingerprint(table: "note", row: old),
+                                                  row: SyncWire.row(fromSQLite: row)))
+            }
+            for d in deletes {
+                order.append(d.id)
+                let (old, ok) = try current(d.id)
+                guard let old else {
+                    outcomes[d.id] = d.baseUpdatedAt == nil ? .applied : .stale
+                    continue
+                }
+                guard ok else { outcomes[d.id] = .rejected; continue }
+                if let b = d.baseUpdatedAt, old["updated_at"] as? String != b { outcomes[d.id] = .stale; continue }
+                changes.append(SyncWire.RowChange(table: "note", rowId: d.id, op: .delete,
+                                                  baseFp: SyncRows.fingerprint(table: "note", row: old), row: nil))
+            }
+
+            var head = Self.head(db)
+            if !changes.isEmpty {
+                let resp = try pushLocked(db, SyncWire.PushRequest(schemaVersion: LibraryStore.schemaVersion, changes: changes),
+                                          deviceName: deviceName, now: now)
+                head = resp.head
+                for r in resp.results { outcomes[r.rowId] = r.outcome == .applied ? .applied : .rejected }
+            }
+            return WebEditResult(head: head, updatedAt: stamp, results: order.map { ($0, outcomes[$0] ?? .rejected) })
+        }
+    }
+
+    static func validate(_ u: WebNoteUpsert) throws {
+        guard UUID(uuidString: u.id) != nil else { throw ServerError.badRequest("笔记 id 不是 UUID：\(u.id)") }
+        guard u.kind == 0 || u.kind == 2 else { throw ServerError.badRequest("网页只能写文字笔记和笔迹（kind \(u.kind)）") }
+        guard u.page >= 0, u.anchor.count == 4, u.anchor.allSatisfy(\.isFinite) else {
+            throw ServerError.badRequest("页码或位置不对（\(u.id)）")
+        }
+        guard (try? JSONSerialization.jsonObject(with: Data(u.payload.utf8))) is [String: Any] else {
+            throw ServerError.badRequest("payload 不是 JSON 对象（\(u.id)）")
+        }
+        if u.kind == 2 {
+            guard let pts = u.points.flatMap(InkPointsBlob.decode), !pts.isEmpty,
+                  pts.allSatisfy({ $0.x.isFinite && $0.y.isFinite && $0.z.isFinite }) else {
+                throw ServerError.badRequest("笔迹没有点或点集格式不对（\(u.id)）")
+            }
+        } else if u.points != nil {
+            throw ServerError.badRequest("文字笔记不带点集（\(u.id)）")
+        }
     }
 }

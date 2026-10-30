@@ -11,7 +11,9 @@
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import { canvasTransform, type AlignTable } from "./align";
 import type { Decor } from "./decor";
-import type { PageMarks } from "./marks";
+import { drawPageInk } from "./ink";
+import type { InputHost } from "./input";
+import { visibleStrokes, type PageMarks, type Stroke } from "./marks";
 
 const GAP = 12;                  // 页与页、页与边的间距（CSS 像素）
 const PREFETCH = 1;              // 视口外各预先画几页
@@ -57,7 +59,7 @@ export interface ViewerMarks {
   marks(i: number): PageMarks | undefined;
 }
 
-export class Viewer {
+export class Viewer implements InputHost {
   readonly count: number;
   zoom = 1;
 
@@ -87,6 +89,8 @@ export class Viewer {
   private gesture: { zoom: number; a: Anchor; x: number; y: number } | null = null;
   private resizeObserver: ResizeObserver;
   private destroyed = false;
+  /** 正在写 / 擦（W3）：期间的触摸（手写笔自己、手掌）不滚动页面 */
+  private inking = false;
 
   constructor(
     private scroller: HTMLElement,
@@ -181,6 +185,51 @@ export class Viewer {
   }
 
   zoomBy(factor: number) { this.setZoom(this.zoom * factor); }
+
+  // MARK: - 给输入用（W3，`input.ts`）
+
+  locate(clientX: number, clientY: number): { page: number; nx: number; ny: number } | null {
+    const r = this.scroller.getBoundingClientRect();
+    const cx = clientX - r.left + this.scroller.scrollLeft, cy = clientY - r.top + this.scroller.scrollTop;
+    const i = this.indexAt(cy);
+    const nx = (cx - this.left) / this.pageWidth, ny = (cy - this.tops[i]) / this.heights[i];
+    return nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1 ? { page: i, nx, ny } : null;
+  }
+
+  norm(page: number, clientX: number, clientY: number): [number, number] {
+    const r = this.scroller.getBoundingClientRect();
+    const cx = clientX - r.left + this.scroller.scrollLeft, cy = clientY - r.top + this.scroller.scrollTop;
+    return [(cx - this.left) / this.pageWidth, (cy - this.tops[page]) / this.heights[page]];
+  }
+
+  pageDiv(page: number) { return this.slots[page].div; }
+
+  pageSize(page: number) { return { w: this.pageWidth, h: this.heights[page] }; }
+
+  fitSize(page: number) { return { fw: this.fitWidth, fh: (this.fitWidth * this.h[page]) / this.w[page] }; }
+
+  setInking(on: boolean) { this.inking = on; }
+
+  /**
+   * 页上刚加了一笔：它画在最上面（同页没有排在它后面的图层的笔迹）时直接补画到这页的笔迹画布上，
+   * 不整页重画（一页几百笔时整页重画要好几十毫秒，写字时每一笔都卡一下）。补不了就整页重画。
+   */
+  appendInk(page: number, stroke: Stroke) {
+    const s = this.slots[page];
+    if (!s?.canvas || !this.extras) return;
+    const marks = this.extras.marks(page);
+    const order = marks ? visibleStrokes(marks.strokes, this.extras.decor.layers) : [];
+    if (!s.ink || order[order.length - 1] !== stroke) {
+      this.paintMarks(page, s, s.canvas);
+      return;
+    }
+    const ctx = s.ink.getContext("2d");
+    if (!ctx) return;
+    const { fw, fh } = this.fitSize(page);
+    const kx = s.ink.width / fw;
+    ctx.setTransform(kx, 0, 0, s.ink.height / fh, 0, 0);
+    drawPageInk(ctx, [stroke], fw, fh, kx);
+  }
 
   /** 这几页（默认全部已画的页）的标记变了：重画笔迹、重摆高亮与图钉。页面图不动。 */
   refreshMarks(pages?: Iterable<number>) {
@@ -295,6 +344,10 @@ export class Viewer {
   };
 
   private onTouchStart = (e: TouchEvent) => {
+    if (this.inking) {
+      e.preventDefault();   // 写字时手写笔 / 手掌碰到屏幕：不滚动
+      return;
+    }
     if (e.touches.length !== 2) return;
     e.preventDefault();
     const [a, b] = [e.touches[0], e.touches[1]];
@@ -303,6 +356,10 @@ export class Viewer {
   };
 
   private onTouchMove = (e: TouchEvent) => {
+    if (this.inking) {
+      e.preventDefault();
+      return;
+    }
     if (!this.pinch || e.touches.length !== 2) return;
     e.preventDefault();
     const [a, b] = [e.touches[0], e.touches[1]];
@@ -480,7 +537,7 @@ export class Viewer {
       page.after(ink);
     }
     s.ink = ink;
-    this.extras.decor.attach(s.div, marks);
+    this.extras.decor.attach(s.div, marks, i);
   }
 
   private onClick = (e: MouseEvent) => {

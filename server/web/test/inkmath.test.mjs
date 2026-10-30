@@ -79,3 +79,13 @@ test("点集二进制解码与跨端向量一致", () => {
   assert.equal(decodePoints(Uint8Array.of(1, 0, 0)), null, "长度不对");
   assert.deepEqual(Array.from(base64Bytes("AQID")), [1, 2, 3]);
 });
+
+test("点集编码与跨端向量逐字节一致", async () => {
+  const { encodePoints } = await import("../.test-build/inkmath.js");
+  for (const row of lines("ink-blob-vectors.txt")) {
+    const [pts, hex] = row.split("|");
+    const want = pts ? pts.split(";").flatMap((p) => nums(p)) : [];
+    const got = Buffer.from(encodePoints(Float32Array.from(want))).toString("hex");
+    assert.equal(got, hex, row);
+  }
+});

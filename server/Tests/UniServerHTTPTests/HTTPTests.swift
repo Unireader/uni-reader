@@ -421,6 +421,32 @@ final class HTTPTests: XCTestCase {
                 XCTAssertEqual(r.status, .ok)
                 XCTAssertTrue(String(buffer: r.body).hasPrefix(#"{"head":"#), String(buffer: r.body))
             }
+
+            // W3：写一条文字笔记，取回来（payload 原样、带 updatedAt）；坏请求整批 400
+            let id = "44444444-4444-4444-4444-444444444444"
+            let edit = #"{"upserts":[{"id":"\#(id)","kind":0,"page":0,"anchor":[0.5,0.5,0,0],"payload":"{\"quote\":\"\",\"text\":\"网页写的\",\"rects\":[]}"}],"deletes":[]}"#
+            try await client.execute(uri: "\(book)/edits", method: .post, headers: Self.json, body: ByteBuffer(string: edit)) {
+                XCTAssertEqual($0.status, .unauthorized)
+            }
+            try await client.execute(uri: "\(book)/edits", method: .post, headers: self.auth(token, Self.json),
+                                     body: ByteBuffer(string: edit)) { r in
+                XCTAssertEqual(r.status, .ok)
+                struct Resp: Decodable { struct Item: Decodable { let id: String; let outcome: String }; let updatedAt: String; let results: [Item] }
+                let resp = try self.decode(Resp.self, r)
+                XCTAssertEqual(resp.results.map(\.id), [id])
+                XCTAssertEqual(resp.results.map(\.outcome), ["applied"])
+                XCTAssertFalse(resp.updatedAt.isEmpty)
+            }
+            try await client.execute(uri: "\(book)/marks?from=0&to=0", method: .get, headers: self.auth(token)) { r in
+                let body = String(buffer: r.body)
+                XCTAssertTrue(body.contains("网页写的") && body.contains(#""updatedAt":"#), body)
+            }
+            let badPoints = edit.replacingOccurrences(of: #""kind":0"#, with: #""kind":2,"points":"不是base64""#)
+            for bad in [badPoints, #"{"upserts":[{"id":"x"}],"deletes":[]}"#,
+                        edit.replacingOccurrences(of: id, with: "not-a-uuid")] {
+                try await client.execute(uri: "\(book)/edits", method: .post, headers: self.auth(token, Self.json),
+                                         body: ByteBuffer(string: bad)) { XCTAssertEqual($0.status, .badRequest, bad) }
+            }
         }
     }
 

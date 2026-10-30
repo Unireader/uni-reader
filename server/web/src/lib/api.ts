@@ -106,6 +106,26 @@ export const documentView = (ws: string, doc: string, hash?: string) =>
 export const pageMarks = (ws: string, doc: string, from: number, to: number) =>
   api<{ marks: MarkRow[] }>(`${book(ws, doc)}/marks?from=${from}&to=${to}`).then((r) => r.marks);
 
+export interface EditUpsert {
+  id: string; kind: 0 | 2; page: number; anchor: number[]; payload: string;
+  /** 笔迹点集的二进制（base64）；文字笔记不带 */
+  points?: string;
+  /** 看到的服务器上这一行的更新时间（新建不带）：服务器上已经变了就不写 */
+  baseUpdatedAt?: string;
+  /** 行不在服务器上时用的创建时间（撤销删除时恢复原来的叠放顺序） */
+  createdAt?: string;
+}
+export interface EditDelete { id: string; baseUpdatedAt?: string }
+export type EditOutcome = "applied" | "stale" | "rejected";
+
+/** 写一批文字笔记 / 笔迹（方案 §3：服务器当成一次推送）。 */
+export const postEdits = (ws: string, doc: string, upserts: EditUpsert[], deletes: EditDelete[]) =>
+  api<{ head: number; updatedAt: string; results: { id: string; outcome: EditOutcome }[] }>(`${book(ws, doc)}/edits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ upserts, deletes }),
+  });
+
 /** 工作区当前的修订号：别的设备改了什么，它就变。 */
 export const head = (ws: string) => api<{ head: number }>(`workspaces/${encodeURIComponent(ws)}/head`).then((r) => r.head);
 

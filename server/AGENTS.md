@@ -8,7 +8,7 @@ macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进�
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 27 项 + HTTP 7 项
+swift test  --disable-automatic-resolution   # 核心 29 项 + HTTP 7 项
 BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
 $BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
 $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）
@@ -29,7 +29,8 @@ $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 
   `scripts/build-web.sh`（类型检查 + `npm test` + 构建）出 `web/dist`，之后 `swift build` 时构建插件 `EmbedWebAssets` 自动把它编进程序（文件有变自动重新生成）。
   没有 `web/dist` 照样能编、测试照样能跑，只是程序不带网页。开发：`serve --web-dir web/dist` 读磁盘，或 `cd web && npm run dev`（`/v1` 转发到本机 8790）。
   网页的 node 测试（`cd web && npm test`，`web/test/`）：笔宽 / 锥度 / 铅笔抖动 / 扫描页对齐对 **Mac 代码生成**的向量 `../spike/web-ink-vectors.txt`
-  （`../spike/web-ink-vectors.swift` 生成，改了 `PenPreset.swift` / `ScanAlign.swift` 要重新生成）、点集解码对 `../spike/ink-blob-vectors.txt`、标记解析与图层规则。
+  （`../spike/web-ink-vectors.swift` 生成，改了 `PenPreset.swift` / `ScanAlign.swift` 要重新生成）、点集编解码对 `../spike/ink-blob-vectors.txt`、标记解析与图层规则、
+  改动的叠加显示 / 提交队列 / 撤销、笔记正文的 Markdown 与公式。网络函数可以从外面传入（`MarkStore` / `EditSession` 最后一个参数），测试里用假服务器。
 - 默认端口 8790（App 自己占了 8770~8773）。默认数据目录：macOS `~/Library/Application Support/UniReaderServer/`，
   Linux `/var/lib/unireader`。
 
@@ -73,7 +74,7 @@ server/
     WorkspaceHost.swift       全部工作区：列表、按 id 打开、登记上传、删除（整个挪进回收站）/ 找回 / 到期清理
     HostedWorkspace.swift     一个工作区：登记、推送、拉取、快照、改名、修订号
     HostedWorkspace+Files.swift   PDF / 图片本体 / 备份
-    HostedWorkspace+Web.swift     网页阅读器用的查询（书目、页上的标记、图层 / 笔记类型 / 对齐参数）
+    HostedWorkspace+Web.swift     网页阅读器用的查询（书目、页上的标记、图层 / 笔记类型 / 对齐参数）+ 网页写入（当成一次推送）
     ServerTrash.swift         删除先归档（按天一个小库）
   Sources/UniServerHTTP/ServerApp.swift   HTTP 接口（Hummingbird）：路由表在文件头；令牌中间件、错误→状态码、续传、配对限流
   Sources/UniServerHTTP/WebFiles.swift    网页阅读器的静态文件（不要令牌）：编进程序的那份 / --web-dir

@@ -9,7 +9,10 @@ export interface Color { r: number; g: number; b: number; a: number }
 export type MarkStyle = "fill" | "underline" | "box";
 export type NoteDisplay = "tap" | "hover" | "always";
 
-export interface Stroke {
+/** 服务器上这一行的时间（原样字符串）：网页刚写、还没存上的是空串。 */
+interface Stamped { createdAt: string; updatedAt: string }
+
+export interface Stroke extends Stamped {
   id: string;
   color: Color;
   width: number;
@@ -19,9 +22,9 @@ export interface Stroke {
   pts: Float32Array;
 }
 
-export interface Highlight { id: string; rects: number[][]; color: Color; style: MarkStyle }
+export interface Highlight extends Stamped { id: string; rects: number[][]; color: Color; style: MarkStyle }
 
-export interface TextNote {
+export interface TextNote extends Stamped {
   id: string;
   /** 归一化包围盒 [x, y, w, h]。 */
   anchor: number[];
@@ -32,17 +35,32 @@ export interface TextNote {
   style: MarkStyle;
   typeId: string | null;
   display: NoteDisplay;
+  /** payload 原样解出来的对象：网页改正文时只换 `text`，Mac 写的其他键（类型、来源、卡片位置……）原样留着。 */
+  raw: Record<string, unknown>;
 }
 
 export interface PageMarks {
   strokes: Stroke[];
   highlights: Highlight[];
   notes: TextNote[];
-  /** 这一页的原始数据拼起来，比较「变没变」用（轮询刷新时没变的页不重画）。 */
+  /** 各条的 id + 更新时间拼起来，比较「变没变」用（轮询刷新时没变的页不重画，见 [pageSig]）。 */
   sig: string;
 }
 
-export interface MarkRow { id: string; kind: number; page: number; anchor: number[]; payload: string; points?: string }
+export interface MarkRow {
+  id: string; kind: number; page: number; anchor: number[]; payload: string; points?: string;
+  createdAt: string; updatedAt: string;
+}
+
+/** 一页标记的签名：每条的 id + 服务器上的更新时间。网页自己写的那条存上后拿到同一个时间，服务器回来的同一份数据签名不变、不重画。 */
+export function pageSig(m: Pick<PageMarks, "strokes" | "highlights" | "notes">): string {
+  const parts: string[] = [];
+  for (const list of [m.strokes, m.highlights, m.notes]) {
+    for (const x of list) parts.push(`${x.id}@${x.updatedAt}`);
+    parts.push("|");
+  }
+  return parts.join(",");
+}
 
 export interface InkLayer { id: string; name: string; colorKey: string; sortOrder: number; visible: boolean }
 
@@ -95,7 +113,6 @@ const style = (v: unknown): MarkStyle => (v === "underline" || v === "box" ? v :
 /** 一段页的行 → 每页的标记。认不出的行跳过（同 App：坏行不显示）。 */
 export function parseMarks(rows: MarkRow[]): Map<number, PageMarks> {
   const out = new Map<number, PageMarks>();
-  const sig = new Map<number, string[]>();
   for (const row of rows) {
     let p: Record<string, unknown>;
     try { p = JSON.parse(row.payload); } catch { continue; }
@@ -104,33 +121,42 @@ export function parseMarks(rows: MarkRow[]): Map<number, PageMarks> {
     if (!page) {
       page = { strokes: [], highlights: [], notes: [], sig: "" };
       out.set(row.page, page);
-      sig.set(row.page, []);
     }
-    sig.get(row.page)!.push(row.id, row.payload, row.points ?? "", row.anchor.join(","));
+    const stamp = { createdAt: row.createdAt ?? "", updatedAt: row.updatedAt ?? "" };
     if (row.kind === 2) {
       const c = color(p.color);
       const pts = row.points ? decodePoints(base64Bytes(row.points)) : null;
       if (!c || typeof p.width !== "number" || !pts) continue;
       page.strokes.push({
         id: row.id, color: c, width: p.width, type: penType(p.type),
-        layerId: upper(p.layerId) || DEFAULT_LAYER, pts,
+        layerId: upper(p.layerId) || DEFAULT_LAYER, pts, ...stamp,
       });
     } else if (row.kind === 3) {
       const c = color(p.color);
       if (!c) continue;
-      page.highlights.push({ id: row.id, rects: rects(p.rects), color: c, style: style(p.style) });
+      page.highlights.push({ id: row.id, rects: rects(p.rects), color: c, style: style(p.style), ...stamp });
     } else if (row.kind === 0) {
       const d = p.display;
       page.notes.push({
         id: row.id, anchor: row.anchor, rects: rects(p.rects),
         quote: typeof p.quote === "string" ? p.quote : "", text: typeof p.text === "string" ? p.text : "",
         color: color(p.color), style: style(p.style), typeId: upper(p.type_id) || null,
-        display: d === "hover" || d === "always" ? d : "tap",
+        display: d === "hover" || d === "always" ? d : "tap", raw: p, ...stamp,
       });
     }
   }
-  for (const [i, page] of out) page.sig = sig.get(i)!.join("\u0001");
+  for (const page of out.values()) page.sig = pageSig(page);
   return out;
+}
+
+/** 写回服务器的笔迹 payload（键同 Mac `InkStrokePayload`；点不放这里，另走二进制）。 */
+export function strokePayload(s: Stroke): string {
+  return JSON.stringify({ color: s.color, width: s.width, type: s.type, points: [], layerId: s.layerId });
+}
+
+/** 写回服务器的文字笔记 payload：在原来的对象上换正文（新建的给 Mac 新建点笔记时的那几个键）。 */
+export function notePayload(n: TextNote): string {
+  return JSON.stringify({ ...n.raw, quote: n.quote, text: n.text, rects: n.rects });
 }
 
 /** 工作区的笔记类型（`meta.note_types`，JSON 数组）。 */
