@@ -24,6 +24,13 @@ struct ServerClient: Sendable {
         }
 
         var status: Int? { if case .http(let c, _) = self { return c } else { return nil } }
+
+        /// 服务器程序太旧、没有这个接口：路由不存在时回的是不带说明的 404 / 405
+        /// （「没有这个工作区」那种 404 带着服务器给的说明）。
+        var isUnsupportedRoute: Bool {
+            if case .http(let c, let msg) = self { return (c == 404 || c == 405) && msg.isEmpty }
+            return false
+        }
     }
 
     /// 用户填的地址 → 基础地址：没写协议补 `http://`，去掉末尾的 `/`。
@@ -65,6 +72,19 @@ struct ServerClient: Sendable {
         try decode(WorkspaceList.self, try await send(request("v1/workspaces")).0).workspaces
     }
 
+    /// 改服务器工作区的名字，回改完的工作区（新名字 + 修订号）。
+    func renameWorkspace(_ ws: String, name: String) async throws -> WorkspaceInfo {
+        var req = try request("v1/workspaces/\(ws)", method: "PATCH")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = try JSONSerialization.data(withJSONObject: ["name": name])
+        return try decode(WorkspaceInfo.self, try await send(req, body: body).0)
+    }
+
+    /// 从服务器删除整个工作区（服务器先整个挪进回收站，90 天内能在服务器上用命令行找回）。
+    func deleteWorkspace(_ ws: String) async throws {
+        _ = try await send(request("v1/workspaces/\(ws)", method: "DELETE"))
+    }
+
     func push(_ ws: String, body: Data) async throws -> Data {
         var req = try request("v1/workspaces/\(ws)/push", method: "POST")
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -80,9 +100,10 @@ struct ServerClient: Sendable {
         return try await send(req).0
     }
 
-    /// 下载快照到 [dst]（不能已存在），返回快照对应的修订号。
-    func downloadSnapshot(_ ws: String, to dst: URL) async throws -> UInt64 {
-        let resp = try await download(request("v1/workspaces/\(ws)/snapshot"), to: dst)
+    /// 下载快照到 [dst]（不能已存在），返回快照对应的修订号。[progress] 收到（已下载，总字节数；不知道总数时为 -1）。
+    func downloadSnapshot(_ ws: String, to dst: URL,
+                          progress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws -> UInt64 {
+        let resp = try await download(request("v1/workspaces/\(ws)/snapshot"), to: dst, progress: progress)
         guard let rev = resp.value(forHTTPHeaderField: "X-UniReader-Rev").flatMap({ UInt64($0) }) else {
             throw Failure.badResponse
         }
@@ -97,7 +118,8 @@ struct ServerClient: Sendable {
     /// 下载一份 PDF 到 [dst]。[progress] 收到的是已下载的字节数（约每 0.15 秒一次，下完那一下必报）。
     func downloadPDF(_ ws: String, hash: String, to dst: URL,
                      progress: (@Sendable (Int64) -> Void)? = nil) async throws {
-        _ = try await download(request("v1/workspaces/\(ws)/pdf/\(hash)"), to: dst, progress: progress)
+        _ = try await download(request("v1/workspaces/\(ws)/pdf/\(hash)"), to: dst,
+                               progress: progress.map { p in { done, _ in p(done) } })
     }
 
     func uploadPDF(_ ws: String, hash: String, file: URL, progress: ((Int64, Int64) -> Void)? = nil) async throws {
@@ -171,7 +193,7 @@ struct ServerClient: Sendable {
     }
 
     private func download(_ req: URLRequest, to dst: URL,
-                          progress: (@Sendable (Int64) -> Void)? = nil) async throws -> HTTPURLResponse {
+                          progress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws -> HTTPURLResponse {
         var req = req
         req.timeoutInterval = 300
         let (tmp, resp) = try await session.download(for: req, delegate: progress.map(DownloadWatcher.init))
@@ -271,16 +293,17 @@ struct ServerClient: Sendable {
     }
 }
 
-/// 下载进度：系统新建任务时交给每任务的代理（`didCreateTask`），盯着任务的 `countOfBytesReceived` 报已收到的字节数。
+/// 下载进度：系统新建任务时交给每任务的代理（`didCreateTask`），盯着任务的 `countOfBytesReceived` 报已收到的字节数
+/// （连同总字节数 `countOfBytesExpectedToReceive`，不知道时为 -1）。
 /// ⚠️ 别盯 `task.progress`：它的单位不是字节（实测总数是 100，报出来的是 5、100）。
 /// 按时间节流（KVO 每收一块就来一次），收满那一下必报，免得最后停在 9x%。
 private final class DownloadWatcher: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private let report: @Sendable (Int64) -> Void
+    private let report: @Sendable (Int64, Int64) -> Void
     private let lock = NSLock()
     private var observation: NSKeyValueObservation?
     private var last: TimeInterval = 0
 
-    init(_ report: @escaping @Sendable (Int64) -> Void) { self.report = report }
+    init(_ report: @escaping @Sendable (Int64, Int64) -> Void) { self.report = report }
 
     func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
         let o = task.observe(\.countOfBytesReceived) { [weak self] t, _ in
@@ -296,6 +319,6 @@ private final class DownloadWatcher: NSObject, URLSessionTaskDelegate, @unchecke
             last = now
             return true
         }
-        if due { report(done) }
+        if due { report(done, total) }
     }
 }

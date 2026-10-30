@@ -80,12 +80,17 @@ enum ServerSyncIO {
         return nil
     }
 
-    /// 库里有行、本机没文件的图片：从服务器补下来（某一张取不到就跳过它）。
-    static func downloadMissingImages(db: SQLiteDB, folder: URL, client: ServerClient, wid: String) async throws {
-        for r in (try? db.query("SELECT sha256, ext FROM image")) ?? [] {
-            try Task.checkCancellation()
+    /// 库里有行、本机没文件的图片：从服务器补下来（某一张取不到就跳过它）。[progress] 收到（第几张，共几张）。
+    static func downloadMissingImages(db: SQLiteDB, folder: URL, client: ServerClient, wid: String,
+                                      progress: ((Int, Int) -> Void)? = nil) async throws {
+        let missing = ((try? db.query("SELECT sha256, ext FROM image")) ?? []).compactMap { r -> (String, String)? in
             guard let sha = r["sha256"] as? String, let ext = r["ext"] as? String,
-                  !ImageAssets.exists(in: folder, sha256: sha, ext: ext) else { continue }
+                  !ImageAssets.exists(in: folder, sha256: sha, ext: ext) else { return nil }
+            return (sha, ext)
+        }
+        for (i, (sha, ext)) in missing.enumerated() {
+            try Task.checkCancellation()
+            progress?(i, missing.count)
             do {
                 try await client.downloadImage(wid, sha: sha, ext: ext, to: ImageAssets.url(in: folder, sha256: sha, ext: ext))
             } catch let e as URLError where e.code == .cancelled {
@@ -99,15 +104,20 @@ enum ServerSyncIO {
     // MARK: - 建本机缓存
 
     /// 下载快照建一份本机缓存，放在 [dir] 下（名字不撞）。返回缓存文件夹。
+    /// [fraction] 收到当前这一步的进度（资料库按字节、图片按张数；不知道总量时为 nil）。
     static func createCache(in dir: URL, name: String, serverURL: String, serverId: String? = nil, client: ServerClient,
-                            wid: String, progress: (Step) -> Void) async throws -> URL {
+                            wid: String, progress: (Step) -> Void,
+                            fraction: (@Sendable (Double?) -> Void)? = nil) async throws -> URL {
         let fm = FileManager.default
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let tmp = dir.appendingPathComponent(".\(UUID().uuidString).download", isDirectory: true)
         defer { try? fm.removeItem(at: tmp) }
         progress(.library)
-        let rev = try await client.downloadSnapshot(wid, to: tmp.appendingPathComponent("UniReader/library.sqlite"))
+        let rev = try await client.downloadSnapshot(wid, to: tmp.appendingPathComponent("UniReader/library.sqlite")) { got, total in
+            fraction?(total > 0 ? min(1, Double(got) / Double(total)) : nil)
+        }
         progress(.preparing)
+        fraction?(nil)
         do {
             let store = try LibraryStore(workspaceFolder: tmp)
             defer { store.close() }
@@ -116,17 +126,97 @@ enum ServerSyncIO {
             try store.withMirrorDB { try SyncClient.resetBase($0, folder: tmp, pulledRev: rev) }
             store.checkpointTruncate()
         }
+        try Task.checkCancellation()   // 停了（启动页「停止下载」/ 删除）就别把它挪成缓存，临时文件夹随 defer 删掉
         let dst = uniqueFolder(in: dir, name: safeName(name))
         try fm.moveItem(at: tmp, to: dst)
         progress(.images)
         if let db = try? SQLiteDB(path: dst.appendingPathComponent("UniReader/library.sqlite").path) {
-            try? await downloadMissingImages(db: db, folder: dst, client: client, wid: wid)
+            try? await downloadMissingImages(db: db, folder: dst, client: client, wid: wid) { i, n in
+                fraction?(n > 0 ? Double(i) / Double(n) : nil)
+            }
             db.close()
         }
         return dst
     }
 
     enum Step { case library, preparing, images }
+
+    // MARK: - 下载整个工作区的 PDF（启动页右键「下载到本机」）
+
+    struct PendingPDF: Equatable { let documentId: String; let contentHash: String; let rel: String; let size: Int64 }
+
+    /// 本机副本里没文件的书，每本挑**第一个服务器上有的版本**（口径同 `ServerSyncCoordinator.fetchDocument`），
+    /// 不超过 [maxBytes] 的才要（同本机缓存的规矩：大 PDF 用到再下，方案 §0）。
+    /// 🔴 只认库里已经记着**工作区内路径**的版本：这一步只写文件、不写库（工作区可能随时被打开，那时库归窗口那条连接）。
+    /// 没有这种路径的书留给打开后的预取，它会顺带补一条 location。
+    static func pendingPDFs(folder: URL, client: ServerClient, wid: String, maxBytes: Int64) async throws -> [PendingPDF] {
+        struct Candidate { let variantId: String; let hash: String; let rel: String? }
+        var byDoc: [(String, [Candidate])] = []
+        do {
+            let db = try SQLiteDB(path: folder.appendingPathComponent("UniReader/library.sqlite").path)
+            defer { db.close() }
+            let rows = try db.query("""
+            SELECT v.id, v.document_id, v.content_hash,
+                   (SELECT l.path FROM location l WHERE l.variant_id=v.id AND l.in_workspace=1 LIMIT 1) AS rel
+            FROM variant v JOIN document d ON d.id=v.document_id
+            ORDER BY d.sort_order, d.added_at, v.added_at
+            """)
+            var index: [String: Int] = [:]
+            for r in rows {
+                guard let vid = r["id"] as? String, let doc = r["document_id"] as? String,
+                      let hash = r["content_hash"] as? String else { continue }
+                if index[doc] == nil { index[doc] = byDoc.count; byDoc.append((doc, [])) }
+                byDoc[index[doc]!].1.append(Candidate(variantId: vid, hash: hash, rel: r["rel"] as? String))
+            }
+            byDoc = byDoc.filter { _, vs in !vs.contains { localPDF(db: db, folder: folder, variantId: $0.variantId) != nil } }
+        }
+        var out: [PendingPDF] = []
+        for (doc, variants) in byDoc {
+            for v in variants {
+                try Task.checkCancellation()
+                guard let size = try await client.pdfSize(wid, hash: v.hash) else { continue }
+                if size <= maxBytes, let rel = v.rel, isSafeRelative(rel) {
+                    out.append(PendingPDF(documentId: doc, contentHash: v.hash, rel: rel, size: size))
+                }
+                break
+            }
+        }
+        return out
+    }
+
+    /// 按清单下 PDF 到工作区里（只写文件）。[progress] 收到（第几本，共几本，已下字节，总字节）。
+    /// 某一本没下成就跳过它（打开后的预取还会再试）；取消照常往外抛。
+    /// [keepGoing] 每本开始前问一次，答「否」就停（工作区被打开了：之后归会话自己的预取）。
+    static func downloadPDFs(_ list: [PendingPDF], folder: URL, client: ServerClient, wid: String,
+                             keepGoing: (@Sendable () async -> Bool)? = nil,
+                             progress: @escaping @Sendable (Int, Int, Int64, Int64) -> Void) async throws {
+        let total = list.reduce(Int64(0)) { $0 + $1.size }
+        var done: Int64 = 0
+        for (i, p) in list.enumerated() {
+            try Task.checkCancellation()
+            if let keepGoing, await !keepGoing() { throw CancellationError() }
+            let base = done, index = i + 1
+            progress(index, list.count, base, total)
+            do {
+                try await client.downloadPDF(wid, hash: p.contentHash, to: folder.appendingPathComponent(p.rel)) { got in
+                    progress(index, list.count, base + got, total)
+                }
+            } catch let e as URLError where e.code == .cancelled {
+                throw CancellationError()
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // 这一本没下成：跳过
+            }
+            done += p.size
+        }
+        progress(list.count, list.count, total, total)
+    }
+
+    /// 服务器给的工作区内路径：不许绝对路径与 `..`（别让它把文件写到工作区外面去）。
+    static func isSafeRelative(_ rel: String) -> Bool {
+        !rel.isEmpty && !rel.hasPrefix("/") && !rel.split(separator: "/").contains("..")
+    }
 
     /// 在缓存目录里找某个工作区的本机缓存（按 `workspace_id`）。
     static func findCache(workspaceId: String, root: URL = cachesRoot) -> URL? {

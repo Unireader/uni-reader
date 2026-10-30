@@ -19,6 +19,9 @@ public final class HostedWorkspace: @unchecked Sendable {
     let store: LibraryStore
     let paths: ServerPaths
     let lock = NSLock()
+    /// 已关掉（工作区被删除时，`WorkspaceHost.delete`）。之后还拿着这个实例的请求一律当「没有这个工作区」，
+    /// 别往已经挪进回收站的文件夹里写东西（`storePDF` 会重新建出 `PDFs/`，列表里就多出一个空壳）。
+    private var closed = false
 
     static let metaHead = "srv_head_rev"
 
@@ -56,7 +59,13 @@ public final class HostedWorkspace: @unchecked Sendable {
 
     public func close() {
         lock.lock(); defer { lock.unlock() }
+        closed = true
         store.close()
+    }
+
+    /// 在锁里调：工作区已经关掉（被删除）就当它不存在。
+    func checkOpen() throws {
+        if closed { throw ServerError.unknownWorkspace(id) }
     }
 
     public var name: String {
@@ -176,6 +185,7 @@ public final class HostedWorkspace: @unchecked Sendable {
             throw ServerError.schemaMismatch(client: req.schemaVersion, server: LibraryStore.schemaVersion)
         }
         lock.lock(); defer { lock.unlock() }
+        try checkOpen()
         return try store.withMirrorDB { db in try pushLocked(db, req, deviceName: deviceName, now: now) }
     }
 
@@ -355,6 +365,7 @@ public final class HostedWorkspace: @unchecked Sendable {
     /// 🔴 一次拉取的**全部页攒齐再应用**（父行和子行可能分在不同页，见 `SyncClient.applyPulled`）。
     func pullRows(since: UInt64, limit: Int = 5000) throws -> SyncWire.PullResponse {
         lock.lock(); defer { lock.unlock() }
+        try checkOpen()
         return try store.withMirrorDB { db in
             let head = Self.head(db)
             let entries = try db.query("SELECT tbl,row_id,rev,deleted FROM srv_rev WHERE rev>? ORDER BY rev LIMIT ?",
@@ -382,11 +393,39 @@ public final class HostedWorkspace: @unchecked Sendable {
                                   row: SyncWire.row(fromSQLite: row))
     }
 
+    // MARK: - 改名
+
+    /// 改工作区的名字（App 启动页对着本机还没有副本的服务器工作区改名时用）。`meta.workspace_name` 是同步的 meta 键，
+    /// 改了就记一个修订号，各设备下次拉取时拿到新名字（本机缓存的文件夹名不跟着变，用户看不到它）。返回当前修订号。
+    @discardableResult
+    public func rename(to newName: String) throws -> UInt64 {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw ServerError.badRequest("名字不能为空") }
+        guard name.count <= 255 else { throw ServerError.badRequest("名字太长") }
+        lock.lock(); defer { lock.unlock() }
+        try checkOpen()
+        return try store.withMirrorDB { db in
+            var head = Self.head(db)
+            let key = "workspace_name"
+            try db.transaction {
+                let before = SyncRows.fingerprint(table: "meta", row: try SyncRows.fetch(db, table: "meta", rowId: key))
+                try db.run("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                           [.text(key), .text(name)])
+                let after = SyncRows.fingerprint(table: "meta", row: try SyncRows.fetch(db, table: "meta", rowId: key))
+                guard after != before else { return }
+                try Self.bump(db, head: &head, table: "meta", rowId: key, fp: after)
+                try Self.setHead(db, head)
+            }
+            return head
+        }
+    }
+
     // MARK: - 快照
 
     /// 给新设备建缓存用的一致快照（不含服务器私有表），写到 [dst]（必须尚不存在）。返回快照对应的修订号。
     public func exportSnapshot(to dst: URL) throws -> UInt64 {
         lock.lock(); defer { lock.unlock() }
+        try checkOpen()
         let head = store.withMirrorDB { Self.head($0) }
         store.checkpointTruncate()
         try store.vacuumInto(dst.path)

@@ -62,9 +62,11 @@ final class WorkspacesViewController: NSViewController {
     private var rows: [Row] = []
     private var remote: [String: RemoteState] = [:]   // 账号 id → 那台服务器的工作区
     private var loadToken = 0
-    private var busy = false
+    /// 正在下载（`ServerSyncCoordinator.workspaceDownloads` 上一次的键）：下完的那几个要重新找本机副本。
+    private var downloading: Set<String> = []
     private var bag = Set<AnyCancellable>()
     private var welcome: WorkspacesWelcomeView!
+    private var sync: ServerSyncCoordinator { .shared }
 
     override func loadView() {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -87,6 +89,10 @@ final class WorkspacesViewController: NSViewController {
         ServerAccounts.shared.$all.dropFirst().sink { [weak self] _ in
             DispatchQueue.main.async { self?.reloadServers() }
         }.store(in: &bag)
+        // 下载进度：只就地改那几行（@Published 在 willSet 发出，挪到下一拍再读新值）
+        sync.$workspaceDownloads.dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.downloadsChanged() }
+        }.store(in: &bag)
         rebuild()
     }
 
@@ -97,7 +103,6 @@ final class WorkspacesViewController: NSViewController {
         let accounts = ServerAccounts.shared.all
         remote = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, RemoteState.loading) })
         rebuild()
-        let recents = WorkspaceRegistry.shared.recents
         for a in accounts {
             guard let client = ServerAccounts.shared.client(a) else {
                 remote[a.id] = .failed(ServerSyncError.noAccount.localizedDescription)
@@ -107,20 +112,7 @@ final class WorkspacesViewController: NSViewController {
                 let state: RemoteState
                 do {
                     let list = try await client.workspaces()
-                    // 本机有没有这个工作区的副本：最近列表里同一个 id 能解析到的那份（主线程，只是几次 fileExists），
-                    // 否则去缓存目录里找（要逐个打开库看身份，放后台）
-                    var copies: [String: URL] = [:]
-                    for ws in list {
-                        if let r = recents.first(where: { $0.id == ws.id }), let u = WorkspaceRegistry.resolve(r) { copies[ws.id] = u }
-                    }
-                    let rest = list.map(\.id).filter { copies[$0] == nil }
-                    let found = await Task.detached { () -> [String: URL] in
-                        var out: [String: URL] = [:]
-                        for id in rest { if let u = ServerSyncIO.findCache(workspaceId: id) { out[id] = u } }
-                        return out
-                    }.value
-                    copies.merge(found) { a, _ in a }
-                    state = .loaded(list, localCopies: copies)
+                    state = .loaded(list, localCopies: await Self.findCopies(list.map(\.id)))
                 } catch {
                     state = .failed(error.localizedDescription)
                 }
@@ -128,6 +120,36 @@ final class WorkspacesViewController: NSViewController {
                 self.remote[a.id] = state
                 self.rebuild()
             }
+        }
+    }
+
+    /// 本机有没有这些工作区的副本：最近列表里同一个 id 能解析到的那份（主线程，只是几次 fileExists），
+    /// 否则去缓存目录里找（要逐个打开库看身份，放后台）。
+    private static func findCopies(_ ids: [String]) async -> [String: URL] {
+        let recents = WorkspaceRegistry.shared.recents
+        var copies: [String: URL] = [:]
+        for id in ids {
+            if let r = recents.first(where: { $0.id == id }), let u = WorkspaceRegistry.resolve(r) { copies[id] = u }
+        }
+        let rest = ids.filter { copies[$0] == nil }
+        let found = await Task.detached { () -> [String: URL] in
+            var out: [String: URL] = [:]
+            for id in rest { if let u = ServerSyncIO.findCache(workspaceId: id) { out[id] = u } }
+            return out
+        }.value
+        return copies.merging(found) { a, _ in a }
+    }
+
+    /// 只重找这几个工作区的本机副本（下载完 / 删掉之后），不重新问服务器。
+    private func refreshCopies(_ ids: Set<String>) {
+        Task {
+            let found = await Self.findCopies(Array(ids))
+            for (aid, state) in remote {
+                guard case .loaded(let list, var copies) = state, list.contains(where: { ids.contains($0.id) }) else { continue }
+                for id in ids { copies[id] = found[id] }
+                remote[aid] = .loaded(list, localCopies: copies)
+            }
+            rebuild()
         }
     }
 
@@ -149,6 +171,16 @@ final class WorkspacesViewController: NSViewController {
         welcome.items = rows.map(item)
     }
 
+    private func downloadsChanged() {
+        let now = sync.workspaceDownloads
+        for (i, r) in rows.enumerated() {
+            if case .remote = r { welcome.update(i, item(r)) }
+        }
+        let finished = downloading.subtracting(now.keys)
+        downloading = Set(now.keys)
+        if !finished.isEmpty { refreshCopies(finished) }
+    }
+
     private func item(_ r: Row) -> WorkspacesWelcomeView.Item {
         switch r {
         case .header(let t): return .header(t)
@@ -163,10 +195,14 @@ final class WorkspacesViewController: NSViewController {
             else if WorkspaceRegistry.opensOffline(w) { detail = L("Offline copy") + " · " + detail }
             return .entry(icon: NSWorkspace.shared.icon(forFile: url.path), title: w.name, detail: detail)
         case .remote(let a, let ws):
+            let title = ws.name.isEmpty ? L("Untitled Workspace") : ws.name
+            if let d = sync.workspaceDownloads[ws.id] {
+                return .entry(icon: Self.symbol("server.rack"), title: title, detail: d.step,
+                              progress: .init(fraction: d.fraction))
+            }
             let detail = localCopy(a, ws).map { String(format: L("On this Mac · %@"), Self.displayPath($0)) }
                 ?? L("Not downloaded yet; opening downloads the library")
-            return .entry(icon: Self.symbol("server.rack"), title: ws.name.isEmpty ? L("Untitled Workspace") : ws.name,
-                          detail: detail)
+            return .entry(icon: Self.symbol("server.rack"), title: title, detail: detail)
         }
     }
 
@@ -189,24 +225,194 @@ final class WorkspacesViewController: NSViewController {
         return nil
     }
 
-    // MARK: 动作
+    // MARK: 右键
 
-    /// 右键：只有「本机」一段的工作区有菜单（服务器那几段是服务器给的列表，本机没有「移除」可言）。
-    /// 「从列表中移除」只摘最近列表里这一条，工作区文件夹一个字节都不动。
-    private func contextItems(_ i: Int) -> [(title: String, action: () -> Void)] {
-        guard rows.indices.contains(i), case .local(let r) = rows[i] else { return [] }
-        var out: [(title: String, action: () -> Void)] = []
-        if let url = WorkspaceRegistry.resolve(r) {
-            out.append((L("Show in Finder"), { NSWorkspace.shared.activateFileViewerSelecting([url]) }))
+    /// 「本机」一段：在访达中显示 / 重命名 / 从列表中移除（只摘最近列表里这一条，工作区文件夹一个字节都不动）。
+    /// 服务器那几段：下载到本机（或停止下载）/ 重命名 / 从服务器删除（确认两次）。
+    private func contextItems(_ i: Int) -> [WorkspacesWelcomeView.ContextItem] {
+        guard rows.indices.contains(i) else { return [] }
+        switch rows[i] {
+        case .local(let r):
+            var out: [WorkspacesWelcomeView.ContextItem] = []
+            if let url = WorkspaceRegistry.resolve(r) {
+                out.append(.action(L("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([url]) })
+                out.append(.action(L("Rename…")) { [weak self] in self?.renameLocal(r, url) })
+            }
+            out.append(.separator)
+            out.append(.action(L("Remove from List")) {
+                WorkspaceRegistry.shared.removeRecent(URL(fileURLWithPath: r.sourcePath))
+            })
+            return out
+        case .remote(let a, let ws):
+            var out: [WorkspacesWelcomeView.ContextItem] = []
+            if sync.workspaceDownloads[ws.id] != nil {
+                out.append(.action(L("Stop Downloading")) { [weak self] in self?.sync.cancelWorkspaceDownload(ws.id) })
+            } else if let copy = localCopy(a, ws) {
+                if WorkspaceRegistry.shared.openManager(at: copy) == nil {
+                    out.append(.action(L("Download Missing PDFs")) { [weak self] in self?.download(a, ws) })
+                }
+            } else {
+                out.append(.action(L("Download to This Mac")) { [weak self] in self?.download(a, ws) })
+            }
+            out.append(.action(L("Rename…")) { [weak self] in self?.renameRemote(a, ws) })
+            out.append(.separator)
+            out.append(.action(L("Delete from Server…")) { [weak self] in self?.confirmDelete(a, ws) })
+            return out
+        case .header, .message:
+            return []
         }
-        out.append((L("Remove from List"), {
-            WorkspaceRegistry.shared.removeRecent(URL(fileURLWithPath: r.sourcePath))
-        }))
-        return out
     }
 
+    // MARK: 下载到本机
+
+    /// 右键「下载到本机」：资料库 + 图片 + 不大的 PDF，进度显示在这一行（2026-10-30 用户要求）。
+    private func download(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo) {
+        welcome.setStatus("", busy: false)
+        Task {
+            do {
+                try await sync.downloadWorkspace(a, ws)
+            } catch is CancellationError {
+            } catch let e as URLError where e.code == .cancelled {
+            } catch {
+                welcome.setStatus(String(format: L("Couldn’t download “%@”: %@"), ws.name, error.localizedDescription),
+                                  busy: false)
+            }
+        }
+    }
+
+    // MARK: 重命名
+
+    private func renameLocal(_ r: RecentWorkspace, _ folder: URL) {
+        promptName(current: r.name) { [weak self] name in
+            Task {
+                do {
+                    let result = try await WorkspaceManager.renameClosed(folder, to: name)
+                    // 服务器工作区：顺手让服务器也改（启动页下面那一段马上就是新名字）；连不上也没关系，同步会推上去
+                    if ServerSyncIO.serverURL(of: result) != nil {
+                        try? await ServerSyncCoordinator.shared.renameOnServer(folder: result, to: name)
+                        self?.reloadServers()
+                    }
+                } catch {
+                    self?.welcome.setStatus(error.localizedDescription, busy: false)
+                }
+            }
+        }
+    }
+
+    /// 服务器上的工作区改名：让服务器改；本机有副本就把副本也改了（两边同一个名字，同步时不算冲突）。
+    /// 服务器连不上 / 太旧而本机有副本时，只改副本，等同步带上去。
+    private func renameRemote(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo) {
+        promptName(current: ws.name) { [weak self] name in
+            guard let self else { return }
+            let copy = self.localCopy(a, ws)
+            Task {
+                do {
+                    do {
+                        try await self.sync.renameOnServer(a, ws, to: name)
+                    } catch where copy != nil {
+                        // 只改本机副本，同步带上去
+                    }
+                    if let copy { _ = try await WorkspaceManager.renameClosed(copy, to: name) }
+                    self.reloadServers()
+                } catch {
+                    self.welcome.setStatus(error.localizedDescription, busy: false)
+                }
+            }
+        }
+    }
+
+    private func promptName(current: String, done: @escaping (String) -> Void) {
+        guard let win = view.window else { return }
+        let a = NSAlert()
+        a.messageText = L("Rename Workspace")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = L("Name")
+        field.stringValue = current
+        a.accessoryView = field
+        a.addButton(withTitle: L("Rename"))
+        a.addButton(withTitle: L("Cancel"))
+        a.window.initialFirstResponder = field
+        a.beginSheetModal(for: win) { resp in
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard resp == .alertFirstButtonReturn, !name.isEmpty, name != current else { return }
+            done(name)
+        }
+    }
+
+    // MARK: 从服务器删除（确认两次）
+
+    private func confirmDelete(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo) {
+        guard let win = view.window else { return }
+        let name = ws.name.isEmpty ? L("Untitled Workspace") : ws.name
+        let copy = localCopy(a, ws)
+        if let copy, WorkspaceRegistry.shared.hasWindow(forWorkspace: copy)
+            || WorkspaceRegistry.shared.openManager(at: copy) != nil {
+            WorkspacePanels.alert(String(format: L("“%@” is open"), name),
+                                  L("Close this workspace’s windows first, then delete it from the server."))
+            return
+        }
+        var text = L("Its books, notes and handwriting are removed from the server, and no device can open it from the server any more. The server keeps it in its trash for 90 days; it can be restored there with “unireader-server restore”.")
+        if let copy {
+            text += "\n\n" + (ServerSyncCoordinator.isInCachesFolder(copy)
+                ? L("The copy on this Mac will be moved to the Trash.")
+                : String(format: L("The copy on this Mac (%@) becomes a local workspace and stays where it is."),
+                         (copy.path as NSString).abbreviatingWithTildeInPath))
+        }
+        text += "\n\n" + L("Copies on other devices aren’t touched; they’ll report that the workspace is gone from the server.")
+        let first = NSAlert()
+        first.alertStyle = .warning
+        first.messageText = String(format: L("Delete “%@” from the server?"), name)
+        first.informativeText = text
+        first.addButton(withTitle: L("Delete…")).hasDestructiveAction = true
+        first.addButton(withTitle: L("Cancel"))
+        first.beginSheetModal(for: win) { [weak self] resp in
+            guard resp == .alertFirstButtonReturn else { return }
+            // 第一个框收起之后再弹第二个（同一扇窗上不能叠两个 sheet）
+            DispatchQueue.main.async { self?.confirmDeleteAgain(a, ws, name: name, copy: copy) }
+        }
+    }
+
+    /// 第二次确认：默认按钮是「取消」，回车不会删。
+    private func confirmDeleteAgain(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo, name: String, copy: URL?) {
+        guard let win = view.window else { return }
+        let second = NSAlert()
+        second.alertStyle = .critical
+        second.messageText = String(format: L("Really delete “%@” from the server?"), name)
+        second.informativeText = L("This takes effect right away for all your devices.")
+        let delete = second.addButton(withTitle: L("Delete from Server"))
+        delete.hasDestructiveAction = true
+        delete.keyEquivalent = ""
+        let cancel = second.addButton(withTitle: L("Cancel"))
+        cancel.keyEquivalent = "\r"
+        second.beginSheetModal(for: win) { [weak self] resp in
+            guard resp == .alertFirstButtonReturn else { return }
+            self?.delete(a, ws, name: name, copy: copy)
+        }
+    }
+
+    private func delete(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo, name: String, copy: URL?) {
+        welcome.setStatus(String(format: L("Deleting “%@” from the server…"), name), busy: true)
+        Task {
+            do {
+                let fate = try await sync.deleteFromServer(a, ws, localCopy: copy)
+                var msg = String(format: L("Deleted “%@” from the server."), name)
+                switch fate {
+                case .none: break
+                case .trashed: msg += " " + L("The copy on this Mac is in the Trash.")
+                case .detached: msg += " " + L("The copy on this Mac is now a local workspace.")
+                }
+                welcome.setStatus(msg, busy: false)
+            } catch {
+                welcome.setStatus(String(format: L("Couldn’t delete “%@”: %@"), name, error.localizedDescription), busy: false)
+            }
+            reloadServers()
+        }
+    }
+
+    // MARK: 打开
+
     private func open(_ i: Int) {
-        guard !busy, rows.indices.contains(i) else { return }
+        guard rows.indices.contains(i) else { return }
         switch rows[i] {
         case .local(let r): openLocal(r)
         case .remote(let a, let ws): openRemote(a, ws)
@@ -228,27 +434,31 @@ final class WorkspacesViewController: NSViewController {
         WorkspacesWindowController.closeIfOpen()
     }
 
-    /// 本机已有副本就直接开它；没有就先下载资料库建本机缓存（PDF 用到再下）。
+    /// 正在点开的服务器工作区（双击两下别开两趟）。
+    private var opening: Set<String> = []
+
+    /// 本机已有副本就直接开它；没有就先下载资料库建本机缓存（PDF 用到再下），进度显示在这一行。
+    /// 右键「下载到本机」正在下的，等它建好缓存就开（还在下的 PDF 由打开前的那一步停掉）。
     private func openRemote(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo) {
         if let copy = localCopy(a, ws) {
             WorkspacePanels.route(copy, strict: true)
             WorkspacesWindowController.closeIfOpen()
             return
         }
-        busy = true
-        welcome.setStatus(L("Downloading the library…"), busy: true)
+        guard !opening.contains(ws.id) else { return }
+        opening.insert(ws.id)
+        welcome.setStatus("", busy: false)
         Task {
+            defer { opening.remove(ws.id) }
             do {
-                let folder = try await ServerSyncCoordinator.shared.openFromServer(a, ws) { [weak self] step in
-                    self?.welcome.setStatus(step, busy: true)
-                }
-                self.welcome.setStatus("", busy: false)
+                let folder = try await sync.openFromServer(a, ws)
                 WorkspacePanels.route(folder, strict: true)
                 WorkspacesWindowController.closeIfOpen()
+            } catch is CancellationError {
+            } catch let e as URLError where e.code == .cancelled {
             } catch {
-                self.welcome.setStatus(error.localizedDescription, busy: false)
+                welcome.setStatus(error.localizedDescription, busy: false)
             }
-            self.busy = false
         }
     }
 }

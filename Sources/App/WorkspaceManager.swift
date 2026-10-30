@@ -307,24 +307,74 @@ final class WorkspaceManager: ObservableObject {
         bookkeep { try? $0.setOpenDocuments(ids) }
     }
 
+    /// 改名（工具栏工作区菜单、启动页右键）。名字去掉首尾空白，空的或没变就什么都不做。
+    /// 服务器工作区的名字是同步的 meta 键：改完马上推一次，启动页与别的设备的列表才跟着变。
     func rename(_ newName: String) {
-        try? store?.setWorkspaceName(newName)
-        name = store?.workspaceName ?? newName
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != name else { return }
+        try? store?.setWorkspaceName(trimmed)
+        name = store?.workspaceName ?? trimmed
         syncPackageName()
+        WorkspaceRegistry.shared.renameRecent(id: workspaceId, folder: folder, name: name)
+        if isServerWorkspace { Task { await ServerSyncCoordinator.shared.push(self) } }
     }
 
     /// 保持「文件夹名 == 工作区名.unrd」不变式：工作区改名后联动原地改包名。
     /// SQLite 连接基于 fd，同目录 rename 不影响已打开的连接；改名失败不阻断（仅记 lastError）。
+    /// App 自己管的副本（离线副本、服务器工作区的本机缓存）不改包名：用户看不到那个文件夹名，
+    /// 改了反倒要连带改最近列表里记的副本路径。
     private func syncPackageName() {
-        guard let folder, folder.pathExtension == Self.packageExtension else { return }
-        let current = folder.deletingPathExtension().lastPathComponent
-        let target = Self.sanitizedPackageName(name, fallback: current)
-        guard target != current, let url = Self.availablePackageURL(beside: folder, name: target) else { return }
+        guard let folder, let url = Self.renamedPackageURL(folder, name: name) else { return }
         do {
             try FileManager.default.moveItem(at: folder, to: url)
             WorkspaceRegistry.shared.replaceRecent(old: folder, new: url)   // 连带更新池的键与「上次工作区」
+            ServerSyncCoordinator.shared.folderMoved(from: folder, to: url)  // 服务器工作区的同步按路径记账
             self.folder = url
         } catch { lastError = "\(error)" }
+    }
+
+    /// 改名后包该挪到哪；不用挪 = nil。
+    private static func renamedPackageURL(_ folder: URL, name: String) -> URL? {
+        guard folder.pathExtension == packageExtension, !isAppManagedCopy(folder) else { return nil }
+        let current = folder.deletingPathExtension().lastPathComponent
+        let target = sanitizedPackageName(name, fallback: current)
+        guard target != current else { return nil }
+        return availablePackageURL(beside: folder, name: target)
+    }
+
+    /// App 自己管的副本：离线副本（`mirrorsRoot`）、服务器工作区的本机缓存（`ServerSyncIO.cachesRoot`）。
+    static func isAppManagedCopy(_ folder: URL) -> Bool {
+        let p = folder.standardizedFileURL.path
+        return [mirrorsRoot, ServerSyncIO.cachesRoot].contains { p.hasPrefix($0.standardizedFileURL.path + "/") }
+    }
+
+    /// 改一个**没开着**的工作区的名字（启动页右键）：临时连接写库里的名字，包名跟着改（同 `rename`）。返回改完的文件夹。
+    /// 服务器工作区先等关掉后那一轮同步跑完（两条连接别同时写），改完再同步一轮把新名字推上去。
+    /// 等的时候它被打开了，就交给开着的那个实例改。
+    static func renameClosed(_ folder: URL, to newName: String) async throws -> URL {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return folder }
+        let isServer = ServerSyncIO.serverURL(of: folder) != nil
+        if isServer { await ServerSyncCoordinator.shared.waitForIdle(folder) }
+        if let m = WorkspaceRegistry.shared.openManager(at: folder) {
+            m.rename(name)
+            return m.folder ?? folder
+        }
+        do {
+            let store = try LibraryStore(workspaceFolder: folder)
+            defer { store.close() }
+            try store.setWorkspaceName(name)
+        }
+        var result = folder
+        if let url = renamedPackageURL(folder, name: name) {
+            try FileManager.default.moveItem(at: folder, to: url)
+            WorkspaceRegistry.shared.replaceRecent(old: folder, new: url)
+            ServerSyncCoordinator.shared.folderMoved(from: folder, to: url)
+            result = url
+        }
+        WorkspaceRegistry.shared.renameRecent(id: LibraryStore.peekIdentity(folder: result)?.id, folder: result, name: name)
+        if isServer { ServerSyncCoordinator.shared.syncClosed(result) }
+        return result
     }
 
     func refresh() {

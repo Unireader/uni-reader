@@ -11,6 +11,8 @@ import UniServerHTTP
 /// unireader-server reset-pairing-code  换一个配对码（已配对的设备不受影响）
 /// unireader-server devices             列出设备
 /// unireader-server revoke <设备 id>    吊销一台设备
+/// unireader-server deleted             列出回收站里被删的工作区（App 里「从服务器删除」的，留 90 天）
+/// unireader-server restore <工作区 id> 把最近一次删掉的它放回来
 /// ```
 /// 默认只听本机（127.0.0.1）：服务全程是明文 HTTP，对外要么放在反向代理（负责 HTTPS）后面，
 /// 要么只在 Tailscale 里用 `--host 0.0.0.0`。
@@ -74,6 +76,7 @@ struct UniReaderServerMain {
                 while !Task.isCancelled {
                     workspaces.backupChanged()
                     workspaces.pruneUploads()
+                    workspaces.pruneDeleted()
                     try? await Task.sleep(nanoseconds: 3600 * 1_000_000_000)
                 }
             }
@@ -94,6 +97,16 @@ struct UniReaderServerMain {
             guard positional.count == 2 else { fail("用法：unireader-server revoke <设备 id>") }
             try store.revoke(deviceId: positional[1])
             print("已吊销 \(positional[1])")
+        case "deleted":
+            let list = try WorkspaceHost(paths: paths).deletedWorkspaces()
+            if list.isEmpty { print("回收站里没有被删的工作区") }
+            for d in list {
+                print("\(d.id)  \(d.name.isEmpty ? "（未命名）" : d.name)  删于 \(d.deletedAt)  设备 \(d.device.isEmpty ? "—" : d.device)")
+            }
+        case "restore":
+            guard positional.count == 2 else { fail("用法：unireader-server restore <工作区 id>") }
+            let d = try WorkspaceHost(paths: paths).restoreDeleted(positional[1])
+            print("已放回「\(d.name)」（\(d.id)）。服务器在跑的话不用重启，App 里刷新工作区列表就能看到")
         default:
             usage()
             exit(2)
@@ -125,6 +138,7 @@ struct UniReaderServerMain {
         用法：
           unireader-server [serve] [--data <目录>] [--host 127.0.0.1] [--port 8790] [--name <名字>] [--no-discovery]
           unireader-server pairing-code | reset-pairing-code | devices | revoke <设备 id>
+          unireader-server deleted | restore <工作区 id>
         默认数据目录：\(ServerPaths.defaultRoot.path)
         """)
     }

@@ -35,6 +35,7 @@ extension HostedWorkspace {
             throw ServerError.badContentHash
         }
         lock.lock(); defer { lock.unlock() }
+        try checkOpen()
         try store.withMirrorDB { db in
             let fm = FileManager.default
             if pdfFileLocked(db, contentHash: contentHash) != nil {
@@ -81,6 +82,7 @@ extension HostedWorkspace {
             throw ServerError.badContentHash
         }
         lock.lock(); defer { lock.unlock() }
+        try checkOpen()
         let fm = FileManager.default
         let dst = ImageAssets.url(in: folder, sha256: sha256, ext: ext)
         if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: tmp); return }
@@ -102,6 +104,7 @@ extension HostedWorkspace {
     @discardableResult
     func backup(now: Date, policy: BackupRetention.Policy) throws -> URL {
         lock.lock(); defer { lock.unlock() }
+        try checkOpen()
         let fm = FileManager.default
         let dir = paths.backupFolder(id)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)

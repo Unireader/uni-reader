@@ -26,7 +26,9 @@ public final class WorkspaceHost: @unchecked Sendable {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: paths.workspaces.path)) ?? []
         return names.filter { $0.hasSuffix(".unrd") }.compactMap { file -> Summary? in
             let id = String(file.dropLast(5))
-            guard ServerCrypto.isUUID(id) else { return nil }
+            // 没有库的文件夹不算（被删的工作区若有迟到的写入，也只会留下空壳）
+            guard ServerCrypto.isUUID(id), FileManager.default.fileExists(
+                atPath: paths.workspaceFolder(id).appendingPathComponent("UniReader/library.sqlite").path) else { return nil }
             let name = opened[id]?.store.workspaceName
                 ?? LibraryStore.peekIdentity(folder: paths.workspaceFolder(id))?.name ?? ""
             return Summary(id: id, name: name)
@@ -67,6 +69,118 @@ public final class WorkspaceHost: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         for w in opened.values { w.close() }
         opened.removeAll()
+    }
+
+    // MARK: - 删除整个工作区（先归档再删，红线⑪）
+
+    /// 回收站里的一个被删工作区。
+    public struct Deleted: Equatable, Sendable {
+        public var id: String
+        public var name: String
+        /// 删除时间（ISO 8601）。
+        public var deletedAt: String
+        /// 哪台设备删的。
+        public var device: String
+        /// `trash/<id>/deleted-<时间>/`：里面是 `workspace.unrd`（整个工作区原样）+ `backups/`（它的定时备份）+ `info.json`。
+        public var folder: URL
+    }
+
+    /// 被删的工作区在回收站里留多少天（同 `ServerTrash.prune` 的行级回收站）。
+    public static let deletedKeepDays = 90
+
+    /// 从服务器删除整个工作区：关掉它，**整个文件夹原样挪进** `trash/<id>/deleted-<时间>/`（挪 = 归档，没有「删了一半」），
+    /// 定时备份一起挪过去；快照缓存与续传中的半截文件直接删（都能重新生成）。90 天内可以用命令行 `restore` 找回。
+    /// 已经拿着这个工作区的请求之后都会得到「没有这个工作区」（`HostedWorkspace.checkOpen`）。
+    @discardableResult
+    public func delete(_ id: String, device: String, now: Date = .now) throws -> Deleted {
+        guard ServerCrypto.isUUID(id) else { throw ServerError.unknownWorkspace(id) }
+        lock.lock(); defer { lock.unlock() }
+        let fm = FileManager.default
+        let folder = paths.workspaceFolder(id)
+        guard fm.fileExists(atPath: folder.appendingPathComponent("UniReader/library.sqlite").path) else {
+            throw ServerError.unknownWorkspace(id)
+        }
+        let name = opened[id]?.store.workspaceName ?? LibraryStore.peekIdentity(folder: folder)?.name ?? ""
+        // 等它手上的读写做完再关（close 拿的是工作区自己那把锁）
+        if let w = opened.removeValue(forKey: id) { w.close() }
+        lastBackupHead[id] = nil
+
+        let stamp = ISO.string(now)
+        var dir = paths.trashFolder(id).appendingPathComponent(Self.deletedPrefix + Self.fileStamp(stamp), isDirectory: true)
+        var n = 2
+        while fm.fileExists(atPath: dir.path) {
+            dir = paths.trashFolder(id).appendingPathComponent(Self.deletedPrefix + Self.fileStamp(stamp) + "-\(n)", isDirectory: true)
+            n += 1
+        }
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let info = ["id": id, "name": name, "deletedAt": stamp, "device": device]
+        try JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys])
+            .write(to: dir.appendingPathComponent("info.json"))
+        try fm.moveItem(at: folder, to: dir.appendingPathComponent("workspace.unrd", isDirectory: true))
+        let backups = paths.backupFolder(id)
+        if fm.fileExists(atPath: backups.path) {
+            try? fm.moveItem(at: backups, to: dir.appendingPathComponent("backups", isDirectory: true))
+        }
+        try? fm.removeItem(at: paths.snapshotFolder(id))
+        for name in (try? fm.contentsOfDirectory(atPath: paths.partials.path)) ?? [] where name.hasPrefix(id + "-") {
+            try? fm.removeItem(at: paths.partials.appendingPathComponent(name))
+        }
+        return Deleted(id: id, name: name, deletedAt: stamp, device: device, folder: dir)
+    }
+
+    static let deletedPrefix = "deleted-"
+
+    /// ISO 时间 → 文件名里用的样子（去掉冒号与毫秒）：`2026-10-30T07-12-33`。
+    static func fileStamp(_ iso: String) -> String {
+        String(iso.prefix(19)).replacingOccurrences(of: ":", with: "-")
+    }
+
+    /// 回收站里全部被删的工作区，新删的在前。
+    public func deletedWorkspaces() -> [Deleted] {
+        let fm = FileManager.default
+        let trash = paths.root.appendingPathComponent("trash", isDirectory: true)
+        var out: [Deleted] = []
+        for id in (try? fm.contentsOfDirectory(atPath: trash.path)) ?? [] where ServerCrypto.isUUID(id) {
+            let base = paths.trashFolder(id)
+            for name in (try? fm.contentsOfDirectory(atPath: base.path)) ?? [] where name.hasPrefix(Self.deletedPrefix) {
+                let dir = base.appendingPathComponent(name, isDirectory: true)
+                guard fm.fileExists(atPath: dir.appendingPathComponent("workspace.unrd").path) else { continue }
+                let info = (try? Data(contentsOf: dir.appendingPathComponent("info.json")))
+                    .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] } ?? [:]
+                out.append(Deleted(id: id, name: info["name"] ?? "", deletedAt: info["deletedAt"] ?? "",
+                                   device: info["device"] ?? "", folder: dir))
+            }
+        }
+        return out.sorted { $0.deletedAt > $1.deletedAt }
+    }
+
+    /// 把最近一次删掉的这个工作区放回来（命令行 `restore`）。服务器上已经有同一个工作区（又上传过一次）就拒绝。
+    @discardableResult
+    public func restoreDeleted(_ id: String) throws -> Deleted {
+        guard let d = deletedWorkspaces().first(where: { $0.id == id }) else { throw ServerError.unknownWorkspace(id) }
+        lock.lock(); defer { lock.unlock() }
+        let fm = FileManager.default
+        let folder = paths.workspaceFolder(id)
+        guard !fm.fileExists(atPath: folder.path) else { throw ServerError.alreadyHosted(id) }
+        try fm.createDirectory(at: paths.workspaces, withIntermediateDirectories: true)
+        try fm.moveItem(at: d.folder.appendingPathComponent("workspace.unrd", isDirectory: true), to: folder)
+        let backups = d.folder.appendingPathComponent("backups", isDirectory: true)
+        if fm.fileExists(atPath: backups.path), !fm.fileExists(atPath: paths.backupFolder(id).path) {
+            try? fm.moveItem(at: backups, to: paths.backupFolder(id))
+        }
+        try? fm.removeItem(at: d.folder)
+        return d
+    }
+
+    /// 清掉回收站里删了超过 [keepDays] 天的工作区（每小时那一轮顺带调）。返回清了几个。
+    @discardableResult
+    public func pruneDeleted(keepDays: Int = deletedKeepDays, now: Date = .now) -> Int {
+        let cutoff = ISO.string(now.addingTimeInterval(-Double(keepDays) * 86_400))
+        var n = 0
+        for d in deletedWorkspaces() where !d.deletedAt.isEmpty && d.deletedAt < cutoff {
+            if (try? FileManager.default.removeItem(at: d.folder)) != nil { n += 1 }
+        }
+        return n
     }
 
     // MARK: - 上传会话（方案 §5：库和文件逐个传，全部到齐才登记）

@@ -296,6 +296,52 @@ final class HTTPTests: XCTestCase {
         }
     }
 
+    /// 改名（PATCH）与删除（DELETE）：删除后列表里没了、再操作 404；回收站里有它。
+    func testRenameAndDeleteWorkspace() async throws {
+        let up = try host.newUploadFolder()
+        let lib = try LibraryStore(workspaceFolder: up)
+        try lib.setWorkspaceName("要删的")
+        let id = try lib.ensureWorkspaceId()
+        lib.checkpointTruncate()
+        lib.close()
+        try host.install(uploaded: up)
+
+        try await app().test(.router) { client in
+            let token = try await self.pair(client)
+            let rename = ByteBuffer(string: #"{"name":"新名字"}"#)
+            try await client.execute(uri: "/v1/workspaces/\(id)", method: .patch,
+                                     headers: self.auth(token, Self.json), body: rename) { r in
+                XCTAssertEqual(r.status, .ok)
+                let w = try self.decode(Workspace.self, r)
+                XCTAssertEqual(w.name, "新名字")
+                XCTAssertGreaterThan(w.head, 0)
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)", method: .patch,
+                                     headers: self.auth(token, Self.json), body: ByteBuffer(string: #"{"name":"  "}"#)) {
+                XCTAssertEqual($0.status, .badRequest, "空名字拒绝")
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)", method: .delete) {
+                XCTAssertEqual($0.status, .unauthorized, "删除也要令牌")
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)", method: .delete, headers: self.auth(token)) {
+                XCTAssertEqual($0.status, .noContent)
+            }
+            try await client.execute(uri: "/v1/workspaces", method: .get, headers: self.auth(token)) { r in
+                XCTAssertEqual(try self.decode(Workspaces.self, r).workspaces.count, 0)
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)", method: .delete, headers: self.auth(token)) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)/pull?since=0", method: .get, headers: self.auth(token)) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+        }
+        let deleted = host.deletedWorkspaces()
+        XCTAssertEqual(deleted.map(\.id), [id])
+        XCTAssertEqual(deleted.first?.name, "新名字")
+        XCTAssertEqual(deleted.first?.device, "测试平板")
+    }
+
     func testParseRange() {
         XCTAssertEqual(UniServerApp.parseRange("bytes=0-0", size: 10), 0...0)
         XCTAssertEqual(UniServerApp.parseRange("bytes=5-", size: 10), 5...9)

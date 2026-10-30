@@ -1148,3 +1148,29 @@
 "Convert “%@” to a local workspace?" = "把「%@」变回本地工作区？";
 "It will stop syncing with the server. The copy on the server isn’t touched; changes you make here from now on stay on this Mac." = "它将不再与服务器同步。服务器上的那份不受影响，之后在这里做的改动只留在本机。";
 "%d PDFs aren’t on this Mac and won’t be downloaded from the server afterwards: %@" = "有 %d 本书的 PDF 不在本机，变回本地后也不会再从服务器下载：%@";
+
+/* 启动页右键：下载到本机 / 重命名 / 从服务器删除（2026-10-30） */
+"Stop Downloading" = "停止下载";
+"Download Missing PDFs" = "下载缺少的 PDF";
+"Download to This Mac" = "下载到本机";
+"Delete from Server…" = "从服务器删除…";
+"Couldn’t download “%@”: %@" = "没能下载「%@」：%@";
+"“%@” is open" = "「%@」正开着";
+"Close this workspace’s windows first, then delete it from the server." = "先关掉这个工作区的窗口，再从服务器删除。";
+"Its books, notes and handwriting are removed from the server, and no device can open it from the server any more. The server keeps it in its trash for 90 days; it can be restored there with “unireader-server restore”." = "服务器上它的书、笔记、笔迹都会删掉，所有设备都不能再从服务器打开它。服务器会把它在回收站里留 90 天，期间可以在服务器上用「unireader-server restore」找回。";
+"The copy on this Mac will be moved to the Trash." = "这台 Mac 上的副本会移到废纸篓。";
+"The copy on this Mac (%@) becomes a local workspace and stays where it is." = "这台 Mac 上的那份（%@）会变回本地工作区，原地保留。";
+"Copies on other devices aren’t touched; they’ll report that the workspace is gone from the server." = "别的设备上的副本不会动，它们之后同步时会提示服务器上没有这个工作区。";
+"Delete “%@” from the server?" = "从服务器删除「%@」？";
+"Really delete “%@” from the server?" = "确定要从服务器删除「%@」吗？";
+"This takes effect right away for all your devices." = "删除会立即生效，对你所有的设备都一样。";
+"Delete from Server" = "从服务器删除";
+"Deleting “%@” from the server…" = "正在从服务器删除「%@」…";
+"Deleted “%@” from the server." = "已从服务器删除「%@」。";
+"The copy on this Mac is in the Trash." = "本机副本已移到废纸篓。";
+"The copy on this Mac is now a local workspace." = "本机那份已变回本地工作区。";
+"Couldn’t delete “%@”: %@" = "没能删除「%@」：%@";
+"Checking which PDFs to download…" = "正在查看要下载哪些 PDF…";
+"Downloading PDFs (%d of %d)…" = "正在下载 PDF（第 %d 本，共 %d 本）…";
+"The server program is too old for this. Update the server first." = "服务器程序版本太旧，不支持这个操作。请先升级服务器。";
+"Close this workspace’s windows first." = "请先关掉这个工作区的窗口。";

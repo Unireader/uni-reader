@@ -8,7 +8,7 @@ macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进�
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 21 项 + HTTP 5 项
+swift test  --disable-automatic-resolution   # 核心 24 项 + HTTP 6 项
 BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
 $BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
 $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）
@@ -63,13 +63,14 @@ server/
     BackupRetention.swift -> ../../../Sources/App/BackupRetention.swift   符号链接：备份保留策略
     ServerBasics.swift        数据目录布局 ServerPaths、错误 ServerError、哈希 / 随机串 ServerCrypto
     ServerStore.swift         server.sqlite：配对码、设备令牌（只存哈希）
-    WorkspaceHost.swift       全部工作区：列表、按 id 打开、登记上传
-    HostedWorkspace.swift     一个工作区：登记、推送、拉取、快照、修订号
+    WorkspaceHost.swift       全部工作区：列表、按 id 打开、登记上传、删除（整个挪进回收站）/ 找回 / 到期清理
+    HostedWorkspace.swift     一个工作区：登记、推送、拉取、快照、改名、修订号
     HostedWorkspace+Files.swift   PDF / 图片本体 / 备份
     ServerTrash.swift         删除先归档（按天一个小库）
   Sources/UniServerHTTP/ServerApp.swift   HTTP 接口（Hummingbird）：路由表在文件头；令牌中间件、错误→状态码、续传、配对限流
   Sources/UniServerHTTP/Discovery.swift   局域网发现（Bonjour `_unireader-srv._tcp`：macOS 系统 dnssd；Linux 起 avahi-publish-service 子进程）
-  Sources/unireader-server/               命令行入口：serve / pairing-code / reset-pairing-code / devices / revoke；每小时备份有改动的工作区
+  Sources/unireader-server/               命令行入口：serve / pairing-code / reset-pairing-code / devices / revoke / deleted / restore；
+                                          每小时备份有改动的工作区、清 90 天前删掉的工作区
   Tests/UniServerCoreTests/               核心（直接调 `HostedWorkspace` / `SyncClient`）
   Tests/UniServerHTTPTests/               HTTP（HummingbirdTesting 的 `.router`，进程内调路由、不开端口）
   scripts/setup-linux-build.sh            一次性装 Linux 交叉编译的工具链与 SDK（用户跑）

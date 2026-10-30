@@ -32,6 +32,9 @@ MainActor.assumeIsolated {
             .header("xvan 的 MacBook Pro · 127.0.0.1:8790"),
             .entry(icon: sym("server.rack"), title: "101学习区", detail: "本机已有 · /Volumes/SSD/2027考研/101/101学习区.unrd"),
             .entry(icon: sym("server.rack"), title: "政治资料", detail: "还没有下载；打开时会先下载资料库"),
+            .entry(icon: sym("server.rack"), title: "2027 数学全程（名字很长很长很长很长很长很长很长很长）",
+                   detail: "正在下载 PDF（第 3 本，共 12 本）…", progress: .init(fraction: 0.42)),
+            .entry(icon: sym("server.rack"), title: "英语真题", detail: "正在准备本机副本…", progress: .init(fraction: nil)),
             .header("书房的 Mac · 192.168.1.5:8790"),
             .message("连不上这台服务器：未能连接到服务器。"),
         ]

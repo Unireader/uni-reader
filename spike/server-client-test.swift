@@ -3,7 +3,8 @@
 //   bash spike/server-client-test.sh
 //
 // ① 配对 ② 上传本地工作区（工作区外的 PDF 被收进去、图片、Notes/）③ 另一台设备建缓存、按需下载 PDF
-// ④ 两边各改一处后各跑一轮完整同步（含 20MB 的 PDF 分块上传）⑤ 上传中断后续传 ⑥ 变回本地工作区。
+// ④ 两边各改一处后各跑一轮完整同步（含 20MB 的 PDF 分块上传）⑤ 上传中断后续传 ⑥ 变回本地工作区
+// ⑦ 服务器上改名、别的设备拉到 ⑧ 启动页「下载到本机」：建缓存的进度、按大小挑 PDF、只写文件 ⑨ 从服务器删除。
 import Foundation
 
 func L(_ s: String) -> String { s }   // App 的 `L()` 走 Bundle 本地化，spike 里原样返回
@@ -178,6 +179,77 @@ check(ServerSyncIO.findCache(workspaceId: wid, root: root)?.resolvingSymlinksInP
       "「从服务器打开」不再把 A 当缓存，只认 B")
 check(try specState(a) == rowsBefore, "资料一行不少")
 check(try await client.workspaces().contains { $0.id == wid }, "服务器上那份还在")
+
+// ============================================================
+print("⑦ 服务器上改名，别的设备同步时拿到")
+let renamed = try await client.renameWorkspace(wid, name: "  改过名的工作区 ")
+check(renamed.name == "改过名的工作区", "改名回来的是新名字（去掉首尾空白）")
+check(try await client.workspaces().first { $0.id == wid }?.name == "改过名的工作区", "列表里是新名字")
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+check(LibraryStore.peekIdentity(folder: b)?.name == "改过名的工作区", "B 同步一轮拿到新名字")
+do {
+    _ = try await client.renameWorkspace(wid, name: "   ")
+    check(false, "空名字应该被拒")
+} catch let e as ServerClient.Failure {
+    check(e.status == 400 && !e.isUnsupportedRoute, "空名字 → 400，不当成「服务器太旧」")
+}
+
+// ============================================================
+print("⑧ 启动页「下载到本机」：建缓存（带进度）→ 按大小挑 PDF → 只写文件")
+final class Fractions: @unchecked Sendable { let lock = NSLock(); var values: [Double?] = [] }
+let fr = Fractions()
+let cDir = root.appendingPathComponent("C")
+let c = try await ServerSyncIO.createCache(in: cDir, name: "C", serverURL: base.absoluteString, client: client, wid: wid,
+                                           progress: { _ in }, fraction: { f in fr.lock.withLock { fr.values.append(f) } })
+let fractions = fr.lock.withLock { fr.values }.compactMap { $0 }
+check(fractions.contains(1), "资料库下载有字节进度、最后到 100%（\(fractions.count) 次）")
+let small = try await ServerSyncIO.pendingPDFs(folder: c, client: client, wid: wid, maxBytes: 1_048_576)
+check(small.map(\.documentId) == ["D1"] && small.first?.size == Int64(pdfA.count),
+      "上限 1MB：只挑小书 D1，20MB 的大书留着用到再下")
+check(small.first.map { !$0.rel.isEmpty && ServerSyncIO.isSafeRelative($0.rel) } == true, "落点是库里记的工作区内路径")
+let libBefore = try Data(contentsOf: c.appendingPathComponent("UniReader/library.sqlite"))
+final class Ticks: @unchecked Sendable { let lock = NSLock(); var values: [(Int64, Int64)] = [] }
+let ticks = Ticks()
+try await ServerSyncIO.downloadPDFs(small, folder: c, client: client, wid: wid) { _, _, got, total in
+    ticks.lock.withLock { ticks.values.append((got, total)) }
+}
+check((try? Data(contentsOf: c.appendingPathComponent(small[0].rel))) == pdfA, "小书下到了它的路径，逐字节一致")
+let seenTicks = ticks.lock.withLock { ticks.values }
+check(seenTicks.last.map { $0.0 == $0.1 } == true && seenTicks.map(\.0) == seenTicks.map(\.0).sorted(),
+      "PDF 进度单调、最后 = 总字节数")
+check(try Data(contentsOf: c.appendingPathComponent("UniReader/library.sqlite")) == libBefore, "只写文件、库一个字节没动")
+check(try await ServerSyncIO.pendingPDFs(folder: c, client: client, wid: wid, maxBytes: 1_048_576).isEmpty,
+      "再看一遍：小书已在本机，不再要")
+check(try await ServerSyncIO.pendingPDFs(folder: c, client: client, wid: wid, maxBytes: 100 * 1_048_576).map(\.documentId) == ["D2"],
+      "上限放到 100MB：只剩大书 D2")
+check(!ServerSyncIO.isSafeRelative("../x.pdf") && !ServerSyncIO.isSafeRelative("/etc/x") && !ServerSyncIO.isSafeRelative("PDFs/../../x"),
+      "服务器给的路径不许跳出工作区")
+
+// ============================================================
+print("⑨ 从服务器删除")
+try await client.deleteWorkspace(wid)
+check(try await !client.workspaces().contains { $0.id == wid }, "列表里没有它了")
+do {
+    try await client.deleteWorkspace(wid)
+    check(false, "删过的再删应该 404")
+} catch let e as ServerClient.Failure {
+    check(e.status == 404 && !e.isUnsupportedRoute, "再删一次：404 且带说明（不当成「服务器太旧」）")
+}
+do {
+    try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+    check(false, "删掉之后别的设备同步应该失败")
+} catch let e as ServerClient.Failure {
+    check(e.status == 404, "别的设备同步：404「\(e.errorDescription ?? "")」")
+}
+// 服务器没有的路由：不带说明的 404 / 405（App 据此提示「服务器程序太旧」）
+var bogus = URLRequest(url: base.appendingPathComponent("v1/workspaces/\(wid)/no-such-route"))
+bogus.httpMethod = "PATCH"
+bogus.setValue("Bearer \(paired.token)", forHTTPHeaderField: "Authorization")
+let (bogusBody, bogusResp) = try await URLSession(configuration: direct).data(for: bogus)
+let bogusMsg = ((try? JSONSerialization.jsonObject(with: bogusBody)) as? [String: Any])
+    .flatMap { $0["error"] as? [String: Any] }?["message"] as? String ?? ""
+let bogusFailure = ServerClient.Failure.http((bogusResp as? HTTPURLResponse)?.statusCode ?? 0, bogusMsg)
+check(bogusFailure.isUnsupportedRoute, "不存在的接口 → \((bogusResp as? HTTPURLResponse)?.statusCode ?? 0)、没有说明 → 认作「服务器太旧」")
 
 try? fm.removeItem(at: root)
 print("\n结果：\(pass) 过，\(fail) 不过")

@@ -10,6 +10,8 @@ import UniServerCore
 /// | `POST pair` | 配对码换设备令牌（**唯一不要令牌的接口**，试错一分钟超过 5 次就拒） |
 /// | `GET info` | 服务器版本、数据版本、我是哪台设备 |
 /// | `GET workspaces` | 工作区列表（含当前修订号） |
+/// | `PATCH workspaces/:ws` | 改名（JSON `{"name":…}`），回工作区（新名字 + 修订号） |
+/// | `DELETE workspaces/:ws` | 删除整个工作区：先整个挪进回收站（90 天内命令行 `restore` 找回），204 |
 /// | `POST uploads` → `PUT/HEAD uploads/:u/file?path=` → `POST uploads/:u/finish` | 上传本地工作区（逐个文件、可续传），齐了再登记 |
 /// | `DELETE uploads/:u` | 放弃上传 |
 /// | `GET workspaces/:ws/snapshot` | 建缓存用的快照（响应头 `X-UniReader-Rev` = 快照对应的修订号） |
@@ -61,6 +63,21 @@ public enum UniServerApp {
             WorkspaceList(workspaces: host.list().compactMap { s in
                 (try? host.workspace(s.id)).map { WorkspaceDTO(id: s.id, name: s.name, head: $0.head) }
             })
+        }
+
+        api.patch("workspaces/:ws") { request, context -> WorkspaceDTO in
+            let id = try context.parameters.require("ws")
+            let body = try await request.decode(as: RenameRequest.self, context: context)
+            let w = try host.workspace(id)
+            let head = try await Blocking.run { try w.rename(to: body.name) }
+            return WorkspaceDTO(id: w.id, name: w.name, head: head)
+        }
+
+        api.delete("workspaces/:ws") { _, context -> HTTPResponse.Status in
+            let id = try context.parameters.require("ws")
+            let device = context.device?.name ?? ""
+            try await Blocking.run { _ = try host.delete(id, device: device) }
+            return .noContent
         }
 
         // MARK: 上传本地工作区
@@ -375,6 +392,7 @@ enum Resumable {
 // MARK: - JSON
 
 struct PairRequest: Decodable { let code: String; let deviceName: String }
+struct RenameRequest: Decodable { let name: String }
 struct PairResponse: ResponseEncodable {
     let deviceId: String; let token: String; let schemaVersion: Int; let serverId: String; let serverName: String
 }

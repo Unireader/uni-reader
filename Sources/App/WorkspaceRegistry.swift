@@ -541,6 +541,15 @@ final class WorkspaceRegistry: ObservableObject {
         NSDocumentController.shared.clearRecentDocuments(nil)
     }
 
+    /// 工作区改了名：最近列表里那一条跟着换名字（先按 id，再按源路径 / 离线副本路径找）。
+    func renameRecent(id: String?, folder: URL?, name: String) {
+        let path = folder?.path ?? ""
+        guard let i = recentIndex(id: id, path: path) ?? recents.firstIndex(where: { $0.mirrorPath == path }),
+              recents[i].name != name else { return }
+        recents[i].name = name
+        saveRecents()
+    }
+
     /// 工作区原地改名后，把最近列表里的旧路径替换为新路径（去重保序），并跟进池的键。
     func replaceRecent(old: URL, new: URL) {
         // 改名动的是源盘那份（副本在 ~/Library 下、名字由 App 定，用户改不到它）

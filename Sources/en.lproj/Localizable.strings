@@ -1146,3 +1146,29 @@
 "Convert “%@” to a local workspace?" = "Convert “%@” to a local workspace?";
 "It will stop syncing with the server. The copy on the server isn’t touched; changes you make here from now on stay on this Mac." = "It will stop syncing with the server. The copy on the server isn’t touched; changes you make here from now on stay on this Mac.";
 "%d PDFs aren’t on this Mac and won’t be downloaded from the server afterwards: %@" = "%d PDFs aren’t on this Mac and won’t be downloaded from the server afterwards: %@";
+
+/* 启动页右键：下载到本机 / 重命名 / 从服务器删除（2026-10-30） */
+"Stop Downloading" = "Stop Downloading";
+"Download Missing PDFs" = "Download Missing PDFs";
+"Download to This Mac" = "Download to This Mac";
+"Delete from Server…" = "Delete from Server…";
+"Couldn’t download “%@”: %@" = "Couldn’t download “%@”: %@";
+"“%@” is open" = "“%@” is open";
+"Close this workspace’s windows first, then delete it from the server." = "Close this workspace’s windows first, then delete it from the server.";
+"Its books, notes and handwriting are removed from the server, and no device can open it from the server any more. The server keeps it in its trash for 90 days; it can be restored there with “unireader-server restore”." = "Its books, notes and handwriting are removed from the server, and no device can open it from the server any more. The server keeps it in its trash for 90 days; it can be restored there with “unireader-server restore”.";
+"The copy on this Mac will be moved to the Trash." = "The copy on this Mac will be moved to the Trash.";
+"The copy on this Mac (%@) becomes a local workspace and stays where it is." = "The copy on this Mac (%@) becomes a local workspace and stays where it is.";
+"Copies on other devices aren’t touched; they’ll report that the workspace is gone from the server." = "Copies on other devices aren’t touched; they’ll report that the workspace is gone from the server.";
+"Delete “%@” from the server?" = "Delete “%@” from the server?";
+"Really delete “%@” from the server?" = "Really delete “%@” from the server?";
+"This takes effect right away for all your devices." = "This takes effect right away for all your devices.";
+"Delete from Server" = "Delete from Server";
+"Deleting “%@” from the server…" = "Deleting “%@” from the server…";
+"Deleted “%@” from the server." = "Deleted “%@” from the server.";
+"The copy on this Mac is in the Trash." = "The copy on this Mac is in the Trash.";
+"The copy on this Mac is now a local workspace." = "The copy on this Mac is now a local workspace.";
+"Couldn’t delete “%@”: %@" = "Couldn’t delete “%@”: %@";
+"Checking which PDFs to download…" = "Checking which PDFs to download…";
+"Downloading PDFs (%d of %d)…" = "Downloading PDFs (%d of %d)…";
+"The server program is too old for this. Update the server first." = "The server program is too old for this. Update the server first.";
+"Close this workspace’s windows first." = "Close this workspace’s windows first.";

@@ -12,8 +12,18 @@ final class WorkspacesWelcomeView: NSView, NSTableViewDataSource, NSTableViewDel
     /// 列表里的一行。
     enum Item {
         case header(String)
-        case entry(icon: NSImage, title: String, detail: String)
+        /// [progress] 非 nil = 正在下载（行尾一个圆形进度 + 百分比，说明行写着在干什么）。
+        case entry(icon: NSImage, title: String, detail: String, progress: EntryProgress? = nil)
         case message(String)
+    }
+
+    /// 一行的下载进度。[fraction] nil = 还不知道总量（转圈）。
+    struct EntryProgress: Equatable { var fraction: Double? }
+
+    /// 右键菜单的一项。
+    enum ContextItem {
+        case action(String, () -> Void)
+        case separator
     }
 
     static let size = NSSize(width: 780, height: 480)
@@ -21,6 +31,7 @@ final class WorkspacesWelcomeView: NSView, NSTableViewDataSource, NSTableViewDel
 
     var items: [Item] = [] {
         didSet {
+            guard !patching else { return }
             let selected = table.selectedRow
             table.reloadData()
             if items.indices.contains(selected), isEntry(selected) {
@@ -33,8 +44,9 @@ final class WorkspacesWelcomeView: NSView, NSTableViewDataSource, NSTableViewDel
     var onNew: () -> Void = {}
     var onOpenExisting: () -> Void = {}
     var onConnect: () -> Void = {}
-    /// 右键某一行时的菜单项（标题 + 动作）；空 = 这一行没有右键菜单。
-    var contextItems: (Int) -> [(title: String, action: () -> Void)] = { _ in [] }
+    /// 右键某一行时的菜单项；空 = 这一行没有右键菜单。
+    var contextItems: (Int) -> [ContextItem] = { _ in [] }
+    private var patching = false
 
     private let table = WelcomeTable()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
@@ -146,6 +158,20 @@ final class WorkspacesWelcomeView: NSView, NSTableViewDataSource, NSTableViewDel
 
     var selectedIndex: Int { table.selectedRow }
 
+    /// 只换一行（下载进度一跳一跳地变）：同为工作区行就地改那一格，不重排整张表（不闪、选中不丢）。
+    func update(_ i: Int, _ item: Item) {
+        guard items.indices.contains(i) else { return }
+        patching = true
+        items[i] = item
+        patching = false
+        if case .entry(_, _, let detail, let progress) = item,
+           let cell = table.view(atColumn: 0, row: i, makeIfNecessary: false) as? EntryCell {
+            cell.update(detail: detail, progress: progress)
+        } else {
+            table.reloadData(forRowIndexes: [i], columnIndexes: [0])
+        }
+    }
+
     private static func bigButton(_ title: String, _ symbol: String, _ target: AnyObject, _ action: Selector) -> NSButton {
         let b = NSButton(title: title, target: target, action: action)
         b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
@@ -175,7 +201,12 @@ final class WorkspacesWelcomeView: NSView, NSTableViewDataSource, NSTableViewDel
         menu.removeAllItems()
         let row = table.clickedRow
         guard items.indices.contains(row) else { return }
-        for entry in contextItems(row) { menu.addItem(ActionMenuItem(entry.title, entry.action)) }
+        for entry in contextItems(row) {
+            switch entry {
+            case .action(let title, let run): menu.addItem(ActionMenuItem(title, run))
+            case .separator: menu.addItem(.separator())
+            }
+        }
     }
 
     // MARK: 表格
@@ -228,15 +259,22 @@ final class WorkspacesWelcomeView: NSView, NSTableViewDataSource, NSTableViewDel
                 t.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             ])
             return cell
-        case .entry(let icon, let title, let detail):
-            return EntryCell(icon: icon, title: title, detail: detail)
+        case .entry(let icon, let title, let detail, let progress):
+            return EntryCell(icon: icon, title: title, detail: detail, progress: progress)
         }
     }
 }
 
-/// 一行工作区：32pt 图标 + 名字 + 一行说明。是 `NSTableCellView`：选中时系统会把 `labelColor` 的字换成反白。
+/// 一行工作区：32pt 图标 + 名字 + 一行说明；下载时行尾多一个圆形进度 + 百分比（同书库侧栏 `DocRowCell` 的样子）。
+/// 是 `NSTableCellView`：选中时系统会把 `labelColor` 的字换成反白。
 private final class EntryCell: NSTableCellView {
-    init(icon: NSImage, title: String, detail: String) {
+    private let sub = NSTextField(labelWithString: "")
+    private let ring = NSProgressIndicator()
+    private let percent = NSTextField(labelWithString: "")
+    private var clearOfRing: [NSLayoutConstraint] = []
+    private var toRowEnd: [NSLayoutConstraint] = []
+
+    init(icon: NSImage, title: String, detail: String, progress: WorkspacesWelcomeView.EntryProgress?) {
         super.init(frame: .zero)
         let iv = NSImageView(image: icon)
         iv.imageScaling = .scaleProportionallyUpOrDown
@@ -246,31 +284,69 @@ private final class EntryCell: NSTableCellView {
         name.font = .systemFont(ofSize: 13, weight: .medium)
         name.textColor = .labelColor
         name.lineBreakMode = .byTruncatingTail
-        let sub = NSTextField(labelWithString: detail)
         sub.font = .systemFont(ofSize: 11)
         sub.textColor = .labelColor
         sub.lineBreakMode = .byTruncatingMiddle
-        for v in [iv, name, sub] as [NSView] {
+        ring.style = .spinning
+        ring.controlSize = .small
+        ring.minValue = 0
+        ring.maxValue = 1
+        percent.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        percent.textColor = .labelColor
+        percent.alignment = .right
+        percent.stringValue = "100%"   // 按最宽的量好宽度，位数变了圆环不跟着挪
+        let percentWidth = ceil(percent.intrinsicContentSize.width)
+        for v in [iv, name, sub, ring, percent] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
         imageView = iv
         textField = name
+        // 文字的右边界：下载时让开进度，不下载时贴到行尾
+        clearOfRing = [name.trailingAnchor.constraint(lessThanOrEqualTo: ring.leadingAnchor, constant: -8),
+                       sub.trailingAnchor.constraint(lessThanOrEqualTo: ring.leadingAnchor, constant: -8)]
+        toRowEnd = [name.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+                    sub.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)]
         NSLayoutConstraint.activate([
             iv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             iv.centerYAnchor.constraint(equalTo: centerYAnchor),
             iv.widthAnchor.constraint(equalToConstant: 32),
             iv.heightAnchor.constraint(equalToConstant: 32),
             name.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 10),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
             name.bottomAnchor.constraint(equalTo: centerYAnchor, constant: 1),
             sub.leadingAnchor.constraint(equalTo: name.leadingAnchor),
-            sub.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
             sub.topAnchor.constraint(equalTo: centerYAnchor, constant: 2),
+            percent.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            percent.centerYAnchor.constraint(equalTo: centerYAnchor),
+            percent.widthAnchor.constraint(equalToConstant: percentWidth),
+            ring.trailingAnchor.constraint(equalTo: percent.leadingAnchor, constant: -4),
+            ring.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ring.widthAnchor.constraint(equalToConstant: 16),
+            ring.heightAnchor.constraint(equalToConstant: 16),
         ])
+        update(detail: detail, progress: progress)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    func update(detail: String, progress: WorkspacesWelcomeView.EntryProgress?) {
+        sub.stringValue = detail
+        ring.isHidden = progress == nil
+        percent.isHidden = progress?.fraction == nil
+        // 先停旧的再开新的（同一条约束不会同时开着两条互斥的右边界）
+        NSLayoutConstraint.deactivate(progress == nil ? clearOfRing : toRowEnd)
+        NSLayoutConstraint.activate(progress == nil ? toRowEnd : clearOfRing)
+        guard let progress else { ring.stopAnimation(nil); return }
+        if let f = progress.fraction {
+            ring.isIndeterminate = false
+            ring.stopAnimation(nil)
+            ring.doubleValue = f
+            percent.stringValue = String(format: "%d%%", Int(f * 100))
+        } else {
+            ring.isIndeterminate = true
+            ring.startAnimation(nil)
+        }
+    }
 }
 
 /// 带闭包的菜单项（本文件自带一份，好让离屏样张只编这一个文件）。

@@ -55,6 +55,8 @@ final class ServerSyncCoordinator: ObservableObject {
     /// 打开服务器工作区之前：取消还在跑的上一轮，再同步一轮，最多等 [timeout] 秒。
     func prepareToOpen(_ folder: URL, timeout: TimeInterval) async {
         let k = WorkspaceRegistry.key(folder)
+        // 启动页「下载到本机」还在下 PDF：停掉（开着时由会话自己预取，两边别同时写同一份文件）
+        if let wid = LibraryStore.peekIdentity(folder: folder)?.id { await stopWorkspacePDFs(wid) }
         if let running = busy[k] {
             running.task.cancel()
             await running.task.value
@@ -272,28 +274,244 @@ final class ServerSyncCoordinator: ObservableObject {
         NotificationCenter.default.post(name: .serverPDFDownloaded, object: m, userInfo: ["documentId": v.documentId])
     }
 
-    // MARK: - 从服务器打开
+    // MARK: - 从服务器打开 / 下载到本机（启动页）
+
+    /// 启动页上一行服务器工作区的下载进度（2026-10-30 用户要求「启动页右键下载，下载进度显示在条目上」）。
+    struct WorkspaceDownload: Equatable {
+        /// 这一步在干什么（给人看）。
+        var step: String
+        /// 这一步的进度 0~1；nil = 还不知道总量。
+        var fraction: Double?
+    }
+
+    /// 工作区 id → 下载进度。启动页那一行看它。
+    @Published private(set) var workspaceDownloads: [String: WorkspaceDownload] = [:]
+    /// 建本机缓存（资料库 + 图片）：同一个工作区只跑一趟，启动页点开、右键下载、「从服务器打开」面板撞上了等同一趟。
+    private var cacheTasks: [String: Task<URL, Error>] = [:]
+    /// 「下载到本机」的第二步（不大的 PDF）。打开这个工作区之前先停掉它（`prepareToOpen`）。
+    private var pdfTasks: [String: (token: UUID, task: Task<Void, Error>)] = [:]
 
     /// 本机已有这个服务器工作区的缓存就直接用它；没有就下载快照建一份。返回缓存文件夹（调用方再 `route` 过去）。
+    /// [progress] 只有发起这一趟的调用方收得到（撞上别人那一趟的只等结果）；进度同时记进 `workspaceDownloads`。
     func openFromServer(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo,
-                        progress: @escaping (String) -> Void) async throws -> URL {
+                        progress: ((String) -> Void)? = nil) async throws -> URL {
+        try await ensureCache(a, ws, keepProgress: false, progress: progress)
+    }
+
+    private func ensureCache(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo, keepProgress: Bool,
+                             progress: ((String) -> Void)? = nil) async throws -> URL {
+        if let running = cacheTasks[ws.id] { return try await running.value }
         if let existing = await Task.detached(operation: { ServerSyncIO.findCache(workspaceId: ws.id) }).value {
             return existing
         }
+        if let running = cacheTasks[ws.id] { return try await running.value }   // 上面等的时候别人先开了一趟
         guard let client = ServerAccounts.shared.client(a) else { throw ServerSyncError.noAccount }
         let dir = ServerSyncIO.cachesRoot.appendingPathComponent(ServerSyncIO.hostFolderName(a.url), isDirectory: true)
         let name = ws.name.isEmpty ? L("Workspace") : ws.name
         let labels: [ServerSyncIO.Step: String] = [.library: L("Downloading the library…"),
                                                    .preparing: L("Preparing the local copy…"),
                                                    .images: L("Downloading images…")]
-        let url = a.url, sid = a.serverId
-        return try await Task.detached(priority: .userInitiated) {
+        let url = a.url, sid = a.serverId, wid = ws.id
+        setWorkspaceDownload(wid, labels[.library] ?? "", nil)
+        let task = Task.detached(priority: .userInitiated) { [weak self] () async throws -> URL in
             try await ServerSyncIO.createCache(in: dir, name: name, serverURL: url, serverId: sid,
-                                               client: client, wid: ws.id) { step in
+                                               client: client, wid: wid, progress: { step in
                 let text = labels[step] ?? ""
-                Task { @MainActor in progress(text) }
+                Task { @MainActor in
+                    progress?(text)
+                    self?.setWorkspaceDownload(wid, text, nil)
+                }
+            }, fraction: { f in
+                Task { @MainActor in self?.updateWorkspaceFraction(wid, f) }
+            })
+        }
+        cacheTasks[wid] = task
+        defer { cacheTasks[wid] = nil }
+        do {
+            let folder = try await task.value
+            if !keepProgress { clearWorkspaceDownload(wid) }   // 要接着下 PDF 的，这一行的进度别断
+            return folder
+        } catch {
+            clearWorkspaceDownload(wid)
+            throw error
+        }
+    }
+
+    /// 启动页右键「下载到本机」：建本机缓存，再把不大的 PDF 也下下来（本机缓存的口径：大 PDF 用到再下，方案 §0）。
+    /// 已经开着它就只建缓存——开着时会话自己会预取。返回缓存文件夹。
+    @discardableResult
+    func downloadWorkspace(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo) async throws -> URL {
+        let wid = ws.id
+        let folder = try await ensureCache(a, ws, keepProgress: true)
+        if let running = pdfTasks[wid] {   // 已经在下了：等那一趟
+            _ = try? await running.task.value
+            return folder
+        }
+        guard WorkspaceRegistry.shared.openManager(at: folder) == nil,
+              let client = ServerAccounts.shared.client(a) else {
+            clearWorkspaceDownload(wid)
+            return folder
+        }
+        let checking = L("Checking which PDFs to download…")
+        let format = L("Downloading PDFs (%d of %d)…")
+        setWorkspaceDownload(wid, checking, nil)
+        let token = UUID()
+        let task = Task.detached(priority: .utility) { [weak self] in
+            let list = try await ServerSyncIO.pendingPDFs(folder: folder, client: client, wid: wid,
+                                                          maxBytes: Self.largePDFBytes)
+            // 打开前那一步会停掉这一趟；万一打开刚好落在建好缓存与开始下 PDF 之间，每本开始前再看一眼
+            let notOpen: @Sendable () async -> Bool = {
+                await MainActor.run { WorkspaceRegistry.shared.openManager(at: folder) == nil }
             }
-        }.value
+            try await ServerSyncIO.downloadPDFs(list, folder: folder, client: client, wid: wid,
+                                                keepGoing: notOpen) { i, n, got, total in
+                let f = total > 0 ? min(1, Double(got) / Double(total)) : nil
+                Task { @MainActor in self?.setWorkspaceDownload(wid, String(format: format, i, n), f) }
+            }
+        }
+        pdfTasks[wid] = (token, task)
+        defer {
+            if pdfTasks[wid]?.token == token {
+                pdfTasks[wid] = nil
+                clearWorkspaceDownload(wid)
+            }
+        }
+        do {
+            try await task.value
+        } catch is CancellationError {
+        } catch let e as URLError where e.code == .cancelled {
+        }
+        return folder
+    }
+
+    /// 右键「停止下载」：资料库那一步与 PDF 那一步都停。资料库没下完的不留半截（`createCache` 下在临时文件夹里）。
+    func cancelWorkspaceDownload(_ wid: String) {
+        cacheTasks[wid]?.cancel()
+        pdfTasks[wid]?.task.cancel()
+    }
+
+    /// 停掉「下载到本机」还在下的 PDF（等它真停下来）。打开它之前、从服务器删除之前调。
+    func stopWorkspacePDFs(_ wid: String) async {
+        guard let running = pdfTasks[wid] else { return }
+        running.task.cancel()
+        _ = try? await running.task.value
+    }
+
+    private func setWorkspaceDownload(_ wid: String, _ step: String, _ fraction: Double?) {
+        let new = WorkspaceDownload(step: step, fraction: fraction)
+        // 整百分点或这一步变了才发（每次发启动页都要找那一行）
+        if let old = workspaceDownloads[wid], old.step == step,
+           old.fraction.map({ Int($0 * 100) }) == fraction.map({ Int($0 * 100) }) { return }
+        workspaceDownloads[wid] = new
+    }
+
+    private func updateWorkspaceFraction(_ wid: String, _ fraction: Double?) {
+        guard let cur = workspaceDownloads[wid] else { return }   // 下完之后迟到的进度别把这一行又点亮
+        setWorkspaceDownload(wid, cur.step, fraction)
+    }
+
+    private func clearWorkspaceDownload(_ wid: String) {
+        if workspaceDownloads[wid] != nil { workspaceDownloads[wid] = nil }
+    }
+
+    // MARK: - 改名 / 从服务器删除（启动页右键）
+
+    /// 改服务器工作区的名字。本机有副本时调用方走本机改名（`WorkspaceRenamer`），改完由同步带上去；
+    /// 这里只给**本机没有副本**的用：让服务器直接改（别的设备下次同步拿到新名字）。
+    func renameOnServer(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo, to name: String) async throws {
+        guard let client = ServerAccounts.shared.client(a) else { throw ServerSyncError.noAccount }
+        do {
+            _ = try await client.renameWorkspace(ws.id, name: name)
+        } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
+            throw ServerSyncError.serverTooOld
+        }
+    }
+
+    /// 本机副本已经改了名的服务器工作区：顺手让服务器也改（启动页的服务器那一段马上就是新名字，不用等同步）。
+    func renameOnServer(folder: URL, to name: String) async throws {
+        guard let ep = endpoint(for: folder) else { throw ServerSyncError.noAccount }
+        do {
+            _ = try await ep.client.renameWorkspace(ep.wid, name: name)
+        } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
+            throw ServerSyncError.serverTooOld
+        }
+    }
+
+    /// 这台 Mac 上的副本在「从服务器删除」之后怎么处理的。
+    enum LocalCopyFate: Equatable {
+        case none
+        /// App 缓存目录里的副本：移到了废纸篓（还能从废纸篓拿回来）。
+        case trashed
+        /// 就地变成缓存的原件（如移动硬盘上的）：变回了本地工作区，原地不动。
+        case detached(URL)
+    }
+
+    /// 从服务器删除整个工作区（启动页右键、确认两次之后）。服务器那边先把它整个挪进回收站（90 天内能在服务器上找回）。
+    /// 本机副本（[localCopy]）：App 缓存目录里的移到废纸篓；不在缓存目录里的（就地变成缓存的原件）变回本地工作区。
+    /// 🔴 本机副本开着窗口时不许删（调用方先拦；这里再兜一道）。别的设备上的副本不动，它们之后同步会报「服务器上没有这个工作区」。
+    func deleteFromServer(_ a: ServerAccount, _ ws: ServerClient.WorkspaceInfo,
+                          localCopy: URL?) async throws -> LocalCopyFate {
+        if let localCopy, WorkspaceRegistry.shared.openManager(at: localCopy) != nil
+            || WorkspaceRegistry.shared.hasWindow(forWorkspace: localCopy) {
+            throw ServerSyncError.workspaceOpen
+        }
+        guard let client = ServerAccounts.shared.client(a) else { throw ServerSyncError.noAccount }
+        // 还在建本机缓存的：停掉并等它收尾，免得删完之后才冒出一份缓存
+        if let building = cacheTasks[ws.id] {
+            building.cancel()
+            _ = try? await building.value
+        }
+        await stopWorkspacePDFs(ws.id)
+        do {
+            try await client.deleteWorkspace(ws.id)
+        } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
+            throw ServerSyncError.serverTooOld
+        } catch let e as ServerClient.Failure where e.status == 404 {
+            // 别的设备已经删掉了：照常处理本机副本
+        }
+        guard let folder = localCopy else { return .none }
+        let k = WorkspaceRegistry.key(folder)
+        if let running = busy[k] {   // 关掉后那一轮还在跑：停掉再动文件夹
+            running.task.cancel()
+            await running.task.value
+        }
+        status[k] = nil
+        if Self.isInCachesFolder(folder) {
+            try FileManager.default.trashItem(at: folder, resultingItemURL: nil)
+            WorkspaceRegistry.shared.removeRecent(folder)
+            return .trashed
+        }
+        let store = try LibraryStore(workspaceFolder: folder)
+        defer { store.close() }
+        try store.withMirrorDB { try SyncClient.detach($0) }
+        return .detached(folder)
+    }
+
+    // MARK: - 文件夹改名
+
+    /// 工作区包改了名（`WorkspaceManager.rename` 联动包名）：按新路径重记各张表，否则开着时的推送找不到自己的会话。
+    func folderMoved(from old: URL, to new: URL) {
+        let ok = WorkspaceRegistry.key(old), nk = WorkspaceRegistry.key(new)
+        guard ok != nk else { return }
+        if let v = status.removeValue(forKey: ok) { status[nk] = v }
+        if let v = busy.removeValue(forKey: ok) { busy[nk] = v }
+        if let v = sessions.removeValue(forKey: ok) { sessions[nk] = v }
+        if let v = downloads.removeValue(forKey: ok) { downloads[nk] = v }
+        for (key, v) in downloadTasks where key.hasPrefix(ok + "\n") {
+            downloadTasks[key] = nil
+            downloadTasks[nk + key.dropFirst(ok.count)] = v
+        }
+    }
+
+    /// 等这个工作区还在跑的那一轮（关掉后那一轮）跑完。没开着的工作区要用临时连接写库之前调。
+    func waitForIdle(_ folder: URL) async {
+        if let running = busy[WorkspaceRegistry.key(folder)] { await running.task.value }
+    }
+
+    /// 没开着的服务器工作区：用临时连接完整同步一轮（本机改了名字之后推上去）。
+    func syncClosed(_ folder: URL) {
+        guard let ep = endpoint(for: folder) else { return }
+        _ = startClosedRound(folder, ep, after: busy[WorkspaceRegistry.key(folder)]?.task)
     }
 
     // MARK: - 上传本地工作区
@@ -372,7 +590,7 @@ extension Notification.Name {
 }
 
 enum ServerSyncError: LocalizedError, Equatable {
-    case noAccount, notOnServer, notOpen, alreadyOnServer, hasOfflineCopy
+    case noAccount, notOnServer, notOpen, alreadyOnServer, hasOfflineCopy, serverTooOld, workspaceOpen
 
     var errorDescription: String? {
         switch self {
@@ -381,6 +599,8 @@ enum ServerSyncError: LocalizedError, Equatable {
         case .notOpen: return L("The workspace isn’t open.")
         case .alreadyOnServer: return L("This workspace is already on a server.")
         case .hasOfflineCopy: return L("This workspace has an offline copy. Sync it back and delete it before uploading.")
+        case .serverTooOld: return L("The server program is too old for this. Update the server first.")
+        case .workspaceOpen: return L("Close this workspace’s windows first.")
         }
     }
 }
