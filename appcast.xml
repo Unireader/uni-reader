@@ -9,6 +9,66 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.17</title>
+      <pubDate>Sat, 31 Oct 2026 04:04:14 +0000</pubDate>
+      <sparkle:version>59</sparkle:version>
+      <sparkle:shortVersionString>0.3.17</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能：快速打开（⌘P）</h4>
+<ul>
+<li>按 ⌘P（或「文件 › 快速打开…」），当前窗口上方弹出一个搜索框，可以搜这个工作区里的 PDF、Markdown 笔记、画板和习题（全部习题 / 错题本 / 收藏 / 每本书 / 每一章）。</li>
+<li>不输入时最近打开过的排在前面；↑↓ 选择，回车或单击打开；再按一次 ⌘P、按 Esc 或点别处收起。快捷键可以在设置里改。</li>
+</ul>
+<h4>新功能：侧栏拖拽排序</h4>
+<ul>
+<li>侧栏里可以直接拖动调整顺序，都在同一组里换位置：书库分组里的书、笔记目录里的笔记、画板、习题（全部习题 / 错题本 / 收藏 / 每本书，以及错题本、收藏底下的书）。</li>
+<li>右键「上移 / 下移」照常可用。新加的书、笔记、画板会出现在这一组的最前面。</li>
+<li>单击一行松开时才打开它，按住拖动时不会打开。</li>
+<li>连接服务器的工作区里，画板、笔记和习题的顺序要等服务器程序更新后才会同步到其他设备。</li>
+</ul>
+<h4>改进：侧栏</h4>
+<ul>
+<li>每个条目右键都有「复制名称」和「在 Agent 中引用」：引用会在 Agent 输入框里插入这一项，发送时 Agent 就知道你指的是哪本书、哪篇笔记、哪个目录或哪一组题。</li>
+<li>习题各行行尾显示「已做/共」（比如 12/30），做完一道新题当场更新；错题本那一支只显示题数。</li>
+<li>Agent 导入题目、补答案或收藏时，侧栏不再跳回顶部。</li>
+</ul>
+<h4>改进：习题</h4>
+<ul>
+<li>可以让 Agent 收藏或取消收藏题目（比如「把这一章的错题都收藏」）。Agent 只会在你要求时改收藏；错题本仍然只能你自己手动移出。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.17">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New: Quick Open (⌘P)</h4>
+<ul>
+<li>Press ⌘P (or File › Quick Open…) to open a search field above the current window. It finds the PDFs, Markdown notes, boards and exercises (All Exercises / Mistakes / Starred / each book / each chapter) in this workspace.</li>
+<li>With nothing typed, recently opened items come first. Use ↑↓ to choose and Return or a click to open; press ⌘P again, Esc, or click elsewhere to close it. The shortcut can be changed in Settings.</li>
+</ul>
+<h4>New: Drag to reorder in the sidebar</h4>
+<ul>
+<li>Drag items in the sidebar to reorder them within their group: books in a library group, notes in a folder, boards, and exercises (All Exercises / Mistakes / Starred / each book, plus the books under Mistakes and Starred).</li>
+<li>Move Up / Move Down in the context menu still work. New books, notes and boards appear at the top of their group.</li>
+<li>A row now opens when you release the click, so dragging a row doesn't open it.</li>
+<li>In workspaces on a server, the order of boards, notes and exercises syncs to other devices once the server program is updated.</li>
+</ul>
+<h4>Improvements: Sidebar</h4>
+<ul>
+<li>Every item has "Copy Name" and "Reference in Agent" in its context menu. Referencing puts the item into the agent's message box, so the agent knows which book, note, folder or set of exercises you mean.</li>
+<li>Exercise rows show how many you've done out of the total (for example 12/30), updated as soon as you answer a new question; Mistakes rows show just the count.</li>
+<li>The sidebar no longer jumps back to the top when the agent imports questions, fills in answers or stars questions.</li>
+</ul>
+<h4>Improvements: Exercises</h4>
+<ul>
+<li>You can ask the agent to star or unstar questions (for example, "star all the mistakes in this chapter"). The agent changes stars only when you ask; questions still leave the mistake list only when you remove them yourself.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.17">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.17/UniReader-0.3.17.zip" length="17307767" type="application/octet-stream" sparkle:edSignature="iSEI107hdfi4z5md74f7G4uLDPsJWsaoBxfjYsd8qWGgzyv+owaBEMVQfZIizI+yomVMKDj3eKkWJXVaWt5mAA==" />
+    </item>
+    <item>
       <title>v0.3.16</title>
       <pubDate>Sat, 31 Oct 2026 02:54:57 +0000</pubDate>
       <sparkle:version>58</sparkle:version>
