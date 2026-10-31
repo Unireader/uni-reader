@@ -9,6 +9,34 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.16</title>
+      <pubDate>Sat, 31 Oct 2026 02:54:57 +0000</pubDate>
+      <sparkle:version>58</sparkle:version>
+      <sparkle:shortVersionString>0.3.16</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>改进：习题</h4>
+<ul>
+<li>可以去掉一本书的章节分级：在侧栏「习题」里右键这本书，选「移除章节分级…」，这本书底下就不再按章节展开。题目、作答记录、错题本、收藏和题目笔记都不变。之后再往这本书导入的题也不分章节；想恢复，右键选「按目录分章节」。</li>
+<li>让 Agent 第一次往一本书里导入习题时，它会先问你怎么分章节：按 PDF 目录分、按你说的方式分（比如按页面上的标题或题组，可以分好几级），或者不分。以后再导入，沿用这本书原来的分法。</li>
+<li>跟 Agent 说「习题册」「练习册」「练习库」，它会明白指的是 App 里的习题。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.16">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Improvements: Exercises</h4>
+<ul>
+<li>You can take the chapters off a book: right-click the book under Exercises in the sidebar and choose "Remove Chapters…". The book is no longer expanded by chapter; its questions, your answers, mistakes, stars and notes stay as they are. Questions imported into this book later aren't grouped either. To group them again, right-click the book and choose "Group by Table of Contents".</li>
+<li>The first time the agent imports exercises into a book, it now asks how to group them into chapters: by the PDF's table of contents, your own way (for example by the headings printed on the pages or by question groups, with as many levels as you like), or not at all. Later imports into that book keep the same grouping.</li>
+<li>When you say 习题册, 练习册 or 练习库 to the agent, it knows you mean the exercises in the app.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.16">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.16/UniReader-0.3.16.zip" length="17197039" type="application/octet-stream" sparkle:edSignature="bfv9KJhdHettP3CY8M3zWMhSoMk/rBIjrmaMmMBD1qI6v4EsIEbKy5UnRwi7mzlpc/4ONNn1D2znukifRH9jBw==" />
+    </item>
+    <item>
       <title>v0.3.15</title>
       <pubDate>Sat, 31 Oct 2026 01:36:01 +0000</pubDate>
       <sparkle:version>57</sparkle:version>
