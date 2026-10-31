@@ -110,6 +110,7 @@ enum MainMenu {
         let (item0, m) = container(L("File"))
         m.addItem(post(L("New Window"), .newWindowRequested, key: "n"))
         m.addItem(post(L("Open PDF…"), .openPDFRequested, key: "o"))
+        m.addItem(post(L("Quick Open…"), .quickOpenRequested, shortcut: .quickOpen))
         m.addItem(post(L("New Tab"), .newTabRequested, key: "t"))
         m.addItem(.separator())
         m.addItem(post(L("New Markdown Note"), .newMarkdownNoteRequested, key: "n", mods: [.command, .shift]))

@@ -69,6 +69,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   §10 安卓两种模式（模式2 与 Mac 共用同一份进度，协议 `docs/PROTOCOL.md §4.9`）+ 离线镜像同步习题；
   §11 填空 / 主观题（v21：手写小画板、自己判、Agent 经 MCP 读作答并批改；本轮平板只显示题干）；
   §12 题目笔记（v22 `exercise.note`，判完才显示）+ 顶栏「重做上次做错的」（只练上一次结果是错的题；本轮只做 Mac）
+- `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行）
 - `docs/REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
 - **`docs/SERVER-MODE-PLAN.md`** — 连接服务器（独立 Swift 服务器程序，2026-10-29 定方案；服务器 S0 + S1 已落地，Mac 客户端 S2 第一轮、安卓 S3 第一轮已落地，Linux 版已在用户 NAS 上跑通）：工作区「从服务器打开 / 上传到服务器」，
   各设备本机缓存全部、大 PDF 按需下载；以服务器为中心的同步沿用离线镜像的指纹与判定；本地工作区规则不变。

@@ -166,7 +166,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private static func expansionKey(_ node: SidebarNode) -> String? {
         switch node.kind {
         case .noteFolder(let src, let folder): return folderKey(src, folder)
-        case .exercise(let scope, _, _) where !node.children.isEmpty: return scope.rowID
+        case .exercise(let scope, _, _, _) where !node.children.isEmpty: return scope.rowID
         default: return nil
         }
     }
@@ -200,6 +200,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     // MARK: 数据
 
     private func reload() {
+        // 整树重建前记下滚动位置：新节点先是全收起的，收起那一下内容变矮、位置被压回顶上；
+        // 展开完再放回去（用户 2026-10-31：Agent 改习题时侧栏不要跳回顶上）
+        let scrolledTo = scroll.contentView.bounds.origin
         var r: [SidebarNode] = []
         if let notice { r.append(SidebarNode(kind: .notice(notice))) }
         let docs = workspace.documents
@@ -237,10 +240,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         // 哪几行、什么顺序只在 `ExerciseGroupNode.build` 一份（平板抽屉的 `exGroups` 也用它）。
         let groups = ExerciseGroupNode.build(workspace.exerciseSummary, documents: docs.map { ($0.id, $0.title) },
                                              title: workspace.exerciseScopeTitle, noChapter: L("No Chapter"))
+            .map { $0.withDone(workspace.exerciseDone) }   // 行尾「已做 / 共」（§16）
         if !groups.isEmpty {
             let sec = SidebarNode(kind: .exerciseSection)
             func make(_ g: ExerciseGroupNode) -> SidebarNode {
-                let n = SidebarNode(kind: .exercise(g.scope, title: g.title, count: g.count))
+                let n = SidebarNode(kind: .exercise(g.scope, title: g.title, count: g.count, done: g.done))
                 n.children = g.children.map(make)
                 return n
             }
@@ -257,6 +261,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         restoringExpansion = false
         select(ids: keep.isEmpty ? Set([tabs.active.rowID].compactMap { $0 }) : keep)
         syncingSelection = false
+        restoreScroll(to: scrolledTo)
+    }
+
+    /// 滚回 `reload()` 之前的位置（内容变短了就停在能到的最底下；`constrainBoundsRect` 连带算上内容边距）。
+    private func restoreScroll(to origin: NSPoint) {
+        let clip = scroll.contentView
+        guard clip.bounds.origin != origin else { return }
+        let target = clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size)).origin
+        clip.setBoundsOrigin(target)
+        scroll.reflectScrolledClipView(clip)
     }
 
     /// 一层目录底下的节点：子目录在前、笔记在后（顺序由 `NoteFolder` 排好）。
@@ -382,17 +396,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             return iconCell(symbol: "folder", title: folder.name, subtitle: nil, dim: false, tip: folder.path)
         case .board(let b):
             return iconCell(symbol: "scribble.variable", title: b.displayName, subtitle: nil, dim: false, tip: nil)
-        case .exercise(let scope, let title, let count):
-            let symbol: String
-            switch scope {
-            case .all: symbol = "checklist"
-            case .wrong: symbol = "xmark.circle"
-            case .starred: symbol = "star"
-            case .document, .wrongDocument, .starredDocument: symbol = "doc.questionmark"
-            case .chapter(_, let path), .wrongChapter(_, let path), .starredChapter(_, let path):
-                symbol = path.isEmpty ? "questionmark.folder" : "list.bullet.indent"
-            }
-            return countCell(symbol: symbol, title: title, count: count)
+        case .exercise(let scope, let title, let count, let done):
+            return countCell(symbol: scope.symbolName, title: title, count: count, done: done)
         case .exerciseSection:
             let cell = NSTableCellView()
             let t = NSTextField(labelWithString: L("Exercises"))
@@ -509,13 +514,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     /// 习题那几行：图标 + 名字 + 行尾的题数（同「邮件」侧栏的未读数，颜色用 `labelColor`——侧栏是玻璃底，红线 ④）。
-    private func countCell(symbol: String, title: String, count: Int) -> NSView {
+    /// 图标 + 名字 + 行尾的数。给了 `done` → 「已做/共」（习题，§16），否则只有数。
+    private func countCell(symbol: String, title: String, count: Int, done: Int? = nil) -> NSView {
         let cell = NSTableCellView()
         let img = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
         let t = NSTextField(labelWithString: title)
         t.lineBreakMode = .byTruncatingTail
         t.textColor = .labelColor
-        let n = NSTextField(labelWithString: count > 0 ? String(count) : "")
+        let n = NSTextField(labelWithString: count <= 0 ? "" : done.map { "\($0)/\(count)" } ?? String(count))
+        if let done, count > 0 { n.toolTip = String(format: L("Done %d of %d"), done, count) }
         n.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         n.textColor = .labelColor
         n.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -604,7 +611,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(ClosureMenuItem(L("New Board…")) { NotificationCenter.default.post(name: .newBoardRequested, object: nil) })
         case .board(let b):
             buildBoardMenu(menu, board: b)
-        case .exercise(let scope, _, _) where scope != .wrong:
+        case .exercise(let scope, _, _, _) where scope != .wrong:
             // 习题默认都在公用标签里换（`TabsModel.openExercises`）；想并排留着就单独开。
             // 错题本那一行本身没有这一项（它就是错题标签的入口）；它底下按书 / 按章的几级有
             menu.addItem(item(L("Open in New Tab"), "plus.square.on.square") { [weak self] in
@@ -625,6 +632,75 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         default:
             break
         }
+        addReferenceItems(menu, clicked: n)
+    }
+
+    // MARK: 复制名称 / 在 Agent 中引用（`ACP-AGENT-PLAN.md §11`）
+
+    /// 侧栏每一种条目（顶上的同步提示条除外）末尾都有这两项（用户 2026-10-31 要求）。
+    /// 点在多选里的那一行 → 对选中的全部；否则只对这一行。
+    private func addReferenceItems(_ m: NSMenu, clicked: SidebarNode) {
+        if case .notice = clicked.kind { return }
+        let selected = outline.selectedRowIndexes.compactMap { outline.item(atRow: $0) as? SidebarNode }
+            .filter { if case .notice = $0.kind { return false } else { return true } }
+        let nodes = selected.contains(clicked) ? selected : [clicked]
+        m.autoenablesItems = false
+        if m.numberOfItems > 0 { m.addItem(.separator()) }
+        m.addItem(item(L("Copy Name"), "doc.on.doc") { [weak self] in
+            guard let self else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(nodes.map(self.displayName).joined(separator: "\n"), forType: .string)
+        })
+        let agent = item(L("Reference in Agent"), "at") { [weak self] in self?.referenceInAgent(nodes) }
+        agent.isEnabled = AgentPanelModel.shared.canAttach(from: tabs.windowID)
+        m.addItem(agent)
+    }
+
+    /// 侧栏上这一行显示的名字（「复制名称」复制的就是它）。
+    private func displayName(_ n: SidebarNode) -> String {
+        switch n.kind {
+        case .notice: return ""
+        case .section(_, let title): return title
+        case .doc(let d): return d.title
+        case .md(let note): return note.title
+        case .noteFolder(_, let folder): return folder.name
+        case .noteSection(let source, _): return source.name
+        case .board(let b): return b.displayName
+        case .boardSection: return L("Boards")
+        case .exercise(_, let title, _, _): return title
+        case .exerciseSection: return L("Exercises")
+        }
+    }
+
+    /// 这一行在 Agent 那边是什么（`AgentMention+Workspace`）。
+    private func mention(_ n: SidebarNode) -> AgentMention? {
+        switch n.kind {
+        case .notice: return nil
+        case .section(let group, let title):
+            let docs = n.children.compactMap { if case .doc(let d) = $0.kind { d } else { nil } }
+            switch group {
+            case nil: return .documents(docs, key: "library", title: title, what: "All PDFs", in: workspace)
+            case ""?: return .documents(docs, key: "ungrouped", title: title, what: "The PDFs in no group", in: workspace)
+            case let g?: return .documents(docs, key: "group:" + g, title: title, what: "The PDFs in the group \"\(g)\"",
+                                           in: workspace)
+            }
+        case .doc(let d): return .pdf(d, in: workspace)
+        case .md(let note): return .note(note, in: workspace)
+        case .noteFolder(let source, let folder): return .folder(source: source, path: folder.path, in: workspace)
+        case .noteSection(let source, _): return .folder(source: source, path: "", in: workspace)
+        case .board(let b): return .board(b, in: workspace)
+        case .boardSection: return .boards(workspace.boards, title: L("Boards"), in: workspace)
+        case .exercise(let scope, _, let count, _): return .exercises(scope, count: count, in: workspace)
+        case .exerciseSection: return .exercises(.all, count: workspace.exerciseSummary.total, in: workspace)
+        }
+    }
+
+    private func referenceInAgent(_ nodes: [SidebarNode]) {
+        let ms = nodes.compactMap(mention)
+        guard !ms.isEmpty, !AgentPanelModel.shared.reference(ms, from: tabs.windowID) else { return }
+        let a = NSAlert()
+        a.messageText = String(format: L("%@ is not available."), AgentPanelModel.shared.agentName(for: tabs.windowID))
+        if let win = view.window { a.beginSheetModal(for: win) } else { a.runModal() }
     }
 
     /// 习题里一本书那一行的章节分级（`EXERCISE-PLAN.md §14`）：有章节树 → 「移除章节分级…」（先确认）；
@@ -1255,8 +1331,9 @@ final class SidebarNode: NSObject {
         /// 画板笔记（v16，`BOARD-NOTE-PLAN.md`）与它们的段头。
         case board(BoardNote)
         case boardSection
-        /// 习题（v20，`EXERCISE-PLAN.md §4.1`）：一个范围一行（全部 / 错题本 / 收藏 / 每篇有题的文档），行尾是题数。
-        case exercise(ExerciseScope, title: String, count: Int)
+        /// 习题（v20，`EXERCISE-PLAN.md §4.1`）：一个范围一行（全部 / 错题本 / 收藏 / 每篇有题的文档），
+        /// 行尾是「已做 / 共」（§16；`done` 为 nil 的错题本那一支只显示题数）。
+        case exercise(ExerciseScope, title: String, count: Int, done: Int?)
         case exerciseSection
     }
     let kind: Kind
@@ -1285,7 +1362,7 @@ final class SidebarNode: NSObject {
     var rowID: String? {
         if let n = note { return "md:" + n.ref.key }
         if let b = board { return BoardNote.rowPrefix + b.id.uuidString }
-        if case .exercise(let scope, _, _) = kind { return scope.rowID }
+        if case .exercise(let scope, _, _, _) = kind { return scope.rowID }
         return docID
     }
 }

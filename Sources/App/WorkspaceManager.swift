@@ -33,6 +33,9 @@ final class WorkspaceManager: ObservableObject {
     /// 🔴 只许 `WorkspaceManager+Exercise` 写。
     /// 每次变都发一条 `.exercisesDidChange`（object = 本工作区）：平板同步（`AppModel+Exercise`）够不着
     /// `@MainActor` 的工作区实例，靠它知道「平板开着的那组题 / 抽屉分组」该重发了。
+    /// 每组题做过几道（侧栏行尾「已做 / 共」，`EXERCISE-PLAN.md §16`）。和 `exerciseSummary` 分开放：
+    /// 每答一道新题它就变，但不该让开着的习题标签重读（不碰 `exerciseRevision`）。🔴 只许 `refreshExerciseDone()` 写。
+    @Published var exerciseDone = ExerciseDoneSummary()
     @Published var exerciseRevision = 0 {
         didSet { NotificationCenter.default.post(name: .exercisesDidChange, object: self) }
     }

@@ -187,7 +187,8 @@ final class MCPServer: ObservableObject {
     To grade the user's fill-in or subjective answers, read them with list_exercise_attempts (render_exercise_answer \
     for handwriting), compare with the reference answer, and save right / wrong plus feedback with \
     grade_exercise_attempts. Each exercise can also carry the user's own note (note in list_exercises; it is not a \
-    text note on the PDF): change it with update_exercises note only when the user asks.
+    text note on the PDF): change it with update_exercises note only when the user asks. To star (收藏) or unstar \
+    questions when the user asks, find them with list_exercises and pass update_exercises starred true / false.
     """
 
     /// 能访问到的端点（面板展示）：回环模式只有 127.0.0.1；所有接口模式 = 本机每个 IP 各一个（`NetWatch`，

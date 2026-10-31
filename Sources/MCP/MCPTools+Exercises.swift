@@ -329,11 +329,12 @@ extension MCPTools {
             "user_answer": MCPSchema.string("What the user wrote in the document: option letters (\"B\") for choice, transcribed text for subjective; replaces the earlier one; empty string removes it"),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "Fill questions: what the user wrote in the document, one string per blank; replaces the earlier one; all empty removes it"),
             "note": MCPSchema.string("The user's own note on this question, shown under the explanation once they have answered it. Replaces the whole note; empty string removes it. Write it only when the user asks you to. \(mathWriting)"),
+            "starred": MCPSchema.boolean("Star (收藏) the question (true) or take the star off (false); starred questions are listed under 收藏 in the app. Change it only when the user asks you to."),
         ], required: ["id"])
         return MCPTool(
             name: "update_exercises",
             title: "Update exercises",
-            description: "Change saved exercises by id — most often to fill in answers and explanations after finding the answer key, to set the chapter, to record the answer the user already wrote in the document (user_answer / user_blanks), or, when the user asks, to write their note on a question (note). Only the fields you pass change; the user's stars, mistakes and practice history are kept. When the answer changes, the user's earlier attempts at that question are judged again where the app can judge them (a wrong one goes into the mistake list); attempts the user or an agent already graded keep their verdict. Every change is checked first; if any one is invalid, nothing is changed.",
+            description: "Change saved exercises by id — most often to fill in answers and explanations after finding the answer key, to set the chapter, to record the answer the user already wrote in the document (user_answer / user_blanks), or, when the user asks, to write their note on a question (note) or to star / unstar it (starred). Only the fields you pass change; the user's stars change only through starred, and their mistakes and practice history are kept. When the answer changes, the user's earlier attempts at that question are judged again where the app can judge them (a wrong one goes into the mistake list); attempts the user or an agent already graded keep their verdict. Every change is checked first; if any one is invalid, nothing is changed.",
             inputSchema: MCPSchema.object([
                 "workspace": MCPSchema.string("Workspace .unrd path, only when the ids could be in several open workspaces."),
                 "updates": MCPSchema.array(of: patch, "Changes, one per exercise (at most \(maxImportExercises))"),
@@ -362,7 +363,7 @@ extension MCPTools {
                     chapter: try chapterArg(d["chapter"], at: path), userAnswer: try stringField(d, "user_answer", at: path),
                     blanks: try blanksArg(d["blanks"], at: path),
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path),
-                    note: try stringField(d, "note", at: path))
+                    note: try stringField(d, "note", at: path), starred: try boolField(d, "starred", at: path))
             }
             let wsPath = try args.string("workspace")
             let r = try await MainActor.run { try MCPFacade.shared.updateExercises(patches, workspacePath: wsPath) }

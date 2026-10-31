@@ -348,3 +348,35 @@ Kimi 导习题时推来二十来项的待办（ACP `plan`），整片清单叠�
 - 界面：输入框上方一块「排队中：回答完后逐条发送」（`Window/AI/AgentQueueView`，分组框当底、按 frame 摆、只报高度），
   每条一行：带了几张图（放前面）+ 话的第一行（长的省略，悬停看全文）+「编辑」（退回输入框）/「移除」。
   离屏验证 `spike/agent-queue-view-test.swift` 15 项 + 浅 / 深样张。**待用户实测**。
+
+## 11. 侧栏「复制名称」「在 Agent 中引用」（2026-10-31）
+
+用户原话：「侧边栏的任何条目，又可以右键复制名称，以及在 agent 中引用」。
+
+- **哪些**：侧栏每一种条目——书库段头（整个书库 / 未分组 / 某个分组）、PDF、笔记源段头、笔记子目录、Markdown 笔记、
+  画板段头、画板、习题段头、习题的每一行（全部 / 错题本 / 收藏 / 书 / 章，含错题本、收藏底下那几级）。只有顶上的同步提示条没有。
+  右键菜单末尾两项，点在多选里的那一行就对选中的全部。
+- **复制名称**：复制侧栏上显示的那个名字（多选时一行一个）。
+- **在 Agent 中引用**：这扇窗的 Agent 页亮出来，输入框**在光标处**插 `@名字 `（前面不是空白就补一个空格），发送时照 `@` 选的一样
+  附 `resource_link`（`AgentPanelModel.reference` → `AgentChat.requestMentions` → 输入框 `insertMentions`；会话还没建好时输入框不可编辑，
+  所以直接改字串、不走 `insertText`）。Agent 没开 / 没工作区时这一项是灰的。
+- **给 Agent 的是什么**（`Agent/AgentMention+Workspace.swift`，`@` 候选的 PDF / 笔记也改由它造，两条路给的是同一份）：
+  🔴 仍然**只给名字、位置和「用哪个工具读」，不给内容**（§8）。
+
+  | 种类 | 名字 | 位置（uri） | 说明里写什么 |
+  |---|---|---|---|
+  | PDF / 笔记 | 文件名 | file URL（PDF 没文件时退成 `unireader://`） | 同 §8 |
+  | 笔记目录 / 笔记源 | 目录名 + `/` | 目录的 file URL | 源名 + 相对路径（含子目录），`list_markdown_notes`（source / folder）+ `read_markdown` |
+  | 一组 PDF | 段头名 | 工作区链接 | 是哪一组、几本，每本书名 + document_id（最多列 40 本，多了指 `list_documents`） |
+  | 画板 / 全部画板 | 画板名 / 「画板笔记」 | 工作区链接 | 名字与 board id；**MCP 还读不了画板上的笔迹**，要内容就问用户 |
+  | 习题的一组 | 标签页标题那种全称（「高数 · 第一章」） | 工作区链接 | 是哪一组、几道，`list_exercises` 该带的参数（document_id / all_documents、chapter、filter） |
+
+- `AgentMention` 改动：`Kind` 多了 `folder` / `documents` / `board` / `boards` / `exercises`；新几种的说明构造时写进 `info`；
+  `mimeType` 变成可空（目录给 `inode/directory`，其余新种类不给）。仍只依赖 Foundation，`spike/agent-mention-test.swift` 直接编它。
+- 验证：`spike/agent-mention-test.swift` 39 项全过（新加 4 项：新几种的说明 / mime / 中文名字 / 发送时照样按正文里还在不在附上）；
+  Mac Debug 编译通过。🔴 没在真 App 里跑过。
+- 实测清单（用户）：
+  63. 侧栏各种条目右键都有「复制名称」「在 Agent 中引用」；复制出来的是侧栏上那个名字；多选几本书复制 = 一行一个。
+  64. 「在 Agent 中引用」：Agent 页亮出来，输入框光标处多了 `@名字 `；连着引用几样都插在光标处；发出去后 Agent 知道是什么
+      （PDF / 笔记能读；目录能列出里面的笔记；习题组能用 list_exercises 列出那一组；画板它会说读不了内容）。
+  65. Agent 关着（设置里关掉）时这一项是灰的。

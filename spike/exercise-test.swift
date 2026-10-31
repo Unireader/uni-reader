@@ -808,5 +808,59 @@ let d9groups = try store.exerciseChapterCounts().filter { $0.documentId == d9.id
 check(d9groups.count == 1 && d9groups[0].chapter.isEmpty && d9groups[0].count == 2,
       "侧栏的章节分组只剩「没章节」一组（书那一行不再展开）")
 
+// MARK: - 2026-10-31：Agent 收藏 / 取消收藏（`EXERCISE-PLAN.md §15`）
+// `update_exercises` 的 `starred` 走 `WorkspaceManager.saveExercise`：先 `upsertExercise` 存内容，再 `setExerciseStarred`。
+print("— Agent 收藏：存内容不冲掉收藏、收藏改 updated_at")
+var s1 = row(ok(input("s1", number: "1"), seq: 0)!, doc: d9.id); s1.page = 6
+try store.upsertExercises([s1])
+let s1t = try store.exercise(id: s1.id)!.updatedAt
+try store.setExerciseStarred(id: s1.id, true, at: s1t.addingTimeInterval(3))
+let s1Starred = try store.exercise(id: s1.id)!
+check(s1Starred.starred && s1Starred.updatedAt > s1t, "收藏写上、updated_at 跟着变（同步按它取新）")
+var s1Again = s1; s1Again.starred = false; s1Again.updatedAt = s1t.addingTimeInterval(6)
+try store.upsertExercise(s1Again)
+check(try store.exercise(id: s1.id)!.starred, "再存题目内容（行里 starred 是假）不会把收藏冲掉")
+try store.setExerciseStarred(id: s1.id, false, at: s1t.addingTimeInterval(9))
+check(!(try store.exercise(id: s1.id)!.starred), "取消收藏")
+
+// MARK: - 2026-10-31：侧栏「已做 / 共」（`EXERCISE-PLAN.md §16`）
+
+print("— 侧栏已做几道")
+let dd = doc("进度", "h10")
+var g1 = row(ok(input("g1", number: "1"), seq: 0)!, doc: dd.id); g1.chapter = ["第一章", "1.1"]; g1.page = 1
+var g2 = row(ok(input("g2", number: "2"), seq: 1)!, doc: dd.id); g2.chapter = ["第一章", "1.2"]; g2.page = 2; g2.starred = true
+var g3 = row(ok(input("g3", number: "3"), seq: 2)!, doc: dd.id); g3.chapter = ["第二章"]; g3.page = 5; g3.starred = true
+var g4 = row(ok(input("g4", number: "4"), seq: 3)!, doc: dd.id); g4.page = 9
+try store.upsertExercises([g1, g2, g3, g4])
+func attempt(_ id: String, _ src: String = "") -> LibExerciseAttempt {
+    LibExerciseAttempt(id: UUID().uuidString, exerciseId: id, answer: "A", correct: true, elapsedMs: 0, createdAt: .now, source: src)
+}
+try store.recordExerciseAttempt(attempt(g1.id))
+try store.recordExerciseAttempt(attempt(g1.id))          // 同一道做两次只算一道
+try store.recordMarkedAttempts([attempt(g2.id, LibExerciseAttempt.markSource)])   // 书上的作答也算做过
+var dsum = ExerciseDoneSummary()
+for r in try store.exerciseDoneCounts() where r.documentId == dd.id {
+    dsum.chapters[r.documentId, default: [:]][r.chapter] = ExerciseDoneStat(done: r.done, starred: r.starred)
+}
+check(dsum.done(.document(dd.id)) == 2, "整本书做过 2 道（一道做两次只算一次、书上的作答算）")
+check(dsum.done(.chapter(dd.id, ["第一章"])) == 2 && dsum.done(.chapter(dd.id, ["第一章", "1.1"])) == 1,
+      "章 = 自己 + 各小节")
+check(dsum.done(.chapter(dd.id, ["第二章"])) == 0 && dsum.done(.chapter(dd.id, [])) == 0, "没做的章 / 未分章节是 0")
+check(dsum.done(.starredDocument(dd.id)) == 1 && dsum.done(.starredChapter(dd.id, ["第二章"])) == 0,
+      "收藏那一支数的是收藏里做过的")
+check(dsum.done(.wrong) == nil && dsum.done(.wrongDocument(dd.id)) == nil, "错题本那一支不给（全都做过）")
+check(dsum.done(.all) == 2, "全部 = 各书相加")
+let gs = ExerciseSummary(total: 4, starred: 2, byDocument: [dd.id: 4],
+                         chapters: [dd.id: [["第一章", "1.1"]: ExerciseChapterStat(count: 1, firstPage: 1),
+                                            ["第一章", "1.2"]: ExerciseChapterStat(count: 1, firstPage: 2, starred: 1),
+                                            ["第二章"]: ExerciseChapterStat(count: 1, firstPage: 5, starred: 1),
+                                            []: ExerciseChapterStat(count: 1, firstPage: 9)]])
+let gtree = ExerciseGroupNode.build(gs, documents: [(dd.id, "进度")], title: { $0.key }, noChapter: "未分章节")
+    .map { $0.withDone(dsum) }
+let book = gtree.first { $0.scope == .document(dd.id) }
+check(book?.done == 2 && book?.count == 4, "书那一行：2/4")
+check(book?.children.first?.done == 2 && book?.children.first?.children.first?.done == 1, "整棵树都填上了")
+check(gtree[1].done == nil && gtree[0].done == 2 && gtree[2].done == 1, "全部 / 错题本（不显示）/ 收藏")
+
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

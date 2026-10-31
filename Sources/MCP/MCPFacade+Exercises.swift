@@ -29,6 +29,8 @@ extension MCPFacade {
         var userBlanks: [String]? = nil
         /// 题目笔记（整段替换，"" = 删掉；v22，`EXERCISE-PLAN.md §12`）。用户状态，只在用户要求时写。
         var note: String? = nil
+        /// 收藏 / 取消收藏（`EXERCISE-PLAN.md §15`）。用户状态，只在用户要求时改。错题本不开放给 Agent（拍板 ③：只能用户手动移出）。
+        var starred: Bool? = nil
     }
 
     /// `grade_exercise_attempts` 的一条。
@@ -208,6 +210,7 @@ extension MCPFacade {
                 n.kind = d.kind; n.number = d.number; n.section = d.section; n.payload = d.payload
                 n.chapter = d.chapter ?? e.chapter
                 if let v = p.note { n.note = v.trimmingCharacters(in: .whitespacesAndNewlines) }
+                if let v = p.starred { n.starred = v }
                 next.append((n, d.userMark))
             }
         }

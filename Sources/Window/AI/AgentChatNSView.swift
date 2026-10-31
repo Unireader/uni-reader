@@ -1155,6 +1155,12 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
             textDidChange(Notification(name: NSText.didChangeNotification))
             window?.makeFirstResponder(textView)
         }
+        // 侧栏「在 Agent 中引用」（`ACP-AGENT-PLAN.md §11`）：插到光标处，前面不是空白就补一个空格
+        if !chat.mentionRequest.isEmpty {
+            let ms = chat.mentionRequest
+            chat.mentionRequest = []
+            insertMentions(ms)
+        }
         refreshAttachments()
         placeholder.isHidden = !textView.string.isEmpty
         textView.isEditable = chat.sessionId != nil
@@ -1432,6 +1438,22 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         window?.makeFirstResponder(textView)
         textView.insertText(m.token + " ", replacementRange: r)
         pickedMentions.append(m)
+    }
+
+    /// 别处送来的引用（侧栏右键）：在光标处插 `@名字 `（几样之间空一格），记下它们，发送时照 `@` 选的一样附上。
+    /// 直接改字串而不走 `insertText`：会话还没建好时输入框不可编辑，`insertText` 会被拒。
+    private func insertMentions(_ ms: [AgentMention]) {
+        let s = textView.string as NSString
+        var r = textView.selectedRange()
+        if r.location == NSNotFound || NSMaxRange(r) > s.length { r = NSRange(location: s.length, length: 0) }
+        var piece = ms.map(\.token).joined(separator: " ") + " "
+        if r.location > 0, let prev = UnicodeScalar(s.character(at: r.location - 1)),
+           !CharacterSet.whitespacesAndNewlines.contains(prev) { piece = " " + piece }
+        textView.string = s.replacingCharacters(in: r, with: piece)
+        textView.setSelectedRange(NSRange(location: r.location + (piece as NSString).length, length: 0))
+        pickedMentions += ms
+        textDidChange(Notification(name: NSText.didChangeNotification))
+        window?.makeFirstResponder(textView)
     }
 
     /// 有字、有会话、空闲或正在回答（回答中发 = 排队，`AgentChat.queued`）。

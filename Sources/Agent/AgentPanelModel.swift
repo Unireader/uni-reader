@@ -145,29 +145,10 @@ final class AgentPanelModel: ObservableObject {
     /// PDF 要逐篇查一次库 + stat 文件，所以只在弹出候选时取一次（不是每敲一个字取一次）。
     static func mentions(in ws: WorkspaceManager) -> [AgentMention] {
         var out: [(Date, AgentMention)] = []
-        for d in ws.documents {
-            let path = ws.currentFilePath(documentId: d.id)
-            var uri: String
-            if let path {
-                uri = URL(fileURLWithPath: path).absoluteString
-            } else {
-                var link = DeepLink()
-                link.workspacePath = ws.folder?.path
-                link.workspaceId = ws.store?.workspaceId
-                link.documentId = d.id
-                uri = link.absoluteString
-            }
-            let file = path.map { ($0 as NSString).lastPathComponent } ?? d.title + ".pdf"
-            out.append((d.lastOpenedAt, AgentMention(kind: .pdf, id: d.id, name: file,
-                                                     detail: file == d.title + ".pdf" ? "" : d.title, uri: uri)))
-        }
+        for d in ws.documents { out.append((d.lastOpenedAt, .pdf(d, in: ws))) }
         for n in ws.allNotes {
-            guard let url = ws.noteURL(n.ref) else { continue }
-            let src = ws.noteSource(id: n.ref.sourceID)?.name ?? ""
-            let place = [src, n.ref.folder].filter { !$0.isEmpty }.joined(separator: " / ")
-            out.append((n.lastOpenedAt ?? .distantPast,
-                        AgentMention(kind: .note, id: n.ref.key, name: url.lastPathComponent,
-                                     detail: place, uri: url.absoluteString)))
+            guard let m = AgentMention.note(n, in: ws) else { continue }
+            out.append((n.lastOpenedAt ?? .distantPast, m))
         }
         // 稳定排序：同一时间（多为「没打开过」）保持原来的先后
         return out.enumerated()
@@ -190,6 +171,16 @@ final class AgentPanelModel: ObservableObject {
         let chat = chat(for: window, cwd: ctx.cwd)
         guard chat.acceptsImages != false else { return false }
         chat.addAttachment(image)
+        readers[window]?.controller?.showAgentTab()
+        return true
+    }
+
+    /// 侧栏「在 Agent 中引用」（`ACP-AGENT-PLAN.md §11`）：这扇窗的 Agent 输入框在光标处插进这几样的 `@名字`，
+    /// 发送时照 `@` 选的一样附上；面板亮出来、光标留在输入框。返回 false = 发不了（Agent 关着 / 没开工作区）。
+    @discardableResult
+    func reference(_ mentions: [AgentMention], from window: UUID) -> Bool {
+        guard enabled, !mentions.isEmpty, let ctx = context(for: window) else { return false }
+        chat(for: window, cwd: ctx.cwd).requestMentions(mentions)
         readers[window]?.controller?.showAgentTab()
         return true
     }

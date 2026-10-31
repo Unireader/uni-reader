@@ -17,6 +17,8 @@
 > 顶栏加「重做上次做错的」开关，只练上一次结果是错的题、都重新作答，答对一次下次就不在了。本轮只做 Mac。
 > **2026-10-31 第五轮：章节怎么分**（§14）：Agent 第一次往一本书里导题先问用户怎么分（按 PDF 目录 / 按用户说的方式自己分、几级都行 / 不分），
 > 以后沿用；侧栏右键一本书能「移除章节分级」（题目和用户状态都不动）/「按目录分章节」。用户说的「习题册 / 练习册 / 练习库」= App 的习题。不改表结构。
+> **同日：Agent 收藏 / 取消收藏**（§15）：`update_exercises` 加 `starred`，用户要求时才改；错题本仍不开放给 Agent。
+> **同日：侧栏行尾「已做 / 共」+ 改动时侧栏不跳回顶上**（§16）。
 
 ## 1. 需求
 
@@ -157,7 +159,7 @@ CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_
 |---|---|---|
 | `import_exercises` | write | 按 §2 的结构批量写入一篇文档的习题（一次 ≤50 道）。逐条校验，不合格的退回原因、其余照常写入；命中去重键即更新。可带 `chapter`（不带 = 按目录自动）、`user_answer`（书上的作答，§2.4）；顶层 `chapters`（`"toc"` / `"none"`，不带 = 按这本书现在的样子，§14.2） |
 | `list_exercises` | read | 列出习题（按文档 / 页范围 / 章节 / 收藏 / 错题筛选，分页），带 id、题号、章节、书上的作答、作答统计；补答案前先用它对号 |
-| `update_exercises` | write | 按 id 改部分字段（最常见：补 `answer` + `answer_source` + `explanation`；也能改 `chapter`、`user_answer`）。答案变了 → 重判 |
+| `update_exercises` | write | 按 id 改部分字段（最常见：补 `answer` + `answer_source` + `explanation`；也能改 `chapter`、`user_answer`；用户要求时改 `note`、`starred`，§12 / §15）。答案变了 → 重判 |
 | `delete_exercises` | delete | 按 id 删（🔴 **先归档进回收站再删**，红线 11） |
 | `render_page` 的 `include_marks` | read | （已有工具的新参数）把用户可见图层的笔迹与高亮叠画在页图上，给 Agent 认手写的作答（§2.4） |
 
@@ -809,3 +811,72 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   53. 选「自己分」（比如「按习题 2.3 › A 组这样分」）：侧栏按 Agent 写的多级章节展开；换一次对话接着导，Agent 不再问、沿用同一套，
       同名的上级没有多出一份；让它「把这几道挪到 B 组」能挪。
   54. 跟 Agent 说「把这几页加到练习册」「习题册里有几道错题」：它明白指的是 App 里的习题。
+
+## 15. Agent 收藏 / 取消收藏（2026-10-31，Mac）
+
+用户原话：「做一下题目 star 收藏 agent」。原先 Agent 只能读收藏（`list_exercises` 的 `starred` 与 `filter: "starred"`），改不了。
+
+- **入口**：`update_exercises` 每一项多一个 `starred`（`true` 收藏 / `false` 取消），同题目笔记（§12）的做法——用户状态，
+  **只在用户要求时改**（工具说明、`MCPServer.instructions`、Agent 面板上下文串、SKILL.md「收藏」一节都这么写）。
+  只带 `id` + `starred` 即可，题目内容不动；一次 ≤50 道。没另开工具：查题、改题本来就是这一对工具，Agent 少记一个名字。
+- **写法**：`MCPFacade.updateExercises` 把它放进那道题，`WorkspaceManager.saveExercise` 发现收藏变了另调 `setExerciseStarred`
+  （`upsertExercise` 的 `ON CONFLICT` 不碰收藏 / 错题 / 笔记，§2.1），连带改 `updated_at`，离线镜像 / 服务器同步按它取新；
+  写完 `exercisesChanged()`，侧栏「收藏」的数、开着的习题标签、平板当场跟着变。
+- **错题本不开放**：拍板 ③「答错自动进，只能手动移出」不变；Agent 判错照旧会让题进错题本（`grade_exercise_attempts`）。
+- 安卓 / 服务器不用改（只是改了行里的一列）。
+
+### 15.1 代码落点
+
+`MCP/MCPTools+Exercises.swift`（`starred` 参数与说明）、`MCP/MCPFacade+Exercises.swift`（`ExercisePatch.starred`）、
+`App/WorkspaceManager+Exercise.swift`（`saveExercise` 写收藏）、`MCP/MCPServer.swift`、`Agent/AgentChat.swift`、
+`skills/unireader-exercise-import/SKILL.md`。
+
+### 15.2 验证（2026-10-31）
+
+- `spike/exercise-test.swift` 312 项全过（新加 3 项：收藏写上并改 `updated_at`、再存题目内容不冲掉收藏、取消收藏）。
+- Mac Debug 编译通过。🔴 Agent 经 MCP 收藏没有在真 App 里跑过，由用户实测。
+
+### 15.3 实测清单（用户）
+
+  55. 跟 Agent 说「把第 X 页第 5 题收藏一下」「把这一章的错题都收藏」：侧栏「收藏」底下当场出现、数对；开着的习题标签上星标跟着亮。
+  56. 「取消收藏第 5 题」：从「收藏」里消失；题目内容、作答、错题本、笔记都没变。
+  57. Agent 不会自己去收藏 / 取消收藏（比如导题、补答案时不碰收藏）；让它「把这道移出错题本」时它说明只能你在 App 里手动移出。
+
+## 16. 侧栏「已做 / 共」+ 改动时侧栏不跳回顶上（2026-10-31，Mac）
+
+用户原话：「练习库的侧边栏项，显示题目数量和已做题目数量，或者换成一个圆形的进度条都可以。然后 agent 更新的时候不要刷新重置侧边栏滚动位置」。
+
+### 16.1 已做 / 共
+
+- 选了文字（两样都给，比圆形进度少一层猜）：行尾「`12/30`」= 做过 12 道、共 30 道；悬停提示「已做 12 题，共 30 题」。
+  **错题本那一支只显示题数**：里面的题都是答错进来的，全都做过，「7/7」没意义。收藏那一支数的是收藏里做过的。
+- **「做过」**= 至少一次作答（含书上的作答），同顶栏「只看没做过」与 §13 的标准。
+- **数据**：`LibraryStore.exerciseDoneCounts()`（一条 `GROUP BY document_id, chapter`，`EXISTS` 走 `idx_exercise_attempt_ex`，不读 payload）
+  → `WorkspaceManager.exerciseDone`（`ExerciseDoneSummary`，章节路径前缀求和，同 `ExerciseSummary.count`）→
+  `ExerciseGroupNode.withDone` 给整棵树填上 `done` → 侧栏 `countCell`。
+- **和 `exerciseSummary` 分开放**：每答一道新题它就变，但不能让开着的习题标签重读（`exerciseRevision` 不动）。
+  答对 / 没判的作答原先什么都不刷新（只有答错才要更新错题本的数），现在只调 `refreshExerciseDone()`；
+  其余改动走 `refreshExercises()` 时顺带重算。
+- `ExerciseGroupNode.done` 是可选的、默认 nil：平板抽屉（`exGroups`）照旧不带它，线格式不变。
+- 🔴 `LibraryStore.swift` 服务器也编（符号链接）：只是多了一个查询方法，服务器 `swift build` / `swift test` 36 项、Linux 交叉编译都过了。
+
+### 16.2 侧栏滚动位置
+
+- 病根：侧栏任何改动都整树重建（`reload()`：`reloadData` 换新节点 → 段头展开 → 子目录按记录展开）。新节点先是全收起的，
+  收起那一下内容变矮，clip view 的位置被压回顶上，展开回来位置就丢了。Agent 改习题（导入 / 补答案 / 收藏）、平板同步、
+  笔记目录有外部改动……都会触发，以前一样跳。
+- 修法：`reload()` 开头记下 `scroll.contentView.bounds.origin`，展开、选中都做完后放回去（`restoreScroll`：
+  `constrainBoundsRect` 收进能到的范围，连带算上内容边距；再 `reflectScrolledClipView`）。没动就不碰。
+- 没有改成「增量更新」：整树重建是老做法，改它牵连太多；这次只把位置放回去。
+
+### 16.3 验证（2026-10-31）
+
+- `spike/exercise-test.swift` 321 项全过（新加 9 项：一道做两次只算一道、书上的作答算做过、章 = 自己 + 各小节、没做的章与未分章节是 0、
+  收藏那一支数收藏里做过的、错题本那一支不给、全部 = 各书相加、整棵树都填上、三行顶层）。
+- Mac Debug 编译通过。🔴 侧栏显示、滚动位置没在真 App 里跑过。
+
+### 16.4 实测清单（用户）
+
+  66. 侧栏「习题」：全部 / 收藏 / 每本书 / 每一章行尾是「已做/共」，错题本那一支只有题数；悬停看到「已做 x 题，共 y 题」。
+  67. 做一道没做过的题（答对也算）：对应的几行数字当场加一；同一道再做一次不变；开着的练习页不会因此跳题。
+  68. 侧栏往下滚一段（比如滚到习题那一段），让 Agent 导题 / 补答案 / 收藏几道：侧栏停在原处，不跳回顶上。

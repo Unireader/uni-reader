@@ -736,6 +736,40 @@ struct ExerciseSummary: Equatable {
 }
 
 /// 挂在某个章节路径上的题：几道、最早在第几页（0 起；全没页码 = `Int.max`）、其中几道在错题本里、几道收藏了。
+/// 每组题做过几道（`LibraryStore.exerciseDoneCounts`，侧栏行尾「已做 / 共」，`EXERCISE-PLAN.md §16`）。
+/// 「做过」= 至少一次作答（含书上的作答），同「只看没做过」。
+struct ExerciseDoneSummary: Equatable {
+    /// 文档 id → 章节路径（恰好挂在这一级）→ 做过的题数 + 其中收藏了的几道。
+    var chapters: [String: [[String]: ExerciseDoneStat]] = [:]
+
+    /// 这一组做过几道。错题本那一支返回 nil：里面的题都是答错进来的、全都做过，行尾只显示题数。
+    func done(_ scope: ExerciseScope) -> Int? {
+        func sum(_ id: String?, _ path: [String]?, _ n: KeyPath<ExerciseDoneStat, Int>) -> Int {
+            let books = id.map { [chapters[$0] ?? [:]] } ?? Array(chapters.values)
+            var total = 0
+            for book in books {
+                for (chapter, stat) in book where path.map({ ExerciseScope.chapterContains($0, chapter) }) ?? true {
+                    total += stat[keyPath: n]
+                }
+            }
+            return total
+        }
+        switch scope {
+        case .all: return sum(nil, nil, \.done)
+        case .starred: return sum(nil, nil, \.starred)
+        case .document(let id): return sum(id, nil, \.done)
+        case .chapter(let id, let p): return sum(id, p, \.done)
+        case .starredDocument(let id): return sum(id, nil, \.starred)
+        case .starredChapter(let id, let p): return sum(id, p, \.starred)
+        case .wrong, .wrongDocument, .wrongChapter: return nil
+        }
+    }
+}
+struct ExerciseDoneStat: Equatable {
+    var done: Int
+    var starred: Int = 0
+}
+
 struct ExerciseChapterStat: Equatable {
     var count: Int
     var firstPage: Int
@@ -865,6 +899,16 @@ struct ExerciseGroupNode: Equatable {
     var title: String
     var count: Int
     var children: [ExerciseGroupNode] = []
+    /// 做过几道（侧栏行尾「已做 / 共」，§16）；nil = 不显示（错题本那一支，或调用方没给做题进度）。
+    var done: Int? = nil
+
+    /// 整棵树填上「做过几道」。
+    func withDone(_ d: ExerciseDoneSummary) -> ExerciseGroupNode {
+        var n = self
+        n.done = d.done(scope)
+        n.children = children.map { $0.withDone(d) }
+        return n
+    }
 
     /// 建整段。`documents` = 书库顺序的（id, 书名）；`title` 给全部 / 错题本 / 收藏三行起名；
     /// `noChapter` = 「未分章节」那一行的名字。没有题 → 空（这一段不出现）。
@@ -958,6 +1002,18 @@ enum ExerciseScope: Hashable {
 
     /// 侧栏 / 标签页选中键的前缀（同 `BoardNote.rowPrefix` 的口径）。
     static let rowPrefix = "ex:"
+
+    /// 这一组在侧栏 / ⌘P 快速打开里的图标（SF Symbols 名）。
+    var symbolName: String {
+        switch self {
+        case .all: return "checklist"
+        case .wrong: return "xmark.circle"
+        case .starred: return "star"
+        case .document, .wrongDocument, .starredDocument: return "doc.questionmark"
+        case .chapter(_, let path), .wrongChapter(_, let path), .starredChapter(_, let path):
+            return path.isEmpty ? "questionmark.folder" : "list.bullet.indent"
+        }
+    }
     private static let wrongPrefix = "wrong:"
     private static let starredPrefix = "starred:"
 

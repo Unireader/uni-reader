@@ -695,6 +695,8 @@ extension Notification.Name {
     /// 咨询 AI / Agent 的独立窗口显示、隐藏或关闭了（阅读窗口工具栏两枚开关据此刷按下态）。
     static let auxPanelVisibilityChanged = Notification.Name("com.xvan.UniReader.auxPanelVisibilityChanged")
     static let openPDFRequested = Notification.Name("com.xvan.UniReader.openPDFRequested")
+    /// ⌘P 快速打开（`QUICK-OPEN-PLAN.md`）：key 阅读窗认领、弹出面板；面板自己是 key 时由它收起。
+    static let quickOpenRequested = Notification.Name("com.xvan.UniReader.quickOpenRequested")
     /// 新建一篇 Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md`）。
     static let newMarkdownNoteRequested = Notification.Name("com.xvan.UniReader.newMarkdownNoteRequested")
     /// 新建一篇画板笔记（v16，`BOARD-NOTE-PLAN.md`）。

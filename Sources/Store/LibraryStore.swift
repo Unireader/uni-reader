@@ -1222,6 +1222,15 @@ final class LibraryStore {
         """, row: { r in (r.text(0), Self.chapterPath(r.text(1)), Int(r.int64(2)), r.isNull(3) ? Int.max : Int(r.int64(3)),
                           Int(r.int64(4)), Int(r.int64(5))) })
     }
+    /// 每篇文档每个章节**做过**的题数，以及其中收藏了的几道（侧栏习题行尾「已做 / 共」用，`EXERCISE-PLAN.md §16`）。
+    /// 「做过」= 至少一次作答（含书上的作答），同「只看没做过」的标准。一条 GROUP BY，不读 payload。
+    func exerciseDoneCounts() throws -> [(documentId: String, chapter: [String], done: Int, starred: Int)] {
+        try db.query("""
+        SELECT document_id, chapter, COUNT(*), SUM(starred) FROM exercise e
+        WHERE document_id IS NOT NULL AND EXISTS (SELECT 1 FROM exercise_attempt a WHERE a.exercise_id = e.id)
+        GROUP BY document_id, chapter
+        """, row: { r in (r.text(0), Self.chapterPath(r.text(1)), Int(r.int64(2)), Int(r.int64(3))) })
+    }
     /// 一批题一个事务（MCP `import_exercises` 一次几十道，中途出错整批不落）。
     func upsertExercises(_ rows: [LibExercise]) throws {
         try db.transaction { for e in rows { try upsertExercise(e) } }

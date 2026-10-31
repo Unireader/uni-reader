@@ -58,5 +58,26 @@ let samePdf = m("x.pdf", kind: .pdf, id: "D1"), sameNote = m("x.pdf", kind: .not
 check(AgentMention.stillReferenced([samePdf, sameNote], in: "@x.pdf").count == 2, "种类不同的同 id 不算重复")
 check(c.token == "@c.pdf" && c.mimeType == "application/pdf" && a.mimeType == "text/markdown", "token / mimeType")
 
+print("侧栏「在 Agent 中引用」的几种（2026-10-31，ACP-AGENT-PLAN.md §11）")
+let folder = AgentMention(kind: .folder, id: "ws\u{1}数学", name: "数学/", detail: "笔记 / 数学", uri: "file:///n/数学",
+                          info: "A folder of Markdown notes … list_markdown_notes")
+check(folder.agentDescription == folder.info && folder.mimeType == "inode/directory", "目录：说明用构造时写好的那句、mime 是目录")
+let ex = AgentMention(kind: .exercises, id: "ex:all", name: "全部习题", detail: "", uri: "unireader://open", info: "exercises …")
+check(ex.mimeType == nil && ex.agentDescription == "exercises …" && ex.token == "@全部习题", "习题组：没有 mime、名字可以是中文")
+check(m("p.pdf", kind: .pdf).agentDescription.contains("document_id"), "PDF 的说明仍是固定那句（不看 info）")
+check(AgentMention.stillReferenced([ex, folder], in: "@全部习题 和 @数学/ 有什么").count == 2, "新几种照样按正文里还在不在附上")
+
+print("通用排序（⌘P 快速打开也用，QUICK-OPEN-PLAN.md）")
+struct Row { var title: String; var detail: String }
+let rows = [Row(title: "高等数学 上册", detail: "PDF"), Row(title: "极限笔记", detail: "Markdown 笔记 · 数学"),
+            Row(title: "高数 · 第一章 函数与极限", detail: "习题 · 共 12 题"), Row(title: "草稿", detail: "画板笔记")]
+let rk = { (q: String) in AgentMentionMatch.rank(rows, query: q, name: \.title, detail: \.detail).map(\.title) }
+check(rk("") == rows.map(\.title), "空查询 = 原顺序")
+check(rk("极限") == ["极限笔记", "高数 · 第一章 函数与极限"], "名字开头 > 名字里含")
+check(rk("画板") == ["草稿"], "第二行里含也算（按类别搜）")
+check(rk("高数").first == "高数 · 第一章 函数与极限", "开头命中排第一")
+check(rk("gdsx").isEmpty, "都不中 → 没有")
+check(AgentMentionMatch.rank(rows, query: "", limit: 2, name: \.title, detail: \.detail).count == 2, "条数上限")
+
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

@@ -1180,3 +1180,11 @@
 "Downloading PDFs (%d of %d)…" = "Downloading PDFs (%d of %d)…";
 "The server program is too old for this. Update the server first." = "The server program is too old for this. Update the server first.";
 "Close this workspace’s windows first." = "Close this workspace’s windows first.";
+/* 侧栏「复制名称 / 在 Agent 中引用」、⌘P 快速打开（2026-10-31） */
+"Done %d of %d" = "Done %d of %d";
+"Copy Name" = "Copy Name";
+"Reference in Agent" = "Reference in Agent";
+"Quick Open…" = "Quick Open…";
+"Search PDFs, notes, boards and exercises" = "Search PDFs, notes, boards and exercises";
+"No Results" = "No Results";
+"Markdown Note" = "Markdown Note";

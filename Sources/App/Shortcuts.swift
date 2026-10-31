@@ -132,6 +132,7 @@ struct KeyCombo: Hashable {
 /// 它们列在 `Shortcuts.reserved` 里，改别的动作时不许撞上。
 enum ShortcutAction: String, CaseIterable, Identifiable {
     // 视图
+    case quickOpen
     case toggleSidebar, toggleInspector, zoomIn, zoomOut, zoomFit
     case addBookmark, jumpBack, jumpForward, jumpHistory, gotoPage
     case nightMode, canvasMode, refWindow
@@ -174,7 +175,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var section: Section {
         switch self {
-        case .toggleSidebar, .toggleInspector, .zoomIn, .zoomOut, .zoomFit, .addBookmark,
+        case .quickOpen, .toggleSidebar, .toggleInspector, .zoomIn, .zoomOut, .zoomFit, .addBookmark,
              .jumpBack, .jumpForward, .jumpHistory, .gotoPage, .nightMode, .canvasMode, .refWindow:
             return .view
         case .penSlot1, .penSlot2, .penSlot3, .penSlot4, .eraser, .pageTurn, .write, .writingLock:
@@ -188,6 +189,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .quickOpen: return L("Quick Open…")
         case .toggleSidebar: return L("Toggle Sidebar")
         case .toggleInspector: return L("Toggle Inspector")
         case .zoomIn: return L("Zoom In")
@@ -227,6 +229,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var defaultCombo: KeyCombo {
         switch self {
+        case .quickOpen: return KeyCombo("p", .command)   // ⌘P（用户 2026-10-31 指定；App 没有「打印」，不冲突）
         case .toggleSidebar: return KeyCombo("b", .command)
         case .toggleInspector: return KeyCombo("i", .command)
         case .zoomIn: return KeyCombo("=", .command)

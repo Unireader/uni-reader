@@ -39,6 +39,16 @@ extension WorkspaceManager {
             exerciseSummary = s
             exerciseRevision += 1
         }
+        refreshExerciseDone()
+    }
+
+    /// 重算每组做过几道（侧栏「已做 / 共」）。只改 `exerciseDone`，不加 `exerciseRevision`（开着的习题标签不用重读）。
+    func refreshExerciseDone() {
+        var d = ExerciseDoneSummary()
+        for row in (try? store?.exerciseDoneCounts()) ?? [] {
+            d.chapters[row.documentId, default: [:]][row.chapter] = ExerciseDoneStat(done: row.done, starred: row.starred)
+        }
+        if d != exerciseDone { exerciseDone = d }
     }
 
     /// 内容变了（导入 / 改 / 删 / 收藏 / 进出错题本）：重算数并通知开着的习题标签。
@@ -154,7 +164,7 @@ extension WorkspaceManager {
     }
 
     /// 改一道题的内容（`update_exercises`）。收藏 / 错题不经这里改。答案（或题型）变了 → 这道题的作答全部重判。
-    /// `userMark` 非 nil = 同时改书上的作答（空 = 撤掉）。笔记（`e.note`）变了也一起写——`upsertExercise` 不碰它。
+    /// `userMark` 非 nil = 同时改书上的作答（空 = 撤掉）。笔记（`e.note`）、收藏（`e.starred`）变了也一起写——`upsertExercise` 不碰这两样。
     func saveExercise(_ e: Exercise, userMark: ExerciseResponse? = nil) throws {
         guard let store else { return }
         let old = exercise(id: e.id)
@@ -162,6 +172,7 @@ extension WorkspaceManager {
         e.updatedAt = .now
         try store.upsertExercise(e.toRow())
         if let old, old.note != e.note { try store.setExerciseNote(id: e.id, e.note, at: e.updatedAt) }
+        if let old, old.starred != e.starred { try store.setExerciseStarred(id: e.id, e.starred, at: e.updatedAt) }
         if let old, old.payload.answer != e.payload.answer || old.payload.accept != e.payload.accept || old.kind != e.kind {
             try rejudgeAttempts(e)
         }
@@ -253,7 +264,7 @@ extension WorkspaceManager {
         let a = LibExerciseAttempt(id: UUID().uuidString, exerciseId: id, answer: response.answerString(kind),
                                    correct: correct, elapsedMs: max(0, elapsedMs), createdAt: .now, ink: ink)
         do { try store?.recordExerciseAttempt(a) } catch { lastError = "\(error)"; return nil }
-        if correct == false { exercisesChanged() }
+        if correct == false { exercisesChanged() } else { refreshExerciseDone() }
         return a.id
     }
 

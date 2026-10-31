@@ -1182,3 +1182,11 @@
 "Downloading PDFs (%d of %d)…" = "正在下载 PDF（第 %d 本，共 %d 本）…";
 "The server program is too old for this. Update the server first." = "服务器程序版本太旧，不支持这个操作。请先升级服务器。";
 "Close this workspace’s windows first." = "请先关掉这个工作区的窗口。";
+/* 侧栏「复制名称 / 在 Agent 中引用」、⌘P 快速打开（2026-10-31） */
+"Done %d of %d" = "已做 %d 题，共 %d 题";
+"Copy Name" = "复制名称";
+"Reference in Agent" = "在 Agent 中引用";
+"Quick Open…" = "快速打开…";
+"Search PDFs, notes, boards and exercises" = "搜索 PDF、笔记、画板和习题";
+"No Results" = "没有找到";
+"Markdown Note" = "Markdown 笔记";

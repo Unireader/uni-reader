@@ -373,6 +373,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private func observeMenuCommands() {
         on(.openPDFRequested) { $0.openPDF() }
+        on(.quickOpenRequested) { QuickOpenController.shared.toggle(for: $0) }   // ⌘P（`QUICK-OPEN-PLAN.md`）
         on(.newWindowRequested) { c in
             AppDelegate.shared?.openReaderWindow(
                 workspacePath: c.workspace.folder?.standardizedFileURL.path, docId: nil)
