@@ -737,5 +737,34 @@ try store.recordExerciseAttempt(LibExerciseAttempt(id: UUID().uuidString, exerci
                                                    elapsedMs: 0, createdAt: Date().addingTimeInterval(10), source: ""))
 check(!lw.lastResultWrong(try store.exerciseAttemptStats()[lwRow.id]), "再答对一次 → 不算了（下次重做就不在里面）")
 
+print("— 打开一组题停在第几道（接着上次做的往下，§13）")
+let rsQ = (1...6).map { i -> Exercise in var e = lw; e.id = "rsQ\(i)"; return e }
+let rsT0 = Date(timeIntervalSince1970: 1_800_000_000)
+func rsDone(_ sec: Double) -> ExerciseAttemptStats {
+    ExerciseAttemptStats(attempts: 1, correct: 1, lastAnswer: "B", lastAt: rsT0.addingTimeInterval(sec))
+}
+let rsBook = ExerciseAttemptStats(attempts: 1, markedAnswer: "A", markedCorrect: false)
+check(Exercise.resumeIndex([], stats: [:]) == 0, "一道题都没有 → 0")
+check(Exercise.resumeIndex(rsQ, stats: [:]) == 0, "一道都没做过 → 第 1 题")
+check(Exercise.resumeIndex(rsQ, stats: ["rsQ1": rsDone(1), "rsQ2": rsDone(2), "rsQ3": rsDone(3)]) == 3,
+      "按顺序做完前 3 道 → 第 4 题")
+check(Exercise.resumeIndex(rsQ, stats: ["rsQ1": rsDone(1), "rsQ2": rsDone(2), "rsQ4": rsDone(4)]) == 4,
+      "跳过第 3 题、最近做的是第 4 题 → 第 5 题（不回头找跳过的）")
+check(Exercise.resumeIndex(rsQ, stats: ["rsQ4": rsDone(9), "rsQ5": rsDone(1), "rsQ6": rsDone(2)]) == 0,
+      "最近做的那道后面都做过了 → 从头找第一道没做过的")
+check(Exercise.resumeIndex(rsQ, stats: ["rsQ1": rsDone(1), "rsQ5": rsDone(5), "rsQ6": rsDone(6),
+                                       "rsQ4": rsDone(3)]) == 1,
+      "最近做的是最后一道 → 从头找（第 2 题）")
+check(Exercise.resumeIndex(rsQ, stats: ["rsQ2": rsDone(5), "rsQ3": rsBook]) == 3,
+      "书上已有作答的算做过（同「只看没做过」）→ 跳过第 3 题，停第 4 题")
+check(Exercise.resumeIndex(rsQ, stats: ["rsQ1": rsBook, "rsQ2": rsBook]) == 2,
+      "只有书上的作答、App 里没练过 → 从头找第一道没做过的")
+check(Exercise.resumeIndex(rsQ, stats: Dictionary(uniqueKeysWithValues: rsQ.enumerated().map { ($1.id, rsDone(Double($0))) })) == 0,
+      "全都做过 → 第 1 题")
+check(Exercise.resumeIndex(rsQ, stats: ["rsQ2": rsDone(7), "rsQ4": rsDone(7)]) == 4,
+      "两道时间一样 → 取排在后面的那道（停第 5 题）")
+check(Exercise.resumeIndex(rsQ, stats: ["rsQ3": rsDone(2), "rsQ5": rsDone(8), "rsQ6": rsDone(1)]) == 0,
+      "最近做的是第 5 题、第 6 题也做过 → 从头找（第 1 题）")
+
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

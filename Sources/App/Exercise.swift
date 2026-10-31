@@ -259,6 +259,24 @@ struct Exercise: Identifiable, Equatable {
         return earlierResponse(s)?.correct == false
     }
 
+    /// 打开一组题时停在第几道（用户 2026-10-31 定「接着上次做的往下」，`EXERCISE-PLAN.md §13`）：
+    /// 先找这一组里**在 App 里最近练过**的那道（`lastAt` 最大；书上的作答不算，它的时间是导入那一刻），
+    /// 从它后面找第一道没做过的；后面都做过了，从头找第一道没做过的；全做过（或一道都没练过、也没有没做过的）→ 第 1 题。
+    /// 「没做过」同顶栏「只看没做过」（`ExerciseFilter.unanswered`：一次作答都没有，书上的作答也算做过）。
+    /// 两道题时间一样时取排在后面的那道。安卓 `Exercise.resumeIndex` 逐条照抄（两端同一个库得出同一道）。
+    static func resumeIndex(_ items: [Exercise], stats: [String: ExerciseAttemptStats]) -> Int {
+        func undone(_ i: Int) -> Bool { (stats[items[i].id]?.attempts ?? 0) == 0 }
+        var last = -1
+        var lastAt: Date?
+        for (i, e) in items.enumerated() {
+            guard let t = stats[e.id]?.lastAt else { continue }
+            if lastAt.map({ t >= $0 }) ?? true { last = i; lastAt = t }
+        }
+        let start = last + 1
+        if let i = (start..<items.count).first(where: undone) { return i }
+        return (0..<start).first(where: undone) ?? 0
+    }
+
     /// 列表里一行显示的题干：去掉换行、并掉连续空白（公式源码原样留着）。
     var plainStem: String { Self.collapse(payload.stem) }
 

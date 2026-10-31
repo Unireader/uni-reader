@@ -94,6 +94,8 @@ final class ExerciseDeck {
         stats = workspace.exerciseAttemptStats()
         scopeItems = workspace.exercises(in: scope)
         items = scopeItems.filter(passes)
+        // 每次启动后第一次打开这一组：接着上次做的往下（App 开着期间切回来停在原来那题，这份一直在 `decks` 里）
+        index = Exercise.resumeIndex(items, stats: stats)
     }
 
     var current: Exercise? { items.indices.contains(index) ? items[index] : nil }
