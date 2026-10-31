@@ -30,6 +30,8 @@ public struct ServerPaths: Sendable {
     func snapshotFolder(_ id: String) -> URL { root.appendingPathComponent("snapshots/\(id)", isDirectory: true) }
     /// 断点续传中的半截文件（PDF / 图片本体）。
     var partials: URL { uploads.appendingPathComponent("partials", isDirectory: true) }
+    /// 服务器出图的缓存（`PageImages`）。
+    public var renderCache: URL { root.appendingPathComponent("cache/render", isDirectory: true) }
 
     func createDirectories() throws {
         for d in [root, workspaces, uploads] {
@@ -57,6 +59,9 @@ public enum ServerError: Error, Equatable, CustomStringConvertible {
     case alreadyHosted(String)
     case unknownWorkspace(String)
     case unknownDocument(String)
+    /// 服务器出图要的 MuPDF 命令行没装（`PageImages`）。
+    case renderUnavailable
+    case renderFailed(String)
     /// 客户端与服务器的 schema 版本不同：低于服务器只能读，高于服务器要先升级服务器（方案 §3.6）。
     case schemaMismatch(client: Int, server: Int)
     case badContentHash
@@ -70,6 +75,8 @@ public enum ServerError: Error, Equatable, CustomStringConvertible {
         case .alreadyHosted(let id): return "服务器上已经有这个工作区（\(id)）"
         case .unknownWorkspace(let id): return "服务器上没有这个工作区（\(id)）"
         case .unknownDocument(let id): return "工作区里没有这本书（\(id)）"
+        case .renderUnavailable: return "服务器没装出图工具（mupdf-tools、libjpeg-turbo-progs），只能用浏览器加载"
+        case .renderFailed(let m): return "服务器出图失败：\(m)"
         case .schemaMismatch(let c, let s):
             return c < s ? "App 的数据版本（\(c)）比服务器（\(s)）旧，请先升级 App"
                          : "App 的数据版本（\(c)）比服务器（\(s)）新，请先升级服务器"

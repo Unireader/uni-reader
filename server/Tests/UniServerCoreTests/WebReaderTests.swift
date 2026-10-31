@@ -91,6 +91,7 @@ final class WebReaderMarksTests: XCTestCase {
         XCTAssertEqual(byId["N4"]?.payload, #"{"quote":"","text":"看这里","rects":[]}"#, "非笔迹 payload 原样")
         XCTAssertEqual(byId["N4"]?.anchor, [0.1, 0.2, 0.3, 0.4])
         XCTAssertEqual(try ws.pageMarks(documentId: "D1", from: 3, to: 9).map(\.id), ["N7"])
+        XCTAssertEqual(try ws.pageMarks(documentId: "D1", from: 0, to: 99, kinds: [0, 4]).map(\.id), ["N4"], "只要文字笔记；4 不在允许的里面")
         XCTAssertThrowsError(try ws.pageMarks(documentId: "nope", from: 0, to: 1)) {
             XCTAssertEqual($0 as? ServerError, .unknownDocument("nope"))
         }

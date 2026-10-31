@@ -247,6 +247,9 @@ final class HTTPTests: XCTestCase {
                 XCTAssertEqual(r.status, .partialContent)
                 XCTAssertEqual(String(buffer: r.body), "2345")
                 XCTAssertEqual(r.headers[.contentRange], "bytes 2-5/10")
+                // 地址里带内容哈希：让浏览器长期缓存（分段的也一样）
+                XCTAssertEqual(r.headers[.cacheControl], "private, max-age=31536000, immutable")
+                XCTAssertNotNil(r.headers[.eTag])
             }
             try await client.execute(uri: uri, method: .get, headers: self.auth(token)) {
                 XCTAssertEqual(String(buffer: $0.body), "0123456789")
@@ -369,7 +372,7 @@ final class HTTPTests: XCTestCase {
         lib.close()
         let ws = try host.install(uploaded: dir)
 
-        let app = UniServerApp.application(host: host, store: store, web: WebFiles(directory: webDir),
+        let app = UniServerApp.application(host: host, store: store, web: WebFiles(directory: webDir), accessLog: true,
                                            address: .hostname("127.0.0.1", port: 0))
         try await app.test(.router) { client in
             try await client.execute(uri: "/", method: .get) { r in
@@ -441,6 +444,17 @@ final class HTTPTests: XCTestCase {
                 let body = String(buffer: r.body)
                 XCTAssertTrue(body.contains("网页写的") && body.contains(#""updatedAt":"#), body)
             }
+            // 服务器出图：这个测试里没配（等于没装 MuPDF）→ 501，网页据此退回浏览器加载
+            try await client.execute(uri: "/v1/workspaces/\(ws.id)/pdf/\(hash)/info", method: .get, headers: self.auth(token)) {
+                XCTAssertEqual($0.status, .notImplemented)
+            }
+            try await client.execute(uri: "/v1/workspaces/\(ws.id)/pdf/\(hash)/page/0?w=800", method: .get, headers: self.auth(token)) {
+                XCTAssertEqual($0.status, .notImplemented)
+            }
+            try await client.execute(uri: "\(book)/notes", method: .get, headers: self.auth(token)) { r in
+                XCTAssertEqual(r.status, .ok)
+                XCTAssertTrue(String(buffer: r.body).contains("网页写的"), String(buffer: r.body))
+            }
             let badPoints = edit.replacingOccurrences(of: #""kind":0"#, with: #""kind":2,"points":"不是base64""#)
             for bad in [badPoints, #"{"upserts":[{"id":"x"}],"deletes":[]}"#,
                         edit.replacingOccurrences(of: id, with: "not-a-uuid")] {
@@ -448,6 +462,14 @@ final class HTTPTests: XCTestCase {
                                          body: ByteBuffer(string: bad)) { XCTAssertEqual($0.status, .badRequest, bad) }
             }
         }
+    }
+
+    func testAccessLogShortensIds() {
+        let req = Request(head: .init(method: .get, scheme: "http", authority: "x",
+                                      path: "/v1/workspaces/8f2c1d3e-0000-4000-8000-000000000000/pdf/\(String(repeating: "ab", count: 32))",
+                                      headerFields: [.range: "bytes=0-262143"]),
+                          body: .init(buffer: ByteBuffer()))
+        XCTAssertEqual(AccessLogMiddleware.describe(req), "GET /v1/workspaces/8f2c1d3e…/pdf/abababab… bytes=0-262143")
     }
 
     func testParseRange() {

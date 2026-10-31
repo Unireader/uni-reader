@@ -19,9 +19,12 @@ public final class HostedWorkspace: @unchecked Sendable {
     let store: LibraryStore
     let paths: ServerPaths
     let lock = NSLock()
+    /// PDF 的「内容哈希 → 文件」（只记找到了的）：取 PDF 的请求一本书几百个（分段下载），不必每个都去等上面那把锁——
+    /// 设备同步推送时锁要占好一会儿，网页翻页就跟着卡（`pdfFile`）。
+    let pdfLocations = LockedCache<String, URL>()
     /// 已关掉（工作区被删除时，`WorkspaceHost.delete`）。之后还拿着这个实例的请求一律当「没有这个工作区」，
     /// 别往已经挪进回收站的文件夹里写东西（`storePDF` 会重新建出 `PDFs/`，列表里就多出一个空壳）。
-    private var closed = false
+    private(set) var closed = false
 
     static let metaHead = "srv_head_rev"
 
@@ -504,4 +507,13 @@ public final class HostedWorkspace: @unchecked Sendable {
         let url = folder.appendingPathComponent(rel).standardizedFileURL.resolvingSymlinksInPath()
         return url.path.hasPrefix(base + "/") ? url : nil
     }
+}
+
+/// 带锁的小字典（几个请求线程同时读写）。
+final class LockedCache<K: Hashable, V>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [K: V] = [:]
+    func get(_ k: K) -> V? { lock.lock(); defer { lock.unlock() }; return values[k] }
+    func set(_ k: K, _ v: V) { lock.lock(); defer { lock.unlock() }; values[k] = v }
+    func clear() { lock.lock(); defer { lock.unlock() }; values.removeAll() }
 }

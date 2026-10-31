@@ -1,6 +1,6 @@
 <script lang="ts">
   // 线条图标（24×24，跟随文字颜色）。
-  let { name }: { name: "back" | "list" | "minus" | "plus" | "chevron" | "pointer" | "eraser" | "note" | "undo" | "redo" } = $props();
+  let { name }: { name: "back" | "list" | "minus" | "plus" | "chevron" | "pointer" | "eraser" | "note" | "undo" | "redo" | "sidebar" | "panel" | "search" | "logout" } = $props();
 </script>
 
 <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor"
@@ -25,5 +25,13 @@
     <path d="M9 5L4 10l5 5" /><path d="M4 10h10.5a5 5 0 0 1 0 10H12" />
   {:else if name === "redo"}
     <path d="M15 5l5 5-5 5" /><path d="M20 10H9.5a5 5 0 0 0 0 10H12" />
+  {:else if name === "sidebar"}
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><path d="M9.5 4.5v15" />
+  {:else if name === "panel"}
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><path d="M9 4.5v15M5.5 8.5h1.5M5.5 11.5h1.5" />
+  {:else if name === "search"}
+    <circle cx="11" cy="11" r="6" /><path d="M20 20l-4.5-4.5" />
+  {:else if name === "logout"}
+    <path d="M14 4.5H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h7" /><path d="M16 8l4 4-4 4M20 12H10" />
   {/if}
 </svg>

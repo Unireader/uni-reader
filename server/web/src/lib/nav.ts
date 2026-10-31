@@ -8,3 +8,14 @@ export function parseHash(hash = location.hash): string[] {
 export function go(...parts: string[]) {
   location.hash = "#/" + parts.map(encodeURIComponent).join("/");
 }
+
+const LAST_WS = "unireader.lastWorkspace";
+
+/** 上次打开的工作区（打开网页时直接进它的书库）。 */
+export function lastWorkspace(): string | null {
+  try { return localStorage.getItem(LAST_WS); } catch { return null; }
+}
+
+export function rememberWorkspace(ws: string) {
+  try { localStorage.setItem(LAST_WS, ws); } catch { /* 无痕模式等 */ }
+}

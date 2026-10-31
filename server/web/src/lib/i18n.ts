@@ -65,6 +65,31 @@ const ZH: Record<string, string> = {
   "This was changed on another device in the meantime. Reloaded the latest version.": "这期间别的设备改过这里，已重新载入最新的内容。",
   "The server did not accept this change. Reloaded the latest version.": "服务器没有收下这处改动，已重新载入最新的内容。",
   "Some changes are not saved to the server yet. Leave anyway?": "还有改动没存到服务器上，确定离开？",
+  // 应用外壳与书库
+  "Server": "服务器",
+  "Hide Sidebar": "收起侧栏",
+  "Show Sidebar": "显示侧栏",
+  "Pick a workspace on the left.": "从左边选一个工作区。",
+  "{0} books": "{0} 本书",
+  "Filter books": "筛选书名",
+  "Continue Reading": "继续阅读",
+  "Page {0} of {1}": "第 {0} 页，共 {1} 页",
+  "Library": "书库",
+  "Contents and Notes": "目录与笔记",
+  "Notes": "笔记",
+  "No text notes in this book yet. Pick “Add Text Note” in the toolbar below and click on a page to write one.":
+    "这本书还没有文字笔记。在下面的工具条里选「添加文字笔记」，再点一下页面就能写。",
+  "Page {0}": "第 {0} 页",
+  "{0} not saved": "{0} 处没存上",
+  // 页面由谁来画（方案 §11）
+  "Server Images": "服务器出图",
+  "In Browser": "浏览器加载",
+  "How pages are drawn: as images on the server, or from the PDF in this browser. Click to switch.":
+    "页面由谁来画：服务器画成图片发过来，或者在这个浏览器里加载 PDF。点一下切换。",
+  "The server cannot draw pages (MuPDF is not installed there). Loading the PDF in this browser instead.":
+    "服务器画不了页面（没装 MuPDF），改用这个浏览器加载 PDF。",
+  "The server could not draw this book ({0}). Loading the PDF in this browser instead.":
+    "服务器没能画这本书（{0}），改用这个浏览器加载 PDF。",
 };
 
 /** 取一句界面文字；`{0}`、`{1}` 换成参数。 */

@@ -8,8 +8,13 @@ extension HostedWorkspace {
     /// 这份 PDF 在服务器上的文件；没有 = nil。
     public func pdfFile(contentHash: String) -> URL? {
         guard ServerCrypto.isSHA256Hex(contentHash) else { return nil }
+        // 找到过的直接用（文件还在就行；内容哈希定了，文件就不会变），不等工作区的锁
+        if let url = pdfLocations.get(contentHash), FileManager.default.fileExists(atPath: url.path) { return url }
         lock.lock(); defer { lock.unlock() }
-        return store.withMirrorDB { pdfFileLocked($0, contentHash: contentHash) }
+        guard !closed else { return nil }
+        let url = store.withMirrorDB { pdfFileLocked($0, contentHash: contentHash) }
+        if let url { pdfLocations.set(contentHash, url) }
+        return url
     }
 
     func pdfFileLocked(_ db: SQLiteDB, contentHash: String) -> URL? {

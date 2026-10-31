@@ -18,10 +18,13 @@ import UniServerCore
 /// | `POST workspaces/:ws/push` | 推送（`SyncWire` 二进制） |
 /// | `GET workspaces/:ws/pull?since=&limit=` | 拉取（`SyncWire` 二进制） |
 /// | `HEAD/GET/PUT workspaces/:ws/pdf/:hash` | PDF：查有没有 / 下载（支持 `Range`）/ 上传（可续传） |
+/// | `GET workspaces/:ws/pdf/:hash/info` | 服务器出图：各页尺寸 + 扫描图宽度 + 目录（JSON，`PageImages.info`）；没装 MuPDF → 501 |
+/// | `GET workspaces/:ws/pdf/:hash/page/:n?w=` | 服务器出图：第 n 页（从 0 起）约 w 像素宽的 JPEG（扫描页最多按扫描图本身的宽度），顺手在后台画后两页 |
 /// | `HEAD/GET/PUT workspaces/:ws/image/:sha.:ext` | 图片本体，同上 |
 /// | `GET workspaces/:ws/documents` | 书目（网页阅读器用）：书名 / 分组 / 页数 / 阅读进度 / 打开用哪份 PDF |
 /// | `GET workspaces/:ws/documents/:doc/view?hash=` | 打开一本书（网页）：笔迹图层、笔记类型、扫描页对齐参数（`hash` = 打开的那份 PDF） |
 /// | `GET workspaces/:ws/documents/:doc/marks?from=&to=` | 一段页（从 0 起，含两端）上的文字笔记 / 笔迹 / 高亮（网页）；笔迹点集一律二进制、base64 |
+/// | `GET workspaces/:ws/documents/:doc/notes` | 整本书的文字笔记（网页阅读页的「笔记」列表；格式同 `marks`） |
 /// | `GET workspaces/:ws/head` | 当前修订号（网页轮询，变了再重拉标记） |
 /// | `POST workspaces/:ws/documents/:doc/edits` | 网页写文字笔记 / 笔迹（JSON：`upserts` / `deletes`）：当成一次「基线 = 服务器现状」的推送；带了 `baseUpdatedAt` 而服务器上已经变了的行不写（`stale`） |
 ///
@@ -36,7 +39,8 @@ public enum UniServerApp {
     static let revHeader = HTTPField.Name("X-UniReader-Rev")!
 
     public static func router(host: WorkspaceHost, store: ServerStore, name: String = "UniReader",
-                              web: WebFiles = WebFiles()) -> Router<ServerRequestContext> {
+                              web: WebFiles = WebFiles(), accessLog: Bool = false,
+                              images: PageImages? = nil) -> Router<ServerRequestContext> {
         let router = Router(context: ServerRequestContext.self)
         let serverId = (try? store.serverId()) ?? ""
         router.add(middleware: ServerErrorMiddleware())
@@ -63,6 +67,7 @@ public enum UniServerApp {
 
         // MARK: 其余都要令牌
         let api = router.group("v1").add(middleware: AuthMiddleware(store: store))
+        if accessLog { api.add(middleware: AccessLogMiddleware()) }   // 在令牌之后：日志里能写是哪台设备
 
         api.get("info") { _, context -> InfoResponse in
             InfoResponse(serverVersion: ServerInfo.version, schemaVersion: ServerInfo.schemaVersion,
@@ -161,7 +166,7 @@ public enum UniServerApp {
 
         api.head("workspaces/:ws/pdf/:hash") { _, context -> Response in
             let w = try workspace(context), hash = try pdfHash(context)
-            if let url = w.pdfFile(contentHash: hash) {
+            if let url = try await Blocking.run({ w.pdfFile(contentHash: hash) }) {
                 return Response(status: .ok, headers: [.contentLength: String(Resumable.size(url)), .acceptRanges: "bytes"])
             }
             return Resumable.missing(Resumable.size(host.partialFile(workspace: w.id, name: "\(hash).pdf")))
@@ -169,8 +174,10 @@ public enum UniServerApp {
 
         api.get("workspaces/:ws/pdf/:hash") { request, context -> Response in
             let w = try workspace(context), hash = try pdfHash(context)
-            guard let url = w.pdfFile(contentHash: hash) else { throw HTTPError(.notFound, message: "服务器上没有这份 PDF") }
-            return try await fileResponse(request, context, url, type: "application/pdf")
+            guard let url = try await Blocking.run({ w.pdfFile(contentHash: hash) }) else {
+                throw HTTPError(.notFound, message: "服务器上没有这份 PDF")
+            }
+            return try await fileResponse(request, context, url, type: "application/pdf", immutable: hash)
         }
 
         api.put("workspaces/:ws/pdf/:hash") { request, context -> Response in
@@ -181,6 +188,37 @@ public enum UniServerApp {
             guard n == total else { return Resumable.progress(n) }
             try await Blocking.run { try w.storePDF(contentHash: hash, from: part) }
             return Response(status: .created)
+        }
+
+        // MARK: 服务器出图（方案 WEB-READER-PLAN §11）
+        @Sendable func renderer() throws -> PageImages {
+            guard let images, images.available else { throw ServerError.renderUnavailable }
+            return images
+        }
+
+        api.get("workspaces/:ws/pdf/:hash/info") { _, context -> Response in
+            let w = try workspace(context), hash = try pdfHash(context), images = try renderer()
+            let data = try await Blocking.run { () throws -> Data in
+                guard let url = w.pdfFile(contentHash: hash) else { throw HTTPError(.notFound, message: "服务器上没有这份 PDF") }
+                return try images.info(hash: hash, pdf: url)
+            }
+            return Response(status: .ok, headers: [.contentType: "application/json", .cacheControl: "private, max-age=31536000, immutable"],
+                            body: .init(byteBuffer: ByteBuffer(bytes: data)))
+        }
+
+        api.get("workspaces/:ws/pdf/:hash/page/:n") { request, context -> Response in
+            let w = try workspace(context), hash = try pdfHash(context), images = try renderer()
+            guard let n = context.parameters.get("n").flatMap({ Int($0) }), n >= 0 else {
+                throw HTTPError(.badRequest, message: "页码不对（从 0 起）")
+            }
+            let width = min(max(request.uri.queryParameters.get("w").flatMap { Int($0) } ?? 1280, 64), 4096)
+            let (file, pdf) = try await Blocking.run { () throws -> (URL, URL) in
+                guard let url = w.pdfFile(contentHash: hash) else { throw HTTPError(.notFound, message: "服务器上没有这份 PDF") }
+                return (try images.page(hash: hash, pdf: url, index: n, width: width), url)
+            }
+            images.prefetch(hash: hash, pdf: pdf, after: n, width: width)
+            return try await fileResponse(request, context, file, type: "image/jpeg",
+                                          immutable: "\(hash.prefix(16))-\(file.lastPathComponent)")
         }
 
         // MARK: 网页阅读器
@@ -204,6 +242,13 @@ public enum UniServerApp {
             }
             // 一次最多 200 页：网页只取视口附近几页
             let marks = try await Blocking.run { try w.pageMarks(documentId: doc, from: from, to: min(to, from + 199)) }
+            return PageMarkList(marks: marks.map(PageMarkDTO.init))
+        }
+
+        // 网页阅读页的「笔记」列表：整本书的文字笔记（只有文字笔记，没有笔迹）
+        api.get("workspaces/:ws/documents/:doc/notes") { _, context -> PageMarkList in
+            let w = try workspace(context), doc = try context.parameters.require("doc")
+            let marks = try await Blocking.run { try w.pageMarks(documentId: doc, from: 0, to: Int(Int32.max), kinds: [0]) }
             return PageMarkList(marks: marks.map(PageMarkDTO.init))
         }
 
@@ -251,7 +296,7 @@ public enum UniServerApp {
         api.get("workspaces/:ws/image/:name") { request, context -> Response in
             let w = try workspace(context), (sha, ext) = try imageName(context)
             guard let url = w.imageFile(sha256: sha, ext: ext) else { throw HTTPError(.notFound, message: "服务器上没有这张图") }
-            return try await fileResponse(request, context, url, type: "application/octet-stream")
+            return try await fileResponse(request, context, url, type: "application/octet-stream", immutable: sha)
         }
 
         api.put("workspaces/:ws/image/:name") { request, context -> Response in
@@ -268,8 +313,9 @@ public enum UniServerApp {
     }
 
     public static func application(host: WorkspaceHost, store: ServerStore, name: String = "UniReader",
-                                   web: WebFiles = WebFiles(), address: BindAddress) -> some ApplicationProtocol {
-        Application(router: router(host: host, store: store, name: name, web: web),
+                                   web: WebFiles = WebFiles(), accessLog: Bool = false, images: PageImages? = nil,
+                                   address: BindAddress) -> some ApplicationProtocol {
+        Application(router: router(host: host, store: store, name: name, web: web, accessLog: accessLog, images: images),
                     configuration: .init(address: address, serverName: "UniReader/\(ServerInfo.version)"))
     }
 
@@ -288,21 +334,26 @@ public enum UniServerApp {
     }
 
     /// 文件下载，支持单段 `Range`（断点续下）。
+    /// [immutable] = 这份文件的内容哈希：地址里带着它、内容永远不变，让浏览器长期缓存（只存在这台设备上，`private`）。
+    /// 2026-10-30 之前没给缓存说明，浏览器每次打开书都把用到的部分重新下载一遍。
     static func fileResponse(_ request: Request, _ context: ServerRequestContext,
-                             _ url: URL, type: String) async throws -> Response {
+                             _ url: URL, type: String, immutable: String? = nil) async throws -> Response {
         let size = Int(Resumable.size(url))
+        var headers: HTTPFields = [.contentType: type, .acceptRanges: "bytes"]
+        if let tag = immutable {
+            headers[.cacheControl] = "private, max-age=31536000, immutable"
+            headers[.eTag] = "\"\(tag)\""
+        }
         if let header = request.headers[.range] {
             guard let r = parseRange(header, size: size) else {
                 throw HTTPError(.rangeNotSatisfiable, headers: [.contentRange: "bytes */\(size)"])
             }
             let body = try await FileIO().loadFile(path: url.path, range: r, context: context)
-            return Response(status: .partialContent,
-                            headers: [.contentType: type, .acceptRanges: "bytes",
-                                      .contentRange: "bytes \(r.lowerBound)-\(r.upperBound)/\(size)"],
-                            body: body)
+            headers[.contentRange] = "bytes \(r.lowerBound)-\(r.upperBound)/\(size)"
+            return Response(status: .partialContent, headers: headers, body: body)
         }
         let body = try await FileIO().loadFile(path: url.path, context: context)
-        return Response(status: .ok, headers: [.contentType: type, .acceptRanges: "bytes"], body: body)
+        return Response(status: .ok, headers: headers, body: body)
     }
 
     /// `bytes=a-b` / `bytes=a-` / `bytes=-n`（只认单段）。
@@ -343,8 +394,9 @@ struct AuthMiddleware: RouterMiddleware {
 
     func handle(_ request: Request, context: Context,
                 next: (Request, Context) async throws -> Response) async throws -> Response {
+        // 查库（每分钟还要写一次「最近活动」）放到后台队列：别在网络线程上等磁盘
         guard let value = request.headers[.authorization], value.hasPrefix("Bearer "),
-              let device = store.authenticate(token: String(value.dropFirst(7))) else {
+              let device = try await Blocking.run({ [store] in store.authenticate(token: String(value.dropFirst(7))) }) else {
             throw HTTPError(.unauthorized, message: "需要有效的设备令牌（先配对）")
         }
         var context = context
@@ -370,6 +422,8 @@ struct ServerErrorMiddleware: RouterMiddleware {
         case .notAWorkspace, .badRequest: return .badRequest
         case .workspaceSchemaTooNew, .alreadyHosted, .schemaMismatch: return .conflict
         case .unknownWorkspace, .unknownDocument: return .notFound
+        case .renderUnavailable: return .notImplemented
+        case .renderFailed: return .internalServerError
         case .badContentHash: return .unprocessableContent
         }
     }

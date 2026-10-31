@@ -8,6 +8,7 @@ import UniServerHTTP
 /// ```
 /// unireader-server [serve] [--data <目录>] [--host 127.0.0.1] [--port 8790] [--name <名字>] [--no-discovery]
 ///                          [--web-dir <目录>]   网页阅读器读这个目录（开发用；默认用编在程序里的那份）
+///                          [--no-access-log]    不记请求耗时日志（默认记，`AccessLog.swift`）
 /// unireader-server pairing-code        显示配对码
 /// unireader-server reset-pairing-code  换一个配对码（已配对的设备不受影响）
 /// unireader-server devices             列出设备
@@ -30,6 +31,8 @@ struct UniReaderServerMain {
         var name = defaultName
         var discovery = true
         var webDir: URL?
+        var accessLog = true
+        var renderCacheMB = 2048
         var positional: [String] = []
         while !args.isEmpty {
             let a = args.removeFirst()
@@ -42,6 +45,10 @@ struct UniReaderServerMain {
             case "--name": name = try value(&args, a)
             case "--no-discovery": discovery = false
             case "--web-dir": webDir = URL(fileURLWithPath: try value(&args, a), isDirectory: true)
+            case "--no-access-log": accessLog = false
+            case "--render-cache-mb":
+                guard let v = Int(try value(&args, a)), v > 0 else { fail("--render-cache-mb 要一个正整数（MB）") }
+                renderCacheMB = v
             case "-h", "--help": usage(); return
             default: positional.append(a)
             }
@@ -53,6 +60,7 @@ struct UniReaderServerMain {
         case "serve":
             let workspaces = try WorkspaceHost(paths: paths)
             let web = WebFiles(directory: webDir)
+            let images = PageImages(root: paths.renderCache, limitBytes: Int64(renderCacheMB) * 1_048_576)
             print("""
             UniReader 服务器 \(ServerInfo.version)（数据版本 \(ServerInfo.schemaVersion)）
               数据目录：\(dataDir.path)
@@ -61,6 +69,8 @@ struct UniReaderServerMain {
               名字：    \(name)
               工作区：  \(workspaces.list().count) 个
               网页：    \(web.sourceDescription)
+              请求日志：\(accessLog ? "记（每个 /v1 请求一行耗时；关掉用 --no-access-log）" : "不记")
+              服务器出图：\(images.summary)
             """)
             let loopback = ["127.0.0.1", "localhost", "::1"].contains(host)
             if !loopback {
@@ -82,14 +92,40 @@ struct UniReaderServerMain {
                     workspaces.backupChanged()
                     workspaces.pruneUploads()
                     workspaces.pruneDeleted()
+                    images.prune()
                     try? await Task.sleep(nanoseconds: 3600 * 1_000_000_000)
                 }
             }
             let app = UniServerApp.application(host: workspaces, store: store, name: name, web: web,
-                                               address: .hostname(host, port: port))
+                                               accessLog: accessLog, images: images, address: .hostname(host, port: port))
             try await app.runService()
             advertiser.stop()
             workspaces.closeAll()
+        case "render":
+            // 调试：直接用出图那套代码画一个 PDF 的某一页，看工具能不能用、要多久（临时目录，跑完删掉）
+            guard positional.count >= 2 else { fail("用法：unireader-server render <PDF 文件> [页，从 1 起] [宽]") }
+            let pdf = URL(fileURLWithPath: positional[1])
+            let pageNo = positional.count > 2 ? Int(positional[2]) ?? 1 : 1
+            let width = positional.count > 3 ? Int(positional[3]) ?? 1280 : 1280
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("unireader-render-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let images = PageImages(root: tmp, limitBytes: 1 << 30)
+            print("出图：\(images.summary)")
+            var t = Date()
+            let info = try images.info(hash: "probe", pdf: pdf)
+            let pages = try images.pageSizes(hash: "probe", pdf: pdf)
+            print("页面尺寸与目录：\(pages.count) 页，JSON \(info.count) 字节，\(Int(Date().timeIntervalSince(t) * 1000))ms")
+            if pages.indices.contains(pageNo - 1) {
+                let p = pages[pageNo - 1]
+                let scan = p.count > 2 && p[2] > 0 ? "扫描图约 \(Int(p[2])) 像素宽" : "不是扫描页（不限宽度）"
+                print("第 \(pageNo) 页：\(Int(p[0])) × \(Int(p[1])) pt，\(scan)")
+            } else {
+                print("第 \(pageNo) 页：没有这一页")
+            }
+            t = Date()
+            let out = try images.page(hash: "probe", pdf: pdf, index: pageNo - 1, width: width)
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? NSNumber)?.intValue ?? 0
+            print("画第 \(pageNo) 页（\(out.lastPathComponent)）：\(bytes) 字节，\(Int(Date().timeIntervalSince(t) * 1000))ms")
         case "pairing-code":
             print(try store.pairingCode())
         case "reset-pairing-code":
@@ -143,6 +179,9 @@ struct UniReaderServerMain {
         用法：
           unireader-server [serve] [--data <目录>] [--host 127.0.0.1] [--port 8790] [--name <名字>] [--no-discovery]
                            [--web-dir <目录>]（网页阅读器读这个目录，开发用）
+                           [--no-access-log]（不记请求耗时日志；默认每个 /v1 请求一行，网页查修订号不记）
+                           [--render-cache-mb 2048]（服务器出图的缓存上限）
+          unireader-server render <PDF 文件> [页] [宽]（调试：试画一页，看出图工具能不能用、要多久）
           unireader-server pairing-code | reset-pairing-code | devices | revoke <设备 id>
           unireader-server deleted | restore <工作区 id>
         默认数据目录：\(ServerPaths.defaultRoot.path)

@@ -8,7 +8,7 @@ macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进�
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 29 项 + HTTP 7 项
+swift test  --disable-automatic-resolution   # 核心 34 项 + HTTP 8 项
 BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
 $BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
 $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）
@@ -57,8 +57,9 @@ REMOTE=nas REMOTE_ADDR=192.168.1.160 REMOTE_DIR=/storage/data/98_Misc/unireader-
   开机自启：`/etc/systemd/system/unireader-server.service`（`RequiresMountsFor` 等 `/storage` 挂好；`--host 0.0.0.0 --name NAS`，端口 8790）。
   换程序：`scp` 到 `.new` → 当前版本 `cp -p` 成 `.prev`（回退用）→ `mv` 覆盖 → `systemctl restart unireader-server`；
   ⚠️ `/storage` 是 mergerfs，**`chmod` 报「Operation not supported」**——文件本来就带执行权限，别写进脚本（`set -e` 会在那一步停下）；
-  日志 `journalctl -u unireader-server`；
-  配对码 `unireader-server pairing-code --data /storage/data/22_Exam/Unireader`。对外 HTTPS 由用户用 caddy 反向代理（NAS 上已装）。
+  日志 `journalctl -u unireader-server`（`/v1` 每个请求一行耗时，`grep 请求`；`serve --no-access-log` 关掉，`AccessLog.swift`）；
+  配对码 `unireader-server pairing-code --data /storage/data/22_Exam/Unireader`。
+  服务器出图要 NAS 上装着 `mupdf-tools` + `libjpeg-turbo-progs`（2026-10-30 已装，1.17）；试画：`unireader-server render <PDF> [页] [宽]`。对外 HTTPS 由用户用 caddy 反向代理（NAS 上已装）。
 
 ## 结构
 
@@ -75,9 +76,11 @@ server/
     HostedWorkspace.swift     一个工作区：登记、推送、拉取、快照、改名、修订号
     HostedWorkspace+Files.swift   PDF / 图片本体 / 备份
     HostedWorkspace+Web.swift     网页阅读器用的查询（书目、页上的标记、图层 / 笔记类型 / 对齐参数）+ 网页写入（当成一次推送）
+    PageImages.swift          服务器出图：MuPDF 命令行（mutool + cjpeg）画页成 JPEG、读页面尺寸与目录，缓存在 cache/render/
     ServerTrash.swift         删除先归档（按天一个小库）
   Sources/UniServerHTTP/ServerApp.swift   HTTP 接口（Hummingbird）：路由表在文件头；令牌中间件、错误→状态码、续传、配对限流
   Sources/UniServerHTTP/WebFiles.swift    网页阅读器的静态文件（不要令牌）：编进程序的那份 / --web-dir
+  Sources/UniServerHTTP/AccessLog.swift   请求耗时日志（默认开）
   Sources/UniServerHTTP/Discovery.swift   局域网发现（Bonjour `_unireader-srv._tcp`：macOS 系统 dnssd；Linux 起 avahi-publish-service 子进程）
   Sources/unireader-server/               命令行入口：serve / pairing-code / reset-pairing-code / devices / revoke / deleted / restore；
                                           每小时备份有改动的工作区、清 90 天前删掉的工作区

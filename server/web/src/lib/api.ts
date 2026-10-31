@@ -59,18 +59,26 @@ async function send(url: string, init: RequestInit): Promise<Response> {
   try { return await fetch(url, init); } catch { throw new ApiError(0, t("Cannot reach the server.")); }
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** 带令牌取一个地址（令牌失效时清掉令牌、回配对页）；不看状态码，由调用方看。 */
+export async function authFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const tk = token();
   const headers = new Headers(init.headers);
   if (tk) headers.set("Authorization", `Bearer ${tk}`);
-  const r = await send(`/v1/${path}`, { ...init, headers });
+  const r = await send(url, { ...init, headers });
   if (r.status === 401 && tk) {
     signOut();
     unauthorized?.();
   }
+  return r;
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const r = await authFetch(`/v1/${path}`, init);
   if (!r.ok) throw await errorOf(r);
   return (await r.json()) as T;
 }
+
+export { errorOf };
 
 /** 配对码换令牌（唯一不要令牌的接口）。成功后令牌存进本浏览器。 */
 export async function pair(code: string, deviceName: string): Promise<void> {
@@ -93,6 +101,18 @@ export const documents = (ws: string) =>
   api<{ documents: DocumentInfo[] }>(`workspaces/${encodeURIComponent(ws)}/documents`).then((r) => r.documents);
 
 export const pdfURL = (ws: string, hash: string) => `/v1/workspaces/${encodeURIComponent(ws)}/pdf/${hash}`;
+
+/** 服务器出图（方案 §11）：各页尺寸（pt，已转正）+ 目录。服务器没装 MuPDF → 501。 */
+export interface ServerOutline { title: string; page: number; y: number | null; children: ServerOutline[] }
+/** [pages] 每页 `[宽 pt, 高 pt, 扫描图多少像素宽（0 = 不是扫描页）]`；老服务器只给前两个。 */
+export interface PageInfo { pages: number[][]; outline: ServerOutline[] }
+
+// `v=2`：内容加了扫描图宽度。浏览器把这个地址长期缓存，内容格式变了要换地址，不然拿到的是缓存里的旧格式
+export const pageInfo = (ws: string, hash: string) => api<PageInfo>(`workspaces/${encodeURIComponent(ws)}/pdf/${hash}/info?v=2`);
+
+/** 第 [page] 页（从 0 起）[width] 像素宽的图。 */
+export const pageImageURL = (ws: string, hash: string, page: number, width: number) =>
+  `${pdfURL(ws, hash)}/page/${page}?w=${width}`;
 
 /** 打开一本书要的几样：图层、笔记类型（JSON 文本）、扫描页对齐参数（JSON 文本，没开就没有）。 */
 export interface DocumentView { layers: InkLayer[]; noteTypes?: string; align?: string }
@@ -125,6 +145,10 @@ export const postEdits = (ws: string, doc: string, upserts: EditUpsert[], delete
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ upserts, deletes }),
   });
+
+/** 整本书的文字笔记（阅读页的「笔记」列表；格式同 [pageMarks]，只有文字笔记）。 */
+export const bookNotes = (ws: string, doc: string) =>
+  api<{ marks: MarkRow[] }>(`${book(ws, doc)}/notes`).then((r) => r.marks);
 
 /** 工作区当前的修订号：别的设备改了什么，它就变。 */
 export const head = (ws: string) => api<{ head: number }>(`workspaces/${encodeURIComponent(ws)}/head`).then((r) => r.head);

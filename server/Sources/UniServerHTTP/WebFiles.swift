@@ -56,6 +56,7 @@ public final class WebFiles: @unchecked Sendable {
         case "json", "map": return "application/json"
         case "svg": return "image/svg+xml"
         case "png": return "image/png"
+        case "webmanifest": return "application/manifest+json"
         case "ico": return "image/x-icon"
         case "wasm": return "application/wasm"
         case "ttf": return "font/ttf"
@@ -102,7 +103,10 @@ public final class WebFiles: @unchecked Sendable {
     func addRoutes(to router: Router<ServerRequestContext>) {
         router.get("/") { _, _ in try self.response("index.html") }
         router.get("index.html") { _, _ in try self.response("index.html") }
-        router.get("favicon.svg") { _, _ in try self.response("favicon.svg") }
+        // 网页应用清单与图标（安卓 Chrome「添加到主屏幕」后像应用一样全屏打开）
+        for file in ["favicon.svg", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png"] {
+            router.get(RouterPath(file)) { _, _ in try self.response(file) }
+        }
         for prefix in ["assets", "pdfjs"] {
             router.get("\(prefix)/**") { _, context in
                 try self.response(prefix + "/" + context.parameters.getCatchAll().joined(separator: "/"))

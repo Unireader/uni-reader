@@ -14,7 +14,11 @@ export function openPDF(url: string, token: string): PDFDocumentLoadingTask {
   return pdfjs.getDocument({
     url,
     httpHeaders: { Authorization: `Bearer ${token}` },
-    rangeChunkSize: 256 * 1024,
+    // 每段 32KB（2026-10-30 实测改的，原来 256KB）：pdf.js 打开时一定会取最后一页（`checkLastPage`），
+    // 平铺的页面树要把每一页的页面对象都读一遍；扫描书里这些几百字节的小对象夹在大图之间、各在一段里，
+    // 一段多大就下多少。用户 NAS 上一本 134 页、122MB 的扫描书：256KB 一段 = 打开前下 34MB、5 秒多；
+    // 32KB = 4.4MB。图片不受影响（一张图连着的几段合成一个请求）；没再往小改，是怕文字型 PDF 里挨着的小对象要多跑几趟。
+    rangeChunkSize: 32 * 1024,
     disableAutoFetch: true,   // 只取看到的页要用的部分
     disableStream: true,
     cMapUrl: extras + "cmaps/",
@@ -28,7 +32,11 @@ export function openPDF(url: string, token: string): PDFDocumentLoadingTask {
 
 export interface OutlineNode {
   title: string;
+  /** 浏览器加载时：pdf.js 的目标（点了再解析） */
   dest: string | unknown[] | null;
+  /** 服务器出图时：服务器已经解析好的页（从 0 起）与页内纵坐标（pt，没有 = null） */
+  page?: number;
+  y?: number | null;
   children: OutlineNode[];
 }
 

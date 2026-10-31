@@ -112,10 +112,12 @@ extension HostedWorkspace {
         public let updatedAt: String
     }
 
-    static let pageMarkKinds = [0, 2, 3]
+    public static let pageMarkKinds = [0, 2, 3]
 
     /// 页 [from]...[to]（从 0 起）上的标记。顺序 = 页、创建时刻（与 App 读笔迹同序，后画的盖住先画的）。
-    public func pageMarks(documentId: String, from: Int, to: Int) throws -> [PageMark] {
+    /// [kinds] 只能是 0 / 2 / 3 里的（网页「笔记」列表只要文字笔记：`[0]`）。
+    public func pageMarks(documentId: String, from: Int, to: Int, kinds: [Int] = pageMarkKinds) throws -> [PageMark] {
+        let kinds = kinds.filter(Self.pageMarkKinds.contains)
         lock.lock(); defer { lock.unlock() }
         try checkOpen()
         guard from <= to else { return [] }
@@ -126,7 +128,8 @@ extension HostedWorkspace {
             return try db.query("""
             SELECT id, kind, page, anchor_x, anchor_y, anchor_w, anchor_h, payload, points, points_at IS updated_at,
                    created_at, updated_at FROM note
-            WHERE document_id=? AND kind IN (0, 2, 3) AND page BETWEEN ? AND ? ORDER BY page ASC, created_at ASC
+            WHERE document_id=? AND kind IN (\(kinds.map(String.init).joined(separator: ","))) AND page BETWEEN ? AND ?
+            ORDER BY page ASC, created_at ASC
             """, [.text(documentId), .int(Int64(from)), .int(Int64(to))]) { r -> PageMark? in
                 let kind = Int(r.int64(1))
                 var payload = r.blob(7)

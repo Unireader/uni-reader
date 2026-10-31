@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "tsc --outDir .test-build --module commonjs --target es2022 --strict --noImplicitAny false --skipLibCheck --esModuleInterop --lib es2022,dom src/lib/inkmath.ts src/lib/align.ts src/lib/marks.ts src/lib/markstore.ts src/lib/edits.ts src/lib/uuid.ts src/lib/markdown.ts && node -e \"require('fs').writeFileSync('.test-build/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test test/"
+    "test": "tsc --outDir .test-build --module commonjs --target es2022 --strict --noImplicitAny false --skipLibCheck --esModuleInterop --lib es2022,dom src/lib/inkmath.ts src/lib/align.ts src/lib/marks.ts src/lib/markstore.ts src/lib/edits.ts src/lib/uuid.ts src/lib/markdown.ts src/lib/source.ts && node -e \"require('fs').writeFileSync('.test-build/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test test/"
   },
   "dependencies": {
     "katex": "0.16.22",

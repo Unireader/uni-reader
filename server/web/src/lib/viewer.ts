@@ -8,12 +8,12 @@
 // - 扫描页对齐开着时（`SCAN-ALIGN-PLAN.md`）：页尺寸用对齐后的（宽一律 W、高各页 sh），画页时套每页的变换。
 // - 页上的标记（W2）：页面图画好时同一时刻画好笔迹、摆好高亮与图钉（`decor.ts`），一起换上。
 
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import { canvasTransform, type AlignTable } from "./align";
 import type { Decor } from "./decor";
 import { drawPageInk } from "./ink";
 import type { InputHost } from "./input";
 import { visibleStrokes, type PageMarks, type Stroke } from "./marks";
+import { isCancel, type PageSize, type PageSource, type RenderJob } from "./source";
 
 const GAP = 12;                  // 页与页、页与边的间距（CSS 像素）
 const PREFETCH = 1;              // 视口外各预先画几页
@@ -21,6 +21,7 @@ const KEEP = 2;                  // 再往外各留几页的画布不收
 const MAX_PIXELS = 16_000_000;   // 单块画布的像素上限（iOS Safari 约 1677 万）
 const CONCURRENCY = 2;           // 同时画几页
 const SETTLE_MS = 180;           // 缩放停手多久后重画
+const DOCK_ROOM = 76;            // 最后一页下面留出浮动工具条的高度，能滚到它上面
 
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 6;
@@ -30,11 +31,11 @@ interface Slot {
   canvas: HTMLCanvasElement | null;
   /** 这页的笔迹（没有可见笔迹就没有） */
   ink: HTMLCanvasElement | null;
-  /** 现有画布对应的 pdf.js 倍率（0 = 没画） */
+  /** 现有画布对应的倍率（像素 / pt，0 = 没画） */
   scale: number;
   /** 正在画的倍率（0 = 没在画） */
   busy: number;
-  task: RenderTask | null;
+  task: RenderJob | null;
   /** 每次开画 / 收回 +1，过期的那次画完就扔掉 */
   gen: number;
 }
@@ -94,18 +95,24 @@ export class Viewer implements InputHost {
 
   constructor(
     private scroller: HTMLElement,
-    private pdf: PDFDocumentProxy,
+    private source: PageSource,
     estimate: { width: number; height: number },
     private events: ViewerEvents,
     zoom = 1,
     private align: AlignTable | null = null,
     private extras: ViewerMarks | null = null,
   ) {
-    this.count = pdf.numPages;
+    this.count = source.count;
     this.zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
     this.w = new Array(this.count).fill(estimate.width);
     this.h = new Array(this.count).fill(estimate.height);
     this.known = new Uint8Array(this.count);
+    if (source.sizes) {
+      // 服务器出图：各页尺寸打开时就齐了
+      source.sizes.forEach((sz, i) => { this.w[i] = sz.w; this.h[i] = sz.h; });
+      this.known.fill(1);
+      this.learnedAny = true;
+    }
     if (align) {
       // 对齐后的页尺寸是现成的：不用估、不用量
       for (let i = 0; i < this.count; i++) {
@@ -262,7 +269,7 @@ export class Viewer implements InputHost {
       y += hh + GAP;
     }
     this.content.style.width = `${cw}px`;
-    this.content.style.height = `${y}px`;
+    this.content.style.height = `${y + DOCK_ROOM}px`;
   }
 
   /** 重新排版，视口顶边中点那一处不动（窗口变了 / 量到了某页的真尺寸）。 */
@@ -427,7 +434,7 @@ export class Viewer implements InputHost {
     this.pump();
   }
 
-  /** 这一页该用的 pdf.js 倍率：页宽 × 屏幕像素比，超过画布上限就降。 */
+  /** 这一页该用的倍率（像素 / pt）：页宽 × 屏幕像素比，超过画布上限就降。 */
   private targetScale(i: number): number {
     let s = (this.pageWidth / this.w[i]) * (window.devicePixelRatio || 1);
     const px = this.w[i] * this.h[i] * s * s;
@@ -464,21 +471,21 @@ export class Viewer implements InputHost {
     this.running++;
     let canvas: HTMLCanvasElement | null = null;
     try {
-      const page = await this.pdf.getPage(i + 1);
+      const size = await this.source.pageSize(i);
       if (this.destroyed || gen !== s.gen) return;
-      this.learn(i, page);
+      this.learn(i, size);
       const scale = this.targetScale(i);
       s.busy = scale;
-      const viewport = page.getViewport({ scale });
       const pa = this.align?.pages[i];
       canvas = document.createElement("canvas");
       canvas.className = "pv-pdf";
       // 对齐开着：画布是对齐后的页（W × sh），原始页按每页的变换画上去（转出去的角裁掉、空出的角是白的）
-      canvas.width = Math.max(1, Math.floor(pa ? pa.w * scale : viewport.width));
-      canvas.height = Math.max(1, Math.floor(pa ? pa.sh * scale : viewport.height));
-      const task = page.render({ canvas, viewport, transform: pa ? canvasTransform(pa, scale) : undefined });
-      s.task = task;
-      await task.promise;
+      canvas.width = Math.max(1, Math.floor((pa ? pa.w : size.w) * scale));
+      canvas.height = Math.max(1, Math.floor((pa ? pa.sh : size.h) * scale));
+      const job = this.source.render(i, scale, canvas, pa ? canvasTransform(pa, scale) : undefined,
+                                     pa ? { w: pa.sw, h: pa.sh } : undefined);
+      s.task = job;
+      await job.promise;
       if (this.destroyed || gen !== s.gen) return;
       if (s.canvas) {
         s.canvas.replaceWith(canvas);
@@ -491,7 +498,7 @@ export class Viewer implements InputHost {
       canvas = null;   // 已经换上了：下面出错也别在 finally 里把它收回
       if (this.extras) this.paintMarks(i, s, s.canvas);
     } catch (e) {
-      if ((e as { name?: string })?.name !== "RenderingCancelledException") console.warn(`第 ${i + 1} 页没画出来`, e);
+      if (!isCancel(e)) console.warn(`第 ${i + 1} 页没画出来`, e);
     } finally {
       if (canvas) free(canvas);
       if (gen === s.gen) {
@@ -504,17 +511,16 @@ export class Viewer implements InputHost {
   }
 
   /** 记下这一页的真尺寸，和估的不一样就（下一帧）重新排版。第一次量到的尺寸顺带当作其余没量过的页的估计。 */
-  private learn(i: number, page: PDFPageProxy) {
+  private learn(i: number, vp: PageSize) {
     if (this.known[i]) return;
     this.known[i] = 1;
-    const vp = page.getViewport({ scale: 1 });
-    const changed = Math.abs(vp.width - this.w[i]) > 0.5 || Math.abs(vp.height - this.h[i]) > 0.5;
+    const changed = Math.abs(vp.w - this.w[i]) > 0.5 || Math.abs(vp.h - this.h[i]) > 0.5;
     if (!this.learnedAny) {
       this.learnedAny = true;
-      for (let k = 0; k < this.count; k++) if (!this.known[k]) { this.w[k] = vp.width; this.h[k] = vp.height; }
+      for (let k = 0; k < this.count; k++) if (!this.known[k]) { this.w[k] = vp.w; this.h[k] = vp.h; }
     }
-    this.w[i] = vp.width;
-    this.h[i] = vp.height;
+    this.w[i] = vp.w;
+    this.h[i] = vp.h;
     if (changed && !this.relayoutFrame) {
       this.relayoutFrame = requestAnimationFrame(() => {
         this.relayoutFrame = 0;
@@ -560,7 +566,7 @@ export class Viewer implements InputHost {
     }
     this.extras?.decor.detach(s.div);
     this.active.delete(i);
-    this.pdf.getPage(i + 1).then((p) => p.cleanup()).catch(() => {});
+    this.source.release(i);
   }
 }
 
