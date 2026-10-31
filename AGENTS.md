@@ -37,6 +37,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   App 侧客户端对着真服务器的端到端：`bash spike/server-client-test.sh`（自起临时服务器，端口 18790）。
   Linux 版在 Mac 上交叉编译（`server/scripts/build-linux.sh`，钉 Swift 6.2.3），**改了 `Sources/Store/` / `Sources/Sync/` 也要交叉编译一次**；
   Linux 上的验证用同一个端到端脚本的远端模式（`server/AGENTS.md`「Linux 版」）。
+  **服务器发布**走 `server/scripts/release.sh <版本>`（推 tag `server-v<版本>`，GitHub Actions 测试 + 编三个平台 + 发 Release，**不标 Latest**），
+  细则 `server/AGENTS.md`「发布」；与 App 的 `scripts/release.sh` 互不相干。
   安卓客户端（`android/…/local/server/`）对着真服务器的端到端 + Mac ↔ 安卓互通：`bash spike/android-server-e2e.sh`（平板经 USB 接着）；
   同步线格式是跨端契约（`docs/PROTOCOL.md §9`，向量 `spike/sync-wire-vectors.txt`），**改 `Sources/Sync/SyncWire.swift` 要同步安卓 `SyncWire.kt`**。
 

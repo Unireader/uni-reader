@@ -1,0 +1,168 @@
+# UniReader 服务器：测试 + 打包 + 发布（流程见 server/AGENTS.md「发布」）。
+#
+# - 推 tag server-v<版本>（server/scripts/release.sh 改版本号、提交、打 tag、推送）→ 网页测试 + Linux 单元测试 →
+#   编 Linux aarch64 / x86_64（musl 静态链接）+ macOS arm64 → 发 GitHub Release。
+#   🔴 发布**不标成 Latest**：README 的下载链接（releases/latest）、版本徽章、App 的自动更新都只认 App 的发布。
+# - 在 Actions 页面手动运行（workflow_dispatch）= 演练：测试 + 编译，产物留在这次运行里，不发布。
+name: server-release
+
+on:
+  push:
+    tags: ["server-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # 钉死 6.2.3 + 静态 SDK 0.0.1（与 server/scripts/setup-linux-build.sh 一致）：6.2.4 起的静态 SDK 把 musl 的分配器换成 mimalloc，
+  # 用了 ARMv8.1 的原子指令，在 ARMv8.0 的板子（RK3399、树莓派 4）上一启动就 Illegal instruction。升级前先看 server/AGENTS.md。
+  STATIC_SDK_URL: https://download.swift.org/swift-6.2.3-release/static-sdk/swift-6.2.3-RELEASE/swift-6.2.3-RELEASE_static-linux-0.0.1.artifactbundle.tar.gz
+  STATIC_SDK_SUM: f30ec724d824ef43b5546e02ca06a8682dafab4b26a99fbb0e858c347e507a2c
+
+jobs:
+  version:
+    name: 版本号
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          ver=$(sed -nE 's/.*static let version = "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' server/Sources/UniServerCore/WorkspaceHost.swift)
+          [ -n "$ver" ] || { echo "::error::没从 WorkspaceHost.swift 读到 ServerInfo.version"; exit 1; }
+          if [[ "$GITHUB_REF" == refs/tags/server-v* ]]; then
+            tag_ver=${GITHUB_REF#refs/tags/server-v}
+            [ "$tag_ver" = "$ver" ] || { echo "::error::tag 是 $tag_ver，代码里的版本号是 $ver"; exit 1; }
+            [ -f "server/release-notes/v$ver.md" ] || { echo "::error::缺发布日志 server/release-notes/v$ver.md"; exit 1; }
+          fi
+          echo "版本 $ver"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+  web:
+    name: 网页阅读器（检查 + 测试 + 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: server/web/pnpm-lock.yaml
+      - working-directory: server/web
+        run: |
+          pnpm install --frozen-lockfile
+          npm run check
+          npm test
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: server/web/dist
+          if-no-files-found: error
+
+  linux:
+    name: Linux（单元测试 + aarch64 / x86_64）
+    needs: [version, web]
+    runs-on: ubuntu-latest
+    container: swift:6.2.3-noble
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: server/web/dist
+      - name: 单元测试（glibc；静态 SDK 不带 XCTest，所以在这里跑）
+        working-directory: server
+        run: swift test --disable-automatic-resolution
+      - name: 装 Static Linux SDK
+        run: swift sdk install "$STATIC_SDK_URL" --checksum "$STATIC_SDK_SUM"
+      - name: 编译、打包
+        working-directory: server
+        run: |
+          mkdir -p ../dist
+          for arch in aarch64 x86_64; do
+            sdk="$arch-swift-linux-musl"
+            swift build -c release --disable-automatic-resolution --swift-sdk "$sdk" --product unireader-server -Xlinker -s
+            bin="$(swift build -c release --disable-automatic-resolution --swift-sdk "$sdk" --show-bin-path)/unireader-server"
+            if [ "$arch" = x86_64 ]; then
+              got=$("$bin" --version)
+              [ "$got" = "$VER" ] || { echo "::error::编出来的程序报版本 $got，应为 $VER"; exit 1; }
+            fi
+            name="unireader-server-$VER-linux-$arch"
+            mkdir -p "../dist/$name"
+            cp "$bin" deploy/unireader-server.service "../dist/$name/"
+            tar -C ../dist -czf "../dist/$name.tar.gz" "$name"
+            ls -l "../dist/$name/"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: macOS（arm64）
+    needs: [version, web]
+    runs-on: macos-26
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: server/web/dist
+      - name: 编译、打包
+        working-directory: server
+        run: |
+          swift --version
+          swift build -c release --disable-automatic-resolution --product unireader-server
+          bin="$(swift build -c release --disable-automatic-resolution --show-bin-path)/unireader-server"
+          got=$("$bin" --version)
+          [ "$got" = "$VER" ] || { echo "::error::编出来的程序报版本 $got，应为 $VER"; exit 1; }
+          name="unireader-server-$VER-macos-arm64"
+          mkdir -p "../dist/$name"
+          cp "$bin" "../dist/$name/"
+          tar -C ../dist -czf "../dist/$name.tar.gz" "$name"
+          ls -l "../dist/$name/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-macos
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: 发布
+    if: startsWith(github.ref, 'refs/tags/server-v')
+    needs: [version, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VER: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-*
+          path: dist
+          merge-multiple: true
+      - name: 校验和
+        working-directory: dist
+        run: |
+          sha256sum -- *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: 发 GitHub Release（不标成 Latest）
+        run: |
+          gh release create "server-v$VER" dist/*.tar.gz dist/SHA256SUMS.txt \
+            --title "UniReader 服务器 $VER" \
+            --notes-file "server/release-notes/v$VER.md" \
+            --latest=false --verify-tag

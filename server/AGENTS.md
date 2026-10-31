@@ -61,6 +61,24 @@ REMOTE=nas REMOTE_ADDR=192.168.1.160 REMOTE_DIR=/storage/data/98_Misc/unireader-
   配对码 `unireader-server pairing-code --data /storage/data/22_Exam/Unireader`。
   服务器出图要 NAS 上装着 `mupdf-tools` + `libjpeg-turbo-progs`（2026-10-30 已装，1.17）；试画：`unireader-server render <PDF> [页] [宽]`。对外 HTTPS 由用户用 caddy 反向代理（NAS 上已装）。
 
+## 发布（2026-10-31 起，GitHub Actions 打包）
+
+```bash
+# 1. 先写发布日志 server/release-notes/v<版本>.md（中文 + 英文，日常说法，只写上次发布以来的改动；开头一行说明这是服务器不是 App）
+server/scripts/release.sh <版本> --dry-run   # 演练：检查 + 改版本号 + 本机编译 + 核对 --version，跑完改回去
+server/scripts/release.sh <版本>             # 正式：提交 release(server): v<版本> → tag server-v<版本> → 推送 main 和 tag
+gh run watch $(gh run list --workflow server-release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+```
+
+- 版本号只有一处：`ServerInfo.version`（`WorkspaceHost.swift`），`--version` 打印它；与 App 的版本号各管各的（App 的 tag 是 `v<版本>`）。
+- CI（`../.github/workflows/server-release.yml`）收到 tag：核对 tag = 代码里的版本号、发布日志在 → 网页 `check` / `test` / `build` →
+  `swift:6.2.3-noble` 容器里跑**单元测试（Linux 上真跑，Mac 交叉编译做不到）** → 静态 SDK 编 aarch64 / x86_64（x86_64 当场跑 `--version`）→
+  `macos-26` 上编 arm64（没签名、没公证）→ 发 Release：三个 `unireader-server-<版本>-<平台>.tar.gz`（Linux 包里带 systemd 模板）+ `SHA256SUMS.txt`。
+- 🔴 服务器的 Release **一律 `--latest=false`**：README 的下载链接 `releases/latest`、版本徽章、App 的自动更新都只认 App 的发布。
+- 演练 CI（不发布）：Actions 页面手动运行 `server-release`（`gh workflow run server-release.yml`），产物留在那次运行里。
+- 发布后换 NAS：从 Release 下 aarch64 包、对一下 `SHA256SUMS.txt`，按上面「换程序」那几步换，换完 `unireader-server --version` 和
+  `journalctl -u unireader-server` 的启动那几行核对版本。
+
 ## 结构
 
 ```

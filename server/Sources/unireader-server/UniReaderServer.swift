@@ -9,6 +9,7 @@ import UniServerHTTP
 /// unireader-server [serve] [--data <目录>] [--host 127.0.0.1] [--port 8790] [--name <名字>] [--no-discovery]
 ///                          [--web-dir <目录>]   网页阅读器读这个目录（开发用；默认用编在程序里的那份）
 ///                          [--no-access-log]    不记请求耗时日志（默认记，`AccessLog.swift`）
+/// unireader-server --version           只打印版本号
 /// unireader-server pairing-code        显示配对码
 /// unireader-server reset-pairing-code  换一个配对码（已配对的设备不受影响）
 /// unireader-server devices             列出设备
@@ -50,6 +51,7 @@ struct UniReaderServerMain {
                 guard let v = Int(try value(&args, a)), v > 0 else { fail("--render-cache-mb 要一个正整数（MB）") }
                 renderCacheMB = v
             case "-h", "--help": usage(); return
+            case "--version": print(ServerInfo.version); return   // 只打印版本号（发布脚本 / CI 冒烟测试、换程序后核对用）
             default: positional.append(a)
             }
         }
@@ -184,6 +186,7 @@ struct UniReaderServerMain {
           unireader-server render <PDF 文件> [页] [宽]（调试：试画一页，看出图工具能不能用、要多久）
           unireader-server pairing-code | reset-pairing-code | devices | revoke <设备 id>
           unireader-server deleted | restore <工作区 id>
+          unireader-server --version（只打印版本号）
         默认数据目录：\(ServerPaths.defaultRoot.path)
         """)
     }
