@@ -6,7 +6,9 @@ extension WorkspaceManager {
 
     /// 重读画板列表（侧栏与平板 `boards` 广播用）。增删改名、改纸样之后调；落笔不调。
     func refreshBoards() {
-        let list = ((try? store?.boards()) ?? []).map(BoardNote.init(row:))
+        // 库里按最近打开排；拖过的按手动顺序，新建的（没拖过）在最前（`SIDEBAR-DRAG-PLAN.md`）
+        let list = SidebarOrder.apply(((try? store?.boards()) ?? []).map(BoardNote.init(row:)), order: boardOrder,
+                                      id: { $0.id.uuidString })
         if list != boards { boards = list }
     }
 

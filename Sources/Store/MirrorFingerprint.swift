@@ -170,7 +170,12 @@ enum MirrorFp {
     /// `note_sources`（引用的笔记目录）2026-10-29 起同步：每个目录可以记几条路径、每台电脑用本机存在的那条
     /// （`MARKDOWN-NOTES-PLAN.md §10`），两端都改了按目录合并路径（`MirrorDiff.mergeNoteSources`）。
     /// ⚠️ 安卓 `MirrorFp.kt` 的白名单还没有它（平板上打不开外部目录）；哪天加上，合并也要照搬过去。
-    static let syncedMetaKeys: Set<String> = ["workspace_name", "note_types", "note_sources"]
+    ///
+    /// `board_order` / `exercise_order` / `note_order`（侧栏拖拽排出来的手动顺序，`SIDEBAR-DRAG-PLAN.md`）2026-10-31 起同步：
+    /// 两端都改了按 meta 的老规矩保留源那份（没有时间戳可比）。安卓的白名单没有它们（平板上不拖）；
+    /// 服务器认这张白名单，**旧版服务器会把它们丢掉**（推送整理那一步记成 unchanged），换了新服务器才跨设备同步。
+    static let syncedMetaKeys: Set<String> = ["workspace_name", "note_types", "note_sources",
+                                              "board_order", "exercise_order", "note_order"]
 
     /// `document` 里纯粹表示「读到哪儿」的列。
     ///

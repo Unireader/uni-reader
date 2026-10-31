@@ -189,6 +189,9 @@ final class NoteFolder {
         return root
     }
 
+    /// 换这一层笔记的先后（侧栏拖拽排出来的手动顺序，`WorkspaceManager+Order`）。`notes` 是 `private(set)`，故经这里改。
+    func reorderNotes(_ f: ([NoteItem]) -> [NoteItem]) { notes = f(notes) }
+
     /// 把库里那行的 UUID / 上次打开补进这一层的条目（`notes` 是 `private(set)`，故由本类型自己改）。
     func fillNotes(_ cache: [String: LibMarkdownDoc]) {
         for i in notes.indices {

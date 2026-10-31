@@ -169,6 +169,9 @@ extension WorkspaceManager {
             for t in trees where t.source.kind == .workspace { t.root.fill(from: cache) }
         }
 
+        // 侧栏拖出来的手动顺序（`SIDEBAR-DRAG-PLAN.md`）：没拖过的目录照旧按名字
+        let order = noteOrder
+        for t in trees { if let o = order[t.source.id] { t.root.applyNoteOrder(o) } }
         noteTrees = trees
         noteBaseIndex = index
         registerAliases(into: &index, trees: trees)

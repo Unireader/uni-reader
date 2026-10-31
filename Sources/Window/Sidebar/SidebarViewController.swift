@@ -24,7 +24,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 笔记右键「打开为小窗」（`NoteWindowController`）。
     var onOpenNoteWindow: (NoteRef) -> Void = { _ in }
 
-    private let outline = NSOutlineView()
+    private let outline = SidebarOutlineView()
     private let scroll = NSScrollView()
     private var roots: [SidebarNode] = []
     private var syncingSelection = false
@@ -34,6 +34,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var expandedFolders: Set<String> = []
     /// 正在按记忆恢复展开状态：这期间 AppKit 发回来的展开/收起通知不算数，别把记忆覆盖了。
     private var restoringExpansion = false
+    /// 正在拖侧栏自己的行（拖拽排序）：这期间工作区变了不重建，拖完补一次。
+    private var draggingRows = false
+    private var reloadAfterDrag = false
     private var bag = Set<AnyCancellable>()
     private var observers: [NSObjectProtocol] = []
 
@@ -68,8 +71,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
-        outline.registerForDraggedTypes([.fileURL])
-        outline.setDraggingSourceOperationMask([], forLocal: true)
+        // 收两种拖放：从 Finder 拖进来的 PDF、侧栏自己的行（同一组里拖拽排序，`SIDEBAR-DRAG-PLAN.md`）。
+        // 排序用系统自带的拖放与「让出空位」的反馈，不自己画任何东西（2026-09 自绘三版都被否决）
+        outline.registerForDraggedTypes([.fileURL, Self.rowDragType])
+        outline.setDraggingSourceOperationMask(.move, forLocal: true)
+        outline.setDraggingSourceOperationMask([], forLocal: false)
+        // 🔴 用侧栏列表默认的插入线，别用 `.gap`：`.gap` 拖动时把被拖的行藏起来、等数据源用移动动画挪完才放出来，
+        // 我们放下后是整树重建，藏起来的行视图被复用到别处 → 那一行成了空白（2026-10-31 用户截图：拖「收藏」后它不见了）
+        outline.draggingDestinationFeedbackStyle = .sourceList
+        // 只有能拖的行拖得起来；按住不能拖的行（段头 / 目录 / 章节）往下拉 = 照常的拖选，不会把别的选中行带着拖走
+        outline.canDrag = { [weak self] rows, point in self?.canDragRows(rows, at: point) ?? false }
         scroll.documentView = outline
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -200,6 +211,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     // MARK: 数据
 
     private func reload() {
+        // 拖拽排序进行中别重建（行在手上，节点换掉了会乱）：记一笔，拖完再建（`draggingSession(endedAt:)`）
+        if draggingRows { reloadAfterDrag = true; return }
         // 整树重建前记下滚动位置：新节点先是全收起的，收起那一下内容变矮、位置被压回顶上；
         // 展开完再放回去（用户 2026-10-31：Agent 改习题时侧栏不要跳回顶上）
         let scrolledTo = scroll.contentView.bounds.origin
@@ -238,9 +251,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         // 全部 / 错题本 / 收藏三行恒在，后面每篇有题的文档一行，顺序同书库。
         // 错题本、收藏也按书 → 章展开（用户 2026-10-11 要的），数的是错题 / 收藏；错题本点哪一级都在那一个错题标签里换。
         // 哪几行、什么顺序只在 `ExerciseGroupNode.build` 一份（平板抽屉的 `exGroups` 也用它）。
-        let groups = ExerciseGroupNode.build(workspace.exerciseSummary, documents: docs.map { ($0.id, $0.title) },
-                                             title: workspace.exerciseScopeTitle, noChapter: L("No Chapter"))
-            .map { $0.withDone(workspace.exerciseDone) }   // 行尾「已做 / 共」（§16）
+        let groups = workspace.exerciseGroups().map { $0.withDone(workspace.exerciseDone) }   // 行尾「已做 / 共」（§16）
         if !groups.isEmpty {
             let sec = SidebarNode(kind: .exerciseSection)
             func make(_ g: ExerciseGroupNode) -> SidebarNode {
@@ -548,6 +559,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !syncingSelection else { return }
+        // 鼠标按下时选中变了：等松手（单击 → `rowClicked`）再打开——拖起来排序的那一下不该顺手把它打开。
+        // 键盘上下移动照旧当场打开。
+        if NSApp.currentEvent?.type == .leftMouseDown { return }
+        openSelected()
+    }
+
+    /// 选中的恰好一行、又不是当前标签开着的 → 打开它（同侧栏单击）。
+    private func openSelected() {
         // 多选期间不动当前打开的文档；恰选一篇才联动
         let ids = selectedRowIDs()
         guard ids.count == 1, let id = ids.first, id != tabs.active.rowID else { return }
@@ -565,7 +584,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     @objc private func rowClicked() {
-        guard let n = outline.item(atRow: outline.clickedRow) as? SidebarNode, case .notice(let notice) = n.kind else { return }
+        guard let n = outline.item(atRow: outline.clickedRow) as? SidebarNode, case .notice(let notice) = n.kind else {
+            // 单击一行松手才打开（见 `outlineViewSelectionDidChange`）；拖起来排序时不会走到这里
+            if outline.clickedRow >= 0, !syncingSelection { openSelected() }
+            return
+        }
         switch notice {
         case .sourceBack(let src, let count):
             guard let count else { return }
@@ -576,20 +599,136 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    // MARK: 拖进来（只收 Finder 里的 PDF；行级拖拽一概没有）
+    // MARK: 拖拽：Finder 拖进来的 PDF + 同一组里拖拽排序（`SIDEBAR-DRAG-PLAN.md`）
+
+    static let rowDragType = NSPasteboard.PasteboardType("com.xvan.UniReader.sidebarRow")
+
+    /// 能拖的行：书库分组里的书、目录里的笔记、画板、习题那一段的顶层各行（全部 / 错题本 / 收藏 / 每本书）
+    /// 与错题本 / 收藏底下的书。段头、子目录、章节（跟着书里的页码走）不能拖。
+    private func isDraggable(_ n: SidebarNode) -> Bool {
+        switch n.kind {
+        case .doc, .md, .board: return true
+        case .exercise(let scope, _, _, _):
+            switch scope {
+            case .chapter, .wrongChapter, .starredChapter: return false
+            default: return true
+            }
+        default: return false
+        }
+    }
+
+    /// 这几行能不能拖起来：按下的那一行和要拖的每一行都得能拖，且在同一组里。
+    private func canDragRows(_ rows: IndexSet, at point: NSPoint) -> Bool {
+        let hit = outline.row(at: point)
+        guard hit >= 0, let h = outline.item(atRow: hit) as? SidebarNode, isDraggable(h) else { return false }
+        let nodes = rows.compactMap { outline.item(atRow: $0) as? SidebarNode }
+        guard nodes.count == rows.count, nodes.allSatisfy(isDraggable),
+              let p = outline.parent(forItem: h) as? SidebarNode else { return false }
+        return nodes.allSatisfy { (outline.parent(forItem: $0) as? SidebarNode) === p }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint,
+                     forItems draggedItems: [Any]) {
+        draggingRows = true
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint,
+                     operation: NSDragOperation) {
+        draggingRows = false
+        guard reloadAfterDrag else { return }
+        reloadAfterDrag = false
+        DispatchQueue.main.async { [weak self] in self?.reload() }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+        guard let n = item as? SidebarNode, isDraggable(n), let id = n.rowID else { return nil }
+        let p = NSPasteboardItem()
+        p.setString(id, forType: Self.rowDragType)
+        return p
+    }
+
+    /// 这次拖的是侧栏自己的行（返回它们的 `rowID`）；从 Finder 拖进来的 PDF → nil。
+    private func draggedRowIDs(_ info: NSDraggingInfo) -> [String]? {
+        guard (info.draggingSource as? NSOutlineView) === outline else { return nil }
+        let ids = (info.draggingPasteboard.pasteboardItems ?? []).compactMap { $0.string(forType: Self.rowDragType) }
+        return ids.isEmpty ? nil : ids
+    }
+
+    /// 拖的那几行在哪一组：共同的父节点（不在同一组 → nil）、组里前面有几行不能拖（子目录 / 全部·错题本·收藏）、
+    /// 能拖的那几样现在的先后（`rowID`）。
+    private func reorderGroup(_ ids: [String]) -> (parent: SidebarNode, lead: Int, siblings: [String])? {
+        let want = Set(ids)
+        var parent: SidebarNode?
+        for row in 0..<outline.numberOfRows {
+            guard let n = outline.item(atRow: row) as? SidebarNode, let id = n.rowID, want.contains(id) else { continue }
+            guard let p = outline.parent(forItem: n) as? SidebarNode, parent == nil || parent === p else { return nil }
+            parent = p
+        }
+        guard let p = parent else { return nil }
+        let lead = p.children.firstIndex(where: isDraggable) ?? 0
+        return (p, lead, p.children.filter(isDraggable).compactMap(\.rowID))
+    }
 
     func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
                      proposedChildIndex index: Int) -> NSDragOperation {
-        outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
-        return .copy
+        guard let ids = draggedRowIDs(info) else {
+            // Finder 拖进来的 PDF：落在哪都算整表
+            outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            return .copy
+        }
+        // 排序：只在同一组里换位置，不跨组
+        guard let g = reorderGroup(ids) else { return [] }
+        var at = index
+        if index == NSOutlineViewDropOnItemIndex {
+            // 悬在同组的一行上：按指针在这一行的上半 / 下半，换成放到它前面 / 后面
+            guard let n = item as? SidebarNode, (outlineView.parent(forItem: n) as? SidebarNode) === g.parent,
+                  let i = g.parent.children.firstIndex(where: { $0 === n }) else { return [] }
+            let p = outlineView.convert(info.draggingLocation, from: nil)
+            at = i + (p.y > outlineView.rect(ofRow: outlineView.row(forItem: n)).midY ? 1 : 0)
+        } else {
+            guard (item as? SidebarNode) === g.parent else { return [] }
+        }
+        at = min(max(at, g.lead), g.lead + g.siblings.count)
+        outlineView.setDropItem(g.parent, dropChildIndex: at)
+        return .move
     }
 
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        if let ids = draggedRowIDs(info) {
+            guard let g = reorderGroup(ids), (item as? SidebarNode) === g.parent else { return false }
+            let order = SidebarOrder.move(g.siblings, dragged: Set(ids), to: index - g.lead)
+            guard order != g.siblings else { return false }
+            applyOrder(order, in: g.parent)
+            return true
+        }
         let urls = (info.draggingPasteboard.readObjects(forClasses: [NSURL.self],
                                                        options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
         guard !urls.isEmpty else { return false }
         onDropFiles(urls)
         return true
+    }
+
+    /// 一组的新顺序存下来（各存各的地方，见 `WorkspaceManager+Order`）；存完侧栏随工作区的变化整树重建。
+    private func applyOrder(_ rowIDs: [String], in parent: SidebarNode) {
+        switch parent.kind {
+        case .section:
+            // 一个分组是整份书库顺序里的几个位置：按新顺序填回去（同右键「上移 / 下移」）
+            workspace.reorderDocuments(SidebarOrder.fill(workspace.documents.map(\.id), group: rowIDs))
+        case .noteSection(let source, let folder), .noteFolder(let source, let folder):
+            let rels = rowIDs.compactMap { $0.hasPrefix("md:") ? NoteRef(key: String($0.dropFirst(3)))?.relPath : nil }
+            workspace.setNoteOrder(source: source.id, folder: folder.path, relPaths: rels)
+        case .boardSection:
+            workspace.setBoardOrder(rowIDs.compactMap { UUID(uuidString: String($0.dropFirst(BoardNote.rowPrefix.count))) })
+        case .exerciseSection:
+            // 顶层各行（全部 / 错题本 / 收藏 / 每本书）的先后
+            workspace.setExerciseOrder(rowIDs.compactMap { ExerciseScope(rowID: $0)?.key })
+        case .exercise:
+            // 错题本 / 收藏底下的几本书：顶层顺序里那几本书占着的位置按新顺序填
+            let books = rowIDs.compactMap { ExerciseScope(rowID: $0)?.documentId }.map { ExerciseScope.document($0).key }
+            workspace.setExerciseOrder(SidebarOrder.fill(workspace.exerciseGroups().map(\.scope.key), group: books))
+        default:
+            break
+        }
     }
 
     // MARK: 右键菜单
@@ -1311,6 +1450,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         onOpenRecent(src)
         registry.requestActivation(forWorkspace: src)
         if let mirror = workspace.folder { registry.evacuate(mirror) }
+    }
+}
+
+/// 侧栏的大纲视图：多一道「这几行能不能拖起来」（`SIDEBAR-DRAG-PLAN.md`）。
+final class SidebarOutlineView: NSOutlineView {
+    var canDrag: (IndexSet, NSPoint) -> Bool = { _, _ in true }
+    override func canDragRows(with rowIndexes: IndexSet, at mouseDownPoint: NSPoint) -> Bool {
+        canDrag(rowIndexes, mouseDownPoint) && super.canDragRows(with: rowIndexes, at: mouseDownPoint)
     }
 }
 

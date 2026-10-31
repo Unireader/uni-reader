@@ -51,8 +51,7 @@ extension QuickOpenItem {
         var out = recent.enumerated()
             .sorted { $0.element.0 != $1.element.0 ? $0.element.0 > $1.element.0 : $0.offset < $1.offset }
             .map(\.element.1)
-        let groups = ExerciseGroupNode.build(ws.exerciseSummary, documents: ws.documents.map { ($0.id, $0.title) },
-                                             title: ws.exerciseScopeTitle, noChapter: L("No Chapter"))
+        let groups = ws.exerciseGroups()
         for g in ExerciseGroupNode.flatten(groups) {
             out.append(QuickOpenItem(target: .exercises(g.scope), title: ws.exerciseScopeTitle(g.scope),
                                      detail: L("Exercises") + " · " + String(format: L("%d questions"), g.count),

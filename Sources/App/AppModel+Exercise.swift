@@ -62,8 +62,7 @@ extension AppModel {
         MainActor.assumeIsolated {
             var list: [[String: Any]] = []
             if let ws = padWorkspace {
-                let groups = ExerciseGroupNode.build(ws.exerciseSummary, documents: ws.documents.map { ($0.id, $0.title) },
-                                                     title: ws.exerciseScopeTitle, noChapter: L("No Chapter"))
+                let groups = ws.exerciseGroups()
                 list = ExerciseGroupNode.flatten(groups).map {
                     ["key": $0.scope.key, "title": $0.title, "count": $0.count, "depth": $0.depth]
                 }
