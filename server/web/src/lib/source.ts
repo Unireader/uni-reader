@@ -76,6 +76,8 @@ export function widthBucket(px: number): number {
 
 /** 扫描图超过这么宽就最多要一半（同 `PageImages.halveAbove`）。 */
 const HALVE_ABOVE = 4000;
+/** 要的那一档离上限不到两成就直接按上限要（同 `PageImages.nearLimit`）：放大缩小共用一张，不再各画一份几乎一样大的。 */
+const NEAR_LIMIT = 1.2;
 
 /** 扫描页最多画多宽（同 `PageImages.scanLimit`：高分辨率扫描取一半再少 4 像素，MuPDF 这样才按一半解原图、快一倍）。 */
 export function scanLimit(native: number): number {
@@ -83,11 +85,14 @@ export function scanLimit(native: number): number {
 }
 
 /**
- * 向服务器要多宽：按档；扫描页最多按 [scanLimit] 要（[native] = 扫描图本身多宽，0 = 不是扫描页）——服务器那边也是这样限的
- * （`PageImages.renderWidth`），这里先限好，放大缩小时地址不变，浏览器缓存的那张接着用。
+ * 向服务器要多宽：按档；扫描页最多按 [scanLimit] 要，离上限不到两成的直接按上限要（[native] = 扫描图本身多宽，0 = 不是扫描页）——
+ * 服务器那边也是这样定的（`PageImages.renderWidth`），这里先定好，放大缩小时地址不变，浏览器缓存的那张接着用。
  */
 export function requestWidth(px: number, native: number): number {
-  return widthBucket(native > 0 ? Math.min(px, scanLimit(native)) : px);
+  const b = widthBucket(px);
+  if (native <= 0) return b;
+  const limit = scanLimit(native);
+  return b * NEAR_LIMIT >= limit ? widthBucket(limit) : b;
 }
 
 export class ImageSource implements PageSource {

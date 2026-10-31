@@ -22,6 +22,9 @@ public final class PageImages: @unchecked Sendable {
     /// 扫描图超过这么宽（高分辨率扫描）就最多画到它的一半（2026-10-31 用户定）：画到原图一半以下时 MuPDF 只解开一半大小的原图，
     /// NAS 上快一倍（4268 宽的页画 2560 宽 2.7 秒、画 2130 宽 1.3 秒）；代价是放大看时不如原图细。
     public static let halveAbove = 4000
+    /// 扫描页：网页要的那一档离上限（[scanLimit]）不到两成，就直接按上限画（2026-10-31 用户定）。
+    /// 不然放大缩小各画一份几乎一样大的（上限 2130 的书，2048 档、2560 档各一份），白画一次、多等 1～2 秒。
+    public static let nearLimit = 1.2
     /// 等着提前画的最多留几张（翻得快时，早先那几页的就不画了）。
     static let aheadLimit = 8
     static let timeout: TimeInterval = 90
@@ -73,10 +76,14 @@ public final class PageImages: @unchecked Sendable {
         native > halveAbove ? native / 2 - 4 : native
     }
 
-    /// 一页实际出多宽：按档；扫描页不超过 [scanLimit]（[native]，0 = 不是扫描页 / 量不出来）；
-    /// 页太细长时按像素上限压窄（[w] × [h] = 页的尺寸，任何单位）。
+    /// 一页实际出多宽：按档；扫描页不超过 [scanLimit]，离上限不到两成的直接按上限（[nearLimit]，同样不超过最宽的一档）；
+    /// [native] = 扫描图多宽，0 = 不是扫描页 / 量不出来；页太细长时按像素上限压窄（[w] × [h] = 页的尺寸，任何单位）。
     static func renderWidth(bucket: Int, w: Double, h: Double, native: Int = 0) -> Int {
-        let want = native > 0 ? min(bucket, scanLimit(native)) : bucket
+        var want = bucket
+        if native > 0 {
+            let limit = scanLimit(native)
+            if Double(bucket) * nearLimit >= Double(limit) { want = min(limit, widths.last!) }
+        }
         guard w > 0, h > 0 else { return max(1, want) }
         let cap = Int((maxPixels * w / h).squareRoot())
         return max(1, min(want, cap))

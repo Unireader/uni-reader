@@ -61,6 +61,11 @@ final class PageImagesTests: XCTestCase {
         XCTAssertEqual(PageImages.renderWidth(bucket: 3200, w: 600, h: 800, native: 4268), 2130, "高分辨率扫描最多画一半")
         XCTAssertEqual(PageImages.renderWidth(bucket: 2560, w: 600, h: 800, native: 4000), 2560, "4000 本身不算（算的话是 1996）")
         XCTAssertEqual(PageImages.renderWidth(bucket: 1600, w: 600, h: 800, native: 4268), 1600)
+        // 离上限不到两成：直接按上限，放大缩小共用一张
+        XCTAssertEqual(PageImages.renderWidth(bucket: 2048, w: 600, h: 800, native: 4268), 2130)
+        XCTAssertEqual(PageImages.renderWidth(bucket: 1280, w: 600, h: 800, native: 1423), 1423)
+        XCTAssertEqual(PageImages.renderWidth(bucket: 2048, w: 600, h: 800, native: 2500), 2048, "差两成以上照档")
+        XCTAssertEqual(PageImages.renderWidth(bucket: 3200, w: 600, h: 600, native: 3500), 3200, "不超过最宽的一档")
     }
 
     func testInfoAndPagesAreCachedAndRenderedOnce() throws {
