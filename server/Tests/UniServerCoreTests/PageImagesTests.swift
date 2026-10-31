@@ -58,6 +58,9 @@ final class PageImagesTests: XCTestCase {
         XCTAssertEqual(PageImages.renderWidth(bucket: 3200, w: 600, h: 800, native: 1423), 1423, "扫描页不比扫描图宽")
         XCTAssertEqual(PageImages.renderWidth(bucket: 960, w: 600, h: 800, native: 1423), 960)
         XCTAssertEqual(PageImages.renderWidth(bucket: 3200, w: 600, h: 3000, native: 2000), 1549)
+        XCTAssertEqual(PageImages.renderWidth(bucket: 3200, w: 600, h: 800, native: 4268), 2130, "高分辨率扫描最多画一半")
+        XCTAssertEqual(PageImages.renderWidth(bucket: 2560, w: 600, h: 800, native: 4000), 2560, "4000 本身不算（算的话是 1996）")
+        XCTAssertEqual(PageImages.renderWidth(bucket: 1600, w: 600, h: 800, native: 4268), 1600)
     }
 
     func testInfoAndPagesAreCachedAndRenderedOnce() throws {
@@ -107,6 +110,51 @@ final class PageImagesTests: XCTestCase {
         img.prune()
         XCTAssertFalse(FileManager.default.fileExists(atPath: old.path), "最久没用的先删")
         XCTAssertTrue(FileManager.default.fileExists(atPath: new.path))
+    }
+
+    func testPrefetchDrawsTheNextPagesWhenIdle() throws {
+        let img = images()
+        let pdf = dir.appendingPathComponent("book.pdf")
+        _ = try img.page(hash: "h1", pdf: pdf, index: 0, width: 480)
+        img.prefetch(hash: "h1", pdf: pdf, after: 0, width: 480)
+        img.prefetch(hash: "h1", pdf: pdf, after: 1, width: 480)   // 第 3 页（index 2）之后没有了：不报错
+        let folder = dir.appendingPathComponent("cache/h1")
+        let want = ["p1-w480.jpg", "p2-w480.jpg"]
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !want.allSatisfy({ FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }) {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertTrue(want.allSatisfy { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) })
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(draws, 3, "已经画过的不重画")
+    }
+
+    /// 位置满了：等着的网页请求后来的先进；提前画的等到没有人在等、也没有在画的才进。
+    func testGateServesLatestRequestFirstAndPrefetchLast() {
+        let gate = RenderGate(slots: 1)
+        let order = LockedCache<Int, String>()
+        let count = LockedCache<Int, Int>()
+        func record(_ name: String) {
+            let n = (count.get(0) ?? 0)
+            count.set(0, n + 1)
+            order.set(n, name)
+        }
+        gate.enter(urgent: true)
+        let done = DispatchGroup()
+        for (name, urgent) in [("提前", false), ("先要的", true), ("后要的", true)] {
+            done.enter()
+            DispatchQueue.global().async {
+                gate.enter(urgent: urgent)
+                record(name)
+                Thread.sleep(forTimeInterval: 0.05)
+                gate.leave()
+                done.leave()
+            }
+            Thread.sleep(forTimeInterval: 0.1)   // 按顺序排上队
+        }
+        gate.leave()
+        XCTAssertEqual(done.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual((0..<3).map { order.get($0) ?? "" }, ["后要的", "先要的", "提前"])
     }
 
     func testUnavailableWithoutTools() {

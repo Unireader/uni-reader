@@ -11,12 +11,19 @@ import Foundation
 /// - 宽度只出 [widths] 这几档（网页要多宽就往上取一档），特别细长的页按像素上限压窄。
 /// - 扫描页不比扫描图本身画得更宽（2026-10-30 用户定：「扫描件本身是有分辨率上限的」）：再宽也不会更清楚，只是更慢、更大。
 ///   扫描图多宽是读尺寸时一起量的（[infoScript]）；NAS 上的扫描书大多 1000～1450 像素宽，Mac 的网页却要 2560～3200。
+///   高分辨率扫描（超过 [halveAbove]）最多画到原图的一半（[scanLimit]）。
 /// - 同时最多画 [renderers] 页（NAS 是 6 核的 ARM）；同一张图同时有人要，只画一次、其余的等它。
+///   正在看的页先画（2026-10-31 用户定）：网页要的页后要的先轮到，提前画的后几页只在没有别的要画时才画（[RenderGate]）。
 /// 阻塞调用（跑子进程、读写文件），HTTP 层经 `Blocking.run` 调。
 public final class PageImages: @unchecked Sendable {
     public static let widths = [480, 720, 960, 1280, 1600, 2048, 2560, 3200]
     static let maxPixels = 12_000_000.0
     static let renderers = 2
+    /// 扫描图超过这么宽（高分辨率扫描）就最多画到它的一半（2026-10-31 用户定）：画到原图一半以下时 MuPDF 只解开一半大小的原图，
+    /// NAS 上快一倍（4268 宽的页画 2560 宽 2.7 秒、画 2130 宽 1.3 秒）；代价是放大看时不如原图细。
+    public static let halveAbove = 4000
+    /// 等着提前画的最多留几张（翻得快时，早先那几页的就不画了）。
+    static let aheadLimit = 8
     static let timeout: TimeInterval = 90
     /// 各页尺寸 + 目录的缓存文件；内容格式变了就换个名字（旧的不再用，按最久没用的删掉）。
     static let infoFile = "info-2.json"
@@ -27,7 +34,9 @@ public final class PageImages: @unchecked Sendable {
     public let limitBytes: Int64
     private let lock = NSLock()
     private var running: [String: DispatchGroup] = [:]
-    private let gate = DispatchSemaphore(value: renderers)
+    private let gate = RenderGate(slots: renderers)
+    private var ahead: [Ahead] = []
+    private var aheadRunning = false
     private let sizes = LockedCache<String, [[Double]]>()
     private var rendersSincePrune = 0
 
@@ -58,10 +67,16 @@ public final class PageImages: @unchecked Sendable {
     /// 网页要 [width] 像素宽：往上取一档（超过最宽的一档按最宽的）。
     public static func bucket(_ width: Int) -> Int { widths.first { $0 >= width } ?? widths.last! }
 
-    /// 一页实际出多宽：按档；扫描页不超过扫描图本身的宽度（[native]，0 = 不是扫描页 / 量不出来）；
+    /// 扫描页最多画多宽（[native] = 扫描图本身多宽）。超过 [halveAbove] 的取一半再少 4 像素：
+    /// MuPDF 要「画出来的宽 ≤ 原图宽 / 2 - 2」才按一半解（NAS 实测：4268 宽的页画 2130 宽 1.3 秒、2140 宽 2.1 秒）。
+    public static func scanLimit(_ native: Int) -> Int {
+        native > halveAbove ? native / 2 - 4 : native
+    }
+
+    /// 一页实际出多宽：按档；扫描页不超过 [scanLimit]（[native]，0 = 不是扫描页 / 量不出来）；
     /// 页太细长时按像素上限压窄（[w] × [h] = 页的尺寸，任何单位）。
     static func renderWidth(bucket: Int, w: Double, h: Double, native: Int = 0) -> Int {
-        let want = native > 0 ? min(bucket, native) : bucket
+        let want = native > 0 ? min(bucket, scanLimit(native)) : bucket
         guard w > 0, h > 0 else { return max(1, want) }
         let cap = Int((maxPixels * w / h).squareRoot())
         return max(1, min(want, cap))
@@ -102,7 +117,8 @@ public final class PageImages: @unchecked Sendable {
     // MARK: - 出图
 
     /// 第 [index] 页（从 0 起）大约 [width] 像素宽的 JPEG（扫描页最多按扫描图本身的宽度）。没画过就现画（同时有人要同一张只画一次）。
-    public func page(hash: String, pdf: URL, index: Int, width: Int) throws -> URL {
+    /// [urgent] = 网页正等着看；false = 提前画的，空闲时才画。
+    public func page(hash: String, pdf: URL, index: Int, width: Int, urgent: Bool = true) throws -> URL {
         guard let mutool, let cjpeg else { throw ServerError.renderUnavailable }
         let all = try pageSizes(hash: hash, pdf: pdf)
         guard all.indices.contains(index) else { throw ServerError.badRequest("没有第 \(index + 1) 页") }
@@ -111,7 +127,7 @@ public final class PageImages: @unchecked Sendable {
                                  native: size.count > 2 ? Int(size[2]) : 0)
         let dir = folder(hash)
         let out = dir.appendingPathComponent("p\(index)-w\(w).jpg")
-        try ensure(key: out.path, out: out) {
+        try ensure(key: out.path, out: out, urgent: urgent) {
             let tag = UUID().uuidString
             let pnm = dir.appendingPathComponent(".\(tag).pnm"), jpg = dir.appendingPathComponent(".\(tag).jpg")
             defer {
@@ -132,13 +148,35 @@ public final class PageImages: @unchecked Sendable {
         return out
     }
 
-    /// 后台先画好接下来几页（顺着往下读时不用等）。已经有的、正在画的不重复画。
+    private struct Ahead: Equatable { let hash: String; let pdf: URL; let index: Int; let width: Int }
+
+    /// 空闲时先画好接下来几页（顺着往下读时不用等）。已经有的、正在画的不重复画。
+    /// 一次只画一张；后加的先画（翻到哪儿就先画哪儿的后几页），最多留 [aheadLimit] 张，再早的不画了。
     public func prefetch(hash: String, pdf: URL, after index: Int, width: Int, count: Int = 2) {
-        DispatchQueue.global(qos: .utility).async {
-            guard let n = (try? self.pageSizes(hash: hash, pdf: pdf))?.count else { return }
-            for i in (index + 1)..<min(n, index + 1 + count) {
-                _ = try? self.page(hash: hash, pdf: pdf, index: i, width: width)
+        lock.lock()
+        for i in stride(from: index + count, through: index + 1, by: -1) {
+            let a = Ahead(hash: hash, pdf: pdf, index: i, width: width)
+            ahead.removeAll { $0 == a }
+            ahead.append(a)
+        }
+        if ahead.count > Self.aheadLimit { ahead.removeFirst(ahead.count - Self.aheadLimit) }
+        let start = !aheadRunning
+        aheadRunning = true
+        lock.unlock()
+        if start { DispatchQueue.global(qos: .utility).async { self.drainAhead() } }
+    }
+
+    private func drainAhead() {
+        while true {
+            lock.lock()
+            guard let a = ahead.popLast() else {
+                aheadRunning = false
+                lock.unlock()
+                return
             }
+            lock.unlock()
+            // 超出页数的（最后几页）在 page 里报错，不管
+            _ = try? page(hash: a.hash, pdf: a.pdf, index: a.index, width: a.width, urgent: false)
         }
     }
 
@@ -176,15 +214,20 @@ public final class PageImages: @unchecked Sendable {
     }
 
     /// 有就直接用（顺手更新时间，删旧的时它算新的）；没有就做，同一个 [key] 同时只做一次，别的等它做完。
-    private func ensure(key: String, out: URL, _ make: () throws -> Void) throws {
+    /// 不急的（[urgent] = false，提前画的）先等到空闲、轮到了才登记：排着队的不会挡住网页随后要看的同一页（那页自己画，不等它）。
+    private func ensure(key: String, out: URL, urgent: Bool = true, _ make: () throws -> Void) throws {
         let fm = FileManager.default
         if fm.fileExists(atPath: out.path) {
             try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: out.path)
             return
         }
+        if !urgent { gate.enter(urgent: false) }
+        var holding = !urgent
+        defer { if holding { gate.leave() } }
         lock.lock()
         if let g = running[key] {
             lock.unlock()
+            if !urgent { return }   // 别人正在画，提前画的不用管
             g.wait()
             if fm.fileExists(atPath: out.path) { return }
             throw ServerError.renderFailed("同时在画的那次没画成")
@@ -199,8 +242,10 @@ public final class PageImages: @unchecked Sendable {
             lock.unlock()
             g.leave()
         }
-        gate.wait()
-        defer { gate.signal() }
+        if !holding {
+            gate.enter(urgent: true)
+            holding = true
+        }
         if fm.fileExists(atPath: out.path) { return }
         try fm.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
         try make()
@@ -322,4 +367,39 @@ public final class PageImages: @unchecked Sendable {
     try { outline = doc.loadOutline(); } catch (e) {}
     print(JSON.stringify({ pages: pages, outline: outline ? conv(outline) : [] }));
     """
+}
+
+/// 画图的位置：同时最多 [slots] 张。网页正等着看的（urgent）先画，其中后要的先轮到——翻得快时，停下来的那页不用排在一路翻过的页后面；
+/// 提前画的只在没有别的在画、也没有人在等时才画。
+final class RenderGate: @unchecked Sendable {
+    private let cond = NSCondition()
+    private let slots: Int
+    private var busy = 0
+    private var waiting: [Int] = []   // 等着的 urgent，按来的先后；最后一个先轮到
+    private var ticket = 0
+
+    init(slots: Int) { self.slots = slots }
+
+    func enter(urgent: Bool) {
+        cond.lock()
+        defer { cond.unlock() }
+        if urgent {
+            ticket += 1
+            let me = ticket
+            waiting.append(me)
+            while busy >= slots || waiting.last != me { cond.wait() }
+            waiting.removeLast()
+        } else {
+            while busy > 0 || !waiting.isEmpty { cond.wait() }
+        }
+        busy += 1
+        cond.broadcast()   // 还有空位的话，下一个等着的可以进
+    }
+
+    func leave() {
+        cond.lock()
+        busy -= 1
+        cond.broadcast()
+        cond.unlock()
+    }
 }

@@ -8,7 +8,7 @@ macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进�
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 34 项 + HTTP 8 项
+swift test  --disable-automatic-resolution   # 核心 36 项 + HTTP 8 项
 BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
 $BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
 $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）
@@ -76,13 +76,14 @@ server/
     HostedWorkspace.swift     一个工作区：登记、推送、拉取、快照、改名、修订号
     HostedWorkspace+Files.swift   PDF / 图片本体 / 备份
     HostedWorkspace+Web.swift     网页阅读器用的查询（书目、页上的标记、图层 / 笔记类型 / 对齐参数）+ 网页写入（当成一次推送）
-    PageImages.swift          服务器出图：MuPDF 命令行（mutool + cjpeg）画页成 JPEG、读页面尺寸与目录，缓存在 cache/render/
+    PageImages.swift          服务器出图：MuPDF 命令行（mutool + cjpeg）画页成 JPEG、读页面尺寸 / 扫描图宽度 / 目录，缓存在 cache/render/；
+                              扫描页不超过扫描图宽度（超过 4000 的最多一半）；RenderGate：正在看的先画、后要的先轮到，提前画的空闲时才画
     ServerTrash.swift         删除先归档（按天一个小库）
   Sources/UniServerHTTP/ServerApp.swift   HTTP 接口（Hummingbird）：路由表在文件头；令牌中间件、错误→状态码、续传、配对限流
   Sources/UniServerHTTP/WebFiles.swift    网页阅读器的静态文件（不要令牌）：编进程序的那份 / --web-dir
   Sources/UniServerHTTP/AccessLog.swift   请求耗时日志（默认开）
   Sources/UniServerHTTP/Discovery.swift   局域网发现（Bonjour `_unireader-srv._tcp`：macOS 系统 dnssd；Linux 起 avahi-publish-service 子进程）
-  Sources/unireader-server/               命令行入口：serve / pairing-code / reset-pairing-code / devices / revoke / deleted / restore；
+  Sources/unireader-server/               命令行入口：serve / pairing-code / reset-pairing-code / devices / revoke / deleted / restore / render（试画一页）；
                                           每小时备份有改动的工作区、清 90 天前删掉的工作区
   Sources/web-embed/                      构建插件用的生成器：web/dist → EmbeddedWeb.swift（每个文件一个 base64 字符串）
   Plugins/EmbedWebAssets/                 构建插件（编 UniServerHTTP 时跑上面那个生成器）

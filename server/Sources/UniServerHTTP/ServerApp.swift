@@ -19,7 +19,7 @@ import UniServerCore
 /// | `GET workspaces/:ws/pull?since=&limit=` | 拉取（`SyncWire` 二进制） |
 /// | `HEAD/GET/PUT workspaces/:ws/pdf/:hash` | PDF：查有没有 / 下载（支持 `Range`）/ 上传（可续传） |
 /// | `GET workspaces/:ws/pdf/:hash/info` | 服务器出图：各页尺寸 + 扫描图宽度 + 目录（JSON，`PageImages.info`）；没装 MuPDF → 501 |
-/// | `GET workspaces/:ws/pdf/:hash/page/:n?w=` | 服务器出图：第 n 页（从 0 起）约 w 像素宽的 JPEG（扫描页最多按扫描图本身的宽度），顺手在后台画后两页 |
+/// | `GET workspaces/:ws/pdf/:hash/page/:n?w=` | 服务器出图：第 n 页（从 0 起）约 w 像素宽的 JPEG（扫描页最多按扫描图本身的宽度，超过 4000 的最多一半）；正在看的先画，后两页空闲时在后台画 |
 /// | `HEAD/GET/PUT workspaces/:ws/image/:sha.:ext` | 图片本体，同上 |
 /// | `GET workspaces/:ws/documents` | 书目（网页阅读器用）：书名 / 分组 / 页数 / 阅读进度 / 打开用哪份 PDF |
 /// | `GET workspaces/:ws/documents/:doc/view?hash=` | 打开一本书（网页）：笔迹图层、笔记类型、扫描页对齐参数（`hash` = 打开的那份 PDF） |

@@ -1,7 +1,7 @@
 // 页面从哪来（方案 §11）：两种显示方式共用同一个阅读视图（`viewer.ts`），视图只认这里的接口。
 // - `PdfSource`：浏览器里用 pdf.js 加载 PDF、画页（W1 起的做法）。
 // - `ImageSource`：服务器用 MuPDF 画好 JPEG，按需要的宽度取（各页尺寸打开时一次给齐，不用加载 pdf.js）；
-//   扫描页最多按扫描图本身的宽度要，再宽也不会更清楚（画布照样按屏幕的像素，图拉大画上去）。
+//   扫描页最多按扫描图本身的宽度要，再宽也不会更清楚；高分辨率扫描最多要一半（画布照样按屏幕的像素，图拉大画上去）。
 // 两种都画到同一块画布上（白底、扫描页对齐的变换照套），所以笔迹、高亮、书写都不用分两套。
 
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
@@ -74,12 +74,20 @@ export function widthBucket(px: number): number {
   return WIDTHS.find((w) => w >= px) ?? WIDTHS[WIDTHS.length - 1];
 }
 
+/** 扫描图超过这么宽就最多要一半（同 `PageImages.halveAbove`）。 */
+const HALVE_ABOVE = 4000;
+
+/** 扫描页最多画多宽（同 `PageImages.scanLimit`：高分辨率扫描取一半再少 4 像素，MuPDF 这样才按一半解原图、快一倍）。 */
+export function scanLimit(native: number): number {
+  return native > HALVE_ABOVE ? Math.floor(native / 2) - 4 : native;
+}
+
 /**
- * 向服务器要多宽：按档；扫描页最多按扫描图本身的宽度（[native]，0 = 不是扫描页）要——服务器那边也是这样限的
+ * 向服务器要多宽：按档；扫描页最多按 [scanLimit] 要（[native] = 扫描图本身多宽，0 = 不是扫描页）——服务器那边也是这样限的
  * （`PageImages.renderWidth`），这里先限好，放大缩小时地址不变，浏览器缓存的那张接着用。
  */
 export function requestWidth(px: number, native: number): number {
-  return widthBucket(native > 0 ? Math.min(px, native) : px);
+  return widthBucket(native > 0 ? Math.min(px, scanLimit(native)) : px);
 }
 
 export class ImageSource implements PageSource {
