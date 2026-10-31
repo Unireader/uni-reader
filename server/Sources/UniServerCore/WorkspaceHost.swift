@@ -273,7 +273,7 @@ public final class WorkspaceHost: @unchecked Sendable {
 public enum ServerInfo {
     /// 服务器认的工作区数据版本（= App 的 `LibraryStore.schemaVersion`，同一份代码）。
     public static var schemaVersion: Int { LibraryStore.schemaVersion }
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
 
     /// 内容哈希（SHA-256 小写十六进制）。会拼进文件名，HTTP 层收到就先验。
     public static func isContentHash(_ s: String) -> Bool { ServerCrypto.isSHA256Hex(s) }
