@@ -15,6 +15,8 @@
 > 用户自己判对错；可以打字也可以在内置小画板上手写；Agent 能读作答（含手写图）并批改。本轮只做 Mac，平板只显示题干。
 > **2026-10-27 第四轮：题目笔记 + 重做上次做错的**（schema v22，§12）：每道题能写一段自己的笔记（判完才显示）；
 > 顶栏加「重做上次做错的」开关，只练上一次结果是错的题、都重新作答，答对一次下次就不在了。本轮只做 Mac。
+> **2026-10-31 第五轮：章节怎么分**（§14）：Agent 第一次往一本书里导题先问用户怎么分（按 PDF 目录 / 按用户说的方式自己分、几级都行 / 不分），
+> 以后沿用；侧栏右键一本书能「移除章节分级」（题目和用户状态都不动）/「按目录分章节」。用户说的「习题册 / 练习册 / 练习库」= App 的习题。不改表结构。
 
 ## 1. 需求
 
@@ -128,6 +130,8 @@ CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_
 - **怎么来**（优先级从高到低）：Agent 明确给的 `chapter` > 已有的题原来的章节（可能是用户手动设的，重导不冲掉）>
   **按页码从 PDF 自带目录自动定**（`ExerciseChapter.path`：每层取「起始页 ≤ 题目页」的最后一项，一直走到最深；
   目录项没落点的按它第一个有落点的子孙算；章开头、第一节之前的页停在章这一级）。
+- **分法**（2026-10-31，§14）：按目录（上面这条）/ Agent 按用户说的方式自己写（页面标题、题组，层数不限）/ 不分。
+  Agent 第一次往一本书里导题时问用户；`import_exercises` 的 `chapters` 只管没自己带 `chapter` 的题；不分章节的书再导题也不按目录分。
 - 🔴 **只用 PDF 自带的目录，不用用户书签**——书签名字随手起，当章节会乱。没有目录的扫描件章节留空：
   可以让 Agent 按页面标题填，或用户在列表里右键「设置章节…」（下拉框：按页码自动 / 不设 / 目录里任一节 / 手动填写，
   手填用「›」分级）。
@@ -151,7 +155,7 @@ CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_
 
 | 工具 | 层级 | 作用 |
 |---|---|---|
-| `import_exercises` | write | 按 §2 的结构批量写入一篇文档的习题（一次 ≤50 道）。逐条校验，不合格的退回原因、其余照常写入；命中去重键即更新。可带 `chapter`（不带 = 按目录自动）、`user_answer`（书上的作答，§2.4） |
+| `import_exercises` | write | 按 §2 的结构批量写入一篇文档的习题（一次 ≤50 道）。逐条校验，不合格的退回原因、其余照常写入；命中去重键即更新。可带 `chapter`（不带 = 按目录自动）、`user_answer`（书上的作答，§2.4）；顶层 `chapters`（`"toc"` / `"none"`，不带 = 按这本书现在的样子，§14.2） |
 | `list_exercises` | read | 列出习题（按文档 / 页范围 / 章节 / 收藏 / 错题筛选，分页），带 id、题号、章节、书上的作答、作答统计；补答案前先用它对号 |
 | `update_exercises` | write | 按 id 改部分字段（最常见：补 `answer` + `answer_source` + `explanation`；也能改 `chapter`、`user_answer`）。答案变了 → 重判 |
 | `delete_exercises` | delete | 按 id 删（🔴 **先归档进回收站再删**，红线 11） |
@@ -718,3 +722,90 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   46. App 开着期间：在别的组和这一组之间来回切，停在原来那题（不会被拉回「接着做」的那道）。
   47. 错题本 / 全做过的组：重开后停在第 1 题。
   48. 平板模式1：同 44~47（关掉工作区再打开算「重开」）；模式2 在平板上开一组 Mac 还没开过的题：停的位置同 Mac。
+
+## 14. 章节怎么分：Agent 先问、侧栏能移除（2026-10-31，Mac）
+
+用户原话：「允许直接移除练习册的section分级，不影响题目」「创建导入练习册时需要AI询问是否要secion 分级」
+「练习库，允许动态添加多级的section」「agent 提示词优化，当用户说习题册，练习册，指的就是软件的练习库Exercises」。
+
+- 用户说的 **section 分级 = 侧栏里书底下那棵章节树**（`exercise.chapter`），不是参与去重的题组名 `exercise.section`（它不分级）。
+- 「动态添加多级」拍板（用户 2026-10-31 选的）：**Agent 按对话自己建**——不受 PDF 目录限制，按页面上印的标题、题组
+  （「习题 2.3 › A 组」）或用户说的任何分法，层数不限。没选的两种：列表右键把题归到已有的自定义章节 / 在章节下新建子章节；
+  侧栏先建空章节再放题（要新表，改表结构与三端同步）。
+- 数据层没变：`chapter` 本来就是任意层数的路径，侧栏树按路径拼、同级按最早页码排（§2.3）。
+
+### 14.1 三种分法
+
+| 分法 | 章节从哪来 | Agent 怎么导 |
+|---|---|---|
+| 按目录 | `ExerciseChapter.path`（按页码查 PDF 自带目录） | 带 `chapters: "toc"`，题不带 `chapter` |
+| 自己分 | Agent 给每道题写的完整路径（几级都行，已有的上级原样照抄） | 每道题带 `chapter`，同时带 `chapters: "none"`（漏写的那道不会被按目录分走） |
+| 不分 | 都空，侧栏里这本书只有书名一行 | 带 `chapters: "none"` |
+
+- **第一次往一本书里导题**（`list_exercises` 里这本书一道都没有）Agent 先问用户选哪种；PDF 没目录就不提「按目录」。
+  以后不再问、沿用原来的分法：看已有题的 `chapter` 对照目录判断是哪一种（SKILL.md 流程第 2 步）。
+- 写在：`skills/unireader-exercise-import/SKILL.md`、`MCPServer.instructions`、Agent 面板上下文串（`AgentChat.exercises`）、
+  `import_exercises` 的说明与 `chapter` / `chapters` 两个参数说明、`update_exercises` 的 `chapter`（中途改分法 / 挪题）。
+
+### 14.2 `import_exercises` 的 `chapters`
+
+- 顶层参数 `"toc"` / `"none"`（Swift 里是 `ExerciseChapterMode.toc` / `.flat`），只管**没自己带 `chapter` 的题**；
+  题自己带的永远优先，§2.3 的优先级不变（已有的题有章节就沿用）。
+- **不传 = 按这本书现在的样子**（`ExerciseChapter.usesTOC`）：不分章节的书保持不分，其余照旧按目录。
+- 「不分章节的书」**不另存标记，从库里推出来**（`ExerciseChapter.bookIsFlat`）：已经有题、一道都没设章节，
+  而且至少有一道按目录本来能分进某一章。最后这条把「用户选了不分 / 移除过」和「题恰好都在目录管不到的页上」
+  （比如目录从第 10 页起、先导了前面的题）分开——后者照旧按目录分。没目录的书恒为「不是」（反正分不出来）。
+  - 为什么不存标记：存进 `meta` 要进同步白名单，而 NAS 上现在的服务器会把不认识的 `meta` 键丢掉（`HostedWorkspace` 推送整理那一步），
+    等于还得跟着发服务器；另加一列要升表结构、改安卓。推出来的规则只在 Mac 导题时用（导题只经 Mac 的 MCP），别的端不用懂。
+  - 已知的边角：「不分」的书、已有的题全在目录管不到的页上，跨对话再导、Agent 又没带 `chapters` 时，落在目录里的新题会按目录分。
+    遇到了在侧栏「移除章节分级…」一次就好——这时已经有落在目录里的题，之后就判得出来了。
+- 按「不分章节的书」处理了的（没传 `chapters`、书是平的），文字结果多一行告诉 Agent；`structured` 不变，`outputSchema` 不用动。
+
+### 14.3 侧栏：移除 / 恢复
+
+- 「全部」底下**一本书那一行**右键：有章节树 →「移除章节分级…」（确认表）；没有 →「按目录分章节」。
+  错题本 / 收藏底下那几行是筛出来的视图，不放这两项。
+- **移除** = 这本书的题 `chapter` 全部清空（`WorkspaceManager.clearExerciseChapters` → `setExerciseChapter(ids:, [])`，一个事务，
+  连带改 `updated_at`，离线镜像 / 服务器同步按它取新）。题目内容、作答、收藏、错题本、题目笔记都不动；
+  手动或 Agent 设过的章节也一起清掉、恢复不了（确认表里写明）。不进回收站：没删行，只改一列。
+- 各窗口里**开着这本书某一章的习题标签**退回整本书那一级（书底下 / 错题本底下 / 收藏底下各对各的，单独开的仍是单独的，
+  `TabsModel.exerciseChaptersRemoved`），不留一个空章节。
+- **按目录分章节** = 每道题按页码去目录里找（同列表「设置章节… → 按页码自动」；`autoAssignExerciseChapters` 顺手改成同一章的一起写，
+  整本几百道不再一道一次提交）。PDF 没目录 → 提示改用列表「设置章节…」手填或让 Agent 填。
+
+### 14.4 叫法
+
+用户说的「习题册」「练习册」「练习库」= App 的习题（Exercises，侧栏「习题」那一段），不是文件、也不是某一本 PDF。
+写进 SKILL.md（description + 开头一段）、`MCPServer.instructions`、Agent 面板上下文串、`import_exercises` 说明。
+
+### 14.5 安卓 / 服务器
+
+不用改：没动表结构和同步线格式；移除分级就是改了一批行的 `chapter`，经离线镜像 / 服务器照常同步，平板侧栏跟着变平。导题只在 Mac。
+
+### 14.6 代码落点
+
+| 层 | 文件 |
+|---|---|
+| 纯逻辑 | `App/Exercise.swift`（`ExerciseChapterMode`、`ExerciseChapter.bookIsFlat` / `usesTOC`） |
+| 执行层 | `App/WorkspaceManager+Exercise.swift`（`clearExerciseChapters`、`autoAssignExerciseChapters` 按章成批写）、`App/TabsModel.swift`（`exerciseChaptersRemoved`） |
+| 界面 | `Window/Sidebar/SidebarViewController.swift`（`buildExerciseBookMenu` / `confirmRemoveChapters` / `groupExercisesByTOC`）、两份 `Localizable.strings` |
+| MCP / Agent | `MCP/MCPTools+Exercises.swift`（`chapters` 参数、导入时判断）、`MCP/MCPServer.swift`、`Agent/AgentChat.swift`、`skills/unireader-exercise-import/SKILL.md` |
+
+### 14.7 验证（2026-10-31）
+
+- `spike/exercise-test.swift` 309 项全过（新加 18 项：「不分章节的书」各种情形——有题都没章节、新书、有一道带章节、没目录、
+  题都在目录管不到的页上、有一道落在目录里、不知道页码；`chapters` 明说 toc / none、没说时新书 / 平的书 / 分了章节的书；线上写法；
+  整本清空章节后题目内容 / 收藏 / 错题 / 笔记不动、`updated_at` 变了、侧栏分组只剩一组、之后算「不分章节的书」）。
+- Mac Debug 编译通过、改动的文件没有新警告。
+- 🔴 侧栏右键、确认表、标签退回，以及 Agent 问不问 / 怎么问 / 自己分的章节对不对，都没有在真 App 里跑过，由用户实测。
+
+### 14.8 实测清单（用户）
+
+  49. 侧栏「习题」里一本有章节树的书，右键 →「移除章节分级…」→ 确认：书底下不再展开；点书看题，题目、做过的记录、错题本、收藏、
+      题目笔记都还在；错题本 / 收藏底下这本书也不再展开。
+  50. 移除前开着这本书某一章（也试错题本底下的某一章）：移除后那个标签换成整本书那一级，不是空列表。
+  51. 移除后让 Agent 再往这本书导几道题：新题也不分章节。右键这本书「按目录分章节」：按目录重新分好。没目录的 PDF：提示没有目录。
+  52. 一本还没导过题的书，让 Agent 导题：它先问怎么分（按目录 / 按页面标题或题组自己分 / 不分），选哪种侧栏就是哪种。
+  53. 选「自己分」（比如「按习题 2.3 › A 组这样分」）：侧栏按 Agent 写的多级章节展开；换一次对话接着导，Agent 不再问、沿用同一套，
+      同名的上级没有多出一份；让它「把这几道挪到 B 组」能挪。
+  54. 跟 Agent 说「把这几页加到练习册」「习题册里有几道错题」：它明白指的是 App 里的习题。

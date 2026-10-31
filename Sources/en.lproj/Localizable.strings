@@ -967,6 +967,14 @@
 "Type a Name…" = "Type a Name…";
 "e.g. Chapter 2 › 2.3" = "e.g. Chapter 2 › 2.3";
 "Practice by chapter from the sidebar. “Automatic” looks up each question’s page in the PDF’s table of contents." = "Practice by chapter from the sidebar. “Automatic” looks up each question’s page in the PDF’s table of contents.";
+/* 习题：移除 / 恢复一本书的章节分级（2026-10-31，EXERCISE-PLAN.md §14） */
+"Remove Chapters…" = "Remove Chapters…";
+"Remove Chapters" = "Remove Chapters";
+"Group by Table of Contents" = "Group by Table of Contents";
+"Remove the chapters of “%@”?" = "Remove the chapters of “%@”?";
+"Its questions will no longer be grouped by chapter in the sidebar. The questions, your answers, mistakes, stars and notes stay as they are. Questions imported into this book later won’t be grouped either. To group them again, right-click the book and choose Group by Table of Contents; chapters you set by hand can’t be brought back." = "Its questions will no longer be grouped by chapter in the sidebar. The questions, your answers, mistakes, stars and notes stay as they are. Questions imported into this book later won’t be grouped either. To group them again, right-click the book and choose Group by Table of Contents; chapters you set by hand can’t be brought back.";
+"This PDF has no table of contents" = "This PDF has no table of contents";
+"Chapters can only be found from a PDF’s own table of contents. You can still set a chapter by hand: right-click questions in the list and choose Set Chapter…, or ask the agent to fill them in." = "Chapters can only be found from a PDF’s own table of contents. You can still set a chapter by hand: right-click questions in the list and choose Set Chapter…, or ask the agent to fill them in.";
 /* 习题：做过的题显示自己的答案（2026-10-11） */
 "Last time you chose %@. Correct." = "Last time you chose %@. Correct.";
 "Last time you chose %@. Wrong. The answer is %@." = "Last time you chose %@. Wrong. The answer is %@.";

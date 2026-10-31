@@ -195,6 +195,24 @@ final class TabsModel: ObservableObject {
         persist()
     }
 
+    /// 某本书的章节分级刚被移除（`EXERCISE-PLAN.md §14`）：开着它某一章的习题标签换成整本书那一级
+    /// （书底下 / 错题本底下 / 收藏底下各对各的），不留一个空章节在那儿。单独开的标签仍是单独的。
+    func exerciseChaptersRemoved(documentId: String) {
+        var changed = false
+        for t in tabs {
+            let to: ExerciseScope
+            switch t.exerciseScope {
+            case .chapter(documentId, _)?: to = .document(documentId)
+            case .wrongChapter(documentId, _)?: to = .wrongDocument(documentId)
+            case .starredChapter(documentId, _)?: to = .starredDocument(documentId)
+            default: continue
+            }
+            t.openExercises(to, separate: t.exerciseSeparate)
+            changed = true
+        }
+        if changed { persist() }
+    }
+
     /// 新建一篇画板笔记并打开（侧栏「＋」/ 菜单 / 平板 `boardAdd`）。
     @discardableResult
     func newBoard(spec: WorkspaceManager.BoardSpec = .infinite) -> DocTabModel? {

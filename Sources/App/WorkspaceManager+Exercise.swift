@@ -199,16 +199,28 @@ extension WorkspaceManager {
         exercisesChanged()
     }
 
-    /// 几道题各按自己的页码从目录重新定章节（「按目录自动设置」）。`toc` 是这些题那本书的目录。
+    /// 几道题各按自己的页码从目录重新定章节（「按目录自动设置」/ 侧栏「按目录分章节」）。`toc` 是这些题那本书的目录。
+    /// 同一章的一起写（一章一个事务）：整本书几百道题时不至于一道一次提交。
     func autoAssignExerciseChapters(ids: [String], toc: [ExerciseChapterNode]) {
         guard let store else { return }
+        var byPath: [[String]: [String]] = [:]
+        for id in ids {
+            guard let e = exercise(id: id), let p = e.page else { continue }
+            byPath[ExerciseChapter.path(page: p, in: toc), default: []].append(id)
+        }
         do {
-            for id in ids {
-                guard let e = exercise(id: id), let p = e.page else { continue }
-                try store.setExerciseChapter(ids: [id], ExerciseChapter.path(page: p, in: toc))
-            }
+            for (path, group) in byPath { try store.setExerciseChapter(ids: group, path) }
         } catch { lastError = "\(error)"; return }
         exercisesChanged()
+    }
+
+    /// 移除一本书的章节分级（侧栏右键，`EXERCISE-PLAN.md §14`）：这本书的题全部改成不设章节。
+    /// 只动章节这一列（连同 `updated_at`，同步按它取新）——题目、作答、收藏、错题本、笔记都不动。
+    /// 之后往这本书导题也不再按目录自动分（`ExerciseChapter.bookIsFlat`）。
+    func clearExerciseChapters(documentId: String) {
+        let ids = exercises(in: .document(documentId)).filter { !$0.chapter.isEmpty }.map(\.id)
+        guard !ids.isEmpty else { return }
+        setExerciseChapter(ids: ids, [])
     }
 
     // MARK: - 写：练习界面

@@ -610,6 +610,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(item(L("Open in New Tab"), "plus.square.on.square") { [weak self] in
                 self?.tabs.openExercises(scope, newTab: true)
             })
+            // 「全部」底下的一本书：移除 / 恢复章节分级（§14）。错题本、收藏底下的那几行只是筛出来的视图，不放
+            if case .document(let docId) = scope { buildExerciseBookMenu(menu, documentId: docId, hasChapters: !n.children.isEmpty) }
         case .noteFolder(let source, let folder):
             menu.addItem(ClosureMenuItem(L("New Note Here")) { [weak self] in
                 guard let self, let ref = self.workspace.createNote(title: L("Untitled Note"),
@@ -622,6 +624,51 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             })
         default:
             break
+        }
+    }
+
+    /// 习题里一本书那一行的章节分级（`EXERCISE-PLAN.md §14`）：有章节树 → 「移除章节分级…」（先确认）；
+    /// 没有 → 「按目录分章节」（每道题按页码去 PDF 自带目录里找，同列表右键「设置章节…」的「按页码自动」）。
+    private func buildExerciseBookMenu(_ m: NSMenu, documentId: String, hasChapters: Bool) {
+        m.addItem(.separator())
+        if hasChapters {
+            m.addItem(item(L("Remove Chapters…"), "list.bullet") { [weak self] in self?.confirmRemoveChapters(documentId) })
+        } else {
+            m.addItem(item(L("Group by Table of Contents"), "list.bullet.indent") { [weak self] in
+                self?.groupExercisesByTOC(documentId)
+            })
+        }
+    }
+
+    private func confirmRemoveChapters(_ documentId: String) {
+        let a = NSAlert()
+        a.messageText = String(format: L("Remove the chapters of “%@”?"), workspace.exerciseScopeTitle(.document(documentId)))
+        a.informativeText = L("Its questions will no longer be grouped by chapter in the sidebar. The questions, your answers, mistakes, stars and notes stay as they are. Questions imported into this book later won’t be grouped either. To group them again, right-click the book and choose Group by Table of Contents; chapters you set by hand can’t be brought back.")
+        a.addButton(withTitle: L("Remove Chapters"))
+        a.addButton(withTitle: L("Cancel"))
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] resp in
+            guard let self, resp == .alertFirstButtonReturn else { return }
+            self.workspace.clearExerciseChapters(documentId: documentId)
+            // 各窗口里开着这本书某一章的习题标签退回整本书（不然留着一个空章节）
+            for c in AppDelegate.shared?.readerWindowControllers ?? [] where c.workspace === self.workspace {
+                c.tabs.exerciseChaptersRemoved(documentId: documentId)
+            }
+        }
+        if let win = view.window { a.beginSheetModal(for: win, completionHandler: finish) } else { finish(a.runModal()) }
+    }
+
+    private func groupExercisesByTOC(_ documentId: String) {
+        let ws = workspace
+        ExerciseOriginal.chapters(documentId: documentId, workspace: ws) { [weak self] toc in
+            guard toc.isEmpty else {
+                ws.autoAssignExerciseChapters(ids: ws.exercises(in: .document(documentId)).map(\.id), toc: toc)
+                return
+            }
+            let a = NSAlert()
+            a.messageText = L("This PDF has no table of contents")
+            a.informativeText = L("Chapters can only be found from a PDF’s own table of contents. You can still set a chapter by hand: right-click questions in the list and choose Set Chapter…, or ask the agent to fill them in.")
+            a.addButton(withTitle: L("OK"))
+            if let win = self?.view.window { a.beginSheetModal(for: win) } else { a.runModal() }
         }
     }
 

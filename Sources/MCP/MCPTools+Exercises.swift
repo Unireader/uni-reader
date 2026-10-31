@@ -27,7 +27,7 @@ extension MCPTools {
             "explanation": MCPSchema.string("explanation"),
             "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] of the question on its page"),
             "has_figure": MCPSchema.boolean("the question relies on a figure or table"),
-            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "chapter path in the table of contents, top level first; empty = none"),
+            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "chapter path, top level first (from the table of contents, or the user's own grouping); empty = none"),
             "user_answer": MCPSchema.string("what the user wrote in the document: option letters (choice) or the transcribed text (subjective)"),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "fill questions: what the user wrote in the document, one string per blank"),
             "user_answer_correct": MCPSchema.boolean("whether that marked answer is right (absent when it is not judged yet)"),
@@ -92,6 +92,15 @@ extension MCPTools {
         return a.compactMap { $0 as? String }
     }
 
+    /// `import_exercises` 的 `chapters`（`EXERCISE-PLAN.md §14`）：`"toc"` / `"none"`；没给 = nil（按这本书现在的样子）。
+    private static func chapterModeArg(_ v: Any?) throws -> ExerciseChapterMode? {
+        guard let v, !(v is NSNull) else { return nil }
+        guard let s = v as? String, let m = ExerciseChapterMode(rawValue: s) else {
+            throw MCPInvalidParams("chapters must be \"toc\" or \"none\"")
+        }
+        return m
+    }
+
     private static func regionArg(_ v: Any?, at path: String) throws -> [Double]? {
         guard let v, !(v is NSNull) else { return nil }
         guard let a = v as? [NSNumber] else { throw MCPInvalidParams("\(path).region must be [x, y, w, h]") }
@@ -134,7 +143,7 @@ extension MCPTools {
             "explanation": MCPSchema.string("Explanation / solution (Markdown + $math$), from the document or your own (optional)."),
             "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] box around the whole question on its page, normalized 0–1, top-left origin (as in render_page). Lets the user see the original question."),
             "has_figure": MCPSchema.boolean("True when the question depends on a figure, graph or table the text cannot carry; the original is then shown while practicing.", default: false),
-            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, using the titles in the PDF's table of contents (get_document). Omit it: UniReader looks up the page in the table of contents itself. Give it only when that would be wrong (e.g. exercises collected at the back of the book) or the PDF has no table of contents."),
+            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels. When the book is grouped by the table of contents, omit it: UniReader looks up the page itself (unless the book is not grouped into chapters, see chapters); give it only when that would be wrong (e.g. exercises collected at the back of the book). When the user wants the questions grouped their own way — the headings printed on the pages, question groups such as [\"习题 2.3\", \"A 组\"], or however they say — give every question its full path (reuse the exact names of levels that already exist) and pass chapters \"none\". [] = no chapter."),
             "user_answer": MCPSchema.string("What the user already wrote for this question in the document. Choice: the option(s) marked — a highlight on an option (list_annotations) or a circled / written letter (render_page with include_marks) — e.g. \"B\". Subjective: their handwritten answer, transcribed. Saved as the user's earlier attempt; a choice answer is judged right away (a wrong one goes into the mistake list), a subjective one waits to be graded (grade_exercise_attempts). Omit when the user has not answered it."),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "Fill questions only: what the user already wrote in the document, one string per blank (\"\" for a blank left empty)."),
         ], required: ["page", "stem"])
@@ -143,16 +152,19 @@ extension MCPTools {
             title: "Import exercises",
             description: """
             Save exercises recognized in a PDF into the workspace so the user can practice them in UniReader \
-            (练习 / 错题本 / 收藏 in the UI): single / multiple choice, fill in the blank, and subjective questions \
+            (练习 / 错题本 / 收藏 in the UI; the user may call this exercise library 习题册, 练习册 or 练习库): single / multiple choice, fill in the blank, and subjective questions \
             (calculation, proof, short answer — the user writes or hand-draws an answer and marks it against the reference \
             answer, or asks an agent to grade it). Look at the pages first (render_page for the image, read_pages for the text), \
             transcribe each question exactly, then call this with up to \(maxImportExercises) questions in reading order. \
             Each question is checked on its own: bad ones come back with a reason and the rest are saved. Importing the same \
             question again (same page + section + number, or the same text when there is no number) updates it and keeps \
-            the user's stars, mistakes and practice history.
+            the user's stars, mistakes and practice history. \
+            The first time you import into a book (list_exercises shows it has no questions yet), ask the user whether \
+            to group its questions into chapters and pass the answer as chapters.
             """,
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "exercises": MCPSchema.array(of: item, "Questions to save (1–\(maxImportExercises))"),
+                "chapters": MCPSchema.enumeration(["toc", "none"], "How the questions that carry no chapter of their own are grouped in the sidebar. The first time you import into a book (it has no questions yet), ask the user how to group them: \"toc\" = by the PDF's table of contents (UniReader looks up each page); their own way = give each question a chapter and pass \"none\"; not at all = \"none\" (the book stays one flat list). Omit it on later imports of a book grouped by the table of contents or not grouped: the book keeps the way it is (a book the user took the chapters off stays flat). A question's own chapter always wins."),
             ]) { a, _ in a }, required: ["exercises"]),
             outputSchema: MCPSchema.object([
                 "document_id": MCPSchema.string("document"), "title": MCPSchema.string("document title"),
@@ -176,6 +188,7 @@ extension MCPTools {
                 throw MCPInvalidParams("at most \(maxImportExercises) exercises per call; split the rest into another call")
             }
             let docId = try args.string("document_id"), wsPath = try args.string("workspace")
+            let mode = try chapterModeArg(args.raw["chapters"])
             let t = try await MainActor.run { try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath) }
             var items: [Result<ExerciseDraft, ExerciseImport.Rejected>] = []
             for (i, raw) in list.enumerated() {
@@ -206,14 +219,24 @@ extension MCPTools {
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path))
                 items.append(ExerciseImport.validate(input, seq: i))
             }
-            // 章节没给的按页码从 PDF 自带目录里查（`EXERCISE-PLAN.md §2.3`）；文件不在 / 没目录 → 空
-            if let path = t.path, items.contains(where: { if case .success(let d) = $0 { d.chapter == nil } else { false } }) {
+            // 章节没给的按页码从 PDF 自带目录里查（`EXERCISE-PLAN.md §2.3`）；文件不在 / 没目录 → 空。
+            // 不分章节的书（用户移除过分级 / 第一次导入时选了不分）保持不分，除非这次明说 `chapters: "toc"`（§14）。
+            var keptFlat = false
+            if mode != .flat, let path = t.path,
+               items.contains(where: { if case .success(let d) = $0 { d.chapter == nil } else { false } }) {
                 let toc = (try? await MCPDocReader.shared.withDocument(path: path) { ExerciseChapterNode.toc(of: $0) }) ?? []
                 if !toc.isEmpty {
-                    items = items.map { r in
-                        guard case .success(var d) = r, let p = d.page else { return r }
-                        d.autoChapter = ExerciseChapter.path(page: p, in: toc)
-                        return .success(d)
+                    let existing = await MainActor.run {
+                        t.ws.exercises(in: .document(t.id)).map { (page: $0.page, chapter: $0.chapter) }
+                    }
+                    if ExerciseChapter.usesTOC(mode, existing: existing, toc: toc) {
+                        items = items.map { r in
+                            guard case .success(var d) = r, let p = d.page else { return r }
+                            d.autoChapter = ExerciseChapter.path(page: p, in: toc)
+                            return .success(d)
+                        }
+                    } else {
+                        keptFlat = true
                     }
                 }
             }
@@ -223,6 +246,9 @@ extension MCPTools {
             var lines = ["Saved exercises into “\(r["title"] ?? "")”: \(r["created"] ?? 0) new, \(r["updated"] ?? 0) updated, \(r["rejected"] ?? 0) rejected."]
             for o in (r["results"] as? [MCPObject]) ?? [] where o["status"] as? String == "rejected" {
                 lines.append("- #\(o["index"] ?? "") rejected: \(o["reason"] ?? "")")
+            }
+            if keptFlat {
+                lines.append("This book is not grouped into chapters (the user took them off or chose no chapters), so these questions got none. Pass chapters: \"toc\" only if the user now asks for chapters.")
             }
             return MCPToolResult(text: lines.joined(separator: "\n"), structured: r)
         }
@@ -299,7 +325,7 @@ extension MCPTools {
                 "Replaces all options"),
             "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] on the question's page"),
             "has_figure": MCPSchema.boolean("The question depends on a figure or table"),
-            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first; [] clears it"),
+            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels (e.g. to regroup questions the way the user asks); [] clears it"),
             "user_answer": MCPSchema.string("What the user wrote in the document: option letters (\"B\") for choice, transcribed text for subjective; replaces the earlier one; empty string removes it"),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "Fill questions: what the user wrote in the document, one string per blank; replaces the earlier one; all empty removes it"),
             "note": MCPSchema.string("The user's own note on this question, shown under the explanation once they have answered it. Replaces the whole note; empty string removes it. Write it only when the user asks you to. \(mathWriting)"),

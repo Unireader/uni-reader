@@ -753,6 +753,15 @@ struct ExerciseChapterNode: Equatable {
     var children: [ExerciseChapterNode] = []
 }
 
+/// 导入时新题的章节怎么定（`import_exercises` 的 `chapters`，`EXERCISE-PLAN.md §14`）。
+/// Agent 第一次往一本书里导题时问过用户、按用户选的传；以后不传，按这本书现在的样子（`ExerciseChapter.usesTOC`）。
+enum ExerciseChapterMode: String {
+    /// 按页码从 PDF 自带目录里定（原来的做法）。
+    case toc
+    /// 不分章节：没明确给 `chapter` 的题一律不设（线上写 `"none"`；Swift 里别叫 `none`，会和 `Optional.none` 混）。
+    case flat = "none"
+}
+
 enum ExerciseChapter {
     /// 路径规整：每段去首尾空白、去掉空段。
     static func clean(_ path: [String]) -> [String] {
@@ -779,6 +788,25 @@ enum ExerciseChapter {
         if let p = n.page { return p }
         for c in n.children { if let p = startPage(c) { return p } }
         return nil
+    }
+
+    /// 这本书是不是「不分章节」的（`EXERCISE-PLAN.md §14`）：已经有题、一道都没设章节，而且其中至少有一道
+    /// 按目录本来能分进某一章——也就是用户移除过分级 / 导入时选了不分，而不是题恰好都落在目录管不到的页上。
+    /// 没目录的书恒为假（反正也分不出来）。不另存标记：看库里这本书的题现在是什么样就够了。
+    static func bookIsFlat(_ existing: [(page: Int?, chapter: [String])], toc: [ExerciseChapterNode]) -> Bool {
+        guard !toc.isEmpty, !existing.isEmpty, existing.allSatisfy({ $0.chapter.isEmpty }) else { return false }
+        return existing.contains { e in e.page.map { !path(page: $0, in: toc).isEmpty } ?? false }
+    }
+
+    /// 导入的这一批里没明确给章节的题，要不要按目录自动定（`import_exercises` 的 `chapters`）：
+    /// 说了就听说的；没说就看这本书现在的样子——不分章节的书（`bookIsFlat`）保持不分，其余照旧按目录。
+    static func usesTOC(_ mode: ExerciseChapterMode?, existing: [(page: Int?, chapter: [String])],
+                        toc: [ExerciseChapterNode]) -> Bool {
+        switch mode {
+        case .toc?: return true
+        case .flat?: return false
+        case nil: return !bookIsFlat(existing, toc: toc)
+        }
     }
 
     /// 目录摊平成一列（「设置章节…」的下拉框用）：每项是到它为止的完整路径。

@@ -969,6 +969,14 @@
 "Type a Name…" = "手动填写…";
 "e.g. Chapter 2 › 2.3" = "例如：第二章 › 2.3";
 "Practice by chapter from the sidebar. “Automatic” looks up each question’s page in the PDF’s table of contents." = "设好之后可以在侧栏按章节练。「按页码自动」会按每道题所在的页码去 PDF 目录里找章节。";
+/* 习题：移除 / 恢复一本书的章节分级（2026-10-31，EXERCISE-PLAN.md §14） */
+"Remove Chapters…" = "移除章节分级…";
+"Remove Chapters" = "移除章节分级";
+"Group by Table of Contents" = "按目录分章节";
+"Remove the chapters of “%@”?" = "移除「%@」的章节分级？";
+"Its questions will no longer be grouped by chapter in the sidebar. The questions, your answers, mistakes, stars and notes stay as they are. Questions imported into this book later won’t be grouped either. To group them again, right-click the book and choose Group by Table of Contents; chapters you set by hand can’t be brought back." = "侧栏里这本书不再按章节展开。题目、作答记录、错题本、收藏和题目笔记都不变。以后再往这本书导入的题也不分章节。想恢复，右键这本书选「按目录分章节」；手动设过的章节没法恢复。";
+"This PDF has no table of contents" = "这个 PDF 没有目录";
+"Chapters can only be found from a PDF’s own table of contents. You can still set a chapter by hand: right-click questions in the list and choose Set Chapter…, or ask the agent to fill them in." = "只能按 PDF 自带的目录找章节。也可以手动设：在列表里右键题目选「设置章节…」，或者让 Agent 填。";
 /* 习题：做过的题显示自己的答案（2026-10-11） */
 "Last time you chose %@. Correct." = "上次作答：%@，正确。";
 "Last time you chose %@. Wrong. The answer is %@." = "上次作答：%@，错误。正确答案是 %@。";

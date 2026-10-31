@@ -175,8 +175,13 @@ final class MCPServer: ObservableObject {
     (empty with a hint when neither exists); copy quotes for add_highlight / add_note from it. \
     Exercises (习题) are questions saved for the user to practice — single / multiple choice, fill in the blank \
     (type fill, with blanks) and subjective ones (type subjective: calculation, proof, short answer; the answer is a \
-    reference answer): when asked to recognize or import the exercises on some pages, look at them with render_page \
-    and read_pages, transcribe each question exactly, and save them with import_exercises; answers the user already \
+    reference answer). When the user says 习题册, 练习册 or 练习库 they mean these Exercises in UniReader (the 习题 \
+    part of the sidebar), not a file or a PDF. When asked to recognize or import the exercises on some pages, look at them with render_page \
+    and read_pages, transcribe each question exactly, and save them with import_exercises (the first time you import \
+    into a book — list_exercises shows none yet — ask the user how to group its questions into chapters: by the PDF's \
+    table of contents (chapters "toc"), their own way — printed headings, question groups, any number of levels; give \
+    each question its chapter path and pass chapters "none" — or not at all (chapters "none"); later imports follow \
+    the same grouping); answers the user already \
     wrote on the page (a highlighted option from list_annotations, or handwriting seen with render_page include_marks) \
     go in user_answer / user_blanks; fill in answers later from an answer key with list_exercises + update_exercises. \
     To grade the user's fill-in or subjective answers, read them with list_exercise_attempts (render_exercise_answer \

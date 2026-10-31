@@ -766,5 +766,47 @@ check(Exercise.resumeIndex(rsQ, stats: ["rsQ2": rsDone(7), "rsQ4": rsDone(7)]) =
 check(Exercise.resumeIndex(rsQ, stats: ["rsQ3": rsDone(2), "rsQ5": rsDone(8), "rsQ6": rsDone(1)]) == 0,
       "最近做的是第 5 题、第 6 题也做过 → 从头找（第 1 题）")
 
+// MARK: - 2026-10-31：不分章节的书（`EXERCISE-PLAN.md §14`）
+
+print("— 不分章节的书：导入时要不要按目录自动分")
+// 用上面那份 `toc`：第 1 页（0 起 0）起就在「前言」里；目录管不到的页只有拿空目录模拟
+let lateToc = [ExerciseChapterNode(label: "第一章", page: 10)]   // 第 10 页（0 起）之前的页目录管不到
+typealias Ex = (page: Int?, chapter: [String])
+let flatBook: [Ex] = [(5, []), (9, [])]
+check(ExerciseChapter.bookIsFlat(flatBook, toc: toc), "有题、都没章节、目录本来能分 → 不分章节的书")
+check(!ExerciseChapter.bookIsFlat([], toc: toc), "一道题都没有 → 不算（新书）")
+check(!ExerciseChapter.bookIsFlat([(5, []), (9, ["第一章 函数", "1.2 极限"])], toc: toc), "有一道带章节 → 不算")
+check(!ExerciseChapter.bookIsFlat(flatBook, toc: []), "没目录 → 不算（反正分不出来）")
+check(!ExerciseChapter.bookIsFlat([(2, []), (4, [])], toc: lateToc), "题都在目录管不到的页上 → 不算（不是用户选的不分）")
+check(ExerciseChapter.bookIsFlat([(2, []), (12, [])], toc: lateToc), "有一道落在目录里 → 算")
+check(!ExerciseChapter.bookIsFlat([(nil, [])], toc: toc), "不知道在哪页的题 → 不算")
+check(ExerciseChapter.usesTOC(.toc, existing: flatBook, toc: toc), "明说 toc → 按目录（不分章节的书也一样）")
+check(!ExerciseChapter.usesTOC(.flat, existing: [], toc: toc), "明说 none → 不按目录（新书也一样）")
+check(!ExerciseChapter.usesTOC(nil, existing: flatBook, toc: toc), "没说、不分章节的书 → 保持不分")
+check(ExerciseChapter.usesTOC(nil, existing: [], toc: toc), "没说、新书 → 照旧按目录")
+check(ExerciseChapter.usesTOC(nil, existing: [(5, ["前言"])], toc: toc), "没说、分了章节的书 → 照旧按目录")
+check(ExerciseChapterMode(rawValue: "none") == .flat && ExerciseChapterMode(rawValue: "toc") == .toc
+      && ExerciseChapterMode(rawValue: "flat") == nil, "线上写法 toc / none")
+// 移除分级 = 整本书的章节清空（`WorkspaceManager.clearExerciseChapters` 走的就是这条）；题目、收藏、错题、笔记不动
+let d9 = doc("练习册", "h9")
+var f1 = row(ok(input("f1", answer: "A", src: "book", number: "1"), seq: 0)!, doc: d9.id)
+f1.chapter = ["第一章 函数", "1.1 映射"]; f1.page = 3; f1.starred = true; f1.wrong = true
+var f2 = row(ok(input("f2", number: "2"), seq: 1)!, doc: d9.id); f2.chapter = ["第一章 函数"]; f2.page = 2
+try store.upsertExercises([f1, f2])
+try store.setExerciseNote(id: f1.id, "笔记", at: .now)
+let f1Before = try store.exercise(id: f1.id)!
+try store.setExerciseChapter(ids: [f1.id, f2.id], [], at: f1Before.updatedAt.addingTimeInterval(5))
+let f1After = try store.exercise(id: f1.id)!
+let f2After = try store.exercise(id: f2.id)
+check(f1After.chapter.isEmpty && f2After?.chapter.isEmpty == true, "整本书的章节清空")
+check(f1After.payload == f1Before.payload && f1After.number == "1" && f1After.starred && f1After.wrong
+      && f1After.note == "笔记", "题目内容、收藏、错题、笔记都没动")
+check(f1After.updatedAt > f1Before.updatedAt, "改了 updated_at（同步按它取新）")
+let d9rows = try store.exercises(documentId: d9.id).map { (page: $0.page, chapter: $0.chapter) }
+check(ExerciseChapter.bookIsFlat(d9rows, toc: toc), "清空之后这本书算不分章节 → 再导题不按目录分")
+let d9groups = try store.exerciseChapterCounts().filter { $0.documentId == d9.id }
+check(d9groups.count == 1 && d9groups[0].chapter.isEmpty && d9groups[0].count == 2,
+      "侧栏的章节分组只剩「没章节」一组（书那一行不再展开）")
+
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)
