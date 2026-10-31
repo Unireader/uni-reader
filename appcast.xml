@@ -9,6 +9,72 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.15</title>
+      <pubDate>Sat, 31 Oct 2026 01:36:01 +0000</pubDate>
+      <sparkle:version>57</sparkle:version>
+      <sparkle:shortVersionString>0.3.15</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>改进：习题</h4>
+<ul>
+<li>打开一组习题时接着上次做的往下：停在你上次在 App 里做的那道题之后、第一道还没做过的题；后面都做过了，就从头找第一道没做过的。App 开着期间切回这一组，仍停在原来那题。</li>
+</ul>
+<h4>改进：连接服务器</h4>
+<ul>
+<li>服务器工作区里还没下载的书，在侧栏显示下载图标；右键「从服务器下载」（可以多选一起下），下载进度显示在那一行。</li>
+<li>「工作区」窗口里，服务器上的工作区可以右键：</li>
+</ul>
+<p>  - 「下载到本机」：在这台 Mac 上存一份，并下载不超过设定大小的 PDF，进度显示在那一行。已经存过的显示「下载缺少的 PDF」；下载中可以「停止下载」。</p>
+<p>  - 「重命名…」：本机和服务器上的工作区都能改名。</p>
+<p>  - 「从服务器删除…」：要确认两次。服务器会把它在回收站里留 90 天；这台 Mac 上的副本移到废纸篓（原本就放在本机的那份会变回本地工作区，留在原处）。</p>
+<p>  - 改名和删除服务器上的工作区，需要先把服务器程序升级到新版。</p>
+<ul>
+<li>工具栏的工作区菜单和 Dock 图标的右键菜单里也能打开「工作区…」窗口。</li>
+</ul>
+<h4>改进：Markdown 笔记的引用目录</h4>
+<ul>
+<li>同一个引用目录可以在每台电脑上各记一个位置（比如用别的软件同步的同一个目录，在两台 Mac 上的路径不同）：在侧栏这个目录上右键「添加这台电脑上的位置…」；「位置」子菜单里勾着的是这台电脑正在用的那个，也可以在访达中显示或移除。这台电脑上一个位置都没有时，名字后面会注明「不在这台电脑上」。</li>
+<li>引用目录的列表会随工作区一起同步（离线副本和服务器都会带上）。</li>
+</ul>
+<h4>变更</h4>
+<ul>
+<li>去掉了平板用浏览器打开的网页采集页。平板请用 UniReader 安卓 App 扫 Mac 上的二维码连接。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.15">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Improvements: Exercises</h4>
+<ul>
+<li>Opening a set of exercises now picks up where you left off: it goes to the first question you haven't done after the one you last did in the app; if everything after it is done, it starts from the first question you haven't done. While the app stays open, switching back to a set still returns to the question you were on.</li>
+</ul>
+<h4>Improvements: Servers</h4>
+<ul>
+<li>Books in a server workspace that haven't been downloaded yet show a download icon in the sidebar. Right-click and choose "Download from Server" (you can select several at once); the progress shows in that row.</li>
+<li>In the Workspaces window, right-click a workspace on a server for:</li>
+</ul>
+<p>  - "Download to This Mac": keeps a copy on this Mac and downloads the PDFs up to the set size, with progress in that row. If a copy already exists it shows "Download Missing PDFs"; while downloading you can choose "Stop Downloading".</p>
+<p>  - "Rename…": workspaces on this Mac and on servers can both be renamed.</p>
+<p>  - "Delete from Server…": asks you to confirm twice. The server keeps it in its trash for 90 days. The copy on this Mac is moved to the Trash (if the workspace was originally a folder on this Mac, that folder becomes a local workspace again and stays where it is).</p>
+<p>  - Renaming or deleting a workspace on a server needs an updated server program.</p>
+<ul>
+<li>"Workspaces…" is now also in the toolbar's workspace menu and in the Dock icon's menu.</li>
+</ul>
+<h4>Improvements: Referenced folders for Markdown notes</h4>
+<ul>
+<li>A referenced folder can now remember a different location on each computer (for example, the same folder synced by another app lives at different paths on two Macs). Right-click the folder in the sidebar and choose "Add Location on This Mac…". The checked item in the Locations submenu is the one this computer uses; you can also show a location in Finder or remove it. If none of its locations is on this computer, its name is marked "not on this Mac".</li>
+<li>The list of referenced folders now syncs with the workspace (both offline copies and servers carry it).</li>
+</ul>
+<h4>Changes</h4>
+<ul>
+<li>The web capture page that tablets opened in a browser has been removed. On a tablet, use the UniReader Android app to scan the QR code on the Mac.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.15">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.15/UniReader-0.3.15.zip" length="17182672" type="application/octet-stream" sparkle:edSignature="vk19NukFR09PTDYtt6vHl/42+LcGWJKCCOupTSvyC5/lpGa9LKYo8srZCjuEAUK5lKtUOaxUw0IDK8YEYEmDDw==" />
+    </item>
+    <item>
       <title>v0.3.14</title>
       <pubDate>Thu, 29 Oct 2026 14:48:03 +0000</pubDate>
       <sparkle:version>56</sparkle:version>
