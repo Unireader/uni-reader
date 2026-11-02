@@ -33,6 +33,7 @@ extension MCPTools {
             "user_answer_correct": MCPSchema.boolean("whether that marked answer is right (absent when it is not judged yet)"),
             "starred": MCPSchema.boolean("starred by the user"),
             "in_mistakes": MCPSchema.boolean("in the user's mistake list"),
+            "tags": MCPSchema.array(of: MCPSchema.string("tag"), "free-form tags on the question (e.g. 真题, 模拟)"),
             "note": MCPSchema.string("the user's own note on this question (Markdown + $math$); absent when there is none"),
             "attempts": MCPSchema.integer("times practiced"),
             "correct": MCPSchema.integer("times answered correctly"),
@@ -146,6 +147,7 @@ extension MCPTools {
             "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels. When the book is grouped by the table of contents, omit it: UniReader looks up the page itself (unless the book is not grouped into chapters, see chapters); give it only when that would be wrong (e.g. exercises collected at the back of the book). When the user wants the questions grouped their own way — the headings printed on the pages, question groups such as [\"习题 2.3\", \"A 组\"], or however they say — give every question its full path (reuse the exact names of levels that already exist) and pass chapters \"none\". [] = no chapter."),
             "user_answer": MCPSchema.string("What the user already wrote for this question in the document. Choice: the option(s) marked — a highlight on an option (list_annotations) or a circled / written letter (render_page with include_marks) — e.g. \"B\". Subjective: their handwritten answer, transcribed. Saved as the user's earlier attempt; a choice answer is judged right away (a wrong one goes into the mistake list), a subjective one waits to be graded (grade_exercise_attempts). Omit when the user has not answered it."),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "Fill questions only: what the user already wrote in the document, one string per blank (\"\" for a blank left empty)."),
+            "tags": MCPSchema.array(of: MCPSchema.string("tag"), "Free-form tags for the question, e.g. [\"真题\", \"2023\"] — only when the user asks for tagging or the page itself says so (a section headed 历年真题). Added to the tags the question already has; never removes any."),
         ], required: ["page", "stem"])
         return MCPTool(
             name: "import_exercises",
@@ -214,6 +216,7 @@ extension MCPTools {
                     region: try regionArg(d["region"], at: path),
                     figure: try boolField(d, "has_figure", at: path),
                     chapter: try chapterArg(d["chapter"], at: path),
+                    tags: try stringsArg(d["tags"], "tags", at: path),
                     userAnswer: try stringField(d, "user_answer", at: path),
                     blanks: try blanksArg(d["blanks"], at: path),
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path))
@@ -264,6 +267,7 @@ extension MCPTools {
                 "pages": MCPSchema.pageSpec,
                 "filter": MCPSchema.enumeration(["all", "mistakes", "starred"], "Only the user's mistakes or starred ones", default: "all"),
                 "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Only this chapter and its sub-sections (path, top level first); [] = only questions with no chapter"),
+                "tag": MCPSchema.string("Only questions carrying this tag (case-insensitive)"),
                 "offset": MCPSchema.integer("Skip this many (paging)", min: 0),
                 "limit": MCPSchema.integer("At most this many (default 50)", min: 1, max: 200),
             ]) { a, _ in a }),
@@ -284,9 +288,10 @@ extension MCPTools {
             let offset = max(0, try args.int("offset") ?? 0)
             let limit = min(200, max(1, try args.int("limit") ?? 50))
             let chapter = try chapterArg(args.raw["chapter"], at: "arguments")
+            let tag = try args.string("tag")
             let r = try await MainActor.run {
                 try MCPFacade.shared.listExercises(documentId: docId, workspacePath: wsPath, allDocuments: all,
-                                                   pages: pages, filter: filter, chapter: chapter,
+                                                   pages: pages, filter: filter, chapter: chapter, tag: tag,
                                                    offset: offset, limit: limit)
             }
             let list = (r["exercises"] as? [MCPObject]) ?? []
@@ -329,6 +334,7 @@ extension MCPTools {
             "user_answer": MCPSchema.string("What the user wrote in the document: option letters (\"B\") for choice, transcribed text for subjective; replaces the earlier one; empty string removes it"),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "Fill questions: what the user wrote in the document, one string per blank; replaces the earlier one; all empty removes it"),
             "note": MCPSchema.string("The user's own note on this question, shown under the explanation once they have answered it. Replaces the whole note; empty string removes it. Write it only when the user asks you to. \(mathWriting)"),
+            "tags": MCPSchema.array(of: MCPSchema.string("tag"), "Free-form tags (e.g. 真题, 模拟). Replaces the whole set; [] removes them all. To add one, send the existing tags from list_exercises plus the new one."),
             "starred": MCPSchema.boolean("Star (收藏) the question (true) or take the star off (false); starred questions are listed under 收藏 in the app. Change it only when the user asks you to."),
         ], required: ["id"])
         return MCPTool(
@@ -363,7 +369,8 @@ extension MCPTools {
                     chapter: try chapterArg(d["chapter"], at: path), userAnswer: try stringField(d, "user_answer", at: path),
                     blanks: try blanksArg(d["blanks"], at: path),
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path),
-                    note: try stringField(d, "note", at: path), starred: try boolField(d, "starred", at: path))
+                    note: try stringField(d, "note", at: path), starred: try boolField(d, "starred", at: path),
+                    tags: try stringsArg(d["tags"], "tags", at: path))
             }
             let wsPath = try args.string("workspace")
             let r = try await MainActor.run { try MCPFacade.shared.updateExercises(patches, workspacePath: wsPath) }

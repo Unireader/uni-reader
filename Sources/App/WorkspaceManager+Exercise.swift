@@ -142,7 +142,9 @@ extension WorkspaceManager {
             let row = LibExercise(id: hit?.id ?? UUID().uuidString, documentId: documentId, page: d.page, seq: seq,
                                   kind: d.kind.rawValue, number: d.number, section: d.section,
                                   payload: d.payload.data(), starred: hit?.starred ?? false, wrong: hit?.wrong ?? false,
-                                  source: source, createdAt: hit?.createdAt ?? now, updatedAt: now, chapter: chapter)
+                                  source: source, createdAt: hit?.createdAt ?? now, updatedAt: now, chapter: chapter,
+                                  note: hit?.note ?? "",
+                                  tags: d.tags.map { ExerciseTag.merged(hit?.tags ?? [], $0) } ?? hit?.tags ?? [])
             if let hit, let old = try? JSONDecoder().decode(ExercisePayload.self, from: hit.payload),
                old.answer != d.payload.answer || old.accept != d.payload.accept || hit.kind != d.kind.rawValue {
                 rejudge.insert(hit.id)
@@ -255,6 +257,33 @@ extension WorkspaceManager {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let e = exercise(id: id), e.note != t else { return }
         do { try store?.setExerciseNote(id: id, t) } catch { lastError = "\(error)"; return }
+        exercisesChanged()
+    }
+
+    /// 题目标签（v24）：整组替换。规整后和库里一样就不写。
+    func setExerciseTags(id: String, _ tags: [String]) { setExerciseTags(ids: [id], tags, mode: .replace) }
+
+    enum TagMode { case replace, add, remove }
+
+    /// 几道题一起改标签（列表右键 / 练习页）：`replace` 整组换成 `tags`，`add` 并进去，`remove` 去掉这几个（不分大小写）。
+    func setExerciseTags(ids: [String], _ tags: [String], mode: TagMode) {
+        guard let store else { return }
+        let new = ExerciseTag.clean(tags)
+        var changes: [(id: String, tags: [String])] = []
+        for id in ids {
+            guard let e = exercise(id: id) else { continue }
+            let next: [String]
+            switch mode {
+            case .replace: next = new
+            case .add: next = ExerciseTag.merged(e.tags, new)
+            case .remove:
+                let drop = Set(new.map { $0.lowercased() })
+                next = e.tags.filter { !drop.contains($0.lowercased()) }
+            }
+            if next != e.tags { changes.append((id, next)) }
+        }
+        guard !changes.isEmpty else { return }
+        do { try store.setExercisesTags(changes) } catch { lastError = "\(error)"; return }
         exercisesChanged()
     }
 

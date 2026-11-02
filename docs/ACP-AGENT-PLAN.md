@@ -459,3 +459,19 @@ session_id（那段对话在原 Agent 里的 id，只对同一家有意义）, c
   82. 存的时候按停止：不存，提示「上下文没有保存」。
   83. 终端里的外部 Agent（经 MCP）：「列出 UniReader 里存的上下文」「读第一份」能做到；「把我们这次的对话存成上下文」→ 管理窗口里出现，Agent 列是它的名字。
   84. 连服务器的工作区：NAS 上的服务器换成新版之后，另一台设备同步后能看到这些上下文（旧版服务器不传，见 §12.1）。
+
+## 13. 多 Agent 并行（2026-11-02）
+
+用户要求：「多 Agent 并行」。做法：**一扇阅读窗口里同时开几段对话**，每段各连一个 Agent（可以不是同一个），后台的照常收回复、等批准。
+
+- 模型（`AgentPanelModel`）：`chats[窗口] = [AgentChat]`，`activeChatID[窗口]` 是眼前这段；最多 `maxParallel = 6` 段。
+  `chat(for:cwd:)` 仍返回**眼前这段**（框选截图 / `@` 引用 / 习题批改的投递都落在它上），`chats(for:cwd:)` 给全部，
+  `addChat(in:cwd:launch:)` / `selectChat` / `closeChat`（最后一段不关）。换工作目录 = 整批结束重建。`chatListRevision` 通知界面。
+- 进程：不变——一个「工作目录 + 启动配置」一个进程，同进程里每段对话是一个 ACP session（`AgentConnection.chats` 本来就按 sessionId 分发）。
+  所以两段都用 Kimi 只有一个 `kimi acp` 进程；选 Qwen / Claude 就多一个进程。
+- `AgentChat.pinnedLaunch`：并行对话新建时选的 Agent，钉死；点它的「新对话」不会被设置里的新选择换走。第一段（`nil`）保持原来的「跟设置、点新对话才换」。
+- 界面：Inspector「Agent」页外壳换成 `AgentChatsView`——顶上一条 `NSSegmentedControl`（一段一格，格上小图标：回答中 / 等你批准 / 出错）+「＋」（弹 Agent 列表：Kimi / Qwen / Claude + 设置里自填的）+「✕」（关眼前这段）；
+  下面是眼前这段的 `AgentChatNSView`。后台的对话**没有视图**，切回来才重建（长对话分段建视图的老办法照旧）。
+- 没做：不同段之间互相传话；每段单独的 MCP 口令；窗口之间共享并行对话（每扇窗口各管各的）。
+- 同日顺手：工具调用的标题只留第一行 160 字、工具输出入库前截到 8000 字（`AgentTranscript.clampTitle`）——
+  怀疑有的 Agent 把调用参数拼进标题，`import_exercises` 一次几十道题时单行标签每次量宽都排整段文字，拖动 Inspector 时主线程被占满。**这是推测，未经采样证实**，见 TODO。

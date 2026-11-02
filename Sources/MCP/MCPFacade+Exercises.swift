@@ -31,6 +31,8 @@ extension MCPFacade {
         var note: String? = nil
         /// 收藏 / 取消收藏（`EXERCISE-PLAN.md §15`）。用户状态，只在用户要求时改。错题本不开放给 Agent（拍板 ③：只能用户手动移出）。
         var starred: Bool? = nil
+        /// 题目标签（v24）：整组替换，`[]` = 清掉。nil = 不动。
+        var tags: [String]? = nil
     }
 
     /// `grade_exercise_attempts` 的一条。
@@ -70,7 +72,7 @@ extension MCPFacade {
 
     /// 列出习题。`allDocuments` = 整个工作区（此时 `documentId` 只用来找工作区）。`pages` 只在单篇时有意义。
     func listExercises(documentId: String?, workspacePath: String?, allDocuments: Bool, pages: String?,
-                       filter: String, chapter: [String]? = nil, offset: Int, limit: Int) throws -> MCPObject {
+                       filter: String, chapter: [String]? = nil, tag: String? = nil, offset: Int, limit: Int) throws -> MCPObject {
         let ws: WorkspaceManager
         var scope: ExerciseScope
         var title = ""
@@ -92,6 +94,9 @@ extension MCPFacade {
         if let chapter {
             let path = ExerciseChapter.clean(chapter)
             list = list.filter { ExerciseScope.chapterContains(path, $0.chapter) }
+        }
+        if let tag, !tag.trimmingCharacters(in: .whitespaces).isEmpty {
+            list = list.filter { ExerciseTag.has($0, tag.trimmingCharacters(in: .whitespaces)) }
         }
         if let pages, !allDocuments, case .document(let id) = scope {
             let count = ws.document(id: id)?.pageCount ?? 0
@@ -134,6 +139,7 @@ extension MCPFacade {
         if let x = e.payload.explanation { o["explanation"] = x }
         if let r = e.payload.region { o["region"] = r }
         if !e.note.isEmpty { o["note"] = e.note }
+        o["tags"] = e.tags
         return o
     }
 
@@ -211,6 +217,7 @@ extension MCPFacade {
                 n.chapter = d.chapter ?? e.chapter
                 if let v = p.note { n.note = v.trimmingCharacters(in: .whitespacesAndNewlines) }
                 if let v = p.starred { n.starred = v }
+                if let v = p.tags { n.tags = ExerciseTag.clean(v) }
                 next.append((n, d.userMark))
             }
         }

@@ -941,3 +941,23 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   86. 「上一题 / 下一题」在手势条上面、拇指好按；「答对自动下一题」不被截字。
   87. 答一道新题：顶栏「已做」+1、进度条前进；抽屉里那组的「已做/共」跟着变；书库页习题那组副标题对。
   88. 平板（模式2 连 Mac）：抽屉习题行尾也有「已做/共」（要新版 Mac）。
+
+## 19. 题目标签（2026-11-02，schema v24）
+
+用户要求（原话）：「支持给题目添加 tag，比如真题 tag 等等，自由添加」。
+
+- 存哪：`exercise` 表尾加 `tags TEXT NOT NULL DEFAULT ''`（JSON 字符串数组，同 `chapter`；空串 = 没有），列序在 `note` 后面。
+  🔴 三端契约：Mac `LibraryStore` / 安卓 `Schema.kt` + `MirrorFp.kt` / 离线镜像 `MirrorFp.specs` 同序；标签改动也改 `updated_at`，按它取新。
+  镜像向量 #30 / #33 随列规格变，新加 #35；安卓 `MirrorFpTest` 6 项通过。本轮安卓只建列，平板界面不显示、不筛选。
+- 规整（`ExerciseTag.clean`）：去首尾空白、折叠内部空白、不分大小写去重（留先写的）、单个最长 30 字、最多 20 个。
+- 写入：`upsertExercise` 的 `ON CONFLICT` 带 `tags`（所以调用方必须带着原标签写，`saveExercise` 用的是读出来的整行）；
+  `WorkspaceManager.importExercises` 里 `d.tags` 给了就**并进**已有标签（不冲掉用户加的），没给就沿用；
+  `setExerciseTags(ids:_:mode:)`（替换 / 添加 / 移除）一批一个事务，写完 `exercisesChanged()`。
+- MCP：`import_exercises` 每题 `tags`（并入）；`update_exercises` `tags`（整组替换）；`list_exercises` 新参数 `tag`，每题输出 `tags`。
+- 界面：练习页顶行「标签」按钮（显示前两枚 + `+N`，点开 `ExerciseTagEditor`：`NSTokenField`，候选 = 这一组已有标签）；
+  列表多一列「标签」，右键「编辑标签… / 添加标签… / 移除标签…」（单选 = 整组编辑，多选 = 并入 / 移除）；
+  顶栏「全部标签」下拉（这一组有标签才显示）→ `ExerciseDeck.tagFilter`，和「只看没做过 / 重做上次做错的」叠加生效。
+  平板开着同一组题时看到的是筛完的题（筛选值不上线）。
+- 验证：`spike/exercise-test.swift` 329 项、`spike/mirror-fp-test.swift` 67 项、`agent-context-test` 版本号跟到 24；Mac Debug 编译通过。
+  🔴 界面手感由用户实测。
+

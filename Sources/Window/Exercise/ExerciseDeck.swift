@@ -61,6 +61,10 @@ final class ExerciseDeck {
     private var redoing: Set<String> = []
     /// 顶上的两个开关（「只看没做过」/「重做上次做错的」，至多开一个）。换了就按它重取一份快照（`setFilter`）。
     private(set) var filter: ExerciseFilter = .all
+    /// 只看带这个标签的题（nil = 不限）。和上面的开关一起生效；平板不管它，只看到筛完的题。
+    private(set) var tagFilter: String?
+    /// 这一组里出现过的标签（顶栏的下拉列表；多的在前）。
+    var availableTags: [String] { ExerciseTag.all(in: scopeItems) }
     /// 这一组（不管筛选）有哪些题：「重做上次做错的」要按全组数一数有几道（开关能不能点）。
     private var scopeItems: [Exercise] = []
 
@@ -100,7 +104,19 @@ final class ExerciseDeck {
 
     var current: Exercise? { items.indices.contains(index) ? items[index] : nil }
 
-    private func passes(_ e: Exercise) -> Bool { filter.includes(e, stats: stats[e.id]) }
+    private func passes(_ e: Exercise) -> Bool {
+        filter.includes(e, stats: stats[e.id]) && (tagFilter.map { ExerciseTag.has(e, $0) } ?? true)
+    }
+
+    /// 换标签筛选：按新条件重取一份快照，尽量停在原来那道题上。
+    func setTagFilter(_ t: String?) {
+        guard t != tagFilter, workspace != nil else { return }
+        tagFilter = t
+        let curId = current?.id
+        resnapshot()
+        index = curId.flatMap { id in items.firstIndex { $0.id == id } } ?? 0
+        notify(.content)
+    }
 
     /// 换筛选：按新条件重取一份快照，尽量停在原来那道题上。这一轮答过什么不丢。
     /// 换成「重做上次做错的」= 开始重做一轮（`startLastWrongRound`）。
@@ -249,6 +265,11 @@ final class ExerciseDeck {
 
     /// 这一组里有没有正显示着作答的题（「全部重做」能不能点）。
     var hasShownAnswers: Bool { items.contains { answer(for: $0) != nil } }
+
+    /// 改标签（练习页 / 列表）。
+    func setTags(ids: [String], _ tags: [String], mode: WorkspaceManager.TagMode) {
+        workspace?.setExerciseTags(ids: ids, tags, mode: mode)
+    }
 
     func setStarred(_ e: Exercise, _ on: Bool) { workspace?.setExerciseStarred(id: e.id, on) }
     func setWrong(_ e: Exercise, _ on: Bool) { workspace?.setExerciseWrong(id: e.id, on) }

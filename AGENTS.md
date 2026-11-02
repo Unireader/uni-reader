@@ -56,7 +56,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `docs/INK-PAGING-PLAN.md` — 笔迹内存按页窗口加载/淘汰（**`session.strokes` 不再是全集**）；改笔迹代码前先读
 - **`docs/BINARY-INK-PLAN.md`** — 笔迹点集二进制（schema v18，`points` / `points_at` 两列；payload 不再存点，开库后台整理老行）；改笔迹读写 / 落库前先读
 - `docs/MCP-PLAN.md` — MCP 服务（内置 HTTP 端点给外部 Agent）；§15/§16/§17 是实现记录
-- `docs/ACP-AGENT-PLAN.md` — Agent 面板（ACP 客户端）；§2 fork 做法、§7 Markdown 正文、§8 `@` 选文件、§12 Agent 上下文（v23 `agent_context`：Agent 写的交接摘要，换 Agent 接着聊）
+- `docs/ACP-AGENT-PLAN.md` — Agent 面板（ACP 客户端）；§2 fork 做法、§7 Markdown 正文、§8 `@` 选文件、§12 Agent 上下文（v23 `agent_context`：Agent 写的交接摘要，换 Agent 接着聊）、§13 多 Agent 并行（一扇窗口几段对话，`AgentChatsView` 标签条）
 - `docs/IMAGE-NOTE-PLAN.md` — 图片笔记（note kind=6 + `image` 表 v13 + `Images/`，内容寻址、待删除 30 天）
 - `docs/SCAN-ALIGN-PLAN.md` — 扫描页对齐（每页旋转+平移，按内容哈希记）：**开着时对齐后的页面就是页面坐标**；变换/`page_align`(v14)/`displayKey` 是三端契约
 - `docs/SCAN-ENHANCE-PLAN.md` — 扫描页增强（出图时处理、不改 PDF）：算法版已落地，AI 调研暂停、接着做看 §3.5
@@ -69,7 +69,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   §10 安卓两种模式（模式2 与 Mac 共用同一份进度，协议 `docs/PROTOCOL.md §4.9`）+ 离线镜像同步习题；
   §11 填空 / 主观题（v21：手写小画板、自己判、Agent 经 MCP 读作答并批改；本轮平板只显示题干）；
   §12 题目笔记（v22 `exercise.note`，判完才显示）+ 顶栏「重做上次做错的」（只练上一次结果是错的题；本轮只做 Mac）；
-  §17 答对自动下一题（练习页底部开关，Mac + 安卓）
+  §17 答对自动下一题（练习页底部开关，Mac + 安卓）；
+  §19 题目标签（v24 `exercise.tags`，自由添加，练习页 / 列表 / 顶栏筛选 + MCP `tags`）
 - `docs/SIDEBAR-DRAG-PLAN.md` — 侧栏拖拽排序（系统 `NSOutlineView` 拖放、同一组里换位置；书库 / 笔记 / 画板 / 练习库；顺序存哪）
 - `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行）
 - `docs/REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动

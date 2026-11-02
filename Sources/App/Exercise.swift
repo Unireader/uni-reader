@@ -130,6 +130,8 @@ struct Exercise: Identifiable, Equatable {
     var chapter: [String]
     /// 用户给这道题写的笔记（Markdown + `$…$`），空 = 没写（v22，`EXERCISE-PLAN.md §12`）。
     var note: String
+    /// 题目标签（v24，自由添加：真题 / 模拟 …）；已规整（`ExerciseTag.clean`），空 = 没有。
+    var tags: [String]
 
     /// 库行解码。payload 坏了 / 题型不认识（以后的新题型）→ nil，调用方跳过这一行。
     init?(row: LibExercise) {
@@ -139,14 +141,14 @@ struct Exercise: Identifiable, Equatable {
         self.kind = kind; number = row.number; section = row.section; payload = p
         starred = row.starred; wrong = row.wrong; source = row.source
         createdAt = row.createdAt; updatedAt = row.updatedAt
-        chapter = row.chapter; note = row.note
+        chapter = row.chapter; note = row.note; tags = row.tags
     }
 
     func toRow() -> LibExercise {
         LibExercise(id: id, documentId: documentId, page: page, seq: seq, kind: kind.rawValue,
                     number: number, section: section, payload: payload.data(),
                     starred: starred, wrong: wrong, source: source, createdAt: createdAt, updatedAt: updatedAt,
-                    chapter: chapter, note: note)
+                    chapter: chapter, note: note, tags: tags)
     }
 
     var hasAnswer: Bool { payload.answer.contains { !$0.isEmpty } }
@@ -410,6 +412,8 @@ struct ExerciseDraft: Equatable {
     var userAnswer: [String]? = nil
     /// 填空 / 主观题书上的作答（Agent 转写的文字）。nil = 没给；`isEmpty` = 撤掉原来那条。
     var userResponse: ExerciseResponse? = nil
+    /// Agent 给的标签（已规整）。nil = 没给，已有的题标签不动；给了 = 并进已有的标签（不会冲掉用户加的）。
+    var tags: [String]? = nil
 
     /// 书上的作答，统一成一份（nil = 没给；空 = 撤掉）。
     var userMark: ExerciseResponse? {
@@ -432,6 +436,7 @@ struct ExerciseInput {
     var region: [Double]?
     var figure: Bool?
     var chapter: [String]? = nil
+    var tags: [String]? = nil
     var userAnswer: String? = nil
     /// 填空题的空：每空一个参考答案（可空）+ 另外认可的写法。nil = 没给。
     var blanks: [(answer: String?, accept: [String])]? = nil
@@ -551,7 +556,7 @@ enum ExerciseImport {
                                       number: (i.number ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                                       section: (i.section ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                                       payload: payload, chapter: i.chapter.map(ExerciseChapter.clean),
-                                      userAnswer: userAnswer))
+                                      userAnswer: userAnswer, tags: i.tags.map(ExerciseTag.clean)))
     }
 
     /// 填空 / 主观题（`EXERCISE-PLAN.md §11.1`）：没有选项。填空的参考答案在 `blanks[].answer`（要么每空都给、要么都不给），
@@ -625,7 +630,7 @@ enum ExerciseImport {
                                       blanks: blanks, accept: accept)
         return .success(ExerciseDraft(page: i.page, seq: seq, kind: kind, number: trim(i.number), section: trim(i.section),
                                       payload: payload, chapter: i.chapter.map(ExerciseChapter.clean),
-                                      userResponse: user))
+                                      userResponse: user, tags: i.tags.map(ExerciseTag.clean)))
     }
 
     private static func answerSource(_ i: ExerciseInput, hasAnswer: Bool) -> Result<String?, Rejected> {
@@ -657,6 +662,7 @@ enum ExerciseImport {
                               answerSource: e.payload.answerSource,
                               explanation: e.payload.explanation, region: e.payload.region, figure: e.payload.figure,
                               chapter: e.chapter)
+        i.tags = e.tags
         if e.kind == .fill { i.blanks = blankInputs(of: e) }
         return i
     }
@@ -794,6 +800,46 @@ enum ExerciseChapterMode: String {
     case toc
     /// 不分章节：没明确给 `chapter` 的题一律不设（线上写 `"none"`；Swift 里别叫 `none`，会和 `Optional.none` 混）。
     case flat = "none"
+}
+
+/// 题目标签（v24）：自由文字，用户 / Agent 随便加（真题、模拟、2023 …）。
+enum ExerciseTag {
+    static let maxCount = 20
+    static let maxLength = 30
+
+    /// 规整：去首尾空白、折叠内部空白、去掉空的、按不分大小写去重（留先写的）、截断过长的、最多 `maxCount` 个。
+    static func clean(_ tags: [String]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for raw in tags {
+            let t = raw.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            let name = String(t.prefix(maxLength))
+            guard !name.isEmpty, seen.insert(name.lowercased()).inserted else { continue }
+            out.append(name)
+            if out.count == maxCount { break }
+        }
+        return out
+    }
+
+    /// 把一段输入拆成标签：逗号 / 顿号 / 分号 / 换行分隔（输入框里敲「真题, 2023」）。
+    static func parse(_ text: String) -> [String] {
+        clean(text.components(separatedBy: CharacterSet(charactersIn: ",，、;；\n")))
+    }
+
+    /// 并集：先 `base` 后 `extra`，规整后返回。
+    static func merged(_ base: [String], _ extra: [String]) -> [String] { clean(base + extra) }
+
+    /// 一组题里出现过的标签（按出现的题数多的在前，同数按字母序）。
+    static func all(in exercises: [Exercise]) -> [String] {
+        var count: [String: Int] = [:]
+        var spelling: [String: String] = [:]
+        for e in exercises { for t in e.tags { let k = t.lowercased(); count[k, default: 0] += 1; spelling[k] = spelling[k] ?? t } }
+        return count.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.compactMap { spelling[$0.key] }
+    }
+
+    static func has(_ e: Exercise, _ tag: String) -> Bool {
+        e.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame }
+    }
 }
 
 enum ExerciseChapter {

@@ -44,7 +44,7 @@ func row(_ d: ExerciseDraft, doc: String, id: String = UUID().uuidString) -> Lib
 }
 
 print("— 建表")
-check(LibraryStore.schemaVersion == 23, "schema 版本 23（v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记；v23 = Agent 上下文）")
+check(LibraryStore.schemaVersion == 24, "schema 版本 24（v24 = 题目标签；v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记；v23 = Agent 上下文）")
 check((try? store.exercises()) != nil, "exercise 表可查")
 
 print("— 校验与规整")
@@ -861,6 +861,29 @@ let book = gtree.first { $0.scope == .document(dd.id) }
 check(book?.done == 2 && book?.count == 4, "书那一行：2/4")
 check(book?.children.first?.done == 2 && book?.children.first?.children.first?.done == 1, "整棵树都填上了")
 check(gtree[1].done == nil && gtree[0].done == 2 && gtree[2].done == 1, "全部 / 错题本（不显示）/ 收藏")
+
+print("— 题目标签（v24）")
+check(ExerciseTag.clean([" 真题 ", "真题", "2023", "", "Past  Paper", "past paper"]) == ["真题", "2023", "Past Paper"], "规整：去空白 / 去重（不分大小写）/ 折叠空格")
+check(ExerciseTag.parse("真题，2023、模拟;真题") == ["真题", "2023", "模拟"], "parse 按中英文逗号 / 顿号 / 分号拆")
+check(ExerciseTag.clean((0..<30).map { "t\($0)" }).count == ExerciseTag.maxCount, "最多 \(ExerciseTag.maxCount) 个")
+check(ExerciseTag.clean([String(repeating: "长", count: 80)])[0].count == ExerciseTag.maxLength, "过长截断")
+do {
+    let tdoc = doc("标签册", "htag").id
+    let dt = ok(input("标签题一", answer: "A", src: "book", number: "1"))!
+    var r1 = row(dt, doc: tdoc, id: "tag-ex-1")
+    r1.tags = ["真题"]
+    try store.upsertExercise(r1)
+    var back = try store.exercise(id: "tag-ex-1")
+    check(back?.tags == ["真题"], "标签写进库、读回来")
+    // 重导同一道题（upsert，不带标签）：写什么就是什么——保留旧标签是 WorkspaceManager.importExercises 的事
+    try store.setExerciseTags(id: "tag-ex-1", ["真题", "2023"])
+    back = try store.exercise(id: "tag-ex-1")
+    check(back?.tags == ["真题", "2023"], "setExerciseTags 整组替换")
+    try store.setExercisesTags([("tag-ex-1", [])])
+    back = try store.exercise(id: "tag-ex-1")
+    check(back?.tags == [], "清空后是空数组")
+    check(Exercise(row: back!)?.tags == [], "App 层 Exercise 带 tags")
+} catch { check(false, "标签读写抛错：\(error)") }
 
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

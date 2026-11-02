@@ -191,7 +191,10 @@ final class MCPServer: ObservableObject {
     for handwriting), compare with the reference answer, and save right / wrong plus feedback with \
     grade_exercise_attempts. Each exercise can also carry the user's own note (note in list_exercises; it is not a \
     text note on the PDF): change it with update_exercises note only when the user asks. To star (收藏) or unstar \
-    questions when the user asks, find them with list_exercises and pass update_exercises starred true / false.
+    questions when the user asks, find them with list_exercises and pass update_exercises starred true / false. \
+    Questions can carry free-form tags (tags in list_exercises, e.g. 真题 or 模拟): import_exercises tags adds tags \
+    (only when the user asks or the page itself says so), update_exercises tags replaces the whole set, \
+    list_exercises tag lists one tag's questions.
     """
 
     /// 能访问到的端点（面板展示）：回环模式只有 127.0.0.1；所有接口模式 = 本机每个 IP 各一个（`NetWatch`，

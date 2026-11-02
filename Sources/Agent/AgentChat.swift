@@ -68,7 +68,7 @@ struct AgentReaderContext: Equatable {
     /// 两种笔记的区别（2026-10-05 用户：Agent 要分清文字笔记和 Markdown 笔记）。只说「笔记」时按当前标签页猜（用户定），
     /// 上面按标签页各接一句。MCP 的 `instructions` 里也写了一遍，但不是每个 Agent 都读它，这里再带上。
     /// 习题（`EXERCISE-PLAN.md §3.2`）：用户说「识别习题 / 把这几页的题导进来」时 Agent 该用哪几个工具。理由同上。
-    private static let exercises = "Exercises (习题) are questions saved for the user to practice (练习 / 错题本 / 收藏): single / multiple choice, fill in the blank (type fill, one entry in blanks per blank) and subjective questions (type subjective — calculation, proof, short answer; answer = the reference answer). When the user says 习题册, 练习册 or 练习库 they mean these Exercises in UniReader (the 习题 part of the sidebar), not a file or a PDF. To recognize the exercises on some pages: look at each page with render_page (and read_pages for the text), transcribe every question exactly without rewording, and save them with import_exercises (page, number, stem, options or blanks, plus answer + answer_source only when the answer is printed or you are sure). The first time you import into a book (list_exercises shows no questions in it yet), ask the user how to group its questions into chapters: by the PDF's table of contents (chapters \"toc\"), their own way (printed headings, question groups, any number of levels: give each question its chapter path, top level first, and pass chapters \"none\"), or not at all (chapters \"none\"). Later imports follow the book's grouping: for table-of-contents or ungrouped books leave chapters out (a book whose chapters the user removed stays flat); for a book grouped the user's own way keep giving every question its chapter, reusing the existing level names. Regroup existing questions with update_exercises chapter when the user asks. If the user already answered on the page — usually by highlighting an option (list_annotations, kinds highlight) or by circling / writing (render_page with include_marks) — pass it as user_answer (user_blanks for fill). Fill in answers later from an answer key with list_exercises + update_exercises. To grade the user's fill-in or subjective answers: list_exercise_attempts (ungraded_only, or the exercise_ids you were given), render_exercise_answer for handwriting, compare with the reference answer, then grade_exercise_attempts with correct + short feedback in the user's language. Each exercise can also carry the user's own note (题目笔记, note in list_exercises — not a text note on the PDF); change it with update_exercises note only when the user asks. When the user asks to star (收藏 / 加星) or unstar questions, find them with list_exercises (filter starred lists the starred ones) and pass update_exercises starred true / false."
+    private static let exercises = "Exercises (习题) are questions saved for the user to practice (练习 / 错题本 / 收藏): single / multiple choice, fill in the blank (type fill, one entry in blanks per blank) and subjective questions (type subjective — calculation, proof, short answer; answer = the reference answer). When the user says 习题册, 练习册 or 练习库 they mean these Exercises in UniReader (the 习题 part of the sidebar), not a file or a PDF. To recognize the exercises on some pages: look at each page with render_page (and read_pages for the text), transcribe every question exactly without rewording, and save them with import_exercises (page, number, stem, options or blanks, plus answer + answer_source only when the answer is printed or you are sure). The first time you import into a book (list_exercises shows no questions in it yet), ask the user how to group its questions into chapters: by the PDF's table of contents (chapters \"toc\"), their own way (printed headings, question groups, any number of levels: give each question its chapter path, top level first, and pass chapters \"none\"), or not at all (chapters \"none\"). Later imports follow the book's grouping: for table-of-contents or ungrouped books leave chapters out (a book whose chapters the user removed stays flat); for a book grouped the user's own way keep giving every question its chapter, reusing the existing level names. Regroup existing questions with update_exercises chapter when the user asks. If the user already answered on the page — usually by highlighting an option (list_annotations, kinds highlight) or by circling / writing (render_page with include_marks) — pass it as user_answer (user_blanks for fill). Fill in answers later from an answer key with list_exercises + update_exercises. To grade the user's fill-in or subjective answers: list_exercise_attempts (ungraded_only, or the exercise_ids you were given), render_exercise_answer for handwriting, compare with the reference answer, then grade_exercise_attempts with correct + short feedback in the user's language. Each exercise can also carry the user's own note (题目笔记, note in list_exercises — not a text note on the PDF); change it with update_exercises note only when the user asks. When the user asks to star (收藏 / 加星) or unstar questions, find them with list_exercises (filter starred lists the starred ones) and pass update_exercises starred true / false. Questions can carry free-form tags (tags in list_exercises, e.g. 真题 or 模拟): import_exercises tags adds tags (only when the user asks or the page itself says so, such as a section headed 历年真题), update_exercises tags replaces the whole set (send the existing tags plus the new one to add), and list_exercises tag lists one tag's questions."
 
     /// Agent 上下文（`ACP-AGENT-PLAN.md §12`）：用户说「接着上次存的那个」时 Agent 该去哪找。理由同上。
     private static let contexts = "Agent contexts (Agent 上下文) are handoff summaries of earlier conversations, possibly with other agents, saved in this workspace. When the user asks to continue earlier work or mentions a saved context, find it with list_agent_contexts and read it with read_agent_context. The user saves one from the panel's Contexts menu; call save_agent_context only when the user asks you to."
@@ -168,12 +168,20 @@ final class AgentChat: ObservableObject {
     /// 上一轮回答什么时候结束的（收到 `session/prompt` 的应答）。认「轮次外推来的回复」用，见 `apply`。
     private var turnEndedAt: Date?
 
-    init(cwd: URL) { self.cwd = cwd }
+    /// 同一扇窗口里并行的几段对话靠它区分（`AgentPanelModel`）。
+    let id = UUID()
+    /// 这段对话钉死用哪个 Agent（并行对话新建时选的）。nil = 跟设置走（原来的行为：点「新对话」才换到设置里新选的）。
+    let pinnedLaunch: AgentConfig.Launch?
+
+    init(cwd: URL, launch: AgentConfig.Launch? = nil) {
+        self.cwd = cwd
+        pinnedLaunch = launch
+    }
 
     var isBusy: Bool { phase == .running || phase == .connecting || phase == .loading }
 
     /// 在跟谁说话：连着的进程按什么起的就是什么；还没连上 = 设置里现在选的。
-    private var launch: AgentConfig.Launch { connection?.launch ?? AgentConfig.current }
+    private var launch: AgentConfig.Launch { connection?.launch ?? pinnedLaunch ?? AgentConfig.current }
     var agentName: String { launch.displayName }
 
     // MARK: - 会话
@@ -190,7 +198,7 @@ final class AgentChat: ObservableObject {
     /// 设置里换了 Agent（连着的进程不是按现在的设置起的）：新对话换到新 Agent 上——**只有这里换**，
     /// 正在聊的那段不打断（用户 2026-10-13 定）。
     func newChat() {
-        let switching = connection.map { $0.launch != AgentConfig.current } ?? false
+        let switching = pinnedLaunch == nil && (connection.map { $0.launch != AgentConfig.current } ?? false)
         // 眼前这段还一句没说：它就是新的，别再建一个（空会话 Agent 也会记着，多了历史里一堆空条目）
         if sessionId != nil, items.isEmpty, phase == .idle, !switching { return }
         if phase == .running, let id = sessionId, let c = connection { Task { await c.cancel(id) } }
@@ -638,7 +646,7 @@ final class AgentChat: ObservableObject {
 
     private func connectionOrNew() throws -> AgentConnection {
         if let connection, !connection.isDead { return connection }
-        let c = AgentPanelModel.shared.connection(for: cwd)
+        let c = AgentPanelModel.shared.connection(for: cwd, launch: pinnedLaunch)
         connection = c
         return c
     }

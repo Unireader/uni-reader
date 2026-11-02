@@ -103,11 +103,23 @@ enum AgentTranscript {
 
     /// 工具名去掉 MCP 前缀：`mcp__unireader__get_state` → `get_state`。
     static func prettyTitle(_ t: String) -> String {
+        var t = t
         if t.hasPrefix("mcp__"), let r = t.range(of: "__", range: t.index(t.startIndex, offsetBy: 5)..<t.endIndex) {
-            return String(t[r.upperBound...])
+            t = String(t[r.upperBound...])
         }
-        return t
+        return clampTitle(t)
     }
+
+    /// 工具调用的标题只留第一行、最多 `maxTitle` 个字符。有的 Agent 把调用参数整段拼进标题（`import_exercises` 一次几十道题
+    /// 就是几万字），单行标签每次量宽 / 重排都要排整段文字，拖动窗口或 Inspector 时主线程被它占满。
+    static let maxTitle = 160
+    static func clampTitle(_ t: String) -> String {
+        let line = t.prefix(maxTitle * 4).split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+        return line.count > maxTitle ? String(line.prefix(maxTitle)) + "…" : line
+    }
+
+    /// 工具输出存进条目前的上限：界面只展示前 4000 字（`AgentChatNSView.tool`），其余没用，也别在每次增量更新时反复比较 / 拷贝。
+    static let maxOutput = 8000
 
     static func text(of block: ContentBlock) -> String? {
         switch block {
@@ -124,7 +136,7 @@ enum AgentTranscript {
             case .diff(let d): return String(format: L("Edited %@"), d.path)
             case .terminal: return nil
             }
-        }.joined(separator: "\n")
+        }.joined(separator: "\n").prefix(maxOutput).description
     }
 
     /// 应用一条更新。返回 true = 条目有变化（调用方据此决定要不要发 objectWillChange）。

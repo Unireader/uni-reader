@@ -1,0 +1,217 @@
+import AppKit
+import Combine
+
+/// Inspector「Agent」页的外壳：顶上一条标签（一段并行对话一格 + 新建 / 关闭），下面是眼前这段对话的 `AgentChatNSView`。
+///
+/// 并行 = 同一扇窗口里同时开几段对话，各自连一个 Agent（可以是不同的 Agent），后台的那几段照常收流式回复、
+/// 等批准——对话本身住在 `AgentPanelModel`，这里只是换着看。后台的对话没有视图，不占排版。
+/// 标签上的小图标：回答中 / 等你批准 / 出错；一眼看出哪段在等你。
+/// 🔴 系统控件（`NSSegmentedControl` + 按钮），不自绘。
+@MainActor
+final class AgentChatsView: NSView {
+    private let windowID: UUID
+    let cwd: URL
+    var workspaceName: String { didSet { chatView?.workspaceName = workspaceName } }
+    private(set) var chatView: AgentChatNSView?
+
+    private let strip = NSVisualEffectView()
+    private let stripLine = NSBox()
+    private let segments = NSSegmentedControl()
+    private let addButton = NSButton()
+    private let closeButton = NSButton()
+    private var bag = Set<AnyCancellable>()
+    private var chatBag = Set<AnyCancellable>()
+    private var stripKey = ""
+    private var refreshQueued = false
+
+    private static let stripHeight: CGFloat = 34
+
+    init(windowID: UUID, cwd: URL, workspaceName: String) {
+        self.windowID = windowID
+        self.cwd = cwd
+        self.workspaceName = workspaceName
+        super.init(frame: .zero)
+        strip.material = .headerView
+        strip.blendingMode = .withinWindow
+        stripLine.boxType = .separator
+        segments.segmentStyle = .automatic
+        segments.trackingMode = .selectOne
+        segments.target = self
+        segments.action = #selector(segmentPicked)
+        configure(addButton, symbol: "plus", tip: L("New Parallel Chat"), action: #selector(addPressed))
+        configure(closeButton, symbol: "xmark", tip: L("Close This Chat"), action: #selector(closePressed))
+        for v in [strip, stripLine, segments, addButton, closeButton] as [NSView] { addSubview(v) }
+
+        AgentPanelModel.shared.$chatListRevision
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.listChanged() }
+            .store(in: &bag)
+        listChanged()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    private func configure(_ b: NSButton, symbol: String, tip: String, action: Selector) {
+        b.bezelStyle = .toolbar
+        b.isBordered = true
+        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+        b.contentTintColor = .labelColor
+        b.imagePosition = .imageOnly
+        b.toolTip = tip
+        b.target = self
+        b.action = action
+    }
+
+    private var chats: [AgentChat] { AgentPanelModel.shared.chats(for: windowID, cwd: cwd) }
+
+    // MARK: - 刷新
+
+    /// 对话列表或选中的变了：换眼前的视图，重画标签条，重新订阅各段对话的状态。
+    private func listChanged() {
+        let list = chats
+        let active = AgentPanelModel.shared.chat(for: windowID, cwd: cwd)
+        if chatView?.chat !== active {
+            chatView?.removeFromSuperview()
+            let v = AgentChatNSView(chat: active, workspaceName: workspaceName, showsHeader: true)
+            chatView = v
+            addSubview(v)
+            needsLayout = true
+        }
+        chatBag.removeAll()
+        for c in list {
+            c.objectWillChange
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in self?.queueStripRefresh() }
+                .store(in: &chatBag)
+        }
+        refreshStrip()
+    }
+
+    /// 流式回复每个碎片都会触发：合并到下一拍，标签没变就什么都不做（`refreshStrip` 比的是标签内容）。
+    private func queueStripRefresh() {
+        guard !refreshQueued else { return }
+        refreshQueued = true
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshQueued = false
+            self?.refreshStrip()
+        }
+    }
+
+    private struct Tab { var label: String; var symbol: String?; var tip: String }
+
+    private func status(_ c: AgentChat) -> (symbol: String?, tip: String) {
+        if !c.permissions.isEmpty { return ("exclamationmark.bubble", L("Waiting for your approval")) }
+        if case .failed = c.phase { return ("exclamationmark.triangle", L("Failed")) }
+        if c.isBusy { return ("ellipsis.bubble", L("Working")) }
+        return (nil, "")
+    }
+
+    private func tabs() -> [Tab] {
+        let list = chats
+        var seen: [String: Int] = [:]
+        return list.map { c in
+            let base = Self.shortTitle(c)
+            seen[base, default: 0] += 1
+            let s = status(c)
+            let label = seen[base]! > 1 ? "\(base) \(seen[base]!)" : base
+            return Tab(label: label, symbol: s.symbol, tip: [c.agentName, s.tip].filter { !$0.isEmpty }.joined(separator: " · "))
+        }
+    }
+
+    private static func shortTitle(_ c: AgentChat) -> String {
+        let t = (c.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return c.agentName }
+        return t.count > 10 ? String(t.prefix(10)) + "…" : t
+    }
+
+    private func refreshStrip() {
+        let list = chats
+        let t = tabs()
+        let activeID = AgentPanelModel.shared.activeChatID(for: windowID)
+        let key = t.map { "\($0.label)|\($0.symbol ?? "")" }.joined(separator: "\u{1}") + "#\(activeID?.uuidString ?? "")"
+        guard key != stripKey else { return }
+        let countChanged = segments.segmentCount != t.count
+        stripKey = key
+        segments.segmentCount = t.count
+        for (i, tab) in t.enumerated() {
+            segments.setLabel(tab.label, forSegment: i)
+            segments.setImage(tab.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }, forSegment: i)
+            segments.setToolTip(tab.tip, forSegment: i)
+            segments.setWidth(0, forSegment: i)
+        }
+        if let activeID, let i = list.firstIndex(where: { $0.id == activeID }) { segments.selectedSegment = i }
+        closeButton.isHidden = list.count < 2
+        addButton.isEnabled = list.count < AgentPanelModel.maxParallel
+        if countChanged { needsLayout = true }
+    }
+
+    // MARK: - 操作
+
+    @objc private func segmentPicked() {
+        let list = chats
+        let i = segments.selectedSegment
+        guard list.indices.contains(i) else { return }
+        AgentPanelModel.shared.selectChat(list[i].id, in: windowID)
+    }
+
+    @objc private func closePressed() {
+        guard let id = AgentPanelModel.shared.activeChatID(for: windowID) else { return }
+        AgentPanelModel.shared.closeChat(id, in: windowID)
+    }
+
+    /// 新建并行对话：弹出可选的 Agent（预设 + 设置里自填的那个）。
+    @objc private func addPressed() {
+        let menu = NSMenu()
+        for l in Self.choices() {
+            let it = NSMenuItem(title: l.displayName, action: #selector(menuPicked(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = LaunchBox(l)
+            menu.addItem(it)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: addButton.bounds.height + 4), in: addButton)
+    }
+
+    private final class LaunchBox: NSObject {
+        let launch: AgentConfig.Launch
+        init(_ l: AgentConfig.Launch) { launch = l }
+    }
+
+    @objc private func menuPicked(_ sender: NSMenuItem) {
+        guard let box = sender.representedObject as? LaunchBox else { return }
+        if AgentPanelModel.shared.addChat(in: windowID, cwd: cwd, launch: box.launch) == nil { NSSound.beep() }
+    }
+
+    /// 可选的 Agent：三个预设；设置里自填的命令不在预设里时也列出来。显示名取命令名（Kimi / Qwen / Claude-agent-acp）。
+    private static func choices() -> [AgentConfig.Launch] {
+        var out = AgentConfig.Preset.allCases.map {
+            AgentConfig.Launch(command: $0.command, arguments: $0.arguments.split(whereSeparator: \.isWhitespace).map(String.init))
+        }
+        let cur = AgentConfig.current
+        if !out.contains(cur) { out.insert(cur, at: 0) }
+        return out
+    }
+
+    // MARK: - 排版
+
+    override func layout() {
+        super.layout()
+        let b = bounds
+        let h = Self.stripHeight
+        strip.frame = NSRect(x: 0, y: 0, width: b.width, height: h)
+        stripLine.frame = NSRect(x: 0, y: h, width: b.width, height: 1)
+        let pad: CGFloat = 10
+        var right = b.width - pad
+        for btn in [addButton, closeButton] where !btn.isHidden {
+            btn.sizeToFit()
+            let w = max(28, btn.frame.width)
+            btn.frame = NSRect(x: right - w, y: (h - 24) / 2, width: w, height: 24)
+            right = btn.frame.minX - 6
+        }
+        let sh = segments.intrinsicContentSize.height
+        segments.frame = NSRect(x: pad, y: (h - sh) / 2, width: max(60, right - pad - 2), height: sh)
+        segments.segmentDistribution = .fillEqually
+        chatView?.frame = NSRect(x: 0, y: h + 1, width: b.width, height: max(0, b.height - h - 1))
+    }
+
+    override var isFlipped: Bool { true }
+}

@@ -8,7 +8,7 @@ import CoreGraphics    // Linux 上 CGRect 等由 Foundation 提供（服务器�
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 23
+    static let schemaVersion = 24
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -317,6 +317,7 @@ final class LibraryStore {
         -- page 0 起（可空）；seq = 同页内的先后；kind 0 单选 / 1 多选；starred 收藏；wrong 在错题本里。
         -- chapter = 所属章节在目录里的路径，JSON 字符串数组（从顶层到最深一级，`["第二章 导数","2.3 求导法则"]`），
         -- 空串 = 没设章节（§2.3）。
+        -- v24：tags = 题目标签（真题 / 模拟 …，自由添加），JSON 字符串数组，空串 = 没有；重导题目时 Agent 给了才覆盖。
         -- v22（§12）：note = 用户给这道题写的笔记（Markdown + `$…$`），空串 = 没写；同收藏 / 错题是用户状态，重导题目不动它。
         -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
         CREATE TABLE IF NOT EXISTS exercise (
@@ -334,7 +335,8 @@ final class LibraryStore {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           chapter TEXT NOT NULL DEFAULT '',
-          note TEXT NOT NULL DEFAULT ''
+          note TEXT NOT NULL DEFAULT '',
+          tags TEXT NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_exercise_doc ON exercise(document_id, page, seq);
         -- 每次作答一行。answer：选择题 = 选中的选项键按字母序拼起来（"B" / "AC"）；填空 = JSON 字符串数组（每空一格）；
@@ -425,6 +427,8 @@ final class LibraryStore {
         // v21 → v22：题目笔记（`EXERCISE-PLAN.md §12`）。🔴 顺序与安卓 `Schema.ADD_COLUMNS` 一致（也是 `MirrorFp.specs` 的列序）。
         try addColumnIfMissing("exercise", "note", "TEXT NOT NULL DEFAULT ''")
         // v22 → v23 只新增 agent_context 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
+        // v23 → v24：题目标签。🔴 顺序与安卓 `Schema.ADD_COLUMNS` 一致（也是 `MirrorFp.specs` 的列序）。
+        try addColumnIfMissing("exercise", "tags", "TEXT NOT NULL DEFAULT ''")
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -1284,16 +1288,16 @@ final class LibraryStore {
     /// 章节也在这里写（它是题的归属，不是用户状态；要不要沿用旧值由上层定，见 `WorkspaceManager.importExercises`）。
     func upsertExercise(_ e: LibExercise) throws {
         try db.run("""
-        INSERT INTO exercise(id,document_id,page,seq,kind,number,section,payload,starred,wrong,source,created_at,updated_at,chapter,note)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO exercise(id,document_id,page,seq,kind,number,section,payload,starred,wrong,source,created_at,updated_at,chapter,note,tags)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET document_id=excluded.document_id, page=excluded.page, seq=excluded.seq,
           kind=excluded.kind, number=excluded.number, section=excluded.section, payload=excluded.payload,
-          source=excluded.source, updated_at=excluded.updated_at, chapter=excluded.chapter
+          source=excluded.source, updated_at=excluded.updated_at, chapter=excluded.chapter, tags=excluded.tags
         """, [.text(e.id), e.documentId.map { .text($0) } ?? .null, e.page.map { .int(Int64($0)) } ?? .null,
               .int(Int64(e.seq)), .int(Int64(e.kind)), .text(e.number), .text(e.section), .blob(e.payload),
               .int(e.starred ? 1 : 0), .int(e.wrong ? 1 : 0), .text(e.source),
               .text(ISO.string(e.createdAt)), .text(ISO.string(e.updatedAt)), .text(Self.chapterText(e.chapter)),
-              .text(e.note)])
+              .text(e.note), .text(Self.chapterText(e.tags))])
     }
 
     /// 章节路径 ↔ 库里那一列（JSON 字符串数组；空路径存空串，便于 `chapter=''` 直接筛）。
@@ -1360,6 +1364,15 @@ final class LibraryStore {
     func setExerciseWrong(id: String, _ on: Bool, at: Date = .now) throws {
         try db.run("UPDATE exercise SET wrong=?, updated_at=? WHERE id=?",
                    [.int(on ? 1 : 0), .text(ISO.string(at)), .text(id)])
+    }
+    /// 题目标签（v24）：整组替换。改 `updated_at`，离线镜像按它取新。
+    func setExerciseTags(id: String, _ tags: [String], at: Date = .now) throws {
+        try db.run("UPDATE exercise SET tags=?, updated_at=? WHERE id=?",
+                   [.text(Self.chapterText(tags)), .text(ISO.string(at)), .text(id)])
+    }
+    /// 一批题的标签一个事务。
+    func setExercisesTags(_ list: [(id: String, tags: [String])], at: Date = .now) throws {
+        try db.transaction { for c in list { try setExerciseTags(id: c.id, c.tags, at: at) } }
     }
     /// 题目笔记（v22，`EXERCISE-PLAN.md §12`）：空串 = 删掉笔记。改 `updated_at`，离线镜像按它取新。
     func setExerciseNote(id: String, _ note: String, at: Date = .now) throws {
@@ -1811,7 +1824,8 @@ final class LibraryStore {
                     createdAt: ISO.date(r["created_at"] as? String) ?? .now,
                     updatedAt: ISO.date(r["updated_at"] as? String) ?? .now,
                     chapter: chapterPath(r["chapter"] as? String ?? ""),
-                    note: r["note"] as? String ?? "")
+                    note: r["note"] as? String ?? "",
+                    tags: chapterPath(r["tags"] as? String ?? ""))
     }
     private static func exerciseAttempt(_ r: [String: Any]) -> LibExerciseAttempt {
         LibExerciseAttempt(id: r["id"] as? String ?? "", exerciseId: r["exercise_id"] as? String ?? "",

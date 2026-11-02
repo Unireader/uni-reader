@@ -183,6 +183,8 @@ struct LibExercise: Identifiable, Equatable {
     var chapter: [String] = []
     /// v22：用户给这道题写的笔记（Markdown + `$…$`）；空 = 没写（`EXERCISE-PLAN.md §12`）。
     var note: String = ""
+    /// v24：题目标签（自由添加，如「真题」）；空 = 没有。库里存 JSON 字符串数组，同 `chapter`。
+    var tags: [String] = []
 }
 
 /// 一次作答（`exercise_attempt` 表，v20）。`answer`：选择题 = 选中的选项键按字母序拼起来；填空 = JSON 字符串数组（每空一格）；

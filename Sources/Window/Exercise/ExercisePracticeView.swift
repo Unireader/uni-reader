@@ -32,6 +32,7 @@ final class ExercisePracticeView: NSView {
     private let doc = FlippedDocView()
     private let metaLabel = NSTextField(labelWithString: "")
     private let starButton = NSButton()
+    private let tagsButton = NSButton()
     private let originalButton = NSButton()
     private let sourceButton = NSButton()
     private let stemView = AgentMarkdownView(text: "", fontSize: 16, documentId: "exercise-stem")
@@ -100,6 +101,7 @@ final class ExercisePracticeView: NSView {
         metaLabel.textColor = .labelColor
         metaLabel.lineBreakMode = .byTruncatingTail
         setup(starButton, symbol: "star", title: L("Star"), action: #selector(toggleStar))
+        setup(tagsButton, symbol: "tag", title: L("Tags"), action: #selector(editTags))
         setup(originalButton, symbol: "photo", title: L("Original"), action: #selector(toggleOriginal))
         setup(sourceButton, symbol: "doc.text.magnifyingglass", title: L("Open Page"), action: #selector(openSource))
         originalButton.setButtonType(.pushOnPushOff)
@@ -141,7 +143,7 @@ final class ExercisePracticeView: NSView {
         noteView.onHeightChange = { [weak self] in self?.needsLayout = true }
         noteView.onSave = { [weak self] id, text in self?.deck.setNote(id: id, text) }
         noteView.onEndEditing = { [weak self] in self?.takeFocus() }
-        for v in [metaLabel, starButton, originalButton, sourceButton, stemView, originalImage, freeView, submitButton,
+        for v in [metaLabel, starButton, tagsButton, originalButton, sourceButton, stemView, originalImage, freeView, submitButton,
                   resultIcon, resultLabel, historyNote, rightButton, wrongButton, flipButton, askAgentButton,
                   feedbackTitle, feedbackView, agentNote, markNote, explanationTitle, explanationView, noteView,
                   retryButton, mistakeButton, emptyLabel] as [NSView] { doc.addSubview(v) }
@@ -239,6 +241,8 @@ final class ExercisePracticeView: NSView {
         metaLabel.toolTip = e.chapter.isEmpty ? nil : ExerciseChapter.display(e.chapter)
         starButton.image = NSImage(systemSymbolName: e.starred ? "star.fill" : "star", accessibilityDescription: nil)
         starButton.title = e.starred ? L("Starred") : L("Star")
+        tagsButton.title = e.tags.isEmpty ? L("Tags") : Self.tagsTitle(e.tags)
+        tagsButton.toolTip = e.tags.isEmpty ? L("Add tags to this question, such as Past Paper") : e.tags.joined(separator: "\n")
         sourceButton.isEnabled = e.documentId != nil && e.page != nil
         originalButton.isEnabled = e.documentId != nil && e.page != nil
         let showOriginal = originalShown[e.id] ?? e.payload.figure
@@ -517,6 +521,20 @@ final class ExercisePracticeView: NSView {
         deck.setStarred(e, !e.starred)   // 库变了 → `exerciseRevision` → 标签视图 reload → show()
     }
 
+    /// 按钮上最多露出前两枚标签，其余写「+N」。
+    private static func tagsTitle(_ tags: [String]) -> String {
+        let shown = tags.prefix(2).joined(separator: " · ")
+        return tags.count > 2 ? shown + " +\(tags.count - 2)" : shown
+    }
+
+    @objc private func editTags() {
+        guard let e = deck.current, let win = window else { return }
+        ExerciseTagEditor.present(on: win, kind: .edit, count: 1, current: e.tags, suggestions: deck.availableTags) { [weak self] tags in
+            self?.deck.setTags(ids: [e.id], tags, mode: .replace)
+            self?.takeFocus()
+        }
+    }
+
     @objc private func toggleMistake() {
         guard let e = deck.current, e.wrong else { return }
         deck.setWrong(e, false)
@@ -628,7 +646,7 @@ final class ExercisePracticeView: NSView {
 
         // 顶行：题号这些 + 右侧三个按钮
         var bx = x0 + colW
-        for b in [sourceButton, originalButton, starButton] {
+        for b in [sourceButton, originalButton, tagsButton, starButton] {
             b.sizeToFit()
             bx -= b.frame.width
             b.frame = NSRect(x: bx, y: y - 2, width: b.frame.width, height: b.frame.height)

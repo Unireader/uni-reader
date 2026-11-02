@@ -24,7 +24,7 @@ final class InspectorViewController: NSViewController {
     private let tocPage = NSView()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private let agentPage = NSView()
-    private var agentView: AgentChatNSView?
+    private var agentView: AgentChatsView?
     private let agentPlaceholder = PlaceholderView()
 
     private var tab: InspectorTab = .info
@@ -319,9 +319,11 @@ final class InspectorViewController: NSViewController {
             setAgentContent(agentPlaceholder)
             return
         }
-        let chat = AgentPanelModel.shared.chat(for: tabs.windowID, cwd: folder.deletingLastPathComponent())
-        if agentView?.chat !== chat {
-            let v = AgentChatNSView(chat: chat, workspaceName: workspace.name, showsHeader: true)
+        let cwd = folder.deletingLastPathComponent()
+        // 换了工作目录 → 模型里换成新的一批对话（旧的结束），外壳也重建
+        AgentPanelModel.shared.chats(for: tabs.windowID, cwd: cwd)
+        if agentView?.cwd != cwd {
+            let v = AgentChatsView(windowID: tabs.windowID, cwd: cwd, workspaceName: workspace.name)
             agentView = v
             setAgentContent(v)
         } else if agentView?.workspaceName != workspace.name {

@@ -37,6 +37,8 @@ final class ExerciseTabView: NSView {
     /// 重做上次做错的（开关，用户 2026-10-27 要的）：只留上一次结果是错的题，这一轮都重新作答；答对一次下次就不在了。
     /// 与「只看没做过」至多开一个（同一个 `ExerciseDeck.filter`）；哪一组都有，错题本里正好挑出还没做对的。
     private let lastWrongButton = NSButton()
+    /// 按标签筛（这一组里有标签才显示）：「全部标签」+ 出现过的每个标签。
+    private let tagPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let separator = NSBox()
     private let practice: ExercisePracticeView
     private let list: ExerciseListView
@@ -76,8 +78,13 @@ final class ExerciseTabView: NSView {
         lastWrongButton.title = L("Redo Last Wrong")
         lastWrongButton.target = self
         lastWrongButton.action = #selector(lastWrongToggled)
+        tagPopup.controlSize = .regular
+        tagPopup.target = self
+        tagPopup.action = #selector(tagPicked)
+        tagPopup.toolTip = L("Show only the questions with this tag.")
+        tagPopup.isHidden = true
         separator.boxType = .separator
-        for v in [practice, list, header, progressLabel, redoAllButton, lastWrongButton, unansweredButton, modeControl,
+        for v in [practice, list, header, progressLabel, redoAllButton, lastWrongButton, unansweredButton, tagPopup, modeControl,
                   separator] as [NSView] {
             addSubview(v)
         }
@@ -132,12 +139,45 @@ final class ExerciseTabView: NSView {
         if s.done > 0 { parts.append(String(format: L("this round: %d done, %d right"), s.done, s.correct)) }
         progressLabel.stringValue = parts.joined(separator: " · ")
         redoAllButton.isEnabled = deck.hasShownAnswers
+        syncTagPopup()
         unansweredButton.state = deck.filter == .unanswered ? .on : .off   // 平板那边换了，这边跟着
         let wrongs = deck.lastWrongCount
         lastWrongButton.state = deck.filter == .lastWrong ? .on : .off
         lastWrongButton.isEnabled = deck.filter == .lastWrong || wrongs > 0   // 开着时总能关掉
         lastWrongButton.toolTip = L("Practice only the questions you got wrong last time, all ready to answer again. Get one right and it won’t come back next time.")
             + "\n" + String(format: L("Wrong last time here: %d"), wrongs)
+    }
+
+    /// 标签下拉：这一组里一个标签都没有、也没在按标签筛，就藏起来（免得多一个没用的控件）。
+    private func syncTagPopup() {
+        let tags = deck.availableTags
+        let cur = deck.tagFilter
+        tagPopup.isHidden = tags.isEmpty && cur == nil
+        guard !tagPopup.isHidden else { return }
+        var names = tags
+        if let cur, !names.contains(where: { $0.caseInsensitiveCompare(cur) == .orderedSame }) { names.append(cur) }
+        let key = ([cur ?? ""] + names).joined(separator: "\u{1}")
+        if tagPopup.identifier?.rawValue != key {
+            tagPopup.identifier = NSUserInterfaceItemIdentifier(key)
+            tagPopup.removeAllItems()
+            tagPopup.addItem(withTitle: L("All Tags"))
+            tagPopup.menu?.addItem(.separator())
+            for n in names { tagPopup.addItem(withTitle: n) }
+        }
+        if let cur, let i = names.firstIndex(where: { $0.caseInsensitiveCompare(cur) == .orderedSame }) {
+            tagPopup.selectItem(at: i + 2)
+        } else {
+            tagPopup.selectItem(at: 0)
+        }
+        needsLayout = true
+    }
+
+    @objc private func tagPicked() {
+        let i = tagPopup.indexOfSelectedItem
+        deck.setTagFilter(i >= 2 ? tagPopup.titleOfSelectedItem : nil)
+        practice.show()
+        list.reload()
+        syncHeader()
     }
 
     @objc private func redoAll() {
@@ -209,13 +249,14 @@ final class ExerciseTabView: NSView {
                                    width: mw, height: modeControl.frame.height)
         // 往左依次排：只看没做过（错题本里不显示）、重做上次做错的、全部重做
         var right = modeControl.frame.minX
-        for b in [unansweredButton, lastWrongButton, redoAllButton] where !b.isHidden {
-            b.sizeToFit()
+        tagPopup.sizeToFit()
+        for b in [tagPopup, unansweredButton, lastWrongButton, redoAllButton] as [NSControl] where !b.isHidden {
+            if b !== tagPopup { b.sizeToFit() }
             let bw = b.frame.width
             b.frame = NSRect(x: right - 10 - bw, y: topInset + (headerH - b.frame.height) / 2, width: bw, height: b.frame.height)
             right = b.frame.minX
         }
-        let tw = max(0, redoAllButton.frame.minX - pad * 2)
+        let tw = max(0, right - pad * 2)
         let ph = progressLabel.intrinsicContentSize.height
         progressLabel.frame = NSRect(x: pad, y: topInset + (headerH - ph) / 2, width: tw, height: ph)
         separator.frame = NSRect(x: 0, y: header.frame.maxY, width: b.width, height: 1)

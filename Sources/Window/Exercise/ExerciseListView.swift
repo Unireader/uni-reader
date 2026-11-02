@@ -16,12 +16,13 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
     private let table = NSTableView()
 
     private enum Col: String, CaseIterable {
-        case number, stem, chapter, page, type, mine, tries, status, note
+        case number, stem, chapter, tags, page, type, mine, tries, status, note
         var title: String {
             switch self {
             case .number: return L("No.")
             case .stem: return L("Question")
             case .chapter: return L("Chapter")
+            case .tags: return L("Tags")
             case .page: return L("Page")
             case .type: return L("Type")
             case .mine: return L("My Answer")
@@ -35,6 +36,7 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             case .number: return 56
             case .stem: return 360
             case .chapter: return 140
+            case .tags: return 110
             case .page: return 48
             case .type: return 64
             case .mine: return 110
@@ -113,6 +115,9 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         case .chapter:
             cell.textField?.stringValue = e.chapter.last ?? ""
             cell.toolTip = e.chapter.isEmpty ? nil : ExerciseChapter.display(e.chapter)
+        case .tags:
+            cell.textField?.stringValue = e.tags.joined(separator: " · ")
+            cell.toolTip = e.tags.isEmpty ? nil : e.tags.joined(separator: "\n")
         case .page: cell.textField?.stringValue = e.page.map { String($0 + 1) } ?? ""
         case .type:
             switch e.kind {
@@ -210,6 +215,8 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         // 章节：一次只能改同一本书里的题（下拉框列的是那本书的目录）
         let docs = Set(items.map { $0.documentId ?? "" })
         if docs.count == 1, let d = docs.first, !d.isEmpty { add(menu, L("Set Chapter…"), #selector(menuChapter)) }
+        add(menu, rows.count == 1 ? L("Edit Tags…") : L("Add Tags…"), #selector(menuTags))
+        if rows.count > 1, items.contains(where: { !$0.tags.isEmpty }) { add(menu, L("Remove Tags…"), #selector(menuRemoveTags)) }
         if items.contains(where: \.wrong) { add(menu, L("Remove from Mistakes"), #selector(menuUnmistake)) }
         menu.addItem(.separator())
         add(menu, rows.count == 1 ? L("Delete Exercise…") : String(format: L("Delete %d Exercises…"), rows.count),
@@ -251,6 +258,28 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
                 case .path(let p): ws.setExerciseChapter(ids: ids, p)
                 }
             }
+        }
+    }
+
+    /// 一道 = 直接编辑它的整组标签；多道 = 把输入的标签并进每一道。
+    @objc private func menuTags() {
+        let items = targetRows().compactMap { deck.items.indices.contains($0) ? deck.items[$0] : nil }
+        guard !items.isEmpty, let win = window else { return }
+        let ids = items.map(\.id)
+        let single = items.count == 1
+        ExerciseTagEditor.present(on: win, kind: single ? .edit : .add, count: items.count,
+                                  current: single ? items[0].tags : [], suggestions: deck.availableTags) { [weak self] tags in
+            self?.deck.setTags(ids: ids, tags, mode: single ? .replace : .add)
+        }
+    }
+
+    @objc private func menuRemoveTags() {
+        let items = targetRows().compactMap { deck.items.indices.contains($0) ? deck.items[$0] : nil }
+        guard !items.isEmpty, let win = window else { return }
+        let ids = items.map(\.id)
+        ExerciseTagEditor.present(on: win, kind: .remove, count: items.count, current: [],
+                                  suggestions: ExerciseTag.all(in: items)) { [weak self] tags in
+            self?.deck.setTags(ids: ids, tags, mode: .remove)
         }
     }
 

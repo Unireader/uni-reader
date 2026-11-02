@@ -28,6 +28,13 @@
   `Sources/Views/` 已删除，SwiftUI 只剩 Markdown 引擎托管。代码第 1–8 步写完、Debug 包可编译，**还没有实测过**。
   `main` 上仍是 SwiftUI 版，红线以 `main` 的 `AGENTS.md` 为准直到合并。
 
+## 🐞 已知欠账（2026-11-02）
+
+- **Agent 经 MCP `import_exercises` 导入时 Agent 面板卡住、拖拽窗口 / Inspector 不跟随**（用户报）。根因**未确认**：
+  已排除导入本身（一批一个事务，库读写很快）；怀疑项 ① 工具调用标题 / 输出过长（已加上限，`AgentTranscript.clampTitle`）；
+  ② 每次导入触发侧栏整棵重建（`workspace.objectWillChange` 一次导入发 3 回）+ 开着的习题标签整份 `deck.reload()` / `practice.show()`；
+  ③ 平板在线时 `exercisesDidChange` 重发全量。**下一步：让用户复现的同时后台连续 `sample`**（`hang-continuous-sample-first`），看主线程栈再改。
+
 ## ⏭️ 接下来（建议顺序）
 
 > 本节**只留真的没做的事**，验收类条目不挂在这里（2026-09-07 / 09-13 两次裁决）。
