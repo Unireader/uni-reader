@@ -342,3 +342,18 @@ struct LibMarkdownDoc: Identifiable, Equatable {
     var updatedAt: Date         // 正文最后修改（离线镜像 LWW 依据）
     var lastOpenedAt: Date
 }
+
+/// 一份 Agent 上下文（`agent_context` 表，v23，`ACP-AGENT-PLAN.md §12`）：一段 Agent 对话的交接摘要，
+/// 换一个 Agent 新开对话时带上它接着聊。工作区级，不挂文档。
+struct LibAgentContext: Identifiable, Equatable {
+    var id: String              // UUID
+    var title: String
+    /// 摘要正文（Markdown，那个 Agent 写的；不含标题那一行）。
+    var summary: String
+    /// 写摘要的 Agent 的名字（Kimi / Claude Code …）；外部 Agent 经 MCP 存的 = 它的 clientInfo 名字。
+    var agent: String
+    /// 那段对话在原 Agent 里的会话 id（只对同一个 Agent 有意义）；空 = 不知道。
+    var sessionId: String
+    var createdAt: Date
+    var updatedAt: Date
+}

@@ -9,6 +9,7 @@ enum MCPTools {
         registerBatch2(into: server)
         registerBatch3(into: server)
         registerBatch4(into: server)
+        registerBatch5(into: server)
     }
 
     /// 批 4：习题（`EXERCISE-PLAN.md §3`，2026-10-10）。列表是 `.read`，导入 / 改是 `.write`，删是 `.delete`（先进回收站）。

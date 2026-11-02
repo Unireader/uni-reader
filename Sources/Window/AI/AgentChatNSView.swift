@@ -41,6 +41,8 @@ final class AgentChatNSView: NSView {
     private let permissions = NSStackView()
     /// 回答中排上队的话（贴在输入框上方，`AgentChat.queued`）。
     private let queueView = AgentQueueView()
+    /// 挂在输入框上、随下一句话带过去的已存上下文（`AgentChat.handoffs`，`ACP-AGENT-PLAN.md §12`）。
+    private let handoffView = AgentQueueView(header: L("Context carried into your next message"), editable: false)
     private let composer: AgentComposerView
     private var itemViews: [UUID: (kind: AgentItem.Kind, view: NSView)] = [:]
     /// 上次刷新时的全部条目 id（不论建没建视图）。
@@ -113,7 +115,11 @@ final class AgentChatNSView: NSView {
         queueView.isHidden = true
         queueView.onEdit = { [weak chat] in chat?.editQueued($0) }
         queueView.onRemove = { [weak chat] in chat?.removeQueued($0) }
-        for v in [header, headerLine, banners, transcriptScroll, empty, permissions, queueView, composer] as [NSView] { addSubview(v) }
+        handoffView.isHidden = true
+        handoffView.onRemove = { [weak chat] in chat?.removeHandoff($0) }
+        for v in [header, headerLine, banners, transcriptScroll, empty, permissions, queueView, handoffView, composer] as [NSView] {
+            addSubview(v)
+        }
         header.isHidden = !showsHeader
         headerLine.isHidden = !showsHeader
         transcriptScroll.contentView.postsBoundsChangedNotifications = true
@@ -201,10 +207,10 @@ final class AgentChatNSView: NSView {
         let ch = composer.preferredHeight
         composer.frame = NSRect(x: 12, y: b.height - 12 - ch, width: b.width - 24, height: ch)
         var bottom = composer.frame.minY - 4
-        if !queueView.isHidden {
-            let qh = queueView.preferredHeight
-            queueView.frame = NSRect(x: 12, y: bottom - 4 - qh, width: b.width - 24, height: qh)
-            bottom = queueView.frame.minY
+        for box in [handoffView, queueView] where !box.isHidden {
+            let qh = box.preferredHeight
+            box.frame = NSRect(x: 12, y: bottom - 4 - qh, width: b.width - 24, height: qh)
+            bottom = box.frame.minY
         }
         if !permissions.arrangedSubviews.isEmpty {
             fitPermissions(width: b.width - 24)
@@ -274,6 +280,11 @@ final class AgentChatNSView: NSView {
         refreshPermissions()
         queueView.update(chat.queued.map { .init(id: $0.id, text: $0.text, images: $0.images.count) })
         queueView.isHidden = chat.queued.isEmpty
+        handoffView.update(chat.handoffs.map { h in
+            .init(id: h.id, text: h.context.agent.isEmpty ? h.context.title : "\(h.context.title) · \(h.context.agent)",
+                  images: 0)
+        })
+        handoffView.isHidden = chat.handoffs.isEmpty
         composer.refresh()
         needsLayout = true
     }
@@ -285,12 +296,28 @@ final class AgentChatNSView: NSView {
         headerKey = key
         header.configure(icon: "sparkles", title: chat.title ?? chat.agentName, subtitle: workspaceName, buttons: [
             .init(symbol: "clock.arrow.circlepath", tip: L("Earlier Chats"), menu: { [weak self] in self?.historyMenu() ?? NSMenu() }),
+            .init(symbol: "tray.full", tip: L("Contexts"), menu: { [weak self] in self?.contextsMenu() ?? NSMenu() }),
             .init(symbol: "ellipsis", tip: L("More"), menu: { AgentMenus.options() }),
             .init(symbol: "square.and.pencil", tip: L("New Chat"), action: { [weak self] in self?.chat.newChat() }),
         ])
     }
 
     func historyMenu() -> NSMenu { AgentMenus.history(chat) }
+
+    /// 「上下文」菜单（`ACP-AGENT-PLAN.md §12`）：保存这段 / 带上已存的 / 管理。
+    func contextsMenu() -> NSMenu {
+        AgentMenus.contexts(chat) { [weak self] in self?.presentContextsSheet() }
+    }
+
+    private func presentContextsSheet() {
+        guard let ws = chat.workspaceProvider(), let host = window?.contentViewController else { return }
+        let vc = AgentContextsSheetController(workspace: ws)
+        vc.onAttach = { [weak self] c in
+            self?.chat.attachContext(c)
+            self?.composer.focus()
+        }
+        host.presentAsSheet(vc)
+    }
 
     private func refreshBanners() {
         let key = "\(chat.missingMCP)\u{1}\(chat.phase)\u{1}\(chat.agentName)"
@@ -762,6 +789,45 @@ enum AgentMenus {
         return m
     }
 
+    /// 上下文（`ACP-AGENT-PLAN.md §12`）：让 Agent 把这段对话写成交接摘要存进工作区；已存的点一下 = 挂到输入框上、
+    /// 随下一句话带过去（再点一下取下）；「管理上下文…」看 / 改 / 删。
+    static func contexts(_ chat: AgentChat, manage: @escaping () -> Void) -> NSMenu {
+        let m = NSMenu()
+        m.autoenablesItems = false
+        let save = ClosureMenuItem(L("Save This Chat as a Context")) { [weak chat] in chat?.saveContext() }
+        save.image = NSImage(systemSymbolName: "tray.and.arrow.down", accessibilityDescription: nil)
+        save.subtitle = String(format: L("%@ writes a summary of this chat; any agent can carry on from it."), chat.agentName)
+        save.isEnabled = chat.canSaveContext
+        m.addItem(save)
+        let saved = chat.workspaceProvider()?.agentContexts ?? []
+        m.addItem(.separator())
+        m.addItem(.sectionHeader(title: L("Attach to Your Next Message")))
+        if saved.isEmpty {
+            let i = NSMenuItem(title: L("No saved contexts"), action: nil, keyEquivalent: "")
+            i.isEnabled = false
+            m.addItem(i)
+        }
+        let attached = Set(chat.handoffs.map(\.context.id))
+        for c in saved.prefix(30) {
+            let on = attached.contains(c.id)
+            let i = ClosureMenuItem(c.title) { [weak chat] in
+                guard let chat else { return }
+                if on { chat.handoffs.filter { $0.context.id == c.id }.forEach { chat.removeHandoff($0.id) } }
+                else { chat.attachContext(c) }
+            }
+            let when = c.updatedAt.formatted(date: .abbreviated, time: .omitted)
+            i.subtitle = c.agent.isEmpty ? when : "\(c.agent) · \(when)"
+            i.state = on ? .on : .off
+            i.isEnabled = chat.sessionId != nil
+            m.addItem(i)
+        }
+        m.addItem(.separator())
+        let manageItem = ClosureMenuItem(L("Manage Contexts…"), action: manage)
+        manageItem.isEnabled = chat.workspaceProvider() != nil
+        m.addItem(manageItem)
+        return m
+    }
+
     /// 面板本身的设置：跟随 Agent。
     static func options() -> NSMenu {
         let panel = AgentPanelModel.shared
@@ -1186,6 +1252,7 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         defer {
             stripScroll.isHidden = chat.attachments.isEmpty
             let hint = chat.phase == .running ? L("Press Return to send after this reply…")
+                : !chat.handoffs.isEmpty ? L("Say what to do next with this context…")
                 : chat.attachments.isEmpty ? String(format: L("Ask %@…"), chat.agentName)
                 : L("Ask about the image…")
             if placeholder.stringValue != hint { placeholder.stringValue = hint }

@@ -8,7 +8,7 @@ import CoreGraphics    // Linux 上 CGRect 等由 Foundation 提供（服务器�
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 22
+    static let schemaVersion = 23
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -124,6 +124,11 @@ final class LibraryStore {
     /// 把几道习题（连同作答记录）归档。
     func archiveExercises(ids: [String], to path: String) throws -> TrashStore.Archived {
         try TrashStore.archiveExercises(db, ids: ids, to: path)
+    }
+
+    /// 把几份 Agent 上下文归档（v23）。
+    func archiveAgentContexts(ids: [String], to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveAgentContexts(db, ids: ids, to: path)
     }
 
     /// 恢复前探路：这份快照的 PDF 已经被重新导入过吗（返回要并入的那篇文档 id）。
@@ -350,6 +355,19 @@ final class LibraryStore {
           feedback TEXT NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_id, created_at);
+        -- v23：Agent 上下文（`ACP-AGENT-PLAN.md §12`）。一段 Agent 对话的交接摘要（那个 Agent 自己写的 Markdown），
+        -- 换一个 Agent（Kimi / Claude Code / Qwen…）新开对话时带上它接着聊。工作区级，不挂文档。
+        -- agent = 写摘要的 Agent 的名字；session_id = 那段对话在它那边的会话 id（只对同一个 Agent 有意义，空串 = 不知道）。
+        -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
+        CREATE TABLE IF NOT EXISTS agent_context (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL DEFAULT '',
+          summary TEXT NOT NULL DEFAULT '',
+          agent TEXT NOT NULL DEFAULT '',
+          session_id TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -406,6 +424,7 @@ final class LibraryStore {
         try addColumnIfMissing("exercise_attempt", "feedback", "TEXT NOT NULL DEFAULT ''")
         // v21 → v22：题目笔记（`EXERCISE-PLAN.md §12`）。🔴 顺序与安卓 `Schema.ADD_COLUMNS` 一致（也是 `MirrorFp.specs` 的列序）。
         try addColumnIfMissing("exercise", "note", "TEXT NOT NULL DEFAULT ''")
+        // v22 → v23 只新增 agent_context 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -1522,6 +1541,32 @@ final class LibraryStore {
         return out
     }
 
+    // MARK: - Agent 上下文（agent_context，v23；`ACP-AGENT-PLAN.md §12`）
+
+    /// 全部上下文，最近改过的在前。
+    func agentContexts() throws -> [LibAgentContext] {
+        try db.query("SELECT * FROM agent_context ORDER BY updated_at DESC, created_at DESC").map(Self.agentContext)
+    }
+    func agentContext(id: String) throws -> LibAgentContext? {
+        try db.query("SELECT * FROM agent_context WHERE id=?", [.text(id)]).map(Self.agentContext).first
+    }
+    /// 新建或整行覆盖（同 id）。`updated_at` 由调用方给（改标题 / 改摘要都要换，离线镜像按它取新）。
+    func upsertAgentContext(_ c: LibAgentContext) throws {
+        try db.run("""
+        INSERT INTO agent_context(id, title, summary, agent, session_id, created_at, updated_at)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, summary=excluded.summary, agent=excluded.agent,
+          session_id=excluded.session_id, updated_at=excluded.updated_at
+        """, [.text(c.id), .text(c.title), .text(c.summary), .text(c.agent), .text(c.sessionId),
+              .text(ISO.string(c.createdAt)), .text(ISO.string(c.updatedAt))])
+    }
+    /// 删几份。归档进回收站由上层先做（红线⑪）。
+    func deleteAgentContexts(ids: [String]) throws {
+        guard !ids.isEmpty else { return }
+        let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        try db.run("DELETE FROM agent_context WHERE id IN (\(marks))", ids.map { .text($0) })
+    }
+
     // MARK: - 页面几何缓存（page_geom）
 
     /// 某内容的每页高度（文档单位）；没缓存或页数对不上 → nil（上层按 PDF 现算并回填）。
@@ -1642,6 +1687,14 @@ final class LibraryStore {
     }
 
     // MARK: - 行 → 模型
+
+    private static func agentContext(_ r: [String: Any]) -> LibAgentContext {
+        LibAgentContext(id: r["id"] as? String ?? "", title: r["title"] as? String ?? "",
+                        summary: r["summary"] as? String ?? "", agent: r["agent"] as? String ?? "",
+                        sessionId: r["session_id"] as? String ?? "",
+                        createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                        updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
 
     private static func doc(_ r: [String: Any]) -> LibDocument {
         LibDocument(id: r["id"] as? String ?? "", title: r["title"] as? String ?? "",

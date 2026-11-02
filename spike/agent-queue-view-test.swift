@@ -70,6 +70,23 @@ func check(_ c: Bool, _ m: String) { if c { pass += 1; print("  ✅ \(m)") } els
     v.update([])
     check(v.preferredHeight == 0, "空了高度为 0")
 
+    print("3b. 「带上的上下文」那一种（`editable: false`，`ACP-AGENT-PLAN.md §12`）")
+    let ctx = AgentQueueView.Item(id: UUID(), text: "高数第二章复习 · Kimi", images: 0)
+    let hv = AgentQueueView(header: "随下一句话带上的上下文", editable: false)
+    hv.update([ctx])
+    hv.frame = NSRect(x: 0, y: 0, width: 276, height: hv.preferredHeight)
+    hv.layoutSubtreeIfNeeded()
+    let hb = hv.subviews.compactMap { $0 as? NSButton }
+    let shown = hb.filter { !$0.isHidden }
+    let ht = hv.subviews.compactMap { $0 as? NSTextField }.first { $0.toolTip != nil }!
+    check(hv.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue == "随下一句话带上的上下文" }, "标题换成传进来的那句")
+    check(shown.count == 1 && shown[0].toolTip == L("Remove"), "只露出「移除」，没有「编辑」")
+    check(ht.frame.maxX <= shown[0].frame.minX - 5 && ht.frame.maxX > shown[0].frame.minX - 10, "字一直排到「移除」左边（不给「编辑」留空）")
+    var hRemoved: UUID?
+    hv.onRemove = { hRemoved = $0 }
+    shown[0].performClick(nil)
+    check(hRemoved == ctx.id, "移除：回调带那一条的 id")
+
     print("4. 样张")
     for (name, ap) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: h + 24))

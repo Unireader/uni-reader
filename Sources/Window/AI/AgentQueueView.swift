@@ -4,6 +4,7 @@ import AppKit
 /// 每条一行：带了几张图（放在前面，长句省略时也看得见）+ 话的第一行（太长省略）+「编辑」（退回输入框）/「移除」两个图标按钮。
 ///
 /// 同 `AgentPlanView`：分组框只当底，里面按 frame 摆、对外只报高度（`preferredHeight`），由面板按 frame 摆它。
+/// 「带上的上下文」（`ACP-AGENT-PLAN.md §12`）也用它：换个标题、不要「编辑」钮（`editable: false`）。
 /// 离屏验证 `spike/agent-queue-view-test.swift`。
 @MainActor
 final class AgentQueueView: NSView {
@@ -17,7 +18,8 @@ final class AgentQueueView: NSView {
     var onRemove: (UUID) -> Void = { _ in }
 
     private let box = NSBox()
-    private let header = NSTextField(labelWithString: L("Queued — sent after this reply"))
+    private let header: NSTextField
+    private let editable: Bool
     private var rows: [(id: UUID, text: NSTextField, edit: NSButton, remove: NSButton)] = []
     private(set) var items: [Item] = []
 
@@ -27,7 +29,9 @@ final class AgentQueueView: NSView {
     private static let rowH: CGFloat = 24
     private static let buttonSide: CGFloat = 22
 
-    init() {
+    init(header title: String = L("Queued — sent after this reply"), editable: Bool = true) {
+        header = NSTextField(labelWithString: title)
+        self.editable = editable
         super.init(frame: .zero)
         box.titlePosition = .noTitle
         header.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .semibold)
@@ -57,6 +61,7 @@ final class AgentQueueView: NSView {
             text.lineBreakMode = .byTruncatingTail
             text.toolTip = item.text
             let edit = button("pencil", L("Edit")) { [weak self] in self?.onEdit(item.id) }
+            edit.isHidden = !editable
             let remove = button("xmark", L("Remove")) { [weak self] in self?.onRemove(item.id) }
             for v in [text, edit, remove] as [NSView] { addSubview(v) }
             return (item.id, text, edit, remove)
@@ -84,7 +89,7 @@ final class AgentQueueView: NSView {
         let s = Self.buttonSide
         for r in rows {
             let removeX = w - Self.padX - s
-            let editX = removeX - 2 - s
+            let editX = editable ? removeX - 2 - s : removeX
             r.remove.frame = NSRect(x: removeX, y: y + (Self.rowH - s) / 2, width: s, height: s)
             r.edit.frame = NSRect(x: editX, y: y + (Self.rowH - s) / 2, width: s, height: s)
             let th = ceil(r.text.intrinsicContentSize.height)

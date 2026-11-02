@@ -13,6 +13,9 @@ import AppKit
 /// 原先排在题目内容最后，每题高度不同，按钮跟着上下跳）。底下浮着标签栏时摆在它上面（`bottomInset`，同日用户截图：
 /// 胶囊压在这一条上）。
 ///
+/// 「答对自动下一题」（用户 2026-11-02 要的开关，`EXERCISE-PLAN.md §17`）：底部那条正中一个复选框，本机记住、默认关。
+/// 开着时这一轮刚交的作答判为对（程序判对，或自己点「答对了」）→ 停一下让人看到绿勾 → 翻到下一题；判错停在这一题看解析。
+///
 /// 键盘：A~H 选、Return 提交 / 下一题、← → 上一题 / 下一题；填空 / 主观题 ⌘Return 提交。
 @MainActor
 final class ExercisePracticeView: NSView {
@@ -50,6 +53,10 @@ final class ExercisePracticeView: NSView {
     private let nextButton = NSButton()
     /// 底部那条（上一题 / 下一题）上沿的分隔线。
     private let navLine = NSBox()
+    /// 答对自动下一题（底部那条正中）。
+    private let autoNextBox = NSButton(checkboxWithTitle: L("Next When Right"), target: nil, action: nil)
+    /// 等着自动翻页的那一次（换题 / 再做一次 / 关开关时作废）。
+    private var autoNextToken: UUID?
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     /// 填空 / 主观题的作答区（选择题时藏起来）。
     private let freeView = ExerciseFreeAnswerView()
@@ -115,6 +122,10 @@ final class ExercisePracticeView: NSView {
         setup(prevButton, symbol: "chevron.left", title: L("Previous"), action: #selector(prev))
         setup(nextButton, symbol: "chevron.right", title: L("Next"), action: #selector(next))
         nextButton.imagePosition = .imageTrailing
+        autoNextBox.state = Self.autoNext ? .on : .off
+        autoNextBox.toolTip = L("When you get a question right, go on to the next one after a moment. Get it wrong and you stay to read the explanation.")
+        autoNextBox.target = self
+        autoNextBox.action = #selector(autoNextToggled)
         emptyLabel.alignment = .center
         emptyLabel.font = .preferredFont(forTextStyle: .body)
         emptyLabel.textColor = .labelColor
@@ -135,7 +146,7 @@ final class ExercisePracticeView: NSView {
                   feedbackTitle, feedbackView, agentNote, markNote, explanationTitle, explanationView, noteView,
                   retryButton, mistakeButton, emptyLabel] as [NSView] { doc.addSubview(v) }
         navLine.boxType = .separator
-        for v in [navLine, prevButton, nextButton] as [NSView] { addSubview(v) }
+        for v in [navLine, prevButton, nextButton, autoNextBox] as [NSView] { addSubview(v) }
         for v in [stemView, explanationView, feedbackView] { v.onHeightChange = { [weak self] in self?.needsLayout = true } }
         show()
     }
@@ -171,7 +182,7 @@ final class ExercisePracticeView: NSView {
             shownId = ""; shownContent = nil; shownKind = nil
             noteView.commit()
             for v in doc.subviews { v.isHidden = v !== emptyLabel }
-            for v in [navLine, prevButton, nextButton] as [NSView] { v.isHidden = true }
+            for v in [navLine, prevButton, nextButton, autoNextBox] as [NSView] { v.isHidden = true }
             switch deck.filter {
             case .unanswered: emptyLabel.stringValue = L("You’ve done every question here.")
             case .lastWrong: emptyLabel.stringValue = L("No question here was wrong last time.")
@@ -182,9 +193,10 @@ final class ExercisePracticeView: NSView {
             return
         }
         for v in doc.subviews { v.isHidden = false }
-        for v in [navLine, prevButton, nextButton] as [NSView] { v.isHidden = false }
+        for v in [navLine, prevButton, nextButton, autoNextBox] as [NSView] { v.isHidden = false }
         emptyLabel.isHidden = true
         if e.id != shownId {
+            autoNextToken = nil
             picked = []
             shownAt = Date()
             scroll.contentView.scroll(to: .zero)
@@ -430,6 +442,7 @@ final class ExercisePracticeView: NSView {
             takeFocus()   // 交了之后输入框锁住，键盘交回给练习页（← → / Return 下一题）
         }
         refreshState()
+        scheduleAutoNext(e)
     }
 
     /// 填空 / 主观题输入变了：存草稿（翻走再回来还在），「提交」能不能点跟着变。
@@ -440,7 +453,10 @@ final class ExercisePracticeView: NSView {
         submitButton.isEnabled = !r.isEmpty(e.kind)
     }
 
-    @objc private func markRight() { judgeCurrent(true) }
+    @objc private func markRight() {
+        judgeCurrent(true)
+        if let e = deck.current { scheduleAutoNext(e) }
+    }
     @objc private func markWrong() { judgeCurrent(false) }
 
     @objc private func flipVerdict() {
@@ -479,6 +495,7 @@ final class ExercisePracticeView: NSView {
     }
 
     @objc private func retry() {
+        autoNextToken = nil
         deck.retry()
         picked = []
         shownAt = Date()
@@ -487,6 +504,7 @@ final class ExercisePracticeView: NSView {
 
     /// 批量重做之后（`deck.index` 已由调用方挪好）：当前题从头计时、清掉没交的勾选再重画。
     func restart() {
+        autoNextToken = nil
         picked = []
         shownAt = Date()
         scroll.contentView.scroll(to: .zero)
@@ -520,8 +538,47 @@ final class ExercisePracticeView: NSView {
 
     func go(_ i: Int) {
         guard deck.items.indices.contains(i), i != deck.index else { return }
+        autoNextToken = nil
         deck.index = i
         show()
+    }
+
+    // MARK: - 答对自动下一题
+
+    private static let autoNextKey = "exerciseAutoNext"
+    /// 本机记住（同一台 Mac 上各个习题标签共用）。
+    static var autoNext: Bool {
+        get { UserDefaults.standard.bool(forKey: autoNextKey) }
+        set { UserDefaults.standard.set(newValue, forKey: autoNextKey) }
+    }
+    /// 判对之后停多久再翻：够看清绿勾，又不至于等得不耐烦。
+    private static let autoNextDelay: TimeInterval = 0.8
+
+    @objc private func autoNextToggled() {
+        Self.autoNext = autoNextBox.state == .on
+        if !Self.autoNext { autoNextToken = nil }
+        takeFocus()
+    }
+
+    /// 这一轮刚交的 `e` 判为对 → 过一会儿翻到下一题。到时候再核一遍：开关还开着、还停在这道题、
+    /// 显示的仍是这一轮答对的那次（没点「再做一次」、没改判），且不是最后一题。
+    private func scheduleAutoNext(_ e: Exercise) {
+        guard Self.autoNext, isRight(e) else { return }
+        let token = UUID()
+        autoNextToken = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoNextDelay) { [weak self] in
+            guard let self, self.autoNextToken == token else { return }
+            self.autoNextToken = nil
+            guard Self.autoNext, self.window != nil, !self.isHidden, let cur = self.deck.current, cur.id == e.id,
+                  self.isRight(cur) else { return }
+            self.go(self.deck.index + 1)
+        }
+    }
+
+    /// 眼下显示的是这一轮答的、而且判为对。
+    private func isRight(_ e: Exercise) -> Bool {
+        guard let a = deck.answer(for: e) else { return false }
+        return a.earlier == nil && a.correct == true
     }
 
     override func keyDown(with event: NSEvent) {
@@ -670,6 +727,12 @@ final class ExercisePracticeView: NSView {
         prevButton.frame = NSRect(x: x0, y: barY + (navH - ph) / 2, width: max(100, prevButton.frame.width), height: ph)
         let nw = max(100, nextButton.frame.width)
         nextButton.frame = NSRect(x: x0 + colW - nw, y: barY + (navH - nh) / 2, width: nw, height: nh)
+        // 正中：答对自动下一题（太窄放不下就藏起来，不压按钮）
+        autoNextBox.sizeToFit()
+        let cw = autoNextBox.frame.width, ch = autoNextBox.frame.height
+        let room = nextButton.frame.minX - prevButton.frame.maxX - 16
+        autoNextBox.frame = NSRect(x: x0 + (colW - cw) / 2, y: barY + (navH - ch) / 2, width: cw, height: ch)
+        if navShown { autoNextBox.isHidden = room < cw }
     }
 }
 

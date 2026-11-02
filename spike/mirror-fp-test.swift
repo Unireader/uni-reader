@@ -100,8 +100,13 @@ check(MirrorFp.spec("note")?.columns.map(\.name) ==
       ["id", "document_id", "kind", "page", "anchor_x", "anchor_y", "anchor_w", "anchor_h",
        "payload", "created_at", "updated_at"], "note 列表")
 check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc",
-                                     "board_note", "board_page", "board_item", "exercise", "exercise_attempt", "meta"],
-      "参与同步的表恰好 12 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张）")
+                                     "board_note", "board_page", "board_item", "exercise", "exercise_attempt",
+                                     "agent_context", "meta"],
+      "参与同步的表恰好 13 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张、v23 Agent 上下文）")
+check(MirrorFp.spec("agent_context")?.columns.map(\.name) ==
+      ["id", "title", "summary", "agent", "session_id", "created_at", "updated_at"]
+      && MirrorFp.spec("agent_context")?.lww == "updated_at",
+      "agent_context 列表（v23）+ 按 updated_at 取新")
 check(MirrorFp.spec("exercise")?.columns.map(\.name) ==
       ["id", "document_id", "page", "seq", "kind", "number", "section", "payload", "starred", "wrong", "source",
        "created_at", "updated_at", "chapter", "note"] && MirrorFp.spec("exercise")?.lww == "updated_at",
@@ -222,6 +227,14 @@ let tableCases: [(String, [String: Any])] = [
         "created_at": "2026-10-10T09:00:00.000Z", "updated_at": "2026-10-27T08:00:00.000Z",
         "chapter": "[\"第二章 导数\",\"2.3 求导法则\"]",
         "note": "别忘了 $f'(x)=2x$，**链式法则**",
+    ] as [String: Any]),
+    // v23 Agent 上下文（2026-11-02，`ACP-AGENT-PLAN.md §12`）：中文标题 + 多行 Markdown 摘要
+    ("agent_context", [
+        "id": "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC",
+        "title": "高数第二章错题整理",
+        "summary": "## 做到哪了\n- 已导入第二章习题 1~20\n- 第 5 题答案待核对：$f'(x)=2x$\n\n## 接下来\n1. 批改主观题",
+        "agent": "Kimi", "session_id": "session-7f3a",
+        "created_at": "2026-11-02T08:00:00.000Z", "updated_at": "2026-11-02T08:30:00.000Z",
     ] as [String: Any]),
 ]
 for (t, row) in tableCases {

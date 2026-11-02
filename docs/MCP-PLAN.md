@@ -936,3 +936,10 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
   （`MCPServer.instructions` 引用了 `MCPTools.mathWriting`），在 spike 里补了两段空串替身；新增「端口被占 → 自己重开」一项。
   没过的 2 项是**原有问题**、与本次无关（改动前的版本同样失败）：所有接口模式下经 Tailscale 地址（100.x）连不上
   `NWListener`，同一台机器上的普通 BSD socket 服务经同一地址可达——待查。
+
+## 26. 2026-11-02 批 5：Agent 上下文（`list_agent_contexts` / `read_agent_context` / `save_agent_context`）
+
+工作区里存下的「一段 Agent 对话的交接摘要」（schema v23 `agent_context`），换一个 Agent 也能接着做。界面与数据见 `ACP-AGENT-PLAN.md §12`；
+这里只记接口：两个读（列表、读全文，id 可给前 8 位）+ 一个写（`save_agent_context`，`agent` 取调用方 `clientInfo` 的名字，给 `id` = 改已有那份；
+说明里写明只在用户要求时存）。实现在 `MCP/MCPTools+AgentContext.swift`（工具 + `MCPFacade` 执行，同一个文件）。
+`instructions` 加了一句：用户说「接着上次的」就用两个读工具找。🔴 输出 schema 每个键都声明了；对着运行中的 App 跑一次 `python3 spike/mcp-schema-audit.py` 由用户实测时做。

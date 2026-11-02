@@ -1194,3 +1194,36 @@
 /* 侧栏 PDF 右键「重命名…」（2026-11-02） */
 "Rename Document" = "重命名文档";
 "Document name" = "文档名称";
+
+/* 习题「答对自动下一题」+ Agent 上下文（2026-11-02，EXERCISE-PLAN.md §17 / ACP-AGENT-PLAN.md §12） */
+"Next When Right" = "答对自动下一题";
+"When you get a question right, go on to the next one after a moment. Get it wrong and you stay to read the explanation." = "答对后稍停一下自动翻到下一题；答错则停在这一题，可以看解析。";
+"Agent Context" = "Agent 上下文";
+"Agent Contexts" = "Agent 上下文";
+"%d Agent contexts" = "%d 份 Agent 上下文";
+"Context %@" = "上下文 %@";
+"Carried over the context “%@”." = "已带上上下文「%@」。";
+"Please write a handoff summary of this chat so I can continue it with another agent." = "请把这段对话写成交接摘要，我要换个 Agent 接着做。";
+"The agent wrote no summary, so no context was saved." = "Agent 没有写出摘要，上下文没有保存。";
+"Could not save the context." = "上下文保存失败。";
+"Saved as the context “%@”. In a new chat with any agent, attach it from the Contexts menu to carry on." = "已保存为上下文「%@」。在任何 Agent 的新对话里，从「上下文」菜单带上它就能接着做。";
+"No context was saved." = "上下文没有保存。";
+"Context carried into your next message" = "随下一句话带上的上下文";
+"Contexts" = "上下文";
+"Say what to do next with this context…" = "说说接下来要做什么…";
+"Save This Chat as a Context" = "保存这段对话为上下文";
+"%@ writes a summary of this chat; any agent can carry on from it." = "由 %@ 写一份这段对话的摘要，任何 Agent 都能接着做。";
+"Attach to Your Next Message" = "随下一句话带上";
+"No saved contexts" = "还没有保存的上下文";
+"Manage Contexts…" = "管理上下文…";
+"No contexts saved yet. In a chat, choose Save This Chat as a Context." = "还没有保存的上下文。在对话里点「上下文」菜单 ›「保存这段对话为上下文」。";
+"Summaries of earlier Agent chats, saved in this workspace. Attach one in a new chat with any agent and it can carry on from there." = "之前 Agent 对话的摘要，存在这个工作区里。在任何 Agent 的新对话里带上一份，它就能接着做。";
+"Updated" = "更新时间";
+"Save Changes" = "保存修改";
+"Attach to This Chat" = "带到这段对话";
+"Written by %@ · %@" = "由 %@ 写 · %@";
+"%d selected" = "已选 %d 份";
+"Delete the context “%@”?" = "删除上下文「%@」？";
+"Delete %d contexts?" = "删除 %d 份上下文？";
+"It moves to Recently Deleted, where you can put it back." = "会移到回收站，可以从那里放回。";
+"Could not delete the context." = "上下文删除失败。";

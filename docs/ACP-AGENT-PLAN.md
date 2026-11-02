@@ -12,7 +12,7 @@
 | 代码 | `AIPanelModel` / `AIInlineLayer` / `AIPanelWindowController` | `Sources/Agent/` + `AgentChatView` / `AgentInlineLayer` / `AgentWindowController` |
 | 形态 | 内置 / 独立窗口 | 内置 / 独立窗口（**各管各的**，两块可同时开）。🔴 **2026-09-19 起改为只住在 Inspector 的「Agent」页**（内置面板与独立窗口都已删，网页 AI 停用），见 `APPKIT-REWRITE-PLAN.md §9.2`；本文件下面讲形态 / 窗口的段落是历史记录 |
 | 快捷键 | ⌘⇧A | ⌘⇧K（「AI」菜单 › Agent 面板，可在设置里改） |
-| 存数据 | 会话链接落库（`AIThread`） | **什么都不存**（历史由 Agent 自己保存，见 §3） |
+| 存数据 | 会话链接落库（`AIThread`） | 对话本身不存（历史由 Agent 自己保存，见 §3）；用户点「保存上下文」时 Agent 写的交接摘要存进工作区库（§12） |
 
 用户原话：「现有 AI 只能使用网页进行问答，这部分保留作为咨询 AI 模块」「我们不自己做，使用 ACP 来实现」。
 
@@ -23,7 +23,7 @@
 | D1 | 客户端 SDK = 自家 fork **`Unireader/swift-acp`**（上游 `wiedymi/swift-acp`，为 macOS 应用 Aizen 而写） | 有真实使用场景；fork 了有问题自己改。Rust 官方 SDK 走 FFI 桥接被否（构建链、回调跨 FFI 都重） |
 | D2 | **不引入 Node 进程** | 用户：「我是不太希望加个 nodejs 进程的」。Claude 官方适配器要 Node → **首批只做 Kimi，Claude 先不管** |
 | D3 | Agent 工作目录 = **工作区 `.unrd` 包所在的目录**（包的上一级），不是包本身 | 用户定 |
-| D4 | 会话**不落库** | 用户：「我们不保存具体数据」。Kimi 支持按工作目录列历史（`session/list`）+ 回放（`session/load`），App 连索引都不用存 |
+| D4 | 会话**不落库** | 用户：「我们不保存具体数据」。Kimi 支持按工作目录列历史（`session/list`）+ 回放（`session/load`），App 连索引都不用存。**2026-11-02 补充**：用户要「换 Agent 接着聊」，对话仍不存，只存用户点「保存上下文」时 Agent 写的那份摘要（§12） |
 | D5 | Agent 调 `goto` / `open_document` 时阅读区**默认跟着跳**，面板里有「跟随 Agent」开关 | 用户同意 |
 | D6 | 界面 = **独立的 Agent 面板**，同时支持内置与独立窗口两种形态，不并进咨询面板 | 用户选「独立 Agent 窗口」并注明「同时支持内联和独立 Window 两个模式」。咨询面板的工具栏全是网页专用的 |
 
@@ -183,7 +183,7 @@ MCP 服务没开 → 不带，面板顶部提示「开启并重新连接」（**
 ## 6. 刻意没做
 
 - **不做 `ACPRegistry` 的「发现并安装 Agent」**：违背不代装依赖的规矩。
-- **不存会话数据**（D4）。
+- **不存会话数据**（D4）：只存用户点「保存上下文」时的那份摘要（§12），不存对话原文、不存历史索引。
 - **不自动开 MCP 服务**（§3.3）。
 - **不做 MCP-over-ACP**（SDK 支持的实验性能力：MCP 直接走 ACP 通道、不要 HTTP 端口）：现在的 HTTP 方案够用，Kimi 是否支持也没核实。
 
@@ -380,3 +380,82 @@ Kimi 导习题时推来二十来项的待办（ACP `plan`），整片清单叠�
   64. 「在 Agent 中引用」：Agent 页亮出来，输入框光标处多了 `@名字 `；连着引用几样都插在光标处；发出去后 Agent 知道是什么
       （PDF / 笔记能读；目录能列出里面的笔记；习题组能用 list_exercises 列出那一组；画板它会说读不了内容）。
   65. Agent 关着（设置里关掉）时这一项是灰的。
+
+## 12. Agent 上下文：换 Agent 接着聊（2026-11-02，schema v23）
+
+用户原话：「agent 上下文可以记录下来，在任何 agent 都可以复用」。问过后用户选的三条：
+① 是「**换 Agent 接着聊**」（不是每次都自动带上的长期备忘）；② 存的是**当前 Agent 写的摘要**（不是对话原文）；
+③ 存在**工作区库里新建的一张表**（随离线副本 / 服务器同步，要升表结构，Mac + 安卓 + 服务器一起改）。
+
+起因：每家 Agent 的历史只存在它自己那里（`session/load` 只能回放同一家的），Kimi 里聊到一半换成 Claude Code 就接不上。
+
+### 12.1 数据（`agent_context`，v23）
+
+```
+id TEXT PRIMARY KEY, title, summary（Markdown，不含标题行）, agent（写摘要的 Agent 名）,
+session_id（那段对话在原 Agent 里的 id，只对同一家有意义）, created_at, updated_at
+```
+
+- 工作区级，不挂文档、没有子表。安卓 `Schema.kt` 逐字相同（安卓没有 Agent 面板，只建表、随同步带着走）。
+- 同步：进 `MirrorFp.specs`（`exercise_attempt` 之后、`meta` 之前，7 列全 TEXT，按 `updated_at` 取新）；跨端向量 `spike/mirror-fp-vectors.txt` #34。
+  服务器经符号链接编同一份 Store / Sync，不用另改；⚠️ 但**旧版服务器不认这张表**：推上去它答「一致」、客户端照样记下基线，
+  之后这几份不会再推（同侧栏顺序键那条，`SIDEBAR-DRAG-PLAN.md §2`）。服务器换新版之后，在那之前存的上下文要改一下（改个字再改回）才会传上去。
+- 删除先归档（红线⑪）：回收站新种类 `agentContexts`（manifest 计数键 `agentContext`），快照里只有 `agent_context` 一张表，放回 = OR REPLACE。安卓回收站认这个种类。
+
+### 12.2 界面（Agent 页标题行多一个「上下文」按钮，`tray.full`）
+
+菜单三段：
+- **保存这段对话为上下文**：这段对话里说过话、眼下空闲时可点。发一句可见的请求（「请把这段对话写成交接摘要…」）+ 隐藏块里的写法要求
+  （`AgentContextText.saveInstruction`：用户的语言、Markdown、**第一行 `# 标题`**、目标 / 做了什么 / 关键事实（书名 + document_id、note_ref、页码、题目 id）/
+  现状 / 待办 / 用户的要求；不调工具；只回摘要）。这一轮**正常答完**就把它的回复（思考过程不算）按第一个标题行切成标题与正文存下（`AgentContextText.parse`：
+  标题行前面的客套话丢掉；没有标题行 = 第一行当标题、整段当正文；正文空就不存），对话里加一条提示「已保存为上下文「…」」。
+  停止 / 出错 / 换会话 = 不存。
+- **随下一句话带上**：已存的上下文（最近改过的在前，最多 30 条，副标题 = Agent · 日期）。点一下 = 挂到输入框上方（「随下一句话带上的上下文」那块，
+  和排队那块同一个视图，只有「移除」），再点一下取下。随下一句话放进隐藏上下文块（`AgentContextText.handoff`：说明这是之前对话的交接摘要 + 标题 / context_id /
+  谁写的 / 日期 + 摘要原文），对话里加一条提示「已带上上下文「…」」；回放时随隐藏块一起剔掉。斜杠命令不带，留着跟下一句话走（同图片说明）。
+- **管理上下文…**：一个表单窗（`Window/Sheets/AgentContextsSheet`）：列表（标题 / Agent / 更新时间，可多选）+ 下面编辑选中那份的标题与摘要原文（等宽字体，不渲染）
+  +「删除…」（进回收站）/「保存修改」/「带到这段对话」/「完成」（Esc）。换选中、点「完成」、点「带到这段对话」前，改过的先存下（不弹窗问）。
+
+典型用法：Kimi 里聊到一半 → 「保存这段对话为上下文」→ 设置里换成 Claude Code → 「新对话」→ 「上下文」菜单点那一份 → 说一句「接着做」。
+
+### 12.3 MCP（批 5，任何 Agent 都能用，包括终端里的外部 Agent）
+
+| 工具 | 级别 | 作用 |
+|---|---|---|
+| `list_agent_contexts` | read | 列出工作区里存的上下文（id / 标题 / Agent / 时间 / 摘要字数） |
+| `read_agent_context` | read | 读一份的全文（id 可给前 8 位） |
+| `save_agent_context` | write | 存一份（`agent` = 调用方 `clientInfo` 的名字）；给 `id` = 改已有那份。说明里写明**只在用户要求时存** |
+
+`MCPServer.instructions` 与面板上下文块（`AgentReaderContext.contexts`）各加一句：用户说「接着上次的」就用前两个找、读。
+
+### 12.4 代码落点
+
+| 层 | 文件 |
+|---|---|
+| 存储 | `Store/LibraryStore.swift`（v23 DDL、DAO）、`Store/LibraryModels.swift`（`LibAgentContext`）、`Store/MirrorFingerprint.swift`、`Store/TrashStore.swift` |
+| 执行层 | `App/WorkspaceManager+AgentContext.swift`（存 / 改 / 删先归档、`.agentContextsDidChange`）、`App/WorkspaceManager+Trash.swift`、`App/TrashModel.swift` |
+| Agent | `Agent/AgentContextText.swift`（纯 Foundation：写法要求 / 切标题 / 带过去的那一块）、`Agent/AgentChat.swift`（`saveContext` / `handoffs`）、`Agent/AgentPanelModel.swift` |
+| 界面 | `Window/AI/AgentChatNSView.swift`（标题行按钮 + `AgentMenus.contexts` + 输入框上方那块）、`Window/AI/AgentQueueView.swift`（可换标题、可不要「编辑」）、`Window/Sheets/AgentContextsSheet.swift`、`Window/Sheets/TrashSheet.swift` |
+| MCP | `MCP/MCPTools+AgentContext.swift`（工具 + 执行）、`MCP/MCPTools.swift`、`MCP/MCPServer.swift` |
+| 安卓 | `local/store/Schema.kt`（v23）、`MirrorFp.kt`（含 `needsMigrate`）、`MirrorReport.kt`、`TrashStore.kt` / `Trash.kt` / `TrashSheet.kt`、`MirrorFpTest` |
+
+### 12.5 验证（2026-11-02）
+
+- `spike/agent-context-test.swift`（新）49 项全过：切标题与正文（标题行 / 客套话 / 二级标题 / 没有标题行 / `#标签` / 空）、标题规整、带过去的那一块、
+  库的读写（排序、覆盖写不动 created_at）、指纹规格与列序、回收站归档 → 删 → 放回（逐字段相同、重复放回幂等）、manifest 键名与老条目、v22 库升级补表。
+- `spike/agent-queue-view-test.swift` 19 项（新加 4 项：只有「移除」的那一种）；`trash-test` 71、`store-test` 54、`mirror-fp-test` 66 全过；
+  `mirror-apply-test` 55 过 1 不过（TODO 里那条老的）。
+- 服务器 `swift test` 全过、Linux 交叉编译通过、`spike/server-client-test.sh` 47 项全过。安卓 `assembleDebug` + JVM 单测 181 项全过。
+- Mac Debug 编译通过、改动的文件没有新警告。
+- 🔴 没在真 App 里跑过：保存（Agent 真写出来的摘要能不能切对）、带上、管理窗口、MCP 三个工具（`python3 spike/mcp-schema-audit.py` 要对着运行中的 App 跑）都由用户实测。
+
+### 12.6 实测清单（用户）
+
+  78. Agent 页标题行多了「上下文」按钮；一句没说时「保存这段对话为上下文」是灰的。
+  79. 和 Kimi 聊几句 → 「保存这段对话为上下文」：对话里多一句请求、Kimi 写出带 `# 标题` 的摘要，答完出现「已保存为上下文「…」」。
+  80. 设置里换成 Claude Code（或 Qwen）→「新对话」→「上下文」菜单里看到刚才那份（副标题 Kimi · 日期）→ 点它：输入框上方出现「随下一句话带上的上下文」；
+      说「接着做」→ 对话里出现「已带上上下文「…」」，Claude Code 知道之前做到哪了。再点一次菜单里那份（打勾的）= 取下。
+  81. 「管理上下文…」：列表、改标题 / 摘要后点「保存修改」或直接换选中 / 点「完成」都存下；「带到这段对话」= 挂到输入框；「删除…」后在回收站里能放回。
+  82. 存的时候按停止：不存，提示「上下文没有保存」。
+  83. 终端里的外部 Agent（经 MCP）：「列出 UniReader 里存的上下文」「读第一份」能做到；「把我们这次的对话存成上下文」→ 管理窗口里出现，Agent 列是它的名字。
+  84. 连服务器的工作区：NAS 上的服务器换成新版之后，另一台设备同步后能看到这些上下文（旧版服务器不传，见 §12.1）。

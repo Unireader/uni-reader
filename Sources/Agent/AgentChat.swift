@@ -60,6 +60,7 @@ struct AgentReaderContext: Equatable {
         lines.append(MCPTools.mathWriting)   // 同 `noteKinds`：MCP 说明里有，但不是每个 Agent 都读
         lines.append(MCPTools.graphWriting)
         lines.append(Self.exercises)
+        lines.append(Self.contexts)
         lines.append(AgentTranscript.contextClose)
         return lines.joined(separator: "\n")
     }
@@ -68,6 +69,9 @@ struct AgentReaderContext: Equatable {
     /// 上面按标签页各接一句。MCP 的 `instructions` 里也写了一遍，但不是每个 Agent 都读它，这里再带上。
     /// 习题（`EXERCISE-PLAN.md §3.2`）：用户说「识别习题 / 把这几页的题导进来」时 Agent 该用哪几个工具。理由同上。
     private static let exercises = "Exercises (习题) are questions saved for the user to practice (练习 / 错题本 / 收藏): single / multiple choice, fill in the blank (type fill, one entry in blanks per blank) and subjective questions (type subjective — calculation, proof, short answer; answer = the reference answer). When the user says 习题册, 练习册 or 练习库 they mean these Exercises in UniReader (the 习题 part of the sidebar), not a file or a PDF. To recognize the exercises on some pages: look at each page with render_page (and read_pages for the text), transcribe every question exactly without rewording, and save them with import_exercises (page, number, stem, options or blanks, plus answer + answer_source only when the answer is printed or you are sure). The first time you import into a book (list_exercises shows no questions in it yet), ask the user how to group its questions into chapters: by the PDF's table of contents (chapters \"toc\"), their own way (printed headings, question groups, any number of levels: give each question its chapter path, top level first, and pass chapters \"none\"), or not at all (chapters \"none\"). Later imports follow the book's grouping: for table-of-contents or ungrouped books leave chapters out (a book whose chapters the user removed stays flat); for a book grouped the user's own way keep giving every question its chapter, reusing the existing level names. Regroup existing questions with update_exercises chapter when the user asks. If the user already answered on the page — usually by highlighting an option (list_annotations, kinds highlight) or by circling / writing (render_page with include_marks) — pass it as user_answer (user_blanks for fill). Fill in answers later from an answer key with list_exercises + update_exercises. To grade the user's fill-in or subjective answers: list_exercise_attempts (ungraded_only, or the exercise_ids you were given), render_exercise_answer for handwriting, compare with the reference answer, then grade_exercise_attempts with correct + short feedback in the user's language. Each exercise can also carry the user's own note (题目笔记, note in list_exercises — not a text note on the PDF); change it with update_exercises note only when the user asks. When the user asks to star (收藏 / 加星) or unstar questions, find them with list_exercises (filter starred lists the starred ones) and pass update_exercises starred true / false."
+
+    /// Agent 上下文（`ACP-AGENT-PLAN.md §12`）：用户说「接着上次存的那个」时 Agent 该去哪找。理由同上。
+    private static let contexts = "Agent contexts (Agent 上下文) are handoff summaries of earlier conversations, possibly with other agents, saved in this workspace. When the user asks to continue earlier work or mentions a saved context, find it with list_agent_contexts and read it with read_agent_context. The user saves one from the panel's Contexts menu; call save_agent_context only when the user asks you to."
 
     private static let noteKinds = "UniReader has two kinds of notes: a text note (批注 / 文字笔记) is pinned to a spot on a PDF page — the user makes one with right-click › Add Note Here, or by selecting text and adding a note (tools: add_note, list_annotations, delete_annotations); a Markdown note (Markdown 笔记) is a separate .md file opened in its own tab (tools: list_markdown_notes, read_markdown, edit_markdown)."
 }
@@ -80,6 +84,12 @@ struct AgentPermissionAsk: Identifiable {
     let detail: String
     let options: [Option]
     fileprivate let resume: (RequestPermissionResponse) -> Void
+}
+
+/// 输入框上挂着的一份已存上下文（随下一句话带过去）。`id` 是挂上去这一次的，同一份挂两次也分得开。
+struct AgentHandoff: Identifiable {
+    let id = UUID()
+    let context: LibAgentContext
 }
 
 /// 回答中按回车排上队的一句话（连同当时挂在输入框上的图片、`@` 的文件），这一轮答完依次发出去。
@@ -101,8 +111,10 @@ struct AgentConfigItem: Identifiable {
     let kind: Kind
 }
 
-/// 一段 Agent 对话（一个宿主 × 一个工作目录一份）。**不落库**：历史由 Agent 自己按工作目录保存，
+/// 一段 Agent 对话（一个宿主 × 一个工作目录一份）。对话本身**不落库**：历史由 Agent 自己按工作目录保存，
 /// 面板要看旧对话时用 `session/list` 列、`session/load` 回放（用户 2026-09-18：「我们不保存具体数据」）。
+/// 例外是用户点「保存上下文」时 Agent 写的那份交接摘要（2026-11-02 用户要的「换 Agent 接着聊」，`ACP-AGENT-PLAN.md §12`）：
+/// 存进工作区库，在任何 Agent 的对话里都能带上。
 @MainActor
 final class AgentChat: ObservableObject {
     enum Phase: Equatable {
@@ -142,6 +154,13 @@ final class AgentChat: ObservableObject {
     @Published private(set) var queued: [AgentQueuedMessage] = []
     /// 下一次发送时放进隐藏上下文块的说明（英文，给 Agent 看：题目 / 作答的 id 等）。发出去就清。
     private(set) var contextNotes: [String] = []
+    /// 挂在输入框上的已存上下文（「上下文」菜单里点的），随下一句话放进隐藏块带过去（`ACP-AGENT-PLAN.md §12`）。
+    /// 同 `contextNotes`：真正发出那一刻才取走；斜杠命令不带，留着跟下一句话走。
+    @Published private(set) var handoffs: [AgentHandoff] = []
+    /// 这段对话属于哪个工作区（存上下文要写它的库）。宿主设。
+    var workspaceProvider: () -> WorkspaceManager? = { nil }
+    /// 正在等 Agent 写交接摘要的那一轮：哪段会话、那句请求在 `items` 里的位置（它后面的回复就是摘要）。
+    private var pendingSave: (session: String, from: Int)?
 
     private var connection: AgentConnection?
     /// 上次随消息带过去的上下文。没变就不重复带（省 token，也免得对话里满是同一段）。
@@ -396,8 +415,14 @@ final class AgentChat: ObservableObject {
             blocks.append(.image(ImageContent(data: img.data.base64EncodedString(), mimeType: img.mimeType)))
         }
         // 图片的来源（哪本书哪一页）放进隐藏块：Agent 要用 MCP 去读那一页时用得上，回放时剔掉
+        let carried = handoffs
+        handoffs = []
         let notes = images.enumerated().compactMap { i, img in img.note.map { "Attached image \(i + 1): \($0)" } }
             + contextNotes
+            + carried.map { h in
+                AgentContextText.handoff(title: h.context.title, summary: h.context.summary, agent: h.context.agent,
+                                         id: h.context.id, date: h.context.updatedAt)
+            }
         contextNotes = []
         if !notes.isEmpty {
             blocks.append(.text(TextContent(text: ([AgentTranscript.contextOpen] + notes + [AgentTranscript.contextClose])
@@ -411,8 +436,59 @@ final class AgentChat: ObservableObject {
             }
         }
         items.append(AgentItem(kind: .user(text, images: images)))
+        for h in carried {
+            items.append(AgentItem(kind: .notice(String(format: L("Carried over the context “%@”."), h.context.title),
+                                                 isError: false)))
+        }
         run(blocks, session: id, on: c)
     }
+
+    // MARK: - 上下文（`ACP-AGENT-PLAN.md §12`）
+
+    /// 这段对话里说过话、眼下空闲、没在等上一份摘要：才能「保存上下文」。
+    var canSaveContext: Bool {
+        phase == .idle && sessionId != nil && connection != nil && pendingSave == nil && workspaceProvider() != nil
+            && items.contains { if case .user = $0.kind { return true } else { return false } }
+    }
+
+    /// 保存上下文：请这个 Agent 把这段对话写成交接摘要（说明放隐藏块，对话里只看到一句请求），
+    /// 这一轮正常答完就把回复存进工作区库（`finishSave`）。
+    func saveContext() {
+        guard canSaveContext, let id = sessionId, let c = connection else { return }
+        let text = L("Please write a handoff summary of this chat so I can continue it with another agent.")
+        pendingSave = (id, items.count)
+        items.append(AgentItem(kind: .user(text, images: [])))
+        let note = [AgentTranscript.contextOpen, AgentContextText.saveInstruction, AgentTranscript.contextClose]
+            .joined(separator: "\n")
+        run([.text(TextContent(text: text)), .text(TextContent(text: note))], session: id, on: c)
+    }
+
+    /// 那一轮答完：把请求之后 Agent 的回复（思考过程不算）拼起来，切出标题与正文存下。
+    private func finishSave(session: String, from: Int) {
+        guard from < items.count else { return }
+        let reply = items[(from + 1)...].compactMap { item -> String? in
+            if case .agent(let s) = item.kind { return s } else { return nil }
+        }.joined(separator: "\n\n")
+        let parsed = AgentContextText.parse(reply)
+        guard !parsed.summary.isEmpty, let ws = workspaceProvider() else {
+            items.append(AgentItem(kind: .notice(L("The agent wrote no summary, so no context was saved."), isError: true)))
+            return
+        }
+        guard let saved = ws.addAgentContext(title: parsed.title, summary: parsed.summary, agent: agentName,
+                                             sessionId: session) else {
+            items.append(AgentItem(kind: .notice(L("Could not save the context."), isError: true)))
+            return
+        }
+        items.append(AgentItem(kind: .notice(String(format: L("Saved as the context “%@”. In a new chat with any agent, attach it from the Contexts menu to carry on."), saved.title), isError: false)))
+    }
+
+    /// 把一份已存上下文挂到输入框上，随下一句话带过去（同一份已经挂着就不重复挂）。
+    func attachContext(_ c: LibAgentContext) {
+        guard !handoffs.contains(where: { $0.context.id == c.id }) else { return }
+        handoffs.append(AgentHandoff(context: c))
+    }
+
+    func removeHandoff(_ id: UUID) { handoffs.removeAll { $0.id == id } }
 
     /// 压缩上下文（占用菜单里那一项）：发 Agent 自己报的那条命令，和用户在输入框里打 `/compact` 一样。
     func compact() {
@@ -431,6 +507,11 @@ final class AgentChat: ObservableObject {
                 let r = try await c.prompt(id, blocks)
                 guard sessionId == id else { return }   // 中途换了会话：这条结果不属于眼前这段
                 turnEndedAt = Date()
+                if let p = pendingSave, p.session == id {
+                    pendingSave = nil
+                    if r.stopReason == .endTurn { finishSave(session: id, from: p.from) }
+                    else { items.append(AgentItem(kind: .notice(L("No context was saved."), isError: false))) }
+                }
                 switch r.stopReason {
                 case .cancelled:
                     items.append(AgentItem(kind: .notice(L("Stopped."), isError: false)))
@@ -446,6 +527,7 @@ final class AgentChat: ObservableObject {
             } catch {
                 guard sessionId == id else { return }
                 items.append(AgentItem(kind: .notice(describe(error), isError: true)))
+                if pendingSave?.session == id { pendingSave = nil }
                 phase = connection == nil ? .failed(describe(error)) : .idle
                 restoreQueue()     // 出错了别接着往下发：退回输入框，用户自己决定
             }
@@ -538,6 +620,7 @@ final class AgentChat: ObservableObject {
         connection = nil
         sessionId = nil
         lastContextSent = nil
+        pendingSave = nil
         restoreQueue()
         items.append(AgentItem(kind: .notice(L("The agent process exited. Start a new chat to reconnect."), isError: true)))
         phase = .failed(L("The agent process exited."))
@@ -580,6 +663,7 @@ final class AgentChat: ObservableObject {
         if let id = sessionId { connection?.unregister(sessionId: id) }
         sessionId = nil
         lastContextSent = nil
+        pendingSave = nil   // 等着的那一轮属于这段：换会话就不存了
         restoreQueue()   // 排着的属于眼前这段：换会话不往新的那段里发，退回输入框（同没发出去的草稿）
     }
 

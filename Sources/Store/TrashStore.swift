@@ -24,6 +24,8 @@ enum TrashStore {
                                  "exercise", "exercise_attempt"]
     /// 画板笔记条目（v16）要搬的表，同样父表在前（`board_item REFERENCES board_note(id)`）。
     static let boardTables = ["board_note", "board_page", "board_item"]
+    /// Agent 上下文条目（v23，`ACP-AGENT-PLAN.md §12`）：一张表、没有子表。
+    static let agentContextTables = ["agent_context"]
 
     /// 页内笔迹的 note.kind（与 `InkStroke.noteKind` 同值，这里不引 App 层的类型）。
     private static let inkKind = 2
@@ -45,9 +47,13 @@ enum TrashStore {
         var boardImage = 0
         /// 习题（v20）。作答记录跟着题走，不单独计数。
         var exercise = 0
+        /// Agent 上下文（v23）。
+        var agentContext = 0
 
         /// 「一共多少条会跟着一起没」——确认框里那个数。
-        var total: Int { ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage + exercise }
+        var total: Int {
+            ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage + exercise + agentContext
+        }
 
         init() {}
         /// 老条目的 manifest 没有新加的键：逐个 `decodeIfPresent`，缺了就是 0（读不出来的条目会凭空消失）。
@@ -59,6 +65,7 @@ enum TrashStore {
             inkLayer = v(.inkLayer); scratchPad = v(.scratchPad)
             boardInk = v(.boardInk); boardImage = v(.boardImage)
             exercise = v(.exercise)
+            agentContext = v(.agentContext)
         }
     }
 
@@ -112,6 +119,16 @@ enum TrashStore {
             try db.run("""
             CREATE TABLE \(t).exercise_attempt AS SELECT * FROM main.exercise_attempt WHERE exercise_id IN (\(marks))
             """, params)
+            return try summarize(db, schema: t)
+        }
+    }
+
+    /// 把几份 Agent 上下文搬进快照库（Agent 面板「删除」/ MCP，`ACP-AGENT-PLAN.md §12`）。
+    static func archiveAgentContexts(_ db: SQLiteDB, ids: [String], to path: String) throws -> Archived {
+        try withAttached(db, path: path) { t in
+            let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+            try db.run("CREATE TABLE \(t).agent_context AS SELECT * FROM main.agent_context WHERE id IN (\(marks))",
+                       ids.map { .text($0) })
             return try summarize(db, schema: t)
         }
     }
@@ -197,7 +214,7 @@ enum TrashStore {
             let present = try tableNames(db, schema: t)
             var written = 0
             try db.transaction {
-                for table in documentTables + boardTables where present.contains(table) {
+                for table in documentTables + boardTables + agentContextTables where present.contains(table) {
                     if remapDocumentId != nil, ["document", "variant", "location"].contains(table) { continue }
                     let cols = try columnNames(db, schema: t, table: table)
                     guard !cols.isEmpty else { continue }
@@ -299,6 +316,9 @@ enum TrashStore {
             out.images = Array(Set(out.images + imgs)).sorted()
         }
         if present.contains("exercise") { out.counts.exercise = try count(db, schema: t, table: "exercise") }
+        if present.contains("agent_context") {
+            out.counts.agentContext = try count(db, schema: t, table: "agent_context")
+        }
         if present.contains("ink_layer") { out.counts.inkLayer = try count(db, schema: t, table: "ink_layer") }
         if present.contains("scratch_pad") { out.counts.scratchPad = try count(db, schema: t, table: "scratch_pad") }
         if present.contains("variant") {

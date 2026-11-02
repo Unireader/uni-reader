@@ -167,6 +167,9 @@ final class MCPServer: ObservableObject {
     (with line numbers), by search, or as a heading outline; edit_markdown changes part of a note by exact \
     old_text replacement or line insertion — prefer it over update_markdown, which replaces the whole text. \
     Never edit files inside a .unrd package directly. \
+    Agent contexts (Agent 上下文) are handoff summaries of earlier conversations saved in the workspace so any agent \
+    can continue that work: when the user asks to continue earlier work or mentions a saved context, find it with \
+    list_agent_contexts and read it with read_agent_context; save one with save_agent_context only when the user asks. \
     \(MCPTools.mathWriting) \
     \(MCPTools.graphWriting) \
     Most PDF tools default to the document in the key window when no target is given. \

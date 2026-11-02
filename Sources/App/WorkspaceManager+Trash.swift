@@ -150,6 +150,31 @@ extension Trash {
         }
     }
 
+    /// 把几份 Agent 上下文归档（`ACP-AGENT-PLAN.md §12`）。**调用方随后才可以删。** 归档到的份数对不上 `ids` 同样算失败。
+    @discardableResult
+    static func archiveAgentContexts(store: LibraryStore, ids: [String], title: String) -> URL? {
+        let workspace = store.workspaceFolder
+        guard let dir = makeDir(in: workspace, title: title) else { return nil }
+        do {
+            let a = try store.archiveAgentContexts(ids: ids, to: dir.appendingPathComponent(snapshotName).path)
+            guard a.counts.agentContext == ids.count else {
+                throw NSError(domain: "UniReader", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "archived \(a.counts.agentContext) of \(ids.count) agent contexts"])
+            }
+            var m = Manifest()
+            m.kind = .agentContexts
+            m.title = title
+            m.counts = a.counts
+            try encode(m).write(to: dir.appendingPathComponent(manifestName))
+            wsLog("[TRASH] Agent 上下文已移入回收站：\(title)（\(ids.count) 份）")
+            return dir
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            wsLog("[TRASH] ⚠️ Agent 上下文归档失败，删除已放弃：\(title) — \(error)")
+            return nil
+        }
+    }
+
     /// 建一个空的条目目录（名字不撞）。
     private static func makeDir(in workspace: URL, title: String) -> URL? {
         let fm = FileManager.default
@@ -273,6 +298,7 @@ extension WorkspaceManager {
         try? FileManager.default.removeItem(at: entry.url)
         refresh()
         reconcileAndPurgeImages()   // 图片的待删除标记要跟着摘掉
+        if entry.manifest.kind == .agentContexts { agentContextsChanged() }
         if entry.manifest.kind == .annotations {
             NotificationCenter.default.post(name: Trash.annotationsRestored, object: self,
                                             userInfo: ["documentId": entry.manifest.documentId])

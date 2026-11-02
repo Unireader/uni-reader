@@ -136,6 +136,10 @@ final class AgentPanelModel: ObservableObject {
         c.mentionProvider = { [weak self] in
             self?.readers[window]?.controller.map { Self.mentions(in: $0.workspace) } ?? []
         }
+        c.workspaceProvider = { [weak self] in
+            guard let ws = self?.readers[window]?.controller?.workspace, ws.store != nil else { return nil }
+            return ws
+        }
         chats[window] = c
         return c
     }

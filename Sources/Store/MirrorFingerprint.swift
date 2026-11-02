@@ -153,6 +153,11 @@ enum MirrorFp {
             Column("elapsed_ms", .int), Column("created_at", .text), Column("source", .text),
             Column("ink", .blob), Column("judged_by", .text), Column("feedback", .text),
         ]),
+        // v23：Agent 上下文（`ACP-AGENT-PLAN.md §12`），工作区级、没有子表。改标题 / 改摘要都改 `updated_at`，按它取新。
+        TableSpec(table: "agent_context", key: "id", columns: [
+            Column("id", .text), Column("title", .text), Column("summary", .text), Column("agent", .text),
+            Column("session_id", .text), Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),
         ]),

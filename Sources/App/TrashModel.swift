@@ -28,6 +28,7 @@ enum Trash {
         case board      // 一篇画板笔记（v16）
         case annotations   // 一篇文档里的几条批注（高亮 / 文字笔记 / 书签 / 图片笔记），MCP `delete_annotations` 删的
         case exercises     // 几道习题连同作答记录（v20，`EXERCISE-PLAN.md §5`）
+        case agentContexts // 几份 Agent 上下文（v23，`ACP-AGENT-PLAN.md §12`）
     }
 
     /// `manifest.json` 的内容。**新增字段一律给默认值**：老条目的 manifest 少字段也要读得出来，

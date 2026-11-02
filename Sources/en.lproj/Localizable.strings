@@ -1192,3 +1192,36 @@
 /* 侧栏 PDF 右键「重命名…」（2026-11-02） */
 "Rename Document" = "Rename Document";
 "Document name" = "Document name";
+
+/* 习题「答对自动下一题」+ Agent 上下文（2026-11-02，EXERCISE-PLAN.md §17 / ACP-AGENT-PLAN.md §12） */
+"Next When Right" = "Next When Right";
+"When you get a question right, go on to the next one after a moment. Get it wrong and you stay to read the explanation." = "When you get a question right, go on to the next one after a moment. Get it wrong and you stay to read the explanation.";
+"Agent Context" = "Agent Context";
+"Agent Contexts" = "Agent Contexts";
+"%d Agent contexts" = "%d Agent contexts";
+"Context %@" = "Context %@";
+"Carried over the context “%@”." = "Carried over the context “%@”.";
+"Please write a handoff summary of this chat so I can continue it with another agent." = "Please write a handoff summary of this chat so I can continue it with another agent.";
+"The agent wrote no summary, so no context was saved." = "The agent wrote no summary, so no context was saved.";
+"Could not save the context." = "Could not save the context.";
+"Saved as the context “%@”. In a new chat with any agent, attach it from the Contexts menu to carry on." = "Saved as the context “%@”. In a new chat with any agent, attach it from the Contexts menu to carry on.";
+"No context was saved." = "No context was saved.";
+"Context carried into your next message" = "Context carried into your next message";
+"Contexts" = "Contexts";
+"Say what to do next with this context…" = "Say what to do next with this context…";
+"Save This Chat as a Context" = "Save This Chat as a Context";
+"%@ writes a summary of this chat; any agent can carry on from it." = "%@ writes a summary of this chat; any agent can carry on from it.";
+"Attach to Your Next Message" = "Attach to Your Next Message";
+"No saved contexts" = "No saved contexts";
+"Manage Contexts…" = "Manage Contexts…";
+"No contexts saved yet. In a chat, choose Save This Chat as a Context." = "No contexts saved yet. In a chat, choose Save This Chat as a Context.";
+"Summaries of earlier Agent chats, saved in this workspace. Attach one in a new chat with any agent and it can carry on from there." = "Summaries of earlier Agent chats, saved in this workspace. Attach one in a new chat with any agent and it can carry on from there.";
+"Updated" = "Updated";
+"Save Changes" = "Save Changes";
+"Attach to This Chat" = "Attach to This Chat";
+"Written by %@ · %@" = "Written by %@ · %@";
+"%d selected" = "%d selected";
+"Delete the context “%@”?" = "Delete the context “%@”?";
+"Delete %d contexts?" = "Delete %d contexts?";
+"It moves to Recently Deleted, where you can put it back." = "It moves to Recently Deleted, where you can put it back.";
+"Could not delete the context." = "Could not delete the context.";
