@@ -1089,6 +1089,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if targets.count == 1 {
             m.addItem(item(L("Open in New Window"), "macwindow.badge.plus") { [weak self] in self?.onOpenInNewWindow(doc.id) })
+            // 改的是库里的书名（侧栏 / 标签 / 窗口标题显示的那个），磁盘上的文件名不动（2026-11-02 用户要求）
+            m.addItem(item(L("Rename…"), "pencil") { [weak self] in
+                self?.textPrompt(title: L("Rename Document"), placeholder: L("Document name"), initial: doc.title) { raw in
+                    let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty, name != doc.title else { return }
+                    self?.workspace.rename(documentId: doc.id, title: name)
+                }
+            })
         }
         // 边界上 / 跨分组混选时灰掉而不是隐藏（忽隐忽现比灰着更难用）
         let up = item(L("Move Up"), "arrow.up") { [weak self] in self?.moveSelection(targets, up: true) }

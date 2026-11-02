@@ -1188,3 +1188,7 @@
 "Search PDFs, notes, boards and exercises" = "Search PDFs, notes, boards and exercises";
 "No Results" = "No Results";
 "Markdown Note" = "Markdown Note";
+
+/* 侧栏 PDF 右键「重命名…」（2026-11-02） */
+"Rename Document" = "Rename Document";
+"Document name" = "Document name";

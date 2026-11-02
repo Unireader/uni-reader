@@ -341,6 +341,18 @@ final class TabsModel: ObservableObject {
         for t in tabs where t.docID != nil && !live.contains(t.docID!) {
             if tabs.count > 1 { close(t.id) } else { t.select(nil) }
         }
+        syncTitles(docs)
+    }
+
+    /// PDF 标签的书名跟着库走（侧栏改名，2026-11-02）：会话里的 `title` 是窗口标题、标签名与平板 `docs` 广播读的那份。
+    /// 只碰 PDF 标签（画板 / 习题也借 `session.title` 放自己的名字）；文件找不到的标签显示 `missingDoc` 的名字，一并换。
+    private func syncTitles(_ docs: [LibDocument]) {
+        let byID = Dictionary(docs.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for t in tabs where t.noteRef == nil && t.boardID == nil && t.exerciseScope == nil {
+            guard let id = t.docID, let d = byID[id] else { continue }
+            if !t.session.title.isEmpty, t.session.title != d.title { t.session.title = d.title }
+            if t.missingDoc?.id == id, t.missingDoc?.title != d.title { t.missingDoc = d }
+        }
     }
 
     /// 这个会话是不是本窗口的某个标签（平板发来的请求带的是**会话 id**，可能指向后台标签）。
