@@ -9,6 +9,44 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.18</title>
+      <pubDate>Mon, 02 Nov 2026 00:55:15 +0000</pubDate>
+      <sparkle:version>60</sparkle:version>
+      <sparkle:shortVersionString>0.3.18</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能：给 PDF 改名</h4>
+<ul>
+<li>侧栏里右键一本书，选「重命名…」就能改它的名字。改的是书库里显示的名字（侧栏、标签页、窗口标题），磁盘上的文件名不变。</li>
+<li>已经打开的标签页会跟着换成新名字；连接服务器的工作区里，新名字会同步到其他设备和网页。</li>
+</ul>
+<h4>修复：改过的 PDF 在其他设备上还是旧的</h4>
+<ul>
+<li>连接服务器的工作区里，给 PDF 加了目录这类直接改动文件的操作之后，打开时弹出「文件已变化」，选「关联为新版本」——之前其他设备和网页仍然拿到旧文件，现在会换成新的。其他设备同步后这本书会显示为未下载，点「从服务器下载」下到的就是新版本（不大的会自动下载）。</li>
+<li>页数没变时，文字识别结果和扫描页对齐会沿用到新版本，不用重新识别。</li>
+<li>以前已经这样关联过的书，更新后第一次打开工作区时会自动整理好。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.18">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New: Rename a PDF</h4>
+<ul>
+<li>Right-click a book in the sidebar and choose Rename… to change its name. This changes the name shown in the library (sidebar, tabs and window title); the file on disk keeps its name.</li>
+<li>Open tabs switch to the new name right away. In workspaces on a server, the new name syncs to your other devices and the web reader.</li>
+</ul>
+<h4>Fix: an edited PDF stayed old on other devices</h4>
+<ul>
+<li>In workspaces on a server, after you change a PDF file directly (for example, add a table of contents), opening it shows "File Changed"; if you chose "Link as New Version", other devices and the web reader still got the old file. Now they get the new one. After syncing, the book shows as not downloaded on other devices, and Download from Server gets the new version (smaller files download automatically).</li>
+<li>If the page count didn't change, text recognition results and scanned-page alignment carry over to the new version, so nothing has to be recognized again.</li>
+<li>Books you already linked this way are tidied up automatically the first time you open the workspace after updating.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.18">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.18/UniReader-0.3.18.zip" length="17323133" type="application/octet-stream" sparkle:edSignature="p9Lu1bT90NgT8YGubuJ2iosANUGmnII8eKBzgvFSZPJP1CiFes6Sf4vl/AsqMHDcMt3P/fmk5RUkGI7tyvRWDQ==" />
+    </item>
+    <item>
       <title>v0.3.17</title>
       <pubDate>Sat, 31 Oct 2026 04:04:14 +0000</pubDate>
       <sparkle:version>59</sparkle:version>
