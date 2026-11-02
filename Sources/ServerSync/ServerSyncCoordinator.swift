@@ -265,7 +265,9 @@ final class ServerSyncCoordinator: ObservableObject {
                           ep: (client: ServerClient, wid: String),
                           progress: @escaping @Sendable (Int64) -> Void) async throws {
         let existing = m.locations(documentId: v.documentId).first { $0.variantId == v.id && $0.inWorkspace }
-        let rel = existing?.path ?? "PDFs/\(v.contentHash).pdf"
+        var rel = existing?.path ?? "PDFs/\(v.contentHash).pdf"
+        // 按哈希起的名字被别的版本占着（那份文件原地改过内容、关联成了新版本）：另起一个名字，别把它盖掉
+        if existing == nil, (try? m.store?.locationExists(path: rel)) == true { rel = "PDFs/\(UUID().uuidString).pdf" }
         try await ep.client.downloadPDF(ep.wid, hash: v.contentHash, to: folder.appendingPathComponent(rel),
                                         progress: progress)
         guard let store = m.store else { return }

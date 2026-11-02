@@ -657,6 +657,93 @@ final class LibraryStore {
     }
     func removeLocation(id: String) throws { try db.run("DELETE FROM location WHERE id=?", [.text(id)]) }
 
+    /// 有没有哪条 location 记着这个路径（不分版本）。下载时挑落盘路径用：`PDFs/<哈希>.pdf` 可能已被别的版本占着
+    /// （原地改过内容、关联为新版本之后，新版本的文件仍叫旧哈希的名字），照名字下下去会把新内容盖掉。
+    func locationExists(path: String) throws -> Bool {
+        try db.query("SELECT 1 FROM location WHERE path=? LIMIT 1", [.text(path)]).first != nil
+    }
+
+    // MARK: - 文件原地改了内容（「关联为新版本」，2026-11-02）
+
+    /// 按内容哈希记的三样（OCR 结果 / 扫描页对齐 / 页高）照抄一份到新哈希下，新哈希已有的不覆盖。
+    /// 只在**页数没变**时由调用方调：原地加目录 / 改元数据这类改动页面本身没动，这三样照旧有效；
+    /// 不抄的话新版本要重新识别（云端 OCR 再收一次费）、重新测对齐（开着对齐的书，批注会对不上页面）。
+    func copyContentCaches(from oldHash: String, to newHash: String) throws {
+        guard !oldHash.isEmpty, !newHash.isEmpty, oldHash != newHash else { return }
+        let p: [SQLiteDB.Value] = [.text(newHash), .text(oldHash)]
+        try db.transaction {
+            try db.run("""
+            INSERT OR IGNORE INTO ocr_page(content_hash,page,provider,payload,lang,created_at)
+            SELECT ?, page, provider, payload, lang, created_at FROM ocr_page WHERE content_hash=?
+            """, p)
+            try db.run("""
+            INSERT OR IGNORE INTO page_align(content_hash,enabled,page_count,payload,created_at,updated_at)
+            SELECT ?, enabled, page_count, payload, created_at, updated_at FROM page_align WHERE content_hash=?
+            """, p)
+            try db.run("""
+            INSERT OR IGNORE INTO page_geom(content_hash,page_count,heights,created_at)
+            SELECT ?, page_count, heights, created_at FROM page_geom WHERE content_hash=?
+            """, p)
+        }
+    }
+
+    /// 被新内容取代的旧版本：本机已经没有任何路径指向它、而且这篇文档还有别的版本时，删掉这一行。
+    ///
+    /// 为什么要删：不删的话它在服务器上照样是这篇文档的一个版本，而下载 / 网页阅读器都先取**最早**的版本，
+    /// 别的设备与网页就一直拿旧文件（2026-11-02 用户报「加了目录没更新」）。删掉后同步把删除带过去，
+    /// 别的设备上它连同本机的 location 一起没了，于是去下新版本。
+    /// 不经回收站：这一行只有哈希 / 页数 / 时间，对应的文件本机已经被新内容盖掉了，归档也恢复不出东西；
+    /// 服务器收到删除照常先归档再删。返回删了没有。
+    @discardableResult
+    func deleteVariantIfUnused(id: String) throws -> Bool {
+        guard let v = try variant(id: id) else { return false }
+        let refs = try db.query("SELECT 1 FROM location WHERE variant_id=? LIMIT 1", [.text(id)])
+        guard refs.isEmpty else { return false }
+        let siblings = try db.query("SELECT 1 FROM variant WHERE document_id=? AND id<>? LIMIT 1",
+                                    [.text(v.documentId), .text(id)])
+        guard !siblings.isEmpty else { return false }   // 文档至少留一个版本
+        try db.run("DELETE FROM variant WHERE id=?", [.text(id)])
+        return true
+    }
+
+    /// 补救 2026-11-02 之前「关联为新版本」留下的旧版本（那时只挪路径、不删旧行，旧版本在本机就一条路径都不剩了）。
+    /// 认法：旧版本本机没有任何路径；同一篇有一个**更晚加进来**、本机有路径的版本；两者页数相同，
+    /// 或新版本的文件正是 `PDFs/<旧版本哈希>.pdf`（从服务器按哈希下下来的那份被原地改了内容）。
+    /// ⚠️ 服务器工作区里「别的设备拉过来、本机还没下载」的版本也是一条路径都没有：同一篇在别的设备上「关联为同一文档」
+    /// 合并过两版、旧的那版这里没下载时会被认成被取代——所以只在升级后每个工作区跑**一次**（调用方记标记），
+    /// 之后的「关联为新版本」当场就删（`WorkspaceManager.rekeyLocation`），不再靠它。
+    /// 页数没变的照 `copyContentCaches` 抄一份缓存。返回删了几行。
+    @discardableResult
+    func dropSupersededVariants() throws -> Int {
+        let rows = try db.query("""
+        SELECT v.id AS old_id, v.content_hash AS old_hash, v.page_count AS old_pages,
+               w.content_hash AS new_hash, w.page_count AS new_pages
+        FROM variant v
+        JOIN variant w ON w.document_id = v.document_id AND w.id <> v.id AND w.added_at > v.added_at
+        JOIN location l ON l.variant_id = w.id
+        WHERE NOT EXISTS (SELECT 1 FROM location x WHERE x.variant_id = v.id)
+          AND (w.page_count = v.page_count OR (l.in_workspace = 1 AND l.path = 'PDFs/' || v.content_hash || '.pdf'))
+        ORDER BY w.added_at DESC
+        """)
+        var n = 0
+        var done = Set<String>()
+        for r in rows {
+            guard let id = r["old_id"] as? String, done.insert(id).inserted,
+                  let oldHash = r["old_hash"] as? String, let newHash = r["new_hash"] as? String else { continue }
+            if let a = r["old_pages"] as? Int64, let b = r["new_pages"] as? Int64, a == b, a > 0 {
+                try copyContentCaches(from: oldHash, to: newHash)
+            }
+            if try deleteVariantIfUnused(id: id) { n += 1 }
+        }
+        return n
+    }
+
+    /// 文档的总页数跟着新版本走（换了内容、页数变了时）。
+    func setPageCount(documentId: String, pageCount: Int) throws {
+        try db.run("UPDATE document SET page_count=? WHERE id=? AND page_count<>?",
+                   [.int(Int64(pageCount)), .text(documentId), .int(Int64(pageCount))])
+    }
+
     // MARK: - 导入：按 hash + 路径「找到或创建」
 
     /// 打开一个 PDF 时调用（已算出 hash）。返回其逻辑文档与该版本。

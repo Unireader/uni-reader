@@ -199,6 +199,12 @@ final class WorkspaceManager: ObservableObject {
         openDocs = store.openDocuments()         // 上次「打开集」（本工作区所有窗口的文档）
         restoreDocIds = openDocs                 // 启动快照：restoreSession 只读它一次进本地，之后随窗口重同步无碍
         windowDocs = [:]
+        // 2026-11-02 之前「关联为新版本」留下的旧版本行（`dropSupersededVariants` 有认法与为什么只跑一次）：
+        // 删掉，同步带给别的设备。标记是本机私有的 meta 键（不在 `MirrorFp.syncedMetaKeys` 里，不同步）。
+        if store.meta(Self.variantRepairKey) == nil, let n = try? store.dropSupersededVariants() {
+            try? store.setMeta(Self.variantRepairKey, "1")
+            if n > 0 { wsLog("[VARIANT] \(folder.lastPathComponent)：删掉 \(n) 个被原地改过内容取代的旧版本") }
+        }
         refresh()
         lastError = nil
         purgeExpiredTrash()                      // 回收站：清掉过了保留期的条目（`BACKUP-PLAN.md §2.6`）
@@ -720,21 +726,43 @@ final class WorkspaceManager: ObservableObject {
         refresh()
     }
 
+    /// 打开工作区时那次一次性补救（`LibraryStore.dropSupersededVariants`）做过没有。本机私有，不同步。
+    static let variantRepairKey = "variant_repair_20261102"
+
     /// 同路径内容变化（原地覆盖了 PDF）后的关联修正：把指向 absolutePath 的 location 记录从旧版本
     /// 摘除（**只删记录、不删物理文件**），再把该路径挂到实际内容 hash 对应的版本（已有版本加路径，
     /// 否则新建版本）。保留原 location 的 inWorkspace/相对路径标志——不修正的话，旧记录仍指旧 hash，
     /// 每次打开都会重复触发「内容已变化」提示。
+    ///
+    /// 2026-11-02 起顺带收尾旧版本（用户报：服务器工作区里给 PDF 加了目录、关联为新版本后，别的设备与网页还是旧文件）：
+    /// 页数没变 → OCR / 扫描页对齐 / 页高抄到新哈希下；旧版本本机再没有路径指向它 → 删掉那一行
+    /// （`LibraryStore.deleteVariantIfUnused` 有为什么）。新版本照常随下一次推送把文件传上服务器。
     func rekeyLocation(documentId: String, absolutePath: String, newHash: String, pageCount: Int) {
         guard let store, !newHash.isEmpty else { return }
         let matches = ((try? store.locations(documentId: documentId)) ?? []).filter { resolvedPath($0) == absolutePath }
         guard let first = matches.first else { return }
+        let oldVariants = Set(matches.map(\.variantId)).compactMap { try? store.variant(id: $0) }
         for l in matches { try? store.removeLocation(id: l.id) }
+        let newVariant: LibVariant?
         if let v = try? store.variant(hash: newHash) {
             _ = try? store.addLocation(variantId: v.id, path: first.path,
                                        inWorkspace: first.inWorkspace, isRelative: first.isRelative)
+            newVariant = v
         } else {
-            _ = try? store.addVariant(documentId: documentId, hash: newHash, pageCount: pageCount,
-                                      path: first.path, inWorkspace: first.inWorkspace, isRelative: first.isRelative)
+            newVariant = try? store.addVariant(documentId: documentId, hash: newHash, pageCount: pageCount,
+                                               path: first.path, inWorkspace: first.inWorkspace, isRelative: first.isRelative)
+        }
+        // 新内容恰好是另一篇文档的某个版本：路径挂过去了，这篇的旧版本不动（别把这篇删成没有版本）
+        if let nv = newVariant, nv.documentId == documentId {
+            for old in oldVariants where old.id != nv.id {
+                if pageCount > 0, old.pageCount == pageCount {
+                    try? store.copyContentCaches(from: old.contentHash, to: newHash)
+                }
+                if (try? store.deleteVariantIfUnused(id: old.id)) == true {
+                    wsLog("[VARIANT] 关联为新版本：删掉被取代的旧版本 \(old.contentHash.prefix(8)) → \(newHash.prefix(8))")
+                }
+            }
+            if pageCount > 0 { try? store.setPageCount(documentId: documentId, pageCount: pageCount) }
         }
         refresh()
     }
