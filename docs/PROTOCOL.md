@@ -716,7 +716,7 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 
 | opcode | payload | 对象形状 |
 |---|---|---|
-| `exGroups` | `u16 n` · `n ×( str key, str title, u16 count, u8 depth )` | `{type:"exGroups", list:[{key,title,count,depth},…]}` |
+| `exGroups` | `u16 n` · `n ×( str key, str title, u16 count, u8 depth )` · 可选尾部 `n × u16 done` | `{type:"exGroups", list:[{key,title,count,depth,done?},…]}` |
 | `exOpen` | `str scope` | `{type:"exOpen", scope}` |
 | `exDeck`（可选尾部） | `str scope` · `str title` · `u8 filter` · `u16 index` · `u16 done` · `u16 right` · `u16 n` · `n × 题` · `u8 noFilter` | `{type:"exDeck", scope, title, filter, index, done, right, list:[题,…], noFilter}` |
 | `exIndex` | `str scope` · `u16 index` | `{type:"exIndex", scope, index}` |
@@ -750,6 +750,9 @@ shown, chosen, correct, lastAt, tries, rights, marked, markedCorrect}`。
   全部 / 错题本（底下有错题的书 → 章节树）/ 收藏（底下有收藏的书 → 章节树）/ 每本有题的书（底下章节树，有题没设章节时末尾一行「未分章节」）。
   `depth` = 缩进层级（0 起），子项紧跟在父项后面；`title` 是 Mac 那边的显示名（已按 Mac 的语言）。
   `n = 0` = 这个工作区没有题，客户端不显示这一段。发送时机：客户端接入、跟随的会话变化、习题有任何增删改。
+  **尾部 `done`**（可选，2026-11-02，同 `exDeck.noFilter` 先例）：列表之后再跟 `n × u16`，与上面同序，= 这一组做过几道
+  （至少一次作答，含书上的作答；同 Mac 侧栏行尾「已做 / 共」，`EXERCISE-PLAN.md §16`）；`0xFFFF` = 这一行不显示做题进度
+  （错题本那一支：错题都做过）。没有尾部（老 Mac）= 都不显示。Mac 习题有作答时也重发（记作答会改这些数）。
 - `exOpen`：客户端现在显示哪一组（空串 = 不在习题上）。Mac 记下（工作区取此刻被跟随会话的），立刻回一份 `exDeck`；
   之后这一组有任何变化（谁答的、谁翻的、库里刷新）都再发。工作区关了 / 范围键不认识 / 那本书没了 → 回 `scope` 为空串的 `exDeck`，
   客户端据此关掉自己的习题页。

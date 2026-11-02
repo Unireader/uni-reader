@@ -453,6 +453,10 @@ enum WireCodec {
                 w.str(strOf(g["key"])); w.str(strOf(g["title"]))
                 w.u16(intOf(g["count"])); w.u8(UInt8(clamping: intOf(g["depth"])))
             }
+            // 可选尾部（2026-11-02）：每组做过几道，与上面同序 n × u16。哪一组都没给 `done` = 不写（老格式字节不变）
+            if list.contains(where: { $0["done"] != nil }) {
+                for g in list { w.u16(intOf(g["done"])) }
+            }
         case "exOpen": w.u8(Op.exOpen); w.str(strOf(o["scope"]))
         case "exDeck":
             w.u8(Op.exDeck); w.str(strOf(o["scope"])); w.str(strOf(o["title"]))
@@ -889,6 +893,9 @@ enum WireCodec {
             for _ in 0..<n {
                 let key = r.str(), title = r.str(), count = r.u16(), depth = r.u8()
                 list.append(["key": key, "title": title, "count": NSNumber(value: count), "depth": NSNumber(value: depth)])
+            }
+            if n > 0, r.remaining >= 2 * n {   // 可选尾部 done（老 Mac 不发）
+                for i in 0..<n { list[i]["done"] = NSNumber(value: r.u16()) }
             }
             out = ["type": "exGroups", "list": list]
         case Op.exOpen: out = ["type": "exOpen", "scope": r.str()]

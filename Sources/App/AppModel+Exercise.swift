@@ -41,6 +41,16 @@ extension AppModel {
                 MainActor.assumeIsolated { self?.workspaceExercisesChanged(note.object as? WorkspaceManager) }
             }
             .store(in: &exerciseSyncBag)
+        // 做过几道变了（答了一道新题）→ 抽屉的「已做 / 共」重发（`exGroups` 尾部 done）
+        NotificationCenter.default.publisher(for: .exerciseDoneDidChange)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self, let ws = note.object as? WorkspaceManager, ws === self.padWorkspace else { return }
+                    self.broadcastExerciseGroups()
+                }
+            }
+            .store(in: &exerciseSyncBag)
     }
 
     /// 被跟随会话所属的工作区（`@MainActor` 实例，按路径从登记表里找）。
@@ -62,9 +72,12 @@ extension AppModel {
         MainActor.assumeIsolated {
             var list: [[String: Any]] = []
             if let ws = padWorkspace {
-                let groups = ws.exerciseGroups()
+                // 每组做过几道（侧栏行尾「已做 / 共」，`EXERCISE-PLAN.md §16`）随尾部一起发；
+                // 错题本那一支不显示进度（nil）→ 发 0xFFFF（`PROTOCOL.md §4.9`），平板那几行只显示题数
+                let groups = ws.exerciseGroups().map { $0.withDone(ws.exerciseDone) }
                 list = ExerciseGroupNode.flatten(groups).map {
-                    ["key": $0.scope.key, "title": $0.title, "count": $0.count, "depth": $0.depth]
+                    ["key": $0.scope.key, "title": $0.title, "count": $0.count, "depth": $0.depth,
+                     "done": $0.done ?? 0xFFFF]
                 }
             }
             server.broadcast(["type": "exGroups", "list": list])

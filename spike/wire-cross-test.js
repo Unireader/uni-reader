@@ -224,6 +224,12 @@ const canonical = [
   // —— 习题顶栏只剩「只看没做过」（2026-10-11）：exDeck 尾部 noFilter = 1（错题本那一支没有这个开关）——
   { type: "exDeck", scope: "wrong:doc:D-1", title: "错题本 · 高数", filter: 0, index: 0, done: 0, right: 0,
     list: [], noFilter: 1 },
+  // —— exGroups 尾部 done（2026-11-02，每组做过几道，安卓抽屉显示「已做 / 共」）——
+  { type: "exGroups", list: [
+    { key: "all", title: "全部习题", count: 12, depth: 0, done: 5 },
+    { key: "wrong", title: "错题本", count: 3, depth: 0, done: 3 },
+    { key: "chap:D-1:[\"第二章 导数\"]", title: "第二章 导数", count: 5, depth: 1, done: 0 },
+  ] },
 ];
 
 let pass = 0, fail = 0;
@@ -243,11 +249,18 @@ const jsHex = canonical.map(function (msg, i) {
 
 // exDeck 尾部 noFilter 可选：老 Mac 发的帧没有它，照样解得出、按 0（有「只看没做过」）
 (function () {
-  const full = Wire.encode(canonical[canonical.length - 1]);
+  let idx = canonical.length - 1;
+  while (canonical[idx].type !== "exDeck") idx--;
+  const full = Wire.encode(canonical[idx]);
   const dec = function (u8) { return Wire.decode(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)); };
   const a = dec(full), b = dec(full.subarray(0, full.length - 1));
   if (a && a.noFilter === 1 && b && b.noFilter === 0) pass++;
   else { console.log("✗ exDeck 尾部 noFilter 可选"); fail++; }
+  // exGroups 尾部 done 可选（2026-11-02）：去掉尾部（老 Mac）照样解得出、没有 done
+  const g = Wire.encode(canonical[canonical.length - 1]);
+  const ga = dec(g), gb = dec(g.subarray(0, g.length - 6));
+  if (ga && ga.list[0].done === 5 && gb && gb.list.length === 3 && gb.list[0].done === undefined) pass++;
+  else { console.log("✗ exGroups 尾部 done 可选"); fail++; }
 })();
 
 // 与 Swift 向量比对

@@ -35,7 +35,10 @@ final class WorkspaceManager: ObservableObject {
     /// `@MainActor` 的工作区实例，靠它知道「平板开着的那组题 / 抽屉分组」该重发了。
     /// 每组题做过几道（侧栏行尾「已做 / 共」，`EXERCISE-PLAN.md §16`）。和 `exerciseSummary` 分开放：
     /// 每答一道新题它就变，但不该让开着的习题标签重读（不碰 `exerciseRevision`）。🔴 只许 `refreshExerciseDone()` 写。
-    @Published var exerciseDone = ExerciseDoneSummary()
+    /// 变了发 `.exerciseDoneDidChange`（object = 本工作区）：平板抽屉的「已做 / 共」跟着重发（`exGroups` 尾部）。
+    @Published var exerciseDone = ExerciseDoneSummary() {
+        didSet { NotificationCenter.default.post(name: .exerciseDoneDidChange, object: self) }
+    }
     @Published var exerciseRevision = 0 {
         didSet { NotificationCenter.default.post(name: .exercisesDidChange, object: self) }
     }

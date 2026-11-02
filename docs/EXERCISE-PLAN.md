@@ -857,7 +857,7 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
 - **和 `exerciseSummary` 分开放**：每答一道新题它就变，但不能让开着的习题标签重读（`exerciseRevision` 不动）。
   答对 / 没判的作答原先什么都不刷新（只有答错才要更新错题本的数），现在只调 `refreshExerciseDone()`；
   其余改动走 `refreshExercises()` 时顺带重算。
-- `ExerciseGroupNode.done` 是可选的、默认 nil：平板抽屉（`exGroups`）照旧不带它，线格式不变。
+- `ExerciseGroupNode.done` 是可选的、默认 nil：~~平板抽屉（`exGroups`）照旧不带它，线格式不变~~ → 2026-11-02 起 `exGroups` 尾部带上（§18）。
 - 🔴 `LibraryStore.swift` 服务器也编（符号链接）：只是多了一个查询方法，服务器 `swift build` / `swift test` 36 项、Linux 交叉编译都过了。
 
 ### 16.2 侧栏滚动位置
@@ -904,3 +904,40 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   75. 多选勾完提交、填空全对提交、主观题点「答对了」：都自动到下一题；最后一题答对不翻。
   76. 勾上后答对、在 0.8 秒内自己按 ← / 点「再做一次」/ 切到列表：不会再被翻走；取消勾选后答对不翻；退出重开 App 勾选状态还在。
   77. 平板（模式1 / 模式2）同样有这个开关、规则一样；模式2 平板答对时平板自己翻，Mac 那边跟着平板到下一题、不会多翻一题。
+
+## 18. 安卓：做题进度 + 手机上刷题的排版（2026-11-02，安卓两模式）
+
+用户原话：「安卓端补充下练习题进度显示。同时优化下手机UI的适配，方便刷题」（手机 = IQOO 15，主要用模式1）。
+
+### 18.1 进度
+
+- **抽屉 / 书库页的分组**：行尾「已做/共」（同 Mac 侧栏 §16，错题本那一支只显示题数）。模式1 本机照抄 Mac 的 `exerciseDoneCounts` /
+  `ExerciseDoneSummary` / `withDone`（JVM 单测与 `spike/exercise-test.swift` §16 那几项逐条对应）；答对一道新题只重读这几个数。
+  书库页那组副标题写「已做 x 题，共 y 题」。
+- **模式2**：`exGroups` 加了可选尾部 `n × u16 done`（`PROTOCOL.md §4.9`，`0xFFFF` = 不显示；老 Mac 不发 = 都不显示），
+  Mac `AppModel+Exercise.broadcastExerciseGroups` 带上 `withDone`，`exerciseDone` 一变（记了作答）就重发（`.exerciseDoneDidChange`）。
+  三端线格式：Swift / `spike/wire.js` 编解码、向量 `spike/wire-vectors-swift.txt` #122（末尾追加）、安卓 `WireCodecTest`。
+- **练习页顶栏**：「已做 x / y」+ 一条系统水平进度条（x = 这一组里 `tries > 0` 的题，含书上的作答，同「做过」的口径），
+  原来的「这一轮：做了 a，对 b」照旧。两模式都从 `exDeck` 现算，协议没改。
+
+### 18.2 手机排版（视图宽 < 600dp 时用紧凑排法，随转屏 / 分屏切换，平板不变）
+
+- 顶栏：第一行 标题 +「练习 / 列表」+ ⋯（系统菜单：「全部重做」、可勾选的「只看没做过」）；第二行 进度文字 + 进度条。
+- 底部那条：「上一题」「下一题」等分宽度、至少 48dp 高；「答对自动下一题」在中间，一行放不下就挪到按钮上面单独一行。
+- 题目一栏左右 16dp、选项间距 8dp、每个选项至少 48dp 高；列表题号列 40dp。
+- **系统栏让位**（手机上才暴露的老问题）：习题页原来铺到屏幕最底下，「上一题 / 下一题」压在手势条下面；横屏手机的侧边导航栏 / 挖孔也没让。
+  现在习题页让开左、右、下三边（`shared/Insets.onSystemInsets`）。⚠️ Markdown 笔记页同样铺到底、底边没让位，这次没动。
+- 代码在 `android/`：`shared/exercise/ExerciseScreen.kt`（`NavRow`、紧凑排法、进度）、`shared/ReaderDrawer.kt`、`local/LibraryActivity.kt`、
+  `local/ExerciseController.kt`、`local/exercise/Exercise.kt`、`local/store/LibraryStore.kt`、`pad/WireCodec.kt`、`shared/Insets.kt`、`local/ReaderActivity.kt`。
+
+### 18.3 验证
+
+- 安卓 `assembleDebug` 通过、JVM 单测 182 项全过；Swift 线格式测试 129 项、`node spike/wire-cross-test.js` 246 项全过；
+  `spike/exercise-test.swift` 321 项全过；Mac Debug 编译通过。测试包已装到手机。🔴 观感 / 手感由用户在手机上实测。
+
+### 18.4 实测清单（用户）
+
+  85. 手机上打开习题：顶栏两行不挤（标题 / 练习·列表 / ⋯；进度文字 + 进度条），⋯ 里「全部重做」「只看没做过」能用。
+  86. 「上一题 / 下一题」在手势条上面、拇指好按；「答对自动下一题」不被截字。
+  87. 答一道新题：顶栏「已做」+1、进度条前进；抽屉里那组的「已做/共」跟着变；书库页习题那组副标题对。
+  88. 平板（模式2 连 Mac）：抽屉习题行尾也有「已做/共」（要新版 Mac）。

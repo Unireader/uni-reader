@@ -233,6 +233,12 @@ let canonical: [[String: Any]] = [
     // —— 习题顶栏只剩「只看没做过」（2026-10-11）：exDeck 尾部 noFilter = 1（错题本那一支没有这个开关）——
     ["type": "exDeck", "scope": "wrong:doc:D-1", "title": "错题本 · 高数", "filter": 0, "index": 0, "done": 0, "right": 0,
      "list": [[String: Any]](), "noFilter": 1],
+    // —— exGroups 尾部 done（2026-11-02，每组做过几道，安卓抽屉显示「已做 / 共」）——
+    ["type": "exGroups", "list": [
+        ["key": "all", "title": "全部习题", "count": 12, "depth": 0, "done": 5],
+        ["key": "wrong", "title": "错题本", "count": 3, "depth": 0, "done": 3],
+        ["key": "chap:D-1:[\"第二章 导数\"]", "title": "第二章 导数", "count": 5, "depth": 1, "done": 0],
+    ]],
 ]
 
 var pass = 0, fail = 0
@@ -272,12 +278,22 @@ struct WireCodecTest {
         expectNil("str越界", Data([0x01, 0xff, 0xff]))   // auth: len=0xffff 但无内容
 
         // exDeck 尾部 noFilter 可选：老 Mac 发的帧没有它，照样解得出、按 0（有「只看没做过」）
-        if let full = WireCodec.encode(canonical[canonical.count - 1]),
+        let noFilterIdx = canonical.lastIndex { ($0["type"] as? String) == "exDeck" }!
+        if let full = WireCodec.encode(canonical[noFilterIdx]),
            (WireCodec.decode(full)?["noFilter"] as? NSNumber)?.intValue == 1,
            (WireCodec.decode(full.dropLast())?["noFilter"] as? NSNumber)?.intValue == 0 {
             pass += 1
         } else {
             print("✗ exDeck 尾部 noFilter 可选"); fail += 1
+        }
+
+        // exGroups 尾部 done 可选：去掉尾部（老 Mac）照样解得出、没有 done
+        if let full = WireCodec.encode(canonical[canonical.count - 1]),
+           let g = WireCodec.decode(full)?["list"] as? [[String: Any]], (g[0]["done"] as? NSNumber)?.intValue == 5,
+           let old = WireCodec.decode(full.dropLast(6))?["list"] as? [[String: Any]], old.count == 3, old[0]["done"] == nil {
+            pass += 1
+        } else {
+            print("✗ exGroups 尾部 done 可选"); fail += 1
         }
 
         let out = vectors.joined(separator: "\n") + "\n"

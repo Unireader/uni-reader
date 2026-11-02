@@ -15,6 +15,8 @@ extension ExerciseChapterNode {
 extension Notification.Name {
     /// 某个工作区的习题内容变了（`WorkspaceManager.exerciseRevision` 每次加一都发，object = 那个工作区）。
     static let exercisesDidChange = Notification.Name("UniReader.exercisesDidChange")
+    /// 某个工作区的「每组做过几道」变了（`WorkspaceManager.exerciseDone`，记作答时；object = 那个工作区）。
+    static let exerciseDoneDidChange = Notification.Name("UniReader.exerciseDoneDidChange")
 }
 
 /// 习题的执行层（`EXERCISE-PLAN.md`）：`exercise` / `exercise_attempt` 两张表的读写 + 侧栏的数。

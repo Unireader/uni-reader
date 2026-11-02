@@ -44,7 +44,7 @@ func row(_ d: ExerciseDraft, doc: String, id: String = UUID().uuidString) -> Lib
 }
 
 print("— 建表")
-check(LibraryStore.schemaVersion == 22, "schema 版本 22（v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记）")
+check(LibraryStore.schemaVersion == 23, "schema 版本 23（v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记；v23 = Agent 上下文）")
 check((try? store.exercises()) != nil, "exercise 表可查")
 
 print("— 校验与规整")

@@ -349,6 +349,10 @@
         for (var eg = 0; eg < EG.length; eg++) {
           w.str(EG[eg].key || ""); w.str(EG[eg].title || ""); w.u16(EG[eg].count || 0); w.u8(EG[eg].depth || 0);
         }
+        // 可选尾部（2026-11-02）：每组做过几道，同序 n × u16；哪一组都没给 done = 不写
+        if (EG.some(function (g) { return g.done !== undefined; })) {
+          for (var egd = 0; egd < EG.length; egd++) w.u16(EG[egd].done || 0);
+        }
         break;
       }
       case "exOpen": w.u8(OP.exOpen); w.str(o.scope || ""); break;
@@ -637,6 +641,7 @@
           var egKey = r.str(), egTitle = r.str(), egCount = r.u16();
           egl[egi] = { key: egKey, title: egTitle, count: egCount, depth: r.u8() };
         }
+        if (egn > 0 && r.left() >= 2 * egn) { for (var egj = 0; egj < egn; egj++) egl[egj].done = r.u16(); }
         return { type: "exGroups", list: egl };
       }
       case OP.exOpen: return { type: "exOpen", scope: r.str() };

@@ -951,10 +951,12 @@ struct ExerciseGroupNode: Equatable {
     }
 
     /// 摊平成一列（先父后子），`depth` = 缩进层级（0 起）。平板抽屉就按这一列画（`exGroups`）。
-    static func flatten(_ nodes: [ExerciseGroupNode], depth: Int = 0) -> [(scope: ExerciseScope, title: String, count: Int, depth: Int)] {
-        var out: [(scope: ExerciseScope, title: String, count: Int, depth: Int)] = []
+    /// `done` 同节点上那个（nil = 不显示做题进度）。
+    static func flatten(_ nodes: [ExerciseGroupNode], depth: Int = 0)
+        -> [(scope: ExerciseScope, title: String, count: Int, depth: Int, done: Int?)] {
+        var out: [(scope: ExerciseScope, title: String, count: Int, depth: Int, done: Int?)] = []
         for n in nodes {
-            out.append((n.scope, n.title, n.count, depth))
+            out.append((n.scope, n.title, n.count, depth, n.done))
             out += flatten(n.children, depth: depth + 1)
         }
         return out
