@@ -890,9 +890,34 @@ PullResponse  （GET /v1/workspaces/:ws/pull?since=&limit= 的响应体）
 
 - 三方判定的表 = `MirrorFp.specs`（单列 TEXT 主键，行 id 就是主键值；`meta` 只认同步白名单里的键）。
 - 通道表：`image`（行 id = `sha256`）、`page_align`（= `content_hash`）、`ocr_page`（三列复合主键写成 `content_hash␟page␟provider`，`␟` = 0x1F）。
-- 客户端私有、**不上线**的：`sync_base` 表、`meta.srv_url` / `srv_id` / `srv_pulled_rev`；服务器私有的：`srv_rev` 表、`meta.srv_head_rev`。
+- 客户端私有、**不上线**的：`sync_base` 表、`meta.srv_url` / `srv_id` / `srv_pulled_rev`、笔记文件基线 `UniReader/note-sync.json`；
+  服务器私有的：`srv_rev` 表、`meta.srv_head_rev`、`srv_note` 表、`meta.srv_note_head`。
 
 ### 9.4 局域网发现
 
 `_unireader-srv._tcp`（TXT `v` / `id` / `ver` / `schema`，不放配对码），细则在 `SERVER-MODE-PLAN.md §3.7`。
 Mac `Sources/ServerSync/ServerDiscovery.swift`（`NWBrowser`）、安卓 `local/server/ServerDiscovery.kt`（`NsdManager`，只收 IPv4）。
+
+### 9.5 笔记文件（`Notes/` 与引用目录镜像，2026-11-03，`SERVER-MODE-PLAN.md §4.4 / §13.11`）
+
+库里的行之外，工作区里 `Notes/` 下的 Markdown 正文与附件是**文件**，按文件整份同步。走普通 HTTP（令牌同其它接口），不进 `push` / `pull`：
+
+| 请求（`/v1/workspaces/{ws}/…`） | 说明 |
+|---|---|
+| `GET notes` | 全部文件（含墓碑）：`{"head":N,"files":[{"path","rev","sha256","size","deleted"}]}`。`rev` **每个文件一个、互不相同**；墓碑 `deleted=true`、`sha256=""` |
+| `GET note?path=` | 文件字节；响应头 `X-UniReader-Rev`；没有 / 已删除 → 404 |
+| `PUT note?path=&base=` | 请求体 = 整份字节。`base` = 设备上次同步时看到的 `rev`（本机新建传 0）。服务器上没有 / 已删除 / 内容相同 / `rev == base` → 200；否则 **409**（不收）。两种都带 `X-UniReader-Rev` = 这个文件现在的修订号 |
+| `DELETE note?path=&base=` | 同上规则；200 = 已删（或早就没了）、409 = `base` 对不上 |
+
+- `path` 是工作区内相对路径，**NFC**；值要按「只留 `A-Za-z0-9-._~`」严格百分号转义（文件名里常有 `+ & ( )` 空格）。
+- **能同步的路径**：`Notes/…`，或 `NotesMirror/<源 id>/…`（引用目录的镜像，§下）；任何一级名字都不以 `.` 开头、不叫 `trash`（不分大小写）、不以 `.part` 结尾；单个文件 ≤ 100 MB。
+- **基线**（客户端自己记，`UniReader/note-sync.json`）：每个文件 `{rev, sha, size, mtime}`；`size` + `mtime` 没变就认为内容没变，不重新算哈希。
+- **判定**（本机 L / 基线 B / 服务器 S）：只有本机改了 → `PUT base=B.rev`；只有服务器改了 → 下载；两边都改了（或两边各自新建同名且内容不同）→ **冲突**：服务器那份换到原路径，本机那份另存成
+  `<原名> (冲突 <设备名> <yyyy-MM-dd HH-mm>).<扩展名>`（重名加 ` 2`…）再 `PUT base=0` 上传——两份字节都在；一边删、一边改过 → 留改过的；服务器上**压根没记录**（不是墓碑）绝不当成被删。
+  别的设备删了、本机没动 → 本机挪进 `Notes/.trash/<时间>/`（不抹掉）。开着工作区时只推，不问服务器、不改本机已有文件。
+- 服务器：文件就放在工作区文件夹的 `Notes/` / `NotesMirror/` 里；被覆盖的旧版本、被删的文件先进 `trash/<工作区>/notes/<日期>/`（保留 90 天）；
+  `Notes/`（或 `NotesMirror/`）整个目录不在了不当成「全删了」。
+- **引用目录镜像**（`MARKDOWN-NOTES-PLAN.md §11`）：本机有这个引用目录 → 把里面的文件整个传到 `NotesMirror/<id>/…`（本机为准，`base` 取服务器现在的 `rev`，不吵冲突；本机没扫到任何文件时什么都不动）；
+  本机没有 → 把镜像拉到工作区的 `NotesMirror/<id>/`，**只读**（不往里写、不往服务器推）。
+- 老服务器没有这些接口：路由不存在的 404 / 405（不带说明）→ 客户端当没有笔记同步，库与 PDF 照常。
+- 安卓：**还没做**（欠着，见 `SERVER-MODE-PLAN.md §13.11`）。线格式以本节为准；Mac 实现 `Sources/Sync/SyncNotes.swift` + `Sources/ServerSync/ServerNoteSync.swift`。

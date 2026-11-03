@@ -91,7 +91,7 @@ final class ServerAccounts: ObservableObject {
 
     func client(_ a: ServerAccount) -> ServerClient? {
         guard let base = URL(string: a.url), let token = Keychain.read(Self.tokenKey(a.id)) else { return nil }
-        return ServerClient(baseURL: base, token: token)
+        return ServerClient(baseURL: base, token: token, deviceName: a.deviceName)
     }
 
     func client(forURL url: String) -> ServerClient? { account(forURL: url).flatMap(client) }

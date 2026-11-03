@@ -25,6 +25,8 @@ public final class HostedWorkspace: @unchecked Sendable {
     /// 已关掉（工作区被删除时，`WorkspaceHost.delete`）。之后还拿着这个实例的请求一律当「没有这个工作区」，
     /// 别往已经挪进回收站的文件夹里写东西（`storePDF` 会重新建出 `PDFs/`，列表里就多出一个空壳）。
     private(set) var closed = false
+    /// `srv_note`（笔记文件的修订记录）这个进程里对过一次磁盘账没有（`HostedWorkspace+Notes.swift`）；在 `lock` 里读写。
+    var notesReconciled = false
 
     static let metaHead = "srv_head_rev"
 
@@ -57,7 +59,7 @@ public final class HostedWorkspace: @unchecked Sendable {
             throw ServerError.notAWorkspace
         }
         self.id = id
-        try store.withMirrorDB { try $0.exec(Self.revDDL) }
+        try store.withMirrorDB { try $0.exec(Self.revDDL); try $0.exec(Self.noteDDL) }
     }
 
     public func close() {
@@ -110,6 +112,8 @@ public final class HostedWorkspace: @unchecked Sendable {
                 try db.transaction {
                     for k in deviceLocalMeta { try db.run("DELETE FROM meta WHERE key=?", [.text(k)]) }
                     try db.exec("DROP TABLE IF EXISTS sync_base")
+                    try db.exec("DROP TABLE IF EXISTS srv_note")
+                    try db.run("DELETE FROM meta WHERE key=?", [.text(metaNoteHead)])
                     try normalizeLocations(db, folder: src)
                     try seedRevisions(db, folder: src)
                 }
@@ -435,7 +439,8 @@ public final class HostedWorkspace: @unchecked Sendable {
         let copy = try SQLiteDB(path: dst.path)
         defer { copy.close() }
         try copy.exec("DROP TABLE IF EXISTS srv_rev")
-        try copy.run("DELETE FROM meta WHERE key=?", [.text(Self.metaHead)])
+        try copy.exec("DROP TABLE IF EXISTS srv_note")
+        try copy.run("DELETE FROM meta WHERE key IN (?,?)", [.text(Self.metaHead), .text(Self.metaNoteHead)])
         try copy.exec("PRAGMA journal_mode=DELETE")   // 交出去的是单个文件，不带 -wal / -shm
         return head
     }

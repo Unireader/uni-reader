@@ -21,6 +21,10 @@ import UniServerCore
 /// | `GET workspaces/:ws/pdf/:hash/info` | 服务器出图：各页尺寸 + 扫描图宽度 + 目录（JSON，`PageImages.info`）；没装 MuPDF → 501 |
 /// | `GET workspaces/:ws/pdf/:hash/page/:n?w=` | 服务器出图：第 n 页（从 0 起）约 w 像素宽的 JPEG（扫描页最多按扫描图本身的宽度，超过 4000 的最多一半）；正在看的先画，后两页空闲时在后台画 |
 /// | `HEAD/GET/PUT workspaces/:ws/image/:sha.:ext` | 图片本体，同上 |
+/// | `GET workspaces/:ws/notes` | 笔记文件清单（`Notes/` 与 `NotesMirror/<源>/` 下全部文件，含已删除的墓碑；JSON：`head` + `files[{path,rev,sha256,size,deleted}]`） |
+/// | `GET workspaces/:ws/note?path=` | 下载一个笔记文件（响应头 `X-UniReader-Rev`）；没有 / 已删除 → 404 |
+/// | `PUT workspaces/:ws/note?path=&base=` | 整份上传一个笔记文件（请求体 = 文件字节）。`base` = 设备上次同步时看到的修订号（新文件传 0）：服务器上没有 / 已删除 / 内容相同 / 修订号 == base → 200（收下或不用动）；服务器上又变过 → **409**（不收）。响应头 `X-UniReader-Rev` = 这个文件现在的修订号。旧版本先进回收站 |
+/// | `DELETE workspaces/:ws/note?path=&base=` | 删一个笔记文件（先进回收站，记墓碑）；`base` 对不上 → 409，早就没了 → 200 |
 /// | `GET workspaces/:ws/documents` | 书目（网页阅读器用）：书名 / 分组 / 页数 / 阅读进度 / 打开用哪份 PDF |
 /// | `GET workspaces/:ws/documents/:doc/view?hash=` | 打开一本书（网页）：笔迹图层、笔记类型、扫描页对齐参数（`hash` = 打开的那份 PDF） |
 /// | `GET workspaces/:ws/documents/:doc/marks?from=&to=` | 一段页（从 0 起，含两端）上的文字笔记 / 笔迹 / 高亮（网页）；笔迹点集一律二进制、base64 |
@@ -309,6 +313,40 @@ public enum UniServerApp {
             return Response(status: .created)
         }
 
+        // MARK: 笔记文件（方案 SERVER-MODE-PLAN §4.4 / §13.12）
+        api.get("workspaces/:ws/notes") { _, context -> Response in
+            let w = try workspace(context)
+            let data = try await Blocking.run { try w.noteList() }
+            return Response(status: .ok, headers: [.contentType: "application/json"],
+                            body: .init(byteBuffer: ByteBuffer(bytes: data)))
+        }
+
+        api.get("workspaces/:ws/note") { request, context -> Response in
+            let w = try workspace(context), path = try query(request, "path")
+            guard let found = try await Blocking.run({ try w.noteFile(path: path) }) else {
+                throw HTTPError(.notFound, message: "服务器上没有这个笔记文件")
+            }
+            var resp = try await fileResponse(request, context, found.url, type: "application/octet-stream")
+            resp.headers[revHeader] = String(found.rev)
+            return resp
+        }
+
+        api.put("workspaces/:ws/note") { request, context -> Response in
+            let w = try workspace(context), path = try query(request, "path")
+            let base = UInt64(try query(request, "base")) ?? 0
+            let tmp = host.partialFile(workspace: w.id, name: "note-\(UUID().uuidString)")
+            try await receiveWhole(request, to: tmp, limit: 100 * 1024 * 1024)
+            let (result, rev) = try await Blocking.run { try w.putNote(path: path, base: base, from: tmp) }
+            return Response(status: result == .stale ? .conflict : .ok, headers: [revHeader: String(rev)])
+        }
+
+        api.delete("workspaces/:ws/note") { request, context -> Response in
+            let w = try workspace(context), path = try query(request, "path")
+            let base = UInt64(try query(request, "base")) ?? 0
+            let (result, rev) = try await Blocking.run { try w.deleteNote(path: path, base: base) }
+            return Response(status: result == .stale ? .conflict : .ok, headers: [revHeader: String(rev)])
+        }
+
         return router
     }
 
@@ -326,6 +364,27 @@ public enum UniServerApp {
             throw HTTPError(.badRequest, message: "缺参数 \(key)")
         }
         return v
+    }
+
+    /// 把整个请求体流式写进 [file]（一次传完，不续传；笔记文件都不大）。超过 [limit] → 413，半截文件删掉。
+    static func receiveWhole(_ request: Request, to file: URL, limit: Int64) async throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        _ = fm.createFile(atPath: file.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: file)
+        var written: Int64 = 0
+        do {
+            for try await buffer in request.body {
+                written += Int64(buffer.readableBytes)
+                guard written <= limit else { throw HTTPError(.contentTooLarge, message: "文件超过 \(limit / 1_048_576) MB，不同步") }
+                try handle.write(contentsOf: Data(buffer.readableBytesView))
+            }
+            try handle.close()
+        } catch {
+            try? handle.close()
+            try? fm.removeItem(at: file)
+            throw error
+        }
     }
 
     static func binary(_ data: Data) -> Response {

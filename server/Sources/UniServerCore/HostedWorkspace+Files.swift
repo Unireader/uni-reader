@@ -125,6 +125,7 @@ extension HostedWorkspace {
         let plan = BackupRetention.plan(files.map(\.1), policy: policy, now: now)
         for i in plan.drop { try? fm.removeItem(at: dir.appendingPathComponent(files[i].0)) }
         ServerTrash.prune(folder: paths.trashFolder(id), now: now)
+        ServerTrash.pruneNotes(folder: paths.trashFolder(id), now: now)
         return dst
     }
 }

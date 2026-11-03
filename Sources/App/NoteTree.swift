@@ -83,12 +83,24 @@ struct NoteRoot: Codable, Equatable, Identifiable {
         return FileManager.default.fileExists(atPath: path, isDirectory: &dir) && dir.boolValue
     }
 
-    /// 这个源的根目录绝对路径。引用源在这台电脑上一条路径都不在时给第一条（侧栏照常列出这一段，笔记显示为找不到）。
+    /// 这个源的根目录绝对路径。引用源在这台电脑上一条路径都不在时：服务器上有镜像就用镜像（只读，`mirrorURL`），
+    /// 没有就给第一条（侧栏照常列出这一段，笔记显示为找不到）。
     func rootURL(workspace: URL?) -> URL? {
         switch kind {
         case .workspace: return workspace?.appendingPathComponent(path)
-        case .reference: return URL(fileURLWithPath: localPath() ?? path)
+        case .reference:
+            if let local = localPath() { return URL(fileURLWithPath: local) }
+            return mirrorURL(workspace: workspace) ?? URL(fileURLWithPath: path)
         }
+    }
+
+    /// 服务器镜像（`MARKDOWN-NOTES-PLAN.md §11`）：这台电脑上没有这个目录、但同步时从服务器拉下来了一份，
+    /// 放在 `<工作区>/NotesMirror/<源 id>/`。**只读**——本机不会往里写，也不会往服务器推。
+    /// 本机有这个目录时一律以本机文件为准，不读镜像（返回 nil）。
+    func mirrorURL(workspace: URL?, isDirectory: (String) -> Bool = NoteRoot.directoryExists) -> URL? {
+        guard kind == .reference, localPath(isDirectory: isDirectory) == nil, let workspace else { return nil }
+        let dir = workspace.appendingPathComponent("NotesMirror/\(id)", isDirectory: true)
+        return isDirectory(dir.path) ? dir : nil
     }
 }
 

@@ -8,6 +8,8 @@ import Foundation
 struct ServerClient: Sendable {
     let baseURL: URL
     let token: String?
+    /// 这台电脑在服务器上的设备名（配对时起的）：笔记冲突副本的文件名里用（`SyncNotes.conflictPath`）。
+    var deviceName: String = "Mac"
 
     enum Failure: LocalizedError, Equatable {
         /// 服务器回了错误状态（带上它给的说明）。
@@ -132,6 +134,77 @@ struct ServerClient: Sendable {
 
     func uploadImage(_ ws: String, sha: String, ext: String, file: URL) async throws {
         try await resumableUpload(path: "v1/workspaces/\(ws)/image/\(sha).\(ext)", query: [], file: file, progress: nil)
+    }
+
+    // MARK: 笔记文件（方案 SERVER-MODE-PLAN §4.4 / §13.12，线格式 PROTOCOL.md §9.5）
+
+    /// 服务器上全部笔记文件的现状（含已删除的墓碑）。
+    func listNotes(_ ws: String) async throws -> SyncNotes.ListResponse {
+        var req = try request("v1/workspaces/\(ws)/notes")
+        req.timeoutInterval = 60
+        return try decode(SyncNotes.ListResponse.self, try await send(req).0)
+    }
+
+    /// 下载一个笔记文件到 [dst]（调用方给的临时位置）。返回服务器上的修订号。
+    func downloadNote(_ ws: String, path: String, to dst: URL) async throws -> UInt64 {
+        let resp = try await download(noteRequest(ws, "GET", path: path), to: dst)
+        guard let rev = resp.value(forHTTPHeaderField: SyncNotes.revHeader).flatMap({ UInt64($0) }) else {
+            throw Failure.badResponse
+        }
+        return rev
+    }
+
+    /// 服务器对一次写（上传 / 删除）的回答。
+    enum NoteWrite: Equatable {
+        /// 收下了（或服务器已经是这样）；`rev` 是这个文件现在的修订号。
+        case ok(rev: UInt64)
+        /// 服务器上这个文件在 [base] 之后又变过：没收。`rev` 是服务器现在的修订号。
+        case stale(rev: UInt64)
+    }
+
+    /// 整份上传一个笔记文件。[base] = 上次同步时看到的修订号（本机新增的传 0）。
+    func putNote(_ ws: String, path: String, base: UInt64, file: URL) async throws -> NoteWrite {
+        var req = try noteRequest(ws, "PUT", path: path, base: base)
+        req.timeoutInterval = 300
+        let (data, resp) = try await session.upload(for: req, fromFile: file)
+        return try noteWrite(resp, data)
+    }
+
+    func deleteNote(_ ws: String, path: String, base: UInt64) async throws -> NoteWrite {
+        let (data, resp) = try await session.data(for: noteRequest(ws, "DELETE", path: path, base: base))
+        return try noteWrite(resp, data)
+    }
+
+    private func noteRequest(_ ws: String, _ method: String, path: String, base: UInt64? = nil) throws -> URLRequest {
+        // 文件名里可能有 `+` `&` `=` 这类字符：值一律自己严格转义，别让 URLComponents 当成分隔符放过去
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s }
+        guard var c = URLComponents(url: baseURL.appendingPathComponent("v1/workspaces/\(ws)/note"),
+                                    resolvingAgainstBaseURL: false) else { throw Failure.badAddress }
+        var items = [URLQueryItem(name: "path", value: enc(path))]
+        if let base { items.append(URLQueryItem(name: "base", value: String(base))) }
+        c.percentEncodedQueryItems = items
+        guard let url = c.url else { throw Failure.badAddress }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.timeoutInterval = 30
+        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        return req
+    }
+
+    private func noteWrite(_ resp: URLResponse, _ data: Data) throws -> NoteWrite {
+        guard let http = resp as? HTTPURLResponse else { throw Failure.badResponse }
+        let rev = http.value(forHTTPHeaderField: SyncNotes.revHeader).flatMap { UInt64($0) }
+        switch http.statusCode {
+        case 200..<300:
+            guard let rev else { throw Failure.badResponse }
+            return .ok(rev: rev)
+        case 409:
+            guard let rev else { throw Failure.badResponse }
+            return .stale(rev: rev)
+        default:
+            throw Self.failure(http.statusCode, data)
+        }
     }
 
     // MARK: 上传本地工作区

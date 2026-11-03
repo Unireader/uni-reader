@@ -1245,3 +1245,9 @@
 "Waiting for your approval" = "等你批准";
 "Working" = "回答中";
 "Failed" = "出错了";
+
+/* Markdown 笔记 · 引用目录的服务器镜像（只读）*/
+"%@ ↗ (server mirror, read-only)" = "%@ ↗（服务器镜像，只读）";
+"None of these folders is on this Mac. This is a read-only copy kept on the server; add the folder's location here to edit it." = "这台电脑上没有其中任何一个目录。这里显示的是服务器上保存的只读副本；右键「添加这台电脑上的位置…」后可编辑。";
+"Server mirror · read-only" = "服务器镜像 · 只读";
+"This folder is a read-only copy from the server. Edit it on a Mac that has the folder." = "这个目录是服务器上的只读副本。请在有这个目录的电脑上编辑。";

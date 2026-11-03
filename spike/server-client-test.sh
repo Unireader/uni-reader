@@ -68,6 +68,6 @@ fi
 
 cp spike/server-client-test.swift "$TMP/main.swift"
 swiftc Sources/Store/*.swift Sources/Sync/*.swift \
-    Sources/ServerSync/ServerClient.swift Sources/ServerSync/ServerSyncIO.swift \
+    Sources/ServerSync/ServerClient.swift Sources/ServerSync/ServerSyncIO.swift Sources/ServerSync/ServerNoteSync.swift \
     "$TMP/main.swift" -o "$TMP/sct"
 SERVER_URL="$URL" PAIRING_CODE="$CODE" WORK_DIR="$TMP" "$TMP/sct"

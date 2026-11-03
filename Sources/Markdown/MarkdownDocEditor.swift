@@ -24,6 +24,8 @@ struct MarkdownDocEditor: View {
     /// 标签页里的整页阅读保留居中阅读栏（2026-09-24 用户报「小窗没有 wrap，也没法滚动」，
     /// 第一版改法按测得宽度动态传 `readingWidth = nil` 没生效，才查到这条创建即定死的限制）。
     var usesReadingColumn: Bool = true
+    /// 服务器镜像里的笔记只读（`MARKDOWN-NOTES-PLAN.md §11`）：能选能复制、能点链接，不能改。
+    var isEditable: Bool = true
     /// 点了 `[[…]]`：参数是目标笔记 id（引擎从存储形态的竖线后面取出来的）。
     var onOpenNote: (String) -> Void = { _ in }
     /// 滚动位置的记忆（切标签会把整个编辑区拆掉重建，引擎自己记的偏移跟着没了，由上层存）。
@@ -67,6 +69,7 @@ struct MarkdownDocEditor: View {
                                      configuration: configuration.fittingLatex(to: containerWidth),
                                      fontSize: fontSize,
                                      documentId: documentId,
+                                     isEditable: isEditable,
                                      onLinkClick: { onOpenNote($0) },
                                      onTableCellContextMenu: TableEditMenu.decorate,
                                      placeholder: NSAttributedString(

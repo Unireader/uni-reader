@@ -464,6 +464,81 @@ final class HTTPTests: XCTestCase {
         }
     }
 
+    /// 笔记文件（方案 §4.4 / §13.12）：令牌、整份上传、基线对不上 409、下载、清单与墓碑、路径检查。
+    func testNoteFiles() async throws {
+        let up = try host.newUploadFolder()
+        let lib = try LibraryStore(workspaceFolder: up)
+        try lib.setWorkspaceName("笔记")
+        let id = try lib.ensureWorkspaceId()
+        lib.checkpointTruncate()
+        lib.close()
+        try host.install(uploaded: up)
+        let rev = HTTPField.Name("X-UniReader-Rev")!
+        // 文件名里带中文、空格、括号、加号：线上必须按严格转义走
+        let name = "Notes/数学/极限 (冲突 书房 2026-11-03 12-50) a+b.md"
+        let enc = name.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn:
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"))!
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/workspaces/\(id)/notes", method: .get) {
+                XCTAssertEqual($0.status, .unauthorized, "清单要令牌")
+            }
+            let token = try await self.pair(client)
+            // 新文件
+            let r1: UInt64 = try await client.execute(uri: "/v1/workspaces/\(id)/note?path=\(enc)&base=0", method: .put,
+                                                      headers: self.auth(token), body: ByteBuffer(string: "第一版")) { r in
+                XCTAssertEqual(r.status, .ok)
+                return UInt64(r.headers[rev] ?? "") ?? 0
+            }
+            XCTAssertGreaterThan(r1, 0)
+            // 基线对不上 → 409，响应头是服务器现在的修订号
+            try await client.execute(uri: "/v1/workspaces/\(id)/note?path=\(enc)&base=\(r1 + 7)", method: .put,
+                                     headers: self.auth(token), body: ByteBuffer(string: "别人的")) { r in
+                XCTAssertEqual(r.status, .conflict)
+                XCTAssertEqual(r.headers[rev], String(r1))
+            }
+            // 下载：原样的字节 + 修订号
+            try await client.execute(uri: "/v1/workspaces/\(id)/note?path=\(enc)", method: .get, headers: self.auth(token)) { r in
+                XCTAssertEqual(r.status, .ok)
+                XCTAssertEqual(String(buffer: r.body), "第一版")
+                XCTAssertEqual(r.headers[rev], String(r1))
+            }
+            // 基线对 → 收下
+            let r2: UInt64 = try await client.execute(uri: "/v1/workspaces/\(id)/note?path=\(enc)&base=\(r1)", method: .put,
+                                                      headers: self.auth(token), body: ByteBuffer(string: "第二版")) { r in
+                XCTAssertEqual(r.status, .ok)
+                return UInt64(r.headers[rev] ?? "") ?? 0
+            }
+            XCTAssertGreaterThan(r2, r1)
+            // 清单
+            try await client.execute(uri: "/v1/workspaces/\(id)/notes", method: .get, headers: self.auth(token)) { r in
+                let list = try JSONDecoder().decode(SyncNotes.ListResponse.self, from: Data(r.body.readableBytesView))
+                XCTAssertEqual(list.files.map(\.path), [name])
+                XCTAssertEqual(list.files.first?.rev, r2)
+                XCTAssertEqual(list.files.first?.sha256, ServerCrypto.sha256Hex(Data("第二版".utf8)))
+            }
+            // 删除：基线不对 409；对了 200 并留墓碑；之后下载 404
+            try await client.execute(uri: "/v1/workspaces/\(id)/note?path=\(enc)&base=\(r1)", method: .delete,
+                                     headers: self.auth(token)) { XCTAssertEqual($0.status, .conflict) }
+            try await client.execute(uri: "/v1/workspaces/\(id)/note?path=\(enc)&base=\(r2)", method: .delete,
+                                     headers: self.auth(token)) { XCTAssertEqual($0.status, .ok) }
+            try await client.execute(uri: "/v1/workspaces/\(id)/note?path=\(enc)", method: .get, headers: self.auth(token)) {
+                XCTAssertEqual($0.status, .notFound)
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)/notes", method: .get, headers: self.auth(token)) { r in
+                let list = try JSONDecoder().decode(SyncNotes.ListResponse.self, from: Data(r.body.readableBytesView))
+                XCTAssertEqual(list.files.first?.deleted, true)
+            }
+            // 不合规的路径一律 400
+            for bad in ["Notes/..%2Flibrary.sqlite", "UniReader%2Flibrary.sqlite", "Notes/.hidden.md", "Notes"] {
+                try await client.execute(uri: "/v1/workspaces/\(id)/note?path=\(bad)&base=0", method: .put,
+                                         headers: self.auth(token), body: ByteBuffer(string: "x")) {
+                    XCTAssertEqual($0.status, .badRequest, bad)
+                }
+            }
+        }
+    }
+
     func testAccessLogShortensIds() {
         let req = Request(head: .init(method: .get, scheme: "http", authority: "x",
                                       path: "/v1/workspaces/8f2c1d3e-0000-4000-8000-000000000000/pdf/\(String(repeating: "ab", count: 32))",

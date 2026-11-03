@@ -109,6 +109,18 @@ extension WorkspaceManager {
 
     func noteRootURL(_ source: NoteRoot) -> URL? { source.rootURL(workspace: folder) }
 
+    /// 这个源现在读的是服务器镜像（只读）？
+    func isMirrorSource(_ sourceID: String) -> Bool {
+        noteSource(id: sourceID)?.mirrorURL(workspace: folder) != nil
+    }
+
+    /// 镜像里的笔记不许改：返回 true 时调用方不要写（并已把原因放进 `lastError`）。
+    private func rejectMirrorWrite(_ sourceID: String) -> Bool {
+        guard isMirrorSource(sourceID) else { return false }
+        lastError = L("This folder is a read-only copy from the server. Edit it on a Mac that has the folder.")
+        return true
+    }
+
     func noteURL(_ ref: NoteRef) -> URL? {
         guard let src = noteSource(id: ref.sourceID), let root = noteRootURL(src) else { return nil }
         return root.appendingPathComponent(ref.relPath)
@@ -309,7 +321,7 @@ extension WorkspaceManager {
     /// 存正文。**只写文件**——内建源顺手打一下 `updated_at`（引用源没有库行）。
     @discardableResult
     func saveNoteBody(_ ref: NoteRef, text: String) -> Bool {
-        guard let url = noteURL(ref) else { return false }
+        guard !rejectMirrorWrite(ref.sourceID), let url = noteURL(ref) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
@@ -345,7 +357,7 @@ extension WorkspaceManager {
     @discardableResult
     func createNote(title: String, in sourceID: String = NoteRoot.workspaceID,
                     folder subdir: String = "") -> NoteRef? {
-        guard let src = noteSource(id: sourceID), let root = noteRootURL(src) else { return nil }
+        guard !rejectMirrorWrite(sourceID), let src = noteSource(id: sourceID), let root = noteRootURL(src) else { return nil }
         let clean = title.trimmed.nonEmpty ?? L("Untitled Note")
         var used = Set(allNotes.filter { $0.ref.sourceID == sourceID }.map { $0.ref.relPath.lowercased() })
         let rel = MarkdownImport.availablePath(
@@ -370,7 +382,7 @@ extension WorkspaceManager {
     /// 明确接受的代价（「哪怕不兼容也不要改」）。
     @discardableResult
     func renameNote(_ ref: NoteRef, to title: String) -> NoteRef? {
-        guard let url = noteURL(ref), let clean = title.trimmed.nonEmpty,
+        guard !rejectMirrorWrite(ref.sourceID), let url = noteURL(ref), let clean = title.trimmed.nonEmpty,
               let root = noteSource(id: ref.sourceID).flatMap({ noteRootURL($0) }) else { return nil }
         let ext = url.pathExtension.nonEmpty ?? "md"
         let newRel = [ref.folder.nonEmpty, MarkdownImport.safeFileName(clean) + "." + ext]
@@ -393,7 +405,7 @@ extension WorkspaceManager {
 
     /// 删一篇：**进废纸篓**（不是抹掉）。引用源删的是用户自己目录里的原件，调用方必须先问清楚。
     func deleteNote(_ ref: NoteRef) {
-        guard let url = noteURL(ref) else { return }
+        guard !rejectMirrorWrite(ref.sourceID), let url = noteURL(ref) else { return }
         do {
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
         } catch {

@@ -31,8 +31,10 @@ enum ServerSyncIO {
 
     // MARK: - 一轮（临时连接）
 
-    /// 完整一轮：推（先传新文件）→ 拉 → 应用 → 补缺的图片。🔴 只在**没有活连接**时调（打开前 / 关闭后）。
-    static func closedRound(folder: URL, client: ServerClient, wid: String) async throws {
+    /// 完整一轮：推（先传新文件）→ 拉 → 应用 → 补缺的图片 → 笔记文件（`Notes/` 与引用目录镜像）。
+    /// 🔴 只在**没有活连接**时调（打开前 / 关闭后）。返回笔记文件这一步做了什么（日志用）。
+    @discardableResult
+    static func closedRound(folder: URL, client: ServerClient, wid: String) async throws -> ServerNoteSync.Report {
         let store = try LibraryStore(workspaceFolder: folder)
         defer { store.close() }
         let db = store.withMirrorDB { $0 }
@@ -42,6 +44,19 @@ enum ServerSyncIO {
             push: { req in try SyncWire.decodePushResponse(try await client.push(wid, body: SyncWire.encode(req))) },
             pull: { since in try SyncWire.decodePullResponse(try await client.pull(wid, since: since)) })
         try await downloadMissingImages(db: db, folder: folder, client: client, wid: wid)
+        return try await syncNotes(db: db, folder: folder, client: client, wid: wid, mode: .full)
+    }
+
+    /// 笔记文件那一步。服务器程序太旧、没有这些接口时当作没有（行与 PDF 照常同步，用户升级服务器后就好了）。
+    static func syncNotes(db: SQLiteDB?, folder: URL, client: ServerClient, wid: String,
+                          mode: ServerNoteSync.Mode) async throws -> ServerNoteSync.Report {
+        do {
+            // 开着时只推内建 `Notes/`，引用目录镜像留给完整一轮（要问服务器现状、要改本机文件）
+            let sources = (mode == .full ? db.map { ServerNoteSync.referenceSources(db: $0) } : nil) ?? []
+            return try await ServerNoteSync.sync(folder: folder, client: client, wid: wid, sources: sources, mode: mode)
+        } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
+            return ServerNoteSync.Report()
+        }
     }
 
     // MARK: - 文件
@@ -134,6 +149,8 @@ enum ServerSyncIO {
             try? await downloadMissingImages(db: db, folder: dst, client: client, wid: wid) { i, n in
                 fraction?(n > 0 ? Double(i) / Double(n) : nil)
             }
+            // 笔记文件也一起拉下来（本机缓存默认缓存全部，方案 §0）；失败不影响建缓存，打开前那一轮会补
+            _ = try? await syncNotes(db: db, folder: dst, client: client, wid: wid, mode: .full)
             db.close()
         }
         return dst

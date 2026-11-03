@@ -443,7 +443,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // 这台电脑上一条路径都不在 → 段名后面注明，右键「添加这台电脑上的位置…」
             let cell = NSTableCellView()
             let here = source.kind == .reference ? source.localPath() : nil
+            let mirror = source.mirrorURL(workspace: workspace.folder) != nil
             let title = source.kind != .reference ? source.name
+                : mirror ? String(format: L("%@ ↗ (server mirror, read-only)"), source.name)
                 : here == nil ? String(format: L("%@ ↗ (not on this Mac)"), source.name) : "\(source.name) \u{2197}"
             let t = NSTextField(labelWithString: title)
             t.font = .preferredFont(forTextStyle: .subheadline)
@@ -453,7 +455,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 ? String(format: L("Referenced folder · %d notes"), folder.noteCount) + "\n"
                     + source.paths.map { ($0 == here ? "✓ " : "    ") + ($0 as NSString).abbreviatingWithTildeInPath }
                         .joined(separator: "\n")
-                    + (here == nil ? "\n" + L("None of these folders is on this Mac. Right-click to add its location here.") : "")
+                    + (mirror ? "\n" + L("None of these folders is on this Mac. This is a read-only copy kept on the server; add the folder's location here to edit it.")
+                       : here == nil ? "\n" + L("None of these folders is on this Mac. Right-click to add its location here.") : "")
                 : String(format: L("%d notes in this workspace"), folder.noteCount)
             t.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(t)
@@ -890,9 +893,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// md 笔记的右键菜单。没有「分组 / 排序 / 关联为同一文档」那一排——那些是 PDF 书库的事。
     private func buildNoteMenu(_ m: NSMenu, note: NoteItem) {
         let external = workspace.noteSource(id: note.ref.sourceID)?.kind == .reference
+        let readOnly = workspace.isMirrorSource(note.ref.sourceID)      // 服务器镜像：不能改名 / 删
+        m.autoenablesItems = false
         m.addItem(ClosureMenuItem(L("Open in Small Window")) { [weak self] in self?.onOpenNoteWindow(note.ref) })
         m.addItem(.separator())
-        m.addItem(ClosureMenuItem(L("Rename…")) { [weak self] in
+        let rename = ClosureMenuItem(L("Rename…")) { [weak self] in
             self?.textPrompt(title: L("Rename Note"), placeholder: L("Note name"), initial: note.title) { name in
                 guard let self, let newRef = self.workspace.renameNote(note.ref, to: name) else {
                     if let e = self?.workspace.lastError { self?.presentNoteError(e) }
@@ -901,13 +906,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 // 🔴 改名 = 改文件名，指向它的 `[[旧名字]]` 会断链（我们不改别人的正文，红线）
                 for t in self.tabs.tabs where t.noteRef == note.ref { t.openMarkdown(newRef) }
             }
-        })
+        }
+        rename.isEnabled = !readOnly
+        m.addItem(rename)
         m.addItem(ClosureMenuItem(L("Show in Finder")) { [weak self] in
             guard let url = self?.workspace.noteURL(note.ref) else { return }
             NSWorkspace.shared.activateFileViewerSelecting([url])
         })
         m.addItem(.separator())
-        m.addItem(ClosureMenuItem(L("Move to Trash…")) { [weak self] in
+        let trash = ClosureMenuItem(L("Move to Trash…")) { [weak self] in
             guard let self else { return }
             let a = NSAlert()
             a.messageText = String(format: L("Move “%@” to the Trash?"), note.title)
@@ -920,7 +927,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             guard a.runModal() == .alertFirstButtonReturn else { return }
             self.workspace.deleteNote(note.ref)
             for t in self.tabs.tabs { t.closeMarkdownIfGone() }
-        })
+        }
+        trash.isEnabled = !readOnly
+        m.addItem(trash)
     }
 
     /// 画板笔记的右键菜单：新建 / 改名 / 删除（进回收站，可从「文件 › 最近删除」恢复）。

@@ -8,7 +8,7 @@ macOS 上开发与测试；**Linux 版在 Mac 上交叉编译**成静态二进�
 ```bash
 cd server
 swift build --disable-automatic-resolution
-swift test  --disable-automatic-resolution   # 核心 40 项 + HTTP 8 项
+swift test  --disable-automatic-resolution   # 核心 42 项 + HTTP 9 项
 BIN=$(swift build --disable-automatic-resolution --show-bin-path)/unireader-server
 $BIN serve --data <数据目录> --port 8790      # 默认只听 127.0.0.1；--help 看全部子命令
 $BIN serve --host 0.0.0.0 --name 书房         # 让局域网里的设备连 + 发现它（Bonjour，方案 §3.7）
@@ -93,6 +93,7 @@ server/
     WorkspaceHost.swift       全部工作区：列表、按 id 打开、登记上传、删除（整个挪进回收站）/ 找回 / 到期清理
     HostedWorkspace.swift     一个工作区：登记、推送、拉取、快照、改名、修订号
     HostedWorkspace+Files.swift   PDF / 图片本体 / 备份
+    HostedWorkspace+Notes.swift   笔记文件（`Notes/` 与引用目录镜像 `NotesMirror/<源>/`）：`srv_note` 表（每个文件一个修订号）、按磁盘对账、整份收 / 删（409 = 基线对不上）、旧版本与被删文件先进回收站
     HostedWorkspace+Web.swift     网页阅读器用的查询（书目、页上的标记、图层 / 笔记类型 / 对齐参数）+ 网页写入（当成一次推送）
     PageImages.swift          服务器出图：MuPDF 命令行（mutool + cjpeg）画页成 JPEG、读页面尺寸 / 扫描图宽度 / 目录，缓存在 cache/render/；
                               扫描页不超过扫描图宽度（超过 4000 的最多一半）；RenderGate：正在看的先画、后要的先轮到，提前画的空闲时才画
@@ -126,7 +127,7 @@ HTTP 层只用 `UniServerCore` 的 public 接口（字节进、字节出：`push
    App 那边 `xcodegen generate` + Debug 编译 + 对应 spike（`AGENTS.md`「构建与验证」）。
 2. 🔴 **冲突规则只有一份**：服务器推送、客户端拉取都交给 `MirrorDiff.compute`（`source` 一律指服务器），写入走 `MirrorApply.write`。
    别在服务器里另写一套判定。
-3. 服务器私有的东西（`srv_rev` 表、`meta.srv_head_rev`）**只在服务器库里**，不进跨端 schema；`exportSnapshot` 交出去前去掉。
+3. 服务器私有的东西（`srv_rev` 表、`meta.srv_head_rev`、`srv_note` 表、`meta.srv_note_head`）**只在服务器库里**，不进跨端 schema；`exportSnapshot` 交出去前去掉。
    客户端私有的是 `sync_base` 与 `meta.srv_pulled_rev`。
 4. 修订号**每行一个、互不相同**（拉取按修订号分页，同号的行会在页边上漏掉）。
 5. 删除**先归档再删**（红线⑪）：`ServerTrash.archive` 在删除事务之前调，连同外键会带走的子行；父行被删后

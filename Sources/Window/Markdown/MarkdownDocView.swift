@@ -71,10 +71,12 @@ final class MarkdownDocView: NSView {
         let wiki: WorkspaceWikiIndex?
         /// 笔记小窗不要居中阅读栏（见 `MarkdownDocEditor.usesReadingColumn`）。
         let usesReadingColumn: Bool
+        /// 服务器镜像里的笔记只读。
+        let isEditable: Bool
         let onOpenNote: (String) -> Void
         var body: some View {
             MarkdownDocEditor(text: $box.text, documentId: documentId, wiki: wiki,
-                              usesReadingColumn: usesReadingColumn, onOpenNote: onOpenNote,
+                              usesReadingColumn: usesReadingColumn, isEditable: isEditable, onOpenNote: onOpenNote,
                               onPersistScrollOffset: { ScrollMemory.shared.offsets[$0] = $1 },
                               restoreScrollOffset: { ScrollMemory.shared.offsets[$0] })
         }
@@ -97,6 +99,7 @@ final class MarkdownDocView: NSView {
         documentId = "md-\(ref.key)"
         host = NSHostingView(rootView: Root(box: box, documentId: documentId, wiki: workspace.wiki,
                                             usesReadingColumn: showsHeader,
+                                            isEditable: !workspace.isMirrorSource(ref.sourceID),
                                             onOpenNote: { [relay] in relay.onOpen($0) }))
         host.sizingOptions = []
         super.init(frame: .zero)
@@ -295,7 +298,7 @@ final class MarkdownDocView: NSView {
 
     private func save() {
         let text = box.text
-        guard text != savedText else { return }
+        guard text != savedText, !workspace.isMirrorSource(ref.sourceID) else { return }
         // 文件已经不在了（被删 / 在 App 外改了名）：别自动存——那会把它在旧路径上凭空建回来。
         guard let url = workspace.noteURL(ref), FileManager.default.fileExists(atPath: url.path) else {
             wsLog("[MD] \(ref.key) 文件已不在，不自动保存")
@@ -314,7 +317,8 @@ final class MarkdownDocView: NSView {
         let title = ref.title
         // 引用源在路径前面标上它叫什么，一眼能看出这篇是外部目录里的
         let sourceName = workspace.noteSource(id: ref.sourceID)?.name ?? ""
-        let path = sourceName.isEmpty ? ref.relPath : "\(sourceName)/\(ref.relPath)"
+        var path = sourceName.isEmpty ? ref.relPath : "\(sourceName)/\(ref.relPath)"
+        if workspace.isMirrorSource(ref.sourceID) { path += " · " + L("Server mirror · read-only") }
         if titleLabel.stringValue != title { titleLabel.stringValue = title }
         if pathLabel.stringValue != path { pathLabel.stringValue = path }
         needsLayout = true

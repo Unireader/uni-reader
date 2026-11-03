@@ -95,6 +95,16 @@ enum ServerTrash {
         }
     }
 
+    /// 笔记文件的归档（`trash/<工作区>/notes/<yyyy-MM-dd>/…`，`HostedWorkspace.archiveNote`）：超过 [keepDays] 天的整天删掉。
+    static func pruneNotes(folder: URL, keepDays: Int = 90, now: Date = .now) {
+        let fm = FileManager.default
+        let base = folder.appendingPathComponent("notes", isDirectory: true)
+        let cutoff = String(ISO.string(now.addingTimeInterval(-Double(keepDays) * 86_400)).prefix(10))
+        for name in (try? fm.contentsOfDirectory(atPath: base.path)) ?? [] where name.count == 10 && name < cutoff {
+            try? fm.removeItem(at: base.appendingPathComponent(name))
+        }
+    }
+
     private static func chunks(_ ids: [String], size: Int = 500) -> [[String]] {
         stride(from: 0, to: ids.count, by: size).map { Array(ids[$0..<min($0 + size, ids.count)]) }
     }

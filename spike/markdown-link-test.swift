@@ -186,6 +186,24 @@ let mixed = NoteRoot(id: "E3", kind: .reference, paths: ["/没有这个目录/va
 check(mixed.rootURL(workspace: nil)?.standardizedFileURL.path == URL(fileURLWithPath: realDir).standardizedFileURL.path,
       "rootURL 跳过本机不存在的那条")
 
+// 服务器镜像（MARKDOWN-NOTES-PLAN §11）：本机没有这个目录、工作区里有 NotesMirror/<id>/ 才读镜像；本机有则一律读本机
+do {
+    let wsDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("mdl-mirror-\(UUID().uuidString).unrd")
+    let mirrorDir = wsDir.appendingPathComponent("NotesMirror/SRC1")
+    try FileManager.default.createDirectory(at: mirrorDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: wsDir) }
+    let gone = NoteRoot(id: "SRC1", kind: .reference, paths: ["/Users/nobody/vault-\(UUID().uuidString)"], name: "vault")
+    check(gone.mirrorURL(workspace: wsDir)?.path == mirrorDir.path, "本机没有这个目录 + 有镜像 → 读镜像")
+    check(gone.rootURL(workspace: wsDir)?.path == mirrorDir.path, "rootURL 回落到镜像")
+    let other = NoteRoot(id: "SRC2", kind: .reference, paths: ["/Users/nobody/x-\(UUID().uuidString)"], name: "x")
+    check(other.mirrorURL(workspace: wsDir) == nil, "没有这个源的镜像 → nil（仍显示「不在这台电脑上」）")
+    check(other.rootURL(workspace: wsDir)?.path == other.paths[0], "没有镜像 → 给第一条路径（老行为）")
+    let here = NoteRoot(id: "SRC1", kind: .reference, paths: [NSTemporaryDirectory()], name: "vault")
+    check(here.mirrorURL(workspace: wsDir) == nil, "本机有这个目录 → 不读镜像")
+    check(wsRoot.mirrorURL(workspace: wsDir) == nil, "内建源没有镜像这回事")
+    check(gone.mirrorURL(workspace: nil) == nil, "没有工作区 → nil")
+}
+
 print("\n— 10) 路径工具 —")
 var used = Set<String>()
 eq(MarkdownImport.availablePath("vault", used: &used), "vault", "第一次原样")

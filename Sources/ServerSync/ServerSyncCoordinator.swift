@@ -90,7 +90,8 @@ final class ServerSyncCoordinator: ObservableObject {
             await previous?.value
             let result: Status
             do {
-                try await ServerSyncIO.closedRound(folder: folder, client: ep.client, wid: ep.wid)
+                let notes = try await ServerSyncIO.closedRound(folder: folder, client: ep.client, wid: ep.wid)
+                Self.logNotes(notes, folder: folder, round: "closed")
                 result = .synced(Date())
             } catch {
                 result = Self.classify(error)
@@ -161,21 +162,31 @@ final class ServerSyncCoordinator: ObservableObject {
             let changes = try await Task.detached(priority: .utility) {
                 try SyncClient.localChanges(db, folder: folder)
             }.value
-            guard !changes.isEmpty else {
-                if status[k] != .syncing { status[k] = .synced(Date()) }
-                return
+            if !changes.isEmpty {
+                status[k] = .syncing
+                try await ServerSyncIO.uploadFiles(for: changes, db: db, folder: folder, client: ep.client, wid: ep.wid)
+                let req = SyncWire.PushRequest(schemaVersion: LibraryStore.schemaVersion, changes: changes)
+                let resp = try SyncWire.decodePushResponse(try await ep.client.push(ep.wid, body: SyncWire.encode(req)))
+                // 推的时候窗口关了（关闭后那一轮会再推一次）、或变回了本地工作区（基线表已经删了）：不记
+                guard m.store != nil, sessions[k] === s else { return }
+                try SyncClient.recordPushed(db, pushed: changes, response: resp)
             }
-            status[k] = .syncing
-            try await ServerSyncIO.uploadFiles(for: changes, db: db, folder: folder, client: ep.client, wid: ep.wid)
-            let req = SyncWire.PushRequest(schemaVersion: LibraryStore.schemaVersion, changes: changes)
-            let resp = try SyncWire.decodePushResponse(try await ep.client.push(ep.wid, body: SyncWire.encode(req)))
-            // 推的时候窗口关了（关闭后那一轮会再推一次）、或变回了本地工作区（基线表已经删了）：不记
+            // 笔记文件（`Notes/`）：只推。基线在 `UniReader/note-sync.json` 里（不碰库连接），后台线程做
+            let notes = try await ServerSyncIO.syncNotes(db: nil, folder: folder, client: ep.client, wid: ep.wid, mode: .pushOnly)
+            Self.logNotes(notes, folder: folder, round: "open")
             guard m.store != nil, sessions[k] === s else { return }
-            try SyncClient.recordPushed(db, pushed: changes, response: resp)
-            status[k] = .synced(Date())
+            if !changes.isEmpty || notes.touched || status[k] != .syncing { status[k] = .synced(Date()) }
         } catch {
             if sessions[k] === s { status[k] = Self.classify(error) }
         }
+    }
+
+    /// 笔记文件这一步做了什么：有动静或有失败才写日志（`[SYNC-NOTES]`），免得每分钟刷一行。
+    nonisolated static func logNotes(_ r: ServerNoteSync.Report, folder: URL, round: String) {
+        guard r.touched || !r.failed.isEmpty else { return }
+        wsLog("[SYNC-NOTES] \(round) \(folder.lastPathComponent): \(r.summary)")
+        for c in r.conflicts { wsLog("[SYNC-NOTES]   冲突副本 \(c)") }
+        for f in r.failed.prefix(10) { wsLog("[SYNC-NOTES]   失败 \(f)") }
     }
 
     // MARK: - PDF
@@ -486,6 +497,7 @@ final class ServerSyncCoordinator: ObservableObject {
         let store = try LibraryStore(workspaceFolder: folder)
         defer { store.close() }
         try store.withMirrorDB { try SyncClient.detach($0) }
+        try? FileManager.default.removeItem(at: ServerNoteSync.baseFile(folder))     // 笔记文件的基线（`note-sync.json`）
         return .detached(folder)
     }
 
@@ -565,6 +577,7 @@ final class ServerSyncCoordinator: ObservableObject {
             await running.task.value
         }
         try store.withMirrorDB { try SyncClient.detach($0) }
+        try? FileManager.default.removeItem(at: ServerNoteSync.baseFile(folder))     // 笔记文件的基线（`note-sync.json`）
         status[k] = nil
         m.objectWillChange.send()
     }

@@ -1243,3 +1243,9 @@
 "Waiting for your approval" = "Waiting for your approval";
 "Working" = "Working";
 "Failed" = "Failed";
+
+/* Markdown 笔记 · 引用目录的服务器镜像（只读）*/
+"%@ ↗ (server mirror, read-only)" = "%@ ↗ (server mirror, read-only)";
+"None of these folders is on this Mac. This is a read-only copy kept on the server; add the folder's location here to edit it." = "None of these folders is on this Mac. This is a read-only copy kept on the server; add the folder's location here to edit it.";
+"Server mirror · read-only" = "Server mirror · read-only";
+"This folder is a read-only copy from the server. Edit it on a Mac that has the folder." = "This folder is a read-only copy from the server. Edit it on a Mac that has the folder.";

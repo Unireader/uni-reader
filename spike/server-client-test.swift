@@ -195,6 +195,164 @@ do {
 }
 
 // ============================================================
+print("⑩ 笔记文件：两台设备双向同步（B 是 ③ 的缓存，再建一台 D）")
+func readNote(_ folder: URL, _ rel: String) -> String? { try? String(contentsOf: folder.appendingPathComponent(rel), encoding: .utf8) }
+func writeNote(_ folder: URL, _ rel: String, _ text: String) throws {
+    let u = folder.appendingPathComponent(rel)
+    try fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(text.utf8).write(to: u)
+}
+func notesList() async throws -> [String: SyncNotes.Entry] {
+    Dictionary(try await client.listNotes(wid).files.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+}
+func conflictCopies(_ folder: URL, of name: String) -> [String] {
+    let dir = folder.appendingPathComponent("Notes/子目录")
+    return ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasPrefix("\(name) (冲突 ") }.sorted()
+}
+func serverNoteText(_ path: String) async throws -> String {
+    let tmp = root.appendingPathComponent("dl-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: tmp) }
+    _ = try await client.downloadNote(wid, path: path, to: tmp)
+    return try String(contentsOf: tmp, encoding: .utf8)
+}
+var clientD = client
+clientD.deviceName = "设备D"
+let dDir = root.appendingPathComponent("D")
+let d = try await ServerSyncIO.createCache(in: dDir, name: "D", serverURL: base.absoluteString, client: clientD, wid: wid) { _ in }
+check(readNote(b, "Notes/子目录/a.md") == "# 笔记", "B 建缓存时拿到了首次上传带上去的笔记")
+check(readNote(d, "Notes/子目录/a.md") == "# 笔记", "D 建缓存时也拿到了")
+
+// 用户报的 bug：一台设备新建的笔记，别的设备要能拿到
+try writeNote(b, "Notes/操作系统.md", "- 多线程模型\n\t- XXX")
+try writeNote(b, "Notes/.obsidian/app.json", "{}")
+try writeNote(b, "Notes/.DS_Store", "x")
+try writeNote(b, "Notes/半截.md.part", "x")
+var rep = try await ServerNoteSync.sync(folder: b, client: client, wid: wid, sources: [], mode: .pushOnly)
+check(rep.pushed == 1, "开着时只推：B 新建的笔记传上去了（\(rep.summary)）")
+var list = try await notesList()
+check(list["Notes/操作系统.md"]?.deleted == false, "服务器清单里有它")
+check(!list.keys.contains { $0.contains(".obsidian") || $0.contains(".DS_Store") || $0.hasSuffix(".part") }, "隐藏文件 / 临时文件不上传")
+rep = try await ServerNoteSync.sync(folder: b, client: client, wid: wid, sources: [], mode: .pushOnly)
+check(!rep.touched, "再推一次什么也不做（基线对上了）")
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+check(readNote(d, "Notes/操作系统.md") == "- 多线程模型\n\t- XXX", "D 完整一轮之后拿到了这篇笔记，逐字一致")
+
+// 另一边改 → 这边拿到
+try writeNote(d, "Notes/操作系统.md", "- 多线程模型\n\t- 用户级线程")
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+check(readNote(b, "Notes/操作系统.md") == "- 多线程模型\n\t- 用户级线程", "D 改的正文，B 同步后拿到")
+
+// 两边都改 → 服务器先到的留在原路径，后到的另存冲突副本；两份字节都在，两台设备最后一致
+try writeNote(b, "Notes/子目录/a.md", "B 的版本")
+try writeNote(d, "Notes/子目录/a.md", "D 的版本")
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+let dRep = try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+check(readNote(d, "Notes/子目录/a.md") == "B 的版本", "冲突：原路径是先到的 B 的版本")
+let dCopies = conflictCopies(d, of: "a")
+check(dCopies.count == 1 && readNote(d, "Notes/子目录/" + dCopies[0]) == "D 的版本", "冲突：D 的版本一字不改另存成 \(dCopies.first ?? "?")")
+check(dCopies.first?.contains("设备D") == true, "副本名里带设备名")
+check(dRep.conflicts.count == 1, "报告里列出了冲突副本")
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+check(conflictCopies(b, of: "a").count == 1 && readNote(b, "Notes/子目录/" + (conflictCopies(b, of: "a").first ?? "")) == "D 的版本",
+      "B 也拿到了冲突副本，两台设备都有两份")
+check(readNote(b, "Notes/子目录/a.md") == "B 的版本", "B 的原路径没动")
+
+// 开着时（只推）遇到服务器上又变过的：不覆盖，留给下一次完整一轮
+try writeNote(b, "Notes/操作系统.md", "B 又改")
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)               // 先推上去
+try writeNote(d, "Notes/操作系统.md", "D 也改")                                        // D 不知道
+rep = try await ServerNoteSync.sync(folder: d, client: clientD, wid: wid, sources: [], mode: .pushOnly)
+check(rep.skipped == 1 && rep.pushed == 0, "只推遇到服务器已变：不收、记下来（\(rep.summary)）")
+check(readNote(d, "Notes/操作系统.md") == "D 也改", "本机文件没被动")
+check(try await serverNoteText("Notes/操作系统.md") == "B 又改", "服务器上还是 B 的")
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)               // 完整一轮收拾成冲突副本
+check(readNote(d, "Notes/操作系统.md") == "B 又改", "完整一轮之后原路径是服务器的")
+check(((try? fm.contentsOfDirectory(atPath: d.appendingPathComponent("Notes").path)) ?? []).contains {
+    $0.hasPrefix("操作系统 (冲突 ") && readNote(d, "Notes/" + $0) == "D 也改"
+}, "D 的内容留在冲突副本里")
+
+// 删除：先归档再删；别的设备本机挪进 .trash，不是抹掉
+try fm.removeItem(at: b.appendingPathComponent("Notes/操作系统.md"))
+rep = try await ServerNoteSync.sync(folder: b, client: client, wid: wid, sources: [], mode: .pushOnly)
+check(rep.removedRemote == 1, "B 删了，服务器上也删（\(rep.summary)）")
+list = try await notesList()
+check(list["Notes/操作系统.md"]?.deleted == true, "服务器留墓碑")
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+check(readNote(d, "Notes/操作系统.md") == nil, "D 同步后这篇没了")
+let dTrash = (fm.enumerator(atPath: d.appendingPathComponent("Notes/.trash").path)?.allObjects as? [String]) ?? []
+check(dTrash.contains { $0.hasSuffix("操作系统.md") }, "D 把它挪进了 Notes/.trash（\(dTrash.count) 项），没有抹掉")
+
+// 改动优先于删除：一边删、另一边改过 → 留下改过的
+try writeNote(d, "Notes/子目录/b.md", "原文")
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+try fm.removeItem(at: b.appendingPathComponent("Notes/子目录/b.md"))
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)                 // 服务器记墓碑
+try writeNote(d, "Notes/子目录/b.md", "D 改过")
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+check(readNote(d, "Notes/子目录/b.md") == "D 改过", "D 改过的没有被别处的删除带走")
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+check(readNote(b, "Notes/子目录/b.md") == "D 改过", "B 也拿回了改过的版本")
+
+// 服务器上压根没记录（不是墓碑）绝不当成「被删了」
+// （人为模拟：D 有基线，把服务器清单里这篇的墓碑换成没有——这里用一个新建、从没上传的路径代替：本机多出的永远只会被上传）
+try writeNote(d, "Notes/只在D.md", "d only")
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+check(readNote(d, "Notes/只在D.md") == "d only", "只在本机的笔记不会被清掉")
+check(try await notesList()["Notes/只在D.md"]?.deleted == false, "而是传上了服务器")
+
+// ============================================================
+print("⑩b 引用目录的服务器镜像：本机有 → 传上去；本机没有 → 拉一份只读副本")
+let vault = root.appendingPathComponent("外部笔记/vault")
+try writeNote(vault.deletingLastPathComponent(), "vault/x.md", "# x")
+try writeNote(vault.deletingLastPathComponent(), "vault/sub/y.md", "# y [[x]]")
+try writeNote(vault.deletingLastPathComponent(), "vault/img.png", "png")
+try writeNote(vault.deletingLastPathComponent(), "vault/.obsidian/cfg.json", "{}")
+let srcJSON = "[{\"id\":\"SRC1\",\"kind\":\"reference\",\"name\":\"vault\",\"path\":\"\(vault.path)\",\"paths\":[\"\(vault.path)\"]}]"
+for f in [b, d] {
+    let st = try LibraryStore(workspaceFolder: f); defer { st.close() }
+    try st.setMeta("note_sources", srcJSON)
+}
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+list = try await notesList()
+check(["x.md", "sub/y.md", "img.png"].allSatisfy { list["NotesMirror/SRC1/\($0)"]?.deleted == false }, "本机有这个目录：整个传上服务器的 NotesMirror/SRC1/（含附件）")
+check(!list.keys.contains { $0.contains("NotesMirror/SRC1/.obsidian") }, "隐藏目录不传")
+check(readNote(b, "NotesMirror/SRC1/x.md") == nil, "有本机目录的设备不会再往工作区里拉一份")
+
+// D 这台「没有」这个目录：把外部目录挪开再让 D 同步（同一台机器上模拟另一台电脑）
+let moved = root.appendingPathComponent("外部笔记/vault-moved")
+try fm.moveItem(at: vault, to: moved)
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+check(readNote(d, "NotesMirror/SRC1/x.md") == "# x" && readNote(d, "NotesMirror/SRC1/sub/y.md") == "# y [[x]]"
+      && readNote(d, "NotesMirror/SRC1/img.png") == "png", "本机没有这个目录：服务器镜像拉到了 NotesMirror/SRC1/，逐字一致")
+check(ServerNoteSync.referenceSources(db: try SQLiteDB(path: d.appendingPathComponent("UniReader/library.sqlite").path)).first?.id == "SRC1",
+      "从 note_sources 读得到引用目录")
+
+// 目录回来了（本机有）：本机为准，不读镜像；改动、删除都传上去，镜像跟着变
+try fm.moveItem(at: moved, to: vault)
+try writeNote(vault.deletingLastPathComponent(), "vault/x.md", "# x 改")
+try fm.removeItem(at: vault.appendingPathComponent("sub/y.md"))
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+list = try await notesList()
+check(list["NotesMirror/SRC1/sub/y.md"]?.deleted == true, "本机删掉的文件，服务器镜像里也删")
+// 镜像订阅者：把外部目录再挪走，让 D 当订阅者
+try fm.moveItem(at: vault, to: moved)
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+check(readNote(d, "NotesMirror/SRC1/x.md") == "# x 改", "订阅的一方跟着更新")
+check(readNote(d, "NotesMirror/SRC1/sub/y.md") == nil, "服务器上删掉的，订阅方的副本也清掉")
+
+// 本机目录是空的（外置盘没挂上之类）：什么都不动，别把镜像删光
+let emptyDir = root.appendingPathComponent("外部笔记/vault")
+try fm.createDirectory(at: emptyDir, withIntermediateDirectories: true)
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+list = try await notesList()
+check(list["NotesMirror/SRC1/x.md"]?.deleted == false && list["NotesMirror/SRC1/img.png"]?.deleted == false,
+      "本机目录是空的 → 不把服务器上的镜像删光")
+try? fm.removeItem(at: emptyDir)
+try? fm.moveItem(at: moved, to: vault)
+
+// ============================================================
 print("⑧ 启动页「下载到本机」：建缓存（带进度）→ 按大小挑 PDF → 只写文件")
 final class Fractions: @unchecked Sendable { let lock = NSLock(); var values: [Double?] = [] }
 let fr = Fractions()
