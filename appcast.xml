@@ -9,6 +9,90 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.20</title>
+      <pubDate>Tue, 03 Nov 2026 07:18:23 +0000</pubDate>
+      <sparkle:version>62</sparkle:version>
+      <sparkle:shortVersionString>0.3.20</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<p>&gt; 用到服务器的话：<strong>先把服务器升级到 0.3.0，再更新这个版本</strong>。这一版的数据版本是 24，旧服务器会拒收它推上去的改动。</p>
+<h4>新功能：几秒内看到别的设备的改动</h4>
+<ul>
+<li>连接服务器的工作区，开着的时候就能收到其他设备的改动：别处画的笔迹、加的批注、高亮、书签、图片笔记，几秒内就出现在你开着的这本书里，不用关掉再打开。阅读位置不会被拉走。</li>
+<li>你自己的改动，停手 2 秒后就会传上服务器（以前最久要等一分钟）。</li>
+</ul>
+<h4>新功能：笔记文件也会同步</h4>
+<ul>
+<li>工作区 Notes 里的 Markdown 笔记和附件，现在会在连接服务器的各设备之间同步。在一台电脑上新建或修改，另一台几秒内就能看到。</li>
+<li>两台设备改了同一篇：不会互相覆盖。先同步的那份留在原处，另一份一字不改，另存成「xxx (冲突 设备名 日期).md」，两份都保留，由你自己处理。</li>
+<li>别的设备删掉的笔记，这台会放进 Notes 里的隐藏文件夹 .trash，不是直接抹掉。</li>
+</ul>
+<h4>新功能：引用的笔记目录可以在别的设备上只读查看</h4>
+<ul>
+<li>引用了外部笔记目录（比如 Obsidian 的库）的那台电脑，会把它传到服务器。其他没有这个目录的设备，在侧栏里也能看到它，标着「服务器镜像，只读」，可以读、不能改。</li>
+<li>哪台设备本机有这个目录，就以本机的文件为准。</li>
+</ul>
+<h4>新功能：习题标签</h4>
+<ul>
+<li>习题可以加标签（比如「真题」「2023」）。练习页、列表和顶栏都能按标签筛选；在列表里可以给多道题一起加或去掉标签。终端里的 Agent 通过 MCP 导入或修改习题时也能带标签。</li>
+</ul>
+<h4>新功能：多个 Agent 同时对话</h4>
+<ul>
+<li>一扇窗口里最多可以同时开 6 段 Agent 对话，每段可以选不同的 Agent。Agent 页顶上多了一排标签条，点哪段看哪段，「新建并行对话」开一段新的。</li>
+</ul>
+<h4>改进</h4>
+<ul>
+<li>平板上的习题抽屉，每个分组后面会显示「已做 / 共」多少题。</li>
+<li>Agent 工具调用的标题和输出太长时会截断，避免导入大量习题时界面卡顿。</li>
+</ul>
+<h4>已知限制</h4>
+<ul>
+<li>安卓版暂时还不支持笔记文件同步、引用目录镜像，以及开着时收别的设备的改动。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.20">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<p>&gt; If you use a server: <strong>upgrade the server to 0.3.0 first, then update to this version.</strong> This version uses data version 24, and an older server will refuse the changes it pushes.</p>
+<h4>New: See changes from your other devices within seconds</h4>
+<ul>
+<li>On a workspace connected to a server, changes from your other devices now arrive while the workspace is open: strokes, text notes, highlights, bookmarks and image notes made elsewhere appear in the book you have open within seconds, without closing and reopening it. Your reading position is not moved.</li>
+<li>Your own changes are uploaded 2 seconds after you stop (it used to take up to a minute).</li>
+</ul>
+<h4>New: Notes files sync too</h4>
+<ul>
+<li>The Markdown notes and attachments in a workspace's Notes folder now sync between the devices connected to the server. Create or edit a note on one computer and the other sees it within seconds.</li>
+<li>If two devices edit the same note, neither overwrites the other. The version that synced first stays in place; the other is saved untouched as "xxx (conflict device date).md", and both are kept for you to sort out.</li>
+<li>A note deleted on another device is moved to a hidden .trash folder inside Notes on this one, not erased.</li>
+</ul>
+<h4>New: Read your referenced notes folder on other devices</h4>
+<ul>
+<li>A computer that references an outside notes folder (an Obsidian vault, for example) uploads it to the server. Other devices that don't have that folder see it in the sidebar marked "server mirror, read-only": you can read it but not edit it.</li>
+<li>On a device that does have the folder, its own files are always the ones used.</li>
+</ul>
+<h4>New: Question tags</h4>
+<ul>
+<li>Questions can have tags (such as Past Paper or 2023). Filter by tag on the practice page, in the list and in the toolbar; in the list you can add or remove tags on several questions at once. Agents in the terminal can set tags through MCP when they import or change questions.</li>
+</ul>
+<h4>New: Several agents at once</h4>
+<ul>
+<li>One window can now hold up to 6 agent chats at the same time, and each chat can use a different agent. The Agent page has a new tab strip: click a tab to see that chat, and New Parallel Chat starts another.</li>
+</ul>
+<h4>Improvements</h4>
+<ul>
+<li>On the tablet, each group in the exercise drawer now shows how many questions you've done out of the total.</li>
+<li>Very long agent tool-call titles and outputs are now cut off, so importing many questions no longer stalls the window.</li>
+</ul>
+<h4>Known limits</h4>
+<ul>
+<li>The Android app does not yet support notes file sync, referenced-folder mirrors, or receiving other devices' changes while a workspace is open.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.20">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.20/UniReader-0.3.20.zip" length="17679556" type="application/octet-stream" sparkle:edSignature="Jz2IBmu4540wOINhh+W8cCN9E8xL56uSSJ8SlzFhdTn9z4PhHquNu6ayWaNNcYvGFsNbbdLqgBxQ3LFqdCU6Cg==" />
+    </item>
+    <item>
       <title>v0.3.19</title>
       <pubDate>Mon, 02 Nov 2026 10:17:53 +0000</pubDate>
       <sparkle:version>61</sparkle:version>
