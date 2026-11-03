@@ -933,5 +933,6 @@ Mac `Sources/ServerSync/ServerDiscovery.swift`（`NWBrowser`）、安卓 `local/
 - 触发改动的有：别的设备的推送、网页写入、笔记文件上传 / 删除（含服务器上手动改了 `Notes/`）、改名。通知不丢：改动发生在「读状态」和「挂上」之间也会立刻答。
 - 答了 `changed:true` → 设备按平常的拉取（`GET pull?since=`、`GET notes`）去取，**取完把新的 `rows` / `notes` 传给下一次 `wait`**。拉完修订号仍没往前走（数据被还原过）要停几秒再挂，别空转。
 - 请求断开（取消）就不再等。要令牌。**老服务器没有这个接口**：不带说明的 404 / 405 → 客户端当它不支持，退回原来的「每分钟推一次、重新打开才拉」。
-- 推送侧：本机改动**停手 2 秒后推**（至少隔 5 秒；每分钟兜底一次），不必等定时器。
+- 推送侧：本机改动**停手 2 秒后推**（至少隔 5 秒；每分钟兜底一次），不必等定时器。Mac：`SQLiteDB.totalChanges`；安卓：`total_changes()`。
+- Mac 实现 `ServerSyncCoordinator.watchLoop` / `pullWhileOpen`；安卓 `ServerSync.watch` / `pullWhileOpen`。
 
