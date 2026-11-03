@@ -218,6 +218,20 @@ extension HostedWorkspace {
             dst = dst.deletingLastPathComponent().appendingPathComponent(name)
         }
         try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if move { try fm.moveItem(at: url, to: dst) } else { try fm.copyItem(at: url, to: dst) }
+        if move { try fm.moveItem(at: url, to: dst) } else { try Self.copyBytes(from: url, to: dst) }
+    }
+
+    /// 只复制字节，不带属性。🔴 不能用 `FileManager.copyItem`：用户 NAS 的 `/storage` 是 mergerfs，
+    /// 它要连带复制权限 / 扩展属性（同 `chmod` 报「Operation not supported」），在上面只会建出空目录、文件复制不出来
+    /// ——覆盖已有笔记前的归档就失败，每次编辑都 500（2026-11-03 实测，macOS 上测不出来）。
+    static func copyBytes(from src: URL, to dst: URL) throws {
+        guard FileManager.default.createFile(atPath: dst.path, contents: nil) else {
+            throw ServerError.badRequest("无法在回收站里创建 \(dst.lastPathComponent)")
+        }
+        let reader = try FileHandle(forReadingFrom: src)
+        defer { try? reader.close() }
+        let writer = try FileHandle(forWritingTo: dst)
+        defer { try? writer.close() }
+        while let chunk = try reader.read(upToCount: 1 << 20), !chunk.isEmpty { try writer.write(contentsOf: chunk) }
     }
 }

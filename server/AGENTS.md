@@ -137,6 +137,9 @@ HTTP 层只用 `UniServerCore` 的 public 接口（字节进、字节出：`push
 7. 安全：工作区 id 必须是 UUID（会拼进路径）；文件路径一律经 `HostedWorkspace.resolveInside`（`..`、符号链接越界不认）；
    PDF / 图片收下前校验 SHA-256。所有 HTTP 接口都要令牌（`../docs/REMOTE-ACCESS-PLAN.md §2` 的教训）；
    唯一的例外是网页本身（`WebFiles` 的几条静态路由，不含任何数据）——**别往那几条路由里放数据**，网页要的数据走 `/v1`。
+9. 🔴 **不要用 `FileManager.copyItem`**（NAS 的 `/storage` 是 mergerfs）：它连带复制权限 / 扩展属性，在上面只会建出空目录、文件复制不出来
+   （2026-11-03 实测：覆盖已有笔记前的归档失败，每次编辑都 500）。复制用 `HostedWorkspace.copyBytes`（只搬字节）；挪文件用 `moveItem`（rename，实测可用）。
+   🔴 **改了服务器代码，部署前必须在 NAS 上跑一遍远端端到端**（`REMOTE=nas … bash ../spike/server-client-test.sh`，上面「Linux 版」）：macOS 上的测试发现不了文件系统差异。
 8. 只用 Linux 上也有的 API：Foundation、SQLite、Crypto、NIO。**不 import** AppKit / Network / PDFKit。
    链进来的 Store 层里苹果独有的都包在 `#if canImport(...)` / `#if os(macOS)` 里：`SQLite3`（Linux 用 `SwiftToolchainCSQLite`）、
    `CryptoKit`（Linux 用 `Crypto`）、`CoreGraphics`（Linux 上 `CGRect` 由 Foundation 给）、`ImageAssets` 的解图 / 转码（Linux 上不编）、

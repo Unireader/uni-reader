@@ -482,6 +482,10 @@ struct ServerErrorMiddleware: RouterMiddleware {
                 next: (Request, Context) async throws -> Response) async throws -> Response {
         do { return try await next(request, context) } catch let e as ServerError {
             throw HTTPError(Self.status(e), message: e.description)
+        } catch let e where !(e is HTTPError) {
+            // 意外错误（磁盘 / 文件系统）：不写日志的话客户端只看到一个 500，服务器上什么线索都没有
+            FileHandle.standardError.write(Data("错误 \(request.method.rawValue) \(request.uri.path)：\(e)\n".utf8))
+            throw e
         }
     }
 
