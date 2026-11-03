@@ -24,9 +24,10 @@ extension WorkspaceManager {
         for tab in openTabs { tab.applyRemote(rows) }
     }
 
-    /// 开着的编辑器里的内建笔记（`Notes/…` 路径）：服务器同步这一轮不碰它们。
+    /// 编辑器里还有未存输入的内建笔记（`Notes/…` 路径）：服务器同步这一轮不碰它们。
+    /// 干净的（哪怕开着）照常拉，编辑器会自己换成新内容。
     func openNoteSyncSkip() -> Set<String> {
-        Set(MarkdownDocView.openRefs(of: self).filter { $0.sourceID == NoteRoot.workspaceID }
+        Set(MarkdownDocView.unsavedRefs(of: self).filter { $0.sourceID == NoteRoot.workspaceID }
             .map { SyncNotes.prefix + SyncNotes.normalize($0.relPath) })
     }
 }

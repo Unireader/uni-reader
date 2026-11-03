@@ -69,8 +69,8 @@ enum ServerNoteSync {
     /// 网络 / 认证 / 服务器错误往外抛（整轮放弃）；单个文件的问题记进 `Report.failed`、不影响别的文件。
     @discardableResult
     ///
-    /// [skip]：这一轮完全不碰的文件（`Notes/…` 路径）。开着工作区时拉服务器的改动（S4），正在编辑器里开着的笔记
-    /// 不能被换掉——编辑区里可能有还没落盘的字，盖了就丢（等它关掉后的完整一轮再处理）。
+    /// [skip]：这一轮完全不碰的文件（`Notes/…` 路径）。开着工作区时拉服务器的改动（S4），编辑器里**还有未存输入**的笔记
+    /// 不能被换掉——盖了就丢（等存盘后的下一轮再处理）。没有未存输入的编辑器不用绕，它自己会跟着文件刷新。
     static func sync(folder: URL, client: ServerClient, wid: String,
                      sources: [ReferenceSource], mode: Mode, skip: Set<String> = []) async throws -> Report {
         let key = folder.standardizedFileURL.path

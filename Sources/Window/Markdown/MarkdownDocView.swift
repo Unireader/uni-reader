@@ -183,9 +183,11 @@ final class MarkdownDocView: NSView {
     /// 而小窗不挂在阅读窗格上，只问 `ReaderPaneController` 会漏掉它。
     private static let all = NSHashTable<MarkdownDocView>.weakObjects()
 
-    /// 现在开着的所有笔记编辑器（标签页 + 小窗）显示的是哪篇——服务器同步开着工作区时据此绕开它们（S4）。
-    static func openRefs(of workspace: WorkspaceManager) -> [NoteRef] {
-        all.allObjects.filter { $0.workspace === workspace }.map(\.ref)
+    /// 开着的笔记编辑器（标签页 + 小窗）里**还有没存盘的输入**的那几篇——服务器同步开着工作区时只绕开它们（S4）。
+    /// 没有未存输入的编辑器不用绕：文件被换掉后它自己会刷新（`reloadFromDisk`，只在没有未存输入时才换）。
+    /// 只绕开有未存输入的，才不至于「在这台开着看、另一台改了却一直看不到」（2026-11-03 用户实测撞上）。
+    static func unsavedRefs(of workspace: WorkspaceManager) -> [NoteRef] {
+        all.allObjects.filter { $0.workspace === workspace && $0.box.text != $0.savedText }.map(\.ref)
     }
 
     /// 正显示在窗口里的、编辑这一篇的编辑区（拆下来还没释放的不算）。
