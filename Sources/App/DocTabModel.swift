@@ -1340,3 +1340,138 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.persistedScratchStrokes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 }
+
+// MARK: - 服务器同步：开着的文档接收别的设备的改动（`SERVER-MODE-PLAN.md §6`，S4）
+
+extension DocTabModel {
+
+    /// 同步已经把别的设备的改动写进库（`SyncClient.applyPulled`）之后调：这篇开着的文档里受影响的几类，重新从库装载。
+    ///
+    /// 沿用各 `load…` 的纪律：**对账集先于列表赋值**——`persistedX` 先换成库里的新样子，再给 `session.X` 赋值，
+    /// 紧随其后的 `persistX` 订阅比出来就没有差异，不会把刚拉下来的东西写回去或当成「被擦除」去删库。
+    /// 只处理这一篇自己的行；没变的类不动（不白白触发界面重绘）；正在编辑、还没对账完的类（内存 ≠ 已落库快照）这一轮跳过，
+    /// 本机正在改的优先，别的类不受影响。阅读进度、窗口位置一概不碰——**不把正在读的人拽走**。
+    func applyRemote(_ rows: [SyncWire.PulledRow]) {
+        guard let docId = session.documentId, noteRef == nil else { return }
+        enum Kind { case text, ai, highlight, image, bookmark, layers, noteTypes }
+        var kinds = Set<Kind>()
+        var inkPages = Set<Int>()
+        var inkDeletes = Set<UUID>()
+
+        for r in rows {
+            switch r.table {
+            case "note":
+                if r.deleted {
+                    guard let u = UUID(uuidString: r.rowId) else { continue }
+                    if session.persistedTextNotes[u] != nil { kinds.insert(.text) }
+                    else if session.persistedHighlights[u] != nil { kinds.insert(.highlight) }
+                    else if session.persistedImageNotes[u] != nil { kinds.insert(.image) }
+                    else if session.persistedBookmarks[u] != nil { kinds.insert(.bookmark) }
+                    else if session.persistedAIThreads[u] != nil { kinds.insert(.ai) }
+                    else if session.persistedStrokes[u] != nil { inkDeletes.insert(u) }
+                } else if let row = r.row.map(SyncWire.sqliteRow), row["document_id"] as? String == docId {
+                    switch row["kind"] as? Int64 {
+                    case Int64(TextNote.noteKind): kinds.insert(.text)
+                    case Int64(AIThread.noteKind): kinds.insert(.ai)
+                    case Int64(Highlight.noteKind): kinds.insert(.highlight)
+                    case Int64(ImageNote.noteKind): kinds.insert(.image)
+                    case Int64(Bookmark.noteKind): kinds.insert(.bookmark)
+                    case Int64(InkStroke.noteKind): if let p = row["page"] as? Int64 { inkPages.insert(Int(p)) }
+                    default: break
+                    }
+                }
+            case "ink_layer":
+                if r.deleted {
+                    if UUID(uuidString: r.rowId).map({ session.persistedInkLayers[$0] != nil }) == true { kinds.insert(.layers) }
+                } else if let row = r.row.map(SyncWire.sqliteRow), row["document_id"] as? String == docId {
+                    kinds.insert(.layers)
+                }
+            case "meta":
+                if r.rowId == "note_types" { kinds.insert(.noteTypes) }
+            default:
+                break
+            }
+        }
+
+        if kinds.contains(.text) {
+            let loaded = workspace.textNotes(documentId: docId)
+            if dictionary(loaded) != session.persistedTextNotes, dictionary(session.textNotes) == session.persistedTextNotes {
+                session.persistedTextNotes = dictionary(loaded)
+                session.textNotes = loaded
+            }
+        }
+        if kinds.contains(.ai) {
+            let loaded = workspace.aiThreads(documentId: docId)
+            if dictionary(loaded) != session.persistedAIThreads, dictionary(session.aiThreads) == session.persistedAIThreads {
+                session.persistedAIThreads = dictionary(loaded)
+                session.aiThreads = loaded
+            }
+        }
+        if kinds.contains(.highlight) {
+            let loaded = workspace.highlights(documentId: docId)
+            if dictionary(loaded) != session.persistedHighlights, dictionary(session.highlights) == session.persistedHighlights {
+                session.persistedHighlights = dictionary(loaded)
+                session.highlights = loaded
+            }
+        }
+        if kinds.contains(.image) {
+            let loaded = workspace.imageNotes(documentId: docId)
+            if dictionary(loaded) != session.persistedImageNotes, dictionary(session.imageNotes) == session.persistedImageNotes {
+                session.persistedImageNotes = dictionary(loaded)
+                session.imageNotes = loaded
+            }
+        }
+        if kinds.contains(.bookmark) {
+            let loaded = workspace.bookmarks(documentId: docId)
+            if dictionary(loaded) != session.persistedBookmarks, dictionary(session.bookmarks) == session.persistedBookmarks {
+                session.persistedBookmarks = dictionary(loaded)
+                session.bookmarks = loaded
+            }
+        }
+        if kinds.contains(.layers) {
+            let loaded = workspace.inkLayers(documentId: docId).sorted { $0.sortOrder < $1.sortOrder }
+            if dictionary(loaded) != session.persistedInkLayers, dictionary(session.inkLayers) == session.persistedInkLayers {
+                let active = session.activeLayerID
+                session.persistedInkLayers = dictionary(loaded)
+                session.inkLayers = loaded
+                session.activeLayerID = loaded.contains { $0.id == active } ? active : loaded.first?.id
+            }
+        }
+        if kinds.contains(.noteTypes) {
+            let types = workspace.noteTypes()
+            if types != session.noteTypes { session.noteTypes = types }
+        }
+        if !inkPages.isEmpty || !inkDeletes.isEmpty { applyRemoteInk(documentId: docId, pages: inkPages, deletes: inkDeletes) }
+    }
+
+    private func dictionary<T: Identifiable>(_ items: [T]) -> [T.ID: T] where T.ID == UUID {
+        Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+    }
+
+    /// 笔迹是按页窗口装载的（`session.strokes` 只是已装载页）：只重读**已装载**的、被改到的页，
+    /// 其余页留在库里（滚到时照常装）。内存里这些页上已经按值落库的笔画用库里的新值换掉，
+    /// 还没落库的（刚画的）原样留在后面——后画的在上。
+    private func applyRemoteInk(documentId id: String, pages: Set<Int>, deletes: Set<UUID>) {
+        guard let store = workspace.store else { return }
+        // 被删的笔画所在的页也要处理
+        var touched = pages
+        for s in session.strokes where deletes.contains(s.id) { touched.insert(s.page) }
+        touched.formIntersection(session.inkLoadedPages)
+        guard !touched.isEmpty || !deletes.isEmpty else { return }
+
+        var fresh: [InkStroke] = []
+        for p in touched {
+            let rows = (try? store.inkRows(documentId: id, kind: InkStroke.noteKind, pages: p...p)) ?? []
+            fresh += rows.compactMap(InkStroke.init(row:))
+        }
+        let clean = session.strokes.filter { touched.contains($0.page) && session.persistedStrokes[$0.id] == $0 }
+        let cleanIDs = Set(clean.map(\.id))
+        let rest = session.strokes.filter { !cleanIDs.contains($0.id) && !deletes.contains($0.id) }
+        for sid in cleanIDs.union(deletes) { session.persistedStrokes.removeValue(forKey: sid) }
+        let (merged, added) = InkWindow.merge(existing: rest, loaded: fresh, pages: touched)
+        for s in added { session.persistedStrokes[s.id] = s }
+        guard merged != session.strokes else { return }
+        session.strokes = merged
+        app.broadcastStrokes()      // 平板那份是「Mac 当前窗口」，整替一次（PROTOCOL.md §4.2）
+    }
+}

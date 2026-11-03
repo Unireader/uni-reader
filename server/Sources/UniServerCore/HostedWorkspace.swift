@@ -27,6 +27,8 @@ public final class HostedWorkspace: @unchecked Sendable {
     private(set) var closed = false
     /// `srv_note`（笔记文件的修订记录）这个进程里对过一次磁盘账没有（`HostedWorkspace+Notes.swift`）；在 `lock` 里读写。
     var notesReconciled = false
+    /// 变更通知（长轮询，`HostedWorkspace+Watch.swift`）。
+    let changeSignal: ChangeSignal
 
     static let metaHead = "srv_head_rev"
 
@@ -59,7 +61,12 @@ public final class HostedWorkspace: @unchecked Sendable {
             throw ServerError.notAWorkspace
         }
         self.id = id
-        try store.withMirrorDB { try $0.exec(Self.revDDL); try $0.exec(Self.noteDDL) }
+        let state = try store.withMirrorDB { db -> ChangeState in
+            try db.exec(Self.revDDL)
+            try db.exec(Self.noteDDL)
+            return ChangeState(rows: Self.head(db), notes: Self.noteHead(db))
+        }
+        changeSignal = ChangeSignal(state)
     }
 
     public func close() {
@@ -193,7 +200,11 @@ public final class HostedWorkspace: @unchecked Sendable {
         }
         lock.lock(); defer { lock.unlock() }
         try checkOpen()
-        return try store.withMirrorDB { db in try pushLocked(db, req, deviceName: deviceName, now: now) }
+        return try store.withMirrorDB { db in
+            let resp = try pushLocked(db, req, deviceName: deviceName, now: now)
+            publishChange(db)
+            return resp
+        }
     }
 
     struct Key: Hashable { var table: String; var rowId: String }
@@ -423,6 +434,7 @@ public final class HostedWorkspace: @unchecked Sendable {
                 try Self.bump(db, head: &head, table: "meta", rowId: key, fp: after)
                 try Self.setHead(db, head)
             }
+            publishChange(db)
             return head
         }
     }

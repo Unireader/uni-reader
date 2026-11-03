@@ -286,6 +286,7 @@ extension HostedWorkspace {
                 let resp = try pushLocked(db, SyncWire.PushRequest(schemaVersion: LibraryStore.schemaVersion, changes: changes),
                                           deviceName: deviceName, now: now)
                 head = resp.head
+                publishChange(db)
                 for r in resp.results { outcomes[r.rowId] = r.outcome == .applied ? .applied : .rejected }
             }
             return WebEditResult(head: head, updatedAt: stamp, results: order.map { ($0, outcomes[$0] ?? .rejected) })

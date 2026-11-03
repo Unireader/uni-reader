@@ -106,30 +106,55 @@ final class ServerSyncCoordinator: ObservableObject {
         return task
     }
 
-    // MARK: - 开着时（只推不拉）
+    // MARK: - 开着时（S4：几秒内推出去、服务器一有动静就拉）
 
     private final class Session {
         weak var manager: WorkspaceManager?
+        /// 每秒一次：发现本机改了东西 → 停手 2 秒后推；兜底每分钟推一次（笔记文件的改动不经过库）。
         var timer: Timer?
         var pushing = false
+        var pulling = false
         var prefetch: Task<Void, Never>?
+        /// 挂着等服务器通知的那个任务（`watchLoop`）。
+        var watch: Task<Void, Never>?
+        /// 上次处理完时服务器的笔记文件修订号（0 = 还没处理过，开头会过一遍）。
+        var noteHead: UInt64 = 0
+        /// 这条库连接累计改过的行数（`SQLiteDB.totalChanges`）：变了 = 本机改了东西。
+        var seenChanges = 0
+        /// 本机最后一次改动的时刻；nil = 没有待推的。
+        var dirtyAt: Date?
+        var lastPush = Date.distantPast
+        var noteSaved: NSObjectProtocol?
     }
+
+    /// 停手多久再推（用户定：「在线时改完停 2 秒推送」，方案 §4.3）与两次推送之间至少隔多久（全量比对要读全库，别太勤）。
+    private static let quietBeforePush: TimeInterval = 2
+    private static let minPushInterval: TimeInterval = 5
+    private static let heartbeat: TimeInterval = 60
 
     private var sessions: [String: Session] = [:]
     private var observing = false
 
-    /// 服务器工作区开起来了（`WorkspaceRegistry.acquire` 新建实例时调）：起定时推送，后台下载小 PDF。
+    /// 服务器工作区开起来了（`WorkspaceRegistry.acquire` 新建实例时调）：起推送计时，挂上服务器通知，后台下载小 PDF。
     func workspaceOpened(_ m: WorkspaceManager) {
         guard let folder = m.folder, m.isServerWorkspace else { return }
         let k = WorkspaceRegistry.key(folder)
         guard sessions[k] == nil else { return }
         let s = Session()
         s.manager = m
-        s.timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self, weak m] _ in
-            Task { @MainActor in if let m { await self?.push(m) } }
+        s.seenChanges = m.store?.withMirrorDB { $0.totalChanges } ?? 0
+        s.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self, weak m, weak s] _ in
+            Task { @MainActor in if let self, let m, let s { await self.tick(m, s) } }
+        }
+        // 笔记正文存盘（自动保存）：文件改动不经过库，单独记一笔
+        s.noteSaved = NotificationCenter.default.addObserver(forName: .markdownNoteSavedInApp, object: m, queue: .main) { [weak s] _ in
+            s?.dirtyAt = Date()
         }
         sessions[k] = s
         s.prefetch = Task { [weak self, weak m] in if let m { await self?.prefetchSmallPDFs(m) } }
+        s.watch = Task { [weak self, weak m, weak s] in
+            if let self, let m, let s { await self.watchLoop(m, s) }
+        }
         if !observing {
             observing = true
             NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil,
@@ -143,6 +168,104 @@ final class ServerSyncCoordinator: ObservableObject {
         guard let s = sessions.removeValue(forKey: WorkspaceRegistry.key(folder)) else { return }
         s.timer?.invalidate()
         s.prefetch?.cancel()
+        s.watch?.cancel()
+        if let o = s.noteSaved { NotificationCenter.default.removeObserver(o) }
+    }
+
+    /// 每秒一次：本机有改动且停手满 2 秒 → 推；距上次推送满一分钟 → 兜底推一次。
+    private func tick(_ m: WorkspaceManager, _ s: Session) async {
+        guard let store = m.store, !s.pushing, !s.pulling else { return }
+        let now = Date()
+        let changes = store.withMirrorDB { $0.totalChanges }
+        if changes != s.seenChanges { s.seenChanges = changes; s.dirtyAt = now }
+        let quiet = s.dirtyAt.map { now.timeIntervalSince($0) >= Self.quietBeforePush } ?? false
+        let sinceLast = now.timeIntervalSince(s.lastPush)
+        if (quiet && sinceLast >= Self.minPushInterval) || sinceLast >= Self.heartbeat {
+            await push(m)
+        }
+    }
+
+    // MARK: 服务器通知 → 拉
+
+    /// 挂着等服务器通知（`GET wait`，长轮询，最多 25 秒一轮）；有动静就拉。出错退避重试；服务器程序太旧没有这个接口就不挂了。
+    private func watchLoop(_ m: WorkspaceManager, _ s: Session) async {
+        var failures = 0
+        while !Task.isCancelled {
+            guard let folder = m.folder, let store = m.store, sessions[WorkspaceRegistry.key(folder)] === s else { return }
+            guard let ep = endpoint(for: folder) else { await Self.pause(10); continue }
+            let db = store.withMirrorDB { $0 }
+            let rows = SyncClient.pulledRev(db), notes = s.noteHead
+            do {
+                let ch = try await ep.client.waitForChange(ep.wid, rows: rows, notes: notes)
+                failures = 0
+                guard ch.changed, !Task.isCancelled else { continue }
+                try await pullWhileOpen(m, s, ep, noteHead: ch.notes)
+                // 修订号没往前走（服务器数据被还原过之类）：别空转
+                if SyncClient.pulledRev(db) == rows, s.noteHead == notes { await Self.pause(10) }
+            } catch is CancellationError {
+                return
+            } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
+                wsLog("[SYNC-LIVE] 服务器程序太旧，没有 wait 接口：开着时不收通知（升级服务器后重新打开工作区）")
+                return
+            } catch {
+                failures += 1
+                if sessions[WorkspaceRegistry.key(folder)] === s { status[WorkspaceRegistry.key(folder)] = Self.classify(error) }
+                await Self.pause(min(60, Double(5 * failures)))
+            }
+        }
+    }
+
+    private nonisolated static func pause(_ seconds: Double) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    /// 开着工作区时拉别的设备的改动：行写进库（用窗口那条连接，主线程）→ 界面与开着的文档跟上 →
+    /// 补图片 → 笔记文件（编辑器里开着的那几篇绕开）→ 新书的小 PDF。
+    /// 🔴 与推送互斥（`pushing` / `pulling`）：两边同时改基线会互相踩。
+    private func pullWhileOpen(_ m: WorkspaceManager, _ s: Session, _ ep: (client: ServerClient, wid: String),
+                               noteHead: UInt64) async throws {
+        guard let folder = m.folder else { return }
+        let k = WorkspaceRegistry.key(folder)
+        while s.pushing { await Self.pause(0.3); if Task.isCancelled { return } }
+        guard let store = m.store, sessions[k] === s else { return }
+        s.pulling = true
+        defer { s.pulling = false }
+        let db = store.withMirrorDB { $0 }
+        let t0 = CFAbsoluteTimeGetCurrent()
+
+        // ① 行
+        let since = SyncClient.pulledRev(db)
+        let fetched = try await SyncClient.fetchPulled(since: since) { rev in
+            try SyncWire.decodePullResponse(try await ep.client.pull(ep.wid, since: rev))
+        }
+        guard m.store != nil, sessions[k] === s else { return }
+        var newImages = false, newBooks = false
+        if !fetched.rows.isEmpty || fetched.head != since {
+            let before = db.totalChanges
+            let rep = try SyncClient.applyPulled(db, folder: folder, rows: fetched.rows)
+            try SyncClient.setPulledRev(db, fetched.head)
+            s.seenChanges += db.totalChanges - before          // 同步自己写的不算「本机改动」
+            m.applyRemoteRows(fetched.rows)
+            newImages = fetched.rows.contains { $0.table == SyncRows.imageTable && !$0.deleted }
+            newBooks = fetched.rows.contains { $0.table == "variant" && !$0.deleted }
+            if !fetched.rows.isEmpty {
+                wsLog("[SYNC-LIVE] 拉到 \(fetched.rows.count) 行（冲突 \(rep.conflicts) 跳过 \(rep.skipped)）"
+                      + " \(Set(fetched.rows.map(\.table)).sorted().joined(separator: ","))")
+            }
+        }
+        // ② 新图片
+        if newImages { try? await ServerSyncIO.downloadMissingImages(db: db, folder: folder, client: ep.client, wid: ep.wid) }
+        // ③ 笔记文件
+        let notes = try await ServerSyncIO.syncNotes(db: db, folder: folder, client: ep.client, wid: ep.wid,
+                                                     mode: .full, skip: m.openNoteSyncSkip())
+        Self.logNotes(notes, folder: folder, round: "live")
+        s.noteHead = noteHead
+        // ④ 新书
+        if newBooks { s.prefetch = Task { [weak self, weak m] in if let m { await self?.prefetchSmallPDFs(m) } } }
+        guard sessions[k] === s else { return }
+        status[k] = .synced(Date())
+        let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        if ms > 500 { wsLog("[SYNC-LIVE] 一次拉取用了 \(ms)ms") }
     }
 
     func pushAll() {
@@ -153,15 +276,20 @@ final class ServerSyncCoordinator: ObservableObject {
     func push(_ m: WorkspaceManager) async {
         guard let folder = m.folder, let store = m.store else { return }
         let k = WorkspaceRegistry.key(folder)
-        guard let s = sessions[k], !s.pushing else { return }
+        guard let s = sessions[k], !s.pushing, !s.pulling else { return }
         guard let ep = endpoint(for: folder) else { status[k] = .noAccount; return }
         s.pushing = true
+        s.dirtyAt = nil
+        s.lastPush = Date()
         defer { s.pushing = false }
         let db = store.withMirrorDB { $0 }
         do {
+            let t0 = CFAbsoluteTimeGetCurrent()
             let changes = try await Task.detached(priority: .utility) {
                 try SyncClient.localChanges(db, folder: folder)
             }.value
+            let compareMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            if compareMs > 300 { wsLog("[SYNC-LIVE] 找本机改动用了 \(compareMs)ms（\(changes.count) 处）") }
             if !changes.isEmpty {
                 status[k] = .syncing
                 try await ServerSyncIO.uploadFiles(for: changes, db: db, folder: folder, client: ep.client, wid: ep.wid)
@@ -169,7 +297,9 @@ final class ServerSyncCoordinator: ObservableObject {
                 let resp = try SyncWire.decodePushResponse(try await ep.client.push(ep.wid, body: SyncWire.encode(req)))
                 // 推的时候窗口关了（关闭后那一轮会再推一次）、或变回了本地工作区（基线表已经删了）：不记
                 guard m.store != nil, sessions[k] === s else { return }
+                let before = db.totalChanges
                 try SyncClient.recordPushed(db, pushed: changes, response: resp)
+                s.seenChanges += db.totalChanges - before          // 记基线是同步自己写的，不算「本机改动」
             }
             // 笔记文件（`Notes/`）：只推。基线在 `UniReader/note-sync.json` 里（不碰库连接），后台线程做
             let notes = try await ServerSyncIO.syncNotes(db: nil, folder: folder, client: ep.client, wid: ep.wid, mode: .pushOnly)

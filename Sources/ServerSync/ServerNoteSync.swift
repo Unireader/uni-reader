@@ -68,13 +68,17 @@ enum ServerNoteSync {
     /// 同步这个工作区的全部笔记文件。同一个工作区同一时刻只跑一个（后来的排队）。
     /// 网络 / 认证 / 服务器错误往外抛（整轮放弃）；单个文件的问题记进 `Report.failed`、不影响别的文件。
     @discardableResult
+    ///
+    /// [skip]：这一轮完全不碰的文件（`Notes/…` 路径）。开着工作区时拉服务器的改动（S4），正在编辑器里开着的笔记
+    /// 不能被换掉——编辑区里可能有还没落盘的字，盖了就丢（等它关掉后的完整一轮再处理）。
     static func sync(folder: URL, client: ServerClient, wid: String,
-                     sources: [ReferenceSource], mode: Mode) async throws -> Report {
+                     sources: [ReferenceSource], mode: Mode, skip: Set<String> = []) async throws -> Report {
         let key = folder.standardizedFileURL.path
         await Gate.shared.acquire(key)
         defer { Task { await Gate.shared.release(key) } }
 
         let ctx = Context(folder: folder, client: client, wid: wid)
+        ctx.skip = skip
         ctx.base = loadBase(folder)
         defer { saveBase(ctx.base, folder: folder) }      // 取消 / 出错也要把已经做完的记下来
 
@@ -121,6 +125,7 @@ enum ServerNoteSync {
         paths.formUnion(ctx.base.keys.filter { $0.hasPrefix(tree.prefix) })
         if let server { paths.formUnion(server.keys.filter { $0.hasPrefix(tree.prefix) }) }
         paths.subtract(oversize)        // 太大的不同步，也不能因为「没扫到」当成被删了
+        paths.subtract(ctx.skip)
 
         for path in paths.sorted() {
             try Task.checkCancellation()
@@ -286,6 +291,7 @@ enum ServerNoteSync {
         let client: ServerClient
         let wid: String
         var base: [String: Base] = [:]
+        var skip = Set<String>()
         var report = Report()
         let fm = FileManager.default
 

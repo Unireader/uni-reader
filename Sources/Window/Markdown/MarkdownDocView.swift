@@ -183,6 +183,11 @@ final class MarkdownDocView: NSView {
     /// 而小窗不挂在阅读窗格上，只问 `ReaderPaneController` 会漏掉它。
     private static let all = NSHashTable<MarkdownDocView>.weakObjects()
 
+    /// 现在开着的所有笔记编辑器（标签页 + 小窗）显示的是哪篇——服务器同步开着工作区时据此绕开它们（S4）。
+    static func openRefs(of workspace: WorkspaceManager) -> [NoteRef] {
+        all.allObjects.filter { $0.workspace === workspace }.map(\.ref)
+    }
+
     /// 正显示在窗口里的、编辑这一篇的编辑区（拆下来还没释放的不算）。
     static func editors(showing ref: NoteRef, in workspace: WorkspaceManager) -> [MarkdownDocView] {
         all.allObjects.filter { $0.window != nil && $0.ref == ref && $0.workspace === workspace }

@@ -99,6 +99,7 @@ extension HostedWorkspace {
             try fm.moveItem(at: tmp, to: dst)
             let size = (try? fm.attributesOfItem(atPath: dst.path)[.size] as? NSNumber)?.int64Value ?? 0
             let rev = try Self.bumpNote(db, path: path, sha256: sha, size: size, mtime: Self.mtime(dst), deleted: false)
+            publishChange(db)
             return (.applied, rev)
         }
     }
@@ -117,6 +118,7 @@ extension HostedWorkspace {
             if row.rev != base { return (.stale, row.rev) }
             if FileManager.default.fileExists(atPath: dst.path) { try archiveNote(at: dst, path: path, move: true, now: now) }
             let rev = try Self.bumpNote(db, path: path, sha256: "", size: 0, mtime: 0, deleted: true)
+            publishChange(db)
             return (.applied, rev)
         }
     }
@@ -165,6 +167,7 @@ extension HostedWorkspace {
             }
         }
         notesReconciled = true
+        publishChange(db)       // 有人直接动了服务器上的 Notes/ 文件时，对账出来的新修订号也要通知出去
     }
 
     // MARK: - 小工具

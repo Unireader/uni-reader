@@ -49,11 +49,11 @@ enum ServerSyncIO {
 
     /// 笔记文件那一步。服务器程序太旧、没有这些接口时当作没有（行与 PDF 照常同步，用户升级服务器后就好了）。
     static func syncNotes(db: SQLiteDB?, folder: URL, client: ServerClient, wid: String,
-                          mode: ServerNoteSync.Mode) async throws -> ServerNoteSync.Report {
+                          mode: ServerNoteSync.Mode, skip: Set<String> = []) async throws -> ServerNoteSync.Report {
         do {
             // 开着时只推内建 `Notes/`，引用目录镜像留给完整一轮（要问服务器现状、要改本机文件）
             let sources = (mode == .full ? db.map { ServerNoteSync.referenceSources(db: $0) } : nil) ?? []
-            return try await ServerNoteSync.sync(folder: folder, client: client, wid: wid, sources: sources, mode: mode)
+            return try await ServerNoteSync.sync(folder: folder, client: client, wid: wid, sources: sources, mode: mode, skip: skip)
         } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
             return ServerNoteSync.Report()
         }

@@ -539,6 +539,45 @@ final class HTTPTests: XCTestCase {
         }
     }
 
+    /// 长轮询：没变化 → 超时 `changed:false`；已经不一样 → 立刻回；挂着的时候别处改了 → 立刻醒；要令牌。
+    func testWaitForChange() async throws {
+        let up = try host.newUploadFolder()
+        let lib = try LibraryStore(workspaceFolder: up)
+        try lib.setWorkspaceName("长轮询")
+        let id = try lib.ensureWorkspaceId()
+        lib.checkpointTruncate()
+        lib.close()
+        let w = try host.install(uploaded: up)
+        struct Wait: Decodable { let rows: UInt64; let notes: UInt64; let changed: Bool }
+        let s = w.changeState
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/workspaces/\(id)/wait?rows=0&notes=0", method: .get) {
+                XCTAssertEqual($0.status, .unauthorized, "长轮询也要令牌")
+            }
+            let token = try await self.pair(client)
+            try await client.execute(uri: "/v1/workspaces/\(id)/wait?rows=\(s.rows)&notes=\(s.notes)&timeout=0.3",
+                                     method: .get, headers: self.auth(token)) { r in
+                let d = try self.decode(Wait.self, r)
+                XCTAssertFalse(d.changed); XCTAssertEqual(d.rows, s.rows)
+            }
+            let t0 = Date()
+            try await client.execute(uri: "/v1/workspaces/\(id)/wait?rows=\(s.rows + 5)&notes=\(s.notes)&timeout=20",
+                                     method: .get, headers: self.auth(token)) { r in
+                XCTAssertTrue(try self.decode(Wait.self, r).changed)
+            }
+            XCTAssertLessThan(Date().timeIntervalSince(t0), 3, "已经不一样要立刻回")
+
+            async let waited: Wait = client.execute(uri: "/v1/workspaces/\(id)/wait?rows=\(s.rows)&notes=\(s.notes)&timeout=20",
+                                                    method: .get, headers: self.auth(token)) { try self.decode(Wait.self, $0) }
+            try await Task.sleep(nanoseconds: 300_000_000)
+            try await client.execute(uri: "/v1/workspaces/\(id)/note?path=Notes%2Fa.md&base=0", method: .put,
+                                     headers: self.auth(token), body: ByteBuffer(string: "x")) { XCTAssertEqual($0.status, .ok) }
+            let got = try await waited
+            XCTAssertTrue(got.changed); XCTAssertGreaterThan(got.notes, s.notes)
+        }
+    }
+
     func testAccessLogShortensIds() {
         let req = Request(head: .init(method: .get, scheme: "http", authority: "x",
                                       path: "/v1/workspaces/8f2c1d3e-0000-4000-8000-000000000000/pdf/\(String(repeating: "ab", count: 32))",

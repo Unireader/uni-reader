@@ -353,6 +353,68 @@ try? fm.removeItem(at: emptyDir)
 try? fm.moveItem(at: moved, to: vault)
 
 // ============================================================
+print("⑩c 开着工作区（S4）：服务器通知 → 拉取，开着的笔记绕开")
+let liveB = try LibraryStore(workspaceFolder: b)        // B 现在「开着」：窗口持有这条连接
+let liveDB = liveB.withMirrorDB { $0 }
+func decodePull(_ rev: UInt64) async throws -> SyncWire.PullResponse { try SyncWire.decodePullResponse(try await client.pull(wid, since: rev)) }
+
+// 没有动静 → 超时回 changed:false
+let idle0 = SyncClient.pulledRev(liveDB)
+let idleNotes = try await client.listNotes(wid).head
+let idleStart = Date()
+let idle = try await client.waitForChange(wid, rows: try await decodePull(idle0).head, notes: idleNotes, timeout: 1)
+check(!idle.changed && Date().timeIntervalSince(idleStart) >= 0.9, "没动静：wait 挂满超时、changed=false")
+
+// 修订号已经不一样 → 立刻回
+let t1 = Date()
+let already = try await client.waitForChange(wid, rows: 0, notes: 0, timeout: 20)
+check(already.changed && Date().timeIntervalSince(t1) < 2, "已经不一样：wait 立刻回")
+
+// B 挂着等；D 加一条笔记并同步 → B 被叫醒
+let headNow = try await decodePull(0).head
+let waitStart = Date()
+async let woke = client.waitForChange(wid, rows: headNow, notes: idleNotes, timeout: 20)
+try await Task.sleep(nanoseconds: 400_000_000)
+do {
+    let sd = try LibraryStore(workspaceFolder: d); defer { sd.close() }
+    try sd.withMirrorDB { db in
+        try db.run("""
+        INSERT INTO note(id,document_id,kind,page,anchor_x,anchor_y,anchor_w,anchor_h,payload,created_at,updated_at)
+        VALUES('N-LIVE','D1',0,0,0,0,0,0,X'7B7D',?,?)
+        """, [.text(t(20)), .text(t(20))])
+    }
+}
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+let ch = try await woke
+check(ch.changed && ch.rows > headNow && Date().timeIntervalSince(waitStart) < 5, "挂着的 wait 被别的设备的推送叫醒（\(Int(Date().timeIntervalSince(waitStart) * 1000))ms 内）")
+
+// 开着时拉：攒齐页 → 应用到窗口那条连接 → 记修订号；开着的库里出现新行，基线对上（再拉一次没有新东西）
+let since0 = SyncClient.pulledRev(liveDB)
+let fetched = try await SyncClient.fetchPulled(since: since0, pull: decodePull)
+check(fetched.rows.contains { $0.table == "note" && $0.rowId == "N-LIVE" }, "拉到了 D 新加的那条笔记")
+_ = try SyncClient.applyPulled(liveDB, folder: b, rows: fetched.rows)
+try SyncClient.setPulledRev(liveDB, fetched.head)
+check(try liveDB.query("SELECT id FROM note WHERE id='N-LIVE'").count == 1, "开着的库里有了它（没关窗口、没重开）")
+check(SyncClient.pulledRev(liveDB) == fetched.head, "拉到的修订号记下了")
+check(try SyncClient.localChanges(liveDB, folder: b).isEmpty, "写进来的行基线对上了：不会被当成本机改动推回去")
+let again = try await SyncClient.fetchPulled(since: SyncClient.pulledRev(liveDB), pull: decodePull)
+check(again.rows.isEmpty && again.head == fetched.head, "再拉一次没有新东西")
+
+// 开着时的笔记文件：编辑器里开着的那篇绕开，其余的照拉
+try writeNote(d, "Notes/live.md", "D 写的")
+try writeNote(d, "Notes/开着的.md", "D 的新版本")
+try await ServerSyncIO.closedRound(folder: d, client: clientD, wid: wid)
+try writeNote(b, "Notes/开着的.md", "B 编辑区里还没存的旧字")      // 模拟：B 的编辑器开着这篇
+let liveRep = try await ServerNoteSync.sync(folder: b, client: client, wid: wid, sources: [], mode: .full, skip: ["Notes/开着的.md"])
+check(readNote(b, "Notes/live.md") == "D 写的", "开着时拉：没开着的笔记拉下来了（\(liveRep.summary)）")
+check(readNote(b, "Notes/开着的.md") == "B 编辑区里还没存的旧字", "编辑器里开着的那篇这轮没碰")
+check(liveRep.conflicts.isEmpty, "也没有为它造冲突副本")
+liveB.close()
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)        // 关掉后的完整一轮才处理它
+check(((try? fm.contentsOfDirectory(atPath: b.appendingPathComponent("Notes").path)) ?? []).contains { $0.hasPrefix("开着的 (冲突 ") },
+      "关掉之后那一轮：两边都改过 → 冲突副本，字一个没丢")
+
+// ============================================================
 print("⑧ 启动页「下载到本机」：建缓存（带进度）→ 按大小挑 PDF → 只写文件")
 final class Fractions: @unchecked Sendable { let lock = NSLock(); var values: [Double?] = [] }
 let fr = Fractions()

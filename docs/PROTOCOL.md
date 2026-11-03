@@ -921,3 +921,17 @@ Mac `Sources/ServerSync/ServerDiscovery.swift`（`NWBrowser`）、安卓 `local/
   本机没有 → 把镜像拉到工作区的 `NotesMirror/<id>/`，**只读**（不往里写、不往服务器推）。
 - 老服务器没有这些接口：路由不存在的 404 / 405（不带说明）→ 客户端当没有笔记同步，库与 PDF 照常。
 - 安卓：**还没做**（欠着，见 `SERVER-MODE-PLAN.md §13.11`）。线格式以本节为准；Mac 实现 `Sources/Sync/SyncNotes.swift` + `Sources/ServerSync/ServerNoteSync.swift`。
+
+### 9.6 变更通知：长轮询 `GET wait`（S4，2026-11-03，`SERVER-MODE-PLAN.md §13.12`）
+
+设备**开着**一个服务器工作区时，挂一个请求等服务器说「有改动」，不必隔几十秒问一次：
+
+`GET /v1/workspaces/{ws}/wait?rows={R}&notes={N}&timeout={秒}` → `{"rows":R',"notes":N',"changed":true|false}`
+
+- `R` = 本机已经拉到的行修订号（`meta.srv_pulled_rev`），`N` = 本机已经处理到的笔记文件修订号（`GET notes` 的 `head`；还没处理过传 0）。
+- 服务器上任何一个和传来的**不一样**（不是「更大」：服务器数据被还原过、修订号变小也要答）就**立刻**回 `changed:true`；都一样就挂着，最多 `timeout` 秒（默认 25，上限 55，太长会被反向代理切断）后回 `changed:false`。
+- 触发改动的有：别的设备的推送、网页写入、笔记文件上传 / 删除（含服务器上手动改了 `Notes/`）、改名。通知不丢：改动发生在「读状态」和「挂上」之间也会立刻答。
+- 答了 `changed:true` → 设备按平常的拉取（`GET pull?since=`、`GET notes`）去取，**取完把新的 `rows` / `notes` 传给下一次 `wait`**。拉完修订号仍没往前走（数据被还原过）要停几秒再挂，别空转。
+- 请求断开（取消）就不再等。要令牌。**老服务器没有这个接口**：不带说明的 404 / 405 → 客户端当它不支持，退回原来的「每分钟推一次、重新打开才拉」。
+- 推送侧：本机改动**停手 2 秒后推**（至少隔 5 秒；每分钟兜底一次），不必等定时器。
+

@@ -25,6 +25,7 @@ import UniServerCore
 /// | `GET workspaces/:ws/note?path=` | 下载一个笔记文件（响应头 `X-UniReader-Rev`）；没有 / 已删除 → 404 |
 /// | `PUT workspaces/:ws/note?path=&base=` | 整份上传一个笔记文件（请求体 = 文件字节）。`base` = 设备上次同步时看到的修订号（新文件传 0）：服务器上没有 / 已删除 / 内容相同 / 修订号 == base → 200（收下或不用动）；服务器上又变过 → **409**（不收）。响应头 `X-UniReader-Rev` = 这个文件现在的修订号。旧版本先进回收站 |
 /// | `DELETE workspaces/:ws/note?path=&base=` | 删一个笔记文件（先进回收站，记墓碑）；`base` 对不上 → 409，早就没了 → 200 |
+/// | `GET workspaces/:ws/wait?rows=&notes=&timeout=` | **长轮询**（S4）：等到工作区的行修订号 / 笔记文件修订号和传来的不一样就立刻回答 `{"rows":N,"notes":M,"changed":true}`；超时（默认 25 秒，最多 55）回 `changed:false`。设备开着工作区时一直挂着它，答了就去拉 |
 /// | `GET workspaces/:ws/documents` | 书目（网页阅读器用）：书名 / 分组 / 页数 / 阅读进度 / 打开用哪份 PDF |
 /// | `GET workspaces/:ws/documents/:doc/view?hash=` | 打开一本书（网页）：笔迹图层、笔记类型、扫描页对齐参数（`hash` = 打开的那份 PDF） |
 /// | `GET workspaces/:ws/documents/:doc/marks?from=&to=` | 一段页（从 0 起，含两端）上的文字笔记 / 笔迹 / 高亮（网页）；笔迹点集一律二进制、base64 |
@@ -273,6 +274,15 @@ public enum UniServerApp {
             let r = try await Blocking.run { try w.webEdits(documentId: doc, upserts: upserts, deletes: deletes, deviceName: device) }
             return WebEditResponse(head: r.head, updatedAt: r.updatedAt,
                                    results: r.results.map { WebEditResponse.Item(id: $0.id, outcome: $0.outcome.rawValue) })
+        }
+
+        api.get("workspaces/:ws/wait") { request, context -> WaitDTO in
+            let w = try workspace(context)
+            let rows = UInt64(request.uri.queryParameters.get("rows") ?? "") ?? 0
+            let notes = UInt64(request.uri.queryParameters.get("notes") ?? "") ?? 0
+            let timeout = min(max(Double(request.uri.queryParameters.get("timeout") ?? "") ?? 25, 0), 55)
+            let s = await w.waitForChange(rows: rows, notes: notes, timeout: timeout)
+            return WaitDTO(rows: s.rows, notes: s.notes, changed: s.rows != rows || s.notes != notes)
         }
 
         api.get("workspaces/:ws/head") { _, context -> HeadDTO in
@@ -628,3 +638,4 @@ struct WebEditResponse: ResponseEncodable {
 }
 struct PageMarkList: ResponseEncodable { let marks: [PageMarkDTO] }
 struct HeadDTO: ResponseEncodable { let head: UInt64 }
+struct WaitDTO: ResponseEncodable { let rows: UInt64; let notes: UInt64; let changed: Bool }

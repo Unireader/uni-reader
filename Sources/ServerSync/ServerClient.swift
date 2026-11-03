@@ -136,6 +136,26 @@ struct ServerClient: Sendable {
         try await resumableUpload(path: "v1/workspaces/\(ws)/image/\(sha).\(ext)", query: [], file: file, progress: nil)
     }
 
+    // MARK: 变更通知（S4，长轮询）
+
+    struct Change: Decodable, Equatable {
+        let rows: UInt64
+        let notes: UInt64
+        /// 修订号和传去的不一样（有改动，或服务器数据被还原过）；false = 等到超时什么也没发生。
+        let changed: Bool
+    }
+
+    /// 挂住等工作区有改动：行修订号 / 笔记文件修订号和 [rows] / [notes] 不一样就立刻回答，否则最多等 [timeout] 秒。
+    /// 取消任务就断开。服务器程序太旧没有这个接口 → `Failure.isUnsupportedRoute`。
+    func waitForChange(_ ws: String, rows: UInt64, notes: UInt64, timeout: TimeInterval = 25) async throws -> Change {
+        var req = try request("v1/workspaces/\(ws)/wait",
+                              query: [URLQueryItem(name: "rows", value: String(rows)),
+                                      URLQueryItem(name: "notes", value: String(notes)),
+                                      URLQueryItem(name: "timeout", value: String(Int(timeout)))])
+        req.timeoutInterval = timeout + 20
+        return try decode(Change.self, try await send(req).0)
+    }
+
     // MARK: 笔记文件（方案 SERVER-MODE-PLAN §4.4 / §13.12，线格式 PROTOCOL.md §9.5）
 
     /// 服务器上全部笔记文件的现状（含已删除的墓碑）。

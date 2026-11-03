@@ -220,6 +220,20 @@ enum SyncClient {
         return report
     }
 
+    /// 从 [since] 起把服务器上的改动**全部页攒齐**（父行和子行可能分在不同页，必须攒齐了再 `applyPulled`）。
+    /// 返回行 + 服务器现在的修订号（没有新行也会返回，`pulledRev` 要跟着走）。
+    static func fetchPulled(since start: UInt64,
+                            pull: (UInt64) async throws -> SyncWire.PullResponse) async throws -> (rows: [SyncWire.PulledRow], head: UInt64) {
+        var since = start
+        var acc: [SyncWire.PulledRow] = []
+        while true {
+            let page = try await pull(since)
+            acc += page.rows
+            if page.more, let last = page.rows.last { since = last.rev } else { since = max(since, page.head); break }
+        }
+        return (acc, since)
+    }
+
     // MARK: - 一轮
 
     struct RoundReport: Equatable {

@@ -91,6 +91,14 @@ final class SQLiteDB {
         }
     }
 
+    /// 这条连接自打开以来改过（插入 / 更新 / 删除）的行数累计。数字变了 = 库被这条连接写过：
+    /// 服务器同步用它发现「开着工作区时用户改了东西」，停手一会儿再推（不必每次全量比对）。
+    var totalChanges: Int {
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return 0 }
+        return Int(sqlite3_total_changes(db))
+    }
+
     /// 写语句（INSERT/UPDATE/DELETE）。
     func run(_ sql: String, _ params: [Value] = []) throws {
         lock.lock(); defer { lock.unlock() }
