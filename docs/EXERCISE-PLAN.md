@@ -961,3 +961,23 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
 - 验证：`spike/exercise-test.swift` 329 项、`spike/mirror-fp-test.swift` 67 项、`agent-context-test` 版本号跟到 24；Mac Debug 编译通过。
   🔴 界面手感由用户实测。
 
+
+## 20. 安卓：填空题作答（2026-11-04，模式1）
+
+§11.6 的「下一轮」做掉一半：模式1（本机工作区）的填空题（kind 3）可以作答了，主观题与模式2 不变（仍 macOnly）。
+
+- **判题与作答**：`Exercise.blankCount` / `acceptedForms` / `blankMatches` / `judgeFill` / `normalizeBlank` 逐条照抄 Mac
+  （只做肯定等价变换、全对得上才自动判对、有对不上的交给人判不直接判错）；作答存 `answer` 列 = JSON 字符串数组
+  （`Exercise.fillAnswerString` 复用 `ExChapter.text` 的编码，`decodeBlanks` 还原）。以前做过的按 `earlierFill` 显示
+  （App 里练的最近一次优先、对错用库里记的，同 Mac `earlierResponse`）。
+- **写库**：统计 SQL 的最近一次 / 书上作答查询多带 `id` 与对错（`ExAttemptStats.lastAttemptId` /
+  `lastPracticedCorrect` / `markedAttemptId`）；自己判定写回 `LibraryStore.judgeExerciseAttempt`（`correct` +
+  `judged_by='self'`，判错同一事务进错题本，照 Mac 同名函数）。`recordExerciseAttempt` 返回作答 id（填空自判用）。
+  这两处写的就是 v21 已有的列，作答与判定随离线镜像 / 服务器同步回 Mac，Mac 照常认得。
+- **界面**（`ExerciseScreen` 两模式共用，`ExCard` 加填空字段）：每空一行「第 N 空 + 输入框」，草稿按题存（翻走再回来还在，
+  同 Mac `drafts`），回车跳下一空、最后一空回车交卷；交卷后锁住、对得上的空标绿勾、亮参考答案（每空一行，认可的写法跟在后面）；
+  程序判不了（有对不上的空 / 没答案）→ 「答对了 / 答错了」自己判定。列表「我的答案」填空显示 `2 / 1/2`、未判标「未判」。
+- **没做**：手写（`ink` 列）本端不做；主观题（kind 4）模式1 也不做；模式2 的填空要扩协议（`exDeck` 不发填空数据），
+  本轮不动。
+- 验证：安卓 `assembleDebug` 通过、JVM 单测全过（`ExerciseTest` 新加 payload v21 键、规整、逐空比对、永不自动判错、
+  编解码、earlier、deck 交卷各组）。🔴 观感 / 手感由用户在真机实测。
