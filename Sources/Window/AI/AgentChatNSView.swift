@@ -437,7 +437,7 @@ final class AgentChatNSView: NSView {
         for item in chat.items[shownFrom...] {
             if let cur = itemViews[item.id], cur.kind == item.kind {
                 views.append(cur.view)
-            } else if let cur = itemViews[item.id], AgentItemViews.update(cur.view, to: item.kind) {
+            } else if let cur = itemViews[item.id], AgentItemViews.update(cur.view, from: cur.kind, to: item.kind) {
                 // 流式：同一条回复 / 思考又长了一段，就地换文字，别重建视图（见 `AgentMarkdownView`）
                 itemViews[item.id] = (item.kind, cur.view)
                 views.append(cur.view)
@@ -869,8 +869,19 @@ enum AgentItemViews {
 
     /// 同一条条目又来了新内容（流式）：能就地更新就别重建视图。
     /// - Returns: 吃下了这次更新（调用方据此跳过重建）。
-    static func update(_ view: NSView, to kind: AgentItem.Kind) -> Bool {
+    static func update(_ view: NSView, from old: AgentItem.Kind, to kind: AgentItem.Kind) -> Bool {
         switch kind {
+        case .tool(let call):
+            // 🔴 工具输出是一片片推过来的（2026-11-10 采样：Kimi 生成 `import_exercises` 的参数时每出一段就推一次带全文的更新）。
+            // 原来每推一次就把整条拆了重建，光新建那个最长 4000 字的换行标签（建的时候要整段量一遍）加上随后的
+            // 释放 / 重排 / 重画，主线程一直占着 80% 以上。只有输出变了（状态、标题都没动，本来就是带折叠正文的那种）
+            // 就只换正文文字；折着时正文不在视图树里，换文字不触发排版。别的变化照旧整条重建。
+            guard case .tool(var was) = old, !was.output.isEmpty, !call.output.isEmpty,
+                  let v = view as? AgentDisclosureView else { return false }
+            was.output = call.output
+            guard was == call else { return false }
+            return v.update(plain: toolOutput(call))
+
         case .agent(let s):
             guard let v = view as? AgentMarkdownView else { return false }
             v.update(text: s)
@@ -905,6 +916,11 @@ enum AgentItemViews {
                                    body: md, markdown: md)
     }
 
+    /// 工具输出展示出来的那一段（最多 4000 字）。
+    private static func toolOutput(_ call: AgentToolCall) -> String {
+        call.output.count > 4000 ? String(call.output.prefix(4000)) + "…" : call.output
+    }
+
     private static func tool(_ call: AgentToolCall) -> NSView {
         let status: NSView
         switch call.status {
@@ -930,9 +946,8 @@ enum AgentItemViews {
         // 不用 NSStackView：对话记录条目里套 stack 是 Agent 记笔记时整窗卡住的根因之一（见 `AgentRowView`）
         let label = AgentRowView([status, t], spacing: 6)
         guard !call.output.isEmpty else { return label }
-        let out = call.output.count > 4000 ? String(call.output.prefix(4000)) + "…" : call.output
         // 工具输出是 JSON / diff 这类原样的东西，不当 Markdown 渲染：等宽照原样显示
-        let text = NSTextField(wrappingLabelWithString: out)
+        let text = NSTextField(wrappingLabelWithString: toolOutput(call))
         text.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         text.isSelectable = true
         return AgentDisclosureView(header: label, body: text)

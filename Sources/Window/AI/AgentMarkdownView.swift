@@ -464,6 +464,14 @@ final class AgentDisclosureView: NSView {
     /// 思考过程的新文本（流式）。
     func update(text: String) { markdown?.update(text: text) }
 
+    /// 工具输出的新文本（流式；正文是等宽纯文本标签的那一种）。折着时正文不在视图树里，只换文字、不排版。
+    /// - Returns: 吃下了（正文不是纯文本标签就不管，调用方整条重建）。
+    func update(plain text: String) -> Bool {
+        guard markdown == nil, let label = body as? NSTextField else { return false }
+        if label.stringValue != text { label.stringValue = text }
+        return true
+    }
+
     /// 表头的图标 + 标题这一行（思考过程用）。
     static func headerRow(title: String, symbol: String) -> NSView {
         let l = NSTextField(labelWithString: title)

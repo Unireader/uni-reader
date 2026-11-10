@@ -282,6 +282,32 @@ func testThought() {
     check(abs(md.frame.width - 360) < 0.5, "正文铺满整行宽，实得 \(md.frame.width)")
 }
 
+// MARK: 3b. 工具输出流式更新（2026-11-10：只换正文文字，不重建整条）
+
+@MainActor
+func testToolOutputStream() {
+    print("3b. 工具输出流式更新")
+    let body = toolOutput()
+    let d = AgentDisclosureView(header: AgentRowView([statusIcon(spinner: true), toolTitle("import_exercises")], spacing: 6), body: body)
+    let c = host(d, width: 360, fill: true)
+    let collapsed = d.frame.height
+    check(d.update(plain: "短"), "纯文本正文：吃下更新")
+    c.layoutSubtreeIfNeeded()
+    check(body.superview == nil && abs(d.frame.height - collapsed) < 0.5, "折着时更新：正文仍不在视图树里、高度不变")
+    findButton(d)?.performClick(nil)
+    c.layoutSubtreeIfNeeded()
+    check(body.superview === d && body.stringValue == "短", "点开后显示的是新文字")
+    let short = d.frame.height
+    check(d.update(plain: String(repeating: "{\"page\": 12, \"text\": \"……\"} ", count: 30)), "展开着再来一段更长的")
+    c.layoutSubtreeIfNeeded()
+    check(body.superview === d, "展开着更新：不被折回去")
+    check(d.frame.height > short + 20, "展开着更新：正文变长、整条跟着长高，原 \(short)、现 \(d.frame.height)")
+    check(!ambiguous(d), "展开着更新后没有含糊约束")
+    let md = AgentMarkdownView(text: "先", fontSize: 12, documentId: "thought-spike-2")
+    let t = AgentDisclosureView(header: AgentDisclosureView.headerRow(title: "Thinking", symbol: "brain"), body: md, markdown: md)
+    check(!t.update(plain: "x"), "思考过程（Markdown 正文）不吃纯文本更新")
+}
+
 // MARK: 4. 性能
 
 final class FlippedStack: NSStackView { override var isFlipped: Bool { true } }
@@ -405,6 +431,7 @@ MainActor.assumeIsolated {
     testRows()
     testDisclosure()
     testThought()
+    testToolOutputStream()
     testPerf()
     looks()
 }

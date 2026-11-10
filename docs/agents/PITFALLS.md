@@ -171,6 +171,15 @@
   那段不动，没贴底不摘）。新加条目类型照此办。正文长高（固有高度变）只要 0.1ms，不是问题；转圈放不放在 stack 里
   也几乎没差别。离屏验证 `spike/agent-flat-row-test.swift`（65 项：与原版逐个子视图对位置、展开收起、放进对话记录不被拉伸、性能对比 + 样张）、
   `spike/agent-transcript-test.swift` 第 9 节。
+- **流式来的工具输出只换正文文字，别整条重建**（2026-11-10 采样：Kimi 导习题时 UniReader 一直占 80% 以上 CPU）：
+  Kimi 生成工具调用的参数（`import_exercises` 一次几十道题）时，每出一段就推一次带全文的 `tool_call_update`；
+  原来每推一次就把这条工具调用的视图拆了重建，新建那个最长 4000 字的换行标签要整段量一遍，再加旧视图释放、
+  整排重排重画，主线程占满。现在只有输出变了（状态 / 标题没动）时走 `AgentItemViews.update` → `AgentDisclosureView.update(plain:)`
+  就地换文字（折着时正文不在视图树里，不排版）；内容没变的更新 `AgentTranscript.apply` 不写回条目。
+  同一次采样还查出**侧栏每收一次 `workspace.objectWillChange` 就整棵重载一遍**（一次习题写入连改三个 `@Published` = 三遍），
+  已并成一拍一次（`SidebarViewController.queueReload`）。🔴 正式版没有符号，`sample` 只看得到系统帧，
+  我按形态猜成 Inspector 猜错了——这类问题直接让用户开 `build/dev` 的 Debug 包再采。
+  `spike/agent-flat-row-test.swift` 加了 3b 节，但该脚本头部的编译命令已过期（缺 `GrapherFencedRenderer` / `TableEditMenu`），这一节没跑过。
 - **`NSBox` 别写 `box.contentView = stack`**（踩了两次：2026-09-26 权限卡片「元素全挤在一行」、2026-10-27 Kimi 的
   二十来项待办整片叠在上面的条目上）：box 的内容视图走 autoresizing，里面的约束传不到 box 的高度上，`fittingSize`
   只算出一行字高，内容溢出去盖住别的视图。权限卡片改成内容视图用约束钉在 box 四边；对话记录里的计划条目

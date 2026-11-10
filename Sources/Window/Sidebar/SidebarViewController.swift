@@ -37,6 +37,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 正在拖侧栏自己的行（拖拽排序）：这期间工作区变了不重建，拖完补一次。
     private var draggingRows = false
     private var reloadAfterDrag = false
+    private var reloadQueued = false
     private var bag = Set<AnyCancellable>()
     private var observers: [NSObjectProtocol] = []
 
@@ -97,7 +98,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         loadExpanded()
         workspace.objectWillChange
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.reload() }
+            .sink { [weak self] in self?.queueReload() }
             .store(in: &bag)
         registry.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -209,6 +210,20 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     // MARK: 数据
+
+    /// 工作区变了：排到下一拍整棵重建一次。
+    ///
+    /// 🔴 **别每发一次 `objectWillChange` 就重建一遍**（2026-11-10 采样：Agent 经 MCP 连着导 / 改习题时主线程被侧栏重建占满）：
+    /// 工作区每个 `@Published` 属性各发一次，一次习题写入就连改 `exerciseSummary` / `exerciseRevision` / `exerciseDone` 三个，
+    /// 原来是整棵重载三遍（`reloadData` + 逐个展开 + 恢复滚动位置）。同一拍里来的几次并成一次。
+    private func queueReload() {
+        guard !reloadQueued else { return }
+        reloadQueued = true
+        DispatchQueue.main.async { [weak self] in
+            self?.reloadQueued = false
+            self?.reload()
+        }
+    }
 
     private func reload() {
         // 拖拽排序进行中别重建（行在手上，节点换掉了会乱）：记一笔，拖完再建（`draggingSession(endedAt:)`）

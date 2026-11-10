@@ -207,6 +207,8 @@ enum AgentTranscript {
             if let t = u.title { call.title = prettyTitle(t) }
             if let k = u.kind { call.kind = k.rawValue }
             if let c = u.content { call.output = outputText(c) }
+            // 什么都没变就别写回去：写一次 = 面板刷新一次（有的 Agent 同一条更新会重复推）
+            guard items[i].kind != .tool(call) else { return false }
             items[i].kind = .tool(call)
             return true
         case .plan(let p):
