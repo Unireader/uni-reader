@@ -145,11 +145,35 @@ extension ReaderView {
     func linkMenu(note id: UUID) -> NSMenu {
         let m = NSMenu()
         m.addItem(ClosureMenuItem(L("Copy Link")) { [weak self] in self?.copyLinkToPasteboard(note: id) })
+        // 选区批注的图钉手动拖过：能放回选区末端的自动位置
+        if session.textNotes.first(where: { $0.id == id })?.pin != nil {
+            m.addItem(ClosureMenuItem(L("Put Pin Back")) { [weak self] in self?.resetPin(id) })
+        }
         return m
+    }
+
+    /// 图钉放回自动位置（清掉 `TextNote.pin`）。进撤销栈。
+    func resetPin(_ id: UUID) {
+        guard let i = session.textNotes.firstIndex(where: { $0.id == id }), session.textNotes[i].pin != nil else { return }
+        session.inkEdit("Move", kind: .move) {
+            session.textNotes[i].pin = nil
+            session.textNotes[i].updatedAt = .now
+        }
+    }
+
+    /// 选区批注：拖的是图钉本身（中心钳在页内，同 `notePinCenter` 的边距）。返回它的页与此刻的图钉中心（页内屏幕点）。
+    private func selectionPin(id: UUID) -> (index: Int, pageRect: CGRect, center: CGPoint)? {
+        guard let i = session.textNotes.firstIndex(where: { $0.id == id }), !session.textNotes[i].rects.isEmpty else { return nil }
+        let pr = displayPageRect(session.textNotes[i].page)
+        return (i, pr, Self.notePinCenter(session.textNotes[i], size: pr.size))
     }
 
     /// 图钉拖动位移（屏幕点）夹到锚点不出本页。
     func clampPinDrag(_ id: UUID, _ t: CGSize) -> CGSize {
+        if let s = selectionPin(id: id) {
+            return CGSize(width: min(max(t.width, 12 - s.center.x), s.pageRect.width - 12 - s.center.x),
+                          height: min(max(t.height, 10 - s.center.y), s.pageRect.height - 10 - s.center.y))
+        }
         guard let a = pinAnchor(id: id) else { return t }
         let pr = displayPageRect(a.page)
         let ax = a.anchor.minX * pr.width, ay = a.anchor.minY * pr.height
@@ -164,6 +188,16 @@ extension ReaderView {
 
     /// 图钉拖动提交：屏幕点位移 → 页内归一化平移（点批注用 `InkEdit.translated`，图片笔记锚矩形钳在页内）。
     func commitPinDrag(_ id: UUID, translation t: CGSize) {
+        // 选区批注：只挪图钉（`TextNote.pin`），选区、铺色、`anchor` 都不动
+        if let s = selectionPin(id: id) {
+            guard s.pageRect.width > 0, s.pageRect.height > 0, t != .zero else { return }
+            let p = CGPoint(x: (s.center.x + t.width) / s.pageRect.width, y: (s.center.y + t.height) / s.pageRect.height)
+            session.inkEdit("Move", kind: .move) {
+                session.textNotes[s.index].pin = p
+                session.textNotes[s.index].updatedAt = .now
+            }
+            return
+        }
         guard let a = pinAnchor(id: id) else { return }
         let pr = displayPageRect(a.page)
         guard pr.width > 0, pr.height > 0 else { return }

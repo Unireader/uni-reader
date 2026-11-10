@@ -1276,3 +1276,4 @@
 "%d sync conflicts were resolved automatically" = "%d sync conflicts were resolved automatically";
 "The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong." = "The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong.";
 "Clear List" = "Clear List";
+"Put Pin Back" = "Put Pin Back";

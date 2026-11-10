@@ -1278,3 +1278,4 @@
 "%d sync conflicts were resolved automatically" = "有 %d 处同步冲突已自动处理";
 "The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong." = "同一样东西在两台设备上都改过。保留的是较新的那次改动（一边删、一边改时保留改的那份）。看着没问题就不用管。";
 "Clear List" = "清空列表";
+"Put Pin Back" = "图钉放回原位";

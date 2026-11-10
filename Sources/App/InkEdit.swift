@@ -122,6 +122,8 @@ enum InkEdit {
         var t = n
         t.anchor = translatedRect(n.anchor, dx: dx, dy: dy)
         t.rects = n.rects.map { translatedRect($0, dx: dx, dy: dy) }
+        // 手动摆过的图钉跟着选区一起走（钳在页内）
+        t.pin = n.pin.map { CGPoint(x: min(1, max(0, Double($0.x) + dx)), y: min(1, max(0, Double($0.y) + dy))) }
         t.updatedAt = .now
         return t
     }
@@ -173,6 +175,8 @@ enum InkEdit {
         var t = n
         t.anchor = scaledRect(n.anchor, anchor: a, sx: sx, sy: sy)
         t.rects = n.rects.map { scaledRect($0, anchor: a, sx: sx, sy: sy) }
+        t.pin = n.pin.map { CGPoint(x: min(1, max(0, a.x + (Double($0.x) - a.x) * sx)),
+                                    y: min(1, max(0, a.y + (Double($0.y) - a.y) * sy))) }
         t.updatedAt = .now
         return t
     }

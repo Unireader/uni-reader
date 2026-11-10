@@ -272,6 +272,10 @@ struct TextNote: Identifiable, Equatable {
     var source: NoteSource? = nil   // 来源（AI 回填）；nil = 用户自己写的
     var display: NoteDisplay = .tap // 页面上怎么展开正文（每条自己的属性）
     var card: NoteCard? = nil       // 气泡卡片手动摆过的位置 / 大小；nil = 自动规则
+    /// 图钉手动拖到的位置（页内归一化的图钉**中心**，2026-11-10，`REQUIREMENTS.md §1.2`）；nil = 自动规则
+    /// （选区批注落在选区末端右侧）。只对选区批注有意义：点批注的图钉就是锚点，拖它改的是 `anchor`。
+    /// `anchor` / `rects` 的含义不变（选区在哪、铺色铺在哪），所以不认这个键的旧版本只是把图钉画回自动位置。
+    var pin: CGPoint? = nil
     var createdAt: Date = .now
     var updatedAt: Date = .now
 }
@@ -290,6 +294,7 @@ private struct TextNotePayload: Codable {
     var source: Src?        // JSON 键 source；旧 payload 无此键 → nil，同样零迁移
     var display: String?    // JSON 键 display（tap/hover/always）；旧 payload 无此键 → tap，零迁移
     var card: NoteCard?     // JSON 键 card（{dx, dy, w?, h?}）；旧 payload 无此键 → nil，零迁移
+    var pin: [Double]?      // JSON 键 pin（[x, y]，页内归一化的图钉中心）；旧 payload 无此键 → nil（自动位置），零迁移
 
     struct Src: Codable {
         var kind: String
@@ -305,7 +310,7 @@ private struct TextNotePayload: Codable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case quote, text, rects, color, style, source, display, card
+        case quote, text, rects, color, style, source, display, card, pin
         case typeId = "type_id"
     }
 }
@@ -325,7 +330,8 @@ extension TextNote {
                                                               threadId: $0.threadId?.uuidString,
                                                               at: ISO.string($0.at))
                                       },
-                                      display: display.rawValue, card: card)
+                                      display: display.rawValue, card: card,
+                                      pin: pin.map { [Double($0.x), Double($0.y)] })
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return LibNote(id: id.uuidString, documentId: documentId, kind: Self.noteKind,
                        page: page, anchor: anchor, payload: data,
@@ -355,6 +361,7 @@ extension TextNote {
                   style: p.style.flatMap { HighlightStyle(rawValue: $0) } ?? .fill,
                   typeId: p.typeId.flatMap { UUID(uuidString: $0) },
                   source: src, display: p.display.flatMap { NoteDisplay(rawValue: $0) } ?? .tap, card: p.card,
+                  pin: p.pin.flatMap { $0.count == 2 ? CGPoint(x: $0[0], y: $0[1]) : nil },
                   createdAt: note.createdAt, updatedAt: note.updatedAt)
     }
 }

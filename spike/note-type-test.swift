@@ -109,6 +109,16 @@ note.card = NoteCard(dx: 12, dy: -7.5, w: 300, h: nil)
 let carded = note.toNote(documentId: docId)!
 check(TextNote(note: carded)?.card == NoteCard(dx: 12, dy: -7.5, w: 300, h: nil), "card 编解码回环（h 缺省）")
 check(String(data: carded.payload, encoding: .utf8)!.contains("\"card\":{"), "payload 含 card 键")
+
+// 图钉手动位置（2026-11-10）：payload 键 pin = [x, y]；旧 payload 无此键 → nil；平移 / 缩放时跟着选区走
+check(TextNote(note: oldRow)?.pin == nil, "旧 payload（无 pin）→ nil（自动位置）")
+note.pin = CGPoint(x: 0.25, y: 0.5)
+let pinned = note.toNote(documentId: docId)!
+check(TextNote(note: pinned)?.pin == CGPoint(x: 0.25, y: 0.5), "pin 编解码回环")
+check(String(data: pinned.payload, encoding: .utf8)!.contains("\"pin\":[0.25,0.5]"), "payload 里是 [x, y] 数组")
+check(TextNote(note: pinned)?.anchor == note.anchor && TextNote(note: pinned)?.rects == note.rects, "anchor / rects 不受影响")
+note.pin = nil
+check(!String(data: note.toNote(documentId: docId)!.payload, encoding: .utf8)!.contains("\"pin\""), "放回原位 → payload 里没有 pin 键")
 note.card = nil
 
 let page = CGSize(width: 600, height: 800)

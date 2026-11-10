@@ -9,7 +9,11 @@ extension ReaderView {
     // MARK: 图钉落位（与 SwiftUI 版 `PageCellView.markerPos` / `imageMarkerPos` 同一套数，屏幕点）
 
     /// 文字批注图钉：选区批注落在末端右侧（不遮文字起点）；点批注（无行框）落在锚点处。钳在页内。
+    /// 选区批注的图钉被手动拖过（`TextNote.pin`）→ 就在那儿。
     static func notePinCenter(_ n: TextNote, size: CGSize) -> CGPoint {
+        if !n.rects.isEmpty, let p = n.pin {
+            return CGPoint(x: min(max(p.x * size.width, 12), size.width - 12), y: min(max(p.y * size.height, 10), size.height - 10))
+        }
         let x = n.rects.isEmpty ? n.anchor.minX * size.width : n.anchor.maxX * size.width + 9
         let y = n.rects.isEmpty ? n.anchor.minY * size.height : n.anchor.minY * size.height + 7
         return CGPoint(x: min(max(x, 12), size.width - 12), y: min(max(y, 10), size.height - 10))
@@ -105,13 +109,9 @@ extension ReaderView {
                 pin.onClick = { [weak self] in self?.notePinClicked(id) }
                 pin.onHover = { [weak self] inside in self?.pinHover(id, inside) }
                 pin.menuProvider = { [weak self] in self?.linkMenu(note: id) }
-                if n.rects.isEmpty {   // 点批注可拖（选区批注的图钉跟着文字走，不拖）
-                    pin.clampDrag = { [weak self] t in self?.clampPinDrag(id, t) ?? t }
-                    pin.onDragEnd = { [weak self] t in self?.commitPinDrag(id, translation: t) }
-                } else {
-                    pin.clampDrag = nil
-                    pin.onDragEnd = nil
-                }
+                // 都能拖：点批注拖的是锚点；选区批注拖的只是图钉（选区与铺色不动，位置记在 `TextNote.pin`）
+                pin.clampDrag = { [weak self] t in self?.clampPinDrag(id, t) ?? t }
+                pin.onDragEnd = { [weak self] t in self?.commitPinDrag(id, translation: t) }
                 if bubbleVisible(n), !zooming {
                     wantNotes.insert(n.id)
                     let b = noteBubble(n.id)
