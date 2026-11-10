@@ -17,6 +17,9 @@
 - **H1 扫描页增强**（模式1）：⋯「增强扫描页」按文档开关（记在本机，不进库）；步骤同 Mac（降噪 → 估纸色 → 原图 ÷ 纸色 → 软色阶 → 轻锐化），
   纯 Kotlin 在像素上算（`shared/ScanEnhance`），没有 Mac 的「精细处理」和参数滑块。合成的假扫描页出样张看过（发黄的纸、右侧阴影都成了白，字更黑）；
   JVM `ScanEnhanceTest` 3 项 + 模拟器 `PdfTextTest.增强出图`（分条读写没有接缝）通过。模拟器上 720×1440 一页约 0.45 秒，真机耗时待看。
+- **A2′ 拖笔记卡片**（模式1）：手指按住展开着的笔记卡片（文字 / 图片笔记）拖 = 挪位置，按住四角 / 四边拖 = 改大小；不许盖住自己的图钉、钳在页内
+  （规则逐条照 Mac `NoteCardDrag`，`shared/NoteCardDrag` + `NoteCardDragTest` 4 项）；松手写进 payload `card`（`LibraryStore.setNoteCard`，
+  模拟器插桩 `NoteFeaturesStoreTest` 10 项全过），能撤销，Mac 上看到的是同一个位置。🔴 手感没在真机上试过：从卡片上起手的单指拖动不再滚页面。
 - 验证：JVM 单测 211 项全过（新增 `DocGroupsTest` / `JumpHistoryTest` / `TextSearchTest`、`ExerciseTest` 两组）；模拟器插桩 `ExerciseStoreTest` 4 项
   （顺带补上「习题数据层没有插桩测试」那条欠账）、`PdfTextTest` 1 项（Pdfium 取字与纵向位置）全过；新图标出样张看过。
   🔴 几块新界面（分组面板、跳转历史列表、搜索面板、笔记弹层、删除确认）没有在设备上点过，由用户实测。安卓提交 8ad2738 / b204cbc / 8741305 / ee40088。
