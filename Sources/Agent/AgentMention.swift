@@ -16,6 +16,8 @@ struct AgentMention: Equatable, Identifiable {
         case board, boards
         /// 习题的一组（全部 / 错题本 / 收藏 / 某本书 / 某一章）。
         case exercises
+        /// Agent 的一条斜杠命令（只在输入框的 `/` 候选里用：`name` = `/命令名`，`detail` = 说明；不是引用，发送时不附）。
+        case command
     }
 
     var kind: Kind

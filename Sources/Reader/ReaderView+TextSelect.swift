@@ -171,6 +171,19 @@ extension ReaderView {
         pb.setString(text, forType: .string)
     }
 
+    /// 选中的文字作为引用放进 Agent 输入框：正文里是 Markdown 引用块（用户看得见、能删改），
+    /// 「出自哪本书第几页」放进随下一次发送带走的隐藏上下文（同习题「让 Agent 批改」那条路），Agent 想看原页自己走 MCP。
+    func quoteSelectionInAgent() {
+        guard let sel = selection, !sel.text.isEmpty else { return }
+        let page = sel.rects.keys.min()
+        var note = "The quoted text above was selected by the user in the PDF"
+        if !session.title.isEmpty { note += " \"\(session.title)\"" }
+        if let id = session.documentId { note += " (document_id \(id))" }
+        if let page { note += ", page \(PageNo.external(page))" }
+        note += ". Use the unireader MCP tools if you need more of the page."
+        AgentPanelModel.shared.prepare(text: AgentQuote.markdown(sel.text), note: note, images: [], from: session.windowID)
+    }
+
     // MARK: 高亮命中
 
     /// 文字高亮命中（文档坐标）→ 命中的高亮与被点中的那一行。逐行框判定，上下各放宽 2 个屏幕点；

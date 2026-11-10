@@ -669,6 +669,7 @@
 "Retry" = "重试";
 "Allow “%@”?" = "允许执行“%@”吗？";
 "Ask %@…" = "向 %@ 提问…";
+"Quote in %@" = "在 %@ 中引用这段文字";
 "Ask %@" = "向 %@ 提问";
 "Model" = "模型";
 "How the agent asks before running tools" = "Agent 执行工具前怎么征求你的同意";

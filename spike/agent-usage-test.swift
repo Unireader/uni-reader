@@ -85,5 +85,28 @@ pb.setData(Data("{\\rtf1 x}".utf8), forType: .rtf)
 pb.setData(img.tiffRepresentation ?? Data(), forType: .tiff)
 check(AgentPaste.classify(types: (pb.types ?? []).map(\.rawValue), imageFileCount: 0) == .text, "文字 + RTF + TIFF（模拟 Pages）→ 粘文字")
 
+// 输入 `/` 的命令候选 + 选中文字引用（2026-11-10，`ACP-AGENT-PLAN.md §14`）
+print("\n命令候选 / 引用块")
+func q(_ s: String, _ caret: Int? = nil) -> String? {
+    AgentSlash.activeQuery(in: s as NSString, caret: caret ?? (s as NSString).length)?.query
+}
+check(q("/") == "", "只打了 / → 空查询（全列）")
+check(q("/com") == "com", "/com → com")
+check(q("/compact ") == nil, "命令名后面有空格了 → 不再是在打命令名")
+check(q("/compact 说明", 4) == "com", "光标还在命令名里 → 照认（按光标前那段）")
+check(q("/usr/bin") == nil, "路径不算")
+check(q("说 /compact") == nil, "不在开头不算")
+check(q("") == nil && q("abc") == nil, "空的 / 普通话不算")
+check(AgentSlash.activeQuery(in: "/com" as NSString, caret: 4)?.range == NSRange(location: 0, length: 4), "替换范围 = 从 / 到光标")
+let cmds = [AgentCommand(name: "init", description: "Create AGENTS.md"),
+            AgentCommand(name: "compact", description: "Summarize the conversation"),
+            AgentCommand(name: "recompile", description: "x"),
+            AgentCommand(name: "help", description: "List commands, compact view")]
+check(AgentSlash.rank(cmds, query: "").map(\.name) == ["init", "compact", "recompile", "help"], "空查询：原顺序全给")
+check(AgentSlash.rank(cmds, query: "COM").map(\.name) == ["compact", "recompile", "help"], "开头 > 名字里含 > 说明里含，不分大小写")
+check(AgentSlash.rank(cmds, query: "zzz").isEmpty, "都不中 → 空")
+check(AgentQuote.markdown("第一行\n第二行") == "> 第一行\n> 第二行\n\n", "每行加 > ，末尾空一行")
+check(AgentQuote.markdown("\n a\r\n\nb\n\n") == ">  a\n>\n> b\n\n", "首尾空行去掉、中间空行留着（不断开引用块）、CRLF 当换行")
+
 print("\n通过 \(pass)，失败 \(fail)")
 exit(fail == 0 ? 0 : 1)

@@ -16,6 +16,8 @@ final class MarkdownDocView: NSView {
     let workspace: WorkspaceManager
     private let box: TextBox
     private let relay: LinkRelay
+    /// 输入 `[[` 时的候选列表（`NoteLinkCompleter`）。
+    private let links: NoteLinkCompleter
     private let host: NSHostingView<Root>
     private let titleLabel = NSTextField(labelWithString: "")
     private let pathLabel = NSTextField(labelWithString: "")
@@ -74,11 +76,13 @@ final class MarkdownDocView: NSView {
         /// 服务器镜像里的笔记只读。
         let isEditable: Bool
         let onOpenNote: (String) -> Void
+        let links: NoteLinkCompleter
         var body: some View {
             MarkdownDocEditor(text: $box.text, documentId: documentId, wiki: wiki,
                               usesReadingColumn: usesReadingColumn, isEditable: isEditable, onOpenNote: onOpenNote,
                               onPersistScrollOffset: { ScrollMemory.shared.offsets[$0] = $1 },
-                              restoreScrollOffset: { ScrollMemory.shared.offsets[$0] })
+                              restoreScrollOffset: { ScrollMemory.shared.offsets[$0] },
+                              links: links)
         }
     }
 
@@ -97,10 +101,13 @@ final class MarkdownDocView: NSView {
         let relay = LinkRelay()
         self.relay = relay
         documentId = "md-\(ref.key)"
+        let links = NoteLinkCompleter(workspace: workspace, documentId: documentId, ownKey: ref.key)
+        self.links = links
         host = NSHostingView(rootView: Root(box: box, documentId: documentId, wiki: workspace.wiki,
                                             usesReadingColumn: showsHeader,
                                             isEditable: !workspace.isMirrorSource(ref.sourceID),
-                                            onOpenNote: { [relay] in relay.onOpen($0) }))
+                                            onOpenNote: { [relay] in relay.onOpen($0) }, links: links))
+        links.host = host
         host.sizingOptions = []
         super.init(frame: .zero)
         Self.all.add(self)
@@ -334,6 +341,7 @@ final class MarkdownDocView: NSView {
     /// 离开窗口前记下滚到哪儿了。引擎的 `dismantleNSView` 也会记，但它要等托管视图真正释放才跑，
     /// 时机不归我们管；这里在拆之前先记一次，切回来时 `restoreScrollOffset` 一定拿得到。
     override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { links.close() }   // 候选列表是子窗口，别留在原窗口上
         if newWindow == nil, window != nil,
            let scroll = descendantTextView(in: host)?.enclosingScrollView,
            scroll.contentView.bounds.height > 0 {

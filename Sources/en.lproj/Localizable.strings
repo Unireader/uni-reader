@@ -667,6 +667,7 @@
 "Retry" = "Retry";
 "Allow “%@”?" = "Allow “%@”?";
 "Ask %@…" = "Ask %@…";
+"Quote in %@" = "Quote in %@";
 "Ask %@" = "Ask %@";
 "Model" = "Model";
 "How the agent asks before running tools" = "How the agent asks before running tools";

@@ -31,6 +31,8 @@ struct MarkdownDocEditor: View {
     /// 滚动位置的记忆（切标签会把整个编辑区拆掉重建，引擎自己记的偏移跟着没了，由上层存）。
     var onPersistScrollOffset: ((String, CGFloat) -> Void)?
     var restoreScrollOffset: ((String) -> CGFloat?)?
+    /// 输入 `[[` 时的候选列表（只读的镜像笔记不给）。它的身份在这份编辑区的一生里不变（引擎的回调只捕获一次）。
+    @ObservedObject var links: NoteLinkCompleter
 
     @AppStorage(NoteBubble.editorFontSizeKey) private var fontSizeSetting = Int(NoteBubble.defaultEditorFont)
     private var fontSize: CGFloat { CGFloat(fontSizeSetting) + 2 }   // 整页阅读比批注小框再大一点
@@ -53,6 +55,7 @@ struct MarkdownDocEditor: View {
         // 同 `MarkdownNoteEditor.baseConfiguration`：源码里的 `'` `"` 不许被换成智能引号
         c.spellChecking.automaticQuoteSubstitution = false
         c.services.latex = NoteLatexRenderer.shared
+        c.extensions = [HighlightExtension()]   // `==高亮==`（Obsidian 写法；引擎默认不开）
         return c
     }()
 
@@ -66,12 +69,16 @@ struct MarkdownDocEditor: View {
     var body: some View {
         NoteLatexRenderer.shared.registerBlocks(in: text)   // 块公式按块排版（同气泡/批注框，见 `NoteLatexRenderer`）
         return NativeTextViewWrapper(text: $text,
+                                     pendingInlineReplacement: $links.pending,
                                      configuration: configuration.fittingLatex(to: containerWidth),
                                      fontSize: fontSize,
                                      documentId: documentId,
                                      isEditable: isEditable,
                                      onLinkClick: { onOpenNote($0) },
+                                     onCaretRectChange: { [links] in links.caretRectChanged($0) },
                                      onTableCellContextMenu: TableEditMenu.decorate,
+                                     onInlineSelectionChange: { [links] in links.selectionChanged($0) },
+                                     onInlinePreviewKey: { [links] in links.key($0) },
                                      placeholder: NSAttributedString(
                                          string: L("Write in Markdown. Type [[ to link another note."),
                                          attributes: [.foregroundColor: NSColor.placeholderTextColor,

@@ -39,6 +39,11 @@ extension ReaderView {
                 m.addItem(parent)
             }
             m.addItem(ClosureMenuItem(L("Copy")) { [weak self] in self?.copySelectionToPasteboard() })
+            // 选中的文字作为引用放进这扇窗的 Agent 输入框（`ACP-AGENT-PLAN.md §14`）
+            if AgentPanelModel.shared.canAttach(from: session.windowID) {
+                let name = AgentPanelModel.shared.agentName(for: session.windowID)
+                m.addItem(ClosureMenuItem(String(format: L("Quote in %@"), name)) { [weak self] in self?.quoteSelectionInAgent() })
+            }
             if AIPanelModel.shared.enabled {
                 let ask = ClosureMenuItem(String(format: L("Ask %@ About This"), aiProviderName)) { [weak self] in
                     self?.askAIAboutSelection()

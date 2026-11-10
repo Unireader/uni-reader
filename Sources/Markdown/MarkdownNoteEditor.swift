@@ -278,6 +278,7 @@ struct MarkdownNoteEditor: View {
         c.headings.topSpacingEm = [0.3, 0.25, 0.2, 0.15, 0.1, 0.1]
         c.lists.indentPerLevel = 16
         c.services.latex = NoteLatexRenderer.shared
+        c.extensions = [HighlightExtension()]   // `==高亮==`（批注编辑框与气泡都认）
     }
 
     var body: some View {

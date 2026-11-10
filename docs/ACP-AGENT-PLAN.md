@@ -482,3 +482,15 @@ session_id（那段对话在原 Agent 里的 id，只对同一家有意义）, c
 - 没做：不同段之间互相传话；每段单独的 MCP 口令；窗口之间共享并行对话（每扇窗口各管各的）。
 - 同日顺手：工具调用的标题只留第一行 160 字、工具输出入库前截到 8000 字（`AgentTranscript.clampTitle`）——
   怀疑有的 Agent 把调用参数拼进标题，`import_exercises` 一次几十道题时单行标签每次量宽都排整段文字，拖动 Inspector 时主线程被占满。**这是推测，未经采样证实**，见 TODO。
+
+## 14. 输入 `/` 弹命令候选 + 选中文字作为引用（2026-11-10）
+
+- **`/` 候选**：整段话以 `/` 开头、光标还在命令名里（没有空白、没有第二个 `/`）→ 弹出 Agent 报上来的斜杠命令
+  （`available_commands_update`，`AgentChat.commands`；Agent 没报过就不弹，照样能手打）。排序：名字开头 > 名字里含 > 说明里含。
+  ↑↓ / 回车 / Tab / Esc 同 `@` 候选（同一块 `AgentMentionPopup`，候选项 `AgentMention.Kind.command`）；选中 = 换成 `/命令名 ` 接着写参数。
+  已经把唯一那条完整打出来时列表自己收起——这时回车是发送，不是再选一遍。纯逻辑 `AgentSlash.activeQuery` / `rank`。
+- **选中文字 → 引用**：阅读区选中文字右键「在 <Agent 名> 中引用这段文字」（这扇窗能发给 Agent 时才有）：输入框里放一段 Markdown 引用块
+  （`AgentQuote.markdown`，每行 `> `，下面空一行接着写问题），「出自哪本书（document_id）第几页」进随下一次发送带走的隐藏上下文
+  （`AgentPanelModel.prepare`，同习题「让 Agent 批改」那条路），Agent 页亮出来等用户发。
+- 验证：`spike/agent-usage-test.swift` 51 项全过（新加 13 项）；Mac Debug 编译通过。🔴 界面由用户实测：① 输入框打 `/` 出命令列表、打 `/com` 只剩相关的、
+  回车补全成 `/compact `；② 完整打 `/compact` 回车直接发送；③ 选中一段文字右键 →「在 … 中引用这段文字」→ Agent 页输入框里是引用块。

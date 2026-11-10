@@ -83,7 +83,8 @@ final class AgentMentionPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     /// 显示 / 更新。`anchor` = `@` 那一处的屏幕矩形（`firstRect(forCharacterRange:)`）。
     /// 默认摆在它上方（输入框在面板最底下），上方放不下才放下方。
-    func show(_ list: [AgentMention], anchor: NSRect, parent: NSWindow) {
+    /// `below` = 优先摆在下方（笔记正文里的 `[[`：上方是刚写的字，别盖住），放不下才翻到上方。
+    func show(_ list: [AgentMention], anchor: NSRect, parent: NSWindow, below: Bool = false) {
         let changed = list.map(\.id) != items.map(\.id)
         items = list
         if changed {
@@ -94,9 +95,11 @@ final class AgentMentionPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         let rows = min(list.count, Self.maxRows)
         // `.inset` 样式上下各留一点边
         let h = CGFloat(rows) * Self.rowHeight + 12
-        var origin = NSPoint(x: anchor.minX - 12, y: anchor.maxY + 4)
+        var origin = NSPoint(x: anchor.minX - 12, y: below ? anchor.minY - 4 - h : anchor.maxY + 4)
         if let screen = (parent.screen ?? NSScreen.main)?.visibleFrame {
-            if origin.y + h > screen.maxY { origin.y = anchor.minY - 4 - h }
+            if below {
+                if origin.y < screen.minY { origin.y = anchor.maxY + 4 }
+            } else if origin.y + h > screen.maxY { origin.y = anchor.minY - 4 - h }
             origin.x = min(max(origin.x, screen.minX + 4), screen.maxX - Self.width - 4)
         }
         panel.setFrame(NSRect(x: origin.x, y: origin.y, width: Self.width, height: h), display: true)
@@ -150,6 +153,7 @@ final class AgentMentionPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         private static let pdfIcon = NSWorkspace.shared.icon(for: .pdf)
         private static let noteIcon = NSWorkspace.shared.icon(for: UTType(filenameExtension: "md") ?? .plainText)
         private static let folderIcon = NSWorkspace.shared.icon(for: .folder)
+        private static let commandIcon = NSImage(systemSymbolName: "command", accessibilityDescription: nil)
 
         init() {
             super.init(frame: .zero)
@@ -190,6 +194,7 @@ final class AgentMentionPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
             switch m.kind {
             case .pdf: icon.image = Self.pdfIcon
             case .folder: icon.image = Self.folderIcon
+            case .command: icon.image = Self.commandIcon
             default: icon.image = Self.noteIcon
             }
             name.stringValue = m.name

@@ -1450,6 +1450,22 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
     private func updateMention() {
         guard !textView.hasMarkedText() else { return }
         let sel = textView.selectedRange()
+        // 斜杠命令：整段话以 `/` 开头、光标还在命令名里 → 候选是 Agent 报上来的命令（没报过就不弹，照样能手打）
+        if textView.isEditable, let win = textView.window, sel.length == 0, !chat.commands.isEmpty,
+           let hit = AgentSlash.activeQuery(in: textView.string as NSString, caret: sel.location) {
+            if dismissedMentionAt == hit.range.location { return }
+            dismissedMentionAt = nil
+            mentionRange = hit.range
+            let list = AgentSlash.rank(chat.commands, query: hit.query).map { c in
+                AgentMention(kind: .command, id: "/" + c.name, name: "/" + c.name,
+                             detail: [c.description, c.hint ?? ""].filter { !$0.isEmpty }.joined(separator: "  "), uri: "")
+            }
+            // 一个都不中、或者已经把唯一那条完整打出来了：收起（回车就该是发送，不是再「选」一遍）
+            guard !list.isEmpty, !(list.count == 1 && list[0].name == "/" + hit.query) else { mentionPopup.hide(); return }
+            let anchor = textView.firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
+            mentionPopup.show(list, anchor: anchor, parent: win)
+            return
+        }
         guard textView.isEditable, let win = textView.window, sel.length == 0,
               let hit = AgentMentionMatch.activeQuery(in: textView.string as NSString, caret: sel.location) else {
             closeMention()
@@ -1503,6 +1519,10 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
         guard let r = mentionRange, NSMaxRange(r) <= (textView.string as NSString).length else { closeMention(); return }
         closeMention()
         window?.makeFirstResponder(textView)
+        if m.kind == .command {   // 斜杠命令：换成 `/命令名 `，后面接着写参数；它不是引用，不记进 pickedMentions
+            textView.insertText(m.name + " ", replacementRange: r)
+            return
+        }
         textView.insertText(m.token + " ", replacementRange: r)
         pickedMentions.append(m)
     }
