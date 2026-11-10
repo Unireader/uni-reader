@@ -747,3 +747,40 @@ Linux 交叉编译通过；App Debug 编译通过。
 ② B 同时自己也在写（两边都有未存的改动）→ 都不丢；③ A 在笔记里新建 / 改一篇，B（没打开那一篇）侧栏几秒内出现；B 正开着那一篇时它不被换，关掉后才处理；
 ④ 看 `~/Library/Logs/UniReader-ws.log`（`touch` 它才写）里 `[SYNC-LIVE]` / `[SYNC-NOTES]`；⑤ 旧服务器上只会有一行「太旧」日志、功能退回原样。
 
+### 13.13 2026-11-10：收尾一轮（用户：「连接服务器的收尾做」）
+
+**Mac**
+
+- **删得太多先问**（§4.6）：`Sources/Sync/SyncDeleteGuard.swift`（纯函数，App 与服务器共用目录、服务器不调）。一次推送里的删除 > 50 行，
+  或某张表一次删掉它已同步行数的 20%（且 ≥ 10 行）→ 整批先不推（同一次推送是一个事务，不拆），状态行「已暂停：有 N 项删除等你确认」，
+  工作区菜单多「确认删除…」：说清各删多少，确认后这一批放行。关着工作区跑的那一轮没有界面可问：抛 `SyncDeleteGuard.Blocked`、那一轮不推不拉，
+  等开着时确认。**只拦推送不拦拉取**——服务器上的每条删除都是某台设备推上去的，在那台设备上已经问过了。
+- **冲突报告**：推送回应里的 `conflicts`、拉取时 `PullReport.conflictNotes`（新加，`MirrorDiff.Conflict.note`）攒在
+  `ServerSyncCoordinator.conflicts`（App 开着期间，最多 200 条，同时写 `[SYNC]` 日志）；工作区菜单「同步冲突（N）…」列出来，可清空。冲突照旧自动处理、不阻塞。
+- **退出时推送**：`applicationShouldTerminate` 结清窗口后，还有服务器工作区在同步（关窗后那一轮 / 还开着的会话）就 `.terminateLater`，
+  等它收尾最多 4 秒（`waitForQuit`）；超时不等，改动没丢，下次打开前照常同步。
+- **开着的画板 / 练习页实时更新**：`applyRemoteRows` 里习题走 `exercisesChangedRemotely()`（开着的练习页就地刷新快照），
+  画板走 `DocTabModel.applyRemoteBoard`（先把本机没落库的结清，再整篇重读；正在写的那一笔不打断，撤销栈清空）。
+- **开着的 PDF 被改了内容**：App 回到前台时 `DocTabModel.recheckFileOnActivate`——修改时间变了才算哈希，内容真变了弹同一张「文件已变化」；
+  「关联为新版本」后按磁盘上的新文件入库并重新装载（随后新版本照常传上服务器）；「仍打开」什么都不改（眼前还是旧内容）。
+
+**安卓**
+
+- 删得太多先问：`local/server/SyncDeleteGuard`（阈值同 Mac，`SyncDeleteGuardTest`），状态 `NeedsConfirm`，书库页同步那一行点一下确认。冲突报告安卓没做（只写日志）。
+- 开着的画板 / 练习页实时更新：`BoardController.reloadFromRemote` / `ExerciseController.reloadFromRemote`。
+- **笔记文件同步**（§4.4 的安卓一半，`local/server/NoteSync`，判定表逐行照 Mac）：打开前 / 关闭后完整一轮，开着时存盘就推、每分钟兜底、
+  服务器有动静就完整一轮（编辑器里没存的那篇绕开）；冲突另存副本、别处删了的挪进 `Notes/.trash/`。**引用目录镜像没做**。
+- 启动页长按服务器上的工作区：下载到本机 / 重命名 / 从服务器删除（确认两次；本机那份留着不动，只是不再同步）。
+
+**验证**：`spike/sync-delete-guard-test.swift` 12 项；服务器 `swift test` 57 项、`spike/server-client-test.sh` 95 项照旧全过；Linux 交叉编译通过
+（⚠️ `server/scripts/build-linux.sh` 现在在「先构建网页」那一步就停了：`server/web` 的 `npm test` 在 Node 24 上跑不起来——`node --test test/` 不认目录参数，
+与这一轮无关，这次是跳过网页那步单独编的，**没修**）；安卓 JVM 单测 227 项；安卓笔记同步在模拟器上对着临时服务器跑过端到端
+（`ServerSyncE2ETest.笔记文件_…`：拉取 / 来回改 / 只推 / 冲突副本 / 删除进 `.trash`，通过）。
+⚠️ 同一趟里**老用例 `配对_上传_…` 在模拟器上没过**：`ServerSyncIO.prepareUpload` 里 `journal_mode=DELETE` 报 `database is locked`——这段代码这一轮没碰，
+可能只是模拟器的问题，也可能安卓「上传到服务器…」在真机上同样会失败（这条端到端从没在真机上跑过），**要用户在平板上确认**。
+`spike/android-server-e2e.sh` 的编译清单漏了 `ServerNoteSync.swift`（11-03 起就编不过），已补。
+
+🔴 界面都没在真 App 里点过，待用户实测：① 一次删掉 60 条笔迹（或一本笔记很多的书）→ 状态行说已暂停 → 菜单「确认删除…」→ 确认后才传；
+② 两台设备离线各改同一条笔记再同步 → 菜单出现「同步冲突（1）…」；③ 改完马上 ⌘Q，另一台设备上看得到；④ 平板在画板上写字，Mac 开着同一篇画板几秒内出现；
+⑤ Mac 开着一本 PDF 时用别的程序给它加目录，切回 App → 弹「文件已变化」；⑥ 安卓改一篇笔记，Mac 上看到；两边同时改同一篇 → 多出一篇「(冲突 …)」；
+⑦ 安卓启动页长按服务器上的工作区，三个入口都能用。

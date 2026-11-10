@@ -35,7 +35,7 @@ CODE=$("$BIN" pairing-code --data "$TMP/data")
 echo "== Mac 造工作区传上去"
 cp spike/android-server-interop.swift "$TMP/main.swift"
 swiftc Sources/Store/*.swift Sources/Sync/*.swift \
-    Sources/ServerSync/ServerClient.swift Sources/ServerSync/ServerSyncIO.swift \
+    Sources/ServerSync/ServerClient.swift Sources/ServerSync/ServerSyncIO.swift Sources/ServerSync/ServerNoteSync.swift \
     "$TMP/main.swift" -o "$TMP/interop"
 MAC_WS=$(SERVER_URL="$URL" PAIRING_CODE="$CODE" WORK_DIR="$TMP" "$TMP/interop" seed | sed -n 's/^MAC_WORKSPACE=//p')
 [ -n "$MAC_WS" ] || { echo "Mac 没传上去"; exit 1; }

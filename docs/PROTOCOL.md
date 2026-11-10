@@ -920,7 +920,8 @@ Mac `Sources/ServerSync/ServerDiscovery.swift`（`NWBrowser`）、安卓 `local/
 - **引用目录镜像**（`MARKDOWN-NOTES-PLAN.md §11`）：本机有这个引用目录 → 把里面的文件整个传到 `NotesMirror/<id>/…`（本机为准，`base` 取服务器现在的 `rev`，不吵冲突；本机没扫到任何文件时什么都不动）；
   本机没有 → 把镜像拉到工作区的 `NotesMirror/<id>/`，**只读**（不往里写、不往服务器推）。
 - 老服务器没有这些接口：路由不存在的 404 / 405（不带说明）→ 客户端当没有笔记同步，库与 PDF 照常。
-- 安卓：**还没做**（欠着，见 `SERVER-MODE-PLAN.md §13.11`）。线格式以本节为准；Mac 实现 `Sources/Sync/SyncNotes.swift` + `Sources/ServerSync/ServerNoteSync.swift`。
+- 安卓：2026-11-10 做了内建 `Notes/` 那一半（`android/…/local/server/NoteSync.kt`，判定表逐行照 Mac；引用目录镜像没做，`SERVER-MODE-PLAN.md §13.13`）。
+  线格式以本节为准；Mac 实现 `Sources/Sync/SyncNotes.swift` + `Sources/ServerSync/ServerNoteSync.swift`。
 
 ### 9.6 变更通知：长轮询 `GET wait`（S4，2026-11-03，`SERVER-MODE-PLAN.md §13.12`）
 
