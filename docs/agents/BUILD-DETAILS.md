@@ -43,7 +43,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `unireader` 分支换到 `xVanTuring/swift-markdown-engine` 的 `xvan` 分支，和 Perch 共用——
   上游把智能引号写死为开，笔记里 `'` 会变 `’`，当初 fork 就是为了加 `SpellCheckingPolicy.automaticQuoteSubstitution`
   （上游 0.14.0 已合并），两处编辑区都关掉；
-  `project.yml` 里 `exactVersion` 钉死，现 **0.14.0-xvan.7**（2026-10-20 从 `.1` 升上来：多了 grapher 图形块用的
+  `project.yml` 里 `exactVersion` 钉死，现 **0.14.0-xvan.8**（2026-11-11：行内公式不再被裁——图片按实际墨迹定上下边界、公式撑开所在行，样张对比的做法见 `project.yml` 注释；`.7` 是 2026-10-20 从 `.1` 升上来：多了 grapher 图形块用的
   `FencedBlockRenderer` / `renderedBlockFrames`，以及 Perch 那边打的 `.2`~`.6`——表格默认就地编辑，
   🔴 **表格右键菜单引擎不再自带、由 App 出**（`Sources/Markdown/TableEditMenu.swift`，两处编辑器都接
   `onTableCellContextMenu`，测试 `spike/table-edit-menu-test.swift` 11 项），`$$` 编辑时实时预览、自动配对补全、
