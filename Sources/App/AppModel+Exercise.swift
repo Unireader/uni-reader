@@ -255,7 +255,7 @@ extension AppModel {
                 d.redo(ids)
                 d.index = min(max(0, num), max(0, d.items.count - 1))
             }
-        case 4:   // 筛选（认 0 / 1 / 4；老平板发来的 2 错题 / 3 收藏已不用，丢掉。平板本轮还没有 4「重做上次做错的」）
+        case 4:   // 筛选（认 0 / 1 / 4；老平板发来的 2 错题 / 3 收藏已不用，丢掉。安卓 2026-11-10 起会发 4「重做上次做错的」，重挑一轮 = 先 0 再 4）
             guard let f = ExerciseFilter(rawValue: num) else { return }
             d.asPad { d.setFilter(f) }
         case 5:   // 到 PDF 原页：Mac 打开那篇、跳过去，并把平板锁到那个标签

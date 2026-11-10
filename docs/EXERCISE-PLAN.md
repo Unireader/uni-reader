@@ -981,3 +981,32 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   本轮不动。
 - 验证：安卓 `assembleDebug` 通过、JVM 单测全过（`ExerciseTest` 新加 payload v21 键、规整、逐空比对、永不自动判错、
   编解码、earlier、deck 交卷各组）。🔴 观感 / 手感由用户在真机实测。
+
+## 21. 安卓：重做上次做错的 + 手机上两个开关直接可点（2026-11-10，安卓两模式）
+
+用户原话：「优化下手机做题，支持桌面的：`Redo Last Wrong` 和 `Not Done Only`」。§12.2 留给下一轮的那一半做掉了（题目笔记仍没做）。
+
+- **规则逐条照 Mac**：`Exercise.lastResultWrong`（选择题按现在的答案现判；填空 / 主观题用库里记的对错，主观题平板不能作答、
+  但 Mac 上判错的照样挑进来）、`ExFilter.LAST_WRONG = 4`、`LocalExerciseDeck.applyLastWrongRound`（= Mac `startLastWrongRound`：
+  按此刻库里的统计重挑、这一轮在它们上答过的清掉、从第一道练起；开着时以前的作答一律不显示）、`lastWrongCount`（按全组数）。
+  与「只看没做过」至多开一个；哪一组都有（错题本里也有）；一道上次做错的都没有时灰着（开着时总能关）；
+  开着时「全部重做」= 再挑一遍；只管 App 开着期间。
+- **界面**（`shared/exercise/ExerciseScreen`，两模式共用）：宽屏顶栏「全部重做」后面多一个开关「重做上次做错的」（同 Mac 的顺序）。
+  **手机（宽 < 600dp）两个开关不再收在 ⋯ 里**：标题那一行下面单独一行「重做上次做错的」「只看没做过」，直接点；⋯ 里只剩「全部重做」。
+  开「重做上次做错的」会切回练习页。挑不出题时正文写「这里没有上次做错的题。」。
+- **模式1**：`ExerciseController.restartLastWrong` 排在库队列上读统计（刚交的作答已先写进去）。
+- **模式2**：协议没改。开 = `exAct` 4 带 `4`（Mac 早就认）；开着时「全部重做」= 先发 `0` 再发 `4`（Mac「换成 4」就是重挑一轮，
+  新老 Mac 都认，Mac 那边会跟着闪一下全部再回到挑出来的题）。`exDeck` 不带「有几道上次做错的」→ 平板上这个开关一直能点
+  （`ExDeckView.lastWrong = null`），没有错题时点了显示那句空提示。Mac 开着这个开关时平板的开关跟着高亮。
+- 代码在 `android/`：`local/exercise/Exercise.kt`、`local/exercise/LocalExerciseDeck.kt`、`local/ExerciseController.kt`、
+  `shared/exercise/ExModel.kt`、`shared/exercise/ExerciseScreen.kt`、`pad/RemoteExHost.kt`、strings 两份（`ex_redo_last_wrong` / `ex_empty_last_wrong`）。
+- 验证：安卓 `assembleDebug` 通过、JVM 单测 202 项全过（`ExerciseTest` 新加 `lastResultWrong` 12 种情形，与 `spike/exercise-test.swift`
+  同一段逐条对应；`deckLastWrongRound`：开 / 答对留着 / 再挑一遍 / 关掉）。🔴 观感 / 手感由用户在真机实测。
+
+### 21.1 实测清单（用户）
+
+  89. 手机上打开一组题：标题下面一行有「重做上次做错的」「只看没做过」两个开关，不用进 ⋯；错题本里只有前一个。
+  90. 点「重做上次做错的」：只剩上次做错的题、都能重新作答、从第一道开始；答对几道后关掉再开 → 答对的不在了；
+      和「只看没做过」互斥；这一组没有错题时它是灰的。
+  91. 开着时 ⋯ →「全部重做」：重新挑一遍（这一轮答对的不再出现）。
+  92. 平板（模式2 连 Mac）：平板上开 / 关这个开关，Mac 顶栏的开关跟着变，两边看到的是同一份挑出来的题。
