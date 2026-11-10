@@ -9,6 +9,40 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.21</title>
+      <pubDate>Tue, 10 Nov 2026 01:11:27 +0000</pubDate>
+      <sparkle:version>63</sparkle:version>
+      <sparkle:shortVersionString>0.3.21</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能：在 Agent 输入框里用 @ 引用笔记目录</h4>
+<ul>
+<li>输入 @ 时，候选里多了 Markdown 笔记的目录：每个笔记源本身和其中的各级子目录都在里面，带文件夹图标。打目录名就能找到。</li>
+<li>发出去后，Agent 能列出这个目录（含子目录）里的笔记并读取。和在侧栏目录上右键「在 Agent 中引用」效果一样。</li>
+</ul>
+<h4>修正</h4>
+<ul>
+<li>用 @ 选 PDF 时，插进输入框的是书名（侧栏上显示的那个），不再是一串编号。复制进工作区的书、从服务器下载的书以前都会出现这种情况。侧栏右键「在 Agent 中引用」PDF 也一样改好了。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.21">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New: Mention a notes folder with @ in the Agent input</h4>
+<ul>
+<li>When you type @, the suggestions now include your Markdown notes folders: each notes source and every folder inside it, shown with a folder icon. Type a folder's name to find it.</li>
+<li>Once sent, the agent can list the notes in that folder (and its subfolders) and read them, the same as right-clicking the folder in the sidebar and choosing Reference in Agent.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Picking a PDF with @ now inserts the book's title (the name shown in the sidebar) instead of a string of letters and numbers. This used to happen with books copied into the workspace and books downloaded from a server. Reference in Agent on a PDF in the sidebar is fixed the same way.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.21">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.21/UniReader-0.3.21.zip" length="17687010" type="application/octet-stream" sparkle:edSignature="xim0hemnWiSZCx0lbiTzkK4M9ipOhbq9BYwrYZBOhkyYxvhfzfXsFcGOcjCydkNQpP2LyC0YAIX+Q9la9tnjBQ==" />
+    </item>
+    <item>
       <title>v0.3.20</title>
       <pubDate>Tue, 03 Nov 2026 07:18:23 +0000</pubDate>
       <sparkle:version>62</sparkle:version>
