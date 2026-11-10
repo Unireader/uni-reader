@@ -8,9 +8,11 @@ import Combine
 /// 与 AI 浮窗「全 app 只有一扇」不同：参考窗的状态（开的哪本、滚到哪、独立的 `PDFDocument`）
 /// 本来就是每扇阅读窗各一份，独立出来的窗口自然也跟着那扇窗走。
 ///
-/// **做成阅读窗的子窗口**（`addChildWindow`，同 `AIPanelDock` 的做法，但**不贴边、不定位**，
-/// 用户摆哪就是哪）：恒在阅读窗之上（点回正文它不会沉到后面去——对照习题/答案时正是这一点），
-/// 拖阅读窗它跟着走，阅读窗最小化它一起收。代价是不能把它藏到阅读窗后面，要藏就关掉。
+/// **独立的浮动窗口，不是阅读窗的子窗口**（用户 2026-11-10 报「拖动很卡、拖到其他屏幕就看不见了」后改）：
+/// 子窗口只能显示在父窗口所在的那个 space——开着「显示器具有单独的空间」时每块屏幕各是一个 space，
+/// 拖到另一块屏幕就不显示了。现在靠窗口层级保持「恒在阅读窗之上」（点回正文它不会沉到后面去——
+/// 对照习题/答案时正是这一点）：App 在前台时 `.floating`，切到别的 App 时降回 `.normal`
+/// （不然会压在别的 App 上面）。代价：拖阅读窗它不再跟着走；阅读窗最小化 / 还原时由这里跟着收起 / 放回。
 ///
 /// 工具栏由这里建；内容是页流 `RefPageStreamView`（与覆盖层形态同一个类，各建一份）。
 @MainActor
@@ -27,6 +29,11 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
     private var contentsButton: NSButton?
     /// 正由 `dismiss()` 主动关窗。`windowWillClose` 靠它分辨「程序关的」还是「用户点了红色关闭钮」。
     private var dismissing = false
+    /// 所属的阅读窗（只为跟着它最小化 / 还原；不是父窗口）。
+    private weak var host: NSWindow?
+    private var hostBag = Set<AnyCancellable>()
+    /// 因阅读窗最小化而被这里收起来的（还原时只放回这种，用户自己最小化的不动）。
+    private var hiddenWithHost = false
 
     /// 全 app 共用一个 frame 记忆名：「上次摆在哪、多大」是本端偏好，不分哪扇阅读窗。
     private static let frameName = "RefWindow"
@@ -55,6 +62,7 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         // 阅读窗全屏时它得能进那个 space，否则一开小窗系统就切回桌面去显示它。
         win.collectionBehavior.insert(.fullScreenAuxiliary)
         win.setFrameAutosaveName(Self.frameName)
+        win.level = NSApp.isActive ? .floating : .normal
         super.init(window: win)
 
         let tb = NSToolbar(identifier: "ref-window")
@@ -85,6 +93,14 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
                 self.model.close()
             }
             .store(in: &bag)
+        // 层级跟着 App 前后台走（见类注释）。
+        let nc = NotificationCenter.default
+        nc.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in self?.window?.level = .floating }
+            .store(in: &bag)
+        nc.publisher(for: NSApplication.didResignActiveNotification)
+            .sink { [weak self] _ in self?.window?.level = .normal }
+            .store(in: &bag)
         refresh()
     }
 
@@ -92,7 +108,7 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
 
     // MARK: - 开合
 
-    /// 上屏并挂到阅读窗底下当子窗口。
+    /// 上屏，并记下所属的阅读窗（跟着它最小化 / 还原）。
     /// 首次（没有 frame 记忆）落在阅读窗**右下角内侧**、用覆盖层记着的尺寸——看起来就是覆盖层
     /// 原地「弹」出来的；之后按记忆。
     func show(attachedTo host: NSWindow?) {
@@ -107,11 +123,32 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
                 win.center()
             }
         }
-        if let host, host.isVisible, win.parent !== host {
-            win.parent?.removeChildWindow(win)
-            host.addChildWindow(win, ordered: .above)
-        }
+        follow(host)
+        hiddenWithHost = false
         win.makeKeyAndOrderFront(nil)
+    }
+
+    /// 阅读窗最小化 → 一起收起；还原 → 放回（原先由子窗口关系自动完成）。
+    private func follow(_ newHost: NSWindow?) {
+        guard newHost !== host else { return }
+        host = newHost
+        hostBag.removeAll()
+        guard let newHost else { return }
+        let nc = NotificationCenter.default
+        nc.publisher(for: NSWindow.didMiniaturizeNotification, object: newHost)
+            .sink { [weak self] _ in
+                guard let self, let win = self.window, win.isVisible else { return }
+                self.hiddenWithHost = true
+                win.orderOut(nil)
+            }
+            .store(in: &hostBag)
+        nc.publisher(for: NSWindow.didDeminiaturizeNotification, object: newHost)
+            .sink { [weak self] _ in
+                guard let self, self.hiddenWithHost else { return }
+                self.hiddenWithHost = false
+                self.window?.orderFront(nil)
+            }
+            .store(in: &hostBag)
     }
 
     /// 关掉（由 `ReaderWindowController` 在 model 关闭 / 切回覆盖层 / 关阅读窗时调）。
@@ -122,7 +159,8 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         model.releaseViews(host: .window)
         guard let win = window else { return }
         popover?.performClose(nil)
-        win.parent?.removeChildWindow(win)
+        hostBag.removeAll()
+        hiddenWithHost = false
         dismissing = true
         if win.isVisible { win.close() }   // 用户已经点过红色关闭钮的话，别再发一次 willClose
     }
@@ -133,7 +171,6 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
     /// 这里若一律按「用户关窗」处理就会顺手 `model.close()`——覆盖层永远出不来、工具栏开关也跟着灭
     /// （用户 2026-09-11 报「点 Show Inside the Window 窗口消失、内部窗口没出现、按钮取消激活」）。
     func windowWillClose(_ notification: Notification) {
-        if let win = window { win.parent?.removeChildWindow(win) }
         guard !dismissing, model.isOpen else { return }
         model.close()
     }

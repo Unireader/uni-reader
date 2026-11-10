@@ -17,7 +17,7 @@ import PDFKit
 ///
 /// **两种形态**（用户 2026-09-11「参考小窗支持独立小窗口（类似 AI 窗口那样）」）：
 /// 浮在阅读区上的覆盖层（`overlay`），或一扇独立的小窗口（`window`，由 `RefWindowController` 建，
-/// 作为阅读窗的子窗口跟着它走）。两种形态共用这一份 model——开的哪本、滚到哪、缩放多少，
+/// 浮动窗口、随阅读窗最小化）。两种形态共用这一份 model——开的哪本、滚到哪、缩放多少，
 /// 切换形态时原样带过去。
 @MainActor
 final class RefWindowModel: ObservableObject {
@@ -258,7 +258,7 @@ final class RefWindowModel: ObservableObject {
 enum RefWindowMode: String {
     /// 浮在阅读区上的覆盖层（可折叠成气泡）。
     case overlay
-    /// 独立的小窗口：阅读窗的子窗口，恒在它之上、跟着它走（`RefWindowController`）。
+    /// 独立的小窗口：浮动窗口，恒在阅读窗之上，可拖到别的屏幕（`RefWindowController`）。
     case window
 }
 

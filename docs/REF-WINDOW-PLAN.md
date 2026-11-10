@@ -289,7 +289,7 @@ wantPx = 小窗内容区宽度(px) × 当前缩放
 |---|---|
 | 形态 | `RefWindowModel.mode`（`overlay` / `window`），偏好全 app 一份（`UserDefaults` `refWindowMode`，同 `aiPanelMode`）；每扇阅读窗的 model 各持内存值，**只在从关闭状态打开时对齐偏好**——在这扇窗口弹出去，不会把另一扇正开着的覆盖层也拽出去 |
 | 入口 | 覆盖层顶栏「弹出为独立窗口」（`macwindow`，同 AI 内置面板那枚）↔ 独立窗口工具栏「改为窗口内置」。两边都**只改 model**，窗口开合由 `ReaderWindowController` 一条 `CombineLatest($isOpen, $mode)` 订阅统一推——工具栏开关、红色关闭钮、⌘W 也都汇到 model |
-| 窗口 | `RefWindowController`（`Sources/Window/`，一扇阅读窗一份，关掉即销毁，位置/尺寸靠 frame autosave `RefWindow`）。**阅读窗的子窗口**（`addChildWindow`，同 `AIPanelDock` 的机制但不贴边不定位）：恒在阅读窗之上（点回正文不会沉下去——对照场景要的正是这一点）、跟着阅读窗走、随它最小化；`.fullScreenAuxiliary` 让它能进全屏 space。首次弹出落在阅读窗右下角内侧、用覆盖层记着的尺寸 |
+| 窗口 | `RefWindowController`（`Sources/Window/`，一扇阅读窗一份，关掉即销毁，位置/尺寸靠 frame autosave `RefWindow`）。**独立的浮动窗口**（2026-11-10 起不再是阅读窗的子窗口：子窗口只能显示在父窗口所在的 space，多屏各一个 space 时拖到另一块屏幕就不显示；用户同时报拖动卡顿）：App 在前台时层级 `.floating`、切走降回 `.normal`，所以仍恒在阅读窗之上（点回正文不会沉下去——对照场景要的正是这一点）；拖阅读窗它不再跟着走，阅读窗最小化 / 还原时由 `RefWindowController` 跟着收起 / 放回；`.fullScreenAuxiliary` 让它能进全屏 space。首次弹出落在阅读窗右下角内侧、用覆盖层记着的尺寸 |
 | 工具栏 | `NSToolbar` + `.unifiedCompact`、标题可见（文档名，副标题 = 页码 n / N）：选书（`NSMenuToolbarItem`）· 目录（带 view 的按钮 + `NSPopover`，内容与覆盖层**同一个** `RefTOCPopoverContent`）· 回到进度 · 在主视图显示这一页 · 改为窗口内置。没有「折叠」「关闭」（系统标题栏自带） |
 | 内容 | `RefDetachedContent` = 一个 `RefPageStream(host: .window)`，与覆盖层同一份页流，一行不差 |
 | 切换 | 视口记忆本来就在 model（§11 第一条），切换形态 = 旧页流 `onDisappear`、新页流 `onAppear` 走「折叠→展开」那条恢复路径：滚动位置与缩放原样接上 |
