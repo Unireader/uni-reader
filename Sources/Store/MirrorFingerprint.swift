@@ -246,15 +246,44 @@ enum MirrorFp {
     private static func UInt8truncating(_ x: UInt64) -> UInt8 { UInt8(x & 0xFF) }
 
     /// 一行的指纹：各列 `enc()` 以 `0x1F` 相连 → SHA-256 → 前 16 个 hex 字符。
+    ///
+    /// 连接服务器时每次推送前都要把全库每行算一遍（`SyncClient.localChanges`），所以这里直接往一个缓冲里写、
+    /// 不为每列另建 `Data`，hex 也查表拼（2026-11-10 采样：`String(format:)` 和每列的小块分配占了大头）。
+    /// 🔴 写进去的字节必须与 `enc()` 逐字节相同（跨端契约，向量 `spike/mirror-fp-vectors.txt`）。
     static func fingerprint(_ values: [Value]) -> String {
-        var buf = Data()
+        var buf = [UInt8]()
+        buf.reserveCapacity(256)
         for (i, v) in values.enumerated() {
             if i > 0 { buf.append(separator) }
-            buf.append(enc(v))
+            switch v {
+            case .null:
+                buf.append(tagNull)
+            case .int(let n):
+                buf.append(tagInt)
+                buf.append(contentsOf: String(n).utf8)
+            case .real(let d):
+                buf.append(tagReal)
+                let bits = canonical(d).bitPattern
+                for k in 0..<8 { buf.append(UInt8(truncatingIfNeeded: bits >> (8 * UInt64(k)))) }
+            case .text(let s):
+                buf.append(tagText)
+                buf.append(contentsOf: s.utf8)
+            case .blob(let b):
+                buf.append(tagBlob)
+                buf.append(contentsOf: b)
+            }
         }
         let digest = SHA256.hash(data: buf)
-        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        var hex = [UInt8]()
+        hex.reserveCapacity(16)
+        for byte in digest.prefix(8) {
+            hex.append(hexDigits[Int(byte >> 4)])
+            hex.append(hexDigits[Int(byte & 0x0F)])
+        }
+        return String(decoding: hex, as: UTF8.self)
     }
+
+    private static let hexDigits = Array("0123456789abcdef".utf8)
 
     // MARK: - 从查询结果取值
 

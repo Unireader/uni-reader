@@ -4,15 +4,23 @@ import Combine
 /// Inspector「Agent」页的外壳：顶上一条标签（一段并行对话一格 + 新建 / 关闭），下面是眼前这段对话的 `AgentChatNSView`。
 ///
 /// 并行 = 同一扇窗口里同时开几段对话，各自连一个 Agent（可以是不同的 Agent），后台的那几段照常收流式回复、
-/// 等批准——对话本身住在 `AgentPanelModel`，这里只是换着看。后台的对话没有视图，不占排版。
+/// 等批准——对话本身住在 `AgentPanelModel`，这里只是换着看。
+///
+/// 🔴 **看过的对话视图留着、藏起来，切回去不重建**（2026-11-10 用户：「多 tab 切换会重新绘制布局导致有一些卡顿」）：
+/// 原来每切一次就把眼前的 `AgentChatNSView` 扔掉、给另一段新建一个，整段对话记录的条目视图和 Markdown 正文
+/// 都要重新建、重新排版。现在每段对话一个视图（第一次切到时才建），换着显示；藏着的那几个不摆位、不刷新
+/// （`AgentChatNSView.layout` / `refresh` 自己看 `isHiddenOrHasHiddenAncestor`），切回来补一次，所以后台的对话照旧不占排版。
 /// 标签上的小图标：回答中 / 等你批准 / 出错；一眼看出哪段在等你。
 /// 🔴 系统控件（`NSSegmentedControl` + 按钮），不自绘。
 @MainActor
 final class AgentChatsView: NSView {
     private let windowID: UUID
     let cwd: URL
-    var workspaceName: String { didSet { chatView?.workspaceName = workspaceName } }
+    var workspaceName: String { didSet { for v in chatViews.values { v.workspaceName = workspaceName } } }
+    /// 眼前这段对话的视图。
     private(set) var chatView: AgentChatNSView?
+    /// 每段对话一个视图（按对话 id；第一次切到才建，对话关了才扔）。
+    private var chatViews: [UUID: AgentChatNSView] = [:]
 
     private let strip = NSVisualEffectView()
     private let stripLine = NSBox()
@@ -70,11 +78,28 @@ final class AgentChatsView: NSView {
     private func listChanged() {
         let list = chats
         let active = AgentPanelModel.shared.chat(for: windowID, cwd: cwd)
+        // 关掉的对话：视图跟着扔
+        let alive = Set(list.map(\.id))
+        for (id, v) in chatViews where !alive.contains(id) {
+            v.removeFromSuperview()
+            chatViews.removeValue(forKey: id)
+        }
         if chatView?.chat !== active {
-            chatView?.removeFromSuperview()
-            let v = AgentChatNSView(chat: active, workspaceName: workspaceName, showsHeader: true)
+            let v: AgentChatNSView
+            if let kept = chatViews[active.id], kept.chat === active {
+                v = kept
+            } else {
+                chatViews[active.id]?.removeFromSuperview()
+                v = AgentChatNSView(chat: active, workspaceName: workspaceName, showsHeader: true)
+                v.isHidden = true
+                chatViews[active.id] = v
+                addSubview(v)
+            }
+            // 先按眼前的尺寸摆好再露出来：藏着的时候面板可能改过大小
+            v.frame = chatFrame
+            chatView?.isHidden = true
             chatView = v
-            addSubview(v)
+            v.isHidden = false
             needsLayout = true
         }
         chatBag.removeAll()
@@ -210,7 +235,13 @@ final class AgentChatsView: NSView {
         let sh = segments.intrinsicContentSize.height
         segments.frame = NSRect(x: pad, y: (h - sh) / 2, width: max(60, right - pad - 2), height: sh)
         segments.segmentDistribution = .fillEqually
-        chatView?.frame = NSRect(x: 0, y: h + 1, width: b.width, height: max(0, b.height - h - 1))
+        chatView?.frame = chatFrame
+    }
+
+    /// 对话视图占的那一块（标签条下面）。
+    private var chatFrame: NSRect {
+        let h = Self.stripHeight
+        return NSRect(x: 0, y: h + 1, width: bounds.width, height: max(0, bounds.height - h - 1))
     }
 
     override var isFlipped: Bool { true }

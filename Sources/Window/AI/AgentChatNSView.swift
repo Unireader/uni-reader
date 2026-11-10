@@ -154,6 +154,7 @@ final class AgentChatNSView: NSView {
     override func viewDidUnhide() {
         super.viewDidUnhide()
         needsLayout = true
+        if refreshSkipped { refresh() }
     }
 
     private func buildEmpty() {
@@ -271,7 +272,14 @@ final class AgentChatNSView: NSView {
         }
     }
 
+    /// 藏着的时候来过更新、没刷（见 `refresh`）。
+    private var refreshSkipped = false
+
     private func refresh() {
+        // 🔴 藏着就不刷（并行对话里不在眼前的那几段、Inspector 切到了别的页）：后台的对话照常收流式回复，
+        // 每个碎片都刷一遍就是白建视图、白求解约束（整个窗口共用一个约束引擎）。记一笔，露出来时补一次（`viewDidUnhide`）。
+        guard !isHiddenOrHasHiddenAncestor else { refreshSkipped = true; return }
+        refreshSkipped = false
         let ask = String(format: L("Ask %@"), chat.agentName)
         if emptyTitle.stringValue != ask { emptyTitle.stringValue = ask }
         refreshHeader()

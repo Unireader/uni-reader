@@ -149,6 +149,15 @@ extension MCPFacade {
     private func resolveExercises(_ ids: [String], workspacePath: String?) throws -> (WorkspaceManager, [Exercise]) {
         let candidates: [WorkspaceManager] = (workspacePath?.isEmpty == false)
             ? [try manager(workspacePath: workspacePath)] : WorkspaceRegistry.shared.openManagers
+        // 给的都是完整 id（平常都是）：按 id 逐道取，别为了认几道题把整个工作区的题全读出来解码一遍
+        // （2026-11-10 采样：Agent 一道一道改题时，每次调用都在主线程上读全库）。有一道没取到再走下面的前缀匹配。
+        let keys = ids.map { $0.trimmingCharacters(in: .whitespaces).uppercased() }
+        if !keys.isEmpty, keys.allSatisfy({ UUID(uuidString: $0) != nil }) {
+            for ws in candidates {
+                let hits = keys.compactMap { ws.exercise(id: $0) }
+                if hits.count == keys.count { return (ws, hits) }
+            }
+        }
         for ws in candidates {
             let all = ws.exercises(in: .all)
             var hits: [Exercise] = []

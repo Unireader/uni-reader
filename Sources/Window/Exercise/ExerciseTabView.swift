@@ -104,9 +104,11 @@ final class ExerciseTabView: NSView {
         list.reload()
 
         // 库里的习题变了（Agent 导入 / 补答案、收藏、移出错题本、删）→ 快照就地刷新
+        // 连着变（Agent 一道一道导 / 改题，每次都要把这组题和作答统计整个重读）时 0.3 秒里只刷一次：
+        // 第一下马上刷（自己点收藏这类要当场见效），这段时间里后面再来的并成最后一次。
         workspace.$exerciseRevision
             .dropFirst()
-            .receive(on: RunLoop.main)
+            .throttle(for: .milliseconds(300), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.deck.reload()
