@@ -9,6 +9,38 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.22</title>
+      <pubDate>Tue, 10 Nov 2026 02:46:19 +0000</pubDate>
+      <sparkle:version>64</sparkle:version>
+      <sparkle:shortVersionString>0.3.22</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>新功能：选择题也能手写演算</h4>
+<ul>
+<li>做选择题时，选项下面多了一个「手写」开关。打开后是一块小画板，和填空题、主观题用的是同一块：笔、橡皮、撤销、清除、加高。</li>
+<li>先在画板上演算，再点选项（多选题点「提交」）。演算会跟着这次作答一起保存，判题仍然只看你选的选项。</li>
+<li>以后翻回这道题，上次的演算显示在选项下面。点「再做一次」画板会清空。</li>
+<li>写了一半翻到别的题，回来时演算还在。</li>
+<li>这个开关和填空题、主观题的「手写」分开记：选择题开着不会让填空题也摊开画板，反过来也一样。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.22">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>New: Handwritten working for multiple-choice questions</h4>
+<ul>
+<li>Multiple-choice questions now have a Handwriting switch below the options. Turning it on opens the same small pad used for fill-in-the-blank and free-response questions: pen, eraser, Undo, Clear and More Space.</li>
+<li>Work the problem out on the pad, then click an option (or Submit for multiple-answer questions). Your working is saved with that attempt; the answer is still judged only by the options you chose.</li>
+<li>When you come back to the question later, the working from last time is shown below the options. Try Again clears the pad.</li>
+<li>If you move to another question halfway through, your working is still there when you return.</li>
+<li>This switch is remembered separately from Handwriting on fill-in-the-blank and free-response questions, so turning one on doesn't open the pad on the other kind.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.22">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.22/UniReader-0.3.22.zip" length="17691061" type="application/octet-stream" sparkle:edSignature="7aYRW/hxKw70iWUb/ae/VKKFbk+SIGfcfrdxV+AYgmcU0QeMZfhFBmeKLBPH10HtRlOY4fSenH1bN4AVZTCKBg==" />
+    </item>
+    <item>
       <title>v0.3.21</title>
       <pubDate>Tue, 10 Nov 2026 01:11:27 +0000</pubDate>
       <sparkle:version>63</sparkle:version>
