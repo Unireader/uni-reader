@@ -1192,6 +1192,15 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         if workspace.isServerWorkspace {
             menu.addItem(.sectionHeader(title: serverStatusLine))
             add(menu, L("Upload Changes Now"), #selector(menuPushNow), symbol: "arrow.up.circle")
+            // 删得太多停下来了：在这里确认；同步时自动处理掉的冲突：在这里看
+            if ServerSyncCoordinator.shared.pendingDeletes(of: workspace.folder) != nil {
+                add(menu, L("Review Deletions…"), #selector(menuReviewDeletes), symbol: "exclamationmark.triangle")
+            }
+            let conflicts = ServerSyncCoordinator.shared.conflicts(of: workspace.folder).count
+            if conflicts > 0 {
+                add(menu, String(format: L("Sync Conflicts (%d)…"), conflicts), #selector(menuShowConflicts),
+                    symbol: "arrow.triangle.branch")
+            }
             // 就地变成缓存的原件（如移动硬盘上的）可以变回本地；App 缓存目录里的不给（变回了也还藏在 App 的数据目录里）
             if let folder = workspace.folder, !ServerSyncCoordinator.isInCachesFolder(folder) {
                 add(menu, L("Convert to Local Workspace…"), #selector(menuConvertToLocal), symbol: "folder")
@@ -1258,6 +1267,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         case .offline?: return String(format: L("Server %@ · offline, using the local copy"), host)
         case .failed(let m)?: return String(format: L("Server %@ · sync failed: %@"), host, m)
         case .noAccount?: return L("Not signed in to this server (Settings › Servers)")
+        case .needsConfirm(let n)?: return String(format: L("Server %@ · paused: %d deletions need your OK"), host, n)
         case nil: return String(format: L("Server %@"), host)
         }
     }
@@ -1271,6 +1281,52 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func menuPushNow() {
         let ws = workspace
         Task { await ServerSyncCoordinator.shared.push(ws) }
+    }
+
+    /// 「删得太多先问」：说清这次要从服务器删掉多少、各是什么，确认了才推。
+    @objc private func menuReviewDeletes() {
+        guard let win = window, let x = ServerSyncCoordinator.shared.pendingDeletes(of: workspace.folder) else { return }
+        let a = NSAlert()
+        a.alertStyle = .warning
+        a.messageText = String(format: L("Delete %d items from the server?"), x.total)
+        let lines = x.byTable.prefix(6).map { "\(ServerSyncCoordinator.tableName($0.table)) × \($0.count)" }
+        a.informativeText = L("These were deleted on this Mac. Uploading will delete them on the server and on your other devices too. Nothing has been uploaded yet.")
+            + "\n\n" + lines.joined(separator: "\n")
+        a.addButton(withTitle: L("Delete on Server"))
+        a.addButton(withTitle: L("Not Now"))
+        a.buttons.first?.hasDestructiveAction = true
+        let ws = workspace
+        a.beginSheetModal(for: win) { resp in
+            if resp == .alertFirstButtonReturn { ServerSyncCoordinator.shared.confirmDeletes(ws) }
+        }
+    }
+
+    /// 同步冲突报告：两边改了同一处时已经按规则自动处理了，这里列出来让用户知道（新的在上）。
+    @objc private func menuShowConflicts() {
+        guard let win = window else { return }
+        let list = ServerSyncCoordinator.shared.conflicts(of: workspace.folder)
+        guard !list.isEmpty else { return }
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 440, height: 220))
+        text.isEditable = false
+        text.drawsBackground = false
+        text.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        text.textColor = .labelColor
+        text.string = list.reversed().map { "\($0.at.formatted(date: .omitted, time: .shortened))  \($0.text)" }
+            .joined(separator: "\n")
+        let scroll = NSScrollView(frame: text.frame)
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.documentView = text
+        let a = NSAlert()
+        a.messageText = String(format: L("%d sync conflicts were resolved automatically"), list.count)
+        a.informativeText = L("The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong.")
+        a.accessoryView = scroll
+        a.addButton(withTitle: L("OK"))
+        a.addButton(withTitle: L("Clear List"))
+        let folder = workspace.folder
+        a.beginSheetModal(for: win) { resp in
+            if resp == .alertSecondButtonReturn { ServerSyncCoordinator.shared.clearConflicts(of: folder) }
+        }
     }
     /// 「变回本地工作区…」：确认后停同步、去掉库里记的服务器（服务器上那份不动）。
     /// 本机没有文件的书列出来：变回之后不会再从服务器下载（原本就缺文件的旧版本也在其中，所以只提示、不拦）。

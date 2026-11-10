@@ -154,6 +154,8 @@ enum SyncClient {
         var conflicts = 0
         /// 父行不在、没写成的行（基线没动，下一轮再说）。
         var skipped = 0
+        /// 每处冲突一句话（哪张表、怎么处理的；`MirrorDiff.Conflict.note`），给冲突报告用。
+        var conflictNotes: [String] = []
     }
 
     /// 应用拉下来的行。🔴 一次拉取的**全部页攒齐了再调**：父行和子行可能分在不同页（父行后来又改过，
@@ -181,7 +183,8 @@ enum SyncClient {
         let plan = MirrorDiff.compute(base: b, mine: mine, theirs: theirs)
         let localWins = Set(plan.changes(to: .source).map { Key(table: $0.table, rowId: $0.rowId) })
 
-        var report = PullReport(conflicts: plan.conflicts.count)
+        var report = PullReport(conflicts: plan.conflicts.count,
+                                conflictNotes: plan.conflicts.map { "\($0.table) · \($0.note)" })
         try db.transaction {
             var applied = MirrorApply.Result()
             try MirrorApply.write(db, plan.changes(to: .mirror), result: &applied, side: .mirror)

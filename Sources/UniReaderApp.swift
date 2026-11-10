@@ -640,6 +640,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 资料库快照（`BACKUP-PLAN.md §3.2`）。**放在结清之后**：刚才那些写要在快照里。
         // 节流照旧生效（距上次不足 30 分钟就跳过），所以频繁开关 app 不会每次都写一份。
         BackupService.shared.backupBeforeQuit()
+        // 服务器工作区：窗口结清时各自起了「关闭后那一轮」同步（推 + 拉），进程一退它就断了——等它收尾再退，最多 4 秒
+        // （`SERVER-MODE-PLAN.md §13.13`；连不上 / 太慢就不等，改动没丢，下次打开前照常同步）。
+        if ServerSyncCoordinator.shared.hasPendingWork {
+            Task { @MainActor in
+                await ServerSyncCoordinator.shared.waitForQuit(timeout: 4)
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        }
         return .terminateNow
     }
 

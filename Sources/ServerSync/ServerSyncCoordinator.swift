@@ -24,6 +24,107 @@ final class ServerSyncCoordinator: ObservableObject {
         case failed(String)
         /// 本机没有这台服务器的令牌（没连过、或在设置里断开了）。
         case noAccount
+        /// 这次要从服务器删的行太多，先停下等用户确认（`SERVER-MODE-PLAN.md §4.6`；关联值 = 几行）。
+        case needsConfirm(Int)
+    }
+
+    // MARK: - 删得太多先问 / 冲突报告（§4.6）
+
+    /// 等确认的那批删除（按工作区）。确认 = `confirmDeletes`，之后这一批放行。
+    private(set) var pendingDeletes: [String: SyncDeleteGuard.Excess] = [:]
+    private var allowedDeletes: [String: Set<String>] = [:]
+
+    func pendingDeletes(of folder: URL?) -> SyncDeleteGuard.Excess? {
+        folder.flatMap { pendingDeletes[WorkspaceRegistry.key($0)] }
+    }
+
+    /// 用户确认了：放行这一批删除，马上推。
+    func confirmDeletes(_ m: WorkspaceManager) {
+        guard let folder = m.folder else { return }
+        let k = WorkspaceRegistry.key(folder)
+        guard let x = pendingDeletes.removeValue(forKey: k) else { return }
+        allowedDeletes[k] = x.keys
+        Task { await push(m) }
+    }
+
+    /// 一处冲突（同步时两边改了同一行，已按规则自动处理；这里只是让用户看得到）。App 开着期间攒着，最多留 200 条。
+    struct ConflictEntry: Equatable, Identifiable {
+        let id = UUID()
+        var at: Date
+        /// 一句话：哪种东西、怎么回事、留了哪一份。
+        var text: String
+    }
+
+    @Published private(set) var conflicts: [String: [ConflictEntry]] = [:]
+
+    func conflicts(of folder: URL?) -> [ConflictEntry] { folder.flatMap { conflicts[WorkspaceRegistry.key($0)] } ?? [] }
+    func clearConflicts(of folder: URL?) { if let folder { conflicts[WorkspaceRegistry.key(folder)] = nil } }
+
+    private func record(_ k: String, _ texts: [String]) {
+        guard !texts.isEmpty else { return }
+        let now = Date()
+        var list = conflicts[k] ?? []
+        list.append(contentsOf: texts.map { ConflictEntry(at: now, text: $0) })
+        conflicts[k] = Array(list.suffix(200))
+        wsLog("[SYNC] 冲突 \(texts.count) 处：" + texts.prefix(5).joined(separator: "；"))
+    }
+
+    /// 推送时服务器报回来的冲突 → 一句话。
+    nonisolated static func describe(_ c: SyncWire.Conflict) -> String {
+        let what: String
+        switch c.kind {
+        case .bothModified: what = L("changed on both sides")
+        case .deleteVsEdit: what = L("deleted on one side, edited on the other")
+        case .bothAdded: what = L("added on both sides")
+        }
+        let kept = c.keptServer ? L("kept the server’s version") : L("kept this Mac’s version")
+        return "\(tableName(c.table)) · \(what) · \(kept)"
+    }
+
+    /// 表名的日常说法（冲突报告 / 删除确认里用）。
+    nonisolated static func tableName(_ table: String) -> String {
+        switch table {
+        case "document", "variant", "location": return L("Book")
+        case "note": return L("Annotation or ink stroke")
+        case "ink_layer": return L("Ink layer")
+        case "scratch_pad": return L("Scratchpad")
+        case "board_note", "board_page": return L("Board")
+        case "board_item": return L("Board stroke or image")
+        case "exercise": return L("Exercise")
+        case "exercise_attempt": return L("Exercise answer")
+        case "md_doc": return L("Markdown note")
+        case "agent_context": return L("Agent context")
+        case "meta": return L("Workspace setting")
+        default: return table
+        }
+    }
+
+    private func record(_ k: String, round: SyncClient.RoundReport) {
+        record(k, round.push.conflicts.map(Self.describe) + round.pull.conflictNotes)
+    }
+
+    // MARK: - 退出前（`AppDelegate.applicationShouldTerminate`）
+
+    /// 退出前有没有要等的：还开着的服务器工作区（要推一次）、关窗后正在跑的那一轮。
+    var hasPendingWork: Bool { !busy.isEmpty || !sessions.isEmpty }
+
+    /// 退出前把改动送出去，最多等 `timeout` 秒：还开着的服务器工作区各推一次（只推不拉），关窗后正在跑的那一轮等它收尾。
+    /// 连不上 / 太慢就不等了——改动没丢，下次打开前照常同步。
+    func waitForQuit(timeout: TimeInterval) async {
+        var done = false
+        let closing = busy.values.map(\.task)
+        let managers = sessions.values.compactMap(\.manager)
+        Task { @MainActor in
+            for m in managers { await self.push(m) }
+            for t in closing { await t.value }
+            done = true
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        while !done, Date() < deadline { await Self.pause(0.05) }
+        if !done {
+            for t in closing { t.cancel() }
+            wsLog("[SYNC] 退出前同步没在 \(Int(timeout)) 秒内做完，不等了（下次打开前会再同步）")
+        }
     }
 
     @Published private(set) var status: [String: Status] = [:]
@@ -90,9 +191,17 @@ final class ServerSyncCoordinator: ObservableObject {
             await previous?.value
             let result: Status
             do {
-                let notes = try await ServerSyncIO.closedRound(folder: folder, client: ep.client, wid: ep.wid)
+                var round = SyncClient.RoundReport()
+                let notes = try await ServerSyncIO.closedRound(folder: folder, client: ep.client, wid: ep.wid,
+                                                               guardDeletes: true, onRound: { round = $0 })
                 Self.logNotes(notes, folder: folder, round: "closed")
+                let report = round
+                await MainActor.run { [weak self] in self?.record(k, round: report) }
                 result = .synced(Date())
+            } catch let blocked as SyncDeleteGuard.Blocked {
+                // 没有界面可问：先不同步，等工作区开着时在菜单里确认
+                wsLog("[SYNC] 关着时这一轮要删 \(blocked.excess.total) 行，超过阈值，先不同步（等用户确认）")
+                result = .needsConfirm(blocked.excess.total)
             } catch {
                 result = Self.classify(error)
             }
@@ -246,6 +355,7 @@ final class ServerSyncCoordinator: ObservableObject {
             try SyncClient.setPulledRev(db, fetched.head)
             s.seenChanges += db.totalChanges - before          // 同步自己写的不算「本机改动」
             m.applyRemoteRows(fetched.rows)
+            record(k, rep.conflictNotes)
             newImages = fetched.rows.contains { $0.table == SyncRows.imageTable && !$0.deleted }
             newBooks = fetched.rows.contains { $0.table == "variant" && !$0.deleted }
             if !fetched.rows.isEmpty {
@@ -291,6 +401,17 @@ final class ServerSyncCoordinator: ObservableObject {
             let compareMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
             if compareMs > 300 { wsLog("[SYNC-LIVE] 找本机改动用了 \(compareMs)ms（\(changes.count) 处）") }
             if !changes.isEmpty {
+                // 删得太多先问（§4.6）：这一批删除没被确认过就整批先不推（别的改动也一起等——同一次推送是一个事务，
+                // 拆开推会让子行先于父行的删除到服务器，判成孤儿）
+                if let x = SyncDeleteGuard.excess(in: changes, baseCounts: ServerSyncIO.baseCounts(db),
+                                                  allowed: allowedDeletes[k] ?? []) {
+                    if pendingDeletes[k] != x { wsLog("[SYNC] 这次推送要删 \(x.total) 行，超过阈值，等用户确认") }
+                    pendingDeletes[k] = x
+                    status[k] = .needsConfirm(x.total)
+                    return
+                }
+                pendingDeletes[k] = nil
+                allowedDeletes[k] = nil
                 status[k] = .syncing
                 try await ServerSyncIO.uploadFiles(for: changes, db: db, folder: folder, client: ep.client, wid: ep.wid)
                 let req = SyncWire.PushRequest(schemaVersion: LibraryStore.schemaVersion, changes: changes)
@@ -300,6 +421,7 @@ final class ServerSyncCoordinator: ObservableObject {
                 let before = db.totalChanges
                 try SyncClient.recordPushed(db, pushed: changes, response: resp)
                 s.seenChanges += db.totalChanges - before          // 记基线是同步自己写的，不算「本机改动」
+                record(k, resp.conflicts.map(Self.describe))
             }
             // 笔记文件（`Notes/`）：只推。基线在 `UniReader/note-sync.json` 里（不碰库连接），后台线程做
             let notes = try await ServerSyncIO.syncNotes(db: nil, folder: folder, client: ep.client, wid: ep.wid, mode: .pushOnly)

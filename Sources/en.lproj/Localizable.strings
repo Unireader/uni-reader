@@ -1250,3 +1250,29 @@
 "None of these folders is on this Mac. This is a read-only copy kept on the server; add the folder's location here to edit it." = "None of these folders is on this Mac. This is a read-only copy kept on the server; add the folder's location here to edit it.";
 "Server mirror · read-only" = "Server mirror · read-only";
 "This folder is a read-only copy from the server. Edit it on a Mac that has the folder." = "This folder is a read-only copy from the server. Edit it on a Mac that has the folder.";
+
+/* 连接服务器：删得太多先问 / 冲突报告（2026-11-10，SERVER-MODE-PLAN §13.13） */
+"changed on both sides" = "changed on both sides";
+"deleted on one side, edited on the other" = "deleted on one side, edited on the other";
+"added on both sides" = "added on both sides";
+"kept the server’s version" = "kept the server’s version";
+"kept this Mac’s version" = "kept this Mac’s version";
+"Book" = "Book";
+"Annotation or ink stroke" = "Annotation or ink stroke";
+"Ink layer" = "Ink layer";
+"Scratchpad" = "Scratchpad";
+"Board stroke or image" = "Board stroke or image";
+"Exercise answer" = "Exercise answer";
+"Markdown note" = "Markdown note";
+"Agent context" = "Agent context";
+"Workspace setting" = "Workspace setting";
+"Review Deletions…" = "Review Deletions…";
+"Sync Conflicts (%d)…" = "Sync Conflicts (%d)…";
+"Server %@ · paused: %d deletions need your OK" = "Server %@ · paused: %d deletions need your OK";
+"Delete %d items from the server?" = "Delete %d items from the server?";
+"These were deleted on this Mac. Uploading will delete them on the server and on your other devices too. Nothing has been uploaded yet." = "These were deleted on this Mac. Uploading will delete them on the server and on your other devices too. Nothing has been uploaded yet.";
+"Delete on Server" = "Delete on Server";
+"Not Now" = "Not Now";
+"%d sync conflicts were resolved automatically" = "%d sync conflicts were resolved automatically";
+"The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong." = "The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong.";
+"Clear List" = "Clear List";

@@ -33,18 +33,32 @@ enum ServerSyncIO {
 
     /// 完整一轮：推（先传新文件）→ 拉 → 应用 → 补缺的图片 → 笔记文件（`Notes/` 与引用目录镜像）。
     /// 🔴 只在**没有活连接**时调（打开前 / 关闭后）。返回笔记文件这一步做了什么（日志用）。
+    /// `guardDeletes`：删得太多就抛 `SyncDeleteGuard.Blocked`、这一轮什么都不推不拉（§4.6；这一轮没有界面可问，
+    /// 等工作区开着时在菜单里确认）。`onRound` = 行同步那一步的结果（冲突报告要它）。
     @discardableResult
-    static func closedRound(folder: URL, client: ServerClient, wid: String) async throws -> ServerNoteSync.Report {
+    static func closedRound(folder: URL, client: ServerClient, wid: String, guardDeletes: Bool = false,
+                            onRound: (SyncClient.RoundReport) -> Void = { _ in }) async throws -> ServerNoteSync.Report {
         let store = try LibraryStore(workspaceFolder: folder)
         defer { store.close() }
         let db = store.withMirrorDB { $0 }
-        _ = try await SyncClient.roundAsync(
+        let round = try await SyncClient.roundAsync(
             db, folder: folder,
-            beforePush: { changes in try await uploadFiles(for: changes, db: db, folder: folder, client: client, wid: wid) },
+            beforePush: { changes in
+                if guardDeletes, let x = SyncDeleteGuard.excess(in: changes, baseCounts: baseCounts(db)) {
+                    throw SyncDeleteGuard.Blocked(excess: x)
+                }
+                try await uploadFiles(for: changes, db: db, folder: folder, client: client, wid: wid)
+            },
             push: { req in try SyncWire.decodePushResponse(try await client.push(wid, body: SyncWire.encode(req))) },
             pull: { since in try SyncWire.decodePullResponse(try await client.pull(wid, since: since)) })
+        onRound(round)
         try await downloadMissingImages(db: db, folder: folder, client: client, wid: wid)
         return try await syncNotes(db: db, folder: folder, client: client, wid: wid, mode: .full)
+    }
+
+    /// 每张表已同步的行数（`sync_base` 的条数），「删得太多」按占比判时用。
+    static func baseCounts(_ db: SQLiteDB) -> [String: Int] {
+        ((try? MirrorStore.syncBase(db)) ?? [:]).mapValues(\.count)
     }
 
     /// 笔记文件那一步。服务器程序太旧、没有这些接口时当作没有（行与 PDF 照常同步，用户升级服务器后就好了）。

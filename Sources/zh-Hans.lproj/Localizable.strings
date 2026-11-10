@@ -1252,3 +1252,29 @@
 "None of these folders is on this Mac. This is a read-only copy kept on the server; add the folder's location here to edit it." = "这台电脑上没有其中任何一个目录。这里显示的是服务器上保存的只读副本；右键「添加这台电脑上的位置…」后可编辑。";
 "Server mirror · read-only" = "服务器镜像 · 只读";
 "This folder is a read-only copy from the server. Edit it on a Mac that has the folder." = "这个目录是服务器上的只读副本。请在有这个目录的电脑上编辑。";
+
+/* 连接服务器：删得太多先问 / 冲突报告（2026-11-10，SERVER-MODE-PLAN §13.13） */
+"changed on both sides" = "两边都改了";
+"deleted on one side, edited on the other" = "一边删了、另一边改了";
+"added on both sides" = "两边都加了";
+"kept the server’s version" = "保留了服务器那份";
+"kept this Mac’s version" = "保留了这台 Mac 的那份";
+"Book" = "书";
+"Annotation or ink stroke" = "批注或笔迹";
+"Ink layer" = "笔迹图层";
+"Scratchpad" = "草稿纸";
+"Board stroke or image" = "画板上的笔迹或图片";
+"Exercise answer" = "习题作答";
+"Markdown note" = "Markdown 笔记";
+"Agent context" = "Agent 上下文";
+"Workspace setting" = "工作区设置";
+"Review Deletions…" = "确认删除…";
+"Sync Conflicts (%d)…" = "同步冲突（%d）…";
+"Server %@ · paused: %d deletions need your OK" = "服务器 %@ · 已暂停：有 %d 项删除等你确认";
+"Delete %d items from the server?" = "要从服务器删除 %d 项吗？";
+"These were deleted on this Mac. Uploading will delete them on the server and on your other devices too. Nothing has been uploaded yet." = "这些是在这台 Mac 上删掉的。上传后，服务器和你的其他设备上也会删掉它们。现在还什么都没有上传。";
+"Delete on Server" = "从服务器删除";
+"Not Now" = "先不同步";
+"%d sync conflicts were resolved automatically" = "有 %d 处同步冲突已自动处理";
+"The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong." = "同一样东西在两台设备上都改过。保留的是较新的那次改动（一边删、一边改时保留改的那份）。看着没问题就不用管。";
+"Clear List" = "清空列表";
