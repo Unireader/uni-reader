@@ -53,6 +53,12 @@ extension WorkspaceManager {
         if d != exerciseDone { exerciseDone = d }
     }
 
+    /// 别的设备改了习题 / 作答（服务器同步拉下来的行已经写进库）：同下面那条，重算数并通知开着的习题标签。
+    func exercisesChangedRemotely() {
+        exercisesChanged()
+        refreshExerciseDone()
+    }
+
     /// 内容变了（导入 / 改 / 删 / 收藏 / 进出错题本）：重算数并通知开着的习题标签。
     private func exercisesChanged() {
         let before = exerciseRevision

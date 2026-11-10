@@ -60,6 +60,32 @@ extension DocTabModel {
         app.sessionDocumentChanged(session)   // 标题 / 平板 `boards.kind` 都变了
     }
 
+    /// 开着服务器工作区时别的设备改了这篇画板（行已经写进库）：整篇重读（`SERVER-MODE-PLAN.md §13.13`）。
+    /// 先把本机还没落库的结清（对账是按差量写的，不会把刚拉下来的行冲掉），再从库里装一遍。
+    /// 正在写的那一笔不打断——这一次先不动，下一次别的设备再有改动时一起跟上。撤销栈随重读清空。
+    func applyRemoteBoard(_ rows: [SyncWire.PulledRow]) {
+        guard session.isBoard, !staged, let id = session.board?.id else { return }
+        let key = id.uuidString
+        func same(_ s: String?) -> Bool { s?.caseInsensitiveCompare(key) == .orderedSame }
+        let hit = rows.contains { r in
+            switch r.table {
+            case "board_note": return same(r.rowId)
+            case "board_item", "board_page":
+                if r.deleted {
+                    guard let u = UUID(uuidString: r.rowId) else { return false }
+                    return session.persistedScratchStrokes[u] != nil || session.persistedBoardImages[u] != nil
+                        || session.boardPages.contains { $0.id == u }
+                }
+                return same(r.row.map(SyncWire.sqliteRow)?["board_id"] as? String)
+            default: return false
+            }
+        }
+        guard hit, session.scratchLive == nil else { return }
+        persistBoardRow(); persistBoardPages(); persistBoardStrokes(); persistBoardImages()
+        guard let b = workspace.board(id: id) else { return }   // 别处把这篇删了：留着眼前这份，不替用户关
+        loadBoard(b)
+    }
+
     /// 离开画板（换成 PDF / md / 空标签，或关标签前）：先同步结清落库，再清状态。不是画板 → 空操作。
     func leaveBoard() {
         guard boardID != nil else { return }

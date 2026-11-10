@@ -624,6 +624,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 是否已过 `applicationDidFinishLaunching`（= 冷启动的 open 事件窗口已关闭）。
     static var didFinishLaunching = false
 
+    /// 回到前台：开着的 PDF 在别的程序里被改过内容没有（`DocTabModel.recheckFileOnActivate`）。
+    func applicationDidBecomeActive(_ notification: Notification) {
+        for c in readerWindowControllers { for t in c.tabs.tabs { t.recheckFileOnActivate() } }
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Self.isTerminating = true
         // 🔴 **退出时必须自己把每扇窗结清**：AppKit 的 `terminate:` 不关窗，

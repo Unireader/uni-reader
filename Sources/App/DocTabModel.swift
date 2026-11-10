@@ -622,7 +622,32 @@ final class DocTabModel: ObservableObject, Identifiable {
             app.broadcastStrokes()   // 新文档的已存笔迹回传平板（平板本地不落库，靠 Mac 回显）
         }
         trace?.mark("装载完成", "\(pdf.pageCount)页 → p\(page + 1)")
+        openedFile = (target.path, Self.modificationDate(target.path))
+        changedWhileOpen = false
         verifyContentHash(documentId: id, openedPath: target.path, storedHash: target.hash)
+    }
+
+    // MARK: 开着的时候文件被换了内容（`SERVER-MODE-PLAN.md §13.13`）
+
+    /// 装载时打开的那个文件与它当时的修改时间。
+    private var openedFile: (path: String, mtime: Date?)?
+    /// 这次「文件已变化」是开着的时候发现的（不是刚打开时）：屏幕上还是旧内容，关联为新版本之后要重新装载。
+    private var changedWhileOpen = false
+
+    private static func modificationDate(_ path: String) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+    }
+
+    /// App 回到前台时调：这份 PDF 在别的程序里被改过没有（比如加了目录）。修改时间变了才去算哈希；
+    /// 内容真变了就走和打开时同一张「文件已变化」的弹窗——关联为新版本后重新装载，服务器工作区随后把新版本传上去。
+    func recheckFileOnActivate() {
+        guard !closed, !staged, noteRef == nil, hashMismatch == nil, let id = docID, session.documentId == id,
+              let f = openedFile else { return }
+        let now = Self.modificationDate(f.path)
+        guard now != nil, now != f.mtime else { return }
+        openedFile = (f.path, now)
+        changedWhileOpen = true
+        verifyContentHash(documentId: id, openedPath: f.path, storedHash: session.contentHash)
     }
 
     /// 目录在**后台**建（2026-09-10 账本：`目录 128~143ms`，是装载段里最大的项之一，全在遍历 PDF 大纲——
@@ -672,6 +697,14 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 不清就会反复弹；而且必须赶在下面改 `session` 之前——那些改动会触发同步，届时它还在就又弹一次。
     func linkAsNewVersion(_ m: HashMismatch) {
         hashMismatch = nil
+        if changedWhileOpen {
+            // 开着的时候被换的：屏幕上还是旧内容，页数也可能变了——按磁盘上的新文件入库，再整篇重新装载
+            changedWhileOpen = false
+            let pages = PDFDocument(url: URL(fileURLWithPath: m.path))?.pageCount ?? session.pdf?.pageCount ?? 0
+            workspace.rekeyLocation(documentId: m.docId, absolutePath: m.path, newHash: m.newHash, pageCount: pages)
+            reload()
+            return
+        }
         workspace.rekeyLocation(documentId: m.docId, absolutePath: m.path,
                                 newHash: m.newHash, pageCount: session.pdf?.pageCount ?? 0)
         session.contentHash = m.newHash
@@ -682,6 +715,8 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 「文件已变化」→ 仍打开（不改库：本次按实际内容打开，下次打开仍会提示）。
     func openAnyway(_ m: HashMismatch) {
         hashMismatch = nil   // 同上，先清
+        // 开着的时候被换的：眼前这份是旧内容，什么都不改（库里的哈希、OCR、对齐都还对得上它）；下次打开会再问
+        if changedWhileOpen { changedWhileOpen = false; return }
         session.contentHash = m.newHash
         refreshScanAlignForCurrentContent()
         session.reloadOCRState()

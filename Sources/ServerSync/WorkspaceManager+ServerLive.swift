@@ -20,8 +20,13 @@ extension WorkspaceManager {
             refreshNotes()
         }
         if !tables.isDisjoint(with: ["board_note", "board_page", "board_item"]) { refreshBoards() }
-        if !tables.isDisjoint(with: ["exercise", "exercise_attempt"]) { refreshExercises() }
-        for tab in openTabs { tab.applyRemote(rows) }
+        // 习题：数重算，开着的练习页 / 列表跟着重读（就地刷新快照，不会把眼前的题换掉，见 `ExerciseDeck.reload`）
+        if !tables.isDisjoint(with: ["exercise", "exercise_attempt"]) { exercisesChangedRemotely() }
+        let boardTouched = !tables.isDisjoint(with: ["board_note", "board_page", "board_item"])
+        for tab in openTabs {
+            tab.applyRemote(rows)
+            if boardTouched { tab.applyRemoteBoard(rows) }   // 开着的画板整篇重读
+        }
     }
 
     /// 编辑器里还有未存输入的内建笔记（`Notes/…` 路径）：服务器同步这一轮不碰它们。
