@@ -67,6 +67,19 @@ check(ex.mimeType == nil && ex.agentDescription == "exercises …" && ex.token =
 check(m("p.pdf", kind: .pdf).agentDescription.contains("document_id"), "PDF 的说明仍是固定那句（不看 info）")
 check(AgentMention.stillReferenced([ex, folder], in: "@全部习题 和 @数学/ 有什么").count == 2, "新几种照样按正文里还在不在附上")
 
+print("PDF 的名字用书名（2026-11-10：工作区副本文件名是 UUID / 哈希，插进去像编号）")
+check(AgentMention.pdfName(title: "高等数学 上册") == "高等数学 上册.pdf", "书名 + .pdf（带空格也行）")
+check(AgentMention.pdfName(title: "Notes.PDF") == "Notes.PDF", "书名自己带 .pdf（不分大小写）就不再加")
+let gs = m(AgentMention.pdfName(title: "高数"), kind: .pdf, id: "G1")
+let gsx = m(AgentMention.pdfName(title: "高数习题"), kind: .pdf, id: "G2")
+check(AgentMention.stillReferenced([gs, gsx], in: "看 @高数习题.pdf").map(\.id) == ["G2"], "名字是另一本的前缀也不会误附")
+
+print("@ 候选里的目录（2026-11-10「@ 引用目录」）")
+let pool = [m("极限.md", "笔记 / 数学"), m("数学/", "笔记 / 数学", kind: .folder, id: "ws\u{1}数学"),
+            m("数学分析.pdf", kind: .pdf, id: "P1")]
+check(AgentMentionMatch.rank(pool, query: "数学").map(\.name) == ["数学/", "数学分析.pdf", "极限.md"],
+      "打目录名：目录（名字最短）排在最前，第二行命中的笔记在后")
+
 print("通用排序（⌘P 快速打开也用，QUICK-OPEN-PLAN.md）")
 struct Row { var title: String; var detail: String }
 let rows = [Row(title: "高等数学 上册", detail: "PDF"), Row(title: "极限笔记", detail: "Markdown 笔记 · 数学"),

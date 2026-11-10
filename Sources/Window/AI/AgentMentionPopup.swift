@@ -149,6 +149,7 @@ final class AgentMentionPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
         private static let pdfIcon = NSWorkspace.shared.icon(for: .pdf)
         private static let noteIcon = NSWorkspace.shared.icon(for: UTType(filenameExtension: "md") ?? .plainText)
+        private static let folderIcon = NSWorkspace.shared.icon(for: .folder)
 
         init() {
             super.init(frame: .zero)
@@ -186,7 +187,11 @@ final class AgentMentionPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         private var detailTop: NSLayoutConstraint!
 
         func show(_ m: AgentMention) {
-            icon.image = m.kind == .pdf ? Self.pdfIcon : Self.noteIcon
+            switch m.kind {
+            case .pdf: icon.image = Self.pdfIcon
+            case .folder: icon.image = Self.folderIcon
+            default: icon.image = Self.noteIcon
+            }
             name.stringValue = m.name
             detail.stringValue = m.detail
             let two = !m.detail.isEmpty

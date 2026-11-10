@@ -7,7 +7,9 @@ import Foundation
 @MainActor
 extension AgentMention {
 
-    /// 一篇 PDF：名字是文件名（本机找不到文件时用书名 + .pdf），位置是 file URL（没有文件时退成 `unireader://`）。
+    /// 一篇 PDF：名字是书名 + .pdf（`pdfName`），位置是 file URL（没有文件时退成 `unireader://`）。
+    /// 第二行只在用的是工作区外的原文件、且文件名和名字不一样时写那个文件名
+    /// （工作区里那份叫 `PDFs/<UUID>.pdf` / `<内容哈希>.pdf`，写出来只是一串编号）。
     static func pdf(_ d: LibDocument, in ws: WorkspaceManager) -> AgentMention {
         let path = ws.currentFilePath(documentId: d.id)
         var uri: String
@@ -18,8 +20,31 @@ extension AgentMention {
             link.documentId = d.id
             uri = link.absoluteString
         }
-        let file = path.map { ($0 as NSString).lastPathComponent } ?? d.title + ".pdf"
-        return AgentMention(kind: .pdf, id: d.id, name: file, detail: file == d.title + ".pdf" ? "" : d.title, uri: uri)
+        let name = pdfName(title: d.title)
+        var detail = ""
+        if let path {
+            let file = (path as NSString).lastPathComponent
+            let inside = ws.folder.map { path.hasPrefix($0.standardizedFileURL.path + "/") } ?? false
+            if !inside, file != name { detail = file }
+        }
+        return AgentMention(kind: .pdf, id: d.id, name: name, detail: detail, uri: uri)
+    }
+
+    /// 输入框 `@` 的目录候选：每个笔记源本身 + 它底下各级子目录（侧栏「在 Agent 中引用」目录给的是同一份，§11）。
+    /// 哪些源同侧栏：有笔记的源，或引用目录（空的也列）。顺序 = 侧栏上的顺序（源 → 目录树先序）。
+    static func noteFolders(in ws: WorkspaceManager) -> [AgentMention] {
+        var out: [AgentMention] = []
+        func walk(_ source: NoteRoot, _ f: NoteFolder) {
+            for sub in f.folders {
+                out.append(.folder(source: source, path: sub.path, in: ws))
+                walk(source, sub)
+            }
+        }
+        for section in ws.noteTrees where section.root.hasAnything || section.source.kind == .reference {
+            out.append(.folder(source: section.source, path: "", in: ws))
+            walk(section.source, section.root)
+        }
+        return out
     }
 
     /// 一篇 Markdown 笔记（文件在哪都不知道 → nil）。

@@ -32,6 +32,14 @@ struct AgentMention: Equatable, Identifiable {
 
     var token: String { "@" + name }
 
+    /// PDF 插进输入框的名字 = 书名（侧栏上显示的那个）+ `.pdf`，书名自己已带就不再加。
+    /// 不用文件名：复制进工作区 / 从服务器下来的副本文件名是 UUID 或内容哈希（用户 2026-11-10 报「显示的是编号」）。
+    /// 留着 `.pdf`：与同名笔记（`.md`）分得开，也免得「高数」成了「高数习题」的前缀
+    /// ——发送时按正文里还有没有 `@名字` 决定附不附（`stillReferenced`）。
+    static func pdfName(title: String) -> String {
+        title.lowercased().hasSuffix(".pdf") ? title : title + ".pdf"
+    }
+
     /// 给 Agent 看的一句说明（放进 `resource_link` 的 description）：它是什么、怎么读。
     var agentDescription: String {
         switch kind {

@@ -201,7 +201,8 @@ final class AgentPanelModel: ObservableObject {
     }
 
     /// 输入框 `@` 的候选：书库里的 PDF + 全部源里的 Markdown 笔记，混在一起按最近打开排
-    /// （引用源的笔记没有「上次打开」，排在最后）。
+    /// （引用源的笔记没有「上次打开」，排在最后）；再后面是笔记源与各级子目录（2026-11-10 用户要的「@ 引用目录」，
+    /// 目录没有「上次打开」；打字过滤时名字开头 / 含的照样排到前面）。
     /// PDF 要逐篇查一次库 + stat 文件，所以只在弹出候选时取一次（不是每敲一个字取一次）。
     static func mentions(in ws: WorkspaceManager) -> [AgentMention] {
         var out: [(Date, AgentMention)] = []
@@ -210,6 +211,7 @@ final class AgentPanelModel: ObservableObject {
             guard let m = AgentMention.note(n, in: ws) else { continue }
             out.append((n.lastOpenedAt ?? .distantPast, m))
         }
+        for m in AgentMention.noteFolders(in: ws) { out.append((.distantPast, m)) }
         // 稳定排序：同一时间（多为「没打开过」）保持原来的先后
         return out.enumerated()
             .sorted { $0.element.0 != $1.element.0 ? $0.element.0 > $1.element.0 : $0.offset < $1.offset }

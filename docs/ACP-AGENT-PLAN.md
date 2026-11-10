@@ -266,6 +266,13 @@ Agent 的回复从前只解析行内语法（`AttributedString(markdown:)` 的 `
 - **候选** = 这扇窗口工作区书库里的 PDF + 全部笔记源（内建 + 引用）里的 Markdown 笔记，混在一起按
   「上次打开」排（`AgentPanelModel.mentions(in:)`，经 `AgentChat.mentionProvider` 取；PDF 要逐篇查库 + stat，
   所以**一次弹出只取一次**，打字只重新过滤）。用户 2026-09-24 在「只列笔记 / 扫 Agent 工作目录」之间选了这一种。
+  2026-11-10 起再加**笔记目录**（用户：「支持 @ 引用目录，主要是 markdown 笔记的目录」）：每个笔记源本身 + 各级子目录
+  （`AgentMention.noteFolders(in:)`，哪些源、什么顺序同侧栏），排在 PDF / 笔记后面（目录没有「上次打开」），
+  给 Agent 的与侧栏「在 Agent 中引用」目录那一份相同（§11 表）；浮窗里用系统文件夹图标。只列笔记目录，不扫任意目录。
+- **PDF 的名字 = 书名 + `.pdf`**（`AgentMention.pdfName`，书名自己带 `.pdf` 就不再加；2026-11-10 用户报「显示的是编号」）：
+  原先用文件名，而复制进工作区 / 从服务器下来的副本叫 `PDFs/<UUID>.pdf` / `<内容哈希>.pdf`。留 `.pdf` 是为了与同名笔记分开、
+  也免得一本的名字是另一本的前缀时发送误附（`stillReferenced` 按正文里有没有 `@名字` 判断）。
+  第二行只在用的是工作区外的原文件、且文件名和名字不同时写那个文件名；侧栏「在 Agent 中引用」PDF 走的是同一个构造。
 - 🔴 **只给名字和位置，不给内容**（用户定）：输入框里插 `@文件名 `；发送时对**正文里还留着 `@文件名` 的**
   各附一个 ACP `resource_link`（uri = 本机 file URL，PDF 本机找不到文件时退成 `unireader://` 链接；
   title = 书名 / 所在目录；description 里写 document_id / note_ref，让 Agent 走 MCP 读）。
@@ -365,7 +372,7 @@ Kimi 导习题时推来二十来项的待办（ACP `plan`），整片清单叠�
 
   | 种类 | 名字 | 位置（uri） | 说明里写什么 |
   |---|---|---|---|
-  | PDF / 笔记 | 文件名 | file URL（PDF 没文件时退成 `unireader://`） | 同 §8 |
+  | PDF / 笔记 | PDF = 书名 + `.pdf`（§8，2026-11-10 前是文件名），笔记 = 文件名 | file URL（PDF 没文件时退成 `unireader://`） | 同 §8 |
   | 笔记目录 / 笔记源 | 目录名 + `/` | 目录的 file URL | 源名 + 相对路径（含子目录），`list_markdown_notes`（source / folder）+ `read_markdown` |
   | 一组 PDF | 段头名 | 工作区链接 | 是哪一组、几本，每本书名 + document_id（最多列 40 本，多了指 `list_documents`） |
   | 画板 / 全部画板 | 画板名 / 「画板笔记」 | 工作区链接 | 名字与 board id；**MCP 还读不了画板上的笔迹**，要内容就问用户 |
@@ -373,7 +380,7 @@ Kimi 导习题时推来二十来项的待办（ACP `plan`），整片清单叠�
 
 - `AgentMention` 改动：`Kind` 多了 `folder` / `documents` / `board` / `boards` / `exercises`；新几种的说明构造时写进 `info`；
   `mimeType` 变成可空（目录给 `inode/directory`，其余新种类不给）。仍只依赖 Foundation，`spike/agent-mention-test.swift` 直接编它。
-- 验证：`spike/agent-mention-test.swift` 39 项全过（新加 4 项：新几种的说明 / mime / 中文名字 / 发送时照样按正文里还在不在附上）；
+- 验证：`spike/agent-mention-test.swift` 39 项全过（2026-11-10 加 PDF 名字与目录候选后 43 项）（新加 4 项：新几种的说明 / mime / 中文名字 / 发送时照样按正文里还在不在附上）；
   Mac Debug 编译通过。🔴 没在真 App 里跑过。
 - 实测清单（用户）：
   63. 侧栏各种条目右键都有「复制名称」「在 Agent 中引用」；复制出来的是侧栏上那个名字；多选几本书复制 = 一行一个。
