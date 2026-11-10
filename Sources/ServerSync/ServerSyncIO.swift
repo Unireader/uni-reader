@@ -163,6 +163,7 @@ enum ServerSyncIO {
             try? await downloadMissingImages(db: db, folder: dst, client: client, wid: wid) { i, n in
                 fraction?(n > 0 ? Double(i) / Double(n) : nil)
             }
+            try? SyncClient.recordDownloadedImages(db, folder: dst)   // 补下来的图片进基线，免得第一次同步又推一遍
             // 笔记文件也一起拉下来（本机缓存默认缓存全部，方案 §0）；失败不影响建缓存，打开前那一轮会补
             _ = try? await syncNotes(db: db, folder: dst, client: client, wid: wid, mode: .full)
             db.close()

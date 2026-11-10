@@ -36,6 +36,16 @@ enum SyncClient {
         return spec.merging(try SyncRows.channelState(db, folder: folder), uniquingKeysWith: { a, _ in a })
     }
 
+    /// 建缓存后补下来的图片记进基线：`resetBase` 那一刻图片文件还没下（`imageKeys` 只算文件在的），不补记的话
+    /// 第一次同步会把每张图片当成「本机新加的」重新推一遍、文件也重传一遍（2026-11-10 安卓端到端测试里发现，两端同病）。
+    /// 只补「现在文件在、基线里没有」的；一行一行写、不开事务。
+    static func recordDownloadedImages(_ db: SQLiteDB, folder: URL) throws {
+        let have = Set((try MirrorStore.syncBase(db)[SyncRows.imageTable] ?? [:]).keys)
+        for sha in try MirrorStore.imageKeys(db, folder: folder) where !have.contains(sha) {
+            try setBase(db, Key(table: SyncRows.imageTable, rowId: sha), "")
+        }
+    }
+
     /// 写基线（整表替换 + 记下拉到的修订号），一个事务。
     static func writeBase(_ db: SQLiteDB, _ base: [String: [String: String]], pulledRev: UInt64) throws {
         try db.exec(MirrorStore.syncBaseDDL)
