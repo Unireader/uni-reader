@@ -3,12 +3,15 @@
 // （它那个文件牵出整个工作区）和 Markdown 引擎用不到的几个类型换成桩。依赖已编好的包模块（先按 AGENTS.md 编一次 Debug 包）。运行：
 //
 //   D=build/dev/Build/Products/Debug; O=/tmp/ex-free; mkdir -p $O && cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ \
-//   && cp spike/exercise-free-answer-test.swift $O/main.swift && swiftc -I $D $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
-//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/LatexCompat.swift Sources/Window/AI/AgentMarkdownView.swift \
+//   && cp spike/exercise-free-answer-test.swift $O/main.swift && swiftc -I $D -F $D -framework GrapherEmbed -framework GrapherKit -framework GrapherRender \
+//      -Xlinker -rpath -Xlinker $PWD/$D $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
+//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/GrapherBlocks.swift Sources/Markdown/TableEditMenu.swift \
+//      Sources/Markdown/LatexCompat.swift Sources/Window/AI/AgentMarkdownView.swift \
 //      Sources/Window/AI/AgentRowView.swift Sources/Agent/AgentMarkdownBlocks.swift Sources/Store/*.swift Sources/App/Exercise.swift \
 //      Sources/App/InkModel.swift Sources/App/PenPreset.swift Sources/App/ScratchPadModel.swift Sources/App/BoardModel.swift \
 //      Sources/Reader/InkRenderCG.swift Sources/Window/Exercise/ExerciseInkPad.swift Sources/Window/Exercise/ExerciseFreeAnswerView.swift \
 //      $O/main.swift -o $O/t && $O/t $O
+//   （2026-11-10：Markdown 编辑器后来多依赖了图形块与表格菜单，命令补上那两个源文件和三个 Grapher 框架。）
 //
 // 盯的事：
 //  1. 画板：合成鼠标事件写一笔 → 笔迹在**逻辑坐标**（宽恒 600）里；橡皮整笔擦；撤销 / 清空 / 加高；只读时不收输入；
@@ -17,7 +20,8 @@
 //     最终判错时对不上的标红叉；
 //  4. 主观题：输入框 → `response.text`、打开手写 → 画板出现且高度变大、写一笔进 `response.ink`、交卷后输入框换成「你的作答」、
 //     画板只读、参考答案出现；
-//  5. 排版：看得见的子视图从上到下不重叠。
+//  5. 排版：看得见的子视图从上到下不重叠；
+//  6. 选择题（2026-11-10）：只有手写那一块（演算纸）、开关另记一份、交卷后只读显示 / 没手写时不占地方。
 // 另出样张：$O/look-fill-light.png、$O/look-fill-answered-dark.png、$O/look-subjective-light.png、$O/look-subjective-answered-dark.png
 import AppKit
 import MarkdownEngine
@@ -337,6 +341,51 @@ func testSubjective() {
     check(!titles3.contains(L("Reference Answer")), "没有参考答案：不出那一块")
 }
 
+/// 5. 选择题（2026-11-10）：作答区只有手写那一块（演算纸），开关与填空 / 主观题分开记。
+@MainActor
+func testChoice() {
+    print("5. 选择题的手写演算")
+    UserDefaults.standard.removeObject(forKey: "exercise.handwriting.choice")
+    UserDefaults.standard.set(true, forKey: "exercise.handwriting")   // 主观题那边开着，不该带到选择题
+    let e = exercise(.single, answer: ["B"])
+    let v = ExerciseFreeAnswerView()
+    v.frame = NSRect(x: 0, y: 0, width: 560, height: 10)
+    let win = host(v, width: 600, height: 900)
+    _ = win
+    v.begin(e, draft: nil)
+    v.frame.size.height = v.height(forWidth: 560)
+    v.layoutSubtreeIfNeeded()
+    let h0 = v.frame.height
+    let pad = v.subviews.compactMap { $0 as? ExerciseInkPad }.first!
+    check(allSubviews(v).compactMap { $0 as? NSScrollView }.allSatisfy(\.isHidden), "没有打字的输入框")
+    check(v.subviews.compactMap { $0 as? NSTextField }.allSatisfy(\.isHidden), "没有「第 N 空」「你的作答」这些")
+    check(pad.isHidden && h0 < 60, "默认只有一行「手写」开关（高 \(h0)），主观题那边开着不影响这里")
+    guard let hand = v.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == L("Handwriting") }) else {
+        check(false, "有「手写」开关"); return
+    }
+    check(!hand.isHidden, "「手写」开关在")
+    hand.performClick(nil)
+    v.frame.size.height = v.height(forWidth: 560)
+    v.layoutSubtreeIfNeeded()
+    check(!pad.isHidden && v.frame.height > h0 + 200, "打开 → 画板出现")
+    check(UserDefaults.standard.bool(forKey: "exercise.handwriting.choice"), "选择题的开关另记一份")
+    draw(pad, [CGPoint(x: 40, y: 40), CGPoint(x: 160, y: 70)])
+    let r = v.response
+    check(r.ink?.strokes.count == 1 && r.keys.isEmpty && r.text.isEmpty && r.blanks.isEmpty, "response 只带笔迹")
+    noOverlap(v, "选择题演算中")
+    snapshot(v, "look-choice-light.png")
+    // 交卷后：带手写的那次只读显示；没手写的那次整块收成 0 高
+    v.showAnswered(e, answer: ExerciseDeck.Answer(response: ExerciseResponse(keys: ["B"]), correct: true), ink: r.ink)
+    v.frame.size.height = v.height(forWidth: 560)
+    v.layoutSubtreeIfNeeded()
+    check(!pad.isHidden && !pad.isEditable && pad.ink == r.ink && hand.isHidden, "交卷后：演算只读显示、没有开关")
+    let titles = v.subviews.compactMap { $0 as? NSTextField }.filter { !$0.isHidden }.map(\.stringValue)
+    check(titles.isEmpty, "选择题不出「你的作答 / 参考答案」：\(titles)")
+    v.showAnswered(e, answer: ExerciseDeck.Answer(response: ExerciseResponse(keys: ["A"]), correct: false), ink: nil)
+    check(pad.isHidden && v.height(forWidth: 560) < 1, "没手写的那次：整块不占地方（高 \(v.height(forWidth: 560))）")
+    UserDefaults.standard.removeObject(forKey: "exercise.handwriting.choice")
+}
+
 MainActor.assumeIsolated {
     _ = NSApplication.shared
     try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -344,6 +393,7 @@ MainActor.assumeIsolated {
     testRender()
     testFill()
     testSubjective()
+    testChoice()
 }
 UserDefaults.standard.removeObject(forKey: "exercise.handwriting")
 print("\n\(checks - failures) 通过，\(failures) 失败（样张在 \(outDir.path)）")

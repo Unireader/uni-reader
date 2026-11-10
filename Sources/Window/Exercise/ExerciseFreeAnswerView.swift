@@ -1,6 +1,8 @@
 import AppKit
 
 /// 填空 / 主观题的作答区（`EXERCISE-PLAN.md §11.2`）：练习页里选项那一块换成它。
+/// 选择题也用它（2026-11-10，用户：「选择题也会有计算」）：摆在选项下面，只有手写那一块——演算写在小画板上，
+/// 选了选项交卷时笔迹跟着那次作答一起存（`exercise_attempt.ink`），以后翻回来看得到当时怎么算的。
 /// - 填空：每空一个输入框；交卷后锁住，对得上参考答案的空标绿勾（最终判错时对不上的标红叉）。
 /// - 主观题：多行输入框（`$…$` 写公式）；交卷后换成渲染好的「你的作答」。
 /// - 两种都能打开手写小画板（`ExerciseInkPad`），开没开记在本机，下一题照旧。
@@ -45,8 +47,11 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
     private var mineText = ""
     private var refText: String?
 
-    /// 手写开着没有（本机记住，下一题照旧）。
+    /// 手写开着没有（本机记住，下一题照旧）。选择题另记一份：演算纸不是每道选择题都要，
+    /// 不该因为主观题开着手写就在每道选择题下面都摊开一张纸（反过来也一样）。
     private static let handKey = "exercise.handwriting"
+    private static let choiceHandKey = "exercise.handwriting.choice"
+    private var handPrefKey: String { kind.isChoice ? Self.choiceHandKey : Self.handKey }
 
     init() {
         super.init(frame: .zero)
@@ -122,7 +127,7 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
         fitTextHeight()
         pad.load(draft?.ink)
         pad.isEditable = true
-        handOn = !(draft?.ink?.isEmpty ?? true) || UserDefaults.standard.bool(forKey: Self.handKey)
+        handOn = !(draft?.ink?.isEmpty ?? true) || UserDefaults.standard.bool(forKey: handPrefKey)
         handButton.state = handOn ? .on : .off
         mineText = ""
         refText = nil
@@ -223,7 +228,7 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
 
     private func refreshControls() {
         let fill = kind == .fill
-        textScroll.isHidden = fill || locked
+        textScroll.isHidden = fill || kind.isChoice || locked
         placeholder.isHidden = textScroll.isHidden || !textView.string.isEmpty
         handButton.isHidden = locked
         for v in [toolControl, undoButton, clearButton, growButton] as [NSView] { v.isHidden = locked || !handOn }
@@ -246,7 +251,7 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
 
     @objc private func toggleHand() {
         handOn = handButton.state == .on
-        UserDefaults.standard.set(handOn, forKey: Self.handKey)
+        UserDefaults.standard.set(handOn, forKey: handPrefKey)
         refreshControls()
         heightMayChange()
         onEdit()

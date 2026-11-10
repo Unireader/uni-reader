@@ -195,7 +195,9 @@ final class ExerciseDeck {
         guard !redoing.contains(e.id), filter != .lastWrong else { return nil }
         if e.kind.isChoice {
             guard let p = e.earlierAnswer(stats[e.id]) else { return nil }
-            return Answer(response: ExerciseResponse(keys: p.chosen), correct: p.correct, earlier: p.from)
+            // 那次作答的 id：练习页据它取演算的手写（选择题也能带手写，2026-11-10）
+            let aid: String? = { if case .book = p.from { return stats[e.id]?.markedId } else { return stats[e.id]?.lastId } }()
+            return Answer(response: ExerciseResponse(keys: p.chosen), correct: p.correct, earlier: p.from, attemptId: aid)
         }
         guard let p = e.earlierResponse(stats[e.id]) else { return nil }
         return Answer(response: p.response, correct: p.correct, earlier: p.from, attemptId: p.attemptId, judgedBy: p.judgedBy)

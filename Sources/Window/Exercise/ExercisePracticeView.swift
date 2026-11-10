@@ -209,7 +209,7 @@ final class ExercisePracticeView: NSView {
             stemView.update(text: e.payload.stem)
             explanationView.update(text: e.payload.explanation ?? "")
             rebuildOptions(e)
-            if !e.kind.isChoice { freeView.begin(e, draft: deck.drafts[e.id]) }
+            freeView.begin(e, draft: deck.drafts[e.id])   // 选择题也有：只是手写演算那一块
         }
         refreshState()
     }
@@ -261,13 +261,11 @@ final class ExercisePracticeView: NSView {
             }
         }
         let free = !e.kind.isChoice
-        freeView.isHidden = !free
-        // 填空 / 主观题：交过的锁住显示作答（笔迹在库里那条上，统计里不带），没交的照常输入
-        let row = free ? answer?.attemptId.flatMap { workspace?.exerciseAttempt(id: $0) } : nil
-        if free {
-            if let a = answer { freeView.showAnswered(e, answer: a, ink: ExerciseInk.decode(row?.ink)) }
-            else if freeView.isLocked { freeView.begin(e, draft: deck.drafts[e.id]) }
-        }
+        freeView.isHidden = false
+        // 交过的锁住显示作答（笔迹在库里那条上，统计里不带），没交的照常输入。选择题只有手写演算那一块
+        let row = answer?.attemptId.flatMap { workspace?.exerciseAttempt(id: $0) }
+        if let a = answer { freeView.showAnswered(e, answer: a, ink: ExerciseInk.decode(row?.ink)) }
+        else if freeView.isLocked { freeView.begin(e, draft: deck.drafts[e.id]) }
         submitButton.isHidden = judged || e.kind == .single
         submitButton.isEnabled = free ? !freeView.response.isEmpty(e.kind) : !picked.isEmpty
         // 填空 / 主观题打字时 Return 是换行 / 下一空，提交用 ⌘Return；选择题的 Return 由 `keyDown` 管
@@ -437,7 +435,8 @@ final class ExercisePracticeView: NSView {
         let ms = Int(Date().timeIntervalSince(shownAt) * 1000)
         if e.kind.isChoice {
             guard !picked.isEmpty else { return }
-            deck.submit(picked, elapsedMs: ms)
+            // 演算的手写跟着这次作答一起存（没写就不带）
+            deck.submit(ExerciseResponse(keys: picked, ink: freeView.response.ink), elapsedMs: ms)
             picked = []
         } else {
             let r = freeView.response
@@ -451,8 +450,13 @@ final class ExercisePracticeView: NSView {
 
     /// 填空 / 主观题输入变了：存草稿（翻走再回来还在），「提交」能不能点跟着变。
     private func freeEdited() {
-        guard let e = deck.current, !e.kind.isChoice, deck.answer(for: e) == nil else { return }
+        guard let e = deck.current, deck.answer(for: e) == nil else { return }
         let r = freeView.response
+        if e.kind.isChoice {
+            // 选择题：草稿只有演算的手写（选了哪个不进草稿，「提交」能不能点看选没选）
+            deck.drafts[e.id] = (r.ink?.isEmpty ?? true) ? nil : r
+            return
+        }
         deck.drafts[e.id] = r.isEmpty(e.kind) ? nil : r
         submitButton.isEnabled = !r.isEmpty(e.kind)
     }
