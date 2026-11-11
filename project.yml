@@ -61,11 +61,14 @@ packages:
     # 换中文字体画（磁盘缓存键换版 v3）。fork 提交 1933da8。`spike/markdown-relayout-cost.swift` 对比：打字每字、
     # 首次排版、改宽度都在波动内；含大量中文下标公式的 52K 字整篇替换慢约 15%，是这些公式现在被认出来了——
     # 换成同样多的英文公式对比，改前改后一样。
+    # `.10`（同日）：习题选项 `若 $x, y$ 和 $z$ …` 里的 `$x, y$` 显示源码——防误判规则对没有运算符的内容只放行
+    # 「3 个以内纯字母 / 带撇号 / 带括号的函数写法」，加一种逗号分隔的变量列表（每项 1~3 个字母 + 可选数字与撇号）。
+    # fork 提交 5019918。耗时对比同 `.9`：只有新认出来的公式多出的那份整篇替换耗时，同样多的已认公式对比改前改后一样。
     url: https://github.com/xVanTuring/swift-markdown-engine
     # 2026-09-21 从 0.9.0 升到 0.13.0：0.9.0 每敲一个字都按整篇算账（17K 字的笔记 56ms/字、
     # 52K 字 159ms/字，一帧才 16.7ms），0.13.0 把增量做对了——恒定 9~11ms/字，不再随全文长度涨。
     # 量法见 `spike/markdown-relayout-cost.swift`。升级只动版本号，App 代码一行没改。
-    exactVersion: 0.14.0-xvan.9
+    exactVersion: 0.14.0-xvan.10
   HighlighterSwift:
     url: https://github.com/smittytone/HighlighterSwift
     exactVersion: 3.1.0
