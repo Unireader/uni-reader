@@ -43,7 +43,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `unireader` 分支换到 `xVanTuring/swift-markdown-engine` 的 `xvan` 分支，和 Perch 共用——
   上游把智能引号写死为开，笔记里 `'` 会变 `’`，当初 fork 就是为了加 `SpellCheckingPolicy.automaticQuoteSubstitution`
   （上游 0.14.0 已合并），两处编辑区都关掉；
-  `project.yml` 里 `exactVersion` 钉死，现 **0.14.0-xvan.8**（2026-11-11：行内公式不再被裁——图片按实际墨迹定上下边界、公式撑开所在行，样张对比的做法见 `project.yml` 注释；`.7` 是 2026-10-20 从 `.1` 升上来：多了 grapher 图形块用的
+  `project.yml` 里 `exactVersion` 钉死，现 **0.14.0-xvan.9**（2026-11-11：公式里的中文画得出来了、写在下标 / 上标里的中文也算公式，见 `docs/agents/PITFALLS.md`「行内公式」④；`.8` 同日：行内公式不再被裁——图片按实际墨迹定上下边界、公式撑开所在行，样张对比的做法见 `project.yml` 注释；`.7` 是 2026-10-20 从 `.1` 升上来：多了 grapher 图形块用的
   `FencedBlockRenderer` / `renderedBlockFrames`，以及 Perch 那边打的 `.2`~`.6`——表格默认就地编辑，
   🔴 **表格右键菜单引擎不再自带、由 App 出**（`Sources/Markdown/TableEditMenu.swift`，两处编辑器都接
   `onTableCellContextMenu`，测试 `spike/table-edit-menu-test.swift` 11 项），`$$` 编辑时实时预览、自动配对补全、
@@ -59,6 +59,9 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `git worktree repair <worktree 路径>` 即可；
   在 worktree 里跑 `swift test` 不联网的办法：`swift package config set-mirror` 把 HighlighterSwift / SwiftMath
   指到 `build/dev/SourcePackages/repositories/` 里现成的仓库，跑完 `unset-mirror` 撤掉（`.swiftpm/` 别提交）；
+  撤掉后 worktree 里的 `Package.resolved`（引擎 gitignore 了它）还记着镜像时的写法，下次直接编会报
+  `Package.resolved file is corrupted or malformed`——重新 `set-mirror` 就好，别去改它；
+  `git stash -u` 会把 `.swiftpm/` 的镜像配置一起收走，想在原版代码上对比测试，用另一个停在原版提交的 worktree；
   开发期让 App 用本地引擎：`project.yml` 临时写 `path:` 指向 worktree，**发布前必须推送、打 tag、换回 `url` + `exactVersion`**；
   🔴 **升级前后都跑一遍 `spike/markdown-relayout-cost.swift`**——0.9.0 每敲一个字按整篇算账，17K 字的笔记 56ms/字、
   52K 字 159ms/字（一帧才 16.7ms），0.13.0 恒定 9~12ms/字不随全文长度涨；量的是主线程 CPU 时间，用法见文件头，
