@@ -9,6 +9,60 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.26</title>
+      <pubDate>Thu, 12 Nov 2026 08:49:05 +0000</pubDate>
+      <sparkle:version>68</sparkle:version>
+      <sparkle:shortVersionString>0.3.26</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>习题</h4>
+<ul>
+<li>可以自己框出原题区域：在练习页原题图下方，或在题目列表里右键，选「设置原题区域…」，在页面上拖一个框把题目框住，之后「原题」只显示这一块；点「用整页」恢复显示整页。</li>
+<li>跨页的题：题目接到下一页时（比如图在下一页），在「设置原题区域」上方选好页数，在每一页上各框一块，「原题」会把几块从上到下拼在一起显示。练习页和列表里的页码也写成「第 N–N+1 页」。</li>
+<li>把题引用到 Agent：练习页顶部或题目列表右键（可以多选）选「在 Agent 中引用」，题目会放进 Agent 的输入框，接着写你要问的就行。</li>
+<li>Agent 能看到你正在练哪一道题、答没答，能帮你打开某道题、某一章、错题本或收藏，也能看原题图。</li>
+<li><code>unireader://open?ex=…</code> 链接会打开那本书的练习页并停在这道题，Agent 给出的题目链接点一下就到。</li>
+</ul>
+<h4>Agent</h4>
+<ul>
+<li>你发出的消息下面多了一行「上下文」，列出随这条消息一起发给 Agent、但气泡里看不到的内容：@ 引用、正在看的文档 / 笔记 / 题、引用出处、批改请求、交接摘要。鼠标停在上面可以看原文。</li>
+<li>打开以前的对话时，你的消息后面不再拼着 @ 附件的文件路径，前后两条消息（比如「继续」）也不再连成一句。</li>
+<li>Agent 可以新建 Markdown 笔记（建在内建笔记文件夹或引用的文件夹里，比如 Obsidian 库），建好后马上出现在侧栏。</li>
+</ul>
+<h4>Markdown 笔记</h4>
+<ul>
+<li>可以新建文件夹：在侧栏笔记分组的标题或子文件夹上右键选「新建文件夹…」，或用「文件 › 新建笔记文件夹…」。</li>
+<li>宽表格用触控板左右滑动时有惯性了，松开手指不再立刻停下。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.26">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Exercises</h4>
+<ul>
+<li>You can now box the question yourself: below the Original image on the practice page, or by right-clicking in the question list, choose "Set Question Area…", drag a box around the question, and Original shows only that part of the page. "Use Whole Page" goes back to showing the whole page.</li>
+<li>Questions that span pages: when a question runs onto the next page (say its figure is there), choose the pages at the top of "Set Question Area" and box a part on each page; Original shows the parts one above the other. The practice page and the list show the page as "Pages N–N+1".</li>
+<li>Reference a question in the Agent: on the practice page, or by right-clicking in the question list (several at once if you like), choose "Reference in Agent". The question goes into the Agent's message box, ready for you to type your question.</li>
+<li>The agent can see which question you are practicing and whether you have answered it, can open a question, a chapter, your wrong-answer book or your favorites for you, and can look at the Original image.</li>
+<li>A <code>unireader://open?ex=…</code> link opens that book's practice page at the question, so question links given by the agent take you straight there.</li>
+</ul>
+<h4>Agent</h4>
+<ul>
+<li>Each message you send now has a "Context:" line underneath listing what went to the agent with it but isn't shown in the bubble: @ references, the document, note or question you are viewing, the source of a quote, grading requests and saved contexts. Hover over an item to see the exact text.</li>
+<li>When you reopen an earlier conversation, your messages no longer end with the file paths of @ attachments, and two messages in a row (such as "continue") are no longer run together.</li>
+<li>The agent can create Markdown notes (in the built-in notes folder or a referenced folder such as an Obsidian vault); a new note shows up in the sidebar right away.</li>
+</ul>
+<h4>Markdown notes</h4>
+<ul>
+<li>You can create folders: right-click a notes group header or a subfolder in the sidebar and choose "New Folder…", or use File › New Notes Folder….</li>
+<li>Scrolling a wide table sideways with the trackpad now keeps its momentum instead of stopping the moment you lift your fingers.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.26">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.26/UniReader-0.3.26.zip" length="18107202" type="application/octet-stream" sparkle:edSignature="+y7kdU2WnkCCbGZgvvYgc7pLtRH0x450yfudBzZfCtbqNrEvY4b/7VvLs9ZTdGJ4brl1TpwN8nWdLEIQeJ/XCw==" />
+    </item>
+    <item>
       <title>v0.3.25</title>
       <pubDate>Wed, 11 Nov 2026 09:47:38 +0000</pubDate>
       <sparkle:version>67</sparkle:version>
