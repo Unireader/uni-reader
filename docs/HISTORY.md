@@ -3,6 +3,14 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ Agent 查看 / 打开 / 处理练习页上的题（2026-11-12，Mac）
+
+- 起因（用户）：「看下现在 Agent 可以直接打开某一题吗」「拓展下 Agent 能够查看题目，打开题目，处理题目的能力」。此前练习页上 Agent 看不到当前题，也没法带用户去某一道题。
+- Agent 面板上下文写明当前组 / 第几题 / `exercise_id` / 答没答；`get_current_view` 认习题标签（当前题全文 + 屏幕上的作答与 `attempt_id` + 列表选中）；
+  新工具 `open_exercises`（题 / 书 / 章 / 错题本 / 收藏 / 标签 / 筛选 / 视图）、`render_exercise`（原题图）；链接 `unireader://open?ex=`，`list_exercises` 带 `exercise_link`，
+  引用某一道题的链接改成它。`EXERCISE-PLAN.md §27`、`MCP-PLAN.md §29`、`ACP-AGENT-PLAN.md §16`、`URL-SCHEME-PLAN.md §1`。
+- 验证：Mac Debug 编译通过；`deep-link-test` 47 项、`exercise-test` 354 项。界面待用户实测（实测清单 115~119）。
+
 ## ✅ 跨页的题：原题跨几页（2026-11-12，Mac + 安卓模式1）
 
 - 起因（用户）：题目从第 N 页开始、接到第 N+1 页，图在第 N+1 页；题目只记第 N 页，原题框只能框第 N 页，图裁不进来。

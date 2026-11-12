@@ -22,6 +22,8 @@ enum MCPTools {
         c.register(listExerciseAttemptsTool())
         c.register(renderExerciseAnswerTool())
         c.register(gradeExerciseAttemptsTool())
+        c.register(openExercisesTool())      // 2026-11-12：打开 / 看原题（`EXERCISE-PLAN.md §27`）
+        c.register(renderExerciseTool())
     }
 
     /// 批 1：读取类 + 打开工作区/文档两个导航动作。

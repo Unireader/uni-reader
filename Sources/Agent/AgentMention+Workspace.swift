@@ -138,7 +138,7 @@ extension AgentMention {
     }
 
     /// 一道习题（§15）。名字 = 练习页顶行那几样：「书名 · 第 12 页 · 题号 3」（没题号写题型），
-    /// 同一本书里每章题号重来也分得开；位置 = 那一页的 `unireader://` 链接。
+    /// 同一本书里每章题号重来也分得开；位置 = 在练习页打开这道题的 `unireader://open?ex=` 链接（2026-11-12 起，§27）。
     /// 🔴 同 §8 不给内容：题干 / 选项 / 答案 / 作答都让 Agent 按 exercise_id 自己读。
     static func exercise(_ e: Exercise, in ws: WorkspaceManager) -> AgentMention {
         let doc = e.documentId.flatMap { ws.document(id: $0) }
@@ -149,11 +149,9 @@ extension AgentMention {
             parts.append(last.map { String(format: L("Pages %d–%d"), p + 1, $0 + 1) } ?? String(format: L("Page %d"), p + 1))
         }
         parts.append(e.number.isEmpty ? ExercisePracticeView.kindName(e.kind) : String(format: L("No. %@"), e.number))
+        // 链接 = 在练习页打开这道题（`EXERCISE-PLAN.md §27`；以前是 PDF 出处页，那个 Agent 经 list_exercises 的 link 拿）
         var link = workspaceLink(ws)
-        if let d = e.documentId, doc != nil {
-            link.documentId = d
-            link.page = e.page.map { $0 + 1 }
-        }
+        link.exerciseId = e.id
         var place: [String] = []
         if !e.number.isEmpty { place.append("number \(e.number)") }
         if let p = e.page { place.append(last.map { "pages \(p + 1)–\($0 + 1)" } ?? "page \(p + 1)") }
@@ -167,7 +165,8 @@ extension AgentMention {
                 + (place.isEmpty ? "" : ", " + place.joined(separator: ", "))
                 + "; exercise_id \(e.id). Read the question, its options, reference answer, explanation, the user's note "
                 + "and practice stats with list_exercises (exercise_ids \(ids)); the user's answers with "
-                + "list_exercise_attempts (exercise_ids \(ids)). If it depends on a figure, look at its page with render_page.")
+                + "list_exercise_attempts (exercise_ids \(ids)). If it depends on a figure, look at it with render_exercise "
+                + "(exercise_id \(e.id)); to take the user to it, open_exercises (exercise_id \(e.id)).")
     }
 
     /// 工作区本身的 `unireader://` 链接（没有文件位置可给时的 uri）。

@@ -126,10 +126,31 @@ final class AgentPanelModel: ObservableObject {
                 relativePath: ref.relPath,
                 link: link.absoluteString)
         }
-        return AgentReaderContext(workspaceName: c.workspace.name, workspaceFolder: folder,
-                                  windowId: c.windowId, tabId: tab.id, documentId: tab.docID,
-                                  docTitle: s.title, page: s.currentPageIndex,
-                                  pageCount: s.pdf?.pageCount ?? 0, markdown: markdown)
+        var ctx = AgentReaderContext(workspaceName: c.workspace.name, workspaceFolder: folder,
+                                     windowId: c.windowId, tabId: tab.id, documentId: tab.docID,
+                                     docTitle: s.title, page: s.currentPageIndex,
+                                     pageCount: s.pdf?.pageCount ?? 0, markdown: markdown)
+        if let scope = tab.exerciseScope { ctx.exercise = exerciseTab(scope, in: c.workspace) }
+        return ctx
+    }
+
+    /// 习题标签：哪一组、第几题、答没答（`EXERCISE-PLAN.md §27`）。用标签自己那份进度（不刷新，只读）。
+    private static func exerciseTab(_ scope: ExerciseScope, in ws: WorkspaceManager) -> AgentReaderContext.ExerciseTab {
+        let d = ExerciseDeck.shared(scope: scope, workspace: ws, reload: false)
+        var t = AgentReaderContext.ExerciseTab(group: ws.exerciseScopeTitle(scope), list: d.mode == .list,
+                                               position: d.index + 1, count: d.items.count)
+        if d.mode == .list { t.selected = d.selectedIds.count }
+        guard let e = d.current else { return t }
+        t.exerciseId = e.id
+        t.number = e.number
+        t.kind = e.kind.wireName
+        if let p = e.page {
+            t.pages = e.lastPage.flatMap { $0 > p ? "\(p + 1)–\($0 + 1)" : nil } ?? "\(p + 1)"
+        }
+        t.documentId = e.documentId
+        t.book = e.documentId.flatMap { ws.document(id: $0)?.title } ?? ""
+        t.answered = d.answer(for: e) != nil
+        return t
     }
 
     // MARK: - 对话

@@ -89,6 +89,8 @@ Current document: "标题" (document_id …), page N of M, reader tab session_id
 </unireader-context>
 ```
 
+活动标签是习题（练习页）时（2026-11-12，§16），那一行改为 Current tab: Exercises：哪一组、练习还是列表、第几题、`exercise_id`、题型 / 题号 / 页码 / 书名、
+答没答（列表里选了几道），并说明「这道题」指它、全文用 `get_current_view`、看原题用 `render_exercise`、带用户去别的题用 `open_exercises`。
 活动标签是 Markdown 笔记时，Current document 那行改为 Current Markdown note，并带笔记标题、note_ref、
 来源、相对路径、标签 session_id、window_id 与 unireader:// 链接。上下文只带身份，不把整篇正文塞进每条消息；
 Agent 要读时调用 get_current_view，拿编辑器里的实时正文与 revision（包括还没走完 0.8 秒自动保存的改动）；
@@ -514,3 +516,20 @@ session_id（那段对话在原 Agent 里的 id，只对同一家有意义）, c
   103. 练习页顶行有「在 Agent 中引用」，点了 Agent 页亮出来、输入框里是 `@书名 · 第 N 页 · 题号 X `；问一句「这题怎么做」，Agent 能读出这道题。
   104. 列表里多选几道右键「在 Agent 中引用」：一道一个 `@`；删掉其中一个再发，Agent 只收到剩下的。
   105. 设置里关掉 Agent：练习页那个按钮不见、列表右键那一项灰掉。
+
+## 16. Agent 看得到、打得开练习页上的题（2026-11-12）
+
+用户原话：「看下现在 Agent 可以直接打开某一题吗」「拓展下 Agent 能够查看题目，打开题目，处理题目的能力」。此前习题标签上 Agent 什么都看不到
+（上下文块写「没有打开文档」，`get_current_view` 回 `empty`），也没有带用户去某一道题的办法（`link` 只到 PDF 出处页）。
+
+- **上下文块**（`AgentReaderContext.ExerciseTab`，`AgentPanelModel.exerciseTab`）：见 §3.2。只带身份；翻题 / 交卷 / 换视图后和上次不一样，下一条消息重新带。
+- **工具**（`MCP-PLAN.md §29`、`EXERCISE-PLAN.md §27`）：`get_current_view` 认习题标签（当前题全文 + 屏幕上的作答 + `attempt_id`）、
+  `open_exercises`（导航级，「跟随 Agent」关着时同 `goto` 不动界面）、`render_exercise`（原题图）。
+- **引用某一道题**（§15）的 uri 改成 `unireader://open?ex=<id>`（在练习页打开它），说明里多指一句 `render_exercise` / `open_exercises`。
+- 验证：Mac Debug 编译通过；`spike/deep-link-test.swift` 47 项。🔴 上下文块与三个工具都没在真 App 里跑过。
+- 实测清单（用户）：
+  115. 练习页停在某题，在 Agent 面板问「这道题怎么做」→ Agent 不用问就知道是哪道（不再说「没打开文档」）。
+  116. 交了卷再问「我这题错在哪」→ Agent 读到你的作答和对错；填空 / 主观题说「帮我批改这题」→ 直接批改，练习页上出现评语。
+  117. 说「打开第二章的错题」「带我去第 5 页那道题」「把上次做错的重做一遍」→ 练习页跟着换；关掉「跟随 Agent」再说一次 → 界面不动，Agent 说明没跳。
+  118. 说「看看这道题的图」→ Agent 调 `render_exercise` 看原题图（跨页的是拼好的那张）。
+

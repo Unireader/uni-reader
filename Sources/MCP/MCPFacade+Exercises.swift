@@ -146,7 +146,9 @@ extension MCPFacade {
         if let p = e.page {
             o["page"] = PageNo.external(p)
             o["link"] = link(ws, doc: e.documentId, page: PageNo.external(p))
+            if let q = e.lastPage, q > p { o["last_page"] = PageNo.external(q) }
         }
+        o["exercise_link"] = link(ws, exercise: e.id)
         if let s = e.payload.answerSource { o["answer_source"] = s }
         if let x = e.payload.explanation { o["explanation"] = x }
         if let r = e.payload.region {
@@ -156,6 +158,156 @@ extension MCPFacade {
         if !e.note.isEmpty { o["note"] = e.note }
         o["tags"] = e.tags
         return o
+    }
+
+    // MARK: - 用户在练习页上看到的（`get_current_view` / `open_exercises`，`EXERCISE-PLAN.md §27`）
+
+    /// 习题标签此刻的样子：哪一组、练习还是列表、筛选、第几题，当前这道题（同 `list_exercises` 一道题的样子）
+    /// 加上屏幕上显示的作答（`on_screen`，带 `attempt_id` 好直接批改），列表里选中了哪几道。
+    func exerciseTabState(_ ws: WorkspaceManager, scope: ExerciseScope) -> MCPObject {
+        let d = ExerciseDeck.shared(scope: scope, workspace: ws, reload: false)
+        let s = d.sessionSummary
+        var o: MCPObject = [
+            "group": ws.exerciseScopeTitle(scope), "scope": Self.scopeDTO(scope),
+            "view": d.mode == .list ? "list" : "practice", "filter": Self.filterName(d.filter),
+            "count": d.items.count, "position": d.items.isEmpty ? 0 : d.index + 1,
+            "done_this_round": s.done, "right_this_round": s.correct,
+        ]
+        if let t = d.tagFilter { o["tag"] = t }
+        if let e = d.current {
+            var c = exerciseDTO(ws, e, stats: d.stats[e.id])
+            c["on_screen"] = Self.onScreen(d, e)
+            o["current"] = c
+        }
+        if d.mode == .list { o["selected_ids"] = d.selectedIds }
+        return o
+    }
+
+    /// 这道题屏幕上显示的作答：这一轮答的，或以前那次（同练习页）；还没交的草稿另外给。
+    private static func onScreen(_ d: ExerciseDeck, _ e: Exercise) -> MCPObject {
+        var o: MCPObject = ["answered": false]
+        if let a = d.answer(for: e) {
+            o["answered"] = true
+            switch e.kind {
+            case .single, .multiple: o["answer"] = Exercise.answerString(a.chosen)
+            case .fill: o["blanks"] = a.response.blanks
+            case .subjective: o["answer"] = a.response.text
+            }
+            if let c = a.correct { o["correct"] = c }
+            switch a.earlier {
+            case nil: o["from"] = "this_round"
+            case .practiced?: o["from"] = "earlier_practice"
+            case .book?: o["from"] = "book"
+            }
+            if let id = a.attemptId { o["attempt_id"] = id }
+            if !a.judgedBy.isEmpty { o["judged_by"] = a.judgedBy }
+        } else if let r = d.drafts[e.id] {
+            switch e.kind {
+            case .fill where r.blanks.contains(where: { !$0.isEmpty }): o["draft_blanks"] = r.blanks
+            case .subjective where !r.text.isEmpty: o["draft"] = r.text
+            default: break
+            }
+        }
+        return o
+    }
+
+    static func filterName(_ f: ExerciseFilter) -> String {
+        switch f {
+        case .all: return "all"
+        case .unanswered: return "not_done"
+        case .lastWrong: return "last_wrong"
+        }
+    }
+
+    static func scopeDTO(_ scope: ExerciseScope) -> MCPObject {
+        var o: MCPObject = [:]
+        switch scope {
+        case .all, .document, .chapter: o["list"] = "all"
+        case .wrong, .wrongDocument, .wrongChapter: o["list"] = "mistakes"
+        case .starred, .starredDocument, .starredChapter: o["list"] = "starred"
+        }
+        if let d = scope.documentId { o["document_id"] = d }
+        switch scope {
+        case .chapter(_, let p), .wrongChapter(_, let p), .starredChapter(_, let p): o["chapter"] = p
+        default: break
+        }
+        return o
+    }
+
+    /// `open_exercises`：哪一组（书 / 章 / 错题本 / 收藏，`list` + `documentId` + `chapter`）、停在哪一道、练习还是列表、筛选。
+    /// 只给 `exerciseId` = 那道题所在的那本书。给的题不在那一组里 → 报错，不悄悄换一组。
+    func openExercises(exerciseId: String?, documentId: String?, chapter: [String]?, list: String,
+                       view: String?, filter: String?, tag: String?, workspacePath: String?, activate: Bool) throws -> MCPObject {
+        var ws: WorkspaceManager
+        var target: Exercise?
+        if let id = exerciseId, !id.isEmpty {
+            let (w, found) = try resolveExercises([id], workspacePath: workspacePath)
+            ws = w
+            target = found.first
+        } else if let documentId, !documentId.isEmpty {
+            ws = try writeTarget(documentId: documentId, workspacePath: workspacePath).ws
+        } else {
+            ws = try manager(workspacePath: workspacePath)
+        }
+        // 书：给了用给的；没给时，按书分的组（全部 / 某一章）跟着那道题走，错题本 / 收藏整本不限
+        var doc = documentId.flatMap { $0.isEmpty ? nil : $0 }
+        if doc == nil, list == "all" || chapter != nil { doc = target?.documentId }
+        if let d = doc, ws.document(id: d) == nil {
+            throw MCPToolError("document '\(d)' is not in workspace \(ws.name); call list_documents")
+        }
+        if chapter != nil, doc == nil { throw MCPInvalidParams("chapter needs document_id (or exercise_id of a question in that book)") }
+        let path = chapter.map(ExerciseChapter.clean)
+        let scope: ExerciseScope
+        switch (list, doc, path) {
+        case ("mistakes", nil, _): scope = .wrong
+        case ("mistakes", let d?, nil): scope = .wrongDocument(d)
+        case ("mistakes", let d?, let p?): scope = .wrongChapter(d, p)
+        case ("starred", nil, _): scope = .starred
+        case ("starred", let d?, nil): scope = .starredDocument(d)
+        case ("starred", let d?, let p?): scope = .starredChapter(d, p)
+        case (_, nil, _): scope = .all
+        case (_, let d?, nil): scope = .document(d)
+        case (_, let d?, let p?): scope = .chapter(d, p)
+        }
+        let title = ws.exerciseScopeTitle(scope)
+        if let e = target, !scope.includes(e) {
+            throw MCPToolError("exercise \(e.id.prefix(8)) is not in “\(title)”; leave list and chapter out to open it in its own book")
+        }
+        if target == nil, ws.exercises(in: scope).isEmpty {
+            throw MCPToolError("“\(title)” has no exercises; call list_exercises")
+        }
+        let f: ExerciseFilter?
+        switch filter {
+        case nil: f = nil
+        case "all"?: f = .all
+        case "not_done"?:
+            guard !scope.isMistakes else { throw MCPInvalidParams("filter not_done is not offered in the mistakes (every question there was done)") }
+            f = .unanswered
+        case "last_wrong"?: f = .lastWrong
+        default: throw MCPInvalidParams("filter must be all, not_done or last_wrong")
+        }
+        let mode: ExerciseDeck.Mode? = view == "list" ? .list : view == "practice" ? .practice : (target != nil ? .practice : nil)
+        guard let app = AppDelegate.shared else { throw MCPToolError("UniReader is still starting up") }
+        let (c, tab, _) = try app.showExercises(scope, at: target?.id, mode: mode, filter: f, tag: tag, in: ws, activate: activate)
+        var o = exerciseTabState(ws, scope: scope)
+        o["window_id"] = c.windowId.uuidString
+        o["session_id"] = tab.id.uuidString
+        return o
+    }
+
+    /// `render_exercise`：这道题的原题图要渲哪几段（同练习页「原题」：有框按框、跨页的拼起来、没框整页）。
+    func exerciseImageSource(_ id: String, workspacePath: String?) throws -> (MCPObject, ExerciseImageSource) {
+        let (ws, found) = try resolveExercises([id], workspacePath: workspacePath)
+        guard let e = found.first else { throw MCPToolError("exercise not found: \(id)") }
+        guard e.documentId != nil, e.page != nil else {
+            throw MCPToolError("exercise \(e.id.prefix(8)) has no source page in a PDF")
+        }
+        guard let src = ExerciseOriginal.source(for: e, workspace: ws) else {
+            throw MCPToolError("the PDF of exercise \(e.id.prefix(8)) is not on this Mac")
+        }
+        let r: MCPObject = ["exercise_id": e.id, "pages": src.slices.map { PageNo.external($0.page) },
+                            "cropped": e.payload.region != nil]
+        return (r, src)
     }
 
     // MARK: - 改 / 删

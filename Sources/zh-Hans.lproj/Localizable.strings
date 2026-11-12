@@ -1296,6 +1296,7 @@
 "Set Question Area" = "设置原题区域";
 "Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page." = "在页面上拖出一个框，把题目框住。在框里拖可以挪动，拖边或角可以改大小。之后「原题」只显示这一块。";
 "Use Whole Page" = "用整页";
+"Question not found in this workspace: %@" = "这个工作区里没有这道题：%@";
 "Pages %d–%d" = "第 %d–%d 页";
 "Question is on:" = "题目在：";
 "Page %d only" = "只在第 %d 页";

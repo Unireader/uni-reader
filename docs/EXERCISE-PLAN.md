@@ -1135,3 +1135,29 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   112. 练习页顶行、列表「页」一列显示「第 N–N+1 页」/「N–N+1」；「在 Agent 中引用」插进去的名字也是。
   113. 让 Agent 导一道跨页的题（或「把这题的原题框到下一页的图」）→ 它给 `next_regions`，原题图跟着拼上第二块。
   114. 平板模式1（同步过去后）与模式2 看原题都是拼好的那张；书的最后一页上的题「题目在」不出现。
+
+
+## 27. Agent 查看 / 打开 / 处理练习页上的题（2026-11-12，Mac）
+
+用户原话：「看下现在 Agent 可以直接打开某一题吗」「拓展下 Agent 能够查看题目，打开题目，处理题目的能力」。
+
+- **看**：用户开着练习页时，Agent 面板每条消息的上下文里写明哪一组、第几题、`exercise_id`、答没答（`ACP-AGENT-PLAN.md §16`）；
+  `get_current_view` 给当前题全文 + 屏幕上的作答（`on_screen`，带 `attempt_id`）+ 列表里选中的几道；`render_exercise` 出原题图（同「原题」那张，跨页的拼好）。
+- **打开**：MCP `open_exercises`（一道题 / 一本书 / 一章 / 错题本 / 收藏 / 某个标签 / 只看没做过 / 重做上次做错的，练习或列表）；
+  链接 `unireader://open?ex=<id>`（在那本书的练习页停在这道题，`URL-SCHEME-PLAN.md §1`），`list_exercises` 每道题带 `exercise_link`；
+  在 Agent 中引用某一道题的链接也改成它。两条路共用 `AppDelegate.showExercises`（窗口 / 标签规则同侧栏）+ `ExerciseDeck.present`
+  （换筛选 / 标签、停在某题、切练习 / 列表；那道题被筛选挡住先去掉筛选）。开着的标签按 `ExerciseDeck.changed` 的 `.agent` 重画，**不抢键盘焦点**。
+- **处理**：原有的 `update_exercises`（答案 / 解析 / 框 / 章节 / 标签 / 笔记 / 收藏）、`grade_exercise_attempts`、`delete_exercises` 不变；
+  有了 `on_screen.attempt_id`，「帮我批改这题」不用先查作答。错题本仍只能用户手动移出（拍板 ③），没开放给 Agent。
+- **平板**：没动。平板开着同一组时，Agent 换题会经平板同步推过去（`changed` 照发）。
+- 代码：`App/DeepLink.swift`（`ex`）、`App/DeepLinkRouter.swift`、`App/AppModel+Exercise.swift`（`showExercises`）、`Window/Exercise/ExerciseDeck.swift`
+  （`present` / `selectedIds` / `Origin.agent`）、`ExerciseTabView.swift`、`ExerciseListView.swift`、`ExerciseOriginal.swift`（`jpegSized`）、
+  `MCP/MCPFacade+Exercises.swift`、`MCP/MCPTools+Exercises.swift`、`MCP/MCPFacade.swift`（`currentView` / `link`）、`MCP/MCPTools+Reader.swift`、
+  `MCP/MCPServer.swift`（instructions）、`Agent/AgentChat.swift`、`Agent/AgentPanelModel.swift`、`Agent/AgentMention+Workspace.swift`。
+- 验证：Mac Debug 编译通过、没有新警告；`spike/deep-link-test.swift` 47 项（新加 `ex` 8 项）、`spike/exercise-test.swift` 354 项照过。
+  🔴 三个工具、上下文块、链接都没在真 App 里跑过（实测清单在 `ACP-AGENT-PLAN.md §16`：115~118，另加下面一条）。
+
+### 27.1 实测清单（用户）
+
+  119. 在别处（Obsidian / 浏览器地址栏）打开 `list_exercises` 给的 `exercise_link` → UniReader 切到那本书的练习页、停在那道题；题已删 → 弹框说找不到。
+

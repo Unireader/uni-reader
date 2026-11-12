@@ -15,8 +15,9 @@ import Combine
 final class ExerciseDeck {
     enum Mode: Int { case practice = 0, list = 1 }
 
-    /// 谁改的：Mac 本机（练习页 / 列表）还是平板（`AppModel+Exercise`）。
-    enum Origin { case mac, pad }
+    /// 谁改的：Mac 本机（练习页 / 列表）、平板（`AppModel+Exercise`），还是 Agent / 链接把用户带到某一道题
+    /// （`present`，`EXERCISE-PLAN.md §27`）。
+    enum Origin { case mac, pad, agent }
     /// 改了什么：只换了第几题（平板那边只发 `exIndex`），还是别的（重发整份 `exDeck`）。
     enum Change { case index, content }
     /// 这一份变了。Mac 本机的改动，标签视图自己已经画过了（订阅方按 `origin` 挑着处理）。
@@ -54,6 +55,8 @@ final class ExerciseDeck {
     private(set) var stats: [String: ExerciseAttemptStats] = [:]
     var mode: Mode = .practice
     var index = 0 { didSet { if index != oldValue { notify(.index) } } }
+    /// 列表里选中的那几道（列表视图选中变了就写这里；`get_current_view` 告诉 Agent 用户选了哪几道）。
+    var selectedIds: [String] = []
     private(set) var answers: [String: Answer] = [:]
     /// 填空 / 主观题还没交的输入（按题记）：翻到别的题再翻回来、切标签再切回来，写了一半的不丢。
     var drafts: [String: ExerciseResponse] = [:]
@@ -103,6 +106,29 @@ final class ExerciseDeck {
     }
 
     var current: Exercise? { items.indices.contains(index) ? items[index] : nil }
+
+    /// 把用户带到这一组的某处（Agent `open_exercises` / `unireader://open?ex=`，`EXERCISE-PLAN.md §27`）：
+    /// 换筛选（`filter`）/ 标签（`tag`：nil = 不动，空串 = 不按标签筛）、停在某一道（`exerciseId`）、切练习 / 列表（`mode`）。
+    /// 要停的那道在这一组里、却被筛选挡住了 → 先把筛选和标签都去掉。返回停没停到（这一组里没有这道 = false）。
+    /// 整个过程算 Agent 改的：开着的标签据 `changed` 的 `.agent` 重画（不抢键盘焦点）。
+    @discardableResult
+    func present(exerciseId: String?, mode m: Mode?, filter f: ExerciseFilter?, tag: String?) -> Bool {
+        origin = .agent
+        defer { origin = .mac; notify(.content) }
+        if let tag { setTagFilter(tag.isEmpty ? nil : tag) }
+        if let f { setFilter(f) }
+        var found = true
+        if let id = exerciseId {
+            if !items.contains(where: { $0.id == id }), scopeItems.contains(where: { $0.id == id }) {
+                filter = .all
+                tagFilter = nil
+                resnapshot()
+            }
+            if let i = items.firstIndex(where: { $0.id == id }) { index = i } else { found = false }
+        }
+        if let m { mode = m }
+        return found
+    }
 
     private func passes(_ e: Exercise) -> Bool {
         filter.includes(e, stats: stats[e.id]) && (tagFilter.map { ExerciseTag.has(e, $0) } ?? true)

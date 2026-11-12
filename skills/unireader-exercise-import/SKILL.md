@@ -190,3 +190,11 @@ App 只负责存题和练习；**看图、转写、对答案、批改都是你�
 - `update_exercises` 的 `region`：用户说「原题框大了 / 切掉字了 / 重新框一下 / 原题显示整页就行」时改它。先 `list_exercises` 读出这道题现在的
   `region` 和 `page`，`render_page` 看那一页再定新框（同导入时的口径：整道题、宁可稍大不要切掉字）；`[]` = 去掉框，看原题回到整页。
   用户也能在 App 里自己框（「设置原题区域…」），存的是同一个字段——没让你改的题别动它的框。
+
+## 看题、带用户去某一道题
+
+- 用户开着练习页时，你收到的上下文里写着当前是哪一组、第几题、`exercise_id`；`get_current_view` 给这道题的全文、屏幕上显示的作答
+  （`on_screen`：答了什么、对不对、`attempt_id`）。用户说「这道题」就是它；「帮我批改这题」直接拿 `attempt_id` 去 `grade_exercise_attempts`。
+- `render_exercise`：看原题图（带图的、跨页的题都按用户看到的那张出），比自己拿 `page` + `region` 去 `render_page` 省事。
+- `open_exercises`：把用户带到题上——`exercise_id`（停在这道）、`document_id` + `chapter`（一本书 / 一章）、`list: "mistakes"` / `"starred"`、
+  `tag`、`filter: "not_done"` / `"last_wrong"`（重做上次做错的）、`view: "list"`。只想给个能点的链接，用 `list_exercises` 里的 `exercise_link`。

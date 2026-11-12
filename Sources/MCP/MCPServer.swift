@@ -192,6 +192,9 @@ final class MCPServer: ObservableObject {
     grade_exercise_attempts. Each exercise can also carry the user's own note (note in list_exercises; it is not a \
     text note on the PDF): change it with update_exercises note only when the user asks. To star (收藏) or unstar \
     questions when the user asks, find them with list_exercises and pass update_exercises starred true / false. \
+    To see a question as printed (figures, parts on the next page) use render_exercise; to take the user to a question \
+    or a group of them (a book, a chapter, the mistakes or starred ones, a tag, a redo round) use open_exercises; \
+    get_current_view on the practice tab gives the current question and the answer showing for it. \
     Questions can carry free-form tags (tags in list_exercises, e.g. 真题 or 模拟): import_exercises tags adds tags \
     (only when the user asks or the page itself says so), update_exercises tags replaces the whole set, \
     list_exercises tag lists one tag's questions.

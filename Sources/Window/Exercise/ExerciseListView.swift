@@ -105,6 +105,11 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
 
     func numberOfRows(in tableView: NSTableView) -> Int { deck.items.count }
 
+    /// 选中的那几道记进 `deck`：Agent 问「用户选了哪几道」时 `get_current_view` 从那里读（`EXERCISE-PLAN.md §27`）。
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        deck.selectedIds = table.selectedRowIndexes.compactMap { deck.items.indices.contains($0) ? deck.items[$0].id : nil }
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard deck.items.indices.contains(row), let id = tableColumn?.identifier,
               let col = Col(rawValue: id.rawValue) else { return nil }

@@ -14,6 +14,24 @@ struct AgentReaderContext: Equatable {
         var link: String
     }
 
+    /// 活动标签是习题（练习页）时：哪一组、第几题、答没答（`EXERCISE-PLAN.md §27`）。只带身份，题目内容 Agent 用
+    /// `get_current_view` 读；翻到别的题 / 交了卷就和上次不一样，下一条消息重新带上。
+    struct ExerciseTab: Equatable {
+        var group: String
+        var list: Bool
+        var position: Int
+        var count: Int
+        var exerciseId: String?
+        var number: String = ""
+        var kind: String = ""
+        /// 「12」或跨页的「12–13」（1 起）。
+        var pages: String = ""
+        var book: String = ""
+        var documentId: String?
+        var answered = false
+        var selected = 0
+    }
+
     var workspaceName: String
     /// 工作区 `.unrd` 包本身（Agent 的工作目录是它的上一级）。
     var workspaceFolder: URL
@@ -27,6 +45,8 @@ struct AgentReaderContext: Equatable {
     var pageCount: Int
     /// 活动标签是整篇 Markdown 笔记时非 nil；与 `documentId` 互斥。
     var markdown: MarkdownNote?
+    /// 活动标签是习题时非 nil（与上面两样互斥）。
+    var exercise: ExerciseTab? = nil
 
     /// Agent 的工作目录 = 工作区包所在的目录（用户 2026-09-18 定）。
     var cwd: URL { workspaceFolder.deletingLastPathComponent() }
@@ -47,6 +67,23 @@ struct AgentReaderContext: Equatable {
             lines.append("Use the unireader read_markdown tool to read the note's current live text (outline / search / line ranges for long notes). To modify it, use edit_markdown with exact old_text copied from read_markdown; use update_markdown only to rewrite the whole note. Never edit the file directly.")
             lines.append("link \(markdown.link)")
             lines.append(Self.noteKinds + " The current tab is a Markdown note, so \"note\" (笔记) without a kind means a Markdown note, most likely this one.")
+        } else if let ex = exercise {
+            var s = "Current tab: Exercises (习题), the group \"\(ex.group)\" in the \(ex.list ? "list" : "practice") view"
+            if let id = ex.exerciseId {
+                s += ", question \(ex.position) of \(ex.count): exercise_id \(id), a \(ex.kind) question"
+                if !ex.number.isEmpty { s += " numbered \(ex.number)" }
+                if !ex.pages.isEmpty { s += " on page \(ex.pages)" }
+                if let d = ex.documentId { s += " of \"\(ex.book)\" (document_id \(d))" }
+                s += ex.answered ? "; an answer is showing for it" : "; the user has not answered it yet"
+            } else {
+                s += ", no question to show"
+            }
+            if ex.list, ex.selected > 0 { s += "; \(ex.selected) selected in the list" }
+            if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
+            if let windowId { s += ", window_id \(windowId.uuidString)" }
+            lines.append(s + ".")
+            lines.append("\"This question\" (这道题 / 这题) means that one. get_current_view gives it in full with the answer showing and its attempt_id (to grade it with grade_exercise_attempts); render_exercise shows it as printed (figures); open_exercises moves the user to another question or group.")
+            lines.append(Self.noteKinds + " If the user says \"note\" (笔记) about this question, they probably mean its own note (update_exercises note); otherwise ask which one.")
         } else if let documentId {
             var s = "Current document: \"\(docTitle)\" (document_id \(documentId)), page \(page + 1) of \(pageCount)"
             if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
@@ -68,7 +105,7 @@ struct AgentReaderContext: Equatable {
     /// 两种笔记的区别（2026-10-05 用户：Agent 要分清文字笔记和 Markdown 笔记）。只说「笔记」时按当前标签页猜（用户定），
     /// 上面按标签页各接一句。MCP 的 `instructions` 里也写了一遍，但不是每个 Agent 都读它，这里再带上。
     /// 习题（`EXERCISE-PLAN.md §3.2`）：用户说「识别习题 / 把这几页的题导进来」时 Agent 该用哪几个工具。理由同上。
-    private static let exercises = "Exercises (习题) are questions saved for the user to practice (练习 / 错题本 / 收藏): single / multiple choice, fill in the blank (type fill, one entry in blanks per blank) and subjective questions (type subjective — calculation, proof, short answer; answer = the reference answer). When the user says 习题册, 练习册 or 练习库 they mean these Exercises in UniReader (the 习题 part of the sidebar), not a file or a PDF. To recognize the exercises on some pages: look at each page with render_page (and read_pages for the text), transcribe every question exactly without rewording, and save them with import_exercises (page, number, stem, options or blanks, plus answer + answer_source only when the answer is printed or you are sure). The first time you import into a book (list_exercises shows no questions in it yet), ask the user how to group its questions into chapters: by the PDF's table of contents (chapters \"toc\"), their own way (printed headings, question groups, any number of levels: give each question its chapter path, top level first, and pass chapters \"none\"), or not at all (chapters \"none\"). Later imports follow the book's grouping: for table-of-contents or ungrouped books leave chapters out (a book whose chapters the user removed stays flat); for a book grouped the user's own way keep giving every question its chapter, reusing the existing level names. Regroup existing questions with update_exercises chapter when the user asks. If the user already answered on the page — usually by highlighting an option (list_annotations, kinds highlight) or by circling / writing (render_page with include_marks) — pass it as user_answer (user_blanks for fill). Fill in answers later from an answer key with list_exercises + update_exercises. To grade the user's fill-in or subjective answers: list_exercise_attempts (ungraded_only, or the exercise_ids you were given), render_exercise_answer for handwriting, compare with the reference answer, then grade_exercise_attempts with correct + short feedback in the user's language. Each exercise can also carry the user's own note (题目笔记, note in list_exercises — not a text note on the PDF); change it with update_exercises note only when the user asks. When the user asks to star (收藏 / 加星) or unstar questions, find them with list_exercises (filter starred lists the starred ones) and pass update_exercises starred true / false. Questions can carry free-form tags (tags in list_exercises, e.g. 真题 or 模拟): import_exercises tags adds tags (only when the user asks or the page itself says so, such as a section headed 历年真题), update_exercises tags replaces the whole set (send the existing tags plus the new one to add), and list_exercises tag lists one tag's questions."
+    private static let exercises = "Exercises (习题) are questions saved for the user to practice (练习 / 错题本 / 收藏): single / multiple choice, fill in the blank (type fill, one entry in blanks per blank) and subjective questions (type subjective — calculation, proof, short answer; answer = the reference answer). When the user says 习题册, 练习册 or 练习库 they mean these Exercises in UniReader (the 习题 part of the sidebar), not a file or a PDF. To recognize the exercises on some pages: look at each page with render_page (and read_pages for the text), transcribe every question exactly without rewording, and save them with import_exercises (page, number, stem, options or blanks, plus answer + answer_source only when the answer is printed or you are sure). The first time you import into a book (list_exercises shows no questions in it yet), ask the user how to group its questions into chapters: by the PDF's table of contents (chapters \"toc\"), their own way (printed headings, question groups, any number of levels: give each question its chapter path, top level first, and pass chapters \"none\"), or not at all (chapters \"none\"). Later imports follow the book's grouping: for table-of-contents or ungrouped books leave chapters out (a book whose chapters the user removed stays flat); for a book grouped the user's own way keep giving every question its chapter, reusing the existing level names. Regroup existing questions with update_exercises chapter when the user asks. If the user already answered on the page — usually by highlighting an option (list_annotations, kinds highlight) or by circling / writing (render_page with include_marks) — pass it as user_answer (user_blanks for fill). Fill in answers later from an answer key with list_exercises + update_exercises. To grade the user's fill-in or subjective answers: list_exercise_attempts (ungraded_only, or the exercise_ids you were given), render_exercise_answer for handwriting, compare with the reference answer, then grade_exercise_attempts with correct + short feedback in the user's language. Each exercise can also carry the user's own note (题目笔记, note in list_exercises — not a text note on the PDF); change it with update_exercises note only when the user asks. When the user asks to star (收藏 / 加星) or unstar questions, find them with list_exercises (filter starred lists the starred ones) and pass update_exercises starred true / false. Questions can carry free-form tags (tags in list_exercises, e.g. 真题 or 模拟): import_exercises tags adds tags (only when the user asks or the page itself says so, such as a section headed 历年真题), update_exercises tags replaces the whole set (send the existing tags plus the new one to add), and list_exercises tag lists one tag's questions. To see a question as printed (figures, tables, parts on the next page) use render_exercise. To take the user to questions — one question, a book, a chapter, the mistakes or starred ones, a tag, only the ones not done or a redo round of the ones wrong last time — use open_exercises; to give a clickable link instead, use exercise_link from list_exercises."
 
     /// Agent 上下文（`ACP-AGENT-PLAN.md §12`）：用户说「接着上次存的那个」时 Agent 该去哪找。理由同上。
     private static let contexts = "Agent contexts (Agent 上下文) are handoff summaries of earlier conversations, possibly with other agents, saved in this workspace. When the user asks to continue earlier work or mentions a saved context, find it with list_agent_contexts and read it with read_agent_context. The user saves one from the panel's Contexts menu; call save_agent_context only when the user asks you to."

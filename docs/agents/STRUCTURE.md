@@ -55,7 +55,8 @@
   标签：`DocTabModel.exerciseScope`（第四种，与 `docID` / `noteRef` / `boardID` 互斥，选中键 `"ex:"+scope.key`）；
   窗格 `ReaderPaneController.exView` 托管 `Window/Exercise/ExerciseTabView`（练习 `ExercisePracticeView` / 列表
   `ExerciseListView`，练到哪了在 `ExerciseDeck.shared` 里，切标签拆掉重建不丢）；「原题」现渲 `ExerciseOriginal`（自己一份
-  `PDFDocument` + 串行队列，传 `pageAlign`；跨页的题几段拼一张，段落规则 `Exercise.originalSlices`，`EXERCISE-PLAN.md §26`）。MCP `MCPTools+Exercises` / `MCPFacade+Exercises`（批 4）。
+  `PDFDocument` + 串行队列，传 `pageAlign`；跨页的题几段拼一张，段落规则 `Exercise.originalSlices`，`EXERCISE-PLAN.md §26`）。
+  Agent / 链接带用户到某一道题：`AppDelegate.showExercises` + `ExerciseDeck.present`（§27），MCP `open_exercises` / `render_exercise`，`ex=` 链接。MCP `MCPTools+Exercises` / `MCPFacade+Exercises`（批 4）。
   🔴 错题本规则（用户定）：答错进（库里与作答同一个事务），**只能手动移出**，答对不动它；答案变了重判作答，判错照样进。
   章节 `exercise.chapter`（目录路径，`ExerciseChapter.path` 按页查 PDF 自带目录、不用书签；侧栏章节树 `ExerciseChapterTree`
   按最早页码排）、书上的作答（`exercise_attempt.source = mark`，每题至多一条）、标签顶上的「只看没做过」`ExerciseFilter`

@@ -351,7 +351,7 @@ final class MCPFacade {
     /// 回到 App 里这个位置的 `unireader://` 链接（`DeepLink`）：Agent 写进 Obsidian / 清单里，点了就回来。
     /// 带 `ws` 路径 + `wsid`（有才带，盘换了挂载点靠它找回）；`page` 对外 1 起。
     func link(_ ws: WorkspaceManager, doc: String? = nil, page: Int? = nil, frac: Double? = nil,
-              note: UUID? = nil, markdown: String? = nil) -> String {
+              note: UUID? = nil, markdown: String? = nil, exercise: String? = nil) -> String {
         var l = DeepLink()
         l.workspacePath = ws.folder?.path
         l.workspaceId = ws.store?.workspaceId
@@ -360,6 +360,7 @@ final class MCPFacade {
         l.frac = frac
         l.noteId = note
         l.markdownId = markdown
+        l.exerciseId = exercise
         return l.absoluteString
     }
 
@@ -588,6 +589,16 @@ final class MCPFacade {
             o["title"] = ref.title
             o["link"] = link(c.workspace, markdown: ref.key)
             o["markdown"] = markdownDTO(c.workspace, ref, includeText: true)
+            return o
+        }
+        // 习题标签（2026-11-12，`EXERCISE-PLAN.md §27`）：哪一组、第几题、屏幕上显示的作答
+        if let scope = tab.exerciseScope {
+            o["content_type"] = "exercises"
+            o["document_id"] = scope.documentId ?? NSNull()
+            o["title"] = tab.tabTitle
+            let state = exerciseTabState(c.workspace, scope: scope)
+            if let id = (state["current"] as? MCPObject)?["id"] as? String { o["link"] = link(c.workspace, exercise: id) }
+            o["exercises"] = state
             return o
         }
         guard let docId = tab.docID else {

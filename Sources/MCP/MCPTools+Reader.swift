@@ -9,14 +9,14 @@ extension MCPTools {
         MCPTool(
             name: "get_current_view",
             title: "What the user is looking at",
-            description: "What the active tab in the key window (or a given window) is showing. For a PDF: position, zoom, chapter and selection. For a Markdown note: identity and current live editor text, including edits not autosaved yet.",
+            description: "What the active tab in the key window (or a given window) is showing. For a PDF: position, zoom, chapter and selection. For a Markdown note: identity and current live editor text, including edits not autosaved yet. For exercises (the practice tab): which group, practice or list view, the current question in full and the answer showing for it (with its attempt_id), and the questions selected in the list.",
             inputSchema: MCPSchema.object([
                 "window_id": MCPSchema.string("Window id from get_state. Default: the key window."),
             ]),
             outputSchema: MCPSchema.object([
                 "window_id": MCPSchema.string("window id"), "session_id": MCPSchema.string("tab / session id"),
                 "workspace": workspaceDTOSchema,
-                "content_type": MCPSchema.enumeration(["empty", "pdf", "markdown"], "kind of content in the active tab"),
+                "content_type": MCPSchema.enumeration(["empty", "pdf", "markdown", "exercises"], "kind of content in the active tab"),
                 "document_id": MCPSchema.nullable(MCPSchema.string("library document id; null for Markdown or an empty tab")), "title": MCPSchema.string("title"),
                 "page": MCPSchema.integer("page at the top of the viewport, 1-based"), "frac": MCPSchema.number("position inside that page, 0 top … 1 bottom"),
                 "link": MCPSchema.string("unireader:// link that reopens exactly this position"),
@@ -28,6 +28,7 @@ extension MCPTools {
                 "selection": MCPSchema.object(["page": MCPSchema.integer("1-based"), "text": MCPSchema.string("selected text"),
                                                "rects": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")))]),
                 "markdown": markdownDTOSchema(includeText: true),
+                "exercises": MCPSchema.object(exerciseTabProperties, description: "the practice tab (content_type exercises)"),
             ]),
             tier: .read
         ) { _, args in
@@ -50,6 +51,11 @@ extension MCPTools {
                     lines.append("revision \(note["revision"] ?? "") · \(total) lines · use edit_markdown to change part of it")
                     lines.append("\n--- Markdown text ---\n\(text)")
                 }
+            } else if let ex = v["exercises"] as? MCPObject {
+                lines.append("Exercises tab: " + exerciseTabSummary(ex))
+                lines.append("session_id \(v["session_id"] ?? "") · window_id \(v["window_id"] ?? "")")
+                if let link = v["link"] as? String { lines.append("link \(link)") }
+                lines.append("render_exercise shows a question as printed; open_exercises moves to another question or group.")
             } else if let title = v["title"] as? String {
                 lines.append("“\(title)” — page \(v["page"] ?? 1)/\(v["page_count"] ?? 0) (\(String(format: "%.0f", ((v["frac"] as? Double) ?? 0) * 100))% down the page) · zoom \(String(format: "%.2f", (v["zoom"] as? Double) ?? 1))")
                 if let ch = v["chapter"] as? String { lines.append("Chapter: \(ch)") }

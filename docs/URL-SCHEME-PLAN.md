@@ -29,6 +29,8 @@
 | `page` | 页码，**1 起** | 与 MCP 同口径（换算只在 `PageNo`）；越界钳到末页，不报错 |
 | `frac` | 页内位置 0（页顶）… 1（页底） | 默认 0；越界钳到 0…1 |
 | `note` | 笔记 id | 文字笔记 / 高亮 / 图片笔记 / 书签任一（`note.id`，UUID）。跳到它所在处；文字/图片笔记还会**展开气泡**。给了它，`page`/`frac` 只在找不到这条笔记时兜底 |
+| `md` | Markdown 笔记 id（`md_doc.id`） | 与 `doc` 互斥且优先（`MARKDOWN-NOTES-PLAN.md §4.4`） |
+| `ex` | 习题 id（`exercise.id`，2026-11-12） | 打开题目所在那本书的练习页、停在这道题上（同 MCP `open_exercises` 只给 `exercise_id`，`EXERCISE-PLAN.md §27`）。优先级在 `md` 之后、`doc` 之前；`ws`/`wsid` 都没给时按它找开着的工作区；找不到 → 报错 |
 
 不认识的参数一律忽略（以后加参数，老版本 App 照样能开）。`unireader://open` 光杆 = 只把 App 叫到前台。
 

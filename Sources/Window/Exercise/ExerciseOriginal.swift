@@ -78,9 +78,16 @@ enum ExerciseOriginal {
     /// 平板模式2 的「看原题」（`/exercise.png`，`EXERCISE-PLAN.md §10.4`）：同一块、同一份 PDF 实例，出 JPEG 字节。
     /// 在调用方线程（`LANServer` 的服务 queue）上**同步**等本队列渲完——PDF 实例只许本队列碰，纪律不变。
     nonisolated static func jpeg(_ src: ExerciseImageSource, pixelWidth: Int) -> Data? {
+        jpegSized(src, pixelWidth: pixelWidth)?.data
+    }
+
+    /// 同上，连图的像素尺寸一起给（MCP `render_exercise` 要报宽高）。
+    nonisolated static func jpegSized(_ src: ExerciseImageSource, pixelWidth: Int) -> (data: Data, width: Int, height: Int)? {
         let cg = queue.sync { renderCG(src, pixelWidth: pixelWidth) }
-        guard let cg else { return nil }
-        return NSBitmapImageRep(cgImage: cg).representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+        guard let cg,
+              let data = NSBitmapImageRep(cgImage: cg).representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+        else { return nil }
+        return (data, cg.width, cg.height)
     }
 
     /// 只在 `queue` 上跑。

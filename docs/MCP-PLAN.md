@@ -960,3 +960,22 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
   越过最后一页、坏框、没有 `region` → 退回（导入只退那一道；修改整批不动）。`update_exercises` 给 `[]` = 不跨页了，`region: []` 时一并去掉。
   `list_exercises` / `update_exercises` 的输出带 `next_regions`（有才带），已在 `exerciseOutputSchema` 里声明。
 - 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`。
+
+## 29. 2026-11-12 习题：看得到当前题、打开题、看原题（`open_exercises` / `render_exercise`）
+
+- 起因（用户）：「拓展下 Agent 能够查看题目，打开题目，处理题目的能力」。习题标签上 `get_current_view` 原先回 `empty`；没有工具能带用户到某一道题；
+  看原题只能自己拿 `page` + `region` 去 `render_page`。
+- **`get_current_view`**：`content_type` 加 `exercises`，带 `exercises` 对象（`exerciseTabProperties`）：`group` / `scope`（list + document_id + chapter）/
+  `view`（practice / list）/ `filter`（all / not_done / last_wrong）/ `tag` / `count` / `position` / 这一轮做了几道对几道 /
+  `current`（同 `list_exercises` 一道题，另加 `on_screen`：屏幕上显示的作答、对错、来自这一轮 / 以前 / 书上、`attempt_id`、谁判的、还没交的草稿）/
+  `selected_ids`（列表视图里选中的，`ExerciseListView` 选中变了写进 `ExerciseDeck.selectedIds`）。`link` = 当前题的 `ex=` 链接。
+- **`open_exercises`**（`.navigate`）：`exercise_id` 停在哪道；`document_id` + `chapter` + `list`（all / mistakes / starred）定哪一组，只给 `exercise_id` = 它那本书；
+  `filter` / `tag`（`""` = 不按标签筛）/ `view`。给的题不在那一组 → 报错不换组；那道题被筛选挡住 → 先去掉筛选（`ExerciseDeck.present`）。
+  窗口 / 标签规则同侧栏（`AppDelegate.showExercises` → `TabsModel.openExercises`），链接 `ex=` 共用它。「跟随 Agent」关着 → 同 `goto` 回 `AgentFollow.declined`。
+  返回同 `get_current_view` 的 `exercises` + `window_id` / `session_id`。
+- **`render_exercise`**（`.read`）：原题图 JPEG，同练习页「原题」（`ExerciseOriginal.source` + `jpegSized`：有框按框、跨页拼起来、没框整页），
+  默认宽 1400。出图在 `ExerciseOriginal` 自己的队列上，处理函数把等待挪到全局队列，不占着 Swift 并发线程。
+- `list_exercises` / `update_exercises` 每道题多两个键：`exercise_link`（`unireader://open?ex=`，给用户点）、`last_page`（跨页的题）。
+- `instructions` 与 App 内 Agent 的上下文块各加了一句用法。
+- 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`；新返回的键都已在 `outputSchema` 里声明（逐个核对过）。
+

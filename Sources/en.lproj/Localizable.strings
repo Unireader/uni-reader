@@ -1294,6 +1294,7 @@
 "Set Question Area" = "Set Question Area";
 "Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page." = "Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page.";
 "Use Whole Page" = "Use Whole Page";
+"Question not found in this workspace: %@" = "Question not found in this workspace: %@";
 "Pages %d–%d" = "Pages %d–%d";
 "Question is on:" = "Question is on:";
 "Page %d only" = "Page %d only";

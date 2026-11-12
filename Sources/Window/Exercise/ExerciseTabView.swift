@@ -130,6 +130,19 @@ final class ExerciseTabView: NSView {
                 self.syncHeader()
             }
             .store(in: &bag)
+
+        // Agent / 链接把用户带到这一组的某一道（`ExerciseDeck.present`，`EXERCISE-PLAN.md §27`）：可能连练习 / 列表也换了。
+        // 不抢键盘焦点——用户多半正在 Agent 输入框里打字。
+        ExerciseDeck.changed
+            .filter { [weak self] in $0.origin == .agent && $0.deck === self?.deck }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.modeControl.selectedSegment != self.deck.mode.rawValue { self.applyMode(focus: false) }
+                self.practice.show()
+                self.list.reload()
+                self.syncHeader()
+            }
+            .store(in: &bag)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
@@ -232,11 +245,11 @@ final class ExerciseTabView: NSView {
         applyMode()
     }
 
-    private func applyMode() {
+    private func applyMode(focus: Bool = true) {
         modeControl.selectedSegment = deck.mode.rawValue
         practice.isHidden = deck.mode != .practice
         list.isHidden = deck.mode != .list
-        if deck.mode == .list { list.reload() } else { practice.takeFocus() }
+        if deck.mode == .list { list.reload() } else if focus { practice.takeFocus() }
         syncHeader()
     }
 

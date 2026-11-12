@@ -8,12 +8,16 @@ extension MCPTools {
     static let maxImportExercises = 50
 
     /// 一道题在输出里的样子（`list_exercises` / `update_exercises` 共用）。
-    static var exerciseOutputSchema: MCPObject {
-        MCPSchema.object([
+    static var exerciseOutputSchema: MCPObject { MCPSchema.object(exerciseOutputProperties) }
+
+    static var exerciseOutputProperties: [String: MCPObject] {
+        [
             "id": MCPSchema.string("exercise id"),
             "document_id": MCPSchema.string("source document"),
             "page": MCPSchema.integer("source page, 1-based"),
-            "link": MCPSchema.string("unireader:// link to the source page"),
+            "last_page": MCPSchema.integer("for a question that runs onto the following pages: the last page it is printed on, 1-based"),
+            "link": MCPSchema.string("unireader:// link to the source page in the PDF"),
+            "exercise_link": MCPSchema.string("unireader:// link that opens this question in UniReader's practice view (give it to the user to click)"),
             "type": MCPSchema.enumeration(["single", "multiple", "fill", "subjective"],
                                           "single / multiple choice, fill in the blank, or subjective (free answer)"),
             "number": MCPSchema.string("question number as printed (may be empty)"),
@@ -39,7 +43,41 @@ extension MCPTools {
             "attempts": MCPSchema.integer("times practiced"),
             "correct": MCPSchema.integer("times answered correctly"),
             "ungraded": MCPSchema.integer("attempts not judged yet (fill / subjective answers waiting for the user or an agent to grade; list them with list_exercise_attempts)"),
+        ]
+    }
+
+    /// 习题标签此刻的样子（`get_current_view` 的 `exercises`、`open_exercises` 的返回，`EXERCISE-PLAN.md §27`）。
+    static var exerciseTabProperties: [String: MCPObject] {
+        let onScreen = MCPSchema.object([
+            "answered": MCPSchema.boolean("an answer is showing for this question (given this round, or an earlier one the app shows)"),
+            "answer": MCPSchema.string("the answer showing: option letters (choice) or the text (subjective)"),
+            "blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "fill questions: the answer showing, one string per blank"),
+            "correct": MCPSchema.boolean("verdict on that answer (absent = not judged yet)"),
+            "from": MCPSchema.enumeration(["this_round", "earlier_practice", "book"], "given in this practice round, an earlier practice, or recognized from the user's marks in the book"),
+            "attempt_id": MCPSchema.string("that answer's attempt id (grade_exercise_attempts, render_exercise_answer, list_exercise_attempts)"),
+            "judged_by": MCPSchema.string("who judged it: program, self or agent"),
+            "draft": MCPSchema.string("subjective questions: what the user has typed but not submitted yet"),
+            "draft_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "fill questions: typed but not submitted yet"),
         ])
+        var current = exerciseOutputProperties
+        current["on_screen"] = onScreen
+        return [
+            "group": MCPSchema.string("the group of questions open, as named in the sidebar"),
+            "scope": MCPSchema.object([
+                "list": MCPSchema.enumeration(["all", "mistakes", "starred"], "all questions, the mistakes (错题本) or the starred ones (收藏)"),
+                "document_id": MCPSchema.string("only this book"),
+                "chapter": MCPSchema.array(of: MCPSchema.string("level"), "only this chapter and its sub-sections"),
+            ]),
+            "view": MCPSchema.enumeration(["practice", "list"], "one question at a time, or the list of them"),
+            "filter": MCPSchema.enumeration(["all", "not_done", "last_wrong"], "all questions, only the ones not done yet, or only the ones wrong last time (a redo round)"),
+            "tag": MCPSchema.string("only questions with this tag"),
+            "count": MCPSchema.integer("questions in this view"),
+            "position": MCPSchema.integer("which one is current, 1-based (0 = none)"),
+            "done_this_round": MCPSchema.integer("answered in this practice round"),
+            "right_this_round": MCPSchema.integer("answered right in this practice round"),
+            "current": MCPSchema.object(current, description: "the current question, plus the answer showing for it (on_screen)"),
+            "selected_ids": MCPSchema.array(of: MCPSchema.string("exercise id"), "list view: the questions the user selected"),
+        ]
     }
 
     static var blankOutputSchema: MCPObject {
@@ -496,6 +534,109 @@ extension MCPTools {
                 lines.append("- [\((a["id"] as? String ?? "").prefix(8))] #\(a["number"] ?? "") \(a["type"] ?? "") · \(verdict) · \(ans.prefix(60))\(hand)")
             }
             return MCPToolResult(text: lines.joined(separator: "\n"), structured: r)
+        }
+    }
+
+    static func openExercisesTool() -> MCPTool {
+        MCPTool(
+            name: "open_exercises",
+            title: "Open exercises",
+            description: "Show exercises in UniReader's practice tab: a book's questions, one chapter, the mistakes (错题本) or the starred ones (收藏), optionally only one tag, the ones not done yet or the ones wrong last time — and stop on one question with exercise_id (e.g. the one you are explaining, or the next one the user should do). With just exercise_id it opens that question in its own book. Moves the user's view like open_document.",
+            inputSchema: MCPSchema.object([
+                "workspace": MCPSchema.string("Workspace .unrd path, only when it could be ambiguous."),
+                "exercise_id": MCPSchema.string("Stop on this question (full id or its first 8 characters); it must be in the group you open."),
+                "document_id": MCPSchema.string("Only this book. Default: the book of exercise_id (for list all); none for mistakes / starred = every book."),
+                "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Only this chapter and its sub-sections (path, top level first, as in list_exercises); needs a book."),
+                "list": MCPSchema.enumeration(["all", "mistakes", "starred"], "All questions, the mistakes or the starred ones", default: "all"),
+                "filter": MCPSchema.enumeration(["all", "not_done", "last_wrong"], "Only the questions not done yet, or a redo round of the ones wrong last time (not_done is not offered for mistakes). Omit to keep the tab's current filter."),
+                "tag": MCPSchema.string("Only questions with this tag; \"\" = no tag filter. Omit to keep the tab's current one."),
+                "view": MCPSchema.enumeration(["practice", "list"], "One question at a time, or the list. Default: practice when exercise_id is given, otherwise unchanged."),
+                "activate": MCPSchema.boolean("Bring UniReader and the window to front", default: true),
+            ]),
+            outputSchema: MCPSchema.object(exerciseTabProperties.merging([
+                "window_id": MCPSchema.string("window id"), "session_id": MCPSchema.string("tab / session id"),
+            ]) { a, _ in a }),
+            tier: .navigate
+        ) { ctx, args in
+            let id = try args.string("exercise_id")
+            let docId = try args.string("document_id"), wsPath = try args.string("workspace")
+            let chapter = try chapterArg(args.raw["chapter"], at: "arguments")
+            let list = try args.string("list") ?? "all"
+            guard ["all", "mistakes", "starred"].contains(list) else { throw MCPInvalidParams("list must be all, mistakes or starred") }
+            let filter = try args.string("filter"), tag = try args.string("tag")
+            let view = try args.string("view")
+            if let view, !["practice", "list"].contains(view) { throw MCPInvalidParams("view must be practice or list") }
+            let activate = try args.bool("activate", default: true)
+            if ctx.fromInAppAgent, !AgentFollow.enabled {
+                return MCPToolResult(text: AgentFollow.declined, structured: [:])
+            }
+            let r = try await MainActor.run {
+                try MCPFacade.shared.openExercises(exerciseId: id, documentId: docId, chapter: chapter, list: list, view: view,
+                                                   filter: filter, tag: tag, workspacePath: wsPath, activate: activate)
+            }
+            return MCPToolResult(text: "Opened " + exerciseTabSummary(r), structured: r)
+        }
+    }
+
+    /// 习题标签状态的一段文字（`open_exercises` / `get_current_view` 共用）。
+    static func exerciseTabSummary(_ r: MCPObject) -> String {
+        var lines = ["“\(r["group"] ?? "")” · \(r["view"] ?? "practice") view · \(r["count"] ?? 0) question(s)"
+                     + ((r["filter"] as? String).flatMap { $0 == "all" ? nil : " · filter \($0)" } ?? "")
+                     + ((r["tag"] as? String).map { " · tag \($0)" } ?? "")
+                     + " · this round \(r["done_this_round"] ?? 0) done, \(r["right_this_round"] ?? 0) right"]
+        if let c = r["current"] as? MCPObject {
+            let pages = (c["last_page"] as? Int).map { "p.\(c["page"] ?? "?")–\($0)" } ?? "p.\(c["page"] ?? "?")"
+            lines.append("Current: question \(r["position"] ?? 0) of \(r["count"] ?? 0) — exercise_id \(c["id"] ?? "") · \(pages) #\(c["number"] ?? "") \(c["type"] ?? "")")
+            lines.append("Stem: " + String(Exercise.collapse(c["stem"] as? String ?? "").prefix(200)))
+            if let s = c["on_screen"] as? MCPObject {
+                if s["answered"] as? Bool == true {
+                    let ans = (s["blanks"] as? [String]).map { $0.joined(separator: " / ") } ?? (s["answer"] as? String ?? "")
+                    let verdict = (s["correct"] as? Bool).map { $0 ? "right" : "wrong" } ?? "not judged"
+                    lines.append("On screen: answered “\(Exercise.collapse(ans).prefix(120))” (\(verdict), \(s["from"] ?? "")\((s["attempt_id"] as? String).map { ", attempt_id \($0)" } ?? ""))")
+                } else {
+                    lines.append("On screen: not answered yet")
+                }
+            }
+        } else {
+            lines.append("No question to show in this view.")
+        }
+        if let sel = r["selected_ids"] as? [String], !sel.isEmpty { lines.append("Selected in the list: \(sel.joined(separator: ", "))") }
+        if let w = r["window_id"] { lines.append("session_id \(r["session_id"] ?? "") · window_id \(w)") }
+        return lines.joined(separator: "\n")
+    }
+
+    static func renderExerciseTool() -> MCPTool {
+        MCPTool(
+            name: "render_exercise",
+            title: "Show a question as printed",
+            description: "Render an exercise as it is printed in its PDF — the same picture the user sees under Original while practicing: the question's box (region; with next_regions the parts on the following pages are stacked below), or the whole page when it has no box. Use it to see figures, tables and layout the text cannot carry. JPEG.",
+            inputSchema: MCPSchema.object([
+                "workspace": MCPSchema.string("Workspace .unrd path, only when the id could be in several open workspaces."),
+                "exercise_id": MCPSchema.string("Exercise id (full, or its first 8 characters)"),
+                "width": MCPSchema.integer("Image width in pixels (default 1400)", min: 400, max: 2400),
+            ], required: ["exercise_id"]),
+            outputSchema: MCPSchema.object([
+                "exercise_id": MCPSchema.string("full exercise id"),
+                "pages": MCPSchema.array(of: MCPSchema.integer("1-based"), "the pages in the picture, top to bottom"),
+                "cropped": MCPSchema.boolean("true = only the question's box; false = the whole page (the question has no box yet)"),
+                "width": MCPSchema.integer("pixels"), "height": MCPSchema.integer("pixels"),
+            ]),
+            tier: .read
+        ) { _, args in
+            guard let id = try args.string("exercise_id"), !id.isEmpty else { throw MCPInvalidParams("exercise_id is required") }
+            let wsPath = try args.string("workspace")
+            let width = min(2400, max(400, try args.int("width") ?? 1400))
+            var (r, src) = try await MainActor.run { try MCPFacade.shared.exerciseImageSource(id, workspacePath: wsPath) }
+            // 出图在 `ExerciseOriginal` 自己的队列上（同一本 PDF 只许一条队列碰），别占着并发线程池等
+            let out = await withCheckedContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async { cont.resume(returning: ExerciseOriginal.jpegSized(src, pixelWidth: width)) }
+            }
+            guard let out else { throw MCPToolError("could not render the page of exercise \(id)") }
+            r["width"] = out.width
+            r["height"] = out.height
+            let pages = (r["pages"] as? [Int] ?? []).map(String.init).joined(separator: ", ")
+            return MCPToolResult(text: "Exercise \(r["exercise_id"] ?? id) as printed, page(s) \(pages)\((r["cropped"] as? Bool) == true ? "" : " (whole page: no box set)"), \(out.width)×\(out.height) px.",
+                                 structured: r, image: (out.data, "image/jpeg"))
         }
     }
 

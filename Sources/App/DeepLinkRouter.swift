@@ -20,6 +20,7 @@ enum DeepLinkRouter {
         case appNotReady
         case workspaceNotFound(String)
         case documentNotFound(String)
+        case exerciseNotFound(String)
         case nothingOpen
 
         var errorDescription: String? {
@@ -27,6 +28,7 @@ enum DeepLinkRouter {
             case .appNotReady: return L("UniReader is still starting up.")
             case .workspaceNotFound(let p): return String(format: L("Workspace not found: %@"), p)
             case .documentNotFound(let d): return String(format: L("Document not found in this workspace: %@"), d)
+            case .exerciseNotFound(let e): return String(format: L("Question not found in this workspace: %@"), e)
             case .nothingOpen: return L("The link does not say which workspace or document to open, and nothing is open.")
             }
         }
@@ -63,6 +65,15 @@ enum DeepLinkRouter {
             NSApp.activate(ignoringOtherApps: true)
             c0.window?.makeKeyAndOrderFront(nil)
             wsLog("链接到位：\(ws.name) md=\(mdID)")
+            return
+        }
+
+        // 3b：习题（2026-11-12，`EXERCISE-PLAN.md §27`）：题目所在那本书的练习页、停在这道题上（同 MCP `open_exercises`）
+        if let exID = link.exerciseId {
+            guard let e = ws.exercise(id: exID) else { throw RouteError.exerciseNotFound(exID) }
+            let scope: ExerciseScope = e.documentId.map { .document($0) } ?? .all
+            _ = try delegate.showExercises(scope, at: e.id, mode: .practice, in: ws, window: c0, activate: true)
+            wsLog("链接到位：\(ws.name) ex=\(exID)")
             return
         }
 
@@ -106,6 +117,9 @@ enum DeepLinkRouter {
         // 链接没说工作区：哪个开着的工作区有这篇就用哪个
         if let mdID = link.markdownId,
            let ws = WorkspaceRegistry.shared.openManagers.first(where: { $0.note(key: mdID) != nil }),
+           let c = window(of: ws) { return c }
+        if let exID = link.exerciseId,
+           let ws = WorkspaceRegistry.shared.openManagers.first(where: { $0.exercise(id: exID) != nil }),
            let c = window(of: ws) { return c }
         if let docId = link.documentId,
            let ws = WorkspaceRegistry.shared.openManagers.first(where: { $0.document(id: docId) != nil }),

@@ -299,4 +299,30 @@ extension AppDelegate {
             return nil
         }
     }
+
+    /// 打开一组题、可停在某一道上（Agent `open_exercises` 与 `unireader://open?ex=` 共用，`EXERCISE-PLAN.md §27`）。
+    /// 窗口：给了就用它；否则这个工作区的 key 窗口 / 第一扇，都没有就新开一扇（照常恢复它的标签）。
+    /// 标签规则同侧栏（`TabsModel.openExercises`：默认一个公用习题标签，错题本一支另一个）。
+    /// 先改好这一组的状态（`ExerciseDeck.present`）再开标签：标签视图已在就按 `.agent` 重画，刚建的直接读到新状态。
+    @discardableResult
+    func showExercises(_ scope: ExerciseScope, at exerciseId: String?, mode: ExerciseDeck.Mode?,
+                       filter: ExerciseFilter? = nil, tag: String? = nil, in ws: WorkspaceManager,
+                       window: ReaderWindowController? = nil,
+                       activate: Bool) throws -> (ReaderWindowController, DocTabModel, ExerciseDeck) {
+        let deck = ExerciseDeck.shared(scope: scope, workspace: ws)
+        deck.present(exerciseId: exerciseId, mode: mode, filter: filter, tag: tag)
+        let c: ReaderWindowController
+        if let window, window.workspace === ws { c = window }
+        else {
+            let mine = readerWindowControllers.filter { $0.workspace === ws }
+            if let k = mine.first(where: { $0.window?.isKeyWindow == true }) ?? mine.first { c = k }
+            else { c = try makeReaderWindow(workspacePath: ws.folder?.path, docId: nil, activate: activate) }
+        }
+        let tab = c.tabs.openExercises(scope)
+        if activate {
+            NSApp.activate(ignoringOtherApps: true)
+            c.window?.makeKeyAndOrderFront(nil)
+        }
+        return (c, tab, deck)
+    }
 }

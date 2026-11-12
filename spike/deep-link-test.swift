@@ -1,6 +1,6 @@
 // `unireader://open?…` 链接的解析与生成（`Sources/App/DeepLink.swift`，只依赖 Foundation）。运行：
 //   cp spike/deep-link-test.swift /tmp/main.swift && swiftc Sources/App/DeepLink.swift /tmp/main.swift -o /tmp/dlt && /tmp/dlt
-// 覆盖：scheme/host 判定、七个参数各自的解析、`ws` 三种写法归一、页码/位置/笔记 id 的坏值、
+// 覆盖：scheme/host 判定、八个参数各自的解析（含 2026-11-12 的 ex）、`ws` 三种写法归一、页码/位置/笔记 id 的坏值、
 //       未知参数忽略、生成时的严格编码（空格/括号/中文/井号）、生成 → 解析往返一致、frac 格式。
 import Foundation
 
@@ -42,6 +42,19 @@ mdLink.workspacePath = "/Volumes/T7/读书.unrd"
 mdLink.markdownId = "M1"
 check((try? DeepLink.parse(mdLink.url)) == mdLink, "md 链接 生成 → 解析 往返一致")
 check(mdLink.absoluteString.contains("&md=M1"), "生成的链接里带 md 参数")
+
+// 习题（2026-11-12，`EXERCISE-PLAN.md §27`）：ex = 在练习页打开这道题
+let ex = parse("unireader://open?ws=%2FVolumes%2FT7%2F%E8%AF%BB%E4%B9%A6.unrd&ex=E1-AB")
+check(ex?.exerciseId == "E1-AB", "ex → 习题 id")
+check(ex?.documentId == nil && ex?.markdownId == nil, "只给 ex 时没有 doc / md")
+check(parse("unireader://open?ex=E1")?.isEmpty == false, "只有 ex 也算有定位参数")
+check(parse("unireader://open?EX=E1")?.exerciseId == "E1", "ex 参数名大小写不敏感")
+var exLink = DeepLink()
+exLink.workspacePath = "/Volumes/T7/读书.unrd"
+exLink.exerciseId = "E1-AB"
+check((try? DeepLink.parse(exLink.url)) == exLink, "ex 链接 生成 → 解析 往返一致")
+check(exLink.absoluteString.hasSuffix("&ex=E1-AB"), "生成的链接里带 ex 参数")
+check(DeepLink.formatHint.contains("ex=<exercise_id>"), "给 Agent 的格式说明里有 ex")
 check(parse("unireader://open?PAGE=3&Doc=x")?.page == 3 && parse("unireader://open?PAGE=3&Doc=x")?.documentId == "x", "参数名大小写不敏感")
 check(parse("unireader://open?doc=x&foo=bar&page=2")?.page == 2, "未知参数忽略")
 check(parse("unireader://open?doc=&page=")?.isEmpty == true, "空值当没给")
