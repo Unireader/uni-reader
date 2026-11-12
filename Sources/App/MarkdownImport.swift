@@ -134,6 +134,29 @@ enum MarkdownImport {
 
 
     /// 文件名里不能出现的字符换成 `-`（同 Obsidian 导出那套口径）。
+    /// Agent 新建笔记（MCP `create_markdown`，`MARKDOWN-NOTES-PLAN.md §14`）落在源里的哪个相对路径：标题 = 文件名
+    /// （去掉多写的 `.md`，非法字符换成 `-`），`folder` 一级一级查。不行 → 一句英文原因（原样回给 Agent）。
+    /// `..`、点开头、`trash` 的目录与点开头的文件扫描时跳过（`NoteScan`）——建在那里就看不见了，直接拒绝。
+    static func newNotePath(title: String, folder: String) -> Result<String, NewNoteRejected> {
+        var name = title.trimmed
+        if name.lowercased().hasSuffix(".md") { name = String(name.dropLast(3)).trimmed }
+        guard !name.isEmpty else { return .failure(NewNoteRejected("title is empty")) }
+        let file = safeFileName(name)
+        guard !file.hasPrefix(".") else {
+            return .failure(NewNoteRejected("a note name cannot start with a dot (such files are not shown)"))
+        }
+        let parts = folder.split(separator: "/").map { String($0).trimmed }.filter { !$0.isEmpty }
+        for p in parts where p == ".." || p.hasPrefix(".") || p.lowercased() == "trash" {
+            return .failure(NewNoteRejected("folder '\(folder)' is not allowed: no '..', no names starting with a dot, no 'trash' (such folders are hidden)"))
+        }
+        return .success((parts + [file + ".md"]).joined(separator: "/"))
+    }
+
+    struct NewNoteRejected: Error, Equatable {
+        let reason: String
+        init(_ r: String) { reason = r }
+    }
+
     static func safeFileName(_ s: String) -> String {
         var out = s
         for c in ["/", "\\", ":", "*", "?", "\"", "<", ">", "|", "#", "^", "[", "]"] {

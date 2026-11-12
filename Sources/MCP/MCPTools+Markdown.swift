@@ -4,7 +4,8 @@ import Foundation
 /// - `list_markdown_notes`：拿 `note_ref`；
 /// - `read_markdown`：按行分页（带行号）/ 行内搜索 / 标题大纲，任何一篇都能读，不必开着；
 /// - `edit_markdown`：code agent 式局部修改（原文精确匹配替换、按行号插入），不用重吐整篇；
-/// - `update_markdown`：整篇替换（带 revision 乐观锁），只留给「真要重写全文」的场合。
+/// - `update_markdown`：整篇替换（带 revision 乐观锁），只留给「真要重写全文」的场合；
+/// - `create_markdown`：新建一篇（2026-11-12，`MARKDOWN-NOTES-PLAN.md §14`；此前 Agent 只能绕过 App 直接写文件）。
 /// 纯逻辑在 `MCPMarkdownText`，碰 App 状态的在 `MCPFacade`（写入同一条路：原子写文件 + 推回所有编辑器）。
 extension MCPTools {
     /// 笔记里公式怎么写（英文，给模型看）。MCP `instructions`、写笔记工具的正文字段、Agent 面板上下文共用这一段。
@@ -181,6 +182,51 @@ extension MCPTools {
         }
         guard let old else { throw MCPInvalidParams("\(label): 'old_text' or 'insert_line' is required") }
         return .replace(old: old, new: new, all: try a.bool("replace_all", default: false))
+    }
+
+    static func createMarkdown() -> MCPTool {
+        MCPTool(
+            name: "create_markdown",
+            title: "Create a Markdown note",
+            description: "Create a new Markdown note — a separate .md file in the workspace's built-in Notes folder or in a referenced external folder (e.g. the user's Obsidian vault) — with an optional starting text. Use it instead of writing files yourself: the note shows up in UniReader's sidebar right away and nothing else is touched. The title becomes the file name (and the name [[wiki links]] use). Missing folders are created. If a note with that name already exists there, nothing is written and you get its note_ref: change it with edit_markdown / update_markdown instead. Create notes only when the user asks for them.",
+            inputSchema: MCPSchema.object([
+                "title": MCPSchema.string("Note title = file name, without .md (characters / \\ : * ? \" < > | # ^ [ ] become -)."),
+                "text": MCPSchema.string("Starting Markdown body (optional; default empty). \(mathWriting)"),
+                "source": MCPSchema.string("Note source id or name from list_markdown_notes sources. Default: the workspace's built-in Notes folder."),
+                "folder": MCPSchema.string("Folder inside the source, relative to its root, e.g. \"101思想政治理论/思修\" (created if missing). Default: the source root."),
+                "open": MCPSchema.boolean("Open the new note in a tab afterwards", default: false),
+                "workspace": MCPSchema.string("Workspace .unrd path. Default: the key window's workspace."),
+            ], required: ["title"]),
+            outputSchema: MCPSchema.object([
+                "ref": MCPSchema.string("note_ref of the new note"),
+                "title": MCPSchema.string("note title"),
+                "source": MCPSchema.string("source name"),
+                "relative_path": MCPSchema.string("path relative to the source root"),
+                "link": MCPSchema.string("unireader:// link that opens the note"),
+                "revision": MCPSchema.string("revision of the text written (for update_markdown)"),
+                "characters": MCPSchema.integer("character count"),
+                "line_count": MCPSchema.integer("lines"),
+                "opened": MCPSchema.boolean("the note was opened in a tab"),
+            ]),
+            tier: .write
+        ) { ctx, args in
+            let title = try args.requiredString("title")
+            let text = try args.string("text") ?? ""
+            let source = try args.string("source"), folder = try args.string("folder") ?? ""
+            let ws = try args.string("workspace")
+            // 打开是导航：「跟随 Agent」关着时照建不开（同 open_document 带 path 时导入照做）
+            var open = try args.bool("open", default: false)
+            var declined = false
+            if open, ctx.fromInAppAgent, !AgentFollow.enabled { open = false; declined = true }
+            let r = try await MainActor.run {
+                try MCPFacade.shared.createMarkdown(title: title, text: text, source: source, folder: folder,
+                                                    workspacePath: ws, open: open)
+            }
+            var line = "Created Markdown note “\(r["title"] ?? "")” at \(r["source"] ?? "")/\(r["relative_path"] ?? "") · note_ref \(r["ref"] ?? "") · \(r["line_count"] ?? 0) lines · revision \(r["revision"] ?? "")"
+            if (r["opened"] as? Bool) == true { line += " · opened in a tab" }
+            if declined { line += "\nNot opened: " + AgentFollow.declined }
+            return MCPToolResult(text: line, structured: r)
+        }
     }
 
     static func updateMarkdown() -> MCPTool {

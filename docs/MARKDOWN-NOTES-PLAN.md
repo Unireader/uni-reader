@@ -388,3 +388,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_md_doc_path ON md_doc(rel_path);
   106. 笔记段头右键「新建文件夹…」→ 输入名字 → 侧栏多出这个空文件夹；它的右键「在这里新建」建出的笔记在里面。
   107. 子目录右键「新建文件夹…」→ 建在它底下、父目录自动展开；同名再建一次得到「名字 2」。
   108. 工作区里一篇笔记都没有时，「文件 › 新建笔记文件夹…」建出来后侧栏出现「笔记」这一段。
+
+## 14. Agent 新建笔记：MCP `create_markdown`（2026-11-12）
+
+起因：用户贴的 Agent 原话「没有 MCP 工具能新建笔记，只能通过文件系统创建（新建纯文本 .md，不动库内其它文件），随后用 MCP 验证」。
+Agent 绕过 App 直接写文件，能用但不稳：不知道源根在哪、可能写进 `.unrd` 包、写到扫描看不见的目录，侧栏要等下次扫描才出来。
+
+- **工具**（`.write`，受写入开关管）：`title`（= 文件名，不带 `.md`）、`text`（开头正文，可省）、`source`（源的 id 或名字，默认内建 `Notes/`；
+  引用的外部目录如 Obsidian vault 也行）、`folder`（源里的相对目录，多级，不在就建）、`open`（建完开一个标签；「跟随 Agent」关着时照建不开）。
+  返回 `note_ref` / 相对路径 / 链接 / revision，接着就能 `edit_markdown`。
+- **规则**（`WorkspaceManager.createNote(named:text:in:folder:)`，纯规则在 `MarkdownImport.newNotePath`）：
+  - **同名已有就报错、不改名**（界面上的「新建笔记」会加 `-2`；Agent 要的往往就是这个名字，`[[…]]` 也按名字认），回话里给出已有那篇的 `note_ref`，让它改用 `edit_markdown` / `update_markdown`。
+    清单里有的、刚写进磁盘还没扫到的都算（不分大小写）。
+  - 文件名过 `safeFileName`；点开头的文件名、目录里有 `..` / 点开头 / `trash` 的一律拒绝（扫描时跳过，建了也看不见）。
+  - 引用目录的根不在这台电脑上 → 拒绝（不在本机凭空建目录）；服务器镜像源只读 → 拒绝。
+  - 只写这一个新文件（红线 9：别的笔记一个字不动）；写完重扫，侧栏马上出现。
+- **说明**：MCP `instructions` 与 App 内 Agent 的上下文（两种笔记那句）都加了「新建用 `create_markdown`，别自己写 .md 文件」。
+- 验证：`spike/markdown-link-test.swift` 112 项（新加路径规则 9 项；顺手把过时的「schema 恰好 v15」改成「至少 v15」）；Mac Debug 编译通过。
+  🔴 没对着运行中的 App 跑过。
+- 实测清单（用户）：
+  125. 让 Agent「在思修目录下按章节新建几篇笔记」（引用的 Obsidian 目录）→ 侧栏马上出现，文件就在 vault 对应目录里，其它笔记没被动过。
+  126. 让它再建一篇同名的 → 它收到「已存在」、改用 `edit_markdown` 往那篇里写，而不是多出一篇「名字-2」。
+

@@ -61,6 +61,7 @@ enum MCPTools {
         c.register(deleteAnnotations())
         c.register(editMarkdown())
         c.register(updateMarkdown())
+        c.register(createMarkdown())   // 2026-11-12（`MARKDOWN-NOTES-PLAN.md §14`）
         c.register(importPDFTool())
         c.register(createWorkspace())
         c.register(runOCR())

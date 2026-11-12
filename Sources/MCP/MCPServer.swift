@@ -165,7 +165,9 @@ final class MCPServer: ObservableObject {
     go by the active tab: a PDF tab means a text note on that document, a Markdown note tab means a Markdown note. \
     For Markdown notes: list_markdown_notes gives note_ref values; read_markdown reads any note by line range \
     (with line numbers), by search, or as a heading outline; edit_markdown changes part of a note by exact \
-    old_text replacement or line insertion — prefer it over update_markdown, which replaces the whole text. \
+    old_text replacement or line insertion — prefer it over update_markdown, which replaces the whole text; \
+    create_markdown makes a new note (in the built-in Notes folder or a referenced folder such as an Obsidian vault) — \
+    use it instead of writing .md files yourself. \
     Never edit files inside a .unrd package directly. \
     Agent contexts (Agent 上下文) are handoff summaries of earlier conversations saved in the workspace so any agent \
     can continue that work: when the user asks to continue earlier work or mentions a saved context, find it with \

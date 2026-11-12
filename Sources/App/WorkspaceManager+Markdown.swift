@@ -376,6 +376,53 @@ extension WorkspaceManager {
         }
     }
 
+    /// Agent 建笔记时的错误（MCP `create_markdown` 把 `message` 原样回给 Agent，所以是英文）。
+    struct NoteCreateError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    /// 新建一篇带正文的笔记（MCP `create_markdown`，`MARKDOWN-NOTES-PLAN.md §14`，用户 2026-11-12：Agent 只能绕过 App 直接写文件）。
+    /// 与上面那个（界面上的「新建笔记」）不同：**名字撞了不改名、直接报错**——Agent 往往要的就是这个名字，`[[…]]` 也按名字认；
+    /// 目录不在就建（`folder` 相对源根，多级可以）；引用目录的根必须在这台电脑上（不在时 `noteRootURL` 给的是别台电脑的路径，
+    /// 别在本机凭空建出一串目录）。只写这一个新文件，别的一概不碰（红线 9）。
+    func createNote(named title: String, text: String, in sourceID: String, folder: String) throws -> NoteRef {
+        lastError = nil
+        guard let src = noteSource(id: sourceID), let root = noteRootURL(src) else {
+            throw NoteCreateError(message: "note source '\(sourceID)' not found; see sources in list_markdown_notes")
+        }
+        guard !rejectMirrorWrite(sourceID) else {
+            throw NoteCreateError(message: "\(src.name) is a read-only copy from the server here; the note can only be created on a Mac that has this folder")
+        }
+        // 文件名与目录的规则（纯函数，`spike/markdown-link-test.swift` 测它）
+        let rel: String
+        switch MarkdownImport.newNotePath(title: title, folder: folder) {
+        case .failure(let why): throw NoteCreateError(message: why.reason)
+        case .success(let r): rel = r
+        }
+        let fm = FileManager.default
+        guard src.kind == .workspace || NoteRoot.directoryExists(root.path) else {
+            throw NoteCreateError(message: "the folder of note source \(src.name) is not on this Mac")
+        }
+        let url = root.appendingPathComponent(rel)
+        // 已有同名（清单里的，或刚写进磁盘还没扫到的；APFS 默认不分大小写）→ 报错，告诉它用哪个工具改
+        if let hit = allNotes.first(where: { $0.ref.sourceID == sourceID && $0.ref.relPath.lowercased() == rel.lowercased() }) {
+            throw NoteCreateError(message: "a note already exists at \(src.name)/\(hit.ref.relPath) (note_ref \(hit.ref.key)); change it with edit_markdown or update_markdown, or pick another title")
+        }
+        guard !fm.fileExists(atPath: url.path) else {
+            throw NoteCreateError(message: "a file already exists at \(src.name)/\(rel); pick another title")
+        }
+        do {
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try MarkdownImport.writeAtomically(text, to: url)
+        } catch {
+            lastError = "\(error)"
+            throw NoteCreateError(message: "could not write the note: \(error.localizedDescription)")
+        }
+        refreshNotes()
+        return NoteRef(sourceID: sourceID, relPath: rel)
+    }
+
     /// 新建一个空文件夹（`parent` 给相对源根的上级目录，空 = 源根）。撞名加 ` 2`、` 3`（同 Finder「新建文件夹」）。
     /// 返回新目录相对源根的路径；失败 = nil（原因在 `lastError`）。
     ///

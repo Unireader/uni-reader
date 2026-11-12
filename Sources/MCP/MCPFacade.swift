@@ -292,6 +292,39 @@ final class MCPFacade {
         return markdownWriteResult(ws, ref, text)
     }
 
+    /// `create_markdown`：新建一篇笔记（`MARKDOWN-NOTES-PLAN.md §14`）。`source` = 源的 id 或名字（默认内建 `Notes/`），
+    /// `folder` 相对源根（不在就建）；同名已有 → 报错不改名。`open` = 建完在这个工作区的窗口里打开（「跟随 Agent」由调用方先查）。
+    func createMarkdown(title: String, text: String, source: String?, folder: String, workspacePath: String?,
+                        open: Bool) throws -> MCPObject {
+        let ws = try manager(workspacePath: workspacePath)
+        let src: NoteRoot
+        if let source, !source.isEmpty {
+            guard let s = ws.noteSources.first(where: { $0.id == source })
+                    ?? ws.noteSources.first(where: { $0.name.caseInsensitiveCompare(source) == .orderedSame }) else {
+                throw MCPToolError("note source '\(source)' not found; sources: "
+                                   + ws.noteSources.map { "\($0.name) (\($0.id))" }.joined(separator: ", "))
+            }
+            src = s
+        } else {
+            guard let s = ws.noteSource(id: NoteRoot.workspaceID) else { throw MCPToolError("this workspace has no Notes folder") }
+            src = s
+        }
+        let ref: NoteRef
+        do { ref = try ws.createNote(named: title, text: text, in: src.id, folder: folder) }
+        catch let e as WorkspaceManager.NoteCreateError { throw MCPToolError(e.message) }
+        var o = markdownWriteResult(ws, ref, text)
+        o["source"] = src.name
+        o["relative_path"] = ref.relPath
+        var opened = false
+        if open, let c = controllers(for: ws).first(where: { $0.window?.isKeyWindow == true }) ?? controllers(for: ws).first {
+            c.tabs.openMarkdown(ref)
+            c.window?.makeKeyAndOrderFront(nil)
+            opened = true
+        }
+        o["opened"] = opened
+        return o
+    }
+
     private func tabDTO(_ c: ReaderWindowController, _ tab: DocTabModel) -> MCPObject {
         let s = tab.session
         var o: MCPObject = ["session_id": tab.id.uuidString, "is_active": tab.isActive]

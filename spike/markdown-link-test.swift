@@ -281,7 +281,8 @@ let wsDir = tmp.appendingPathComponent("libws")
 try! fm.createDirectory(at: wsDir, withIntermediateDirectories: true)
 let store = try LibraryStore(workspaceFolder: wsDir)
 let sv = store.meta("schema_version") ?? "?"
-check(sv == "15", "schema v15（得到 \(sv)）")
+// md_doc 是 v15 加的；之后库版本还会往上走（2026-11-12 已是 24），这里只看「至少 15」
+check((Int(sv) ?? 0) >= 15, "schema ≥ v15（得到 \(sv)）")
 _ = try store.addMarkdownDoc(id: "md-1", title: "极限", relPath: "vault/数学/微积分/极限.md")
 let born = try store.markdownDoc(id: "md-1")!.createdAt
 check(try store.allMarkdownDocs().count == 1, "插入一行")
@@ -295,6 +296,19 @@ do {
 } catch { check(true, "rel_path 唯一约束生效") }
 try store.deleteMarkdownDoc(id: "md-1")
 check(try store.allMarkdownDocs().isEmpty, "删行")
+
+print("— Agent 新建笔记的路径（MarkdownImport.newNotePath，MARKDOWN-NOTES-PLAN §14）")
+func np(_ t: String, _ f: String = "") -> String? { if case .success(let r) = MarkdownImport.newNotePath(title: t, folder: f) { return r } else { return nil } }
+func nr(_ t: String, _ f: String = "") -> String? { if case .failure(let w) = MarkdownImport.newNotePath(title: t, folder: f) { return w.reason } else { return nil } }
+check(np("06. 法律建设") == "06. 法律建设.md", "标题 = 文件名，加 .md")
+check(np("06. 法律建设.md") == "06. 法律建设.md" && np("a.MD") == "a.md", "多写的 .md 去掉（不分大小写）")
+check(np("第一章", "101思想政治理论/思修") == "101思想政治理论/思修/第一章.md", "多级目录")
+check(np("x", "/a//b/ ") == "a/b/x.md", "目录前后的 / 与空段去掉")
+check(np("a/b: c?") == "a-b- c-.md", "文件名里的非法字符换成 -")
+check(nr("  ")?.contains("empty") == true && nr(".md")?.contains("empty") == true, "空标题退回")
+check(nr(".hidden")?.contains("dot") == true, "点开头的文件名退回（扫描看不见）")
+check(nr("x", "a/../b")?.contains("not allowed") == true, "目录里有 .. 退回")
+check(nr("x", ".obsidian")?.contains("not allowed") == true && nr("x", "a/Trash")?.contains("not allowed") == true, "点开头 / trash 目录退回")
 
 print("\n\(fail == 0 ? "✅ 全部通过" : "❌ 有失败")：\(pass) 过 / \(fail) 败")
 exit(fail == 0 ? 0 : 1)

@@ -979,3 +979,11 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 - `instructions` 与 App 内 Agent 的上下文块各加了一句用法。
 - 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`；新返回的键都已在 `outputSchema` 里声明（逐个核对过）。
 
+## 30. 2026-11-12 `create_markdown`：Agent 新建 Markdown 笔记
+
+- 起因：Agent 说「没有 MCP 工具能新建笔记，只能通过文件系统创建」。新工具（批 3 那一组，`.write`）：`title` / `text` / `source` / `folder` / `open` / `workspace`，
+  同名已有报错并给出那篇的 `note_ref`，不改名。细则见 `MARKDOWN-NOTES-PLAN.md §14`。实现：`MCPTools.createMarkdown` → `MCPFacade.createMarkdown`
+  → `WorkspaceManager.createNote(named:text:in:folder:)`。`open` 是导航，「跟随 Agent」关着时照建不开、回话里说明。
+- `instructions` 的 Markdown 那段与 Agent 面板上下文的两种笔记那句各加了一句：新建用它，别自己写 .md。
+- 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`（写入类工具它本来也只列出来不调用；返回的键都在 `outputSchema` 里）。
+
