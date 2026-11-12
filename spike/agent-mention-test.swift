@@ -80,6 +80,17 @@ let pool = [m("极限.md", "笔记 / 数学"), m("数学/", "笔记 / 数学", k
 check(AgentMentionMatch.rank(pool, query: "数学").map(\.name) == ["数学/", "数学分析.pdf", "极限.md"],
       "打目录名：目录（名字最短）排在最前，第二行命中的笔记在后")
 
+print("引用某一道题（2026-11-12，ACP-AGENT-PLAN.md §15）")
+let q1 = AgentMention(kind: .exercise, id: "E1", name: "高数 · 第 12 页 · 题号 3", detail: "第一章",
+                      uri: "unireader://open?doc=D&page=12", info: "One exercise … exercise_id E1 …")
+let q2 = AgentMention(kind: .exercise, id: "E2", name: "高数 · 第 12 页 · 题号 4", detail: "第一章",
+                      uri: "unireader://open?doc=D&page=12", info: "One exercise … exercise_id E2 …")
+check(q1.mimeType == nil && q1.agentDescription.contains("exercise_id E1"), "单题：没有 mime、说明里带 exercise_id")
+let qs = AgentMention.stillReferenced([q1, q2, q1], in: "比较 @高数 · 第 12 页 · 题号 3 和 @高数 · 第 12 页 · 题号 4 有什么不同")
+check(qs.map(\.id) == ["E1", "E2"], "名字里有空格和 ·：照样按正文认出来、去重")
+check(AgentMention.stillReferenced([q1, q2], in: "只问 @高数 · 第 12 页 · 题号 4").map(\.id) == ["E2"], "删掉一道 = 不附它")
+check(AgentMention.stillReferenced([q1, ex], in: "@高数 · 第 12 页 · 题号 3 @全部习题").count == 2, "单题与习题组是两种，不互相去重")
+
 print("通用排序（⌘P 快速打开也用，QUICK-OPEN-PLAN.md）")
 struct Row { var title: String; var detail: String }
 let rows = [Row(title: "高等数学 上册", detail: "PDF"), Row(title: "极限笔记", detail: "Markdown 笔记 · 数学"),

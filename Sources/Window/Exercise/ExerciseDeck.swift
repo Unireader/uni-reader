@@ -277,6 +277,8 @@ final class ExerciseDeck {
     func setWrong(_ e: Exercise, _ on: Bool) { workspace?.setExerciseWrong(id: e.id, on) }
     /// 题目笔记（练习页「笔记」那一块）：空 = 删掉。
     func setNote(id: String, _ text: String) { workspace?.setExerciseNote(id: id, text) }
+    /// 原题区域（`ExerciseRegionPicker`）：nil = 整页。
+    func setRegion(id: String, _ region: [Double]?) { workspace?.setExerciseRegion(id: id, region) }
 
     /// 这一轮做了几道、对几道（顶栏那行字）。
     var sessionSummary: (done: Int, correct: Int) {

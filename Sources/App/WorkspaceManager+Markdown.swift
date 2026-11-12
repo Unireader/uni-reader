@@ -376,6 +376,47 @@ extension WorkspaceManager {
         }
     }
 
+    /// 新建一个空文件夹（`parent` 给相对源根的上级目录，空 = 源根）。撞名加 ` 2`、` 3`（同 Finder「新建文件夹」）。
+    /// 返回新目录相对源根的路径；失败 = nil（原因在 `lastError`）。
+    ///
+    /// 空目录本来就会进侧栏的树（`refreshNotes` 把子目录清单一起交给 `NoteFolder.build`），所以建完重扫一遍就出来了。
+    /// ⚠️ 同步（离线镜像 / 服务器）只认文件：空文件夹不会出现在别的设备上，放进第一篇笔记之后才跟过去。
+    @discardableResult
+    func createNoteFolder(named name: String, in sourceID: String = NoteRoot.workspaceID,
+                          parent: String = "") -> String? {
+        lastError = nil   // 调用方拿 nil 时看它说原因，别留着上一回的
+        guard !rejectMirrorWrite(sourceID), let src = noteSource(id: sourceID), let root = noteRootURL(src) else { return nil }
+        let base = MarkdownImport.safeFileName(name.trimmed.nonEmpty ?? L("Untitled Folder"))
+        // 点开头的目录扫描时一律跳过（`walkDirs`），`trash` 也是——建了也看不见，直接拒绝
+        guard !base.hasPrefix("."), base.lowercased() != "trash" else {
+            lastError = L("Folder names can’t start with a dot or be “trash”.")
+            return nil
+        }
+        let dirRel = parent.trimmed
+        let dir = dirRel.isEmpty ? root : root.appendingPathComponent(dirRel, isDirectory: true)
+        let fm = FileManager.default
+        // 上级得在：引用目录在这台电脑上不在时 `noteRootURL` 给的是别台电脑的路径，别顺手在本机建出一串目录来。
+        // 内建 `Notes/` 一篇笔记都没有时可能还没建出来，那个例外
+        guard NoteRoot.directoryExists(dir.path) || (src.kind == .workspace && dirRel.isEmpty) else {
+            lastError = L("That folder is not on this Mac.")
+            return nil
+        }
+        // 同级里已有的名字（文件和目录都算，不分大小写——APFS 默认不分）
+        let used = Set(((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).map { $0.lowercased() })
+        var pick = base
+        var n = 2
+        while used.contains(pick.lowercased()) { pick = "\(base) \(n)"; n += 1 }
+        let rel = dirRel.isEmpty ? pick : dirRel + "/" + pick
+        do {
+            try fm.createDirectory(at: root.appendingPathComponent(rel, isDirectory: true), withIntermediateDirectories: true)
+            refreshNotes()
+            return rel
+        } catch {
+            lastError = "\(error)"
+            return nil
+        }
+    }
+
     /// 改名 = **改文件名**（标题就是文件名，Obsidian 的惯例）。
     ///
     /// 🔴 指向它的 `[[旧名字]]` 会**断链**——我们不改别人的正文（红线），这是用户 2026-09-20

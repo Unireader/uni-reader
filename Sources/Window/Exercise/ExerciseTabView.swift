@@ -11,7 +11,7 @@ final class ExerciseTabView: NSView {
     private let deck: ExerciseDeck
     /// 「到 PDF 原页」（窗格接 `AppDelegate.showDocument` + 跳页）。
     var onOpenSource: (Exercise) -> Void = { _ in }
-    /// 这扇窗的 id（练习页「让 Agent 批改」用，窗格设）。
+    /// 这扇窗的 id（练习页「让 Agent 批改」、引用某一道题到 Agent 用，窗格设）。
     var agentWindow: () -> UUID? = { nil }
     /// 顶部让开工具栏的高度（由窗格设）。
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
@@ -93,6 +93,7 @@ final class ExerciseTabView: NSView {
         practice.onChange = { [weak self] in self?.syncHeader() }
         practice.agentWindow = { [weak self] in self?.agentWindow() }
         list.onOpenSource = { [weak self] e in self?.onOpenSource(e) }
+        list.agentWindow = { [weak self] in self?.agentWindow() }
         list.onPractice = { [weak self] i in
             guard let self else { return }
             self.deck.index = i

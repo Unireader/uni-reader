@@ -380,6 +380,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
         on(.newTabRequested) { $0.tabs.docPickerPresented = true }
         on(.newMarkdownNoteRequested) { $0.newMarkdownNote() }
+        on(.newNoteFolderRequested) { $0.newNoteFolder() }
         on(.newBoardRequested) { $0.presentNewBoard() }
         on(.importMarkdownRequested) { $0.importMarkdownFolder() }
         on(.openMarkdownNote) { c, note in
@@ -613,6 +614,27 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             return
         }
         tabs.openMarkdown(ref)
+    }
+
+    /// 「文件 › 新建笔记文件夹…」：在内建 `Notes/` 根目录建一个空文件夹（子目录里建、引用目录里建走侧栏右键）。
+    /// 内建源一篇笔记都没有时侧栏不列那一段，右键无处可点——第一个文件夹靠这一项建。
+    func newNoteFolder() {
+        guard let win = window else { return }
+        let a = NSAlert()
+        a.messageText = L("New Folder")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = L("Folder name")
+        field.stringValue = L("Untitled Folder")
+        a.accessoryView = field
+        a.addButton(withTitle: L("OK"))
+        a.addButton(withTitle: L("Cancel"))
+        a.window.initialFirstResponder = field
+        a.beginSheetModal(for: win) { [weak self] resp in
+            guard let self, resp == .alertFirstButtonReturn else { return }
+            if self.workspace.createNoteFolder(named: field.stringValue) == nil, let e = self.workspace.lastError {
+                self.presentError(e)
+            }
+        }
     }
 
     /// 引用一个**外部**笔记目录：不复制，直接在那儿读写（2026-09-20 用户要的「引用模式」）。

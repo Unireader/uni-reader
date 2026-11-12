@@ -266,6 +266,18 @@ extension WorkspaceManager {
         exercisesChanged()
     }
 
+    /// 原题区域（`payload.region`，练习页 / 列表「设置原题区域…」，`EXERCISE-PLAN.md §25`）：题目在那一页上的框，
+    /// 归一化 `[x, y, w, h]`、左上原点；nil = 看原题时显示整页。不合格的框（越界 / 零宽高）不写。
+    /// 走 `saveExercise`（整行写回、打 `updated_at`，同步按它取新），答案没变不会重判作答。
+    func setExerciseRegion(id: String, _ region: [Double]?) {
+        guard var e = exercise(id: id) else { return }
+        let r = region.map { $0.map { ($0 * 10_000).rounded() / 10_000 } }
+        if let r, !(r.count == 4 && r.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) && r[2] > 0 && r[3] > 0) { return }
+        guard e.payload.region != r else { return }
+        e.payload.region = r
+        do { try saveExercise(e) } catch { lastError = "\(error)" }
+    }
+
     /// 题目标签（v24）：整组替换。规整后和库里一样就不写。
     func setExerciseTags(id: String, _ tags: [String]) { setExerciseTags(ids: [id], tags, mode: .replace) }
 

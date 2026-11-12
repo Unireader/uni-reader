@@ -673,6 +673,17 @@ else { check(false, "还原后再校验 = 原样") }
 let backS = ExerciseImport.input(from: subE)
 check(backS.answer == subE.referenceText && backS.blanks == nil, "主观题还原：answer = 参考答案")
 
+print("— 原题框：update 去掉框（`region: []` → nil，EXERCISE-PLAN.md §25）")
+let regE = Exercise(row: row(ok(input("框题", answer: "B", src: "book", region: [0.1, 0.2, 0.8, 0.1], figure: true))!, doc: dv.id))!
+var backR = ExerciseImport.input(from: regE)
+check(backR.region == [0.1, 0.2, 0.8, 0.1], "还原时带着原来的框")
+backR.region = nil   // MCPFacade.updateExercises 把 `region: []` 换成 nil
+if case .success(let d) = ExerciseImport.validate(backR, seq: 0) {
+    check(d.payload.region == nil && d.payload.stem == regE.payload.stem && d.payload.answer == regE.payload.answer
+          && d.payload.figure == regE.payload.figure, "去掉框后再校验：框没了，题干 / 答案 / 带图标记不变")
+} else { check(false, "去掉框后再校验：框没了，题干 / 答案 / 带图标记不变") }
+check(reason(input("x", region: []))?.contains("region") == true, "导入时给空框照旧退回（[] 只在 update 里表示去掉）")
+
 // MARK: - v22 题目笔记 + 重做上次做错的（`EXERCISE-PLAN.md §12`）
 
 print("— v22 题目笔记")

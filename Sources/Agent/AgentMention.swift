@@ -1,7 +1,8 @@
 import Foundation
 
 /// 输入框里 `@` 引用的一样东西（`ACP-AGENT-PLAN.md §8`、§11）：`@` 候选是工作区书库里的 PDF 与任一源里的
-/// Markdown 笔记；侧栏「在 Agent 中引用」还能引用笔记目录、一组 PDF、画板、习题的一组（§11）。
+/// Markdown 笔记；侧栏「在 Agent 中引用」还能引用笔记目录、一组 PDF、画板、习题的一组（§11）；
+/// 习题标签里还能引用某一道题（§15）。
 ///
 /// 🔴 **只给 Agent 名字和位置，不给内容**（用户 2026-09-24 定）：输入框里留 `@名字`，发送时附一个
 /// ACP `resource_link` 块（名字 + URI + 库里的身份 + 怎么读），Agent 要读内容自己走 unireader MCP。
@@ -16,6 +17,8 @@ struct AgentMention: Equatable, Identifiable {
         case board, boards
         /// 习题的一组（全部 / 错题本 / 收藏 / 某本书 / 某一章）。
         case exercises
+        /// 一道习题（习题标签的列表右键 / 练习页顶上的按钮，§15）。
+        case exercise
         /// Agent 的一条斜杠命令（只在输入框的 `/` 候选里用：`name` = `/命令名`，`detail` = 说明；不是引用，发送时不附）。
         case command
     }

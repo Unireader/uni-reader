@@ -777,11 +777,22 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // 「全部」底下的一本书：移除 / 恢复章节分级（§14）。错题本、收藏底下的那几行只是筛出来的视图，不放
             if case .document(let docId) = scope { buildExerciseBookMenu(menu, documentId: docId, hasChapters: !n.children.isEmpty) }
         case .noteFolder(let source, let folder):
-            menu.addItem(ClosureMenuItem(L("New Note Here")) { [weak self] in
-                guard let self, let ref = self.workspace.createNote(title: L("Untitled Note"),
-                                                                    in: source.id, folder: folder.path) else { return }
+            let readOnly = workspace.isMirrorSource(source.id)      // 服务器镜像：不能往里加
+            menu.autoenablesItems = false
+            let new = ClosureMenuItem(L("New Note Here")) { [weak self] in
+                guard let self else { return }
+                self.expand(source, folder.path)
+                guard let ref = self.workspace.createNote(title: L("Untitled Note"),
+                                                          in: source.id, folder: folder.path) else { return }
                 self.tabs.openMarkdown(ref)
-            })
+            }
+            new.isEnabled = !readOnly
+            menu.addItem(new)
+            let newFolder = ClosureMenuItem(L("New Folder…")) { [weak self] in
+                self?.promptNewNoteFolder(source: source, parent: folder.path)
+            }
+            newFolder.isEnabled = !readOnly
+            menu.addItem(newFolder)
             menu.addItem(ClosureMenuItem(L("Show in Finder")) { [weak self] in
                 guard let root = self?.workspace.noteRootURL(source) else { return }
                 NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(folder.path)])
@@ -998,8 +1009,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             guard let self, let ref = self.workspace.createNote(title: L("Untitled Note"), in: source.id) else { return }
             self.tabs.openMarkdown(ref)
         }
-        new.isEnabled = here
+        let readOnly = workspace.isMirrorSource(source.id)      // 服务器镜像：不能往里加
+        new.isEnabled = here && !readOnly
         m.addItem(new)
+        let newFolder = ClosureMenuItem(L("New Folder…")) { [weak self] in
+            self?.promptNewNoteFolder(source: source, parent: "")
+        }
+        newFolder.isEnabled = here && !readOnly
+        m.addItem(newFolder)
         let reveal = ClosureMenuItem(L("Show in Finder")) { [weak self] in
             guard let url = self?.workspace.noteRootURL(source) else { return }
             NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -1029,6 +1046,33 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             self.workspace.removeReferencedNotesFolder(id: source.id)
             for t in self.tabs.tabs { t.closeMarkdownIfGone() }
         })
+    }
+
+    /// 「新建文件夹…」（段头 = 源根，子目录行 = 它底下）：问名字 → 建空目录 → 上级展开，新目录就在眼前。
+    /// 空目录侧栏本来就列（`refreshNotes`），往里加笔记用它自己的右键「在这里新建」。
+    private func promptNewNoteFolder(source: NoteRoot, parent: String) {
+        textPrompt(title: L("New Folder"), placeholder: L("Folder name"), initial: L("Untitled Folder")) { [weak self] name in
+            guard let self else { return }
+            self.expand(source, parent)
+            guard let rel = self.workspace.createNoteFolder(named: name, in: source.id, parent: parent) else {
+                if let e = self.workspace.lastError { self.presentNoteError(e) }
+                return
+            }
+            wsLog("[MD] 新建文件夹 \(source.id):\(rel)")
+        }
+    }
+
+    /// 让某个笔记目录在下一次重建侧栏时是展开的（记进展开记忆；段头本来就恒展开，`path` 为空时不用记）。
+    /// 要在改动目录**之前**调：改完 `refreshNotes()` 触发的重建排在下一拍，到时按记忆展开。
+    private func expand(_ source: NoteRoot, _ path: String) {
+        guard !path.isEmpty else { return }
+        var p = path
+        // 上面几级也得开着，不然展开不到它
+        while !p.isEmpty {
+            expandedFolders.insert("\(source.id):\(p)")
+            p = (p as NSString).deletingLastPathComponent
+        }
+        saveExpanded()
     }
 
     /// 「位置」子菜单：这个引用目录记着的每条路径，本机正在用的那条打勾；每条可以在访达里显示、移除（至少留一条）。

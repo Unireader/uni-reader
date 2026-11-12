@@ -35,8 +35,12 @@ final class ExercisePracticeView: NSView {
     private let tagsButton = NSButton()
     private let originalButton = NSButton()
     private let sourceButton = NSButton()
+    /// 在 Agent 中引用这道题（`ACP-AGENT-PLAN.md §15`）：这扇窗能发给 Agent 时才显示。
+    private let referButton = NSButton()
     private let stemView = AgentMarkdownView(text: "", fontSize: 16, documentId: "exercise-stem")
     private let originalImage = NSImageView()
+    /// 原题图下面：设置原题区域…（`ExerciseRegionPicker`，原题图显示着才有）。
+    private let regionButton = NSButton()
     private var optionRows: [ExerciseOptionRow] = []
     private let submitButton = NSButton()
     private let resultIcon = NSImageView()
@@ -104,6 +108,11 @@ final class ExercisePracticeView: NSView {
         setup(tagsButton, symbol: "tag", title: L("Tags"), action: #selector(editTags))
         setup(originalButton, symbol: "photo", title: L("Original"), action: #selector(toggleOriginal))
         setup(sourceButton, symbol: "doc.text.magnifyingglass", title: L("Open Page"), action: #selector(openSource))
+        setup(referButton, symbol: "at", title: L("Reference in Agent"), action: #selector(referenceInAgent))
+        setup(regionButton, symbol: "crop", title: L("Set Question Area…"), action: #selector(setRegion))
+        regionButton.toolTip = L("Choose which part of the page Original shows, instead of the whole page.")
+        regionButton.isHidden = true
+        referButton.toolTip = L("Put this question into the Agent’s message box, so you can ask about it.")
         originalButton.setButtonType(.pushOnPushOff)
         originalImage.imageScaling = .scaleProportionallyDown
         originalImage.imageAlignment = .alignTopLeft
@@ -143,7 +152,7 @@ final class ExercisePracticeView: NSView {
         noteView.onHeightChange = { [weak self] in self?.needsLayout = true }
         noteView.onSave = { [weak self] id, text in self?.deck.setNote(id: id, text) }
         noteView.onEndEditing = { [weak self] in self?.takeFocus() }
-        for v in [metaLabel, starButton, tagsButton, originalButton, sourceButton, stemView, originalImage, freeView, submitButton,
+        for v in [metaLabel, starButton, tagsButton, originalButton, sourceButton, referButton, stemView, originalImage, regionButton, freeView, submitButton,
                   resultIcon, resultLabel, historyNote, rightButton, wrongButton, flipButton, askAgentButton,
                   feedbackTitle, feedbackView, agentNote, markNote, explanationTitle, explanationView, noteView,
                   retryButton, mistakeButton, emptyLabel] as [NSView] { doc.addSubview(v) }
@@ -244,6 +253,7 @@ final class ExercisePracticeView: NSView {
         tagsButton.title = e.tags.isEmpty ? L("Tags") : Self.tagsTitle(e.tags)
         tagsButton.toolTip = e.tags.isEmpty ? L("Add tags to this question, such as Past Paper") : e.tags.joined(separator: "\n")
         sourceButton.isEnabled = e.documentId != nil && e.page != nil
+        referButton.isHidden = agentWindow().map { AgentPanelModel.shared.canAttach(from: $0) } != true
         originalButton.isEnabled = e.documentId != nil && e.page != nil
         let showOriginal = originalShown[e.id] ?? e.payload.figure
         originalButton.state = showOriginal ? .on : .off
@@ -400,6 +410,7 @@ final class ExercisePracticeView: NSView {
 
     private func loadOriginal(_ e: Exercise, show: Bool) {
         originalImage.isHidden = !show
+        regionButton.isHidden = !show
         guard show else { return }
         let want = "\(e.id)|\(e.documentId ?? "")|\(e.page ?? -1)|\(e.payload.region ?? [])"
         guard originalFor != want, let ws = workspace else { return }
@@ -410,7 +421,7 @@ final class ExercisePracticeView: NSView {
             guard let self, self.originalFor == want else { return }
             self.originalImage.image = img
             // 渲不出来（文件不在了）就别留一块空框；按钮仍可以再点一次重试
-            if img == nil { self.originalImage.isHidden = true; self.originalFor = "" }
+            if img == nil { self.originalImage.isHidden = true; self.regionButton.isHidden = true; self.originalFor = "" }
             self.needsLayout = true
         }
     }
@@ -500,6 +511,34 @@ final class ExercisePracticeView: NSView {
             alert.messageText = String(format: L("%@ is not available."), name)
             if let w = window { alert.beginSheetModal(for: w) } else { alert.runModal() }
         }
+    }
+
+    /// 设置原题区域：整页上框一块，存进这道题（`EXERCISE-PLAN.md §25`）；存完原题图按新框重渲（`loadOriginal` 认框）。
+    @objc private func setRegion() {
+        guard let e = deck.current, let ws = workspace, let win = window else { return }
+        Self.pickRegion(e, deck: deck, workspace: ws, on: win)
+    }
+
+    /// 列表右键也走这里。
+    static func pickRegion(_ e: Exercise, deck: ExerciseDeck, workspace ws: WorkspaceManager, on win: NSWindow) {
+        ExerciseRegionPicker.present(on: win, exercise: e, workspace: ws) { [weak deck] region in
+            deck?.setRegion(id: e.id, region)
+        }
+    }
+
+    @objc private func referenceInAgent() {
+        guard let e = deck.current, let ws = workspace, let win = agentWindow() else { return }
+        Self.reference([e], in: ws, from: win, sheetOn: window)
+    }
+
+    /// 几道题插进这扇窗 Agent 输入框的光标处（`@书名 · 第 N 页 · 题号 X`），发送时照 `@` 选的一样附上说明
+    /// （`AgentMention.exercise`：只给位置和 exercise_id，题目内容 Agent 自己经 MCP 读）。列表右键也走这里。
+    static func reference(_ items: [Exercise], in ws: WorkspaceManager, from win: UUID, sheetOn window: NSWindow?) {
+        let ms = items.map { AgentMention.exercise($0, in: ws) }
+        guard !ms.isEmpty, !AgentPanelModel.shared.reference(ms, from: win) else { return }
+        let a = NSAlert()
+        a.messageText = String(format: L("%@ is not available."), AgentPanelModel.shared.agentName(for: win))
+        if let window { a.beginSheetModal(for: window) } else { a.runModal() }
     }
 
     @objc private func retry() {
@@ -648,13 +687,25 @@ final class ExercisePracticeView: NSView {
             return
         }
 
-        // 顶行：题号这些 + 右侧三个按钮
+        // 顶行：题号这些 + 右侧几个按钮
         var bx = x0 + colW
-        for b in [sourceButton, originalButton, tagsButton, starButton] {
-            b.sizeToFit()
-            bx -= b.frame.width
-            b.frame = NSRect(x: bx, y: y - 2, width: b.frame.width, height: b.frame.height)
-            bx -= 6
+        func placeTopButtons() {
+            bx = x0 + colW
+            for b in [referButton, sourceButton, originalButton, tagsButton, starButton] where !b.isHidden {
+                b.sizeToFit()
+                bx -= b.frame.width
+                b.frame = NSRect(x: bx, y: y - 2, width: b.frame.width, height: b.frame.height)
+                bx -= 6
+            }
+        }
+        // 五个按钮挤得题号那行放不下时，「在 Agent 中引用」只留图标（提示文字里有全称）
+        referButton.title = L("Reference in Agent")
+        referButton.imagePosition = .imageLeading
+        placeTopButtons()
+        if !referButton.isHidden, bx - x0 < 220 {
+            referButton.title = ""
+            referButton.imagePosition = .imageOnly
+            placeTopButtons()
         }
         metaLabel.frame = NSRect(x: x0, y: y + 3, width: max(0, bx - x0 - 8), height: 18)
         y += 38
@@ -667,7 +718,13 @@ final class ExercisePracticeView: NSView {
             let scale = min(1, colW / max(size.width, 1))
             let h = min(520, size.height * scale)
             originalImage.frame = NSRect(x: x0, y: y, width: colW, height: max(h, 40))
-            y = originalImage.frame.maxY + 16
+            y = originalImage.frame.maxY + 8
+            if !regionButton.isHidden {
+                regionButton.sizeToFit()
+                regionButton.frame = NSRect(x: x0, y: y, width: regionButton.frame.width, height: regionButton.frame.height)
+                y = regionButton.frame.maxY + 8
+            }
+            y += 8
         }
 
         for r in optionRows {

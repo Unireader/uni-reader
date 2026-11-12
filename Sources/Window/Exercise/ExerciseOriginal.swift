@@ -13,11 +13,12 @@ enum ExerciseOriginal {
     private static let cache = NSCache<NSString, NSImage>()
 
     /// 渲出这道题的原图（宽 `pixelWidth` 像素左右）。拿不到（文件不在 / 没页码）→ nil。完成回调在主线程。
-    static func image(for e: Exercise, workspace: WorkspaceManager, pixelWidth: Int,
+    /// `wholePage` = 不管有没有框都渲整页（设置原题区域时在整页上框，`ExerciseRegionPicker`）。
+    static func image(for e: Exercise, workspace: WorkspaceManager, pixelWidth: Int, wholePage: Bool = false,
                       completion: @escaping (NSImage?) -> Void) {
         guard let docId = e.documentId, let pageIndex = e.page,
               let target = workspace.openTarget(documentId: docId) else { completion(nil); return }
-        let region = e.payload.region
+        let region = wholePage ? nil : e.payload.region
         let key = "\(docId)#\(pageIndex)#\(region.map { $0.map { String(format: "%.4f", $0) }.joined(separator: ",") } ?? "page")#\(pixelWidth)"
         if let hit = cache.object(forKey: key as NSString) { completion(hit); return }
         let pageCount = workspace.document(id: docId)?.pageCount ?? 0

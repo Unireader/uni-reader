@@ -713,6 +713,8 @@ extension Notification.Name {
     static let quickOpenRequested = Notification.Name("com.xvan.UniReader.quickOpenRequested")
     /// 新建一篇 Markdown 笔记（v15，`MARKDOWN-NOTES-PLAN.md`）。
     static let newMarkdownNoteRequested = Notification.Name("com.xvan.UniReader.newMarkdownNoteRequested")
+    /// 在内建 `Notes/` 根目录新建一个文件夹（问名字；子目录里建走侧栏右键）。
+    static let newNoteFolderRequested = Notification.Name("com.xvan.UniReader.newNoteFolderRequested")
     /// 新建一篇画板笔记（v16，`BOARD-NOTE-PLAN.md`）。
     static let newBoardRequested = Notification.Name("com.xvan.UniReader.newBoardRequested")
     /// 把一个现有笔记目录（Obsidian vault 或它的子目录）**复制**进工作区。

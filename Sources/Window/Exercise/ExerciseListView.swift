@@ -1,7 +1,7 @@
 import AppKit
 
 /// 列表：一行一题（`EXERCISE-PLAN.md §4.2`）。双击 = 从这一题开始练；右键：重做（可多选）/ 收藏 / 移出错题本 /
-/// 到 PDF 原页 / 删除。
+/// 到 PDF 原页 / 在 Agent 中引用（可多选，`ACP-AGENT-PLAN.md §15`）/ 删除。
 /// 题干只显示一行纯文本（公式源码原样）——几百行都走引擎渲染太重，看全题去练习页。
 @MainActor
 final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
@@ -11,6 +11,8 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
     var onOpenSource: (Exercise) -> Void = { _ in }
     /// 右键「重做」：这几道题（id）当没答过，从第几行开始练。
     var onRedo: ([String], Int) -> Void = { _, _ in }
+    /// 这扇阅读窗口的 id（右键「在 Agent 中引用」往这扇窗的 Agent 页插；拿不到 = 那一项灰掉）。
+    var agentWindow: () -> UUID? = { nil }
 
     private let scroll = NSScrollView()
     private let table = NSTableView()
@@ -204,7 +206,10 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         if rows.count == 1 {
             add(menu, L("Practice from Here"), #selector(menuPractice))
             if redoable > 0 { add(menu, L("Try Again"), #selector(menuRedo)) }
-            if items[0].documentId != nil, items[0].page != nil { add(menu, L("Open Page"), #selector(menuOpen)) }
+            if items[0].documentId != nil, items[0].page != nil {
+                add(menu, L("Open Page"), #selector(menuOpen))
+                add(menu, L("Set Question Area…"), #selector(menuRegion))
+            }
             menu.addItem(.separator())
         } else if redoable > 0 {
             add(menu, String(format: L("Redo %d Questions"), redoable), #selector(menuRedo))
@@ -218,6 +223,14 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         add(menu, rows.count == 1 ? L("Edit Tags…") : L("Add Tags…"), #selector(menuTags))
         if rows.count > 1, items.contains(where: { !$0.tags.isEmpty }) { add(menu, L("Remove Tags…"), #selector(menuRemoveTags)) }
         if items.contains(where: \.wrong) { add(menu, L("Remove from Mistakes"), #selector(menuUnmistake)) }
+        menu.addItem(.separator())
+        // 在 Agent 中引用：同侧栏那一项（Agent 关着 / 没工作区时灰掉）
+        menu.autoenablesItems = false
+        let agent = NSMenuItem(title: L("Reference in Agent"), action: #selector(menuReference), keyEquivalent: "")
+        agent.target = self
+        agent.image = NSImage(systemSymbolName: "at", accessibilityDescription: nil)
+        agent.isEnabled = agentWindow().map { AgentPanelModel.shared.canAttach(from: $0) } == true
+        menu.addItem(agent)
         menu.addItem(.separator())
         add(menu, rows.count == 1 ? L("Delete Exercise…") : String(format: L("Delete %d Exercises…"), rows.count),
             #selector(menuDelete))
@@ -237,6 +250,11 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         onRedo(rows.map { deck.items[$0].id }, first)
     }
     @objc private func menuOpen() { if let r = targetRows().first, deck.items.indices.contains(r) { onOpenSource(deck.items[r]) } }
+
+    @objc private func menuRegion() {
+        guard let r = targetRows().first, deck.items.indices.contains(r), let ws = workspace, let win = window else { return }
+        ExercisePracticeView.pickRegion(deck.items[r], deck: deck, workspace: ws, on: win)
+    }
 
     @objc private func menuStar() {
         let items = targetRows().compactMap { deck.items.indices.contains($0) ? deck.items[$0] : nil }
@@ -281,6 +299,13 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
                                   suggestions: ExerciseTag.all(in: items)) { [weak self] tags in
             self?.deck.setTags(ids: ids, tags, mode: .remove)
         }
+    }
+
+    /// 选中的这几道题插进这扇窗 Agent 输入框（`@书名 · 第 N 页 · 题号 X`，发送时附说明，Agent 按 exercise_id 自己读）。
+    @objc private func menuReference() {
+        let items = targetRows().compactMap { deck.items.indices.contains($0) ? deck.items[$0] : nil }
+        guard !items.isEmpty, let ws = workspace, let win = agentWindow() else { return }
+        ExercisePracticeView.reference(items, in: ws, from: win, sheetOn: window)
     }
 
     @objc private func menuUnmistake() {

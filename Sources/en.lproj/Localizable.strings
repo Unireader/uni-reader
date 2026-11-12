@@ -1277,3 +1277,20 @@
 "The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong." = "The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong.";
 "Clear List" = "Clear List";
 "Put Pin Back" = "Put Pin Back";
+
+/* Markdown 笔记文件夹 / 习题引用到 Agent / 原题区域（2026-11-12） */
+"New Folder…" = "New Folder…";
+"New Folder" = "New Folder";
+"Untitled Folder" = "Untitled Folder";
+"Folder name" = "Folder name";
+"New Notes Folder…" = "New Notes Folder…";
+"Folder names can’t start with a dot or be “trash”." = "Folder names can’t start with a dot or be “trash”.";
+"That folder is not on this Mac." = "That folder is not on this Mac.";
+"Put this question into the Agent’s message box, so you can ask about it." = "Put this question into the Agent’s message box, so you can ask about it.";
+"Set Question Area…" = "Set Question Area…";
+"Choose which part of the page Original shows, instead of the whole page." = "Choose which part of the page Original shows, instead of the whole page.";
+"Can’t show the page of this question" = "Can’t show the page of this question";
+"The PDF it comes from is not on this Mac." = "The PDF it comes from is not on this Mac.";
+"Set Question Area" = "Set Question Area";
+"Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page." = "Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page.";
+"Use Whole Page" = "Use Whole Page";

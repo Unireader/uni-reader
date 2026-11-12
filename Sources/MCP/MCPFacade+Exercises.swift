@@ -17,6 +17,7 @@ extension MCPFacade {
         var answer: String?
         var answerSource: String?
         var explanation: String?
+        /// 原题框（`[]` = 去掉框，看原题回到整页；`EXERCISE-PLAN.md §25`）。
         var region: [Double]?
         var figure: Bool?
         /// 章节路径（`[]` = 清掉）。
@@ -72,7 +73,16 @@ extension MCPFacade {
 
     /// 列出习题。`allDocuments` = 整个工作区（此时 `documentId` 只用来找工作区）。`pages` 只在单篇时有意义。
     func listExercises(documentId: String?, workspacePath: String?, allDocuments: Bool, pages: String?,
-                       filter: String, chapter: [String]? = nil, tag: String? = nil, offset: Int, limit: Int) throws -> MCPObject {
+                       filter: String, chapter: [String]? = nil, tag: String? = nil, exerciseIds: [String]? = nil,
+                       offset: Int, limit: Int) throws -> MCPObject {
+        // 按 id 取那几道（Agent 面板里引用了某一道题，`ACP-AGENT-PLAN.md §15`）：别的筛选一概不看
+        if let ids = exerciseIds, !ids.isEmpty {
+            let (w, found) = try resolveExercises(ids, workspacePath: workspacePath)
+            let stats = w.exerciseAttemptStats()
+            let slice = found.dropFirst(offset).prefix(limit)
+            return ["workspace": w.name, "total": found.count, "offset": offset,
+                    "exercises": slice.map { exerciseDTO(w, $0, stats: stats[$0.id]) }]
+        }
         let ws: WorkspaceManager
         var scope: ExerciseScope
         var title = ""
@@ -202,7 +212,7 @@ extension MCPFacade {
             if let v = p.section { i.section = v }
             if let v = p.stem { i.stem = v }
             if let v = p.options { i.options = v }
-            if let v = p.region { i.region = v }
+            if let v = p.region { i.region = v.isEmpty ? nil : v }   // [] = 去掉框（同 chapter / tags 的 [] 清空）
             if let v = p.figure { i.figure = v }
             if let v = p.explanation { i.explanation = v }
             if let b = p.blanks {

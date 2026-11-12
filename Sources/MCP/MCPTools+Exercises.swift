@@ -261,8 +261,9 @@ extension MCPTools {
         MCPTool(
             name: "list_exercises",
             title: "List exercises",
-            description: "List the exercises saved in UniReader for a document (or the whole workspace with all_documents), in practice order, with ids, question numbers, answers and the user's practice stats. Use it before update_exercises to match questions by number, e.g. when filling in answers from an answer key.",
+            description: "List the exercises saved in UniReader for a document (or the whole workspace with all_documents), in practice order, with ids, question numbers, answers and the user's practice stats. Use it before update_exercises to match questions by number, e.g. when filling in answers from an answer key. With exercise_ids it returns just those questions (e.g. one the user referenced in the chat).",
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
+                "exercise_ids": MCPSchema.array(of: MCPSchema.string("exercise id (full, or its first 8 characters)"), "Only these exercises, in this order; document_id, all_documents, pages, filter, chapter and tag are ignored"),
                 "all_documents": MCPSchema.boolean("List every document in the workspace instead of one", default: false),
                 "pages": MCPSchema.pageSpec,
                 "filter": MCPSchema.enumeration(["all", "mistakes", "starred"], "Only the user's mistakes or starred ones", default: "all"),
@@ -289,10 +290,11 @@ extension MCPTools {
             let limit = min(200, max(1, try args.int("limit") ?? 50))
             let chapter = try chapterArg(args.raw["chapter"], at: "arguments")
             let tag = try args.string("tag")
+            let ids = try stringsArg(args.raw["exercise_ids"], "exercise_ids", at: "arguments")
             let r = try await MainActor.run {
                 try MCPFacade.shared.listExercises(documentId: docId, workspacePath: wsPath, allDocuments: all,
                                                    pages: pages, filter: filter, chapter: chapter, tag: tag,
-                                                   offset: offset, limit: limit)
+                                                   exerciseIds: ids, offset: offset, limit: limit)
             }
             let list = (r["exercises"] as? [MCPObject]) ?? []
             var lines = ["\(r["total"] ?? 0) exercise(s)\(r["title"].map { " in “\($0)”" } ?? ""); showing \(list.count) from \(offset)."]
@@ -328,7 +330,7 @@ extension MCPTools {
             "options": MCPSchema.array(of: MCPSchema.object([
                 "key": MCPSchema.string("A–H"), "text": MCPSchema.string("option text")], required: ["key", "text"]),
                 "Replaces all options"),
-            "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] on the question's page"),
+            "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] box around the whole question on its page, normalized 0–1, top-left origin (as in render_page); it is what the user sees under Original while practicing. [] removes it, so Original shows the whole page."),
             "has_figure": MCPSchema.boolean("The question depends on a figure or table"),
             "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels (e.g. to regroup questions the way the user asks); [] clears it"),
             "user_answer": MCPSchema.string("What the user wrote in the document: option letters (\"B\") for choice, transcribed text for subjective; replaces the earlier one; empty string removes it"),

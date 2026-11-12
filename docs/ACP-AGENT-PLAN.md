@@ -494,3 +494,23 @@ session_id（那段对话在原 Agent 里的 id，只对同一家有意义）, c
   （`AgentPanelModel.prepare`，同习题「让 Agent 批改」那条路），Agent 页亮出来等用户发。
 - 验证：`spike/agent-usage-test.swift` 51 项全过（新加 13 项）；Mac Debug 编译通过。🔴 界面由用户实测：① 输入框打 `/` 出命令列表、打 `/com` 只剩相关的、
   回车补全成 `/compact `；② 完整打 `/compact` 回车直接发送；③ 选中一段文字右键 →「在 … 中引用这段文字」→ Agent 页输入框里是引用块。
+
+## 15. 引用某一道题（2026-11-12）
+
+用户原话：「支持引用某一题到 agent」。侧栏只能引用习题的**一组**（§11），这一轮补上单题。
+
+- **入口**：练习页顶行「在 Agent 中引用」（`at` 图标；这扇窗能发给 Agent 时才显示；顶行挤不下时只留图标）；
+  列表右键「在 Agent 中引用」（可多选，一道一个 `@`；Agent 不可用时灰掉）。两处都走 `ExercisePracticeView.reference` → `AgentPanelModel.reference`，
+  与侧栏同一条路：输入框光标处插 `@名字 `，发送时附 `resource_link`。
+- **名字**：练习页顶行那几样——`书名 · 第 12 页 · 题号 3`（没题号写题型）。带页码是因为不少书每章题号从 1 重来。
+- **给 Agent 的说明**（`AgentMention.exercise`，`Kind.exercise`）：🔴 仍然只给位置不给内容——题型、题号、页码、书名 + document_id、章节、`exercise_id`，
+  指它用 `list_exercises (exercise_ids [...])` 读题干 / 选项 / 参考答案 / 解析 / 笔记 / 练习统计，`list_exercise_attempts (exercise_ids [...])` 读作答，
+  带图的题用 `render_page` 看页面。uri = 那一页的 `unireader://` 链接。
+- **MCP 配套**：`list_exercises` 加了 `exercise_ids`（完整 id 或前 8 位，按给的顺序返回；给了它就不看 document_id / all_documents / pages / filter / chapter / tag）。
+  原先没有按 id 读单题的办法——`list_exercise_attempts` 只在做过的题上有结果。
+- 验证：`spike/agent-mention-test.swift` 47 项全过（新加 4 项：单题的说明 / mime、名字带空格和 · 照样按正文认出、去重、与习题组不互相去重）；
+  Mac Debug 编译通过。🔴 没在真 App 里跑过。
+- 实测清单（用户）：
+  103. 练习页顶行有「在 Agent 中引用」，点了 Agent 页亮出来、输入框里是 `@书名 · 第 N 页 · 题号 X `；问一句「这题怎么做」，Agent 能读出这道题。
+  104. 列表里多选几道右键「在 Agent 中引用」：一道一个 `@`；删掉其中一个再发，Agent 只收到剩下的。
+  105. 设置里关掉 Agent：练习页那个按钮不见、列表右键那一项灰掉。

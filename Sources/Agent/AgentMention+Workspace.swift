@@ -1,7 +1,8 @@
 import Foundation
 
 /// 由工作区里的东西造 `AgentMention`（`ACP-AGENT-PLAN.md §8`、§11）：输入框 `@` 的候选（PDF / 笔记）与
-/// 侧栏「在 Agent 中引用」（侧栏每一种条目）都走这里，同一样东西两条路进来给 Agent 的是同一份说明。
+/// 侧栏「在 Agent 中引用」（侧栏每一种条目）都走这里，同一样东西两条路进来给 Agent 的是同一份说明；
+/// 习题标签里引用某一道题也是（§15）。
 ///
 /// 🔴 只给名字、位置和「用哪个 MCP 工具读」，不给内容（同 §8）。
 @MainActor
@@ -134,6 +135,35 @@ extension AgentMention {
         return AgentMention(
             kind: .exercises, id: scope.rowID, name: title, detail: "", uri: workspaceLink(ws).absoluteString,
             info: "A set of exercises (习题) in UniReader: \(what)\(n). List them with \(how).")
+    }
+
+    /// 一道习题（§15）。名字 = 练习页顶行那几样：「书名 · 第 12 页 · 题号 3」（没题号写题型），
+    /// 同一本书里每章题号重来也分得开；位置 = 那一页的 `unireader://` 链接。
+    /// 🔴 同 §8 不给内容：题干 / 选项 / 答案 / 作答都让 Agent 按 exercise_id 自己读。
+    static func exercise(_ e: Exercise, in ws: WorkspaceManager) -> AgentMention {
+        let doc = e.documentId.flatMap { ws.document(id: $0) }
+        var parts: [String] = [doc?.title ?? L("Exercises")]
+        if let p = e.page { parts.append(String(format: L("Page %d"), p + 1)) }
+        parts.append(e.number.isEmpty ? ExercisePracticeView.kindName(e.kind) : String(format: L("No. %@"), e.number))
+        var link = workspaceLink(ws)
+        if let d = e.documentId, doc != nil {
+            link.documentId = d
+            link.page = e.page.map { $0 + 1 }
+        }
+        var place: [String] = []
+        if !e.number.isEmpty { place.append("number \(e.number)") }
+        if let p = e.page { place.append("page \(p + 1)") }
+        if let d = e.documentId { place.append("of \"\(doc?.title ?? d)\" (document_id \(d))") }
+        if !e.chapter.isEmpty { place.append("chapter \(e.chapter.joined(separator: " > "))") }
+        let ids = "[\"\(e.id)\"]"
+        return AgentMention(
+            kind: .exercise, id: e.id, name: parts.joined(separator: " · "),
+            detail: e.chapter.last ?? e.section, uri: link.absoluteString,
+            info: "One exercise (习题) in UniReader, a \(e.kind.wireName) question"
+                + (place.isEmpty ? "" : ", " + place.joined(separator: ", "))
+                + "; exercise_id \(e.id). Read the question, its options, reference answer, explanation, the user's note "
+                + "and practice stats with list_exercises (exercise_ids \(ids)); the user's answers with "
+                + "list_exercise_attempts (exercise_ids \(ids)). If it depends on a figure, look at its page with render_page.")
     }
 
     /// 工作区本身的 `unireader://` 链接（没有文件位置可给时的 uri）。

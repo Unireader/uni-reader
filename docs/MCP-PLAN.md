@@ -943,3 +943,12 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 这里只记接口：两个读（列表、读全文，id 可给前 8 位）+ 一个写（`save_agent_context`，`agent` 取调用方 `clientInfo` 的名字，给 `id` = 改已有那份；
 说明里写明只在用户要求时存）。实现在 `MCP/MCPTools+AgentContext.swift`（工具 + `MCPFacade` 执行，同一个文件）。
 `instructions` 加了一句：用户说「接着上次的」就用两个读工具找。🔴 输出 schema 每个键都声明了；对着运行中的 App 跑一次 `python3 spike/mcp-schema-audit.py` 由用户实测时做。
+
+## 27. 2026-11-12 `list_exercises` 加 `exercise_ids`
+
+- 起因：Agent 面板里能引用某一道题了（`ACP-AGENT-PLAN.md §15`），说明里只给 `exercise_id`；原先没有按 id 读单题的办法
+  （`list_exercise_attempts` 只在做过的题上有结果）。
+- `exercise_ids`：完整 id 或前 8 位，按给的顺序返回；给了它就不看 `document_id` / `all_documents` / `pages` / `filter` / `chapter` / `tag`；
+  认题走 `resolveExercises`（同 `update_exercises`），找不到 / 前缀有歧义照样报错。返回格式不变（不带 `document_id` / `title` 两个单书字段，它们本来就是可选的）。
+- 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`（只加了入参，输出键没变）。
+- 同日 `update_exercises` 的 `region` 认 `[]` = 去掉框（看原题回到整页，`EXERCISE-PLAN.md §25`）；之前传 `null` 是不改、传 `[]` 报格式错，Agent 没法把框去掉。

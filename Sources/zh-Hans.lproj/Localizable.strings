@@ -1279,3 +1279,20 @@
 "The same item was changed on two devices. The newer change was kept (for an edit against a delete, the edit). Nothing needs to be done unless something looks wrong." = "同一样东西在两台设备上都改过。保留的是较新的那次改动（一边删、一边改时保留改的那份）。看着没问题就不用管。";
 "Clear List" = "清空列表";
 "Put Pin Back" = "图钉放回原位";
+
+/* Markdown 笔记文件夹 / 习题引用到 Agent / 原题区域（2026-11-12） */
+"New Folder…" = "新建文件夹…";
+"New Folder" = "新建文件夹";
+"Untitled Folder" = "未命名文件夹";
+"Folder name" = "文件夹名称";
+"New Notes Folder…" = "新建笔记文件夹…";
+"Folder names can’t start with a dot or be “trash”." = "文件夹名称不能以点开头，也不能叫 “trash”。";
+"That folder is not on this Mac." = "这台电脑上没有这个文件夹。";
+"Put this question into the Agent’s message box, so you can ask about it." = "把这道题放进 Agent 的输入框，接着写你要问的。";
+"Set Question Area…" = "设置原题区域…";
+"Choose which part of the page Original shows, instead of the whole page." = "选定「原题」显示页面上的哪一块，不用显示整页。";
+"Can’t show the page of this question" = "显示不了这道题所在的页面";
+"The PDF it comes from is not on this Mac." = "这道题所在的 PDF 不在这台电脑上。";
+"Set Question Area" = "设置原题区域";
+"Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page." = "在页面上拖出一个框，把题目框住。在框里拖可以挪动，拖边或角可以改大小。之后「原题」只显示这一块。";
+"Use Whole Page" = "用整页";
