@@ -1302,3 +1302,14 @@
 "Page %d only" = "只在第 %d 页";
 "If the question runs onto the next page (say its figure is there), choose the pages above and box the part on each page; Original shows the parts one above the other." = "题目接到下一页时（比如图在下一页），先在上面选好页数，再在每一页上框出各自那一部分；「原题」会把几块从上到下拼在一起显示。";
 "Choose which part of the page Original shows, instead of the whole page. A question that runs onto the next page can have a box on each page." = "选定「原题」显示页面上的哪一块，不用显示整页。题目跨页时每一页各框一块。";
+"Context:" = "上下文：";
+"Viewing “%@”, page %d" = "正在看《%@》第 %d 页";
+"Viewing “%@”" = "正在看《%@》";
+"Viewing note “%@”" = "正在看笔记《%@》";
+"Practicing “%@”, question %d" = "正在练「%@」第 %d 题";
+"Practicing “%@”" = "正在练「%@」";
+"Quote from “%@”, page %d" = "引用出处：《%@》第 %d 页";
+"Quote from “%@”" = "引用出处：《%@》";
+"Grading request" = "批改请求";
+"Saved context “%@”" = "交接摘要「%@」";
+"Summary instructions" = "写交接摘要的说明";

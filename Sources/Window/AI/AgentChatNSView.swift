@@ -866,7 +866,7 @@ enum AgentMenus {
 enum AgentItemViews {
     static func make(_ item: AgentItem) -> NSView {
         switch item.kind {
-        case .user(let s, let images): return AgentUserMessageView(text: s, images: images, id: item.id)
+        case .user(let s, let images, let ctx): return AgentUserMessageView(text: s, images: images, context: ctx, id: item.id)
         case .agent(let s): return agent(s, id: item.id)
         case .thought(let s): return thought(s, id: item.id)
         case .tool(let call): return tool(call)
@@ -898,9 +898,9 @@ enum AgentItemViews {
             guard let v = view as? AgentDisclosureView, v.markdown != nil else { return false }
             v.update(text: s)
             return true
-        case .user(let s, let images):
-            // 回放时同一句话可能分几片推回来：图片没变、正文还在，就地换文字
-            guard let v = view as? AgentUserMessageView, v.images == images else { return false }
+        case .user(let s, let images, let ctx):
+            // 回放时同一句话可能分几片推回来：图片、上下文都没变、正文还在，就地换文字（上下文变了整条重建：回放期间不建视图，代价小）
+            guard let v = view as? AgentUserMessageView, v.images == images, v.context == ctx else { return false }
             return v.update(text: s)
         case .plan(let entries):
             // 计划每次推的都是完整清单：就地换内容，别整条重建

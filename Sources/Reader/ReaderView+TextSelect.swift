@@ -176,7 +176,7 @@ extension ReaderView {
     func quoteSelectionInAgent() {
         guard let sel = selection, !sel.text.isEmpty else { return }
         let page = sel.rects.keys.min()
-        var note = "The quoted text above was selected by the user in the PDF"
+        var note = AgentSentContext.Marker.quote   // 回放时据这个开头认出「引用出处」（`AgentSentContext`）
         if !session.title.isEmpty { note += " \"\(session.title)\"" }
         if let id = session.documentId { note += " (document_id \(id))" }
         if let page { note += ", page \(PageNo.external(page))" }

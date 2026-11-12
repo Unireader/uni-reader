@@ -504,7 +504,7 @@ final class ExercisePracticeView: NSView {
         }
         let label = e.number.isEmpty ? Self.kindName(e.kind) : String(format: L("No. %@"), e.number)
         let text = String(format: L("Please grade my answer to this question (%@): say whether it is right and what to improve."), label)
-        let note = "The user wants you to grade their answer. exercise_id \(e.id), attempt_id \(aid). "
+        let note = AgentSentContext.Marker.grading + " exercise_id \(e.id), attempt_id \(aid). "
             + "Read the question, the reference answer and the user's answer with list_exercise_attempts (exercise_ids: [\"\(e.id)\"]); "
             + "if it has handwriting, look at it with render_exercise_answer. Then save the verdict and feedback with "
             + "grade_exercise_attempts — it replaces any verdict the user gave themselves."

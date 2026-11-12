@@ -4,8 +4,9 @@ import Foundation
 /// 对话里的一条（`AgentChat.items`）。流式到来的碎片在 `AgentTranscript.apply` 里拼成整条。
 struct AgentItem: Identifiable, Equatable {
     enum Kind: Equatable {
-        /// 用户的一句话 + 随它发出去的图片（回放时 Agent 推回来的图片也拼在这里）。
-        case user(String, images: [AgentImage])
+        /// 用户的一句话 + 随它发出去的图片（回放时 Agent 推回来的图片也拼在这里）+ 随它发出去、气泡里看不见的上下文
+        /// （`@` 引用、引用出处、交接摘要、用户在看什么……显示在气泡下面一行，`ACP-AGENT-PLAN.md §18`）。
+        case user(String, images: [AgentImage], context: [AgentSentContext] = [])
         case agent(String)
         case thought(String)
         case tool(AgentToolCall)
@@ -75,7 +76,7 @@ enum AgentTranscript {
     static func weight(_ kind: AgentItem.Kind) -> Int {
         switch kind {
         case .agent(let s), .thought(let s): return 200 + s.utf16.count
-        case .user(let s, let images): return 200 + s.utf16.count + 400 * images.count
+        case .user(let s, let images, let ctx): return 200 + s.utf16.count + 400 * images.count + 40 * ctx.count
         case .tool, .plan, .notice: return 200
         }
     }
@@ -87,18 +88,36 @@ enum AgentTranscript {
     /// 回放时要从用户消息里剔掉的段落：我们自己的上下文块 + Kimi 自己注入的 system-reminder。
     private static let hiddenTags = [(contextOpen, contextClose), ("<system-reminder>", "</system-reminder>")]
 
-    static func stripHidden(_ s: String) -> String {
+    static func stripHidden(_ s: String) -> String { splitHidden(s).visible }
+
+    /// 拆成用户看得见的部分 + 我们自己的隐藏上下文块里面的文字（Kimi 的 system-reminder 只剔不留）。
+    /// 隐藏块里的东西据 `AgentSentContext.parse` 显示在气泡下面那行「上下文」里（`ACP-AGENT-PLAN.md §18`）。
+    static func splitHidden(_ s: String) -> (visible: String, hidden: [String]) {
         var out = s
+        var hidden: [String] = []
         for (open, close) in hiddenTags {
             while let a = out.range(of: open) {
+                let inner: Range<String.Index>
                 if let b = out.range(of: close, range: a.upperBound..<out.endIndex) {
+                    inner = a.upperBound..<b.lowerBound
+                    if open == contextOpen { hidden.append(String(out[inner])) }
                     out.removeSubrange(a.lowerBound..<b.upperBound)
                 } else {
+                    if open == contextOpen { hidden.append(String(out[a.upperBound...])) }
                     out.removeSubrange(a.lowerBound..<out.endIndex)   // 没闭合：后面全算上下文
                 }
             }
         }
-        return out
+        return (out, hidden)
+    }
+
+    /// 给眼前这条用户消息补上下文（回放时附件 / 隐藏块跟在那句话后面单独推来）。没有用户消息 / 没新东西 → false。
+    private static func addContext(_ extra: [AgentSentContext], to items: inout [AgentItem]) -> Bool {
+        guard !extra.isEmpty, case .user(let s, let imgs, let ctx)? = items.last?.kind else { return false }
+        let merged = AgentSentContext.merged(ctx, extra)
+        guard merged != ctx else { return false }
+        items[items.count - 1].kind = .user(s, images: imgs, context: merged)
+        return true
     }
 
     /// 工具名去掉 MCP 前缀：`mcp__unireader__get_state` → `get_state`。
@@ -147,31 +166,36 @@ enum AgentTranscript {
             // 回放：图片挂到眼前这条用户消息上（发送时图片排在文字后面），没有就单起一条
             guard let data = Data(base64Encoded: img.data) else { return false }
             let pic = AgentImage(data: data, mimeType: img.mimeType)
-            if case .user(let prev, let imgs)? = items.last?.kind {
-                items[items.count - 1].kind = .user(prev, images: imgs + [pic])
+            if case .user(let prev, let imgs, let ctx)? = items.last?.kind {
+                items[items.count - 1].kind = .user(prev, images: imgs + [pic], context: ctx)
             } else {
                 items.append(AgentItem(kind: .user("", images: [pic])))
             }
             return true
-        case .userMessageChunk(.resourceLink):
-            // 回放：`@` 附上的文件，用户那句话里已经写着 `@名字`，不再把 URI 拼进去
-            return false
+        case .userMessageChunk(.resourceLink(let r)):
+            // 回放：`@` 附上的文件，用户那句话里已经写着 `@名字`，不再把 URI 拼进去；记进气泡下面那行「上下文」
+            return addContext([AgentSentContext.reference(name: r.name, uri: r.uri, mimeType: r.mimeType,
+                                                          description: r.description)], to: &items)
         case .userMessageChunk(let b):
             guard let raw = text(of: b) else { return false }
-            let t = stripHidden(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty else { return false }
-            if case .user(let prev, let imgs)? = items.last?.kind {
-                // Agent 把 `@` 附件（resource_link）转成了文字、跟在那句话后面单独一块（Kimi 是本机路径，Claude Code 是
-                // `[@名字](file://…)`；用户 2026-11-12 截图「后面有一堆路径」）：那句话里已经写着 `@名字`，不显示
-                if AgentMention.isLinkEcho(t) { return false }
+            let parts = splitHidden(raw)
+            let extra = parts.hidden.flatMap { AgentSentContext.parse(hidden: $0) }
+            let t = parts.visible.trimmingCharacters(in: .whitespacesAndNewlines)
+            if case .user(let prev, let imgs, let ctx)? = items.last?.kind {
+                if t.isEmpty { return addContext(extra, to: &items) }
+                // Agent 把 `@` 附件（resource_link）转成了文字、跟在那句话后面单独一块（Kimi 是本机路径 / `<resource_link …/>`，
+                // Claude Code 是 `[@名字](file://…)`；用户 2026-11-12 截图「后面有一堆路径」）：那句话里已经写着 `@名字`，
+                // 正文里不显示，记进「上下文」
+                if AgentMention.isLinkEcho(t) { return addContext(AgentSentContext.references(echo: t) + extra, to: &items) }
                 // 我们发的每条消息只有**一块**看得见的文字（其余是附件 / 图片 / 上下文块），眼前这条已经有字了，再来的字就是
                 // 下一句（那句话之后 Agent 没回就又发了「继续」，以前会接成一句「……空的继续」）。还没字的那条（只有图片）把字补上。
                 if prev.isEmpty {
-                    items[items.count - 1].kind = .user(t, images: imgs)
+                    items[items.count - 1].kind = .user(t, images: imgs, context: AgentSentContext.merged(ctx, extra))
                     return true
                 }
             }
-            items.append(AgentItem(kind: .user(t, images: [])))
+            guard !t.isEmpty else { return false }
+            items.append(AgentItem(kind: .user(t, images: [], context: extra)))
             return true
         case .agentMessageChunk(let b):
             guard let t = text(of: b) else { return false }

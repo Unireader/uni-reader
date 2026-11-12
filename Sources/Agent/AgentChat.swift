@@ -60,7 +60,7 @@ struct AgentReaderContext: Equatable {
             "Workspace: \(workspaceName). Its library lives in the package \"\(pkg)\" inside your working directory. Never read or modify files inside that .unrd package directly; use the unireader MCP tools for anything in the library (documents, pages, notes, highlights, bookmarks).",
         ]
         if let markdown {
-            var s = "Current Markdown note: \"\(markdown.title)\" (note_ref \(markdown.ref), source \"\(markdown.sourceName)\" [\(markdown.sourceKind)], relative_path \"\(markdown.relativePath)\")"
+            var s = AgentSentContext.Marker.markdown + "\"\(markdown.title)\" (note_ref \(markdown.ref), source \"\(markdown.sourceName)\" [\(markdown.sourceKind)], relative_path \"\(markdown.relativePath)\")"
             if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
             if let windowId { s += ", window_id \(windowId.uuidString)" }
             lines.append(s + ".")
@@ -68,7 +68,7 @@ struct AgentReaderContext: Equatable {
             lines.append("link \(markdown.link)")
             lines.append(Self.noteKinds + " The current tab is a Markdown note, so \"note\" (笔记) without a kind means a Markdown note, most likely this one.")
         } else if let ex = exercise {
-            var s = "Current tab: Exercises (习题), the group \"\(ex.group)\" in the \(ex.list ? "list" : "practice") view"
+            var s = AgentSentContext.Marker.exercises + " (习题), the group \"\(ex.group)\" in the \(ex.list ? "list" : "practice") view"
             if let id = ex.exerciseId {
                 s += ", question \(ex.position) of \(ex.count): exercise_id \(id), a \(ex.kind) question"
                 if !ex.number.isEmpty { s += " numbered \(ex.number)" }
@@ -85,7 +85,7 @@ struct AgentReaderContext: Equatable {
             lines.append("\"This question\" (这道题 / 这题) means that one. get_current_view gives it in full with the answer showing and its attempt_id (to grade it with grade_exercise_attempts); render_exercise shows it as printed (figures); open_exercises moves the user to another question or group.")
             lines.append(Self.noteKinds + " If the user says \"note\" (笔记) about this question, they probably mean its own note (update_exercises note); otherwise ask which one.")
         } else if let documentId {
-            var s = "Current document: \"\(docTitle)\" (document_id \(documentId)), page \(page + 1) of \(pageCount)"
+            var s = AgentSentContext.Marker.document + "\"\(docTitle)\" (document_id \(documentId)), page \(page + 1) of \(pageCount)"
             if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
             if let windowId { s += ", window_id \(windowId.uuidString)" }
             lines.append(s + ".")
@@ -469,22 +469,27 @@ final class AgentChat: ObservableObject {
                                          id: h.context.id, date: h.context.updatedAt)
             }
         contextNotes = []
+        // 气泡下面那行「上下文」（`ACP-AGENT-PLAN.md §18`）：从真发出去的原文认，与回放时认的同一套（`AgentSentContext.parse`）
+        var sent = mentions.map { m in
+            AgentSentContext(kind: .reference(m.kind), name: m.name, detail: m.agentDescription)
+        }
         if !notes.isEmpty {
             blocks.append(.text(TextContent(text: ([AgentTranscript.contextOpen] + notes + [AgentTranscript.contextClose])
                 .joined(separator: "\n"))))
+            sent = AgentSentContext.merged(sent, AgentSentContext.parse(hidden: notes.joined(separator: "\n")))
         }
         if let ctx = contextProvider() {
             let t = ctx.promptText
             if t != lastContextSent {
                 blocks.append(.text(TextContent(text: t)))
                 lastContextSent = t
+                for h in AgentTranscript.splitHidden(t).hidden {
+                    sent = AgentSentContext.merged(sent, AgentSentContext.parse(hidden: h))
+                }
             }
         }
-        items.append(AgentItem(kind: .user(text, images: images)))
-        for h in carried {
-            items.append(AgentItem(kind: .notice(String(format: L("Carried over the context “%@”."), h.context.title),
-                                                 isError: false)))
-        }
+        // 带进来的交接摘要在「上下文」那行里显示（以前另起一行「已带上…」）
+        items.append(AgentItem(kind: .user(text, images: images, context: sent)))
         run(blocks, session: id, on: c)
     }
 
@@ -502,7 +507,7 @@ final class AgentChat: ObservableObject {
         guard canSaveContext, let id = sessionId, let c = connection else { return }
         let text = L("Please write a handoff summary of this chat so I can continue it with another agent.")
         pendingSave = (id, items.count)
-        items.append(AgentItem(kind: .user(text, images: [])))
+        items.append(AgentItem(kind: .user(text, images: [], context: AgentSentContext.parse(hidden: AgentContextText.saveInstruction))))
         let note = [AgentTranscript.contextOpen, AgentContextText.saveInstruction, AgentTranscript.contextClose]
             .joined(separator: "\n")
         run([.text(TextContent(text: text)), .text(TextContent(text: note))], session: id, on: c)

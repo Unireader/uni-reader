@@ -2,11 +2,17 @@
 // 编的是**真代码**（`AgentUserMessageView` / `AgentMarkdownView` / `AgentCodeHighlighter`），只把图片缩略图、
 // 工作区 wiki 索引这些跟本题无关的类型换成桩。依赖已编好的包模块（先按 AGENTS.md 编一次 Debug 包）。运行：
 //
-//   D=build/dev/Build/Products/Debug; O=/tmp/agent-user-bubble; mkdir -p $O && cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ \
-//   && cp spike/agent-user-bubble-test.swift $O/main.swift && swiftc -I $D $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
-//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Window/AI/AgentMarkdownView.swift \
-//      Sources/Window/AI/AgentUserMessageView.swift Sources/Agent/AgentMarkdownBlocks.swift $O/main.swift -o $O/t && $O/t $O
+//   D=build/dev/Build/Products/Debug; AD=$(cd $D && pwd); O=/tmp/agent-user-bubble; mkdir -p $O && \
+//   cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ && cp spike/agent-user-bubble-test.swift $O/main.swift && \
+//   swiftc -I $D -F $D -framework GrapherKit -framework GrapherRender -Xlinker -rpath -Xlinker $AD \
+//      $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
+//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/LatexCompat.swift \
+//      Sources/Markdown/GrapherBlocks.swift Sources/Markdown/TableEditMenu.swift Sources/Window/AI/AgentMarkdownView.swift \
+//      Sources/Window/AI/AgentRowView.swift Sources/Window/AI/AgentUserMessageView.swift Sources/Agent/AgentMarkdownBlocks.swift \
+//      Sources/Agent/AgentMention.swift Sources/Agent/AgentSentContext.swift $O/main.swift -o $O/t && $O/t $O
 //
+// （2026-11-12 补全：笔记编辑框后来依赖 LatexCompat / GrapherBlocks / TableEditMenu，Agent 正文依赖 AgentRowView，
+//   画图块要链 GrapherKit / GrapherRender 两个框架；旧命令编不过。）
 // （两个资源包要和可执行文件放一起：包里的 `Bundle.module` 按可执行文件所在目录找。）
 // 盯五件事：
 //  1. 宽度估算：块级结构（标题 / 列表 / 引用 / 代码块 / 表格 / 块公式 / 图片）撑满，其余按原文量；
@@ -14,7 +20,8 @@
 //  3. 🔴 **估出来的宽度不能比排出来的窄**：按估的宽度排出来的高度 = 按上限宽度排出来的高度（没多折一行）；
 //  4. 回放分片就地换文字（`update(text:)`）后宽度跟着变；
 //  5. 着色器：没写语言 / 不认识的语言不着色（也不慢），别名认得，颜色深浅外观各一套，长度对得上，有缓存；
-//  6. 右键：表格上出「复制表格」且不留错位选区、代码块上出「复制代码」、不重复加项、剪贴板内容对（用临时剪贴板）。
+//  6. 右键：表格上出「复制表格」且不留错位选区、代码块上出「复制代码」、不重复加项、剪贴板内容对（用临时剪贴板）；
+//  7. 气泡下面那行「上下文」（2026-11-12，`ACP-AGENT-PLAN.md §18`）：靠右、折行不撑宽面板、没有就不占地方。
 // 另出样张：$O/look-light.png、$O/look-dark.png（气泡、代码块底色与着色、荧光笔底色），
 // $O/look-code-selected.png（整块选中有折行的代码块：折行行的底色不盖选区、围栏不露出来——要引擎 0.13.0-unireader.2）。
 import AppKit
@@ -236,6 +243,54 @@ func testBubbles() {
     check(!imageOnly.update(text: "后来的文字"), "只有图片的那条不能就地补文字（交给重建）")
 }
 
+// MARK: 7. 「上下文」那一行
+
+@MainActor
+func testContextLine() {
+    print("7. 气泡下面的「上下文」")
+    let panel: CGFloat = 360
+    let h = Harness(width: panel, appearance: .aqua)
+    let item = panel - 28
+    // 一行放得下的（`few`）/ 放不下、要折的（`two` 一行约 320pt > 上限 284，`many` 一长串）
+    let few = [AgentSentContext(kind: .reference(.pdf), name: "计网.pdf")]
+    let two = [AgentSentContext(kind: .reference(.pdf), name: "计网.pdf"),
+               AgentSentContext(kind: .viewingDocument, name: "2027计算机网络", page: 22)]
+    let many = two + (1...8).map { AgentSentContext(kind: .reference(.note), name: "很长很长的一篇笔记名字 \($0).md") }
+    let plain = h.user("帮我看看这题")
+    let v1 = AgentUserMessageView(text: "帮我看看这题", images: [], context: few, id: UUID())
+    let v2 = AgentUserMessageView(text: "帮我看看这题", images: [], context: many, id: UUID())
+    let v3 = AgentUserMessageView(text: "", images: [AgentImage()], context: few, id: UUID())
+    let v4 = AgentUserMessageView(text: "帮我看看这题", images: [], context: two, id: UUID())
+    for v in [v1, v2, v3, v4] { h.add(v) }
+    pump(1.2)
+    check(abs(h.win.frame.width - panel) < 0.5, "🔴 一长串上下文也没把窗口撑宽（\(h.win.frame.width)）")
+    check(plain.contextLabel == nil, "没有上下文：不建那一行")
+    for v in [v1, v2, v3, v4] {
+        guard let l = v.contextLabel else { check(false, "有上下文就有那一行"); continue }
+        check(abs(v.frame.width - item) < 0.5, "条目宽不变（\(v.frame.width)）")
+        // 文字框的对齐框比 frame 每边窄 2pt（约束管的是对齐框）
+        let a = l.alignmentRect(forFrame: l.frame)
+        check(a.width <= item - AgentUserMessageView.leftGap + 0.5, "那一行不超过气泡上限（\(a.width)）")
+        check(abs(a.maxX - v.bounds.maxX) < 0.5, "那一行靠右（maxX \(a.maxX) / \(v.bounds.maxX)）")
+        check(!l.hasAmbiguousLayout, "那一行布局不含糊")
+        check(l.toolTip?.isEmpty == false, "悬停有说明")
+    }
+    let oneLine = v1.contextLabel?.frame.height ?? 0
+    let wrapped = v2.contextLabel?.frame.height ?? 0
+    let twoLines = v4.contextLabel?.frame.height ?? 0
+    check(oneLine > 8 && oneLine < 24, "一行放得下的就一行（\(oneLine)）")
+    if let a = v1.contextLabel.map({ $0.alignmentRect(forFrame: $0.frame) }) {
+        check(a.width < item - AgentUserMessageView.leftGap - 100, "一行放得下时按文字宽收窄、靠右（\(a.width)）")
+    }
+    check(twoLines > oneLine * 1.6 && twoLines < oneLine * 2.6, "放不下的折成两行（\(twoLines)）")
+    check(wrapped > oneLine * 2.6, "一长串折成几行（\(wrapped)），条目跟着变高")
+    check(v1.frame.height > plain.frame.height + oneLine, "有上下文的条目 = 气泡 + 间距 + 那一行（\(v1.frame.height) vs \(plain.frame.height)）")
+    if let b = v1.bubble, let l = v1.contextLabel {
+        check(l.frame.minY >= b.frame.maxY - 0.5 || l.frame.maxY <= b.frame.minY + 0.5, "那一行不压在气泡上")
+    }
+    check(AgentUserMessageView.label(two[1]).contains("22"), "「正在看」带页码")
+}
+
 // MARK: 5. 着色器
 
 @MainActor
@@ -402,6 +457,12 @@ func looks() {
             _ = h.user("先看第 **12** 页，把 `fittingWidth` ==标出来==")
             _ = h.user("- 列表撑满\n- 第二项")
             _ = h.user("```python\nprint('hi')\n```")
+            h.add(AgentUserMessageView(text: "@计网.pdf 帮我把这题的原题框调一下", images: [], context: [
+                AgentSentContext(kind: .reference(.pdf), name: "计网.pdf"),
+                AgentSentContext(kind: .reference(.exercise), name: "2027计算机网络 · Page 22 · No. 11"),
+                AgentSentContext(kind: .viewingExercises, name: "第二章 物理层", page: 3),
+                AgentSentContext(kind: .handoff, name: "计网第二章复习"),
+            ], id: UUID()))
             let md = AgentMarkdownView(text: reply, fontSize: AgentMarkdown.bodyFontSize, documentId: "look-\(name)")
             h.add(md)
             pump(1.5)
@@ -431,6 +492,7 @@ MainActor.assumeIsolated {
     testBubbles()
     testHighlighter()
     testContextMenu()
+    testContextLine()
     looks()
     print(failures == 0 ? "✓ 全部 \(checks) 项通过" : "✗ \(failures) / \(checks) 项失败")
     exit(failures == 0 ? 0 : 1)
