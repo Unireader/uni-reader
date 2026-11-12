@@ -158,14 +158,20 @@ enum AgentTranscript {
             return false
         case .userMessageChunk(let b):
             guard let raw = text(of: b) else { return false }
-            let t = stripHidden(raw)
-            guard !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-            // 已经带了图片的那条不再往后拼文字：图片在文字后面，再来的文字是下一句
-            if case .user(let prev, let imgs)? = items.last?.kind, imgs.isEmpty {
-                items[items.count - 1].kind = .user(prev + t, images: [])
-            } else {
-                items.append(AgentItem(kind: .user(t.trimmingCharacters(in: .whitespacesAndNewlines), images: [])))
+            let t = stripHidden(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { return false }
+            if case .user(let prev, let imgs)? = items.last?.kind {
+                // Agent 把 `@` 附件（resource_link）转成了文字、跟在那句话后面单独一块（Kimi 是本机路径，Claude Code 是
+                // `[@名字](file://…)`；用户 2026-11-12 截图「后面有一堆路径」）：那句话里已经写着 `@名字`，不显示
+                if AgentMention.isLinkEcho(t) { return false }
+                // 我们发的每条消息只有**一块**看得见的文字（其余是附件 / 图片 / 上下文块），眼前这条已经有字了，再来的字就是
+                // 下一句（那句话之后 Agent 没回就又发了「继续」，以前会接成一句「……空的继续」）。还没字的那条（只有图片）把字补上。
+                if prev.isEmpty {
+                    items[items.count - 1].kind = .user(t, images: imgs)
+                    return true
+                }
             }
+            items.append(AgentItem(kind: .user(t, images: [])))
             return true
         case .agentMessageChunk(let b):
             guard let t = text(of: b) else { return false }

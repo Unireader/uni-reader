@@ -63,6 +63,35 @@ struct AgentMention: Equatable, Identifiable {
         }
     }
 
+    /// 回放旧对话时，Agent 把我们附的 `resource_link`（`@` 引用）转成的那块文字（`ACP-AGENT-PLAN.md §17`，用户 2026-11-12 截图：
+    /// 消息后面拼着一串路径）：Kimi 存成本机路径（`/Users/…/PDFs/<哈希>.pdf`）或 `<resource_link uri="…" name="…" />` 标签
+    /// （`unireader://` 那种引用：习题、一组题…），Claude Code 适配器存成 `[@名字](file:///…)`，有的存 `@/路径`，
+    /// 也可能是原样的 `file://` / `unireader://` 链接。**整块只有这些东西**才算——一句话里提到路径不算；
+    /// 光秃的路径至少三级（`/compact` 这类斜杠命令不会被当成路径）。
+    static func isLinkEcho(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return false }
+        // 一个或几个 `<resource_link …/>`（或成对的 `<resource_link …>…</resource_link>`），中间只有空白
+        if t.hasPrefix("<resource_link"), t.range(of: Self.resourceLinkTags, options: .regularExpression) != nil { return true }
+        guard !t.contains("\n") else { return false }
+        func isLinkURL<S: StringProtocol>(_ s: S) -> Bool {
+            let l = s.lowercased()
+            return l.hasPrefix("file://") || l.hasPrefix("unireader://")
+        }
+        if isLinkURL(t) { return true }
+        // Markdown 链接，目标是本机文件 / unireader 链接
+        if t.hasPrefix("["), t.hasSuffix(")"), let r = t.range(of: "](", options: .backwards) {
+            return isLinkURL(t[r.upperBound..<t.index(before: t.endIndex)])
+        }
+        var p = Substring(t)
+        if p.hasPrefix("@") { p = p.dropFirst() }
+        if p.hasPrefix("~/") { p = p.dropFirst() }
+        guard p.hasPrefix("/") else { return false }
+        return p.split(separator: "/").count >= 3
+    }
+    private static let resourceLinkTags =
+        #"^(?:<resource_link\b[^>]*/>\s*|<resource_link\b[^>]*>[\s\S]*?</resource_link>\s*)+$"#
+
     /// 发送时真正要附上的那些：输入框里还留着 `@名字` 的（选完又删掉的不算），按身份去重、保持选中的先后。
     static func stillReferenced(_ picked: [AgentMention], in text: String) -> [AgentMention] {
         var seen = Set<String>()

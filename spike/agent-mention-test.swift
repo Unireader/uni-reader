@@ -103,5 +103,23 @@ check(rk("高数").first == "高数 · 第一章 函数与极限", "开头命中
 check(rk("gdsx").isEmpty, "都不中 → 没有")
 check(AgentMentionMatch.rank(rows, query: "", limit: 2, name: \.title, detail: \.detail).count == 2, "条数上限")
 
+print("— 回放：Agent 把 @ 附件转成的文字（isLinkEcho，ACP-AGENT-PLAN §17）")
+check(AgentMention.isLinkEcho("/Users/xvan/Library/Application Support/UniReader/Servers/x.tech/101学习区.unrd/PDFs/d858.pdf"), "Kimi：本机绝对路径（带空格、中文）")
+check(AgentMention.isLinkEcho("  /Users/xvan/Project/ObsidianVault/思修/06. 法律建设.md\n"), "前后空白 / 换行剪掉")
+check(AgentMention.isLinkEcho("[@06. 法律建设.md](file:///Users/xvan/Project/a%20b/06.%20x.md)"), "Claude Code：[@名字](file://…)")
+check(AgentMention.isLinkEcho("file:///Users/xvan/a.pdf") && AgentMention.isLinkEcho("unireader://open?ws=%2Fa&doc=1"), "原样的 file:// / unireader:// 链接")
+check(AgentMention.isLinkEcho("@/Users/xvan/notes/a.md") && AgentMention.isLinkEcho("~/Documents/读书/a.pdf"), "@/路径、~/路径")
+check(!AgentMention.isLinkEcho("/compact") && !AgentMention.isLinkEcho("/model kimi"), "斜杠命令不算（不到三级）")
+check(!AgentMention.isLinkEcho("继续"), "普通的话不算")
+check(!AgentMention.isLinkEcho("看看 /Users/xvan/a/b.pdf 这个文件"), "一句话里提到路径不算")
+check(!AgentMention.isLinkEcho("/Users/xvan/a/b.pdf\n/Users/xvan/a/c.pdf"), "多行不算（整块只能是一样东西）")
+check(!AgentMention.isLinkEcho("[文档](https://example.com/a)"), "网页链接不算")
+let kimiTag = #"<resource_link uri="unireader://open?ws=%2FUsers%2Fxvan%2F408.unrd&amp;wsid=FADC&amp;doc=4810&amp;page=22" name="2027计算机网络_高清带书签版 · Page 22 · No. 11" />"#
+check(AgentMention.isLinkEcho(kimiTag), "Kimi：<resource_link uri=… name=… />（习题引用，用户截图原样）")
+check(AgentMention.isLinkEcho(kimiTag + "\n" + kimiTag), "几个标签一块（中间换行）也认")
+check(AgentMention.isLinkEcho(#"<resource_link uri="file:///a/b.pdf" name="b.pdf">PDF</resource_link>"#), "成对写法也认")
+check(!AgentMention.isLinkEcho(kimiTag + " 用这一题来测试"), "标签后面还有话不算")
+check(!AgentMention.isLinkEcho("<resource_linker />"), "名字不对的标签不算")
+
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)
