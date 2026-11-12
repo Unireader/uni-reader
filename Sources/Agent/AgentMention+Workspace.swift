@@ -143,7 +143,11 @@ extension AgentMention {
     static func exercise(_ e: Exercise, in ws: WorkspaceManager) -> AgentMention {
         let doc = e.documentId.flatMap { ws.document(id: $0) }
         var parts: [String] = [doc?.title ?? L("Exercises")]
-        if let p = e.page { parts.append(String(format: L("Page %d"), p + 1)) }
+        // 跨页的题印到哪一页（`EXERCISE-PLAN.md §26`）；不跨页 = nil
+        let last: Int? = { guard let p = e.page, let q = e.lastPage, q > p else { return nil }; return q }()
+        if let p = e.page {
+            parts.append(last.map { String(format: L("Pages %d–%d"), p + 1, $0 + 1) } ?? String(format: L("Page %d"), p + 1))
+        }
         parts.append(e.number.isEmpty ? ExercisePracticeView.kindName(e.kind) : String(format: L("No. %@"), e.number))
         var link = workspaceLink(ws)
         if let d = e.documentId, doc != nil {
@@ -152,7 +156,7 @@ extension AgentMention {
         }
         var place: [String] = []
         if !e.number.isEmpty { place.append("number \(e.number)") }
-        if let p = e.page { place.append("page \(p + 1)") }
+        if let p = e.page { place.append(last.map { "pages \(p + 1)–\($0 + 1)" } ?? "page \(p + 1)") }
         if let d = e.documentId { place.append("of \"\(doc?.title ?? d)\" (document_id \(d))") }
         if !e.chapter.isEmpty { place.append("chapter \(e.chapter.joined(separator: " > "))") }
         let ids = "[\"\(e.id)\"]"

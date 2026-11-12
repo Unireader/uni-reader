@@ -1294,3 +1294,8 @@
 "Set Question Area" = "Set Question Area";
 "Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page." = "Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page.";
 "Use Whole Page" = "Use Whole Page";
+"Pages %d–%d" = "Pages %d–%d";
+"Question is on:" = "Question is on:";
+"Page %d only" = "Page %d only";
+"If the question runs onto the next page (say its figure is there), choose the pages above and box the part on each page; Original shows the parts one above the other." = "If the question runs onto the next page (say its figure is there), choose the pages above and box the part on each page; Original shows the parts one above the other.";
+"Choose which part of the page Original shows, instead of the whole page. A question that runs onto the next page can have a box on each page." = "Choose which part of the page Original shows, instead of the whole page. A question that runs onto the next page can have a box on each page.";

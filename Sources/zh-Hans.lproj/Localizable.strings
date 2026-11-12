@@ -1296,3 +1296,8 @@
 "Set Question Area" = "设置原题区域";
 "Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page." = "在页面上拖出一个框，把题目框住。在框里拖可以挪动，拖边或角可以改大小。之后「原题」只显示这一块。";
 "Use Whole Page" = "用整页";
+"Pages %d–%d" = "第 %d–%d 页";
+"Question is on:" = "题目在：";
+"Page %d only" = "只在第 %d 页";
+"If the question runs onto the next page (say its figure is there), choose the pages above and box the part on each page; Original shows the parts one above the other." = "题目接到下一页时（比如图在下一页），先在上面选好页数，再在每一页上框出各自那一部分；「原题」会把几块从上到下拼在一起显示。";
+"Choose which part of the page Original shows, instead of the whole page. A question that runs onto the next page can have a box on each page." = "选定「原题」显示页面上的哪一块，不用显示整页。题目跨页时每一页各框一块。";

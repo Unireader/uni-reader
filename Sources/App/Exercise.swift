@@ -57,6 +57,9 @@ struct ExercisePayload: Codable, Equatable {
     var explanation: String?
     /// 题目在页上的框 `[x, y, w, h]`（归一化 0~1、左上原点）。
     var region: [Double]?
+    /// 跨页的题：后面几页上各一个框（第 k 个 = `page + 1 + k` 页），同 `region` 的口径；nil = 不跨页。
+    /// 只在有 `region` 时才有意义（`ExerciseRegion`，`EXERCISE-PLAN.md §26`）。老版本不认这个键 → 只显示第一段。
+    var nextRegions: [[Double]]?
     /// 带图 / 表：练习时默认显示原题截图。
     var figure: Bool
     /// 填空题有几个空（只有填空题有；没答案时靠它知道摆几个输入框）。
@@ -66,15 +69,16 @@ struct ExercisePayload: Codable, Equatable {
 
     init(stem: String, options: [ExerciseOption], answer: [String] = [], answerSource: String? = nil,
          explanation: String? = nil, region: [Double]? = nil, figure: Bool = false,
-         blanks: Int? = nil, accept: [[String]]? = nil) {
+         blanks: Int? = nil, accept: [[String]]? = nil, nextRegions: [[Double]]? = nil) {
         self.stem = stem; self.options = options; self.answer = answer; self.answerSource = answerSource
         self.explanation = explanation; self.region = region; self.figure = figure
-        self.blanks = blanks; self.accept = accept
+        self.blanks = blanks; self.accept = accept; self.nextRegions = nextRegions
     }
 
     enum CodingKeys: String, CodingKey {
         case stem, options, answer, explanation, region, figure, blanks, accept
         case answerSource = "answer_source"
+        case nextRegions = "next_regions"
     }
 
     init(from decoder: Decoder) throws {
@@ -85,6 +89,8 @@ struct ExercisePayload: Codable, Equatable {
         answerSource = try c.decodeIfPresent(String.self, forKey: .answerSource)
         explanation = try c.decodeIfPresent(String.self, forKey: .explanation)
         region = try c.decodeIfPresent([Double].self, forKey: .region)
+        // 坏了 / 不合格就当不跨页（不连累整道题读不出来）
+        nextRegions = ExerciseRegion.cleanNext((try? c.decodeIfPresent([[Double]].self, forKey: .nextRegions)) ?? nil)
         figure = try c.decodeIfPresent(Bool.self, forKey: .figure) ?? false
         blanks = try c.decodeIfPresent(Int.self, forKey: .blanks)
         accept = try c.decodeIfPresent([[String]].self, forKey: .accept)
@@ -98,6 +104,7 @@ struct ExercisePayload: Codable, Equatable {
         try c.encodeIfPresent(answerSource, forKey: .answerSource)
         try c.encodeIfPresent(explanation, forKey: .explanation)
         try c.encodeIfPresent(region, forKey: .region)
+        if region != nil, let n = nextRegions, !n.isEmpty { try c.encode(n, forKey: .nextRegions) }
         if figure { try c.encode(true, forKey: .figure) }
         try c.encodeIfPresent(blanks, forKey: .blanks)
         if let accept, accept.contains(where: { !$0.isEmpty }) { try c.encode(accept, forKey: .accept) }
@@ -107,6 +114,36 @@ struct ExercisePayload: Codable, Equatable {
         let e = JSONEncoder()
         e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return (try? e.encode(self)) ?? Data("{}".utf8)
+    }
+}
+
+/// 原题框的规则（`EXERCISE-PLAN.md §25 / §26`）：一个框 = `[x, y, w, h]`，归一化 0~1、左上原点、宽高 > 0。
+/// 跨页的题在 `region`（起始页那一块）之外再带 `next_regions`：后面每页一个框，按页的先后，至多 `maxNextPages` 页。
+enum ExerciseRegion {
+    /// 一道题最多往后接几页（连起始页共 4 页）。
+    static let maxNextPages = 3
+
+    static func isValid(_ r: [Double]) -> Bool {
+        r.count == 4 && r.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 } && r[2] > 0 && r[3] > 0
+    }
+
+    /// 读库时用：截到第一个不合格的框之前、至多 `maxNextPages` 个；一个都不剩 → nil。
+    static func cleanNext(_ n: [[Double]]?) -> [[Double]]? {
+        guard let n else { return nil }
+        var out: [[Double]] = []
+        for r in n.prefix(maxNextPages) {
+            guard isValid(r) else { break }
+            out.append(r)
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    /// 留四位小数（App 里拖出来的框，别存一长串）。
+    static func rounded(_ r: [Double]) -> [Double] { r.map { ($0 * 10_000).rounded() / 10_000 } }
+
+    /// 后面几页越过了最后一页（`page` 0 起）。
+    static func runsPastEnd(page: Int, next: [[Double]]?, pageCount: Int) -> Bool {
+        page + (next?.count ?? 0) >= pageCount
     }
 }
 
@@ -150,6 +187,23 @@ struct Exercise: Identifiable, Equatable {
                     starred: starred, wrong: wrong, source: source, createdAt: createdAt, updatedAt: updatedAt,
                     chapter: chapter, note: note, tags: tags)
     }
+
+    /// 看原题要渲的几段（`EXERCISE-PLAN.md §26`）：起始页那一块，跨页的题再接后面几页各一块，从上到下拼成一张图。
+    /// 没有框 = 起始页整页一段（`region` 为 nil）。给了 `pageCount` 就去掉越过最后一页的。没页码 → 空。
+    func originalSlices(pageCount: Int? = nil) -> [(page: Int, region: [Double]?)] {
+        guard let p = page else { return [] }
+        guard let r = payload.region else { return [(p, nil)] }
+        var out: [(page: Int, region: [Double]?)] = [(p, r)]
+        for (k, n) in (payload.nextRegions ?? []).enumerated() {
+            let q = p + 1 + k
+            if let c = pageCount, q >= c { break }
+            out.append((q, n))
+        }
+        return out
+    }
+
+    /// 题目印到第几页为止（0 起；不跨页 = `page`）。
+    var lastPage: Int? { page.map { $0 + (payload.region == nil ? 0 : payload.nextRegions?.count ?? 0) } }
 
     var hasAnswer: Bool { payload.answer.contains { !$0.isEmpty } }
     var answerFromAgent: Bool { hasAnswer && payload.answerSource == ExerciseAnswerSource.agent.rawValue }
@@ -436,6 +490,8 @@ struct ExerciseInput {
     var region: [Double]?
     var figure: Bool?
     var chapter: [String]? = nil
+    /// 跨页的题：后面几页上的框（`ExerciseRegion`）。nil / 空 = 不跨页。
+    var nextRegions: [[Double]]? = nil
     var tags: [String]? = nil
     var userAnswer: String? = nil
     /// 填空题的空：每空一个参考答案（可空）+ 另外认可的写法。nil = 没给。
@@ -534,6 +590,11 @@ enum ExerciseImport {
         case .failure(let why): return .failure(why)
         case .success(let r): region = r
         }
+        let next: [[Double]]?
+        switch validNext(i.nextRegions, region: region) {
+        case .failure(let why): return .failure(why)
+        case .success(let n): next = n
+        }
         // 书上的作答：只认得选项字母；单选题圈了两个也照收（那就是用户当时的作答，判错）
         var userAnswer: [String]?
         if let raw = i.userAnswer {
@@ -551,7 +612,8 @@ enum ExerciseImport {
             }
         }
         let payload = ExercisePayload(stem: stem, options: options, answer: answer, answerSource: source,
-                                      explanation: cleanExplanation(i.explanation), region: region, figure: figure)
+                                      explanation: cleanExplanation(i.explanation), region: region, figure: figure,
+                                      nextRegions: next)
         return .success(ExerciseDraft(page: i.page, seq: seq, kind: kind,
                                       number: (i.number ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                                       section: (i.section ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
@@ -625,9 +687,14 @@ enum ExerciseImport {
         case .failure(let why): return .failure(why)
         case .success(let r): region = r
         }
+        let next: [[Double]]?
+        switch validNext(i.nextRegions, region: region) {
+        case .failure(let why): return .failure(why)
+        case .success(let n): next = n
+        }
         let payload = ExercisePayload(stem: stem, options: [], answer: answer, answerSource: source,
                                       explanation: cleanExplanation(i.explanation), region: region, figure: figure,
-                                      blanks: blanks, accept: accept)
+                                      blanks: blanks, accept: accept, nextRegions: next)
         return .success(ExerciseDraft(page: i.page, seq: seq, kind: kind, number: trim(i.number), section: trim(i.section),
                                       payload: payload, chapter: i.chapter.map(ExerciseChapter.clean),
                                       userResponse: user, tags: i.tags.map(ExerciseTag.clean)))
@@ -643,10 +710,25 @@ enum ExerciseImport {
 
     private static func validRegion(_ r: [Double]?) -> Result<[Double]?, Rejected> {
         guard let r else { return .success(nil) }
-        guard r.count == 4, r.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }), r[2] > 0, r[3] > 0 else {
+        guard ExerciseRegion.isValid(r) else {
             return .failure("region must be [x, y, w, h] with values 0–1 (top-left origin) and w, h > 0")
         }
         return .success(r)
+    }
+
+    /// 跨页的题后面几页的框（`EXERCISE-PLAN.md §26`）。空数组 = 不跨页。越没越过最后一页由调用方查（这里不知道页数）。
+    private static func validNext(_ n: [[Double]]?, region: [Double]?) -> Result<[[Double]]?, Rejected> {
+        guard let n, !n.isEmpty else { return .success(nil) }
+        guard region != nil else {
+            return .failure("next_regions needs region: the box around the part of the question on its own page")
+        }
+        guard n.count <= ExerciseRegion.maxNextPages else {
+            return .failure("next_regions covers at most \(ExerciseRegion.maxNextPages) following pages")
+        }
+        guard n.allSatisfy(ExerciseRegion.isValid) else {
+            return .failure("each box in next_regions must be [x, y, w, h] with values 0–1 (top-left origin) and w, h > 0")
+        }
+        return .success(n)
     }
 
     private static func cleanExplanation(_ s: String?) -> String? {
@@ -663,6 +745,7 @@ enum ExerciseImport {
                               explanation: e.payload.explanation, region: e.payload.region, figure: e.payload.figure,
                               chapter: e.chapter)
         i.tags = e.tags
+        i.nextRegions = e.payload.nextRegions
         if e.kind == .fill { i.blanks = blankInputs(of: e) }
         return i
     }

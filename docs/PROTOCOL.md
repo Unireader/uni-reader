@@ -779,7 +779,8 @@ shown, chosen, correct, lastAt, tries, rights, marked, markedCorrect}`。
 
   其余 `act` 值丢弃（只许尾部追加）。
 - **原题图**不走线格式：`GET /exercise.png?id=<题 id>&w=<像素宽>`（与 `/page.png` 同级不校验 token），
-  Mac 渲那道题的框（四周放 1.5% 页宽；没有框渲整页），只认客户端此刻开着的那一组里的题，别的 id 回 404。
+  Mac 渲那道题的框（四周放 1.5% 页宽；没有框渲整页；跨页的题后面几页各一块、从上到下拼成一张，`EXERCISE-PLAN.md §26`），
+  只认客户端此刻开着的那一组里的题，别的 id 回 404。
 - 老客户端不认识这几条，照旧丢弃（§5）；老 Mac 收不到 `exOpen`，新客户端的「习题」一段就一直是空的。
 
 ## 5. 兼容与版本

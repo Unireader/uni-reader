@@ -684,6 +684,61 @@ if case .success(let d) = ExerciseImport.validate(backR, seq: 0) {
 } else { check(false, "去掉框后再校验：框没了，题干 / 答案 / 带图标记不变") }
 check(reason(input("x", region: []))?.contains("region") == true, "导入时给空框照旧退回（[] 只在 update 里表示去掉）")
 
+print("— 跨页的题：next_regions（EXERCISE-PLAN.md §26）")
+do {
+    func cross(_ next: [[Double]]?, region: [Double]? = [0.1, 0.8, 0.8, 0.18], page: Int? = 4) -> ExerciseInput {
+        var i = input("跨页题", answer: "B", src: "book", page: page, region: region, figure: true)
+        i.nextRegions = next
+        return i
+    }
+    let d2 = ok(cross([[0.1, 0.02, 0.8, 0.3]]))
+    check(d2?.payload.nextRegions == [[0.1, 0.02, 0.8, 0.3]], "合格的后一页框保留")
+    check(ok(cross([]))?.payload.nextRegions == nil, "空数组 = 不跨页")
+    check(reason(cross([[0.1, 0.02, 0.8, 0.3]], region: nil))?.contains("needs region") == true, "没有起始页的框 → 退回")
+    check(reason(cross([[0.1, 0.02, 0, 0.3]]))?.contains("next_regions") == true, "后一页框宽为 0 → 退回")
+    check(reason(cross([[0.1, 0.02, 0.8]]))?.contains("next_regions") == true, "后一页框不是 4 个数 → 退回")
+    check(reason(cross(Array(repeating: [0, 0, 1, 1], count: ExerciseRegion.maxNextPages + 1)))?.contains("at most") == true,
+          "往后超过 \(ExerciseRegion.maxNextPages) 页 → 退回")
+    check(ok(cross(Array(repeating: [0, 0, 1, 1], count: ExerciseRegion.maxNextPages))) != nil, "恰好 \(ExerciseRegion.maxNextPages) 页可以")
+
+    // 编解码：老版本读不到这个键也不坏；没有起始页框时不写出去；坏了当不跨页
+    let json2 = String(data: d2!.payload.data(), encoding: .utf8) ?? ""
+    check(json2.contains("\"next_regions\":[[0.1,0.02,0.8,0.3]]"), "键名 next_regions、二维数组")
+    check((try? JSONDecoder().decode(ExercisePayload.self, from: d2!.payload.data())) == d2!.payload, "跨页 payload 编解码回环一致")
+    var orphan = d2!.payload; orphan.region = nil
+    check(!(String(data: orphan.data(), encoding: .utf8) ?? "").contains("next_regions"), "没有起始页框时不写 next_regions")
+    let bad = try? JSONDecoder().decode(ExercisePayload.self, from: Data(#"{"stem":"s","options":[],"region":[0,0,1,1],"next_regions":[[0,0,1,1],[0,0,2,1],[0,0,1,1]]}"#.utf8))
+    check(bad?.nextRegions == [[0, 0, 1, 1]], "读库：截到第一个不合格的框之前")
+    let junk = try? JSONDecoder().decode(ExercisePayload.self, from: Data(#"{"stem":"s","options":[],"region":[0,0,1,1],"next_regions":"x"}"#.utf8))
+    check(junk != nil && junk?.nextRegions == nil, "next_regions 类型不对 → 当不跨页，整道题照样读得出")
+
+    // 看原题的几段 / 印到第几页
+    let ce = Exercise(row: row(d2!, doc: dv.id))!
+    let sl = ce.originalSlices(pageCount: 20)
+    check(sl.count == 2 && sl[0].page == 4 && sl[0].region == [0.1, 0.8, 0.8, 0.18] && sl[1].page == 5
+          && sl[1].region == [0.1, 0.02, 0.8, 0.3], "两段：起始页那块 + 下一页那块")
+    check(ce.originalSlices(pageCount: 5).count == 1, "下一页越过最后一页 → 只剩起始页那段")
+    check(ce.lastPage == 5, "印到下一页为止")
+    var whole = ce; whole.payload.region = nil
+    check(whole.originalSlices(pageCount: 20).count == 1 && whole.originalSlices(pageCount: 20)[0].region == nil
+          && whole.lastPage == 4, "没有起始页框 = 整页一段（后面几页的框不算）")
+    var nopage = ce; nopage.page = nil
+    check(nopage.originalSlices().isEmpty && nopage.lastPage == nil, "没页码 → 没有原题")
+    check(ExerciseRegion.runsPastEnd(page: 4, next: [[0, 0, 1, 1]], pageCount: 5)
+          && !ExerciseRegion.runsPastEnd(page: 4, next: [[0, 0, 1, 1]], pageCount: 6)
+          && !ExerciseRegion.runsPastEnd(page: 4, next: nil, pageCount: 5), "越没越过最后一页")
+
+    // update：还原带着后几页；去掉起始页框（MCPFacade 同时把 next 置 nil）后再校验通过
+    var back = ExerciseImport.input(from: ce)
+    check(back.nextRegions == [[0.1, 0.02, 0.8, 0.3]], "还原时带着后几页的框")
+    if case .success(let d) = ExerciseImport.validate(back, seq: 0) { check(d.payload == ce.payload, "还原后再校验 = 原样") }
+    else { check(false, "还原后再校验 = 原样") }
+    back.region = nil
+    check(reason(back)?.contains("needs region") == true, "只去掉起始页框、留着后几页 → 退回（MCPFacade 会一并去掉）")
+    back.nextRegions = nil
+    check(ok(back)?.payload.nextRegions == nil && ok(back)?.payload.region == nil, "两样都去掉 → 整页")
+}
+
 // MARK: - v22 题目笔记 + 重做上次做错的（`EXERCISE-PLAN.md §12`）
 
 print("— v22 题目笔记")

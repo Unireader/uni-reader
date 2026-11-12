@@ -7,13 +7,25 @@ struct PadExerciseSub {
     let scope: ExerciseScope
 }
 
-/// `/exercise.png` 渲一道题要的东西（主线程备好，服务 queue 上用；同 Mac 本机「看原题」那一块）。
-struct ExerciseImageSource {
-    let path: String
-    /// 0 起。
+/// 看原题的一段：哪一页（0 起）、页上哪一块（nil = 整页）、那一页的扫描页对齐。
+struct ExerciseSlice: Equatable {
     let page: Int
     let region: [Double]?
     let align: PageAlign?
+}
+
+/// 渲一道题的原图要的东西（主线程备好，渲染队列上用）：Mac 本机「看原题」与平板 `/exercise.png` 同一份。
+/// 跨页的题有几段（`EXERCISE-PLAN.md §26`），从上到下拼。
+struct ExerciseImageSource {
+    let path: String
+    let slices: [ExerciseSlice]
+
+    /// 缓存键里认的那部分（每段的页 + 框；对齐参数变了页图本来就跟着换，这里不管）。
+    var cacheKey: String {
+        slices.map { s in
+            "\(s.page):" + (s.region.map { $0.map { String(format: "%.4f", $0) }.joined(separator: ",") } ?? "page")
+        }.joined(separator: "|")
+    }
 }
 
 /// 习题的平板同步（模式2，`EXERCISE-PLAN.md §10.4`，协议 `PROTOCOL.md §4.9`）。
@@ -135,12 +147,11 @@ extension AppModel {
         list.reserveCapacity(d.items.count)
         var images: [String: ExerciseImageSource] = [:]
         // 同一本书只查一次文件位置与扫描页对齐
-        var targets: [String: (path: String, align: ScanAlignTable?)?] = [:]
-        func target(_ docId: String) -> (path: String, align: ScanAlignTable?)? {
+        var targets: [String: (path: String, align: ScanAlignTable?, pageCount: Int)?] = [:]
+        func target(_ docId: String) -> (path: String, align: ScanAlignTable?, pageCount: Int)? {
             if let hit = targets[docId] { return hit }
-            let t = ws.openTarget(documentId: docId).map { t in
-                (t.path, ws.scanAlign(contentHash: t.hash, pageCount: ws.document(id: docId)?.pageCount ?? 0))
-            }
+            let n = ws.document(id: docId)?.pageCount ?? 0
+            let t = ws.openTarget(documentId: docId).map { t in (t.path, ws.scanAlign(contentHash: t.hash, pageCount: n), n) }
             targets[docId] = t
             return t
         }
@@ -177,8 +188,11 @@ extension AppModel {
                 "marked": choice ? stat?.markedAnswer ?? "" : "",
                 "markedCorrect": !choice || stat?.markedAnswer == nil ? 0 : code(stat?.markedCorrect),
             ])
-            if hasOriginal, let docId = e.documentId, let page = e.page, let t = target(docId) {
-                images[e.id] = ExerciseImageSource(path: t.path, page: page, region: e.payload.region, align: t.align?.page(page))
+            if hasOriginal, let docId = e.documentId, let t = target(docId) {
+                // 跨页的题几段拼一张（同 Mac 本机 `ExerciseOriginal.source`，`EXERCISE-PLAN.md §26`）
+                let slices = e.originalSlices(pageCount: t.pageCount > 0 ? t.pageCount : nil)
+                    .map { ExerciseSlice(page: $0.page, region: $0.region, align: t.align?.page($0.page)) }
+                if !slices.isEmpty { images[e.id] = ExerciseImageSource(path: t.path, slices: slices) }
             }
         }
         setExerciseImages(images)

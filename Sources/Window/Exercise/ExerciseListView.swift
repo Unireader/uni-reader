@@ -39,7 +39,7 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             case .stem: return 360
             case .chapter: return 140
             case .tags: return 110
-            case .page: return 48
+            case .page: return 56
             case .type: return 64
             case .mine: return 110
             case .tries: return 110
@@ -120,7 +120,10 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         case .tags:
             cell.textField?.stringValue = e.tags.joined(separator: " · ")
             cell.toolTip = e.tags.isEmpty ? nil : e.tags.joined(separator: "\n")
-        case .page: cell.textField?.stringValue = e.page.map { String($0 + 1) } ?? ""
+        case .page:
+            // 跨页的题写成「5–6」（`EXERCISE-PLAN.md §26`）
+            if let p = e.page, let q = e.lastPage, q > p { cell.textField?.stringValue = "\(p + 1)–\(q + 1)" }
+            else { cell.textField?.stringValue = e.page.map { String($0 + 1) } ?? "" }
         case .type:
             switch e.kind {
             case .single: cell.textField?.stringValue = L("Single")

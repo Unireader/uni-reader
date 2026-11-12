@@ -952,3 +952,11 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
   认题走 `resolveExercises`（同 `update_exercises`），找不到 / 前缀有歧义照样报错。返回格式不变（不带 `document_id` / `title` 两个单书字段，它们本来就是可选的）。
 - 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`（只加了入参，输出键没变）。
 - 同日 `update_exercises` 的 `region` 认 `[]` = 去掉框（看原题回到整页，`EXERCISE-PLAN.md §25`）；之前传 `null` 是不改、传 `[]` 报格式错，Agent 没法把框去掉。
+
+## 28. 2026-11-12 习题的 `next_regions`（跨页的题）
+
+- 起因：题目从一页接到下一页（图在下一页）时，`region` 只能框起始页，原题图里看不到图（`EXERCISE-PLAN.md §26`）。
+- `import_exercises` / `update_exercises` 每道题多一个可选的 `next_regions`：`[[x, y, w, h], …]`，后面每页一个框（至多 3 页），要有 `region`；
+  越过最后一页、坏框、没有 `region` → 退回（导入只退那一道；修改整批不动）。`update_exercises` 给 `[]` = 不跨页了，`region: []` 时一并去掉。
+  `list_exercises` / `update_exercises` 的输出带 `next_regions`（有才带），已在 `exerciseOutputSchema` 里声明。
+- 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`。

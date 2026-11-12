@@ -34,6 +34,8 @@ extension MCPFacade {
         var starred: Bool? = nil
         /// 题目标签（v24）：整组替换，`[]` = 清掉。nil = 不动。
         var tags: [String]? = nil
+        /// 跨页的题后面几页的框（整组替换，`[]` = 不跨页了；`EXERCISE-PLAN.md §26`）。nil = 不动；去掉 `region` 时一并去掉。
+        var nextRegions: [[Double]]? = nil
     }
 
     /// `grade_exercise_attempts` 的一条。
@@ -147,7 +149,10 @@ extension MCPFacade {
         }
         if let s = e.payload.answerSource { o["answer_source"] = s }
         if let x = e.payload.explanation { o["explanation"] = x }
-        if let r = e.payload.region { o["region"] = r }
+        if let r = e.payload.region {
+            o["region"] = r
+            if let n = e.payload.nextRegions { o["next_regions"] = n }
+        }
         if !e.note.isEmpty { o["note"] = e.note }
         o["tags"] = e.tags
         return o
@@ -212,7 +217,11 @@ extension MCPFacade {
             if let v = p.section { i.section = v }
             if let v = p.stem { i.stem = v }
             if let v = p.options { i.options = v }
-            if let v = p.region { i.region = v.isEmpty ? nil : v }   // [] = 去掉框（同 chapter / tags 的 [] 清空）
+            if let v = p.region {
+                i.region = v.isEmpty ? nil : v   // [] = 去掉框（同 chapter / tags 的 [] 清空）
+                if v.isEmpty, p.nextRegions == nil { i.nextRegions = nil }   // 起始页的框没了，后面几页的也不留
+            }
+            if let v = p.nextRegions { i.nextRegions = v.isEmpty ? nil : v }
             if let v = p.figure { i.figure = v }
             if let v = p.explanation { i.explanation = v }
             if let b = p.blanks {
@@ -231,6 +240,10 @@ extension MCPFacade {
             case .failure(let why):
                 throw MCPInvalidParams("exercise \(e.id.prefix(8)): \(why.reason); nothing was changed")
             case .success(let d):
+                if let pg = e.page, let c = e.documentId.flatMap({ ws.document(id: $0)?.pageCount }), c > 0,
+                   ExerciseRegion.runsPastEnd(page: pg, next: d.payload.nextRegions, pageCount: c) {
+                    throw MCPInvalidParams("exercise \(e.id.prefix(8)): next_regions runs past the last page (the document has \(c) pages); nothing was changed")
+                }
                 var n = e
                 n.kind = d.kind; n.number = d.number; n.section = d.section; n.payload = d.payload
                 n.chapter = d.chapter ?? e.chapter

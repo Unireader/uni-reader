@@ -98,6 +98,7 @@ CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_
   "answer_source": "book",
   "explanation": "……",
   "region": [0.08, 0.31, 0.84, 0.12],
+  "next_regions": [[0.08, 0.04, 0.84, 0.30]],
   "figure": false
 }
 ```
@@ -108,6 +109,8 @@ CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_
   🔴 练习时 `agent` 来源的答案要明说「答案由 Agent 推算，未经核对」——判错了用户得知道可能是答案本身错了。
 - `region`：题目在**那一页**上的框（归一化 0~1、左上原点，同批注坐标；开着扫描页对齐就是对齐后的页面）。
   有它就能在练习时切到「看原题」（从 PDF 现渲那一块，不存图）。
+- `next_regions`（2026-11-12 补，§26）：跨页的题在**后面几页**上的框，第 k 个 = `page + 1 + k` 页，口径同 `region`；
+  至多 3 页，只在有 `region` 时才算数（没有 `region` 时不写出去）。看原题时几段从上到下拼成一张。老版本不认这个键 → 只显示起始页那段。
 - `figure`：题目带图 / 表，文字转写不全 → 练习时**默认显示原题截图**。
 
 ### 2.1 去重（同一题再导一次 = 更新，不重复）
@@ -1083,6 +1086,7 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   `MCPFacade.updateExercises` 把它换成 nil 再校验）。导入（`import_exercises`）给空框照旧退回。skill 里写了什么时候改、怎么定框。
 - **平板**：安卓两种模式看原题本来就按 `region` 裁（模式1 `ExerciseController.crop`，模式2 `/exercise.png`），同步过去自然跟着变；
   **安卓上还不能自己框**（待办记在 `TODO.md` 第 8 条）。
+- 同日补了跨页的题（一道题框几页），见 §26。
 - 验证：Mac Debug 编译通过；`spike/exercise-test.swift` 332 项（新加 3 项：还原带框、去掉框后再校验只少了框、导入给空框退回）。
   🔴 框选表单没在真 App 里跑过，由用户实测。
 
@@ -1092,3 +1096,42 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   101. 再点「设置原题区域…」：上次的框在；框里拖能挪、拖边角能改大小；「用整页」后原题图回到整页。
   102. 列表里右键一道题「设置原题区域…」同样能用；平板同步后看原题也是那一块。
   109. 让 Agent「把这题的原题框重新框一下」→ 原题图跟着变；再让它「原题显示整页」→ 回到整页。
+
+
+## 26. 跨页的题：原题跨几页（2026-11-12，Mac + 安卓模式1）
+
+用户原话：「优化跨页题目在练习库的支持」「会出现比如题目从第一页开始，到第二页，然后图在第二页的情况，练习库的题页就会是第一页，我们就没办法裁剪实际参考图」。
+
+- **数据**：`payload` 多一个可选键 `next_regions`（§2）：后面每页一个框，按页的先后，至多 3 页（连起始页共 4 页）；
+  `region` 仍是起始页上那一块，`page` 仍记题目开始的那一页（去重键、到原页、章节都不变）。没加列、没改表结构、不升 schema。
+  - 规则只在 `ExerciseRegion`（`Sources/App/Exercise.swift`）：合格的框、读库时截到第一个坏框之前（坏了当不跨页，整道题照样读得出）、
+    越没越过最后一页。看原题的几段 = `Exercise.originalSlices(pageCount:)`：没有 `region` = 起始页整页一段（后面几页的框不算）；
+    越过最后一页的段去掉。`Exercise.lastPage` = 印到第几页为止。
+  - 安卓 `local/exercise/Exercise.kt` 逐条照抄（`ExPayload.cleanNext` / `Exercise.originalSlices` / `lastPage`），测试两边同名一段。
+- **看原题**：几段按**同一个倍率**渲（字一样大，倍率按最宽那段定），从上到下左对齐拼成一张，段间一条 8px 浅灰分隔（同 `PageSnip` 跨页截图）。
+  Mac 本机 `ExerciseOriginal`、平板模式2 的 `/exercise.png`（`ExerciseImageSource` 改成几段 `ExerciseSlice`）、安卓模式1 `ExerciseController.loadOriginal`
+  同一套做法；起始页出不了图 = 没有原题，后面某页出不了就少那一段。
+- **自己框**（`ExerciseRegionPicker`）：表上方「题目在：只在第 N 页 / 第 N–N+1 页 / …」（后面没有页时不出现），几页从上到下排在一个滚动区里
+  （滚动区大小同原来整页那张表，页与页之间一行「第 N 页」），每页各框一块；显示出来的每页都框好了才能「保存」。
+  新接上的一页先放一个页顶的框（左右跟上一页的框对齐、高 30%），多数时候只要拖底边；页数改小再改回来，原来的框还在。
+  后面几页的页图在选了页数之后才渲（先垫白底，框照样能拖）。「用整页」= 两样都去掉。
+- **显示页码**：练习页顶行、列表「页」一列、在 Agent 中引用的名字都写成「第 5–6 页」/「5–6」。
+- **MCP**：`import_exercises` / `update_exercises` 收 `next_regions`（`list_exercises` 也返回它）；越过最后一页 / 没有 `region` / 坏框退回。
+  `update_exercises` 给 `next_regions: []` = 不跨页了；`region: []` 去掉框时后几页的框一并去掉。skill 第 3 步写了跨页的题怎么框。
+- **平板**：模式2 看原题由 Mac 渲，自动跟上；**安卓模式1 能显示、不能自己框**（同 §25，`TODO.md` F4）。
+  ⚠️ 模式2 的原题图按「题 id + 宽」缓存在平板上（`RemoteExHost`），Mac 上改了框，平板要重连才换图——§25 起就是这样，本轮没动。
+- 代码：`Sources/App/Exercise.swift`（`ExerciseRegion`、`originalSlices`、`lastPage`、校验）、`App/WorkspaceManager+Exercise.swift`（`setExerciseRegion(next:)`）、
+  `App/AppModel+Exercise.swift`（`ExerciseSlice` / `ExerciseImageSource`）、`Window/Exercise/ExerciseOriginal.swift`、`ExerciseRegionPicker.swift`、
+  `ExercisePracticeView.swift`、`ExerciseListView.swift`、`Agent/AgentMention+Workspace.swift`、`MCP/MCPTools+Exercises.swift`、`MCP/MCPFacade+Exercises.swift`；
+  安卓 `local/exercise/Exercise.kt`、`local/ExerciseController.kt`。
+- 验证：Mac Debug 编译通过；`spike/exercise-test.swift` 354 项（新加跨页一段 22 项）；安卓 `ExerciseTest` 27 条（新加 `crossPageRegions`）、`assembleDebug` 通过。
+  🔴 表单、拼图、平板显示都没在真机上看过，由用户实测；没对着运行中的 App 跑 `spike/mcp-schema-audit.py`（加了一个输出键 `next_regions`，已在 `outputSchema` 里声明）。
+
+### 26.1 实测清单（用户）
+
+  110. 找一道题干在第 N 页底、图 / 选项在第 N+1 页顶的题：练习页「原题」→「设置原题区域…」→ 上面「题目在」选「第 N–N+1 页」
+       → 下一页出现一个页顶的框 → 拖底边框住图 →「保存」→ 原题图上下两块拼在一起，中间一条浅灰线，两块字一样大。
+  111. 再点「设置原题区域…」：页数停在「第 N–N+1 页」、两页的框都在；改回「只在第 N 页」→「保存」→ 原题图只剩第一块。
+  112. 练习页顶行、列表「页」一列显示「第 N–N+1 页」/「N–N+1」；「在 Agent 中引用」插进去的名字也是。
+  113. 让 Agent 导一道跨页的题（或「把这题的原题框到下一页的图」）→ 它给 `next_regions`，原题图跟着拼上第二块。
+  114. 平板模式1（同步过去后）与模式2 看原题都是拼好的那张；书的最后一页上的题「题目在」不出现。

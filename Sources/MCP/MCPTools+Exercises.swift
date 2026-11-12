@@ -26,6 +26,7 @@ extension MCPTools {
             "answer_source": MCPSchema.enumeration(["book", "agent"], "printed in the document, or worked out by an agent"),
             "explanation": MCPSchema.string("explanation"),
             "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] of the question on its page"),
+            "next_regions": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")), "the question runs onto the following pages: one [x, y, w, h] box per following page, in page order (page + 1, page + 2, …)"),
             "has_figure": MCPSchema.boolean("the question relies on a figure or table"),
             "chapter": MCPSchema.array(of: MCPSchema.string("level"), "chapter path, top level first (from the table of contents, or the user's own grouping); empty = none"),
             "user_answer": MCPSchema.string("what the user wrote in the document: option letters (choice) or the transcribed text (subjective)"),
@@ -108,6 +109,18 @@ extension MCPTools {
         return a.map(\.doubleValue)
     }
 
+    /// `next_regions`：`[[x, y, w, h], …]`（跨页的题后面每页一个框，`EXERCISE-PLAN.md §26`）。框本身合不合格交给 `validate`。
+    private static func nextRegionsArg(_ v: Any?, at path: String) throws -> [[Double]]? {
+        guard let v, !(v is NSNull) else { return nil }
+        guard let list = v as? [Any] else { throw MCPInvalidParams("\(path).next_regions must be an array of [x, y, w, h] boxes") }
+        return try list.map { b in
+            guard let a = b as? [NSNumber] else {
+                throw MCPInvalidParams("\(path).next_regions must be an array of [x, y, w, h] boxes, one per following page")
+            }
+            return a.map(\.doubleValue)
+        }
+    }
+
     private static func stringField(_ d: [String: Any], _ k: String, at path: String) throws -> String? {
         guard let v = d[k], !(v is NSNull) else { return nil }
         guard let s = v as? String else { throw MCPInvalidParams("\(path).\(k) must be a string") }
@@ -143,6 +156,7 @@ extension MCPTools {
             "answer_source": MCPSchema.enumeration(["book", "agent"], "Required with an answer (or blanks with answers): \"book\" when the answer is printed in the document (after the question or in an answer key), \"agent\" when you worked it out yourself."),
             "explanation": MCPSchema.string("Explanation / solution (Markdown + $math$), from the document or your own (optional)."),
             "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] box around the whole question on its page, normalized 0–1, top-left origin (as in render_page). Lets the user see the original question."),
+            "next_regions": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")), "Only for a question that runs onto the next page(s) — e.g. the stem starts at the bottom of its page and the options or the figure are at the top of the next: one [x, y, w, h] box per following page, in page order (page + 1, then page + 2 …, at most \(ExerciseRegion.maxNextPages)), same coordinates as region. region then covers only the part on the question's own page. Original shows the parts one above the other."),
             "has_figure": MCPSchema.boolean("True when the question depends on a figure, graph or table the text cannot carry; the original is then shown while practicing.", default: false),
             "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels. When the book is grouped by the table of contents, omit it: UniReader looks up the page itself (unless the book is not grouped into chapters, see chapters); give it only when that would be wrong (e.g. exercises collected at the back of the book). When the user wants the questions grouped their own way — the headings printed on the pages, question groups such as [\"习题 2.3\", \"A 组\"], or however they say — give every question its full path (reuse the exact names of levels that already exist) and pass chapters \"none\". [] = no chapter."),
             "user_answer": MCPSchema.string("What the user already wrote for this question in the document. Choice: the option(s) marked — a highlight on an option (list_annotations) or a circled / written letter (render_page with include_marks) — e.g. \"B\". Subjective: their handwritten answer, transcribed. Saved as the user's earlier attempt; a choice answer is judged right away (a wrong one goes into the mistake list), a subjective one waits to be graded (grade_exercise_attempts). Omit when the user has not answered it."),
@@ -216,11 +230,18 @@ extension MCPTools {
                     region: try regionArg(d["region"], at: path),
                     figure: try boolField(d, "has_figure", at: path),
                     chapter: try chapterArg(d["chapter"], at: path),
+                    nextRegions: try nextRegionsArg(d["next_regions"], at: path),
                     tags: try stringsArg(d["tags"], "tags", at: path),
                     userAnswer: try stringField(d, "user_answer", at: path),
                     blanks: try blanksArg(d["blanks"], at: path),
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path))
-                items.append(ExerciseImport.validate(input, seq: i))
+                var r = ExerciseImport.validate(input, seq: i)
+                // 跨页的题后面几页不能越过最后一页（`validate` 不知道页数）
+                if case .success(let d) = r,
+                   ExerciseRegion.runsPastEnd(page: page, next: d.payload.nextRegions, pageCount: t.pageCount) {
+                    r = .failure(ExerciseImport.Rejected(stringLiteral: "next_regions runs past the last page (the document has \(t.pageCount) pages)"))
+                }
+                items.append(r)
             }
             // 章节没给的按页码从 PDF 自带目录里查（`EXERCISE-PLAN.md §2.3`）；文件不在 / 没目录 → 空。
             // 不分章节的书（用户移除过分级 / 第一次导入时选了不分）保持不分，除非这次明说 `chapters: "toc"`（§14）。
@@ -331,6 +352,7 @@ extension MCPTools {
                 "key": MCPSchema.string("A–H"), "text": MCPSchema.string("option text")], required: ["key", "text"]),
                 "Replaces all options"),
             "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] box around the whole question on its page, normalized 0–1, top-left origin (as in render_page); it is what the user sees under Original while practicing. [] removes it, so Original shows the whole page."),
+            "next_regions": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")), "For a question that runs onto the next page(s): one [x, y, w, h] box per following page, in page order (at most \(ExerciseRegion.maxNextPages)); needs region (the part on the question's own page). Replaces the earlier ones; [] = the question is on one page. Removing region ([]) removes these too."),
             "has_figure": MCPSchema.boolean("The question depends on a figure or table"),
             "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels (e.g. to regroup questions the way the user asks); [] clears it"),
             "user_answer": MCPSchema.string("What the user wrote in the document: option letters (\"B\") for choice, transcribed text for subjective; replaces the earlier one; empty string removes it"),
@@ -372,7 +394,8 @@ extension MCPTools {
                     blanks: try blanksArg(d["blanks"], at: path),
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path),
                     note: try stringField(d, "note", at: path), starred: try boolField(d, "starred", at: path),
-                    tags: try stringsArg(d["tags"], "tags", at: path))
+                    tags: try stringsArg(d["tags"], "tags", at: path),
+                    nextRegions: try nextRegionsArg(d["next_regions"], at: path))
             }
             let wsPath = try args.string("workspace")
             let r = try await MainActor.run { try MCPFacade.shared.updateExercises(patches, workspacePath: wsPath) }
