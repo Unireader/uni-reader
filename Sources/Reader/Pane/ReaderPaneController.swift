@@ -282,10 +282,11 @@ final class ReaderPaneController: NSViewController {
                 mdView?.flush()
                 mdView?.removeFromSuperview()
                 let v = MarkdownDocView(ref: ref, workspace: workspace)
-                // 引擎回调给的是文件里写的那个**名字**（不是 NoteRef.key），统一交给 `note(key:)` 认
+                // 引擎回调给的是文件里写的那一串（不是 NoteRef.key），统一交给 `linkTarget` 认：笔记就在本窗口开，
+                // 书 / 书页 / 批注走 `DeepLinkRouter.open`（`KNOWLEDGE-LINKS-PLAN.md`）
                 v.onOpenNote = { [weak self] target in
-                    guard let self, let item = self.workspace.note(key: target) else { return }
-                    self.tabs.openMarkdown(item.ref)
+                    guard let self, let t = self.workspace.linkTarget(target) else { return }
+                    if case .note(let ref) = t { self.tabs.openMarkdown(ref) } else { DeepLinkRouter.open(t, in: self.workspace) }
                 }
                 v.onSearchStateChange = { [weak self] in self?.queueRefresh() }
                 view.addSubview(v, positioned: .below, relativeTo: placeholder)

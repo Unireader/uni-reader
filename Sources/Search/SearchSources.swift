@@ -13,46 +13,60 @@ enum SearchSources {
         return "path-" + SHA256Hex.of(p).prefix(16)
     }
 
-    static func all(for ws: WorkspaceManager) -> [SearchIndex.Source] {
+    /// `kinds` = 只要这几类来源（`pdf` / `ann` / `md` / `ex` / `ctx`）；nil = 全部。「关联」只要 `md` + `ann`。
+    static func all(for ws: WorkspaceManager, kinds: Set<String>? = nil) -> [SearchIndex.Source] {
         guard let store = ws.store else { return [] }
         var out: [SearchIndex.Source] = []
         let provider = OCRBackend.current.providerID
+        func want(_ k: String) -> Bool { kinds?.contains(k) ?? true }
 
         // PDF 每页文字 + 每本书的批注
         for d in ws.documents {
+            let id = d.id, title = d.title
+            if want("ann") {
+                out.append(.init(key: "ann:\(id)", title: title, stamp: {
+                    annotationStamp(store: store, documentId: id)
+                }, loadAll: { annotationChunks(store: store, documentId: id, title: title) }))
+            }
+            guard want("pdf") else { continue }
             let f = MCPFacade.shared.fileInfo(ws, documentId: d.id)
-            let id = d.id, title = d.title, pages = d.pageCount, hash = f.hash, path = f.exists ? f.path : nil
+            let pages = d.pageCount, hash = f.hash, path = f.exists ? f.path : nil
             out.append(.init(key: "pdf:\(id)", title: title, stamp: {
                 let ocr = (try? store.ocrStamp(contentHash: hash, provider: provider)) ?? ""
                 return "\(hash)|\(provider)|\(ocr)|\(path == nil ? 0 : 1)"
             }, load: { await pdfChunks(store: store, id: id, title: title, hash: hash, path: path, pageCount: pages) }))
-            out.append(.init(key: "ann:\(id)", title: title, stamp: {
-                annotationStamp(store: store, documentId: id)
-            }, load: { annotationChunks(store: store, documentId: id, title: title) }))
         }
 
         // Markdown 笔记（内建 Notes/ 与引用目录）
-        for n in ws.allNotes {
+        for n in ws.allNotes where want("md") {
             guard let url = ws.noteURL(n.ref) else { continue }
             let key = n.ref.key, title = n.title
             out.append(.init(key: "md:\(key)", title: title, stamp: {
                 let a = try? FileManager.default.attributesOfItem(atPath: url.path)
                 let t = (a?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
                 return "\(t)|\((a?[.size] as? NSNumber)?.int64Value ?? -1)"
-            }, load: {
-                guard let text = MarkdownImport.readText(url) else { return [] }
-                return SearchText.markdownChunks(text).map {
+            }, loadAll: {
+                guard let text = MarkdownImport.readText(url) else { return .init(chunks: []) }
+                let chunks = SearchText.markdownChunks(text).map {
                     SearchIndex.Chunk(kind: "markdown", owner: key, line: $0.line, title: title, heading: $0.heading, body: $0.text)
                 }
+                // 笔记里的链接（`KNOWLEDGE-LINKS-PLAN.md §4`）：原样记，读的时候再解析
+                let edges = KnowledgeLinks.occurrences(in: text).map {
+                    SearchIndex.Edge(fromKind: "markdown", fromOwner: key, fromLine: $0.line,
+                                     kind: $0.kind == .wiki ? "wiki" : "url", target: $0.target, raw: $0.raw, context: $0.context)
+                }
+                return .init(chunks: chunks, edges: edges)
             }))
         }
 
         // 习题、Agent 上下文：整个工作区各一个来源（条数 + 最新修改时间当指纹）
         let docTitles = Dictionary(ws.documents.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a })
-        out.append(.init(key: "ex:all", title: "exercises", stamp: {
+        guard want("ex") || want("ctx") else { return out }
+        if want("ex") { out.append(.init(key: "ex:all", title: "exercises", stamp: {
             let rows = (try? store.exercises()) ?? []
             return "\(rows.count)|\(rows.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0)"
-        }, load: { exerciseChunks(store: store, docTitles: docTitles) }))
+        }, load: { exerciseChunks(store: store, docTitles: docTitles) })) }
+        guard want("ctx") else { return out }
         out.append(.init(key: "ctx:all", title: "agent contexts", stamp: {
             let rows = (try? store.agentContexts()) ?? []
             return "\(rows.count)|\(rows.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0)"
@@ -105,15 +119,26 @@ enum SearchSources {
         return "\(n)|\(latest)"
     }
 
-    nonisolated static func annotationChunks(store: LibraryStore, documentId: String, title: String) -> [SearchIndex.Chunk] {
+    nonisolated static func annotationChunks(store: LibraryStore, documentId: String, title: String) -> SearchIndex.Loaded {
         var out: [SearchIndex.Chunk] = []
+        var edges: [SearchIndex.Edge] = []
         func add(_ id: UUID, _ kind: String, _ page: Int, _ body: String) {
             let b = body.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !b.isEmpty else { return }
             out.append(.init(kind: "annotation", owner: documentId, sub: id.uuidString, page: page, title: title, heading: kind, body: b))
         }
+        /// 批注正文 / 图片说明里的链接（原文引用是 PDF 上的字，不看）
+        func links(_ id: UUID, _ page: Int, _ text: String) {
+            edges += KnowledgeLinks.occurrences(in: text).map {
+                SearchIndex.Edge(fromKind: "annotation", fromOwner: documentId, fromSub: id.uuidString, fromPage: page,
+                                 kind: $0.kind == .wiki ? "wiki" : "url", target: $0.target, raw: $0.raw, context: $0.context)
+            }
+        }
         for r in (try? store.notes(documentId: documentId, kind: TextNote.noteKind)) ?? [] {
-            if let n = TextNote(note: r) { add(n.id, "note", n.page, [n.quote, n.text].filter { !$0.isEmpty }.joined(separator: "\n")) }
+            if let n = TextNote(note: r) {
+                add(n.id, "note", n.page, [n.quote, n.text].filter { !$0.isEmpty }.joined(separator: "\n"))
+                links(n.id, n.page, n.text)
+            }
         }
         for r in (try? store.notes(documentId: documentId, kind: Highlight.noteKind)) ?? [] {
             if let h = Highlight(note: r) { add(h.id, "highlight", h.page, h.quote) }
@@ -122,9 +147,12 @@ enum SearchSources {
             if let b = Bookmark(note: r) { add(b.id, "bookmark", b.page, b.title) }
         }
         for r in (try? store.notes(documentId: documentId, kind: ImageNote.noteKind)) ?? [] {
-            if let m = ImageNote(note: r) { add(m.id, "image_note", m.page, m.caption) }
+            if let m = ImageNote(note: r) {
+                add(m.id, "image_note", m.page, m.caption)
+                links(m.id, m.page, m.caption)
+            }
         }
-        return out
+        return .init(chunks: out, edges: edges)
     }
 
     nonisolated static func exerciseChunks(store: LibraryStore, docTitles: [String: String]) -> [SearchIndex.Chunk] {

@@ -1,6 +1,7 @@
 // 离屏核对「输入 [[ 弹候选」依赖的引擎行为（`MARKDOWN-NOTES-PLAN.md §12`，App 侧 = `NoteLinkCompleter`）：
 // 往引擎的编辑区里打 `[[ab`，看它是不是报「光标在一条正在打字的链接里」、给的占位文字与位置对不对；
-// 再塞一个替换请求，看整条是不是换成了 `[[笔记名]]`；`==高亮==` 扩展开着时有没有背景。
+// 再塞一个替换请求，看整条是不是换成了 `[[笔记名]]`；`==高亮==` 扩展开着时有没有背景；
+// ↑↓ / 回车 / Esc 有没有交给候选列表（要给引擎一个能写的 `isWikiLinkActive` 绑定，2026-11-12 用户报方向键选不了）。
 // 只依赖已编好的引擎模块（先按 AGENTS.md 编一次 Debug 包）。运行：
 //   D=build/dev/Build/Products/Debug; O=/tmp/nlc; mkdir -p $O && cp spike/note-link-complete-test.swift $O/main.swift \
 //   && swiftc -I $D $D/MarkdownEngine.o $O/main.swift -o $O/t && $O/t
@@ -17,18 +18,26 @@ func check(_ c: Bool, _ m: String) { if c { pass += 1; print("  ✅ \(m)") } els
     @Published var pending: InlineReplacementRequest?
     var states: [InlineSelectionState?] = []
     var rects: [CGRect] = []
+    /// 交给候选列表的键（`onInlinePreviewKey` 收到的）。
+    var keys: [InlinePreviewKey] = []
+    /// 引擎写的「光标在一条 [[…]] 里」（App 侧 = `NoteLinkCompleter.wikiActive`）。
+    var wikiActive = false
 }
 
 struct Root: View {
     @ObservedObject var box: Box
+    /// false = 不给 `isWikiLinkActive`（引擎默认常量 false，修之前 App 就是这样）。
+    var bind = true
     var body: some View {
         var c = MarkdownEditorConfiguration.default
         c.extensions = [HighlightExtension()]
-        return NativeTextViewWrapper(text: $box.text, pendingInlineReplacement: $box.pending, configuration: c,
+        return NativeTextViewWrapper(text: $box.text,
+                                     isWikiLinkActive: bind ? Binding(get: { box.wikiActive }, set: { box.wikiActive = $0 }) : .constant(false),
+                                     pendingInlineReplacement: $box.pending, configuration: c,
                                      documentId: "doc",
                                      onCaretRectChange: { [box] in box.rects.append($0) },
                                      onInlineSelectionChange: { [box] in box.states.append($0) },
-                                     onInlinePreviewKey: { _ in false })
+                                     onInlinePreviewKey: { [box] k in box.keys.append(k); return true })
     }
 }
 
@@ -90,6 +99,40 @@ MainActor.assumeIsolated {
         }
     }
     check(found, "「重点」两个字带上了高亮背景属性")
+
+    print("4. ↑↓ / 回车 / Esc 交给候选列表")
+    /// 新开一个编辑区，打 `[[ab`，再按 ↓ ↑ 回车 Esc（经文字视图的命令派发，与真按键同一条路），返回候选列表收到了哪些键。
+    @MainActor func routed(bind: Bool) -> [InlinePreviewKey] {
+        let b = Box()
+        let h = NSHostingView(rootView: Root(box: b, bind: bind))
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        w.contentView = h
+        w.makeKeyAndOrderFront(nil)
+        pump(0.4)
+        guard let t = allSubviews(h).compactMap({ $0 as? NSTextView }).first else { return [] }
+        w.makeFirstResponder(t)
+        t.setSelectedRange(NSRange(location: (t.string as NSString).length, length: 0))
+        for ch in ["[", "[", "a", "b"] {
+            guard let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: w.windowNumber, context: nil, characters: ch,
+                                           charactersIgnoringModifiers: ch, isARepeat: false, keyCode: 0) else { continue }
+            NSApp.postEvent(e, atStart: false)
+            let until = Date().addingTimeInterval(0.15)
+            while let ev = NSApp.nextEvent(matching: .any, until: until, inMode: .default, dequeue: true) { NSApp.sendEvent(ev) }
+        }
+        pump(0.3)
+        for sel in [#selector(NSResponder.moveDown(_:)), #selector(NSResponder.moveUp(_:)),
+                    #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.cancelOperation(_:))] {
+            t.doCommand(by: sel)
+            pump(0.05)
+        }
+        w.orderOut(nil)
+        return b.keys
+    }
+    let without = routed(bind: false)
+    check(without.isEmpty, "不给绑定：一个键都没交给候选列表（就是用户报的毛病；得到 \(without)）")
+    let with = routed(bind: true)
+    check(with == [.moveDown, .moveUp, .confirm, .cancel], "给了绑定：↓ ↑ 回车 Esc 都交给候选列表（得到 \(with)）")
 }
 print("\n通过 \(pass)，失败 \(fail)")
 exit(fail == 0 ? 0 : 1)

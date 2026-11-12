@@ -28,6 +28,8 @@ final class WorkspaceWikiIndex: @unchecked Sendable {
     /// 换一份索引（`refreshNotes()` 重扫目录之后调）。
     func update(index: NoteIndex) {
         lock.lock()
+        var index = index
+        if !index.hasDocuments { index.copyDocuments(from: self.index) }   // 重扫笔记那份没带书单：沿用现有的
         self.index = index
         imageCache = [:]
         version &+= 1
@@ -39,6 +41,21 @@ final class WorkspaceWikiIndex: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return index
+    }
+
+    /// 书库变了：换书单（`[[书名]]` / `[[书名#page=N]]`），版本加一让引擎重画链接样式。
+    func updateDocuments(_ list: [(id: String, title: String)]) {
+        lock.lock()
+        index.setDocuments(list)
+        version &+= 1
+        lock.unlock()
+    }
+
+    /// `[[…]]` 里写的那一串 → 笔记 / 书 / 书的某页（`NoteIndex.target(for:)`）。
+    func target(for raw: String) -> LinkTarget? {
+        lock.lock()
+        defer { lock.unlock() }
+        return index.target(for: raw)
     }
 
     /// `[[名字]]` 指到哪篇（App 自己也用：导入报告要数「还有哪些名字解析不到」）。
@@ -55,8 +72,13 @@ extension WorkspaceWikiIndex: WikiLinkResolver {
     func resolve(displayName: String, range: NSRange) -> WikiLinkResolution? {
         // 老文件里可能残留 `[[名字|<uuid>]]`（第一批导入写过），引擎会拿后缀当 displayName 递进来；
         // 那串 uuid 现在解析不到 → 画成断链，不报错。
-        guard let ref = note(for: displayName) else { return nil }
-        return WikiLinkResolution(id: ref.key, exists: true)
+        // 笔记之外也认书与书页（`[[书名#page=12]]`）：画成可点的链接；点了由各处的 `linkTarget` 认
+        switch target(for: displayName) {
+        case .note(let ref)?: return WikiLinkResolution(id: ref.key, exists: true)
+        case .document(let d, let p)?: return WikiLinkResolution(id: "pdf:\(d)#\(p ?? -1)", exists: true)
+        case .annotation(let d, let a, _)?: return WikiLinkResolution(id: "pdf:\(d)@\(a)", exists: true)
+        case nil: return nil
+        }
     }
 
     /// 🔴 **一律返回 nil**：这是「把显示名换成目标当前名字」的钩子，只对文件里带 `|id` 的链接生效。

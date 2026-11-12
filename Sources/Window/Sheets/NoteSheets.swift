@@ -20,8 +20,27 @@ private struct MarkdownEditorRoot: View {
     let placeholder: String
     /// 本工作区的 `[[…]]` 服务（`MARKDOWN-NOTES-PLAN.md §3`）；nil = 不认 wiki 链接。
     let wiki: WorkspaceWikiIndex?
+    /// 输入 `[[` 时的候选列表（`KNOWLEDGE-LINKS-PLAN.md §3`）；nil = 不弹。
+    let links: NoteLinkCompleter?
     var body: some View {
-        MarkdownNoteEditor(text: $box.text, documentId: documentId, placeholder: placeholder, wiki: wiki)
+        if let links {
+            LinkedEditor(box: box, documentId: documentId, placeholder: placeholder, wiki: wiki, links: links)
+        } else {
+            MarkdownNoteEditor(text: $box.text, documentId: documentId, placeholder: placeholder, wiki: wiki)
+        }
+    }
+}
+
+/// 带 `[[` 候选的那种：🔴 必须 `@ObservedObject` 盯着候选对象——选中后它把替换请求放进 `pending`，
+/// 这里不重算，引擎就收不到（同 `MarkdownDocEditor` 的 `links`）。
+private struct LinkedEditor: View {
+    @ObservedObject var box: MarkdownTextBox
+    let documentId: String
+    let placeholder: String
+    let wiki: WorkspaceWikiIndex?
+    @ObservedObject var links: NoteLinkCompleter
+    var body: some View {
+        MarkdownNoteEditor(text: $box.text, documentId: documentId, placeholder: placeholder, wiki: wiki, links: links)
     }
 }
 
@@ -32,13 +51,26 @@ final class MarkdownEditorHost: NSView {
 
     var text: String { box.text }
 
-    init(text: String, documentId: String, placeholder: String, wiki: WorkspaceWikiIndex? = nil) {
+    /// 输入 `[[` 的候选（给了工作区才有）。
+    private let links: NoteLinkCompleter?
+
+    init(text: String, documentId: String, placeholder: String, wiki: WorkspaceWikiIndex? = nil,
+         workspace: WorkspaceManager? = nil) {
         box = MarkdownTextBox(text)
+        // 批注 / 图片说明不是笔记：候选里不排除谁（ownKey 空）
+        let links = workspace.map { NoteLinkCompleter(workspace: $0, documentId: documentId, ownKey: "") }
+        self.links = links
         host = NSHostingView(rootView: MarkdownEditorRoot(box: box, documentId: documentId,
-                                                          placeholder: placeholder, wiki: wiki))
+                                                          placeholder: placeholder, wiki: wiki, links: links))
         host.sizingOptions = []   // 尺寸归外面给的 frame，别让 SwiftUI 的理想尺寸反过来撑窗口
+        links?.host = host
         super.init(frame: .zero)
         addSubview(host)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { links?.close() }   // 候选列表是子窗口，别留在关掉的弹窗上
+        super.viewWillMove(toWindow: newWindow)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
@@ -139,6 +171,8 @@ final class NoteEditorController: StackPanelController {
         var documentId = "note-draft"
         /// 本工作区的 `[[…]]` 服务；不给就是老行为（wiki 链接原样显示）。
         var wiki: WorkspaceWikiIndex?
+        /// 给了 = 输入 `[[` 弹候选（笔记 / 书 / 书页 / 批注，`KNOWLEDGE-LINKS-PLAN.md §3`）。
+        var workspace: WorkspaceManager? = nil
         var noteTypes: [NoteType]
         var usageCount: (UUID) -> Int
         var saveTitle = L("Save")
@@ -201,7 +235,8 @@ final class NoteEditorController: StackPanelController {
 
         // 编辑框：sheet 满宽 × 340（原来 380×170，写几行公式就挤得没法输入，用户 2026-09-16 报）
         editor = MarkdownEditorHost(text: cfg.initialText, documentId: cfg.documentId,
-                                    placeholder: L("Write a note… (Markdown)"), wiki: cfg.wiki)
+                                    placeholder: L("Write a note… (Markdown, type [[ to link)"), wiki: cfg.wiki,
+                                    workspace: cfg.workspace)
         stack.addArrangedSubview(SheetKit.fixed(editor, width: inner, height: 340))
 
         if cfg.hasRects {
@@ -523,17 +558,19 @@ final class ImageNoteEditorController: StackPanelController {
     private let onView: () -> Void
     private let onCancel: () -> Void
     private let wiki: WorkspaceWikiIndex?
+    private let workspace: WorkspaceManager?
     private var editor: MarkdownEditorHost!
     private var displayControl: NSSegmentedControl!
     private let preview = NSImageView()
     private var bag = Set<AnyCancellable>()
 
-    init(note: ImageNote, info: (url: URL, size: CGSize)?, wiki: WorkspaceWikiIndex? = nil,
+    init(note: ImageNote, info: (url: URL, size: CGSize)?, wiki: WorkspaceWikiIndex? = nil, workspace: WorkspaceManager? = nil,
          onSave: @escaping (String, NoteDisplay) -> Void,
          onDelete: @escaping () -> Void, onView: @escaping () -> Void, onCancel: @escaping () -> Void) {
         self.note = note
         self.info = info
         self.wiki = wiki
+        self.workspace = workspace
         self.onSave = onSave
         self.onDelete = onDelete
         self.onView = onView
@@ -560,7 +597,7 @@ final class ImageNoteEditorController: StackPanelController {
         ImageThumbCache.shared.objectWillChange.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshPreview() }.store(in: &bag)
         editor = MarkdownEditorHost(text: note.caption, documentId: note.id.uuidString,
-                                    placeholder: L("Caption… (Markdown)"), wiki: wiki)
+                                    placeholder: L("Caption… (Markdown)"), wiki: wiki, workspace: workspace)
         stack.addArrangedSubview(SheetKit.fixed(editor, width: 380, height: 100))
         displayControl = SheetKit.displayControl(note.display)
         stack.addArrangedSubview(SheetKit.hrow([SheetKit.secondary(L("Show note")), displayControl, SheetKit.spacer()], width: inner))

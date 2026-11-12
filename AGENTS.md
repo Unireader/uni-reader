@@ -73,6 +73,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   §19 题目标签（v24 `exercise.tags`，自由添加，练习页 / 列表 / 顶栏筛选 + MCP `tags`）
 - **`docs/SEARCH-PLAN.md`** — 全工作区搜索（MCP `search`：PDF 文字 / 笔记 / 批注 / 习题 / 上下文）+ 语义搜索（本机模型或 OpenAI 兼容接口）；
   索引是**派生数据**，单独放 `~/Library/Application Support/UniReader/SearchIndex/`，🔴 不进 `library.sqlite`、不同步（`Sources/Search/`）
+- **`docs/KNOWLEDGE-LINKS-PLAN.md`** — 知识关联（笔记 · 书页 · 批注互相引用）：🔴 **关系只从正文里的链接认、不另存关系表**；`[[书名#page=12]]` 写法、
+  输入 `[[` 的选择框（书 / 书页 / 批注 / 笔记段落）、Inspector「关联」页、MCP `links`；链接原样记在搜索索引的 `edge` 表、读时解析
 - `docs/SIDEBAR-DRAG-PLAN.md` — 侧栏拖拽排序（系统 `NSOutlineView` 拖放、同一组里换位置；书库 / 笔记 / 画板 / 练习库；顺序存哪）
 - `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行）
 - `docs/REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动

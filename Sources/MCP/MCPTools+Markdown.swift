@@ -508,14 +508,26 @@ extension MCPTools {
             }
             let r = await MCPNoteScan.links(input)
             func dto(_ o: MCPNoteScan.Occurrence) -> MCPObject {
-                ["note_ref": o.note.key, "note_title": o.note.title, "line": o.line, "text": o.raw, "target": o.target,
-                 "resolves_to": o.resolved.map { $0.key as Any } ?? NSNull(),
-                 "resolved_title": o.resolved.map { $0.title as Any } ?? NSNull()]
+                var d: MCPObject = ["note_ref": o.note.key, "note_title": o.note.title, "line": o.line, "text": o.raw, "target": o.target,
+                                    "resolves_to": o.resolved.map { $0.key as Any } ?? NSNull(),
+                                    "resolved_title": o.resolved.map { $0.title as Any } ?? NSNull()]
+                // 指到书 / 书页（`[[书名#page=12]]`）
+                if case .document(let doc, let p)? = o.pointsTo {
+                    d["document_id"] = doc
+                    if let p { d["page"] = p + 1 }
+                }
+                return d
             }
             func lines(_ list: [MCPNoteScan.Occurrence], showNote: Bool) -> String {
                 list.prefix(limit).map { o in
                     let at = showNote ? "“\(o.note.title)” (\(o.note.key)) line \(o.line)" : "line \(o.line)"
-                    let to = o.resolved.map { " → “\($0.title)” (\($0.key))" } ?? " → broken"
+                    let to: String
+                    switch o.pointsTo {
+                    case .note(let r)?: to = " → “\(r.title)” (\(r.key))"
+                    case .document(let doc, let p)?: to = " → book \(doc)" + (p.map { " p.\($0 + 1)" } ?? "")
+                    case .annotation?: to = " → annotation"
+                    case nil: to = " → broken"
+                    }
                     return "- \(at): \(o.raw)\(showNote && input.target != nil ? "" : to)"
                 }.joined(separator: "\n")
             }
@@ -545,6 +557,8 @@ extension MCPTools {
             "target": MCPSchema.string("target name inside the link"),
             "resolves_to": MCPSchema.nullable(MCPSchema.string("note_ref it resolves to, or null if broken")),
             "resolved_title": MCPSchema.nullable(MCPSchema.string("title of that note")),
+            "document_id": MCPSchema.string("a book link ([[book title]] / [[book title#page=12]]): the PDF"),
+            "page": MCPSchema.integer("a page link: page, 1-based"),
         ])
     }
 

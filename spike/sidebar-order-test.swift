@@ -1,6 +1,6 @@
 // 侧栏拖拽排序的纯逻辑（`SIDEBAR-DRAG-PLAN.md`，`Sources/App/SidebarOrder.swift`）+ 笔记树按手动顺序排。运行：
 //   cp spike/sidebar-order-test.swift /tmp/main.swift && swiftc Sources/Store/*.swift Sources/App/SidebarOrder.swift \
-//     Sources/App/MarkdownLink.swift Sources/App/MarkdownImport.swift Sources/App/NoteTree.swift \
+//     Sources/App/MarkdownLink.swift Sources/App/MarkdownImport.swift Sources/App/NoteTree.swift Sources/App/KnowledgeLinks.swift Sources/App/DeepLink.swift \
 //     Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/InkModel.swift \
 //     Sources/App/InkLayerModel.swift Sources/App/PenPreset.swift Sources/Support/L.swift \
 //     /tmp/main.swift -o /tmp/so && /tmp/so

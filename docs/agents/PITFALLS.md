@@ -4,6 +4,11 @@
 
 ## Markdown 笔记 / 引擎
 
+- 🔴 **`[[` 候选列表要方向键 / 回车 / Esc，必须给 `NativeTextViewWrapper` 传一个能写的 `isWikiLinkActive:` 绑定**（2026-11-12 用户报「不能用方向键选择」）。
+  引擎只在这个状态为真时才把 ↑↓ / 回车 / Esc 交给 `onInlinePreviewKey`；不传就是它的默认 `.constant(false)`，它写不进去，
+  键全归编辑器挪光标——`onInlinePreviewKey` 接了也白接。11-10 做候选列表时就漏了，一直没人发现。App 侧存在 `NoteLinkCompleter.wikiActive`，
+  回归测试 `spike/note-link-complete-test.swift` §4。
+
 - **`onLinkClick` 只捕获一次**（2026-09-20 实测）：`NativeTextViewWrapper` 在 `makeCoordinator()` 里把它存进
   协调器，而 `updateNSView` 刷新了另外五个回调（`onCaretRectChange` / `onBuildContextMenu` /
   `onInlineSelectionChange` / `onInlinePreviewKey` / `onCodeBlockSelectionChange`）**唯独不刷新它**。

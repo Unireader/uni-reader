@@ -26,10 +26,10 @@ enum MarkdownLink {
     /// 🔴 别名要**原文照取**（不 trim、不去转义）：引擎交给 `resolve(displayName:)` 的就是
     /// 竖线后面那段的原始子串（`**"三次飞跃"**` 这种带星号引号的也一样），登记时动过手就对不上了。
     /// 详见 `NoteIndex.aliases`。
-    static func wikiAliases(_ text: String) -> [(target: String, alias: String)] {
+    static func wikiAliases(_ text: String) -> [(target: String, alias: String, head: String)] {
         let ns = text as NSString
         let guarded = protectedRanges(text)
-        var out: [(String, String)] = []
+        var out: [(String, String, String)] = []
         for m in wikiRegex.matches(in: text, range: ns.fullRange)
         where !guarded.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
             guard !ns.substring(with: m.range).hasPrefix("!") else { continue }   // 图片嵌入的竖线是宽度
@@ -38,7 +38,7 @@ enum MarkdownLink {
             let alias = String(inner[inner.index(after: i)...])
             let target = linkTarget(inner)
             guard !alias.isEmpty, !target.isEmpty else { continue }
-            out.append((target, alias))
+            out.append((target, alias, String(inner[inner.startIndex..<i])))
         }
         return out
     }

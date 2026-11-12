@@ -5,6 +5,7 @@ import Combine
 /// 顶部系统分段切「信息 / 缩略图 / 目录 / 笔记 / Agent」；笔记页再分几个二级分区（记在 `inspectorNotesSection`）。
 /// 只刷新看得见的那一页；会话变化合并到下一拍刷一次，且各页按「数据签名」没变就不重建。
 /// 「Agent」页 = 本窗口的 Agent 对话（2026-09-19 起 Agent 面板只住在这里）；设置里关掉 Agent 就没有这一段。
+/// 「关联」页（2026-11-12，`KNOWLEDGE-LINKS-PLAN.md §5`）：这一页 / 这篇笔记链到哪、被谁引用；PDF 与 Markdown 标签都有。
 @MainActor
 final class InspectorViewController: NSViewController {
     let tabs: TabsModel
@@ -172,6 +173,19 @@ final class InspectorViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.queueRefresh() }
             .store(in: &bag)
+        // 索引里笔记 / 批注的链接变了（别处建好了、批注存了）：关联页重取（内容没变不重建，不会闪）
+        NotificationCenter.default.publisher(for: .searchIndexLinksChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] n in
+                guard let self, let id = n.userInfo?["workspace"] as? String, id == SearchSources.indexID(self.workspace) else { return }
+                self.linksMayHaveChanged()
+            }
+            .store(in: &bag)
+        // 笔记存了（本窗口打字的自动保存，或别处 / Agent 改的）：关联页的链出 / 反向链接可能变了
+        NotificationCenter.default.publisher(for: .markdownNoteSavedInApp, object: workspace)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.linksMayHaveChanged() }
+            .store(in: &bag)
         // 设置里开 / 关 Agent：分段加 / 减最后那段；关掉时对话已被模型结束，视图一并丢掉
         AgentPanelModel.shared.$enabled
             .receive(on: DispatchQueue.main)
@@ -188,6 +202,7 @@ final class InspectorViewController: NSViewController {
         var defs: [(InspectorTab, String, String)] = [
             (.info, "info.circle", L("Info")), (.thumbnails, "rectangle.grid.1x2", L("Thumbnails")),
             (.contents, "list.bullet.indent", L("Contents")), (.notes, "note.text", L("Notes")),
+            (.links, "link", L("Links")),
         ]
         if AgentPanelModel.shared.enabled { defs.append((.agent, "sparkles", L("Agent"))) }
         let list = defs.map(\.0)
@@ -261,6 +276,7 @@ final class InspectorViewController: NSViewController {
     @objc private func addBookmark() { session.beginBookmarkAtCurrent() }
 
     private func applyTab() {
+        linksShown = 0   // 列表被别的页占过：回到关联页必须重建
         sectionControl.isHidden = tab != .notes
         sectionControl.selectedSegment = sections.firstIndex(of: notesSection) ?? 0
         lastSignature = ""
@@ -279,7 +295,7 @@ final class InspectorViewController: NSViewController {
         agentPage.isHidden = tab != .agent
         let needsDoc = tab == .info || tab == .notes
         let doc = documentId.flatMap { workspace.document(id: $0) }
-        listScroll.isHidden = !(needsDoc && doc != nil)
+        listScroll.isHidden = !(needsDoc && doc != nil) && tab != .links
         emptyLabel.isHidden = !(needsDoc && doc == nil)
         if needsDoc && doc == nil {
             emptyLabel.stringValue = "\(L("No Document"))\n\(L("Select a document to see its info and notes."))"
@@ -305,7 +321,162 @@ final class InspectorViewController: NSViewController {
             guard sig != lastSignature else { return }
             lastSignature = sig
             rebuild(notesRows())
+        case .links:
+            refreshLinks()
         }
+    }
+
+    // MARK: 关联页（`KNOWLEDGE-LINKS-PLAN.md §5`）
+
+    /// 关联页的数据要异步取（先对一遍笔记与批注的索引），按「看的是什么」的签名去重；取回来时签名还对才上屏。
+    private var linksToken = 0
+    /// 上一次上屏的关联内容（一样就不重建：自动保存每 0.8 秒一次，列表别跟着闪）。
+    private var linksShown = 0
+
+    /// 正在看什么：一篇笔记（链出用编辑器里的实时正文），或某本书的某一页（链出用这一页批注的实时正文）。
+    private func linksSignature() -> String? {
+        if let ref = tabs.active.noteRef {
+            let text = MarkdownDocView.editors(showing: ref, in: workspace).first?.currentText ?? ""
+            return "md|\(ref.key)|\(text.hashValue)"
+        }
+        guard let d = documentId else { return nil }
+        let p = session.currentPageIndex
+        // 整本书的批注都算（关联页也列别的页上批注链出去的）
+        var h = Hasher()
+        for n in session.textNotes { h.combine(n.id); h.combine(n.page); h.combine(n.text) }
+        for n in session.imageNotes { h.combine(n.id); h.combine(n.page); h.combine(n.caption) }
+        return "pdf|\(d)|\(p)|\(h.finalize())"
+    }
+
+    private func refreshLinks() {
+        guard let sig = linksSignature() else {
+            guard lastSignature != "links|none" else { return }
+            lastSignature = "links|none"
+            linksShown = 0
+            rebuild([hint(L("Open a document or a Markdown note to see its links."))])
+            return
+        }
+        guard "links|" + sig != lastSignature else { return }
+        lastSignature = "links|" + sig
+        linksToken += 1
+        let token = linksToken
+        Task { [weak self] in
+            // 翻页、打字时停手 0.25 秒再取，别每一下都对一遍索引
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let self, token == self.linksToken else { return }
+            let all = await KnowledgeGraph.load(self.workspace, wait: 3)
+            guard token == self.linksToken, self.tab == .links else { return }
+            let (views, content) = self.linksRows(all)
+            guard content != self.linksShown || self.listStack.arrangedSubviews.isEmpty else { return }
+            self.linksShown = content
+            self.rebuild(views)
+        }
+    }
+
+    /// 笔记 / 书页改过、别处存了笔记：关联页按签名重取（签名本身不含别处的改动，清掉它强制重取）。
+    func linksMayHaveChanged() {
+        guard tab == .links else { return }
+        lastSignature = ""
+        queueRefresh()
+    }
+
+    /// 返回行与「内容指纹」（指纹一样 = 显示的东西没变）。
+    private func linksRows(_ all: [KnowledgeGraph.Link]) -> ([NSView], Int) {
+        let ctx = KnowledgeGraph.context(workspace)
+        var views: [NSView] = []
+        var h = Hasher()
+        func section(_ title: String, _ links: [KnowledgeGraph.Link], outgoing: Bool, showPage: Bool = false) {
+            guard !links.isEmpty else { return }
+            h.combine(title)
+            views.append(sectionTitle("\(title) · \(links.count)"))
+            for l in links { h.combine(l); views.append(linkCard(l, outgoing: outgoing, showPage: showPage)) }
+        }
+        if let ref = tabs.active.noteRef {
+            h.combine(ref)
+            views.append(label(String(format: L("Links of “%@”"), ref.title), .headline))
+            let text = MarkdownDocView.editors(showing: ref, in: workspace).first?.currentText ?? workspace.noteBody(ref) ?? ""
+            section(L("Links in this note"), KnowledgeGraph.outgoing(text: text, from: .note(ref), ctx), outgoing: true)
+            section(L("Backlinks"), KnowledgeGraph.backlinks(all, note: ref), outgoing: false)
+        } else if let d = documentId {
+            let s = session, p = s.currentPageIndex
+            h.combine(d); h.combine(p)
+            views.append(label(String(format: L("Links on page %d"), p + 1), .headline))
+            // 这本书全部批注链出去的（实时）；这一页的单列一组，其余页的另一组（停在别的页也看得到，用户 2026-11-12 报）
+            var out: [KnowledgeGraph.Link] = []
+            for n in s.textNotes {
+                out += KnowledgeGraph.outgoing(text: n.text, from: .annotation(documentId: d, id: n.id.uuidString, page: n.page), line: 1, ctx)
+            }
+            for n in s.imageNotes {
+                out += KnowledgeGraph.outgoing(text: n.caption, from: .annotation(documentId: d, id: n.id.uuidString, page: n.page), line: 1, ctx)
+            }
+            func onPage(_ l: KnowledgeGraph.Link) -> Bool { if case .annotation(_, _, p) = l.from { return true }; return false }
+            var ids = Set(s.textNotes.filter { $0.page == p }.map { $0.id.uuidString })
+            ids.formUnion(s.highlights.filter { $0.page == p }.map { $0.id.uuidString })
+            ids.formUnion(s.imageNotes.filter { $0.page == p }.map { $0.id.uuidString })
+            ids.formUnion(s.bookmarks.filter { $0.page == p }.map { $0.id.uuidString })
+            section(L("Linked from annotations on this page"), out.filter(onPage), outgoing: true)
+            let toThisPage = KnowledgeGraph.toPage(all, documentId: d, page: p, annotationIDs: ids)
+                .filter { if case .annotation(d, _, p) = $0.from { return false }; return true }
+            section(L("Links to this page"), toThisPage, outgoing: false)
+            // 链到这本书（整本、别的页、别的批注）的，本书自己批注里的不算（那些在「其他页的批注链到」里）
+            let here = Set(toThisPage)
+            let toBook = all.filter { $0.to?.documentID == d && !here.contains($0) && $0.from.documentID != d }
+            section(L("Links to this book"), toBook, outgoing: false, showPage: true)
+            section(L("Linked from annotations on other pages"), out.filter { !onPage($0) }, outgoing: true, showPage: true)
+        }
+        if views.count <= 1 {
+            views.append(hint(L("Nothing is linked here yet. In a note or an annotation, type [[ to link a note, a book page or an annotation.")))
+        }
+        return (views, h.finalize())
+    }
+
+    /// 一行：链出的显示「指到哪」，被引用的显示「从哪来」；点了打开它。第二行是链接所在那一行的文字。
+    /// `showPage` = 第二行前面注明「哪一页」：链出的注明批注在第几页，被引用的注明链到第几页（整本书的不注）。
+    private func linkCard(_ l: KnowledgeGraph.Link, outgoing: Bool, showPage: Bool = false) -> NSView {
+        let shown = outgoing ? l.to : l.from
+        let (symbol, title) = shown.map(describe) ?? ("link.badge.plus", String(format: L("Not found: %@"), l.raw))
+        var detail = l.context
+        if showPage {
+            let pg: Int?
+            switch outgoing ? l.from : (l.to ?? l.from) {
+            case .annotation(_, let a, let p): pg = p ?? annotationPage(a)
+            case .document(_, let p): pg = p
+            case .note: pg = nil
+            }
+            if let pg { detail = String(format: L("Page %d"), pg + 1) + " · " + detail }
+        }
+        if !outgoing, case .note = l.from, let line = l.line { detail = String(format: L("Line %d"), line) + " · " + detail }
+        let sub = multiline(detail, .caption1, lines: 2)
+        sub.textColor = .labelColor
+        let card = InspectorCard(content: vstack([symbolLabel(symbol, title), sub], spacing: 2), buttons: [])
+        if let shown { card.onTap = { [weak self] in
+            guard let self else { return }
+            if case .note(let ref) = shown { self.tabs.openMarkdown(ref) } else { DeepLinkRouter.open(shown, in: self.workspace) }
+        } }
+        return card
+    }
+
+    private func describe(_ t: LinkTarget) -> (String, String) {
+        switch t {
+        case .note(let ref):
+            return ("doc.text", workspace.note(ref: ref)?.title ?? ref.title)
+        case .document(let d, let p):
+            let title = workspace.document(id: d)?.title ?? d
+            return ("book.closed", p.map { String(format: L("%@ · page %d"), title, $0 + 1) } ?? title)
+        case .annotation(let d, let a, let p):
+            let title = workspace.document(id: d)?.title ?? d
+            var page = p
+            if page == nil, d == documentId { page = annotationPage(a) }
+            return ("note.text", L("Annotation") + " · " + (page.map { String(format: L("%@ · page %d"), title, $0 + 1) } ?? title))
+        }
+    }
+
+    private func annotationPage(_ id: String) -> Int? {
+        let s = session
+        if let n = s.textNotes.first(where: { $0.id.uuidString == id }) { return n.page }
+        if let h = s.highlights.first(where: { $0.id.uuidString == id }) { return h.page }
+        if let n = s.imageNotes.first(where: { $0.id.uuidString == id }) { return n.page }
+        return s.bookmarks.first(where: { $0.id.uuidString == id })?.page
     }
 
     // MARK: Agent 页

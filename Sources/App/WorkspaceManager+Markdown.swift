@@ -185,6 +185,7 @@ extension WorkspaceManager {
         let order = noteOrder
         for t in trees { if let o = order[t.source.id] { t.root.applyNoteOrder(o) } }
         noteTrees = trees
+        index.setDocuments(documents.map { ($0.id, $0.title) })   // `[[书名]]` / `[[书名#page=N]]`（`KNOWLEDGE-LINKS-PLAN.md`）
         noteBaseIndex = index
         registerAliases(into: &index, trees: trees)
         wiki.update(index: index)
@@ -285,8 +286,8 @@ extension WorkspaceManager {
                 guard let text = MarkdownImport.readText(root.appendingPathComponent(item.ref.relPath)),
                       text.contains("[[") else { continue }
                 for pair in MarkdownLink.wikiAliases(text) {
-                    guard let ref = index.note(for: pair.target) else { continue }
-                    index.addAlias(pair.alias, ref)
+                    guard let t = index.target(for: pair.head) else { continue }
+                    index.addAlias(pair.alias, target: t)
                 }
             }
         }
@@ -309,6 +310,13 @@ extension WorkspaceManager {
         if let hit = allNotes.first(where: { $0.rowID == key }) { return hit }
         if let r = wiki.note(for: key), let hit = note(ref: r) { return hit }
         return nil
+    }
+
+    /// 点了一个 `[[…]]`（引擎回调给的是文件里写的那一串）→ 指到哪：笔记 / 书 / 书的某页（`KNOWLEDGE-LINKS-PLAN.md`）。
+    /// 先按 `[[…]]` 的规矩认（带 `#page=` 的先当书），再退回 `note(key:)` 认 note key / 库行 UUID。
+    func linkTarget(_ raw: String) -> LinkTarget? {
+        if let t = wiki.target(for: raw) { return t }
+        return note(key: raw).map { .note($0.ref) }
     }
 
     // MARK: - 正文
@@ -701,7 +709,7 @@ extension WorkspaceManager {
         for item in allNotes where item.ref.sourceID == NoteRoot.workspaceID
             && item.ref.relPath.hasPrefix(prefix + "/") {
             guard let text = noteBody(item.ref) else { continue }
-            for name in MarkdownLink.wikiReferences(text) where wiki.note(for: name) == nil {
+            for name in MarkdownLink.wikiReferences(text) where wiki.target(for: name) == nil {   // 书名也算接上了
                 let k = name.trimmed
                 if !k.isEmpty, seen.insert(k).inserted { out.append(k) }
             }

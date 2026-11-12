@@ -191,12 +191,18 @@ final class AgentMentionPopup: NSObject, NSTableViewDataSource, NSTableViewDeleg
         private var detailTop: NSLayoutConstraint!
 
         func show(_ m: AgentMention) {
-            switch m.kind {
+            if let s = m.symbol, let img = NSImage(systemSymbolName: s, accessibilityDescription: nil) {
+                icon.image = img
+                icon.contentTintColor = .labelColor
+            } else {
+                icon.contentTintColor = nil
+            }
+            if m.symbol == nil { switch m.kind {
             case .pdf: icon.image = Self.pdfIcon
             case .folder: icon.image = Self.folderIcon
             case .command: icon.image = Self.commandIcon
             default: icon.image = Self.noteIcon
-            }
+            } }
             name.stringValue = m.name
             detail.stringValue = m.detail
             let two = !m.detail.isEmpty

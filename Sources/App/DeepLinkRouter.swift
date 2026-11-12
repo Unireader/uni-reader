@@ -187,6 +187,44 @@ enum DeepLinkRouter {
 
     /// 链接说的「哪里」落到这个会话的具体页 + 页内位置。`note` 优先（它自带位置），找不到再看
     /// `page`/`frac`；什么都没说 → nil（只开文档不动位置）。
+    /// App 里点了一个链接（笔记 / 批注里的 `[[…]]`、「关联」面板的一行）→ 打开它（`KNOWLEDGE-LINKS-PLAN.md`）。
+    /// 找标签 / 挑窗口走 `showMarkdown` / `showDocument`（与 MCP、`unireader://` 共用）；页与批注的定位同链接（`target(for:in:)`）。
+    static func open(_ target: LinkTarget, in ws: WorkspaceManager) {
+        guard let delegate = AppDelegate.shared else { return }
+        do {
+            switch target {
+            case .note(let ref):
+                guard ws.note(ref: ref) != nil else { return }
+                let (c, _) = try delegate.showMarkdown(ref, in: ws, activate: true)
+                c.window?.makeKeyAndOrderFront(nil)
+            case .document(let id, let page):
+                guard ws.document(id: id) != nil else { return }
+                let (c, tab) = try delegate.showDocument(id, in: ws, activate: true)
+                if let page {
+                    var l = DeepLink()
+                    l.page = page + 1
+                    if let t = Self.target(for: l, in: tab.session) {
+                        tab.session.jump(page: t.page, frac: t.frac, kind: .list, label: L("Link"), origin: "link")
+                    }
+                }
+                c.window?.makeKeyAndOrderFront(nil)
+            case .annotation(let id, let note, let page):
+                guard ws.document(id: id) != nil else { return }
+                let (c, tab) = try delegate.showDocument(id, in: ws, activate: true)
+                var l = DeepLink()
+                l.noteId = UUID(uuidString: note)
+                l.page = page.map { $0 + 1 }
+                if let t = Self.target(for: l, in: tab.session) {
+                    tab.session.jump(page: t.page, frac: t.frac, kind: .list, label: L("Link"), origin: "link")
+                    if let r = t.reveal { tab.session.revealNoteID = r }
+                }
+                c.window?.makeKeyAndOrderFront(nil)
+            }
+        } catch {
+            wsLog("打开链接失败：\(error)")
+        }
+    }
+
     static func target(for link: DeepLink, in s: DocSession) -> Target? {
         if let id = link.noteId {
             // 与 Inspector 点条目同一口径：锚点上沿再往上让 3%，标题/图钉不顶在视口边上

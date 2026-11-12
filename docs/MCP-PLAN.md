@@ -1025,3 +1025,10 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 
 一次查 PDF 每页文字、Markdown 笔记、批注、习题、Agent 上下文；独立索引库（不进 `library.sqlite`）、每次搜索前增量更新；设置里可开「同时按意思搜索」
 （本机系统模型或 OpenAI 兼容接口）。全部细节、选型实测与性能数据见 **`SEARCH-PLAN.md`**。`instructions` 加了「找东西先用 search」。
+
+## 35. 2026-11-12 知识关联 `links`；`markdown_links` 认书页链接
+
+用户要「让一个学科的知识串起来」：笔记、书页、批注之间的关系**只从文字里认**（`[[笔记名]]` / `[[书名#page=12]]` / `unireader://`）。
+新工具 `links`（`.read`）：某篇笔记 / 某本书（某页）/ 某条批注链到哪、被谁引用，或 `all` 列出全部；`markdown_links` 不再把 `[[书名#page=N]]` 报成断链。
+细则与实测清单见 **`KNOWLEDGE-LINKS-PLAN.md`**。
+

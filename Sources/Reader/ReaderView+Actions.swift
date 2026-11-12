@@ -28,7 +28,7 @@ extension ReaderView {
         presentSheet(NoteEditorController(.init(
             quote: target.quote, initialText: target.initialText, initialTypeId: target.initialTypeId,
             initialDisplay: target.initialDisplay, initialColor: target.initialColor, initialStyle: target.initialStyle,
-            hasRects: target.hasRects, documentId: target.id.uuidString, wiki: workspace.wiki,
+            hasRects: target.hasRects, documentId: target.id.uuidString, wiki: workspace.wiki, workspace: workspace,
             noteTypes: session.noteTypes,
             usageCount: { [session] id in session.textNotes.filter { $0.typeId == id }.count },
             onSave: { [weak self] out in self?.saveEditor(target, out) },
@@ -276,7 +276,7 @@ extension ReaderView {
     func openImageEditor(_ id: UUID) {
         guard let n = session.imageNotes.first(where: { $0.id == id }) else { return }
         presentSheet(ImageNoteEditorController(
-            note: n, info: workspace.imageInfo(sha256: n.image), wiki: workspace.wiki,
+            note: n, info: workspace.imageInfo(sha256: n.image), wiki: workspace.wiki, workspace: workspace,
             onSave: { [weak self] caption, display in
                 self?.updateImageNote(id, caption: caption, display: display)
                 self?.dismissSheet()

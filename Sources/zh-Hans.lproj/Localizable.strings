@@ -1329,3 +1329,25 @@
 "building…" = "正在建…";
 "Last error: %@" = "上次出错：%@";
 "Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service." = "Agent 用 search 工具一次搜遍工作区里的 PDF、笔记、批注和习题；索引会自己保持最新，存放在工作区之外。打开「同时按意思搜索」后，换了说法、意思相同的内容也能找到。系统自带的模型离线可用，但对中文的理解比较粗；OpenAI 兼容接口（例如 SiliconFlow 上的 BAAI/bge-m3，或本机的 Ollama）效果好得多，但 PDF 和笔记的文字会发送给那个服务。";
+
+/* 知识关联（KNOWLEDGE-LINKS-PLAN.md，2026-11-12） */
+"Links" = "关联";
+"Links of “%@”" = "「%@」的关联";
+"Links on page %d" = "第 %d 页的关联";
+"Links in this note" = "这篇笔记链到";
+"Backlinks" = "反向链接";
+"Linked from annotations on this page" = "这一页的批注链到";
+"Links to this page" = "引用了这一页";
+"Links to this book" = "引用了这本书";
+"Nothing is linked here yet. In a note or an annotation, type [[ to link a note, a book page or an annotation." = "这里还没有关联。在笔记或批注里输入 [[，就能链接笔记、书的某一页或批注。";
+"Open a document or a Markdown note to see its links." = "打开一份文档或一篇 Markdown 笔记，就能看到它的关联。";
+"Not found: %@" = "找不到：%@";
+"Line %d" = "第 %d 行";
+"Annotation" = "批注";
+"Whole book" = "整本书";
+"%@ · page %d" = "%1$@ · 第 %2$d 页";
+"Page in this book" = "这本书的这一页";
+"The page you are reading" = "正在看的这一页";
+"Write a note… (Markdown, type [[ to link)" = "写批注…（支持 Markdown，输入 [[ 链接笔记或书页）";
+"Write in Markdown. Type [[ to link a note, a book page or an annotation." = "用 Markdown 写。输入 [[ 可以链接笔记、书的某一页或批注。";
+"Linked from annotations on other pages" = "其他页的批注链到";

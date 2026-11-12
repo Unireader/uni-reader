@@ -39,12 +39,14 @@ actor SearchIndex {
     }
 
     /// 表结构版本：改了切块 / 归一化规则就加一，旧库整个丢掉重建。
-    static let schemaVersion = "3"
+    static let schemaVersion = "4"
 
     let db: SQLiteDB
     let path: URL
+    let workspaceID: String
 
     private init(workspaceID: String) throws {
+        self.workspaceID = workspaceID
         let safe = workspaceID.replacingOccurrences(of: "/", with: "_")
         path = Self.root.appendingPathComponent(safe + ".sqlite")
         db = try SQLiteDB(path: path.path)
@@ -52,7 +54,7 @@ actor SearchIndex {
         if v != Self.schemaVersion {
             try db.exec("""
             DROP TRIGGER IF EXISTS chunk_ai; DROP TRIGGER IF EXISTS chunk_ad; DROP TABLE IF EXISTS chunk_fts; DROP TABLE IF EXISTS chunk; DROP TABLE IF EXISTS source; DROP TABLE IF EXISTS meta;
-            DROP TABLE IF EXISTS vec;
+            DROP TABLE IF EXISTS vec; DROP TABLE IF EXISTS edge;
             """)
         }
         try db.exec("""
@@ -69,6 +71,11 @@ actor SearchIndex {
         CREATE TRIGGER IF NOT EXISTS chunk_ad AFTER DELETE ON chunk BEGIN
             INSERT INTO chunk_fts(chunk_fts, rowid, norm) VALUES ('delete', old.id, old.norm); END;
         CREATE TABLE IF NOT EXISTS vec(chunk_id INTEGER PRIMARY KEY, model TEXT NOT NULL, v BLOB NOT NULL);
+        CREATE TABLE IF NOT EXISTS edge(
+            id INTEGER PRIMARY KEY, source TEXT NOT NULL, from_kind TEXT NOT NULL, from_owner TEXT NOT NULL,
+            from_sub TEXT NOT NULL DEFAULT '', from_page INTEGER, from_line INTEGER,
+            kind TEXT NOT NULL, target TEXT NOT NULL, raw TEXT NOT NULL, context TEXT NOT NULL DEFAULT '');
+        CREATE INDEX IF NOT EXISTS edge_source ON edge(source);
         INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', '\(Self.schemaVersion)');
         """)
     }
@@ -82,7 +89,34 @@ actor SearchIndex {
         let title: String
         /// 指纹（在索引自己的线程上算：可能要查库 / 看文件，别占主线程）。
         let stamp: @Sendable () -> String
-        let load: @Sendable () async -> [Chunk]
+        let load: @Sendable () async -> Loaded
+
+        init(key: String, title: String, stamp: @escaping @Sendable () -> String, loadAll: @escaping @Sendable () async -> Loaded) {
+            self.key = key; self.title = title; self.stamp = stamp; self.load = loadAll
+        }
+        /// 只有文字块、没有链接的来源（PDF 页、习题、上下文）。
+        init(key: String, title: String, stamp: @escaping @Sendable () -> String, load: @escaping @Sendable () async -> [Chunk]) {
+            self.init(key: key, title: title, stamp: stamp, loadAll: { Loaded(chunks: await load()) })
+        }
+    }
+
+    /// 一个来源读出来的东西：文字块，加上里面的链接（笔记、批注才有，`KNOWLEDGE-LINKS-PLAN.md §4`）。
+    struct Loaded: Sendable {
+        var chunks: [Chunk]
+        var edges: [Edge] = []
+    }
+
+    /// 正文里的一处链接（原样记，读的时候再按当前的笔记 / 书单解析——改名、导入新书之后不用重建）。
+    struct Edge: Sendable, Equatable {
+        var fromKind: String        // markdown / annotation
+        var fromOwner: String       // note key / 文档 id
+        var fromSub: String = ""    // 批注 id
+        var fromPage: Int? = nil    // 批注所在页（0 起）
+        var fromLine: Int? = nil    // 笔记里的行（1 起）
+        var kind: String            // wiki / url
+        var target: String          // `[[ ]]` 里的整串 / 整条链接
+        var raw: String
+        var context: String
     }
 
     struct Chunk: Sendable {
@@ -106,6 +140,10 @@ actor SearchIndex {
     private(set) var progress = Progress()
     private var running: Task<Void, Never>?
     private var pendingSources: [Source]?
+    private var edgeCache: [Edge]?
+    /// 笔记与批注那一路（「关联」用）：单独跑，**不排在全量后面**。
+    private var linksRunning: Task<Void, Never>?
+    private var linksPending: (sources: [Source], prefixes: [String])?
 
     /// 把索引对到给定的来源清单：删掉清单里没有的、重建指纹变了的。正在建就排队（只留最新一份清单）。
     /// 返回在 `budget` 秒内有没有建完（没建完后台接着建）。
@@ -115,14 +153,43 @@ actor SearchIndex {
         if embedder == nil { embedding?.cancel() }   // 设置里关掉了语义搜索：正在算的向量停下
         if running == nil { startNext() }
         guard let task = running else { return true }
-        let finished = await withTaskGroup(of: Bool.self) { group -> Bool in
+        return await Self.wait(task, budget: budget) && running == nil
+    }
+
+    /// 只对这几类来源（`md:` / `ann:`）对账，不删别的前缀的来源；**与全量那轮各跑各的**。
+    ///
+    /// 🔴 2026-11-12 用户报「批注里引用了，关联列表看不到」：输入 `[[` 的候选为了按正文搜启动了全量建索引（几本几百页的书要好一阵），
+    /// 原先这一路排在它后面、等 3 秒就放弃，关联页拿到的是旧链接、之后又没人叫它重取。笔记与批注很轻，单独跑；
+    /// 两路都写同一张表（actor 里串行），全量那轮按它开头算的旧指纹再写一遍同一来源也无妨（内容是读时的新内容，下一次对账再补指纹）。
+    func refreshLinks(_ sources: [Source], prefixes: [String], budget: TimeInterval) async -> Bool {
+        linksPending = (sources.filter { s in prefixes.contains { s.key.hasPrefix($0) } }, prefixes)
+        if linksRunning == nil { startLinks() }
+        guard let task = linksRunning else { return true }
+        return await Self.wait(task, budget: budget) && linksRunning == nil
+    }
+
+    private static func wait(_ task: Task<Void, Never>, budget: TimeInterval) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group -> Bool in
             group.addTask { await task.value; return true }
             group.addTask { try? await Task.sleep(nanoseconds: UInt64(max(0, budget) * 1e9)); return false }
             let first = await group.next() ?? false
             group.cancelAll()
             return first
         }
-        return finished && running == nil
+    }
+
+    private func startLinks() {
+        guard let p = linksPending else { linksRunning = nil; return }
+        linksPending = nil
+        linksRunning = Task { [weak self] in
+            await self?.sync(p.sources, prefixes: p.prefixes, tracked: false)
+            await self?.finishLinks()
+        }
+    }
+
+    private func finishLinks() {
+        linksRunning = nil
+        if linksPending != nil { startLinks() }
     }
 
     private func startNext() {
@@ -267,31 +334,64 @@ actor SearchIndex {
         }
     }
 
-    private func sync(_ sources: [Source]) async {
+    /// `prefixes` 非 nil = 部分对账（只删这几类里没了的来源）；`tracked` = 记进 `progress`（只有全量那路记）。
+    private func sync(_ sources: [Source], prefixes: [String]? = nil, tracked: Bool = true) async {
         let have = Dictionary(((try? db.query("SELECT key, stamp FROM source")) ?? []).compactMap { r -> (String, String)? in
             guard let k = r["key"] as? String, let s = r["stamp"] as? String else { return nil }
             return (k, s)
         }, uniquingKeysWith: { a, _ in a })
         let wanted = Set(sources.map(\.key))
-        for k in have.keys where !wanted.contains(k) { remove(source: k) }
+        var linksChanged = false
+        for k in have.keys where !wanted.contains(k) && (prefixes?.contains { k.hasPrefix($0) } ?? true) {
+            remove(source: k)
+            if Self.carriesLinks(k) { linksChanged = true }
+        }
+        // 轻的先做（笔记、批注、习题、上下文），整本书的文字最后：先让「关联」与笔记搜索可用
         let todo = sources.map { ($0, $0.stamp()) }.filter { have[$0.0.key] != $0.1 }
-        progress = Progress(total: todo.count, done: 0, building: !todo.isEmpty, lastError: nil)
+            .sorted { Self.cost($0.0.key) < Self.cost($1.0.key) }
+        if tracked { progress = Progress(total: todo.count, done: 0, building: !todo.isEmpty, lastError: nil) }
         for (s, stamp) in todo {
-            let chunks = await s.load()
-            write(s, stamp: stamp, chunks)
-            progress.done += 1
+            let loaded = await s.load()
+            write(s, stamp: stamp, loaded)
+            if tracked { progress.done += 1 }
+            if Self.carriesLinks(s.key) { linksChanged = true }
+        }
+        if linksChanged { announceLinksChanged() }
+    }
+
+    private static func cost(_ key: String) -> Int { key.hasPrefix("pdf:") ? 1 : 0 }
+    private static func carriesLinks(_ key: String) -> Bool { key.hasPrefix("md:") || key.hasPrefix("ann:") }
+
+    /// 笔记 / 批注的链接变了：告诉「关联」面板重取（`userInfo["workspace"]` = 本索引的工作区身份）。
+    private func announceLinksChanged() {
+        let id = workspaceID
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .searchIndexLinksChanged, object: nil, userInfo: ["workspace": id])
         }
     }
 
     private func remove(source key: String) {
+        edgeCache = nil
+        try? db.run("DELETE FROM edge WHERE source=?", [.text(key)])
         try? db.run("DELETE FROM vec WHERE chunk_id IN (SELECT id FROM chunk WHERE source=?)", [.text(key)])
         try? db.run("DELETE FROM chunk WHERE source=?", [.text(key)])
         try? db.run("DELETE FROM source WHERE key=?", [.text(key)])
     }
 
-    private func write(_ s: Source, stamp: String, _ chunks: [Chunk]) {
+    private func write(_ s: Source, stamp: String, _ loaded: Loaded) {
+        let chunks = loaded.chunks
+        edgeCache = nil
         do {
             try db.transaction {
+                try db.run("DELETE FROM edge WHERE source=?", [.text(s.key)])
+                for e in loaded.edges {
+                    try db.run("""
+                    INSERT INTO edge(source, from_kind, from_owner, from_sub, from_page, from_line, kind, target, raw, context)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                    """, [.text(s.key), .text(e.fromKind), .text(e.fromOwner), .text(e.fromSub),
+                          e.fromPage.map { .int(Int64($0)) } ?? .null, e.fromLine.map { .int(Int64($0)) } ?? .null,
+                          .text(e.kind), .text(e.target), .text(e.raw), .text(e.context)])
+                }
                 try db.run("DELETE FROM vec WHERE chunk_id IN (SELECT id FROM chunk WHERE source=?)", [.text(s.key)])
                 try db.run("DELETE FROM chunk WHERE source=?", [.text(s.key)])
                 for c in chunks {
@@ -316,8 +416,23 @@ actor SearchIndex {
     func reset() {
         embedding?.cancel()
         vecCache = nil
-        try? db.exec("DELETE FROM vec; DELETE FROM chunk; DELETE FROM source;")
+        edgeCache = nil
+        try? db.exec("DELETE FROM vec; DELETE FROM chunk; DELETE FROM source; DELETE FROM edge;")
         try? db.exec("INSERT INTO chunk_fts(chunk_fts) VALUES ('rebuild');")
+    }
+
+    /// 全部链接（笔记、批注里的），有改动才重读。
+    func allEdges() -> [Edge] {
+        if let edgeCache { return edgeCache }
+        let rows = (try? db.query("SELECT from_kind, from_owner, from_sub, from_page, from_line, kind, target, raw, context FROM edge")) ?? []
+        let out = rows.map { r in
+            Edge(fromKind: r["from_kind"] as? String ?? "", fromOwner: r["from_owner"] as? String ?? "",
+                 fromSub: r["from_sub"] as? String ?? "", fromPage: (r["from_page"] as? Int64).map(Int.init),
+                 fromLine: (r["from_line"] as? Int64).map(Int.init), kind: r["kind"] as? String ?? "",
+                 target: r["target"] as? String ?? "", raw: r["raw"] as? String ?? "", context: r["context"] as? String ?? "")
+        }
+        edgeCache = out
+        return out
     }
 
     var stats: (sources: Int, chunks: Int) {
@@ -458,3 +573,9 @@ actor SearchIndex {
         return ((try? db.query(sql, params)) ?? []).map(Self.row)
     }
 }
+
+extension Notification.Name {
+    /// 搜索索引里笔记 / 批注的链接变了（`userInfo["workspace"]` = 索引身份，`SearchSources.indexID`）。「关联」面板据此重取。
+    static let searchIndexLinksChanged = Notification.Name("UniReader.searchIndexLinksChanged")
+}
+

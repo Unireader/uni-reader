@@ -118,6 +118,47 @@ sources.removeAll { $0.key == "pdf:D2" }
 _ = run { await idx.refresh(sources, budget: 30) }
 check(kw("中值").hits.isEmpty, "来源没了：它的块删掉")
 
+print("— 5b) 链接（edge 表，KNOWLEDGE-LINKS-PLAN §4）与部分对账")
+let linkNote = SearchIndex.Source(key: "md:ws:关联.md", title: "关联", stamp: { "1" }, loadAll: {
+    .init(chunks: [SearchIndex.Chunk(kind: "markdown", owner: "ws:关联.md", line: 1, title: "关联", body: "见 [[书D1#page=2]]")],
+          edges: [SearchIndex.Edge(fromKind: "markdown", fromOwner: "ws:关联.md", fromLine: 1, kind: "wiki",
+                                   target: "书D1#page=2", raw: "[[书D1#page=2]]", context: "见 [[书D1#page=2]]")])
+})
+sources.append(linkNote)
+_ = run { await idx.refresh(sources, budget: 30) }
+var edges = run { await idx.allEdges() }
+check(edges.count == 1 && edges[0].target == "书D1#page=2" && edges[0].fromLine == 1, "笔记里的链接记下来了")
+// 部分对账：只给笔记与批注两类，PDF 那些来源不许被当成「没了」删掉
+let onlyLinks = sources.filter { $0.key.hasPrefix("md:") || $0.key.hasPrefix("ann:") }
+_ = run { await idx.refreshLinks(onlyLinks, prefixes: ["md:", "ann:"], budget: 30) }
+check(!kw("对立统一").hits.isEmpty, "部分对账不删 PDF 来源")
+sources.removeAll { $0.key == "md:ws:关联.md" }
+_ = run { await idx.refreshLinks(sources, prefixes: ["md:"], budget: 30) }
+edges = run { await idx.allEdges() }
+check(edges.isEmpty, "笔记没了：它的链接一起删")
+
+print("— 5c) 全量建索引正慢的时候，笔记 / 批注的链接照样马上更新（用户 2026-11-12 报「关联列表看不到」）")
+let slowBook = SearchIndex.Source(key: "pdf:SLOW", title: "很慢的书", stamp: { "1" }, load: {
+    try? await Task.sleep(nanoseconds: 4_000_000_000)   // 模拟几百页的书：读 OCR + 抽字要好一阵
+    return [SearchIndex.Chunk(kind: "pdf", owner: "SLOW", page: 0, title: "很慢的书", body: "慢")]
+})
+let annNew = SearchIndex.Source(key: "ann:D1", title: "书D1", stamp: { "2" }, loadAll: {
+    .init(chunks: [], edges: [SearchIndex.Edge(fromKind: "annotation", fromOwner: "D1", fromSub: "A-1", fromPage: 130,
+                                               kind: "wiki", target: "书D2", raw: "[[书D2]]", context: "[[书D2]]")])
+})
+var withSlow = sources.filter { $0.key != "ann:D1" } + [slowBook, annNew]
+let fullStarted = run { await idx.refresh(withSlow, budget: 0) }
+check(!fullStarted, "全量那轮还在建（很慢的书）")
+let t0 = Date()
+let linksDone = run { await idx.refreshLinks(withSlow, prefixes: ["md:", "ann:"], budget: 2) }
+check(linksDone && Date().timeIntervalSince(t0) < 1.5, "链接那一路不等全量、马上建完（\(String(format: "%.2f", Date().timeIntervalSince(t0))) 秒）")
+check(run { await idx.allEdges() }.contains { $0.fromSub == "A-1" && $0.target == "书D2" }, "批注里新写的链接已经在了")
+_ = run { await idx.refresh(withSlow, budget: 10) }
+check(!kw("慢").hits.isEmpty, "全量那轮随后也建完了")
+withSlow.removeAll { $0.key == "pdf:SLOW" }
+sources = withSlow
+_ = run { await idx.refresh(sources, budget: 10) }
+
 print("— 6) 向量与合并排序")
 /// 假模型：按字计数做向量（同字多 = 像），确定、离线。
 struct FakeEmbedding: EmbeddingProvider {
@@ -140,7 +181,8 @@ let sem = run { await idx.semantic(qv, filter: .init(), limit: 5) }
 check(sem.first?.owner == "D1", "语义检索：最像的排第一")
 let fused = SearchIndex.fuse(keyword: kw("对立统一").hits, semantic: sem, limit: 5)
 check(fused.first?.owner == "D1" && Set(fused.map { "\($0.kind)|\($0.owner)|\($0.page ?? -1)|\($0.line ?? -1)" }).count == fused.count, "合并后不重复、两边都靠前的最靠前")
-check(VectorMath.dot([127, 0], [127, 0].withUnsafeBufferPointer { $0 }) == 127 * 127, "量化点积")
+let row: [Int8] = [127, 0]
+check(row.withUnsafeBufferPointer { VectorMath.dot([127, 0], $0) } == 127 * 127, "量化点积")
 
 try? FileManager.default.removeItem(at: tmp)
 print("\n\(fail == 0 ? "✅ 全部通过" : "❌ 有失败")：\(pass) 过 / \(fail) 败")

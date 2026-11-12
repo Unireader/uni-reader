@@ -392,11 +392,13 @@ final class WorkspaceManager: ObservableObject {
     /// 只重读书目（同步拉到别的设备的书 / 版本 / 文件路径之后用；`refresh()` 还会重扫笔记目录，那个贵）。
     func reloadDocumentList() {
         documents = (try? store?.allDocuments()) ?? []
+        wiki.updateDocuments(documents.map { ($0.id, $0.title) })   // 同步拉来的新书也能 `[[书名]]`
         refreshLocalFileFlags()
     }
 
     func refresh() {
         documents = (try? store?.allDocuments()) ?? []
+        wiki.updateDocuments(documents.map { ($0.id, $0.title) })   // `[[书名]]` 跟着书库（`KNOWLEDGE-LINKS-PLAN.md`）
         refreshNotes()          // 笔记：重扫目录 + 与库对账 + 重建 `[[…]]` 索引
         refreshBoards()
         refreshExercises()

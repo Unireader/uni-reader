@@ -1,7 +1,7 @@
 // Markdown 笔记（`MARKDOWN-NOTES-PLAN.md`）回归测试：扫描 + 目录树 + 名字解析 + 文件层 + md_doc 库回环。
 // 运行：
 //   cp spike/markdown-link-test.swift /tmp/main.swift && swiftc Sources/Store/*.swift \
-//     Sources/App/MarkdownLink.swift Sources/App/MarkdownImport.swift Sources/App/NoteTree.swift \
+//     Sources/App/MarkdownLink.swift Sources/App/MarkdownImport.swift Sources/App/NoteTree.swift Sources/App/KnowledgeLinks.swift Sources/App/DeepLink.swift \
 //     Sources/App/NoteTypeModel.swift Sources/App/TextNoteModel.swift Sources/App/InkModel.swift \
 //     Sources/App/InkLayerModel.swift Sources/App/PenPreset.swift Sources/Support/L.swift \
 //     /tmp/main.swift -o /tmp/mdl && /tmp/mdl

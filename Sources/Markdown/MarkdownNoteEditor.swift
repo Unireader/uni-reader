@@ -242,6 +242,8 @@ struct MarkdownNoteEditor: View {
     var placeholder: String = ""
     /// 本工作区的 `[[…]]` 索引与图片服务（`WorkspaceWikiIndex`）。nil = 不认 wiki 链接（引擎的无操作默认）。
     var wiki: WorkspaceWikiIndex?
+    /// 输入 `[[` 的候选列表（`KNOWLEDGE-LINKS-PLAN.md §3`）；nil = 不弹（引擎照旧）。
+    var links: NoteLinkCompleter? = nil
     /// 正文字号：设置 → 阅读 →「编辑框字号」（默认 13；气泡默认 12，编辑时略大一点看得清）。
     @AppStorage(NoteBubble.editorFontSizeKey) private var fontSizeSetting = Int(NoteBubble.defaultEditorFont)
     private var fontSize: CGFloat { CGFloat(fontSizeSetting) }
@@ -284,10 +286,19 @@ struct MarkdownNoteEditor: View {
     var body: some View {
         NoteLatexRenderer.shared.registerBlocks(in: text)   // 打开时已有的块公式；之后新敲的由渲染器现查（见 `NoteLatexRenderer`）
         return NativeTextViewWrapper(text: $text,
+                                     isWikiLinkActive: links.map { l in
+                                         Binding(get: { l.wikiActive }, set: { l.wikiActive = $0 })
+                                     } ?? .constant(false),
+                                     pendingInlineReplacement: links.map { l in
+                                         Binding(get: { l.pending }, set: { l.pending = $0 })
+                                     } ?? .constant(nil),
                                      configuration: Self.configuration(wiki: wiki).fittingLatex(to: containerWidth),
                                      fontSize: fontSize,
                                      documentId: documentId,
+                                     onCaretRectChange: links.map { l in { l.caretRectChanged($0) } },
                                      onTableCellContextMenu: TableEditMenu.decorate,
+                                     onInlineSelectionChange: links.map { l in { l.selectionChanged($0) } },
+                                     onInlinePreviewKey: links.map { l in { l.key($0) } },
                                      placeholder: placeholder.isEmpty ? nil : NSAttributedString(
                                          string: placeholder,
                                          attributes: [.foregroundColor: NSColor.placeholderTextColor,

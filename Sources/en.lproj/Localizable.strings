@@ -1327,3 +1327,25 @@
 "building…" = "building…";
 "Last error: %@" = "Last error: %@";
 "Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service." = "Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service.";
+
+/* 知识关联（KNOWLEDGE-LINKS-PLAN.md，2026-11-12） */
+"Links" = "Links";
+"Links of “%@”" = "Links of “%@”";
+"Links on page %d" = "Links on page %d";
+"Links in this note" = "Links in this note";
+"Backlinks" = "Backlinks";
+"Linked from annotations on this page" = "Linked from annotations on this page";
+"Links to this page" = "Links to this page";
+"Links to this book" = "Links to this book";
+"Nothing is linked here yet. In a note or an annotation, type [[ to link a note, a book page or an annotation." = "Nothing is linked here yet. In a note or an annotation, type [[ to link a note, a book page or an annotation.";
+"Open a document or a Markdown note to see its links." = "Open a document or a Markdown note to see its links.";
+"Not found: %@" = "Not found: %@";
+"Line %d" = "Line %d";
+"Annotation" = "Annotation";
+"Whole book" = "Whole book";
+"%@ · page %d" = "%1$@ · page %2$d";
+"Page in this book" = "Page in this book";
+"The page you are reading" = "The page you are reading";
+"Write a note… (Markdown, type [[ to link)" = "Write a note… (Markdown, type [[ to link)";
+"Write in Markdown. Type [[ to link a note, a book page or an annotation." = "Write in Markdown. Type [[ to link a note, a book page or an annotation.";
+"Linked from annotations on other pages" = "Linked from annotations on other pages";

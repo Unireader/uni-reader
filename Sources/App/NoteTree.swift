@@ -243,8 +243,11 @@ struct NoteIndex {
     /// `[[名字|别名]]` 变成 `[[别名|别名]]` —— 那是改文件，红线）。
     /// 所以只能反过来：扫一遍全部正文，把每条 `[[名字|别名]]` 的别名登记到它指的那篇上。
     /// 用户 2026-09-20 的 vault 里 47 条链接有 36 条带竖线，不补这张表就全是灰的。
-    private var aliases: [String: NoteRef] = [:]
-    private var aliasesFolded: [String: NoteRef] = [:]
+    /// 2026-11-12 起别名也能指向书页（`[[书名#page=3|第三页]]`，`KNOWLEDGE-LINKS-PLAN.md §2`），所以存的是链接目标。
+    private var aliases: [String: LinkTarget] = [:]
+    private var aliasesFolded: [String: LinkTarget] = [:]
+    /// 书库里的书：书名（归一化、小写、去掉 `.pdf`）→ 文档 id。`[[书名]]` / `[[书名#page=12]]` 按它认。
+    private var documents: [String: String] = [:]
 
     /// macOS 上文件名是 NFD、正文里多半是 NFC——不归一化的话「é」这类名字永远查不中。
     static func normalize(_ s: String) -> String {
@@ -277,11 +280,64 @@ struct NoteIndex {
 
     /// 登记一条别名（`[[名字|别名]]` 里竖线后面那段 → 名字指的那篇）。
     /// **不覆盖已有的**：同一个别名在不同笔记里指不同目标时，先来的算（稳定、可预期）。
-    mutating func addAlias(_ alias: String, _ ref: NoteRef) {
+    mutating func addAlias(_ alias: String, _ ref: NoteRef) { addAlias(alias, target: .note(ref)) }
+
+    mutating func addAlias(_ alias: String, target: LinkTarget) {
         let k = Self.normalize(alias)
         guard !k.isEmpty, exact[k] == nil else { return }   // 真名优先，别名不许盖掉它
-        if aliases[k] == nil { aliases[k] = ref }
-        if aliasesFolded[k.lowercased()] == nil { aliasesFolded[k.lowercased()] = ref }
+        if aliases[k] == nil { aliases[k] = target }
+        if aliasesFolded[k.lowercased()] == nil { aliasesFolded[k.lowercased()] = target }
+    }
+
+    // MARK: 书（`KNOWLEDGE-LINKS-PLAN.md §2`）
+
+    private static func documentKey(_ title: String) -> String {
+        var k = normalize(title).lowercased()
+        if k.hasSuffix(".pdf") { k = String(k.dropLast(4)).trimmingCharacters(in: .whitespaces) }
+        return k
+    }
+
+    /// 换一份书单（书库变了就换）。同名的书挑 id 字典序最小的那本（稳定）。
+    mutating func setDocuments(_ list: [(id: String, title: String)]) {
+        var out: [String: String] = [:]
+        for d in list.sorted(by: { $0.id < $1.id }) {
+            let k = Self.documentKey(d.title)
+            if !k.isEmpty, out[k] == nil { out[k] = d.id }
+        }
+        documents = out
+    }
+
+    var hasDocuments: Bool { !documents.isEmpty }
+    var documentTable: [String: String] { documents }
+    mutating func copyDocuments(from other: NoteIndex) { documents = other.documents }
+
+    func document(named name: String) -> String? { documents[Self.documentKey(name)] }
+
+    /// `[[…]]` 里写的东西 → 链到哪（笔记 / 书 / 书的某页）。规矩：
+    ///  · 带 `#page=N`（Obsidian 链 PDF 的写法）→ 先当书找，找不到再当笔记；
+    ///  · 不带 → 先当笔记找（同名时笔记优先，老链接不受影响），找不到再当书；
+    ///  · 最后查别名表（别名可以指向书页）。
+    func target(for raw: String) -> LinkTarget? {
+        let (name, page) = Self.pdfAnchor(raw)
+        if let page, let d = document(named: name) { return .document(id: d, page: page - 1) }
+        if let r = note(for: raw) { return .note(r) }
+        // 书名里本来就带 `#` 的（`C#入门`）：整串也试一次
+        let whole = raw.split(separator: "|", maxSplits: 1).first.map(String.init) ?? raw
+        if let d = document(named: name) ?? document(named: whole) { return .document(id: d, page: page.map { $0 - 1 }) }
+        let k = Self.normalize(raw)
+        if let t = aliases[k] ?? aliasesFolded[k.lowercased()] { return t }
+        return nil
+    }
+
+    /// `书名#page=12` / `书名.pdf#page=12&…` / `书名#page=12|别名` → (书名, 12)。没有 `page=` → (名字, nil)。页码 1 起。
+    static func pdfAnchor(_ raw: String) -> (name: String, page: Int?) {
+        var head = raw
+        if let bar = head.range(of: "|") { head = String(head[..<bar.lowerBound]) }
+        if head.hasSuffix("\\") { head.removeLast() }
+        let name = MarkdownLink.linkTarget(raw)
+        guard let r = head.range(of: "#page=", options: .caseInsensitive) else { return (name, nil) }
+        let digits = head[r.upperBound...].prefix { $0.isNumber }
+        return (String(head[..<r.lowerBound]).trimmingCharacters(in: .whitespaces), Int(digits).flatMap { $0 > 0 ? $0 : nil })
     }
 
     mutating func addFile(relPath: String, url: URL) {
@@ -303,9 +359,9 @@ struct NoteIndex {
         if let r = lookup(raw) { return r }
         let t = Self.normalize(MarkdownLink.linkTarget(raw))
         if t != raw, let r = lookup(t) { return r }
-        // 最后才试别名表（引擎把 `[[名字|别名]]` 的别名当 id 递过来，见 `aliases` 的注释）
-        if let r = aliases[raw] ?? aliasesFolded[raw.lowercased()] { return r }
-        if t != raw, let r = aliases[t] ?? aliasesFolded[t.lowercased()] { return r }
+        // 最后才试别名表（引擎把 `[[名字|别名]]` 的别名当 id 递过来，见 `aliases` 的注释）；只认指向笔记的
+        if case .note(let r)? = aliases[raw] ?? aliasesFolded[raw.lowercased()] { return r }
+        if t != raw, case .note(let r)? = aliases[t] ?? aliasesFolded[t.lowercased()] { return r }
         return nil
     }
 

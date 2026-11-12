@@ -34,6 +34,8 @@ struct AgentMention: Equatable, Identifiable {
     var uri: String
     /// PDF、笔记以外几种给 Agent 的说明（它是什么、里面有哪些、用哪个 MCP 工具读），构造时写好。
     var info: String = ""
+    /// 候选列表里改用这个系统符号当图标（`[[` 候选里的书页 / 批注 / 笔记段落，`KNOWLEDGE-LINKS-PLAN.md §3`）；nil = 按种类。
+    var symbol: String? = nil
 
     var token: String { "@" + name }
 

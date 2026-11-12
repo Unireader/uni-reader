@@ -210,7 +210,10 @@ enum MCPNoteScan {
         let line: Int
         let raw: String
         let target: String
+        /// 指到的笔记（书 / 书页时为 nil，看 `pointsTo`）。
         let resolved: NoteRef?
+        /// 指到哪（笔记、书或书页，`KNOWLEDGE-LINKS-PLAN.md`）；nil = 断了。
+        let pointsTo: LinkTarget?
     }
 
     /// 某篇链出去的（每一处）、链到它的（每一处，含自己链自己）；不给笔记 = 全库解析不到的那些。
@@ -218,7 +221,14 @@ enum MCPNoteScan {
         await Task.detached(priority: .userInitiated) {
             func occ(_ ref: NoteRef, _ text: String) -> [Occurrence] {
                 MarkdownLink.wikiOccurrences(text).map {
-                    Occurrence(note: ref, line: $0.line, raw: $0.raw, target: $0.target, resolved: s.index.note(for: $0.target))
+                    // 括号里的整串（含 `#page=`）交给 `target(for:)`：`[[书名#page=12]]` 指到书页，不算断
+                    var inner = $0.raw
+                    if inner.hasPrefix("!") { inner.removeFirst() }
+                    inner = String(inner.dropFirst(2).dropLast(2))
+                    let t = s.index.target(for: inner)
+                    var note: NoteRef? = nil
+                    if case .note(let r)? = t { note = r }
+                    return Occurrence(note: ref, line: $0.line, raw: $0.raw, target: $0.target, resolved: note, pointsTo: t)
                 }
             }
             var outgoing: [Occurrence] = [], incoming: [Occurrence] = [], broken: [Occurrence] = []
@@ -229,7 +239,7 @@ enum MCPNoteScan {
                 guard let text else { continue }
                 for o in occ(f.ref, text) {
                     if let t = s.target { if o.resolved == t { incoming.append(o) } }
-                    else if o.resolved == nil { broken.append(o) }
+                    else if o.pointsTo == nil { broken.append(o) }
                 }
             }
             return (outgoing, incoming, broken)

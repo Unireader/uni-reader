@@ -136,8 +136,9 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func wireEditor() {
         // 正文里点 `[[…]]`：就在这扇小窗里换过去
         editor.onOpenNote = { [weak self] target in
-            guard let self, let item = self.workspace.note(key: target) else { return }
-            self.switchTo(item.ref)
+            guard let self, let t = self.workspace.linkTarget(target) else { return }
+            // 笔记就在这扇小窗里换过去；书 / 书页 / 批注到阅读窗里开（`KNOWLEDGE-LINKS-PLAN.md`）
+            if case .note(let ref) = t { self.switchTo(ref) } else { DeepLinkRouter.open(t, in: self.workspace) }
         }
     }
 

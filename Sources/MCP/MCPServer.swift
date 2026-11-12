@@ -180,6 +180,10 @@ final class MCPServer: ObservableObject {
     update_document renames a document in the library or changes its group. \
     Boards (画板笔记) are handwritten whiteboards: list_boards lists them, render_board shows one as an image so you \
     can read the handwriting, open_board shows it to the user. \
+    One workspace is one subject; its notes, PDF pages and annotations are linked by what is written in notes and \
+    annotations: [[note name]], [[book title]], [[book title#page=12]] (a page of a PDF in the library) and \
+    unireader:// links. links shows what a note, page, book or annotation links to and what links to it (or every \
+    link with all); to connect things, write such a link into a note with edit_markdown when the user asks. \
     Agent contexts (Agent 上下文) are handoff summaries of earlier conversations saved in the workspace so any agent \
     can continue that work: when the user asks to continue earlier work or mentions a saved context, find it with \
     list_agent_contexts and read it with read_agent_context; save one with save_agent_context only when the user asks. \

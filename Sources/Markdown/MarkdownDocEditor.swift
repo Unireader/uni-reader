@@ -69,6 +69,7 @@ struct MarkdownDocEditor: View {
     var body: some View {
         NoteLatexRenderer.shared.registerBlocks(in: text)   // 块公式按块排版（同气泡/批注框，见 `NoteLatexRenderer`）
         return NativeTextViewWrapper(text: $text,
+                                     isWikiLinkActive: Binding(get: { links.wikiActive }, set: { links.wikiActive = $0 }),
                                      pendingInlineReplacement: $links.pending,
                                      configuration: configuration.fittingLatex(to: containerWidth),
                                      fontSize: fontSize,
@@ -80,7 +81,7 @@ struct MarkdownDocEditor: View {
                                      onInlineSelectionChange: { [links] in links.selectionChanged($0) },
                                      onInlinePreviewKey: { [links] in links.key($0) },
                                      placeholder: NSAttributedString(
-                                         string: L("Write in Markdown. Type [[ to link another note."),
+                                         string: L("Write in Markdown. Type [[ to link a note, a book page or an annotation."),
                                          attributes: [.foregroundColor: NSColor.placeholderTextColor,
                                                       .font: NSFont.systemFont(ofSize: fontSize)]),
                                      onPersistScrollOffset: onPersistScrollOffset,

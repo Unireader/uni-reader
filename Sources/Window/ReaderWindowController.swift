@@ -384,9 +384,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         on(.newBoardRequested) { $0.presentNewBoard() }
         on(.importMarkdownRequested) { $0.importMarkdownFolder() }
         on(.openMarkdownNote) { c, note in
-            guard let key = note.userInfo?["id"] as? String,
-                  let item = c.workspace.note(key: key) else { return }
-            c.tabs.openMarkdown(item.ref)
+            // 批注气泡里点的 `[[…]]`：笔记在本窗口开；书 / 书页 / 批注走 `DeepLinkRouter.open`（`KNOWLEDGE-LINKS-PLAN.md`）
+            guard let key = note.userInfo?["id"] as? String, let t = c.workspace.linkTarget(key) else { return }
+            if case .note(let ref) = t { c.tabs.openMarkdown(ref) } else { DeepLinkRouter.open(t, in: c.workspace) }
         }
         on(.referenceMarkdownRequested) { $0.referenceMarkdownFolder() }
         on(.closeTabRequested) { $0.closeTabOrWindow() }
