@@ -167,8 +167,19 @@ final class MCPServer: ObservableObject {
     (with line numbers), by search, or as a heading outline; edit_markdown changes part of a note by exact \
     old_text replacement or line insertion — prefer it over update_markdown, which replaces the whole text; \
     create_markdown makes a new note (in the built-in Notes folder or a referenced folder such as an Obsidian vault) — \
-    use it instead of writing .md files yourself. \
+    use it instead of writing .md files yourself; rename_markdown renames a note or moves it to another folder or \
+    note source, move_markdown_folder renames or moves a whole folder, delete_markdown moves a note to the system \
+    Trash — these report [[wiki links]] that broke and never rewrite them; change those only if the user asks. \
+    markdown_links shows a note's links and backlinks (or every broken link); open_markdown shows a note to the user; \
+    add_markdown_image puts a PDF page or a region of it into a note as an image. \
     Never edit files inside a .unrd package directly. \
+    To find something anywhere in the workspace — PDF pages, Markdown notes, annotations, exercises, agent contexts — \
+    use search first (one call, ranked, ignores line breaks and spaces); then follow up with read_pages, search_text \
+    (highlight rectangles inside one PDF), read_markdown or list_annotations. \
+    update_annotations changes existing text notes, highlights, bookmarks and image-note captions in place; \
+    update_document renames a document in the library or changes its group. \
+    Boards (画板笔记) are handwritten whiteboards: list_boards lists them, render_board shows one as an image so you \
+    can read the handwriting, open_board shows it to the user. \
     Agent contexts (Agent 上下文) are handoff summaries of earlier conversations saved in the workspace so any agent \
     can continue that work: when the user asks to continue earlier work or mentions a saved context, find it with \
     list_agent_contexts and read it with read_agent_context; save one with save_agent_context only when the user asks. \

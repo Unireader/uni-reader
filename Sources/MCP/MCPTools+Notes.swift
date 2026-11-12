@@ -191,6 +191,131 @@ extension MCPTools {
 
     static let maxDeleteIds = 200
 
+    static func updateDocument() -> MCPTool {
+        MCPTool(
+            name: "update_document",
+            title: "Rename a document or change its group",
+            description: "Change how a PDF appears in the workspace library: its display title (the file on disk keeps its name), and/or its group (\"\" = no group; a new group name creates the group). Several documents can be moved to a group at once with document_ids. Do this only when the user asks.",
+            inputSchema: MCPSchema.object([
+                "document_id": MCPSchema.string("Library document id from list_documents."),
+                "document_ids": MCPSchema.array(of: MCPSchema.string("document id"), "Several documents (group change only)."),
+                "title": MCPSchema.string("New display title (one document only)."),
+                "group": MCPSchema.string("Group to put the document(s) in; \"\" = no group."),
+                "workspace": MCPSchema.string("Workspace .unrd path. Default: the open workspace that has these documents."),
+            ]),
+            outputSchema: MCPSchema.object([
+                "workspace": workspaceDTOSchema,
+                "documents": MCPSchema.array(of: documentDTOSchema, "the documents after the change"),
+                "groups": MCPSchema.array(of: MCPSchema.string("group name"), "all groups in the workspace now"),
+            ]),
+            tier: .write
+        ) { _, args in
+            var ids: [String] = []
+            if let one = try args.string("document_id"), !one.isEmpty { ids.append(one) }
+            if let many = args.raw["document_ids"] as? [Any] {
+                for v in many {
+                    guard let s = v as? String else { throw MCPInvalidParams("document_ids must be strings") }
+                    if !ids.contains(s) { ids.append(s) }
+                }
+            }
+            let title = try args.string("title"), group = try args.string("group"), ws = try args.string("workspace")
+            guard title != nil || group != nil else { throw MCPInvalidParams("pass title, group, or both") }
+            let r = try await MainActor.run {
+                try MCPFacade.shared.updateDocuments(ids: ids, title: title, group: group, workspacePath: ws)
+            }
+            let docs = (r["documents"] as? [MCPObject]) ?? []
+            let lines = docs.map { d -> String in
+                let g = (d["group"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "(no group)"
+                return "- “\(d["title"] ?? "")” · group \(g) · \(d["document_id"] ?? d["id"] ?? "")"
+            }
+            return MCPToolResult(text: (["Updated \(docs.count) document(s):"] + lines).joined(separator: "\n"), structured: r)
+        }
+    }
+
+    static func updateAnnotations() -> MCPTool {
+        let names = Highlight.palette.map(\.name)
+        let styles = ["fill", "underline", "box"]
+        let item = MCPSchema.object([
+            "id": MCPSchema.string("Annotation id from list_annotations (full id or its 8-character prefix)."),
+            "text": MCPSchema.string("Text note: the new note text. Image note: the new caption."),
+            "title": MCPSchema.string("Bookmark: the new title (must not be empty)."),
+            "color": MCPSchema.string("Text note or highlight: \(names.joined(separator: ", ")) or #RRGGBB. For a text note, \"none\" goes back to the note type's color."),
+            "style": MCPSchema.enumeration(styles, "Text note or highlight: how the selection is drawn"),
+            "type": MCPSchema.nullable(MCPSchema.string("Text note: note type name as shown in UniReader (must already exist); \"\" or null = the generic type.")),
+            "display": MCPSchema.enumeration(["tap", "hover", "always"], "Text note or image note: how the bubble opens on the page"),
+        ], required: ["id"])
+        return MCPTool(
+            name: "update_annotations",
+            title: "Change annotations",
+            description: "Change existing annotations of one document in place, keeping their ids and links: a text note's text, color, style, type or display; a highlight's color or style; a bookmark's title; an image note's caption or display. Take ids from list_annotations. All changes in one call apply together; if any id is unknown or a field does not fit that kind, nothing is changed. Position, quote and handwriting cannot be changed (delete and re-add instead). Change annotations only when the user asks.",
+            inputSchema: MCPSchema.object(writeTargetProperties.merging([
+                "updates": MCPSchema.array(of: item, "Changes to apply (at most \(maxDeleteIds)); fields left out stay as they are"),
+            ]) { a, _ in a }, required: ["updates"]),
+            outputSchema: MCPSchema.object([
+                "document_id": MCPSchema.string("document"), "count": MCPSchema.integer("annotations changed"),
+                "updated": MCPSchema.array(of: MCPSchema.object([
+                    "id": MCPSchema.string("id"),
+                    "kind": MCPSchema.enumeration(["note", "highlight", "bookmark", "image_note"], "what it is"),
+                    "page": MCPSchema.integer("1-based"),
+                    "fields": MCPSchema.array(of: MCPSchema.string("field changed")),
+                    "title": MCPSchema.string("bookmark: its title now"),
+                    "link": MCPSchema.string("unireader:// link to it"),
+                ])),
+                "via": MCPSchema.enumeration(["session", "library"], "changed in the open tab(s) or straight in the library"),
+            ]),
+            tier: .write
+        ) { _, args in
+            guard let list = args.raw["updates"] as? [MCPObject], !list.isEmpty else {
+                throw MCPInvalidParams("updates must be a non-empty array of objects")
+            }
+            guard list.count <= maxDeleteIds else { throw MCPInvalidParams("at most \(maxDeleteIds) updates per call") }
+            var updates: [MCPFacade.AnnotationUpdate] = []
+            for (i, raw) in list.enumerated() {
+                let a = MCPArgs(raw)
+                let at = list.count > 1 ? "updates[\(i)]: " : ""
+                var u = MCPFacade.AnnotationUpdate(id: try a.requiredString("id"))
+                u.text = try a.string("text")
+                u.title = try a.string("title")
+                if let c = try a.string("color") {
+                    let v = c.trimmingCharacters(in: .whitespaces)
+                    if v.isEmpty || v.lowercased() == "none" {
+                        u.color = .some(nil)
+                    } else if let p = Highlight.palette.first(where: { $0.name.caseInsensitiveCompare(v) == .orderedSame }) {
+                        u.color = .some(p.color); u.colorName = p.name
+                    } else if let hex = parseHex(v) {
+                        u.color = .some(hex); u.colorName = v
+                    } else {
+                        throw MCPInvalidParams("\(at)color must be one of \(names.joined(separator: ", ")), #RRGGBB or none")
+                    }
+                }
+                if let st = try a.string("style") {
+                    guard let style = HighlightStyle(rawValue: st.lowercased()) else {
+                        throw MCPInvalidParams("\(at)style must be one of \(styles.joined(separator: ", "))")
+                    }
+                    u.style = style
+                }
+                if raw.keys.contains("type") {
+                    u.typeName = .some(raw["type"] is NSNull ? nil : try a.string("type"))
+                }
+                if let d = try a.string("display") {
+                    guard let display = NoteDisplay(rawValue: d) else { throw MCPInvalidParams("\(at)display must be tap, hover or always") }
+                    u.display = display
+                }
+                updates.append(u)
+            }
+            let docId = try args.string("document_id"), wsPath = try args.string("workspace")
+            let r = try await MainActor.run {
+                let t = try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath)
+                return try MCPFacade.shared.updateAnnotations(t, updates: updates)
+            }
+            let lines = ((r["updated"] as? [MCPObject]) ?? []).map {
+                "- p.\($0["page"] ?? "") \($0["kind"] ?? "") [\(($0["id"] as? String ?? "").prefix(8))] " + (($0["fields"] as? [String]) ?? []).joined(separator: ", ")
+            }
+            return MCPToolResult(text: (["Changed \(r["count"] ?? 0) annotation(s); ids and links stay the same."] + lines).joined(separator: "\n"),
+                                 structured: r)
+        }
+    }
+
     /// `#RRGGBB` → `InkColor`（a = 1）。
     static func parseHex(_ s: String) -> InkColor? {
         var hex = s.trimmingCharacters(in: .whitespaces)

@@ -613,7 +613,7 @@
 "No calls yet." = "No calls yet.";
 "Writing" = "Writing";
 "Allow agents to write" = "Allow agents to write";
-"Lets agents add bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Whatever an agent deletes goes to Recently Deleted and can be put back from File ▸ Recently Deleted." = "Lets agents add bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Whatever an agent deletes goes to Recently Deleted and can be put back from File ▸ Recently Deleted.";
+"Lets agents add and change bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, rename documents and change their groups, create, rename, move and delete Markdown notes (deleted notes go to the system Trash), put PDF page images into notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Annotations an agent deletes go to Recently Deleted and can be put back from File ▸ Recently Deleted." = "Lets agents add and change bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, rename documents and change their groups, create, rename, move and delete Markdown notes (deleted notes go to the system Trash), put PDF page images into notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Annotations an agent deletes go to Recently Deleted and can be put back from File ▸ Recently Deleted.";
 "Annotations" = "Annotations";
 "“%@” and %d more" = "“%@” and %d more";
 "Written by an agent (%@)" = "Written by an agent (%@)";
@@ -1311,3 +1311,19 @@
 "Grading request" = "Grading request";
 "Saved context “%@”" = "Saved context “%@”";
 "Summary instructions" = "Summary instructions";
+
+/* 搜索 / 语义搜索（SEARCH-PLAN.md，2026-11-12） */
+"Also search by meaning" = "Also search by meaning";
+"On this Mac (built-in)" = "On this Mac (built-in)";
+"OpenAI-compatible API" = "OpenAI-compatible API";
+"Model Name" = "Model Name";
+"API Key" = "API Key";
+"Rebuild Index" = "Rebuild Index";
+"Search Index" = "Search Index";
+"No workspace is open" = "No workspace is open";
+"Not built yet" = "Not built yet";
+"%@: %d pieces of text" = "%1$@: %2$d pieces of text";
+"%@: %d pieces of text, %d with vectors" = "%1$@: %2$d pieces of text, %3$d with vectors";
+"building…" = "building…";
+"Last error: %@" = "Last error: %@";
+"Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service." = "Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service.";

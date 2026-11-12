@@ -987,3 +987,41 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 - `instructions` 的 Markdown 那段与 Agent 面板上下文的两种笔记那句各加了一句：新建用它，别自己写 .md。
 - 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`（写入类工具它本来也只列出来不调用；返回的键都在 `outputSchema` 里）。
 
+## 31. 2026-11-12 `rename_markdown`：Agent 改名 / 挪目录 Markdown 笔记
+
+- 起因（用户）：「继续完善下 Agent 能力，比如 markdown 笔记支持重命名」。新工具（`.write`）：目标同 `edit_markdown`，`title`（新名字）/ `folder`（新目录，`"/"` = 源根），
+  至少给一个，空串当没给；同一个源里挪。细则见 `MARKDOWN-NOTES-PLAN.md §15`。
+  实现：`MCPTools.renameMarkdown` → `MCPFacade.renameMarkdown`（先存开着的编辑器 → 索引快照 → `WorkspaceManager.moveNote` → `ReaderWindowController.noteMoved`）
+  → 回到工具里在主线程外读全部正文认断链（`NoteIndex.linksBroken`，红线 4）。
+- 返回新 `note_ref`（旧的不再能用）、`old_*` 三个字段、`changed`、`broken_link_notes` / `broken_links`（最多 50 篇）；断掉的 `[[…]]` **只列出、不改**，
+  说明里写明「告诉用户，用户要求才用 `edit_markdown` 改」。
+- `instructions` 与 Agent 面板上下文的两种笔记那句各加了 `rename_markdown`。
+- 🔴 没对着运行中的 App 跑 `spike/mcp-schema-audit.py`（返回的键都在 `outputSchema` 里）。
+- 同日第二轮：加 `source`（换源）；Markdown 结构类工具挪到 `MCPFacade+Markdown.swift`，另加 `delete_markdown` / `move_markdown_folder` /
+  `markdown_links` / `open_markdown` / `add_markdown_image`（`MARKDOWN-NOTES-PLAN.md §16`）。
+
+## 32. 2026-11-12 改批注 / 改文档名与分组：`update_annotations` / `update_document`；`render_page` 加 `region`
+
+用户看了缺口清单后说「都做吧」（含原先 §7.13 定的「不做：改文档名」——**用户推翻**）。
+
+- **`update_annotations`**（`.write`，`MCPFacade+Annotations.swift`）：`updates[]`，每条 `id` + 要改的字段：文字笔记 `text` / `color`（色名、`#RRGGBB`、`none` 回到类型色）/
+  `style` / `type`（`""` 或 null = 通用）/ `display`；高亮 `color` / `style`；书签 `title`；图片笔记 `text`（说明）/ `display`。
+  写法同 §21 删除：开着这篇的**每个**标签先 `flushPersist()` → 以库为准认 id（8 位前缀也认）→ 有一条认不出 / 字段不适用就**整批不动** →
+  开着的改每个标签的数组（文字 / 图片笔记走 `inkEdit` 进撤销栈）再落库，没开的直接 `save*`。id 与 `unireader://…&note=` 链接都不变。位置、原文、笔迹改不了。
+- **`update_document`**（`.write`）：`title`（书库里的显示名，不改磁盘文件名，同侧栏「重命名…」；只能一篇）/ `group`（`""` = 未分组，新名字 = 新分组；`document_ids` 可一次挪多篇）。
+  走 `WorkspaceManager.rename` / `setGroup(ids:)`，`refresh()` 之后标签、窗口标题、平板书库自己跟着变。
+- **`render_page` 的 `region`**：只出页上一块（`MCPDocReader.render(region:)`），给看图表 / 公式细节与 `add_markdown_image` 用。
+- `get_state` 的标签补上 `board`（带 `board_id`）与 `exercises`（带组：list / 书 / 章）两种 `content_type`（原先都报成 empty，§24 那条「没做」了结）。
+- 设置 › Agent ›「写入」的说明改成现在能做的全部写入。
+- 实测清单（用户）：137. 让 Agent 把某条笔记改成别的颜色 / 改正文 → 开着的页面上当场变、⌘Z 能撤回；关着那本书时改 → 再打开是新的。
+  138. 让 Agent 给一本书改名、挪到某个分组 → 侧栏与标签标题跟着变，磁盘上的文件名没变。
+
+## 33. 2026-11-12 画板：`list_boards` / `render_board` / `open_board`
+
+此前 Agent 完全看不到画板笔记。只读 + 导航（`MCPFacade+Board.swift`、`MCPTools+Board.swift`，`registerBatch6`）；细则 `BOARD-NOTE-PLAN.md §13`。
+实测清单（用户）：139. 让 Agent「看一下我画板上写了什么」→ 它出图读出手写内容；分页画板能指定第几页。140. 让它打开某块画板 → 切过去或新开标签。
+
+## 34. 2026-11-12 全工作区搜索 `search`（+ 语义搜索）
+
+一次查 PDF 每页文字、Markdown 笔记、批注、习题、Agent 上下文；独立索引库（不进 `library.sqlite`）、每次搜索前增量更新；设置里可开「同时按意思搜索」
+（本机系统模型或 OpenAI 兼容接口）。全部细节、选型实测与性能数据见 **`SEARCH-PLAN.md`**。`instructions` 加了「找东西先用 search」。

@@ -51,6 +51,7 @@ struct MCPSettingsView: View {
             serviceSection
             agentSection
             writesSection
+            searchSection
             listenSection
             tokenSection
             configSection
@@ -108,8 +109,76 @@ struct MCPSettingsView: View {
         } header: {
             Text(L("Writing"))
         } footer: {
-            Text(L("Lets agents add bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Whatever an agent deletes goes to Recently Deleted and can be put back from File ▸ Recently Deleted."))
+            Text(L("Lets agents add and change bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, rename documents and change their groups, create, rename, move and delete Markdown notes (deleted notes go to the system Trash), put PDF page images into notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Annotations an agent deletes go to Recently Deleted and can be put back from File ▸ Recently Deleted."))
         }
+    }
+
+    // MARK: - 语义搜索（`SEARCH-PLAN.md §5`）
+
+    @AppStorage(SemanticSearchSettings.enabledKey) private var semanticOn = false
+    @AppStorage(SemanticSearchSettings.providerKey) private var semanticProvider = "system"
+    @AppStorage(SemanticSearchSettings.urlKey) private var semanticURL = ""
+    @AppStorage(SemanticSearchSettings.modelKey) private var semanticModel = ""
+    /// 密钥的界面镜像（本体在 Keychain）。
+    @State private var semanticKey = ""
+    @State private var indexStatus: String?
+
+    private var searchSection: some View {
+        Section {
+            Toggle(L("Also search by meaning"), isOn: $semanticOn)
+                .onChange(of: semanticOn) { _, _ in kickSearchIndex() }
+            if semanticOn {
+                Picker(L("Model"), selection: $semanticProvider) {
+                    Text(L("On this Mac (built-in)")).tag("system")
+                    Text(L("OpenAI-compatible API")).tag("openai")
+                }
+                .onChange(of: semanticProvider) { _, _ in kickSearchIndex() }
+                if semanticProvider == "openai" {
+                    TextField(L("Address"), text: $semanticURL, prompt: Text(SemanticSearchSettings.defaultURL))
+                        .textFieldStyle(.roundedBorder)
+                    TextField(L("Model Name"), text: $semanticModel, prompt: Text(SemanticSearchSettings.defaultModel))
+                        .textFieldStyle(.roundedBorder)
+                    SecureField(L("API Key"), text: $semanticKey)
+                        .textFieldStyle(.roundedBorder)
+                        .onAppear { semanticKey = Keychain.read(SemanticSearchSettings.keychainAccount) ?? "" }
+                        .onChange(of: semanticKey) { _, v in
+                            let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if t.isEmpty { Keychain.delete(SemanticSearchSettings.keychainAccount) }
+                            else { Keychain.write(SemanticSearchSettings.keychainAccount, t) }
+                        }
+                }
+            }
+            LabeledContent {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 8)
+                    Text(indexStatus ?? L("Checking…")).lineLimit(2).multilineTextAlignment(.trailing)
+                    Button(L("Rebuild Index")) {
+                        Task {
+                            await MCPFacade.rebuildSearchIndexes()
+                            await refreshIndexStatus()
+                        }
+                    }
+                }
+            } label: {
+                Text(L("Search Index"))
+            }
+            .task { await refreshIndexStatus() }
+        } header: {
+            Text(L("Search"))
+        } footer: {
+            Text(L("Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service."))
+        }
+    }
+
+    private func kickSearchIndex() {
+        Task {
+            await MCPFacade.warmUpSearchIndexes()
+            await refreshIndexStatus()
+        }
+    }
+
+    private func refreshIndexStatus() async {
+        indexStatus = await MCPFacade.searchIndexStatus()
     }
 
     // MARK: - 服务

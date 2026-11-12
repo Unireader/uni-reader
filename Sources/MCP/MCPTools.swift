@@ -10,6 +10,16 @@ enum MCPTools {
         registerBatch3(into: server)
         registerBatch4(into: server)
         registerBatch5(into: server)
+        registerBatch6(into: server)
+    }
+
+    /// 批 6（2026-11-12）：画板（只读 + 打开）与全工作区搜索（`MCP-PLAN.md §33–34`）。
+    static func registerBatch6(into server: MCPServer) {
+        let c = server.catalog
+        c.register(listBoards())
+        c.register(renderBoard())
+        c.register(openBoard())
+        c.register(searchTool())
     }
 
     /// 批 4：习题（`EXERCISE-PLAN.md §3`，2026-10-10）。列表是 `.read`，导入 / 改是 `.write`，删是 `.delete`（先进回收站）。
@@ -48,6 +58,8 @@ enum MCPTools {
         c.register(goto())
         c.register(listMarkdownNotes())
         c.register(readMarkdown())
+        c.register(markdownLinks())    // 2026-11-12（`MARKDOWN-NOTES-PLAN.md §16`）
+        c.register(openMarkdown())
         c.resources = MCPResources.provider(catalog: c)
     }
 
@@ -59,9 +71,15 @@ enum MCPTools {
         c.register(addNote())
         c.register(addHighlight())
         c.register(deleteAnnotations())
+        c.register(updateAnnotations())    // 2026-11-12（`MCP-PLAN.md §32`）
+        c.register(updateDocument())
         c.register(editMarkdown())
         c.register(updateMarkdown())
         c.register(createMarkdown())   // 2026-11-12（`MARKDOWN-NOTES-PLAN.md §14`）
+        c.register(renameMarkdown())   // 2026-11-12（`MARKDOWN-NOTES-PLAN.md §15`）
+        c.register(moveMarkdownFolder())   // 2026-11-12（`MARKDOWN-NOTES-PLAN.md §16`）
+        c.register(deleteMarkdown())       // .delete：进系统废纸篓
+        c.register(addMarkdownImage())     // PDF 页 / 一块 → 笔记里的图
         c.register(importPDFTool())
         c.register(createWorkspace())
         c.register(runOCR())

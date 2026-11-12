@@ -61,9 +61,10 @@ enum DeepLinkRouter {
         // 笔记没有「页」也没有「气泡」，到这里就结束。
         if let mdID = link.markdownId {
             guard let item = ws.note(key: mdID) else { throw RouteError.documentNotFound(mdID) }
-            c0.tabs.openMarkdown(item.ref)
+            // 「找标签 / 挑窗口」与 MCP `open_markdown` 共用 `showMarkdown`（别两边各写一份）
+            let (c, _) = try delegate.showMarkdown(item.ref, in: ws, activate: true)
             NSApp.activate(ignoringOtherApps: true)
-            c0.window?.makeKeyAndOrderFront(nil)
+            c.window?.makeKeyAndOrderFront(nil)
             wsLog("链接到位：\(ws.name) md=\(mdID)")
             return
         }

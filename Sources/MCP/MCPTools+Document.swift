@@ -290,10 +290,12 @@ extension MCPTools {
                 "width": MCPSchema.integer("Pixel width; snapped to \(LANServer.pageWidthSteps.map(String.init).joined(separator: "/")), max 2160", min: 240, max: 2160),
                 "format": MCPSchema.enumeration(["jpeg", "png"], "image format", default: "jpeg"),
                 "include_marks": MCPSchema.boolean("Also draw the user's handwriting (visible layers) and highlights on the page", default: false),
+                "region": MCPSchema.array(of: MCPSchema.number("0…1"), "Only this part of the page, [x, y, w, h] normalized with the top-left origin (same as annotation rects); width then applies to the part, e.g. to zoom into a figure or formula"),
             ]) { a, _ in a }, required: ["page"]),
             outputSchema: MCPSchema.object([
                 "page": MCPSchema.integer("1-based"), "width": MCPSchema.integer("pixels"), "height": MCPSchema.integer("pixels"),
                 "mime": MCPSchema.string("image/jpeg or image/png"), "bytes": MCPSchema.integer("encoded size"),
+                "region": MCPSchema.array(of: MCPSchema.number("0…1"), "the part rendered, if region was given"),
                 "marks": MCPSchema.object([
                     "strokes": MCPSchema.integer("handwritten strokes drawn"),
                     "highlights": MCPSchema.integer("highlights drawn"),
@@ -315,16 +317,27 @@ extension MCPTools {
             let pageCount = try await reader.withDocument(path: target.path) { $0.pageCount }
             let idx = try PageNo.index(page, pageCount: pageCount)
             let marks = withMarks ? await MainActor.run { MCPFacade.shared.pageMarks(target, index: idx) } : nil
+            let region = try regionArg(args)
             let img = try await reader.render(path: target.path, index: idx, pixelWidth: width, format: format,
-                                              align: target.align, marks: marks)
+                                              align: target.align, marks: marks, region: region)
             var r: MCPObject = ["page": page, "width": img.width, "height": img.height, "mime": img.mime, "bytes": img.data.count]
             var text = "Page \(page) of “\(target.title)” · \(img.width)×\(img.height) \(fmt)"
+            if let region { r["region"] = MCPFacade.rectArray(region); text += " · region \(MCPFacade.rectArray(region))" }
             if let marks {
                 r["marks"] = ["strokes": marks.strokes.count, "highlights": marks.highlights.count] as MCPObject
                 text += " · with \(marks.strokes.count) handwritten stroke(s) and \(marks.highlights.count) highlight(s)"
             }
             return MCPToolResult(text: text, structured: r, image: (img.data, img.mime))
         }
+    }
+
+    /// `region` 参数：`[x, y, w, h]`（页内归一化，左上原点）；没给 = nil。
+    static func regionArg(_ args: MCPArgs) throws -> CGRect? {
+        guard let v = args.raw["region"], !(v is NSNull) else { return nil }
+        guard let a = v as? [NSNumber], a.count == 4 else { throw MCPInvalidParams("region must be [x, y, w, h] with numbers 0…1") }
+        let r = CGRect(x: a[0].doubleValue, y: a[1].doubleValue, width: a[2].doubleValue, height: a[3].doubleValue)
+        guard r.width > 0, r.height > 0 else { throw MCPInvalidParams("region width and height must be > 0") }
+        return r
     }
 
     static func readPages() -> MCPTool {

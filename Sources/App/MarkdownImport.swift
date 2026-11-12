@@ -133,11 +133,76 @@ enum MarkdownImport {
     }
 
 
-    /// 文件名里不能出现的字符换成 `-`（同 Obsidian 导出那套口径）。
     /// Agent 新建笔记（MCP `create_markdown`，`MARKDOWN-NOTES-PLAN.md §14`）落在源里的哪个相对路径：标题 = 文件名
     /// （去掉多写的 `.md`，非法字符换成 `-`），`folder` 一级一级查。不行 → 一句英文原因（原样回给 Agent）。
     /// `..`、点开头、`trash` 的目录与点开头的文件扫描时跳过（`NoteScan`）——建在那里就看不见了，直接拒绝。
     static func newNotePath(title: String, folder: String) -> Result<String, NewNoteRejected> {
+        noteFileName(title).flatMap { file in
+            noteFolderParts(folder).map { ($0 + [file + ".md"]).joined(separator: "/") }
+        }
+    }
+
+    /// Agent 改名 / 挪目录（MCP `rename_markdown`，`MARKDOWN-NOTES-PLAN.md §15`）之后的相对路径。
+    /// `title` 为 nil = **文件名一个字不动**（只挪目录时不能顺手把 `a#b.md` 洗成 `a-b.md`）；给了就按 `newNotePath` 的口径，
+    /// 原来的扩展名照留（`.markdown` 不变成 `.md`）。`folder` 为 nil = 留在原目录；空串 = 源根。
+    static func movedNotePath(from relPath: String, title: String?, folder: String?) -> Result<String, NewNoteRejected> {
+        let parts = relPath.split(separator: "/").map(String.init)
+        guard let oldFile = parts.last else { return .failure(NewNoteRejected("the note path is empty")) }
+        let file: String
+        if let title {
+            let ext = (oldFile as NSString).pathExtension
+            switch noteFileName(title) {
+            case .failure(let why): return .failure(why)
+            case .success(let name): file = name + "." + (ext.isEmpty ? "md" : ext)
+            }
+        } else {
+            file = oldFile
+        }
+        let dirs: [String]
+        if let folder {
+            switch noteFolderParts(folder) {
+            case .failure(let why): return .failure(why)
+            case .success(let d): dirs = d
+            }
+        } else {
+            dirs = Array(parts.dropLast())
+        }
+        return .success((dirs + [file]).joined(separator: "/"))
+    }
+
+    /// Agent 给笔记目录改名 / 挪位置（MCP `move_markdown_folder`，`MARKDOWN-NOTES-PLAN.md §16`）之后的相对路径。
+    /// `name` 为 nil = 目录名不变（一个字不动）；`parent` 为 nil = 留在原上级、空串 = 源根。不许挪进它自己里面。
+    static func movedFolderPath(from folder: String, name: String?, parent: String?) -> Result<String, NewNoteRejected> {
+        let old = folder.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+        guard let oldName = old.last else { return .failure(NewNoteRejected("folder is empty; the source root itself cannot be moved")) }
+        var newName = oldName
+        if let name {
+            let n = name.trimmed
+            guard !n.isEmpty else { return .failure(NewNoteRejected("folder name is empty")) }
+            newName = safeFileName(n)
+            guard !newName.hasPrefix("."), newName.lowercased() != "trash" else {
+                return .failure(NewNoteRejected("folder names cannot start with a dot or be 'trash' (such folders are hidden)"))
+            }
+        }
+        let dirs: [String]
+        if let parent {
+            switch noteFolderParts(parent) {
+            case .failure(let why): return .failure(why)
+            case .success(let d): dirs = d
+            }
+        } else {
+            dirs = Array(old.dropLast())
+        }
+        let new = (dirs + [newName]).joined(separator: "/")
+        let oldPath = old.joined(separator: "/")
+        guard !(new.lowercased() + "/").hasPrefix(oldPath.lowercased() + "/") || new.lowercased() == oldPath.lowercased() else {
+            return .failure(NewNoteRejected("a folder cannot be moved into itself"))
+        }
+        return .success(new)
+    }
+
+    /// 标题 → 文件名（不带扩展名）：去掉多写的 `.md`、非法字符换成 `-`，空的 / 点开头的拒绝。
+    private static func noteFileName(_ title: String) -> Result<String, NewNoteRejected> {
         var name = title.trimmed
         if name.lowercased().hasSuffix(".md") { name = String(name.dropLast(3)).trimmed }
         guard !name.isEmpty else { return .failure(NewNoteRejected("title is empty")) }
@@ -145,11 +210,16 @@ enum MarkdownImport {
         guard !file.hasPrefix(".") else {
             return .failure(NewNoteRejected("a note name cannot start with a dot (such files are not shown)"))
         }
+        return .success(file)
+    }
+
+    /// 源里的相对目录 → 各级目录名（前后的 `/` 与空段去掉）；`..` / 点开头 / `trash` 拒绝。
+    private static func noteFolderParts(_ folder: String) -> Result<[String], NewNoteRejected> {
         let parts = folder.split(separator: "/").map { String($0).trimmed }.filter { !$0.isEmpty }
         for p in parts where p == ".." || p.hasPrefix(".") || p.lowercased() == "trash" {
             return .failure(NewNoteRejected("folder '\(folder)' is not allowed: no '..', no names starting with a dot, no 'trash' (such folders are hidden)"))
         }
-        return .success((parts + [file + ".md"]).joined(separator: "/"))
+        return .success(parts)
     }
 
     struct NewNoteRejected: Error, Equatable {
@@ -157,6 +227,7 @@ enum MarkdownImport {
         init(_ r: String) { reason = r }
     }
 
+    /// 文件名里不能出现的字符换成 `-`（同 Obsidian 导出那套口径）。
     static func safeFileName(_ s: String) -> String {
         var out = s
         for c in ["/", "\\", ":", "*", "?", "\"", "<", ">", "|", "#", "^", "[", "]"] {

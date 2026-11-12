@@ -376,8 +376,8 @@ extension WorkspaceManager {
         }
     }
 
-    /// Agent 建笔记时的错误（MCP `create_markdown` 把 `message` 原样回给 Agent，所以是英文）。
-    struct NoteCreateError: LocalizedError {
+    /// Agent 建 / 改名笔记时的错误（MCP `create_markdown` / `rename_markdown` 把 `message` 原样回给 Agent，所以是英文）。
+    struct NoteAgentError: LocalizedError {
         let message: String
         var errorDescription: String? { message }
     }
@@ -389,35 +389,35 @@ extension WorkspaceManager {
     func createNote(named title: String, text: String, in sourceID: String, folder: String) throws -> NoteRef {
         lastError = nil
         guard let src = noteSource(id: sourceID), let root = noteRootURL(src) else {
-            throw NoteCreateError(message: "note source '\(sourceID)' not found; see sources in list_markdown_notes")
+            throw NoteAgentError(message: "note source '\(sourceID)' not found; see sources in list_markdown_notes")
         }
         guard !rejectMirrorWrite(sourceID) else {
-            throw NoteCreateError(message: "\(src.name) is a read-only copy from the server here; the note can only be created on a Mac that has this folder")
+            throw NoteAgentError(message: "\(src.name) is a read-only copy from the server here; the note can only be created on a Mac that has this folder")
         }
         // 文件名与目录的规则（纯函数，`spike/markdown-link-test.swift` 测它）
         let rel: String
         switch MarkdownImport.newNotePath(title: title, folder: folder) {
-        case .failure(let why): throw NoteCreateError(message: why.reason)
+        case .failure(let why): throw NoteAgentError(message: why.reason)
         case .success(let r): rel = r
         }
         let fm = FileManager.default
         guard src.kind == .workspace || NoteRoot.directoryExists(root.path) else {
-            throw NoteCreateError(message: "the folder of note source \(src.name) is not on this Mac")
+            throw NoteAgentError(message: "the folder of note source \(src.name) is not on this Mac")
         }
         let url = root.appendingPathComponent(rel)
         // 已有同名（清单里的，或刚写进磁盘还没扫到的；APFS 默认不分大小写）→ 报错，告诉它用哪个工具改
         if let hit = allNotes.first(where: { $0.ref.sourceID == sourceID && $0.ref.relPath.lowercased() == rel.lowercased() }) {
-            throw NoteCreateError(message: "a note already exists at \(src.name)/\(hit.ref.relPath) (note_ref \(hit.ref.key)); change it with edit_markdown or update_markdown, or pick another title")
+            throw NoteAgentError(message: "a note already exists at \(src.name)/\(hit.ref.relPath) (note_ref \(hit.ref.key)); change it with edit_markdown or update_markdown, or pick another title")
         }
         guard !fm.fileExists(atPath: url.path) else {
-            throw NoteCreateError(message: "a file already exists at \(src.name)/\(rel); pick another title")
+            throw NoteAgentError(message: "a file already exists at \(src.name)/\(rel); pick another title")
         }
         do {
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try MarkdownImport.writeAtomically(text, to: url)
         } catch {
             lastError = "\(error)"
-            throw NoteCreateError(message: "could not write the note: \(error.localizedDescription)")
+            throw NoteAgentError(message: "could not write the note: \(error.localizedDescription)")
         }
         refreshNotes()
         return NoteRef(sourceID: sourceID, relPath: rel)
@@ -468,6 +468,7 @@ extension WorkspaceManager {
     ///
     /// 🔴 指向它的 `[[旧名字]]` 会**断链**——我们不改别人的正文（红线），这是用户 2026-09-20
     /// 明确接受的代价（「哪怕不兼容也不要改」）。
+    /// 调用方：改之前 `MarkdownDocView.flushEditors`、改完 `ReaderWindowController.noteMoved`（见 `moveNote` 的注释）。
     @discardableResult
     func renameNote(_ ref: NoteRef, to title: String) -> NoteRef? {
         guard !rejectMirrorWrite(ref.sourceID), let url = noteURL(ref), let clean = title.trimmed.nonEmpty,
@@ -477,18 +478,146 @@ extension WorkspaceManager {
             .compactMap { $0 }.joined(separator: "/")
         guard newRel != ref.relPath else { return ref }
         let dst = root.appendingPathComponent(newRel)
-        guard !FileManager.default.fileExists(atPath: dst.path) else {
+        // 只改大小写（`abc` → `ABC`）：APFS 默认不分大小写，`fileExists` 认的是它自己，不算撞名（`moveItem` 改得了）
+        guard newRel.lowercased() == ref.relPath.lowercased() || !FileManager.default.fileExists(atPath: dst.path) else {
             lastError = L("A note with that name already exists in this folder.")
             return nil
         }
         do {
             try FileManager.default.moveItem(at: url, to: dst)
+            remapNoteOrder(source: ref.sourceID) { $0 == ref.relPath ? newRel : nil }   // 侧栏里还在原来的位置
             refreshNotes()
             return NoteRef(sourceID: ref.sourceID, relPath: newRel)
         } catch {
             lastError = "\(error)"
             return nil
         }
+    }
+
+    /// Agent 要写某个源之前的共同检查：源在、不是服务器镜像、引用目录在这台电脑上。返回源与它的根目录。
+    func agentWritableRoot(_ sourceID: String, verb: String) throws -> (NoteRoot, URL) {
+        guard let src = noteSource(id: sourceID), let root = noteRootURL(src) else {
+            throw NoteAgentError(message: "note source '\(sourceID)' not found; see sources in list_markdown_notes")
+        }
+        guard !rejectMirrorWrite(sourceID) else {
+            throw NoteAgentError(message: "\(src.name) is a read-only copy from the server here; notes can only be \(verb) on a Mac that has this folder")
+        }
+        guard src.kind == .workspace || NoteRoot.directoryExists(root.path) else {
+            throw NoteAgentError(message: "the folder of note source \(src.name) is not on this Mac")
+        }
+        return (src, root)
+    }
+
+    /// Agent 改名 / 挪目录 / 挪去别的源（MCP `rename_markdown`，`MARKDOWN-NOTES-PLAN.md §15`，用户 2026-11-12）。
+    /// `title` / `folder` / `toSource` 为 nil = 不变（目录规则同 `create_markdown`，不在就建；换源时 `folder` 不给 = 新源里同样的相对目录）。
+    /// 与上面那个（界面上的「重命名…」）同一个口径——只动这一个文件，指向它的 `[[旧名字]]` 断就断（红线 9，不改别人的正文）；
+    /// 区别是错误带英文原因（原样回给 Agent）、能挪目录 / 换源、目标已有时报出那篇的 note_ref。返回新位置；都没变 = 原样返回 `ref`。
+    ///
+    /// **换源**（内建 `Notes/` ↔ 引用目录，跨文件系统）：先复制到新位置、确认写好了，再把原件**移到废纸篓**（红线 11：先留底再删）；
+    /// 原件挪不走就把刚复制的那份删掉（原件还在，等于没动），报错。附件不跟着走（`![[图]]` 按文件名全库找，一般照样显示）。
+    ///
+    /// 🔴 调用方两件事（同界面那条）：改之前让开着这篇的编辑器先存盘（`MarkdownDocView.flushEditors`）——
+    /// 挪走之后它们的自动保存见旧路径上没文件，按规矩不存，最后那几个字就丢了；改完把标签 / 小窗换到新位置
+    /// （`ReaderWindowController.noteMoved`），不然它们发现那篇「没了」就关掉。
+    func moveNote(_ ref: NoteRef, title: String?, folder: String?, toSource: String? = nil) throws -> NoteRef {
+        lastError = nil
+        let (src, root) = try agentWritableRoot(ref.sourceID, verb: "renamed or moved")
+        let fm = FileManager.default
+        let url = root.appendingPathComponent(ref.relPath)
+        guard fm.fileExists(atPath: url.path) else {
+            throw NoteAgentError(message: "the file \(src.name)/\(ref.relPath) is not on disk; it may have been moved or deleted")
+        }
+        let rel: String
+        switch MarkdownImport.movedNotePath(from: ref.relPath, title: title, folder: folder) {
+        case .failure(let why): throw NoteAgentError(message: why.reason)
+        case .success(let r): rel = r
+        }
+        let targetID = toSource ?? ref.sourceID
+        let crossing = targetID != ref.sourceID
+        guard rel != ref.relPath || crossing else { return ref }
+        let (tsrc, troot) = crossing ? try agentWritableRoot(targetID, verb: "moved") : (src, root)
+        let dst = troot.appendingPathComponent(rel)
+        // 只改大小写不算撞名（APFS 默认不分大小写，`fileExists` 认的是它自己；`moveItem` 改得了）
+        if crossing || rel.lowercased() != ref.relPath.lowercased() {
+            if let hit = allNotes.first(where: { $0.ref.sourceID == targetID && $0.ref.relPath.lowercased() == rel.lowercased() }) {
+                throw NoteAgentError(message: "a note already exists at \(tsrc.name)/\(hit.ref.relPath) (note_ref \(hit.ref.key)); pick another title or folder")
+            }
+            guard !fm.fileExists(atPath: dst.path) else {
+                throw NoteAgentError(message: "a file already exists at \(tsrc.name)/\(rel); pick another title or folder")
+            }
+        }
+        do {
+            try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if crossing {
+                try fm.copyItem(at: url, to: dst)
+                // 复制下来的和原件一样长才算写好了；之后再动原件
+                let a = (try? fm.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
+                let b = (try? fm.attributesOfItem(atPath: dst.path)[.size] as? NSNumber)?.int64Value
+                guard a != nil, a == b else {
+                    try? fm.removeItem(at: dst)
+                    throw NoteAgentError(message: "the copy in \(tsrc.name) did not come out complete; nothing was changed")
+                }
+                do { try fm.trashItem(at: url, resultingItemURL: nil) }
+                catch {
+                    try? fm.removeItem(at: dst)   // 原件还在：把刚复制的那份拿掉，等于没动
+                    throw NoteAgentError(message: "could not move the original to the Trash (\(error.localizedDescription)); nothing was changed")
+                }
+            } else {
+                try fm.moveItem(at: url, to: dst)
+            }
+        } catch let e as NoteAgentError {
+            throw e
+        } catch {
+            lastError = "\(error)"
+            throw NoteAgentError(message: "could not move the note: \(error.localizedDescription)")
+        }
+        wsLog("[MD] Agent 改名 \(ref.key) → \(targetID):\(rel)")
+        if crossing { remapNoteOrder(source: ref.sourceID, remove: [ref.relPath]) { _ in nil } }
+        else { remapNoteOrder(source: ref.sourceID) { $0 == ref.relPath ? rel : nil } }
+        refreshNotes()
+        return NoteRef(sourceID: targetID, relPath: rel)
+    }
+
+    /// Agent 给笔记目录改名 / 挪位置（MCP `move_markdown_folder`，`MARKDOWN-NOTES-PLAN.md §16`）：同一个源里整个目录挪走，
+    /// 里面的笔记、附件、子目录原样跟着（一个字节不改）。`name` / `parent` 为 nil = 不变；`parent` 空串 = 源根。
+    /// 返回新目录与每篇笔记的新旧位置（调用方据此让开着的标签 / 小窗跟过去，同 `moveNote` 的两件事——存盘要在调之前做）。
+    func moveNoteFolder(sourceID: String, folder: String, name: String?, parent: String?) throws
+        -> (folder: String, moves: [(from: NoteRef, to: NoteRef)]) {
+        lastError = nil
+        let (src, root) = try agentWritableRoot(sourceID, verb: "moved")
+        let old = folder.split(separator: "/").map(String.init).filter { !$0.isEmpty }.joined(separator: "/")
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard !old.isEmpty, fm.fileExists(atPath: root.appendingPathComponent(old).path, isDirectory: &isDir), isDir.boolValue else {
+            throw NoteAgentError(message: "folder '\(folder)' not found in \(src.name)")
+        }
+        let new: String
+        switch MarkdownImport.movedFolderPath(from: old, name: name, parent: parent) {
+        case .failure(let why): throw NoteAgentError(message: why.reason)
+        case .success(let r): new = r
+        }
+        guard new != old else { return (old, []) }
+        let dst = root.appendingPathComponent(new)
+        if new.lowercased() != old.lowercased(), fm.fileExists(atPath: dst.path) {
+            throw NoteAgentError(message: "\(src.name)/\(new) already exists; pick another name or parent")
+        }
+        let prefix = old + "/"
+        let inside = allNotes.filter { $0.ref.sourceID == sourceID && $0.ref.relPath.hasPrefix(prefix) }.map(\.ref)
+        do {
+            try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.moveItem(at: root.appendingPathComponent(old), to: dst)
+        } catch {
+            lastError = "\(error)"
+            throw NoteAgentError(message: "could not move the folder: \(error.localizedDescription)")
+        }
+        func remap(_ p: String) -> String? {
+            if p == old { return new }
+            return p.hasPrefix(prefix) ? new + "/" + p.dropFirst(prefix.count) : nil
+        }
+        wsLog("[MD] Agent 挪目录 \(sourceID):\(old) → \(new)（\(inside.count) 篇）")
+        remapNoteOrder(source: sourceID, remap)
+        refreshNotes()
+        return (new, inside.map { ($0, NoteRef(sourceID: sourceID, relPath: remap($0.relPath) ?? $0.relPath)) })
     }
 
     /// 删一篇：**进废纸篓**（不是抹掉）。引用源删的是用户自己目录里的原件，调用方必须先问清楚。
@@ -500,7 +629,29 @@ extension WorkspaceManager {
             lastError = "\(error)"
             return
         }
+        remapNoteOrder(source: ref.sourceID, remove: [ref.relPath]) { _ in nil }
         refreshNotes()
+    }
+
+    /// Agent 删一篇（MCP `delete_markdown`，`MARKDOWN-NOTES-PLAN.md §16`）：同界面上的「移到废纸篓…」，进系统废纸篓、Finder 里能放回；
+    /// 错误带英文原因。返回它在废纸篓里的位置。调用方先存盘（`flushEditors`），让废纸篓里那份是最新的。
+    func trashNoteForAgent(_ ref: NoteRef) throws -> URL? {
+        lastError = nil
+        let (src, root) = try agentWritableRoot(ref.sourceID, verb: "deleted")
+        let url = root.appendingPathComponent(ref.relPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw NoteAgentError(message: "the file \(src.name)/\(ref.relPath) is not on disk; it may already be deleted")
+        }
+        var out: NSURL?
+        do { try FileManager.default.trashItem(at: url, resultingItemURL: &out) }
+        catch {
+            lastError = "\(error)"
+            throw NoteAgentError(message: "could not move the note to the Trash: \(error.localizedDescription)")
+        }
+        wsLog("[MD] Agent 删笔记 \(ref.key) → 废纸篓")
+        remapNoteOrder(source: ref.sourceID, remove: [ref.relPath]) { _ in nil }
+        refreshNotes()
+        return out as URL?
     }
 
     // MARK: - 导入（把一个现有笔记目录**复制**进工作区）

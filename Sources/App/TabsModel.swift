@@ -195,6 +195,13 @@ final class TabsModel: ObservableObject {
         persist()
     }
 
+    /// 一篇 md 笔记改名 / 挪了目录：开着它的标签跟过去，并把标签组存一下（不存的话冷启动恢复时按旧路径找不到，标签就丢了）。
+    func noteMoved(from old: NoteRef, to new: NoteRef) {
+        var changed = false
+        for t in tabs where t.noteMoved(from: old, to: new) { changed = true }
+        if changed { persist() }
+    }
+
     /// 某本书的章节分级刚被移除（`EXERCISE-PLAN.md §14`）：开着它某一章的习题标签换成整本书那一级
     /// （书底下 / 错题本底下 / 收藏底下各对各的），不留一个空章节在那儿。单独开的标签仍是单独的。
     func exerciseChaptersRemoved(documentId: String) {

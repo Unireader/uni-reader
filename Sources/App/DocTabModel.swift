@@ -497,6 +497,14 @@ final class DocTabModel: ObservableObject, Identifiable {
         staged = false
     }
 
+    /// 这篇 md 笔记改名 / 挪了目录 → 标签跟过去（只换身份；不像 `openMarkdown` 那样记一次「打开」）。
+    /// 返回是否换了（`TabsModel.noteMoved` 据此决定要不要存标签组）。
+    func noteMoved(from old: NoteRef, to new: NoteRef) -> Bool {
+        guard noteRef == old, new != old else { return false }
+        noteRef = new
+        return true
+    }
+
     /// 这篇 md 笔记被删了 / 不在了 → 标签退回空态。
     func closeMarkdownIfGone() {
         guard let ref = noteRef, workspace.note(ref: ref) == nil else { return }

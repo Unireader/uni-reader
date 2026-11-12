@@ -34,6 +34,13 @@ final class WorkspaceWikiIndex: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// 此刻这份索引的拷贝（值类型）。Agent 改名前后各留一份，拿来认「哪些 `[[…]]` 因此断了」（`NoteIndex.linksBroken`）。
+    func snapshot() -> NoteIndex {
+        lock.lock()
+        defer { lock.unlock() }
+        return index
+    }
+
     /// `[[名字]]` 指到哪篇（App 自己也用：导入报告要数「还有哪些名字解析不到」）。
     func note(for key: String) -> NoteRef? {
         lock.lock()

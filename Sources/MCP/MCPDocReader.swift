@@ -220,24 +220,40 @@ final class MCPDocReader {
 
     /// 渲一页（与平板 `/page.png` 同一条原语：`PageBitmap.render` + `PageRenderer.encode`）。
     /// `marks` 非空 = 把用户的笔迹与高亮叠画上去（`render_page` 的 `include_marks`）。
+    /// `region`（页内归一化 `[x, y, w, h]`，左上原点）= 只要这一块：整页按「这一块 ≈ `pixelWidth` 宽」放大来渲
+    /// （整页最宽 `regionMaxPagePixels`），叠完笔迹再裁——笔迹与页面同一套坐标，裁前叠才对得上。
     func render(path: String, index: Int, pixelWidth: Int, format: PageRenderer.Format,
-                align: ScanAlignTable?, marks: MCPPageMarks? = nil) async throws -> Rendered {
+                align: ScanAlignTable?, marks: MCPPageMarks? = nil, region: CGRect? = nil) async throws -> Rendered {
         try await withDocument(path: path) { doc in
             guard let page = doc.page(at: index) else { throw MCPToolError("page \(index + 1) not found") }
             let pa = align?.page(index)
             let disp = PageBitmap.displaySize(page, align: pa)
             guard disp.width > 0, disp.height > 0 else { throw MCPToolError("page \(index + 1) has no size") }
-            let px = Int(min(CGFloat(pixelWidth), disp.width * 4).rounded())
+            let clip = region.map { $0.intersection(CGRect(x: 0, y: 0, width: 1, height: 1)) }
+            if let clip, clip.isNull || clip.width < 0.01 || clip.height < 0.01 {
+                throw MCPInvalidParams("region must lie inside the page and be at least 1% wide and high")
+            }
+            let want = CGFloat(pixelWidth) / (clip?.width ?? 1)
+            let px = Int(min(want, disp.width * 4, clip == nil ? .greatestFiniteMagnitude : Self.regionMaxPagePixels).rounded())
             guard px > 0, let base = PageBitmap.render(page: page, pixelWidth: px, align: pa) else {
                 throw MCPToolError("cannot render page \(index + 1)")
             }
-            let cg = (marks.flatMap { $0.isEmpty ? nil : $0.draw(over: base) }) ?? base
+            var cg = (marks.flatMap { $0.isEmpty ? nil : $0.draw(over: base) }) ?? base
+            if let clip {
+                let W = CGFloat(cg.width), H = CGFloat(cg.height)
+                let r = CGRect(x: clip.minX * W, y: clip.minY * H, width: clip.width * W, height: clip.height * H).integral
+                guard let cut = cg.cropping(to: r) else { throw MCPToolError("cannot crop page \(index + 1)") }
+                cg = cut
+            }
             guard let data = PageRenderer.encode(cg, format: format) else {
                 throw MCPToolError("cannot render page \(index + 1)")
             }
             return Rendered(data: data, width: cg.width, height: cg.height, mime: format.contentType)
         }
     }
+
+    /// 裁一块时整页最多渲多宽（像素）：一块很小时别为了放大把整页渲成几亿像素。
+    static let regionMaxPagePixels: CGFloat = 4800
 
     private static func label(of page: PDFPage?, index: Int) -> String? {
         guard let l = page?.label?.trimmingCharacters(in: .whitespaces), !l.isEmpty, l != String(index + 1) else { return nil }

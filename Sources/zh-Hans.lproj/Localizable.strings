@@ -615,7 +615,7 @@
 "No calls yet." = "还没有调用记录。";
 "Writing" = "写入";
 "Allow agents to write" = "允许 Agent 写入";
-"Lets agents add bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Whatever an agent deletes goes to Recently Deleted and can be put back from File ▸ Recently Deleted." = "允许 Agent 添加书签、文字笔记和高亮，删除高亮、文字笔记、书签和图片笔记，导入 PDF，新建工作区，以及发起 OCR。Agent 写的笔记会带一个终端图标标记。Agent 删掉的东西会进回收站，可以在「文件 ▸ 回收站」里放回来。";
+"Lets agents add and change bookmarks, text notes and highlights, delete highlights, text notes, bookmarks and image notes, rename documents and change their groups, create, rename, move and delete Markdown notes (deleted notes go to the system Trash), put PDF page images into notes, import PDFs, create workspaces and start OCR. Notes written by an agent are marked with a terminal icon. Annotations an agent deletes go to Recently Deleted and can be put back from File ▸ Recently Deleted." = "允许 Agent 添加和修改书签、文字笔记与高亮，删除高亮、文字笔记、书签和图片笔记，修改文档名称与分组，新建、改名、挪动和删除 Markdown 笔记（删掉的笔记进系统废纸篓），把 PDF 页面截图放进笔记，导入 PDF，新建工作区，以及发起 OCR。Agent 写的笔记会带一个终端图标标记。Agent 删掉的批注会进回收站，可以在「文件 ▸ 回收站」里放回来。";
 "Annotations" = "批注";
 "“%@” and %d more" = "“%@”及另外 %d 条";
 "Written by an agent (%@)" = "由 Agent 写入（%@）";
@@ -1313,3 +1313,19 @@
 "Grading request" = "批改请求";
 "Saved context “%@”" = "交接摘要「%@」";
 "Summary instructions" = "写交接摘要的说明";
+
+/* 搜索 / 语义搜索（SEARCH-PLAN.md，2026-11-12） */
+"Also search by meaning" = "同时按意思搜索";
+"On this Mac (built-in)" = "本机（系统自带）";
+"OpenAI-compatible API" = "OpenAI 兼容接口";
+"Model Name" = "模型名称";
+"API Key" = "API 密钥";
+"Rebuild Index" = "重建索引";
+"Search Index" = "搜索索引";
+"No workspace is open" = "没有打开的工作区";
+"Not built yet" = "还没建";
+"%@: %d pieces of text" = "%1$@：%2$d 段文字";
+"%@: %d pieces of text, %d with vectors" = "%1$@：%2$d 段文字，%3$d 段已算好向量";
+"building…" = "正在建…";
+"Last error: %@" = "上次出错：%@";
+"Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service." = "Agent 用 search 工具一次搜遍工作区里的 PDF、笔记、批注和习题；索引会自己保持最新，存放在工作区之外。打开「同时按意思搜索」后，换了说法、意思相同的内容也能找到。系统自带的模型离线可用，但对中文的理解比较粗；OpenAI 兼容接口（例如 SiliconFlow 上的 BAAI/bge-m3，或本机的 Ollama）效果好得多，但 PDF 和笔记的文字会发送给那个服务。";

@@ -331,3 +331,23 @@ struct NoteIndex {
         return filesByName[name]
     }
 }
+
+extension NoteIndex {
+    /// 笔记改名 / 挪目录 / 删除之后，这段正文里**因此断掉**的 `[[…]]` 名字（MCP `rename_markdown` / `move_markdown_folder` /
+    /// `delete_markdown`，`MARKDOWN-NOTES-PLAN.md §15–16`）。`moved`：旧位置 → 新位置（nil = 删掉了）。
+    /// 改之前（`before`）指向某篇被动过的笔记、改之后（`after`）不再指向它的新位置（删掉的：改之后什么也指不到）的那些。
+    /// 只报告、不改正文（红线 9）。按名字认的那套照旧：只挪目录时 `[[名字]]` 还按名字连得上，不算断。图片嵌入不算。
+    static func linksBroken(in text: String, before: NoteIndex, after: NoteIndex, moved: [NoteRef: NoteRef?]) -> [String] {
+        MarkdownLink.wikiReferences(text).filter { name in
+            guard let old = before.note(for: name), let entry = moved[old] else { return false }
+            let now = after.note(for: name)
+            if let target = entry { return now != target }
+            return now == nil
+        }
+    }
+
+    /// 只动了一篇的写法。
+    static func linksBroken(in text: String, before: NoteIndex, after: NoteIndex, from: NoteRef, to: NoteRef?) -> [String] {
+        linksBroken(in: text, before: before, after: after, moved: [from: to])
+    }
+}

@@ -310,5 +310,55 @@ check(nr(".hidden")?.contains("dot") == true, "点开头的文件名退回（扫
 check(nr("x", "a/../b")?.contains("not allowed") == true, "目录里有 .. 退回")
 check(nr("x", ".obsidian")?.contains("not allowed") == true && nr("x", "a/Trash")?.contains("not allowed") == true, "点开头 / trash 目录退回")
 
+print("— Agent 改名 / 挪目录的路径（MarkdownImport.movedNotePath，MARKDOWN-NOTES-PLAN §15）")
+func mp(_ r: String, _ t: String?, _ f: String?) -> String? { if case .success(let x) = MarkdownImport.movedNotePath(from: r, title: t, folder: f) { return x } else { return nil } }
+func mr(_ r: String, _ t: String?, _ f: String?) -> String? { if case .failure(let w) = MarkdownImport.movedNotePath(from: r, title: t, folder: f) { return w.reason } else { return nil } }
+check(mp("数学/极限.md", "函数极限", nil) == "数学/函数极限.md", "只改名：留在原目录")
+check(mp("数学/极限.md", nil, "数学/微积分") == "数学/微积分/极限.md", "只挪目录：名字不变")
+check(mp("数学/极限.md", "极限的定义", "分析") == "分析/极限的定义.md", "改名 + 挪目录")
+check(mp("数学/极限.md", nil, "/") == "极限.md", "\"/\" = 挪到源根")
+check(mp("a#b.md", nil, "x") == "x/a#b.md", "只挪目录时文件名一个字不动（不洗非法字符）")
+check(mp("a/old.markdown", "new", nil) == "a/new.markdown" && mp("a/old.md", "new.md", nil) == "a/new.md", "扩展名照留；多写的 .md 去掉")
+check(mp("a/x.md", "p/q", nil) == "a/p-q.md", "新名字里的 / 换成 -（不当成目录）")
+check(mr("a/x.md", " ", nil)?.contains("empty") == true && mr("a/x.md", ".h", nil)?.contains("dot") == true, "空名字 / 点开头退回")
+check(mr("a/x.md", nil, "../b")?.contains("not allowed") == true && mr("a/x.md", nil, "a/.git")?.contains("not allowed") == true, "目录里有 .. / 点开头退回")
+check(mp("a/x.md", "x", nil) == "a/x.md", "名字目录都没变 → 原路径（调用方当没改）")
+
+print("— 改名后哪些 [[…]] 断了（NoteIndex.linksBroken）")
+let oldR = NoteRef(sourceID: "ws", relPath: "数学/极限.md"), newR = NoteRef(sourceID: "ws", relPath: "数学/函数极限.md")
+let moved = NoteRef(sourceID: "ws", relPath: "分析/极限.md")
+let other = NoteRef(sourceID: "ws", relPath: "数学/导数.md")
+var bi = NoteIndex(); bi.add(note: NoteItem(ref: oldR)); bi.add(note: NoteItem(ref: other))
+var ai = NoteIndex(); ai.add(note: NoteItem(ref: newR)); ai.add(note: NoteItem(ref: other))
+var mi = NoteIndex(); mi.add(note: NoteItem(ref: moved)); mi.add(note: NoteItem(ref: other))
+let body = "见 [[极限]]、[[极限#左极限|左极限]]、[[数学/极限]]、[[导数]]、[[还没写的]]，`[[极限]]` 在代码里不算"
+let br = NoteIndex.linksBroken(in: body, before: bi, after: ai, from: oldR, to: newR)
+check(Set(br) == ["极限", "数学/极限"], "改名：指向它的名字 / 路径写法都算断（锚点那条与 [[极限]] 同名合并），别的链接不算（得到 \(br)）")
+check(NoteIndex.linksBroken(in: "[[函数极限]]", before: bi, after: ai, from: oldR, to: newR).isEmpty, "已经写成新名字的不算断")
+check(NoteIndex.linksBroken(in: body, before: bi, after: mi, from: oldR, to: moved).isEmpty, "只挪目录：按名字照样连得上，一条都不算断")
+
+check(NoteIndex.linksBroken(in: body, before: bi, after: NoteIndex(), from: oldR, to: nil).sorted() == ["数学/极限", "极限"], "删除：指向它的全算断")
+var other2 = NoteIndex(); other2.add(note: NoteItem(ref: NoteRef(sourceID: "ws", relPath: "别处/极限.md")))
+check(NoteIndex.linksBroken(in: "[[极限]]", before: bi, after: other2, from: oldR, to: nil).isEmpty, "删除后同名的另一篇接上了：不算断")
+
+print("— 目录挪动的路径（MarkdownImport.movedFolderPath，§16）")
+func fp(_ f: String, _ n: String?, _ p: String?) -> String? { if case .success(let x) = MarkdownImport.movedFolderPath(from: f, name: n, parent: p) { return x } else { return nil } }
+func fr(_ f: String, _ n: String?, _ p: String?) -> String? { if case .failure(let w) = MarkdownImport.movedFolderPath(from: f, name: n, parent: p) { return w.reason } else { return nil } }
+check(fp("数学/微积分", "高数", nil) == "数学/高数", "只改名：留在原上级")
+check(fp("数学/微积分", nil, "") == "微积分" && fp("数学/微积分", nil, "考研/数学一") == "考研/数学一/微积分", "只挪：到源根 / 到多级目录")
+check(fr("数学", nil, "数学/子")?.contains("into itself") == true, "不许挪进它自己里面")
+check(fp("数学", nil, "数学二") == "数学二/数学", "名字前缀相同的别的目录不算「自己里面」")
+check(fr("", "x", nil)?.contains("root") == true && fr("a", ".git", nil)?.contains("dot") == true && fr("a", "Trash", nil) != nil, "源根 / 点开头 / trash 退回")
+check(fp("Math", "math", nil) == "math", "只改大小写可以")
+
+print("— 每一处 [[…]] 的行号（MarkdownLink.wikiOccurrences）")
+let oc = MarkdownLink.wikiOccurrences("第一行 [[甲]]\n```\n[[代码里]]\n```\n[[乙|别名]] 和 [[甲#节]]\n![[图.png]] ![[丙]]")
+check(oc.map(\.target) == ["甲", "乙", "甲", "丙"], "不去重、跳过代码块与图片（得到 \(oc.map(\.target))）")
+check(oc.map(\.line) == [1, 5, 5, 6], "行号 1 起（得到 \(oc.map(\.line))）")
+check(oc[1].raw == "[[乙|别名]]" && oc[3].raw == "![[丙]]", "原样写法")
+let movedMap: [NoteRef: NoteRef?] = [oldR: moved, other: NoteRef(sourceID: "ws", relPath: "x/导数.md")]
+var mi2 = NoteIndex(); mi2.add(note: NoteItem(ref: moved)); mi2.add(note: NoteItem(ref: NoteRef(sourceID: "ws", relPath: "x/导数.md")))
+check(NoteIndex.linksBroken(in: "[[极限]] [[导数]] [[数学/导数]]", before: bi, after: mi2, moved: movedMap).isEmpty, "整个目录挪走：按名字 / 末段都连得上")
+
 print("\n\(fail == 0 ? "✅ 全部通过" : "❌ 有失败")：\(pass) 过 / \(fail) 败")
 exit(fail == 0 ? 0 : 1)

@@ -21,8 +21,8 @@ final class NoteLinkCompleter: ObservableObject {
 
     private weak var workspace: WorkspaceManager?
     private let documentId: String
-    /// 正在编辑的这一篇（候选里不列自己）。
-    private let ownKey: String
+    /// 正在编辑的这一篇的 `NoteRef.key`（候选里不列自己）。改名后由 `MarkdownDocView.noteMoved` 换成新的。
+    var ownKey: String
     /// 托管编辑区的视图：从它底下找引擎的滚动视图，把光标矩形换成屏幕坐标。
     weak var host: NSView?
 

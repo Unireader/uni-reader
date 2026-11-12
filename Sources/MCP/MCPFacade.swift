@@ -11,7 +11,7 @@ final class MCPFacade {
 
     // MARK: - 窗口
 
-    private var controllers: [ReaderWindowController] { AppDelegate.shared?.readerWindowControllers ?? [] }
+    var controllers: [ReaderWindowController] { AppDelegate.shared?.readerWindowControllers ?? [] }
 
     /// key 窗口；没有 key 的（App 不在前台）取最靠前那扇；一扇都没有 → nil。
     var keyController: ReaderWindowController? {
@@ -23,14 +23,14 @@ final class MCPFacade {
         }
     }
 
-    private func controller(windowId: String) throws -> ReaderWindowController {
+    func controller(windowId: String) throws -> ReaderWindowController {
         guard let c = controllers.first(where: { $0.windowId.uuidString == windowId }) else {
             throw MCPToolError("window '\(windowId)' not found; call get_state for current window ids")
         }
         return c
     }
 
-    private func controllers(for ws: WorkspaceManager) -> [ReaderWindowController] {
+    func controllers(for ws: WorkspaceManager) -> [ReaderWindowController] {
         controllers.filter { $0.workspace === ws }
     }
 
@@ -51,14 +51,14 @@ final class MCPFacade {
 
     // MARK: - DTO
 
-    private func workspaceDTO(_ ws: WorkspaceManager) -> MCPObject {
+    func workspaceDTO(_ ws: WorkspaceManager) -> MCPObject {
         ["id": ws.store?.meta("workspace_id") ?? "",
          "name": ws.name,
          "path": ws.folder?.path ?? "",
          "is_mirror": ws.isMirror]
     }
 
-    private func markdownDTO(_ ws: WorkspaceManager, _ ref: NoteRef, includeText: Bool) -> MCPObject {
+    func markdownDTO(_ ws: WorkspaceManager, _ ref: NoteRef, includeText: Bool) -> MCPObject {
         let source = ws.noteSource(id: ref.sourceID)
         let fileExists = ws.noteURL(ref).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         var o: MCPObject = ["ref": ref.key,
@@ -87,7 +87,7 @@ final class MCPFacade {
     /// - 给了 `note_ref`（`NoteRef.key` / 库行 UUID / 笔记名字，同 `unireader://…&md=`）→ 就是它，**不必开着**；
     ///   工作区 = `workspace` > `window_id` 那扇 > key 编辑区所在 > key 阅读窗；
     /// - 没给 → `window_id` 那扇的活动标签；再没给 → key 窗口里的编辑区（含笔记小窗）；再不行 → key 阅读窗的活动标签。
-    private func markdownTarget(noteRef: String?, windowId: String?, workspacePath: String?) throws -> (WorkspaceManager, NoteRef) {
+    func markdownTarget(noteRef: String?, windowId: String?, workspacePath: String?) throws -> (WorkspaceManager, NoteRef) {
         if let key = noteRef, !key.isEmpty {
             let ws: WorkspaceManager
             if let p = workspacePath, !p.isEmpty { ws = try manager(workspacePath: p) }
@@ -118,7 +118,7 @@ final class MCPFacade {
 
     /// 这篇此刻的正文：开在编辑器里就取编辑器里的（含还没走完 0.8 秒自动保存的输入），否则读文件。
     /// `conflict` = 同一篇开在好几个编辑器里、各自的未保存正文不一样（此时不许写）。
-    private func liveMarkdown(_ ws: WorkspaceManager, _ ref: NoteRef) -> (text: String?, editors: [MarkdownDocView], conflict: Bool) {
+    func liveMarkdown(_ ws: WorkspaceManager, _ ref: NoteRef) -> (text: String?, editors: [MarkdownDocView], conflict: Bool) {
         let editors = MarkdownDocView.editors(showing: ref, in: ws)
         let texts = editors.map(\.currentText)
         if let first = texts.first {
@@ -130,7 +130,7 @@ final class MCPFacade {
     }
 
     /// 写入前的共同检查：读得到、没有多份不一致的未保存正文、revision 对得上（给了的话）。
-    private func markdownForWrite(_ ws: WorkspaceManager, _ ref: NoteRef, expectedRevision: String?) throws -> (String, [MarkdownDocView]) {
+    func markdownForWrite(_ ws: WorkspaceManager, _ ref: NoteRef, expectedRevision: String?) throws -> (String, [MarkdownDocView]) {
         let live = liveMarkdown(ws, ref)
         guard let current = live.text else {
             throw MCPToolError("the Markdown file cannot be read; it may have been moved or deleted")
@@ -145,7 +145,7 @@ final class MCPFacade {
     }
 
     /// 原子写文件 + 推回所有正显示这篇的编辑器（防它们稍后的自动保存把 Agent 的改动盖回去）。
-    private func commitMarkdown(_ ws: WorkspaceManager, _ ref: NoteRef, old: String, new: String,
+    func commitMarkdown(_ ws: WorkspaceManager, _ ref: NoteRef, old: String, new: String,
                                 editors: [MarkdownDocView]) throws {
         guard old == new || ws.saveNoteBody(ref, text: new) else {
             throw MCPToolError(ws.lastError ?? "failed to save the Markdown note")
@@ -153,7 +153,7 @@ final class MCPFacade {
         for e in editors { e.applySavedText(new) }
     }
 
-    private func markdownWriteResult(_ ws: WorkspaceManager, _ ref: NoteRef, _ text: String) -> MCPObject {
+    func markdownWriteResult(_ ws: WorkspaceManager, _ ref: NoteRef, _ text: String) -> MCPObject {
         ["ref": ref.key,
          "title": ref.title,
          "link": link(ws, markdown: ref.key),
@@ -299,25 +299,19 @@ final class MCPFacade {
         let ws = try manager(workspacePath: workspacePath)
         let src: NoteRoot
         if let source, !source.isEmpty {
-            guard let s = ws.noteSources.first(where: { $0.id == source })
-                    ?? ws.noteSources.first(where: { $0.name.caseInsensitiveCompare(source) == .orderedSame }) else {
-                throw MCPToolError("note source '\(source)' not found; sources: "
-                                   + ws.noteSources.map { "\($0.name) (\($0.id))" }.joined(separator: ", "))
-            }
-            src = s
+            src = try noteSource(ws, named: source)
         } else {
             guard let s = ws.noteSource(id: NoteRoot.workspaceID) else { throw MCPToolError("this workspace has no Notes folder") }
             src = s
         }
         let ref: NoteRef
         do { ref = try ws.createNote(named: title, text: text, in: src.id, folder: folder) }
-        catch let e as WorkspaceManager.NoteCreateError { throw MCPToolError(e.message) }
+        catch let e as WorkspaceManager.NoteAgentError { throw MCPToolError(e.message) }
         var o = markdownWriteResult(ws, ref, text)
         o["source"] = src.name
         o["relative_path"] = ref.relPath
         var opened = false
-        if open, let c = controllers(for: ws).first(where: { $0.window?.isKeyWindow == true }) ?? controllers(for: ws).first {
-            c.tabs.openMarkdown(ref)
+        if open, let (c, _) = try? AppDelegate.shared?.showMarkdown(ref, in: ws, activate: true) {
             c.window?.makeKeyAndOrderFront(nil)
             opened = true
         }
@@ -342,6 +336,17 @@ final class MCPFacade {
             o["document_id"] = NSNull()
             o["title"] = ref.title
             o["markdown"] = markdownDTO(c.workspace, ref, includeText: false)
+        } else if let bid = tab.boardID {
+            // 画板 / 习题标签原先报成 empty（2026-11-12 补上）
+            o["content_type"] = "board"
+            o["document_id"] = NSNull()
+            o["title"] = tab.tabTitle
+            o["board_id"] = bid.uuidString
+        } else if let scope = tab.exerciseScope {
+            o["content_type"] = "exercises"
+            o["document_id"] = NSNull()
+            o["title"] = tab.tabTitle
+            o["exercises"] = Self.scopeDTO(scope)
         } else {
             o["content_type"] = "empty"
             o["document_id"] = NSNull()
@@ -357,9 +362,9 @@ final class MCPFacade {
     }
 
     /// 文档的文件下落（**只探测、不写库**——`openTarget` 会刷 lastOpened，这里不用它，同 `refDocIndex` 的理由）。
-    private struct FileInfo { var path: String?; var exists: Bool; var inWorkspace: Bool; var hash: String }
+    struct FileInfo { var path: String?; var exists: Bool; var inWorkspace: Bool; var hash: String }
 
-    private func fileInfo(_ ws: WorkspaceManager, documentId: String) -> FileInfo {
+    func fileInfo(_ ws: WorkspaceManager, documentId: String) -> FileInfo {
         var locs = ws.locations(documentId: documentId)
         locs.sort { $0.inWorkspace && !$1.inWorkspace }
         for l in locs {
@@ -397,7 +402,7 @@ final class MCPFacade {
         return l.absoluteString
     }
 
-    private func documentDTO(_ ws: WorkspaceManager, _ d: LibDocument) -> MCPObject {
+    func documentDTO(_ ws: WorkspaceManager, _ d: LibDocument) -> MCPObject {
         let f = fileInfo(ws, documentId: d.id)
         return ["id": d.id,
                 "link": link(ws, doc: d.id),
@@ -1048,7 +1053,7 @@ final class MCPFacade {
 
     // MARK: - 小工具
 
-    static func rectArray(_ r: CGRect) -> [Double] {
+    nonisolated static func rectArray(_ r: CGRect) -> [Double] {
         [Double(r.minX), Double(r.minY), Double(r.width), Double(r.height)]
     }
 

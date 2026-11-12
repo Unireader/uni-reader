@@ -1167,6 +1167,19 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         c.show(attachedTo: window)
     }
 
+    /// 一篇 md 笔记改名 / 挪了目录（侧栏「重命名…」、MCP `rename_markdown`）：这个工作区**所有**窗口里开着它的
+    /// 编辑器、标签、小窗都跟到新位置。编辑器原地换（光标 / 滚动 / 撤销都在），不重建。
+    /// 🔴 必须在 `refreshNotes()` 之后**同步**调：标签与小窗是在下一拍（`$noteTrees` 经 `receive(on: .main)`）才去查
+    /// 「这篇还在不在」的，赶在那之前换好，它们就不会把自己关掉。
+    static func noteMoved(from old: NoteRef, to new: NoteRef, in workspace: WorkspaceManager) {
+        guard old != new else { return }
+        MarkdownDocView.noteMoved(from: old, to: new, in: workspace)
+        for c in AppDelegate.shared?.readerWindowControllers ?? [] where c.workspace === workspace {
+            c.tabs.noteMoved(from: old, to: new)
+            for w in c.noteWindows where w.ref == old { w.noteMoved(to: new) }
+        }
+    }
+
     private func dismissNoteWindows() {
         let all = noteWindows
         noteWindows = []

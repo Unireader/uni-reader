@@ -3,6 +3,26 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ Agent 能力第二轮 + 全工作区搜索（2026-11-12，Mac）
+
+- 起因（用户）：看了缺口清单后「都做吧，把搜索这块整体都强化下。适当的话还可以做一下 vector 支持」。
+- **搜索**：新工具 `search` 一次查 PDF 每页文字 / Markdown 笔记 / 批注 / 习题 / Agent 上下文，独立索引库（FTS5 trigram，不进 `library.sqlite`），每次搜索前增量更新；
+  跨行、全角半角、大小写都不影响。设置 › Agent › 搜索可开「同时按意思搜索」（本机系统模型 / OpenAI 兼容接口），关键词与语义按排名合并。
+  选型实测：系统模型换说法的问题首位命中 4/12，只比关键词（2/12）好一点，所以默认关。`SEARCH-PLAN.md`。
+- **Markdown**：`rename_markdown` 加换源；新 `delete_markdown`（系统废纸篓）/ `move_markdown_folder` / `markdown_links`（出链、反向链接、全库断链）/
+  `open_markdown` / `add_markdown_image`（PDF 页或一块 → 笔记里的图）。侧栏手动顺序改名后不再丢。`MARKDOWN-NOTES-PLAN.md §16`。
+- **PDF**：`update_annotations`（改文字笔记 / 高亮 / 书签 / 图片笔记，id 不变、可撤销）、`update_document`（改书库显示名 / 分组）、`render_page region`。`MCP-PLAN.md §32`。
+- **画板**：`list_boards` / `render_board`（出图看手写）/ `open_board`；`get_state` 认画板与习题标签。`BOARD-NOTE-PLAN.md §13`。
+- 验证：`search-test` 35 项、`markdown-link-test` 137 项、画板离屏出图目检；规模测试（1200 万字）建索引 14 秒、查询 1–130 ms；Mac Debug 编译通过；待用户实测（131~145）。
+
+## ✅ MCP `rename_markdown`：Agent 能给 Markdown 笔记改名 / 挪目录了（2026-11-12，Mac）
+
+- 起因（用户）：「继续完善下 Agent 能力，比如 markdown 笔记支持重命名」。
+- 新工具 `rename_markdown`：改名、挪到同一个源的别的目录（不在就建），或两样一起；只动这一个文件，断掉的 `[[…]]` 列出来、不改（红线 9）；
+  开着它的编辑器先存盘，所有窗口的标签 / 小窗 / 编辑器原地跟过去（光标、滚动、撤销都在）。
+- 顺手修了界面上的「重命名…」：只改大小写被误报「已存在」；只换本窗口的标签、别的窗口和小窗里开着的会被关掉；改之前没先存盘。
+  `MARKDOWN-NOTES-PLAN.md §15`、`MCP-PLAN.md §31`。验证：`markdown-link-test` 125 项；Mac Debug 编译通过；待用户实测（127~130）。
+
 ## ✅ MCP `create_markdown`：Agent 能新建 Markdown 笔记了（2026-11-12，Mac）
 
 - 起因（用户贴的 Agent 原话）：「没有 MCP 工具能新建笔记，只能通过文件系统创建」。

@@ -64,6 +64,31 @@ enum MarkdownLink {
     }
 
 
+    /// 正文里每一处 `[[…]]`（**不去重**）：目标名、所在行（1 起）、原样写法（含 `[[ ]]`）。
+    /// 口径同 `wikiReferences`：保护区里的不算，图片嵌入不算。给 MCP 查链接 / 反向链接用（Agent 要按行号去改）。
+    static func wikiOccurrences(_ text: String) -> [(target: String, line: Int, raw: String)] {
+        let ns = text as NSString
+        let guarded = protectedRanges(text)
+        // 每行起点（升序），二分出某个位置在第几行
+        var starts = [0]
+        for (i, u) in text.utf16.enumerated() where u == 10 { starts.append(i + 1) }
+        func line(at loc: Int) -> Int {
+            var lo = 0, hi = starts.count - 1
+            while lo < hi { let mid = (lo + hi + 1) / 2; if starts[mid] <= loc { lo = mid } else { hi = mid - 1 } }
+            return lo + 1
+        }
+        var out: [(String, Int, String)] = []
+        for m in wikiRegex.matches(in: text, range: ns.fullRange)
+        where !guarded.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
+            let raw = ns.substring(with: m.range)
+            let parts = WikiParts(ns.substring(with: m.range(at: 1)))
+            if raw.hasPrefix("!"), let ext = parts.target.pathExtension, imageExts.contains(ext.lowercased()) { continue }
+            guard !parts.target.isEmpty else { continue }
+            out.append((parts.target, line(at: m.range.location), raw))
+        }
+        return out
+    }
+
     // MARK: - 语法零件
 
     /// `[[…]]` / `![[…]]`。内层不许含 `[`、`]` 与换行（与引擎的 `storagePattern` 同口径）。

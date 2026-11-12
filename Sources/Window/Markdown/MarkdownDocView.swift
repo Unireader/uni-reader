@@ -207,6 +207,22 @@ final class MarkdownDocView: NSView {
         all.allObjects.first { $0.window?.isKeyWindow == true }
     }
 
+    /// 改名 / 挪目录之前：开着这篇的编辑器（标签页 + 小窗，含刚拆下来还没释放的）先把没存的输入写下去。
+    /// 不先存的话，挪走之后它们的自动保存发现旧路径上没文件了、按规矩不存（不能在旧路径上把它建回来），最后那几个字就丢了。
+    static func flushEditors(showing ref: NoteRef, in workspace: WorkspaceManager) {
+        for e in all.allObjects where e.ref == ref && e.workspace === workspace { e.flush() }
+    }
+
+    /// 这篇改名 / 挪了目录（`ReaderWindowController.noteMoved`）：开着它的编辑器**原地**换到新位置，不重建——
+    /// 光标、滚动位置、撤销都留着。引擎那边的文档身份（`documentId`）不动，它只是个不透明的标识。
+    static func noteMoved(from old: NoteRef, to new: NoteRef, in workspace: WorkspaceManager) {
+        for e in all.allObjects where e.ref == old && e.workspace === workspace {
+            e.ref = new
+            e.links.ownKey = new.key
+            e.syncHeader()
+        }
+    }
+
     /// 屏幕上这份编辑器的实时正文。可能比文件里领先不到自动保存的 0.8 秒；Agent/MCP 读当前视图用它。
     var currentText: String { box.text }
 
@@ -345,7 +361,11 @@ final class MarkdownDocView: NSView {
         if newWindow == nil, window != nil,
            let scroll = descendantTextView(in: host)?.enclosingScrollView,
            scroll.contentView.bounds.height > 0 {
-            ScrollMemory.shared.offsets[documentId] = scroll.contentView.bounds.origin.y
+            let y = scroll.contentView.bounds.origin.y
+            ScrollMemory.shared.offsets[documentId] = y
+            // 改过名的话（`noteMoved`），下次重建用的是新名字的身份：两份都记，切回来才找得到
+            let live = "md-\(ref.key)"
+            if live != documentId { ScrollMemory.shared.offsets[live] = y }
         }
         super.viewWillMove(toWindow: newWindow)
     }

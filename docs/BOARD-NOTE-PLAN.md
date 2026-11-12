@@ -424,3 +424,16 @@ CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key
   `scheduleDetachedBoardSave` 把首页附近写回库、盖掉原来的位置。修法：`AppModel.boardSyncAnchor`——没有位置、也没有视图时
   按库里的视口折算一份记在会话上（锚线取 `boardAnchorLine`，同上一条反推的逆运算）；`broadcastBoardScroll` 与笔迹窗口中心
   （`boardWindow`）都经它，所以先发的那份笔迹也是平板要去的那几页。库里没存过仍不发（首页顶，与平板默认一致）。
+
+## 13. Agent 看画板：MCP `list_boards` / `render_board` / `open_board`（2026-11-12）
+
+起因：用户「都做吧」（缺口清单里的「Agent 完全看不到画板」）。只读 + 导航，不提供改画板内容的工具。
+
+- `list_boards`：画板清单（id、标题、分组、无限 / 分页与页数、条目数、是否开着）。id 8 位前缀也认。
+- `render_board`：出图给 Agent 看手写（`MCPBoardRender`，纯 CG、不碰主线程）。层序同画布：纸色 → 页面格线（分页）→ 图片 → 笔迹；
+  坐标同 `ScratchInkTiles`：上下文翻成 y 向下，`InkRenderCG.drawStroke` 按 `(p - 原点) × k` 映射、`inkScale = k`；图片要再翻一次（不然上下颠倒）。
+  分页画板出一页（默认第 1 页；只画起笔在这一页的笔画，出界部分被页边裁掉，同画布的归属规则）；无限画板出内容包围盒加边，总像素上限 1600 万（太高就整体缩小）。
+  开着这块的标签先 `flushPersist()`（新画的几笔可能还没进库）。图片文件位置在主线程查好（`imageInfo(sha256:)`）。
+- `open_board`：`AppDelegate.showBoard`（规则同 `showDocument`），受「跟随 Agent」管。
+- `get_state` 的画板标签报 `content_type: board` + `board_id`。
+- 验证：离屏造一页横线纸画板（L 形、斜线、上红下蓝的图）出图目检：方向、格线、图片上下都对（测试替身只换了编码函数）；Mac Debug 编译通过。🔴 没对着运行中的 App 跑过。

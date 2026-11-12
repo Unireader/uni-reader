@@ -925,12 +925,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         m.addItem(.separator())
         let rename = ClosureMenuItem(L("Rename…")) { [weak self] in
             self?.textPrompt(title: L("Rename Note"), placeholder: L("Note name"), initial: note.title) { name in
-                guard let self, let newRef = self.workspace.renameNote(note.ref, to: name) else {
-                    if let e = self?.workspace.lastError { self?.presentNoteError(e) }
+                guard let self else { return }
+                // 开着它的编辑器先存盘（挪走之后旧路径上没文件，自动保存就不存了）
+                MarkdownDocView.flushEditors(showing: note.ref, in: self.workspace)
+                guard let newRef = self.workspace.renameNote(note.ref, to: name) else {
+                    if let e = self.workspace.lastError { self.presentNoteError(e) }
                     return
                 }
-                // 🔴 改名 = 改文件名，指向它的 `[[旧名字]]` 会断链（我们不改别人的正文，红线）
-                for t in self.tabs.tabs where t.noteRef == note.ref { t.openMarkdown(newRef) }
+                // 🔴 改名 = 改文件名，指向它的 `[[旧名字]]` 会断链（我们不改别人的正文，红线）。
+                // 所有窗口里开着它的标签 / 小窗都跟过去（原先只换了本窗口的标签，别的窗口那份和小窗会被关掉）
+                ReaderWindowController.noteMoved(from: note.ref, to: newRef, in: self.workspace)
             }
         }
         rename.isEnabled = !readOnly

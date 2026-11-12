@@ -76,6 +76,27 @@ extension WorkspaceManager {
         setMetaJSON(Self.noteOrderKey, all)
         refreshNotes()
     }
+
+    /// 笔记 / 目录改名、挪走之后，把手动顺序里的旧路径换成新的（顺序按相对路径记，不换的话改过名的那篇会跳到目录最前面）。
+    /// `map`：旧的源内相对路径（目录或笔记）→ 新路径；nil = 不相干、原样留着。挪到别的目录的笔记从原目录的清单里拿掉
+    /// （新目录里没存过它，按规矩排最前）；`remove` 里的直接拿掉（挪去别的源的）。不重扫，调用方自己 `refreshNotes()`。
+    func remapNoteOrder(source: String, remove: Set<String> = [], _ map: (String) -> String?) {
+        let all = noteOrder
+        guard let mine = all[source], !mine.isEmpty else { return }
+        var out: [String: [String]] = [:]
+        for (folder, paths) in mine {
+            let f = map(folder) ?? folder
+            let kept = paths.filter { !remove.contains($0) }.map { map($0) ?? $0 }.filter { p in
+                let parent = p.split(separator: "/").dropLast().joined(separator: "/")
+                return parent == f
+            }
+            if !kept.isEmpty { out[f] = kept }
+        }
+        guard out != mine else { return }
+        var next = all
+        next[source] = out
+        setMetaJSON(Self.noteOrderKey, next)
+    }
 }
 
 extension NoteFolder {

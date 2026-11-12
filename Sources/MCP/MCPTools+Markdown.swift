@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Markdown 笔记的读写工具（2026-09-24 细化，`MCP-PLAN.md §19`）：
@@ -5,7 +6,8 @@ import Foundation
 /// - `read_markdown`：按行分页（带行号）/ 行内搜索 / 标题大纲，任何一篇都能读，不必开着；
 /// - `edit_markdown`：code agent 式局部修改（原文精确匹配替换、按行号插入），不用重吐整篇；
 /// - `update_markdown`：整篇替换（带 revision 乐观锁），只留给「真要重写全文」的场合；
-/// - `create_markdown`：新建一篇（2026-11-12，`MARKDOWN-NOTES-PLAN.md §14`；此前 Agent 只能绕过 App 直接写文件）。
+/// - `create_markdown`：新建一篇（2026-11-12，`MARKDOWN-NOTES-PLAN.md §14`；此前 Agent 只能绕过 App 直接写文件）；
+/// - `rename_markdown`：改名 / 挪目录（2026-11-12，`§15`）：只动这一个文件，断掉的 `[[…]]` 列出来、不改。
 /// 纯逻辑在 `MCPMarkdownText`，碰 App 状态的在 `MCPFacade`（写入同一条路：原子写文件 + 推回所有编辑器）。
 extension MCPTools {
     /// 笔记里公式怎么写（英文，给模型看）。MCP `instructions`、写笔记工具的正文字段、Agent 面板上下文共用这一段。
@@ -227,6 +229,323 @@ extension MCPTools {
             if declined { line += "\nNot opened: " + AgentFollow.declined }
             return MCPToolResult(text: line, structured: r)
         }
+    }
+
+    /// 断链清单最多列几篇（文字输出与结构化结果同一个上限）。
+    static let brokenListMax = 50
+
+    /// 断链清单的 schema（改名 / 挪目录 / 删除共用）。
+    static var brokenLinkSchema: [String: MCPObject] {
+        ["broken_link_notes": MCPSchema.integer("notes whose [[…]] links broke because of this"),
+         "broken_links": MCPSchema.array(of: MCPSchema.object([
+            "ref": MCPSchema.string("note_ref of the note containing the links"),
+            "title": MCPSchema.string("its title"),
+            "names": MCPSchema.array(of: MCPSchema.string("link target as written inside [[…]]")),
+         ]), "notes whose links broke (at most \(brokenListMax))")]
+    }
+
+    /// 认完断链：写进结构化结果，返回给文字输出接的那几行。断链多时整段文字超过 `messageLimit` 不会抄进结构化结果
+    /// （Claude Code 只看结构化），所以那句建议另放进 `message`。
+    static func reportBroken(_ broken: [(ref: NoteRef, names: [String])], head: String, into o: inout MCPObject) -> String {
+        let listed = broken.prefix(brokenListMax)
+        o["broken_link_notes"] = broken.count
+        o["broken_links"] = listed.map { ["ref": $0.ref.key, "title": $0.ref.title, "names": $0.names] as MCPObject }
+        guard !broken.isEmpty else { return head + "\nNo [[…]] links broke." }
+        let advice = "\(broken.count) note(s) link to it by a name that no longer resolves; those links were left as they are "
+            + "(UniReader never rewrites note text by itself). Tell the user; fix them with edit_markdown only if the user asks"
+        o[MCPToolResult.messageKey] = head + "\n" + advice + " (see broken_links)."
+        var text = head + "\n" + advice + ":"
+        for b in listed {
+            text += "\n- “\(b.ref.title)” (note_ref \(b.ref.key)): " + b.names.map { "[[\($0)]]" }.joined(separator: ", ")
+        }
+        if broken.count > listed.count { text += "\n… and \(broken.count - listed.count) more" }
+        return text
+    }
+
+    /// 空串当「没给」：有的客户端把没填的可选参数也发成 ""。
+    private static func given(_ s: String?) -> String? { s.flatMap { $0.trimmed.isEmpty ? nil : $0 } }
+
+    static func renameMarkdown() -> MCPTool {
+        MCPTool(
+            name: "rename_markdown",
+            title: "Rename or move a Markdown note",
+            description: "Rename a Markdown note, move it to another folder, move it to another note source (e.g. from the workspace's Notes folder into the user's Obsidian vault), or a mix. The title is the file name, so this renames the .md file; the text is not changed. Tabs and mini-windows showing the note follow it, and unsaved typing is saved first. [[wiki links]] in other notes that use the old name break: UniReader never rewrites note text by itself, so the result lists the notes whose links broke — tell the user, and fix those links with edit_markdown only if the user asks. Moving to another folder or source keeps the name, so [[name]] links keep working. Moving to another source copies the file there and then moves the original to the system Trash; attachments stay where they are. If a note with the new name already exists there, nothing is changed. Rename or move notes only when the user asks.",
+            inputSchema: MCPSchema.object(markdownTargetProperties.merging([
+                "title": MCPSchema.string("New title = new file name, without .md (characters / \\ : * ? \" < > | # ^ [ ] become -). Omit to keep the name."),
+                "folder": MCPSchema.string("Move to this folder, relative to the source root, e.g. \"101思想政治理论/思修\" (created if missing); \"/\" = the source root. Omit to stay in the same folder."),
+                "source": MCPSchema.string("Move to this note source (id or name from list_markdown_notes sources). Omit to stay in the same source."),
+            ]) { a, _ in a }),
+            outputSchema: MCPSchema.object([
+                "ref": MCPSchema.string("note_ref after the rename (the old one no longer works)"),
+                "title": MCPSchema.string("new title"),
+                "source": MCPSchema.string("source name"),
+                "relative_path": MCPSchema.string("new path relative to the source root"),
+                "link": MCPSchema.string("unireader:// link that opens the note"),
+                "revision": MCPSchema.string("revision of the note text (unchanged by the rename)"),
+                "characters": MCPSchema.integer("character count"),
+                "line_count": MCPSchema.integer("lines"),
+                "old_ref": MCPSchema.string("note_ref before the rename"),
+                "old_title": MCPSchema.string("title before the rename"),
+                "old_source": MCPSchema.string("source name before the rename"),
+                "old_relative_path": MCPSchema.string("path before the rename"),
+                "changed": MCPSchema.boolean("false when the note already had this name, folder and source"),
+            ].merging(brokenLinkSchema) { a, _ in a }),
+            tier: .write
+        ) { _, args in
+            let noteRef = try args.string("note_ref"), windowId = try args.string("window_id"), ws = try args.string("workspace")
+            // 源根要显式写 "/"，空串当没给（别因为客户端把没填的参数发成 "" 就把笔记挪到源根去）
+            let title = given(try args.string("title")), folder = given(try args.string("folder")), source = given(try args.string("source"))
+            guard title != nil || folder != nil || source != nil else {
+                throw MCPInvalidParams("pass title (the new name), folder (where to move it), source (another note source), or a mix")
+            }
+            let r = try await MainActor.run {
+                try MCPFacade.shared.renameMarkdown(noteRef: noteRef, windowId: windowId, workspacePath: ws,
+                                                    title: title, folder: folder, source: source)
+            }
+            var o = r.json
+            let place = "\(o["source"] ?? "")/\(o["relative_path"] ?? "")"
+            guard let scan = r.scan else {
+                return MCPToolResult(text: "“\(o["title"] ?? "")” already has this name and folder (\(place)); nothing changed · note_ref \(o["ref"] ?? "")",
+                                     structured: o)
+            }
+            let from = scan.moved.keys.first!, to = (scan.moved[from] ?? nil) ?? from
+            let verb = from.title == to.title ? "Moved" : (from.folder == to.folder && from.sourceID == to.sourceID ? "Renamed" : "Renamed and moved")
+            let head = "\(verb) “\(from.title)” → \(place) · note_ref \(to.key) (the old note_ref no longer works)"
+            let text = reportBroken(await MCPNoteScan.brokenLinks(scan), head: head, into: &o)
+            return MCPToolResult(text: text, structured: o)
+        }
+    }
+
+    static func moveMarkdownFolder() -> MCPTool {
+        MCPTool(
+            name: "move_markdown_folder",
+            title: "Rename or move a folder of Markdown notes",
+            description: "Rename a folder of Markdown notes, or move it under another folder of the same note source. Everything inside (notes, attachments, subfolders) moves along unchanged. Tabs showing notes inside follow them. [[name]] links keep working because they resolve by name; links that spelled out the old folder path may break — the result lists them, and they are left unchanged (tell the user; fix with edit_markdown only if asked). Do this only when the user asks.",
+            inputSchema: MCPSchema.object([
+                "folder": MCPSchema.string("The folder to move, relative to the source root, e.g. \"101思想政治理论/思修\"."),
+                "name": MCPSchema.string("New folder name. Omit to keep the name."),
+                "parent": MCPSchema.string("Move it under this folder (relative to the source root, created if missing); \"/\" = the source root. Omit to keep the parent."),
+                "source": MCPSchema.string("Note source id or name from list_markdown_notes sources. Default: the workspace's built-in Notes folder."),
+                "workspace": MCPSchema.string("Workspace .unrd path. Default: the key window's workspace."),
+            ], required: ["folder"]),
+            outputSchema: MCPSchema.object([
+                "source": MCPSchema.string("source name"),
+                "old_folder": MCPSchema.string("folder path before"),
+                "folder": MCPSchema.string("folder path after"),
+                "changed": MCPSchema.boolean("false when nothing changed"),
+                "notes_moved": MCPSchema.integer("notes inside the folder"),
+                "notes": MCPSchema.array(of: MCPSchema.object([
+                    "old_ref": MCPSchema.string("note_ref before"), "ref": MCPSchema.string("note_ref after"), "title": MCPSchema.string("title"),
+                ]), "moved notes (at most 200)"),
+            ].merging(brokenLinkSchema) { a, _ in a }),
+            tier: .write
+        ) { _, args in
+            let folder = try args.requiredString("folder")
+            let name = given(try args.string("name")), parent = given(try args.string("parent"))
+            guard name != nil || parent != nil else { throw MCPInvalidParams("pass name (the new folder name), parent (where to move it), or both") }
+            let source = try args.string("source"), ws = try args.string("workspace")
+            let r = try await MainActor.run {
+                try MCPFacade.shared.moveMarkdownFolder(source: source, folder: folder, name: name, parent: parent == "/" ? "" : parent,
+                                                        workspacePath: ws)
+            }
+            var o = r.json
+            guard let scan = r.scan else {
+                let what = (o["changed"] as? Bool) == true ? "Moved the empty folder" : "Nothing changed for folder"
+                return MCPToolResult(text: "\(what) \(o["source"] ?? "")/\(o["old_folder"] ?? "") → \(o["folder"] ?? "")", structured: o)
+            }
+            let head = "Moved folder \(o["source"] ?? "")/\(o["old_folder"] ?? "") → \(o["folder"] ?? "") · \(o["notes_moved"] ?? 0) note(s) inside, all with new note_refs"
+            let text = reportBroken(await MCPNoteScan.brokenLinks(scan), head: head, into: &o)
+            return MCPToolResult(text: text, structured: o)
+        }
+    }
+
+    static func deleteMarkdown() -> MCPTool {
+        MCPTool(
+            name: "delete_markdown",
+            title: "Delete a Markdown note",
+            description: "Move a Markdown note to the system Trash (the user can put it back from the Trash in Finder). Unsaved typing is saved first, tabs showing it close. For a note in a referenced folder (e.g. the user's Obsidian vault) this trashes the user's own file. [[wiki links]] to it in other notes break and are left unchanged; the result lists them. Delete notes only when the user explicitly asks.",
+            inputSchema: MCPSchema.object(markdownTargetProperties),
+            outputSchema: MCPSchema.object([
+                "ref": MCPSchema.string("note_ref of the deleted note"),
+                "title": MCPSchema.string("its title"),
+                "source": MCPSchema.string("source name"),
+                "source_kind": MCPSchema.string("workspace or reference"),
+                "relative_path": MCPSchema.string("path it had"),
+                "trash_path": MCPSchema.nullable(MCPSchema.string("where it is in the Trash")),
+            ].merging(brokenLinkSchema) { a, _ in a }),
+            tier: .delete
+        ) { _, args in
+            let noteRef = try args.string("note_ref"), windowId = try args.string("window_id"), ws = try args.string("workspace")
+            let r = try await MainActor.run {
+                try MCPFacade.shared.deleteMarkdown(noteRef: noteRef, windowId: windowId, workspacePath: ws)
+            }
+            var o = r.json
+            let head = "Moved “\(o["title"] ?? "")” (\(o["source"] ?? "")/\(o["relative_path"] ?? "")) to the Trash"
+            let text = reportBroken(await MCPNoteScan.brokenLinks(r.scan), head: head, into: &o)
+            return MCPToolResult(text: text, structured: o)
+        }
+    }
+
+    static func addMarkdownImage() -> MCPTool {
+        MCPTool(
+            name: "add_markdown_image",
+            title: "Put a PDF page (or part of it) into a Markdown note",
+            description: "Render a PDF page — or just a region of it, such as a figure, table or formula — and embed it in a Markdown note as an image. The image file goes into the attachments folder of the note's source and the note gets a line ![[file]] (plus an optional caption line) after insert_line or at the end; open editors update and the user's unsaved typing is kept. Use region with the same [x, y, w, h] page coordinates as annotations and search hits; check the crop with render_page first if unsure. Add images only when the user asks.",
+            inputSchema: MCPSchema.object(markdownTargetProperties.merging([
+                "document_id": MCPSchema.string("PDF to take the image from (library document id). Omit for the document in the key window's active PDF tab."),
+                "page": MCPSchema.integer("Page, 1-based", min: 1),
+                "region": MCPSchema.array(of: MCPSchema.number("0…1"), "Only this part of the page, [x, y, w, h] normalized with the top-left origin. Omit for the whole page."),
+                "width": MCPSchema.integer("Pixel width of the saved image (default 1200, max 2160)", min: 200, max: 2160),
+                "format": MCPSchema.enumeration(["jpeg", "png"], "image format (png is sharper for text and formulas, jpeg is smaller)", default: "png"),
+                "include_marks": MCPSchema.boolean("Also draw the user's handwriting and highlights", default: false),
+                "insert_line": MCPSchema.integer("Insert after this line (0 = at the top). Default: at the end.", min: 0),
+                "caption": MCPSchema.string("Optional line put right under the image, e.g. a source like 《书名》p.12 or a unireader:// link."),
+                "display_width": MCPSchema.integer("Optional display width in points written into the embed (![[file|400]])", min: 50),
+            ]) { a, _ in a }, required: ["page"]),
+            outputSchema: MCPSchema.object([
+                "ref": MCPSchema.string("note_ref"), "title": MCPSchema.string("note title"),
+                "link": MCPSchema.string("unireader:// link to the note"),
+                "revision": MCPSchema.string("revision after the insert"),
+                "characters": MCPSchema.integer("characters"), "line_count": MCPSchema.integer("lines"),
+                "image_file": MCPSchema.string("absolute path of the saved image"),
+                "embed": MCPSchema.string("the line inserted"),
+                "inserted_after_line": MCPSchema.integer("0 = top"),
+                "changed_lines": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.integer("1-based")), "lines added"),
+                "image_width": MCPSchema.integer("pixels"), "image_height": MCPSchema.integer("pixels"),
+                "source_link": MCPSchema.string("unireader:// link to the PDF page the image came from"),
+            ]),
+            tier: .write
+        ) { _, args in
+            let noteRef = try args.string("note_ref"), windowId = try args.string("window_id"), ws = try args.string("workspace")
+            let docId = try args.string("document_id")
+            let page = try args.int("page") ?? 1
+            let region = try regionArg(args)
+            let width = min(max(try args.int("width") ?? 1200, 200), 2160)
+            let fmt = try args.string("format") ?? "png"
+            guard fmt == "jpeg" || fmt == "png" else { throw MCPInvalidParams("format must be jpeg or png") }
+            let format: PageRenderer.Format = fmt == "png" ? .png : .jpeg(quality: PageRenderer.defaultJPEGQuality)
+            let withMarks = try args.bool("include_marks", default: false)
+            let after = try args.int("insert_line"), caption = try args.string("caption"), shown = try args.int("display_width")
+            let (note, doc) = try await MainActor.run {
+                let note = try MCPFacade.shared.markdownImageTarget(noteRef: noteRef, windowId: windowId, workspacePath: ws)
+                let doc = try MCPFacade.shared.resolveTarget(documentId: docId, path: nil, workspacePath: nil)
+                return (note, doc)
+            }
+            let reader = MCPDocReader.shared
+            let pageCount = try await reader.withDocument(path: doc.path) { $0.pageCount }
+            let idx = try PageNo.index(page, pageCount: pageCount)
+            let marks = withMarks ? await MainActor.run { MCPFacade.shared.pageMarks(doc, index: idx) } : nil
+            let img = try await reader.render(path: doc.path, index: idx, pixelWidth: width, format: format,
+                                              align: doc.align, marks: marks, region: region)
+            let hash = SHA256.hash(data: img.data).map { String(format: "%02x", $0) }.joined().prefix(8)
+            let base = MarkdownImport.safeFileName(String(doc.title.prefix(40)))
+            let fileName = "\(base)-p\(page)-\(hash).\(fmt == "png" ? "png" : "jpg")"
+            var o = try await MainActor.run {
+                try MCPFacade.shared.insertMarkdownImage(note.0, note.1, dir: note.2, fileName: fileName, data: img.data,
+                                                         afterLine: after, caption: caption, displayWidth: shown)
+            }
+            o["image_width"] = img.width
+            o["image_height"] = img.height
+            if let id = doc.documentId {
+                o["source_link"] = await MainActor.run { MCPFacade.shared.link(note.0, doc: id, page: page) }
+            }
+            return MCPToolResult(text: "Added \(o["embed"] ?? "") (\(img.width)×\(img.height), page \(page) of “\(doc.title)”) to “\(o["title"] ?? "")” after line \(o["inserted_after_line"] ?? 0) · revision \(o["revision"] ?? "")",
+                                 structured: o)
+        }
+    }
+
+    static func openMarkdown() -> MCPTool {
+        MCPTool(
+            name: "open_markdown",
+            title: "Open a Markdown note",
+            description: "Show an existing Markdown note in a tab (switches to it if a tab already shows it, otherwise opens one in a window of its workspace). Use it to bring the user to a note you are talking about.",
+            inputSchema: MCPSchema.object([
+                "note_ref": MCPSchema.string("note_ref from list_markdown_notes / search (also accepts the note's name)."),
+                "workspace": MCPSchema.string("Workspace .unrd path, only when the note lives in a workspace other than the key window's."),
+                "activate": MCPSchema.boolean("Bring UniReader to the front", default: true),
+            ], required: ["note_ref"]),
+            outputSchema: MCPSchema.object([
+                "ref": MCPSchema.string("note_ref"), "title": MCPSchema.string("title"),
+                "session_id": MCPSchema.string("tab id"), "window_id": MCPSchema.string("window id"),
+                "link": MCPSchema.string("unireader:// link"),
+            ]),
+            tier: .navigate
+        ) { ctx, args in
+            let noteRef = try args.requiredString("note_ref"), ws = try args.string("workspace")
+            let activate = try args.bool("activate", default: true)
+            if ctx.fromInAppAgent, !AgentFollow.enabled { return MCPToolResult(text: AgentFollow.declined) }
+            let o = try await MainActor.run { try MCPFacade.shared.openMarkdown(noteRef: noteRef, workspacePath: ws, activate: activate) }
+            return MCPToolResult(text: "Opened “\(o["title"] ?? "")” · note_ref \(o["ref"] ?? "")", structured: o)
+        }
+    }
+
+    static func markdownLinks() -> MCPTool {
+        MCPTool(
+            name: "markdown_links",
+            title: "Links of a Markdown note",
+            description: "Show how Markdown notes link to each other with [[wiki links]]. For one note: every [[link]] in it (with line number and the note it resolves to, or broken) and every place in other notes that links to it (backlinks, with line numbers, so you can edit them with edit_markdown). With broken_only and no note: every [[link]] in the workspace that does not resolve to any note. Read-only; image embeds are not listed.",
+            inputSchema: MCPSchema.object(markdownTargetProperties.merging([
+                "broken_only": MCPSchema.boolean("List every unresolved [[link]] across all notes instead of one note's links (note_ref is ignored)", default: false),
+                "limit": MCPSchema.integer("Max entries per list (default 200)", min: 1),
+            ]) { a, _ in a }),
+            outputSchema: MCPSchema.object([
+                "ref": MCPSchema.nullable(MCPSchema.string("the note (null with broken_only)")),
+                "title": MCPSchema.nullable(MCPSchema.string("its title")),
+                "outgoing": MCPSchema.array(of: occurrenceSchema, "[[links]] in the note, in order"),
+                "backlinks": MCPSchema.array(of: occurrenceSchema, "places in notes that link to it"),
+                "broken": MCPSchema.array(of: occurrenceSchema, "broken_only: unresolved links"),
+                "outgoing_total": MCPSchema.integer("all outgoing links"), "backlinks_total": MCPSchema.integer("all backlinks"),
+                "broken_total": MCPSchema.integer("all unresolved links"),
+                "truncated": MCPSchema.boolean("a list was cut at limit"),
+            ]),
+            tier: .read
+        ) { _, args in
+            let noteRef = try args.string("note_ref"), windowId = try args.string("window_id"), ws = try args.string("workspace")
+            let brokenOnly = try args.bool("broken_only", default: false)
+            let limit = max(1, try args.int("limit") ?? 200)
+            let input = try await MainActor.run {
+                try MCPFacade.shared.markdownLinksInput(noteRef: noteRef, windowId: windowId, workspacePath: ws, wholeWorkspace: brokenOnly)
+            }
+            let r = await MCPNoteScan.links(input)
+            func dto(_ o: MCPNoteScan.Occurrence) -> MCPObject {
+                ["note_ref": o.note.key, "note_title": o.note.title, "line": o.line, "text": o.raw, "target": o.target,
+                 "resolves_to": o.resolved.map { $0.key as Any } ?? NSNull(),
+                 "resolved_title": o.resolved.map { $0.title as Any } ?? NSNull()]
+            }
+            func lines(_ list: [MCPNoteScan.Occurrence], showNote: Bool) -> String {
+                list.prefix(limit).map { o in
+                    let at = showNote ? "“\(o.note.title)” (\(o.note.key)) line \(o.line)" : "line \(o.line)"
+                    let to = o.resolved.map { " → “\($0.title)” (\($0.key))" } ?? " → broken"
+                    return "- \(at): \(o.raw)\(showNote && input.target != nil ? "" : to)"
+                }.joined(separator: "\n")
+            }
+            var o: MCPObject = ["ref": input.target.map { $0.key as Any } ?? NSNull(),
+                                "title": input.target.map { $0.title as Any } ?? NSNull(),
+                                "outgoing": r.outgoing.prefix(limit).map(dto), "backlinks": r.incoming.prefix(limit).map(dto),
+                                "broken": r.broken.prefix(limit).map(dto),
+                                "outgoing_total": r.outgoing.count, "backlinks_total": r.incoming.count, "broken_total": r.broken.count]
+            var text: String
+            if let t = input.target {
+                text = "“\(t.title)” (\(t.key)): \(r.outgoing.count) outgoing link(s), \(r.incoming.count) backlink(s)"
+                if !r.outgoing.isEmpty { text += "\nOutgoing:\n" + lines(r.outgoing, showNote: false) }
+                if !r.incoming.isEmpty { text += "\nBacklinks:\n" + lines(r.incoming, showNote: true) }
+            } else {
+                text = r.broken.isEmpty ? "No broken [[links]] in this workspace." : "\(r.broken.count) broken [[link]](s):\n" + lines(r.broken, showNote: true)
+            }
+            if max(r.outgoing.count, r.incoming.count, r.broken.count) > limit { text += "\n… lists cut at \(limit); raise limit to see more" }
+            o["truncated"] = max(r.outgoing.count, r.incoming.count, r.broken.count) > limit
+            return MCPToolResult(text: text, structured: o)
+        }
+    }
+
+    private static var occurrenceSchema: MCPObject {
+        MCPSchema.object([
+            "note_ref": MCPSchema.string("note containing the link"), "note_title": MCPSchema.string("its title"),
+            "line": MCPSchema.integer("1-based line"), "text": MCPSchema.string("the link as written, e.g. [[极限|定义]]"),
+            "target": MCPSchema.string("target name inside the link"),
+            "resolves_to": MCPSchema.nullable(MCPSchema.string("note_ref it resolves to, or null if broken")),
+            "resolved_title": MCPSchema.nullable(MCPSchema.string("title of that note")),
+        ])
     }
 
     static func updateMarkdown() -> MCPTool {

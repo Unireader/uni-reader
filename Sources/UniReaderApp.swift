@@ -514,6 +514,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return (c, c.tabs.active)
     }
 
+    /// 让一篇 Markdown 笔记显示出来（MCP `open_markdown` / `create_markdown` 与 `unireader://…&md=` 链接共用，规则同 `showDocument`）：
+    /// 这个工作区里已有标签在显示它 → 切过去；有窗口 → key 的那扇（没有就第一扇）开标签；没窗口 → 新开一扇再开。
+    @discardableResult
+    func showMarkdown(_ ref: NoteRef, in ws: WorkspaceManager, activate: Bool) throws -> (ReaderWindowController, DocTabModel) {
+        try showInWorkspace(ws, activate: activate, showing: { $0.noteRef == ref }) { $0.openMarkdown(ref) }
+    }
+
+    /// 让一块画板显示出来（MCP `open_board`），规则同上。
+    @discardableResult
+    func showBoard(_ id: UUID, in ws: WorkspaceManager, activate: Bool) throws -> (ReaderWindowController, DocTabModel) {
+        try showInWorkspace(ws, activate: activate, showing: { $0.boardID == id }) { $0.openBoard(id) }
+    }
+
+    private func showInWorkspace(_ ws: WorkspaceManager, activate: Bool, showing: (DocTabModel) -> Bool,
+                                 open: (TabsModel) -> DocTabModel) throws -> (ReaderWindowController, DocTabModel) {
+        let mine = readerWindows.filter { $0.workspace === ws }
+        let key = mine.first { $0.window?.isKeyWindow == true }
+        for c in [key].compactMap({ $0 }) + mine.filter({ $0 !== key }) {
+            if let t = c.tabs.tabs.first(where: showing) {
+                c.tabs.activate(t.id)
+                return (c, t)
+            }
+        }
+        let c = try key ?? mine.first ?? makeReaderWindow(workspacePath: ws.folder?.path, docId: nil, activate: activate)
+        return (c, open(c.tabs))
+    }
+
     /// 哪扇窗的哪个标签正显示这篇（跨所有窗口；key 窗口优先）。
     func tabShowing(_ documentId: String) -> (ReaderWindowController, DocTabModel)? {
         let key = readerWindows.first { $0.window?.isKeyWindow == true }

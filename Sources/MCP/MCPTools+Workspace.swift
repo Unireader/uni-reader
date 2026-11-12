@@ -19,9 +19,15 @@ extension MCPTools {
                     "workspace": workspaceDTOSchema,
                     "tabs": MCPSchema.array(of: MCPSchema.object([
                         "session_id": MCPSchema.string("tab / session id"), "is_active": MCPSchema.boolean("the visible tab"),
-                        "content_type": MCPSchema.enumeration(["empty", "pdf", "markdown"], "kind of content in this tab"),
-                        "document_id": MCPSchema.nullable(MCPSchema.string("library document id; null for Markdown or an empty tab")),
-                        "title": MCPSchema.string("PDF or Markdown title"), "page": MCPSchema.integer("current page, 1-based"),
+                        "content_type": MCPSchema.enumeration(["empty", "pdf", "markdown", "board", "exercises"], "kind of content in this tab"),
+                        "document_id": MCPSchema.nullable(MCPSchema.string("library document id; null unless a PDF")),
+                        "title": MCPSchema.string("PDF, Markdown note, board or exercise group title"), "page": MCPSchema.integer("current page, 1-based"),
+                        "board_id": MCPSchema.string("board tabs: board id (render_board / open_board)"),
+                        "exercises": MCPSchema.object([
+                            "list": MCPSchema.enumeration(["all", "mistakes", "starred"], "which list"),
+                            "document_id": MCPSchema.string("the book, if one"),
+                            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "chapter path, if one"),
+                        ], description: "exercise tabs: which group (details with get_current_view)"),
                         "page_count": MCPSchema.integer("pages"), "zoom": MCPSchema.number("zoom relative to fit-width"),
                         "canvas_mode": MCPSchema.boolean("canvas mode on"), "file_missing": MCPSchema.boolean("PDF file could not be found"),
                         "markdown": markdownDTOSchema(includeText: false)])),

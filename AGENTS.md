@@ -71,6 +71,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   §12 题目笔记（v22 `exercise.note`，判完才显示）+ 顶栏「重做上次做错的」（只练上一次结果是错的题；本轮只做 Mac）；
   §17 答对自动下一题（练习页底部开关，Mac + 安卓）；
   §19 题目标签（v24 `exercise.tags`，自由添加，练习页 / 列表 / 顶栏筛选 + MCP `tags`）
+- **`docs/SEARCH-PLAN.md`** — 全工作区搜索（MCP `search`：PDF 文字 / 笔记 / 批注 / 习题 / 上下文）+ 语义搜索（本机模型或 OpenAI 兼容接口）；
+  索引是**派生数据**，单独放 `~/Library/Application Support/UniReader/SearchIndex/`，🔴 不进 `library.sqlite`、不同步（`Sources/Search/`）
 - `docs/SIDEBAR-DRAG-PLAN.md` — 侧栏拖拽排序（系统 `NSOutlineView` 拖放、同一组里换位置；书库 / 笔记 / 画板 / 练习库；顺序存哪）
 - `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行）
 - `docs/REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
@@ -98,10 +100,10 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 
 ## 结构要点（速览）
 
-目录地图：`Sources/App/`（单例 + 渲染管线 + 笔迹纯函数 `InkEdit`/`InkUndo`/`InkWindow` 等）、`Sources/Store/`（工作区 SQLite）、`Sources/Sync/`（连接服务器的同步：线格式 + 客户端算法，App 与 `server/` 共用）、`Sources/ServerSync/`（App 这一侧：HTTP 客户端 / 账号 / 调度，只给 App 用）、`Sources/Server/`（LAN WS + UDP，契约 `docs/PROTOCOL.md §6`）、`Sources/MCP/`、`Sources/Agent/`、`Sources/Reader/`（阅读区 AppKit，`ReaderView` + 扩展 + `Pane/Ref/Rack/Scratch/`）、`Sources/Window/`、`Sources/Settings/`、`Sources/Markdown/`。**改哪个模块，先读 `docs/agents/STRUCTURE.md` 对应条目 + 该模块方案文档**（文件头还有各 spike 测试）。跨条目的硬约束已抄进上面的红线；其余不变量：
+目录地图：`Sources/App/`（单例 + 渲染管线 + 笔迹纯函数 `InkEdit`/`InkUndo`/`InkWindow` 等）、`Sources/Store/`（工作区 SQLite）、`Sources/Sync/`（连接服务器的同步：线格式 + 客户端算法，App 与 `server/` 共用）、`Sources/ServerSync/`（App 这一侧：HTTP 客户端 / 账号 / 调度，只给 App 用）、`Sources/Server/`（LAN WS + UDP，契约 `docs/PROTOCOL.md §6`）、`Sources/MCP/`、`Sources/Search/`（全工作区搜索索引）、`Sources/Agent/`、`Sources/Reader/`（阅读区 AppKit，`ReaderView` + 扩展 + `Pane/Ref/Rack/Scratch/`）、`Sources/Window/`、`Sources/Settings/`、`Sources/Markdown/`。**改哪个模块，先读 `docs/agents/STRUCTURE.md` 对应条目 + 该模块方案文档**（文件头还有各 spike 测试）。跨条目的硬约束已抄进上面的红线；其余不变量：
 
 - MCP：`MCPFacade` 是唯一碰 App 活状态处；页码对外 1 起、对内 0 起，换算只在 `PageNo`。
-- DeepLink/MCP：🔴 「让某篇显示出来」只有 `AppDelegate.showDocument` 一份，别在两边各写找标签/挑窗口。
+- DeepLink/MCP：🔴 「让某篇显示出来」只有 `AppDelegate.showDocument` 一份（Markdown 笔记 / 画板是同规矩的 `showMarkdown` / `showBoard`），别在两边各写找标签/挑窗口。
 - Agent 面板：只住 Inspector「Agent」页；流式碎片只就地换文字、不重建视图；与咨询 AI（`Sources/AI/`）别混。
 - Markdown 笔记：`DocTabModel.noteRef` 与 `docID` 互斥；`WorkspaceWikiIndex` 一个工作区一个；存正文刻意不调 `refreshNotes()`。
 - OCR：消费方一律 `DocSession.ocrVisibleRuns(page:)`（已滤水印块），`ocrRuns` 只给落库、别直接消费。

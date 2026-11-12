@@ -124,6 +124,15 @@ final class NoteWindowController: NSWindowController, NSWindowDelegate, NSToolba
         syncTitle()
     }
 
+    /// 这篇改名 / 挪了目录（`ReaderWindowController.noteMoved`）：编辑区已由 `MarkdownDocView.noteMoved` 原地换好，
+    /// 这里只换自己记的那篇、标题与位置记忆的名字。不走 `switchTo`——那会重建编辑区，光标和滚动位置都没了。
+    func noteMoved(to new: NoteRef) {
+        guard new != ref else { return }
+        ref = new
+        window?.setFrameAutosaveName(frameName)
+        syncTitle()
+    }
+
     private func wireEditor() {
         // 正文里点 `[[…]]`：就在这扇小窗里换过去
         editor.onOpenNote = { [weak self] target in
