@@ -216,6 +216,7 @@ extension AnimText {
     | `tree NAME = (8 (3 1 6) (10 _ 14))` | tree in bracket form: `(value child child …)`; `_` is an empty child, so `(10 _ 14)` has only a right child. Binary trees: first child = left, second = right. |
     | `graph NAME [layout=circle\\|layers] = A-B:4, B-C, A->C` | graph: `-` undirected, `->` directed, `:w` weight, a lone `D` adds a node. `layers` puts nodes in breadth-first columns from the first node. |
     | `grid NAME [rows=[…]] [cols=[…]] = 3x4` or `= [[1, 2], [3, 4]]` | 2-D table (DP tables), optional row / column headers; empty cells allowed (`[1, , 3]`) |
+    | `sheet NAME` | a worksheet for hand calculations written row by row (long division, base conversion, binary arithmetic): one character per cell in aligned columns, plus rules, bring-down arrows and row notes (see the sheet actions). Lines `write` / `rule` / `arrow` / `label` / `mark` placed before the first `step` are the starting picture. |
     | `pointer NAME -> TARGET` / `pointer NAME` | a labeled arrow to an array index (may be one past the end), a list node, a tree node, a graph node or a grid cell |
     | `row X Y …` | put already declared elements side by side on one row |
     Elements are stacked top to bottom in declaration order.
@@ -223,8 +224,8 @@ extension AnimText {
     ## Actions (inside a step)
     Targets: `A` (whole element), `A[2]` (one cell), `A[1..3]` (a range), a var name, or a message's `as=` name. \
     For a `seq`, indexes are the sequence numbers themselves (`SW[2..5]`). Lists use positions (`L[0]`); trees use node \
-    VALUES (`T[8]`, first match); graphs use node names and edges (`G[A]`, `G[A-B]`, `G[A->B]`); grids use `D[row,col]` \
-    and ranges like `D[0..2,1]` (0-based).
+    VALUES (`T[8]`, first match); graphs use node names and edges (`G[A]`, `G[A-B]`, `G[A->B]`); grids and sheets use \
+    `D[row,col]` and ranges like `D[0..2,1]` (0-based).
     | action | effect |
     |---|---|
     | `mark TARGET STATE` | color state, kept until changed: `normal`, `active` (blue, "looking at this"), `done` (green), `wrong` (red), `muted` (gray), `new` (orange) |
@@ -242,6 +243,10 @@ extension AnimText {
     | `swap T[8] T[3]` | tree: exchange two node values (heaps) |
     | `set G[A] = "d=3"` / `set G[A-B] = 7` | graph: a small label under a node / an edge weight |
     | `set D[1,2] = 5` | grid cell (a range fills every cell in it) |
+    | `write S[2,5] "1101"` | sheet: write characters from row 2, column 5 rightwards (0-based; a space leaves that cell alone) |
+    | `rule S[2,5..8]` / `rule S[1,5..13] above` | sheet: a line under (or above) those columns of a row — the subtraction line, or the division bar |
+    | `arrow S[1..3,9]` | sheet: a dashed arrow down column 9 from row 1 to row 3 (bringing a digit down) |
+    | `label S[0] "← quotient"` | sheet: a note after the end of a row |
     | `move p -> A[3]` / `move p -> null` | move a pointer (it slides); `mark p wrong` recolors it |
     | `send A -> B "label" [as=NAME] [lost] [state=STATE] [arrive=next]` | a message from lane A to B. Several sends in one step leave one after another (pipelining). `lost` = crosses out half way. `arrive=next` = still in flight at the end of this step, arrives in the next. |
     | `slide SEQ to=N` / `slide SEQ by=N` | move the window |
@@ -262,6 +267,31 @@ extension AnimText {
     ```
     Scenes share one set of playback controls and advance together by step number; a scene with fewer steps stays on \
     its last step. Side by side when wide enough, otherwise stacked. Make step N of every scene describe the same moment.
+
+    ## Kits: one line, steps worked out for you
+    `kit NAME options…` expands into a whole scene (elements and every step) computed by the algorithm itself, so the \
+    result is always correct. Prefer a kit whenever the user's question matches one; write steps by hand only for \
+    things no kit covers. A kit gives the block a title if it has none; inside `scene` it fills that scene (compare \
+    protocols by putting one kit in each scene). Captions follow the system language; add `lang=zh` or `lang=en` to choose.
+    | kit | options | shows |
+    |---|---|---|
+    | `stopwait` / `gbn` / `sr` | `frames=6` `window=4` `lose=2,5` (first transmission of those frames is lost) `loseack=3` (first ACK for 3 is lost) `timeout=2` (rounds) `mod=8` | stop-and-wait, go-back-N, selective repeat on a time-sequence diagram with sender / receiver windows, timers, retransmissions |
+    | `bubble` / `selection` / `insertion` / `quick` | `A=[5, 1, 4, 2]` (2–8 values; numbers compare as numbers) | every comparison and swap with pointers; quicksort uses the last element as pivot |
+    | `crc` | `data=101001 gen=1101` | the textbook long division (a sheet): quotient on top, one XOR per step with its line, digits brought down, the remainder as FCS |
+    | `preorder` / `inorder` / `postorder` / `levelorder` | `T=(8 (3 1 6) (10 _ 14))` (distinct values) | the visiting order on the tree and the output sequence |
+    | `bfs` / `dfs` | `G="A-B, A-C, B-D"` `from=A` | queue / stack, discovered edges, visiting order (neighbors in the order the edges are written) |
+    | `dijkstra` | `G="A-B:4, A-C:2, C-B:1"` `from=A` (weights ≥ 0) | distances under each node, relaxations, the shortest-path tree |
+    ```
+    title Frame 2 lost: three protocols
+    scene Stop-and-wait
+      kit stopwait frames=3 lose=2
+    scene Go-back-N
+      kit gbn frames=6 window=3 lose=2
+    scene Selective repeat
+      kit sr frames=6 window=3 lose=2
+    ```
+    render_anim on a block with kits also returns the expanded text, which you can paste and edit if the user wants \
+    something the kit does not do.
 
     ## Checking
     Call render_anim with the text before writing it into a note: it lists errors by line and returns an image \

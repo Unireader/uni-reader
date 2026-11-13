@@ -1,5 +1,5 @@
 // ```anim 分步演示块：解析 / 状态 / 布局测试（`ANIM-BLOCK-PLAN.md`）。运行：
-//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
+//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift）
 // 覆盖：词法（引号、注释、A->B）、元素与动作解析、按行报错、状态（交换跟着身份走、窗口滑动、栈 / 队列、标记）、
 //       时序图时间（流水线错开、到达后才交付、丢失、计时器、arrive=next）、多场景步数、布局高度各步一致 / 物件不越界、`reference` 里的示例无错。
@@ -151,7 +151,9 @@ check(compare.state(scene: 0, step: 2).cells["A"]![0].tone == .done, "步数少�
 check(compare.script.scenes[0].title == "甲", "场景标题")
 
 print("布局")
-for (name, r) in [("GBN", run), ("排序", sorting), ("对比", compare)] + AnimText.examples.enumerated().map({ ("示例\($0.offset + 1)", AnimEngine.run($0.element)) }) {
+for (name, r) in [("GBN", run), ("排序", sorting), ("对比", compare)] + AnimText.examples.enumerated().map({ ("示例\($0.offset + 1)", AnimEngine.run($0.element)) })
+    + ["kit gbn frames=8 window=4 lose=2 loseack=5", "kit sr frames=8 window=4 lose=2,6", "kit quick A=[5, 1, 4, 2, 8, 3]", "kit crc data=1101011011 gen=10011",
+       "kit dijkstra G=\"A-B:4, A-C:2, C-B:1, B-D:5, C-D:8\"", "kit levelorder T=(1 (2 4 5) (3 6 7))"].map({ ($0, AnimEngine.run($0)) }) {
     for width in [320.0, 560.0, 720.0] {
         let layout = AnimLayout(run: r, width: CGFloat(width))
         var inside = true
@@ -227,6 +229,77 @@ check(d3.tones[2][2] == .done && d3.tones[0][1] == .normal, "二维表范围 mar
 check(dp.state(scene: 0, step: 3).pointers["here"]! == .grid(element: "D", row: 2, col: 2), "指针指表格")
 check(AnimText.parse("grid D rows=[a] = 2x2").errors.contains { $0.message.hasPrefix("rows=") }, "行标题数不对报错")
 check(AnimEngine.run("array A = [1, 2]\npointer i -> A[2]\npointer j -> A[3]").errors.map(\.line) == [3], "指针可以指末尾之后一格，再远报错")
+
+print("套件（A3）")
+func sends(_ r: AnimRun, _ label: String, from lane: String = "发送方") -> Int {
+    r.state(scene: 0, step: r.stepCount - 1).messages.filter { $0.from == lane && $0.label == label }.count
+}
+func finalCells(_ r: AnimRun, _ name: String) -> [String] { r.state(scene: 0, step: r.stepCount - 1).cells[name]!.map(\.value) }
+
+let gbnKit = AnimEngine.run("kit gbn frames=6 window=4 lose=2 lang=zh")
+check(gbnKit.errors.isEmpty, "gbn 套件无错 \(gbnKit.errors)")
+check(gbnKit.script.title == "回退 N 步（窗口 4）", "套件给标题")
+check(sends(gbnKit, "2") == 2 && sends(gbnKit, "3") == 2 && sends(gbnKit, "5") == 2 && sends(gbnKit, "0") == 1, "回退 N 步：丢 2 → 2~5 全部重发")
+check(gbnKit.state(scene: 0, step: gbnKit.stepCount - 1).seqs["SW"]!.tones.filter { $0.value == .done }.count == 6, "最后 6 帧都确认")
+check(gbnKit.state(scene: 0, step: gbnKit.stepCount - 1).vars["期望"]!.value == "6", "接收方期望序号走到 6")
+
+let srKit = AnimEngine.run("kit sr frames=6 window=4 lose=2 lang=zh")
+check(srKit.errors.isEmpty, "sr 套件无错 \(srKit.errors)")
+check(sends(srKit, "2") == 2 && sends(srKit, "3") == 1 && sends(srKit, "5") == 1, "选择重传：只重发 2")
+check(srKit.state(scene: 0, step: srKit.stepCount - 1).marks.contains { $0.kind == .buffer && $0.label == "3" }, "选择重传：失序的 3 先缓存")
+
+let swKit = AnimEngine.run("kit stopwait frames=3 lose=1 loseack=2 lang=zh")
+check(swKit.errors.isEmpty, "停等套件无错 \(swKit.errors)")
+check(sends(swKit, "1") == 2 && sends(swKit, "2") == 2 && sends(swKit, "0") == 1, "停等：丢帧 1、丢 ACK 2 都靠超时重发")
+check(swKit.state(scene: 0, step: swKit.stepCount - 1).marks.filter { $0.kind == .discard && $0.label == "2" }.count == 1, "停等：重发的 2 是重复帧，丢弃再确认")
+
+let ackKit = AnimEngine.run("kit gbn frames=4 window=4 loseack=1 lang=zh")
+check(ackKit.errors.isEmpty && (0..<4).allSatisfy { sends(ackKit, "\($0)") == 1 }, "回退 N 步：丢了 ACK 1 也不用重发（累积确认）")
+check(AnimEngine.run("kit gbn frames=6 window=4 lose=2,3 loseack=4 timeout=3 mod=8").errors.isEmpty, "多处丢失、改超时、mod 也能推演完")
+check(AnimEngine.run("kit sr window=5 mod=8").errors.first?.message.contains("mod / 2") == true, "选择重传窗口超过 mod/2 报错")
+
+for kind in ["bubble", "selection", "insertion", "quick"] {
+    let r = AnimEngine.run("kit \(kind) A=[5, 1, 4, 2, 3] lang=zh")
+    check(r.errors.isEmpty && finalCells(r, "A") == ["1", "2", "3", "4", "5"], "\(kind) 排完有序 \(r.errors)")
+    let d = AnimEngine.run("kit \(kind) A=[3, 1, 3, 2, 10] lang=en")
+    check(d.errors.isEmpty && finalCells(d, "A") == ["1", "2", "3", "3", "10"], "\(kind)：重复值、按数字比（10 排最后）")
+}
+let crcKit = AnimEngine.run("kit crc data=101001 gen=1101 lang=zh")
+let crcSheet = crcKit.state(scene: 0, step: crcKit.stepCount - 1).sheets["竖式"]!
+func sheetRow(_ s: AnimSheetState, _ r: Int) -> String { (s.cells[r] ?? [:]).sorted { $0.key < $1.key }.map(\.value.char).joined() }
+check(crcKit.errors.isEmpty, "CRC 竖式无错 \(crcKit.errors)")
+check(sheetRow(crcSheet, 0) == "110101", "商 110101（同教材）")
+check((2...13).map { sheetRow(crcSheet, $0) } == ["1101", "1110", "1101", "0111", "0000", "1110", "1101", "0110", "0000", "1100", "1101", "001"],
+      "竖式每一行同教材图 3.8 \((2...13).map { sheetRow(crcSheet, $0) })")
+check(AnimKits.polynomial("1101") == "x³ + x² + 1" && AnimKits.polynomial("10011") == "x⁴ + x + 1", "生成多项式写法")
+let crcStep3 = crcKit.state(scene: 0, step: 3)
+check(crcKit.state(scene: 0, step: 1).caption.contains("r = 3") && crcStep3.caption.contains("首位是 1") && crcStep3.says.first?.contains("1⊕1=0  0⊕1=1  1⊕0=1  0⊕1=1") == true,
+      "讲 r 的来历、商为什么是 1、逐位异或 \(crcStep3.caption) \(crcStep3.says)")
+check(crcKit.state(scene: 0, step: 5).caption.contains("首位是 0"), "商 0 的理由 \(crcKit.state(scene: 0, step: 5).caption)")
+check(crcSheet.labels[13]?.contains("余数") == true && crcSheet.arrows.count == 5 && crcSheet.rules.count == 7, "余数注释、5 个落下箭头、7 条横线（含除号上的）")
+check(crcKit.state(scene: 0, step: 0).sheets["竖式"]!.cells[1]!.count == 14, "第 0 步就有除数、)、被除数（4 + 1 + 9 个字）")
+let sheetErr = AnimEngine.run("sheet S\nwrite S[0,0] \"12\"\narray A = [1]\nstep x\n  write A[0,0] \"1\"\n  arrow S[1,2]")
+check(sheetErr.errors.map(\.line) == [5, 6], "竖式：写到非竖式、箭头只有一行都报错 \(sheetErr.errors)")
+
+let tree = "(8 (3 1 6) (10 _ 14))"
+for (kind, want) in [("preorder", "8 3 1 6 10 14"), ("inorder", "1 3 6 8 10 14"), ("postorder", "1 6 3 14 10 8"), ("levelorder", "8 3 10 1 6 14")] {
+    let r = AnimEngine.run("kit \(kind) T=\(tree) lang=zh")
+    check(r.errors.isEmpty && finalCells(r, "序列").joined(separator: " ") == want, "\(kind)：\(want)")
+}
+let graph = "\"A-B, A-C, B-D, C-D, D-E\""
+let bfsKit = AnimEngine.run("kit bfs G=\(graph) lang=zh"), dfsKit = AnimEngine.run("kit dfs G=\(graph) from=A lang=zh")
+check(bfsKit.errors.isEmpty && finalCells(bfsKit, "访问序列") == ["A", "B", "C", "D", "E"], "BFS 顺序 \(bfsKit.errors)")
+check(dfsKit.errors.isEmpty && finalCells(dfsKit, "访问序列") == ["A", "B", "D", "C", "E"] && finalCells(dfsKit, "S").isEmpty, "DFS 顺序，最后栈空 \(dfsKit.errors)")
+let dj = AnimEngine.run("kit dijkstra G=\"A-B:4, A-C:2, C-B:1, B-D:5, C-D:8, E\" from=A lang=zh")
+let dg = dj.state(scene: 0, step: dj.stepCount - 1).graphs["G"]!
+check(dj.errors.isEmpty && ["A", "B", "C", "D", "E"].map { dg.nodes[$0]!.label } == ["0", "3", "2", "8", "∞"], "Dijkstra 距离 0 3 2 8 ∞ \(dj.errors)")
+check(dg.edges.filter { $0.tone == .done }.count == 3, "最短路径树 3 条边标出来")
+check(AnimEngine.run("kit dijkstra G=\"A-B\"").errors.first?.message.contains("weight") == true, "Dijkstra 没权报错")
+
+let kitErr = AnimText.parse("array A = [1]\nkit frobnicate x=1\nkit bubble A=[2, 1] colour=red")
+check(kitErr.errors.map(\.line) == [2, 3], "套件错误报在 kit 那一行 \(kitErr.errors)")
+let kitScenes = AnimEngine.run("title 对比\nscene 甲\n  kit gbn frames=4 lose=1\nscene 乙\n  kit sr frames=4 lose=1")
+check(kitScenes.errors.isEmpty && kitScenes.script.scenes.count == 2 && kitScenes.script.title == "对比", "kit 放在 scene 里对比 \(kitScenes.errors)")
 
 print("写法说明里的示例")
 for (i, example) in AnimText.examples.enumerated() {

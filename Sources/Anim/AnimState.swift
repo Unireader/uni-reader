@@ -78,6 +78,7 @@ struct AnimSceneState: Equatable {
     var trees: [String: AnimTreeState] = [:]
     var graphs: [String: AnimGraphState] = [:]
     var grids: [String: AnimGridState] = [:]
+    var sheets: [String: AnimSheetState] = [:]
     /// 指针 → 指着什么（nil = 不指向任何东西）。
     var pointers: [String: AnimPointerTarget?] = [:]
     var messages: [AnimMessage] = []
@@ -156,12 +157,19 @@ enum AnimEngine {
                 initial.vars[element.name] = AnimVar(value: v, tone: .normal)
             case .text, .pointer:
                 break
-            case .list, .tree, .graph, .grid:
+            case .list, .tree, .graph, .grid, .sheet:
                 initialStructure(element, into: &initial, newID: newID)
             }
         }
         let kinds = Dictionary(scene.elements.map { ($0.name, $0.kind) }, uniquingKeysWith: { a, _ in a })
         for element in scene.elements { initialPointer(element, into: &initial, kinds: kinds, errors: &errors) }
+        // 写在第一个 step 之前的竖式内容：第 0 步就有
+        for (line, action) in scene.setup.first?.actions ?? [] {
+            let handled = applyStructure(action, &initial, kinds: kinds, newID: newID) { errors.append(AnimDiagnostic(line: line, message: $0)) }
+            if !handled {
+                errors.append(AnimDiagnostic(line: line, message: "before the first step only sheet / list / tree / graph / grid actions are allowed; put this inside a step"))
+            }
+        }
 
         var list = [initial]
         var state = initial
@@ -316,6 +324,8 @@ enum AnimEngine {
                     fail(kinds[name] == nil ? "no element “\(name)”" : "\(name) does not support this action")
                 case .link(let t, _):
                     fail(kinds[t.name] == nil ? "no element “\(t.name)”" : "link is for lists")
+                case .write(let t, _), .rule(let t, _), .arrow(let t), .label(let t, _):
+                    fail(kinds[t.name] == nil ? "no element “\(t.name)”" : "\(t.name) is not a sheet")
                 }
             }
             // 新进栈 / 队的格子只在进来那一步是 new 色，下一步回到原色（除非显式 mark）

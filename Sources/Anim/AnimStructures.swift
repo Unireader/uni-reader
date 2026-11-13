@@ -118,6 +118,40 @@ struct AnimGridState: Equatable {
     var cols: Int { values.first?.count ?? 0 }
 }
 
+/// 竖式（草算纸）：按（行, 列）放单个字符，加横线、往下落的箭头、行尾注释。
+struct AnimSheetCell: Equatable {
+    var char: String
+    var tone: AnimTone = .normal
+}
+
+struct AnimSheetRule: Equatable {
+    let row: Int
+    let from: Int
+    let to: Int
+    let above: Bool
+}
+
+struct AnimSheetArrow: Equatable {
+    let col: Int
+    let fromRow: Int
+    let toRow: Int
+}
+
+struct AnimSheetState: Equatable {
+    var cells: [Int: [Int: AnimSheetCell]] = [:]     // 行 → 列 → 字
+    var rules: [AnimSheetRule] = []
+    var arrows: [AnimSheetArrow] = []
+    var labels: [Int: String] = [:]
+
+    /// 用到的行数 / 列数（含横线、箭头、注释占的行）。
+    var rowCount: Int {
+        max((cells.keys.max() ?? -1), (rules.map(\.row).max() ?? -1), (arrows.map(\.toRow).max() ?? -1), (labels.keys.max() ?? -1)) + 1
+    }
+    var colCount: Int {
+        max((cells.values.compactMap { $0.keys.max() }.max() ?? -1), (rules.map(\.to).max() ?? -1), (arrows.map(\.col).max() ?? -1)) + 1
+    }
+}
+
 /// 指针指着什么。
 enum AnimPointerTarget: Equatable {
     case index(element: String, Int)          // 数组 / 栈 / 队列的下标
@@ -156,6 +190,8 @@ extension AnimEngine {
                                                         edges: edges.map { AnimGraphEdge(a: $0.a, b: $0.b, directed: $0.directed, weight: $0.weight) })
         case .grid(let values, let rows, let cols):
             state.grids[element.name] = AnimGridState(values: values, tones: values.map { $0.map { _ in .normal } }, rowLabels: rows, colLabels: cols)
+        case .sheet:
+            state.sheets[element.name] = AnimSheetState()
         default:
             break
         }
@@ -207,7 +243,7 @@ extension AnimEngine {
         func kind(_ name: String) -> AnimElementKind? { kinds[name] }
         func isStructure(_ name: String) -> Bool {
             switch kinds[name] {
-            case .list?, .tree?, .graph?, .grid?, .pointer?: return true
+            case .list?, .tree?, .graph?, .grid?, .pointer?, .sheet?: return true
             default: return false
             }
         }
@@ -303,6 +339,30 @@ extension AnimEngine {
             case .move(let name, let target):
                 guard case .pointer? = kind(name) else { return false }
                 state.pointers[name] = .some(try target.map { try resolvePointer($0, state, kinds: kinds) })
+            case .write(let t, let text):
+                var sheet = try sheetOf(t, state, kinds)
+                guard let r = t.gridRange, r.rows.count == 1, r.cols.count == 1 else { throw AnimParseError("write starts at one cell, like \(t.name)[2,5]") }
+                let (row, col) = (r.rows.lowerBound, r.cols.lowerBound)
+                guard row >= 0, col >= 0, row < 40, col + text.count <= 60 else { throw AnimParseError("sheet: at most 40 rows and 60 columns") }
+                for (k, ch) in text.enumerated() where ch != " " {
+                    sheet.cells[row, default: [:]][col + k] = AnimSheetCell(char: String(ch), tone: sheet.cells[row]?[col + k]?.tone ?? .normal)
+                }
+                state.sheets[t.name] = sheet
+            case .rule(let t, let above):
+                var sheet = try sheetOf(t, state, kinds)
+                guard let r = t.gridRange, r.rows.count == 1, r.cols.lowerBound >= 0, r.rows.lowerBound >= 0 else { throw AnimParseError("rule takes one row and a column range, like \(t.name)[2,5..8]") }
+                sheet.rules.append(AnimSheetRule(row: r.rows.lowerBound, from: r.cols.lowerBound, to: r.cols.upperBound, above: above))
+                state.sheets[t.name] = sheet
+            case .arrow(let t):
+                var sheet = try sheetOf(t, state, kinds)
+                guard let r = t.gridRange, r.cols.count == 1, r.rows.count >= 2, r.rows.lowerBound >= 0 else { throw AnimParseError("arrow takes a row range and one column, like \(t.name)[1..3,9]") }
+                sheet.arrows.append(AnimSheetArrow(col: r.cols.lowerBound, fromRow: r.rows.lowerBound, toRow: r.rows.upperBound))
+                state.sheets[t.name] = sheet
+            case .label(let t, let text):
+                var sheet = try sheetOf(t, state, kinds)
+                guard let row = t.lower, t.lower == t.upper, row >= 0, row < 40 else { throw AnimParseError("label takes one row, like \(t.name)[3]") }
+                sheet.labels[row] = text
+                state.sheets[t.name] = sheet
             default:
                 return false
             }
@@ -310,6 +370,11 @@ extension AnimEngine {
             fail(e.message)
         } catch {}
         return true
+    }
+
+    private static func sheetOf(_ t: AnimTarget, _ state: AnimSceneState, _ kinds: [String: AnimElementKind]) throws -> AnimSheetState {
+        guard case .sheet? = kinds[t.name], let sheet = state.sheets[t.name] else { throw AnimParseError("“\(t.name)” is not a sheet (declare: sheet \(t.name))") }
+        return sheet
     }
 
     private static func dropPointers(to ids: [Int], in element: String, _ state: inout AnimSceneState) {
@@ -343,6 +408,10 @@ extension AnimEngine {
                 throw AnimParseError("\(t.name) has no node or edge \(key)")
             }
             state.graphs[t.name] = g
+        case .sheet?:
+            guard var sh = state.sheets[t.name], let r = t.gridRange else { throw AnimParseError("sheet cells look like \(t.name)[1,2] or \(t.name)[3,5..8]") }
+            for i in r.rows { for j in r.cols where sh.cells[i]?[j] != nil { sh.cells[i]![j]!.tone = tone(sh.cells[i]![j]!.tone) } }
+            state.sheets[t.name] = sh
         case .grid?:
             guard var g = state.grids[t.name], let r = t.gridRange else { throw AnimParseError("grid cells look like \(t.name)[1,2] or \(t.name)[0..2,1]") }
             guard r.rows.lowerBound >= 0, r.rows.upperBound < g.rows, r.cols.lowerBound >= 0, r.cols.upperBound < g.cols else {
@@ -383,6 +452,12 @@ extension AnimEngine {
             }
             for i in r.rows { for j in r.cols { g.values[i][j] = value } }
             state.grids[t.name] = g
+        case .sheet?:
+            guard var sh = state.sheets[t.name], let r = t.gridRange, r.rows.lowerBound >= 0, r.cols.lowerBound >= 0 else { throw AnimParseError("sheet cells look like \(t.name)[1,2]") }
+            for (k, ch) in value.enumerated() where ch != " " {
+                sh.cells[r.rows.lowerBound, default: [:]][r.cols.lowerBound + k] = AnimSheetCell(char: String(ch))
+            }
+            state.sheets[t.name] = sh
         default:
             throw AnimParseError("set: \(t.name) has no values")
         }

@@ -70,6 +70,8 @@ enum AnimElementKind: Equatable {
     case graph(nodes: [String], edges: [AnimGraphEdgeDecl], layout: AnimGraphLayout)
     case pointer(AnimTarget?)
     case grid(values: [[String]], rowLabels: [String], colLabels: [String])
+    /// 竖式（草算纸）：按列对齐的字符，逐步往下写（`write` / `rule` / `arrow` / `label`）。
+    case sheet
 }
 
 struct AnimElement: Equatable {
@@ -114,6 +116,11 @@ enum AnimAction: Equatable {
     case rotate(String, key: String, side: AnimSide)
     /// 指针挪到别处（`null` = 不指向任何东西）。
     case move(String, AnimTarget?)
+    /// 竖式：从 `S[行,列]` 起逐字写（空格 = 跳过）、行下（或上）画线、某列往下落的箭头、行尾注释。
+    case write(AnimTarget, String)
+    case rule(AnimTarget, above: Bool)
+    case arrow(AnimTarget)
+    case label(AnimTarget, String)
 }
 
 struct AnimStepDecl: Equatable {
@@ -130,6 +137,8 @@ struct AnimStepDecl: Equatable {
 struct AnimSceneDecl: Equatable {
     var title: String?
     var elements: [AnimElement] = []
+    /// 写在第一个 `step` 之前的动作（write / rule / arrow / label / mark / unmark，只对竖式、链表、树、图、二维表）：第 0 步就有的内容。
+    var setup: [AnimStepDecl] = []
     /// 排版：每一行是几个元素名（`row` 声明的横排；其余一个元素一行），按声明顺序。
     var rows: [[String]] = []
     var steps: [AnimStepDecl] = []
@@ -154,7 +163,10 @@ enum AnimText {
         var scene: AnimSceneDecl?
         var explicitScenes = false
         var textCounter = 0
-        let lines = source.components(separatedBy: "\n")
+        // 套件（`kit …`）先展开成普通文字；展开出来的行都记在 kit 那一行上
+        let expanded = AnimKits.expand(source)
+        script.errors += expanded.errors
+        let lines = expanded.text.components(separatedBy: "\n")
 
         func error(_ line: Int, _ message: String) {
             script.errors.append(AnimDiagnostic(line: line, message: message))
@@ -166,7 +178,7 @@ enum AnimText {
         }
 
         for (offset, raw) in lines.enumerated() {
-            let lineNo = offset + 1
+            let lineNo = offset < expanded.lineMap.count ? expanded.lineMap[offset] : offset + 1
             let tokens: [String]
             do {
                 tokens = try tokenize(raw)
@@ -209,7 +221,11 @@ enum AnimText {
             if scene!.steps.isEmpty {
                 // 声明区
                 do {
-                    if keyword == "row" {
+                    if ["write", "rule", "arrow", "label", "mark", "unmark"].contains(keyword) {
+                        let action = try parseAction(keyword: keyword, rest: rest)
+                        if scene!.setup.isEmpty { scene!.setup.append(AnimStepDecl(caption: "", actions: [], line: lineNo)) }
+                        scene!.setup[0].actions.append((lineNo, action))
+                    } else if keyword == "row" {
                         try declareRow(rest, in: &scene!)
                     } else {
                         let element = try parseElement(keyword: keyword, rest: rest, line: lineNo, textCounter: &textCounter)
@@ -342,6 +358,9 @@ enum AnimText {
             let (nodes, edges) = try parseGraph(rest[(eq + 1)...].joined(separator: " "))
             guard nodes.count <= 16 else { throw AnimParseError("graph: at most 16 nodes") }
             return AnimElement(name: name, kind: .graph(nodes: nodes, edges: edges, layout: layout), line: line)
+        case "sheet":
+            guard rest.count == 1 else { throw AnimParseError("usage: sheet NAME  (then write / rule / arrow / label)") }
+            return AnimElement(name: try checkedName(rest[0]), kind: .sheet, line: line)
         case "pointer":
             guard rest.count == 1 || (rest.count == 3 && rest[1] == "->") else { throw AnimParseError("usage: pointer NAME -> A[2]  (or just: pointer NAME)") }
             let name = try checkedName(rest[0])
@@ -369,7 +388,7 @@ enum AnimText {
             if !labels.cols.isEmpty, labels.cols.count != cols { throw AnimParseError("cols=[…] has \(labels.cols.count) labels for \(cols) columns") }
             return AnimElement(name: name, kind: .grid(values: values, rowLabels: labels.rows, colLabels: labels.cols), line: line)
         default:
-            throw AnimParseError("unknown element “\(keyword)” (lanes, seq, array, stack, queue, var, text, list, tree, graph, pointer, grid, row; actions go after a `step` line)")
+            throw AnimParseError("unknown element “\(keyword)” (lanes, seq, array, stack, queue, var, text, list, tree, graph, pointer, grid, sheet, row; actions go after a `step` line)")
         }
     }
 
@@ -422,6 +441,16 @@ enum AnimText {
         case "move":
             guard rest.count == 3, rest[1] == "->" else { throw AnimParseError("usage: move POINTER -> A[3]  (or -> null)") }
             return .move(rest[0], rest[2].lowercased() == "null" ? nil : try parseTarget(rest[2]))
+        case "write", "label":
+            guard rest.count == 2 else { throw AnimParseError(keyword == "write" ? "usage: write S[row,col] \"text\"" : "usage: label S[row] \"text\"") }
+            let t = try parseTarget(rest[0])
+            return keyword == "write" ? .write(t, rest[1]) : .label(t, rest[1])
+        case "rule":
+            guard rest.count == 1 || (rest.count == 2 && rest[1].lowercased() == "above") else { throw AnimParseError("usage: rule S[row,col1..col2] [above]") }
+            return .rule(try parseTarget(rest[0]), above: rest.count == 2)
+        case "arrow":
+            guard rest.count == 1 else { throw AnimParseError("usage: arrow S[row1..row2,col]") }
+            return .arrow(try parseTarget(rest[0]))
         case "push", "enqueue":
             guard rest.count >= 2 else { throw AnimParseError("usage: \(keyword) NAME VALUE") }
             let value = rest.dropFirst().joined(separator: " ")
@@ -475,7 +504,7 @@ enum AnimText {
             }
             return .laneEvent(lane: rest[0], label: rest[1], kind: AnimLaneEventKind(rawValue: keyword)!, tone: tone)
         default:
-            throw AnimParseError("unknown action “\(keyword)” (mark, unmark, set, swap, push, pop, enqueue, dequeue, insert, remove, link, rotate, move, say, send, slide, timer, deliver, discard, buffer, note)")
+            throw AnimParseError("unknown action “\(keyword)” (mark, unmark, set, swap, push, pop, enqueue, dequeue, insert, remove, link, rotate, move, write, rule, arrow, label, say, send, slide, timer, deliver, discard, buffer, note)")
         }
     }
 

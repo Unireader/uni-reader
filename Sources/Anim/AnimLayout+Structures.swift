@@ -53,6 +53,9 @@ extension AnimLayout {
             return nameH + CGFloat(depth - 1) * Self.treeLevel + Self.graphNode + 10
         case .graph:
             return nameH + graphCanvasHeight(e, width: w)
+        case .sheet:
+            let rows = max(states.map { $0.sheets[e.name]?.rowCount ?? 0 }.max() ?? 0, 1)
+            return nameH + CGFloat(rows) * Self.sheetRow + 4
         case .grid(let values, let rows, let cols):
             let g = gridGeometry(width: w, rows: values.count, cols: values.first?.count ?? 0, rowLabels: !rows.isEmpty, colLabels: !cols.isEmpty)
             return nameH + g.colLabelH + CGFloat(values.count) * g.cell + 4 + band
@@ -159,9 +162,11 @@ extension AnimLayout {
         }
         if let root = tree.root { place(root, 0) }
         let slots = max(counter, 1)
-        let slotW = min(52, rect.width / slots)
+        // 左右各留 26 点：指针标签画在节点左边，最左的节点也放得下
+        let area = rect.insetBy(dx: 26, dy: 0)
+        let slotW = min(52, area.width / slots)
         let d = min(Self.graphNode, slotW - 4)
-        let left = rect.minX + (rect.width - slots * slotW) / 2
+        let left = area.minX + (area.width - slots * slotW) / 2
         func center(_ nid: Int) -> CGPoint {
             CGPoint(x: left + (slot[nid]! + 0.5) * slotW, y: rect.minY + d / 2 + 2 + CGFloat(level[nid]!) * Self.treeLevel)
         }
@@ -416,6 +421,58 @@ extension AnimLayout {
                                                                            label: CGPoint(x: r.midX, y: y0 + CGFloat(g.rows) * geo.cell + Self.pointerBand / 2 + 3),
                                                                            spread: .horizontal, cell: r)
             }
+        }
+        return items
+    }
+
+    // MARK: - 竖式
+
+    static let sheetRow: CGFloat = 22
+
+    /// 列宽：所有步里最宽的列数 + 最长的行尾注释都要放下；字号跟着列宽。
+    func sheetGeometry(_ name: String, width w: CGFloat) -> (cell: CGFloat, font: CGFloat) {
+        let all = run.states.flatMap { $0 }.compactMap { $0.sheets[name] }
+        let cols = max(all.map(\.colCount).max() ?? 1, 1)
+        let labelW = all.flatMap { $0.labels.values }.map { AnimMetrics.measure($0, size: AnimMetrics.small).width }.max().map { $0 + 12 } ?? 0
+        let cell = min(16, max(9, floor((w - labelW) / CGFloat(cols))))
+        return (cell, cell >= 14 ? AnimMetrics.body + 1 : AnimMetrics.small)
+    }
+
+    func sheetItems(_ id: String, name: String, rect: CGRect, state: AnimSceneState, tone: AnimTone) -> [AnimItem] {
+        guard let sheet = state.sheets[name] else { return [] }
+        let (cw, font) = sheetGeometry(name, width: rect.width)
+        let rh = Self.sheetRow
+        let x0 = rect.minX, y0 = rect.minY
+        func cellRect(_ r: Int, _ c: Int) -> CGRect { CGRect(x: x0 + CGFloat(c) * cw, y: y0 + CGFloat(r) * rh, width: cw, height: rh) }
+        var items: [AnimItem] = []
+        for (r, row) in sheet.cells {
+            for (c, cell) in row {
+                let box = cellRect(r, c)
+                let t = cell.tone == .normal ? tone : cell.tone
+                if t != .normal {
+                    items.append(AnimItem(id: "\(id).b\(r).\(c)", shape: .box(box.insetBy(dx: 0, dy: 2), radius: 2, fill: .fill(t), stroke: nil, lineWidth: 0, dashed: false)))
+                }
+                items.append(AnimItem(id: "\(id).c\(r).\(c)", shape: .text(cell.char, frame: box, size: font, bold: false,
+                                                                           role: t == .normal ? .ink : .text(t), align: .center, backdrop: false)))
+            }
+        }
+        for rule in sheet.rules {
+            let y = rule.above ? y0 + CGFloat(rule.row) * rh + 1 : y0 + CGFloat(rule.row + 1) * rh - 1
+            items.append(AnimItem(id: "\(id).r\(rule.row).\(rule.from).\(rule.to).\(rule.above)",
+                                  shape: .line([CGPoint(x: x0 + CGFloat(rule.from) * cw, y: y), CGPoint(x: x0 + CGFloat(rule.to + 1) * cw, y: y)],
+                                               role: .ink, width: 1, dashed: false, arrow: false, progress: 1)))
+        }
+        for a in sheet.arrows {
+            let x = x0 + (CGFloat(a.col) + 0.5) * cw
+            // 从起始行的字下面落到目标行的字上面
+            items.append(AnimItem(id: "\(id).a\(a.fromRow).\(a.toRow).\(a.col)",
+                                  shape: .line([CGPoint(x: x, y: y0 + CGFloat(a.fromRow + 1) * rh - 2), CGPoint(x: x, y: y0 + CGFloat(a.toRow) * rh + 3)],
+                                               role: .secondary, width: 1, dashed: true, arrow: true, progress: 1)))
+        }
+        let right = x0 + CGFloat(max(sheet.colCount, run.states.flatMap { $0 }.compactMap { $0.sheets[name]?.colCount }.max() ?? 0)) * cw + 10
+        for (r, text) in sheet.labels {
+            items.append(AnimItem(id: "\(id).l\(r)", shape: .text(text, frame: CGRect(x: right, y: y0 + CGFloat(r) * rh, width: max(rect.maxX - right, 10), height: rh),
+                                                                     size: AnimMetrics.small, bold: false, role: .secondary, align: .left, backdrop: false)))
         }
         return items
     }

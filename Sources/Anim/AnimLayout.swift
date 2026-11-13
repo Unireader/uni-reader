@@ -197,7 +197,7 @@ struct AnimLayout {
         case .queue:
             let count = max(states.map { $0.cells[e.name]?.count ?? 0 }.max() ?? 0, 1)
             return nameH + Self.cellSize(width: w, count: count, max: 36) + 4 + band
-        case .list, .tree, .graph, .grid:
+        case .list, .tree, .graph, .grid, .sheet:
             return structureHeight(e, width: w, states: states, nameH: nameH, pointed: pointed)
         case .pointer:
             return 0
@@ -309,6 +309,8 @@ struct AnimLayout {
                 items += graphItems(id, element: element, rect: body, state: state, tone: elementTone, anchors: &anchors)
             case .grid:
                 items += gridItems(id, name: element.name, rect: body, state: state, tone: elementTone, anchors: &anchors)
+            case .sheet:
+                items += sheetItems(id, name: element.name, rect: body, state: state, tone: elementTone)
             case .pointer:
                 break
             case .variable:

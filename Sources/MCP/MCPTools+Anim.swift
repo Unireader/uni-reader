@@ -5,7 +5,7 @@ import Foundation
 extension MCPTools {
 
     /// 写进 MCP 说明与 App 内 Agent 上下文的一句（同 `graphWriting`）。
-    static let animWriting = "Step-by-step animations in Markdown notes (not in PDF text notes): a fenced block whose language is anim describes elements (time-sequence lanes, sequence-number windows, arrays, stacks, queues, variables) and numbered steps of actions; the reader plays it step by step. Use one when a process is easier to follow as it unfolds — protocols (stop-and-wait, sliding window, go-back-N, selective repeat), algorithm traces, data structure operations. Read get_anim_reference before writing one, check the text with render_anim (errors by line, and an image), then write it with edit_markdown like any other text."
+    static let animWriting = "Step-by-step animations in Markdown notes (not in PDF text notes): a fenced block whose language is anim describes elements (time-sequence lanes, sequence-number windows, arrays, stacks, queues, variables, linked lists, trees, graphs, tables, pointers) and numbered steps of actions; the reader plays it step by step. One-line kits generate correct steps for common topics (stop-and-wait / go-back-N / selective repeat, sorting, CRC, tree traversals, BFS / DFS, Dijkstra) — prefer them. Use one when a process is easier to follow as it unfolds — protocols (stop-and-wait, sliding window, go-back-N, selective repeat), algorithm traces, data structure operations. Read get_anim_reference before writing one, check the text with render_anim (errors by line, and an image), then write it with edit_markdown like any other text."
 
     static func getAnimReference() -> MCPTool {
         MCPTool(
@@ -36,6 +36,7 @@ extension MCPTools {
                 "scenes": MCPSchema.integer("scenes"),
                 "errors": MCPSchema.array(of: MCPSchema.object(["line": MCPSchema.integer("1-based line in the text"), "message": MCPSchema.string("what is wrong")])),
                 "width": MCPSchema.integer("pixels"), "height": MCPSchema.integer("pixels"),
+                "expanded": MCPSchema.string("only when the text uses kits: the same text with every kit line replaced by its generated steps"),
             ]),
             tier: .read
         ) { _, args in
@@ -54,8 +55,14 @@ extension MCPTools {
             let errors: [MCPObject] = run.errors.map { ["line": $0.line, "message": $0.message] }
             var lines = ["\(run.stepCount - 1) step(s), \(run.script.scenes.count) scene(s), \(image.width)×\(image.height) png"]
             lines += run.errors.isEmpty ? ["No errors."] : run.errors.map { "Line \($0.line): \($0.message)" }
-            let o: MCPObject = ["steps": run.stepCount - 1, "scenes": run.script.scenes.count, "errors": errors,
+            var o: MCPObject = ["steps": run.stepCount - 1, "scenes": run.script.scenes.count, "errors": errors,
                                 "width": image.width, "height": image.height]
+            // 用了套件：把展开后的文字也给出去（Agent 想在套件之外改几步时，拿它改）
+            let expanded = AnimKits.expand(text)
+            if expanded.text != text {
+                o["expanded"] = expanded.text
+                lines.append("Expanded text (kits replaced by their steps):\n" + expanded.text)
+            }
             return MCPToolResult(text: lines.joined(separator: "\n"), structured: o, image: (data, "image/png"))
         }
     }
