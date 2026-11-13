@@ -28,6 +28,14 @@ struct AnimItem: Equatable {
     let id: String
     var shape: AnimShape
     var alpha: CGFloat = 1
+    /// 连着两个节点的边（树）：补间时端点按两个节点「此刻」的位置现算，边始终连在节点上（`AnimPainter`）。
+    var link: AnimLink? = nil
+}
+
+/// 边的两端：两个圆形节点框的 id（端点在圆周上）。
+struct AnimLink: Equatable {
+    let from: String
+    let to: String
 }
 
 struct AnimFrame {
@@ -175,18 +183,24 @@ struct AnimLayout {
         return box
     }
 
-    private static let nameHeight: CGFloat = 14
+    static let nameHeight: CGFloat = 14
 
     private func elementHeight(_ e: AnimElement, width w: CGFloat, states: [AnimSceneState], sceneIndex: Int, decl: AnimSceneDecl,
                                box: inout SceneBox, x: CGFloat, y: CGFloat) -> CGFloat {
         let nameH = e.name.hasPrefix("#") ? 0 : Self.nameHeight
+        let pointed = Self.pointedElements(states).contains(e.name)
+        let band = pointed ? Self.pointerBand : 0
         switch e.kind {
         case .array:
             let count = states.map { $0.cells[e.name]?.count ?? 0 }.max() ?? 0
-            return nameH + Self.cellSize(width: w, count: count, max: 36) + 14
+            return nameH + Self.cellSize(width: w, count: count, max: 36) + 14 + band
         case .queue:
             let count = max(states.map { $0.cells[e.name]?.count ?? 0 }.max() ?? 0, 1)
-            return nameH + Self.cellSize(width: w, count: count, max: 36) + 4
+            return nameH + Self.cellSize(width: w, count: count, max: 36) + 4 + band
+        case .list, .tree, .graph, .grid:
+            return structureHeight(e, width: w, states: states, nameH: nameH, pointed: pointed)
+        case .pointer:
+            return 0
         case .stack:
             let count = max(states.map { $0.cells[e.name]?.count ?? 0 }.max() ?? 0, 1)
             return nameH + CGFloat(count) * 24 + 6
@@ -255,6 +269,7 @@ struct AnimLayout {
         let decl = run.script.scenes[index]
         let p = "s\(index)."
         var items: [AnimItem] = []
+        var anchors: [AnimPointerTarget: AnimAnchor] = [:]
         if box.titleHeight > 0, let title = decl.title {
             items.append(AnimItem(id: p + "title", shape: .text(title, frame: CGRect(x: box.origin.x, y: box.origin.y, width: box.width, height: box.titleHeight),
                                                                  size: AnimMetrics.body, bold: true, role: .ink, align: .left, backdrop: false)))
@@ -281,11 +296,21 @@ struct AnimLayout {
             let body = CGRect(x: rect.minX, y: rect.minY + nameH, width: rect.width, height: rect.height - nameH)
             switch element.kind {
             case .array:
-                items += cellRow(id, cells: state.cells[element.name] ?? [], rect: body, maxCell: 36, indexes: true, tone: elementTone)
+                items += cellRow(id, name: element.name, cells: state.cells[element.name] ?? [], rect: body, maxCell: 36, indexes: true, tone: elementTone, anchors: &anchors)
             case .queue:
-                items += cellRow(id, cells: state.cells[element.name] ?? [], rect: body, maxCell: 36, indexes: false, tone: elementTone)
+                items += cellRow(id, name: element.name, cells: state.cells[element.name] ?? [], rect: body, maxCell: 36, indexes: false, tone: elementTone, anchors: &anchors)
             case .stack:
-                items += stackItems(id, cells: state.cells[element.name] ?? [], rect: body, tone: elementTone)
+                items += stackItems(id, name: element.name, cells: state.cells[element.name] ?? [], rect: body, tone: elementTone, anchors: &anchors)
+            case .list:
+                items += listItems(id, name: element.name, rect: body, state: state, tone: elementTone, anchors: &anchors)
+            case .tree:
+                items += treeItems(id, name: element.name, rect: body, state: state, tone: elementTone, anchors: &anchors)
+            case .graph:
+                items += graphItems(id, element: element, rect: body, state: state, tone: elementTone, anchors: &anchors)
+            case .grid:
+                items += gridItems(id, name: element.name, rect: body, state: state, tone: elementTone, anchors: &anchors)
+            case .pointer:
+                break
             case .variable:
                 let v = state.vars[element.name] ?? AnimVar(value: "", tone: .normal)
                 let text = "\(element.name) = \(v.value)"
@@ -304,6 +329,7 @@ struct AnimLayout {
                 items += laneItems(p, names: names, rect: rect, box: box, state: state, sceneIndex: index)
             }
         }
+        items += pointerItems(p, state: state, anchors: anchors)
         // 提示与说明
         for (i, say) in state.says.enumerated() {
             let h = (box.saysHeight / CGFloat(max(state.says.count, 1)))
@@ -321,10 +347,17 @@ struct AnimLayout {
 
     private func isLanes(_ e: AnimElement) -> Bool { if case .lanes = e.kind { return true }; return false }
 
-    private func cellRow(_ id: String, cells: [AnimCell], rect: CGRect, maxCell: CGFloat, indexes: Bool, tone: AnimTone) -> [AnimItem] {
+    private func cellRow(_ id: String, name: String, cells: [AnimCell], rect: CGRect, maxCell: CGFloat, indexes: Bool, tone: AnimTone,
+                         anchors: inout [AnimPointerTarget: AnimAnchor]) -> [AnimItem] {
         var items: [AnimItem] = []
         let capacity = max(Int(rect.width / 14), 1)
         let size = Self.cellSize(width: rect.width, count: min(max(cells.count, 1), capacity), max: maxCell)
+        // 指针可以指 0…count（count = 末尾之后，如 i = n）
+        let below = rect.minY + size + (indexes ? 13 : 1)
+        for i in 0...cells.count {
+            let x = rect.minX + CGFloat(i) * size + size / 2
+            anchors[.index(element: name, i)] = AnimAnchor(point: CGPoint(x: x, y: below), label: CGPoint(x: x, y: below + Self.pointerBand / 2 + 2), spread: .horizontal)
+        }
         for (i, cell) in cells.enumerated() {
             let r = CGRect(x: rect.minX + CGFloat(i) * size, y: rect.minY, width: size, height: size)
             let t = cell.tone == .normal ? tone : cell.tone
@@ -343,7 +376,8 @@ struct AnimLayout {
         return items
     }
 
-    private func stackItems(_ id: String, cells: [AnimCell], rect: CGRect, tone: AnimTone) -> [AnimItem] {
+    private func stackItems(_ id: String, name: String, cells: [AnimCell], rect: CGRect, tone: AnimTone,
+                            anchors: inout [AnimPointerTarget: AnimAnchor]) -> [AnimItem] {
         var items: [AnimItem] = []
         let w = min(rect.width, 90), h: CGFloat = 24
         let bottom = rect.maxY - 3
@@ -353,6 +387,8 @@ struct AnimLayout {
                                                                 role: .grid, width: 1.5, dashed: false, arrow: false, progress: 1)))
         for (i, cell) in cells.enumerated() {
             let r = CGRect(x: x0 + 3, y: bottom - CGFloat(i + 1) * h, width: w, height: h - 2)
+            // 栈的指针在右边，标签朝左指过来（用竖排错开；标签在格子右侧外面）
+            anchors[.index(element: name, i)] = AnimAnchor(point: CGPoint(x: x1 + 2, y: r.midY), label: CGPoint(x: x1 + 26, y: r.midY), spread: .vertical)
             let t = cell.tone == .normal ? tone : cell.tone
             items.append(AnimItem(id: "\(id).c\(cell.id)", shape: .box(r, radius: 3, fill: .fill(t), stroke: .stroke(t), lineWidth: 1, dashed: false)))
             items.append(AnimItem(id: "\(id).v\(cell.id)", shape: .text(cell.value, frame: r, size: AnimMetrics.body, bold: false, role: .text(t), align: .center, backdrop: false)))

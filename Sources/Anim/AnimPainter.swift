@@ -73,11 +73,30 @@ enum AnimPainter {
         }
         let old = Dictionary(from.items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let new = Set(to.items.map(\.id))
+        // 节点框此刻的位置（连线的端点按它算）
+        var rects: [String: CGRect] = [:]
+        for item in from.items { if case .box(let r, _, _, _, _, _) = item.shape { rects[item.id] = r } }
+        for item in to.items {
+            guard case .box(let r1, _, _, _, _, _) = item.shape else { continue }
+            if let a = old[item.id], case .box(let r0, _, _, _, _, _) = a.shape { rects[item.id] = arc(r0, r1, t) } else { rects[item.id] = r1 }
+        }
+        func linked(_ item: AnimItem, alpha: CGFloat) -> Bool {
+            guard let link = item.link else { return false }
+            guard let a = rects[link.from], let b = rects[link.to], case .line(_, let role, let w, let dashed, let arrow, _) = item.shape else { return true }
+            let ca = CGPoint(x: a.midX, y: a.midY), cb = CGPoint(x: b.midX, y: b.midY)
+            let len = max(hypot(cb.x - ca.x, cb.y - ca.y), 1)
+            let ux = (cb.x - ca.x) / len, uy = (cb.y - ca.y) / len
+            let pts = [CGPoint(x: ca.x + ux * a.width / 2, y: ca.y + uy * a.height / 2), CGPoint(x: cb.x - ux * b.width / 2, y: cb.y - uy * b.height / 2)]
+            draw(.line(pts, role: role, width: w, dashed: dashed, arrow: arrow, progress: 1), alpha: alpha, palette: palette, ctx: ctx)
+            return true
+        }
         // 先画要消失的（在底下），再按新帧顺序画
         for item in from.items where !new.contains(item.id) {
+            if linked(item, alpha: item.alpha * (1 - t)) { continue }
             draw(item.shape, alpha: item.alpha * (1 - t), palette: palette, ctx: ctx)
         }
         for item in to.items {
+            if linked(item, alpha: old[item.id] == nil ? item.alpha * t : item.alpha) { continue }
             if let a = old[item.id] {
                 blend(a, item, t: t, palette: palette, ctx: ctx)
             } else if case .line(let pts, let role, let w, let dashed, let arrow, let progress) = item.shape {

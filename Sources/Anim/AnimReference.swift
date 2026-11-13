@@ -99,6 +99,86 @@ extension AnimText {
             deliver B "0 1 2"
             slide W to=3
         """,
+        """
+        title Reverse a linked list
+        list L = 1 -> 2 -> 3
+        pointer prev
+        pointer cur -> L[0]
+        step 1 now points back to prev (null); move both pointers forward
+          link L[0] -> null
+          move prev -> L[0]
+          move cur -> L[1]
+        step 2 points back to 1
+          link L[1] -> L[0]
+          move prev -> L[1]
+          move cur -> L[2]
+        step 3 points back to 2; prev is the new head
+          link L[2] -> L[1]
+          move prev -> L[2]
+          move cur -> null
+          mark L[2] done
+        """,
+        """
+        title BST: insert 5, then rotate right at 8
+        tree T = (8 (3 1 6) (10 _ 14))
+        pointer p -> T[8]
+        step 5 < 8: go left
+          mark T[8] active
+          move p -> T[3]
+        step 5 > 3: go right
+          unmark T[8]
+          mark T[3] active
+          move p -> T[6]
+        step 5 < 6: becomes the left child of 6
+          unmark T[3]
+          insert T 5 under 6 left
+          move p -> null
+        step Rotate right at 8: 3 becomes the root
+          rotate T 8 right
+        """,
+        """
+        title Breadth-first search from A
+        graph G = A-B, A-C, B-D, C-D, D-E
+        queue Q = [A]
+        step Visit A, put its neighbors B and C in the queue
+          dequeue Q
+          mark G[A] done
+          set G[A] = "d=0"
+          mark G[A-B] active
+          mark G[A-C] active
+          enqueue Q B
+          enqueue Q C
+        step Visit B: D is new
+          dequeue Q
+          mark G[B] done
+          set G[B] = "d=1"
+          mark G[B-D] active
+          enqueue Q D
+        step Visit C: D is already queued
+          dequeue Q
+          mark G[C] done
+          set G[C] = "d=1"
+          mark G[C-D] muted
+        """,
+        """
+        title Edit distance table: "ab" vs "ac"
+        grid D rows=[-, a, b] cols=[-, a, c] = [[0, 1, 2], [1, , ], [2, , ]]
+        pointer here -> D[1,1]
+        step a = a: copy the diagonal
+          mark D[0,0] active
+          set D[1,1] = 0
+        step a ≠ c: 1 + min of the three neighbors
+          unmark D[0,0]
+          mark D[0..1,1] active
+          move here -> D[1,2]
+          set D[1,2] = 1
+        step Fill the last row the same way
+          unmark D[0..1,1]
+          move here -> D[2,2]
+          set D[2,1] = 1
+          set D[2,2] = 1
+          mark D[2,2] done
+        """,
     ]
 
     static let reference: String = """
@@ -132,12 +212,19 @@ extension AnimText {
     | `queue NAME = [a, b]` | horizontal queue, front on the left |
     | `var NAME = VALUE` | a small "name = value" box |
     | `text "…"` | a line of explanatory text |
+    | `list NAME = a -> b -> c` | linked list; arrows follow each node's next (a null next shows ∅) |
+    | `tree NAME = (8 (3 1 6) (10 _ 14))` | tree in bracket form: `(value child child …)`; `_` is an empty child, so `(10 _ 14)` has only a right child. Binary trees: first child = left, second = right. |
+    | `graph NAME [layout=circle\\|layers] = A-B:4, B-C, A->C` | graph: `-` undirected, `->` directed, `:w` weight, a lone `D` adds a node. `layers` puts nodes in breadth-first columns from the first node. |
+    | `grid NAME [rows=[…]] [cols=[…]] = 3x4` or `= [[1, 2], [3, 4]]` | 2-D table (DP tables), optional row / column headers; empty cells allowed (`[1, , 3]`) |
+    | `pointer NAME -> TARGET` / `pointer NAME` | a labeled arrow to an array index (may be one past the end), a list node, a tree node, a graph node or a grid cell |
     | `row X Y …` | put already declared elements side by side on one row |
     Elements are stacked top to bottom in declaration order.
 
     ## Actions (inside a step)
     Targets: `A` (whole element), `A[2]` (one cell), `A[1..3]` (a range), a var name, or a message's `as=` name. \
-    For a `seq`, indexes are the sequence numbers themselves (`SW[2..5]`).
+    For a `seq`, indexes are the sequence numbers themselves (`SW[2..5]`). Lists use positions (`L[0]`); trees use node \
+    VALUES (`T[8]`, first match); graphs use node names and edges (`G[A]`, `G[A-B]`, `G[A->B]`); grids use `D[row,col]` \
+    and ranges like `D[0..2,1]` (0-based).
     | action | effect |
     |---|---|
     | `mark TARGET STATE` | color state, kept until changed: `normal`, `active` (blue, "looking at this"), `done` (green), `wrong` (red), `muted` (gray), `new` (orange) |
@@ -147,6 +234,15 @@ extension AnimText {
     | `push S v` / `pop S` | stack |
     | `enqueue Q v` / `dequeue Q` | queue (new cells are orange for one step) |
     | `say "…"` | a highlighted remark shown only during this step |
+    | `insert L 2 x` / `remove L 2` | list: insert at / remove the node at position 2 (links are kept consistent) |
+    | `link L[2] -> L[0]` / `link L[2] -> null` | list: change where a node's next points (reversal, cycles) |
+    | `insert T 5 under 6 left\\|right` / `insert T 5` | tree: add a child (without a side: append as the last child; without `under`: the root of an empty tree) |
+    | `remove T 14` | tree: remove that node and its subtree |
+    | `rotate T 8 left\\|right` | binary tree rotation at node 8 (the animation shows nodes moving to their new places) |
+    | `swap T[8] T[3]` | tree: exchange two node values (heaps) |
+    | `set G[A] = "d=3"` / `set G[A-B] = 7` | graph: a small label under a node / an edge weight |
+    | `set D[1,2] = 5` | grid cell (a range fills every cell in it) |
+    | `move p -> A[3]` / `move p -> null` | move a pointer (it slides); `mark p wrong` recolors it |
     | `send A -> B "label" [as=NAME] [lost] [state=STATE] [arrive=next]` | a message from lane A to B. Several sends in one step leave one after another (pipelining). `lost` = crosses out half way. `arrive=next` = still in flight at the end of this step, arrives in the next. |
     | `slide SEQ to=N` / `slide SEQ by=N` | move the window |
     | `timer LANE "T0" start\\|stop\\|expire` | a timer bar beside the lane; `expire` draws a timeout |

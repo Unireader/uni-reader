@@ -1,5 +1,5 @@
 // ```anim 分步演示块：解析 / 状态 / 布局测试（`ANIM-BLOCK-PLAN.md`）。运行：
-//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimLayout.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
+//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift）
 // 覆盖：词法（引号、注释、A->B）、元素与动作解析、按行报错、状态（交换跟着身份走、窗口滑动、栈 / 队列、标记）、
 //       时序图时间（流水线错开、到达后才交付、丢失、计时器、arrive=next）、多场景步数、布局高度各步一致 / 物件不越界、`reference` 里的示例无错。
@@ -15,6 +15,7 @@ check((try? AnimText.tokenize("seq SW 0..7 window=4 at=发送方")) == ["seq", "
 check((try? AnimText.tokenize("array A = [3, 1, 4]")) == ["array", "A", "=", "[3,", "1,", "4]"], "等号单独成词")
 check((try? AnimText.tokenize("say \"没关")) == nil, "引号没关 → 报错")
 check((try? AnimText.tokenize("note B \"#3 号\"")) == ["note", "B", "#3 号"], "引号里的 # 不是注释")
+check((try? AnimText.tokenize("set G[A->B] = 9")) == ["set", "G[A->B]", "=", "9"], "方括号里的 -> 不拆")
 
 print("解析")
 let gbn = """
@@ -150,7 +151,7 @@ check(compare.state(scene: 0, step: 2).cells["A"]![0].tone == .done, "步数少�
 check(compare.script.scenes[0].title == "甲", "场景标题")
 
 print("布局")
-for (name, r) in [("GBN", run), ("排序", sorting), ("对比", compare)] {
+for (name, r) in [("GBN", run), ("排序", sorting), ("对比", compare)] + AnimText.examples.enumerated().map({ ("示例\($0.offset + 1)", AnimEngine.run($0.element)) }) {
     for width in [320.0, 560.0, 720.0] {
         let layout = AnimLayout(run: r, width: CGFloat(width))
         var inside = true
@@ -178,6 +179,54 @@ for (name, r) in [("GBN", run), ("排序", sorting), ("对比", compare)] {
 }
 let wide = AnimLayout(run: compare, width: 720), narrow = AnimLayout(run: compare, width: 400)
 check(wide.height < narrow.height, "宽时两场景并排、窄时上下排")
+
+print("链表 / 树 / 图 / 二维表 / 指针（A2）")
+let ll = AnimEngine.run("""
+list L = a -> b -> c
+pointer p -> L[1]
+step 插入
+  insert L 1 x
+step 删掉 b、反指
+  remove L 2
+  link L[2] -> L[0]
+step 越界
+  remove L 9
+""")
+let l1 = ll.state(scene: 0, step: 1).lists["L"]!, l2 = ll.state(scene: 0, step: 2).lists["L"]!
+check(l1.nodes.map(\.value) == ["a", "x", "b", "c"] && l1.nodes[0].next == l1.nodes[1].id && l1.nodes[1].next == l1.nodes[2].id, "list insert 接好前后指向")
+check(l2.nodes.map(\.value) == ["a", "x", "c"] && l2.nodes[1].next == l2.nodes[2].id, "list remove 前一个接到后一个")
+check(l2.nodes[2].next == l2.nodes[0].id, "link 改指向")
+check(ll.state(scene: 0, step: 1).pointers["p"]! == .node(element: "L", id: ll.state(scene: 0, step: 0).lists["L"]!.nodes[1].id), "指针跟着节点走（插入后还指着 b）")
+check(ll.state(scene: 0, step: 2).pointers["p"]! == nil, "节点删了，指针变成不指")
+check(ll.errors.map(\.line) == [9], "list 越界报行号 \(ll.errors)")
+
+let bst = AnimEngine.run(AnimText.examples[5])
+let t0 = bst.state(scene: 0, step: 0).trees["T"]!, t4 = bst.state(scene: 0, step: 4).trees["T"]!
+check(t0.depth == 3 && t0.nodes.count == 6, "括号写法建树")
+check(t0.child(t0.find("10")!, 0) == nil && t0.child(t0.find("10")!, 1) == t0.find("14"), "_ 是空的左孩子")
+check(bst.state(scene: 0, step: 3).trees["T"]!.child(t0.find("6")!, 0) != nil, "insert under 6 left")
+check(t4.root == t4.find("3") && t4.child(t4.find("3")!, 1) == t4.find("8") && t4.child(t4.find("8")!, 0) == t4.find("6"), "右旋：3 上来，6 挂到 8 左边")
+check(t4.root.map { t4.nodes[$0]!.id } == t0.find("3"), "旋转不换节点身份（动画按 id 挪位置）")
+let heap = AnimEngine.run("tree H = (1 (5 9) 3)\nstep 换\n  swap H[1] H[5]\n  remove H 9\nstep 错\n  rotate H 3 left\n  insert H 7 under 3 left")
+let h1 = heap.state(scene: 0, step: 1).trees["H"]!
+check(h1.nodes[h1.root!]!.value == "5" && h1.nodes[h1.root!]!.valueID == heap.state(scene: 0, step: 0).trees["H"]!.nodes[h1.find("1")!]!.valueID, "swap 交换值，值的身份跟着走")
+check(h1.nodes.count == 3, "remove 删子树（9 是叶子）")
+check(heap.errors.map(\.line) == [6], "没有右孩子不能左旋 \(heap.errors)")
+
+let bfs = AnimEngine.run(AnimText.examples[6])
+let g3 = bfs.state(scene: 0, step: 3).graphs["G"]!
+check(g3.nodes["A"]!.tone == .done && g3.nodes["C"]!.label == "d=1", "图节点 mark / set 标签")
+check(g3.edges.first { $0.a == "A" && $0.b == "B" }!.tone == .active && g3.edges.first { $0.a == "C" && $0.b == "D" }!.tone == .muted, "图的边按 A-B 找（不分方向）")
+check(AnimEngine.run("graph G = A->B:3\nstep x\n  set G[A->B] = 9\n  mark G[B-A] done").state(scene: 0, step: 1).graphs["G"]!.edges[0].weight == "9", "有向边改权")
+check(AnimText.parse("graph G = A-B, A-").errors.contains { $0.line == 1 && $0.message.hasPrefix("graph") }, "坏的边报错")
+
+let dp = AnimEngine.run(AnimText.examples[7])
+let d3 = dp.state(scene: 0, step: 3).grids["D"]!
+check(d3.rows == 3 && d3.cols == 3 && d3.values[1][2] == "1" && d3.values[2][2] == "1" && d3.values[1][0] == "1", "二维表初值、set")
+check(d3.tones[2][2] == .done && d3.tones[0][1] == .normal, "二维表范围 mark / unmark")
+check(dp.state(scene: 0, step: 3).pointers["here"]! == .grid(element: "D", row: 2, col: 2), "指针指表格")
+check(AnimText.parse("grid D rows=[a] = 2x2").errors.contains { $0.message.hasPrefix("rows=") }, "行标题数不对报错")
+check(AnimEngine.run("array A = [1, 2]\npointer i -> A[2]\npointer j -> A[3]").errors.map(\.line) == [3], "指针可以指末尾之后一格，再远报错")
 
 print("写法说明里的示例")
 for (i, example) in AnimText.examples.enumerated() {

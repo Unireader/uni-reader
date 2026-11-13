@@ -74,6 +74,12 @@ struct AnimSceneState: Equatable {
     var seqs: [String: AnimSeqState] = [:]
     /// 整个元素的颜色（`mark A done` 不带下标）。
     var elementTones: [String: AnimTone] = [:]
+    var lists: [String: AnimListState] = [:]
+    var trees: [String: AnimTreeState] = [:]
+    var graphs: [String: AnimGraphState] = [:]
+    var grids: [String: AnimGridState] = [:]
+    /// 指针 → 指着什么（nil = 不指向任何东西）。
+    var pointers: [String: AnimPointerTarget?] = [:]
     var messages: [AnimMessage] = []
     var marks: [AnimLaneMark] = []
     var timers: [AnimTimer] = []
@@ -148,11 +154,14 @@ enum AnimEngine {
                 initial.cells[element.name] = v.map { AnimCell(id: newID(), value: $0, tone: .normal) }
             case .variable(let v):
                 initial.vars[element.name] = AnimVar(value: v, tone: .normal)
-            case .text:
+            case .text, .pointer:
                 break
+            case .list, .tree, .graph, .grid:
+                initialStructure(element, into: &initial, newID: newID)
             }
         }
         let kinds = Dictionary(scene.elements.map { ($0.name, $0.kind) }, uniquingKeysWith: { a, _ in a })
+        for element in scene.elements { initialPointer(element, into: &initial, kinds: kinds, errors: &errors) }
 
         var list = [initial]
         var state = initial
@@ -188,6 +197,7 @@ enum AnimEngine {
 
             for (line, action) in step.actions {
                 func fail(_ message: String) { errors.append(AnimDiagnostic(line: line, message: message)) }
+                if applyStructure(action, &state, kinds: kinds, newID: newID, fail: fail) { continue }
                 switch action {
                 case .say(let text):
                     state.says.append(text)
@@ -268,14 +278,14 @@ enum AnimEngine {
                     apply(target, line: line, &state, kinds: kinds, fail: fail) { _ in .normal }
 
                 case .set(let target, let value):
-                    if target.lower == nil, state.vars[target.name] != nil {
+                    if target.key == nil, state.vars[target.name] != nil {
                         state.vars[target.name]!.value = value
                     } else if var cells = state.cells[target.name], let lo = target.lower, let hi = target.upper {
                         guard lo >= 0, hi < cells.count else { fail("\(target.name) has \(cells.count) item(s), index \(hi) is out of range"); continue }
                         for i in lo...hi { cells[i].value = value }
                         state.cells[target.name] = cells
                     } else {
-                        fail("set: “\(target.name)\(target.lower == nil ? "" : "[…]")” is not a var or an array cell")
+                        fail("set: “\(target.text)” is not a var or an array cell")
                     }
 
                 case .swap(let a, let b):
@@ -301,6 +311,11 @@ enum AnimEngine {
                     guard let cells = state.cells[name] else { fail("no stack / queue “\(name)”"); continue }
                     guard !cells.isEmpty else { fail("\(name) is empty"); continue }
                     if case .dequeue = action { state.cells[name]!.removeFirst() } else { state.cells[name]!.removeLast() }
+
+                case .insertAt(let name, _, _), .insertTree(let name, _, _, _), .remove(let name, _), .rotate(let name, _, _), .move(let name, _):
+                    fail(kinds[name] == nil ? "no element “\(name)”" : "\(name) does not support this action")
+                case .link(let t, _):
+                    fail(kinds[t.name] == nil ? "no element “\(t.name)”" : "link is for lists")
                 }
             }
             // 新进栈 / 队的格子只在进来那一步是 new 色，下一步回到原色（除非显式 mark）
@@ -310,6 +325,12 @@ enum AnimEngine {
             list.append(state)
             for (name, cells) in state.cells {
                 state.cells[name] = cells.map { var c = $0; if c.tone == .new { c.tone = .normal }; return c }
+            }
+            for (name, l) in state.lists {
+                state.lists[name]!.nodes = l.nodes.map { var n = $0; if n.tone == .new { n.tone = .normal }; return n }
+            }
+            for (name, t) in state.trees {
+                for (id, n) in t.nodes where n.tone == .new { state.trees[name]!.nodes[id]!.tone = .normal }
             }
         }
         // 最后一步里还挂着的 arrive=next：没有下一步了，就地到达
@@ -329,6 +350,7 @@ enum AnimEngine {
                               fail: (String) -> Void, tone: (AnimTone) -> AnimTone) {
         let name = target.name
         if var cells = state.cells[name] {
+            if target.key != nil, target.lower == nil { fail("\(target.text): indexes are numbers, like \(name)[2] or \(name)[1..3]"); return }
             if let lo = target.lower, let hi = target.upper {
                 guard lo >= 0, hi < cells.count else { fail("\(name) has \(cells.count) item(s), index \(hi) is out of range"); return }
                 for i in lo...hi { cells[i].tone = tone(cells[i].tone) }
@@ -337,6 +359,7 @@ enum AnimEngine {
                 state.elementTones[name] = tone(state.elementTones[name] ?? .normal)
             }
         } else if var seq = state.seqs[name] {
+            if target.key != nil, target.lower == nil { fail("\(target.text): sequence numbers are numbers, like \(name)[2..5]"); return }
             if let lo = target.lower, let hi = target.upper {
                 guard lo >= seq.lower, hi <= seq.upper else { fail("\(name) runs \(seq.lower)..\(seq.upper), \(lo)..\(hi) is outside"); return }
                 for i in lo...hi { seq.tones[i] = tone(seq.tones[i] ?? .normal) }
@@ -345,7 +368,7 @@ enum AnimEngine {
                 state.elementTones[name] = tone(state.elementTones[name] ?? .normal)
             }
         } else if state.vars[name] != nil {
-            guard target.lower == nil else { fail("\(name) is a var: no index"); return }
+            guard target.key == nil else { fail("\(name) is a var: no index"); return }
             state.vars[name]!.tone = tone(state.vars[name]!.tone)
         } else if let i = state.messages.lastIndex(where: { $0.name == name }) {
             let m = state.messages[i]

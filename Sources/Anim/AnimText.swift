@@ -14,13 +14,47 @@ enum AnimTone: String, CaseIterable {
     case normal, active, done, wrong, muted, new
 }
 
-/// 动作的目标：`A`、`A[2]`、`A[1..3]`、消息的 `as=` 名字、变量名。
+/// 动作的目标：`A`、`A[2]`、`A[1..3]`、`T[8]`（树：按值）、`G[A]` / `G[A-B]`（图：节点 / 边）、`D[1,2]` / `D[0..2,1]`（二维表）、
+/// 消息的 `as=` 名字、变量名。方括号里原样记在 `key`，按元素种类到执行时再解释。
 struct AnimTarget: Equatable {
     let name: String
-    let lower: Int?
-    let upper: Int?
+    let key: String?
 
+    init(name: String, key: String? = nil) {
+        self.name = name
+        self.key = key
+    }
+
+    /// `key` 是数字或数字范围时的上下界（数组、序号条、链表下标）。
+    var lower: Int? { key.flatMap(AnimText.parseRange)?.0 }
+    var upper: Int? { key.flatMap(AnimText.parseRange)?.1 }
     var isRange: Bool { lower != nil }
+
+    /// 二维表：`r,c`、`r1..r2,c1..c2`（任一边可以是单个数）。
+    var gridRange: (rows: ClosedRange<Int>, cols: ClosedRange<Int>)? {
+        guard let parts = key?.components(separatedBy: ","), parts.count == 2,
+              let r = AnimText.parseRange(parts[0].trimmingCharacters(in: .whitespaces)),
+              let c = AnimText.parseRange(parts[1].trimmingCharacters(in: .whitespaces)), r.0 <= r.1, c.0 <= c.1 else { return nil }
+        return (r.0...r.1, c.0...c.1)
+    }
+
+    var text: String { key.map { "\(name)[\($0)]" } ?? name }
+}
+
+/// 树的括号写法解析结果：`(值 孩子…)`，孩子是值、`_`（空）或子树。
+indirect enum AnimTreeDecl: Equatable {
+    case node(String, [AnimTreeDecl?])
+}
+
+struct AnimGraphEdgeDecl: Equatable {
+    let a: String
+    let b: String
+    let directed: Bool
+    let weight: String?
+}
+
+enum AnimGraphLayout: String {
+    case circle, layers
 }
 
 enum AnimElementKind: Equatable {
@@ -31,6 +65,11 @@ enum AnimElementKind: Equatable {
     case queue([String])
     case variable(String)
     case text(String)
+    case list([String])
+    case tree(AnimTreeDecl?)
+    case graph(nodes: [String], edges: [AnimGraphEdgeDecl], layout: AnimGraphLayout)
+    case pointer(AnimTarget?)
+    case grid(values: [[String]], rowLabels: [String], colLabels: [String])
 }
 
 struct AnimElement: Equatable {
@@ -47,6 +86,10 @@ enum AnimTimerOp: String {
     case start, stop, expire
 }
 
+enum AnimSide: String {
+    case left, right
+}
+
 enum AnimAction: Equatable {
     case mark(AnimTarget, AnimTone)
     case unmark(AnimTarget)
@@ -61,6 +104,16 @@ enum AnimAction: Equatable {
     case slide(String, to: Int?, by: Int?)
     case timer(lane: String, label: String, op: AnimTimerOp)
     case laneEvent(lane: String, label: String, kind: AnimLaneEventKind, tone: AnimTone?)
+    /// 链表：在第 i 个位置插入 / 删掉第 i 个；树：插到某节点下（左 / 右 / 末尾）、删掉某节点及其子树。
+    case insertAt(String, index: Int, value: String)
+    case insertTree(String, value: String, parent: String?, side: AnimSide?)
+    /// 链表：`key` 是下标；树：`key` 是节点的值（执行时按元素种类解释）。
+    case remove(String, key: String)
+    /// 链表改指向：`link L[2] -> L[0]` / `link L[2] -> null`。
+    case link(AnimTarget, AnimTarget?)
+    case rotate(String, key: String, side: AnimSide)
+    /// 指针挪到别处（`null` = 不指向任何东西）。
+    case move(String, AnimTarget?)
 }
 
 struct AnimStepDecl: Equatable {
@@ -167,7 +220,9 @@ enum AnimText {
                             throw AnimParseError("only one `lanes` per scene")
                         }
                         scene!.elements.append(element)
-                        if case .seq(_, _, _, _, let lane?) = element.kind {
+                        if case .pointer = element.kind {
+                            // 指针画在它指的东西旁边，不单独占一行
+                        } else if case .seq(_, _, _, _, let lane?) = element.kind {
                             guard scene!.elements.contains(where: { if case .lanes(let names) = $0.kind { return names.contains(lane) }; return false }) else {
                                 scene!.elements.removeLast()
                                 throw AnimParseError("seq at=\(lane): no such lane (declare `lanes` first)")
@@ -247,8 +302,74 @@ enum AnimText {
             guard !rest.isEmpty else { throw AnimParseError("usage: text \"…\"") }
             textCounter += 1
             return AnimElement(name: "#text\(textCounter)", kind: .text(rest.joined(separator: " ")), line: line)
+        case "list":
+            guard rest.count >= 1 else { throw AnimParseError("usage: list NAME = a -> b -> c") }
+            let name = try checkedName(rest[0])
+            var values: [String] = []
+            if rest.count > 1 {
+                guard rest[1] == "=" else { throw AnimParseError("usage: list NAME = a -> b -> c") }
+                let words = Array(rest.dropFirst(2))
+                for (i, w) in words.enumerated() {
+                    if i % 2 == 1 {
+                        guard w == "->" else { throw AnimParseError("list items are joined by ->, like a -> b -> c") }
+                    } else {
+                        guard w != "->" else { throw AnimParseError("list items are joined by ->, like a -> b -> c") }
+                        values.append(w)
+                    }
+                }
+                if words.last == "->" { throw AnimParseError("list ends with ->") }
+            }
+            guard values.count <= 16 else { throw AnimParseError("list: at most 16 nodes") }
+            return AnimElement(name: name, kind: .list(values), line: line)
+        case "tree":
+            guard rest.count >= 1 else { throw AnimParseError("usage: tree NAME = (root (left …) (right …))") }
+            let name = try checkedName(rest[0])
+            var tree: AnimTreeDecl?
+            if rest.count > 1 {
+                guard rest[1] == "=" else { throw AnimParseError("usage: tree NAME = (root (left …) (right …))") }
+                tree = try parseTree(rest.dropFirst(2).joined(separator: " "))
+            }
+            return AnimElement(name: name, kind: .tree(tree), line: line)
+        case "graph":
+            guard rest.count >= 3, let eq = rest.firstIndex(of: "=") else { throw AnimParseError("usage: graph NAME [layout=circle|layers] = A-B:4, B-C, A->C") }
+            let name = try checkedName(rest[0])
+            let opts = try options(Array(rest[1..<eq]), allowed: ["layout"])
+            var layout = AnimGraphLayout.circle
+            if let l = opts["layout"] {
+                guard let v = AnimGraphLayout(rawValue: l.lowercased()) else { throw AnimParseError("layout= takes circle or layers") }
+                layout = v
+            }
+            let (nodes, edges) = try parseGraph(rest[(eq + 1)...].joined(separator: " "))
+            guard nodes.count <= 16 else { throw AnimParseError("graph: at most 16 nodes") }
+            return AnimElement(name: name, kind: .graph(nodes: nodes, edges: edges, layout: layout), line: line)
+        case "pointer":
+            guard rest.count == 1 || (rest.count == 3 && rest[1] == "->") else { throw AnimParseError("usage: pointer NAME -> A[2]  (or just: pointer NAME)") }
+            let name = try checkedName(rest[0])
+            let target: AnimTarget? = rest.count == 3 && rest[2].lowercased() != "null" ? try parseTarget(rest[2]) : nil
+            return AnimElement(name: name, kind: .pointer(target), line: line)
+        case "grid":
+            guard rest.count >= 3, let eq = rest.firstIndex(of: "=") else { throw AnimParseError("usage: grid NAME [rows=[…]] [cols=[…]] = 3x4  (or = [[a, b], [c, d]])") }
+            let name = try checkedName(rest[0])
+            let labels = try parseGridLabels(rest[1..<eq].joined(separator: " "))
+            let body = rest[(eq + 1)...].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            var values: [[String]]
+            if body.hasPrefix("[") {
+                values = try parseNestedList(body)
+            } else {
+                let dims = body.lowercased().components(separatedBy: "x")
+                guard dims.count == 2, let r = Int(dims[0].trimmingCharacters(in: .whitespaces)), let c = Int(dims[1].trimmingCharacters(in: .whitespaces)),
+                      r >= 1, c >= 1 else { throw AnimParseError("grid size looks like 3x4") }
+                values = Array(repeating: Array(repeating: "", count: c), count: r)
+            }
+            let cols = values.map(\.count).max() ?? 0
+            guard !values.isEmpty, cols > 0 else { throw AnimParseError("grid is empty") }
+            guard values.count <= 20, cols <= 20 else { throw AnimParseError("grid: at most 20x20") }
+            values = values.map { $0 + Array(repeating: "", count: cols - $0.count) }
+            if !labels.rows.isEmpty, labels.rows.count != values.count { throw AnimParseError("rows=[…] has \(labels.rows.count) labels for \(values.count) rows") }
+            if !labels.cols.isEmpty, labels.cols.count != cols { throw AnimParseError("cols=[…] has \(labels.cols.count) labels for \(cols) columns") }
+            return AnimElement(name: name, kind: .grid(values: values, rowLabels: labels.rows, colLabels: labels.cols), line: line)
         default:
-            throw AnimParseError("unknown element “\(keyword)” (lanes, seq, array, stack, queue, var, text, row; actions go after a `step` line)")
+            throw AnimParseError("unknown element “\(keyword)” (lanes, seq, array, stack, queue, var, text, list, tree, graph, pointer, grid, row; actions go after a `step` line)")
         }
     }
 
@@ -269,8 +390,38 @@ enum AnimText {
         case "swap":
             guard rest.count == 2 else { throw AnimParseError("usage: swap A[i] A[j]") }
             let a = try parseTarget(rest[0]), b = try parseTarget(rest[1])
-            guard a.lower != nil, !a.isRangeSpan, b.lower != nil, !b.isRangeSpan else { throw AnimParseError("swap takes two single cells, like A[0] A[3]") }
+            guard a.key != nil, b.key != nil, a.name == b.name, a.lower == a.upper, b.lower == b.upper else {
+                throw AnimParseError("swap takes two single cells of one element, like A[0] A[3] or T[8] T[3]")
+            }
             return .swap(a, b)
+        case "insert":
+            // insert L 2 x  ·  insert T 5 under 6 [left|right]  ·  insert T 5（空树的根）
+            if rest.count == 3, let i = Int(rest[1]) { return .insertAt(rest[0], index: i, value: rest[2]) }
+            if rest.count == 2 { return .insertTree(rest[0], value: rest[1], parent: nil, side: nil) }
+            guard rest.count == 4 || rest.count == 5, rest[2].lowercased() == "under" else {
+                throw AnimParseError("usage: insert LIST INDEX VALUE  ·  insert TREE VALUE under PARENT [left|right]")
+            }
+            var side: AnimSide?
+            if rest.count == 5 {
+                guard let v = AnimSide(rawValue: rest[4].lowercased()) else { throw AnimParseError("side is left or right") }
+                side = v
+            }
+            return .insertTree(rest[0], value: rest[1], parent: rest[3], side: side)
+        case "remove":
+            guard rest.count == 2 else { throw AnimParseError("usage: remove LIST INDEX  ·  remove TREE VALUE") }
+            return .remove(rest[0], key: rest[1])
+        case "link":
+            guard rest.count == 3, rest[1] == "->" else { throw AnimParseError("usage: link L[i] -> L[j]  (or -> null)") }
+            let from = try parseTarget(rest[0])
+            let to: AnimTarget? = rest[2].lowercased() == "null" ? nil : try parseTarget(rest[2])
+            guard from.key != nil else { throw AnimParseError("link needs a node, like L[1]") }
+            return .link(from, to)
+        case "rotate":
+            guard rest.count == 3, let side = AnimSide(rawValue: rest[2].lowercased()) else { throw AnimParseError("usage: rotate TREE VALUE left|right") }
+            return .rotate(rest[0], key: rest[1], side: side)
+        case "move":
+            guard rest.count == 3, rest[1] == "->" else { throw AnimParseError("usage: move POINTER -> A[3]  (or -> null)") }
+            return .move(rest[0], rest[2].lowercased() == "null" ? nil : try parseTarget(rest[2]))
         case "push", "enqueue":
             guard rest.count >= 2 else { throw AnimParseError("usage: \(keyword) NAME VALUE") }
             let value = rest.dropFirst().joined(separator: " ")
@@ -324,7 +475,7 @@ enum AnimText {
             }
             return .laneEvent(lane: rest[0], label: rest[1], kind: AnimLaneEventKind(rawValue: keyword)!, tone: tone)
         default:
-            throw AnimParseError("unknown action “\(keyword)” (mark, unmark, set, swap, push, pop, enqueue, dequeue, say, send, slide, timer, deliver, discard, buffer, note)")
+            throw AnimParseError("unknown action “\(keyword)” (mark, unmark, set, swap, push, pop, enqueue, dequeue, insert, remove, link, rotate, move, say, send, slide, timer, deliver, discard, buffer, note)")
         }
     }
 
@@ -339,6 +490,7 @@ enum AnimText {
         var current = ""
         var inQuote = false
         var quoted = false
+        var bracket = 0   // 方括号里（`G[A->B]`）的 -> 不拆
         var chars = Array(line)
         var i = 0
         func flush() {
@@ -357,7 +509,10 @@ enum AnimText {
                 break
             } else if c.isWhitespace {
                 flush()
-            } else if c == "-" && i + 1 < chars.count && chars[i + 1] == ">" {
+            } else if c == "[" || c == "]" {
+                bracket = max(0, bracket + (c == "[" ? 1 : -1))
+                current.append(c)
+            } else if c == "-" && bracket == 0 && i + 1 < chars.count && chars[i + 1] == ">" {
                 flush()
                 tokens.append("->")
                 i += 1
@@ -396,12 +551,134 @@ enum AnimText {
     }
 
     static func parseTarget(_ s: String) throws -> AnimTarget {
-        guard let open = s.firstIndex(of: "[") else { return AnimTarget(name: try checkedName(s), lower: nil, upper: nil) }
-        guard s.hasSuffix("]"), open != s.startIndex else { throw AnimParseError("bad target “\(s)” (use A, A[2] or A[1..3])") }
+        guard let open = s.firstIndex(of: "[") else { return AnimTarget(name: try checkedName(s)) }
+        guard s.hasSuffix("]"), open != s.startIndex else { throw AnimParseError("bad target “\(s)” (use A, A[2], A[1..3], T[8], G[A-B] or D[1,2])") }
         let name = String(s[..<open])
-        let inner = String(s[s.index(after: open)..<s.index(before: s.endIndex)])
-        guard let (lo, hi) = parseRange(inner), hi >= lo else { throw AnimParseError("bad index in “\(s)” (use A[2] or A[1..3])") }
-        return AnimTarget(name: try checkedName(name), lower: lo, upper: hi)
+        let inner = String(s[s.index(after: open)..<s.index(before: s.endIndex)]).trimmingCharacters(in: .whitespaces)
+        guard !inner.isEmpty, !inner.contains("[") else { throw AnimParseError("bad index in “\(s)”") }
+        if let (lo, hi) = parseRange(inner), hi < lo { throw AnimParseError("bad range in “\(s)” (low..high)") }
+        return AnimTarget(name: try checkedName(name), key: inner)
+    }
+
+    /// 树：`(8 (3 1 6) (10 _ 14))`、单个值、`_`（空树）。
+    static func parseTree(_ s: String) throws -> AnimTreeDecl? {
+        var tokens: [String] = []
+        var word = ""
+        for c in s {
+            if c == "(" || c == ")" {
+                if !word.isEmpty { tokens.append(word); word = "" }
+                tokens.append(String(c))
+            } else if c.isWhitespace || c == "," {
+                if !word.isEmpty { tokens.append(word); word = "" }
+            } else {
+                word.append(c)
+            }
+        }
+        if !word.isEmpty { tokens.append(word) }
+        var i = 0
+        var count = 0
+        func item() throws -> AnimTreeDecl? {
+            guard i < tokens.count else { throw AnimParseError("tree: unexpected end (missing “)”?)") }
+            let t = tokens[i]
+            i += 1
+            if t == ")" { throw AnimParseError("tree: unexpected “)”") }
+            if t == "_" { return nil }
+            if t != "(" {
+                count += 1
+                return .node(t, [])
+            }
+            guard i < tokens.count, tokens[i] != "(", tokens[i] != ")", tokens[i] != "_" else { throw AnimParseError("tree: “(” must be followed by the node's value") }
+            let value = tokens[i]
+            i += 1
+            count += 1
+            var children: [AnimTreeDecl?] = []
+            while i < tokens.count, tokens[i] != ")" { children.append(try item()) }
+            guard i < tokens.count else { throw AnimParseError("tree: missing “)”") }
+            i += 1
+            while children.last == .some(nil) { children.removeLast() }
+            return .node(value, children)
+        }
+        guard !tokens.isEmpty else { return nil }
+        let root = try item()
+        guard i == tokens.count else { throw AnimParseError("tree: extra text after the root's “)”") }
+        guard count <= 40 else { throw AnimParseError("tree: at most 40 nodes") }
+        return root
+    }
+
+    /// 图：逗号分隔的 `A-B`、`A->B`、`A-B:4`、单独的 `D`。
+    static func parseGraph(_ s: String) throws -> ([String], [AnimGraphEdgeDecl]) {
+        var nodes: [String] = []
+        var edges: [AnimGraphEdgeDecl] = []
+        func node(_ n: String) throws {
+            let name = n.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, !name.contains(where: { "[]=\"#|:-> ".contains($0) }) else { throw AnimParseError("graph: bad node name “\(n)”") }
+            if !nodes.contains(name) { nodes.append(name) }
+        }
+        for raw in s.components(separatedBy: ",") {
+            var item = raw.trimmingCharacters(in: .whitespaces)
+            guard !item.isEmpty else { continue }
+            var weight: String?
+            if let colon = item.firstIndex(of: ":") {
+                weight = String(item[item.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                item = String(item[..<colon]).trimmingCharacters(in: .whitespaces)
+                if weight?.isEmpty == true { throw AnimParseError("graph: “:” needs a weight after it") }
+            }
+            let directed = item.contains("->")
+            let parts = directed ? item.components(separatedBy: "->") : item.components(separatedBy: "-")
+            if parts.count == 1 {
+                guard weight == nil else { throw AnimParseError("graph: a weight belongs to an edge") }
+                try node(parts[0])
+                continue
+            }
+            guard parts.count == 2 else { throw AnimParseError("graph: “\(item)” is not an edge (A-B or A->B)") }
+            try node(parts[0]); try node(parts[1])
+            let a = parts[0].trimmingCharacters(in: .whitespaces), b = parts[1].trimmingCharacters(in: .whitespaces)
+            guard a != b else { throw AnimParseError("graph: an edge needs two different nodes") }
+            edges.append(AnimGraphEdgeDecl(a: a, b: b, directed: directed, weight: weight))
+        }
+        guard !nodes.isEmpty else { throw AnimParseError("graph has no nodes") }
+        return (nodes, edges)
+    }
+
+    /// `[[a, b], [c, d]]`。
+    static func parseNestedList(_ s: String) throws -> [[String]] {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix("["), t.hasSuffix("]") else { throw AnimParseError("rows look like [[a, b], [c, d]]") }
+        let inner = String(t.dropFirst().dropLast())
+        var rows: [[String]] = []
+        var depth = 0
+        var current = ""
+        for c in inner {
+            if c == "[" {
+                depth += 1
+                if depth == 1 { current = ""; continue }
+            }
+            if c == "]" {
+                depth -= 1
+                if depth == 0 { rows.append(try parseList("[" + current + "]")); continue }
+            }
+            if depth >= 1 { current.append(c) }
+            guard depth <= 1, depth >= 0 else { throw AnimParseError("rows look like [[a, b], [c, d]]") }
+        }
+        guard depth == 0 else { throw AnimParseError("unbalanced [ ] in grid") }
+        return rows
+    }
+
+    private static func parseGridLabels(_ s: String) throws -> (rows: [String], cols: [String]) {
+        var rows: [String] = [], cols: [String] = []
+        var rest = s.trimmingCharacters(in: .whitespaces)
+        while !rest.isEmpty {
+            guard let eq = rest.firstIndex(of: "="), let close = rest.firstIndex(of: "]") else { throw AnimParseError("grid options look like rows=[a, b] cols=[x, y]") }
+            let key = rest[..<eq].trimmingCharacters(in: .whitespaces).lowercased()
+            let list = try parseList(String(rest[rest.index(after: eq)...close]))
+            switch key {
+            case "rows": rows = list
+            case "cols": cols = list
+            default: throw AnimParseError("unknown grid option “\(key)=” (rows, cols)")
+            }
+            rest = String(rest[rest.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+        }
+        return (rows, cols)
     }
 
     /// `[a, b, "c d"]`：逗号分隔，项两边空白去掉；项里的双引号去掉。
@@ -421,10 +698,6 @@ enum AnimText {
         }
         return s
     }
-}
-
-private extension AnimTarget {
-    var isRangeSpan: Bool { lower != upper }
 }
 
 struct AnimParseError: Error {
