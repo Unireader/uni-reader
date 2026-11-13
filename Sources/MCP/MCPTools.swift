@@ -11,6 +11,7 @@ enum MCPTools {
         registerBatch4(into: server)
         registerBatch5(into: server)
         registerBatch6(into: server)
+        registerBatch7(into: server)
     }
 
     /// 批 6（2026-11-12）：画板（只读 + 打开）与全工作区搜索（`MCP-PLAN.md §33–34`）。

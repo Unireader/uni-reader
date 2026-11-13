@@ -3,6 +3,21 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ Agent 工作区记忆与对话记录（schema v25）；输入框点哪都能输入；工具栏「返回」跨标签（2026-11-13，Mac + 安卓 + 服务器）
+
+- 起因（用户）：「工作区 memory 支持提供给 agent 使用，agent 可以写入记忆，也可以取出记忆」「对话自动向量化为历史记忆」
+  「agent 输入框很难激活输入，激活区域小」「工具栏返回按钮在很多页面都是无效的」。问过后定：记忆与对话记录都存工作区库新表、随同步；
+  新对话自动带上记忆 + 工具按需查；返回按钮像浏览器那样跨标签。
+- **记忆**（`ACP-AGENT-PLAN.md §21`）：`agent_memory` 表；每段会话第一句话自动带上（超过 6000 字只带最近的）；MCP 批 7 `list_memories` / `save_memory` /
+  `delete_memory`；「上下文」菜单「管理记忆…」；删除先进回收站（新种类 `agentMemories`）。
+- **对话记录**（§22）：`agent_turn` 表，一轮正常答完记一行（用户那句话 + 回复）；每段对话是搜索索引的一个来源；`search` 多 `memory` / `conversation`，
+  `list_conversations` / `read_conversation`。
+- **输入框**（§23）：文字视图至少和输入区一样高，点空白、点占位字都进输入态。
+- **返回按钮**：窗口级、跨标签的后退 / 前进两个栈（`NavHistory` + `TabsModel+Navigation`），切标签、在标签里换内容、PDF 里的跳转都算一步；⌘[ ⌘] 同。
+- 同步：两张表进 `MirrorFp.specs`（向量 #36 #37）；安卓 `Schema.kt` 逐字相同、`MirrorFp.kt` 同序、回收站认新种类（后台助手照 v23 `f38c596` 做的，未提交）。
+- 验证：spike agent-memory 54（新）、nav-history 14（新）、mirror-fp 71、agent-context 49、exercise 354、store 54、trash 71、agent-sent-context 19、
+  agent-user-bubble 147；服务器 swift test 57、Linux aarch64 交叉编译、server-client 端到端 95；安卓 JVM 228；Mac Debug 编译通过。真 App 未实测（清单 167–172）。
+
 ## ✅ 工具调用展开后的显示；中文表格按版面宽度折行；拖选经过表格 / 单元格编辑框 / 行列手柄（2026-11-13，Mac + 引擎 fork）
 
 - 起因（用户）：「中文表格要不要自动折行：需要做一下」；「优化下 tool 调用展开的显示」（截图：整屏等宽字、行号贴着正文、末尾一大段重复 JSON）；

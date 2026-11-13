@@ -42,6 +42,11 @@
    发版时合进 `xvan`、打 `0.15.0-xvan.3`，`project.yml` 换回 `url` + `exactVersion`（现临时 `path:`，别的机器拉 main 编不过）。
    细节 `docs/agents/BUILD-DETAILS.md` 引擎那条。
 
+0b. **安卓插桩测试（schema v25）**（2026-11-13）：安卓已建 `agent_memory` / `agent_turn` 两张表、随同步、回收站认 `agentMemories`（JVM 单测 228 全过），
+   但建库 / 回收站的插桩测试要接平板跑（接的是 iQOO 主力机时别跑：跑完会卸载 App、清数据）：
+   `cd android && ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.xvan.unireader.local.WorkspaceCreateTest`，`TrashTest` 同理。
+   安卓的改动未提交（仓库里另有用户自己没提交的 `AGENTS.md` / gradle 两处）。
+
 1. **安卓模式2：标签页共存，换文档不再重置**（2026-09-07 用户定方向，**方案待写 → `ANDROID-MODE2-PLAN.md`**）。
 
    起因是「模式2 换文档还会闪一下」这个老症状，但**根治不是给闪烁打补丁**——用户原话：

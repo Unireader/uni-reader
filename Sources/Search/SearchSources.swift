@@ -13,7 +13,7 @@ enum SearchSources {
         return "path-" + SHA256Hex.of(p).prefix(16)
     }
 
-    /// `kinds` = 只要这几类来源（`pdf` / `ann` / `md` / `ex` / `ctx`）；nil = 全部。「关联」只要 `md` + `ann`。
+    /// `kinds` = 只要这几类来源（`pdf` / `ann` / `md` / `ex` / `ctx` / `mem` / `conv`）；nil = 全部。「关联」只要 `md` + `ann`。
     static func all(for ws: WorkspaceManager, kinds: Set<String>? = nil) -> [SearchIndex.Source] {
         guard let store = ws.store else { return [] }
         var out: [SearchIndex.Source] = []
@@ -59,13 +59,39 @@ enum SearchSources {
             }))
         }
 
-        // 习题、Agent 上下文：整个工作区各一个来源（条数 + 最新修改时间当指纹）
+        // 习题、Agent 上下文、Agent 记忆：整个工作区各一个来源（条数 + 最新修改时间当指纹）
         let docTitles = Dictionary(ws.documents.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a })
-        guard want("ex") || want("ctx") else { return out }
         if want("ex") { out.append(.init(key: "ex:all", title: "exercises", stamp: {
             let rows = (try? store.exercises()) ?? []
             return "\(rows.count)|\(rows.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0)"
         }, load: { exerciseChunks(store: store, docTitles: docTitles) })) }
+        if want("mem") { out.append(.init(key: "mem:all", title: "agent memories", stamp: {
+            let rows = (try? store.agentMemories()) ?? []
+            return "\(rows.count)|\(rows.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0)"
+        }, load: {
+            ((try? store.agentMemories()) ?? []).flatMap { m in
+                SearchText.chunks(m.content).map {
+                    SearchIndex.Chunk(kind: "memory", owner: m.id, title: AgentMemoryText.title(m.content),
+                                      heading: m.agent, body: $0)
+                }
+            }
+        })) }
+        // Agent 对话记录（`ACP-AGENT-PLAN.md §22`）：**每段对话一个来源**——多了一轮只重建这一段
+        // （开了语义搜索时也只给这一段算向量），整个工作区一个来源的话每轮都要把全部历史重算一遍
+        if want("conv") {
+            for c in (try? store.recentAgentConversations(limit: 1_000_000)) ?? [] {
+                let id = c.id, title = AgentMemoryText.conversationTitle(c.firstUserText)
+                let stamp = "\(c.turns)|\(c.lastAt.timeIntervalSince1970)"
+                out.append(.init(key: "conv:\(id)", title: title, stamp: { stamp }, load: {
+                    ((try? store.agentTurns(conversationId: id)) ?? []).enumerated().flatMap { i, t in
+                        SearchText.chunks("User: \(t.userText)\n\nAgent: \(t.replyText)").map {
+                            SearchIndex.Chunk(kind: "conversation", owner: id, line: i + 1, title: title,
+                                              heading: t.agent, body: $0)
+                        }
+                    }
+                }))
+            }
+        }
         guard want("ctx") else { return out }
         out.append(.init(key: "ctx:all", title: "agent contexts", stamp: {
             let rows = (try? store.agentContexts()) ?? []

@@ -175,6 +175,31 @@ extension Trash {
         }
     }
 
+    /// 把几条 Agent 记忆归档（`ACP-AGENT-PLAN.md §21`）。**调用方随后才可以删。** 归档到的条数对不上 `ids` 同样算失败。
+    @discardableResult
+    static func archiveAgentMemories(store: LibraryStore, ids: [String], title: String) -> URL? {
+        let workspace = store.workspaceFolder
+        guard let dir = makeDir(in: workspace, title: title) else { return nil }
+        do {
+            let a = try store.archiveAgentMemories(ids: ids, to: dir.appendingPathComponent(snapshotName).path)
+            guard a.counts.agentMemory == ids.count else {
+                throw NSError(domain: "UniReader", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "archived \(a.counts.agentMemory) of \(ids.count) agent memories"])
+            }
+            var m = Manifest()
+            m.kind = .agentMemories
+            m.title = title
+            m.counts = a.counts
+            try encode(m).write(to: dir.appendingPathComponent(manifestName))
+            wsLog("[TRASH] Agent 记忆已移入回收站：\(title)（\(ids.count) 条）")
+            return dir
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            wsLog("[TRASH] ⚠️ Agent 记忆归档失败，删除已放弃：\(title) — \(error)")
+            return nil
+        }
+    }
+
     /// 建一个空的条目目录（名字不撞）。
     private static func makeDir(in workspace: URL, title: String) -> URL? {
         let fm = FileManager.default
@@ -299,6 +324,7 @@ extension WorkspaceManager {
         refresh()
         reconcileAndPurgeImages()   // 图片的待删除标记要跟着摘掉
         if entry.manifest.kind == .agentContexts { agentContextsChanged() }
+        if entry.manifest.kind == .agentMemories { agentMemoriesChanged() }
         if entry.manifest.kind == .annotations {
             NotificationCenter.default.post(name: Trash.annotationsRestored, object: self,
                                             userInfo: ["documentId": entry.manifest.documentId])

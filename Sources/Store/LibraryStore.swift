@@ -8,7 +8,7 @@ import CoreGraphics    // Linux 上 CGRect 等由 Foundation 提供（服务器�
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 24
+    static let schemaVersion = 25
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -129,6 +129,11 @@ final class LibraryStore {
     /// 把几份 Agent 上下文归档（v23）。
     func archiveAgentContexts(ids: [String], to path: String) throws -> TrashStore.Archived {
         try TrashStore.archiveAgentContexts(db, ids: ids, to: path)
+    }
+
+    /// 把几条 Agent 记忆归档（v25）。
+    func archiveAgentMemories(ids: [String], to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveAgentMemories(db, ids: ids, to: path)
     }
 
     /// 恢复前探路：这份快照的 PDF 已经被重新导入过吗（返回要并入的那篇文档 id）。
@@ -370,6 +375,31 @@ final class LibraryStore {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        -- v25：Agent 记忆（`ACP-AGENT-PLAN.md §21`）。Agent 记下、以后每段新对话自动带上的长期备忘（一两句话，Markdown）：
+        -- 用户的偏好、学到哪了、某本书的约定……工作区级，不挂文档。agent = 写下它的 Agent 的名字。
+        -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
+        CREATE TABLE IF NOT EXISTS agent_memory (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL DEFAULT '',
+          agent TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        -- v25：Agent 对话记录（`ACP-AGENT-PLAN.md §22`）。一轮一行：用户那句话 + Agent 的回复（不含工具输出、思考过程），
+        -- 只追加不改；进全工作区搜索（开了语义搜索就算向量），Agent 用 search 查以前聊过什么。
+        -- conversation_id = App 这边的一段对话（几轮共用）；session_id = 那个 Agent 的会话 id（空串 = 不知道）。
+        -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
+        CREATE TABLE IF NOT EXISTS agent_turn (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL DEFAULT '',
+          agent TEXT NOT NULL DEFAULT '',
+          session_id TEXT NOT NULL DEFAULT '',
+          user_text TEXT NOT NULL DEFAULT '',
+          reply_text TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_turn_conversation ON agent_turn(conversation_id, created_at);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -429,6 +459,7 @@ final class LibraryStore {
         // v22 → v23 只新增 agent_context 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
         // v23 → v24：题目标签。🔴 顺序与安卓 `Schema.ADD_COLUMNS` 一致（也是 `MirrorFp.specs` 的列序）。
         try addColumnIfMissing("exercise", "tags", "TEXT NOT NULL DEFAULT ''")
+        // v24 → v25 只新增 agent_memory、agent_turn 两张表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -1580,6 +1611,68 @@ final class LibraryStore {
         try db.run("DELETE FROM agent_context WHERE id IN (\(marks))", ids.map { .text($0) })
     }
 
+    // MARK: - Agent 记忆（agent_memory，v25；`ACP-AGENT-PLAN.md §21`）
+
+    /// 全部记忆，最近改过的在前。
+    func agentMemories() throws -> [LibAgentMemory] {
+        try db.query("SELECT * FROM agent_memory ORDER BY updated_at DESC, created_at DESC").map(Self.agentMemory)
+    }
+    func agentMemory(id: String) throws -> LibAgentMemory? {
+        try db.query("SELECT * FROM agent_memory WHERE id=?", [.text(id)]).map(Self.agentMemory).first
+    }
+    /// 新建或整行覆盖（同 id）。`updated_at` 由调用方给（离线镜像按它取新）。
+    func upsertAgentMemory(_ m: LibAgentMemory) throws {
+        try db.run("""
+        INSERT INTO agent_memory(id, content, agent, created_at, updated_at) VALUES(?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET content=excluded.content, agent=excluded.agent, updated_at=excluded.updated_at
+        """, [.text(m.id), .text(m.content), .text(m.agent),
+              .text(ISO.string(m.createdAt)), .text(ISO.string(m.updatedAt))])
+    }
+    /// 删几条。归档进回收站由上层先做（红线⑪）。
+    func deleteAgentMemories(ids: [String]) throws {
+        guard !ids.isEmpty else { return }
+        let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        try db.run("DELETE FROM agent_memory WHERE id IN (\(marks))", ids.map { .text($0) })
+    }
+
+    // MARK: - Agent 对话记录（agent_turn，v25；`ACP-AGENT-PLAN.md §22`）
+
+    /// 记一轮（只追加）。
+    func insertAgentTurn(_ t: LibAgentTurn) throws {
+        try db.run("""
+        INSERT OR IGNORE INTO agent_turn(id, conversation_id, agent, session_id, user_text, reply_text, created_at, updated_at)
+        VALUES(?,?,?,?,?,?,?,?)
+        """, [.text(t.id), .text(t.conversationId), .text(t.agent), .text(t.sessionId), .text(t.userText),
+              .text(t.replyText), .text(ISO.string(t.createdAt)), .text(ISO.string(t.updatedAt))])
+    }
+    /// 一段对话的各轮，按时间先后。
+    func agentTurns(conversationId: String) throws -> [LibAgentTurn] {
+        try db.query("SELECT * FROM agent_turn WHERE conversation_id=? ORDER BY created_at, id",
+                     [.text(conversationId)]).map(Self.agentTurn)
+    }
+    /// 全部对话记录（搜索索引对账用），按时间先后。
+    func allAgentTurns() throws -> [LibAgentTurn] {
+        try db.query("SELECT * FROM agent_turn ORDER BY created_at, id").map(Self.agentTurn)
+    }
+    /// 最近的几段对话：每段的 id、第一句话、轮数、最后一轮的时间，最近的在前。
+    func recentAgentConversations(limit: Int) throws -> [LibAgentConversation] {
+        try db.query("""
+        SELECT conversation_id, MIN(created_at) AS started, MAX(created_at) AS last, COUNT(*) AS turns,
+               (SELECT user_text FROM agent_turn t2 WHERE t2.conversation_id = t1.conversation_id
+                ORDER BY created_at, id LIMIT 1) AS first_text,
+               (SELECT agent FROM agent_turn t3 WHERE t3.conversation_id = t1.conversation_id
+                ORDER BY created_at DESC, id DESC LIMIT 1) AS agent
+        FROM agent_turn t1 GROUP BY conversation_id ORDER BY last DESC LIMIT ?
+        """, [.int(Int64(limit))]).map { r in
+            LibAgentConversation(id: r["conversation_id"] as? String ?? "",
+                                 firstUserText: r["first_text"] as? String ?? "",
+                                 agent: r["agent"] as? String ?? "",
+                                 turns: Int(r["turns"] as? Int64 ?? 0),
+                                 startedAt: ISO.date(r["started"] as? String) ?? .now,
+                                 lastAt: ISO.date(r["last"] as? String) ?? .now)
+        }
+    }
+
     // MARK: - 页面几何缓存（page_geom）
 
     /// 某内容的每页高度（文档单位）；没缓存或页数对不上 → nil（上层按 PDF 现算并回填）。
@@ -1700,6 +1793,21 @@ final class LibraryStore {
     }
 
     // MARK: - 行 → 模型
+
+    private static func agentMemory(_ r: [String: Any]) -> LibAgentMemory {
+        LibAgentMemory(id: r["id"] as? String ?? "", content: r["content"] as? String ?? "",
+                       agent: r["agent"] as? String ?? "",
+                       createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                       updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
+
+    private static func agentTurn(_ r: [String: Any]) -> LibAgentTurn {
+        LibAgentTurn(id: r["id"] as? String ?? "", conversationId: r["conversation_id"] as? String ?? "",
+                     agent: r["agent"] as? String ?? "", sessionId: r["session_id"] as? String ?? "",
+                     userText: r["user_text"] as? String ?? "", replyText: r["reply_text"] as? String ?? "",
+                     createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                     updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
 
     private static func agentContext(_ r: [String: Any]) -> LibAgentContext {
         LibAgentContext(id: r["id"] as? String ?? "", title: r["title"] as? String ?? "",

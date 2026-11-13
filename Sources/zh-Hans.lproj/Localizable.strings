@@ -1356,3 +1356,22 @@
 "Write a note… (Markdown, type [[ to link)" = "写批注…（支持 Markdown，输入 [[ 链接笔记或书页）";
 "Write in Markdown. Type [[ to link a note, a book page or an annotation." = "用 Markdown 写。输入 [[ 可以链接笔记、书的某一页或批注。";
 "Linked from annotations on other pages" = "其他页的批注链到";
+
+/* Agent 记忆（ACP-AGENT-PLAN §21，2026-11-13） */
+"%d Agent memories" = "%d 条 Agent 记忆";
+"%d memories, attached to every new chat" = "%d 条，每段新对话自动带上";
+"A memory can't be empty." = "记忆不能是空的。";
+"Agent Memories" = "Agent 记忆";
+"Agent Memory" = "Agent 记忆";
+"Agents save facts worth remembering here; every new chat gets them." = "Agent 会把值得记住的事记在这里，每段新对话自动带上。";
+"Could not delete the memory." = "无法删除这条记忆。";
+"Could not save the memory." = "无法保存这条记忆。";
+"Delete %d memories?" = "删除 %d 条记忆？";
+"Delete the memory “%@”?" = "删除记忆「%@」？";
+"Manage Memories…" = "管理记忆…";
+"Memory" = "记忆";
+"New Memory" = "新建记忆";
+"New memory" = "新的记忆";
+"No memories yet. Agents save what is worth remembering as you chat; you can also add one." = "还没有记忆。聊天时 Agent 会把值得记住的事记下来，你也可以自己加一条。";
+"Short facts agents keep for later chats in this workspace. They are attached to the first message of every new chat." = "Agent 为这个工作区以后的对话记下的简短事实，每段新对话的第一句话会自动带上。";
+"Workspace memories (%d)" = "工作区记忆（%d 条）";

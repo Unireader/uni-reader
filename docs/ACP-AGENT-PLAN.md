@@ -635,3 +635,49 @@ session_id（那段对话在原 Agent 里的 id，只对同一家有意义）, c
 - 实测清单（用户）：
   162. 让 Agent 读一页 PDF、读一篇笔记：展开工具调用，没有末尾那段 JSON；行号一栏对齐；长的只显示开头，「显示全部」/「收起」可用。
   163. 工具还在跑时展开（如 `import_exercises`）：内容跟着更新、不闪、不折回去。
+
+## 21. 工作区记忆：Agent 能写入、能取出（2026-11-13，schema v25）
+
+用户：「工作区 memory 支持提供给 agent 使用，agent 可以写入记忆，也可以取出记忆」。问过后用户选：**存工作区库新表、随同步**；
+**新对话自动带上 + 工具按需查**。
+
+- **数据**（`agent_memory`，v25）：`id, content（一两句话，Markdown，最多 2000 字）, agent（谁记的；用户在管理窗里自己加的 = 空）, created_at, updated_at`。
+  工作区级。进 `MirrorFp.specs`（`agent_context` 之后、`meta` 之前，按 `updated_at` 取新；跨端向量 #36）；安卓 `Schema.kt` 逐字相同，只建表、随同步。
+  删除先进回收站（新种类 `agentMemories`，计数键 `agentMemory`，安卓认得）。
+- **带给 Agent**：每段会话的**第一句话**随隐藏上下文块带上（`AgentMemoryText.block`）：最近改过的在前，总长超过 6000 字只带一部分并说明一共几条、
+  去 `list_memories` 看全部；再附一段「怎么记、怎么查」的说明（没有记忆也带，Agent 得知道能记）。排在交接摘要前面（认交接摘要时会吃掉后面整块）。
+  气泡下面那行「上下文」显示「工作区记忆（N 条）」（`AgentSentContext.Marker.memory`，一条都没带就不显示）。MCP 的 `instructions` 里也写了同一段说明，给外部 Agent。
+- **MCP**（批 7，`MCPTools+Memory.swift`）：`list_memories`（可带 query 按词筛）、`save_memory`（新记一条；带 id = 改写）、`delete_memory`（`.delete`，先进回收站）；
+  `search` 多了 `memory` 一种（可走语义搜索）。
+- **界面**：Agent 页「上下文」菜单末尾「管理记忆…」（副标题写着几条），`Window/Sheets/AgentMemoriesSheet.swift`：看 / 改正文、新建一条、删除（先进回收站）。
+- 测试：`spike/agent-memory-test.swift` 54 项（带进去的那一块、气泡下面认得出、库的读写、对话概况、镜像指纹、回收站、manifest、老库升级）；
+  `mirror-fp-test` 71 项（向量 38 条）；`agent-context-test` 49、`exercise-test` 354、`store-test` 54、`trash-test` 71；服务器 `swift test` 57、
+  Linux 交叉编译、`server-client-test.sh` 95；安卓 JVM 单测 228（插桩测试要接平板跑，见 TODO）。
+- 实测清单（用户）：
+  167. 和 Agent 聊几句自己的偏好 / 在学什么：它会用 `save_memory` 记下；「上下文」›「管理记忆…」里看得到、能改、能删（删了在回收站能放回）。
+  168. 新开一段对话（同一个或换一个 Agent）：第一句话气泡下面有「工作区记忆（N 条）」，Agent 知道之前记下的事。
+  169. 另一台电脑同步之后，记忆也在。
+
+## 22. 对话记录：自动存下、能搜（2026-11-13，schema v25）
+
+用户：「对话自动向量化为历史记忆」。问过后用户选：**存工作区库、随同步**。
+
+- **数据**（`agent_turn`，v25）：**一轮一行**——用户看得见的那句话（不含隐藏上下文块）+ Agent 这一轮的回复正文（不含工具输出、思考过程）；
+  `conversation_id` = 那个 Agent 的会话 id（同一段对话几轮共用，回放后接着聊也接得上）。**只追加不改**（同步时按 `updated_at` = `created_at` 取新），
+  进 `MirrorFp.specs`（跨端向量 #37）。没有删除入口（以后要删得先归档，红线⑪）。
+- **什么时候记**：Agent 面板一轮**正常答完**（`stopReason == endTurn`，`AgentChat.recordTurn`）；斜杠命令、「保存上下文」那一轮、停止 / 出错的不记。
+- **搜索**：每段对话是搜索索引的**一个来源**（`conv:<id>`，指纹 = 轮数 + 最后一轮的时间）——多了一轮只重建这一段，开了语义搜索也只给这一段算向量
+  （整个工作区一个来源的话，每轮都要把全部历史重新切块、重算向量）。`search` 多了 `conversation` 一种，命中给 `conversation_id` 和 `turn`。
+- **MCP**：`list_conversations`（最近的在前：第一句话、Agent、轮数、时间）、`read_conversation`（按轮分页，`offset` = `search` 给的 `turn`）。
+- 实测清单（用户）：
+  170. 聊几轮之后，新对话里问「上次我们聊到哪了 / 之前说过 XX 吗」：Agent 用 `search`（conversation）或 `list_conversations` 找得到，`read_conversation` 读得出。
+  171. 开了语义搜索时，换个说法也能搜到以前的对话。
+
+## 23. 输入框点哪都能输入（2026-11-13）
+
+用户：「agent 输入框很难激活输入，激活区域小」。输入区是卡片里套滚动视图、滚动视图里放文字视图；文字视图只有内容那么高（空的时候一行），
+下面那一大块是滚动视图自己的空白，点上去不进输入态。现在文字视图至少和输入区一样高（`AgentComposerView.layout` 设 `minSize`），
+盖在上面的占位提示字也把点击交给文字视图。
+- 实测清单（用户）：
+  172. 空输入框：点输入区任意位置（包括第二、三行的空白、占位提示字上）都直接出光标。
+

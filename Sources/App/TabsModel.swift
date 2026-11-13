@@ -29,7 +29,13 @@ final class TabsModel: ObservableObject {
     var active: DocTabModel { tabs.first { $0.id == activeID } ?? tabs[0] }
 
     private let app: AppModel
-    private let workspace: WorkspaceManager
+    let workspace: WorkspaceManager
+    /// 工具栏「返回」/ ⌘[ ⌘] 的跨标签历史（`TabsModel+Navigation.swift`，2026-11-13）。
+    var navHistory = NavHistory<NavPlace>()
+    /// 正在按历史回到某处：这一路上的切标签 / 跳页不再记历史。
+    var isNavigatingHistory = false
+    /// 这一轮刚到一处（见 `noteArrival`）。
+    var arrivingThisTurn = false
     /// 只订阅**活动标签**的变更并转发（`ContentView` 观察 `tabs` 即等价于观察当前会话）。
     /// 不转发后台标签：它们的落笔/落库与界面无关，转发只会让整窗视图树白重算。
     private var activeBag = Set<AnyCancellable>()
@@ -55,6 +61,7 @@ final class TabsModel: ObservableObject {
         let first = DocTabModel(app: app, workspace: workspace, windowID: windowID)
         first.isActive = true
         tabs = [first]
+        adoptForNavigation(first)
         activeID = first.id
         bindActive()
         bindPadPin()
@@ -101,6 +108,7 @@ final class TabsModel: ObservableObject {
         }
         if active.isEmptyTab {
             active.select(docID)
+            noteArrival()
             persist()
             return active
         }
@@ -119,11 +127,13 @@ final class TabsModel: ObservableObject {
         }
         if active.isEmptyTab {
             active.openMarkdown(ref)
+            noteArrival()
             persist()
             return active
         }
         let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
         tabs.append(t)
+        adoptForNavigation(t)
         WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
         t.openMarkdown(ref)
         activate(t.id)
@@ -141,11 +151,13 @@ final class TabsModel: ObservableObject {
         }
         if active.isEmptyTab {
             active.openBoard(id)   // 装载末尾自己会 `setActive`（活动标签）
+            noteArrival()
             persist()
             return active
         }
         let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
         tabs.append(t)
+        adoptForNavigation(t)
         WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
         t.openBoard(id)
         activate(t.id)
@@ -167,6 +179,7 @@ final class TabsModel: ObservableObject {
             return hit
         }
         if !newTab, let shared = tabs.first(where: { $0.isSharedExerciseTab(for: scope) }) {
+            if shared.id == activeID { noteLeaving(); noteArrival() }   // 就在眼下这个标签里换一组题
             shared.openExercises(scope)
             activate(shared.id)
             persist()
@@ -174,11 +187,13 @@ final class TabsModel: ObservableObject {
         }
         if active.isEmptyTab {
             active.openExercises(scope, separate: newTab)
+            noteArrival()
             persist()
             return active
         }
         let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
         tabs.append(t)
+        adoptForNavigation(t)
         WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
         t.openExercises(scope, separate: newTab)
         activate(t.id)
@@ -246,6 +261,7 @@ final class TabsModel: ObservableObject {
     private func appendTab(docID: String?, staged: Bool = false) -> DocTabModel {
         let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
         tabs.append(t)
+        adoptForNavigation(t)
         WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
         if let docID {
             if staged { t.stage(docID) } else { t.select(docID) }
@@ -260,6 +276,8 @@ final class TabsModel: ObservableObject {
         // `activate` 点的常常就是当前这个（`tabs[0]`），走进去反而不装了，界面就是一片空白。
         next.realize()
         if activeID != id {
+            noteLeaving()   // 工具栏「返回」的跨标签历史（要在换掉 activeID 之前取眼下这一处）
+            noteArrival()
             // 阅读区马上要为这个标签整体重建，先把它「停在哪儿」翻译成待恢复值（见那个方法的红线）。
             next.prepareForReactivation()
             let trace = next.session.openTrace   // 打开耗时账本：切标签的同步段也记（用户报来回切要 150ms）

@@ -56,7 +56,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `docs/INK-PAGING-PLAN.md` — 笔迹内存按页窗口加载/淘汰（**`session.strokes` 不再是全集**）；改笔迹代码前先读
 - **`docs/BINARY-INK-PLAN.md`** — 笔迹点集二进制（schema v18，`points` / `points_at` 两列；payload 不再存点，开库后台整理老行）；改笔迹读写 / 落库前先读
 - `docs/MCP-PLAN.md` — MCP 服务（内置 HTTP 端点给外部 Agent）；§15/§16/§17 是实现记录
-- `docs/ACP-AGENT-PLAN.md` — Agent 面板（ACP 客户端）；§2 fork 做法、§7 Markdown 正文（§19 起按段显示）、§8 `@` 选文件、§12 Agent 上下文（v23 `agent_context`：Agent 写的交接摘要，换 Agent 接着聊）、§13 多 Agent 并行（一扇窗口几段对话，`AgentChatsView` 标签条）
+- `docs/ACP-AGENT-PLAN.md` — Agent 面板（ACP 客户端）；§2 fork 做法、§7 Markdown 正文（§19 起按段显示）、§8 `@` 选文件、§12 Agent 上下文（v23 `agent_context`：Agent 写的交接摘要，换 Agent 接着聊）、§13 多 Agent 并行（一扇窗口几段对话，`AgentChatsView` 标签条）、§21–22 工作区记忆与对话记录（v25 `agent_memory` / `agent_turn`，随同步、进搜索）
 - `docs/IMAGE-NOTE-PLAN.md` — 图片笔记（note kind=6 + `image` 表 v13 + `Images/`，内容寻址、待删除 30 天）
 - `docs/SCAN-ALIGN-PLAN.md` — 扫描页对齐（每页旋转+平移，按内容哈希记）：**开着时对齐后的页面就是页面坐标**；变换/`page_align`(v14)/`displayKey` 是三端契约
 - `docs/SCAN-ENHANCE-PLAN.md` — 扫描页增强（出图时处理、不改 PDF）：算法版已落地，AI 调研暂停、接着做看 §3.5

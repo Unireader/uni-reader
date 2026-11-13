@@ -4,13 +4,13 @@ import Foundation
 /// 关键词走 `SearchIndex.keyword`；设置里开了语义搜索就再走一路向量，两路按排名合并（`SearchIndex.fuse`）。
 /// 单篇 PDF 里找位置（要高亮框）仍用 `search_text`。
 extension MCPTools {
-    static let searchKinds = ["pdf", "markdown", "annotation", "exercise", "context"]
+    static let searchKinds = ["pdf", "markdown", "annotation", "exercise", "context", "memory", "conversation"]
 
     static func searchTool() -> MCPTool {
         MCPTool(
             name: "search",
             title: "Search the whole workspace",
-            description: "Search everything in a workspace at once: the text of every PDF page (OCR text where UniReader has it, otherwise the PDF's own text), Markdown notes, annotations (text notes, highlights, bookmarks, image-note captions), exercises and saved agent contexts. Matching ignores spaces, line breaks, case and full-width/half-width differences, so a phrase broken across lines in a scanned book still matches. Several words = all must appear (if nothing matches, any of them); put a phrase in quotes to keep it together. When semantic search is turned on in UniReader's settings, results that mean the same thing in other words are mixed in (mode hybrid). Results are ranked, one per PDF page / note section, with ids to follow up: read_pages or search_text (for highlight rectangles) for PDF pages, read_markdown with offset = line for notes, list_annotations, list_exercises. The index is built in the background; the first search of a large library may return before it is complete (see index.complete) — search again a bit later for full results.",
+            description: "Search everything in a workspace at once: the text of every PDF page (OCR text where UniReader has it, otherwise the PDF's own text), Markdown notes, annotations (text notes, highlights, bookmarks, image-note captions), exercises, saved agent contexts, workspace memories and earlier Agent-panel conversations (kinds conversation: what the user and the agent said, without tool output). Matching ignores spaces, line breaks, case and full-width/half-width differences, so a phrase broken across lines in a scanned book still matches. Several words = all must appear (if nothing matches, any of them); put a phrase in quotes to keep it together. When semantic search is turned on in UniReader's settings, results that mean the same thing in other words are mixed in (mode hybrid). Results are ranked, one per PDF page / note section, with ids to follow up: read_pages or search_text (for highlight rectangles) for PDF pages, read_markdown with offset = line for notes, list_annotations, list_exercises, read_conversation (offset = turn) for conversations. The index is built in the background; the first search of a large library may return before it is complete (see index.complete) — search again a bit later for full results.",
             inputSchema: MCPSchema.object([
                 "query": MCPSchema.string("Words or phrases to find. Chinese works without spaces; separate several keywords with spaces."),
                 "kinds": MCPSchema.array(of: MCPSchema.enumeration(searchKinds, "content kind"), "Only these kinds (default: all)"),
@@ -42,7 +42,10 @@ extension MCPTools {
                     "exercise_id": MCPSchema.string("exercise: id"),
                     "chapter": MCPSchema.string("exercise: chapter / section"),
                     "context_id": MCPSchema.string("context: id for read_agent_context"),
-                    "agent": MCPSchema.string("context: agent that wrote it"),
+                    "agent": MCPSchema.string("context / memory / conversation: the agent"),
+                    "memory_id": MCPSchema.string("memory: id for save_memory / delete_memory"),
+                    "conversation_id": MCPSchema.string("conversation: id for read_conversation"),
+                    "turn": MCPSchema.integer("conversation: turn number, 1-based (offset for read_conversation)"),
                     "link": MCPSchema.string("unireader:// link that opens it"),
                 ])),
                 "index": MCPSchema.object([
@@ -150,6 +153,8 @@ extension MCPTools {
                     head = "[Note] “\(title)” line \(d["line"] ?? "")\(h) (note_ref \(d["note_ref"] ?? ""))"
                 case "annotation": head = "[\(d["annotation_kind"] ?? "annotation")] “\(title)” p.\(d["page"] ?? "") (id \((d["annotation_id"] as? String ?? "").prefix(8)))"
                 case "exercise": head = "[Exercise] \(title.isEmpty ? "" : "“\(title)” ")(exercise_id \(d["exercise_id"] ?? ""))"
+                case "memory": head = "[Memory] (memory_id \((d["memory_id"] as? String ?? "").prefix(8)))"
+                case "conversation": head = "[Conversation] “\(title)” turn \(d["turn"] ?? "") (conversation_id \(d["conversation_id"] ?? ""))"
                 default: head = "[Context] “\(title)” (context_id \(d["context_id"] ?? ""))"
                 }
                 lines.append("\(i + 1). \(head)\n   \(snip)")

@@ -25,6 +25,10 @@
 - 块不超过约 500 字（`SearchText.chunks` / `markdownChunks`）：语义检索的本机模型一次只看约 256 个字。结果给人看时 PDF 同一页、笔记同一段只留分最高的一块。
 - 画板（手写）不进索引：没有文字。
 
+- 2026-11-13 加两种（`ACP-AGENT-PLAN.md §21–22`）：**Agent 记忆**（`mem:all`，整个工作区一个来源，块的种类 `memory`）与
+  **Agent 对话记录**（**每段对话一个来源** `conv:<id>`，指纹 = 轮数 + 最后一轮时间，块的种类 `conversation`，`line` = 第几轮）。
+  对话按段分来源是为了多一轮只重建、只重算那一段的向量。
+
 ## 3. 放哪：单独一个库，不进 `library.sqlite`
 
 `~/Library/Application Support/UniReader/SearchIndex/<workspace_id>.sqlite`（老库没有 `workspace_id` 就按路径算一个）。

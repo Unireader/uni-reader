@@ -1354,3 +1354,22 @@
 "Write a note… (Markdown, type [[ to link)" = "Write a note… (Markdown, type [[ to link)";
 "Write in Markdown. Type [[ to link a note, a book page or an annotation." = "Write in Markdown. Type [[ to link a note, a book page or an annotation.";
 "Linked from annotations on other pages" = "Linked from annotations on other pages";
+
+/* Agent 记忆（ACP-AGENT-PLAN §21，2026-11-13） */
+"%d Agent memories" = "%d Agent memories";
+"%d memories, attached to every new chat" = "%d memories, attached to every new chat";
+"A memory can't be empty." = "A memory can't be empty.";
+"Agent Memories" = "Agent Memories";
+"Agent Memory" = "Agent Memory";
+"Agents save facts worth remembering here; every new chat gets them." = "Agents save facts worth remembering here; every new chat gets them.";
+"Could not delete the memory." = "Could not delete the memory.";
+"Could not save the memory." = "Could not save the memory.";
+"Delete %d memories?" = "Delete %d memories?";
+"Delete the memory “%@”?" = "Delete the memory “%@”?";
+"Manage Memories…" = "Manage Memories…";
+"Memory" = "Memory";
+"New Memory" = "New Memory";
+"New memory" = "New memory";
+"No memories yet. Agents save what is worth remembering as you chat; you can also add one." = "No memories yet. Agents save what is worth remembering as you chat; you can also add one.";
+"Short facts agents keep for later chats in this workspace. They are attached to the first message of every new chat." = "Short facts agents keep for later chats in this workspace. They are attached to the first message of every new chat.";
+"Workspace memories (%d)" = "Workspace memories (%d)";

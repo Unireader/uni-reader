@@ -25,6 +25,8 @@ struct AgentSentContext: Equatable {
         case handoff
         /// 「保存上下文」那一轮让 Agent 写摘要的说明。
         case saveRequest
+        /// 每段新对话第一句话带上的工作区记忆（`page` = 带了几条，`ACP-AGENT-PLAN.md §21`）。
+        case memories
     }
 
     var kind: Kind
@@ -46,6 +48,7 @@ struct AgentSentContext: Equatable {
         static let handoff = "The user attached a saved context"
         static let savedTitle = "Saved context \""
         static let save = "The user wants to save this conversation as a handoff context"
+        static let memory = "Workspace memories"
     }
 
     // MARK: - 隐藏上下文块
@@ -68,6 +71,12 @@ struct AgentSentContext: Equatable {
             } else if line.hasPrefix(Marker.quote) {
                 let t = between(line, after: Marker.quote + " \"", before: "\" (document_id") ?? quoted(line) ?? ""
                 out.append(AgentSentContext(kind: .quote, name: t, page: number(in: line, after: ", page "), detail: clip(line)))
+            } else if line.hasPrefix(Marker.memory) {
+                // 记忆块：首行 `Workspace memories (N of T): …`，后面几行是记忆本身，不认（不 break：交接摘要可能跟在后面）。
+                // 一条都没带（只有说明）就不显示
+                if let n = number(in: line, after: "("), n > 0 {
+                    out.append(AgentSentContext(kind: .memories, page: n, detail: clip(line)))
+                }
             } else if line.hasPrefix(Marker.grading) {
                 out.append(AgentSentContext(kind: .grading, detail: clip(line)))
             } else if line.hasPrefix(Marker.handoff) {

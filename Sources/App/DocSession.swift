@@ -525,6 +525,7 @@ final class DocSession: ObservableObject, Identifiable {
     /// `centerSpan` 见 `ScrollAnchor.centerSpan`（历史里仍按 `frac` 贴顶记）。
     func jump(page: Int, frac: Double, kind: JumpKind, label: String = "", origin: String = "toc",
               centerSpan: Double? = nil) {
+        onWillJump?(currentMark)
         jumps.record(leaving: currentMark,
                      to: JumpMark(page: page, frac: frac, kind: kind, label: label))
         currentPageIndex = page
@@ -537,6 +538,12 @@ final class DocSession: ObservableObject, Identifiable {
         currentPageIndex = m.page
         emitAnchor(page: m.page, frac: m.frac, origin: "toc")
     }
+
+    /// 跳转之前告诉所在窗口（离开的位置）：工具栏「返回」的跨标签历史也记这一笔（`TabsModel.pdfWillJump`，2026-11-13）。
+    var onWillJump: ((JumpMark) -> Void)?
+
+    /// 工具栏「返回」/ ⌘[ 回到窗口历史里的某处：跳过去，不记历史（同 `goToMark`）。
+    func revisit(_ m: JumpMark) { goToMark(m) }
 
     func jumpBack() { if let m = jumps.back() { goToMark(m) } }
     func jumpForward() { if let m = jumps.forward() { goToMark(m) } }

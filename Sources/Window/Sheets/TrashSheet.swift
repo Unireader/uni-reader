@@ -208,6 +208,7 @@ final class TrashSheetController: StackPanelController, NSTableViewDataSource, N
             case .annotations: text = L("Annotations")
             case .exercises: text = L("Exercises")
             case .agentContexts: text = L("Agent Context")
+            case .agentMemories: text = L("Agent Memory")
             }
         case "when":
             text = e.deletedAt == .distantPast

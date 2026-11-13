@@ -175,8 +175,10 @@ final class ReaderPaneController: NSViewController {
                 d.set(!d.bool(forKey: "nightMode"), forKey: "nightMode")
             }),
             (.toggleCanvasMode, { $0.tab.toggleCanvasMode() }),
-            (.jumpBackRequested, { $0.session.jumpBack() }),
-            (.jumpForwardRequested, { $0.session.jumpForward() }),
+            // 2026-11-13 起是窗口级、跨标签的历史（`TabsModel+Navigation`）；PDF 里的跳转也记在里面。
+            // 「跳转历史」浮窗自己的前进后退仍只在这本书里走。
+            (.jumpBackRequested, { $0.tabs.goBack() }),
+            (.jumpForwardRequested, { $0.tabs.goForward() }),
             (.toggleJumpHistory, { $0.jumpPanel.toggle() }),
             (.toggleSearchResults, { $0.toggleSearchResults() }),
             (.addBookmarkRequested, { c in if c.session.documentId != nil { c.session.beginBookmarkAtCurrent() } }),

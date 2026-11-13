@@ -187,6 +187,8 @@ final class MCPServer: ObservableObject {
     Agent contexts (Agent 上下文) are handoff summaries of earlier conversations saved in the workspace so any agent \
     can continue that work: when the user asks to continue earlier work or mentions a saved context, find it with \
     list_agent_contexts and read it with read_agent_context; save one with save_agent_context only when the user asks. \
+    Memories (Agent 记忆) are short long-term facts agents saved in the workspace for later conversations: read them \
+    with list_memories at the start of a task. \(AgentMemoryText.instructions) \
     \(MCPTools.mathWriting) \
     \(MCPTools.graphWriting) \
     Most PDF tools default to the document in the key window when no target is given. \

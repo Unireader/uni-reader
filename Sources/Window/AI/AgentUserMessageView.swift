@@ -188,6 +188,7 @@ final class AgentUserMessageView: NSView {
         case .grading: return L("Grading request")
         case .handoff: return String(format: L("Saved context “%@”"), name)
         case .saveRequest: return L("Summary instructions")
+        case .memories: return String(format: L("Workspace memories (%d)"), c.page ?? 0)
         }
     }
 
@@ -209,6 +210,7 @@ final class AgentUserMessageView: NSView {
         case .grading: return "checkmark.seal"
         case .handoff: return "tray.full"
         case .saveRequest: return "square.and.pencil"
+        case .memories: return "brain"
         }
     }
 

@@ -317,7 +317,14 @@ final class AgentChatNSView: NSView {
 
     /// 「上下文」菜单（`ACP-AGENT-PLAN.md §12`）：保存这段 / 带上已存的 / 管理。
     func contextsMenu() -> NSMenu {
-        AgentMenus.contexts(chat) { [weak self] in self?.presentContextsSheet() }
+        AgentMenus.contexts(chat, manage: { [weak self] in self?.presentContextsSheet() },
+                            memories: { [weak self] in self?.presentMemoriesSheet() })
+    }
+
+    /// 「管理记忆…」（`ACP-AGENT-PLAN.md §21`）。
+    private func presentMemoriesSheet() {
+        guard let ws = chat.workspaceProvider(), let host = window?.contentViewController else { return }
+        host.presentAsSheet(AgentMemoriesSheetController(workspace: ws))
     }
 
     private func presentContextsSheet() {
@@ -802,7 +809,7 @@ enum AgentMenus {
 
     /// 上下文（`ACP-AGENT-PLAN.md §12`）：让 Agent 把这段对话写成交接摘要存进工作区；已存的点一下 = 挂到输入框上、
     /// 随下一句话带过去（再点一下取下）；「管理上下文…」看 / 改 / 删。
-    static func contexts(_ chat: AgentChat, manage: @escaping () -> Void) -> NSMenu {
+    static func contexts(_ chat: AgentChat, manage: @escaping () -> Void, memories: @escaping () -> Void) -> NSMenu {
         let m = NSMenu()
         m.autoenablesItems = false
         let save = ClosureMenuItem(L("Save This Chat as a Context")) { [weak chat] in chat?.saveContext() }
@@ -836,6 +843,15 @@ enum AgentMenus {
         let manageItem = ClosureMenuItem(L("Manage Contexts…"), action: manage)
         manageItem.isEnabled = chat.workspaceProvider() != nil
         m.addItem(manageItem)
+        // 工作区记忆（`ACP-AGENT-PLAN.md §21`）：Agent 记下的长期备忘，每段新对话自动带上
+        m.addItem(.separator())
+        let count = chat.workspaceProvider()?.agentMemories.count ?? 0
+        let memoryItem = ClosureMenuItem(L("Manage Memories…"), action: memories)
+        memoryItem.image = NSImage(systemSymbolName: "brain", accessibilityDescription: nil)
+        memoryItem.subtitle = count == 0 ? L("Agents save facts worth remembering here; every new chat gets them.")
+                                         : String(format: L("%d memories, attached to every new chat"), count)
+        memoryItem.isEnabled = chat.workspaceProvider() != nil
+        m.addItem(memoryItem)
         return m
     }
 
@@ -1405,6 +1421,13 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
             y += Self.thumbHeight + 8
         }
         textScroll.frame = NSRect(x: 12 - 5, y: y, width: b.width - 24 + 10, height: textHeight)
+        // 🔴 文字视图至少和输入区一样高（2026-11-13 用户报「输入框很难激活，激活区域小」）：它只有内容那么高，
+        // 空的时候就一行，下面那一大块是滚动视图自己的空白，点上去不进输入态
+        let visible = textScroll.contentSize
+        if textView.minSize.height != visible.height { textView.minSize = NSSize(width: 0, height: visible.height) }
+        if textView.frame.height < visible.height - 0.5 {
+            textView.setFrameSize(NSSize(width: visible.width, height: visible.height))
+        }
         placeholder.frame = NSRect(x: 12, y: y, width: b.width - 24, height: 18)
         let rowY = b.height - 8 - 26
         attach.frame = NSRect(x: 10, y: rowY, width: 26, height: 26)
@@ -1640,6 +1663,13 @@ final class AgentComposerView: NSView, NSTextViewDelegate {
 
     // 点框里空白处也进输入态
     override func mouseDown(with event: NSEvent) { focus() }
+
+    /// 占位提示文字盖在输入区上面：点它等于点输入区（不然点在提示字上进不了输入态）。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        if hit === placeholder { return textView }
+        return hit
+    }
 }
 
 /// 输入框：回车发送；⇧ / ⌥ 回车换行；组字中（有 marked text）回车交给输入法上屏。

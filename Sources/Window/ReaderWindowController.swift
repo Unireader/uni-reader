@@ -1098,7 +1098,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         guard names.indices.contains(sender.selectedIndex) else { return }
         NotificationCenter.default.post(name: names[sender.selectedIndex], object: nil)
     }
-    @objc private func jumpBack() { session.jumpBack() }
+    @objc private func jumpBack() { tabs.goBack() }
     @objc private func toggleJumpHistory() { jumpPanel.toggle() }
     @objc private func toggleCanvas() { tabs.active.toggleCanvasMode() }
     @objc private func inspectorToggled() { toggleInspector() }
@@ -1466,7 +1466,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         case ToolID.zoom, ToolID.contents, ToolID.ocr:
             return s.pdf != nil
         case ToolID.jumpBack:
-            return s.jumps.canGoBack
+            return tabs.canGoBack   // 跨标签的窗口历史（笔记 / 画板 / 习题页上也能回去）
         case ToolID.jumpHistory:
             return s.pdf != nil
         // 画板 / 夜间 / 参考窗 / 跳转历史这几枚是带 view 的开关，**不走这条校验**，

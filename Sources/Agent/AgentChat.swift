@@ -202,6 +202,10 @@ final class AgentChat: ObservableObject {
     private var connection: AgentConnection?
     /// 上次随消息带过去的上下文。没变就不重复带（省 token，也免得对话里满是同一段）。
     private var lastContextSent: String?
+    /// 这一轮发出去的那句话在 `items` 里的位置：正常答完就记进对话记录（`ACP-AGENT-PLAN.md §22`）。
+    private var pendingTurn: (session: String, from: Int)?
+    /// 工作区记忆已经随哪段会话的第一句话带过了（`ACP-AGENT-PLAN.md §21`）。
+    private var memoriesSentFor: String?
     /// 上一轮回答什么时候结束的（收到 `session/prompt` 的应答）。认「轮次外推来的回复」用，见 `apply`。
     private var turnEndedAt: Date?
 
@@ -462,8 +466,17 @@ final class AgentChat: ObservableObject {
         // 图片的来源（哪本书哪一页）放进隐藏块：Agent 要用 MCP 去读那一页时用得上，回放时剔掉
         let carried = handoffs
         handoffs = []
+        // 工作区记忆（`ACP-AGENT-PLAN.md §21`）：每段会话的第一句话带一次（排在交接摘要前面：认交接摘要时会吃掉后面整块）
+        var memoryNotes: [String] = []
+        if memoriesSentFor != id, let ws = workspaceProvider() {
+            memoryNotes = [AgentMemoryText.block(ws.agentMemories.map {
+                AgentMemoryText.Item(id: $0.id, content: $0.content, agent: $0.agent, updatedAt: $0.updatedAt)
+            })]
+            memoriesSentFor = id
+        }
         let notes = images.enumerated().compactMap { i, img in img.note.map { "Attached image \(i + 1): \($0)" } }
             + contextNotes
+            + memoryNotes
             + carried.map { h in
                 AgentContextText.handoff(title: h.context.title, summary: h.context.summary, agent: h.context.agent,
                                          id: h.context.id, date: h.context.updatedAt)
@@ -489,6 +502,7 @@ final class AgentChat: ObservableObject {
             }
         }
         // 带进来的交接摘要在「上下文」那行里显示（以前另起一行「已带上…」）
+        pendingTurn = (id, items.count)   // 这一轮正常答完就记进对话记录（`ACP-AGENT-PLAN.md §22`）
         items.append(AgentItem(kind: .user(text, images: images, context: sent)))
         run(blocks, session: id, on: c)
     }
@@ -532,6 +546,15 @@ final class AgentChat: ObservableObject {
         items.append(AgentItem(kind: .notice(String(format: L("Saved as the context “%@”. In a new chat with any agent, attach it from the Contexts menu to carry on."), saved.title), isError: false)))
     }
 
+    /// 一轮正常答完：用户那句话 + 这之后 Agent 的回复（思考过程、工具输出不算）记进对话记录。
+    private func recordTurn(session: String, from: Int) {
+        guard from < items.count, case .user(let text, _, _) = items[from].kind, let ws = workspaceProvider() else { return }
+        let reply = items[(from + 1)...].compactMap { item -> String? in
+            if case .agent(let s) = item.kind { return s } else { return nil }
+        }.joined(separator: "\n\n")
+        ws.recordAgentTurn(conversationId: session, agent: agentName, sessionId: session, userText: text, replyText: reply)
+    }
+
     /// 把一份已存上下文挂到输入框上，随下一句话带过去（同一份已经挂着就不重复挂）。
     func attachContext(_ c: LibAgentContext) {
         guard !handoffs.contains(where: { $0.context.id == c.id }) else { return }
@@ -562,6 +585,10 @@ final class AgentChat: ObservableObject {
                     if r.stopReason == .endTurn { finishSave(session: id, from: p.from) }
                     else { items.append(AgentItem(kind: .notice(L("No context was saved."), isError: false))) }
                 }
+                if let t = pendingTurn, t.session == id {
+                    pendingTurn = nil
+                    if r.stopReason == .endTurn { recordTurn(session: id, from: t.from) }
+                }
                 switch r.stopReason {
                 case .cancelled:
                     items.append(AgentItem(kind: .notice(L("Stopped."), isError: false)))
@@ -578,6 +605,7 @@ final class AgentChat: ObservableObject {
                 guard sessionId == id else { return }
                 items.append(AgentItem(kind: .notice(describe(error), isError: true)))
                 if pendingSave?.session == id { pendingSave = nil }
+                if pendingTurn?.session == id { pendingTurn = nil }
                 phase = connection == nil ? .failed(describe(error)) : .idle
                 restoreQueue()     // 出错了别接着往下发：退回输入框，用户自己决定
             }
@@ -671,6 +699,7 @@ final class AgentChat: ObservableObject {
         sessionId = nil
         lastContextSent = nil
         pendingSave = nil
+        pendingTurn = nil
         restoreQueue()
         items.append(AgentItem(kind: .notice(L("The agent process exited. Start a new chat to reconnect."), isError: true)))
         phase = .failed(L("The agent process exited."))
@@ -714,6 +743,7 @@ final class AgentChat: ObservableObject {
         sessionId = nil
         lastContextSent = nil
         pendingSave = nil   // 等着的那一轮属于这段：换会话就不存了
+        pendingTurn = nil
         restoreQueue()   // 排着的属于眼前这段：换会话不往新的那段里发，退回输入框（同没发出去的草稿）
     }
 

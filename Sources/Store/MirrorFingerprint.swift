@@ -159,6 +159,16 @@ enum MirrorFp {
             Column("id", .text), Column("title", .text), Column("summary", .text), Column("agent", .text),
             Column("session_id", .text), Column("created_at", .text), Column("updated_at", .text),
         ], lww: "updated_at"),
+        // v25：Agent 记忆与对话记录（`ACP-AGENT-PLAN.md §21–22`），工作区级、没有子表。记忆改了就改 `updated_at`；
+        // 对话记录只追加（`updated_at` = `created_at`），两张都按 `updated_at` 取新。
+        TableSpec(table: "agent_memory", key: "id", columns: [
+            Column("id", .text), Column("content", .text), Column("agent", .text),
+            Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
+        TableSpec(table: "agent_turn", key: "id", columns: [
+            Column("id", .text), Column("conversation_id", .text), Column("agent", .text), Column("session_id", .text),
+            Column("user_text", .text), Column("reply_text", .text), Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),
         ]),

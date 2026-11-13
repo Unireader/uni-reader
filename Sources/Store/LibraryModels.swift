@@ -359,3 +359,41 @@ struct LibAgentContext: Identifiable, Equatable {
     var createdAt: Date
     var updatedAt: Date
 }
+
+/// 一条 Agent 记忆（`agent_memory` 表，v25，`ACP-AGENT-PLAN.md §21`）：Agent 记下的长期备忘，
+/// 每段新对话自动带上。工作区级，不挂文档。
+struct LibAgentMemory: Identifiable, Equatable {
+    var id: String              // UUID
+    /// 记忆正文（一两句话，Markdown）。
+    var content: String
+    /// 写下它的 Agent 的名字；用户在管理窗里改过的 = 原来的名字不变。
+    var agent: String
+    var createdAt: Date
+    var updatedAt: Date
+}
+
+/// Agent 对话的一轮（`agent_turn` 表，v25，`ACP-AGENT-PLAN.md §22`）：用户那句话 + Agent 的回复。只追加。
+struct LibAgentTurn: Identifiable, Equatable {
+    var id: String              // UUID
+    /// App 这边的一段对话（几轮共用）。
+    var conversationId: String
+    var agent: String
+    /// 那个 Agent 的会话 id（空 = 不知道）。
+    var sessionId: String
+    /// 用户看得见的那句话（不含随它发出去的隐藏上下文块）。
+    var userText: String
+    /// Agent 这一轮的回复正文（不含工具输出、思考过程）。
+    var replyText: String
+    var createdAt: Date
+    var updatedAt: Date
+}
+
+/// 一段对话的概况（`recentAgentConversations`）。
+struct LibAgentConversation: Identifiable, Equatable {
+    var id: String
+    var firstUserText: String
+    var agent: String
+    var turns: Int
+    var startedAt: Date
+    var lastAt: Date
+}

@@ -1032,3 +1032,9 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 新工具 `links`（`.read`）：某篇笔记 / 某本书（某页）/ 某条批注链到哪、被谁引用，或 `all` 列出全部；`markdown_links` 不再把 `[[书名#page=N]]` 报成断链。
 细则与实测清单见 **`KNOWLEDGE-LINKS-PLAN.md`**。
 
+## 36. 2026-11-13 Agent 记忆与对话记录（批 7）：`list_memories` / `save_memory` / `delete_memory` / `list_conversations` / `read_conversation`
+
+工作区库 v25 两张新表（`agent_memory`、`agent_turn`，随同步）。记忆是 Agent 记下的长期备忘，App 的 Agent 面板每段新对话第一句话自动带上；
+对话记录是面板里每一轮正常答完存下的「用户那句话 + 回复」。`search` 多了 `memory`、`conversation` 两种。`instructions` 里加了怎么记、怎么查（`AgentMemoryText.instructions`）。
+`delete_memory` 是 `.delete`（先进回收站）。细则见 **`ACP-AGENT-PLAN.md §21–22`**。
+

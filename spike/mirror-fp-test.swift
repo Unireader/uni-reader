@@ -101,8 +101,15 @@ check(MirrorFp.spec("note")?.columns.map(\.name) ==
        "payload", "created_at", "updated_at"], "note 列表")
 check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc",
                                      "board_note", "board_page", "board_item", "exercise", "exercise_attempt",
-                                     "agent_context", "meta"],
-      "参与同步的表恰好 13 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张、v23 Agent 上下文）")
+                                     "agent_context", "agent_memory", "agent_turn", "meta"],
+      "参与同步的表恰好 15 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张、v23 Agent 上下文、v25 Agent 记忆与对话记录）")
+check(MirrorFp.spec("agent_memory")?.columns.map(\.name) == ["id", "content", "agent", "created_at", "updated_at"]
+      && MirrorFp.spec("agent_memory")?.lww == "updated_at",
+      "agent_memory 列表（v25）+ 按 updated_at 取新")
+check(MirrorFp.spec("agent_turn")?.columns.map(\.name) ==
+      ["id", "conversation_id", "agent", "session_id", "user_text", "reply_text", "created_at", "updated_at"]
+      && MirrorFp.spec("agent_turn")?.lww == "updated_at",
+      "agent_turn 列表（v25）+ 按 updated_at 取新")
 check(MirrorFp.spec("agent_context")?.columns.map(\.name) ==
       ["id", "title", "summary", "agent", "session_id", "created_at", "updated_at"]
       && MirrorFp.spec("agent_context")?.lww == "updated_at",
@@ -245,6 +252,22 @@ let tableCases: [(String, [String: Any])] = [
         "starred": Int64(0), "wrong": Int64(0), "source": "kimi",
         "created_at": "2026-10-10T09:00:00.000Z", "updated_at": "2026-11-02T09:00:00.000Z",
         "chapter": "", "note": "", "tags": "[\"真题\",\"2023\"]",
+    ] as [String: Any]),
+    // v25 Agent 记忆（2026-11-13，`ACP-AGENT-PLAN.md §21`）：一两句话，含中文、行内公式
+    ("agent_memory", [
+        "id": "DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD",
+        "content": "用户在复习计算机网络（王道 2027），偏好先给结论再推导；公式写成 $C = W\\log_2(1+S/N)$",
+        "agent": "Kimi",
+        "created_at": "2026-11-13T08:00:00.000Z", "updated_at": "2026-11-13T09:00:00.000Z",
+    ] as [String: Any]),
+    // v25 Agent 对话记录：一轮，多行回复
+    ("agent_turn", [
+        "id": "EEEEEEEE-EEEE-4EEE-8EEE-EEEEEEEEEEEE",
+        "conversation_id": "FFFFFFFF-FFFF-4FFF-8FFF-FFFFFFFFFFFF",
+        "agent": "Claude Code", "session_id": "session-91c2",
+        "user_text": "QAM-16 每个码元几比特？",
+        "reply_text": "**4 比特**：16 = 2^4。\n\n- 码元速率 × 4 = 比特率",
+        "created_at": "2026-11-13T08:10:00.000Z", "updated_at": "2026-11-13T08:10:00.000Z",
     ] as [String: Any]),
 ]
 for (t, row) in tableCases {

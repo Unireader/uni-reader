@@ -26,6 +26,8 @@ enum TrashStore {
     static let boardTables = ["board_note", "board_page", "board_item"]
     /// Agent 上下文条目（v23，`ACP-AGENT-PLAN.md §12`）：一张表、没有子表。
     static let agentContextTables = ["agent_context"]
+    /// Agent 记忆条目（v25，`ACP-AGENT-PLAN.md §21`）：一张表、没有子表。
+    static let agentMemoryTables = ["agent_memory"]
 
     /// 页内笔迹的 note.kind（与 `InkStroke.noteKind` 同值，这里不引 App 层的类型）。
     private static let inkKind = 2
@@ -49,10 +51,13 @@ enum TrashStore {
         var exercise = 0
         /// Agent 上下文（v23）。
         var agentContext = 0
+        /// Agent 记忆（v25）。
+        var agentMemory = 0
 
         /// 「一共多少条会跟着一起没」——确认框里那个数。
         var total: Int {
-            ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage + exercise + agentContext
+            ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage + exercise
+                + agentContext + agentMemory
         }
 
         init() {}
@@ -66,6 +71,7 @@ enum TrashStore {
             boardInk = v(.boardInk); boardImage = v(.boardImage)
             exercise = v(.exercise)
             agentContext = v(.agentContext)
+            agentMemory = v(.agentMemory)
         }
     }
 
@@ -124,6 +130,15 @@ enum TrashStore {
     }
 
     /// 把几份 Agent 上下文搬进快照库（Agent 面板「删除」/ MCP，`ACP-AGENT-PLAN.md §12`）。
+    static func archiveAgentMemories(_ db: SQLiteDB, ids: [String], to path: String) throws -> Archived {
+        try withAttached(db, path: path) { t in
+            let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+            try db.run("CREATE TABLE \(t).agent_memory AS SELECT * FROM main.agent_memory WHERE id IN (\(marks))",
+                       ids.map { .text($0) })
+            return try summarize(db, schema: t)
+        }
+    }
+
     static func archiveAgentContexts(_ db: SQLiteDB, ids: [String], to path: String) throws -> Archived {
         try withAttached(db, path: path) { t in
             let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
@@ -214,7 +229,8 @@ enum TrashStore {
             let present = try tableNames(db, schema: t)
             var written = 0
             try db.transaction {
-                for table in documentTables + boardTables + agentContextTables where present.contains(table) {
+                for table in documentTables + boardTables + agentContextTables + agentMemoryTables
+                    where present.contains(table) {
                     if remapDocumentId != nil, ["document", "variant", "location"].contains(table) { continue }
                     let cols = try columnNames(db, schema: t, table: table)
                     guard !cols.isEmpty else { continue }
@@ -318,6 +334,9 @@ enum TrashStore {
         if present.contains("exercise") { out.counts.exercise = try count(db, schema: t, table: "exercise") }
         if present.contains("agent_context") {
             out.counts.agentContext = try count(db, schema: t, table: "agent_context")
+        }
+        if present.contains("agent_memory") {
+            out.counts.agentMemory = try count(db, schema: t, table: "agent_memory")
         }
         if present.contains("ink_layer") { out.counts.inkLayer = try count(db, schema: t, table: "ink_layer") }
         if present.contains("scratch_pad") { out.counts.scratchPad = try count(db, schema: t, table: "scratch_pad") }

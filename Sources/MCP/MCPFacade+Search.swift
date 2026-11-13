@@ -43,6 +43,13 @@ extension MCPFacade {
         case "context":
             o["context_id"] = h.owner
             if !h.heading.isEmpty { o["agent"] = h.heading }
+        case "memory":
+            o["memory_id"] = h.owner
+            if !h.heading.isEmpty { o["agent"] = h.heading }
+        case "conversation":
+            o["conversation_id"] = h.owner
+            o["turn"] = h.line ?? 1
+            if !h.heading.isEmpty { o["agent"] = h.heading }
         default: break
         }
         return o
