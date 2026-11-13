@@ -169,6 +169,18 @@ enum MirrorFp {
             Column("id", .text), Column("conversation_id", .text), Column("agent", .text), Column("session_id", .text),
             Column("user_text", .text), Column("reply_text", .text), Column("created_at", .text), Column("updated_at", .text),
         ], lww: "updated_at"),
+        // v26：日程（`SCHEDULE-PLAN.md`），工作区级。计划与事项各自按 `updated_at` 取新（改标题 / 打勾 / 挪日子都改它）；
+        // 事项的 `plan_id` 只是个标签，删计划时连事项一起删（先进回收站），合并时两张表各管各的行。
+        TableSpec(table: "schedule_plan", key: "id", columns: [
+            Column("id", .text), Column("title", .text), Column("goal", .text), Column("agent", .text),
+            Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
+        TableSpec(table: "schedule_item", key: "id", columns: [
+            Column("id", .text), Column("plan_id", .text), Column("title", .text), Column("detail", .text),
+            Column("day", .text), Column("start_min", .int), Column("duration_min", .int), Column("done_at", .text),
+            Column("result", .text), Column("seq", .int), Column("agent", .text),
+            Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),
         ]),

@@ -81,8 +81,8 @@ defer { try? FileManager.default.removeItem(at: tmp) }
 
 print("— 记忆的读写")
 var store: LibraryStore! = try LibraryStore(workspaceFolder: tmp)
-eq(LibraryStore.schemaVersion, 25, "schema 版本 25")
-eq(store.meta("schema_version"), "25", "新库记下 25")
+eq(LibraryStore.schemaVersion, 26, "schema 版本 26")
+eq(store.meta("schema_version"), "26", "新库记下 26")
 eq(try store.agentMemories().count, 0, "新库没有记忆")
 let a = LibAgentMemory(id: "AAAAAAAA-0000-0000-0000-000000000001", content: "较早的\n- 一", agent: "Kimi", createdAt: t0, updatedAt: t0)
 let b = LibAgentMemory(id: "BBBBBBBB-0000-0000-0000-000000000002", content: "较新的 $x^2$", agent: "", createdAt: t1, updatedAt: t1)
@@ -178,7 +178,7 @@ do {
     s2.close()
     s2 = nil
     let s3 = try LibraryStore(workspaceFolder: dir2)
-    eq(s3.meta("schema_version"), "25", "v24 库打开后升到 25")
+    eq(s3.meta("schema_version"), "26", "v24 库打开后升到 26")
     eq(try s3.agentMemories().count, 0, "补建了 agent_memory 表")
     eq(try s3.recentAgentConversations(limit: 5).count, 0, "补建了 agent_turn 表")
     s3.close()

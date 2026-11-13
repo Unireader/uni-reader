@@ -28,6 +28,9 @@ final class AgentBlockContext {
     let style: MarkdownDisplayStyle
     /// 整条的 Markdown（右键「复制全文」）。
     var fullText: () -> String = { "" }
+    /// 点了正文里的链接：返回 true = 外面接手了（日程说明里的 `[[…]]`，`SCHEDULE-PLAN.md §4.3`）；
+    /// 没设或返回 false 走默认（网址 / unireader:// 交给系统，`[[…]]` 不跳）。
+    var openLink: ((Any) -> Bool)?
 
     init(fontSize: CGFloat) {
         self.fontSize = fontSize
@@ -93,6 +96,7 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
     private let container = NSTextContainer(size: NSSize(width: 100, height: CGFloat.greatestFiniteMagnitude))
     let textView: AgentSelectableTextView
     private var measured: (width: CGFloat, height: CGFloat)?
+    private weak var context: AgentBlockContext?
     /// 引用：左边一道竖条，正文右移。
     private var leftInset: CGFloat { isQuote ? 12 : 0 }
 
@@ -116,6 +120,7 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
         textView.linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
         textView.delegate = self
         textView.extraMenuItems = { [weak context] in context.map { [$0.copyAllItem()] } ?? [] }
+        self.context = context
         storage.setAttributedString(text)
         addSubview(textView)
     }
@@ -158,8 +163,10 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
         NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 3, height: bounds.height), xRadius: 1.5, yRadius: 1.5).fill()
     }
 
-    // 链接：普通网址 / unireader:// 交给系统打开；`[[…]]` 没有工作区上下文可解析，不跳
+    // 链接：外面接手的先给外面（`AgentBlockContext.openLink`）；普通网址 / unireader:// 交给系统打开；
+    // `[[…]]` 没有工作区上下文可解析，不跳
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        if let open = context?.openLink, open(link) { return true }
         if MarkdownDisplayRenderer.wikiLinkTarget(link) != nil { return true }
         if let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:)), url.scheme != nil {
             NSWorkspace.shared.open(url)

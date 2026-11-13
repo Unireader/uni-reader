@@ -71,6 +71,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   §12 题目笔记（v22 `exercise.note`，判完才显示）+ 顶栏「重做上次做错的」（只练上一次结果是错的题；本轮只做 Mac）；
   §17 答对自动下一题（练习页底部开关，Mac + 安卓）；
   §19 题目标签（v24 `exercise.tags`，自由添加，练习页 / 列表 / 顶栏筛选 + MCP `tags`）
+- **`docs/SCHEDULE-PLAN.md`** — 日程（日历 + 待办，v26 `schedule_plan` / `schedule_item`，随同步）：侧栏「日程」标签页（月历 + 那天的待办 + 详情）、
+  Inspector「今天」页、MCP 批 8 让 Agent 排计划 / 挪日子 / 打勾；统计工具 `workspace_stats` 在 `MCP-PLAN.md §38`
 - **`docs/SEARCH-PLAN.md`** — 全工作区搜索（MCP `search`：PDF 文字 / 笔记 / 批注 / 习题 / 上下文）+ 语义搜索（本机模型或 OpenAI 兼容接口）；
   索引是**派生数据**，单独放 `~/Library/Application Support/UniReader/SearchIndex/`，🔴 不进 `library.sqlite`、不同步（`Sources/Search/`）
 - **`docs/KNOWLEDGE-LINKS-PLAN.md`** — 知识关联（笔记 · 书页 · 批注互相引用）：🔴 **关系只从正文里的链接认、不另存关系表**；`[[书名#page=12]]` 写法、

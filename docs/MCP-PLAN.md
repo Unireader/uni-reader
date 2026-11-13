@@ -1038,3 +1038,39 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 对话记录是面板里每一轮正常答完存下的「用户那句话 + 回复」。`search` 多了 `memory`、`conversation` 两种。`instructions` 里加了怎么记、怎么查（`AgentMemoryText.instructions`）。
 `delete_memory` 是 `.delete`（先进回收站）。细则见 **`ACP-AGENT-PLAN.md §21–22`**。
 
+## 37. 2026-11-13 日程（批 8）：`list_schedule` / `add_schedule_items` / `update_schedule_items` / `delete_schedule` / `open_schedule`
+
+工作区库 v26 两张新表（`schedule_plan`、`schedule_item`，随同步）：日历 + 待办，Agent 帮着排计划。`list_schedule` 默认今天起 14 天 + 过期没做完的 +
+没排日期的（`plan_id` 看一份计划的全部）；`add_schedule_items` 一批事项（最多 300），可以挂在一份新计划（`plan`）或已有计划（`plan_id`）下；
+`update_schedule_items` 只改给了的字段（挪日子、打勾、写结果、换计划），也能改计划名 / 目标；`delete_schedule` 是 `.delete`（先进回收站，新种类 `schedule`）；
+`open_schedule` 给用户打开某一天 / 某一件。`get_state` / `get_current_view` 的 `content_type` 多了 `schedule`（后者带 `day` / `item_id`）。
+`instructions` 里加了日程与 `workspace_stats` 各一句。细则见 **`SCHEDULE-PLAN.md §6`**。
+
+## 38. 2026-11-13 统计 `workspace_stats`
+
+用户提：Agent 要数个数时只能把整份清单读一遍（`list_exercises` / `list_annotations` / `read_conversation`…），慢又费 token。
+新增一个只读工具 `workspace_stats`（`.read`）：一次给出工作区里各种数量，全部在 SQL 里 COUNT / SUM / GROUP BY，不读正文、不读 payload。
+
+- 代码：`Sources/Store/StatsStore.swift`（数数；同 `TrashStore` 的写法，入口只有 `LibraryStore.stats(_:)`；经符号链接也编进服务器，只用 Foundation）、
+  `Sources/MCP/MCPStats.swift`（入参校验、`outputSchema`、拼结构化结果与摘要；只依赖 Foundation，spike 直接编）、`Sources/MCP/MCPTools+Stats.swift`（工具 + 主线程那段）。
+- 入参：`workspace`；`sections`（`library` / `annotations` / `markdown` / `boards` / `exercises` / `practice` / `agent` / `schedule`，默认全部）；
+  `document_id`（只数这一篇：书库 / 批注 / 习题 / 练习四块，其余四块总是整个工作区）；`from` / `to`（本地日 `YYYY-MM-DD`，按天细分的范围，
+  默认含今天的最近 7 天，最多 366 天）；`limit`（每张细分清单最多几行，默认 20，最多 200）。
+- 各块口径：
+  - 书库：篇数、总页数、读过（进度离开第一页顶端：`read_page > 0 OR read_frac > 0`）、读完（读过且视口顶部到了最后一页）；
+    逐篇（最近打开的在前）给读到第几页和百分比（读到的页 / 总页数，当前页算读到）。
+  - 批注：`note.kind` 逐种（0 文字笔记 / 1 AI 会话 / 2 页内笔迹 / 3 高亮 / 4 草稿纸笔迹 / 5 书签 / 6 图片笔记）、有笔迹的页数、草稿纸数；逐篇按批注多少排。
+  - Markdown 笔记按 `WorkspaceManager.noteTrees`（扫描结果）逐个笔记源数，不数 `md_doc`（库里不一定每篇都有一行）。画板：画板 / 分页画板 / 页 / 笔迹 / 图。
+  - 习题：按题型（2 这类不认识的记 `other`）、收藏、错题本、有笔记、没标签；做过（至少一条作答，含书上的作答，同侧栏「已做」）；
+    最近一次作答对 / 错 / 没判（按时间戳解析后的先后，同一刻按 id，不重复计）；作答总数、待判（填空 / 主观题里 `correct IS NULL`，
+    同 `list_exercise_attempts` 的 `ungraded_only`）；按文档 / 章节（同侧栏章节树）/ 标签（`json_each` 摊开，不分大小写，坏 JSON 当没标签）细分。
+  - 练习：范围内在 App 里练的作答（书上的作答 `source = mark` 不算：那是导入时认出来的，时间是导入那一刻），合计 + 逐日（只列有作答的天）：
+    作答、对、错、没判、练过几道（去重）、用时。
+  - Agent：记忆、上下文、对话、轮数。
+  - 日程（v26）：计划；事项总数 / 做完 / 没做 / 逾期（没做且日期早于今天）/ 没排日期（没做的）；今天几件、做完几件；
+    逐份计划（新建的在前）；逐日：排在那天的、其中做完的、那天做完的（按 `done_at` 的本地日）。
+- 分天：先在 Swift 里按本机时区算出每个本地日在 UTC 下的起止秒（夏令时那天 23 / 25 小时也对），SQL 里把 `strftime('%s', 时间戳)` 落进区间
+  （`MATERIALIZED` CTE，每行只解析一次）——不比字符串，库里不带毫秒、带 `+08:00` 的写法也归得对。日程的 `day` 本来就是本地日，直接比。
+- 细分清单都截到 `limit` 行，另给 `*_omitted` 说明省了几行；逐日清单受范围上限（366 天）约束。
+- 验证：`spike/workspace-stats-test.swift`（115 项：空库、各表计数、只数一篇、本地日边界与夏令时、几种时间戳写法、同一刻两次作答、入参校验、
+  结构化结果逐键对 `outputSchema` 校验、两万条作答按一年分天的耗时）。

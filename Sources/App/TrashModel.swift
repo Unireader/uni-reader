@@ -30,6 +30,7 @@ enum Trash {
         case exercises     // 几道习题连同作答记录（v20，`EXERCISE-PLAN.md §5`）
         case agentContexts // 几份 Agent 上下文（v23，`ACP-AGENT-PLAN.md §12`）
         case agentMemories // 几条 Agent 记忆（v25，`ACP-AGENT-PLAN.md §21`）
+        case schedule      // 几份日程计划（连同名下的事项）/ 几件日程事项（v26，`SCHEDULE-PLAN.md §5`）
     }
 
     /// `manifest.json` 的内容。**新增字段一律给默认值**：老条目的 manifest 少字段也要读得出来，

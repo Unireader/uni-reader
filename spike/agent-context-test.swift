@@ -80,8 +80,8 @@ defer { try? FileManager.default.removeItem(at: tmp) }
 
 print("— 库的读写")
 var store: LibraryStore! = try LibraryStore(workspaceFolder: tmp)
-eq(LibraryStore.schemaVersion, 25, "schema 版本 25")
-eq(store.meta("schema_version"), "25", "新库记下 25")
+eq(LibraryStore.schemaVersion, 26, "schema 版本 26")
+eq(store.meta("schema_version"), "26", "新库记下 26")
 eq(try store.agentContexts().count, 0, "新库没有上下文")
 
 let t0 = ISO8601DateFormatter().date(from: "2026-11-01T10:00:00Z")!
@@ -171,7 +171,7 @@ do {
     s2.close()
     s2 = nil
     let s3 = try LibraryStore(workspaceFolder: dir2)
-    eq(s3.meta("schema_version"), "25", "v22 库打开后升到 25")
+    eq(s3.meta("schema_version"), "26", "v22 库打开后升到 26")
     eq(try s3.agentContexts().count, 0, "补建了 agent_context 表")
     s3.close()
 }

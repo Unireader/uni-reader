@@ -47,6 +47,11 @@ struct AgentReaderContext: Equatable {
     var markdown: MarkdownNote?
     /// 活动标签是习题时非 nil（与上面两样互斥）。
     var exercise: ExerciseTab? = nil
+    /// 活动标签是日程时 = 看的那一天（`YYYY-MM-DD`；与上面几样互斥，`SCHEDULE-PLAN.md §7`）。
+    var scheduleDay: String? = nil
+    /// 日程页选中的那一件（id、标题）。
+    var scheduleItemId: String? = nil
+    var scheduleItemTitle = ""
 
     /// Agent 的工作目录 = 工作区包所在的目录（用户 2026-09-18 定）。
     var cwd: URL { workspaceFolder.deletingLastPathComponent() }
@@ -84,6 +89,14 @@ struct AgentReaderContext: Equatable {
             lines.append(s + ".")
             lines.append("\"This question\" (这道题 / 这题) means that one. get_current_view gives it in full with the answer showing and its attempt_id (to grade it with grade_exercise_attempts); render_exercise shows it as printed (figures); open_exercises moves the user to another question or group.")
             lines.append(Self.noteKinds + " If the user says \"note\" (笔记) about this question, they probably mean its own note (update_exercises note); otherwise ask which one.")
+        } else if let day = scheduleDay {
+            var s = AgentSentContext.Marker.schedule + " (日程), looking at \(day)"
+            if let id = scheduleItemId { s += ", the item \"\(scheduleItemTitle)\" (item_id \(id)) selected" }
+            if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
+            if let windowId { s += ", window_id \(windowId.uuidString)" }
+            lines.append(s + ".")
+            lines.append("Read the schedule with list_schedule; plan with add_schedule_items (a plan groups the items it adds), change, reschedule or tick items off with update_schedule_items; open_schedule shows the user a day or an item. workspace_stats gives counts (progress, exercises, practice) without reading everything.")
+            lines.append(Self.noteKinds + " If the user says \"note\" (笔记) without a kind, ask which one.")
         } else if let documentId {
             var s = AgentSentContext.Marker.document + "\"\(docTitle)\" (document_id \(documentId)), page \(page + 1) of \(pageCount)"
             if let tabId { s += ", reader tab session_id \(tabId.uuidString)" }
@@ -472,6 +485,8 @@ final class AgentChat: ObservableObject {
             memoryNotes = [AgentMemoryText.block(ws.agentMemories.map {
                 AgentMemoryText.Item(id: $0.id, content: $0.content, agent: $0.agent, updatedAt: $0.updatedAt)
             })]
+            // 日程（`SCHEDULE-PLAN.md §7`）：今天几件、过期几件，一行；没有日程就不带
+            if let line = ws.scheduleAgentLine() { memoryNotes.append(line) }
             memoriesSentFor = id
         }
         let notes = images.enumerated().compactMap { i, img in img.note.map { "Attached image \(i + 1): \($0)" } }

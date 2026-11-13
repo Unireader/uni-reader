@@ -63,6 +63,14 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 习题标签是**单独开的**（侧栏右键「在新标签页中打开」）：侧栏点别的范围不会换掉它。
     /// 只在 `exerciseScope != nil` 时有意义（每次 `openExercises` 都重设，不会带着旧值）。
     @Published private(set) var exerciseSeparate = false
+    /// 本标签显示的是**日程**（v26，`SCHEDULE-PLAN.md §4`）：与 `docID` / `noteRef` / `boardID` / `exerciseScope`
+    /// 五者互斥，同习题的做法（开之前 `select(nil)`）。一扇窗口至多一个日程标签（`TabsModel.openSchedule`）。
+    @Published private(set) var showsSchedule = false
+    /// 待日程页处理的「去某一天 / 选中某一件」（打开日程时带的）；日程页 `takeScheduleFocus()` 取走。
+    private(set) var scheduleFocus: ScheduleFocus?
+    /// 日程页此刻看的是哪一天、选中了哪一件（日程页写，MCP `get_current_view` / Agent 上下文读）。
+    var scheduleShownDay = ""
+    var scheduleSelectedItem: String?
     /// 选中但所有路径失效 → 显示重定位提示。
     @Published var missingDoc: LibDocument?
     /// 同路径内容被替换（hash 与入库版本不符）待确认。
@@ -86,6 +94,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 标签栏上显示的标题：会话标题为空（空标签 / 路径失效）时退回库里的文档名，再退回「新标签页」。
     var tabTitle: String {
         if let ref = noteRef { return ref.title }
+        if showsSchedule { return L("Schedule") }
         if let sc = exerciseScope { return workspace.exerciseScopeTitle(sc) }
         if let b = session.board { return b.displayName }
         if let bid = boardID { return workspace.boards.first { $0.id == bid }?.displayName ?? L("Untitled Board") }
@@ -96,7 +105,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     }
 
     /// 什么都没装的空标签（PDF / Markdown / 画板 / 习题都没有）：打开新内容时就地复用它。
-    var isEmptyTab: Bool { docID == nil && noteRef == nil && boardID == nil && exerciseScope == nil }
+    var isEmptyTab: Bool { docID == nil && noteRef == nil && boardID == nil && exerciseScope == nil && !showsSchedule }
 
     /// **公用的**习题标签（用户 2026-10-11 定）：侧栏点哪组题都在它里面换，不另开标签。右键单独开的不算。
     /// 公用的有两个、各管一支：错题本那一支（错题本和它按书 / 按章展开的几级）一个，其余一个（`ExerciseScope.isMistakes`）。
@@ -110,6 +119,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         if let ref = noteRef { return "md:" + ref.key }
         if let bid = boardID { return BoardNote.rowPrefix + bid.uuidString }
         if let sc = exerciseScope { return sc.rowID }
+        if showsSchedule { return ScheduleFocus.rowID }
         return docID
     }
 
@@ -384,9 +394,11 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 切到另一篇文档（原 `ContentView.onChange(of: selectedDocID)` 那一整块）。
     func select(_ id: String?) {
-        guard id != docID || noteRef != nil || boardID != nil || exerciseScope != nil else { return }
+        guard id != docID || noteRef != nil || boardID != nil || exerciseScope != nil || showsSchedule else { return }
         noteRef = nil       // PDF 与 md 笔记互斥
         exerciseScope = nil // 与习题也互斥（习题标签没有要结清的东西：作答当场就落库了）
+        showsSchedule = false   // 与日程也互斥（日程同样当场落库）
+        scheduleFocus = nil
         leaveBoard()        // 与画板也互斥（先结清画板的落库再清状态）
         // 打开耗时账本从这一刻起算（用户点下去 = 这里）。上一本还没齐的按中断结账。
         session.openTrace?.finish("中断：换文档")
@@ -461,7 +473,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// （平板广播等仍只认 PDF）；Markdown 标签由 `TabsModel` 的混合标签组单独持久化。
     func openMarkdown(_ ref: NoteRef) {
         guard noteRef != ref else { return }
-        if docID != nil || boardID != nil || exerciseScope != nil { select(nil) }
+        if docID != nil || boardID != nil || exerciseScope != nil || showsSchedule { select(nil) }
         noteRef = ref
         staged = false
         workspace.noteWasOpened(ref)
@@ -473,11 +485,33 @@ final class DocTabModel: ObservableObject, Identifiable {
     func openExercises(_ scope: ExerciseScope, separate: Bool = false) {
         if exerciseSeparate != separate { exerciseSeparate = separate }
         guard exerciseScope != scope else { return }
-        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil { select(nil) }
+        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil || showsSchedule { select(nil) }
         exerciseScope = scope
         staged = false
         session.title = workspace.exerciseScopeTitle(scope)   // 窗口标题读它（同画板）
         app.sessionDocumentChanged(session)
+    }
+
+    /// 打开日程（v26，`SCHEDULE-PLAN.md §4`）：规矩同 `openExercises`，先把别的内容收干净。冷启动恢复也走这里。
+    /// `focus` = 去哪一天 / 选中哪一件（nil = 日程页停在哪就是哪，第一次开是今天）。
+    func openSchedule(focus: ScheduleFocus? = nil) {
+        if let focus { scheduleFocus = focus }
+        guard !showsSchedule else {
+            if focus != nil { objectWillChange.send() }   // 已经开着：让窗格刷一下，日程页取走新的去处
+            return
+        }
+        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil { select(nil) }
+        if let focus { scheduleFocus = focus }   // `select(nil)` 清掉了，重新放上
+        showsSchedule = true
+        staged = false
+        session.title = L("Schedule")   // 窗口标题读它（同习题）
+        app.sessionDocumentChanged(session)
+    }
+
+    /// 日程页取走待处理的去处（取一次就没了）。
+    func takeScheduleFocus() -> ScheduleFocus? {
+        defer { scheduleFocus = nil }
+        return scheduleFocus
     }
 
     /// 这组题的来源文档被删了 → 标签退回空态（全部 / 错题本 / 收藏三个范围永远在，空了只是没题）。

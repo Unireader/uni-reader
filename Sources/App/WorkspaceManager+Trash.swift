@@ -200,6 +200,34 @@ extension Trash {
         }
     }
 
+    /// 把几份日程计划（连同名下的事项）和几件事项归档（`SCHEDULE-PLAN.md §5`）。**调用方随后才可以删。**
+    /// 归档到的计划数对不上同样算失败（事项数不好核：计划名下有几件由库说了算）。
+    @discardableResult
+    static func archiveSchedule(store: LibraryStore, planIds: [String], itemIds: [String], title: String) -> URL? {
+        let workspace = store.workspaceFolder
+        guard let dir = makeDir(in: workspace, title: title) else { return nil }
+        do {
+            let a = try store.archiveSchedule(planIds: planIds, itemIds: itemIds,
+                                              to: dir.appendingPathComponent(snapshotName).path)
+            guard a.counts.schedulePlan == planIds.count, a.counts.scheduleItem >= itemIds.count else {
+                throw NSError(domain: "UniReader", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "archived \(a.counts.schedulePlan) of \(planIds.count) plans, "
+                        + "\(a.counts.scheduleItem) items for \(itemIds.count) requested"])
+            }
+            var m = Manifest()
+            m.kind = .schedule
+            m.title = title
+            m.counts = a.counts
+            try encode(m).write(to: dir.appendingPathComponent(manifestName))
+            wsLog("[TRASH] 日程已移入回收站：\(title)（计划 \(planIds.count) 份、事项 \(a.counts.scheduleItem) 件）")
+            return dir
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            wsLog("[TRASH] ⚠️ 日程归档失败，删除已放弃：\(title) — \(error)")
+            return nil
+        }
+    }
+
     /// 建一个空的条目目录（名字不撞）。
     private static func makeDir(in workspace: URL, title: String) -> URL? {
         let fm = FileManager.default
@@ -325,6 +353,7 @@ extension WorkspaceManager {
         reconcileAndPurgeImages()   // 图片的待删除标记要跟着摘掉
         if entry.manifest.kind == .agentContexts { agentContextsChanged() }
         if entry.manifest.kind == .agentMemories { agentMemoriesChanged() }
+        if entry.manifest.kind == .schedule { scheduleChanged() }
         if entry.manifest.kind == .annotations {
             NotificationCenter.default.post(name: Trash.annotationsRestored, object: self,
                                             userInfo: ["documentId": entry.manifest.documentId])

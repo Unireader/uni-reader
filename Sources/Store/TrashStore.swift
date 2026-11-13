@@ -28,6 +28,8 @@ enum TrashStore {
     static let agentContextTables = ["agent_context"]
     /// Agent 记忆条目（v25，`ACP-AGENT-PLAN.md §21`）：一张表、没有子表。
     static let agentMemoryTables = ["agent_memory"]
+    /// 日程条目（v26，`SCHEDULE-PLAN.md`）：几份计划连同它们的事项，或单独几件事项。计划在前（恢复时先有计划）。
+    static let scheduleTables = ["schedule_plan", "schedule_item"]
 
     /// 页内笔迹的 note.kind（与 `InkStroke.noteKind` 同值，这里不引 App 层的类型）。
     private static let inkKind = 2
@@ -53,11 +55,14 @@ enum TrashStore {
         var agentContext = 0
         /// Agent 记忆（v25）。
         var agentMemory = 0
+        /// 日程（v26）：计划、事项。
+        var schedulePlan = 0
+        var scheduleItem = 0
 
         /// 「一共多少条会跟着一起没」——确认框里那个数。
         var total: Int {
             ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage + exercise
-                + agentContext + agentMemory
+                + agentContext + agentMemory + schedulePlan + scheduleItem
         }
 
         init() {}
@@ -72,6 +77,7 @@ enum TrashStore {
             exercise = v(.exercise)
             agentContext = v(.agentContext)
             agentMemory = v(.agentMemory)
+            schedulePlan = v(.schedulePlan); scheduleItem = v(.scheduleItem)
         }
     }
 
@@ -129,7 +135,7 @@ enum TrashStore {
         }
     }
 
-    /// 把几份 Agent 上下文搬进快照库（Agent 面板「删除」/ MCP，`ACP-AGENT-PLAN.md §12`）。
+    /// 把几条 Agent 记忆搬进快照库（管理窗口 / MCP `delete_memory`，`ACP-AGENT-PLAN.md §21`）。
     static func archiveAgentMemories(_ db: SQLiteDB, ids: [String], to path: String) throws -> Archived {
         try withAttached(db, path: path) { t in
             let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
@@ -139,6 +145,23 @@ enum TrashStore {
         }
     }
 
+    /// 把日程搬进快照库（日程页「删除」/ MCP `delete_schedule`，`SCHEDULE-PLAN.md §5`）：`planIds` 这几份计划
+    /// 连同它们名下的全部事项，再加上 `itemIds` 这几件单独的事项。两样都可以空（不能都空，调用方保证）。
+    static func archiveSchedule(_ db: SQLiteDB, planIds: [String], itemIds: [String], to path: String) throws -> Archived {
+        try withAttached(db, path: path) { t in
+            func marks(_ n: Int) -> String { n == 0 ? "NULL" : Array(repeating: "?", count: n).joined(separator: ",") }
+            let p = planIds.map { SQLiteDB.Value.text($0) }
+            let i = itemIds.map { SQLiteDB.Value.text($0) }
+            try db.run("CREATE TABLE \(t).schedule_plan AS SELECT * FROM main.schedule_plan WHERE id IN (\(marks(p.count)))", p)
+            try db.run("""
+            CREATE TABLE \(t).schedule_item AS SELECT * FROM main.schedule_item
+            WHERE id IN (\(marks(i.count))) OR plan_id IN (\(marks(p.count)))
+            """, i + p)
+            return try summarize(db, schema: t)
+        }
+    }
+
+    /// 把几份 Agent 上下文搬进快照库（Agent 面板「删除」/ MCP，`ACP-AGENT-PLAN.md §12`）。
     static func archiveAgentContexts(_ db: SQLiteDB, ids: [String], to path: String) throws -> Archived {
         try withAttached(db, path: path) { t in
             let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
@@ -229,7 +252,7 @@ enum TrashStore {
             let present = try tableNames(db, schema: t)
             var written = 0
             try db.transaction {
-                for table in documentTables + boardTables + agentContextTables + agentMemoryTables
+                for table in documentTables + boardTables + agentContextTables + agentMemoryTables + scheduleTables
                     where present.contains(table) {
                     if remapDocumentId != nil, ["document", "variant", "location"].contains(table) { continue }
                     let cols = try columnNames(db, schema: t, table: table)
@@ -337,6 +360,12 @@ enum TrashStore {
         }
         if present.contains("agent_memory") {
             out.counts.agentMemory = try count(db, schema: t, table: "agent_memory")
+        }
+        if present.contains("schedule_plan") {
+            out.counts.schedulePlan = try count(db, schema: t, table: "schedule_plan")
+        }
+        if present.contains("schedule_item") {
+            out.counts.scheduleItem = try count(db, schema: t, table: "schedule_item")
         }
         if present.contains("ink_layer") { out.counts.inkLayer = try count(db, schema: t, table: "ink_layer") }
         if present.contains("scratch_pad") { out.counts.scratchPad = try count(db, schema: t, table: "scratch_pad") }

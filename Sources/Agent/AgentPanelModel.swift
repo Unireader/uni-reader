@@ -131,6 +131,13 @@ final class AgentPanelModel: ObservableObject {
                                      docTitle: s.title, page: s.currentPageIndex,
                                      pageCount: s.pdf?.pageCount ?? 0, markdown: markdown)
         if let scope = tab.exerciseScope { ctx.exercise = exerciseTab(scope, in: c.workspace) }
+        if tab.showsSchedule {
+            ctx.scheduleDay = tab.scheduleShownDay.isEmpty ? ScheduleDay.today() : tab.scheduleShownDay
+            if let id = tab.scheduleSelectedItem, let m = c.workspace.scheduleItem(id: id) {
+                ctx.scheduleItemId = m.id
+                ctx.scheduleItemTitle = m.title
+            }
+        }
         return ctx
     }
 

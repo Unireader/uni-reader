@@ -18,6 +18,8 @@ check(NoteIndex.pdfAnchor("马原.pdf#page=3&selection=1,2") == ("马原.pdf", 3
 check(NoteIndex.pdfAnchor("马原#page=3|第三页") == ("马原", 3), "带别名")
 check(NoteIndex.pdfAnchor("马原#page=3\\") == ("马原", 3), "表格里转义竖线留下的反斜杠")
 check(NoteIndex.pdfAnchor("马原#第一章").page == nil && NoteIndex.pdfAnchor("马原#第一章").name == "马原", "别的锚点不是页")
+check(NoteIndex.pdfAnchor("2027计算机网络_高清带书签版#p=71") == ("2027计算机网络_高清带书签版", 71), "简写 #p=71 也是页（Agent 这么写过）")
+check(NoteIndex.pdfAnchor("马原#P=5|第五页") == ("马原", 5), "#P= 不分大小写、带别名")
 check(NoteIndex.pdfAnchor("马原#page=0").page == nil, "page=0 不算")
 
 print("— 2) 书 / 笔记 / 别名")

@@ -10,7 +10,7 @@
 > 本文件从此**不挂验收类条目**——落地即算完，真出了问题按 bug 记进「已知欠账」。
 
 - 构建 / 结构 / 红线 / 文档地图见 `AGENTS.md`。两端（Mac / 安卓两模式）+ 服务器与它自带的网页的跨端契约 = `PROTOCOL.md`
-  + 工作区 SQLite schema（现 v24，`Sources/Store/`）。
+  + 工作区 SQLite schema（现 v26，`Sources/Store/`）。
 - 已落地的大块（细节按日期查 `HISTORY.md`，专题看 `AGENTS.md` 文档地图列的方案文档）：阅读区 v2 纯 SwiftUI 页图流 /
   多窗口 + 多标签页 / 工作区 `.unrd` 包 + 离线镜像双向同步 / 二进制协议 + UDP / 平板采集页 + 安卓两模式 /
   多图层笔迹 + 自由框选（光晕、手柄缩放）+ 撤销与剪贴板 + 按页窗口装载 / 草稿纸四端 / PDF 画板模式三端 /
@@ -42,10 +42,18 @@
    发版时合进 `xvan`、打 `0.15.0-xvan.3`，`project.yml` 换回 `url` + `exactVersion`（现临时 `path:`，别的机器拉 main 编不过）。
    细节 `docs/agents/BUILD-DETAILS.md` 引擎那条。
 
-0b. **安卓插桩测试（schema v25）**（2026-11-13）：安卓已建 `agent_memory` / `agent_turn` 两张表、随同步、回收站认 `agentMemories`（JVM 单测 228 全过），
+0b. **安卓插桩测试（schema v25 + v26）**（2026-11-13）：安卓已建 `agent_memory` / `agent_turn`（v25）与日程 `schedule_plan` / `schedule_item`（v26）四张表、
+   随同步、回收站认 `agentMemories` / `schedule`（JVM 单测 228 全过），
    但建库 / 回收站的插桩测试要接平板跑（接的是 iQOO 主力机时别跑：跑完会卸载 App、清数据）：
    `cd android && ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.xvan.unireader.local.WorkspaceCreateTest`，`TrashTest` 同理。
-   安卓的改动未提交（仓库里另有用户自己没提交的 `AGENTS.md` / gradle 两处）。
+   安卓的改动已推送（安卓仓库 `9d901df`；`cae44d0` 是之前就改好的 Gradle 9.8.0 / JDK 27，单独一次提交），打成 0.3.19（`30f3b45`，tag `2026-11-13-1`）。
+
+0c. **服务器 0.5.0（v26）发到 GitHub**（2026-11-13）：NAS 上已换成本机交叉编译的 0.5.0（用户说先换 NAS、后发 GitHub；
+   换之前 NAS 远端端到端 95 项全过，旧的 0.4.0 留在 `unireader-server.prev`）。代码里 `ServerInfo.version` 已改成 0.5.0（已提交、已推送）。
+   发版时写 `server/release-notes/v0.5.0.md`，顺带改正 0.4.0 发布说明里「旧版 App 连新服务器照常」这句——
+   服务器推送要求数据版本**完全一致**（`HostedWorkspace.push`），版本不同的 App / 平板只能拉、不能推。
+
+0d. **日程平板界面**（`SCHEDULE-PLAN.md §9`）：今天的待办、打勾；重复事项、到点提醒、所有工作区合在一起看都还没做。
 
 1. **安卓模式2：标签页共存，换文档不再重置**（2026-09-07 用户定方向，**方案待写 → `ANDROID-MODE2-PLAN.md`**）。
 

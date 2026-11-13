@@ -108,6 +108,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.syncSelectionFromTabs() }
             .store(in: &bag)
+        // 日程变了（打勾 / 加 / Agent 排计划）：只重画「日程」那一行的「做完 / 今天几件」，不重建列表
+        NotificationCenter.default.publisher(for: .scheduleDidChange, object: workspace)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.reloadScheduleRow() }
+            .store(in: &bag)
         // 服务器工作区的书在下载：就地改那一行的进度，不重建列表
         ServerSyncCoordinator.shared.$downloads
             .receive(on: DispatchQueue.main)
@@ -233,6 +238,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let scrolledTo = scroll.contentView.bounds.origin
         var r: [SidebarNode] = []
         if let notice { r.append(SidebarNode(kind: .notice(notice))) }
+        // 日程（v26，`SCHEDULE-PLAN.md §4`）：最上面一行，行尾是今天「做完 / 共几件」
+        if workspace.store != nil { r.append(SidebarNode(kind: .schedule)) }
         let docs = workspace.documents
         if workspace.groups.isEmpty {
             let sec = SidebarNode(kind: .section(group: nil, title: workspace.name.isEmpty ? L("Library") : workspace.name))
@@ -381,11 +388,23 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return false
     }
 
+    /// 「日程」那一行就地重画（行尾的数）。
+    private func reloadScheduleRow() {
+        guard let node = roots.first(where: { if case .schedule = $0.kind { return true } else { return false } }) else { return }
+        outline.reloadItem(node)
+    }
+
     // MARK: 行视图
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let n = item as? SidebarNode else { return nil }
         switch n.kind {
+        case .schedule:
+            let today = ScheduleDay.today()
+            let items = workspace.scheduleItems(from: today, to: today)
+            let cell = countCell(symbol: "calendar", title: L("Schedule"), count: items.count, done: items.filter(\.isDone).count)
+            cell.toolTip = L("Calendar and to-dos. The number is what’s done of today’s items.")
+            return cell
         case .section(_, let title):
             let cell = NSTableCellView()
             let t = NSTextField(labelWithString: title)
@@ -589,7 +608,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let ids = selectedRowIDs()
         guard ids.count == 1, let id = ids.first, id != tabs.active.rowID else { return }
         syncingSelection = true
-        if let scope = ExerciseScope(rowID: id) {
+        if id == ScheduleFocus.rowID {
+            tabs.openSchedule()
+        } else if let scope = ExerciseScope(rowID: id) {
             tabs.openExercises(scope)
         } else if id.hasPrefix("md:"), let ref = NoteRef(key: String(id.dropFirst(3))) {
             tabs.openMarkdown(ref)
@@ -828,6 +849,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func displayName(_ n: SidebarNode) -> String {
         switch n.kind {
         case .notice: return ""
+        case .schedule: return L("Schedule")
         case .section(_, let title): return title
         case .doc(let d): return d.title
         case .md(let note): return note.title
@@ -843,7 +865,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 这一行在 Agent 那边是什么（`AgentMention+Workspace`）。
     private func mention(_ n: SidebarNode) -> AgentMention? {
         switch n.kind {
-        case .notice: return nil
+        case .notice, .schedule: return nil
         case .section(let group, let title):
             let docs = n.children.compactMap { if case .doc(let d) = $0.kind { d } else { nil } }
             switch group {
@@ -1562,6 +1584,8 @@ final class SidebarNode: NSObject {
         /// 行尾是「已做 / 共」（§16；`done` 为 nil 的错题本那一支只显示题数）。
         case exercise(ExerciseScope, title: String, count: Int, done: Int?)
         case exerciseSection
+        /// 日程（v26，`SCHEDULE-PLAN.md §4`）：最上面一行，点了打开日程标签。
+        case schedule
     }
     let kind: Kind
     var children: [SidebarNode] = []
@@ -1590,6 +1614,7 @@ final class SidebarNode: NSObject {
         if let n = note { return "md:" + n.ref.key }
         if let b = board { return BoardNote.rowPrefix + b.id.uuidString }
         if case .exercise(let scope, _, _, _) = kind { return scope.rowID }
+        if case .schedule = kind { return ScheduleFocus.rowID }
         return docID
     }
 }

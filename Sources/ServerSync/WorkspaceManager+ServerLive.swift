@@ -22,6 +22,9 @@ extension WorkspaceManager {
         if !tables.isDisjoint(with: ["board_note", "board_page", "board_item"]) { refreshBoards() }
         // 习题：数重算，开着的练习页 / 列表跟着重读（就地刷新快照，不会把眼前的题换掉，见 `ExerciseDeck.reload`）
         if !tables.isDisjoint(with: ["exercise", "exercise_attempt"]) { exercisesChangedRemotely() }
+        // Agent 记忆 / 日程：开着的管理窗口、日程页、Inspector「今天」跟着重读
+        if tables.contains("agent_memory") { agentMemoriesChanged() }
+        if !tables.isDisjoint(with: ["schedule_plan", "schedule_item"]) { scheduleChanged() }
         let boardTouched = !tables.isDisjoint(with: ["board_note", "board_page", "board_item"])
         for tab in openTabs {
             tab.applyRemote(rows)

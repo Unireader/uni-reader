@@ -330,12 +330,14 @@ struct NoteIndex {
     }
 
     /// `书名#page=12` / `书名.pdf#page=12&…` / `书名#page=12|别名` → (书名, 12)。没有 `page=` → (名字, nil)。页码 1 起。
+    /// 也认简写 `#p=12`（Agent 有时这么写，2026-11-13 用户实测日程里出现过）。
     static func pdfAnchor(_ raw: String) -> (name: String, page: Int?) {
         var head = raw
         if let bar = head.range(of: "|") { head = String(head[..<bar.lowerBound]) }
         if head.hasSuffix("\\") { head.removeLast() }
         let name = MarkdownLink.linkTarget(raw)
-        guard let r = head.range(of: "#page=", options: .caseInsensitive) else { return (name, nil) }
+        guard let r = head.range(of: "#page=", options: .caseInsensitive)
+                ?? head.range(of: "#p=", options: .caseInsensitive) else { return (name, nil) }
         let digits = head[r.upperBound...].prefix { $0.isNumber }
         return (String(head[..<r.lowerBound]).trimmingCharacters(in: .whitespaces), Int(digits).flatMap { $0 > 0 ? $0 : nil })
     }

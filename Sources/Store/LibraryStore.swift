@@ -8,7 +8,7 @@ import CoreGraphics    // Linux 上 CGRect 等由 Foundation 提供（服务器�
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 25
+    static let schemaVersion = 26
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -134,6 +134,14 @@ final class LibraryStore {
     /// 把几条 Agent 记忆归档（v25）。
     func archiveAgentMemories(ids: [String], to path: String) throws -> TrashStore.Archived {
         try TrashStore.archiveAgentMemories(db, ids: ids, to: path)
+    }
+
+    /// 工作区统计（MCP `workspace_stats`，`MCP-PLAN.md §38`）：只 COUNT / SUM / GROUP BY，不读正文。实现在 `StatsStore`。
+    func stats(_ q: StatsStore.Query) throws -> StatsStore.Report { try StatsStore.collect(db, q) }
+
+    /// 把日程归档（v26）：几份计划连同名下的事项 + 几件单独的事项。
+    func archiveSchedule(planIds: [String], itemIds: [String], to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveSchedule(db, planIds: planIds, itemIds: itemIds, to: path)
     }
 
     /// 恢复前探路：这份快照的 PDF 已经被重新导入过吗（返回要并入的那篇文档 id）。
@@ -400,6 +408,39 @@ final class LibraryStore {
           updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_agent_turn_conversation ON agent_turn(conversation_id, created_at);
+        -- v26：日程（`SCHEDULE-PLAN.md`）。计划 = 一组事项（多半是 Agent 一次排出来的，比如「第三章复习，两周」），
+        -- goal = 这份计划要达成什么；agent = 排它的 Agent 的名字（用户自己建的为空串）。
+        -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
+        CREATE TABLE IF NOT EXISTS schedule_plan (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL DEFAULT '',
+          goal TEXT NOT NULL DEFAULT '',
+          agent TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        -- v26：日程事项。plan_id 空串 = 不属于哪份计划（用户随手加的）。day = 'YYYY-MM-DD'（本地日历日，不带时区），
+        -- 空串 = 还没排日期；start_min = 当天第几分钟开始（-1 = 不定时），duration_min = 预计多少分钟（0 = 没说）；
+        -- done_at = 做完的时间（ISO 8601，空串 = 没做完），result = 做完后写的一句「做得怎样」（Agent 据此调整后面的计划）；
+        -- seq = 同一天里的先后。detail 是 Markdown，可写 [[书名#page=12]] 这类链接（关系只从正文里认，不另存）。
+        -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
+        CREATE TABLE IF NOT EXISTS schedule_item (
+          id TEXT PRIMARY KEY,
+          plan_id TEXT NOT NULL DEFAULT '',
+          title TEXT NOT NULL DEFAULT '',
+          detail TEXT NOT NULL DEFAULT '',
+          day TEXT NOT NULL DEFAULT '',
+          start_min INTEGER NOT NULL DEFAULT -1,
+          duration_min INTEGER NOT NULL DEFAULT 0,
+          done_at TEXT NOT NULL DEFAULT '',
+          result TEXT NOT NULL DEFAULT '',
+          seq INTEGER NOT NULL DEFAULT 0,
+          agent TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_schedule_item_day ON schedule_item(day);
+        CREATE INDEX IF NOT EXISTS idx_schedule_item_plan ON schedule_item(plan_id);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -460,6 +501,7 @@ final class LibraryStore {
         // v23 → v24：题目标签。🔴 顺序与安卓 `Schema.ADD_COLUMNS` 一致（也是 `MirrorFp.specs` 的列序）。
         try addColumnIfMissing("exercise", "tags", "TEXT NOT NULL DEFAULT ''")
         // v24 → v25 只新增 agent_memory、agent_turn 两张表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
+        // v25 → v26 只新增 schedule_plan、schedule_item 两张表（同上，无需 ALTER）。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -1673,6 +1715,113 @@ final class LibraryStore {
         }
     }
 
+    // MARK: - 日程（schedule_plan / schedule_item，v26；`SCHEDULE-PLAN.md`）
+
+    /// 全部计划，最近建的在前。
+    func schedulePlans() throws -> [LibSchedulePlan] {
+        try db.query("SELECT * FROM schedule_plan ORDER BY created_at DESC, id").map(Self.schedulePlan)
+    }
+    func schedulePlan(id: String) throws -> LibSchedulePlan? {
+        try db.query("SELECT * FROM schedule_plan WHERE id=?", [.text(id)]).map(Self.schedulePlan).first
+    }
+    /// 新建或整行覆盖（同 id）。`updated_at` 由调用方给。
+    func upsertSchedulePlan(_ p: LibSchedulePlan) throws {
+        try db.run("""
+        INSERT INTO schedule_plan(id, title, goal, agent, created_at, updated_at) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, goal=excluded.goal, agent=excluded.agent,
+          updated_at=excluded.updated_at
+        """, [.text(p.id), .text(p.title), .text(p.goal), .text(p.agent),
+              .text(ISO.string(p.createdAt)), .text(ISO.string(p.updatedAt))])
+    }
+
+    /// 每份计划的事项数与做完的数（计划 id → (共, 做完)；不属于哪份计划的记在空串下）。
+    func schedulePlanCounts() throws -> [String: (total: Int, done: Int)] {
+        var out: [String: (total: Int, done: Int)] = [:]
+        for r in try db.query("""
+        SELECT plan_id, COUNT(*) AS n, SUM(CASE WHEN done_at <> '' THEN 1 ELSE 0 END) AS d
+        FROM schedule_item GROUP BY plan_id
+        """) {
+            out[r["plan_id"] as? String ?? ""] = (Int(r["n"] as? Int64 ?? 0), Int(r["d"] as? Int64 ?? 0))
+        }
+        return out
+    }
+
+    func scheduleItem(id: String) throws -> LibScheduleItem? {
+        try db.query("SELECT * FROM schedule_item WHERE id=?", [.text(id)]).map(Self.scheduleItem).first
+    }
+
+    /// 事项排序：日子 → 不定时的在前、定了时间的按开始时间 → 同一天里的先后 → 建的先后。
+    private static let scheduleOrder = "ORDER BY day, start_min, seq, created_at, id"
+
+    /// 排在 `from`…`to`（含两头，`YYYY-MM-DD`）之间的事项；`planId` 非 nil = 只要这份计划的。
+    func scheduleItems(from: String, to: String, planId: String? = nil) throws -> [LibScheduleItem] {
+        var sql = "SELECT * FROM schedule_item WHERE day <> '' AND day >= ? AND day <= ?"
+        var params: [SQLiteDB.Value] = [.text(from), .text(to)]
+        if let planId { sql += " AND plan_id=?"; params.append(.text(planId)) }
+        return try db.query(sql + " " + Self.scheduleOrder, params).map(Self.scheduleItem)
+    }
+    /// 一份计划的全部事项（没排日期的排最后）。
+    func scheduleItems(planId: String) throws -> [LibScheduleItem] {
+        try db.query("SELECT * FROM schedule_item WHERE plan_id=? ORDER BY day = '', day, start_min, seq, created_at, id",
+                     [.text(planId)]).map(Self.scheduleItem)
+    }
+    /// id 以 `prefix` 开头的事项（MCP 认 8 位前缀用；不分大小写）。
+    func scheduleItems(idPrefix prefix: String) throws -> [LibScheduleItem] {
+        try db.query("SELECT * FROM schedule_item WHERE upper(id) LIKE upper(?) || '%' ESCAPE '\\' LIMIT 5",
+                     [.text(prefix.replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_"))])
+            .map(Self.scheduleItem)
+    }
+    /// 还没排日期的事项。
+    func undatedScheduleItems() throws -> [LibScheduleItem] {
+        try db.query("SELECT * FROM schedule_item WHERE day = '' ORDER BY seq, created_at, id").map(Self.scheduleItem)
+    }
+    /// 过期没做完的：排在 `day` 之前（不含）、还没打勾的。
+    func overdueScheduleItems(before day: String) throws -> [LibScheduleItem] {
+        try db.query("SELECT * FROM schedule_item WHERE day <> '' AND day < ? AND done_at = '' " + Self.scheduleOrder,
+                     [.text(day)]).map(Self.scheduleItem)
+    }
+    /// 某一天里下一件不定时事项的 `seq`（排在最后）。
+    func nextScheduleSeq(day: String) throws -> Int {
+        let r = try db.query("SELECT MAX(seq) AS m FROM schedule_item WHERE day=?", [.text(day)]).first
+        return Int(r?["m"] as? Int64 ?? 0) + 1
+    }
+
+    /// 新建或整行覆盖（同 id），一批在一个事务里写。`updated_at` 由调用方给。
+    func upsertScheduleItems(_ items: [LibScheduleItem]) throws {
+        guard !items.isEmpty else { return }
+        try db.transaction {
+            for m in items {
+                try db.run("""
+                INSERT INTO schedule_item(id, plan_id, title, detail, day, start_min, duration_min, done_at, result, seq,
+                  agent, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET plan_id=excluded.plan_id, title=excluded.title, detail=excluded.detail,
+                  day=excluded.day, start_min=excluded.start_min, duration_min=excluded.duration_min,
+                  done_at=excluded.done_at, result=excluded.result, seq=excluded.seq, agent=excluded.agent,
+                  updated_at=excluded.updated_at
+                """, [.text(m.id), .text(m.planId), .text(m.title), .text(m.detail), .text(m.day),
+                      .int(Int64(m.startMin)), .int(Int64(m.durationMin)), .text(m.doneAt.map(ISO.string) ?? ""),
+                      .text(m.result), .int(Int64(m.seq)), .text(m.agent),
+                      .text(ISO.string(m.createdAt)), .text(ISO.string(m.updatedAt))])
+            }
+        }
+    }
+
+    /// 删几份计划（连同名下的事项）和几件事项。归档进回收站由上层先做（红线⑪）。
+    func deleteSchedule(planIds: [String], itemIds: [String]) throws {
+        try db.transaction {
+            if !planIds.isEmpty {
+                let marks = Array(repeating: "?", count: planIds.count).joined(separator: ",")
+                let p = planIds.map { SQLiteDB.Value.text($0) }
+                try db.run("DELETE FROM schedule_item WHERE plan_id IN (\(marks))", p)
+                try db.run("DELETE FROM schedule_plan WHERE id IN (\(marks))", p)
+            }
+            if !itemIds.isEmpty {
+                let marks = Array(repeating: "?", count: itemIds.count).joined(separator: ",")
+                try db.run("DELETE FROM schedule_item WHERE id IN (\(marks))", itemIds.map { .text($0) })
+            }
+        }
+    }
+
     // MARK: - 页面几何缓存（page_geom）
 
     /// 某内容的每页高度（文档单位）；没缓存或页数对不上 → nil（上层按 PDF 现算并回填）。
@@ -1793,6 +1942,25 @@ final class LibraryStore {
     }
 
     // MARK: - 行 → 模型
+
+    private static func schedulePlan(_ r: [String: Any]) -> LibSchedulePlan {
+        LibSchedulePlan(id: r["id"] as? String ?? "", title: r["title"] as? String ?? "",
+                        goal: r["goal"] as? String ?? "", agent: r["agent"] as? String ?? "",
+                        createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                        updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
+
+    private static func scheduleItem(_ r: [String: Any]) -> LibScheduleItem {
+        let done = r["done_at"] as? String ?? ""
+        return LibScheduleItem(id: r["id"] as? String ?? "", planId: r["plan_id"] as? String ?? "",
+                               title: r["title"] as? String ?? "", detail: r["detail"] as? String ?? "",
+                               day: r["day"] as? String ?? "", startMin: Int(r["start_min"] as? Int64 ?? -1),
+                               durationMin: Int(r["duration_min"] as? Int64 ?? 0),
+                               doneAt: done.isEmpty ? nil : (ISO.date(done) ?? .now), result: r["result"] as? String ?? "",
+                               seq: Int(r["seq"] as? Int64 ?? 0), agent: r["agent"] as? String ?? "",
+                               createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                               updatedAt: ISO.date(r["updated_at"] as? String) ?? .now)
+    }
 
     private static func agentMemory(_ r: [String: Any]) -> LibAgentMemory {
         LibAgentMemory(id: r["id"] as? String ?? "", content: r["content"] as? String ?? "",

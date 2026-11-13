@@ -189,6 +189,15 @@ final class MCPServer: ObservableObject {
     list_agent_contexts and read it with read_agent_context; save one with save_agent_context only when the user asks. \
     Memories (Agent 记忆) are short long-term facts agents saved in the workspace for later conversations: read them \
     with list_memories at the start of a task. \(AgentMemoryText.instructions) \
+    The schedule (日程, calendar + to-dos) holds the user's plans and daily items, per workspace: list_schedule reads it \
+    (today and the next two weeks, overdue items, items with no day, and the user's notes on how finished items went); \
+    when the user asks you to plan their study, check their progress first, then write the plan with add_schedule_items \
+    as one plan (one concrete task per item, on a day, with [[book title#page=N]] links in detail); reschedule, tick off \
+    or rewrite items with update_schedule_items; delete_schedule removes items or whole plans (to the Trash); \
+    open_schedule shows a day or an item to the user. \
+    To count things — documents, pages read, annotations, notes, exercises (done, right, wrong, mistakes, starred, \
+    tags), practice per day, schedule progress, memories, conversations — call workspace_stats instead of reading \
+    whole lists. \
     \(MCPTools.mathWriting) \
     \(MCPTools.graphWriting) \
     Most PDF tools default to the document in the key window when no target is given. \

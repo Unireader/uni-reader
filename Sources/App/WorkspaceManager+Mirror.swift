@@ -256,6 +256,7 @@ extension WorkspaceManager {
             opened?.refresh()
             self.reconcileAndPurgeImages()      // 合并后图片的引用可能变了：对账 + 清缓存（`imageInfo`）
             opened?.reconcileAndPurgeImages()
+            for w in [self, opened].compactMap({ $0 }) { w.agentMemoriesChanged(); w.scheduleChanged() }   // 管理窗口 / 日程页重读
         }
         return r
     }
@@ -315,6 +316,7 @@ extension WorkspaceManager {
             opened?.refresh()
             self.reconcileAndPurgeImages()
             opened?.reconcileAndPurgeImages()
+            for w in [self, opened].compactMap({ $0 }) { w.agentMemoriesChanged(); w.scheduleChanged() }
         }
         return r
     }

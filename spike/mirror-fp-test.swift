@@ -101,8 +101,17 @@ check(MirrorFp.spec("note")?.columns.map(\.name) ==
        "payload", "created_at", "updated_at"], "note 列表")
 check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc",
                                      "board_note", "board_page", "board_item", "exercise", "exercise_attempt",
-                                     "agent_context", "agent_memory", "agent_turn", "meta"],
-      "参与同步的表恰好 15 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张、v23 Agent 上下文、v25 Agent 记忆与对话记录）")
+                                     "agent_context", "agent_memory", "agent_turn", "schedule_plan", "schedule_item",
+                                     "meta"],
+      "参与同步的表恰好 17 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张、v23 Agent 上下文、v25 Agent 记忆与对话记录、v26 日程两张）")
+check(MirrorFp.spec("schedule_plan")?.columns.map(\.name) == ["id", "title", "goal", "agent", "created_at", "updated_at"]
+      && MirrorFp.spec("schedule_plan")?.lww == "updated_at",
+      "schedule_plan 列表（v26）+ 按 updated_at 取新")
+check(MirrorFp.spec("schedule_item")?.columns.map(\.name) ==
+      ["id", "plan_id", "title", "detail", "day", "start_min", "duration_min", "done_at", "result", "seq", "agent",
+       "created_at", "updated_at"]
+      && MirrorFp.spec("schedule_item")?.lww == "updated_at",
+      "schedule_item 列表（v26）+ 按 updated_at 取新")
 check(MirrorFp.spec("agent_memory")?.columns.map(\.name) == ["id", "content", "agent", "created_at", "updated_at"]
       && MirrorFp.spec("agent_memory")?.lww == "updated_at",
       "agent_memory 列表（v25）+ 按 updated_at 取新")
@@ -268,6 +277,23 @@ let tableCases: [(String, [String: Any])] = [
         "user_text": "QAM-16 每个码元几比特？",
         "reply_text": "**4 比特**：16 = 2^4。\n\n- 码元速率 × 4 = 比特率",
         "created_at": "2026-11-13T08:10:00.000Z", "updated_at": "2026-11-13T08:10:00.000Z",
+    ] as [String: Any]),
+    // v26 日程计划（2026-11-13，`SCHEDULE-PLAN.md`）
+    ("schedule_plan", [
+        "id": "12121212-1212-4121-8121-121212121212",
+        "title": "第三章复习（两周）", "goal": "11 月底前把第三章数据链路层过完，错题清零",
+        "agent": "Kimi",
+        "created_at": "2026-11-13T10:00:00.000Z", "updated_at": "2026-11-13T10:00:00.000Z",
+    ] as [String: Any]),
+    // v26 日程事项：定了时间、做完了、带一句结果和一个书页链接
+    ("schedule_item", [
+        "id": "34343434-3434-4343-8343-343434343434",
+        "plan_id": "12121212-1212-4121-8121-121212121212",
+        "title": "读 3.4 滑动窗口", "detail": "读 [[王道计算机网络#page=88]] 到第 96 页，做课后 1–6 题",
+        "day": "2026-11-14", "start_min": Int64(570), "duration_min": Int64(90),
+        "done_at": "2026-11-14T03:20:00.000Z", "result": "GBN 和 SR 的窗口大小还要再看",
+        "seq": Int64(1), "agent": "Kimi",
+        "created_at": "2026-11-13T10:00:00.000Z", "updated_at": "2026-11-14T03:20:00.000Z",
     ] as [String: Any]),
 ]
 for (t, row) in tableCases {

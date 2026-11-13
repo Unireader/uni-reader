@@ -184,6 +184,11 @@ final class AgentMarkdownView: NSView {
     private var height: CGFloat = 0
     /// 高度变了：对话记录据此决定要不要继续贴着底。
     var onHeightChange: (() -> Void)?
+    /// 点了正文里的链接，返回 true = 接手了（见 `AgentBlockContext.openLink`）。
+    var openLink: ((Any) -> Bool)? {
+        get { context.openLink }
+        set { context.openLink = newValue }
+    }
 
     /// 还没显示的新文本（攒着，到点 / 露出来再一起排）。
     private var pendingText: String?

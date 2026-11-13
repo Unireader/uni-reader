@@ -16,7 +16,7 @@ extension MCPTools {
             outputSchema: MCPSchema.object([
                 "window_id": MCPSchema.string("window id"), "session_id": MCPSchema.string("tab / session id"),
                 "workspace": workspaceDTOSchema,
-                "content_type": MCPSchema.enumeration(["empty", "pdf", "markdown", "exercises"], "kind of content in the active tab"),
+                "content_type": MCPSchema.enumeration(["empty", "pdf", "markdown", "exercises", "schedule"], "kind of content in the active tab"),
                 "document_id": MCPSchema.nullable(MCPSchema.string("library document id; null for Markdown or an empty tab")), "title": MCPSchema.string("title"),
                 "page": MCPSchema.integer("page at the top of the viewport, 1-based"), "frac": MCPSchema.number("position inside that page, 0 top … 1 bottom"),
                 "link": MCPSchema.string("unireader:// link that reopens exactly this position"),
@@ -29,6 +29,10 @@ extension MCPTools {
                                                "rects": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")))]),
                 "markdown": markdownDTOSchema(includeText: true),
                 "exercises": MCPSchema.object(exerciseTabProperties, description: "the practice tab (content_type exercises)"),
+                "schedule": MCPSchema.object([
+                    "day": MCPSchema.string("the day the user is looking at, YYYY-MM-DD"),
+                    "item_id": MCPSchema.nullable(MCPSchema.string("the selected schedule item, if any")),
+                ], description: "the schedule tab (content_type schedule); read it with list_schedule"),
             ]),
             tier: .read
         ) { _, args in
@@ -51,6 +55,10 @@ extension MCPTools {
                     lines.append("revision \(note["revision"] ?? "") · \(total) lines · use edit_markdown to change part of it")
                     lines.append("\n--- Markdown text ---\n\(text)")
                 }
+            } else if let sc = v["schedule"] as? MCPObject {
+                lines.append("Schedule tab: looking at \(sc["day"] ?? "")" + ((sc["item_id"] as? String).map { ", item \($0) selected" } ?? ""))
+                lines.append("session_id \(v["session_id"] ?? "") · window_id \(v["window_id"] ?? "")")
+                lines.append("list_schedule reads the items; add_schedule_items / update_schedule_items change them.")
             } else if let ex = v["exercises"] as? MCPObject {
                 lines.append("Exercises tab: " + exerciseTabSummary(ex))
                 lines.append("session_id \(v["session_id"] ?? "") · window_id \(v["window_id"] ?? "")")

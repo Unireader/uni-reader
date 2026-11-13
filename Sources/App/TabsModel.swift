@@ -201,6 +201,32 @@ final class TabsModel: ObservableObject {
         return t
     }
 
+    /// 打开日程（v26，`SCHEDULE-PLAN.md §4`）：一扇窗口至多一个日程标签——开着就切过去（带上要去的地方），
+    /// 当前标签空着就就地开，否则新开一个。
+    @discardableResult
+    func openSchedule(focus: ScheduleFocus? = nil) -> DocTabModel {
+        if let hit = tabs.first(where: { $0.showsSchedule }) {
+            hit.openSchedule(focus: focus)
+            activate(hit.id)
+            persist()
+            return hit
+        }
+        if active.isEmptyTab {
+            active.openSchedule(focus: focus)
+            noteArrival()
+            persist()
+            return active
+        }
+        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
+        tabs.append(t)
+        adoptForNavigation(t)
+        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
+        t.openSchedule(focus: focus)
+        activate(t.id)
+        persist()
+        return t
+    }
+
     /// 某篇文档（或它某一章）的习题标签：文档被删了 → 退回空态（只剩一个标签时不关，同 `pruneMissingBoards`）。
     func pruneMissingExerciseScopes() {
         for t in tabs {
@@ -403,6 +429,8 @@ final class TabsModel: ObservableObject {
         case board(UUID)
         /// `separate` = 右键单独开的那种（`DocTabModel.exerciseSeparate`），键前缀另用 `exs:`。
         case exercises(ExerciseScope, separate: Bool)
+        /// 日程（v26），一扇窗口至多一个。
+        case schedule
 
         static let separateExercisePrefix = "exs:"
 
@@ -412,11 +440,14 @@ final class TabsModel: ObservableObject {
             case .markdown(let ref): return "md:" + ref.key
             case .board(let id): return BoardNote.rowPrefix + id.uuidString
             case .exercises(let scope, let separate): return separate ? Self.separateExercisePrefix + scope.key : scope.rowID
+            case .schedule: return ScheduleFocus.rowID
             }
         }
 
         init?(key: String) {
-            if let scope = ExerciseScope(rowID: key) {
+            if key == ScheduleFocus.rowID {
+                self = .schedule
+            } else if let scope = ExerciseScope(rowID: key) {
                 self = .exercises(scope, separate: false)
             } else if key.hasPrefix(Self.separateExercisePrefix),
                       let scope = ExerciseScope(key: String(key.dropFirst(Self.separateExercisePrefix.count))) {
@@ -441,6 +472,7 @@ final class TabsModel: ObservableObject {
         if let ref = tab.noteRef { return .markdown(ref) }
         if let id = tab.boardID { return .board(id) }
         if let scope = tab.exerciseScope { return .exercises(scope, separate: tab.exerciseSeparate) }
+        if tab.showsSchedule { return .schedule }
         if let id = tab.docID { return .pdf(id) }
         return nil
     }
@@ -451,6 +483,7 @@ final class TabsModel: ObservableObject {
         case .markdown(let ref): return workspace.note(ref: ref) != nil
         case .board(let id): return workspace.boards.contains { $0.id == id }
         case .exercises(let scope, _): return scope.documentId.map { workspace.document(id: $0) != nil } ?? true
+        case .schedule: return true
         }
     }
 
@@ -522,6 +555,8 @@ final class TabsModel: ObservableObject {
                 // 改成「公用一个」之前存下的几个习题标签都算公用：每一支只留第一个，其余按单独开的恢复（每支公用的至多一个）
                 let sep = separate || tabs.contains { $0 !== target && $0.isSharedExerciseTab(for: scope) }
                 target.openExercises(scope, separate: sep)
+            case .schedule:
+                target.openSchedule()   // 存下的组里至多一个（`openSchedule` 保证）
             }
         }
         if let wantActive, restoring.contains(wantActive),

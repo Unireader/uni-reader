@@ -3,6 +3,23 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 日程（日历 + 待办，schema v26）+ 统计工具 `workspace_stats`（2026-11-13，Mac + 服务器同步 + 安卓数据）
+
+- 起因（用户）：「能不能帮我出一个内置日程表，AI 帮我去安排一些计划方案。我做好后就可以更新，类似于日历 + 待办那种」；
+  同一轮又提「agent 还需要加一些统计工具，用于统计各种数量，避免读取全部内容来统计数据这种情况」。问过后定：每个工作区一份、随同步；
+  日程标签页 + Inspector「今天」；Agent 直接写进日程；安卓这轮只跟上数据。方案与实测清单 173–186 见 `SCHEDULE-PLAN.md`。
+- **数据**：`schedule_plan` / `schedule_item` 两张表（v26），进 `MirrorFp.specs`（向量 #38 #39）；删除先进回收站（新种类 `schedule`）。
+- **界面**：侧栏最上面「日程」一行（行尾今天做完 / 共）；日程标签（一扇窗口至多一个）= 月历（可拖着挪日子）+ 那天的待办（过期没做完、没排日期）+ 详情（改了就存，
+  说明里的 `[[…]]` 列成按钮）+「计划」下拉 +「请 Agent 安排…」；Inspector「今天」页读书时打勾、加一件、全部挪到今天。返回键、标签恢复、MCP 状态都认日程标签。
+- **Agent**：MCP 批 8 `list_schedule` / `add_schedule_items` / `update_schedule_items` / `delete_schedule` / `open_schedule`（`MCP-PLAN.md §37`）；
+  新对话第一句话随记忆带一行今天的日程；日程标签上的上下文行；「请 Agent 安排」的隐藏说明写明先看进度再排。
+- **统计** `workspace_stats`（`MCP-PLAN.md §38`，后台助手写的）：书库与阅读进度、批注、笔记、画板、习题（按题型 / 书 / 章 / 标签，错题本、收藏、最近一次对错、待判）、
+  每天的练习、Agent 记忆 / 对话、日程进度，全在 SQL 里数（`Store/StatsStore`，也编进服务器）。
+- 同步时顺手补上：同步拉到 Agent 记忆后管理窗口没刷新（`applyRemoteRows` 漏了 `agent_memory`），离线副本合并完同样补发。
+- 验证：spike schedule 91（新）、workspace-stats 115（新）、mirror-fp 75、agent-memory 54、agent-context 49、exercise 354、store 54、trash 71、nav-history 14、
+  agent-sent-context 19；离屏出图看过月历 / 列表 / 详情（浅深色）；服务器 swift test 57、Linux aarch64 交叉编译、server-client 端到端 95；
+  安卓 JVM 228（安卓仓库 `9d901df`）；Mac Debug 编译通过。真 App 未实测。
+
 ## ✅ Agent 工作区记忆与对话记录（schema v25）；输入框点哪都能输入；工具栏「返回」跨标签（2026-11-13，Mac + 安卓 + 服务器）
 
 - 起因（用户）：「工作区 memory 支持提供给 agent 使用，agent 可以写入记忆，也可以取出记忆」「对话自动向量化为历史记忆」

@@ -6,6 +6,7 @@ import Combine
 /// 只刷新看得见的那一页；会话变化合并到下一拍刷一次，且各页按「数据签名」没变就不重建。
 /// 「Agent」页 = 本窗口的 Agent 对话（2026-09-19 起 Agent 面板只住在这里）；设置里关掉 Agent 就没有这一段。
 /// 「关联」页（2026-11-12，`KNOWLEDGE-LINKS-PLAN.md §5`）：这一页 / 这篇笔记链到哪、被谁引用；PDF 与 Markdown 标签都有。
+/// 「今天」页（2026-11-13，`SCHEDULE-PLAN.md §4.4`）：今天的日程 + 过期没做完的，读书时直接打勾、加一件；不挑标签种类。
 @MainActor
 final class InspectorViewController: NSViewController {
     let tabs: TabsModel
@@ -186,6 +187,21 @@ final class InspectorViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.linksMayHaveChanged() }
             .store(in: &bag)
+        // 日程变了（打勾 / 加 / Agent 排计划 / 同步拉来）：「今天」页重读（内容没变不重建）
+        NotificationCenter.default.publisher(for: .scheduleDidChange, object: workspace)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.tab == .today else { return }
+                self.refreshToday()
+            }
+            .store(in: &bag)
+        NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.tab == .today else { return }
+                self.refreshToday()
+            }
+            .store(in: &bag)
         // 设置里开 / 关 Agent：分段加 / 减最后那段；关掉时对话已被模型结束，视图一并丢掉
         AgentPanelModel.shared.$enabled
             .receive(on: DispatchQueue.main)
@@ -202,7 +218,7 @@ final class InspectorViewController: NSViewController {
         var defs: [(InspectorTab, String, String)] = [
             (.info, "info.circle", L("Info")), (.thumbnails, "rectangle.grid.1x2", L("Thumbnails")),
             (.contents, "list.bullet.indent", L("Contents")), (.notes, "note.text", L("Notes")),
-            (.links, "link", L("Links")),
+            (.links, "link", L("Links")), (.today, "checklist", L("Today")),
         ]
         if AgentPanelModel.shared.enabled { defs.append((.agent, "sparkles", L("Agent"))) }
         let list = defs.map(\.0)
@@ -277,6 +293,7 @@ final class InspectorViewController: NSViewController {
 
     private func applyTab() {
         linksShown = 0   // 列表被别的页占过：回到关联页必须重建
+        todayShown = ""  // 同上：回到「今天」页必须重建
         sectionControl.isHidden = tab != .notes
         sectionControl.selectedSegment = sections.firstIndex(of: notesSection) ?? 0
         lastSignature = ""
@@ -295,7 +312,7 @@ final class InspectorViewController: NSViewController {
         agentPage.isHidden = tab != .agent
         let needsDoc = tab == .info || tab == .notes
         let doc = documentId.flatMap { workspace.document(id: $0) }
-        listScroll.isHidden = !(needsDoc && doc != nil) && tab != .links
+        listScroll.isHidden = !(needsDoc && doc != nil) && tab != .links && tab != .today
         emptyLabel.isHidden = !(needsDoc && doc == nil)
         if needsDoc && doc == nil {
             emptyLabel.stringValue = "\(L("No Document"))\n\(L("Select a document to see its info and notes."))"
@@ -323,6 +340,121 @@ final class InspectorViewController: NSViewController {
             rebuild(notesRows())
         case .links:
             refreshLinks()
+        case .today:
+            refreshToday()
+        }
+    }
+
+    // MARK: 「今天」页（`SCHEDULE-PLAN.md §4.4`）
+
+    /// 上一次上屏的「今天」内容签名（一样就不重建：别处每改一次日程都会通知，列表别跟着闪，输入框也别丢焦点）。
+    private var todayShown = ""
+    /// 「今天」页的输入框（加完一件把光标放回去，连着加）。
+    private weak var todayAddField: NSTextField?
+
+    private func refreshToday() {
+        guard workspace.store != nil else {
+            todayShown = ""
+            rebuild([hint(L("Open a workspace to see its schedule."))])
+            return
+        }
+        let today = ScheduleDay.today()
+        let items = workspace.scheduleItems(from: today, to: today)
+        let overdue = workspace.overdueScheduleItems(before: today)
+        let plans = Dictionary(workspace.schedulePlans.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a })
+        let sig = ([today] + (items + overdue).map { "\($0.id)|\($0.title)|\($0.isDone)|\($0.startMin)|\($0.day)|\($0.durationMin)|\(plans[$0.planId] ?? "")" })
+            .joined(separator: "\n")
+        guard sig != todayShown else { return }
+        let refocus = todayAddField.map { f in view.window?.firstResponder === f.currentEditor() } ?? false
+        todayShown = sig
+        var rows: [NSView] = []
+        let open = ClosureButton { [weak self] in self?.tabs.openSchedule(focus: ScheduleFocus(day: today, itemId: nil)) }
+        open.title = L("Open Schedule")
+        open.bezelStyle = .push
+        open.controlSize = .small
+        let title = sectionTitle(ScheduleFormat.day(today, today: today))
+        let done = items.filter(\.isDone).count
+        let count = label(items.isEmpty ? "" : String(format: L("Done %d of %d"), done, items.count), .caption1)
+        count.textColor = .labelColor
+        rows.append(hstack([vstack([title, count], spacing: 2), flexible(), open]))
+        let field = NSTextField()
+        field.placeholderString = L("Add for today, press Return")
+        field.target = self
+        field.action = #selector(addTodayItem(_:))
+        todayAddField = field
+        rows.append(field)
+        if items.isEmpty {
+            rows.append(hint(L("Nothing planned for today.")))
+        } else {
+            rows += items.map { todayCard($0, planTitle: plans[$0.planId], today: today) }
+        }
+        if !overdue.isEmpty {
+            rows.append(spacer(4))
+            let moveAll = ClosureButton { [weak self] in
+                self?.workspace.moveScheduleItems(ids: overdue.map(\.id), to: today)
+            }
+            moveAll.title = L("Move All to Today")
+            moveAll.bezelStyle = .push
+            moveAll.controlSize = .small
+            rows.append(hstack([sectionTitle(String(format: L("Overdue (%d)"), overdue.count)), flexible(), moveAll]))
+            rows += overdue.map { todayCard($0, planTitle: plans[$0.planId], today: today) }
+        }
+        rebuild(rows)
+        if refocus { view.window?.makeFirstResponder(field) }
+    }
+
+    /// 一件事：勾选框（打勾 = 做完）+ 标题 + 小字（哪天 · 几点 · 计划）；点它 = 到日程里看这一件。
+    private func todayCard(_ m: LibScheduleItem, planTitle: String?, today: String) -> NSView {
+        let check = ClosureButton { [weak self] in self?.workspace.setScheduleDone(ids: [m.id], done: !m.isDone) }
+        check.setButtonType(.switch)
+        check.title = ""
+        check.state = m.isDone ? .on : .off
+        check.toolTip = m.isDone ? L("Mark as Not Done") : L("Mark as Done")
+        var attrs: [NSAttributedString.Key: Any] = [.font: NSFont.preferredFont(forTextStyle: .body), .foregroundColor: NSColor.labelColor]
+        if m.isDone { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        let t = multiline(m.title, .body, lines: 2)
+        t.attributedStringValue = NSAttributedString(string: m.title, attributes: attrs)
+        var col: [NSView] = [t]
+        let subText = ScheduleFormat.subtitle(m, planTitle: planTitle, showDay: m.day != today, today: today)
+        if !subText.isEmpty {
+            let sub = label(subText, .caption1)
+            sub.textColor = .labelColor
+            col.append(sub)
+        }
+        let content = hstack([check, vstack(col, spacing: 2)], alignment: .top, spacing: 4)
+        let card = InspectorCard(content: content, buttons: [])
+        card.onTap = { [weak self] in self?.tabs.openSchedule(focus: ScheduleFocus(day: m.day.isEmpty ? nil : m.day, itemId: m.id)) }
+        card.toolTip = m.detail.isEmpty ? nil : String(m.detail.prefix(400))
+        card.menuProvider = { [weak self] in
+            guard let self else { return nil }
+            let menu = NSMenu()
+            menu.addItem(ClosureMenuItem(m.isDone ? L("Mark as Not Done") : L("Mark as Done")) { [weak self] in
+                self?.workspace.setScheduleDone(ids: [m.id], done: !m.isDone)
+            })
+            if let tomorrow = ScheduleDay.adding(1, to: today) {
+                menu.addItem(ClosureMenuItem(L("Move to Tomorrow")) { [weak self] in
+                    self?.workspace.moveScheduleItems(ids: [m.id], to: tomorrow)
+                })
+            }
+            if m.day != today {
+                menu.addItem(ClosureMenuItem(L("Move to Today")) { [weak self] in
+                    self?.workspace.moveScheduleItems(ids: [m.id], to: today)
+                })
+            }
+            menu.addItem(.separator())
+            menu.addItem(ClosureMenuItem(L("Show in Schedule")) { [weak self] in
+                self?.tabs.openSchedule(focus: ScheduleFocus(day: m.day.isEmpty ? nil : m.day, itemId: m.id))
+            })
+            return menu
+        }
+        return card
+    }
+
+    @objc private func addTodayItem(_ sender: NSTextField) {
+        let t = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        if workspace.addScheduleItems([.init(title: t, day: ScheduleDay.today())], planId: "", agent: "") != nil {
+            sender.stringValue = ""
         }
     }
 

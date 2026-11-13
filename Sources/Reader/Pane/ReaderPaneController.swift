@@ -24,6 +24,8 @@ final class ReaderPaneController: NSViewController {
     private var mdView: MarkdownDocView?
     /// 当前标签开的是习题时的练习 / 列表页（v20，`EXERCISE-PLAN.md §4`）。与阅读区、`mdView` 互斥。
     private var exView: ExerciseTabView?
+    /// 日程标签（v26，`SCHEDULE-PLAN.md §4`）：整个窗格是它。
+    private var schedView: ScheduleTabView?
     private let placeholder = PlaceholderView()
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
@@ -274,6 +276,34 @@ final class ReaderPaneController: NSViewController {
             exView?.removeFromSuperview()
             exView = nil
         }
+        // 日程标签（v26）：开着就建一个（停在哪一天记在标签上，重建时接着看那一天）；带了去处就过去
+        if tab.showsSchedule {
+            if let v = schedView {
+                if let f = tab.takeScheduleFocus() { v.focus(f) }
+            } else {
+                let f = tab.takeScheduleFocus()
+                let v = ScheduleTabView(workspace: workspace, day: f?.day ?? (tab.scheduleShownDay.isEmpty ? nil : tab.scheduleShownDay),
+                                        itemId: f?.itemId ?? (f == nil ? tab.scheduleSelectedItem : nil))
+                if let f, f.day == nil, f.itemId != nil { v.focus(f) }
+                v.agentWindow = { [weak self] in self?.session.windowID }
+                v.onOpenLink = { [weak self] target in
+                    guard let self, let t = self.workspace.linkTarget(target) else { return }
+                    if case .note(let ref) = t { self.tabs.openMarkdown(ref) } else { DeepLinkRouter.open(t, in: self.workspace) }
+                }
+                let tabRef = tab
+                v.onSelectionChange = { [weak tabRef] day, item in
+                    tabRef?.scheduleShownDay = day
+                    tabRef?.scheduleSelectedItem = item
+                }
+                v.reportSelection()
+                view.addSubview(v, positioned: .below, relativeTo: placeholder)
+                schedView = v
+                view.needsLayout = true
+            }
+        } else if schedView != nil {
+            schedView?.removeFromSuperview()
+            schedView = nil
+        }
         // Markdown 笔记标签（v15）：换一篇就重建（旧那份离开窗口时自己补存）。
         // 🔴 **不能在这里早退**——后面还有查找条 / 角标 / **标签栏**要刷，早退一次就是一个
         // 「开了笔记之后标签栏不更新」的 bug。
@@ -301,7 +331,7 @@ final class ReaderPaneController: NSViewController {
                 mdView?.removeFromSuperview()
                 mdView = nil
             }
-            if s.isBoard || tab.boardID != nil || tab.exerciseScope != nil {
+            if s.isBoard || tab.boardID != nil || tab.exerciseScope != nil || tab.showsSchedule {
                 // 画板笔记（v16）：整个窗格就是那张纸（`syncScratchPad` 装）；习题（v20）：整个窗格是 `exView`。
                 // 都没有阅读区，也不要占位提示
                 readerView?.removeFromSuperview(); readerView = nil
@@ -546,6 +576,11 @@ final class ReaderPaneController: NSViewController {
             ex.topInset = si.top
             // 底下浮着标签栏（胶囊 / 贴底整条）：习题页的「上一题 / 下一题」要摆在它上面，同笔架让位的高度
             ex.bottomInset = tabBarInset + scrollerLift
+        }
+        if let sv = schedView {
+            sv.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
+            sv.topInset = si.top
+            sv.bottomInset = tabBarInset + scrollerLift
         }
         if let pad = scratchPad {
             pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧 Inspector 让位

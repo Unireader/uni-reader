@@ -12,6 +12,8 @@ enum MCPTools {
         registerBatch5(into: server)
         registerBatch6(into: server)
         registerBatch7(into: server)
+        registerBatch8(into: server)    // 日程（`MCP-PLAN.md §37`，`SCHEDULE-PLAN.md §6`）
+        registerStats(into: server)     // 统计 `workspace_stats`（`MCP-PLAN.md §38`）
     }
 
     /// 批 6（2026-11-12）：画板（只读 + 打开）与全工作区搜索（`MCP-PLAN.md §33–34`）。

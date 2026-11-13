@@ -347,6 +347,10 @@ final class MCPFacade {
             o["document_id"] = NSNull()
             o["title"] = tab.tabTitle
             o["exercises"] = Self.scopeDTO(scope)
+        } else if tab.showsSchedule {
+            o["content_type"] = "schedule"
+            o["document_id"] = NSNull()
+            o["title"] = tab.tabTitle
         } else {
             o["content_type"] = "empty"
             o["document_id"] = NSNull()
@@ -637,6 +641,15 @@ final class MCPFacade {
             let state = exerciseTabState(c.workspace, scope: scope)
             if let id = (state["current"] as? MCPObject)?["id"] as? String { o["link"] = link(c.workspace, exercise: id) }
             o["exercises"] = state
+            return o
+        }
+        // 日程标签（v26，`SCHEDULE-PLAN.md §6`）：看的是哪一天、选中了哪一件
+        if tab.showsSchedule {
+            o["content_type"] = "schedule"
+            o["document_id"] = NSNull()
+            o["title"] = tab.tabTitle
+            o["schedule"] = ["day": tab.scheduleShownDay.isEmpty ? ScheduleDay.today() : tab.scheduleShownDay,
+                             "item_id": tab.scheduleSelectedItem ?? NSNull()] as MCPObject
             return o
         }
         guard let docId = tab.docID else {

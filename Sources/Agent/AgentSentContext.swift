@@ -49,6 +49,7 @@ struct AgentSentContext: Equatable {
         static let savedTitle = "Saved context \""
         static let save = "The user wants to save this conversation as a handoff context"
         static let memory = "Workspace memories"
+        static let schedule = "Current tab: Schedule"
     }
 
     // MARK: - 隐藏上下文块

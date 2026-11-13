@@ -388,6 +388,46 @@ struct LibAgentTurn: Identifiable, Equatable {
     var updatedAt: Date
 }
 
+/// 日程里的一份计划（`schedule_plan` 表，v26，`SCHEDULE-PLAN.md`）：一组事项，多半是 Agent 一次排出来的。
+struct LibSchedulePlan: Identifiable, Equatable {
+    var id: String              // UUID
+    var title: String
+    /// 这份计划要达成什么（Agent 写；可空）。
+    var goal: String
+    /// 排它的 Agent 的名字（用户自己建的 = 空）。
+    var agent: String
+    var createdAt: Date
+    var updatedAt: Date
+}
+
+/// 日程里的一件事（`schedule_item` 表，v26）。
+struct LibScheduleItem: Identifiable, Equatable {
+    var id: String              // UUID
+    /// 属于哪份计划（空 = 不属于哪份，用户随手加的）。
+    var planId: String
+    var title: String
+    /// 说明（Markdown，可写 `[[书名#page=12]]` 这类链接）。
+    var detail: String
+    /// 哪天做：`YYYY-MM-DD`（本地日历日）；空 = 还没排日期。
+    var day: String
+    /// 当天第几分钟开始（-1 = 不定时）。
+    var startMin: Int
+    /// 预计多少分钟（0 = 没说）。
+    var durationMin: Int
+    /// 做完的时间（nil = 没做完）。
+    var doneAt: Date?
+    /// 做完后写的一句「做得怎样」。
+    var result: String
+    /// 同一天里的先后（不定时的按它排）。
+    var seq: Int
+    /// 写下它的 Agent 的名字（用户自己加的 = 空）。
+    var agent: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    var isDone: Bool { doneAt != nil }
+}
+
 /// 一段对话的概况（`recentAgentConversations`）。
 struct LibAgentConversation: Identifiable, Equatable {
     var id: String
