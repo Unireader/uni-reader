@@ -151,7 +151,7 @@ enum AgentTranscript {
     static func outputText(_ content: [ToolCallContent]) -> String {
         content.compactMap { c -> String? in
             switch c {
-            case .content(let b): return text(of: b)
+            case .content(let b): return text(of: b).map(AgentToolText.clean)
             case .diff(let d): return String(format: L("Edited %@"), d.path)
             case .terminal: return nil
             }

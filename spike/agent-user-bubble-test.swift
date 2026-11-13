@@ -373,11 +373,12 @@ func rightClick(_ v: NSView) -> NSMenu? {
 @MainActor
 func testContextMenu() {
     print("6. 右键菜单（按段显示：表格 / 代码块 / 文字各自一个视图，2026-11-12）")
+    // 备注列是一个不能断开的长词：2026-11-13 起中文能在字间折行，原来那句长中文会收进版面、不再横向滚动
     let table = """
-    | 中文 | 英文 | 备注一列写得很长很长很长很长很长很长很长很长很长很长很长很长 |
+    | 中文 | 英文 | 备注 |
     |---|---|---|
-    | 桌前检查 | desk checking | 一 |
-    | 走查 | walkthrough | 二 |
+    | 桌前检查 | DeskCheckingByTheAuthorAlone | DeskCheckingWalkthroughInspectionReviewAuditSignOff |
+    | 走查 | StructuredWalkthroughMeeting | StructuredWalkthroughWithTheWholeTeamPresentAndMinuted |
     """
     let text = "段落一，公式 $a^2$ 在中间。\n\n```swift\nlet a = 1\n```\n\n\(table)\n\n尾巴。"
     let h = Harness(width: 520, appearance: .aqua)

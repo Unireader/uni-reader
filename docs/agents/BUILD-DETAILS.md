@@ -67,7 +67,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   2026-11-13 已提交 `244bba9` + CHANGELOG `a19ecc1` 并推到 xVanTuring fork 的同名分支；**用户说先不发版：未打 tag、未合进 `xvan`**），
   在 `0.15.0-xvan.2` 上加了：拖动改宽度提速（`NativeTextView+FrameAndOverscroll.swift` 的 live width 一组）、`TableAppearance`（圆角表格）、
   选区不停在表格 / 公式块中间（`NativeTextView+RenderedBlockSelection.swift`）、只读按段接口 `MarkdownDisplayRenderer`、
-  行内公式附件基线取反（表格单元格里原来偏高）；新测试 4 个文件 17 项，`swift test` 868 项、失败的仍是改前就有的 9 个
+  行内公式附件基线取反（表格单元格里原来偏高）；2026-11-13 又加中文表格按版面宽度折行（`CJKTableWrappingTests`）、拖选经过表格的高亮 / 单元格编辑框 / 行列手柄（`MarkdownTextLayoutManager`，`RenderedBlockSelectionTests` +8；这两批 2026-11-13 已提交 `4ba4e97` + CHANGELOG `0a6e1e9`，**还没推送**）；新测试 4 个文件 17 项，`swift test` 868 项、失败的仍是改前就有的 9 个
   （裸网址 `www`、宽表格横划、`ScrollingHeaderController` 三项）。发版时：合进 `xvan`、打 `0.15.0-xvan.3`、推送，再换回 `url` + `exactVersion`（别的机器拉 main 编不过，直到换回为止）；
   🔴 **升级前后都跑一遍 `spike/markdown-relayout-cost.swift`**——0.9.0 每敲一个字按整篇算账，17K 字的笔记 56ms/字、
   52K 字 159ms/字（一帧才 16.7ms），0.13.0 恒定 9~12ms/字不随全文长度涨；量的是主线程 CPU 时间，用法见文件头，

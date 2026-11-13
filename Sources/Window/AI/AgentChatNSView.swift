@@ -957,11 +957,8 @@ enum AgentItemViews {
         // 不用 NSStackView：对话记录条目里套 stack 是 Agent 记笔记时整窗卡住的根因之一（见 `AgentRowView`）
         let label = AgentRowView([status, t], spacing: 6)
         guard !call.output.isEmpty else { return label }
-        // 工具输出是 JSON / diff 这类原样的东西，不当 Markdown 渲染：等宽照原样显示
-        let text = NSTextField(wrappingLabelWithString: toolOutput(call))
-        text.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        text.isSelectable = true
-        return AgentDisclosureView(header: label, body: text)
+        // 工具输出是 JSON / diff 这类原样的东西，不当 Markdown 渲染：浅底块里等宽照原样显示，长的先显示开头（`AgentToolOutputView`）
+        return AgentDisclosureView(header: label, body: AgentToolOutputView(text: toolOutput(call)))
     }
 
     /// 计划（Kimi 的待办）：`AgentPlanView`，就地更新。

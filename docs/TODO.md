@@ -38,7 +38,7 @@
 > 本节**只留真的没做的事**，验收类条目不挂在这里（2026-09-07 / 09-13 两次裁决）。
 
 0. **引擎 fork 发版**（2026-11-12）：worktree `../swift-markdown-engine-worktrees/resize-perf` 的改动（拖动提速、圆角表格、选区不停在表格中间、
-   只读按段接口、公式基线）2026-11-13 已提交并推到 fork 的 `perf/live-resize` 分支（用户说先不发版）；
+   只读按段接口、公式基线；同日又加中文表格折行、选中高亮、编辑框、手柄）都已提交在 fork 的 `perf/live-resize` 分支（前一批已推送、后一批 `4ba4e97` `0a6e1e9` 未推送；用户说先不发版）；
    发版时合进 `xvan`、打 `0.15.0-xvan.3`，`project.yml` 换回 `url` + `exactVersion`（现临时 `path:`，别的机器拉 main 编不过）。
    细节 `docs/agents/BUILD-DETAILS.md` 引擎那条。
 

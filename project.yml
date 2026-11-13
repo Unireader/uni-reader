@@ -74,7 +74,7 @@ packages:
     # 抬起的事件没有位移、被交给整篇文档，表格看不到手势结束就丢了惯性。改为一次手势按第一次位移定方向、从头到尾
     # 交给同一方（开始是竖向、中途变横向的仍归文档滚动）；鼠标滚轮照旧一格一格判断。fork 提交 f9820c5。
     # ⚠️ 开发中临时指向本地 worktree（2026-11-12：拖动改宽度提速 + 表格圆角样式 + 拖选不停在表格中间），
-    # 引擎已提交并推到 fork 的 perf/live-resize 分支（244bba9 + a19ecc1，2026-11-13，未打 tag）；
+    # 引擎在 fork 的 perf/live-resize 分支：244bba9 + a19ecc1 已推送，4ba4e97 + 0a6e1e9（中文表格折行、选中高亮、编辑框、手柄）未推送；都未打 tag；
     # 发版前合进 xvan、打 0.15.0-xvan.3，换回下面两行（url + exactVersion）。
     path: ../swift-markdown-engine-worktrees/resize-perf
     # url: https://github.com/xVanTuring/swift-markdown-engine

@@ -25,6 +25,23 @@
 - **只读按段接口 `MarkdownDisplayRenderer`（fork，2026-11-12）**：给只显示不编辑的地方（Agent 面板、习题）用，解析同编辑器（`DocumentAST`）。
   段内换行输出 U+2028（换成 `\n` 会变成新段落、吃段距）；行内公式附件带 `sourceAttribute`（`$…$` 原文），复制时换回；`[[…]]` 的 `.link`
   是 `x-markdown-wiki:` 开头。用法见 `ACP-AGENT-PLAN.md §19`。
+- **选中高亮是系统私有视图画的（fork，2026-11-13）**：TextKit 2 的选中色由 `_NSTextSelectionView` 里的一行行子视图画，**不经过** `drawBackground(in:)`
+  （改它没用，实测）；行的位置来自 `NSTextLayoutManager.enumerateTextSegments(type: .selection)`。所以引擎的 `NativeTextView.init(frame:)`
+  手工建 TextKit 2（容器宽 = frame 宽、跟随视图宽、高 1000 万，同 `NSTextView(frame:)`），换上 `MarkdownTextLayoutManager` 改这一种分段；
+  系统调用时带 `.rangeNotRequired`（不给范围），要认出是哪段字得自己去掉这个选项。`NSTextLayoutManager` 对内容管理器是弱引用，视图要自己留着 `NSTextContentStorage`。
+- **表格图片是显示时才画的**（`NSImage(size:flipped:drawingHandler:)`），颜色按画的时候的外观取。🔴 **要它画得不一样，就出一张新图，别改同一张再叫重画**
+  （2026-11-13 用户实测踩到）：编辑框第一版在同一张图上改「藏哪一格」、`recache()`、把同一张图重新设给宽表格的图片视图、让窄表格那一行重新排版——
+  屏幕上的图一直落后一步（刚打开叠字、换格后上一格空白），一打字整张重画成新图就对了。现在 `hiddenCell` 是出图时定的、算进缓存键，
+  编辑框打开 / 换格 / 关闭时走拖动改宽度那条重画（`rerenderTablesForCellEditor` → `restyleTablesForWidthChange` + `updateWideTableOverlays`）。
+  🔴 **离屏测试看不出这类问题**：`cacheDisplay` 会让每个视图当场重画，连 `CALayer.render(in:)` 读到的也是对的；「屏幕上没更新」只能靠用户实测，
+  或者在测试里断言「换了一张新图」（`RenderedBlockSelectionTests` 就是这么验的）。
+- **`NSTextView` 不调 `updateLayer`**：它用 `draw(_:)` 画，`updateLayer` 里设的图层边框颜色永远不生效，边框是 CALayer 默认的黑色（单元格编辑框原来就是这样）。
+  图层属性在初始化 / `viewDidChangeEffectiveAppearance` 里按 `effectiveAppearance` 显式设。
+- **文字视图上面的小控件拿不到光标**：`NSTextView` 每次鼠标移动都设一次输入竖线，子视图的光标区域会被盖掉；要在 `NativeTextView.mouseMoved`
+  里先认出指针在控件上、直接设对的光标并跳过 super（复选框、宽表格滚动条、表格手柄都是这样）。
+- **中文表格的列宽（fork，2026-11-13）**：列的最小宽度 = 最长的不能断开的一段。原来只在空格处断，中文整句算一个词 → 中文表格一律横向滚动。
+  现在中日韩文字旁边按 Unicode 换行规则也算断点（`MarkdownStyler.cjkLineBreakOpportunities`，`CFStringTokenizer` 的断行单位），
+  两边都不是中日韩文字的断点不算——别换成「全部按 Unicode 规则断」：那样网址会在 `/` 处断、`well-know-` 在连字符处断，英文表格的排法跟着变。
 
 - 🔴 **`[[` 候选列表要方向键 / 回车 / Esc，必须给 `NativeTextViewWrapper` 传一个能写的 `isWikiLinkActive:` 绑定**（2026-11-12 用户报「不能用方向键选择」）。
   引擎只在这个状态为真时才把 ↑↓ / 回车 / Esc 交给 `onInlinePreviewKey`；不传就是它的默认 `.constant(false)`，它写不进去，
@@ -179,6 +196,11 @@
   （`PageInkLayer.redrawInBackground`，旧图留着、只替换不清空）。改这几处时别把逐帧重设内容加回去。
 
 ## Agent 面板（NSStackView / 流式刷新）
+
+- **Kimi 把 MCP 结果的 `structuredContent` 拼在工具输出文字后面**（2026-11-13 用户截图，`ACP-AGENT-PLAN.md §20`）：
+  `<mcp-result-extras>{"structuredContent":…}</mcp-result-extras>`，内容和正文重复（`read_pages` / `read_markdown` 的正文在结构化结果里又有一份）。
+  显示前在 `AgentToolText.clean` 去掉；🔴 清理时只去正文**末尾**的空白——`read_markdown` 第一行是 `  36⇥…`，开头空格去了，第一行就和下面的行号对不齐
+  （第一版就这么错了，测试的预期值也被同样去了空格，没抓到）。
 
 - **回放时 Agent 发回来的用户消息和我们发出去的不一样**（2026-11-12，`ACP-AGENT-PLAN.md §17`）：`resource_link` 会被 Agent 转成文字
   （Kimi = 本机路径，Claude Code = `[@名字](file://…)`）单独一块发回来；ACP 的 `user_message_chunk` 不带消息 id，几条消息的边界只能靠

@@ -616,3 +616,22 @@ session_id（那段对话在原 Agent 里的 id，只对同一家有意义）, c
   154. 选中文字复制（含公式）→ 公式是 `$…$`；右键表格 / 代码块 / 文字各自的菜单项。
   155. 宽表格、长代码行：触控板横划只滚这一块，竖划滚整个对话。
   156. 习题：题干、选项、解析里的公式（行内与文字对齐、块公式居中）。
+
+## 20. 工具调用展开后的显示（2026-11-13）
+
+用户：「优化下 tool 调用展开的显示」（两张截图：`read_pages` / `read_markdown` 展开后整屏等宽字、和回复连成一片，行号贴着正文，
+末尾又是一大段 `<mcp-result-extras>{"structuredContent":…}` JSON）。
+
+- **重复的 JSON**：Kimi 把 MCP 结果的 `structuredContent` 原样拼在文字后面（`<mcp-result-extras>…</mcp-result-extras>`）。
+  `Agent/AgentToolText.clean` 在存进条目前去掉它（没收尾的去到末尾）；只有这一段时把里面的 JSON 排成多行；整段是 JSON 的也排成多行（键按字母序）。
+  🔴 只去正文**末尾**的空白：开头的空格是第一行行号的对齐。
+- **显示**（`Window/AI/AgentToolOutputView`，按 frame 摆、不进约束引擎）：浅底圆角块（同代码块底色）；
+  `cat -n` 式行号（`  36⇥正文`）单独一栏、正文对齐，折行的接续行也对齐正文（原来默认制表位 28pt，四位行号正好占满）；
+  长输出先显示前 12 行 / 1500 字，底下「显示全部 N 行」，展开后「收起」；右键多一项「复制输出」（整段）。
+  折叠块就地换文字走 `AgentPlainTextBody` 协议（`AgentDisclosureView` 不直接认这个类，别的 spike 的编译命令不用改）。
+- 没改：表头还是工具名；Kimi 给模型的内容里是不是也带着这段 JSON（等于读一遍结果花两份 token）要看 Kimi 那边，App 这里只管显示。
+- 验证：`spike/agent-tool-output-test.swift` 35 项 + 浅 / 深样张；`agent-flat-row-test` 73、`agent-user-bubble-test` 147、
+  `exercise-note-test` 26、`exercise-free-answer-test` 59 照旧全过；Mac Debug 编译通过。
+- 实测清单（用户）：
+  162. 让 Agent 读一页 PDF、读一篇笔记：展开工具调用，没有末尾那段 JSON；行号一栏对齐；长的只显示开头，「显示全部」/「收起」可用。
+  163. 工具还在跑时展开（如 `import_exercises`）：内容跟着更新、不闪、不折回去。

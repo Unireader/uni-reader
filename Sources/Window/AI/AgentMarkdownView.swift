@@ -431,6 +431,12 @@ final class AgentMarkdownView: NSView {
     }
 }
 
+/// 折叠块里可以就地换文字的纯文本正文（工具输出 `AgentToolOutputView`）。
+@MainActor
+protocol AgentPlainTextBody: NSView {
+    func update(text: String)
+}
+
 /// 折叠块：一行表头 + 点开才看得见的正文（思考过程、工具输出共用）。
 ///
 /// 原来是个构造函数，改成类是为了**思考过程也能就地更新**（它同样是流式来的，见 `AgentMarkdownView`），
@@ -505,10 +511,15 @@ final class AgentDisclosureView: NSView {
     /// 思考过程的新文本（流式）。
     func update(text: String) { markdown?.update(text: text) }
 
-    /// 工具输出的新文本（流式；正文是等宽纯文本标签的那一种）。折着时正文不在视图树里，只换文字、不排版。
-    /// - Returns: 吃下了（正文不是纯文本标签就不管，调用方整条重建）。
+    /// 工具输出的新文本（流式；正文是 `AgentToolOutputView` / 等宽纯文本标签的那一种）。折着时正文不在视图树里，只换文字、不排版。
+    /// - Returns: 吃下了（正文不是这两种就不管，调用方整条重建）。
     func update(plain text: String) -> Bool {
-        guard markdown == nil, let label = body as? NSTextField else { return false }
+        guard markdown == nil else { return false }
+        if let out = body as? AgentPlainTextBody {
+            out.update(text: text)
+            return true
+        }
+        guard let label = body as? NSTextField else { return false }
         if label.stringValue != text { label.stringValue = text }
         return true
     }
