@@ -49,11 +49,6 @@
    `cd android && ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.xvan.unireader.local.WorkspaceCreateTest`，`TrashTest` 同理。
    安卓的改动已推送（安卓仓库 `9d901df`；`cae44d0` 是之前就改好的 Gradle 9.8.0 / JDK 27，单独一次提交），打成 0.3.19（`30f3b45`，tag `2026-11-13-1`）。
 
-0c. **服务器 0.5.0（v26）发到 GitHub**（2026-11-13）：NAS 上已换成本机交叉编译的 0.5.0（用户说先换 NAS、后发 GitHub；
-   换之前 NAS 远端端到端 95 项全过，旧的 0.4.0 留在 `unireader-server.prev`）。代码里 `ServerInfo.version` 已改成 0.5.0（已提交、已推送）。
-   发版时写 `server/release-notes/v0.5.0.md`，顺带改正 0.4.0 发布说明里「旧版 App 连新服务器照常」这句——
-   服务器推送要求数据版本**完全一致**（`HostedWorkspace.push`），版本不同的 App / 平板只能拉、不能推。
-
 0d. **日程平板界面**（`SCHEDULE-PLAN.md §9`）：今天的待办、打勾；重复事项、到点提醒、所有工作区合在一起看都还没做。
 
 1. **安卓模式2：标签页共存，换文档不再重置**（2026-09-07 用户定方向，**方案待写 → `ANDROID-MODE2-PLAN.md`**）。

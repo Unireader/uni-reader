@@ -19,6 +19,10 @@
 - 验证：spike schedule 91（新）、workspace-stats 115（新）、mirror-fp 75、agent-memory 54、agent-context 49、exercise 354、store 54、trash 71、nav-history 14、
   agent-sent-context 19；离屏出图看过月历 / 列表 / 详情（浅深色）；服务器 swift test 57、Linux aarch64 交叉编译、server-client 端到端 95；
   安卓 JVM 228（安卓仓库 `9d901df`）；Mac Debug 编译通过。真 App 未实测。
+- 发布（2026-11-13）：服务器 0.5.0（`server-v0.5.0`，NAS 先换上本机交叉编译的同一份；发布说明里改正了 0.4.0 那句「旧版 App 连新服务器照常」——
+  推送要求数据版本完全一致，版本不同只能拉不能推）、Mac 0.3.27（引擎 `0.15.0-xvan.3`，用户定带着「编辑单元格时整张表偶尔不画出来」发，说明里写了已知问题）、
+  安卓 0.3.19（`2026-11-13-1`，装在 iQOO 手机上；平板还是旧版）。Mac 第一次发布在 Developer ID 签名时「时间戳服务不可用」中断，撤销本地提交后原样重跑通过；
+  公证之前要先在开发者账号里重签过期的协议（notarytool 报 403「A required agreement is missing or has expired」）。
 
 ## ✅ Agent 工作区记忆与对话记录（schema v25）；输入框点哪都能输入；工具栏「返回」跨标签（2026-11-13，Mac + 安卓 + 服务器）
 
