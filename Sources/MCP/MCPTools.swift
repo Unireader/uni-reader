@@ -24,6 +24,8 @@ enum MCPTools {
         c.register(openBoard())
         c.register(searchTool())
         c.register(linksTool())        // 知识关联（`KNOWLEDGE-LINKS-PLAN.md §6`）
+        c.register(getAnimReference())  // ```anim 分步演示块（`ANIM-BLOCK-PLAN.md §4.4`）
+        c.register(renderAnim())
     }
 
     /// 批 4：习题（`EXERCISE-PLAN.md §3`，2026-10-10）。列表是 `.read`，导入 / 改是 `.write`，删是 `.delete`（先进回收站）。

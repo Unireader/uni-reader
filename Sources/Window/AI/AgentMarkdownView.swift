@@ -374,6 +374,16 @@ final class AgentMarkdownView: NSView {
                     Self.grapherImage(code, width: w, dark: self?.isDark ?? false)
                 }
             }
+            if language?.lowercased() == AnimFencedRenderer.language {
+                // 分步演示块：面板里只读，显示第 0 步的静态图（播放在笔记编辑区里）
+                return AgentImageBlockView(key: key, centered: true, scrolls: false,
+                                           menuItems: { [weak ctx] in
+                                               [ClosureMenuItem(L("Copy Code")) { AgentMarkdown.copyCode(code) }]
+                                                   + (ctx.map { [NSMenuItem.separator(), $0.copyAllItem()] } ?? [])
+                                           }) { [weak self] w in
+                    Self.animImage(code, width: w, dark: self?.isDark ?? false)
+                }
+            }
             return AgentCodeBlockView(key: key, language: language, code: code, context: ctx)
         case .math(let latex, _):
             let size = fontSize
@@ -410,6 +420,12 @@ final class AgentMarkdownView: NSView {
     private static func grapherImage(_ code: String, width: CGFloat, dark: Bool) -> NSImage? {
         let w = min(max(width, GrapherFencedRenderer.minBlockWidth), GrapherFencedRenderer.maxBlockWidth).rounded(.down)
         guard let picture = GrapherImageCache.shared.picture(text: code, width: w, dark: dark) else { return nil }
+        return NSImage(cgImage: picture.image, size: CGSize(width: w, height: picture.height))
+    }
+
+    private static func animImage(_ code: String, width: CGFloat, dark: Bool) -> NSImage? {
+        let w = AnimBlockMetrics.clampedWidth(width)
+        guard let picture = AnimImageCache.shared.picture(text: code, width: w, dark: dark, controls: false) else { return nil }
         return NSImage(cgImage: picture.image, size: CGSize(width: w, height: picture.height))
     }
 

@@ -37,6 +37,7 @@
   会把 A 工作区的 `[[极限]]` 连到 B 工作区同名那篇去。编辑器 / 气泡 / 整篇编辑区三处都由上层把它传进去；
   `MarkdownDocEditor.swift` 是整篇笔记的编辑区（允许 SwiftUI 的第三处）；
   `TableEditMenu.swift` = 表格单元格右键菜单（引擎 `0.14.0-xvan.2` 起表格就地编辑、但菜单不自带，两处编辑器都接 `onTableCellContextMenu`）
+- `Sources/Anim/` — 笔记里 ```anim 分步演示块（`ANIM-BLOCK-PLAN.md`）：`AnimText`（解析 + 写法全文 `AnimReference`）→ `AnimEngine`（逐步状态，纯函数）→ `AnimLayout`（物件 + 稳定 id）→ `AnimPainter`（按 id 插值绘制、`AnimSnapshot` 出图）；`AnimBlockView` 是编辑区里的实时视图。前三个只依赖 Foundation / CoreText，测试 `spike/anim-test.swift`，出图目检 `spike/anim-look.swift`。编辑区的接入（`NoteFencedRenderer` / `FencedBlockScan` / `FencedBlockOverlay`）在 `Sources/Markdown/FencedBlocks.swift`，与 grapher 块共用
 - Markdown 笔记（`MARKDOWN-NOTES-PLAN.md`）：纯逻辑在 `Sources/App/` —— `NoteTree`（`NoteRoot` 两种源 /
   `NoteRef` = 源+相对路径 = **笔记的身份** / `NoteFolder` 多级树 / `NoteIndex` 按名字解析）+
   `MarkdownLink`（**只扫描不改写**：保护区、`[[…]]` 目标名、图片引用、frontmatter 别名）+

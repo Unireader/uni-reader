@@ -25,8 +25,8 @@ final class MarkdownDocView: NSView {
     private let separator = NSBox()
     private var bag = Set<AnyCancellable>()
     private var observers: [NSObjectProtocol] = []
-    /// 正文里 ```grapher 图形块的实时视图（点一下可旋转、改参数，见 `GRAPHER-BLOCK-PLAN.md`）。
-    private var grapherOverlay: GrapherBlockOverlay?
+    /// 正文里 ```grapher 图形块、```anim 分步演示块的实时视图（`GRAPHER-BLOCK-PLAN.md`、`ANIM-BLOCK-PLAN.md`）。
+    private var blockOverlay: FencedBlockOverlay?
     /// 已经落盘的那一版。与 `box.text` 相同 = 没有待存的改动。
     private var savedText: String
     /// 顶部让开工具栏的高度（由窗格设）。
@@ -130,8 +130,8 @@ final class MarkdownDocView: NSView {
             .debounce(for: .milliseconds(800), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in self?.save() }
             .store(in: &bag)
-        let overlay = GrapherBlockOverlay(host: host)
-        grapherOverlay = overlay
+        let overlay = FencedBlockOverlay.noteEditor(host: host)
+        blockOverlay = overlay
         overlay.start()
         // 正文被换掉（外部改动、MCP 写入）不一定发文字视图的变更通知，这里也提醒一声。
         box.$text
@@ -180,7 +180,7 @@ final class MarkdownDocView: NSView {
 
     deinit {
         for o in observers { NotificationCenter.default.removeObserver(o) }
-        MainActor.assumeIsolated { grapherOverlay?.tearDown() }
+        MainActor.assumeIsolated { blockOverlay?.tearDown() }
     }
 
     /// 立刻把待存的改动写下去（切标签 / 关窗 / 退出 / 导出前都要叫一次）。

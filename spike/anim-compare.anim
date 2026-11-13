@@ -1,0 +1,67 @@
+# 停等 / 回退 N 步 / 选择重传 三场景对比（用户 2026-11-13 实测认可的样例）。出图：build/spike/anim-look-bin spike/anim-compare.anim（见 spike/anim-look.swift）
+title 可靠传输三种方案：帧 1 丢失时各怎么办
+scene 停等协议
+  lanes 发送方 接收方
+  step 发帧 0，等确认
+    send 发送方 -> 接收方 "0"
+    timer 发送方 "T0" start
+    deliver 接收方 "0"
+    send 接收方 -> 发送方 "ACK 0"
+    timer 发送方 "T0" stop
+  step 发帧 1，丢失
+    send 发送方 -> 接收方 "1" lost
+    timer 发送方 "T1" start
+  step 超时，只能重发 1（一次只有一帧在路上）
+    timer 发送方 "T1" expire
+    send 发送方 -> 接收方 "1"
+    deliver 接收方 "1"
+    send 接收方 -> 发送方 "ACK 1"
+scene 回退 N 步（窗口 4）
+  lanes 发送方 接收方
+  seq SW 0..7 window=4 at=发送方
+  step 连发 0~3，不等确认
+    send 发送方 -> 接收方 "0"
+    send 发送方 -> 接收方 "1" lost
+    timer 发送方 "T1" start
+    send 发送方 -> 接收方 "2"
+    send 发送方 -> 接收方 "3"
+  step 收下 0；2、3 失序，全部丢弃
+    deliver 接收方 "0"
+    discard 接收方 "2"
+    discard 接收方 "3"
+    send 接收方 -> 发送方 "ACK 0"
+    slide SW to=1
+  step 超时：从 1 起全部重发
+    timer 发送方 "T1" expire
+    mark SW[1..3] active
+    send 发送方 -> 接收方 "1"
+    send 发送方 -> 接收方 "2"
+    send 发送方 -> 接收方 "3"
+scene 选择重传（窗口 4）
+  lanes 发送方 接收方
+  seq SW 0..7 window=4 at=发送方
+  seq RW 0..7 window=4 at=接收方
+  step 连发 0~3，不等确认
+    send 发送方 -> 接收方 "0"
+    send 发送方 -> 接收方 "1" lost
+    timer 发送方 "T1" start
+    send 发送方 -> 接收方 "2"
+    send 发送方 -> 接收方 "3"
+  step 收下 0；2、3 先缓存，逐个确认
+    deliver 接收方 "0"
+    buffer 接收方 "2"
+    buffer 接收方 "3"
+    mark RW[2..3] new
+    slide RW to=1
+    send 接收方 -> 发送方 "ACK 0"
+    send 接收方 -> 发送方 "ACK 2"
+    send 接收方 -> 发送方 "ACK 3"
+    slide SW to=1
+    mark SW[2..3] done
+  step 超时：只重发 1，收到后 1~3 一起交付
+    timer 发送方 "T1" expire
+    mark SW[1] active
+    send 发送方 -> 接收方 "1"
+    deliver 接收方 "1 2 3"
+    unmark RW[2..3]
+    slide RW to=4

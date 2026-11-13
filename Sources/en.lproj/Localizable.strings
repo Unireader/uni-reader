@@ -1439,3 +1439,12 @@
 "No details yet." = "No details yet.";
 "Add Details" = "Add Details";
 "%@ · p. %d" = "%@ · p. %d";
+
+/* ```anim step-by-step blocks (ANIM-BLOCK-PLAN.md) */
+"Line %ld: %@" = "Line %ld: %@";
+"Previous step" = "Previous step";
+"Next step" = "Next step";
+"Play" = "Play";
+"Pause" = "Pause";
+"Edit the text" = "Edit the text";
+"Step" = "Step";

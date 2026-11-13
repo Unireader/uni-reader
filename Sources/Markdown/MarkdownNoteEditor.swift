@@ -134,12 +134,13 @@ struct WidthKeyedImageProvider: EmbeddedImageProvider {
 
 extension MarkdownEditorConfiguration {
     /// 这份配置按「文本容器宽 `containerWidth`」装上公式缩放与宽度指纹（见 `FittedLatexRenderer`）。
-    func fittingLatex(to containerWidth: CGFloat) -> MarkdownEditorConfiguration {
+    /// `liveBlocks`：整篇笔记编辑区（有 `FencedBlockOverlay` 盖实时视图）传 true，anim 块的静态图只占位不画（见 `AnimFencedRenderer`）。
+    func fittingLatex(to containerWidth: CGFloat, liveBlocks: Bool = false) -> MarkdownEditorConfiguration {
         var c = self
         let w = containerWidth.rounded(.down)
         c.services.latex = FittedLatexRenderer(maxWidth: w)
         c.services.images = WidthKeyedImageProvider(width: Int(w))
-        c.services.fencedBlocks = GrapherFencedRenderer(containerWidth: w)   // ```grapher 块的静态图按同一宽度排
+        c.services.fencedBlocks = NoteFencedRenderer(containerWidth: w, liveBlocks: liveBlocks)   // ```grapher / ```anim 块的静态图按同一宽度排
         return c
     }
 }

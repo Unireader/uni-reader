@@ -200,6 +200,7 @@ final class MCPServer: ObservableObject {
     whole lists. \
     \(MCPTools.mathWriting) \
     \(MCPTools.graphWriting) \
+    \(MCPTools.animWriting) \
     Most PDF tools default to the document in the key window when no target is given. \
     document_id is a stable UUID inside a workspace; file paths may change. \
     read_pages returns the OCR text UniReader has cached for a page, or the PDF's own text where there is none \

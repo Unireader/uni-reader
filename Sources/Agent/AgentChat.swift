@@ -109,6 +109,7 @@ struct AgentReaderContext: Equatable {
         }
         lines.append(MCPTools.mathWriting)   // 同 `noteKinds`：MCP 说明里有，但不是每个 Agent 都读
         lines.append(MCPTools.graphWriting)
+        lines.append(MCPTools.animWriting)
         lines.append(Self.exercises)
         lines.append(Self.contexts)
         lines.append(AgentTranscript.contextClose)

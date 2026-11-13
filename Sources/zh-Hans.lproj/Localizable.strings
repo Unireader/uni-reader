@@ -1441,3 +1441,12 @@
 "No details yet." = "还没有说明。";
 "Add Details" = "添加说明";
 "%@ · p. %d" = "%@ · 第 %d 页";
+
+/* ```anim 分步演示块（ANIM-BLOCK-PLAN.md） */
+"Line %ld: %@" = "第 %ld 行：%@";
+"Previous step" = "上一步";
+"Next step" = "下一步";
+"Play" = "播放";
+"Pause" = "暂停";
+"Edit the text" = "编辑文字";
+"Step" = "步骤";

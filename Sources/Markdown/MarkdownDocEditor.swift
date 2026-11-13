@@ -72,7 +72,7 @@ struct MarkdownDocEditor: View {
         return NativeTextViewWrapper(text: $text,
                                      isWikiLinkActive: Binding(get: { links.wikiActive }, set: { links.wikiActive = $0 }),
                                      pendingInlineReplacement: $links.pending,
-                                     configuration: configuration.fittingLatex(to: containerWidth),
+                                     configuration: configuration.fittingLatex(to: containerWidth, liveBlocks: true),
                                      fontSize: fontSize,
                                      documentId: documentId,
                                      isEditable: isEditable,
