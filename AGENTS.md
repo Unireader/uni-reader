@@ -56,7 +56,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `docs/INK-PAGING-PLAN.md` — 笔迹内存按页窗口加载/淘汰（**`session.strokes` 不再是全集**）；改笔迹代码前先读
 - **`docs/BINARY-INK-PLAN.md`** — 笔迹点集二进制（schema v18，`points` / `points_at` 两列；payload 不再存点，开库后台整理老行）；改笔迹读写 / 落库前先读
 - `docs/MCP-PLAN.md` — MCP 服务（内置 HTTP 端点给外部 Agent）；§15/§16/§17 是实现记录
-- `docs/ACP-AGENT-PLAN.md` — Agent 面板（ACP 客户端）；§2 fork 做法、§7 Markdown 正文、§8 `@` 选文件、§12 Agent 上下文（v23 `agent_context`：Agent 写的交接摘要，换 Agent 接着聊）、§13 多 Agent 并行（一扇窗口几段对话，`AgentChatsView` 标签条）
+- `docs/ACP-AGENT-PLAN.md` — Agent 面板（ACP 客户端）；§2 fork 做法、§7 Markdown 正文（§19 起按段显示）、§8 `@` 选文件、§12 Agent 上下文（v23 `agent_context`：Agent 写的交接摘要，换 Agent 接着聊）、§13 多 Agent 并行（一扇窗口几段对话，`AgentChatsView` 标签条）
 - `docs/IMAGE-NOTE-PLAN.md` — 图片笔记（note kind=6 + `image` 表 v13 + `Images/`，内容寻址、待删除 30 天）
 - `docs/SCAN-ALIGN-PLAN.md` — 扫描页对齐（每页旋转+平移，按内容哈希记）：**开着时对齐后的页面就是页面坐标**；变换/`page_align`(v14)/`displayKey` 是三端契约
 - `docs/SCAN-ENHANCE-PLAN.md` — 扫描页增强（出图时处理、不改 PDF）：算法版已落地，AI 调研暂停、接着做看 §3.5
@@ -88,7 +88,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 ## 红线（用户明确否决过，勿重走）
 
 1. 阅读区**严禁 `PDFView`**（PDFKit 私有 clip view 缺陷 → 缩放跳位/闪烁）。PDFKit 只用 `PDFDocument`/`PDFPage` 解析与出图。**零闪烁纪律照旧**：阅读区图层一律无隐式动画（`QuietLayer`/`QuietShapeLayer`），图只替换不清空，缩放用滚动视图自带放大倍率。
-2. **SwiftUI 只用在两处**，其余界面一律 AppKit：① Markdown 引擎的 SwiftUI 包装（笔记气泡只读渲染、笔记编辑区、Agent 回复正文，都经 `NSHostingView` 托管）；② 设置窗每页表单（`Sources/Settings/`）。
+2. **SwiftUI 只用在两处**，其余界面一律 AppKit：① Markdown 引擎的 SwiftUI 包装（笔记气泡只读渲染、笔记编辑区，都经 `NSHostingView` 托管；Agent 回复 / 习题正文 2026-11-12 起按段显示、纯 AppKit，见 `docs/ACP-AGENT-PLAN.md §19`）；② 设置窗每页表单（`Sources/Settings/`）。
 3. UI 外观**严禁自绘仿系统样式**：系统观感只能用标准控件与材质（`NSVisualEffectView` 等），做不到就用系统默认。
 4. **材质/玻璃底上的文字与按钮别用次要色/无边框淡样式**（`secondaryLabelColor`、不设 `contentTintColor` 的 borderless）——系统画得极淡、看不见。层级差异用**字号**表达，颜色一律显式 `labelColor`。
 5. **显示页图的窗口 `colorSpace` 必须 = 页图色彩空间（sRGB）**（`ReaderWindowController`/`RefWindowController` 都设 `win.colorSpace = .sRGB`）：不一致时每张页图被 CA 整张重画转色，连滚 10 秒多 600MB。新开带页图的窗口照此设。

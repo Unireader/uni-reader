@@ -1,12 +1,15 @@
 // 离屏验证习题 v22 的题目笔记那一块 `ExerciseNoteView`（`EXERCISE-PLAN.md §12.1`）。编的是**真代码**，只把 Markdown 引擎
 // 用不到的几个类型换成桩（同 `spike/exercise-free-answer-test.swift`）。依赖已编好的包模块（先按 AGENTS.md 编一次 Debug 包）。运行：
 //
-//   D=build/dev/Build/Products/Debug; O=/tmp/ex-note; mkdir -p $O && cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ \
-//   && cp spike/exercise-note-test.swift $O/main.swift && swiftc -I $D $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
-//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/LatexCompat.swift Sources/Window/AI/AgentMarkdownView.swift \
-//      Sources/Window/AI/AgentRowView.swift Sources/Agent/AgentMarkdownBlocks.swift Sources/Markdown/TableEditMenu.swift \
-//      Sources/Window/Exercise/ExerciseNoteView.swift \
+//   D=build/dev/Build/Products/Debug; AD=$(cd $D && pwd); O=/tmp/ex-note; mkdir -p $O && cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ \
+//   && cp spike/exercise-note-test.swift $O/main.swift && swiftc -I $D -F $D -framework GrapherEmbed -framework GrapherKit -framework GrapherRender \
+//      -Xlinker -rpath -Xlinker $AD $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
+//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/LatexCompat.swift Sources/Markdown/GrapherBlocks.swift \
+//      Sources/Markdown/TableEditMenu.swift Sources/Window/AI/AgentMarkdownView.swift Sources/Window/AI/AgentMarkdownBlocksView.swift \
+//      Sources/Window/AI/AgentRowView.swift Sources/Window/Exercise/ExerciseNoteView.swift \
 //      $O/main.swift -o $O/t && $O/t $O
+//   （2026-11-12：Agent 正文改为按段显示，命令换成 `AgentMarkdownBlocksView.swift`、去掉已删的 `AgentMarkdownBlocks.swift`；
+//    补了 `NoteLinkCompleter` 桩——笔记编辑框接上 `[[` 选择框后这里编不过。）
 //
 // 盯的事：
 //  1. 三种样子：没写过只有「添加笔记」；写过 = 标题 + 渲染的笔记 +「编辑笔记」；编辑 = 标题 + 输入框 +「完成」；
@@ -30,17 +33,18 @@ final class WorkspaceWikiIndex: WikiLinkResolver, EmbeddedImageProvider, @unchec
     func fingerprint() -> AnyHashable { 0 }
 }
 
+/// 笔记编辑框的 `[[` 选择框（`Window/Markdown/NoteLinkCompleter.swift`，依赖整个工作区），这里用不到。
+final class NoteLinkCompleter {
+    var pending: InlineReplacementRequest?
+    var wikiActive = false
+    func selectionChanged(_ state: InlineSelectionState?) {}
+    func caretRectChanged(_ r: CGRect) {}
+    func key(_ k: InlinePreviewKey) -> Bool { false }
+}
+
 enum NoteBubble {
     static let editorFontSizeKey = "spike.editorFontSize"
     static let defaultEditorFont: CGFloat = 13
-}
-
-/// 同 `Markdown/GrapherBlocks.swift`（那个文件牵出 Grapher 三个模块）：笔记里不出现 ```grapher 块，画不出来就行。
-struct GrapherFencedRenderer: FencedBlockRenderer {
-    let containerWidth: CGFloat
-    var languages: Set<String> { [] }
-    func render(_ request: FencedBlockRequest, theme: MarkdownEditorTheme) -> FencedBlockRendering? { nil }
-    func fingerprint() -> AnyHashable { 0 }
 }
 
 final class ClosureMenuItem: NSMenuItem {

@@ -1,15 +1,12 @@
 import AppKit
 import Highlighter
 import MarkdownEngine
-import SwiftUI
 
 /// Agent 面板里正文的 Markdown 渲染（`ACP-AGENT-PLAN.md` A3）。
 ///
-/// 从前只做行内语法（`AttributedString(markdown:)` 的 `inlineOnlyPreservingWhitespace`）：标题、列表、
-/// 代码块、表格、公式全是原样的源码。这里改成与笔记同一个引擎（`swift-markdown-engine`）的只读渲染。
-///
-/// 🔴 引擎只公开了 SwiftUI 包装，所以这里用 `NSHostingView` 托管——与笔记气泡正文 / 编辑弹窗 / 整篇编辑区
-/// 同属「Markdown 引擎」这一条例外（根 `AGENTS.md`「SwiftUI 只用在两处」），其余界面仍是 AppKit。
+/// 从前只做行内语法（`AttributedString(markdown:)` 的 `inlineOnlyPreservingWhitespace`）；后来（2026-09）改成
+/// 引擎编辑器的只读模式托管进 `NSHostingView`；2026-11-12 起按段显示（`AgentMarkdownView`，纯 AppKit）：
+/// 解析仍是引擎的（与笔记同一套），排版各段自己来。
 @MainActor
 enum AgentMarkdown {
     /// Agent 回复正文的字号（与改造前的纯文本一致）。
@@ -17,8 +14,7 @@ enum AgentMarkdown {
     /// 思考过程折叠起来的正文：比回复小一号（同改造前的 `.callout`）。
     static var thoughtFontSize: CGFloat { NSFont.preferredFont(forTextStyle: .callout).pointSize }
 
-    /// 面板里的只读配置：高度由内容定（滚轮交给对话记录那个滚动视图）、不要自带滚动条与留白、
-    /// 不做拼写检查（显示的是别人写的文字，画红波浪线没意义）。
+    /// 面板里的只读配置（按段显示只取其中的主题、标题 / 列表尺度、公式渲染器、扩展、代码着色、表格样式）。
     /// 标题 / 列表缩进的尺度与公式渲染器跟笔记共用一套（`applyNoteTypography`）；
     /// 主题用引擎默认的——`bodyText` 就是 `labelColor`，跟着系统外观走（气泡那套是钉死浅色的，不能拿来用）。
     /// 高亮两种（2026-10-05 用户要的「输出添加高亮支持」，两种都做）：`==文字==` 荧光笔底色（引擎自带扩展，
@@ -161,87 +157,71 @@ final class AgentCodeHighlighter: SyntaxHighlighter, @unchecked Sendable {
     }
 }
 
-/// 托管进 `NSHostingView` 的那一层：排完版把真实高度报回给 AppKit（同 `BubbleMarkdownHost` 的做法）。
-struct AgentMarkdownHost: View {
-    let text: String
-    let width: CGFloat
-    let fontSize: CGFloat
-    let documentId: String
-    let onHeight: (CGFloat) -> Void
-    /// 右键菜单（`AgentMarkdownView.contextMenu`）。引擎每次 `updateNSView` 都会换上新的，不像 `onLinkClick` 只认第一次。
-    let onContextMenu: (NSMenu, NSRange) -> NSMenu
-
-    var body: some View {
-        NoteLatexRenderer.shared.registerBlocks(in: text)   // 块公式按块排版：须先于引擎排版登记
-        return NativeTextViewWrapper(text: .constant(text),
-                                     configuration: AgentMarkdown.configuration.fittingLatex(to: width),
-                                     fontSize: fontSize,
-                                     documentId: documentId,
-                                     isEditable: false,
-                                     onBuildContextMenu: onContextMenu)
-            .frame(width: width)
-            .fixedSize(horizontal: false, vertical: true)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onHeight($0) }
-            .frame(width: width, alignment: .topLeading)
-    }
-}
-
-/// 一段 Markdown 正文（Agent 的回复 / 思考过程）。宽度由外面的约束给，高度是引擎排完版报回来的。
+/// 一段 Markdown 正文（Agent 的回复 / 思考过程 / 用户消息，习题的题干 / 选项 / 解析 / 笔记）。
+/// 宽度由外面给，高度是各段排完加起来的。
 ///
-/// 🔴 **排版很贵，交给引擎的次数必须掐着来**——每排一次都是整篇重排（TextKit 2），下面三条缺一不可：
-///  · **流式就地更新，不重建视图**：回复是一个碎片一个碎片来的。重建 = 每片都新建一棵 TextKit 2 的视图树，
-///    长回复几百片下来必卡；所以对话记录那边认出是同一条时只调 `update(text:)`。
-///  · **文本按 80ms 并流**（`textInterval`）：否则一条几千字的回复要被整篇排上几百遍。
-///  · **宽度防抖 + 看不见不排**（2026-09-20 用户实测「拖侧边栏很卡，不管在不在 Agent 页」）：
-///    `InspectorViewController.viewDidLayout` **每次布局都给 Agent 页及其子视图设 frame**，不管这页显不显示；
-///    拖分隔条时逐帧改宽度，照排就是每帧把每条回复整篇重排一遍。所以宽度变化只在停手后排一次
-///    （`widthInterval`），而且看不见时（不在窗口 / 自己或祖先隐藏 / 折叠着的思考过程）一次都不排，
-///    露出来时再补（`viewDidUnhide` / `viewDidMoveToWindow`）。
+/// 🔴 **按段显示，不再是一整个引擎编辑器**（2026-11-12，用户看了 Xcode 的 AI 输出定的；分段与各段视图见
+/// `AgentMarkdownBlocksView.swift`）：引擎的只读接口 `MarkdownDisplayRenderer` 用笔记同一套解析把正文切成段，
+/// 文字段用 TextKit 1 排，改宽度时各段只重新折行、按 frame 竖着摆。原来那种「引擎编辑器托管进 `NSHostingView`」
+/// 每改一次宽度都要整篇 TextKit 2 重排（带隐藏源码、表格整张重画），拖侧栏时跟不上。
+///
+/// 仍保留的节流（排版便宜了，但对话记录里可能有几百条）：
+///  · **流式就地更新**：同一条回复只调 `update(text:)`；源码没变的段原样留着，只重建变了的（通常是最后一段）。
+///  · **文本按 80ms 并流**（`textInterval`）。
+///  · **宽度：露在视口里的当场重排；视口外的停手再排；看不见的不排**（不在窗口 / 隐藏 / 折叠着的思考过程，露出来再补）。
 @MainActor
 final class AgentMarkdownView: NSView {
-    /// 已经交给引擎的文本。
+    /// 已经显示出来的文本。
     private(set) var text: String
     private let fontSize: CGFloat
     private let documentId: String
-    private var host: NSHostingView<AgentMarkdownHost>?
-    /// 已经交给引擎的宽度。
-    private var hostWidth: CGFloat = -1
-    /// 引擎报回来的正文高度。
+    private let context: AgentBlockContext
+    private var blocks: [AgentBlockView] = []
+    /// 各段已按这个宽度摆好（< 0：还没摆 / 要重摆）。
+    private var laidOutWidth: CGFloat = -1
+    private var built = false
+    /// 各段加起来的高度。
     private var height: CGFloat = 0
-    /// 排完版高度变了：对话记录据此决定要不要继续贴着底。
+    /// 高度变了：对话记录据此决定要不要继续贴着底。
     var onHeightChange: (() -> Void)?
 
-    /// 还没交给引擎的输入（攒着，到点 / 露出来再一起排）。
+    /// 还没显示的新文本（攒着，到点 / 露出来再一起排）。
     private var pendingText: String?
-    private var pendingWidth: CGFloat?
     private var lastApply = Date.distantPast
     private var timer: Timer?
+    private var widthTimer: Timer?
     /// 文本并流的间隔（最多这么频繁地重排一次）。
     private static let textInterval: TimeInterval = 0.08
-    /// 宽度是防抖：拖分隔条的整个过程一次都不排，停手才排。
+    /// 视口外的正文：宽度防抖，停手才排。
     private static let widthInterval: TimeInterval = 0.15
 
     /// 现在排版有没有意义。
     private var isVisible: Bool { window != nil && !isHiddenOrHasHiddenAncestor }
+    /// 露在对话记录的视口里（滚出去的条目 `visibleRect` 是空的）。
+    private var isOnScreen: Bool { isVisible && !visibleRect.isEmpty }
 
     init(text: String, fontSize: CGFloat, documentId: String) {
         self.text = text
         self.fontSize = fontSize
         self.documentId = documentId
+        context = AgentBlockContext(fontSize: fontSize)
         super.init(frame: .zero)
-        // 拖窄的那一瞬间正文还是按旧宽度排的，别让它画到面板外面去
+        context.fullText = { [weak self] in self?.pendingText ?? self?.text ?? "" }
         clipsToBounds = true
         lastApply = Date()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
-    deinit { timer?.invalidate() }
+    deinit {
+        timer?.invalidate()
+        widthTimer?.invalidate()
+    }
 
     override var isFlipped: Bool { true }
 
-    /// 高度是排出来的；第一帧还没排时先占一行，免得条目塌成 0 高。
+    /// 第一帧还没排时先占一行，免得条目塌成 0 高。
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: max(height, (fontSize * 1.5).rounded()))
+        NSSize(width: NSView.noIntrinsicMetric, height: built ? height : (fontSize * 1.5).rounded())
     }
 
     /// 流式来的新文本（同一条回复越来越长）。
@@ -250,51 +230,62 @@ final class AgentMarkdownView: NSView {
         pendingText = text
         guard isVisible else { return }          // 看不见：攒着，露出来再排
         if Date().timeIntervalSince(lastApply) >= Self.textInterval {
-            flush()
+            applyPending()
         } else {
-            arm(Self.textInterval, restart: false)
+            armText()
         }
     }
 
     override func layout() {
         super.layout()
-        host?.frame = bounds
-        guard abs(bounds.width - (pendingWidth ?? hostWidth)) > 0.5 else { return }
-        pendingWidth = bounds.width
         guard isVisible else { return }
-        // 第一次得立刻排，不然面板要空着等防抖那几十毫秒
-        if host == nil { flush() } else { arm(Self.widthInterval, restart: true) }
+        if !built || pendingText != nil, timer == nil { applyPending() }
+        let w = bounds.width
+        if abs(w - laidOutWidth) <= 0.25 { return }
+        if isOnScreen || laidOutWidth < 0 {
+            relayout(width: w)
+        } else {
+            armWidth()   // 视口外：停手再排（旧宽度的摆放先留着，反正看不见）
+        }
     }
 
     override func viewDidUnhide() {
         super.viewDidUnhide()
-        needsLayout = true      // 藏着的时候宽度可能变过，量一遍
-        flushIfPending()
+        needsLayout = true
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         needsLayout = true
-        flushIfPending()
     }
 
-    private func flushIfPending() {
-        guard isVisible, pendingText != nil || pendingWidth != nil else { return }
-        flush()
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // 公式图片与表格图的颜色是出图时定的：整条重建
+        guard built else { return }
+        blocks.forEach { $0.removeFromSuperview() }
+        blocks = []
+        built = false
+        pendingText = pendingText ?? text
+        needsLayout = true
     }
 
-    /// 尺寸已经定下来了（拖分隔条松手），立刻按新宽度排一次，别再等防抖那 150ms。
-    func flushNow() { flushIfPending() }
+    /// 尺寸已经定下来了（拖分隔条松手），立刻排，别再等防抖。
+    func flushNow() {
+        guard isVisible else { return }
+        if pendingText != nil || !built { applyPending() }
+        if abs(bounds.width - laidOutWidth) > 0.25 { relayout(width: bounds.width) }
+    }
 
-    /// 到点（或该露面了）就把攒下的文本 / 宽度一起交给引擎，排一次。
-    private func arm(_ interval: TimeInterval, restart: Bool) {
-        if restart { timer?.invalidate(); timer = nil }
+    private func armText() {
         guard timer == nil else { return }
-        let t = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+        let t = Timer(timeInterval: Self.textInterval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.timer = nil
-                self.flush()
+                guard self.isVisible else { return }
+                self.applyPending()
+                self.relayout(width: self.bounds.width)
             }
         }
         timer = t
@@ -302,91 +293,141 @@ final class AgentMarkdownView: NSView {
         RunLoop.main.add(t, forMode: .common)
     }
 
-    private func flush() {
+    private func armWidth() {
+        widthTimer?.invalidate()
+        let t = Timer(timeInterval: Self.widthInterval, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.widthTimer = nil
+                if self.isVisible { self.relayout(width: self.bounds.width) }
+            }
+        }
+        widthTimer = t
+        RunLoop.main.add(t, forMode: .common)
+    }
+
+    /// 把攒下的文本切段，源码没变的段原样留着。
+    private func applyPending() {
         timer?.invalidate()
         timer = nil
-        guard pendingText != nil || pendingWidth != nil else { return }
         if let t = pendingText { text = t }
-        if let w = pendingWidth { hostWidth = w }
         pendingText = nil
-        pendingWidth = nil
         lastApply = Date()
-        rebuildRoot()
-    }
-
-    private func rebuildRoot() {
-        let root = AgentMarkdownHost(text: text, width: max(hostWidth, 0), fontSize: fontSize, documentId: documentId,
-                                     onHeight: { [weak self] in self?.setHeight($0) },
-                                     onContextMenu: { [weak self] menu, sel in self?.contextMenu(menu, selection: sel) ?? menu })
-        if let host {
-            host.rootView = root
-        } else {
-            let h = NSHostingView(rootView: root)
-            h.sizingOptions = []      // 高度我们自己按引擎报回来的值管，别让 hosting view 也插一手
-            h.frame = bounds
-            addSubview(h)
-            host = h
-        }
-    }
-
-    private func setHeight(_ h: CGFloat) {
-        guard abs(height - h) > 0.5 else { return }
-        height = h
-        invalidateIntrinsicContentSize()
-        needsLayout = true
-        onHeightChange?()
-    }
-
-    // MARK: 右键菜单
-
-    /// 我们加的菜单项（菜单若是被复用的同一个对象，下次先摘掉这些，别越加越多）。
-    private static let menuItemID = NSUserInterfaceItemIdentifier("agent.markdown.copyBlock")
-
-    /// 引擎在 `NSHostingView` 里建的那个文本视图（右键要用它换算点击位置、改选区）。
-    private var textView: NSTextView? { host.flatMap(Self.firstTextView(in:)) }
-
-    private static func firstTextView(in v: NSView) -> NSTextView? {
-        if let t = v as? NSTextView { return t }
-        for s in v.subviews { if let t = firstTextView(in: s) { return t } }
-        return nil
-    }
-
-    /// 右键菜单（引擎把系统默认菜单 + 当前选区交给这里，`onBuildContextMenu`）：点在表格 / 代码块上时，
-    /// 顶上加一项「复制表格」/「复制代码」（2026-10-05 用户要的）；系统原有的项不动。
-    ///
-    /// 🔴 表格是整张画成一张图的（宽的再套一层横向滚动），右键点在图上，事件一路传给底下的文本视图，
-    /// 它按「点中的词」选中了表格隐藏源码里的一个字符——那个字符的框是一大块，蓝色选区就盖住了半张表
-    /// （同日用户截图，离屏复现：选区 = 表格开头的 `|`）。所以点在表格上时把这种落在表格里的选区收成插入点；
-    /// 用户先拖出来、跨出表格的选区不动。
-    private func contextMenu(_ menu: NSMenu, selection: NSRange) -> NSMenu {
-        for item in menu.items where item.identifier == Self.menuItemID { menu.removeItem(item) }
-        let tv = textView
-        let source = tv?.string ?? text
-        // 点中的位置：按这次右键的坐标算（已有的选区可能是用户早先拖出来的，不在点击处）
-        var index = selection.location
-        if let tv, let ev = NSApp.currentEvent, ev.window === tv.window,
-           ev.type == .rightMouseDown || ev.type == .leftMouseDown {
-            index = tv.characterIndexForInsertion(at: tv.convert(ev.locationInWindow, from: nil))
-        }
-        guard let block = AgentMarkdownBlock.block(at: index, in: source) else { return menu }
-        let content = (source as NSString).substring(with: block.content)
-        let item: NSMenuItem
-        switch block.kind {
-        case .table:
-            if let tv, selection.length > 0, selection.location >= block.range.location,
-               NSMaxRange(selection) <= NSMaxRange(block.range) + 1 {
-                tv.setSelectedRange(NSRange(location: block.range.location, length: 0))
+        built = true
+        NoteLatexRenderer.shared.registerBlocks(in: text)   // 块公式按块排版：须先于出图登记（见 `NoteLatexRenderer`）
+        let ns = text as NSString
+        let segments = MarkdownDisplayRenderer.segments(for: text, style: context.style)
+        var next: [AgentBlockView] = []
+        next.reserveCapacity(segments.count)
+        for (i, seg) in segments.enumerated() {
+            let key = Self.key(seg, ns)
+            if i < blocks.count, blocks[i].key == key { next.append(blocks[i]); continue }
+            if i < blocks.count, let old = blocks[i] as? AgentTextBlockView, case .text(let s, _) = seg,
+               old.key.hasPrefix("t|") {
+                old.update(text: s, key: key)   // 流式：最后一段文字长了，换内容不换视图
+                next.append(old)
+                continue
             }
-            item = ClosureMenuItem(L("Copy Table")) { AgentMarkdown.copyTable(content) }
-        case .code:
-            item = ClosureMenuItem(L("Copy Code")) { AgentMarkdown.copyCode(content) }
+            next.append(makeBlock(seg, key: key))
         }
-        let separator = NSMenuItem.separator()
-        item.identifier = Self.menuItemID
-        separator.identifier = Self.menuItemID
-        menu.insertItem(separator, at: 0)
-        menu.insertItem(item, at: 0)
-        return menu
+        let keep = Set(next.map { ObjectIdentifier($0) })
+        for b in blocks where !keep.contains(ObjectIdentifier(b)) { b.removeFromSuperview() }
+        for b in next where b.superview !== self { addSubview(b) }
+        blocks = next
+        laidOutWidth = -1
+        needsLayout = true
+    }
+
+    private static func key(_ seg: MarkdownDisplaySegment, _ ns: NSString) -> String {
+        let r = seg.range
+        let src = NSMaxRange(r) <= ns.length ? ns.substring(with: r) : ""
+        switch seg {
+        case .text: return "t|" + src
+        case .quote: return "q|" + src
+        case .code: return "c|" + src
+        case .math: return "m|" + src
+        case .table: return "b|" + src
+        case .rule: return "r|"
+        case .image: return "i|" + src
+        }
+    }
+
+    private func makeBlock(_ seg: MarkdownDisplaySegment, key: String) -> AgentBlockView {
+        let ctx = context
+        switch seg {
+        case .text(let s, _):
+            return AgentTextBlockView(key: key, text: s, quote: false, context: ctx)
+        case .quote(let s, _):
+            return AgentTextBlockView(key: key, text: s, quote: true, context: ctx)
+        case .code(let language, let code, _):
+            if language?.lowercased() == GrapherFencedRenderer.language {
+                return AgentImageBlockView(key: key, centered: true, scrolls: false,
+                                           menuItems: { [weak ctx] in
+                                               [ClosureMenuItem(L("Copy Code")) { AgentMarkdown.copyCode(code) }]
+                                                   + (ctx.map { [NSMenuItem.separator(), $0.copyAllItem()] } ?? [])
+                                           }) { [weak self] w in
+                    Self.grapherImage(code, width: w, dark: self?.isDark ?? false)
+                }
+            }
+            return AgentCodeBlockView(key: key, language: language, code: code, context: ctx)
+        case .math(let latex, _):
+            let size = fontSize
+            return AgentImageBlockView(key: key, centered: true, scrolls: false,
+                                       menuItems: { [weak ctx] in ctx.map { [$0.copyAllItem()] } ?? [] }) { _ in
+                NoteLatexRenderer.shared.render(latex: latex, fontSize: size,
+                                                theme: AgentMarkdown.configuration.theme)?.image
+            }
+        case .table(let source, _):
+            return AgentImageBlockView(key: key, centered: false, scrolls: true,
+                                       clipRadius: ctx.style.configuration.tableAppearance.cornerRadius,
+                                       menuItems: { [weak ctx] in
+                                           [ClosureMenuItem(L("Copy Table")) { AgentMarkdown.copyTable(source) }]
+                                               + (ctx.map { [NSMenuItem.separator(), $0.copyAllItem()] } ?? [])
+                                       }) { [weak self] w in
+                guard let self else { return nil }
+                return MarkdownDisplayRenderer.tableImage(source: source, style: ctx.style, availableWidth: w,
+                                                          appearance: self.effectiveAppearance)
+            }
+        case .rule:
+            return AgentRuleBlockView(key: key)
+        case .image(let url, let alt, _):
+            // 正文里的图片：面板里一直不显示图片本身（原来的引擎配置也不给图），显示成可点的链接
+            let s = NSAttributedString(string: alt.isEmpty ? url : alt, attributes: [
+                .font: NSFont.systemFont(ofSize: fontSize), .foregroundColor: NSColor.linkColor,
+                .link: URL(string: url) as Any,
+            ])
+            return AgentTextBlockView(key: key, text: s, quote: false, context: ctx)
+        }
+    }
+
+    private var isDark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
+
+    private static func grapherImage(_ code: String, width: CGFloat, dark: Bool) -> NSImage? {
+        let w = min(max(width, GrapherFencedRenderer.minBlockWidth), GrapherFencedRenderer.maxBlockWidth).rounded(.down)
+        guard let picture = GrapherImageCache.shared.picture(text: code, width: w, dark: dark) else { return nil }
+        return NSImage(cgImage: picture.image, size: CGSize(width: w, height: picture.height))
+    }
+
+    /// 各段按宽度 `w` 量高、竖着摆。
+    private func relayout(width w: CGFloat) {
+        widthTimer?.invalidate()
+        widthTimer = nil
+        laidOutWidth = w
+        let gap = (fontSize * 0.7).rounded()
+        var y: CGFloat = 0
+        for (i, b) in blocks.enumerated() {
+            // 以标题开头的文字段：标题的段前距加在块间距上（开头不在最顶上时）
+            if i > 0, let t = b as? AgentTextBlockView { y += t.leadingSpacing }
+            let h = b.height(forWidth: w)
+            b.frame = NSRect(x: 0, y: y, width: w, height: h)
+            y += h + (i == blocks.count - 1 ? 0 : gap)
+        }
+        let newHeight = ceil(y)
+        if abs(newHeight - height) > 0.5 {
+            height = newHeight
+            invalidateIntrinsicContentSize()
+            onHeightChange?()
+        }
     }
 }
 

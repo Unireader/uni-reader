@@ -8,7 +8,7 @@
 //      $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
 //      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/LatexCompat.swift \
 //      Sources/Markdown/GrapherBlocks.swift Sources/Markdown/TableEditMenu.swift Sources/Window/AI/AgentMarkdownView.swift \
-//      Sources/Window/AI/AgentRowView.swift Sources/Window/AI/AgentUserMessageView.swift Sources/Agent/AgentMarkdownBlocks.swift \
+//      Sources/Window/AI/AgentMarkdownBlocksView.swift Sources/Window/AI/AgentRowView.swift Sources/Window/AI/AgentUserMessageView.swift \
 //      Sources/Agent/AgentMention.swift Sources/Agent/AgentSentContext.swift $O/main.swift -o $O/t && $O/t $O
 //
 // （2026-11-12 补全：笔记编辑框后来依赖 LatexCompat / GrapherBlocks / TableEditMenu，Agent 正文依赖 AgentRowView，
@@ -43,6 +43,15 @@ final class WorkspaceWikiIndex: WikiLinkResolver, EmbeddedImageProvider, @unchec
     func resolve(displayName: String, range: NSRange) -> WikiLinkResolution? { nil }
     func image(for reference: EmbeddedImageRequest) -> NSImage? { nil }
     func fingerprint() -> AnyHashable { 0 }
+}
+
+/// 笔记编辑框的 `[[` 选择框（`Window/Markdown/NoteLinkCompleter.swift`，依赖整个工作区），这里用不到。
+final class NoteLinkCompleter {
+    var pending: InlineReplacementRequest?
+    var wikiActive = false
+    func selectionChanged(_ state: InlineSelectionState?) {}
+    func caretRectChanged(_ r: CGRect) {}
+    func key(_ k: InlinePreviewKey) -> Bool { false }
 }
 
 /// 笔记编辑框读的设置项（`MarkdownNoteEditor`），这里用不到。
@@ -351,68 +360,65 @@ func firstTextView(_ v: NSView) -> NSTextView? {
     return nil
 }
 
-/// 合成一次右键：只调文本视图的 `menu(for:)`（真弹菜单会进模态跟踪、卡住）。右键落在表格图上时，
-/// App 里事件也是从表格图一路传到文本视图手上的（离屏实测：图本身没有菜单）。
+/// 合成一次右键：只调视图的 `menu(for:)`（真弹菜单会进模态跟踪、卡住）。
 @MainActor
-func rightClick(_ tv: NSTextView, at p: NSPoint) -> NSMenu? {
-    let ev = NSEvent.mouseEvent(with: .rightMouseDown, location: tv.convert(p, to: nil), modifierFlags: [],
-                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: tv.window?.windowNumber ?? 0,
+func rightClick(_ v: NSView) -> NSMenu? {
+    let p = NSPoint(x: v.bounds.midX, y: v.bounds.midY)
+    let ev = NSEvent.mouseEvent(with: .rightMouseDown, location: v.convert(p, to: nil), modifierFlags: [],
+                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: v.window?.windowNumber ?? 0,
                                 context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
-    return tv.menu(for: ev)
-}
-
-/// 某段文字在文本视图里的位置（第一个字的框中心）。
-@MainActor
-func point(of needle: String, in tv: NSTextView) -> NSPoint? {
-    let r = (tv.string as NSString).range(of: needle)
-    guard r.location != NSNotFound, let tlm = tv.textLayoutManager, let cs = tv.textContentStorage,
-          let a = cs.location(cs.documentRange.location, offsetBy: r.location), let b = cs.location(a, offsetBy: 1),
-          let tr = NSTextRange(location: a, end: b) else { return nil }
-    tlm.ensureLayout(for: tr)
-    var f = NSRect.zero
-    tlm.enumerateTextSegments(in: tr, type: .standard, options: []) { _, rect, _, _ in f = rect; return false }
-    return NSPoint(x: f.midX + tv.textContainerOrigin.x, y: f.midY + tv.textContainerOrigin.y)
+    return v.menu(for: ev)
 }
 
 @MainActor
 func testContextMenu() {
-    print("6. 右键菜单")
+    print("6. 右键菜单（按段显示：表格 / 代码块 / 文字各自一个视图，2026-11-12）")
     let table = """
     | 中文 | 英文 | 备注一列写得很长很长很长很长很长很长很长很长很长很长很长很长 |
     |---|---|---|
     | 桌前检查 | desk checking | 一 |
     | 走查 | walkthrough | 二 |
     """
-    let text = "段落一。\n\n```swift\nlet a = 1\n```\n\n\(table)\n\n尾巴。"
+    let text = "段落一，公式 $a^2$ 在中间。\n\n```swift\nlet a = 1\n```\n\n\(table)\n\n尾巴。"
     let h = Harness(width: 520, appearance: .aqua)
     let md = AgentMarkdownView(text: text, fontSize: AgentMarkdown.bodyFontSize, documentId: "menu")
     h.add(md)
     pump(1.2)
-    guard let tv = firstTextView(md) else { check(false, "找到引擎的文本视图"); return }
-    let copyTable = "Copy Table", copyCode = "Copy Code"   // 离屏程序没有 App 的本地化表，L() 原样返回键
+    let copyTable = "Copy Table", copyCode = "Copy Code", copyAll = "Copy All (Markdown)"   // 离屏程序没有本地化表，L() 原样返回键
+    let blocks = md.subviews
+    check(blocks.count == 4, "切成四段：文字 / 代码 / 表格 / 文字（得到 \(blocks.count)）")
+    guard blocks.count == 4 else { return }
 
-    // 宽表格：图在一层横向滚动视图里（引擎的 WideTableOverlay），右键点它的中间
-    if let overlay = tv.subviews.first(where: { "\(type(of: $0))" == "WideTableOverlay" }) {
-        let p = NSPoint(x: overlay.frame.midX, y: overlay.frame.midY)
-        let menu = rightClick(tv, at: p)
-        check(menu?.items.first?.title == copyTable, "右键表格：第一项是复制表格（\(menu?.items.first?.title ?? "nil")）")
-        check(menu?.items.dropFirst().first?.isSeparatorItem == true, "复制表格下面一条分隔线")
-        check(tv.selectedRange().length == 0, "右键表格后不留选区（原来会选中表格隐藏源码的一个字符，蓝框盖住半张表）")
-        let again = rightClick(tv, at: p)
-        check(again?.items.filter { $0.title == copyTable }.count == 1, "连着右键两次不会出现两个复制表格")
-    } else {
-        check(false, "样例表格应宽到出横向滚动层")
-    }
-    if let p = point(of: "let a", in: tv) {
-        let menu = rightClick(tv, at: p)
-        check(menu?.items.first?.title == copyCode, "右键代码块：第一项是复制代码（\(menu?.items.first?.title ?? "nil")）")
-        check(menu?.items.contains { $0.title == copyTable } == false, "代码块上不出复制表格")
-    } else {
-        check(false, "找到代码块位置")
-    }
-    if let p = point(of: "尾巴", in: tv) {
-        let menu = rightClick(tv, at: p)
+    // 宽表格：在自己的横向滚动视图里；右键它出「复制表格」
+    check(blocks[2].subviews.contains { $0 is NSScrollView }, "样例表格宽过版面：放在横向滚动视图里")
+    let tableMenu = rightClick(blocks[2])
+    check(tableMenu?.items.first?.title == copyTable, "右键表格：第一项是复制表格（\(tableMenu?.items.first?.title ?? "nil")）")
+    check(tableMenu?.items.contains { $0.title == copyAll } == true, "右键表格：有复制全文")
+    check(rightClick(blocks[2])?.items.filter { $0.title == copyTable }.count == 1, "连着右键两次不会出现两个复制表格")
+
+    let codeMenu = rightClick(blocks[1])
+    check(codeMenu?.items.first?.title == copyCode, "右键代码块：第一项是复制代码（\(codeMenu?.items.first?.title ?? "nil")）")
+    check(codeMenu?.items.contains { $0.title == copyTable } == false, "代码块上不出复制表格")
+
+    if let tv = firstTextView(blocks[3]) {
+        let menu = rightClick(tv)
         check(menu?.items.contains { $0.title == copyTable || $0.title == copyCode } == false, "普通段落上不加这两项")
+        check(menu?.items.filter { $0.title == copyAll }.count == 1, "普通段落：有一项复制全文")
+    } else {
+        check(false, "尾巴那段是文本视图")
+    }
+
+    // 复制含公式的文字：公式图片换回 `$…$`
+    if let tv = firstTextView(blocks[0]) {
+        let pb = NSPasteboard.general
+        let saved = pb.string(forType: .string)
+        tv.selectAll(nil)
+        tv.copy(nil)
+        check(pb.string(forType: .string) == "段落一，公式 $a^2$ 在中间。", "复制文字：公式还原成源码（得到 \(pb.string(forType: .string) ?? "nil")）")
+        pb.clearContents()
+        if let saved { pb.setString(saved, forType: .string) }
+    } else {
+        check(false, "第一段是文本视图")
     }
 
     // 写剪贴板：用临时剪贴板，别动用户的

@@ -2,16 +2,17 @@
 // 手写小画板 `ExerciseInkPad` + 出图 `ExerciseInkRender`。编的是**真代码**，只把 `ExerciseDeck.Answer`
 // （它那个文件牵出整个工作区）和 Markdown 引擎用不到的几个类型换成桩。依赖已编好的包模块（先按 AGENTS.md 编一次 Debug 包）。运行：
 //
-//   D=build/dev/Build/Products/Debug; O=/tmp/ex-free; mkdir -p $O && cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ \
+//   D=build/dev/Build/Products/Debug; AD=$(cd $D && pwd); O=/tmp/ex-free; mkdir -p $O && cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ \
 //   && cp spike/exercise-free-answer-test.swift $O/main.swift && swiftc -I $D -F $D -framework GrapherEmbed -framework GrapherKit -framework GrapherRender \
-//      -Xlinker -rpath -Xlinker $PWD/$D $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
-//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/GrapherBlocks.swift Sources/Markdown/TableEditMenu.swift \
-//      Sources/Markdown/LatexCompat.swift Sources/Window/AI/AgentMarkdownView.swift \
-//      Sources/Window/AI/AgentRowView.swift Sources/Agent/AgentMarkdownBlocks.swift Sources/Store/*.swift Sources/App/Exercise.swift \
+//      -Xlinker -rpath -Xlinker $AD $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
+//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/LatexCompat.swift Sources/Markdown/GrapherBlocks.swift \
+//      Sources/Markdown/TableEditMenu.swift Sources/Window/AI/AgentMarkdownView.swift Sources/Window/AI/AgentMarkdownBlocksView.swift \
+//      Sources/Window/AI/AgentRowView.swift Sources/Store/*.swift Sources/App/Exercise.swift \
 //      Sources/App/InkModel.swift Sources/App/PenPreset.swift Sources/App/ScratchPadModel.swift Sources/App/BoardModel.swift \
 //      Sources/Reader/InkRenderCG.swift Sources/Window/Exercise/ExerciseInkPad.swift Sources/Window/Exercise/ExerciseFreeAnswerView.swift \
 //      $O/main.swift -o $O/t && $O/t $O
-//   （2026-11-10：Markdown 编辑器后来多依赖了图形块与表格菜单，命令补上那两个源文件和三个 Grapher 框架。）
+//   （2026-11-12：Agent 正文改为按段显示，命令换成 `AgentMarkdownBlocksView.swift`、去掉已删的 `AgentMarkdownBlocks.swift`；
+//    补了 `NoteLinkCompleter` 桩——笔记编辑框接上 `[[` 选择框后这里编不过。）
 //
 // 盯的事：
 //  1. 画板：合成鼠标事件写一笔 → 笔迹在**逻辑坐标**（宽恒 600）里；橡皮整笔擦；撤销 / 清空 / 加高；只读时不收输入；
@@ -38,6 +39,15 @@ final class WorkspaceWikiIndex: WikiLinkResolver, EmbeddedImageProvider, @unchec
     func resolve(displayName: String, range: NSRange) -> WikiLinkResolution? { nil }
     func image(for reference: EmbeddedImageRequest) -> NSImage? { nil }
     func fingerprint() -> AnyHashable { 0 }
+}
+
+/// 笔记编辑框的 `[[` 选择框（`Window/Markdown/NoteLinkCompleter.swift`，依赖整个工作区），这里用不到。
+final class NoteLinkCompleter {
+    var pending: InlineReplacementRequest?
+    var wikiActive = false
+    func selectionChanged(_ state: InlineSelectionState?) {}
+    func caretRectChanged(_ r: CGRect) {}
+    func key(_ k: InlinePreviewKey) -> Bool { false }
 }
 
 enum NoteBubble {

@@ -56,6 +56,7 @@ struct MarkdownDocEditor: View {
         c.spellChecking.automaticQuoteSubstitution = false
         c.services.latex = NoteLatexRenderer.shared
         c.extensions = [HighlightExtension()]   // `==高亮==`（Obsidian 写法；引擎默认不开）
+        c.tableAppearance = .rounded   // 与批注 / 气泡 / Agent 同一种表格样式（`MarkdownNoteEditor.applyNoteTypography`）
         return c
     }()
 

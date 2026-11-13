@@ -281,6 +281,7 @@ struct MarkdownNoteEditor: View {
         c.lists.indentPerLevel = 16
         c.services.latex = NoteLatexRenderer.shared
         c.extensions = [HighlightExtension()]   // `==高亮==`（批注编辑框与气泡都认）
+        c.tableAppearance = .rounded   // 表格：圆角底、只有行间细线（参照 Xcode，2026-11-12 用户要；引擎 fork 的开关，Perch 仍是网格）
     }
 
     var body: some View {

@@ -4,6 +4,28 @@
 
 ## Markdown 笔记 / 引擎
 
+- 🔴 **渲染成整块的表格 / 公式块，选区不许停在它中间**（2026-11-12 用户截图：从表格下面往上拖选，一块错位的底色盖住右半张表和下面几行）。
+  引擎把表格源码在文本里压成零宽，只留一个被拉宽成整张表的锚点字符；拖选终点落在表上时，系统按「点在这个字符的左半 / 右半」定在它前后，
+  选区就从表格中间开始。引擎 fork 改成选区（非空）一伸进这种块就扩到整块（`NativeTextView+RenderedBlockSelection.swift`，
+  重写 `setSelectedRanges`，鼠标拖选、⇧方向键都走它）；插入点不动（点进表格照旧开单元格编辑）。只认「渲染图 + 源码隐藏」的块，
+  源码露着的（`.visibleSource`）不管。测试 `RenderedBlockSelectionTests`。🔴 合成鼠标拖选（`postEvent` + `mouseDown`）在 `swift test`
+  里能跑通但会让测试进程提前退出，别写成测试，手工探针验证。
+- 🔴 **行内公式附件的基线：`bounds.origin.y = -baselineOffset`**（2026-11-12 离屏样张：公式整体飘在字上面）。SwiftMath 给的
+  `LatexRenderResult.baselineOffset` 是公式在基线**以下**的深度（正数），`NSTextAttachment.bounds.origin.y` 是相对基线**往上**的偏移，
+  照抄成正值就把公式抬高两倍深度。引擎表格单元格里一直是正值（表格里的行内公式偏高、行也被撑高），fork 同日一起改了。
+- **表格样式 `TableAppearance`（fork，2026-11-12）**：`.grid` 默认（Perch 用），`.rounded` 本 App 打开。格子位置（`TableGeometry`）在出图时记下，
+  单元格编辑框照它摆、内边距与表头字体跟样式走（`TableAppearance.Metrics` 一处定，画图 / 编辑框都读它）；宽表格的横向滚动层把裁剪区
+  调成正好表格高（滚动条那一条比滚动条本身高几点），再给它的图层设圆角 + 裁边——别用图层遮罩（`layer.mask`）：可滚动区域的图层坐标
+  随滚动偏移，遮罩位置要跟着算，而且离屏截图（`cacheDisplay`、`CALayer.render(in:)`）都不画遮罩，样张里看不出对错。
+  验圆角就读角上的像素（`CALayer.render(in:)` 画圆角裁边）。
+- **拖动改宽度（fork，2026-11-12）**：宽度 0.2 秒内连着变 = 正在拖（分隔条、窗口、SwiftUI 逐帧给宽度都算），拖动中：没人用「代码块选中」
+  就不为它整篇排版（原来每帧 `ensureLayout(documentRange)`，占 73% 采样）；整页编辑器按宽度比例估总高度、只排露出来的部分；
+  `.fitsContent` 且底边在视口外的，只排到视口底再按字数比例估剩下的；停手 0.15 秒精确排一次。表格**不走**省事路径——拖动中每帧
+  按新宽度重画（原作者的测试要求；缩放旧图只省 1ms，用户定去掉）。测试：引擎原有的 `TableWidthChangeRestyleTests` 全过即可。
+- **只读按段接口 `MarkdownDisplayRenderer`（fork，2026-11-12）**：给只显示不编辑的地方（Agent 面板、习题）用，解析同编辑器（`DocumentAST`）。
+  段内换行输出 U+2028（换成 `\n` 会变成新段落、吃段距）；行内公式附件带 `sourceAttribute`（`$…$` 原文），复制时换回；`[[…]]` 的 `.link`
+  是 `x-markdown-wiki:` 开头。用法见 `ACP-AGENT-PLAN.md §19`。
+
 - 🔴 **`[[` 候选列表要方向键 / 回车 / Esc，必须给 `NativeTextViewWrapper` 传一个能写的 `isWikiLinkActive:` 绑定**（2026-11-12 用户报「不能用方向键选择」）。
   引擎只在这个状态为真时才把 ↑↓ / 回车 / Esc 交给 `onInlinePreviewKey`；不传就是它的默认 `.constant(false)`，它写不进去，
   键全归编辑器挪光标——`onInlinePreviewKey` 接了也白接。11-10 做候选列表时就漏了，一直没人发现。App 侧存在 `NoteLinkCompleter.wikiActive`，
@@ -73,11 +95,8 @@
   🔴 **验证别经过桥接层的 `render`**：它有磁盘缓存（`~/Library/Caches/MarkdownEngineLatex/`，与 App 共用，`clearCache()` 会删整个目录），
   第二次跑直接读图不排版，改坏了也测不出；引擎测试 `SwiftMathBinarySpacingTests` 直接解析 + 排版。批量 / 随机测试每条包
   `autoreleasepool`、设内存上限、用 `CFFIXED_USER_HOME=<临时目录>` 隔离缓存（2026-10-07 没做这三条，2 万条测试吃满用户内存）。
-- **右键点在表格上会选中一块错位的蓝框**（同日）：表格是整张画成的图，宽表格再套一层横向滚动视图
-  （引擎 `WideTableOverlay`），图本身没有菜单，右键一路传给文本视图，它选中了表格隐藏源码的一个字符
-  （开头的 `|`），那个字符的框是一大块。`AgentMarkdownView.contextMenu` 在点中表格时把这种选区收成插入点。
-  点中哪一块按右键事件坐标换算（`characterIndexForInsertion`），认块规则在 `AgentMarkdownBlocks`，
-  🔴 必须与引擎 `BlockParser` 一致（行首 ``` 才算围栏、没收尾的不算；表格要紧跟分隔行）。
+- ~~**右键点在表格上会选中一块错位的蓝框**（同日）~~：Agent 面板 2026-11-12 起按段显示，表格 / 代码块各自一个视图、自带右键菜单，
+  这条连同认块的 `AgentMarkdownBlocks` 一起作废；笔记编辑区里拖选停在表格中间的同类问题，引擎 fork 同日从根上修了（本节开头那条）。
 
 ## App / 窗口生命周期
 
@@ -175,10 +194,10 @@
   再激活宽度约束**：约束两端要有共同祖先，刚建出来的视图还没有父视图，当场激活是 `NSGenericException` +
   「进程 abort」（改对了顺序才不崩；那次一点历史对话就崩）。另外这排视图变了要叫一次滚动条重算（见上一条），
   **面板尺寸变了也要**——正文没重排就没人报高度，滚动条会停在上次的判断上。🔴 **尺寸连着变（拖分隔条 /
-  拖窗口）的整个过程里这块面板停住不动**（用户 2026-09-21 定：「拖拽过程中不更新 UI，直到松手后再重新布局
-  对话流」）：`layout` 里发现距上次尺寸变化不到 120ms 就直接不摆位、起一只表等停手，停手后 `finishResize`
-  按新尺寸摆位 → 叫每条正文 `flushNow()` 立刻重排（不等它自己那 150ms 防抖）→ 重算滚动条；停住期间内容还是
-  旧宽度，所以面板要 `clipsToBounds`。排滚动条的问题别再猜，`touch ~/Library/Logs/UniReader-agent-scroll.log`
+  拖窗口）时**：~~整块面板停住不动（2026-09-21 定）~~ → **2026-11-12 用户要「拖的时候也重排」，改成边拖边排**：
+  面板照常摆位；正文按段显示（`ACP-AGENT-PLAN.md §19`），**露在视口里的**当场按新宽度重排（文字段只重新折行、表格按新宽度重画，
+  离屏实测一条 3000 字带 10 张表的回复 2.3ms），**视口外的**停手再排，停手后 `finishResize` 叫每条 `flushNow()` 补齐、重算滚动条；
+  仍要 `clipsToBounds`。（中间试过「引擎编辑器 + 50ms 节拍」，用户嫌有延迟，已被按段显示取代。）排滚动条的问题别再猜，`touch ~/Library/Logs/UniReader-agent-scroll.log`
   开几何打点（`AgentScrollLog`，默认关）。离屏验证 `spike/agent-transcript-test.swift`（42 项：增量结果、
   零操作、约束只加一次、约束激活顺序）。
 - **对话记录条目里别套 `NSStackView`，这排视图也别只增不减**（2026-10-10 采样 + 离屏实测）：整个窗口共用一个

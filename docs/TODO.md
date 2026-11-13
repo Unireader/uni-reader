@@ -37,6 +37,11 @@
 
 > 本节**只留真的没做的事**，验收类条目不挂在这里（2026-09-07 / 09-13 两次裁决）。
 
+0. **引擎 fork 发版**（2026-11-12）：worktree `../swift-markdown-engine-worktrees/resize-perf` 的改动（拖动提速、圆角表格、选区不停在表格中间、
+   只读按段接口、公式基线）2026-11-13 已提交并推到 fork 的 `perf/live-resize` 分支（用户说先不发版）；
+   发版时合进 `xvan`、打 `0.15.0-xvan.3`，`project.yml` 换回 `url` + `exactVersion`（现临时 `path:`，别的机器拉 main 编不过）。
+   细节 `docs/agents/BUILD-DETAILS.md` 引擎那条。
+
 1. **安卓模式2：标签页共存，换文档不再重置**（2026-09-07 用户定方向，**方案待写 → `ANDROID-MODE2-PLAN.md`**）。
 
    起因是「模式2 换文档还会闪一下」这个老症状，但**根治不是给闪烁打补丁**——用户原话：

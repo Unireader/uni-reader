@@ -63,6 +63,12 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `Package.resolved file is corrupted or malformed`——重新 `set-mirror` 就好，别去改它；
   `git stash -u` 会把 `.swiftpm/` 的镜像配置一起收走，想在原版代码上对比测试，用另一个停在原版提交的 worktree；
   开发期让 App 用本地引擎：`project.yml` 临时写 `path:` 指向 worktree，**发布前必须推送、打 tag、换回 `url` + `exactVersion`**；
+  🔶 **现状（2026-11-13）**：`project.yml` 正临时指向 `../swift-markdown-engine-worktrees/resize-perf`（分支 `perf/live-resize`，
+  2026-11-13 已提交 `244bba9` + CHANGELOG `a19ecc1` 并推到 xVanTuring fork 的同名分支；**用户说先不发版：未打 tag、未合进 `xvan`**），
+  在 `0.15.0-xvan.2` 上加了：拖动改宽度提速（`NativeTextView+FrameAndOverscroll.swift` 的 live width 一组）、`TableAppearance`（圆角表格）、
+  选区不停在表格 / 公式块中间（`NativeTextView+RenderedBlockSelection.swift`）、只读按段接口 `MarkdownDisplayRenderer`、
+  行内公式附件基线取反（表格单元格里原来偏高）；新测试 4 个文件 17 项，`swift test` 868 项、失败的仍是改前就有的 9 个
+  （裸网址 `www`、宽表格横划、`ScrollingHeaderController` 三项）。发版时：合进 `xvan`、打 `0.15.0-xvan.3`、推送，再换回 `url` + `exactVersion`（别的机器拉 main 编不过，直到换回为止）；
   🔴 **升级前后都跑一遍 `spike/markdown-relayout-cost.swift`**——0.9.0 每敲一个字按整篇算账，17K 字的笔记 56ms/字、
   52K 字 159ms/字（一帧才 16.7ms），0.13.0 恒定 9~12ms/字不随全文长度涨；量的是主线程 CPU 时间，用法见文件头，
   改动前后对比一眼就知道有没有退步）——笔记编辑器 sheet（`MarkdownNoteEditor`）与气泡正文只读渲染

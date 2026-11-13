@@ -510,6 +510,7 @@
 "Copy Image" = "复制图片";
 "Copy Table" = "复制表格";
 "Copy Code" = "复制代码";
+"Copy All (Markdown)" = "复制全文（Markdown）";
 "Import Image Here…" = "在此导入图片…";
 "Choose images to add as notes on this page" = "选择要加到这一页上的图片";
 "Saving image note…" = "正在保存图片笔记…";

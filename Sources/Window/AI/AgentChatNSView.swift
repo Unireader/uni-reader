@@ -180,20 +180,23 @@ final class AgentChatNSView: NSView {
         // 🔴 看不见就不摆位：`InspectorViewController.viewDidLayout` 每次布局都会给 Agent 页及其子视图设 frame，
         // 不管这页显不显示——拖分隔条时逐帧来一遍。切回来时 `viewDidUnhide` 会补一次。
         guard window != nil, !isHiddenOrHasHiddenAncestor else { return }
-        // 🔴 **尺寸连着变（拖分隔条 / 拖窗口）的整个过程里，这块面板停住不动**：不摆位、不重排正文、
-        // 不动滚动条，停手后再一次性重来（`finishResize`）。用户 2026-09-21 定：
-        // 「拖拽过程中不更新 UI，直到松手后再重新布局对话流」——逐帧跟着改宽度就是每帧把每条回复
-        // 整篇重排一遍，中间态还会裁成半截。停住期间内容按旧宽度留着，所以要 `clipsToBounds`。
+        // 尺寸连着变（拖分隔条 / 拖窗口）：**照常摆位**，露在视口里的回复正文当场跟着重排（`AgentMarkdownView` 自己管：
+        // 视口外的停手再排），停手后 `finishResize` 再把没排的补齐、对一次滚动条。
+        // 2026-09-21 用户定过「拖拽过程中不更新 UI」（当时逐帧把每条回复整篇重排，很卡）；2026-11-12 用户要「拖的时候也重排」，
+        // 正文改成按段显示（各段只重新折行，`AgentMarkdownBlocksView.swift`）、只排看得见的，于是改回边拖边排。
+        var resizing = false
         if bounds.size != lastLaidOutSize {
             let now = Date()
             defer { lastSizeChange = now }
             if now.timeIntervalSince(lastSizeChange) < Self.resizeQuiet {
                 armResizeEnd()
-                return
+                resizing = true
             }
         }
-        resizeTimer?.invalidate()
-        resizeTimer = nil
+        if !resizing {
+            resizeTimer?.invalidate()
+            resizeTimer = nil
+        }
         lastLaidOutSize = bounds.size
         let b = bounds
         var y: CGFloat = 0

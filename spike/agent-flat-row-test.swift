@@ -3,10 +3,14 @@
 // 编的是**真代码**（`AgentRowView` / `AgentDisclosureView` / `AgentMarkdownView`），原来的 `NSStackView` 版在下面抄了一份当对照。
 // 依赖已编好的包模块（先按 AGENTS.md 编一次 Debug 包）。运行：
 //
-//   D=build/dev/Build/Products/Debug; O=/tmp/agent-flat-row; mkdir -p $O && cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ \
-//   && cp spike/agent-flat-row-test.swift $O/main.swift && swiftc -O -I $D $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
-//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/LatexCompat.swift Sources/Window/AI/AgentMarkdownView.swift \
-//      Sources/Window/AI/AgentRowView.swift Sources/Agent/AgentMarkdownBlocks.swift $O/main.swift -o $O/t && $O/t $O
+//   D=build/dev/Build/Products/Debug; AD=$(cd $D && pwd); O=/tmp/agent-flat-row; mkdir -p $O && cp -R $D/Highlighter_Highlighter.bundle $D/SwiftMath_SwiftMath.bundle $O/ \
+//   && cp spike/agent-flat-row-test.swift $O/main.swift && swiftc -O -I $D -F $D -framework GrapherEmbed -framework GrapherKit -framework GrapherRender \
+//      -Xlinker -rpath -Xlinker $AD $D/MarkdownEngine.o $D/MarkdownEngineLatex.o $D/SwiftMath.o $D/Highlighter.o \
+//      Sources/Support/L.swift Sources/Markdown/MarkdownNoteEditor.swift Sources/Markdown/LatexCompat.swift Sources/Markdown/GrapherBlocks.swift \
+//      Sources/Markdown/TableEditMenu.swift Sources/Window/AI/AgentMarkdownView.swift Sources/Window/AI/AgentMarkdownBlocksView.swift \
+//      Sources/Window/AI/AgentRowView.swift $O/main.swift -o $O/t && $O/t $O
+//   （2026-11-12：Agent 正文改为按段显示，命令换成 `AgentMarkdownBlocksView.swift`、去掉已删的 `AgentMarkdownBlocks.swift`；
+//    补了 `NoteLinkCompleter` 桩——笔记编辑框接上 `[[` 选择框后这里编不过。）
 //
 // 盯四件事：
 //  1. 拍平的行和原来横排 `NSStackView` 摆得一样：逐个子视图 frame 对得上；窄到放不下时工具名被截断、图标不动；
@@ -25,6 +29,15 @@ final class WorkspaceWikiIndex: WikiLinkResolver, EmbeddedImageProvider, @unchec
     func resolve(displayName: String, range: NSRange) -> WikiLinkResolution? { nil }
     func image(for reference: EmbeddedImageRequest) -> NSImage? { nil }
     func fingerprint() -> AnyHashable { 0 }
+}
+
+/// 笔记编辑框的 `[[` 选择框（`Window/Markdown/NoteLinkCompleter.swift`，依赖整个工作区），这里用不到。
+final class NoteLinkCompleter {
+    var pending: InlineReplacementRequest?
+    var wikiActive = false
+    func selectionChanged(_ state: InlineSelectionState?) {}
+    func caretRectChanged(_ r: CGRect) {}
+    func key(_ k: InlinePreviewKey) -> Bool { false }
 }
 
 enum NoteBubble {
