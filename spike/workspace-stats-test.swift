@@ -219,6 +219,9 @@ func boardItem(_ board: String, _ kind: Int) {
 for _ in 0..<3 { boardItem("B1", 1) }
 boardItem("B1", 2)
 for _ in 0..<2 { boardItem("B2", 1) }
+// 题目草稿纸（`EXERCISE-PLAN.md §29`）：存成画板但不算画板，上面的笔迹也不算
+run("INSERT INTO board_note(id,title,group_name,created_at,updated_at) VALUES('BX','', 'exercise',?,?)", [.text(T), .text(T)])
+for _ in 0..<4 { boardItem("BX", 1) }
 
 // 习题：E6 是不认识的题型 2；E7 的标签不是合法 JSON（当没标签）；E5 / E6 的标签只差大小写（算一个）
 func exercise(_ id: String, _ doc: String?, page: Int?, kind: Int, chapter: String = "", tags: String = "",

@@ -1461,3 +1461,12 @@
 "Close Chat" = "Close Chat";
 "Rename Chat" = "Rename Chat";
 "Leave it empty to use the title the agent gives." = "Leave it empty to use the title the agent gives.";
+
+/* 题目草稿纸（EXERCISE-PLAN.md §29） */
+"Scratch Paper" = "Scratch Paper";
+"Scratch Paper · Question %@" = "Scratch Paper · Question %@";
+"Scratch paper" = "Scratch paper";
+"Show this question’s scratch paper. Each question has its own; it stays with the question and you can keep writing on it after you answer." = "Show this question’s scratch paper. Each question has its own; it stays with the question and you can keep writing on it after you answer.";
+"Expand" = "Expand";
+"Click the title to show the question. Drag it to move." = "Click the title to show the question. Drag it to move.";
+"Click the title to fold the question away. Drag it to move." = "Click the title to fold the question away. Drag it to move.";

@@ -40,13 +40,27 @@ final class ExerciseTabView: NSView {
     /// 按标签筛（这一组里有标签才显示）：「全部标签」+ 出现过的每个标签。
     private let tagPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let separator = NSBox()
+    /// 草稿纸（开关，按下 = 这道题的草稿纸盖在练习页上，`EXERCISE-PLAN.md §29`；同 PDF 上开草稿纸：平时不显示，关了回到题目）。
+    private let scratchButton = NSButton()
+    private let scratch: ExerciseScratchPane
+    /// 草稿纸开着（不记在本机：每次进来都先看题）。
+    private var scratchShown = false
+    /// 换了一张草稿纸（换题 / 收起 / 展开）：窗格把笔架绑过去。
+    var onScratchChange: () -> Void = {}
+    /// 草稿纸那一块挪了 / 变大小了：窗格重摆笔架。
+    var onScratchLayout: () -> Void = {}
+    /// 眼前这道题的草稿纸会话（收起 / 列表页 / 没有题 = nil）。
+    var scratchSession: DocSession? { scratch.isHidden ? nil : scratch.session }
+    /// 草稿纸那一块在本视图里的位置（笔架摆在它上面）。
+    var scratchFrame: NSRect? { scratchSession == nil ? nil : scratch.convert(scratch.bounds, to: self) }
     private let practice: ExercisePracticeView
     private let list: ExerciseListView
     private var bag = Set<AnyCancellable>()
 
-    init(scope: ExerciseScope, workspace: WorkspaceManager) {
+    init(scope: ExerciseScope, workspace: WorkspaceManager, app: AppModel) {
         self.scope = scope
         self.workspace = workspace
+        scratch = ExerciseScratchPane(app: app, workspace: workspace)
         deck = ExerciseDeck.shared(scope: scope, workspace: workspace)
         practice = ExercisePracticeView(deck: deck, workspace: workspace)
         list = ExerciseListView(deck: deck, workspace: workspace)
@@ -84,7 +98,20 @@ final class ExerciseTabView: NSView {
         tagPopup.toolTip = L("Show only the questions with this tag.")
         tagPopup.isHidden = true
         separator.boxType = .separator
-        for v in [practice, list, header, progressLabel, redoAllButton, lastWrongButton, unansweredButton, tagPopup, modeControl,
+        scratchButton.bezelStyle = .push
+        scratchButton.setButtonType(.pushOnPushOff)
+        scratchButton.title = L("Scratch Paper")
+        scratchButton.image = NSImage(systemSymbolName: "pencil.and.scribble", accessibilityDescription: nil)
+        scratchButton.imagePosition = .imageLeading
+        scratchButton.contentTintColor = .labelColor
+        scratchButton.toolTip = L("Show this question’s scratch paper. Each question has its own; it stays with the question and you can keep writing on it after you answer.")
+        scratchButton.target = self
+        scratchButton.action = #selector(scratchToggled)
+        scratchButton.state = .off
+        scratch.isHidden = true
+        scratch.onSessionChange = { [weak self] in self?.onScratchChange() }
+        scratch.onClose = { [weak self] in self?.setScratchShown(false) }
+        for v in [practice, list, scratch, header, scratchButton, progressLabel, redoAllButton, lastWrongButton, unansweredButton, tagPopup, modeControl,
                   separator] as [NSView] {
             addSubview(v)
         }
@@ -149,6 +176,7 @@ final class ExerciseTabView: NSView {
     override var isFlipped: Bool { true }
 
     private func syncHeader() {
+        syncScratch()
         let n = deck.items.count
         let s = deck.sessionSummary
         var parts = [String(format: L("%d questions"), n)]
@@ -248,6 +276,8 @@ final class ExerciseTabView: NSView {
     private func applyMode(focus: Bool = true) {
         modeControl.selectedSegment = deck.mode.rawValue
         practice.isHidden = deck.mode != .practice
+        scratchButton.isHidden = deck.mode != .practice
+        if deck.mode != .practice { setScratchShown(false) }
         list.isHidden = deck.mode != .list
         if deck.mode == .list { list.reload() } else if focus { practice.takeFocus() }
         syncHeader()
@@ -266,7 +296,7 @@ final class ExerciseTabView: NSView {
         // 往左依次排：只看没做过（错题本里不显示）、重做上次做错的、全部重做
         var right = modeControl.frame.minX
         tagPopup.sizeToFit()
-        for b in [tagPopup, unansweredButton, lastWrongButton, redoAllButton] as [NSControl] where !b.isHidden {
+        for b in [scratchButton, tagPopup, unansweredButton, lastWrongButton, redoAllButton] as [NSControl] where !b.isHidden {
             if b !== tagPopup { b.sizeToFit() }
             let bw = b.frame.width
             b.frame = NSRect(x: right - 10 - bw, y: topInset + (headerH - b.frame.height) / 2, width: bw, height: b.frame.height)
@@ -279,5 +309,38 @@ final class ExerciseTabView: NSView {
         let body = NSRect(x: 0, y: separator.frame.maxY, width: b.width, height: max(0, b.height - separator.frame.maxY))
         practice.frame = body
         list.frame = body
+        if scratch.frame != body { scratch.frame = body; onScratchLayout() }
     }
+
+    // MARK: - 草稿纸（`EXERCISE-PLAN.md §29`）
+
+    @objc private func scratchToggled() { setScratchShown(scratchButton.state == .on) }
+
+    /// 开 / 关这道题的草稿纸（盖在整块练习区上，顶上这一条留着）。关了键盘交回练习页。
+    private func setScratchShown(_ on: Bool) {
+        scratchButton.state = on ? .on : .off
+        guard scratchShown != on else { return }
+        scratchShown = on
+        scratch.isHidden = !on
+        syncScratch()
+        onScratchChange()
+        if !on { practice.takeFocus() }
+    }
+
+    /// 草稿纸跟着眼前这道题换（收起 / 列表页 / 不在窗口里 = 放掉，平板若开着同一道题会话留给它）。
+    private func syncScratch() {
+        guard window != nil, deck.mode == .practice, !scratch.isHidden, let e = deck.current else {
+            if scratch.host != nil { scratch.detach() }
+            return
+        }
+        let no = e.number.isEmpty ? String(deck.index + 1) : e.number
+        scratch.show(e, title: String(format: L("Scratch Paper · Question %@"), no))
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        syncScratch()
+    }
+
+
 }

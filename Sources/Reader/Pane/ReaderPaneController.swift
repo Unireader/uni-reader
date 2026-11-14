@@ -265,8 +265,11 @@ final class ReaderPaneController: NSViewController {
         if let scope = tab.exerciseScope {
             if exView?.scope != scope {
                 exView?.removeFromSuperview()
-                let v = ExerciseTabView(scope: scope, workspace: workspace)
+                let v = ExerciseTabView(scope: scope, workspace: workspace, app: app)
                 v.onOpenSource = { [weak self] e in self?.openExerciseSource(e) }
+                // 题目草稿纸（`EXERCISE-PLAN.md §29`）：换了一张纸 → 笔架绑过去；那一块挪了 → 笔架跟着摆
+                v.onScratchChange = { [weak self] in self?.queueRefresh() }
+                v.onScratchLayout = { [weak self] in self?.view.needsLayout = true }
                 v.agentWindow = { [weak self] in self?.session.windowID }
                 view.addSubview(v, positioned: .below, relativeTo: placeholder)
                 exView = v
@@ -409,11 +412,13 @@ final class ReaderPaneController: NSViewController {
 
     /// 阅读区 / 笔记区之外的那一堆（笔架 / 查找条 / 角标 / 标签栏…），两种内容都要跑。
     private func finishRefresh(_ s: DocSession) {
-        if readerView != nil || s.isBoard {   // 画板上也要笔架（落墨 / 橡皮 / 框选全靠它切）
+        // 画板上也要笔架（落墨 / 橡皮 / 框选全靠它切）；习题标签开着草稿纸时笔架对着那道题的草稿纸
+        let rackSession = exView?.scratchSession ?? ((readerView != nil || s.isBoard) ? s : nil)
+        if let rs = rackSession {
             if let rack = penRack {
-                rack.bind(s)
+                rack.bind(rs)
             } else {
-                let rack = PenRackNSView(app: app, session: s)
+                let rack = PenRackNSView(app: app, session: rs)
                 view.addSubview(rack, positioned: .below, relativeTo: floating)
                 penRack = rack
             }
@@ -586,8 +591,13 @@ final class ReaderPaneController: NSViewController {
             pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧 Inspector 让位
             pad.topInset = si.top
         }
-        penRack?.place(viewport: NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - panel), height: b.height),
-                       topInset: si.top, bottomInset: tabBarInset + scrollerLift)
+        if let ex = exView, let f = ex.scratchFrame {
+            // 习题标签：笔架摆在草稿纸那一块上（它的顶边就是分隔线，不用再让工具栏）
+            penRack?.place(viewport: ex.convert(f, to: view), topInset: 0, bottomInset: tabBarInset + scrollerLift)
+        } else {
+            penRack?.place(viewport: NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - panel), height: b.height),
+                           topInset: si.top, bottomInset: tabBarInset + scrollerLift)
+        }
         if !findBanner.isHidden {
             let s = findBanner.fittingSize
             findBanner.frame = NSRect(x: safe.midX - s.width / 2, y: safe.minY + 8, width: s.width, height: max(30, s.height))

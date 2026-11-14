@@ -1,11 +1,10 @@
 import AppKit
 
 /// 填空 / 主观题的作答区（`EXERCISE-PLAN.md §11.2`）：练习页里选项那一块换成它。
-/// 选择题也用它（2026-11-10，用户：「选择题也会有计算」）：摆在选项下面，只有手写那一块——演算写在小画板上，
-/// 选了选项交卷时笔迹跟着那次作答一起存（`exercise_attempt.ink`），以后翻回来看得到当时怎么算的。
 /// - 填空：每空一个输入框；交卷后锁住，对得上参考答案的空标绿勾（最终判错时对不上的标红叉）。
 /// - 主观题：多行输入框（`$…$` 写公式）；交卷后换成渲染好的「你的作答」。
-/// - 两种都能打开手写小画板（`ExerciseInkPad`），开没开记在本机，下一题照旧。
+/// 手写演算不在这里：每道题有自己的草稿纸，在练习页下半部分（`ExerciseScratchPane`，`EXERCISE-PLAN.md §29`；
+/// 原来的手写小画板 2026-11-14 按用户要求拿掉了）。选择题用到它时什么都不显示（高度 0）。
 /// 交卷后下面亮出参考答案。对错、评语、自己判的按钮在练习页上，和选择题共用结果那一行。
 /// 排版同练习页：按 frame 手摆，`height(forWidth:)` 与 `layout()` 走同一个 `arrange`。
 @MainActor
@@ -31,27 +30,12 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
     private let placeholder = NSTextField(labelWithString: L("Write your answer here. Use $…$ for formulas."))
     private var textHeight: CGFloat = 96
 
-    private let handButton = NSButton()
-    private let toolControl = NSSegmentedControl(labels: [L("Pen"), L("Eraser")], trackingMode: .selectOne,
-                                                 target: nil, action: nil)
-    private let undoButton = NSButton()
-    private let clearButton = NSButton()
-    private let growButton = NSButton()
-    private let pad = ExerciseInkPad()
-    private var handOn = false
-
     private let mineTitle = NSTextField(labelWithString: L("Your Answer"))
     private let mineView = AgentMarkdownView(text: "", fontSize: 15, documentId: "exercise-mine")
     private let refTitle = NSTextField(labelWithString: L("Reference Answer"))
     private let refView = AgentMarkdownView(text: "", fontSize: 15, documentId: "exercise-reference")
     private var mineText = ""
     private var refText: String?
-
-    /// 手写开着没有（本机记住，下一题照旧）。选择题另记一份：演算纸不是每道选择题都要，
-    /// 不该因为主观题开着手写就在每道选择题下面都摊开一张纸（反过来也一样）。
-    private static let handKey = "exercise.handwriting"
-    private static let choiceHandKey = "exercise.handwriting.choice"
-    private var handPrefKey: String { kind.isChoice ? Self.choiceHandKey : Self.handKey }
 
     init() {
         super.init(frame: .zero)
@@ -75,39 +59,16 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
         placeholder.font = .systemFont(ofSize: 15)
         placeholder.textColor = .placeholderTextColor
 
-        setup(handButton, symbol: "pencil.and.scribble", title: L("Handwriting"), action: #selector(toggleHand))
-        handButton.setButtonType(.pushOnPushOff)
-        toolControl.target = self
-        toolControl.action = #selector(toolChanged)
-        toolControl.setImage(NSImage(systemSymbolName: "pencil.tip", accessibilityDescription: nil), forSegment: 0)
-        toolControl.setImage(NSImage(systemSymbolName: "eraser", accessibilityDescription: nil), forSegment: 1)
-        toolControl.selectedSegment = 0
-        setup(undoButton, symbol: "arrow.uturn.backward", title: L("Undo"), action: #selector(undoInk))
-        setup(clearButton, symbol: "trash", title: L("Clear"), action: #selector(clearInk))
-        setup(growButton, symbol: "arrow.down.to.line", title: L("More Space"), action: #selector(growInk))
-        pad.onChange = { [weak self] in self?.inkChanged() }
-
         for t in [mineTitle, refTitle] {
             t.font = .preferredFont(forTextStyle: .headline)
             t.textColor = .labelColor
         }
         for v in [mineView, refView] { v.onHeightChange = { [weak self] in self?.heightMayChange() } }
-        for v in [textScroll, placeholder, handButton, toolControl, undoButton, clearButton, growButton, pad,
-                  mineTitle, mineView, refTitle, refView] as [NSView] { addSubview(v) }
+        for v in [textScroll, placeholder, mineTitle, mineView, refTitle, refView] as [NSView] { addSubview(v) }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
     override var isFlipped: Bool { true }
-
-    private func setup(_ b: NSButton, symbol: String, title: String, action: Selector) {
-        b.bezelStyle = .push
-        b.title = title
-        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        b.imagePosition = .imageLeading
-        b.target = self
-        b.action = action
-        b.contentTintColor = .labelColor
-    }
 
     // MARK: - 换题 / 显示
 
@@ -125,10 +86,6 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
         if textView.string != (draft?.text ?? "") { textView.string = draft?.text ?? "" }
         textView.isEditable = true
         fitTextHeight()
-        pad.load(draft?.ink)
-        pad.isEditable = true
-        handOn = !(draft?.ink?.isEmpty ?? true) || UserDefaults.standard.bool(forKey: handPrefKey)
-        handButton.state = handOn ? .on : .off
         mineText = ""
         refText = nil
         mineView.update(text: "")
@@ -137,8 +94,8 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
         heightMayChange()
     }
 
-    /// 交过了：锁住、显示作答（`ink` 由练习页从库里那条取来——统计里不带笔迹）和参考答案。
-    func showAnswered(_ e: Exercise, answer a: ExerciseDeck.Answer, ink: ExerciseInk?) {
+    /// 交过了：锁住、显示作答和参考答案。
+    func showAnswered(_ e: Exercise, answer a: ExerciseDeck.Answer) {
         kind = e.kind
         locked = true
         makeBlanks(e.kind == .fill ? e.blankCount : 0)
@@ -158,10 +115,6 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
             }
         }
         textView.isEditable = false
-        let shownInk = ink ?? a.response.ink
-        pad.load(shownInk)
-        pad.isEditable = false
-        handOn = !(shownInk?.isEmpty ?? true)
         let mine = e.kind == .subjective ? a.response.text.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         if mine != mineText { mineText = mine; mineView.update(text: mine) }
         let ref = Self.referenceMarkdown(e)
@@ -178,7 +131,6 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
         case .subjective: r.text = textView.string
         default: break
         }
-        if handOn, !pad.ink.isEmpty { r.ink = pad.ink }
         return r
     }
 
@@ -230,12 +182,6 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
         let fill = kind == .fill
         textScroll.isHidden = fill || kind.isChoice || locked
         placeholder.isHidden = textScroll.isHidden || !textView.string.isEmpty
-        handButton.isHidden = locked
-        for v in [toolControl, undoButton, clearButton, growButton] as [NSView] { v.isHidden = locked || !handOn }
-        pad.isHidden = !handOn
-        undoButton.isEnabled = pad.canUndo
-        clearButton.isEnabled = !pad.ink.isEmpty
-        growButton.isEnabled = pad.canGrow
         mineTitle.isHidden = !locked || mineText.isEmpty
         mineView.isHidden = mineTitle.isHidden
         refTitle.isHidden = !locked || refText == nil
@@ -248,25 +194,6 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
     }
 
     // MARK: - 操作
-
-    @objc private func toggleHand() {
-        handOn = handButton.state == .on
-        UserDefaults.standard.set(handOn, forKey: handPrefKey)
-        refreshControls()
-        heightMayChange()
-        onEdit()
-    }
-
-    @objc private func toolChanged() { pad.tool = toolControl.selectedSegment == 1 ? .eraser : .pen }
-    @objc private func undoInk() { pad.undo() }
-    @objc private func clearInk() { pad.clear() }
-    @objc private func growInk() { pad.grow() }
-
-    private func inkChanged() {
-        refreshControls()
-        heightMayChange()
-        onEdit()
-    }
 
     func controlTextDidChange(_ obj: Notification) { onEdit() }
 
@@ -324,21 +251,6 @@ final class ExerciseFreeAnswerView: NSView, NSTextFieldDelegate, NSTextViewDeleg
             y += 26
             let h = mineView.intrinsicContentSize.height
             put(mineView, NSRect(x: 0, y: y, width: w, height: h))
-            y += h + 12
-        }
-        // 手写：开关 + 工具一行，下面画板
-        if !handButton.isHidden {
-            var x: CGFloat = 0
-            for b in [handButton, toolControl, undoButton, clearButton, growButton] as [NSControl] where !b.isHidden {
-                b.sizeToFit()
-                put(b, NSRect(x: x, y: y, width: b.frame.width, height: b.frame.height))
-                x += b.frame.width + (b === handButton ? 14 : 6)
-            }
-            y += 34
-        }
-        if !pad.isHidden {
-            let h = pad.height(forWidth: w)
-            put(pad, NSRect(x: 0, y: y, width: w, height: h))
             y += h + 12
         }
         if !refView.isHidden {

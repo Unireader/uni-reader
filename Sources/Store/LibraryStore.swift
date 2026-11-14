@@ -1116,8 +1116,14 @@ final class LibraryStore {
     /// 画板笔记里的图片条目 kind（同 `imageNoteKind`：引用计数的 SQL 要用）。
     static let boardImageKind = 2
 
+    /// 题目草稿纸（`EXERCISE-PLAN.md §29`）：一道题一张，存成画板（`board_note.id` = 题目 id），
+    /// `group_name` 记这个值——不是画板笔记，列表 / 统计里都不算。
+    static let exerciseScratchGroup = "exercise"
+
+    /// 画板笔记列表（不含题目草稿纸）。
     func boards() throws -> [LibBoard] {
-        try db.query("SELECT * FROM board_note ORDER BY COALESCE(last_opened_at, created_at) DESC").map(Self.board)
+        try db.query("SELECT * FROM board_note WHERE group_name <> ? ORDER BY COALESCE(last_opened_at, created_at) DESC",
+                     [.text(Self.exerciseScratchGroup)]).map(Self.board)
     }
     func board(id: String) throws -> LibBoard? {
         try db.query("SELECT * FROM board_note WHERE id=?", [.text(id)]).map(Self.board).first

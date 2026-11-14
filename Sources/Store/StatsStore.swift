@@ -366,10 +366,11 @@ enum StatsStore {
 
     private static func boards(_ db: SQLiteDB) throws -> Boards {
         let t = try ints(db, """
-        SELECT (SELECT COUNT(*) FROM board_note), (SELECT COUNT(DISTINCT board_id) FROM board_page),
+        SELECT (SELECT COUNT(*) FROM board_note WHERE group_name <> ?1), (SELECT COUNT(DISTINCT board_id) FROM board_page),
                (SELECT COUNT(*) FROM board_page),
-               (SELECT COUNT(*) FROM board_item WHERE kind = 1), (SELECT COUNT(*) FROM board_item WHERE kind = 2)
-        """, [], 5)
+               (SELECT COUNT(*) FROM board_item WHERE kind = 1 AND board_id NOT IN (SELECT id FROM board_note WHERE group_name = ?1)),
+               (SELECT COUNT(*) FROM board_item WHERE kind = 2 AND board_id NOT IN (SELECT id FROM board_note WHERE group_name = ?1))
+        """, [.text(LibraryStore.exerciseScratchGroup)], 5)
         return Boards(boards: t[0], pagedBoards: t[1], pages: t[2], inkItems: t[3], imageItems: t[4])
     }
 

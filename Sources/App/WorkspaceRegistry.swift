@@ -205,6 +205,7 @@ final class WorkspaceRegistry: ObservableObject {
         guard retain[k, default: 0] <= 0, !windowPaths.values.contains(k) else { return }
         guard let m = byPath.removeValue(forKey: k)?.manager else { return }
         let wasServer = m.isServerWorkspace
+        ExerciseScratchHost.open(in: m).forEach { $0.flush() }   // 平板还开着这里的某道题的草稿纸：关库前结清
         m.teardown()
         // 服务器工作区：连接关了，用临时连接完整同步一轮（打开它之前会先取消这一轮，见 `ServerSyncCoordinator`）
         if wasServer { ServerSyncCoordinator.shared.workspaceClosed(URL(fileURLWithPath: k)) }

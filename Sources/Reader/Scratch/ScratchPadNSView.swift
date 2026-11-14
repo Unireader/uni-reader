@@ -25,6 +25,10 @@ final class ScratchPadNSView: NSView {
     var topInset: CGFloat = 0 { didSet { if oldValue != topInset { needsLayout = true } } }
     /// 画板笔记用：取图 / 存图（窗格装配时给；草稿纸用不到）。
     weak var workspace: WorkspaceManager?
+    /// 题目草稿纸（`EXERCISE-PLAN.md §29`）：工具条上的名字固定显示它（如「第 3 题」），不能改名。nil = 照常。
+    var fixedTitle: String? { didSet { if fixedTitle != oldValue { padChanged() } } }
+    /// 题目草稿纸能「关」（盖在练习页上，关 = 收起、回到题目）：设了就有关闭键，Esc / 关闭键调它。
+    var onRequestClose: (() -> Void)? { didSet { padChanged() } }
 
     /// 画板笔记（v16，`BOARD-NOTE-PLAN.md §3.3`）：这张纸就是一整篇画板，占一个标签页——
     /// 不能关（关 = 关标签）、没有页面底图，但能放图。
@@ -250,7 +254,7 @@ final class ScratchPadNSView: NSView {
             switch event.keyCode {
             case 53:
                 if self.clearLassoSelection() { return nil }
-                if self.standalone { return event }   // 画板不能「关」（关 = 关标签，走 ⌘W）
+                if self.standalone && self.onRequestClose == nil { return event }   // 画板不能「关」（关 = 关标签，走 ⌘W）
                 self.close()
                 return nil
             case 51, 117:
@@ -285,9 +289,11 @@ final class ScratchPadNSView: NSView {
         pagesLayer.paper = p.bg
         pagesLayer.setNeedsDisplay()
         bar.setStandalone(standalone)
+        bar.setClosable(!standalone || onRequestClose != nil)
         bar.setPaged(paged)
         // 画板：名字的真源此刻就是这张纸（`session.board` 要等下一拍落库时才跟上）
-        bar.update(title: standalone ? (p.title.isEmpty ? L("Untitled Board") : p.title) : p.displayName(index: padIndex),
+        bar.setRenamable(fixedTitle == nil)
+        bar.update(title: fixedTitle ?? (standalone ? (p.title.isEmpty ? L("Untitled Board") : p.title) : p.displayName(index: padIndex)),
                    showPage: p.showPage,
                    pageEnabled: session.pdf?.page(at: p.anchorPage) != nil, anchorPage: p.anchorPage,
                    showMinimap: showMinimap, hasContent: hasContent, zoom: vp.zoom)
@@ -347,7 +353,7 @@ final class ScratchPadNSView: NSView {
         let show = !paged && strokes.isEmpty && images.isEmpty && !showsPage && session.scratchLive == nil
         hint.isHidden = !show
         guard show else { return }
-        hintTitle.stringValue = standalone ? L("Blank board") : L("Blank scratchpad")
+        hintTitle.stringValue = standalone && fixedTitle == nil ? L("Blank board") : L("Blank scratchpad")
         hintBody.stringValue = app.pointerTool == .ink
             ? L("Draw anywhere. Drag with the hand tool to pan, pinch to zoom.")
             : L("Pick the pen in the pen rack to write. Drag to pan, pinch to zoom.")
@@ -729,6 +735,7 @@ final class ScratchPadNSView: NSView {
     }
 
     private func close() {
+        if let c = onRequestClose { app.scratchInkCancel(in: session); c(); return }
         guard !standalone else { return }
         app.scratchInkCancel(in: session)
         session.openPadID = nil
@@ -1592,6 +1599,14 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
         needsLayoutInSuperview()
     }
 
+    /// 关闭键在不在（画板没有；题目草稿纸有，`ScratchPadNSView.onRequestClose`）。
+    func setClosable(_ on: Bool) {
+        guard closeBtn.isHidden == on else { return }
+        closeBtn.isHidden = !on
+        closeDivider.isHidden = !on
+        needsLayoutInSuperview()
+    }
+
     /// 缩放读数只在不是 100% 时出现（常驻一个「100%」是纯噪音）。
     func setZoom(_ z: CGFloat) {
         let hide = abs(z - 1) <= 0.005
@@ -1605,7 +1620,18 @@ final class ScratchToolbarView: NSView, NSTextFieldDelegate {
 
     private func needsLayoutInSuperview() { superview?.needsLayout = true }
 
+    /// 题目草稿纸不能改名：名字那颗键只显示文字，点了不进改名。
+    func setRenamable(_ on: Bool) {
+        guard renamable != on else { return }
+        renamable = on
+        titleButton.image = on ? NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil) : nil
+        titleButton.toolTip = on ? L("Click to rename") : nil
+        needsLayoutInSuperview()
+    }
+    private var renamable = true
+
     private func beginRename() {
+        guard renamable else { return }
         renaming = true
         titleField.stringValue = titleButton.title
         titleButton.isHidden = true

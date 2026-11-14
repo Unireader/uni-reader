@@ -127,55 +127,71 @@ extension DocTabModel {
 
     /// 画板那一行：草稿纸那边改了名字 / 纸样 → 写回 `board_note`。
     func persistBoardRow() {
-        guard var b = session.board, let pad = session.scratchPads.first(where: { $0.id == b.id }) else { return }
+        guard session.persistBoardRow(workspace) else { return }
+        session.title = session.board?.displayName ?? ""
+    }
+    func persistBoardStrokes() { session.persistBoardStrokes(workspace) }
+    func persistBoardPages() { session.persistBoardPages(workspace) }
+    func persistBoardImages() { session.persistBoardImages(workspace) }
+}
+
+/// 画板的增量对账落库（画板标签 `DocTabModel` 与题目草稿纸 `ExerciseScratchHost` 共用）。
+/// 会话里只有一张永远开着的纸，四样东西各对各的快照（`persisted*`）。
+@MainActor
+extension DocSession {
+
+    /// 画板那一行：草稿纸那边改了名字 / 纸样 → 写回 `board_note`。返回 true = 写了。
+    @discardableResult
+    func persistBoardRow(_ ws: WorkspaceManager) -> Bool {
+        guard var b = board, let pad = scratchPads.first(where: { $0.id == b.id }) else { return false }
         b.absorb(pad)
-        guard b != session.persistedBoard else { return }
-        session.board = b
-        session.title = b.displayName
-        workspace.saveBoard(b)
-        session.persistedBoard = b
+        guard b != persistedBoard else { return false }
+        board = b
+        ws.saveBoard(b)
+        persistedBoard = b
+        return true
     }
 
     /// 画板笔迹 ↔ `board_item` kind=1（同 `persistScratchStrokes` 的套路）。
-    func persistBoardStrokes() {
-        guard let bid = session.board?.id else { return }
-        let current = session.scratchStrokes
+    func persistBoardStrokes(_ ws: WorkspaceManager) {
+        guard let bid = board?.id else { return }
+        let current = scratchStrokes
         let currentIDs = Set(current.map(\.id))
-        for st in current where session.persistedScratchStrokes[st.id] != st {
+        for st in current where persistedScratchStrokes[st.id] != st {
             // 分页画板：按第一个点归页、存页内坐标（`BOARD-NOTE-PLAN.md §9.1`）
-            workspace.saveBoardStroke(boardId: bid, st, page: session.boardPageRef(index: session.boardPageIndex(of: st)))
+            ws.saveBoardStroke(boardId: bid, st, page: boardPageRef(index: boardPageIndex(of: st)))
         }
-        for goneID in session.persistedScratchStrokes.keys where !currentIDs.contains(goneID) {
-            workspace.deleteBoardItem(id: goneID)
+        for goneID in persistedScratchStrokes.keys where !currentIDs.contains(goneID) {
+            ws.deleteBoardItem(id: goneID)
         }
-        session.persistedScratchStrokes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        persistedScratchStrokes = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     /// 分页画板的页 ↔ `board_page`（v17）。删掉的页：它上面的条目在页操作里已经从数组摘掉，由另外两个对账删行。
-    func persistBoardPages() {
-        guard let bid = session.board?.id else { return }
-        let current = session.boardPages
+    func persistBoardPages(_ ws: WorkspaceManager) {
+        guard let bid = board?.id else { return }
+        let current = boardPages
         let currentIDs = Set(current.map(\.id))
-        for p in current where session.persistedBoardPages[p.id] != p {
-            workspace.saveBoardPage(boardId: bid, p)
+        for p in current where persistedBoardPages[p.id] != p {
+            ws.saveBoardPage(boardId: bid, p)
         }
-        for goneID in session.persistedBoardPages.keys where !currentIDs.contains(goneID) {
-            workspace.deleteBoardPage(id: goneID)
+        for goneID in persistedBoardPages.keys where !currentIDs.contains(goneID) {
+            ws.deleteBoardPage(id: goneID)
         }
-        session.persistedBoardPages = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        persistedBoardPages = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 
     /// 画板图片 ↔ `board_item` kind=2；删的那张要对账图片引用（最后一处引用没了 → 进待删除）。
-    func persistBoardImages() {
-        guard let bid = session.board?.id else { return }
-        let current = session.boardImages
+    func persistBoardImages(_ ws: WorkspaceManager) {
+        guard let bid = board?.id else { return }
+        let current = boardImages
         let currentIDs = Set(current.map(\.id))
-        for im in current where session.persistedBoardImages[im.id] != im {
-            workspace.saveBoardImage(boardId: bid, im, page: session.boardPageRef(index: session.boardPageIndex(of: im)))
+        for im in current where persistedBoardImages[im.id] != im {
+            ws.saveBoardImage(boardId: bid, im, page: boardPageRef(index: boardPageIndex(of: im)))
         }
-        for (goneID, old) in session.persistedBoardImages where !currentIDs.contains(goneID) {
-            workspace.deleteBoardImage(id: goneID, image: old.image)
+        for (goneID, old) in persistedBoardImages where !currentIDs.contains(goneID) {
+            ws.deleteBoardImage(id: goneID, image: old.image)
         }
-        session.persistedBoardImages = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        persistedBoardImages = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
 }

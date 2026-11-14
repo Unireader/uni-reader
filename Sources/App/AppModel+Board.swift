@@ -105,7 +105,8 @@ extension AppModel {
 
     /// 当前画板上的图（不是画板会话时发空表）。图片本体客户端按 `GET /image?h=<sha>` 自取。
     func broadcastBoardImages() {
-        guard server.hasClients, let s = padSession else { return }
+        guard server.hasClients else { return }
+        guard let s = padScratchSession else { server.broadcast(["type": "boardImages", "list": [[String: Any]]()]); return }
         // 先把这几张图登记给 `/image`（只认登记过的 sha，不拿请求里的字符串拼路径）
         var files: [String: URL] = [:]
         if let folder = s.workspaceFolder {
@@ -146,8 +147,9 @@ extension AppModel {
 
     /// 分页画板的页（不是分页画板时发 `n = 0`）。客户端按布局契约（`§9.2`）自己排页、画背景。
     func broadcastBoardPages() {
-        guard server.hasClients, let s = padSession else { return }
-        let pages = s.isPagedBoard ? s.boardPages : []
+        guard server.hasClients else { return }
+        let s = padScratchSession   // 平板在习题页上 = 题目草稿纸（永远是无限画布）
+        let pages = s?.isPagedBoard == true ? s?.boardPages ?? [] : []
         let l = BoardLayout(pages: pages)
         server.broadcast(["type": "boardPages", "w": l.width, "h": l.height,
                           "list": pages.map { ["id": $0.id.uuidString, "template": Int($0.template.code)] }])

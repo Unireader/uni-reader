@@ -490,7 +490,7 @@ extension MCPTools {
             "answer": MCPSchema.string("what the user wrote: option letters (choice), the text (subjective), or the blanks joined with \" / \" (fill)"),
             "blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "fill questions: what the user wrote in each blank"),
             "blank_matches": MCPSchema.array(of: MCPSchema.boolean("matches"), "fill questions: whether each blank matches the reference answer exactly (after ignoring spaces and full-width forms); a false one may still be an equivalent form"),
-            "has_handwriting": MCPSchema.boolean("the user also wrote by hand; see it with render_exercise_answer"),
+            "has_handwriting": MCPSchema.boolean("the user wrote by hand for this question (its scratch paper, or handwriting saved with this answer); see it with render_exercise_answer"),
             "correct": MCPSchema.boolean("the verdict (absent = not graded yet)"),
             "judged_by": MCPSchema.enumeration(["app", "user", "agent"], "who gave the verdict: the app (choice / exactly matching blanks), the user, or an agent"),
             "feedback": MCPSchema.string("the agent's feedback (Markdown)"),
@@ -644,7 +644,7 @@ extension MCPTools {
         MCPTool(
             name: "render_exercise_answer",
             title: "Show a handwritten answer",
-            description: "Render the user's handwritten answer (drawn on the small pad under a fill-in-the-blank or subjective question) as a PNG, black ink on white. Use it when list_exercise_attempts says has_handwriting.",
+            description: "Render the user's handwriting for an answer as a PNG: the question's scratch paper (each question has one; the user works on it before and after answering), or, for older answers without one, the handwriting saved with the answer. Use it when list_exercise_attempts says has_handwriting.",
             inputSchema: MCPSchema.object([
                 "workspace": MCPSchema.string("Workspace .unrd path, only when the id could be in several open workspaces."),
                 "attempt_id": MCPSchema.string("Attempt id from list_exercise_attempts (full, or its first 8 characters)"),
@@ -654,6 +654,7 @@ extension MCPTools {
                 "attempt_id": MCPSchema.string("full attempt id"),
                 "exercise_id": MCPSchema.string("exercise id"),
                 "width": MCPSchema.integer("pixels"), "height": MCPSchema.integer("pixels"),
+                "from": MCPSchema.string("scratch_paper = the question's scratch paper; answer = handwriting saved with this answer (older answers)"),
             ]),
             tier: .read
         ) { _, args in

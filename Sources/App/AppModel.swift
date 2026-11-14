@@ -61,6 +61,11 @@ final class AppModel: ObservableObject {
     var detachedBoardSave: DispatchWorkItem?
     /// 习题的平板同步（`AppModel+Exercise`，`EXERCISE-PLAN.md §10.4`）：平板此刻开着哪一组（`exOpen`），nil = 不在习题上。
     var padExercise: PadExerciseSub?
+    /// 平板习题页上眼前这道题的草稿纸（`EXERCISE-PLAN.md §29`，`AppModel+Exercise.syncPadExerciseScratch` 维护）。
+    /// 平板开着习题页时，草稿纸那条链路（`scratchpads` / `scratchStrokes` 下行、`ink` / `erase` / 撤销 / 纸样上行）
+    /// 都对着它的会话（`padScratchSession`），不再对着被跟随的那个标签。
+    var padExerciseScratch: ExerciseScratchHost?
+    var padExerciseScratchSession: DocSession?
     /// 整份 `exDeck` 已排着待发（同一轮里多次变化只发一次）。
     var exerciseDeckPushScheduled = false
     var exerciseSyncBag = Set<AnyCancellable>()
@@ -553,6 +558,11 @@ final class AppModel: ObservableObject {
         }
         // 习题（`AppModel+Exercise`）：只认工作区，不挂被跟随会话的文档；也别让草稿纸那道拦截碰到它们
         if handleExerciseMessage(obj) { return }
+        // 平板在习题页上：纸上的东西只落到眼前这道题的草稿纸（`EXERCISE-PLAN.md §29`）；那道题的纸还没就位就丢
+        if padExercise != nil, let type = obj["type"] as? String, AppModel.exerciseScratchTypes.contains(type) {
+            if let xs = padExerciseScratchSession { applyExerciseScratchInput(obj, type: type, to: xs) }
+            return
+        }
         guard let s = padSession else { return }
         // 草稿纸打开时，笔只能落在草稿纸上（功能定义，用户要求）：`ink`/`erase`/`probe` 整条拦下改走
         // 画布坐标那套（见 `AppModel+Scratch`）。线格式没改——Mac 是「哪张纸开着」的唯一真源。
@@ -1036,6 +1046,7 @@ final class AppModel: ObservableObject {
         // 它的 end 也落到这里）。落墨本来就一笔一步，封不封口都一样。
         padSession?.inkUndo.seal()
         padSession?.scratchUndo.seal()
+        padExerciseScratchSession?.scratchUndo.seal()
         inRadial = false; inkStart = nil
     }
 
@@ -1254,7 +1265,7 @@ final class AppModel: ObservableObject {
     /// 撤销或重做一步**草稿纸**编辑（同上，镜像走草稿纸那条）。
     func undoScratch(in s: DocSession, redo: Bool) {
         guard s.applyScratchUndo(redo: redo) else { return }
-        if s.id == padSession?.id { broadcastScratchStrokes() }
+        if s.id == padScratchSession?.id { broadcastScratchStrokes() }
     }
 
     /// 把平板当前会话**内存里的笔迹**（= Mac 当前装载窗口，`InkWindow`；不保证全篇，PROTOCOL.md §4.2）
@@ -1381,6 +1392,11 @@ final class AppModel: ObservableObject {
     var padSession: DocSession? {
         let id = padSelectedSessionID ?? activeSessionID
         return sessions.first { $0.id == id }
+    }
+
+    /// 平板手上那张草稿纸属于哪个会话：开着习题页 = 眼前那道题的草稿纸（还没就位 = nil），否则 = 被跟随的会话。
+    var padScratchSession: DocSession? {
+        padExercise != nil ? padExerciseScratchSession : padSession
     }
 
     // MARK: - 会话注册

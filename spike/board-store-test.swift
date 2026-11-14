@@ -11,7 +11,8 @@
 //  ③ 图片 board_item kind=2：矩形 / sha / 说明 round-trip；**图片引用计数把画板上的图一起数**；
 //  ④ 删画板 = 条目跟着外键级联删掉；
 //  ⑤ 回收站：归档 → 删除 → 恢复 行数一条不少，manifest 统计与图片护身符正确；
-//  ⑥ 内容包围盒 = 笔迹 ∪ 图片；BoardNote.asPad 没有页面底图。
+//  ⑥ 内容包围盒 = 笔迹 ∪ 图片；BoardNote.asPad 没有页面底图；
+//  ⑧ 题目草稿纸（group_name = exercise）不进画板列表、笔迹照常读写。
 import Foundation
 import CoreGraphics
 
@@ -187,6 +188,20 @@ check(try store.boardPages(boardId: pb.id.uuidString).count == 3, "从回收站�
 print("④ 删画板 → 其它画板不受影响")
 try store.deleteBoard(id: b.id.uuidString)
 check(try store.boards().count == 2, "只剩两篇（无限画布 a + 分页那篇）")
+
+print("⑧ 题目草稿纸（`EXERCISE-PLAN.md §29`）：存成画板、group_name = exercise，不进画板列表")
+var xb = BoardNote(title: "", pattern: .grid, groupName: LibraryStore.exerciseScratchGroup)
+try store.upsertBoard(xb.row)
+let xs = InkStroke(page: 0, color: InkColor(r: 28, g: 28, b: 30, a: 1), width: 2.6, type: .ballpoint,
+                   points: [InkPoint(10, 10, 0.5), InkPoint(80, 30, 0.5)], padId: xb.id)
+try store.upsertBoardItem(xs.toBoardItem(boardId: xb.id.uuidString, createdAt: .now)!)
+check(try store.board(id: xb.id.uuidString)?.groupName == LibraryStore.exerciseScratchGroup, "按 id 读得到，group_name 记着 exercise")
+check(try !store.boards().contains { $0.id == xb.id.uuidString }, "画板列表里没有它")
+check(try store.boards().count == 2, "画板笔记还是两篇")
+check(try store.boardItems(boardId: xb.id.uuidString).count == 1, "上面的笔迹照常读写")
+xb.pattern = .dots
+try store.upsertBoard(xb.row)
+check(try store.board(id: xb.id.uuidString)?.groupName == LibraryStore.exerciseScratchGroup, "改纸样后 group_name 不变")
 
 print("\n通过 \(pass) / 失败 \(fail)")
 exit(fail == 0 ? 0 : 1)

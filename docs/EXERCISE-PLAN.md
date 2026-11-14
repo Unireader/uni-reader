@@ -1162,7 +1162,10 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
   119. 在别处（Obsidian / 浏览器地址栏）打开 `list_exercises` 给的 `exercise_link` → UniReader 切到那本书的练习页、停在那道题；题已删 → 弹框说找不到。
 
 
-## 28. 平板模式2 上的演算草稿（2026-11-14 方案，**未动手，等用户定**）
+## 28. 平板模式2 上的演算草稿（2026-11-14 方案，**已作废，改成 §29**）
+
+> 按「甲」做过一版（平板自己一块写字区 + 协议尾部带 `ink`），用户否决：「需要统一，你又搞了一套编辑方式，笔架都不能用」。
+> 那一版没提交、已全部撤掉（备份在 `build/spike/ex-ink-backup/`），下面留作记录。
 
 用户原话：「题目的草稿纸，需要在 pad（模式2）上直接显示一个写字区域支持 pad 写入」。
 
@@ -1201,3 +1204,78 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
 ### 28.4 按乙做的改动
 
 只做平板：同一块小画板，`ExHost` 不加接口、不改协议、不动 Mac；写的东西按题留在内存里，离开习题页就丢。以后想改成甲，画板原样复用，只补协议和存储。
+
+
+## 29. 每道题一张草稿纸（2026-11-14，Mac + 平板模式2）
+
+用户原话：「练习题草稿只，需要统一啊，你又搞了一套编辑方式，笔架都不能用！」；定的四条：
+① 存成**正式的草稿纸**，但不当画板笔记显示；② 交卷后**照样能改**；③ 原来的手写小画板（Mac §11.2 / §24）**全部拿掉**；
+④ 每道题一张、随时能写、只跟着这道题；**平板模式2 上写的直接同步到 Mac**。
+
+### 29.1 数据（不改表结构）
+
+- 一道题的草稿纸 = 一篇画板（`board_note` + `board_item`）：`board_note.id` = **题目 id**，`group_name` = `exercise`
+  （`LibraryStore.exerciseScratchGroup`，原来预留没用的一列）。
+- 画板列表（侧栏 / ⌘P / MCP `list_boards` / 平板 `boards` / `workspace_stats`）一律不算它：`LibraryStore.boards()` 与 `StatsStore` 按 `group_name` 滤掉。
+  按 id 读（`board(id:)`、`render_board`）照常认得。
+- 离线镜像 / 服务器同步 / 回收站 / 备份按画板两张表原样走，不用改。
+- 第一笔落下才建 `board_note` 那一行（没写过的题不留空行）。纸样默认方格。
+- **以前小画板的手写**（`exercise_attempt.ink`，v21）：这道题还没有草稿纸时，取最近一次带手写的作答换算成笔迹放上来（逻辑坐标原样当画布坐标、
+  深色圆珠笔），第一次打开就写进库；作答里那份原样留着，列也不删。
+- 删题不动它的草稿纸（题从回收站恢复时还在；题彻底删掉后它是一篇看不见的画板，暂不清理）。
+
+### 29.2 Mac
+
+- 运行时 `App/ExerciseScratch.swift` 的 `ExerciseScratchHost`：一个**不进标签栏、不登记给平板跟随**的 `DocSession`，样子与画板标签一样
+  （`board` = 这张、`scratchPads = [它]`、`openPadID` = 它），所以 `ScratchPadNSView`、笔架、`AppModel+Scratch` 的落笔 / 擦除 / 框选 / 撤销原样复用。
+  按「工作区 + 题目 id」共用（`acquire` / `release`）：Mac 练习页和平板开着同一道题时就是同一个会话，两边实时看得见对方在写。
+  落库走画板那套增量对账（从 `DocTabModel+Board` 抽成 `DocSession.persistBoard*`，两边共用）；关工作区前 `WorkspaceRegistry` 先结清。
+- 练习页（`ExerciseTabView`）：顶上多一个「草稿纸」开关。**平时不显示**（用户同日改：「草稿纸不应该固定显示」；先做的上下分栏被否掉），
+  点了才盖满整块练习区（顶上那一条留着），同 PDF 上开草稿纸：`ExerciseScratchPane` = 这道题的 `ScratchPadNSView`（画板模式：没有页面底图；
+  有关闭键、Esc 收起——`ScratchPadNSView.onRequestClose`；工具条名字固定为「草稿纸 · 第 N 题」、不能改名）。开没开不记在本机，每次进来先看题。
+  开着时换题就换成那道题的纸。笔架摆在草稿纸上、绑到这张纸的会话。到列表页自动收起。
+- **纸上浮着题目卡片**（用户同日：「草稿纸全屏了有办法把题目也显示吗」，选了浮动卡片）：`ExerciseQuestionCard`（`ExerciseScratchPane.swift`），
+  系统材质底、题干 + 选项（Markdown + 公式），最宽 560、正文最高占纸的 45% 里面滚；拖标题挪位置、点标题收成一行，位置比例和收没收记在本机。
+  平板同样一张（`ExerciseScreen.qCard`，最宽 520dp）。
+- 拿掉的：`ExerciseInkPad`（整个文件）、作答区的「手写」开关和工具、选择题 / 填空 / 主观题交卷带的 `ink`、草稿里的手写。
+  老手写的出图 `ExerciseInkRender` 挪到 `MCP/ExerciseInkRender.swift`，只给 MCP 看老作答用。
+- 「让 Agent 批改」附的图 = 这道题的草稿纸（`ExerciseScratchHost.png`，取写过的那块加边）。
+- MCP：`list_exercise_attempts` 的 `has_handwriting` = 草稿纸写过东西或作答里带老手写；`render_exercise_answer` 先出这道题的草稿纸，
+  没有再出老手写，结果多一个 `from`（`scratch_paper` / `answer`）。
+
+### 29.3 平板模式2（不改协议）
+
+- 平板开着习题页（`exOpen` 非空）时，Mac 把草稿纸那条链路整个对到**眼前这道题的草稿纸**上（`AppModel.padScratchSession`）：
+  `scratchpads`（`open = 0`，那一张的 id = 题目 id）/ `scratchStrokes` / `boardImages` / `boardPages`（`n = 0`）下行；
+  `ink` / `erase` / 框选 / 剪贴板 / 撤销 / 纸样 / 视口上行；开关纸、新建、改名、挪图钉、分页那几条丢掉（`AppModel.exerciseScratchTypes`）。
+  换题（谁翻的都一样）→ 换一张、整套重发；离开习题页 → 换回被跟随会话那一套。线格式一个字节没改。
+- 平板（`PadActivity` / `PadScratch` / `shared/exercise/ExerciseScreen`）：习题页顶上多一个「草稿纸」开关，平时不显示，点了盖满练习区（顶栏留着），
+  **就是原来那块草稿纸画布**挪进来——笔、橡皮、框选、尺子、撤销、顶栏工具全照旧；纸上的关闭键 / 返回键收起（不发 `scratchOpen`，`PadScratch.onExerciseClose`）。
+  `PadScratch.exerciseTitle` 非空 = 习题模式（没有列表 / 页面底图 / 改名 / 删除，只有纸样）。
+  画布上开着的纸 id 和眼前这道题对不上（刚换题、Mac 还没回；老 Mac 不发）时盖一层「正在打开这道题的草稿纸…」、吃掉触摸，免得写到别的题上。
+- **模式1**（同日补上）：同一个习题页开关 / 盖上来 / 题目卡片；画布是画板那套 `BoardController`（`exercise = true` 的第二份：没有列表键、多一颗关闭键、
+  名字固定、不能改名、永远无限画布；`ensureRow` = 第一笔 / 第一张图 / 改纸样时才建 `board_note` 那一行），工具状态与画板标签共用 `boardTools`，
+  撤销 / 剪贴板 / 顶栏同画板标签（`ReaderActivity.showExerciseScratch` / `exScratchOpen`）。本机库 `LibraryStore.boards()` 同样滤掉 `group_name = exercise`。
+  切走习题标签、关工作区、返回键都先收起草稿纸。没做：以前小画板手写的换算（那些手写只在 Mac 上写过，Mac 打开过就已经换算进库、随同步过来）。
+
+### 29.4 验证
+
+- Mac Debug 编译通过、改到的文件无新警告；`spike/board-store-test.swift` 64 项（新加 ⑧ 题目草稿纸不进画板列表）、
+  `spike/workspace-stats-test.swift` 115 项（加了一篇题目草稿纸，画板统计不变）、`spike/exercise-free-answer-test.swift` 33 项（拿掉画板那段；
+  顺手修好它在分步演示改动后编不过的问题）全过；`server` 的 `swift test` 57 项全过。
+- 安卓 `assembleDebug` 通过，JVM 单测全过。
+- 🔴 练习页的草稿纸、平板模式2 上写 / 换题 / 两边同时看都没在真机上跑过，由用户实测。
+
+### 29.5 实测清单（用户）
+
+  194. Mac 练习页：平时只看到题目；点顶上「草稿纸」→ 这道题的草稿纸盖满练习区；笔架上选笔就能写，橡皮 / 框选 / 撤销 / 纸样照草稿纸；关闭键或 Esc 收起、回到题目。
+  195. 开着草稿纸换一道题（← →）→ 换成那道题的纸（新题是空的）；翻回来刚才写的还在；交卷前后都能接着写。
+  195a. 草稿纸上浮着这道题（题干 + 选项、公式正常）：拖标题挪到别处；点标题收成一行再点展开；重开 App 位置和收起状态还在；换题卡片跟着换。平板上同样。
+  196. 侧栏「画板笔记」、⌘P、Agent 的 `list_boards` 里都看不到这些草稿纸。
+  197. 以前用小画板手写过的题：第一次打开草稿纸时，那次的手写已经在纸上。
+  198. 平板模式2 打开同一组题：点「草稿纸」盖上来（就是平时那块草稿纸，顶栏的笔 / 橡皮 / 尺子 / 撤销都能用），关闭键 / 返回键收起；写的字 Mac 那边实时出现，Mac 上写的平板也看得到。
+  199. 平板换题：草稿纸先显示「正在打开…」随即换成那道题的；离开习题页回到 PDF，原来的草稿纸 / 画板照旧。
+  200a. 平板模式1（不连 Mac）：习题页同样有「草稿纸」，盖上来用顶栏的笔 / 橡皮 / 尺子 / 撤销写；关闭键 / 返回键收起；换题换纸；书库页的「画板笔记」里看不到这些纸；
+        同步到 Mac 后在 Mac 那道题的草稿纸上看得到。
+  200. 「让 Agent 批改」附上的是这道题的草稿纸；Agent 用 `render_exercise_answer` 看到的也是它。
+

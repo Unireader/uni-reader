@@ -62,6 +62,27 @@ extension AppModel {
         }
     }
 
+    /// 平板在习题页上时要改道的那几类消息（落笔 / 擦除 / 框选 / 剪贴板 / 撤销 / 纸样 / 开关纸 / 画板视口 …）。
+    static let exerciseScratchTypes: Set<String> = [
+        "ink", "erase", "probe", "lassoMove", "lassoScale", "clip", "undo",
+        "scratchOpen", "scratchAdd", "scratchPaper", "scratchMove", "scratchPageShow", "scratchDelete", "scratchRename",
+        "boardViewport", "boardScroll", "boardPageAdd", "boardPageTemplate",
+    ]
+
+    /// 平板习题页上的草稿纸（`EXERCISE-PLAN.md §29`）：落笔这一类照草稿纸处理；撤销 / 改纸样 / 记视口作用于这张；
+    /// 开关纸、新建、改名、挪图钉、分页画板那几条一律丢（这张纸永远开着、跟着题走）。
+    func applyExerciseScratchInput(_ obj: [String: Any], type: String, to s: DocSession) {
+        if handleScratchInput(obj, to: s) { return }
+        switch type {
+        case "undo":
+            let redo = (obj["redo"] as? Bool) ?? ((obj["redo"] as? NSNumber)?.boolValue ?? false)
+            undoScratch(in: s, redo: redo)
+        case "scratchPaper": applyScratchPaper(obj, to: s)
+        case "boardViewport": applyBoardViewport(obj, to: s)
+        default: break
+        }
+    }
+
     // MARK: - 平板上行：纸上的框选移动 / 缩放与剪贴板（画布坐标）
 
     /// 按消息里的选区在真源上复判命中：纸上这张的笔迹，任一点落在多边形内（无多边形尾部时退回 x0..y1 矩形）。
@@ -366,7 +387,10 @@ extension AppModel {
 
     /// 草稿纸列表 + 当前打开的是第几张（-1 = 没开）。平板据此显示列表与切换覆盖层。
     func broadcastScratchPads() {
-        guard server.hasClients, let s = padSession else { return }
+        guard server.hasClients, let s = padScratchSession else {
+            if server.hasClients, padExercise != nil { server.broadcast(["type": "scratchpads", "open": -1, "list": [[String: Any]]()]) }
+            return
+        }
         let open = s.scratchPads.firstIndex { $0.id == s.openPadID } ?? -1
         let list: [[String: Any]] = s.scratchPads.map { p in
             ["id": p.id.uuidString, "title": p.title, "page": p.anchorPage,
@@ -414,7 +438,11 @@ extension AppModel {
     func broadcastScratchStrokes() {
         // 回推带的 ackRel 已经算上了收到的擦除帧，攒着没擦的点必须先擦掉，平板才不会拿到「说擦了其实没擦」的一份
         flushScratchErase()
-        guard server.hasClients, let s = padSession else { scratchMirror = nil; return }
+        guard server.hasClients, let s = padScratchSession else {
+            scratchMirror = nil
+            if server.hasClients, padExercise != nil { server.broadcast(["type": "scratchStrokes", "list": [[String: Any]]()]) }
+            return
+        }
         let all = s.openPadID.map { s.strokes(pad: $0) } ?? []
         let window = boardWindow(s)
         let sent = window.map { w in all.filter { w.pages.contains(s.boardPageIndex(of: $0)) } } ?? all
@@ -429,7 +457,7 @@ extension AppModel {
     /// 为什么：从前一律发全量，每写一笔整份重建、重发一次。分页画板写到近万笔时一份 ≈ 8MB
     /// （2026-10-07 实测 9214 笔），Debug 包里光在 Mac 主线程上建这一份就要几百毫秒（窗口内 1351 条 ≈ 60ms）。
     func scratchStrokesChanged(in s: DocSession) {
-        guard server.hasClients, s.id == padSession?.id else { return }
+        guard server.hasClients, s.id == padScratchSession?.id else { return }
         let all = s.openPadID.map { s.strokes(pad: $0) } ?? []
         if let m = scratchMirror, m.sessionID == s.id, m.padID == s.openPadID,
            all.count > m.all.count, all.prefix(m.all.count).elementsEqual(m.all) {
@@ -498,7 +526,7 @@ extension AppModel {
     /// 🔴 比的是 `boardWindow` 夹过的中心页：平板拉到最后一页下面（上拉加页那块）时报上来的页号比最后一页还大，
     /// 拿没夹过的页号比，跟夹过的中心永远差 2 页以上 → 每报一次位置就整份重发一次（2026-10-07 实测每 26ms 一份 ≈ 1MB）。
     func boardAnchorMoved(_ s: DocSession) {
-        guard server.hasClients, s.id == padSession?.id, let m = scratchMirror, m.sessionID == s.id,
+        guard server.hasClients, s.id == padScratchSession?.id, let m = scratchMirror, m.sessionID == s.id,
               m.window != nil, let w = boardWindow(s), abs(w.center - m.center) >= 2 else { return }
         requestScratchFull()
     }

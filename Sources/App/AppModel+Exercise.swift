@@ -103,6 +103,7 @@ extension AppModel {
 
     @MainActor private func exerciseDeckChanged(_ d: ExerciseDeck, change: ExerciseDeck.Change) {
         guard server.hasClients, let sub = padExercise, d.scope == sub.scope, d.owner === sub.workspace else { return }
+        syncPadExerciseScratch()   // 换了题 / 题目列表变了：平板手上的草稿纸跟着换成眼前这道题的
         if change == .index && !exerciseDeckPushScheduled {
             // 只是翻了题：不重发整份（平板翻过来的，回声一条同样的位置也无害）
             server.broadcast(["type": "exIndex", "scope": d.scope.key, "index": d.index])
@@ -125,6 +126,7 @@ extension AppModel {
     /// 平板开着的那组没法再开了（工作区关了 / 范围键不认识 / 那本书删了）：发一份空的，平板关掉自己的习题页。
     @MainActor private func closePadExercises() {
         padExercise = nil
+        syncPadExerciseScratch(force: true)
         setExerciseImages([:])
         server.broadcast(["type": "exDeck", "scope": "", "title": "", "filter": 0, "index": 0, "done": 0, "right": 0,
                           "list": [[String: Any]]()])
@@ -225,7 +227,13 @@ extension AppModel {
     /// 平板现在显示哪一组（空 = 不在习题上）。立刻回一份全量；开不了就回空的，平板据此关掉习题页。
     @MainActor private func applyExOpen(_ obj: [String: Any]) {
         let key = obj["scope"] as? String ?? ""
-        guard !key.isEmpty else { padExercise = nil; setExerciseImages([:]); return }
+        guard !key.isEmpty else {
+            let was = padExercise != nil
+            padExercise = nil
+            setExerciseImages([:])
+            if was { syncPadExerciseScratch(force: true) }   // 平板回到 PDF / 画板：草稿纸换回被跟随会话的那一套
+            return
+        }
         guard let scope = ExerciseScope(key: key), let ws = padWorkspace,
               scope.documentId.map({ ws.document(id: $0) != nil }) ?? true else {
             closePadExercises()
@@ -234,6 +242,31 @@ extension AppModel {
         padExercise = PadExerciseSub(workspace: ws, scope: scope)
         _ = ExerciseDeck.shared(scope: scope, workspace: ws)   // 同 Mac 标签打开时：取的时候刷一遍
         scheduleExerciseDeckPush()
+        syncPadExerciseScratch(force: true)
+    }
+
+    /// 平板习题页上眼前这道题的草稿纸（`EXERCISE-PLAN.md §29`）：换了题就换一张，并把这张纸的全套镜像发给平板
+    /// （`scratchpads` 里那一张的 id = 题目 id，平板据此认出是不是眼前这道题的）。离开习题页 = 放掉，发回被跟随会话那一套。
+    /// `force`：没换题也重发（进 / 出习题页时）。
+    @MainActor func syncPadExerciseScratch(force: Bool = false) {
+        var want: (id: String, ws: WorkspaceManager)?
+        if let sub = padExercise, let ws = sub.workspace {
+            let d = ExerciseDeck.shared(scope: sub.scope, workspace: ws, reload: false)
+            if d.items.indices.contains(d.index) { want = (d.items[d.index].id, ws) }
+        }
+        let same = padExerciseScratch?.exerciseId == want?.id
+        if !same {
+            let old = padExerciseScratch
+            if let old, old.session.scratchLive != nil { scratchInkCancel(in: old.session) }   // 换题时正写着的那一笔不落到别的题上
+            padExerciseScratch = want.flatMap { ExerciseScratchHost.acquire(exerciseId: $0.id, workspace: $0.ws, app: self) }
+            padExerciseScratchSession = padExerciseScratch?.session
+            old?.release()
+        }
+        guard !same || force, server.hasClients else { return }
+        broadcastScratchPads()
+        broadcastScratchStrokes()
+        broadcastBoardImages()
+        broadcastBoardPages()
     }
 
     /// 平板翻题：那一组的进度挪过去（Mac 开着同一组的标签跟着翻）。

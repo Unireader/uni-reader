@@ -1463,3 +1463,12 @@
 "Close Chat" = "关闭对话";
 "Rename Chat" = "重命名对话";
 "Leave it empty to use the title the agent gives." = "留空则使用 Agent 给的标题。";
+
+/* 题目草稿纸（EXERCISE-PLAN.md §29） */
+"Scratch Paper" = "草稿纸";
+"Scratch Paper · Question %@" = "草稿纸 · 第 %@ 题";
+"Scratch paper" = "草稿纸";
+"Show this question’s scratch paper. Each question has its own; it stays with the question and you can keep writing on it after you answer." = "打开这道题的草稿纸。每道题有自己的一张，只跟着这道题，交卷后也能接着写。";
+"Expand" = "展开";
+"Click the title to show the question. Drag it to move." = "点标题展开题目，拖动标题可以挪位置。";
+"Click the title to fold the question away. Drag it to move." = "点标题收起题目，拖动标题可以挪位置。";

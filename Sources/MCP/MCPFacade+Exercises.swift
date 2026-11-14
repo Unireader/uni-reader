@@ -441,20 +441,22 @@ extension MCPFacade {
         var exercises: [String: Exercise] = [:]
         let list: [MCPObject] = page.rows.compactMap { a in
             if exercises[a.exerciseId] == nil { exercises[a.exerciseId] = ws.exercise(id: a.exerciseId) }
-            return exercises[a.exerciseId].map { attemptDTO(a, exercise: $0) }
+            return exercises[a.exerciseId].map { attemptDTO(a, exercise: $0, workspace: ws) }
         }
         return ["workspace": ws.name, "total": page.total, "offset": offset, "attempts": list]
     }
 
-    func attemptDTO(_ a: LibExerciseAttempt, exercise e: Exercise) -> MCPObject {
+    /// `workspace` 给了才看这道题的草稿纸（`EXERCISE-PLAN.md §29`）算不算手写。
+    func attemptDTO(_ a: LibExerciseAttempt, exercise e: Exercise, workspace ws: WorkspaceManager? = nil) -> MCPObject {
         let r = ExerciseResponse.decode(e.kind, answer: a.answer, ink: a.ink)
+        let scratch = ws.map { ExerciseScratchHost.hasContent(exerciseId: e.id, workspace: $0) } ?? false
         var o: MCPObject = [
             "id": a.id, "exercise_id": e.id, "number": e.number, "type": e.kind.wireName, "stem": e.payload.stem,
             "reference_answer": Self.referenceAnswerText(e),
             "source": a.source == LibExerciseAttempt.markSource ? "book" : "practice",
             "created_at": ISO.string(a.createdAt),
             "answer": e.kind == .fill ? r.blanks.joined(separator: " / ") : a.answer,
-            "has_handwriting": !(r.ink?.isEmpty ?? true),
+            "has_handwriting": scratch || !(r.ink?.isEmpty ?? true),
             "elapsed_ms": a.elapsedMs,
         ]
         if e.kind == .fill {
@@ -515,15 +517,20 @@ extension MCPFacade {
         throw MCPToolError("answer(s) not found in any open workspace: \(ids.joined(separator: ", ")); call list_exercise_attempts")
     }
 
-    /// 手写作答出图（白底黑字 PNG）。没有手写 → 报错。
+    /// 手写作答出图：这道题的草稿纸（`EXERCISE-PLAN.md §29`，交卷前后写的都在上面）；没有草稿纸再看作答里的老手写（v21 小画板）。
+    /// 都没有 → 报错。
     func renderExerciseAnswer(_ id: String, workspacePath: String?, width: Int) throws -> (MCPObject, Data) {
-        let (_, found) = try resolveAttempts([id], workspacePath: workspacePath)
+        let (ws, found) = try resolveAttempts([id], workspacePath: workspacePath)
         let a = found[0]
+        if let r = ExerciseScratchHost.png(exerciseId: a.exerciseId, workspace: ws, pixelWidth: width) {
+            return (["attempt_id": a.id, "exercise_id": a.exerciseId, "width": r.width, "height": r.height,
+                     "from": "scratch_paper"], r.data)
+        }
         guard let ink = ExerciseInk.decode(a.ink), let png = ExerciseInkRender.png(ink, pixelWidth: width) else {
             throw MCPToolError("this answer has no handwriting; its text is in list_exercise_attempts")
         }
         let h = Int((Double(width) * ink.height / ink.width).rounded(.up))
-        return (["attempt_id": a.id, "exercise_id": a.exerciseId, "width": width, "height": h], png)
+        return (["attempt_id": a.id, "exercise_id": a.exerciseId, "width": width, "height": h, "from": "answer"], png)
     }
 
     /// Agent 批改（整批先全部校验：有一条不对就一条都不写）。后判的为准，判错进错题本；

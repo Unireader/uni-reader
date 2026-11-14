@@ -275,9 +275,9 @@ final class ExercisePracticeView: NSView {
         }
         let free = !e.kind.isChoice
         freeView.isHidden = false
-        // 交过的锁住显示作答（笔迹在库里那条上，统计里不带），没交的照常输入。选择题只有手写演算那一块
-        let row = answer?.attemptId.flatMap { workspace?.exerciseAttempt(id: $0) }
-        if let a = answer { freeView.showAnswered(e, answer: a, ink: ExerciseInk.decode(row?.ink)) }
+        // 交过的锁住显示作答，没交的照常输入（选择题用到它时是空的；演算写在下面这道题的草稿纸上，`EXERCISE-PLAN.md §29`）
+        let row = answer?.attemptId.flatMap { workspace?.exerciseAttempt(id: $0) }   // 评语在库里那条上，统计里不带
+        if let a = answer { freeView.showAnswered(e, answer: a) }
         else if freeView.isLocked { freeView.begin(e, draft: deck.drafts[e.id]) }
         submitButton.isHidden = judged || e.kind == .single
         submitButton.isEnabled = free ? !freeView.response.isEmpty(e.kind) : !picked.isEmpty
@@ -449,8 +449,7 @@ final class ExercisePracticeView: NSView {
         let ms = Int(Date().timeIntervalSince(shownAt) * 1000)
         if e.kind.isChoice {
             guard !picked.isEmpty else { return }
-            // 演算的手写跟着这次作答一起存（没写就不带）
-            deck.submit(ExerciseResponse(keys: picked, ink: freeView.response.ink), elapsedMs: ms)
+            deck.submit(ExerciseResponse(keys: picked), elapsedMs: ms)
             picked = []
         } else {
             let r = freeView.response
@@ -466,11 +465,7 @@ final class ExercisePracticeView: NSView {
     private func freeEdited() {
         guard let e = deck.current, deck.answer(for: e) == nil else { return }
         let r = freeView.response
-        if e.kind.isChoice {
-            // 选择题：草稿只有演算的手写（选了哪个不进草稿，「提交」能不能点看选没选）
-            deck.drafts[e.id] = (r.ink?.isEmpty ?? true) ? nil : r
-            return
-        }
+        if e.kind.isChoice { return }   // 选了哪个不进草稿，「提交」能不能点看选没选
         deck.drafts[e.id] = r.isEmpty(e.kind) ? nil : r
         submitButton.isEnabled = !r.isEmpty(e.kind)
     }
@@ -492,21 +487,20 @@ final class ExercisePracticeView: NSView {
         refreshState()
     }
 
-    /// 让 Agent 批改：把题号这句话放进这扇窗 Agent 页的输入框（手写附成图片），题目与作答的 id 放进隐藏说明，用户点发送。
+    /// 让 Agent 批改：把题号这句话放进这扇窗 Agent 页的输入框（这道题的草稿纸附成图片），题目与作答的 id 放进隐藏说明，用户点发送。
     /// Agent 按说明用 `list_exercise_attempts` 读作答、`grade_exercise_attempts` 写回对错与评语（`EXERCISE-PLAN.md §11.4`）。
     @objc private func askAgent() {
         guard let e = deck.current, let a = deck.answer(for: e), let aid = a.attemptId, let win = agentWindow() else { return }
         var images: [AgentImage] = []
-        if let ink = ExerciseInk.decode(workspace?.exerciseAttempt(id: aid)?.ink) ?? a.response.ink,
-           let png = ExerciseInkRender.png(ink, pixelWidth: 1200) {
-            images.append(AgentImage(data: png, mimeType: "image/png", caption: L("Handwritten answer"),
-                                     note: "the user's handwritten answer to exercise \(e.id) (attempt_id \(aid))"))
+        if let ws = workspace, let png = ExerciseScratchHost.png(exerciseId: e.id, workspace: ws, pixelWidth: 1200)?.data {
+            images.append(AgentImage(data: png, mimeType: "image/png", caption: L("Scratch paper"),
+                                     note: "the user's scratch paper (handwritten working) for exercise \(e.id) (attempt_id \(aid))"))
         }
         let label = e.number.isEmpty ? Self.kindName(e.kind) : String(format: L("No. %@"), e.number)
         let text = String(format: L("Please grade my answer to this question (%@): say whether it is right and what to improve."), label)
         let note = AgentSentContext.Marker.grading + " exercise_id \(e.id), attempt_id \(aid). "
             + "Read the question, the reference answer and the user's answer with list_exercise_attempts (exercise_ids: [\"\(e.id)\"]); "
-            + "if it has handwriting, look at it with render_exercise_answer. Then save the verdict and feedback with "
+            + "the user's handwritten working is on the question's scratch paper (render_exercise_answer). Then save the verdict and feedback with "
             + "grade_exercise_attempts — it replaces any verdict the user gave themselves."
         let name = AgentPanelModel.shared.agentName(for: win)
         if !AgentPanelModel.shared.prepare(text: text, note: note, images: images, from: win) {
