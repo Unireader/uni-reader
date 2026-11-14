@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "unireader": {
+      "type": "http",
+      "url": "http://host.ubx.internal:8773/mcp"
+    }
+  }
+}
