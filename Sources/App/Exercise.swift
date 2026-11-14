@@ -60,6 +60,10 @@ struct ExercisePayload: Codable, Equatable {
     /// 跨页的题：后面几页上各一个框（第 k 个 = `page + 1 + k` 页），同 `region` 的口径；nil = 不跨页。
     /// 只在有 `region` 时才有意义（`ExerciseRegion`，`EXERCISE-PLAN.md §26`）。老版本不认这个键 → 只显示第一段。
     var nextRegions: [[Double]]?
+    /// 这几页不进原题图（从 `page` 起的偏移：0 = 题目所在页，1 = 下一页…；升序、不重复、不能全跳过）。
+    /// 用户 2026-11-14：「不支持只设置后面某一页」——题目记在第 N 页、要看的却只在第 N+1 页那块时用。
+    /// 只在有 `region` 时才有意义；老版本不认这个键 → 照旧每页都显示（`EXERCISE-PLAN.md §30`）。
+    var skipPages: [Int]?
     /// 带图 / 表：练习时默认显示原题截图。
     var figure: Bool
     /// 填空题有几个空（只有填空题有；没答案时靠它知道摆几个输入框）。
@@ -69,16 +73,18 @@ struct ExercisePayload: Codable, Equatable {
 
     init(stem: String, options: [ExerciseOption], answer: [String] = [], answerSource: String? = nil,
          explanation: String? = nil, region: [Double]? = nil, figure: Bool = false,
-         blanks: Int? = nil, accept: [[String]]? = nil, nextRegions: [[Double]]? = nil) {
+         blanks: Int? = nil, accept: [[String]]? = nil, nextRegions: [[Double]]? = nil, skipPages: [Int]? = nil) {
         self.stem = stem; self.options = options; self.answer = answer; self.answerSource = answerSource
         self.explanation = explanation; self.region = region; self.figure = figure
         self.blanks = blanks; self.accept = accept; self.nextRegions = nextRegions
+        self.skipPages = region == nil ? nil : ExerciseRegion.cleanSkip(skipPages, pages: 1 + (nextRegions?.count ?? 0))
     }
 
     enum CodingKeys: String, CodingKey {
         case stem, options, answer, explanation, region, figure, blanks, accept
         case answerSource = "answer_source"
         case nextRegions = "next_regions"
+        case skipPages = "skip_pages"
     }
 
     init(from decoder: Decoder) throws {
@@ -91,6 +97,9 @@ struct ExercisePayload: Codable, Equatable {
         region = try c.decodeIfPresent([Double].self, forKey: .region)
         // 坏了 / 不合格就当不跨页（不连累整道题读不出来）
         nextRegions = ExerciseRegion.cleanNext((try? c.decodeIfPresent([[Double]].self, forKey: .nextRegions)) ?? nil)
+        skipPages = region == nil ? nil
+            : ExerciseRegion.cleanSkip((try? c.decodeIfPresent([Int].self, forKey: .skipPages)) ?? nil,
+                                       pages: 1 + (nextRegions?.count ?? 0))
         figure = try c.decodeIfPresent(Bool.self, forKey: .figure) ?? false
         blanks = try c.decodeIfPresent(Int.self, forKey: .blanks)
         accept = try c.decodeIfPresent([[String]].self, forKey: .accept)
@@ -105,6 +114,7 @@ struct ExercisePayload: Codable, Equatable {
         try c.encodeIfPresent(explanation, forKey: .explanation)
         try c.encodeIfPresent(region, forKey: .region)
         if region != nil, let n = nextRegions, !n.isEmpty { try c.encode(n, forKey: .nextRegions) }
+        if region != nil, let k = skipPages, !k.isEmpty { try c.encode(k, forKey: .skipPages) }
         if figure { try c.encode(true, forKey: .figure) }
         try c.encodeIfPresent(blanks, forKey: .blanks)
         if let accept, accept.contains(where: { !$0.isEmpty }) { try c.encode(accept, forKey: .accept) }
@@ -136,6 +146,13 @@ enum ExerciseRegion {
             out.append(r)
         }
         return out.isEmpty ? nil : out
+    }
+
+    /// `skip_pages` 规整：只留 0..<pages 里的、升序去重；全跳过了（一页都不剩）或一个不剩 → nil。
+    static func cleanSkip(_ k: [Int]?, pages: Int) -> [Int]? {
+        guard let k else { return nil }
+        let out = Array(Set(k.filter { $0 >= 0 && $0 < pages })).sorted()
+        return out.isEmpty || out.count >= pages ? nil : out
     }
 
     /// 留四位小数（App 里拖出来的框，别存一长串）。
@@ -190,20 +207,25 @@ struct Exercise: Identifiable, Equatable {
 
     /// 看原题要渲的几段（`EXERCISE-PLAN.md §26`）：起始页那一块，跨页的题再接后面几页各一块，从上到下拼成一张图。
     /// 没有框 = 起始页整页一段（`region` 为 nil）。给了 `pageCount` 就去掉越过最后一页的。没页码 → 空。
+    /// `skip_pages` 里的页不出（§30）；全被越界去掉时退回起始页那一块，总有一段。
     func originalSlices(pageCount: Int? = nil) -> [(page: Int, region: [Double]?)] {
         guard let p = page else { return [] }
         guard let r = payload.region else { return [(p, nil)] }
-        var out: [(page: Int, region: [Double]?)] = [(p, r)]
+        let skip = Set(payload.skipPages ?? [])
+        var all: [(page: Int, region: [Double]?)] = [(p, r)]
         for (k, n) in (payload.nextRegions ?? []).enumerated() {
             let q = p + 1 + k
             if let c = pageCount, q >= c { break }
-            out.append((q, n))
+            all.append((q, n))
         }
-        return out
+        let out = all.enumerated().filter { !skip.contains($0.offset) }.map(\.element)
+        return out.isEmpty ? [all[0]] : out
     }
 
-    /// 题目印到第几页为止（0 起；不跨页 = `page`）。
-    var lastPage: Int? { page.map { $0 + (payload.region == nil ? 0 : payload.nextRegions?.count ?? 0) } }
+    /// 原题图从第几页起（0 起；跳过了起始页时比 `page` 大）。
+    var firstPage: Int? { originalSlices().first?.page }
+    /// 原题图印到第几页为止（0 起；不跨页 = `page`）。
+    var lastPage: Int? { originalSlices().last?.page }
 
     var hasAnswer: Bool { payload.answer.contains { !$0.isEmpty } }
     var answerFromAgent: Bool { hasAnswer && payload.answerSource == ExerciseAnswerSource.agent.rawValue }
@@ -492,6 +514,8 @@ struct ExerciseInput {
     var chapter: [String]? = nil
     /// 跨页的题：后面几页上的框（`ExerciseRegion`）。nil / 空 = 不跨页。
     var nextRegions: [[Double]]? = nil
+    /// 不进原题图的页（偏移，0 = 起始页；`ExercisePayload.skipPages`）。nil / 空 = 每页都显示。
+    var skipPages: [Int]? = nil
     var tags: [String]? = nil
     var userAnswer: String? = nil
     /// 填空题的空：每空一个参考答案（可空）+ 另外认可的写法。nil = 没给。
@@ -595,6 +619,11 @@ enum ExerciseImport {
         case .failure(let why): return .failure(why)
         case .success(let n): next = n
         }
+        let skip: [Int]?
+        switch validSkip(i.skipPages, region: region, next: next) {
+        case .failure(let why): return .failure(why)
+        case .success(let k): skip = k
+        }
         // 书上的作答：只认得选项字母；单选题圈了两个也照收（那就是用户当时的作答，判错）
         var userAnswer: [String]?
         if let raw = i.userAnswer {
@@ -613,7 +642,7 @@ enum ExerciseImport {
         }
         let payload = ExercisePayload(stem: stem, options: options, answer: answer, answerSource: source,
                                       explanation: cleanExplanation(i.explanation), region: region, figure: figure,
-                                      nextRegions: next)
+                                      nextRegions: next, skipPages: skip)
         return .success(ExerciseDraft(page: i.page, seq: seq, kind: kind,
                                       number: (i.number ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                                       section: (i.section ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
@@ -692,9 +721,14 @@ enum ExerciseImport {
         case .failure(let why): return .failure(why)
         case .success(let n): next = n
         }
+        let skip: [Int]?
+        switch validSkip(i.skipPages, region: region, next: next) {
+        case .failure(let why): return .failure(why)
+        case .success(let k): skip = k
+        }
         let payload = ExercisePayload(stem: stem, options: [], answer: answer, answerSource: source,
                                       explanation: cleanExplanation(i.explanation), region: region, figure: figure,
-                                      blanks: blanks, accept: accept, nextRegions: next)
+                                      blanks: blanks, accept: accept, nextRegions: next, skipPages: skip)
         return .success(ExerciseDraft(page: i.page, seq: seq, kind: kind, number: trim(i.number), section: trim(i.section),
                                       payload: payload, chapter: i.chapter.map(ExerciseChapter.clean),
                                       userResponse: user, tags: i.tags.map(ExerciseTag.clean)))
@@ -731,6 +765,18 @@ enum ExerciseImport {
         return .success(n)
     }
 
+    /// 不进原题图的页（§30）：偏移 0 = 起始页，至多到最后一个 `next_regions`；不能全跳过。空数组 = 每页都显示。
+    private static func validSkip(_ k: [Int]?, region: [Double]?, next: [[Double]]?) -> Result<[Int]?, Rejected> {
+        guard let k, !k.isEmpty else { return .success(nil) }
+        guard region != nil else { return .failure("skip_pages needs region") }
+        let pages = 1 + (next?.count ?? 0)
+        guard k.allSatisfy({ $0 >= 0 && $0 < pages }) else {
+            return .failure("skip_pages entries are offsets from page: 0 = the question's own page, 1…\(pages - 1) = the pages in next_regions")
+        }
+        guard Set(k).count < pages else { return .failure("skip_pages cannot skip every page") }
+        return .success(ExerciseRegion.cleanSkip(k, pages: pages))
+    }
+
     private static func cleanExplanation(_ s: String?) -> String? {
         let t = s?.trimmingCharacters(in: .whitespacesAndNewlines)
         return t?.isEmpty == false ? t : nil
@@ -746,6 +792,7 @@ enum ExerciseImport {
                               chapter: e.chapter)
         i.tags = e.tags
         i.nextRegions = e.payload.nextRegions
+        i.skipPages = e.payload.skipPages
         if e.kind == .fill { i.blanks = blankInputs(of: e) }
         return i
     }

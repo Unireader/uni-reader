@@ -79,6 +79,8 @@
 
 6b. **每道题一张草稿纸**（用户 2026-11-14 定，Mac + 平板模式2，`EXERCISE-PLAN.md §29`）：已写，**待用户实测**（清单 194–200 在 §29.5）；模式1 同日补上。
 
+6c. **原题区域：只显示后面某页 / 缩放框选 / 严格按框**（用户 2026-11-14，Mac + 安卓模式1，`EXERCISE-PLAN.md §30`）：已写，**待用户实测**（清单 201–205 在 §30.1）；安卓 F4 自己框的时候照这版做（每页「不显示这一页」写 `skip_pages`）。
+
 7. ~~Markdown 笔记：输入 `[[` 的自动补全~~——2026-11-10 已做（`MARKDOWN-NOTES-PLAN.md §12`，同日加了 `==高亮==`）。~~批注小框里的 `[[` 候选没接~~——2026-11-12 接上（`KNOWLEDGE-LINKS-PLAN.md §3`）。
 
 8. **安卓模式1 与 macOS 版功能对齐**（2026-09-26 用户定：「模式1 作为独立功能需要达到所有能和 macOS 版本一样的功能，
@@ -99,7 +101,7 @@
      | H4 | `unireader://` 链接 | 没有 | 可做（安卓 intent-filter，Obsidian 安卓版点回来），优先级低 |
      | H5 | 咨询 AI（网页 AI 面板 + 截页） | 没有 | 可做（WebView），建议暂缓：平板分屏开浏览器效果接近，请用户定 |
      | A7 | Markdown 笔记：新建文件夹（Mac 2026-11-12，`MARKDOWN-NOTES-PLAN.md §13`） | 没有 | 可做：笔记页加入口，建空目录后重扫 |
-     | F4 | 习题：自己框原题区域（Mac 2026-11-12，`EXERCISE-PLAN.md §25` / §26 跨页） | 看原题按 `region` + `next_regions` 裁并拼接（Mac 框的同步过来就生效），自己不能框 | 可做：整页上拖框写 `payload.region`；跨页时选页数、每页一框写 `next_regions`（照 Mac `ExerciseRegionPicker`） |
+     | F4 | 习题：自己框原题区域（Mac 2026-11-12，`EXERCISE-PLAN.md §25` / §26 跨页） | 看原题按 `region` + `next_regions` 裁并拼接（Mac 框的同步过来就生效），自己不能框 | 可做：整页上拖框写 `payload.region`；跨页时选页数、每页一框写 `next_regions`、不显示的页写 `skip_pages`（§30，照 Mac `ExerciseRegionPicker`） |
      | ✗ | 目录跳到页内位置 | 只能跳到页顶 | 跳过：pdfiumandroid 2.0.1 的书签 API 只给页号；该库锁版本（见 `android/AGENTS.md`） |
      | ✗ | MCP 服务 | — | 跳过：外部 Agent 跑在电脑上，平板上没有来连的客户端 |
      | ✗ | Agent 面板（ACP） | — | 跳过：要在本机拉起 `kimi acp` 这类命令行子进程，安卓上没有 |

@@ -151,7 +151,7 @@ final class AgentPanelModel: ObservableObject {
         t.exerciseId = e.id
         t.number = e.number
         t.kind = e.kind.wireName
-        if let p = e.page {
+        if let p = e.firstPage {
             t.pages = e.lastPage.flatMap { $0 > p ? "\(p + 1)–\($0 + 1)" : nil } ?? "\(p + 1)"
         }
         t.documentId = e.documentId

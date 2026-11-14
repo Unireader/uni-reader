@@ -1299,13 +1299,10 @@
 "Can’t show the page of this question" = "Can’t show the page of this question";
 "The PDF it comes from is not on this Mac." = "The PDF it comes from is not on this Mac.";
 "Set Question Area" = "Set Question Area";
-"Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page." = "Drag a box around the question. Drag inside the box to move it, drag its edges or corners to resize. Original then shows only this part of the page.";
 "Use Whole Page" = "Use Whole Page";
 "Question not found in this workspace: %@" = "Question not found in this workspace: %@";
 "Pages %d–%d" = "Pages %d–%d";
-"Question is on:" = "Question is on:";
 "Page %d only" = "Page %d only";
-"If the question runs onto the next page (say its figure is there), choose the pages above and box the part on each page; Original shows the parts one above the other." = "If the question runs onto the next page (say its figure is there), choose the pages above and box the part on each page; Original shows the parts one above the other.";
 "Choose which part of the page Original shows, instead of the whole page. A question that runs onto the next page can have a box on each page." = "Choose which part of the page Original shows, instead of the whole page. A question that runs onto the next page can have a box on each page.";
 "Context:" = "Context:";
 "Viewing “%@”, page %d" = "Viewing “%@”, page %d";
@@ -1503,3 +1500,9 @@
 "Not loaded" = "Not loaded";
 "Unload Now" = "Unload Now";
 "Model Memory" = "Model Memory";
+
+/* 原题区域：跳过某页 / 缩放 / 方向键（EXERCISE-PLAN §30） */
+"Don’t show this page" = "Don’t show this page";
+"Fit Width" = "Fit Width";
+"Drag a box around the question." = "Drag a box around the question.";
+"Arrow keys move the box; Option + arrow keys resize it" = "Arrow keys move the box; Option + arrow keys resize it";

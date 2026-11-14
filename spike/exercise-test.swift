@@ -739,6 +739,39 @@ do {
     check(ok(back)?.payload.nextRegions == nil && ok(back)?.payload.region == nil, "两样都去掉 → 整页")
 }
 
+print("— 跳过的页：skip_pages（EXERCISE-PLAN.md §30，安卓 ExerciseTest.skipPages 同一段）")
+do {
+    func sk(_ skip: [Int]?, next: [[Double]]? = [[0.1, 0.02, 0.8, 0.3]], region: [Double]? = [0.1, 0.8, 0.8, 0.18]) -> ExerciseInput {
+        var i = input("跳页题", answer: "B", src: "book", page: 4, region: region)
+        i.nextRegions = next
+        i.skipPages = skip
+        return i
+    }
+    let d = ok(sk([0]))
+    check(d?.payload.skipPages == [0], "只留第 N+1 页：skip_pages [0]")
+    check(ok(sk([]))?.payload.skipPages == nil, "空数组 = 每页都显示")
+    check(reason(sk([0, 1]))?.contains("every page") == true, "全跳过 → 退回")
+    check(reason(sk([2]))?.contains("offsets") == true, "越界 → 退回")
+    check(reason(sk([0], next: nil))?.contains("every page") == true, "只有一页还跳过它 → 退回")
+    check(reason(sk([0], next: nil, region: nil))?.contains("needs region") == true, "没有框 → 退回")
+    check(ok(sk([1, 1]))?.payload.skipPages == [1], "去重")
+
+    let json = String(data: d!.payload.data(), encoding: .utf8) ?? ""
+    check(json.contains("\"skip_pages\":[0]"), "键名 skip_pages")
+    check((try? JSONDecoder().decode(ExercisePayload.self, from: d!.payload.data())) == d!.payload, "编解码回环一致")
+    let junk = try? JSONDecoder().decode(ExercisePayload.self, from: Data(#"{"stem":"s","options":[],"region":[0,0,1,1],"next_regions":[[0,0,1,1]],"skip_pages":[0,1]}"#.utf8))
+    check(junk != nil && junk?.skipPages == nil, "读库：全跳过 → 当没给")
+    let odd = try? JSONDecoder().decode(ExercisePayload.self, from: Data(#"{"stem":"s","options":[],"region":[0,0,1,1],"next_regions":[[0,0,1,1]],"skip_pages":"x"}"#.utf8))
+    check(odd != nil && odd?.skipPages == nil, "类型不对 → 当没给，整道题照样读得出")
+
+    let e = Exercise(row: row(d!, doc: dv.id))!
+    let sl = e.originalSlices(pageCount: 20)
+    check(sl.count == 1 && sl[0].page == 5 && sl[0].region == [0.1, 0.02, 0.8, 0.3], "原题只剩第 N+1 页那块")
+    check(e.firstPage == 5 && e.lastPage == 5, "显示页码 = 第 N+1 页")
+    check(e.originalSlices(pageCount: 5).first?.page == 4, "下一页越界 → 退回起始页那块")
+    check(ExerciseImport.input(from: e).skipPages == [0], "还原时带着 skip_pages")
+}
+
 // MARK: - v22 题目笔记 + 重做上次做错的（`EXERCISE-PLAN.md §12`）
 
 print("— v22 题目笔记")

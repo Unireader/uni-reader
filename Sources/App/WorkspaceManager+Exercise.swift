@@ -269,8 +269,9 @@ extension WorkspaceManager {
     /// 原题区域（`payload.region`，练习页 / 列表「设置原题区域…」，`EXERCISE-PLAN.md §25`）：题目在那一页上的框，
     /// 归一化 `[x, y, w, h]`、左上原点；nil = 看原题时显示整页。跨页的题 `next` 是后面每页一个框（§26），
     /// 没有起始页的框时一并去掉。不合格的框（越界 / 零宽高 / 越过最后一页）不写。
+    /// `skip` = 不进原题图的页（偏移，0 = 起始页，§30）；不合格（越界 / 全跳过）就当没给。
     /// 走 `saveExercise`（整行写回、打 `updated_at`，同步按它取新），答案没变不会重判作答。
-    func setExerciseRegion(id: String, _ region: [Double]?, next: [[Double]]? = nil) {
+    func setExerciseRegion(id: String, _ region: [Double]?, next: [[Double]]? = nil, skip: [Int]? = nil) {
         guard var e = exercise(id: id) else { return }
         let r = region.map(ExerciseRegion.rounded)
         if let r, !ExerciseRegion.isValid(r) { return }
@@ -280,9 +281,11 @@ extension WorkspaceManager {
             if let p = e.page, let c = e.documentId.flatMap({ document(id: $0)?.pageCount }), c > 0,
                ExerciseRegion.runsPastEnd(page: p, next: n, pageCount: c) { return }
         }
-        guard e.payload.region != r || e.payload.nextRegions != n else { return }
+        let k = r == nil ? nil : ExerciseRegion.cleanSkip(skip, pages: 1 + (n?.count ?? 0))
+        guard e.payload.region != r || e.payload.nextRegions != n || e.payload.skipPages != k else { return }
         e.payload.region = r
         e.payload.nextRegions = n
+        e.payload.skipPages = k
         do { try saveExercise(e) } catch { lastError = "\(error)" }
     }
 

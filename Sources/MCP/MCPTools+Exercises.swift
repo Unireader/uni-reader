@@ -31,6 +31,7 @@ extension MCPTools {
             "explanation": MCPSchema.string("explanation"),
             "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] of the question on its page"),
             "next_regions": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")), "the question runs onto the following pages: one [x, y, w, h] box per following page, in page order (page + 1, page + 2, …)"),
+            "skip_pages": MCPSchema.array(of: MCPSchema.integer("offset from page"), "pages left out of Original, as offsets from page (0 = the question's own page, 1 = the first page in next_regions, …); absent = every page shown"),
             "has_figure": MCPSchema.boolean("the question relies on a figure or table"),
             "chapter": MCPSchema.array(of: MCPSchema.string("level"), "chapter path, top level first (from the table of contents, or the user's own grouping); empty = none"),
             "user_answer": MCPSchema.string("what the user wrote in the document: option letters (choice) or the transcribed text (subjective)"),
@@ -157,6 +158,15 @@ extension MCPTools {
             }
             return a.map(\.doubleValue)
         }
+    }
+
+    /// `skip_pages`：整数数组（偏移，0 = 题目所在页，`EXERCISE-PLAN.md §30`）。范围交给 `validate`。
+    private static func skipPagesArg(_ v: Any?, at path: String) throws -> [Int]? {
+        guard let v, !(v is NSNull) else { return nil }
+        guard let a = v as? [NSNumber], a.allSatisfy({ Double($0.intValue) == $0.doubleValue }) else {
+            throw MCPInvalidParams("\(path).skip_pages must be an array of whole numbers (offsets from page)")
+        }
+        return a.map(\.intValue)
     }
 
     private static func stringField(_ d: [String: Any], _ k: String, at path: String) throws -> String? {
@@ -391,6 +401,7 @@ extension MCPTools {
                 "Replaces all options"),
             "region": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h] box around the whole question on its page, normalized 0–1, top-left origin (as in render_page); it is what the user sees under Original while practicing. [] removes it, so Original shows the whole page."),
             "next_regions": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")), "For a question that runs onto the next page(s): one [x, y, w, h] box per following page, in page order (at most \(ExerciseRegion.maxNextPages)); needs region (the part on the question's own page). Replaces the earlier ones; [] = the question is on one page. Removing region ([]) removes these too."),
+            "skip_pages": MCPSchema.array(of: MCPSchema.integer("offset from page", min: 0), "Pages to leave out of Original, as offsets from page: 0 = the question's own page, 1 = the first page in next_regions, and so on — e.g. the question is recorded on page 12 but what the user wants to see is only on page 13: next_regions [[…]] and skip_pages [0]. Cannot leave out every page. Replaces the earlier ones; [] = show every page. Changing next_regions keeps only the entries still in range; removing region removes these too."),
             "has_figure": MCPSchema.boolean("The question depends on a figure or table"),
             "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels (e.g. to regroup questions the way the user asks); [] clears it"),
             "user_answer": MCPSchema.string("What the user wrote in the document: option letters (\"B\") for choice, transcribed text for subjective; replaces the earlier one; empty string removes it"),
@@ -433,7 +444,8 @@ extension MCPTools {
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path),
                     note: try stringField(d, "note", at: path), starred: try boolField(d, "starred", at: path),
                     tags: try stringsArg(d["tags"], "tags", at: path),
-                    nextRegions: try nextRegionsArg(d["next_regions"], at: path))
+                    nextRegions: try nextRegionsArg(d["next_regions"], at: path),
+                    skipPages: try skipPagesArg(d["skip_pages"], at: path))
             }
             let wsPath = try args.string("workspace")
             let r = try await MainActor.run { try MCPFacade.shared.updateExercises(patches, workspacePath: wsPath) }

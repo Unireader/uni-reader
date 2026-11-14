@@ -36,6 +36,8 @@ extension MCPFacade {
         var tags: [String]? = nil
         /// 跨页的题后面几页的框（整组替换，`[]` = 不跨页了；`EXERCISE-PLAN.md §26`）。nil = 不动；去掉 `region` 时一并去掉。
         var nextRegions: [[Double]]? = nil
+        /// 不进原题图的页（偏移，整组替换，`[]` = 每页都显示；§30）。nil = 不动（改了 `next_regions` 时只留还在范围里的）。
+        var skipPages: [Int]? = nil
     }
 
     /// `grade_exercise_attempts` 的一条。
@@ -154,6 +156,7 @@ extension MCPFacade {
         if let r = e.payload.region {
             o["region"] = r
             if let n = e.payload.nextRegions { o["next_regions"] = n }
+            if let k = e.payload.skipPages { o["skip_pages"] = k }
         }
         if !e.note.isEmpty { o["note"] = e.note }
         o["tags"] = e.tags
@@ -374,6 +377,13 @@ extension MCPFacade {
                 if v.isEmpty, p.nextRegions == nil { i.nextRegions = nil }   // 起始页的框没了，后面几页的也不留
             }
             if let v = p.nextRegions { i.nextRegions = v.isEmpty ? nil : v }
+            if let v = p.skipPages {
+                i.skipPages = v.isEmpty ? nil : v
+            } else if i.region == nil {
+                i.skipPages = nil
+            } else if p.nextRegions != nil {
+                i.skipPages = ExerciseRegion.cleanSkip(i.skipPages, pages: 1 + (i.nextRegions?.count ?? 0))
+            }
             if let v = p.figure { i.figure = v }
             if let v = p.explanation { i.explanation = v }
             if let b = p.blanks {

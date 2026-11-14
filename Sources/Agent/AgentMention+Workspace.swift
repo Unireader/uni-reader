@@ -144,8 +144,8 @@ extension AgentMention {
         let doc = e.documentId.flatMap { ws.document(id: $0) }
         var parts: [String] = [doc?.title ?? L("Exercises")]
         // 跨页的题印到哪一页（`EXERCISE-PLAN.md §26`）；不跨页 = nil
-        let last: Int? = { guard let p = e.page, let q = e.lastPage, q > p else { return nil }; return q }()
-        if let p = e.page {
+        let last: Int? = { guard let p = e.firstPage, let q = e.lastPage, q > p else { return nil }; return q }()
+        if let p = e.firstPage {
             parts.append(last.map { String(format: L("Pages %d–%d"), p + 1, $0 + 1) } ?? String(format: L("Page %d"), p + 1))
         }
         parts.append(e.number.isEmpty ? ExercisePracticeView.kindName(e.kind) : String(format: L("No. %@"), e.number))

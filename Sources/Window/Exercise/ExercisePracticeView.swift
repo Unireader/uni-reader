@@ -242,7 +242,8 @@ final class ExercisePracticeView: NSView {
         let judged = answer != nil
         var meta = [String(format: L("Question %d of %d"), deck.index + 1, deck.items.count)]
         if !e.number.isEmpty { meta.append(String(format: L("No. %@"), e.number)) }
-        if let p = e.page {
+        // 跳过了起始页（§30）就从原题图真正开始的那页写起
+        if let p = e.firstPage {
             if let q = e.lastPage, q > p { meta.append(String(format: L("Pages %d–%d"), p + 1, q + 1)) }
             else { meta.append(String(format: L("Page %d"), p + 1)) }
         }
@@ -415,7 +416,7 @@ final class ExercisePracticeView: NSView {
         originalImage.isHidden = !show
         regionButton.isHidden = !show
         guard show else { return }
-        let want = "\(e.id)|\(e.documentId ?? "")|\(e.page ?? -1)|\(e.payload.region ?? [])|\(e.payload.nextRegions ?? [])"
+        let want = "\(e.id)|\(e.documentId ?? "")|\(e.page ?? -1)|\(e.payload.region ?? [])|\(e.payload.nextRegions ?? [])|\(e.payload.skipPages ?? [])"
         guard originalFor != want, let ws = workspace else { return }
         originalFor = want
         originalImage.image = nil
@@ -518,8 +519,8 @@ final class ExercisePracticeView: NSView {
 
     /// 列表右键也走这里。
     static func pickRegion(_ e: Exercise, deck: ExerciseDeck, workspace ws: WorkspaceManager, on win: NSWindow) {
-        ExerciseRegionPicker.present(on: win, exercise: e, workspace: ws) { [weak deck] region, next in
-            deck?.setRegion(id: e.id, region, next: next)
+        ExerciseRegionPicker.present(on: win, exercise: e, workspace: ws) { [weak deck] region, next, skip in
+            deck?.setRegion(id: e.id, region, next: next, skip: skip)
         }
     }
 

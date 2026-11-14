@@ -100,7 +100,7 @@ enum ExerciseOriginal {
     /// 段与段之间那条浅灰分隔有几像素高（不留的话接缝处会被看成一段连续正文，同 `PageSnip` 跨页截图）。
     nonisolated private static let gap = 8
 
-    /// 只在 `queue` 上跑：每段是那一页上的一块（四周放 1.5% 页宽；没有框 = 整页）。
+    /// 只在 `queue` 上跑：每段是那一页上的一块（严格按框；没有框 = 整页）。
     /// 几段按**同一个倍率**渲（字一样大，倍率按最宽那段定），从上到下左对齐拼起来；起始页渲不出来 → nil，后面某页没了就少那段。
     nonisolated private static func renderCG(_ src: ExerciseImageSource, pixelWidth: Int) -> CGImage? {
         guard let pdf = pdf(at: src.path) else { return nil }
@@ -111,10 +111,9 @@ enum ExerciseOriginal {
             guard disp.width > 0, disp.height > 0 else { if k == 0 { return nil } else { break } }
             var sub = CGRect(origin: .zero, size: disp)
             if let r = s.region, r.count == 4 {
-                // 四周各留一点边：Agent 给的框常常贴着字，裁得太紧看着像被切掉了一截
-                let pad = disp.width * 0.015
+                // 严格按框（用户 2026-11-14：「框选区域有误差」——以前四周各放 1.5% 页宽，看到的总比框的大一圈）。
+                // 要留白由框自己留：Agent 的 skill 里写了框四周留 1%~2%。
                 sub = CGRect(x: r[0] * disp.width, y: r[1] * disp.height, width: r[2] * disp.width, height: r[3] * disp.height)
-                    .insetBy(dx: -pad, dy: -pad)
                     .intersection(CGRect(origin: .zero, size: disp))
                 guard sub.width > 1, sub.height > 1 else { if k == 0 { return nil } else { break } }
             }
