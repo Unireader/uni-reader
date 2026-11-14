@@ -610,7 +610,7 @@ final class ReaderPaneController: NSViewController {
         if !tabBar.isHidden {
             let h = TabBarNSView.height
             if tabBar.style == .floating {
-                let w = min(tabBar.preferredWidth, max(60, safe.width - 48))
+                let w = max(60, safe.width - 48)   // 胶囊宽度固定占满（左右各留 24），标签在里面平分（TabBarNSView）
                 tabBar.frame = NSRect(x: safe.midX - w / 2, y: b.height - TabBarMetrics.floatBottom - scrollerLift - h,
                                       width: w, height: h)
             } else {

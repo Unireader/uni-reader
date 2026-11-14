@@ -4,7 +4,9 @@ import AppKit
 ///  · 两种形态：浮动胶囊（系统材质，离底 12pt）/ 贴底整条（系统栏材质 + 顶部分隔线），右键切换；
 ///  · ≥2 个标签才显示（由宿主控制）；关闭按钮在左，只在活动标签或悬停时出现（藏起来时不吃点击）；
 ///  · 活动标签字重加粗（浅色外观下单靠颜色分不清主次，2026-08-29 样张定）；
-///  · 放不下时横向滚动，竖向滚轮自动转横向（用户 2026-09-17：不用按 Shift）。
+///  · 胶囊宽度固定（占满阅读区、左右各留 24pt，宿主定），标签**平分**胶囊里的宽度、开得越多越窄，整排始终显示
+///    （用户 2026-11-14 定，同浏览器；原来是胶囊贴着内容、放不下横向滚动）。每个压到 `TabChipView.minWidth` 还放不下才退回横向滚动
+///    （竖向滚轮自动转横向，用户 2026-09-17：不用按 Shift）。
 /// 🔴 只用系统材质与系统颜色（`quaternaryLabelColor` / `quinaryLabel` 底片），不自绘仿系统样式。
 final class TabBarNSView: NSView {
     var onSelect: (UUID) -> Void = { _ in }
@@ -22,7 +24,8 @@ final class TabBarNSView: NSView {
     private let row = FlippedView()
     private var chips: [TabChipView] = []
     let plus = NSButton()
-    private var contentWidth: CGFloat = 0
+    /// 标签之间的间距（浮动胶囊 2、贴底 1）。
+    private var spacing: CGFloat = 2
 
     override var isFlipped: Bool { true }
 
@@ -48,16 +51,15 @@ final class TabBarNSView: NSView {
         plus.toolTip = L("New Tab")
         plus.target = self
         plus.action = #selector(newTab)
+        // 不接键盘焦点：否则窗口一打开它就是第一个能接键盘的控件，一直套着蓝色焦点框（用户 2026-11-14 报）
+        plus.refusesFirstResponder = true
+        plus.focusRingType = .none
         row.addSubview(plus)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
     @objc private func newTab() { onNewTab() }
 
-    /// 标签栏自己想要多宽（浮动形态：贴着内容走；由宿主再夹到可用宽）。
-    var preferredWidth: CGFloat {
-        contentWidth + TabBarMetrics.pad * 2 + TabBarMetrics.capsuleSideInset * 2
-    }
     static var height: CGFloat { TabBarMetrics.rowHeight + TabBarMetrics.pad * 2 }
 
     func update(items: [TabBarItem], activeID: UUID, style: TabBarStyle) {
@@ -69,17 +71,10 @@ final class TabBarNSView: NSView {
             chips.append(c)
         }
         while chips.count > items.count { chips.removeLast().removeFromSuperview() }
-        let spacing: CGFloat = style == .floating ? 2 : 1
-        var x: CGFloat = 0
+        spacing = style == .floating ? 2 : 1
         for (c, item) in zip(chips, items) {
             c.configure(item: item, active: item.id == activeID, capsule: style == .floating)
-            let w = c.preferredWidth
-            c.frame = NSRect(x: x, y: 0, width: w, height: TabBarMetrics.rowHeight)
-            x += w + spacing
         }
-        plus.frame = NSRect(x: x, y: 0, width: TabBarMetrics.rowHeight, height: TabBarMetrics.rowHeight)
-        contentWidth = x + TabBarMetrics.rowHeight
-        row.frame = NSRect(x: 0, y: 0, width: contentWidth, height: TabBarMetrics.rowHeight)
         floating.isHidden = style != .floating
         docked.isHidden = style != .docked
         dockedLine.isHidden = style != .docked
@@ -102,8 +97,29 @@ final class TabBarNSView: NSView {
         dockedLine.frame = NSRect(x: 0, y: 0, width: b.width, height: 1)
         let inset = style == .floating ? TabBarMetrics.pad + TabBarMetrics.capsuleSideInset : 8
         // 标签排在滚动视图里，滚动视图的边界就把标签裁在胶囊内边距以内（窄到放不下时不会画到胶囊外）
-        scroll.frame = NSRect(x: inset, y: TabBarMetrics.pad, width: max(0, b.width - inset * 2),
-                              height: TabBarMetrics.rowHeight)
+        let avail = max(0, b.width - inset * 2)
+        scroll.frame = NSRect(x: inset, y: TabBarMetrics.pad, width: avail, height: TabBarMetrics.rowHeight)
+        layoutChips(avail: avail)
+    }
+
+    /// 按可用宽摆标签：去掉「+」和间距后平分（取整，余下的像素留在末尾），每个至少 `minWidth`，再窄就让整排超出、可以横向滚动。
+    private func layoutChips(avail: CGFloat) {
+        let n = CGFloat(max(1, chips.count))
+        let room = avail - TabBarMetrics.rowHeight - spacing * CGFloat(chips.count)
+        let w = max(TabChipView.minWidth, (room / n).rounded(.down))
+        var x: CGFloat = 0
+        for c in chips {
+            c.frame = NSRect(x: x, y: 0, width: w, height: TabBarMetrics.rowHeight)
+            x += w + spacing
+        }
+        plus.frame = NSRect(x: x, y: 0, width: TabBarMetrics.rowHeight, height: TabBarMetrics.rowHeight)
+        let total = x + TabBarMetrics.rowHeight
+        row.frame = NSRect(x: 0, y: 0, width: max(avail, total), height: TabBarMetrics.rowHeight)
+        // 塞得下就不该留着之前滚过的偏移（否则左边一截一直看不见）
+        if total <= avail, scroll.contentView.bounds.origin.x != 0 {
+            scroll.contentView.scroll(to: .zero)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -156,6 +172,8 @@ final class TabChipView: NSView {
         close.contentTintColor = .labelColor
         close.target = self
         close.action = #selector(closeTapped)
+        close.refusesFirstResponder = true   // 同「+」：别抢键盘焦点、套蓝框
+        close.focusRingType = .none
         close.setAccessibilityLabel(L("Close Tab"))
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
@@ -172,17 +190,16 @@ final class TabChipView: NSView {
         self.active = active
         self.capsule = capsule
         label.stringValue = item.title
+        // 标签窄了标题会被截断：悬停显示完整名字。标题文字盖在标签上，自己也要设一份，
+        // 否则鼠标停在字上时找到的是没有提示的文字视图，提示不出来
         toolTip = item.title
+        label.toolTip = item.title
         pad.isHidden = !item.padFollowing
         refresh()
     }
 
-    /// 标题自然宽（最小 96 / 最大 220，同原版）。
-    var preferredWidth: CGFloat {
-        let titleW = (item.title as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
-        let w = 8 + 15 + 5 + titleW + (item.padFollowing ? 5 + 12 : 0) + 8
-        return min(max(w, 96), 220)
-    }
+    /// 放不下时最多缩到多窄：关闭键 + 两三个字（再窄就退回横向滚动）。
+    static let minWidth: CGFloat = 64
 
     private var font: NSFont {
         let base = NSFont.preferredFont(forTextStyle: .callout)
