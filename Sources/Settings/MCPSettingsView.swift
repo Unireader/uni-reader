@@ -121,6 +121,10 @@ struct MCPSettingsView: View {
     @ObservedObject private var modelDownload = LocalModelDownloader.shared
     @AppStorage(SemanticSearchSettings.urlKey) private var semanticURL = ""
     @AppStorage(SemanticSearchSettings.modelKey) private var semanticModel = ""
+    @AppStorage(SemanticSearchSettings.keepModelLoadedKey) private var keepModelLoaded = false
+    @AppStorage(SemanticSearchSettings.modelIdleMinutesKey) private var modelIdleMinutes = SemanticSearchSettings.defaultIdleMinutes
+    /// 本机模型此刻是否在内存里（随索引状态每 2 秒刷新）
+    @State private var modelLoaded = false
     /// 密钥的界面镜像（本体在 Keychain）。
     @State private var semanticKey = ""
     @State private var indexStatus: String?
@@ -128,13 +132,19 @@ struct MCPSettingsView: View {
     private var searchSection: some View {
         Section {
             Toggle(L("Also search by meaning"), isOn: $semanticOn)
-                .onChange(of: semanticOn) { _, _ in kickSearchIndex() }
+                .onChange(of: semanticOn) { _, on in
+                    if !on { Task { await LocalEmbedding.shared.unload() } }
+                    kickSearchIndex()
+                }
             if semanticOn {
                 Picker(L("Model"), selection: $semanticProvider) {
                     Text(L("On this Mac (downloaded model)")).tag("local")
                     Text(L("OpenAI-compatible API")).tag("openai")
                 }
-                .onChange(of: semanticProvider) { _, _ in kickSearchIndex() }
+                .onChange(of: semanticProvider) { _, p in
+                    if p == "openai" { Task { await LocalEmbedding.shared.unload() } }
+                    kickSearchIndex()
+                }
                 if semanticProvider != "openai" {
                     localModelRows
                 } else {
@@ -218,6 +228,30 @@ struct MCPSettingsView: View {
             Text(LocalEmbeddingModel.name)
         }
         .onAppear { modelDownload.refreshInstalled() }
+        Toggle(L("Keep the model in memory"), isOn: $keepModelLoaded)
+            .onChange(of: keepModelLoaded) { _, _ in Task { await LocalEmbedding.shared.settingsChanged() } }
+        Picker(L("Unload When Idle For"), selection: $modelIdleMinutes) {
+            ForEach(SemanticSearchSettings.idleMinuteChoices, id: \.self) { m in
+                Text(String(format: L("%d min"), m)).tag(m)
+            }
+        }
+        .disabled(keepModelLoaded)
+        .onChange(of: modelIdleMinutes) { _, _ in Task { await LocalEmbedding.shared.settingsChanged() } }
+        LabeledContent {
+            HStack(spacing: 8) {
+                Spacer(minLength: 8)
+                Text(modelLoaded ? L("Loaded (about 1.2 GB)") : L("Not loaded"))
+                Button(L("Unload Now")) {
+                    Task {
+                        await LocalEmbedding.shared.unload()
+                        modelLoaded = false
+                    }
+                }
+                .disabled(!modelLoaded)
+            }
+        } label: {
+            Text(L("Model Memory"))
+        }
         // 自己下好的文件放进这个文件夹、点「检查文件」就能用，不用再下载
         LabeledContent {
             HStack(spacing: 8) {
@@ -253,6 +287,7 @@ struct MCPSettingsView: View {
 
     private func refreshIndexStatus() async {
         indexStatus = await MCPFacade.searchIndexStatus()
+        modelLoaded = await LocalEmbedding.shared.isLoaded
     }
 
     // MARK: - 服务

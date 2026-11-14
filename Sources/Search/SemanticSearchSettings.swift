@@ -11,7 +11,19 @@ enum SemanticSearchSettings {
     static let defaultURL = "https://api.siliconflow.cn/v1"
     static let defaultModel = "BAAI/bge-m3"
 
+    /// 本机模型常驻内存（不按闲置卸载）；默认关。
+    static let keepModelLoadedKey = "searchModelKeepLoaded"
+    /// 本机模型闲置多少分钟卸掉（常驻关着时用）；没设 = 2 分钟。
+    static let modelIdleMinutesKey = "searchModelIdleMinutes"
+    static let defaultIdleMinutes = 2
+    static let idleMinuteChoices = [1, 2, 5, 10, 30, 60]
+
     static var enabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+    static var keepModelLoaded: Bool { UserDefaults.standard.bool(forKey: keepModelLoadedKey) }
+    static var modelIdleMinutes: Int {
+        let m = UserDefaults.standard.integer(forKey: modelIdleMinutesKey)
+        return m > 0 ? m : defaultIdleMinutes
+    }
     static var providerName: String { UserDefaults.standard.string(forKey: providerKey) == "openai" ? "openai" : "local" }
 
     /// 开着却用不了的原因（本机模型还没下载）；能用 / 关着 = nil。MCP 回话与设置页说明用。

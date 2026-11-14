@@ -261,7 +261,8 @@ private final class RangeDownload: NSObject, URLSessionDataDelegate, @unchecked 
 
 // MARK: - 推理
 
-/// 本机模型（`EmbeddingProvider`）。所有调用串在这个 actor 里；模型用到时才加载，闲置两分钟卸掉（省 1.2 GB 内存）。
+/// 本机模型（`EmbeddingProvider`）。所有调用串在这个 actor 里；模型用到时才加载，闲置一段时间卸掉（省 1.2 GB 内存）；
+/// 闲置分钟数与「常驻内存」在设置 › Agent › 搜索（`SemanticSearchSettings`）。
 actor LocalEmbedding: EmbeddingProvider {
     static let shared = LocalEmbedding()
 
@@ -287,25 +288,56 @@ actor LocalEmbedding: EmbeddingProvider {
         return c
     }
 
+    /// 正在算的调用数：算着的时候不卸（actor 在 await 处可重入，别的调用的计时器可能到点）。
+    private var busy = 0
+
+    var isLoaded: Bool { container != nil }
+
     func unload() {
         idleUnload?.cancel()
+        idleUnload = nil
         container = nil
         Memory.clearCache()
     }
 
+    /// 重新按设置排闲置卸载：常驻开着 / 没加载 / 正在算 → 不排；否则闲置满设定分钟数卸掉。
+    /// 每次算完调一次；设置页改了「常驻」或分钟数也调（`settingsChanged`）。
     private func touch() {
         idleUnload?.cancel()
+        idleUnload = nil
+        guard container != nil, busy == 0, !SemanticSearchSettings.keepModelLoaded else { return }
+        let seconds = SemanticSearchSettings.modelIdleMinutes * 60
         idleUnload = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(120))
+            try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
-            await self?.unload()
+            await self?.idleExpired()
         }
+    }
+
+    private func idleExpired() {
+        guard busy == 0, !SemanticSearchSettings.keepModelLoaded else { return }
+        unload()
+    }
+
+    /// 设置页改了常驻 / 闲置分钟数：按新设置重排计时（关掉常驻 = 从现在起闲置计时）。
+    func settingsChanged() { touch() }
+
+    private func begin() async throws -> EmbedderModelContainer {
+        busy += 1
+        idleUnload?.cancel()
+        idleUnload = nil
+        do { return try await model() } catch { end(); throw error }
+    }
+
+    private func end() {
+        busy -= 1
+        touch()
     }
 
     func embed(_ texts: [String]) async throws -> [(model: String, vector: [Float])] {
         guard !texts.isEmpty else { return [] }
-        let c = try await model()
-        defer { touch() }
+        let c = try await begin()
+        defer { end() }
         // 按长度排好再分批，补齐浪费最少；算完按原顺序放回
         let order = texts.indices.sorted { texts[$0].count < texts[$1].count }
         var out = [[Float]](repeating: [], count: texts.count)
@@ -320,8 +352,8 @@ actor LocalEmbedding: EmbeddingProvider {
     }
 
     func embedQuery(_ text: String) async throws -> [(model: String, vector: [Float])] {
-        let c = try await model()
-        defer { touch() }
+        let c = try await begin()
+        defer { end() }
         return [(modelID, (await Self.run(c, [Self.queryPrefix + text]))[0])]
     }
 

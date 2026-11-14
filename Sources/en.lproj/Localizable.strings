@@ -1495,3 +1495,11 @@
 "Expand" = "Expand";
 "Click the title to show the question. Drag it to move." = "Click the title to show the question. Drag it to move.";
 "Click the title to fold the question away. Drag it to move." = "Click the title to fold the question away. Drag it to move.";
+
+/* 搜索：本机模型闲置卸载 */
+"Keep the model in memory" = "Keep the model in memory";
+"Unload When Idle For" = "Unload When Idle For";
+"Loaded (about 1.2 GB)" = "Loaded (about 1.2 GB)";
+"Not loaded" = "Not loaded";
+"Unload Now" = "Unload Now";
+"Model Memory" = "Model Memory";

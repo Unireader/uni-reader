@@ -130,7 +130,8 @@
 - 混合排序：关键词退回「任一词」（`relaxed`）时，关键词那路在倒数排名融合里按 0.5 算（`fuse(keywordWeight:)`）——只对上一个泛泛的词时，
   满屏泛泛结果会把向量找到的对题内容挤下去（「选一个基准 分成两部分 排序」：混合只剩一条快速排序、排第 4；只按意思 5 条里 3 条是快速排序）。
 - 几个搜索同时来：`refresh` 等到那一路空下来为止（别的调用者排的下一轮也等），不再互相判成「还没建完（0 of 0）」。
-- 推理（`LocalEmbedding` actor）：MLX（`mlx-swift-lm` 的 `MLXEmbedders`）+ swift-transformers 分词器；用到时才加载，闲置 2 分钟卸掉。
+- 推理（`LocalEmbedding` actor）：MLX（`mlx-swift-lm` 的 `MLXEmbedders`）+ swift-transformers 分词器；用到时才加载，闲置一段时间卸掉。
+  闲置卸载（2026-11-14）：设置 › Agent › 搜索里「闲置多久后卸载」（1 / 2 / 5 / 10 / 30 / 60 分钟，默认 2，`searchModelIdleMinutes`）、「模型常驻内存」（`searchModelKeepLoaded`，开着就不卸）、「模型内存」一行显示是否已加载 +「立即卸载」；正在算时不卸（`busy` 计数，actor 在 await 处可重入）；关掉语义搜索或换成接口时当场卸掉。
   🔴 加载前设 `Memory.cacheLimit = 512 MB`（§5.3：不设涨到 27 GB）。每批 16 段、按长度排好；每段最多 1024 个 token，末尾补 `<|endoftext|>`、取最后一个 token、L2 归一。
   查询前面加模型自带的任务说明（`Instruct: …\nQuery:`），正文不加。
 - 设置里「模型」只剩两种：本机（下载的模型）/ OpenAI 兼容接口；老设置存的 `"system"` 当本机。
