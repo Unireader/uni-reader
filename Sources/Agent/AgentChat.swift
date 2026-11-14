@@ -183,6 +183,10 @@ final class AgentChat: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var sessionId: String?
     @Published private(set) var title: String?
+    /// 用户在标签上右键「重命名…」起的名字（只在本机内存里、只管标签和标题行显示；新对话 / 回放旧对话时清掉）。nil = 跟 Agent 给的标题。
+    @Published var customName: String?
+    /// 标签与标题行显示的名字：用户起的优先，其次 Agent 给的。
+    var displayTitle: String? { customName ?? title }
     @Published private(set) var modes: [ModeInfo] = []
     @Published private(set) var currentMode: String?
     @Published private(set) var configs: [AgentConfigItem] = []
@@ -260,6 +264,7 @@ final class AgentChat: ObservableObject {
         detach()
         items = []
         title = nil
+        customName = nil
         if switching {
             // 模式 / 模型 / 历史都是旧 Agent 的，连新的这几秒里别还挂着
             connection = nil
@@ -303,6 +308,7 @@ final class AgentChat: ObservableObject {
         detach()
         items = []
         title = info.title
+        customName = nil
         phase = .loading
         Task {
             do {

@@ -133,7 +133,7 @@ extension MCPTools {
                     "id": MCPSchema.string("note id"), "page": MCPSchema.integer("1-based"), "rect": MCPSchema.array(of: MCPSchema.number("0…1"), "[x, y, w, h]"),
                     "quote": MCPSchema.string("quoted passage"), "text": MCPSchema.string("the note"), "type": MCPSchema.nullable(MCPSchema.string("note type name or null")),
                     "display": MCPSchema.enumeration(["tap", "hover", "always"], "how the bubble opens"),
-                    "style": MCPSchema.enumeration(["fill", "underline", "box"], "how the quoted passage is marked"),
+                    "style": MCPSchema.enumeration(HighlightStyle.allCases.map(\.rawValue), "how the quoted passage is marked"),
                     "color": MCPSchema.string("#RRGGBB when the note has an explicit mark color; absent = the note type's color"),
                     "source": MCPSchema.object(["kind": MCPSchema.string("ai / agent"), "provider": MCPSchema.string("who wrote it"), "url": MCPSchema.string("link")]),
                     "link": MCPSchema.string("unireader:// link: opens the document at this note and expands its bubble"),
@@ -141,7 +141,7 @@ extension MCPTools {
                 "highlights": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "rect": MCPSchema.array(of: MCPSchema.number("0…1")),
                     "quote": MCPSchema.string("highlighted text"), "color": MCPSchema.string("#RRGGBB"),
-                    "style": MCPSchema.enumeration(["fill", "underline", "box"], "how it is drawn"), "created_at": MCPSchema.string("ISO-8601"),
+                    "style": MCPSchema.enumeration(HighlightStyle.allCases.map(\.rawValue), "how it is drawn"), "created_at": MCPSchema.string("ISO-8601"),
                     "link": MCPSchema.string("unireader:// link to this highlight")])),
                 "bookmarks": MCPSchema.array(of: MCPSchema.object([
                     "id": MCPSchema.string("id"), "page": MCPSchema.integer("1-based"), "frac": MCPSchema.number("0…1"), "title": MCPSchema.string("name"),

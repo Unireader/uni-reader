@@ -550,7 +550,7 @@ input {
 /* 页上的标记（decor.ts）：高亮 / 笔记选区在页面图之上、笔迹之下，图钉在最上 */
 .pv-marks { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .pv-mark { position: absolute; border-radius: 2px; }
-.pv-mark.underline { border-radius: 999px; }
+.pv-mark.underline, .pv-mark.strike { border-radius: 999px; }
 .pv-mark.box { border: 1.5px solid; border-radius: 2.75px; box-sizing: border-box; }
 .pv-pins { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .pv-pins:has(.open), .pv-pins:has(.hovering) { z-index: 4; }   /* 展开的气泡伸到下一页时盖在上面 */

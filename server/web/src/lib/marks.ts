@@ -6,7 +6,7 @@ import { base64Bytes, decodePoints, penType, type PenType } from "./inkmath";
 
 export interface Color { r: number; g: number; b: number; a: number }
 
-export type MarkStyle = "fill" | "underline" | "box";
+export type MarkStyle = "fill" | "underline" | "box" | "strike";
 export type NoteDisplay = "tap" | "hover" | "always";
 
 /** 服务器上这一行的时间（原样字符串）：网页刚写、还没存上的是空串。 */
@@ -108,7 +108,7 @@ function rects(v: unknown): number[][] {
   });
 }
 
-const style = (v: unknown): MarkStyle => (v === "underline" || v === "box" ? v : "fill");
+const style = (v: unknown): MarkStyle => (v === "underline" || v === "box" || v === "strike" ? v : "fill");
 
 /** 一段页的行 → 每页的标记。认不出的行跳过（同 App：坏行不显示）。 */
 export function parseMarks(rows: MarkRow[]): Map<number, PageMarks> {

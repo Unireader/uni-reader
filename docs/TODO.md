@@ -37,13 +37,6 @@
 
 > 本节**只留真的没做的事**，验收类条目不挂在这里（2026-09-07 / 09-13 两次裁决）。
 
-0. **编辑表格单元格时整张表不画出来**（2026-11-13 用户报，引擎 `0.15.0-xvan.3` 带进来的）：截图里编辑框、行列手柄都在，表格位置一片空白，笔记内容没丢；
-   疑是 11-13 改成「打开 / 换格 / 关闭编辑框都整张重画」后，某次绘制把表格图片跳过了（`MarkdownTextLayoutFragment.drawLatexImages` 有几处会悄悄返回）。
-   没找到原因，用户定先做日志、再遇到时查：引擎表格日志在 fork 的 `fix/table-blank` 分支（worktree `../swift-markdown-engine-worktrees/resize-perf`，未提交）。
-   App 的「帮助 › 导出排查日志…」2026-11-14 改成发布版也有的通用版（`762d30f`：版本环境 + App 日志 + 系统错误），**不再带表格现场 / 表格日志**
-   （那两段要引擎的 `TableTraceExport`，发布版引擎没有）；引擎修好发 `0.15.0-xvan.4` 时再接回 `DiagnosticLogExport` 第 1 段后面。
-   要用引擎排查日志时 `project.yml` 临时改回 `path: ../swift-markdown-engine-worktrees/resize-perf`（不提交）。Mac 0.3.27 用 `0.15.0-xvan.3` 发布（用户定，带着这个毛病）。
-
 0b. **安卓插桩测试（schema v25 + v26）**（2026-11-13）：安卓已建 `agent_memory` / `agent_turn`（v25）与日程 `schedule_plan` / `schedule_item`（v26）四张表、
    随同步、回收站认 `agentMemories` / `schedule`（JVM 单测 228 全过），
    但建库 / 回收站的插桩测试要接平板跑（接的是 iQOO 主力机时别跑：跑完会卸载 App、清数据）：
@@ -83,6 +76,9 @@
 6. **Agent 面板还差的**（`ACP-AGENT-PLAN.md`；选中文字引用、`/` 命令候选 2026-11-10 已做，§14）：
    - **NAS 上的服务器要换新版才同步 `agent_context` 这张表**（`ACP-AGENT-PLAN.md §12.1`；服务器代码不用改，只是要发一版、换上去——等用户点头再发）；
    - 安卓 Markdown 笔记页底边没让开手势条（习题页已让）。
+
+6b. **平板模式2 上的习题演算草稿**（用户 2026-11-14 提）：方案写在 `EXERCISE-PLAN.md §28`，**等用户定**三件事：存不存（甲：随作答存进 `ink`，要扩协议；乙：纯草稿、不改协议）、
+   两端要不要实时互通、哪些题型显示写字区。
 
 7. ~~Markdown 笔记：输入 `[[` 的自动补全~~——2026-11-10 已做（`MARKDOWN-NOTES-PLAN.md §12`，同日加了 `==高亮==`）。~~批注小框里的 `[[` 候选没接~~——2026-11-12 接上（`KNOWLEDGE-LINKS-PLAN.md §3`）。
 

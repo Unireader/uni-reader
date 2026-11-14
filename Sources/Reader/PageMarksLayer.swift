@@ -74,7 +74,7 @@ final class PageMarksLayer: QuietLayer {
             ctx.restoreGState()
         }
 
-        // 高亮 / 批注标记：铺色 / 画线 / 画框
+        // 高亮 / 批注标记：铺色 / 画线 / 画框 / 删除线
         for m in marks {
             switch m.style {
             case .fill:
@@ -91,6 +91,17 @@ final class PageMarksLayer: QuietLayer {
                     ctx.setLineWidth(w)
                     ctx.move(to: CGPoint(x: p.minX - pt, y: y))
                     ctx.addLine(to: CGPoint(x: p.maxX + pt, y: y))
+                    ctx.strokePath()
+                }
+            case .strike:
+                let c = m.color.copy(alpha: Highlight.strokeOpacity) ?? m.color
+                ctx.setStrokeColor(c)
+                ctx.setLineCap(.round)
+                for r in m.rects {
+                    let p = px(r)
+                    ctx.setLineWidth(max(1.5 * pt, p.height * 0.07))
+                    ctx.move(to: CGPoint(x: p.minX - pt, y: p.midY))
+                    ctx.addLine(to: CGPoint(x: p.maxX + pt, y: p.midY))
                     ctx.strokePath()
                 }
             case .box:

@@ -302,10 +302,10 @@ final class AgentChatNSView: NSView {
 
     private func refreshHeader() {
         guard showsHeader else { return }
-        let key = "\(chat.title ?? "")\u{1}\(workspaceName)\u{1}\(chat.agentName)"
+        let key = "\(chat.displayTitle ?? "")\u{1}\(workspaceName)\u{1}\(chat.agentName)"
         guard key != headerKey else { return }
         headerKey = key
-        header.configure(icon: "sparkles", title: chat.title ?? chat.agentName, subtitle: workspaceName, buttons: [
+        header.configure(icon: "sparkles", title: chat.displayTitle ?? chat.agentName, subtitle: workspaceName, buttons: [
             .init(symbol: "clock.arrow.circlepath", tip: L("Earlier Chats"), menu: { [weak self] in self?.historyMenu() ?? NSMenu() }),
             .init(symbol: "tray.full", tip: L("Contexts"), menu: { [weak self] in self?.contextsMenu() ?? NSMenu() }),
             .init(symbol: "ellipsis", tip: L("More"), menu: { AgentMenus.options() }),

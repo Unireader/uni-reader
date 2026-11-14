@@ -363,6 +363,9 @@ extension ReaderView {
                 case .boxSelection:
                     guard hasSelection else { return event }
                     self.quickHighlight(style: .box)
+                case .strikeSelection:
+                    guard hasSelection else { return event }
+                    self.quickHighlight(style: .strike)
                 case .noteFromSelection:
                     guard hasSelection else { return event }
                     self.beginAddNote()

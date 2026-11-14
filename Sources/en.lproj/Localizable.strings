@@ -103,6 +103,7 @@
 "Highlight Color" = "Highlight Color";
 /* 高亮 / 文字笔记的画法（铺色 / 画线 / 画框）与编辑器里的「标记」一行 */
 "Underline" = "Underline";
+"Strikethrough" = "Strikethrough";
 "Box" = "Box";
 "Mark" = "Mark";
 "Type color" = "Type color";
@@ -558,6 +559,7 @@
 "View" = "View";
 "Highlight Selection" = "Highlight Selection";
 "Underline Selection" = "Underline Selection";
+"Strikethrough Selection" = "Strikethrough Selection";
 "Box Selection" = "Box Selection";
 "Note from Selection" = "Note from Selection";
 "Eraser ⇄ Write" = "Eraser ⇄ Write";
@@ -1453,3 +1455,9 @@
 "Pause" = "Pause";
 "Edit the text" = "Edit the text";
 "Step" = "Step";
+
+/* Agent 标签右键菜单（2026-11-14） */
+"Rename Chat…" = "Rename Chat…";
+"Close Chat" = "Close Chat";
+"Rename Chat" = "Rename Chat";
+"Leave it empty to use the title the agent gives." = "Leave it empty to use the title the agent gives.";

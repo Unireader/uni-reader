@@ -233,12 +233,13 @@ struct NoteCardDrag {
 /// 高亮 / 文字笔记在选中文字上**怎么画**（2026-09-16 起两者共用一套；定义放这里是因为 spike 都编 `TextNoteModel.swift`）。
 ///
 /// payload 里是同名小写串（键 `style`）；旧 payload 无此键 → `.fill`，**零迁移**（与 `display`/`type_id` 同先例）。
-/// 三种都按**逐行框**画（用户 2026-09-16 拍板：画框也是每行一个框，与铺色同口径）。
+/// 四种都按**逐行框**画（用户 2026-09-16 拍板：画框也是每行一个框，与铺色同口径）。
 /// 🔴 安卓模式1 直接读 payload，目前只认铺色（`LibraryStore.textFills`）——画线/画框在那边暂按铺色画，见 `TODO.md` 已知欠账。
 enum HighlightStyle: String, Codable, CaseIterable {
     case fill        // 铺色（荧光笔，默认）
     case underline   // 画线：行框底边一条线
     case box         // 画框：只描边不填充
+    case strike      // 删除线：行框垂直中间一条线（2026-11-14；旧版本读到不认得的值按铺色画）
 
     /// 菜单 / 设置页里的显示名。
     var title: String {
@@ -246,6 +247,7 @@ enum HighlightStyle: String, Codable, CaseIterable {
         case .fill: return L("Highlight")
         case .underline: return L("Underline")
         case .box: return L("Box")
+        case .strike: return L("Strikethrough")
         }
     }
 
@@ -255,6 +257,7 @@ enum HighlightStyle: String, Codable, CaseIterable {
         case .fill: return "highlighter"
         case .underline: return "underline"
         case .box: return "rectangle"
+        case .strike: return "strikethrough"
         }
     }
 }

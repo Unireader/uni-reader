@@ -141,7 +141,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     // AI
     case aiPanel, agentPanel, snipToAI
     // 阅读区单键（不带修饰键也行；文本框/AI 面板打字时一律放行）
-    case highlightSelection, underlineSelection, boxSelection, noteFromSelection
+    case highlightSelection, underlineSelection, boxSelection, strikeSelection, noteFromSelection
     case keyEraser, keyWrite, keyPageTurn, keyLasso, keyLocalInk, keyTextSelect
 
     var id: String { rawValue }
@@ -151,7 +151,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var scope: Scope {
         switch self {
-        case .highlightSelection, .underlineSelection, .boxSelection, .noteFromSelection,
+        case .highlightSelection, .underlineSelection, .boxSelection, .strikeSelection, .noteFromSelection,
              .keyEraser, .keyWrite, .keyPageTurn, .keyLasso, .keyLocalInk, .keyTextSelect:
             return .reader
         default:
@@ -217,6 +217,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .highlightSelection: return L("Highlight Selection")
         case .underlineSelection: return L("Underline Selection")
         case .boxSelection: return L("Box Selection")
+        case .strikeSelection: return L("Strikethrough Selection")
         case .noteFromSelection: return L("Note from Selection")
         case .keyEraser: return L("Eraser ⇄ Write")
         case .keyWrite: return L("Write")
@@ -257,6 +258,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .highlightSelection: return KeyCombo("h")
         case .underlineSelection: return KeyCombo("h", .shift)    // ⇧H 画线（用户 2026-09-16：小写 h 铺色、大写 H 画线）
         case .boxSelection: return KeyCombo("h", .option)         // ⌥H 画框
+        case .strikeSelection: return KeyCombo("h", .control)     // ⌃H 删除线（2026-11-14）
         case .noteFromSelection: return KeyCombo("n")
         case .keyEraser: return KeyCombo("e")
         case .keyWrite: return KeyCombo("b")

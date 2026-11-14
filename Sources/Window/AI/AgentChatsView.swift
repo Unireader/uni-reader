@@ -11,7 +11,8 @@ import Combine
 /// 都要重新建、重新排版。现在每段对话一个视图（第一次切到时才建），换着显示；藏着的那几个不摆位、不刷新
 /// （`AgentChatNSView.layout` / `refresh` 自己看 `isHiddenOrHasHiddenAncestor`），切回来补一次，所以后台的对话照旧不占排版。
 /// 标签上的小图标：回答中 / 等你批准 / 出错；一眼看出哪段在等你。
-/// 🔴 系统控件（`NSSegmentedControl` + 按钮），不自绘。
+/// 🔴 系统控件（`NSSegmentedControl` + 按钮），不自绘。分段控件的格子里放不下关闭按钮，所以关闭 / 重命名放在
+/// 标签的右键菜单里（2026-11-14 用户要「关闭按钮放在 tab 上」，选了右键菜单这条）；顶上的「✕」照旧关眼前这段。
 @MainActor
 final class AgentChatsView: NSView {
     private let windowID: UUID
@@ -24,7 +25,7 @@ final class AgentChatsView: NSView {
 
     private let strip = NSVisualEffectView()
     private let stripLine = NSBox()
-    private let segments = NSSegmentedControl()
+    private let segments = ChatSegments()
     private let addButton = NSButton()
     private let closeButton = NSButton()
     private var bag = Set<AnyCancellable>()
@@ -46,6 +47,7 @@ final class AgentChatsView: NSView {
         segments.trackingMode = .selectOne
         segments.target = self
         segments.action = #selector(segmentPicked)
+        segments.menuProvider = { [weak self] i in self?.tabMenu(at: i) }
         configure(addButton, symbol: "plus", tip: L("New Parallel Chat"), action: #selector(addPressed))
         configure(closeButton, symbol: "xmark", tip: L("Close This Chat"), action: #selector(closePressed))
         for v in [strip, stripLine, segments, addButton, closeButton] as [NSView] { addSubview(v) }
@@ -144,7 +146,7 @@ final class AgentChatsView: NSView {
     }
 
     private static func shortTitle(_ c: AgentChat) -> String {
-        let t = (c.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = (c.displayTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return c.agentName }
         return t.count > 10 ? String(t.prefix(10)) + "…" : t
     }
@@ -182,6 +184,49 @@ final class AgentChatsView: NSView {
     @objc private func closePressed() {
         guard let id = AgentPanelModel.shared.activeChatID(for: windowID) else { return }
         AgentPanelModel.shared.closeChat(id, in: windowID)
+    }
+
+    /// 某一格标签的右键菜单：重命名… / 关闭（只剩一段时关不了，同「✕」）。
+    private func tabMenu(at i: Int) -> NSMenu? {
+        let list = chats
+        guard list.indices.contains(i) else { return nil }
+        let chat = list[i]
+        let m = NSMenu()
+        m.addItem(ClosureMenuItem(L("Rename Chat…")) { [weak self] in self?.promptRename(chat) })
+        let close = ClosureMenuItem(L("Close Chat")) { [weak self] in
+            guard let self else { return }
+            AgentPanelModel.shared.closeChat(chat.id, in: self.windowID)
+        }
+        if list.count < 2 {
+            close.isEnabled = false
+            m.autoenablesItems = false
+        }
+        m.addItem(close)
+        return m
+    }
+
+    /// 重命名一段对话：只改标签与标题行显示的名字；清空 = 回到 Agent 给的标题。
+    private func promptRename(_ chat: AgentChat) {
+        guard let win = window else { return }
+        let a = NSAlert()
+        a.messageText = L("Rename Chat")
+        a.informativeText = L("Leave it empty to use the title the agent gives.")
+        let ok = a.addButton(withTitle: L("Rename"))
+        a.addButton(withTitle: L("Cancel"))
+        let field = NSTextField(string: chat.displayTitle ?? "")
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        field.placeholderString = chat.title ?? chat.agentName
+        // 回车 = 按「重命名」（不接这一下回车会被输入框吃掉）
+        field.target = ok
+        field.action = #selector(NSButton.performClick(_:))
+        a.accessoryView = field
+        a.window.initialFirstResponder = field
+        a.beginSheetModal(for: win) { resp in
+            guard resp == .alertFirstButtonReturn else { return }
+            let t = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            chat.customName = t.isEmpty ? nil : t
+        }
+        DispatchQueue.main.async { field.currentEditor()?.selectAll(nil) }
     }
 
     /// 新建并行对话：弹出可选的 Agent（预设 + 设置里自填的那个）。
@@ -245,4 +290,18 @@ final class AgentChatsView: NSView {
     }
 
     override var isFlipped: Bool { true }
+}
+
+/// 标签条用的分段控件：右键哪一格就给哪一格的菜单（系统 `NSSegmentedControl` 本身不区分点在哪一格）。
+/// 各格等宽（`segmentDistribution = .fillEqually`），按横坐标折算格号。
+@MainActor
+final class ChatSegments: NSSegmentedControl {
+    var menuProvider: ((Int) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard segmentCount > 0, bounds.width > 0 else { return nil }
+        let x = convert(event.locationInWindow, from: nil).x
+        let i = min(segmentCount - 1, max(0, Int(x / (bounds.width / CGFloat(segmentCount)))))
+        return menuProvider?(i)
+    }
 }

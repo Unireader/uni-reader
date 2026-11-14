@@ -296,12 +296,13 @@ function addMark(layer: HTMLElement, rects: number[][], style: MarkStyle, color:
       s.width = `calc(${pct(w)} + 2px)`;
       s.height = `calc(${pct(h)} + 1px)`;
       s.background = css(color, fillOpacity);
-    } else if (style === "underline") {
+    } else if (style === "underline" || style === "strike") {
       // 线粗 = max(1.5, 行高 × 7%)，行高随缩放变：用页高（--ph，排版时设）算
+      // 画线压在行框底边，删除线压在行框垂直中间（线的中心对齐，同 Mac `PageMarksLayer`）
       const thick = `max(1.5px, calc(var(--ph) * ${(h * 0.07).toFixed(6)}))`;
       s.left = `calc(${pct(x)} - 1px - ${thick} / 2)`;
       s.width = `calc(${pct(w)} + 2px + ${thick})`;
-      s.top = pct(y + h);
+      s.top = style === "underline" ? pct(y + h) : `calc(${pct(y + h / 2)} - ${thick} / 2)`;
       s.height = thick;
       s.background = css(color, MARK_COLORS.strokeOpacity);
     } else {

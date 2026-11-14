@@ -103,7 +103,7 @@ extension MCPTools {
         return MCPTool(
             name: "add_highlight",
             title: "Highlight a passage",
-            description: "Highlight a passage on a page. `quote` must be the exact text on that page (copy it from read_pages); it is located in UniReader's OCR text when the page has it (same boxes as a highlight the user makes by hand), otherwise in the PDF's own text like ⌘F, so line breaks inside the passage are fine. `style` picks how it is drawn: fill (highlighter, default), underline, or box (outline only). Fails, rather than guessing, when the text is not found.",
+            description: "Highlight a passage on a page. `quote` must be the exact text on that page (copy it from read_pages); it is located in UniReader's OCR text when the page has it (same boxes as a highlight the user makes by hand), otherwise in the PDF's own text like ⌘F, so line breaks inside the passage are fine. `style` picks how it is drawn: fill (highlighter, default), underline, box (outline only), or strike (a line through the middle of the text). Fails, rather than guessing, when the text is not found.",
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "page": MCPSchema.integer("Page, 1-based", min: 1),
                 "quote": MCPSchema.string("Exact passage to highlight"),
@@ -234,7 +234,7 @@ extension MCPTools {
 
     static func updateAnnotations() -> MCPTool {
         let names = Highlight.palette.map(\.name)
-        let styles = ["fill", "underline", "box"]
+        let styles = HighlightStyle.allCases.map(\.rawValue)
         let item = MCPSchema.object([
             "id": MCPSchema.string("Annotation id from list_annotations (full id or its 8-character prefix)."),
             "text": MCPSchema.string("Text note: the new note text. Image note: the new caption."),

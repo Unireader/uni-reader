@@ -51,6 +51,13 @@ struct MCPPageMarks {
                 ctx.setStrokeColor(c)
                 ctx.setLineWidth(max(1.5, w * 0.002))
                 for r in rects { ctx.stroke(r) }
+            case .strike:
+                ctx.setStrokeColor(c)
+                ctx.setLineWidth(max(1.5, w * 0.002))
+                for r in rects {
+                    ctx.move(to: CGPoint(x: r.minX, y: r.midY)); ctx.addLine(to: CGPoint(x: r.maxX, y: r.midY))
+                }
+                ctx.strokePath()
             }
             ctx.restoreGState()
         }

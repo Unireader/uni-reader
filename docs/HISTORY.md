@@ -3,6 +3,27 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 高亮的第四种画法「删除线」+ Agent 标签右键菜单 + 引擎修「点表格后整篇不渲染」（2026-11-14，Mac + 网页 + 安卓模式1）
+
+- 起因（用户待办清单）：「高亮画线支持划删除线（中间位置）」「agent tab 关闭按钮放在 tab 上」。
+- **删除线**：`HighlightStyle` 加 `strike`（payload `style: "strike"`，表结构不动；旧版本读到不认得的值按铺色画，零迁移）。
+  线宽、颜色、外伸同「画线」，位置在行框垂直中间。Mac：阅读区 `PageMarksLayer`、MCP 出图 `MCPPageMarks`、右键菜单 / 笔记框 / Inspector 的样式切换（都按 `allCases` 自动多一格）、
+  快捷键「选中文字划删除线」默认 ⌃H（设置里可改）、MCP `add_highlight` / `update_annotations` / `list_annotations` 的 `style` 取值。
+  网页阅读器 `decor.ts` / `marks.ts`；安卓模式1 `HL_STRIKE = 3`（`Payloads` 读写、`PadOverlays.drawTextFill`、选字浮条与笔记框多一个按钮，图标 `ic_hl_strike` 由 `tools/icons/gen.py` 生成）。
+  模式2 的页图是 Mac 画的，自然跟上。
+- **Agent 标签右键菜单**：见 `ACP-AGENT-PLAN.md §24`（实测清单 187–189）。
+- **引擎 `0.15.0-xvan.4`：点表格单元格后整篇不渲染**（原 TODO 第 0 条「编辑单元格时整张表不画出来」）：用户报「来回点表格单元格后 LaTeX、表格、动画都不见、页面不能滚动」。
+  在引擎 Demo 里用出问题的那篇笔记复现，加 `willSwitchToNSLayoutManagerNotification` 观察者抓到调用栈：单元格编辑框用 `characterIndexForInsertion(at:)` 定光标，
+  AppKit 落到正文视图取了它的 `layoutManager`，正文降级成 TextKit 1。改用编辑框自己的排版器（fork 提交 `fa302fa`，tag `0.15.0-xvan.4`）；
+  原因与排查办法记在 `docs/agents/PITFALLS.md`「Markdown 笔记 / 引擎」第一条。引擎测试：表格编辑 62 项全过（新加 2 项），全量 881 项只有一项原本就失败的网址自动链接。
+  用户在 Demo 与 App Debug 包里实测不再复现。fork 的排查分支 `fix/table-blank`（worktree `resize-perf`，未提交的临时日志）已无用。
+- 验证：Mac Debug 编译通过、spike `note-type-test` 67 项；网页 `pnpm test` / `svelte-check` 0 错（dist 不入 git，发服务器版本时重建）；安卓 `assembleDebug` + JVM 单测通过。
+- 实测清单（用户）：
+  190. Mac：选中文字 → 右键「删除线」子菜单选色 / 按 ⌃H：每行中间一条线，缩放后线仍在正中；笔记框和 Inspector 里能在四种画法之间切换。
+  191. Agent 调 `add_highlight style=strike`：页面上出删除线；`render_page include_marks` 出的图里也有。
+  192. 网页阅读器打开同一页：删除线位置与 Mac 一致。
+  193. 安卓模式1：选字浮条与笔记框多了删除线按钮；Mac 画的删除线同步到平板后照样画在中间；旧版平板 App 上按铺色显示（不报错）。
+
 ## ✅ 笔记里的分步演示 ```anim（A1~A3 + 安卓模式1）；帮助 › 导出排查日志（2026-11-13 ~ 11-14，Mac + 安卓）
 
 - 起因（用户）：「学习的时候有时需要可视化的教程、动态演示……比如对比数据链路层可靠传输的几种方案：停等、滑动窗口、回退 N 步、选择重传；
