@@ -1,5 +1,5 @@
 // ```anim 分步演示块：解析 / 状态 / 布局测试（`ANIM-BLOCK-PLAN.md`）。运行：
-//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
+//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimKits3.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift）
 // 覆盖：词法（引号、注释、A->B）、元素与动作解析、按行报错、状态（交换跟着身份走、窗口滑动、栈 / 队列、标记）、
 //       时序图时间（流水线错开、到达后才交付、丢失、计时器、arrive=next）、多场景步数、布局高度各步一致 / 物件不越界、`reference` 里的示例无错。
@@ -158,7 +158,9 @@ for (name, r) in [("GBN", run), ("排序", sorting), ("对比", compare)] + Anim
        "kit disk alg=cscan start=100 requests=55,58,39,18,90,160,150,38,184", "kit cache map=set lines=8 ways=2 blocks=0,4,8,0,12,4,16,0,8",
        "kit base n=1000 to=16", "kit kmp P=abaabcac", "kit hash keys=19,14,23,1,68,20,84,27,55,11,10,79 size=13",
        "kit heap A=[53, 17, 78, 9, 45, 65, 87, 32] sort=yes", "kit bsearch A=[7, 10, 13, 16, 19, 29, 32, 33, 37, 41, 43] key=11",
-       "kit tcp ssthresh=16 rounds=20 timeout=12 dup=17"].map({ ($0, AnimEngine.run($0)) }) {
+       "kit tcp ssthresh=16 rounds=20 timeout=12 dup=17",
+       "kit mul method=booth x=-0.11010101 y=0.10110011", "kit mul x=0.1101 y=-0.1011", "kit div method=restore x=0.101101 y=0.110111",
+       "kit div method=nonrestore x=0.1011011 y=-0.1101111", "kit div method=comp x=-0.0101 y=0.1101"].map({ ($0, AnimEngine.run($0)) }) {
     for width in [320.0, 560.0, 720.0] {
         let layout = AnimLayout(run: r, width: CGFloat(width))
         var inside = true
@@ -352,6 +354,65 @@ check(tcp.errors.isEmpty && lastState(tcp).grids["W"]!.values[0] == ["1", "2", "
 let reno = AnimEngine.run("kit tcp ssthresh=8 rounds=8 dup=5 lang=zh")
 check(reno.errors.isEmpty && lastState(reno).grids["W"]!.values[0] == ["1", "2", "4", "8", "9", "4", "5", "6"], "TCP：3 个重复确认后快恢复 cwnd = ssthresh = 4 \(lastState(reno).grids["W"]!.values[0])")
 check(AnimText.parse("kit page alg=lru refs=1,2 frames=9").errors.first?.message.contains("frames") == true, "参数越界报错")
+
+print("定点数乘除（组成原理）")
+let om = AnimEngine.run("kit mul method=orig x=-0.1101 y=0.1011 lang=zh")
+check(om.errors.isEmpty && lastState(om).caption.contains("[x·y]原 = 1.10001111") && sheetRow(lastState(om).sheets["竖式"]!, 13) == "0.10001111",
+      "原码一位乘：-0.1101 × 0.1011 = -0.10001111，最后一行部分积 + 乘数 \(sheetRow(lastState(om).sheets["竖式"]!, 13))")
+let bm = AnimEngine.run("kit mul method=booth x=-0.1101 y=0.1011 lang=zh")
+check(bm.errors.isEmpty && lastState(bm).caption.contains("[x·y]补 = 1.01110001") && bm.stepCount == 10,
+      "Booth：[x·y]补 = 1.01110001，加 5 次移 4 次（9 步 + 第 0 步）\(bm.stepCount)")
+let nr = AnimEngine.run("kit div method=nonrestore x=-0.1011 y=-0.1101 lang=zh")
+check(nr.errors.isEmpty && lastState(nr).caption.contains("[x÷y]原 = 0.1101") && lastState(nr).caption.contains("-0.0111 × 2⁻⁴"), "加减交替：商 0.1101，余数 -0.0111 × 2⁻⁴（唐朔飞例题）")
+let cd = AnimEngine.run("kit div method=comp x=0.1000 y=-0.1011 lang=zh")
+check(cd.errors.isEmpty && lastState(cd).caption.contains("[x÷y]补 = 1.0101") && lastState(cd).caption.contains("[r]补 = 0.0111 × 2⁻⁴"), "补码除法：[x÷y]补 = 1.0101，余数 0.0111 × 2⁻⁴（王道例题）")
+check(AnimText.parse("kit div x=0.1101 y=0.1011").errors.first?.message.contains("|x| < |y|") == true, "|x| ≥ |y| 报溢出")
+check(AnimText.parse("kit div method=restore x=0.1 y=0.1111111").errors.first?.message.contains("6 bits") == true, "恢复余数法最多 6 位")
+check(AnimText.parse("kit mul x=1.01 y=0.1").errors.first?.message.contains("binary fraction") == true, "不是定点小数报错")
+let bi = AnimEngine.run("kit mul method=booth x=-1101 y=1011 lang=zh")
+check(bi.errors.isEmpty && lastState(bi).caption.contains("[x·y]补 = 1,01110001") && lastState(bi).caption.hasSuffix("x·y = -10001111")
+      && sheetRow(bi.state(scene: 0, step: 0).sheets["竖式"]!, 1).hasPrefix("00,0000"),
+      "Booth 定点整数：-1101 × 1011 = -10001111，[x·y]补 = 1,01110001，逗号分开符号位 \(lastState(bi).caption)")
+check(AnimText.parse("kit mul x=1101 y=0.1011").errors.first?.message.contains("both") == true, "整数和小数混用报错")
+check(AnimText.parse("kit div x=101 y=1101").errors.first?.message.contains("binary fraction") == true, "除法仍只认小数")
+// 穷举：1～3 位、所有符号与数值
+func parseFrac(_ s: String) -> Double {
+    let neg = s.hasPrefix("-"), body = neg ? String(s.dropFirst()) : s
+    var v = 0.0, w = 1.0
+    for c in body.dropFirst(2) { w /= 2; if c == "1" { v += w } }
+    return neg ? -v : v
+}
+var mulBad: [String] = [], divBad: [String] = []
+for n in 1...3 {
+    for xm in 0..<(1 << n) { for ym in 0..<(1 << n) { for sx in [false, true] { for sy in [false, true] {
+        let xs = (sx ? "-" : "") + "0." + AnimKits.binary(xm, n), ys = (sy ? "-" : "") + "0." + AnimKits.binary(ym, n)
+        let X = sx ? -xm : xm, Y = sy ? -ym : ym
+        for m in ["orig", "booth"] {
+            let r = AnimEngine.run("kit mul method=\(m) x=\(xs) y=\(ys) lang=zh")
+            if !r.errors.isEmpty || !lastState(r).caption.hasSuffix("x·y = \(AnimKits.trueValue(X * Y, 2 * n))") { mulBad.append("\(m) \(xs)×\(ys)") }
+        }
+        let xi = (sx ? "-" : "") + AnimKits.binary(xm, n), yi = (sy ? "-" : "") + AnimKits.binary(ym, n)
+        for m in ["orig", "booth"] {
+            let r = AnimEngine.run("kit mul method=\(m) x=\(xi) y=\(yi) lang=zh")
+            if !r.errors.isEmpty || !lastState(r).caption.hasSuffix("x·y = \(AnimKits.trueValue(X * Y, 2 * n, ","))") { mulBad.append("\(m) \(xi)×\(yi)") }
+        }
+        guard xm < ym else { continue }
+        let q = (xm << n) / ym, rem = (xm << n) % ym
+        for m in ["restore", "nonrestore"] {
+            let r = AnimEngine.run("kit div method=\(m) x=\(xs) y=\(ys) lang=zh")
+            let cap = lastState(r).caption
+            if !r.errors.isEmpty || !cap.contains("x ÷ y = \(AnimKits.trueValue(sx != sy ? -q : q, n))；") || !cap.contains("\(AnimKits.trueValue(sx ? -rem : rem, n)) × 2") {
+                divBad.append("\(m) \(xs)÷\(ys)")
+            }
+        }
+        let r = AnimEngine.run("kit div method=comp x=\(xs) y=\(ys) lang=zh")
+        let cap = lastState(r).caption
+        let qText = cap.components(separatedBy: "x ÷ y = ")[1].components(separatedBy: "；")[0]
+        if !r.errors.isEmpty || abs(parseFrac(qText) - Double(X) / Double(Y)) > 1.0 / Double(1 << n) + 1e-9 { divBad.append("comp \(xs)÷\(ys) → \(qText)") }
+    } } } }
+}
+check(mulBad.isEmpty, "原码 / Booth 乘法 1～3 位全部组合结果正确（小数与整数） \(mulBad.prefix(5))")
+check(divBad.isEmpty, "恢复余数 / 加减交替商与余数精确、补码除法误差 ≤ 2⁻ⁿ（1～3 位全部组合）\(divBad.prefix(5))")
 
 print("写法说明里的示例")
 for (i, example) in AnimText.examples.enumerated() {

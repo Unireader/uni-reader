@@ -2,7 +2,7 @@
 // 安卓 `shared/anim/` 的 `AnimVectorsTest` 读同一份逐条比对（展开后的文字、报错、每个场景每一步的状态摘要、时序图长度）。
 // 比的是「画面上该有什么」，不比坐标（两端字体不同，文字宽度对不上）。改了 Swift 的解析 / 套件 / 执行，重跑本脚本、安卓测试跟着过。
 // 运行：
-//   mkdir -p build/spike && cp spike/anim-vectors.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift build/spike/main.swift -o build/spike/anim-vectors && build/spike/anim-vectors > spike/anim-vectors.txt
+//   mkdir -p build/spike && cp spike/anim-vectors.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimKits3.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift build/spike/main.swift -o build/spike/anim-vectors && build/spike/anim-vectors > spike/anim-vectors.txt
 import Foundation
 
 func esc(_ s: String) -> String {
@@ -138,6 +138,16 @@ for lang in ["zh", "en"] {
         ("bsearch-\(lang)", "kit bsearch A=[7, 10, 13, 16, 19, 29, 32, 33, 37, 41, 43] key=37 lang=\(lang)"),
         ("bsearch-miss-\(lang)", "kit bsearch A=[7, 10, 13, 16, 19] key=5 lang=\(lang)"),
         ("tcp-\(lang)", "kit tcp ssthresh=16 rounds=20 timeout=12 dup=17 lang=\(lang)"),
+        ("mul-orig-\(lang)", "kit mul method=orig x=-0.1101 y=0.1011 lang=\(lang)"),
+        ("mul-booth-\(lang)", "kit mul method=booth x=-0.1101 y=0.1011 lang=\(lang)"),
+        ("mul-booth-neg-\(lang)", "kit mul method=booth x=0.101 y=-0.11 lang=\(lang)"),
+        ("mul-booth-int-\(lang)", "kit mul method=booth x=-1101 y=1011 lang=\(lang)"),
+        ("mul-orig-int-\(lang)", "kit mul method=orig x=111 y=-101 lang=\(lang)"),
+        ("div-restore-\(lang)", "kit div method=restore x=0.1011 y=-0.1101 lang=\(lang)"),
+        ("div-nonrestore-\(lang)", "kit div method=nonrestore x=-0.1011 y=-0.1101 lang=\(lang)"),
+        ("div-nonrestore-fix-\(lang)", "kit div method=nonrestore x=0.0110 y=0.1110 lang=\(lang)"),
+        ("div-comp-\(lang)", "kit div method=comp x=0.1000 y=-0.1011 lang=\(lang)"),
+        ("div-comp-neg-\(lang)", "kit div method=comp x=-0.0101 y=0.1101 lang=\(lang)"),
     ]
 }
 cases += [
@@ -147,7 +157,7 @@ cases += [
     ("seq-standalone", "seq W 0..7 window=3 mod=4\nstep\n  slide W by=2\n  mark W[2..3] done\nstep\n  slide W to=5\n  unmark W[3]"),
     ("structures", "list L = a -> b -> c\npointer p -> L[1]\ntree T = (5 (3 1 4) 8)\ngraph G = A->B:3, B->A, B-C\ngrid D rows=[x, y] cols=[1, 2, 3] = [[1, , 3], [4]]\npointer q -> D[1,1]\nstep 一\n  insert L 1 x\n  link L[3] -> L[0]\n  insert T 9 under 8 right\n  rotate T 5 right\n  set G[A->B] = 7\n  mark G[B-A] done\n  mark G[C] new\n  set G[C] = \"d=1\"\n  set D[0..1,2] = 0\n  mark D[1,0..1] active\n  move q -> D[0,0]\nstep 二\n  remove L 2\n  swap T[3] T[9]\n  remove T 1\n  move p -> null\n  link L[0] -> null"),
     ("sheet", "sheet S\nwrite S[1,0] \"12 4\"\nrule S[1,0..3] above\nlabel S[0] \"商\"\nstep 写\n  write S[2,1] \"x\"\n  arrow S[1..2,3]\n  mark S[1,0..3] active\n  set S[3,0] = \"7\""),
-    ("errors", "array A = [1, 2]\nlanes X\nstep s\n  mark A[0] shiny\n  frobnicate\n  swap A[0] A[0..1]\n  mark A[5] active\n  send X -> Y \"m\"\n  timer A \"T\" expire\nkit frobnicate x=1\nkit bubble A=[2, 1] colour=red\nkit sr window=5 mod=8\nkit dijkstra G=\"A-B\"\nkit page alg=lru refs=1,2 frames=9\nkit cache map=set lines=5 ways=2 blocks=1\nkit tcp rounds=5 timeout=3 dup=3\nkit heap A=[1, 1]"),
+    ("errors", "array A = [1, 2]\nlanes X\nstep s\n  mark A[0] shiny\n  frobnicate\n  swap A[0] A[0..1]\n  mark A[5] active\n  send X -> Y \"m\"\n  timer A \"T\" expire\nkit frobnicate x=1\nkit bubble A=[2, 1] colour=red\nkit sr window=5 mod=8\nkit dijkstra G=\"A-B\"\nkit page alg=lru refs=1,2 frames=9\nkit cache map=set lines=5 ways=2 blocks=1\nkit tcp rounds=5 timeout=3 dup=3\nkit heap A=[1, 1]\nkit div x=0.11 y=0.1\nkit mul x=1.1 y=0.1\nkit div method=restore x=0.1 y=0.1111111\nkit mul x=1101 y=0.1\nkit div x=101 y=1101"),
     ("empty", ""),
     ("scene-bad", "array A = [1]\nscene 乙\n  array B = [2]\n  step x\n    mark B[0] done"),
 ]
