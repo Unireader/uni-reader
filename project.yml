@@ -77,13 +77,16 @@ packages:
     # 表格圆角样式 `TableAppearance`、只读按段显示接口 `MarkdownDisplayRenderer`（Agent 回复 / 习题正文用）、
     # 拖选经过表格 / 公式块时整块按自己的形状高亮、不停在中间；单元格编辑框没有底色框、贴在表格上；行列手柄显示张开的手；
     # 中文表格按版面宽度折行；表格单元格里的行内公式不再偏高。fork 提交 244bba9、4ba4e97。
-    # 🔴 已知毛病：编辑单元格时整张表偶尔不画出来（`docs/TODO.md` 第 0 条，排查日志在 fork 的 fix/table-blank 分支）。
+    # `0.15.0-xvan.4`（2026-11-14）：点进表格单元格不再把正文视图降级成 TextKit 1——单元格编辑框原来用
+    # `characterIndexForInsertion(at:)` 定光标，AppKit 按窗口坐标落到下面的正文视图、取它的 layoutManager，正文从此
+    # 公式 / 列表圆点 / 表格都不画、滚动也坏（xvan.3 的「编辑单元格时整张表不画出来」就是它）。改用编辑框自己的排版器算。
+    # fork 提交 fa302fa，见 `docs/agents/PITFALLS.md`「Markdown 笔记 / 引擎」第一条。
     # 开发时临时改用本地引擎：把下面两行换成 `path: ../swift-markdown-engine-worktrees/resize-perf`（发布前必须换回来）。
     url: https://github.com/xVanTuring/swift-markdown-engine
     # 2026-09-21 从 0.9.0 升到 0.13.0：0.9.0 每敲一个字都按整篇算账（17K 字的笔记 56ms/字、
     # 52K 字 159ms/字，一帧才 16.7ms），0.13.0 把增量做对了——恒定 9~11ms/字，不再随全文长度涨。
     # 量法见 `spike/markdown-relayout-cost.swift`。升级只动版本号，App 代码一行没改。
-    exactVersion: 0.15.0-xvan.3
+    exactVersion: 0.15.0-xvan.4
   HighlighterSwift:
     url: https://github.com/smittytone/HighlighterSwift
     exactVersion: 3.1.0

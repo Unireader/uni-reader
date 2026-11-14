@@ -43,7 +43,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `unireader` 分支换到 `xVanTuring/swift-markdown-engine` 的 `xvan` 分支，和 Perch 共用——
   上游把智能引号写死为开，笔记里 `'` 会变 `’`，当初 fork 就是为了加 `SpellCheckingPolicy.automaticQuoteSubstitution`
   （上游 0.14.0 已合并），两处编辑区都关掉；
-  `project.yml` 里 `exactVersion` 钉死，现 **0.15.0-xvan.3**（2026-11-13：拖动改宽度提速、圆角表格、只读按段接口、中文表格折行、拖选经过表格的高亮 / 单元格编辑框 / 行列手柄，逐条写在 `project.yml` 注释；🔴 带着「编辑单元格时整张表偶尔不画出来」的毛病，见 `docs/TODO.md` 第 0 条；更早的：0.14.0-xvan.10 2026-11-11：2026-11-11：`$x, y$` 这类逗号分隔的变量列表算公式，见 `docs/agents/PITFALLS.md`「行内公式」⑥；`.9` 同日：公式里的中文画得出来了、写在下标 / 上标里的中文也算公式，见同一条 ④；`.8` 同日：行内公式不再被裁——图片按实际墨迹定上下边界、公式撑开所在行，样张对比的做法见 `project.yml` 注释；`.7` 是 2026-10-20 从 `.1` 升上来：多了 grapher 图形块用的
+  `project.yml` 里 `exactVersion` 钉死，现 **0.15.0-xvan.4**（2026-11-14：点进表格单元格不再把正文视图降级成 TextKit 1，见 `docs/agents/PITFALLS.md`「Markdown 笔记 / 引擎」第一条；`.3` 2026-11-13：拖动改宽度提速、圆角表格、只读按段接口、中文表格折行、拖选经过表格的高亮 / 单元格编辑框 / 行列手柄，逐条写在 `project.yml` 注释；`.3` 带的「编辑单元格时整张表偶尔不画出来」由 `.4` 修掉；更早的：0.14.0-xvan.10 2026-11-11：2026-11-11：`$x, y$` 这类逗号分隔的变量列表算公式，见 `docs/agents/PITFALLS.md`「行内公式」⑥；`.9` 同日：公式里的中文画得出来了、写在下标 / 上标里的中文也算公式，见同一条 ④；`.8` 同日：行内公式不再被裁——图片按实际墨迹定上下边界、公式撑开所在行，样张对比的做法见 `project.yml` 注释；`.7` 是 2026-10-20 从 `.1` 升上来：多了 grapher 图形块用的
   `FencedBlockRenderer` / `renderedBlockFrames`，以及 Perch 那边打的 `.2`~`.6`——表格默认就地编辑，
   🔴 **表格右键菜单引擎不再自带、由 App 出**（`Sources/Markdown/TableEditMenu.swift`，两处编辑器都接
   `onTableCellContextMenu`，测试 `spike/table-edit-menu-test.swift` 11 项），`$$` 编辑时实时预览、自动配对补全、
@@ -64,6 +64,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `git stash -u` 会把 `.swiftpm/` 的镜像配置一起收走，想在原版代码上对比测试，用另一个停在原版提交的 worktree；
   开发期让 App 用本地引擎：`project.yml` 临时写 `path:` 指向 worktree，**发布前必须推送、打 tag、换回 `url` + `exactVersion`**；
   2026-11-13 发了 `0.15.0-xvan.3`（`xvan` 快进到 `perf/live-resize` 的 `0a6e1e9`，tag 与两个分支已推送），`project.yml` 已换回 `url` + `exactVersion`；
+  2026-11-14 发了 `0.15.0-xvan.4`（`xvan` 快进到 `fix/cell-caret-textkit1` 的 `e1ec26d`，worktree `cell-caret`，tag 与分支已推送）；
   worktree `resize-perf` 现在检出的是排查表格空白的 `fix/table-blank` 分支（临时日志，未提交）；
   🔴 **升级前后都跑一遍 `spike/markdown-relayout-cost.swift`**——0.9.0 每敲一个字按整篇算账，17K 字的笔记 56ms/字、
   52K 字 159ms/字（一帧才 16.7ms），0.13.0 恒定 9~12ms/字不随全文长度涨；量的是主线程 CPU 时间，用法见文件头，

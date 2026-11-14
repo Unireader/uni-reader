@@ -4,6 +4,14 @@
 
 ## Markdown 笔记 / 引擎
 
+- 🔴 **正文视图（TextKit 2）一被问 `layoutManager` 就整体降级成 TextKit 1**，之后引擎自己画的东西全没了：公式图、列表圆点、表格（只剩空位），滚动也坏。
+  2026-11-14 用户报「来回点表格单元格后 LaTeX、表格、动画都不见、页面不能滚动」，就是 TODO 第 0 条「编辑单元格时整张表不画出来」的真身。
+  根因：引擎单元格编辑框打开时用 `editor.characterIndexForInsertion(at:)` 算光标，AppKit 按窗口坐标解析、落到下面的正文视图上去取它
+  `textContainer.layoutManager` → 降级。修法：编辑框用自己的 `NSLayoutManager` 算（`TableCellEditorView.caretIndex(at:)`，fork 分支 `fix/cell-caret-textkit1`）。
+  🔴 **无界面的 `swift test` 复现不出来**（窗口没上屏，AppKit 不走按窗口坐标找视图那条路）；查这类问题用引擎 Demo +
+  `NSTextView.willSwitchToNSLayoutManagerNotification` 观察者把调用栈写进文件（这次就是这么一次抓到的）。
+  任何新代码别在正文视图上碰 `layoutManager` / `textContainer.layoutManager`，也别在叠在正文上的 TextKit 1 视图上调按点找字符的系统方法。
+
 - 🔴 **渲染成整块的表格 / 公式块，选区不许停在它中间**（2026-11-12 用户截图：从表格下面往上拖选，一块错位的底色盖住右半张表和下面几行）。
   引擎把表格源码在文本里压成零宽，只留一个被拉宽成整张表的锚点字符；拖选终点落在表上时，系统按「点在这个字符的左半 / 右半」定在它前后，
   选区就从表格中间开始。引擎 fork 改成选区（非空）一伸进这种块就扩到整块（`NativeTextView+RenderedBlockSelection.swift`，
