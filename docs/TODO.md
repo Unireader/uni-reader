@@ -39,9 +39,10 @@
 
 0. **编辑表格单元格时整张表不画出来**（2026-11-13 用户报，引擎 `0.15.0-xvan.3` 带进来的）：截图里编辑框、行列手柄都在，表格位置一片空白，笔记内容没丢；
    疑是 11-13 改成「打开 / 换格 / 关闭编辑框都整张重画」后，某次绘制把表格图片跳过了（`MarkdownTextLayoutFragment.drawLatexImages` 有几处会悄悄返回）。
-   没找到原因，用户定先做日志、再遇到时查：日志在 fork 的 `fix/table-blank` 分支（worktree `../swift-markdown-engine-worktrees/resize-perf`，未提交），
-   App 侧是 Debug 包才有的「帮助 › 导出排查日志…」（`Sources/Window/DiagnosticLogExport.swift`，未提交）。用测试包时 `project.yml` 要临时改回
-   `path: ../swift-markdown-engine-worktrees/resize-perf`（不提交）。Mac 0.3.27 用 `0.15.0-xvan.3` 发布（用户定，带着这个毛病）；修好后发 `0.15.0-xvan.4`。
+   没找到原因，用户定先做日志、再遇到时查：引擎表格日志在 fork 的 `fix/table-blank` 分支（worktree `../swift-markdown-engine-worktrees/resize-perf`，未提交）。
+   App 的「帮助 › 导出排查日志…」2026-11-14 改成发布版也有的通用版（`762d30f`：版本环境 + App 日志 + 系统错误），**不再带表格现场 / 表格日志**
+   （那两段要引擎的 `TableTraceExport`，发布版引擎没有）；引擎修好发 `0.15.0-xvan.4` 时再接回 `DiagnosticLogExport` 第 1 段后面。
+   要用引擎排查日志时 `project.yml` 临时改回 `path: ../swift-markdown-engine-worktrees/resize-perf`（不提交）。Mac 0.3.27 用 `0.15.0-xvan.3` 发布（用户定，带着这个毛病）。
 
 0b. **安卓插桩测试（schema v25 + v26）**（2026-11-13）：安卓已建 `agent_memory` / `agent_turn`（v25）与日程 `schedule_plan` / `schedule_item`（v26）四张表、
    随同步、回收站认 `agentMemories` / `schedule`（JVM 单测 228 全过），
