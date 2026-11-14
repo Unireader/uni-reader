@@ -239,6 +239,10 @@ let canonical: [[String: Any]] = [
         ["key": "wrong", "title": "错题本", "count": 3, "depth": 0, "done": 3],
         ["key": "chap:D-1:[\"第二章 导数\"]", "title": "第二章 导数", "count": 5, "depth": 1, "done": 0],
     ]],
+    // —— Markdown 笔记阅读（2026-11-14，PROTOCOL.md §4.10）：正文 + 图片表 / 空笔记 ——
+    ["type": "mdNote", "key": "workspace:数学/极限.md", "title": "极限",
+     "text": "# 极限\n![[图.png]]\n", "images": [["target": "图.png", "sha": "ab12"]]],
+    ["type": "mdNote", "key": "", "title": "", "text": "", "images": [[String: Any]]()],
 ]
 
 var pass = 0, fail = 0
@@ -288,12 +292,23 @@ struct WireCodecTest {
         }
 
         // exGroups 尾部 done 可选：去掉尾部（老 Mac）照样解得出、没有 done
-        if let full = WireCodec.encode(canonical[canonical.count - 1]),
+        let groupsIdx = canonical.lastIndex { ($0["type"] as? String) == "exGroups" }!
+        if let full = WireCodec.encode(canonical[groupsIdx]),
            let g = WireCodec.decode(full)?["list"] as? [[String: Any]], (g[0]["done"] as? NSNumber)?.intValue == 5,
            let old = WireCodec.decode(full.dropLast(6))?["list"] as? [[String: Any]], old.count == 3, old[0]["done"] == nil {
             pass += 1
         } else {
             print("✗ exGroups 尾部 done 可选"); fail += 1
+        }
+
+        // mdNote 长正文：超过一段（60000 字节）要切成几段、只在字符边界切，拼回来与原文一字不差
+        let long = String(repeating: "极限ab", count: 20000)   // 每组 8 字节 → 160000 字节，切 3 段
+        if let e = WireCodec.encode(["type": "mdNote", "key": "k", "title": "t", "text": long, "images": [[String: Any]]()]),
+           let y = WireCodec.decode(e), y["text"] as? String == long, WireCodec.mdParts(long).count == 3,
+           WireCodec.mdParts(long).allSatisfy({ $0.utf8.count <= WireCodec.mdPartBytes }) {
+            pass += 1
+        } else {
+            print("✗ mdNote 长正文分段"); fail += 1
         }
 
         let out = vectors.joined(separator: "\n") + "\n"

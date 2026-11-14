@@ -61,6 +61,10 @@ final class AppModel: ObservableObject {
     var detachedBoardSave: DispatchWorkItem?
     /// 习题的平板同步（`AppModel+Exercise`，`EXERCISE-PLAN.md §10.4`）：平板此刻开着哪一组（`exOpen`），nil = 不在习题上。
     var padExercise: PadExerciseSub?
+    /// 平板 Markdown 阅读（`AppModel+MarkdownPad`，`PROTOCOL.md §4.10`）：上次发出去的那份（笔记 key + 正文 + 图），
+    /// 内容没变的存盘 / 文件事件不重发；图片 sha 按文件路径缓存（修改时间 + 大小没变就不重算）。
+    var padMarkdownSent = ""
+    var padMarkdownShaCache: [String: (date: Date, size: Int, sha: String)] = [:]
     /// 平板习题页上眼前这道题的草稿纸（`EXERCISE-PLAN.md §29`，`AppModel+Exercise.syncPadExerciseScratch` 维护）。
     /// 平板开着习题页时，草稿纸那条链路（`scratchpads` / `scratchStrokes` 下行、`ink` / `erase` / 撤销 / 纸样上行）
     /// 都对着它的会话（`padScratchSession`），不再对着被跟随的那个标签。
@@ -286,6 +290,16 @@ final class AppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // 平板在看的 Markdown 笔记存盘 / 被外部改了 → 重发正文（`PROTOCOL.md §4.10`，内容没变不发）
+        NotificationCenter.default.publisher(for: .markdownNoteSavedInApp)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] n in self?.markdownNoteChanged(key: n.userInfo?["key"] as? String) }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .markdownNotesChangedOnDisk)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.markdownNoteChanged(key: nil) }
+            .store(in: &cancellables)
+
         // 平板切换文档。
         server.$requestedDocID
             .compactMap { $0 }
@@ -323,7 +337,7 @@ final class AppModel: ObservableObject {
         server.imageProvider = { [weak self] sha in
             guard let self else { return nil }
             self.renderLock.lock(); defer { self.renderLock.unlock() }
-            return self.boardImageFiles[sha]
+            return self.boardImageFiles[sha] ?? self.noteImageFiles[sha]
         }
         // 习题的原题图（`/exercise.png?id=&w=`，`PROTOCOL.md §4.9`）：只认平板开着那组里的题
         server.exerciseImageProvider = { [weak self] id, width in
@@ -412,6 +426,12 @@ final class AppModel: ObservableObject {
     private var boardImageFiles: [String: URL] = [:]
     func setBoardImageFiles(_ m: [String: URL]) {
         renderLock.lock(); boardImageFiles = m; renderLock.unlock()
+    }
+    /// 同一个 `/image?h=` 还能取的：平板正在看的那篇 Markdown 笔记里的图（`PROTOCOL.md §4.10`，
+    /// `AppModel+MarkdownPad.broadcastMarkdownNote` 写）。
+    private var noteImageFiles: [String: URL] = [:]
+    func setNoteImageFiles(_ m: [String: URL]) {
+        renderLock.lock(); noteImageFiles = m; renderLock.unlock()
     }
     /// 平板 `/exercise.png?id=` 能取的题：平板开着那组里有出处页的题（id → 渲染要的东西）。
     /// 主线程写（`AppModel+Exercise.pushExerciseDeck`）、服务 queue 读，同样用 `renderLock` 护着。
@@ -1576,7 +1596,10 @@ final class AppModel: ObservableObject {
     func broadcastDocs() {
         guard server.hasClients else { return }
         let list: [[String: Any]] = sessions.map {
-            ["id": $0.id.uuidString, "title": $0.title.isEmpty ? "未命名" : $0.title, "ws": $0.workspaceName]
+            // Markdown 标签的会话没有书名（`session.title` 是 PDF 那边的），用笔记名，不然平板上叫「未命名」
+            ["id": $0.id.uuidString,
+             "title": !$0.title.isEmpty ? $0.title : ($0.markdownRef?.title ?? "未命名"),
+             "ws": $0.workspaceName]
         }
         server.broadcast([
             "type": "docs",

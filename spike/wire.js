@@ -31,7 +31,8 @@
     boardScroll: 0x5C,                     // 分页画板同步滚动（双向；网页端暂不收发，只保编解码一致）
     scratchStrokesAppend: 0x5D,            // 草稿纸 / 画板笔迹追加：与 scratchStrokes 逐字节相同，语义是「追加」
     // 习题（PROTOCOL.md §4.9；网页端暂不收发，只保编解码一致）
-    exGroups: 0x5E, exOpen: 0x5F, exDeck: 0x60, exIndex: 0x61, exAct: 0x62
+    exGroups: 0x5E, exOpen: 0x5F, exDeck: 0x60, exIndex: 0x61, exAct: 0x62,
+    mdNote: 0x63
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
@@ -382,6 +383,21 @@
         for (var ei = 0; ei < EI.length; ei++) w.str(EI[ei] || "");
         break;
       }
+      // Markdown 笔记阅读（PROTOCOL.md §4.10）：正文按 UTF-8 切段（每段 ≤ 60000 字节、只在字符边界切）
+      case "mdNote": {
+        w.u8(OP.mdNote); w.str(o.key || ""); w.str(o.title || "");
+        var mb = te.encode(o.text || ""), parts = [], mi = 0;
+        while (mi < mb.length) {
+          var mj = Math.min(mb.length, mi + 60000);
+          while (mj < mb.length && mj > mi && (mb[mj] & 0xC0) === 0x80) mj--;
+          parts.push(td.decode(mb.subarray(mi, mj))); mi = mj;
+        }
+        w.u16(parts.length);
+        for (var mp = 0; mp < parts.length; mp++) w.str(parts[mp]);
+        var MI = o.images || []; w.u16(MI.length);
+        for (var mk = 0; mk < MI.length; mk++) { w.str(MI[mk].target || ""); w.str(MI[mk].sha || ""); }
+        break;
+      }
       case "noteNew":
         // Mac 在环形盘提交「新建文字笔记」后下发（0x3F，S→C）：平板在该页内锚点打开编辑器。
         w.u8(OP.noteNew); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
@@ -671,6 +687,13 @@
         var ean = r.u16(), eal = new Array(ean);
         for (var eai = 0; eai < ean; eai++) eal[eai] = r.str();
         return { type: "exAct", scope: eaScope, act: eaAct, id: eaId, arg: eaArg, num: eaNum, ids: eal };
+      }
+      case OP.mdNote: {
+        var mdKey = r.str(), mdTitle = r.str(), mdn = r.u16(), mdText = "";
+        for (var mdi = 0; mdi < mdn; mdi++) mdText += r.str();
+        var mdm = r.u16(), mdImgs = new Array(mdm);
+        for (var mdj = 0; mdj < mdm; mdj++) mdImgs[mdj] = { target: r.str(), sha: r.str() };
+        return { type: "mdNote", key: mdKey, title: mdTitle, text: mdText, images: mdImgs };
       }
       case OP.noteNew:
         return { type: "noteNew", page: r.u32(), nx: r.f32(), ny: r.f32() };

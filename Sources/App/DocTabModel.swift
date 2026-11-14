@@ -41,9 +41,15 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 看到的就是一个**空标签**——那是它们本来就支持的状态，一行都不用改。
     @Published private(set) var noteRef: NoteRef? {
         didSet {
-            guard (oldValue == nil) != (noteRef == nil) else { return }
+            session.markdownRef = noteRef
+            if noteRef != oldValue { app.broadcastDocs() }   // 平板标签栏用笔记名当这个标签的名字
+            guard (oldValue == nil) != (noteRef == nil) else {
+                // 从一篇换到另一篇：`boards` 不变，只把新那篇的正文发给平板（`PROTOCOL.md §4.10`）
+                if noteRef != oldValue { app.broadcastMarkdownNote(force: true) }
+                return
+            }
             session.showsMarkdown = noteRef != nil
-            app.broadcastBoards()   // 平板据 `boards.kind` 显示「Mac 正在看 Markdown 笔记」
+            app.broadcastBoards()   // 平板据 `boards.kind = 1` 切到 Markdown 阅读，紧跟着收到正文（`mdNote`）
         }
     }
     /// 本标签当前显示的**画板笔记**（v16，`BOARD-NOTE-PLAN.md`）。与 `docID` / `noteRef` 三者互斥，

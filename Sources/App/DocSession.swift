@@ -389,6 +389,8 @@ final class DocSession: ObservableObject, Identifiable {
     var workspaceBoards: [BoardNote] = []
     /// 本标签正显示着 Markdown 笔记（平板 `boards.kind = 1`，客户端据此显示空状态）。
     var showsMarkdown = false
+    /// 本标签正显示的那篇 Markdown 笔记（平板 `mdNote` 发它的正文，`PROTOCOL.md §4.10`）。由 `DocTabModel.noteRef` 写。
+    var markdownRef: NoteRef?
     /// 本标签正显示着习题：那一组的范围键（`ExerciseScope.key`；空 = 不是习题标签）。平板 `boards.kind = 3`、
     /// `current` = 它，客户端跟随时显示同一组（`EXERCISE-PLAN.md §10.4`）。由 `DocTabModel.exerciseScope` 写。
     var exerciseScopeKey = ""

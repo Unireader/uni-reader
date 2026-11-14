@@ -230,6 +230,10 @@ const canonical = [
     { key: "wrong", title: "错题本", count: 3, depth: 0, done: 3 },
     { key: "chap:D-1:[\"第二章 导数\"]", title: "第二章 导数", count: 5, depth: 1, done: 0 },
   ] },
+  // —— Markdown 笔记阅读（2026-11-14，PROTOCOL.md §4.10）——
+  { type: "mdNote", key: "workspace:数学/极限.md", title: "极限",
+    text: "# 极限\n![[图.png]]\n", images: [{ target: "图.png", sha: "ab12" }] },
+  { type: "mdNote", key: "", title: "", text: "", images: [] },
 ];
 
 let pass = 0, fail = 0;
@@ -257,7 +261,9 @@ const jsHex = canonical.map(function (msg, i) {
   if (a && a.noFilter === 1 && b && b.noFilter === 0) pass++;
   else { console.log("✗ exDeck 尾部 noFilter 可选"); fail++; }
   // exGroups 尾部 done 可选（2026-11-02）：去掉尾部（老 Mac）照样解得出、没有 done
-  const g = Wire.encode(canonical[canonical.length - 1]);
+  let gi = canonical.length - 1;
+  while (canonical[gi].type !== "exGroups") gi--;
+  const g = Wire.encode(canonical[gi]);
   const ga = dec(g), gb = dec(g.subarray(0, g.length - 6));
   if (ga && ga.list[0].done === 5 && gb && gb.list.length === 3 && gb.list[0].done === undefined) pass++;
   else { console.log("✗ exGroups 尾部 done 可选"); fail++; }

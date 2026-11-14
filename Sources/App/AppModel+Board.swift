@@ -21,6 +21,7 @@ extension AppModel {
         broadcastBoardPages()   // 跟随的会话一变，页也跟着换（不是分页画板 = 空表）
         broadcastBoardViewport(s)
         broadcastBoardScroll(s)   // 分页画板：平板接入 / 切到这篇时对齐到 Mac 此刻的位置
+        if kind == 1 { broadcastMarkdownNote(force: true) }   // Markdown 标签：紧跟一份正文（`PROTOCOL.md §4.10`）
         // 习题分组跟着「被跟随会话所在的工作区」走：凡是会发 `boards` 的时机（接入 / 换会话 / 换工作区）都补一份
         broadcastExerciseGroups()
     }

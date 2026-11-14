@@ -58,6 +58,13 @@ final class WorkspaceWikiIndex: @unchecked Sendable {
         return index.target(for: raw)
     }
 
+    /// `![[附件]]` 指到哪个文件（同 `image(for:)` 的找法；平板阅读 Markdown 笔记时登记图片用，`PROTOCOL.md §4.10`）。
+    func fileURL(for name: String) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        return index.file(for: name)
+    }
+
     /// `[[名字]]` 指到哪篇（App 自己也用：导入报告要数「还有哪些名字解析不到」）。
     func note(for key: String) -> NoteRef? {
         lock.lock()

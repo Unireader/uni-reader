@@ -60,6 +60,25 @@ enum WireCodec {
         /// 习题（2026-10-11，`PROTOCOL.md §4.9`）：分组 / 平板开哪组 / 一组的全量 / 第几题（双向）/ 平板的操作。
         static let exGroups: UInt8 = 0x5E, exOpen: UInt8 = 0x5F, exDeck: UInt8 = 0x60
         static let exIndex: UInt8 = 0x61, exAct: UInt8 = 0x62
+        /// Markdown 笔记阅读（S→C，2026-11-14，`PROTOCOL.md §4.10`）：被跟随的 md 标签那一篇的正文 + 图片表。
+        static let mdNote: UInt8 = 0x63
+    }
+
+    /// `mdNote` 正文每段的上限（字节）：`str` 一条最长 65535，留点余量。
+    static let mdPartBytes = 60000
+
+    /// 正文按 UTF-8 切段：每段 ≤ `mdPartBytes` 字节，只在字符边界切（不切进一个多字节字符的中间）。
+    static func mdParts(_ text: String) -> [String] {
+        let b = Array(text.utf8)
+        var out: [String] = []
+        var i = 0
+        while i < b.count {
+            var j = min(b.count, i + mdPartBytes)
+            while j < b.count, j > i, b[j] & 0xC0 == 0x80 { j -= 1 }   // 退到下一个字符的开头
+            out.append(String(decoding: b[i..<j], as: UTF8.self))
+            i = j
+        }
+        return out
     }
 
     private static let brushes = ["ballpoint", "fountain", "marker", "pencil"]
@@ -485,6 +504,14 @@ enum WireCodec {
             let ids = (o["ids"] as? [Any] ?? []).map { strOf($0) }
             w.u16(ids.count)
             for s in ids { w.str(s) }
+        case "mdNote":
+            w.u8(Op.mdNote); w.str(strOf(o["key"])); w.str(strOf(o["title"]))
+            let parts = mdParts(strOf(o["text"]))
+            w.u16(parts.count)
+            for p in parts { w.str(p) }
+            let imgs = o["images"] as? [[String: Any]] ?? []
+            w.u16(imgs.count)
+            for im in imgs { w.str(strOf(im["target"])); w.str(strOf(im["sha"])) }
         case "scroll": w.u8(Op.scroll); w.u32(intOf(o["page"])); w.f32(num(o["frac"])); w.f64(num(o["t"]))
         case "hover":
             w.u8(Op.hover)
@@ -933,6 +960,14 @@ enum WireCodec {
             for _ in 0..<n where r.ok { ids.append(r.str()) }
             out = ["type": "exAct", "scope": scope, "act": NSNumber(value: act), "id": id, "arg": arg,
                    "num": NSNumber(value: num), "ids": ids]
+        case Op.mdNote:
+            let key = r.str(), title = r.str(), n = r.u16()
+            var text = ""
+            for _ in 0..<n where r.ok { text += r.str() }
+            let m = r.u16()
+            var imgs = [[String: Any]](); imgs.reserveCapacity(m)
+            for _ in 0..<m where r.ok { imgs.append(["target": r.str(), "sha": r.str()]) }
+            out = ["type": "mdNote", "key": key, "title": title, "text": text, "images": imgs]
         default: return nil   // 未知 opcode：丢弃
         }
         return r.ok ? out : nil
