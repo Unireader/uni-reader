@@ -18,7 +18,7 @@
   `TextPaint.apply { }` 里的裸 `density` 认成了 TextPaint 自己的字段；另把整块放大 1.3 倍与笔记正文同大。
 - **导出排查日志**（`762d30f`）：「帮助 › 导出排查日志…」从 Debug 专用的表格排查版改成发布版也有的通用版（版本环境 + App 日志 + 系统错误），用户平时用发布版、出问题当场导出。
 - 验证：spike anim-test 169、anim-vectors 51 组与安卓一致、出图目检（A1~A3 各示例、深浅色、中间帧）；Mac Debug 包用户实测 A1、CRC 与三协议对比；
-  安卓 JVM 全过、平板装 Debug 包截图看过 CRC 竖式逐步、中序遍历。未实测：grapher 块回归（覆盖层改成共用）、MCP `render_anim` 真调用。
+  安卓 JVM 全过、平板装 Debug 包截图看过 CRC 竖式逐步、中序遍历。MCP `render_anim` 用户 11-14 实测正常；未实测：grapher 块回归（覆盖层改成共用）。
 
 ## ✅ 日程（日历 + 待办，schema v26）+ 统计工具 `workspace_stats`（2026-11-13，Mac + 服务器同步 + 安卓数据）
 
