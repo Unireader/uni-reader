@@ -511,6 +511,29 @@ final class AgentDisclosureView: NSView {
         row.frame = NSRect(x: 0, y: 0, width: min(s.width, bounds.width), height: s.height)
     }
 
+    // 点表头的字 / 图标也能展开、收起（不只是那个小箭头；2026-11-14 用户要）。表头里只有标签与图标，没有别的按钮：
+    // 表头范围内（箭头本身除外）的点击都落到这里，按下与松开都在表头里才算一次点击。
+    private var pressedInHeader = false
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let p = convert(point, from: superview)
+        if row.frame.contains(p), !toggle.convert(toggle.bounds, to: self).contains(p) { return self }
+        return super.hitTest(point)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        pressedInHeader = row.frame.contains(convert(event.locationInWindow, from: nil))
+        if !pressedInHeader { super.mouseDown(with: event) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard pressedInHeader else { super.mouseUp(with: event); return }
+        pressedInHeader = false
+        guard row.frame.contains(convert(event.locationInWindow, from: nil)) else { return }
+        toggle.state = toggle.state == .on ? .off : .on
+        toggled()
+    }
+
     @objc private func toggled() {
         let open = toggle.state == .on
         guard open != expanded else { return }
