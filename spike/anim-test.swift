@@ -1,5 +1,5 @@
 // ```anim 分步演示块：解析 / 状态 / 布局测试（`ANIM-BLOCK-PLAN.md`）。运行：
-//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
+//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift）
 // 覆盖：词法（引号、注释、A->B）、元素与动作解析、按行报错、状态（交换跟着身份走、窗口滑动、栈 / 队列、标记）、
 //       时序图时间（流水线错开、到达后才交付、丢失、计时器、arrive=next）、多场景步数、布局高度各步一致 / 物件不越界、`reference` 里的示例无错。
@@ -153,7 +153,12 @@ check(compare.script.scenes[0].title == "甲", "场景标题")
 print("布局")
 for (name, r) in [("GBN", run), ("排序", sorting), ("对比", compare)] + AnimText.examples.enumerated().map({ ("示例\($0.offset + 1)", AnimEngine.run($0.element)) })
     + ["kit gbn frames=8 window=4 lose=2 loseack=5", "kit sr frames=8 window=4 lose=2,6", "kit quick A=[5, 1, 4, 2, 8, 3]", "kit crc data=1101011011 gen=10011",
-       "kit dijkstra G=\"A-B:4, A-C:2, C-B:1, B-D:5, C-D:8\"", "kit levelorder T=(1 (2 4 5) (3 6 7))"].map({ ($0, AnimEngine.run($0)) }) {
+       "kit dijkstra G=\"A-B:4, A-C:2, C-B:1, B-D:5, C-D:8\"", "kit levelorder T=(1 (2 4 5) (3 6 7))",
+       "kit page alg=lru refs=7,0,1,2,0,3,0,4,2,3,0,3,2,1,2,0,1,7,0,1 frames=3", "kit page alg=clock refs=1,2,3,4,1,2,5,1,2,3,4,5 frames=4",
+       "kit disk alg=cscan start=100 requests=55,58,39,18,90,160,150,38,184", "kit cache map=set lines=8 ways=2 blocks=0,4,8,0,12,4,16,0,8",
+       "kit base n=1000 to=16", "kit kmp P=abaabcac", "kit hash keys=19,14,23,1,68,20,84,27,55,11,10,79 size=13",
+       "kit heap A=[53, 17, 78, 9, 45, 65, 87, 32] sort=yes", "kit bsearch A=[7, 10, 13, 16, 19, 29, 32, 33, 37, 41, 43] key=11",
+       "kit tcp ssthresh=16 rounds=20 timeout=12 dup=17"].map({ ($0, AnimEngine.run($0)) }) {
     for width in [320.0, 560.0, 720.0] {
         let layout = AnimLayout(run: r, width: CGFloat(width))
         var inside = true
@@ -300,6 +305,53 @@ let kitErr = AnimText.parse("array A = [1]\nkit frobnicate x=1\nkit bubble A=[2,
 check(kitErr.errors.map(\.line) == [2, 3], "套件错误报在 kit 那一行 \(kitErr.errors)")
 let kitScenes = AnimEngine.run("title 对比\nscene 甲\n  kit gbn frames=4 lose=1\nscene 乙\n  kit sr frames=4 lose=1")
 check(kitScenes.errors.isEmpty && kitScenes.script.scenes.count == 2 && kitScenes.script.title == "对比", "kit 放在 scene 里对比 \(kitScenes.errors)")
+
+print("套件第二批（408）")
+func lastState(_ r: AnimRun) -> AnimSceneState { r.state(scene: 0, step: r.stepCount - 1) }
+let refs = "7,0,1,2,0,3,0,4,2,3,0,3,2,1,2,0,1,7,0,1"
+for (alg, want) in [("fifo", 15), ("lru", 12), ("opt", 9)] {
+    let r = AnimEngine.run("kit page alg=\(alg) refs=\(refs) frames=3 lang=zh")
+    check(r.errors.isEmpty && lastState(r).vars["缺页次数"]?.value == "\(want)", "页面置换 \(alg)：缺页 \(want) 次（教材例题）\(r.errors) \(lastState(r).vars["缺页次数"]?.value ?? "-")")
+}
+let clockRun = AnimEngine.run("kit page alg=clock refs=1,2,3,4,1,2,5,1,2,3,4,5 frames=3 lang=zh")
+check(clockRun.errors.isEmpty && lastState(clockRun).grids["P"]!.values[3].filter { $0 == "√" }.count == Int(lastState(clockRun).vars["缺页次数"]!.value)!, "CLOCK 无错，缺页行与计数一致 \(clockRun.errors)")
+let reqs = "55,58,39,18,90,160,150,38,184"
+for (alg, want) in [("fcfs", "498"), ("sstf", "248"), ("look", "250"), ("clook", "322"), ("scan", "280"), ("cscan", "388")] {
+    let r = AnimEngine.run("kit disk alg=\(alg) start=100 requests=\(reqs) lang=zh")
+    check(r.errors.isEmpty && lastState(r).vars["移动距离"]?.value == want, "磁盘调度 \(alg)：总移动 \(want)（\(lastState(r).vars["移动距离"]?.value ?? "-")）\(r.errors)")
+    check(lastState(r).cells["访问序列"]!.count == 9, "磁盘调度 \(alg)：9 个请求都访问到")
+}
+let direct = AnimEngine.run("kit cache map=direct lines=4 blocks=0,4,0,4 lang=zh"), twoWay = AnimEngine.run("kit cache map=set lines=4 ways=2 blocks=0,4,0,4 lang=zh")
+check(direct.errors.isEmpty && lastState(direct).vars["缺失"]?.value == "4", "直接映射：0 和 4 抢同一行，4 次全缺失")
+check(twoWay.errors.isEmpty && lastState(twoWay).vars["命中"]?.value == "2", "2 路组相联：0、4 同组两路，后两次命中")
+let lruCache = AnimEngine.run("kit cache map=full lines=2 blocks=1,2,1,3,2 replace=lru lang=zh"), fifoCache = AnimEngine.run("kit cache map=full lines=2 blocks=1,2,1,3,2 replace=fifo lang=zh")
+check(lastState(lruCache).vars["命中"]?.value == "1" && lastState(fifoCache).vars["命中"]?.value == "2", "全相联 LRU 换出 2、FIFO 换出 1（命中 1 / 2）")
+let b2 = AnimEngine.run("kit base n=156 to=2 lang=zh"), b16 = AnimEngine.run("kit base n=255 to=16 lang=zh")
+check(b2.errors.isEmpty && b2.script.scenes[0].steps.last!.caption.contains("(10011100)₂"), "156 = (10011100)₂")
+check(b16.errors.isEmpty && b16.script.scenes[0].steps.last!.caption.contains("(FF)₁₆"), "255 = (FF)₁₆")
+let kmp = AnimEngine.run("kit kmp P=ababaa lang=zh")
+let kg = lastState(kmp).grids["K"]!
+check(kmp.errors.isEmpty && kg.values[1] == ["0", "1", "1", "2", "3", "4"] && kg.values[2] == ["0", "1", "0", "1", "0", "4"], "KMP ababaa：next 011234、nextval 010104 \(kg.values)")
+let hash = AnimEngine.run("kit hash keys=19,14,23,1,68,20 size=13 lang=zh")
+let hg = lastState(hash).grids["H"]!
+check(hash.errors.isEmpty && hg.values[0][6] == "19" && hg.values[0][1] == "14" && hg.values[0][2] == "1" && hg.values[1][2] == "2", "散列：1 与 14 冲突，探到 2 号格、比较 2 次")
+check(AnimEngine.run("kit hash keys=0,13,26 size=13 probe=quadratic lang=zh").errors.isEmpty, "平方探测放得下")
+let heapRun = AnimEngine.run("kit heap A=[53, 17, 78, 9, 45, 65, 87, 32] lang=zh")
+check(heapRun.errors.isEmpty && lastState(heapRun).cells["A"]!.map(\.value) == ["87", "45", "78", "32", "17", "65", "53", "9"], "建大根堆：87 45 78 32 17 65 53 9（教材例题）\(heapRun.errors)")
+let hsort = AnimEngine.run("kit heap A=[53, 17, 78, 9, 45, 65, 87, 32] sort=yes lang=zh")
+check(hsort.errors.isEmpty && lastState(hsort).cells["A"]!.map(\.value) == ["9", "17", "32", "45", "53", "65", "78", "87"] && lastState(hsort).trees["T"]!.nodes.count == 1, "堆排序升序，树只剩一个结点 \(hsort.errors)")
+let minHeap = AnimEngine.run("kit heap A=[5, 3, 8, 1] type=min lang=zh")
+check(minHeap.errors.isEmpty && lastState(minHeap).cells["A"]!.first?.value == "1", "小根堆堆顶是最小的")
+let bs = "A=[7, 10, 13, 16, 19, 29, 32, 33, 37, 41, 43]"
+let found = AnimEngine.run("kit bsearch \(bs) key=37 lang=zh"), miss = AnimEngine.run("kit bsearch \(bs) key=11 lang=zh")
+check(found.errors.isEmpty && lastState(found).cells["A"]![8].tone == .done && lastState(found).vars["比较次数"]?.value == "2", "折半找 37：mid 5 → 8，比较 2 次")
+check(miss.errors.isEmpty && miss.script.scenes[0].steps.last!.caption.contains("查找失败"), "折半找 11：失败")
+let tcp = AnimEngine.run("kit tcp ssthresh=16 rounds=14 timeout=12 lang=zh")
+check(tcp.errors.isEmpty && lastState(tcp).grids["W"]!.values[0] == ["1", "2", "4", "8", "16", "17", "18", "19", "20", "21", "22", "23", "1", "2"] && lastState(tcp).vars["ssthresh"]?.value == "11",
+      "TCP：慢开始到 16，拥塞避免到 23，超时后 ssthresh = 11、cwnd 回 1 \(lastState(tcp).grids["W"]!.values[0])")
+let reno = AnimEngine.run("kit tcp ssthresh=8 rounds=8 dup=5 lang=zh")
+check(reno.errors.isEmpty && lastState(reno).grids["W"]!.values[0] == ["1", "2", "4", "8", "9", "4", "5", "6"], "TCP：3 个重复确认后快恢复 cwnd = ssthresh = 4 \(lastState(reno).grids["W"]!.values[0])")
+check(AnimText.parse("kit page alg=lru refs=1,2 frames=9").errors.first?.message.contains("frames") == true, "参数越界报错")
 
 print("写法说明里的示例")
 for (i, example) in AnimText.examples.enumerated() {

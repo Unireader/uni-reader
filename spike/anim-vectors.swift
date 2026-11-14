@@ -2,7 +2,7 @@
 // 安卓 `shared/anim/` 的 `AnimVectorsTest` 读同一份逐条比对（展开后的文字、报错、每个场景每一步的状态摘要、时序图长度）。
 // 比的是「画面上该有什么」，不比坐标（两端字体不同，文字宽度对不上）。改了 Swift 的解析 / 套件 / 执行，重跑本脚本、安卓测试跟着过。
 // 运行：
-//   mkdir -p build/spike && cp spike/anim-vectors.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift build/spike/main.swift -o build/spike/anim-vectors && build/spike/anim-vectors > spike/anim-vectors.txt
+//   mkdir -p build/spike && cp spike/anim-vectors.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift build/spike/main.swift -o build/spike/anim-vectors && build/spike/anim-vectors > spike/anim-vectors.txt
 import Foundation
 
 func esc(_ s: String) -> String {
@@ -114,6 +114,30 @@ for lang in ["zh", "en"] {
         ("bfs-\(lang)", "kit bfs G=\"A-B, A-C, B-D, C-D, D-E\" lang=\(lang)"),
         ("dfs-\(lang)", "kit dfs G=\"A->B, A->C, B->D, C->D, D->E\" from=A lang=\(lang)"),
         ("dijkstra-\(lang)", "kit dijkstra G=\"A-B:4, A-C:2, C-B:1, B-D:5, C-D:8, E\" from=A lang=\(lang)"),
+        ("page-fifo-\(lang)", "kit page alg=fifo refs=7,0,1,2,0,3,0,4,2,3,0,3,2,1,2,0,1,7,0,1 frames=3 lang=\(lang)"),
+        ("page-lru-\(lang)", "kit page alg=lru refs=7,0,1,2,0,3,0,4,2,3,0,3,2 frames=3 lang=\(lang)"),
+        ("page-opt-\(lang)", "kit page alg=opt refs=7,0,1,2,0,3,0,4,2,3,0,3,2 frames=3 lang=\(lang)"),
+        ("page-clock-\(lang)", "kit page alg=clock refs=1,2,3,4,1,2,5,1,2,3,4,5 frames=3 lang=\(lang)"),
+        ("disk-sstf-\(lang)", "kit disk alg=sstf start=100 requests=55,58,39,18,90,160,150,38,184 lang=\(lang)"),
+        ("disk-scan-\(lang)", "kit disk alg=scan start=100 requests=55,58,39,18,90,160,150,38,184 dir=down lang=\(lang)"),
+        ("disk-cscan-\(lang)", "kit disk alg=cscan start=100 requests=55,58,39,18,90,160,150,38,184 lang=\(lang)"),
+        ("disk-look-\(lang)", "kit disk alg=look start=53 requests=98,183,37,122,14,124,65,67 max=199 lang=\(lang)"),
+        ("disk-clook-\(lang)", "kit disk alg=clook start=53 requests=98,183,37,122,14,124,65,67 dir=down lang=\(lang)"),
+        ("disk-fcfs-\(lang)", "kit disk alg=fcfs start=53 requests=98,183,37,122 lang=\(lang)"),
+        ("cache-direct-\(lang)", "kit cache map=direct lines=4 blocks=0,1,4,0,5,1,4 lang=\(lang)"),
+        ("cache-set-\(lang)", "kit cache map=set lines=4 ways=2 blocks=0,1,4,0,5,1,8,4 replace=lru lang=\(lang)"),
+        ("cache-full-\(lang)", "kit cache map=full lines=3 blocks=1,2,3,1,4,2,5 replace=fifo lang=\(lang)"),
+        ("base2-\(lang)", "kit base n=156 to=2 lang=\(lang)"),
+        ("base16-\(lang)", "kit base n=1000 to=16 lang=\(lang)"),
+        ("kmp-\(lang)", "kit kmp P=abaabcac lang=\(lang)"),
+        ("kmp-next-\(lang)", "kit kmp P=aaaab nextval=no lang=\(lang)"),
+        ("hash-linear-\(lang)", "kit hash keys=19,14,23,1,68,20,84,27,55,11,10,79 size=13 lang=\(lang)"),
+        ("hash-quad-\(lang)", "kit hash keys=0,13,26,39 size=13 probe=quadratic lang=\(lang)"),
+        ("heap-\(lang)", "kit heap A=[53, 17, 78, 9, 45, 65, 87, 32] lang=\(lang)"),
+        ("heap-sort-\(lang)", "kit heap A=[5, 3, 8, 1, 9] type=min sort=yes lang=\(lang)"),
+        ("bsearch-\(lang)", "kit bsearch A=[7, 10, 13, 16, 19, 29, 32, 33, 37, 41, 43] key=37 lang=\(lang)"),
+        ("bsearch-miss-\(lang)", "kit bsearch A=[7, 10, 13, 16, 19] key=5 lang=\(lang)"),
+        ("tcp-\(lang)", "kit tcp ssthresh=16 rounds=20 timeout=12 dup=17 lang=\(lang)"),
     ]
 }
 cases += [
@@ -123,7 +147,7 @@ cases += [
     ("seq-standalone", "seq W 0..7 window=3 mod=4\nstep\n  slide W by=2\n  mark W[2..3] done\nstep\n  slide W to=5\n  unmark W[3]"),
     ("structures", "list L = a -> b -> c\npointer p -> L[1]\ntree T = (5 (3 1 4) 8)\ngraph G = A->B:3, B->A, B-C\ngrid D rows=[x, y] cols=[1, 2, 3] = [[1, , 3], [4]]\npointer q -> D[1,1]\nstep 一\n  insert L 1 x\n  link L[3] -> L[0]\n  insert T 9 under 8 right\n  rotate T 5 right\n  set G[A->B] = 7\n  mark G[B-A] done\n  mark G[C] new\n  set G[C] = \"d=1\"\n  set D[0..1,2] = 0\n  mark D[1,0..1] active\n  move q -> D[0,0]\nstep 二\n  remove L 2\n  swap T[3] T[9]\n  remove T 1\n  move p -> null\n  link L[0] -> null"),
     ("sheet", "sheet S\nwrite S[1,0] \"12 4\"\nrule S[1,0..3] above\nlabel S[0] \"商\"\nstep 写\n  write S[2,1] \"x\"\n  arrow S[1..2,3]\n  mark S[1,0..3] active\n  set S[3,0] = \"7\""),
-    ("errors", "array A = [1, 2]\nlanes X\nstep s\n  mark A[0] shiny\n  frobnicate\n  swap A[0] A[0..1]\n  mark A[5] active\n  send X -> Y \"m\"\n  timer A \"T\" expire\nkit frobnicate x=1\nkit bubble A=[2, 1] colour=red\nkit sr window=5 mod=8\nkit dijkstra G=\"A-B\""),
+    ("errors", "array A = [1, 2]\nlanes X\nstep s\n  mark A[0] shiny\n  frobnicate\n  swap A[0] A[0..1]\n  mark A[5] active\n  send X -> Y \"m\"\n  timer A \"T\" expire\nkit frobnicate x=1\nkit bubble A=[2, 1] colour=red\nkit sr window=5 mod=8\nkit dijkstra G=\"A-B\"\nkit page alg=lru refs=1,2 frames=9\nkit cache map=set lines=5 ways=2 blocks=1\nkit tcp rounds=5 timeout=3 dup=3\nkit heap A=[1, 1]"),
     ("empty", ""),
     ("scene-bad", "array A = [1]\nscene 乙\n  array B = [2]\n  step x\n    mark B[0] done"),
 ]

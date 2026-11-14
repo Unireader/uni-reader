@@ -281,6 +281,15 @@ extension AnimText {
     | `preorder` / `inorder` / `postorder` / `levelorder` | `T=(8 (3 1 6) (10 _ 14))` (distinct values) | the visiting order on the tree and the output sequence |
     | `bfs` / `dfs` | `G="A-B, A-C, B-D"` `from=A` | queue / stack, discovered edges, visiting order (neighbors in the order the edges are written) |
     | `dijkstra` | `G="A-B:4, A-C:2, C-B:1"` `from=A` (weights ≥ 0) | distances under each node, relaxations, the shortest-path tree |
+    | `page` | `alg=fifo\\|lru\\|opt\\|clock` `refs=7,0,1,2,0,3` (≤ 20) `frames=3` | OS page replacement: the textbook table (accesses × frames, faults marked √), why each page is evicted, the fault rate |
+    | `disk` | `alg=fcfs\\|sstf\\|scan\\|cscan\\|look\\|clook` `start=100` `requests=55,58,39` `dir=up\\|down` `max=199` | OS disk scheduling: the head moving over the sorted tracks, total and average seek length (C-SCAN / C-LOOK count the return jump) |
+    | `cache` | `map=direct\\|full\\|set` `lines=8` `ways=2` `blocks=0,4,8,0` `replace=lru\\|fifo` | cache mapping: line / set index (b mod …), tag, hit or miss, which block is replaced, the hit rate |
+    | `base` | `n=156` `to=2` (2–16) | base conversion by repeated division (a sheet), remainders read bottom to top |
+    | `kmp` | `P=ababaa` `nextval=yes\\|no` | KMP next / nextval arrays (1-based, as in most Chinese textbooks), every i / j move explained |
+    | `hash` | `keys=19,14,23` `size=13` `p=13` `probe=linear\\|quadratic` | hash table with open addressing: collisions, probe counts, successful ASL |
+    | `heap` | `A=[53, 17, 78, 9]` (distinct, ≤ 15) `type=max\\|min` `sort=no\\|yes` | building a heap by sifting down (tree and array together), optionally heap sort |
+    | `bsearch` | `A=[7, 10, 13]` (sorted) `key=13` | binary search with low / high / mid pointers |
+    | `tcp` | `ssthresh=16` `rounds=20` `timeout=12` `dup=17` | TCP congestion control: cwnd per round (slow start / congestion avoidance colors), timeout and 3-duplicate-ACK reactions |
     ```
     title Frame 2 lost: three protocols
     scene Stop-and-wait

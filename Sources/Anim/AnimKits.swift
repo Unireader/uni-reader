@@ -95,7 +95,7 @@ enum AnimKits {
         }
         skipSpace()
         let name = word().lowercased()
-        guard !name.isEmpty else { throw AnimParseError("usage: kit NAME options… (\(names.joined(separator: ", ")))") }
+        guard !name.isEmpty else { throw AnimParseError("usage: kit NAME options… (\((names + names2).joined(separator: ", ")))") }
         var args = Args()
         while true {
             skipSpace()
@@ -145,7 +145,9 @@ enum AnimKits {
         case "preorder", "inorder", "postorder", "levelorder": return try traverseKit(name, &args, L)
         case "bfs", "dfs": return try searchKit(name, &args, L)
         case "dijkstra": return try dijkstraKit(&args, L)
-        default: throw AnimParseError("unknown kit “\(name)” (\(names.joined(separator: ", ")))")
+        default:
+            if let kit = try generate2(name, &args, L) { return kit }
+            throw AnimParseError("unknown kit “\(name)” (\((names + names2).joined(separator: ", ")))")
         }
     }
 

@@ -18,8 +18,9 @@ description: 在 UniReader（macOS PDF / Markdown 笔记阅读器）的 Markdown
 1. `get_state` 看用户开着哪篇笔记；`read_markdown`（先 `outline` 或 `search`）找到要放演示的位置——**放在讲这个过程的那一段后面**，
    前后各留一个空行。
 2. **每次写之前**先调 `get_anim_reference`，照它的写法和示例写，不要凭印象（不支持的写法整行会被跳过）。
-3. **先看有没有套件**：协议（`stopwait` / `gbn` / `sr`）、排序（`bubble` / `selection` / `insertion` / `quick`）、`crc`、
-   树的遍历（`preorder` / `inorder` / `postorder` / `levelorder`）、`bfs` / `dfs`、`dijkstra`——用户问的正好是这些，就写一行 `kit …`，
+3. **先看有没有套件**：协议（`stopwait` / `gbn` / `sr`）、`tcp` 拥塞控制、排序（`bubble` / `selection` / `insertion` / `quick`）、`crc`、
+   树的遍历（`preorder` / `inorder` / `postorder` / `levelorder`）、`bfs` / `dfs`、`dijkstra`、`kmp`、`hash`、`heap`、`bsearch`、
+   操作系统的 `page`（页面置换）/ `disk`（磁盘调度）、组成原理的 `cache`（映射与替换）/ `base`（进制转换）——用户问的正好是这些，就写一行 `kit …`，
    步骤由引擎推演，保证对（写法见 `get_anim_reference` 的 Kits 一节；对比几种协议就每个 `scene` 放一个 kit）。
    套件不够用时，`render_anim` 返回的 `expanded` 是展开后的文字，拿它改。
    没有合适的套件才手写。手写原则：

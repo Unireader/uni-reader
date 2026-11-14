@@ -57,7 +57,7 @@ extension AnimLayout {
             let rows = max(states.map { $0.sheets[e.name]?.rowCount ?? 0 }.max() ?? 0, 1)
             return nameH + CGFloat(rows) * Self.sheetRow + 4
         case .grid(let values, let rows, let cols):
-            let g = gridGeometry(width: w, rows: values.count, cols: values.first?.count ?? 0, rowLabels: !rows.isEmpty, colLabels: !cols.isEmpty)
+            let g = gridGeometry(width: w, cols: values.first?.count ?? 0, rowLabels: rows, colLabels: !cols.isEmpty)
             return nameH + g.colLabelH + CGFloat(values.count) * g.cell + 4 + band
         default:
             return 0
@@ -388,18 +388,19 @@ extension AnimLayout {
         let colLabelH: CGFloat
     }
 
-    func gridGeometry(width w: CGFloat, rows: Int, cols: Int, rowLabels: Bool, colLabels: Bool) -> GridGeometry {
-        let rowLabelW: CGFloat = rowLabels ? 28 : 0
-        let cell = min(40, max(16, floor((w - rowLabelW) / CGFloat(max(cols, 1)))))
+    /// 行标题宽按最长的那个量（最多 80 点）：写死 28 时「模式串」「nextval」「cwnd」都被挤成两行。
+    func gridGeometry(width w: CGFloat, cols: Int, rowLabels: [String], colLabels: Bool) -> GridGeometry {
+        let rowLabelW: CGFloat = rowLabels.isEmpty ? 0 : min(80, (rowLabels.map { AnimMetrics.measure($0, size: AnimMetrics.small, bold: true).width }.max() ?? 0) + 8)
+        let cell = min(40, max(11, floor((w - rowLabelW) / CGFloat(max(cols, 1)))))   // 窄屏放 20 列：最小 11（字号跟着变小）
         return GridGeometry(cell: cell, rowLabelW: rowLabelW, colLabelH: colLabels ? 16 : 0)
     }
 
     func gridItems(_ id: String, name: String, rect: CGRect, state: AnimSceneState, tone: AnimTone, anchors: inout [AnimPointerTarget: AnimAnchor]) -> [AnimItem] {
         guard let g = state.grids[name] else { return [] }
-        let geo = gridGeometry(width: rect.width, rows: g.rows, cols: g.cols, rowLabels: !g.rowLabels.isEmpty, colLabels: !g.colLabels.isEmpty)
+        let geo = gridGeometry(width: rect.width, cols: g.cols, rowLabels: g.rowLabels, colLabels: !g.colLabels.isEmpty)
         var items: [AnimItem] = []
         let x0 = rect.minX + geo.rowLabelW, y0 = rect.minY + geo.colLabelH
-        let font = geo.cell < 24 ? AnimMetrics.small : AnimMetrics.body
+        let font = geo.cell < 16 ? AnimMetrics.small - 2 : geo.cell < 24 ? AnimMetrics.small : AnimMetrics.body
         for (j, label) in g.colLabels.enumerated() {
             items.append(AnimItem(id: "\(id).cl\(j)", shape: .text(label, frame: CGRect(x: x0 + CGFloat(j) * geo.cell, y: rect.minY, width: geo.cell, height: 14),
                                                                     size: AnimMetrics.small, bold: true, role: .secondary, align: .center, backdrop: false)))
