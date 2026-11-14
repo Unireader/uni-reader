@@ -1641,7 +1641,11 @@ final class AppModel: ObservableObject {
     /// 推平板当前会话的文档布局（每页原始宽高）。仅文档变化时推；`force` 用于新平板连接时补发。
     /// 避免每次滚动/翻页重广播 layout，减少平板端无谓 relayout 与回环噪声。
     func pushLayout(force: Bool = false) {
-        guard server.hasClients, let s = padSession, let pdf = s.pdf else { return }
+        guard server.hasClients, let s = padSession else { return }
+        // 当前不是 PDF（习题 / 画板 / Markdown 标签）：这一次什么都没发，记下的「推过」作废。
+        // 否则平板在习题页上（重）连进来时补发落空，切回原来那篇又被当成「推过了」跳掉 → 平板一直没有页、白屏。
+        // 笔迹那条去重同理：layout 重发会让平板清空笔迹，不跟着作废就补不回来。
+        guard let pdf = s.pdf else { pushedLayoutKey = ""; pushedStrokesKey = ""; return }
         let key = s.displayKey
         if !force && key == pushedLayoutKey { return }
         pushedLayoutKey = key
@@ -1662,6 +1666,10 @@ final class AppModel: ObservableObject {
             "count": pdf.pageCount,
             "pages": pages
         ])
+        // 平板收到 layout 会把滚动位置重置到第一页。平板钉到一个还没装载的后台标签时，装载里恢复进度发的
+        // viewport 比这条 layout 先到、被它冲掉，平板就停在第一页、直到 Mac 上激活那个标签才跳过去。
+        // 所以每发一次 layout 都紧跟着补一次当前进度（新平板连接那条路径本来就这么做，重复一次无害）。
+        pushCurrentViewport()
     }
 
     /// Mac 侧导航 → 广播视口锚点给平板。origin=pad 不回发（避免与平板回传成环）；
