@@ -9,7 +9,7 @@
 | 问题 | 默认 | 理由 |
 |---|---|---|
 | 放在哪 | 只放在 Markdown 笔记里（和 ```grapher 块一样） | 文字即真源，同步、搜索、Obsidian 都不受影响；PDF 页面上的批注以后再说 |
-| 安卓 / 网页阅读器 | 第一阶段只显示文字 | 与 grapher 块同样处理；写法定稳后再各自实现渲染 |
+| 安卓 / 网页阅读器 | 第一阶段只显示文字（安卓模式1 2026-11-14 已能播放，见 §11） | 与 grapher 块同样处理；写法定稳后再各自实现渲染 |
 | HTML 备用通道（```html 块 + WKWebView） | 不做 | 与「App 不带网页」的约定冲突；等 DSL 确实不够用再议 |
 
 ## 1. 它是什么
@@ -297,3 +297,23 @@ step 帧 2 超时：回退，2~5 全部重发
   最后余数标绿并注明「作为 FCS」。`spike/anim-test.swift` 对 101001 / 1101 逐行核对与图 3.8 一致（商 110101、余数 001）。
 - 2026-11-13 用户追问「商为什么是 0 / 1、为什么 r = 3」：CRC 套件开头加两步讲原理（G 对应的多项式与最高次幂 → r；补 r 个 0 = M × 2ʳ、留给余数），
   每一步说明写出「取 r+1 位，首位 1 够除商 1 / 首位 0 不够除商 0」，并用提示条逐位写出异或（`1⊕1=0  0⊕1=1 …`）与「首位必为 0 所以去掉」。
+
+## 11. 安卓模式1 播放（2026-11-14）
+
+用户定「在安卓用 Kotlin 做」。安卓仓库 `android/app/src/main/java/com/xvan/unireader/shared/anim/`：
+
+| Kotlin | 对应 Swift | 说明 |
+|---|---|---|
+| `AnimText.kt` | `AnimText.swift` | 类型、词法、解析，逐条照抄 |
+| `AnimKits.kt` | `AnimKits.swift` | 套件，生成的每一行文字、说明中英两份逐字相同 |
+| `AnimEngine.kt` | `AnimState.swift` + `AnimStructures.swift` | 执行；Swift 是值类型，这边可变对象 + 每步存档深拷贝 |
+| `AnimLayout.kt` | `AnimLayout.swift` + `AnimLayout+Structures.swift` | 布局，文字大小经 `AnimMeasure` 注入 |
+| `AnimPainter.kt` | `AnimPainter.swift` | 插值绘制（弧线换位、字先出后进、线长出来、树边连在节点上）；`StaticLayout` 排字并缓存 |
+| `AnimBlockView.kt` | `AnimBlockView.swift` | 画布 + 文字按钮 / `SeekBar` 控制条，`ValueAnimator` 补间 |
+
+接入：`MdNotes.segments` 把关上的 ```anim 块切成 `Segment.Anim`（没关上的照旧是文字），`MdNoteController` 阅读态放 `AnimBlockView`。
+模式2 不显示笔记正文，没有这一项。
+
+**跨端一致**：`spike/anim-vectors.swift` 用 Mac 参照实现跑 51 组写法（说明里全部示例、每种套件中英两份、对比块、报错、`arrive=next`、
+各种结构），写出 `spike/anim-vectors.txt`：展开后的文字、标题、步数、报错原文、时序图长度、每个场景每一步的状态摘要。安卓 `AnimVectorsTest`
+逐行比对，第一次跑就全部一致。坐标不比（字体不同），布局与绘制规则照抄、观感真机看。改 Swift 的解析 / 套件 / 执行 → 重生成向量 → 安卓跟改。
