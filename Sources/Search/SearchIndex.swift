@@ -152,8 +152,18 @@ actor SearchIndex {
         self.embedder = embedder
         if embedder == nil { embedding?.cancel() }   // 设置里关掉了语义搜索：正在算的向量停下
         if running == nil { startNext() }
-        guard let task = running else { return true }
-        return await Self.wait(task, budget: budget) && running == nil
+        return await waitIdle(budget: budget, links: false)
+    }
+
+    /// 等到那一路空下来（期限内）。一轮建完时若别的调用者又排了一份清单，会紧接着开下一轮——接着等它，
+    /// 不然几个搜索同时来时互相把对方判成「还没建完」（回话里出现「0 of 0 sources done」，2026-11-14 实测）。
+    private func waitIdle(budget: TimeInterval, links: Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(budget)
+        while let task = links ? linksRunning : running {
+            let left = deadline.timeIntervalSinceNow
+            guard left > 0, await Self.wait(task, budget: left) else { return false }
+        }
+        return true
     }
 
     /// 只对这几类来源（`md:` / `ann:`）对账，不删别的前缀的来源；**与全量那轮各跑各的**。
@@ -164,8 +174,7 @@ actor SearchIndex {
     func refreshLinks(_ sources: [Source], prefixes: [String], budget: TimeInterval) async -> Bool {
         linksPending = (sources.filter { s in prefixes.contains { s.key.hasPrefix($0) } }, prefixes)
         if linksRunning == nil { startLinks() }
-        guard let task = linksRunning else { return true }
-        return await Self.wait(task, budget: budget) && linksRunning == nil
+        return await waitIdle(budget: budget, links: true)
     }
 
     private static func wait(_ task: Task<Void, Never>, budget: TimeInterval) async -> Bool {
@@ -218,13 +227,9 @@ actor SearchIndex {
     /// 内存里的向量（按模型分）：ids 与 flat（ids.count × dim 个 Int8）一一对应。向量一变就作废重读。
     private var vecCache: [String: (ids: [Int64], dim: Int, flat: [Int8])]?
 
-    private static func owns(_ e: EmbeddingProvider) -> (sql: String, param: SQLiteDB.Value) {
-        e.modelID == "system" ? ("model LIKE ?", .text("system-%")) : ("model = ?", .text(e.modelID))
-    }
-
-    /// 本机模型一次只看约 256 个字，再长截掉；接口那种给到 1500 字。
-    private static func embedInput(_ body: String, system: Bool) -> String {
-        String(body.prefix(system ? 250 : 1500))
+    /// 块一般不到 500 字；再长的截到 1500 字（本机模型另按 1024 个 token 截）。
+    private static func embedInput(_ body: String) -> String {
+        String(body.prefix(1500))
     }
 
     private func startEmbedding() {
@@ -241,20 +246,19 @@ actor SearchIndex {
     }
 
     private func embedAll(_ e: EmbeddingProvider) async {
-        let own = Self.owns(e)
-        // 换了模型：别的模型算的向量全部作废
-        try? db.run("DELETE FROM vec WHERE NOT (\(own.sql))", [own.param])
+        // 换了模型：别的模型算的向量全部作废（含 2026-11-14 去掉的系统模型的 system-cjk / system-latn）
+        try? db.run("DELETE FROM vec WHERE model <> ?", [.text(e.modelID)])
         try? db.run("DELETE FROM vec WHERE chunk_id NOT IN (SELECT id FROM chunk)")
         let total = ((try? db.query("SELECT COUNT(*) AS n FROM chunk"))?.first?["n"] as? Int64).map(Int.init) ?? 0
         var done = ((try? db.query("SELECT COUNT(*) AS n FROM vec"))?.first?["n"] as? Int64).map(Int.init) ?? 0
         embedProgress = EmbedProgress(done: done, total: total, running: true, lastError: nil)
-        let system = e.modelID == "system"
-        let batch = system ? 16 : 32
+        let batch = 32
         while !Task.isCancelled {
-            let rows = (try? db.query("SELECT id, body FROM chunk WHERE id NOT IN (SELECT chunk_id FROM vec) ORDER BY id LIMIT \(batch)")) ?? []
+            // 由短到长取：同一批长度相近，本机模型补齐浪费最少
+            let rows = (try? db.query("SELECT id, body FROM chunk WHERE id NOT IN (SELECT chunk_id FROM vec) ORDER BY length(body), id LIMIT \(batch)")) ?? []
             guard !rows.isEmpty else { break }
             let ids = rows.compactMap { $0["id"] as? Int64 }
-            let texts = rows.map { Self.embedInput($0["body"] as? String ?? "", system: system) }
+            let texts = rows.map { Self.embedInput($0["body"] as? String ?? "") }
             do {
                 let vs = try await e.embed(texts)
                 try db.transaction {
@@ -314,10 +318,46 @@ actor SearchIndex {
         return Self.dedupe(hits, limit: limit)
     }
 
+    // MARK: - 看索引里有什么（设置 › 搜索 ›「查看索引内容」窗口，`SearchIndexWindow.swift`）
+
+    struct SourceSummary: Sendable { let key: String; let title: String; let chunks: Int; let vectors: Int }
+    struct ChunkSummary: Sendable { let page: Int?; let line: Int?; let heading: String; let body: String; let hasVector: Bool }
+
+    /// 每个来源：块数、已算向量的块数。
+    func sourceSummaries() -> [SourceSummary] {
+        let rows = (try? db.query("""
+        SELECT s.key AS key, s.title AS title, COUNT(c.id) AS n, COUNT(v.chunk_id) AS nv
+        FROM source s LEFT JOIN chunk c ON c.source = s.key LEFT JOIN vec v ON v.chunk_id = c.id
+        GROUP BY s.key ORDER BY s.title
+        """)) ?? []
+        return rows.compactMap { r in
+            guard let k = r["key"] as? String else { return nil }
+            return SourceSummary(key: k, title: r["title"] as? String ?? "", chunks: Int(r["n"] as? Int64 ?? 0), vectors: Int(r["nv"] as? Int64 ?? 0))
+        }
+    }
+
+    /// 一个来源的块（按页 / 行 / 编号排），正文截前 `bodyChars` 字。
+    func chunkSummaries(source: String, bodyChars: Int = 120) -> [ChunkSummary] {
+        let rows = (try? db.query("""
+        SELECT c.page AS page, c.line AS line, c.heading AS heading, substr(c.body, 1, ?) AS body, v.chunk_id IS NOT NULL AS hv
+        FROM chunk c LEFT JOIN vec v ON v.chunk_id = c.id WHERE c.source = ? ORDER BY c.page, c.line, c.id
+        """, [.int(Int64(bodyChars)), .text(source)])) ?? []
+        return rows.map { r in
+            ChunkSummary(page: (r["page"] as? Int64).map(Int.init), line: (r["line"] as? Int64).map(Int.init),
+                         heading: r["heading"] as? String ?? "", body: r["body"] as? String ?? "", hasVector: (r["hv"] as? Int64 ?? 0) != 0)
+        }
+    }
+
+    /// 向量用的模型（库里存的那个；没有 = nil）。
+    var vectorModel: String? { (try? db.query("SELECT model FROM vec LIMIT 1"))?.first?["model"] as? String }
+
     var vectorCount: Int { ((try? db.query("SELECT COUNT(*) AS n FROM vec"))?.first?["n"] as? Int64).map(Int.init) ?? 0 }
 
     /// 两路结果合并（倒数排名融合，k = 60）：两边都靠前的最靠前，只在一边出现的也留着。
-    static func fuse(keyword: [Hit], semantic: [Hit], limit: Int) -> [Hit] {
+    /// `keywordWeight`：关键词那路的分量。关键词退回到「任一词」（`relaxed`）时传 0.5——那时多半只对上一个泛泛的词
+    /// （「选一个基准 分成两部分 排序」只对上「排序」，满屏泛泛的排序题把向量找到的快速排序挤到第 4，2026-11-14 实测），
+    /// 只在关键词那边的排到只在向量那边的后面，两边都有的仍最靠前。
+    static func fuse(keyword: [Hit], semantic: [Hit], limit: Int, keywordWeight: Double = 1) -> [Hit] {
         func key(_ h: Hit) -> String {
             switch h.kind {
             case "pdf": return "pdf|\(h.owner)|\(h.page ?? -1)"
@@ -327,7 +367,7 @@ actor SearchIndex {
             }
         }
         var score: [String: Double] = [:], pick: [String: Hit] = [:]
-        for (i, h) in keyword.enumerated() { let k = key(h); score[k, default: 0] += 1 / (60 + Double(i + 1)); pick[k] = pick[k] ?? h }
+        for (i, h) in keyword.enumerated() { let k = key(h); score[k, default: 0] += keywordWeight / (60 + Double(i + 1)); pick[k] = pick[k] ?? h }
         for (i, h) in semantic.enumerated() { let k = key(h); score[k, default: 0] += 1 / (60 + Double(i + 1)); pick[k] = pick[k] ?? h }
         return score.sorted { $0.value > $1.value }.prefix(limit).compactMap { kv in
             pick[kv.key].map { var h = $0; h.score = kv.value; return h }
@@ -392,6 +432,13 @@ actor SearchIndex {
                           e.fromPage.map { .int(Int64($0)) } ?? .null, e.fromLine.map { .int(Int64($0)) } ?? .null,
                           .text(e.kind), .text(e.target), .text(e.raw), .text(e.context)])
                 }
+                // 正文没变的块留着原来的向量（按正文对上，搬到新块上）：习题整个工作区一个来源，改一道题就整批重建，
+                // 不留的话 2500 多块向量全部重算（本机模型要两分钟 GPU 满载，2026-11-14 实测撞到）
+                try db.exec("CREATE TEMP TABLE IF NOT EXISTS keep_vec(body TEXT PRIMARY KEY, model TEXT NOT NULL, v BLOB NOT NULL); DELETE FROM keep_vec;")
+                try db.run("""
+                INSERT OR IGNORE INTO keep_vec(body, model, v)
+                SELECT c.body, v.model, v.v FROM chunk c JOIN vec v ON v.chunk_id = c.id WHERE c.source=?
+                """, [.text(s.key)])
                 try db.run("DELETE FROM vec WHERE chunk_id IN (SELECT id FROM chunk WHERE source=?)", [.text(s.key)])
                 try db.run("DELETE FROM chunk WHERE source=?", [.text(s.key)])
                 for c in chunks {
@@ -405,8 +452,14 @@ actor SearchIndex {
                           .text(c.title), .text(c.heading), .text(c.body), .text(norm),
                           .text(SearchText.normalize(c.title + " " + c.heading))])
                 }
+                try db.run("""
+                INSERT OR IGNORE INTO vec(chunk_id, model, v)
+                SELECT c.id, k.model, k.v FROM chunk c JOIN keep_vec k ON k.body = c.body WHERE c.source=?
+                """, [.text(s.key)])
+                try db.exec("DELETE FROM keep_vec;")
                 try db.run("INSERT OR REPLACE INTO source(key, stamp, title) VALUES (?,?,?)", [.text(s.key), .text(stamp), .text(s.title)])
             }
+            vecCache = nil
         } catch {
             progress.lastError = "\(s.title): \(error)"
         }

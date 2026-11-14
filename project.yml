@@ -98,6 +98,15 @@ packages:
   ACP:
     url: https://github.com/Unireader/swift-acp
     exactVersion: 0.1.0-unireader.1
+  # 语义搜索的本机嵌入模型（SEARCH-PLAN.md §5.3/§5.4）：Apple 维护的 MLX，只取 MLXEmbedders + MLXLMCommon；
+  # 分词器用 swift-transformers 的 Tokenizers（不取 mlx-swift-lm 的 MLXHuggingFace 宏 / swift-huggingface 下载器，下载自己写）。
+  # 🔴 编 MLX 要 Xcode 的 Metal 工具链：xcodebuild -downloadComponent MetalToolchain（新版 Xcode 默认不带）。
+  MLXSwiftLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    exactVersion: 3.32.3
+  SwiftTransformers:
+    url: https://github.com/huggingface/swift-transformers
+    exactVersion: 1.4.0
 # 同级目录的 Grapher NG（公式 / 函数图形，GPL-3.0-or-later；与本项目的 AGPL-3.0 兼容，合并后的整体按 AGPL 发布）。
 # 只链接它的三个 framework：GrapherKit（数学与文字描述）、GrapherRender（Metal 出图）、GrapherEmbed（可放进文字里的图形块视图）。
 # 两个仓库必须放在同一级目录下（`../grapher-ng`）。笔记里的 ```grapher 块见 `GRAPHER-BLOCK-PLAN.md`。
@@ -126,6 +135,12 @@ targets:
         product: ACP
       - package: ACP
         product: ACPModel
+      - package: MLXSwiftLM
+        product: MLXEmbedders
+      - package: MLXSwiftLM
+        product: MLXLMCommon
+      - package: SwiftTransformers
+        product: Tokenizers
     settings:
       base:
         PRODUCT_NAME: UniReader

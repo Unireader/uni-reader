@@ -3,6 +3,19 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 语义搜索换成本机下载的嵌入模型 Qwen3-Embedding（MLX）+ 查看索引内容窗口（2026-11-14，Mac）
+
+- 起因：用户要评估「向量化」质量。拿 408 工作区实测（`SEARCH-PLAN.md §5.3`）：系统自带 `NLContextualEmbedding` 换说法 33 问首位命中 2、
+  前 10 命中 12（随机期望 5.9），远不如关键词；本机 MLX 跑 Qwen3-Embedding-0.6B bf16 首位 19、前 10 命中 30。用户否决 Ollama，要嵌入 App、可选下载。
+- **本机模型**（`Sources/Search/LocalEmbedding.swift`，§5.4）：`mlx-swift-lm` 3.32.3（`MLXEmbedders`）+ `swift-transformers` 1.4.0；模型钉提交号、
+  设置里下载（Hugging Face / hf-mirror.com，断点续传、验 SHA-256），也可以自己把文件放进模型文件夹点「检查文件」；
+  🔴 `Memory.cacheLimit = 512 MB`（不设涨到 27 GB）。系统模型去掉；OpenAI 兼容接口保留。编 MLX 要 Metal 工具链（`BUILD-DETAILS.md`）。
+- 顺带：来源整批重建时正文没变的块留着向量（改一道题不再重算 2500 多块习题）；打开工作区 10 秒后接着算没算完的向量；
+  关键词退回「任一词」时混合排序里降权；几个搜索同时来不再互相判成「没建完」；设置页索引那一行每 2 秒刷新；下载进度不再闪。
+- **查看索引内容窗口**（`Sources/Window/SearchIndexWindow.swift`）：种类 → 来源 → 每一块（有没有向量）。⌘W 关窗的坑记进 `PITFALLS.md`。
+- 验证：`spike/search-test.swift` 47 项；`spike/semantic-eval.swift`（现有向量）与 `spike/embed-bench/`（MLX 对比，App 存的向量 `--stored` 复核同为 30/33、19）；
+  Mac Debug 编译通过；用户实测：手动放模型、算完 6843 块、重启续算、MCP `search` 三种模式。
+
 ## ✅ 高亮的第四种画法「删除线」+ Agent 标签右键菜单 + 引擎修「点表格后整篇不渲染」（2026-11-14，Mac + 网页 + 安卓模式1）
 
 - 起因（用户待办清单）：「高亮画线支持划删除线（中间位置）」「agent tab 关闭按钮放在 tab 上」。

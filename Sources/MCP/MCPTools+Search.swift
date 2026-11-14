@@ -101,7 +101,8 @@ extension MCPTools {
             var notices: [String] = []
             if mode == "auto" { mode = (embedder != nil && vectors > 0) ? "hybrid" : "keyword" }
             if mode != "keyword", embedder == nil {
-                notices.append("Semantic search is off (UniReader Settings › Agent › Semantic Search), so this was a keyword search.")
+                notices.append(SemanticSearchSettings.unavailableReason.map { "Semantic search is on but \($0), so this was a keyword search." }
+                               ?? "Semantic search is off (UniReader Settings › Agent › Search), so this was a keyword search.")
                 mode = "keyword"
             }
             let kw = await index.keyword(query, filter: filter, limit: mode == "semantic" ? 0 : want * 3)
@@ -117,7 +118,7 @@ extension MCPTools {
                     notices.append("Semantic search failed (\(error.localizedDescription)); keyword results only.")
                 }
                 if vectors == 0 { notices.append("No text has been embedded for semantic search yet; it is being prepared in the background.") }
-                hits = mode == "semantic" && !sem.isEmpty ? Array(sem.prefix(want)) : SearchIndex.fuse(keyword: kw.hits, semantic: sem, limit: want)
+                hits = mode == "semantic" && !sem.isEmpty ? Array(sem.prefix(want)) : SearchIndex.fuse(keyword: kw.hits, semantic: sem, limit: want, keywordWeight: kw.relaxed ? 0.5 : 1)
             }
             if folderOnly {
                 hits = hits.filter { h in

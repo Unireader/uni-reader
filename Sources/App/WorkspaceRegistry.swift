@@ -153,6 +153,14 @@ final class WorkspaceRegistry: ObservableObject {
         UserDefaults.standard.set(finalKey, forKey: lastKey)
         wsLog("acquire：新建实例 \(folder.lastPathComponent) retain=\(retain[finalKey] ?? 0)")
         ServerSyncCoordinator.shared.workspaceOpened(m)   // 服务器工作区：开着时只推不拉（`SERVER-MODE-PLAN.md §4.3`）
+        // 语义搜索开着：打开工作区 10 秒后（窗口先排好、页图先出）在后台把索引与没算完的向量接着算——
+        // 不然上次退出时没算完的，要等下一次搜索才接着算（`SEARCH-PLAN.md §5.4`）
+        if SemanticSearchSettings.current() != nil {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                await MCPFacade.warmUpSearchIndexes()
+            }
+        }
         return m
     }
 

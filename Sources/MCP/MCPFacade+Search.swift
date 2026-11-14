@@ -93,6 +93,7 @@ extension MCPFacade {
                ? String(format: L("%@: %d pieces of text, %d with vectors"), ws.name, stats.chunks, vectors)
                : String(format: L("%@: %d pieces of text"), ws.name, stats.chunks))
         if p.building || e.running { s += " · " + L("building…") }
+        if SemanticSearchSettings.unavailableReason != nil { s += "\n" + L("Search by meaning waits for the model to be downloaded.") }
         if let err = e.lastError ?? p.lastError { s += "\n" + String(format: L("Last error: %@"), err) }
         return s
     }

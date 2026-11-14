@@ -126,6 +126,9 @@
 ## App / 窗口生命周期
 
 - 退出收缩逻辑用 `AppDelegate.applicationShouldTerminate` 置 `isTerminating` 守卫（窗口在 ⌘Q 时也会走关闭路径）。
+- 🔴 **新开的窗口 ⌘W 关不掉**（2026-11-14 用户报「查看索引内容」窗口）：⌘W / ⇧⌘W 不是系统的 `performClose:`，而是 `MainMenu`
+  广播 `.closeTabRequested` / `.closeWindowRequested`，**每种窗口自己订阅、是 key 窗口才关自己**（设置窗、参考窗、笔记窗、
+  `SearchIndexWindowController` 同一段写法）。新加任何窗口都要抄这段订阅，否则 ⌘W 没反应。
 - 「文件已变化」弹窗点完还一直弹（2026-10-11 用户报）：SwiftUI 版的 `.alert(isPresented:)` 关掉时 Binding 自动把
   `hashMismatch` 置空，AppKit 重写改成 `syncAlerts` 里手弹 `NSAlert` 后**没人清**它 → 每次同步看见它还在就再弹。
   模型上「待确认」类状态（`hashMismatch` / `scanAlignConfirm` …）在处理函数**第一行**清掉，早于任何会触发同步的改动。

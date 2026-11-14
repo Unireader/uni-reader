@@ -37,7 +37,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
 
 ## 第三方包（SPM）
 
-目前四个：
+目前六个：
 
 - **`swift-markdown-engine`**（2026-09-26 起用自家 fork；2026-10-11 从 `Unireader/swift-markdown-engine` 的
   `unireader` 分支换到 `xVanTuring/swift-markdown-engine` 的 `xvan` 分支，和 Perch 共用——
@@ -85,6 +85,14 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   UniReader 不在 sandbox，不需要 Installer XPC service 或额外 entitlements。
 - **`swift-acp`**（自家 fork `Unireader/swift-acp`，`exactVersion: 0.1.0-unireader.1`，2026-09-18 加，MIT）——
   Agent 面板的 ACP 客户端，取 `ACP` + `ACPModel` 两个产品；fork 怎么改、怎么打 tag 见 `ACP-AGENT-PLAN.md §2`。
+- **`mlx-swift-lm`**（Apple 的 `ml-explore/mlx-swift-lm`，`exactVersion: 3.32.3`，2026-11-14 加，MIT）+
+  **`swift-transformers`**（`huggingface/swift-transformers`，`exactVersion: 1.4.0`，Apache-2.0）——语义搜索的本机嵌入模型
+  （`Sources/Search/LocalEmbedding.swift`，`SEARCH-PLAN.md §5.4`）。只取 `MLXEmbedders` + `MLXLMCommon` + `Tokenizers`；
+  不取 `MLXHuggingFace` 宏与 swift-huggingface 下载器（下载自己写，好换镜像、钉提交号）。传递依赖 `mlx-swift`（带 Metal 着色器）等。
+  🔴 **编 MLX 要 Xcode 的 Metal 工具链**：`xcodebuild -downloadComponent MetalToolchain`（新版 Xcode 默认不带，没有就报
+  `cannot execute tool 'metal' due to missing Metal Toolchain`；新机器 / 换 Xcode 后先让用户装）。
+  `import MLX` 只许出现在 `LocalEmbedding.swift`（MLX 导出 `Memory`、`Device`、`Stream` 这类通用名字，别让它们漏进别的文件）。
+  对比测试在 `spike/embed-bench/`（独立 SPM 工程，产物 `build/dev/embed-bench/`）。
 
 包解析落在 `build/dev/SourcePackages/`，新克隆或 `rm -rf build` 之后首次编译要先
 `xcodebuild … -derivedDataPath build/dev -resolvePackageDependencies`（联网拉包 = 装依赖，

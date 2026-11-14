@@ -116,7 +116,9 @@ struct MCPSettingsView: View {
     // MARK: - 语义搜索（`SEARCH-PLAN.md §5`）
 
     @AppStorage(SemanticSearchSettings.enabledKey) private var semanticOn = false
-    @AppStorage(SemanticSearchSettings.providerKey) private var semanticProvider = "system"
+    @AppStorage(SemanticSearchSettings.providerKey) private var semanticProvider = "local"
+    @AppStorage(LocalEmbeddingModel.endpointKey) private var modelEndpoint = LocalEmbeddingModel.endpoints[0]
+    @ObservedObject private var modelDownload = LocalModelDownloader.shared
     @AppStorage(SemanticSearchSettings.urlKey) private var semanticURL = ""
     @AppStorage(SemanticSearchSettings.modelKey) private var semanticModel = ""
     /// 密钥的界面镜像（本体在 Keychain）。
@@ -129,11 +131,13 @@ struct MCPSettingsView: View {
                 .onChange(of: semanticOn) { _, _ in kickSearchIndex() }
             if semanticOn {
                 Picker(L("Model"), selection: $semanticProvider) {
-                    Text(L("On this Mac (built-in)")).tag("system")
+                    Text(L("On this Mac (downloaded model)")).tag("local")
                     Text(L("OpenAI-compatible API")).tag("openai")
                 }
                 .onChange(of: semanticProvider) { _, _ in kickSearchIndex() }
-                if semanticProvider == "openai" {
+                if semanticProvider != "openai" {
+                    localModelRows
+                } else {
                     TextField(L("Address"), text: $semanticURL, prompt: Text(SemanticSearchSettings.defaultURL))
                         .textFieldStyle(.roundedBorder)
                     TextField(L("Model Name"), text: $semanticModel, prompt: Text(SemanticSearchSettings.defaultModel))
@@ -152,6 +156,7 @@ struct MCPSettingsView: View {
                 HStack(spacing: 8) {
                     Spacer(minLength: 8)
                     Text(indexStatus ?? L("Checking…")).lineLimit(2).multilineTextAlignment(.trailing)
+                    Button(L("Show Indexed Content…")) { SearchIndexWindowController.show() }
                     Button(L("Rebuild Index")) {
                         Task {
                             await MCPFacade.rebuildSearchIndexes()
@@ -162,13 +167,82 @@ struct MCPSettingsView: View {
             } label: {
                 Text(L("Search Index"))
             }
-            .task { await refreshIndexStatus() }
+            .task {
+                // 页面开着就每 2 秒刷一次：建索引 / 算向量在后台跑，只在出现时算一次的话数字一直不动
+                while !Task.isCancelled {
+                    await refreshIndexStatus()
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
         } header: {
             Text(L("Search"))
         } footer: {
-            Text(L("Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service."))
+            Text(L("Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The model on this Mac (Qwen3-Embedding-0.6B, downloaded once, about 1.2 GB) works offline and nothing leaves your Mac. With an OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow) the text of your PDFs and notes is sent to that service."))
         }
     }
+
+    /// 本机模型：下载 / 进度 / 删除（`LocalEmbedding.swift`）。
+    @ViewBuilder private var localModelRows: some View {
+        Picker(L("Download From"), selection: $modelEndpoint) {
+            Text("Hugging Face").tag(LocalEmbeddingModel.endpoints[0])
+            Text(L("hf-mirror.com (mirror in China)")).tag(LocalEmbeddingModel.endpoints[1])
+        }
+        .disabled(isDownloading)
+        LabeledContent {
+            HStack(spacing: 8) {
+                Spacer(minLength: 8)
+                switch modelDownload.state {
+                case .downloading(let done, let total):
+                    ProgressView(value: Double(done), total: Double(max(total, 1))).frame(width: 120)
+                    // 固定宽度、靠右：数字位数一变整行重排会抖
+                    Text(byteText(done) + " / " + byteText(total)).monospacedDigit()
+                        .frame(width: 150, alignment: .trailing)
+                    Button(L("Cancel")) { modelDownload.cancel() }
+                case .verifying:
+                    ProgressView().controlSize(.small)
+                    Text(L("Checking the download…"))
+                case .failed(let msg):
+                    Text(String(format: L("Download failed: %@"), msg)).lineLimit(3).multilineTextAlignment(.trailing)
+                    Button(L("Retry Download")) { modelDownload.start() }
+                case .idle:
+                    if modelDownload.installed {
+                        Text(L("Downloaded"))
+                        Button(L("Delete")) { modelDownload.delete(); kickSearchIndex() }
+                    } else {
+                        Text(String(format: L("Not downloaded (%@)"), byteText(LocalEmbeddingModel.totalBytes)))
+                        Button(L("Download")) { modelDownload.start() }
+                    }
+                }
+            }
+        } label: {
+            Text(LocalEmbeddingModel.name)
+        }
+        .onAppear { modelDownload.refreshInstalled() }
+        // 自己下好的文件放进这个文件夹、点「检查文件」就能用，不用再下载
+        LabeledContent {
+            HStack(spacing: 8) {
+                Spacer(minLength: 8)
+                Text(LocalEmbeddingModel.directory.path)
+                    .lineLimit(2).truncationMode(.middle).multilineTextAlignment(.trailing)
+                    .textSelection(.enabled)
+                Button(L("Show in Finder")) {
+                    let dir = LocalEmbeddingModel.directory
+                    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    NSWorkspace.shared.activateFileViewerSelecting([dir])
+                }
+                Button(L("Check Files")) { modelDownload.checkFolder() }
+                    .disabled(isDownloading)
+            }
+        } label: {
+            Text(L("Model Folder"))
+        }
+    }
+
+    private var isDownloading: Bool {
+        switch modelDownload.state { case .downloading, .verifying: return true; default: return false }
+    }
+
+    private func byteText(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
 
     private func kickSearchIndex() {
         Task {

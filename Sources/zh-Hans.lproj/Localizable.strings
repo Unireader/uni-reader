@@ -1323,7 +1323,32 @@
 
 /* 搜索 / 语义搜索（SEARCH-PLAN.md，2026-11-12） */
 "Also search by meaning" = "同时按意思搜索";
-"On this Mac (built-in)" = "本机（系统自带）";
+"On this Mac (downloaded model)" = "本机（下载的模型）";
+"Download From" = "下载地址";
+"hf-mirror.com (mirror in China)" = "hf-mirror.com（国内镜像）";
+"Checking the download…" = "正在校验下载的文件…";
+"Download failed: %@" = "下载失败：%@";
+"Retry Download" = "重新下载";
+"Downloaded" = "已下载";
+"Not downloaded (%@)" = "未下载（%@）";
+"Download" = "下载";
+"Search by meaning waits for the model to be downloaded." = "按意思搜索要等模型下载好才能用。";
+"Show Indexed Content…" = "查看索引内容…";
+"PDF Pages" = "PDF 页面";
+"Markdown Notes" = "Markdown 笔记";
+"Agent Conversations" = "Agent 对话";
+"Refresh" = "刷新";
+"Pieces" = "块数";
+"With Vectors" = "已算向量";
+"Search Index — %@" = "搜索索引 — %@";
+"%d sources, %d pieces of text, %d with vectors" = "%d 个来源，%d 块文字，%d 块已算向量";
+"Vector model: %@" = "向量模型：%@";
+"p. %d" = "第 %d 页";
+"line %d" = "第 %d 行";
+"Model Folder" = "模型文件夹";
+"Check Files" = "检查文件";
+"These files are missing or have the wrong size: %@" = "这些文件缺少或大小不对：%@";
+"%@ does not match the expected checksum" = "%@ 的校验和不对";
 "OpenAI-compatible API" = "OpenAI 兼容接口";
 "Model Name" = "模型名称";
 "API Key" = "API 密钥";
@@ -1335,7 +1360,7 @@
 "%@: %d pieces of text, %d with vectors" = "%1$@：%2$d 段文字，%3$d 段已算好向量";
 "building…" = "正在建…";
 "Last error: %@" = "上次出错：%@";
-"Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service." = "Agent 用 search 工具一次搜遍工作区里的 PDF、笔记、批注和习题；索引会自己保持最新，存放在工作区之外。打开「同时按意思搜索」后，换了说法、意思相同的内容也能找到。系统自带的模型离线可用，但对中文的理解比较粗；OpenAI 兼容接口（例如 SiliconFlow 上的 BAAI/bge-m3，或本机的 Ollama）效果好得多，但 PDF 和笔记的文字会发送给那个服务。";
+"Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The model on this Mac (Qwen3-Embedding-0.6B, downloaded once, about 1.2 GB) works offline and nothing leaves your Mac. With an OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow) the text of your PDFs and notes is sent to that service." = "Agent 用 search 工具一次搜遍工作区里的 PDF、笔记、批注和习题；索引会自己保持最新，存放在工作区之外。打开「同时按意思搜索」后，换了说法、意思相同的内容也能找到。本机模型（Qwen3-Embedding-0.6B，下载一次，约 1.2 GB）离线可用，文字不会离开这台 Mac；用 OpenAI 兼容接口（例如 SiliconFlow 上的 BAAI/bge-m3）时，PDF 和笔记的文字会发送给那个服务。";
 
 /* 知识关联（KNOWLEDGE-LINKS-PLAN.md，2026-11-12） */
 "Links" = "关联";

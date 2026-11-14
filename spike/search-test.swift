@@ -1,7 +1,7 @@
 // 全工作区搜索（`SEARCH-PLAN.md`）回归测试：归一化 / 切段 / 摘要 / 打分 + 索引的增量更新、两条查法、筛选、向量与合并排序。
 // 运行：
 //   mkdir -p /tmp/srch && cp spike/search-test.swift /tmp/srch/main.swift && swiftc -O Sources/Search/SearchText.swift \
-//     Sources/Search/SearchIndex.swift Sources/Search/Embedding.swift Sources/Store/SQLite.swift Sources/Support/Keychain.swift \
+//     Sources/Search/SearchIndex.swift Sources/Search/Embedding.swift Sources/Store/SQLite.swift \
 //     /tmp/srch/main.swift -o /tmp/srch/t && /tmp/srch/t
 // 索引写进临时目录（`SearchIndex.testRoot`），不碰真的 Application Support。
 
@@ -181,6 +181,40 @@ let sem = run { await idx.semantic(qv, filter: .init(), limit: 5) }
 check(sem.first?.owner == "D1", "语义检索：最像的排第一")
 let fused = SearchIndex.fuse(keyword: kw("对立统一").hits, semantic: sem, limit: 5)
 check(fused.first?.owner == "D1" && Set(fused.map { "\($0.kind)|\($0.owner)|\($0.page ?? -1)|\($0.line ?? -1)" }).count == fused.count, "合并后不重复、两边都靠前的最靠前")
+// 来源整批重建（习题改了一道）：正文没变的块留着向量，只有新正文要重算（不带模型刷新，看留下了几块）
+let before = run { await idx.vectorCount }
+if let i = sources.firstIndex(where: { $0.key == "ex:all" }) {
+    sources[i] = SearchIndex.Source(key: "ex:all", title: "ex", stamp: { "2" }, load: {
+        [SearchIndex.Chunk(kind: "exercise", owner: "E1", sub: "doc:D2", page: 3, title: "书D2 · 5", body: "下列关于矛盾普遍性的说法正确的是\nA. 矛盾无处不在"),
+         SearchIndex.Chunk(kind: "exercise", owner: "E2", sub: "doc:D2", page: 4, title: "书D2 · 6", body: "新加的一道题")]
+    })
+}
+_ = run { await idx.refresh(sources, budget: 10) }
+check(run { await idx.vectorCount } == before, "重建来源后正文没变的块留着向量、新块没有（重建前 \(before)，后 \(run { await idx.vectorCount })）")
+_ = run { await idx.refresh(sources, budget: 30, embedder: fake) }
+for _ in 0..<50 where run({ await idx.embedProgress.running }) { Thread.sleep(forTimeInterval: 0.1) }
+check(run { await idx.vectorCount } == before + 1, "接着只给新块算了向量")
+// 关键词退回「任一词」时降权：只在关键词那边的排到只在向量那边的后面，两边都有的仍第一
+func hit(_ o: String) -> SearchIndex.Hit {
+    .init(chunkID: 0, kind: "exercise", owner: o, sub: "", page: nil, line: nil, title: "", heading: "", body: "", score: 0, docID: nil)
+}
+let kwOnly = [hit("A"), hit("B")], semOnly = [hit("C"), hit("A")]
+check(SearchIndex.fuse(keyword: kwOnly, semantic: semOnly, limit: 3, keywordWeight: 0.5).map(\.owner) == ["A", "C", "B"],
+      "关键词降权：两边都有的第一、只在向量那边的排在只在关键词那边的前面")
+check(SearchIndex.fuse(keyword: kwOnly, semantic: semOnly, limit: 3).map(\.owner).first == "A", "不降权时两边都有的仍第一")
+
+// 几个搜索同时来：都应等到建完、回「建完了」，不互相判成没建完
+sources.append(SearchIndex.Source(key: "pdf:SLOW2", title: "慢书2", stamp: { "1" }, load: {
+    Thread.sleep(forTimeInterval: 0.3); return [SearchIndex.Chunk(kind: "pdf", owner: "SLOW2", page: 0, title: "慢书2", body: "慢书二的内容")]
+}))
+let both = run { () -> [Bool] in
+    async let a = idx.refresh(sources, budget: 10)
+    async let b = idx.refresh(sources, budget: 10)
+    async let c = idx.refresh(sources, budget: 10)
+    return await [a, b, c]
+}
+check(both == [true, true, true], "三个同时来的刷新都回建完了（得到 \(both)）")
+
 let row: [Int8] = [127, 0]
 check(row.withUnsafeBufferPointer { VectorMath.dot([127, 0], $0) } == 127 * 127, "量化点积")
 

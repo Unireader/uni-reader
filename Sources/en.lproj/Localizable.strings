@@ -1321,7 +1321,32 @@
 
 /* 搜索 / 语义搜索（SEARCH-PLAN.md，2026-11-12） */
 "Also search by meaning" = "Also search by meaning";
-"On this Mac (built-in)" = "On this Mac (built-in)";
+"On this Mac (downloaded model)" = "On this Mac (downloaded model)";
+"Download From" = "Download From";
+"hf-mirror.com (mirror in China)" = "hf-mirror.com (mirror in China)";
+"Checking the download…" = "Checking the download…";
+"Download failed: %@" = "Download failed: %@";
+"Retry Download" = "Retry Download";
+"Downloaded" = "Downloaded";
+"Not downloaded (%@)" = "Not downloaded (%@)";
+"Download" = "Download";
+"Search by meaning waits for the model to be downloaded." = "Search by meaning waits for the model to be downloaded.";
+"Show Indexed Content…" = "Show Indexed Content…";
+"PDF Pages" = "PDF Pages";
+"Markdown Notes" = "Markdown Notes";
+"Agent Conversations" = "Agent Conversations";
+"Refresh" = "Refresh";
+"Pieces" = "Pieces";
+"With Vectors" = "With Vectors";
+"Search Index — %@" = "Search Index — %@";
+"%d sources, %d pieces of text, %d with vectors" = "%d sources, %d pieces of text, %d with vectors";
+"Vector model: %@" = "Vector model: %@";
+"p. %d" = "p. %d";
+"line %d" = "line %d";
+"Model Folder" = "Model Folder";
+"Check Files" = "Check Files";
+"These files are missing or have the wrong size: %@" = "These files are missing or have the wrong size: %@";
+"%@ does not match the expected checksum" = "%@ does not match the expected checksum";
 "OpenAI-compatible API" = "OpenAI-compatible API";
 "Model Name" = "Model Name";
 "API Key" = "API Key";
@@ -1333,7 +1358,7 @@
 "%@: %d pieces of text, %d with vectors" = "%1$@: %2$d pieces of text, %3$d with vectors";
 "building…" = "building…";
 "Last error: %@" = "Last error: %@";
-"Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service." = "Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The built-in model works offline but understands Chinese only roughly. An OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow, or a local Ollama) works much better, but the text of your PDFs and notes is sent to that service.";
+"Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The model on this Mac (Qwen3-Embedding-0.6B, downloaded once, about 1.2 GB) works offline and nothing leaves your Mac. With an OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow) the text of your PDFs and notes is sent to that service." = "Agents search all PDFs, notes, annotations and exercises of a workspace with the search tool; the index is kept up to date by itself and stored outside the workspace. With search by meaning on, passages that say the same thing in other words are found too. The model on this Mac (Qwen3-Embedding-0.6B, downloaded once, about 1.2 GB) works offline and nothing leaves your Mac. With an OpenAI-compatible API (for example BAAI/bge-m3 on SiliconFlow) the text of your PDFs and notes is sent to that service.";
 
 /* 知识关联（KNOWLEDGE-LINKS-PLAN.md，2026-11-12） */
 "Links" = "Links";
