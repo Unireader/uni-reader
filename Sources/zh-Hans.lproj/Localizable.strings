@@ -1442,6 +1442,11 @@
 "Add Details" = "添加说明";
 "%@ · p. %d" = "%@ · 第 %d 页";
 
+/* 帮助 › 导出排查日志（DiagnosticLogExport） */
+"Help" = "帮助";
+"Export Diagnostic Log…" = "导出排查日志…";
+"Could not save the diagnostic log." = "排查日志没能保存。";
+
 /* ```anim 分步演示块（ANIM-BLOCK-PLAN.md） */
 "Line %ld: %@" = "第 %ld 行：%@";
 "Previous step" = "上一步";

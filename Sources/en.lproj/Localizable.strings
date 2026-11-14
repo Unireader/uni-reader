@@ -1440,6 +1440,11 @@
 "Add Details" = "Add Details";
 "%@ · p. %d" = "%@ · p. %d";
 
+/* 帮助 › 导出排查日志（DiagnosticLogExport） */
+"Help" = "Help";
+"Export Diagnostic Log…" = "Export Diagnostic Log…";
+"Could not save the diagnostic log." = "Could not save the diagnostic log.";
+
 /* ```anim step-by-step blocks (ANIM-BLOCK-PLAN.md) */
 "Line %ld: %@" = "Line %ld: %@";
 "Previous step" = "Previous step";

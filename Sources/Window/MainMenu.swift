@@ -18,6 +18,7 @@ enum MainMenu {
         main.addItem(viewMenu())
         main.addItem(aiMenu())
         main.addItem(windowMenu())
+        main.addItem(helpMenu())
         NSApp.mainMenu = main
         applyShortcuts()
         if shortcutsObserver == nil {
@@ -234,6 +235,15 @@ enum MainMenu {
         NSApp.windowsMenu = m   // 系统会把窗口列表自动续在后面
         return item0
     }
+
+    /// 帮助：导出排查日志（`DiagnosticLogExport`，发布版也有：出了问题当场导出交回来）。
+    private static func helpMenu() -> NSMenuItem {
+        let (item0, m) = container(L("Help"))
+        m.addItem(item(L("Export Diagnostic Log…"), #selector(MenuActions.exportDiagnosticLog(_:)),
+                       target: MenuActions.shared))
+        NSApp.helpMenu = m
+        return item0
+    }
 }
 
 /// 菜单动作的接收者（`@objc` selector 得挂在一个对象上）。
@@ -251,6 +261,9 @@ final class MenuActions: NSObject {
     @objc func openSettings(_ sender: Any?) { SettingsWindowController.show() }
 
     @objc func checkForUpdates(_ sender: Any?) { UpdaterService.shared.checkForUpdates() }
+
+    /// 帮助 › 导出排查日志…
+    @objc func exportDiagnosticLog(_ sender: Any?) { DiagnosticLogExport.run() }
 
     @objc func customizeToolbar(_ sender: Any?) {
         NSApp.keyWindow?.toolbar?.runCustomizationPalette(sender)
