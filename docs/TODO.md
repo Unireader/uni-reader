@@ -107,7 +107,7 @@
      | F4 | 习题：自己框原题区域（Mac 2026-11-12，`EXERCISE-PLAN.md §25` / §26 跨页） | 看原题按 `region` + `next_regions` 裁并拼接（Mac 框的同步过来就生效），自己不能框 | 可做：整页上拖框写 `payload.region`；跨页时选页数、每页一框写 `next_regions`、不显示的页写 `skip_pages`（§30，照 Mac `ExerciseRegionPicker`） |
      | ✗ | 目录跳到页内位置 | 只能跳到页顶 | 跳过：pdfiumandroid 2.0.1 的书签 API 只给页号；该库锁版本（见 `android/AGENTS.md`） |
      | ✗ | MCP 服务 | — | 跳过：外部 Agent 跑在电脑上，平板上没有来连的客户端 |
-     | ✗ | Agent 面板（ACP） | — | 跳过：要在本机拉起 `kimi acp` 这类命令行子进程，安卓上没有 |
+     | H6 | Agent 面板 | 两批已写（2026-11-15，`ANDROID-AGENT-PLAN.md`）：不走 ACP（安卓拉不起 `kimi acp` 子进程），改为平板直连 OpenAI 兼容接口（Koog）+ 本机工具；只读 + 记忆 + 跳页 + 写入（批注 / 高亮 / 书签 / Markdown 新建与编辑）；插桩测试与真机冒烟已过，接真模型待用户实测 | 下一批：删除类（先归档）、对话记录（§7） |
      | ✗ | 多窗口、可改快捷键、Sparkle 自动更新 | — | 跳过：平台形态不同（安卓已有多标签页；更新走 GitHub release） |
 
    - 补充（2026-10-13 习题填空 / 主观题时记下，`EXERCISE-PLAN.md §11.6`）：F1 模式1 本机做（作答区 + 画板照 Mac，
