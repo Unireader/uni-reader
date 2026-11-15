@@ -135,6 +135,22 @@ enum TrashStore {
         }
     }
 
+    /// 清除做题记录前的归档（`EXERCISE-PLAN.md §31`）：那几道题本身 + 它们在 App 里做的作答（不含 `source = mark`
+    /// 书上的作答——那条不清）。题目行一起存，是为了恢复时外键有着落：恢复走同一个循环，`exercise` 是 OR IGNORE
+    /// （题还在就不动），作答 OR REPLACE 放回去。
+    static func archiveExerciseAttempts(_ db: SQLiteDB, ids: [String], to path: String) throws -> Archived {
+        try withAttached(db, path: path) { t in
+            let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+            let params = ids.map { SQLiteDB.Value.text($0) }
+            try db.run("CREATE TABLE \(t).exercise AS SELECT * FROM main.exercise WHERE id IN (\(marks))", params)
+            try db.run("""
+            CREATE TABLE \(t).exercise_attempt AS SELECT * FROM main.exercise_attempt
+            WHERE exercise_id IN (\(marks)) AND source <> ?
+            """, params + [.text("mark")])
+            return try summarize(db, schema: t)
+        }
+    }
+
     /// 把几条 Agent 记忆搬进快照库（管理窗口 / MCP `delete_memory`，`ACP-AGENT-PLAN.md §21`）。
     static func archiveAgentMemories(_ db: SQLiteDB, ids: [String], to path: String) throws -> Archived {
         try withAttached(db, path: path) { t in

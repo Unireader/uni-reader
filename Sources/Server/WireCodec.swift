@@ -62,6 +62,8 @@ enum WireCodec {
         static let exIndex: UInt8 = 0x61, exAct: UInt8 = 0x62
         /// Markdown 笔记阅读（S→C，2026-11-14，`PROTOCOL.md §4.10`）：被跟随的 md 标签那一篇的正文 + 图片表。
         static let mdNote: UInt8 = 0x63
+        /// 高亮与选区批注的标记（S→C，2026-11-15，`PROTOCOL.md §4.11`）：当前文档全部的逐行框 + 颜色 + 画法，全量镜像。
+        static let marks: UInt8 = 0x64
     }
 
     /// `mdNote` 正文每段的上限（字节）：`str` 一条最长 65535，留点余量。
@@ -512,6 +514,18 @@ enum WireCodec {
             let imgs = o["images"] as? [[String: Any]] ?? []
             w.u16(imgs.count)
             for im in imgs { w.str(strOf(im["target"])); w.str(strOf(im["sha"])) }
+        case "marks":
+            w.u8(Op.marks)
+            let list = o["list"] as? [[String: Any]] ?? []
+            w.u16(list.count)
+            for m in list {
+                w.str(strOf(m["id"])); w.u8(UInt8(clamping: intOf(m["kind"]))); w.u32(intOf(m["page"]))
+                w.u8(UInt8(clamping: intOf(m["r"]))); w.u8(UInt8(clamping: intOf(m["g"]))); w.u8(UInt8(clamping: intOf(m["b"])))
+                w.u8(UInt8(clamping: intOf(m["style"])))
+                let rects = (m["rects"] as? [[Any]]) ?? []
+                w.u16(rects.count)
+                for r in rects { for k in 0..<4 { w.f32(k < r.count ? num(r[k]) : 0) } }
+            }
         case "scroll": w.u8(Op.scroll); w.u32(intOf(o["page"])); w.f32(num(o["frac"])); w.f64(num(o["t"]))
         case "hover":
             w.u8(Op.hover)
@@ -968,6 +982,23 @@ enum WireCodec {
             var imgs = [[String: Any]](); imgs.reserveCapacity(m)
             for _ in 0..<m where r.ok { imgs.append(["target": r.str(), "sha": r.str()]) }
             out = ["type": "mdNote", "key": key, "title": title, "text": text, "images": imgs]
+        case Op.marks:
+            let n = r.u16()
+            var list = [[String: Any]](); list.reserveCapacity(n)
+            for _ in 0..<n where r.ok {
+                let id = r.str(), kind = r.u8(), page = r.u32()
+                let cr = r.u8(), cg = r.u8(), cb = r.u8(), style = r.u8(), nr = r.u16()
+                var rects = [[NSNumber]]()
+                if r.need(nr * 16) {
+                    rects.reserveCapacity(nr)
+                    for _ in 0..<nr { rects.append([NSNumber(value: r.f32()), NSNumber(value: r.f32()),
+                                                    NSNumber(value: r.f32()), NSNumber(value: r.f32())]) }
+                }
+                list.append(["id": id, "kind": NSNumber(value: kind), "page": NSNumber(value: page),
+                             "r": NSNumber(value: cr), "g": NSNumber(value: cg), "b": NSNumber(value: cb),
+                             "style": NSNumber(value: style), "rects": rects])
+            }
+            out = ["type": "marks", "list": list]
         default: return nil   // 未知 opcode：丢弃
         }
         return r.ok ? out : nil

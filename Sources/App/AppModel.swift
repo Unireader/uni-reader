@@ -1345,6 +1345,37 @@ final class AppModel: ObservableObject {
              "display": Int(n.display.wire)]
         }
         server.broadcast(["type": "notes", "list": list])
+        broadcastMarks()   // 选区批注的底色跟着笔记走：凡是重发 notes 的地方顺带重发标记
+    }
+
+    /// 高亮与选区批注的标记全量镜像（`marks` 0x64，`PROTOCOL.md §4.11`）：页图是纯 PDF，平板自己画这一层。
+    /// 颜色规则同 `ReaderView.refreshMarks`：高亮按自身颜色；批注显式颜色优先，其次类型色，再次通用暖黄。
+    /// 透明度不上线，平板按 kind + 画法自己取（与模式1 同口径）。
+    func broadcastMarks() {
+        guard server.hasClients, let s = padSession else { return }
+        func rgb(_ c: NSColor) -> [Int] {
+            let x = c.usingColorSpace(.sRGB) ?? c
+            return [x.redComponent, x.greenComponent, x.blueComponent].map { Int(($0 * 255).rounded()) }
+        }
+        func rects(_ rs: [CGRect]) -> [[Double]] { rs.map { [$0.minX, $0.minY, $0.width, $0.height] } }
+        func style(_ st: HighlightStyle) -> Int {
+            switch st { case .fill: 0; case .underline: 1; case .box: 2; case .strike: 3 }
+        }
+        var list: [[String: Any]] = []
+        for h in s.highlights where !h.rects.isEmpty {
+            let c = rgb(h.color.nsColor)
+            list.append(["id": h.id.uuidString, "kind": 0, "page": h.page, "r": c[0], "g": c[1], "b": c[2],
+                         "style": style(h.style), "rects": rects(h.rects)])
+        }
+        let types = s.noteTypes
+        for n in s.textNotes where !n.rects.isEmpty {
+            let base = n.color?.nsColor
+                ?? (n.typeId == nil ? ReaderMarkColors.noteBase : NoteType.resolve(n.typeId, in: types).nsColor)
+            let c = rgb(base)
+            list.append(["id": n.id.uuidString, "kind": 1, "page": n.page, "r": c[0], "g": c[1], "b": c[2],
+                         "style": style(n.style), "rects": rects(n.rects)])
+        }
+        server.broadcast(["type": "marks", "list": list])
     }
 
     private func points(_ any: Any?) -> [InkPoint] {

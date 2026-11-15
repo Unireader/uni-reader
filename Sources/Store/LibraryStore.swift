@@ -126,6 +126,44 @@ final class LibraryStore {
         try TrashStore.archiveExercises(db, ids: ids, to: path)
     }
 
+    /// 清除做题记录前归档：那几道题 + 它们在 App 里做的作答（不含书上的作答）。
+    func archiveExerciseAttempts(ids: [String], to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveExerciseAttempts(db, ids: ids, to: path)
+    }
+
+    /// 这几道题里，有几道在 App 里做过（有 `source <> mark` 的作答）——清除做题记录只管这些。返回那几道的 id。
+    func exercisesWithAttempts(ids: [String]) throws -> [String] {
+        guard !ids.isEmpty else { return [] }
+        let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        return try db.query("""
+        SELECT DISTINCT exercise_id FROM exercise_attempt WHERE exercise_id IN (\(marks)) AND source <> ?
+        """, ids.map { .text($0) } + [.text(LibExerciseAttempt.markSource)], row: { $0.text(0) })
+    }
+
+    /// 清除做题记录（`EXERCISE-PLAN.md §31`，调用方先归档）：删掉这几道题在 App 里做的全部作答，**书上的作答留着**；
+    /// 错题本按剩下的记录重算——书上的作答是错的仍留在错题本，否则移出（用户 2026-11-15 定：错题本跟着更新）。
+    /// 一个事务。返回删了几条作答。
+    @discardableResult
+    func clearExerciseAttempts(ids: [String]) throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        let params = ids.map { SQLiteDB.Value.text($0) }
+        let mark = SQLiteDB.Value.text(LibExerciseAttempt.markSource)
+        var removed = 0
+        try db.transaction {
+            removed = try db.query("""
+            SELECT COUNT(*) FROM exercise_attempt WHERE exercise_id IN (\(marks)) AND source <> ?
+            """, params + [mark], row: { Int($0.int64(0)) }).first ?? 0
+            try db.run("DELETE FROM exercise_attempt WHERE exercise_id IN (\(marks)) AND source <> ?", params + [mark])
+            let stillWrong = "EXISTS (SELECT 1 FROM exercise_attempt a WHERE a.exercise_id = exercise.id AND a.correct = 0)"
+            try db.run("""
+            UPDATE exercise SET wrong = \(stillWrong), updated_at = ?
+            WHERE id IN (\(marks)) AND wrong <> \(stillWrong)
+            """, [.text(ISO.string(.now))] + params)
+        }
+        return removed
+    }
+
     /// 把几份 Agent 上下文归档（v23）。
     func archiveAgentContexts(ids: [String], to path: String) throws -> TrashStore.Archived {
         try TrashStore.archiveAgentContexts(db, ids: ids, to: path)

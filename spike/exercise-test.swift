@@ -984,5 +984,39 @@ do {
     check(Exercise(row: back!)?.tags == [], "App 层 Exercise 带 tags")
 } catch { check(false, "标签读写抛错：\(error)") }
 
+print("— 清除做题记录（§31）：只清 App 里的作答、书上的留着、错题本重算、先归档能恢复")
+do {
+    let dc = doc("清除记录", "hash-clear")
+    let c1 = row(ok(input("c1", answer: "A", src: "book", number: "c1"))!, doc: dc.id, id: "clr-1")   // 只有 App 作答（错过）
+    let c2 = row(ok(input("c2", answer: "A", src: "book", number: "c2"))!, doc: dc.id, id: "clr-2")   // App 作答 + 书上答错
+    let c3 = row(ok(input("c3", answer: "A", src: "book", number: "c3"))!, doc: dc.id, id: "clr-3")   // 没做过
+    for r in [c1, c2, c3] { try store.upsertExercise(r) }
+    func att(_ id: String, _ a: String, _ c: Bool) -> LibExerciseAttempt {
+        LibExerciseAttempt(id: UUID().uuidString, exerciseId: id, answer: a, correct: c, elapsedMs: 0, createdAt: .now)
+    }
+    try store.recordExerciseAttempt(att("clr-1", "B", false))
+    try store.recordExerciseAttempt(att("clr-1", "A", true))
+    try store.recordExerciseAttempt(att("clr-2", "A", true))
+    try store.recordMarkedAttempts([mark("clr-2", "C", false)])
+    check(try store.exercise(id: "clr-1")?.wrong == true && store.exercise(id: "clr-2")?.wrong == true, "准备：两道都在错题本")
+    let ids = ["clr-1", "clr-2", "clr-3"]
+    check(Set(try store.exercisesWithAttempts(ids: ids)) == ["clr-1", "clr-2"], "在 App 里做过的只有前两道")
+    let snap = tmp.appendingPathComponent("clear-snap.sqlite").path
+    let todo = try store.exercisesWithAttempts(ids: ids)
+    let arch = try store.archiveExerciseAttempts(ids: todo, to: snap)
+    check(arch.counts.exercise == 2, "归档：两道题的行都在快照里")
+    let removed = try store.clearExerciseAttempts(ids: todo)
+    check(removed == 3, "删了 3 条 App 作答")
+    check(try store.exerciseAttempts(exerciseId: "clr-1").isEmpty, "第一道一条不剩")
+    check(try store.exerciseAttempts(exerciseId: "clr-2").map(\.source) == ["mark"], "第二道只剩书上的作答")
+    check(try store.exercise(id: "clr-1")?.wrong == false, "第一道移出错题本")
+    check(try store.exercise(id: "clr-2")?.wrong == true, "第二道书上答错，留在错题本")
+    check(try store.exercise(id: "clr-3")?.wrong == false, "没做过的不动")
+    check(try store.exercisesWithAttempts(ids: ids).isEmpty, "清完再看：没有可清的")
+    try store.restoreTrash(snapshot: snap, remapDocumentId: nil)
+    check(try store.exerciseAttempts(exerciseId: "clr-1").count == 2 && store.exerciseAttempts(exerciseId: "clr-2").count == 2,
+          "从回收站恢复：作答放回去")
+} catch { check(false, "清除做题记录抛错：\(error)") }
+
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

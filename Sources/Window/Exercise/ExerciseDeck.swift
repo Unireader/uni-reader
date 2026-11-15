@@ -291,6 +291,22 @@ final class ExerciseDeck {
         notify(.content)
     }
 
+    /// 做题记录清掉了（`ExerciseRecordClear`）：这个工作区每一份里这几道题这一轮的作答也不再显示，
+    /// 回到「没做过」（书上的作答还在的显示那条）。库那边已改过，`exerciseRevision` 会让开着的标签 reload。
+    static func forgetAnswers(ids: [String], workspace: WorkspaceManager) {
+        let set = Set(ids)
+        for d in decks.values where d.workspace === workspace {
+            var hit = false
+            for id in set where d.answers[id] != nil || d.redoing.contains(id) {
+                d.answers[id] = nil
+                d.drafts[id] = nil
+                d.redoing.remove(id)
+                hit = true
+            }
+            if hit { d.reload() }
+        }
+    }
+
     /// 这一组里有没有正显示着作答的题（「全部重做」能不能点）。
     var hasShownAnswers: Bool { items.contains { answer(for: $0) != nil } }
 

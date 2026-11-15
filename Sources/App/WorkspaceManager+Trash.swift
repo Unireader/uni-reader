@@ -150,6 +150,33 @@ extension Trash {
         }
     }
 
+    /// 清除做题记录前的归档（`EXERCISE-PLAN.md §31`）：几道题 + 它们在 App 里做的作答。条目种类沿用「习题」
+    /// （安卓模式1 的回收站也认得），恢复 = 作答放回去，题目还在就不动。**调用方随后才可以删。**
+    @discardableResult
+    static func archiveExerciseAttempts(store: LibraryStore, ids: [String], documentTitle: String, title: String) -> URL? {
+        let workspace = store.workspaceFolder
+        guard let dir = makeDir(in: workspace, title: title) else { return nil }
+        do {
+            let a = try store.archiveExerciseAttempts(ids: ids, to: dir.appendingPathComponent(snapshotName).path)
+            guard a.counts.exercise == ids.count else {
+                throw NSError(domain: "UniReader", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "archived \(a.counts.exercise) of \(ids.count) exercises"])
+            }
+            var m = Manifest()
+            m.kind = .exercises
+            m.title = title
+            m.documentTitle = documentTitle
+            m.counts = a.counts
+            try encode(m).write(to: dir.appendingPathComponent(manifestName))
+            wsLog("[TRASH] 做题记录已移入回收站：\(title)（\(ids.count) 道）")
+            return dir
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            wsLog("[TRASH] ⚠️ 做题记录归档失败，清除已放弃：\(title) — \(error)")
+            return nil
+        }
+    }
+
     /// 把几份 Agent 上下文归档（`ACP-AGENT-PLAN.md §12`）。**调用方随后才可以删。** 归档到的份数对不上 `ids` 同样算失败。
     @discardableResult
     static func archiveAgentContexts(store: LibraryStore, ids: [String], title: String) -> URL? {

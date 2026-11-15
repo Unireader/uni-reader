@@ -789,14 +789,25 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(ClosureMenuItem(L("New Board…")) { NotificationCenter.default.post(name: .newBoardRequested, object: nil) })
         case .board(let b):
             buildBoardMenu(menu, board: b)
-        case .exercise(let scope, _, _, _) where scope != .wrong:
-            // 习题默认都在公用标签里换（`TabsModel.openExercises`）；想并排留着就单独开。
-            // 错题本那一行本身没有这一项（它就是错题标签的入口）；它底下按书 / 按章的几级有
-            menu.addItem(item(L("Open in New Tab"), "plus.square.on.square") { [weak self] in
-                self?.tabs.openExercises(scope, newTab: true)
-            })
-            // 「全部」底下的一本书：移除 / 恢复章节分级（§14）。错题本、收藏底下的那几行只是筛出来的视图，不放
-            if case .document(let docId) = scope { buildExerciseBookMenu(menu, documentId: docId, hasChapters: !n.children.isEmpty) }
+        case .exercise(let scope, _, _, _):
+            if scope != .wrong {
+                // 习题默认都在公用标签里换（`TabsModel.openExercises`）；想并排留着就单独开。
+                // 错题本那一行本身没有这一项（它就是错题标签的入口）；它底下按书 / 按章的几级有
+                menu.addItem(item(L("Open in New Tab"), "plus.square.on.square") { [weak self] in
+                    self?.tabs.openExercises(scope, newTab: true)
+                })
+                // 「全部」底下的一本书：移除 / 恢复章节分级（§14）。错题本、收藏底下的那几行只是筛出来的视图，不放
+                if case .document(let docId) = scope { buildExerciseBookMenu(menu, documentId: docId, hasChapters: !n.children.isEmpty) }
+            }
+            // 清除这一组的做题记录（§31）：哪一级都有（全部 / 错题本 / 收藏 / 书 / 章），这一组一道都没做过就不放
+            let ids = workspace.exercises(in: scope).map(\.id)
+            if let t = ExerciseRecordClear.menuTitle(ids: ids, workspace: workspace) {
+                if menu.numberOfItems > 0 { menu.addItem(.separator()) }
+                menu.addItem(item(t, "arrow.counterclockwise") { [weak self] in
+                    guard let self else { return }
+                    ExerciseRecordClear.confirm(ids: ids, workspace: self.workspace, on: self.view.window)
+                })
+            }
         case .noteFolder(let source, let folder):
             let readOnly = workspace.isMirrorSource(source.id)      // 服务器镜像：不能往里加
             menu.autoenablesItems = false

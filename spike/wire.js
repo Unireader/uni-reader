@@ -32,7 +32,8 @@
     scratchStrokesAppend: 0x5D,            // 草稿纸 / 画板笔迹追加：与 scratchStrokes 逐字节相同，语义是「追加」
     // 习题（PROTOCOL.md §4.9；网页端暂不收发，只保编解码一致）
     exGroups: 0x5E, exOpen: 0x5F, exDeck: 0x60, exIndex: 0x61, exAct: 0x62,
-    mdNote: 0x63
+    mdNote: 0x63,
+    marks: 0x64                            // 高亮 / 选区批注标记全量（PROTOCOL.md §4.11）
   };
   var BRUSH = ["ballpoint", "fountain", "marker", "pencil"];
   var MODEK = ["note", "erase", "page", "lasso"];
@@ -398,6 +399,20 @@
         for (var mk = 0; mk < MI.length; mk++) { w.str(MI[mk].target || ""); w.str(MI[mk].sha || ""); }
         break;
       }
+      // 高亮 / 选区批注标记（PROTOCOL.md §4.11）
+      case "marks": {
+        w.u8(OP.marks);
+        var MK = o.list || []; w.u16(MK.length);
+        for (var mki = 0; mki < MK.length; mki++) {
+          var m = MK[mki];
+          w.str(m.id || ""); w.u8(m.kind || 0); w.u32(m.page || 0);
+          w.u8(m.r || 0); w.u8(m.g || 0); w.u8(m.b || 0); w.u8(m.style || 0);
+          var MR = m.rects || []; w.u16(MR.length);
+          for (var mri = 0; mri < MR.length; mri++)
+            for (var mrk = 0; mrk < 4; mrk++) w.f32(MR[mri][mrk] || 0);
+        }
+        break;
+      }
       case "noteNew":
         // Mac 在环形盘提交「新建文字笔记」后下发（0x3F，S→C）：平板在该页内锚点打开编辑器。
         w.u8(OP.noteNew); w.u32(o.page || 0); w.f32(o.nx || 0); w.f32(o.ny || 0);
@@ -694,6 +709,16 @@
         var mdm = r.u16(), mdImgs = new Array(mdm);
         for (var mdj = 0; mdj < mdm; mdj++) mdImgs[mdj] = { target: r.str(), sha: r.str() };
         return { type: "mdNote", key: mdKey, title: mdTitle, text: mdText, images: mdImgs };
+      }
+      case OP.marks: {
+        var mkn = r.u16(), mkl = new Array(mkn);
+        for (var mkj = 0; mkj < mkn; mkj++) {
+          var mkId = r.str(), mkKind = r.u8(), mkPage = r.u32();
+          var mkR = r.u8(), mkG = r.u8(), mkB = r.u8(), mkSt = r.u8(), mkNr = r.u16(), mkRs = new Array(mkNr);
+          for (var mkq = 0; mkq < mkNr; mkq++) mkRs[mkq] = [r.f32(), r.f32(), r.f32(), r.f32()];
+          mkl[mkj] = { id: mkId, kind: mkKind, page: mkPage, r: mkR, g: mkG, b: mkB, style: mkSt, rects: mkRs };
+        }
+        return { type: "marks", list: mkl };
       }
       case OP.noteNew:
         return { type: "noteNew", page: r.u32(), nx: r.f32(), ny: r.f32() };

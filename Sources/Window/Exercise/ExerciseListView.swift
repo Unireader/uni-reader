@@ -232,6 +232,9 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         add(menu, rows.count == 1 ? L("Edit Tags…") : L("Add Tags…"), #selector(menuTags))
         if rows.count > 1, items.contains(where: { !$0.tags.isEmpty }) { add(menu, L("Remove Tags…"), #selector(menuRemoveTags)) }
         if items.contains(where: \.wrong) { add(menu, L("Remove from Mistakes"), #selector(menuUnmistake)) }
+        if let ws = workspace, let t = ExerciseRecordClear.menuTitle(ids: items.map(\.id), workspace: ws) {
+            add(menu, t, #selector(menuClearRecords))
+        }
         menu.addItem(.separator())
         // 在 Agent 中引用：同侧栏那一项（Agent 关着 / 没工作区时灰掉）
         menu.autoenablesItems = false
@@ -319,6 +322,12 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
 
     @objc private func menuUnmistake() {
         for r in targetRows() where deck.items.indices.contains(r) && deck.items[r].wrong { deck.setWrong(deck.items[r], false) }
+    }
+
+    @objc private func menuClearRecords() {
+        let ids = targetRows().compactMap { deck.items.indices.contains($0) ? deck.items[$0].id : nil }
+        guard let ws = workspace else { return }
+        ExerciseRecordClear.confirm(ids: ids, workspace: ws, on: window)
     }
 
     @objc private func menuDelete() {

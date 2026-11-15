@@ -1508,3 +1508,13 @@
 "Fit Width" = "适合宽度";
 "Drag a box around the question." = "拖出一个框，框住题目。";
 "Arrow keys move the box; Option + arrow keys resize it" = "方向键挪动框，Option + 方向键改大小";
+
+/* 清除做题记录（EXERCISE-PLAN.md §31） */
+"Clear Practice Record…" = "清除做题记录…";
+"Clear Practice Records of %d Exercises…" = "清除 %d 道题的做题记录…";
+"Clear the practice record of this exercise?" = "清除这道题的做题记录？";
+"Clear the practice records of %d exercises?" = "清除 %d 道题的做题记录？";
+"Every answer you gave is removed, and the Mistakes list is updated to match. Answers imported from the book stay. You can put the records back from Recently Deleted." = "你做过的每一次作答都会删掉，错题本也跟着更新。从书上导入的作答会留着。可以在回收站里恢复这些记录。";
+"Could not clear the practice records." = "没能清除做题记录。";
+"Practice Record · Exercise %@" = "做题记录 · 习题 %@";
+"Practice Records · %d exercises" = "做题记录 · %d 道题";

@@ -3,6 +3,19 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 模式2 平板显示高亮 / 下划线 + 清除做题记录（2026-11-15，Mac + 安卓）
+
+- 起因（用户待办清单）：「模式2 pad 不显示下划线」「支持清理掉做题记录」。
+- **模式2 高亮**：查下来不只是下划线——模式2 上四种画法的高亮、选区批注的底色**全都没有**：平板的页图来自 Mac `/page.png`，那张图只画 PDF，
+  线格式里也没有发高亮的消息（11-14 那条「模式2 的页图是 Mac 画的，自然跟上」是错的）。
+  新增 `marks`(0x64，S→C，`PROTOCOL.md §4.11`)：当前文档全部高亮 + 选区批注的逐行框 / 基色 / 画法，全量镜像，跟着 `notes` 发、高亮变了单独发
+  （`AppModel.broadcastMarks`）。平板 `PadActivity.onMarks` → `setTextFills`，画法与透明度同模式1。
+  三端编解码（`WireCodec.swift` / `spike/wire.js` / 安卓 `WireCodec.kt`）+ 向量 #125–#126；`wire-codec-test` 134、`wire-cross-test` 254、安卓 `WireCodecTest` 14 全过。
+  ⚠️ Mac 与安卓都要装新版才看得到（老平板收到不认识的消息照旧丢弃）。
+- **清除做题记录**：见 `EXERCISE-PLAN.md §31`（只清 App 里的作答、书上的留着、错题本重算、先进回收站；Mac 列表右键 + 侧栏右键，安卓模式1 多选操作条 + ⋯）。
+- 验证：Mac Debug 编译通过；`spike/exercise-test.swift` 380 项；`server` `swift test`；安卓 `assembleDebug` + `WireCodecTest` / `ExerciseTest`；
+  安卓插桩用例已写未跑（设备不在）。真机待测：模式2 平板上四种画法、颜色与 Mac 并排一致，Mac 上改色 / 改画法 / 删除 / 框选挪动批注时平板跟着变。
+
 ## ✅ 语义搜索换成本机下载的嵌入模型 Qwen3-Embedding（MLX）+ 查看索引内容窗口（2026-11-14，Mac）
 
 - 起因：用户要评估「向量化」质量。拿 408 工作区实测（`SEARCH-PLAN.md §5.3`）：系统自带 `NLContextualEmbedding` 换说法 33 问首位命中 2、

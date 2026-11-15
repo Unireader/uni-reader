@@ -1316,3 +1316,27 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
        → 原题图只有第 N+1 页那块；练习页顶行 / 列表「页」一列写第 N+1 页；再打开设置，勾选还在。
   205. 两页都勾上时「保存」变灰；平板模式1 / 模式2 看原题也只有那一块、也不留边。
 
+## 31. 清除做题记录（2026-11-15，Mac + 安卓模式1）
+
+用户待办「支持清理掉做题记录」。用户定：① 错题本跟着更新；② Agent 从书上导入的作答（`source = mark`）**不清**；③ 安卓模式1 也做。
+
+- **清什么**：选中那几道题在 App 里（Mac / 平板 / 安卓模式1）做的全部作答（`exercise_attempt` 里 `source <> 'mark'` 的行）。
+  一道题只有书上的作答 = 不算做过，不在清除范围里（菜单里的数、确认框里的数都按这个算）。
+- **错题本**：清完按剩下的记录重算 `wrong`——还有一条答错的作答（只可能是书上的）就留着，否则移出；变了才改 `updated_at`。
+  这是「答错进、只能手动出」（拍板 ③）之外唯一会自动移出错题本的地方，用户明确要的。
+- **先归档再清**（红线 11）：快照里放那几道题的行 + 要清的作答，条目种类沿用「习题」（`exercises`，安卓回收站也认得）。
+  恢复走同一个循环：`exercise` OR IGNORE（题还在就不动），作答 OR REPLACE 放回去；错题本标记不跟着恢复。
+- **同步**：就是删行，离线镜像 / 服务器照常传播；一次删得多时 `SyncDeleteGuard` 先问一次。
+- **Mac 入口**：练习列表右键（选中几道）「清除做题记录…」；侧栏习题每一行右键（全部 / 错题本 / 收藏 / 书 / 章）「清除 N 道题的做题记录…」，
+  这一组一道都没做过就不放。确认框共用 `Window/Exercise/ExerciseRecordClear.swift`；清完 `ExerciseDeck.forgetAnswers` 把各份进度里这一轮的作答也去掉。
+  代码：`LibraryStore.exercisesWithAttempts` / `clearExerciseAttempts`、`TrashStore.archiveExerciseAttempts`、`Trash.archiveExerciseAttempts`、
+  `WorkspaceManager.clearExerciseAttempts`。
+- **安卓模式1 入口**：列表长按多选后的操作条「清除做题记录」；练习页顶栏 ⋯「清除这一组的做题记录…」（宽屏也显示 ⋯，只放这一项）。
+  `ExHost.canClearRecords` / `clearRecords(ids)`（null = 这一组全部，不管筛选），实现在 `ExerciseController`，库层同名函数照抄 Mac。模式2 不做（线格式没有这个动作）。
+- MCP 没加（没要求）。
+- 验证：`spike/exercise-test.swift` 新增一节 10 项（共 380 项全过）；安卓插桩 `ExerciseStoreTest.清除做题记录_书上的留着_错题本重算_能恢复` 已写、编译通过，**设备不在、没跑**。
+- 待实测：
+  1. Mac 练习列表选几道做过的题 → 右键「清除做题记录…」→ 确认后列表里「我的答案」清空、侧栏「已做」数变小、错题本里移出；
+  2. 侧栏右键一本书 / 错题本 → 「清除 N 道题的做题记录…」；回收站里出现「做题记录 · …」，恢复后作答回来；
+  3. 安卓模式1 列表长按多选 →「清除做题记录」；练习页 ⋯「清除这一组的做题记录…」；同步到 Mac 后两边一致。
+

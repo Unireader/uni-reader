@@ -271,6 +271,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         }
         on(session.$highlights) { s in
             s.persistHighlights()        // 高亮新建/改色/删除时增量落库
+            s.app.broadcastMarks()       // 镜像给平板（模式2 的页图不带高亮，平板自己画；非 padSession 时重发同值）
         }
         on(session.$imageNotes) { s in
             s.persistImageNotes()        // 图片笔记新建/编辑/删除时增量落库（不上线：平板本轮不认识 kind=6）

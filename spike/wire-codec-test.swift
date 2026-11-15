@@ -243,6 +243,13 @@ let canonical: [[String: Any]] = [
     ["type": "mdNote", "key": "workspace:数学/极限.md", "title": "极限",
      "text": "# 极限\n![[图.png]]\n", "images": [["target": "图.png", "sha": "ab12"]]],
     ["type": "mdNote", "key": "", "title": "", "text": "", "images": [[String: Any]]()],
+    // —— 高亮 / 选区批注标记（2026-11-15，PROTOCOL.md §4.11）：一条下划线高亮 + 一条选区批注（两行）/ 空 ——
+    ["type": "marks", "list": [
+        ["id": "H-1", "kind": 0, "page": 3, "r": 255, "g": 214, "b": 40, "style": 1, "rects": [[0.125, 0.25, 0.5, 0.03125]]],
+        ["id": "N-1", "kind": 1, "page": 0, "r": 255, "g": 209, "b": 38, "style": 0,
+         "rects": [[0.1, 0.2, 0.3, 0.02], [0.1, 0.25, 0.15, 0.02]]],
+    ]],
+    ["type": "marks", "list": [[String: Any]]()],
 ]
 
 var pass = 0, fail = 0

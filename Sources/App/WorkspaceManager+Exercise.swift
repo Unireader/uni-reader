@@ -354,6 +354,36 @@ extension WorkspaceManager {
                                          prefix: prefix, offset: offset, limit: limit)) ?? ([], 0)
     }
 
+    /// 这几道题里在 App 里做过的那几道（清除做题记录的菜单据它决定显不显示、显示几道）。
+    func exercisesWithAttempts(ids: [String]) -> [String] {
+        (try? store?.exercisesWithAttempts(ids: ids)) ?? []
+    }
+
+    /// 清除几道题的做题记录（`EXERCISE-PLAN.md §31`）：**先归档，成功了才删**（红线 11）。只清在 App 里做的作答，
+    /// 书上的作答留着；错题本按剩下的记录重算。没做过的题跳过。返回清了几道（归档失败 → nil，一道都没动）。
+    @discardableResult
+    func clearExerciseAttempts(ids: [String]) -> Int? {
+        guard let store else { return nil }
+        let todo = exercisesWithAttempts(ids: ids)
+        guard !todo.isEmpty else { return 0 }
+        let first = exercise(id: todo[0])
+        let docTitle = first?.documentId.flatMap { document(id: $0)?.title } ?? ""
+        let title = todo.count == 1
+            ? String(format: L("Practice Record · Exercise %@"),
+                     first?.number.isEmpty == false ? first!.number : String(todo[0].prefix(8)))
+            : String(format: L("Practice Records · %d exercises"), todo.count)
+        guard Trash.archiveExerciseAttempts(store: store, ids: todo, documentTitle: docTitle, title: title) != nil else {
+            lastError = String(format: L("Could not archive “%@”, so nothing was deleted."), title)
+            return nil
+        }
+        do { try store.clearExerciseAttempts(ids: todo) } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+        exercisesChanged()
+        return todo.count
+    }
+
     /// 删几道题：**先归档，成功了才删**（红线 11）。归档失败 → 一道都不删，返回 false。
     @discardableResult
     func trashExercises(ids: [String]) -> Bool {

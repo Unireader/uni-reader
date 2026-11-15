@@ -121,6 +121,9 @@ android/
 
 ### 9.1 现状（模式2 今天是什么样）
 
+- **已有高亮 / 选区批注的底色：2026-11-15 起能显示**——Mac 的 `/page.png` 只画 PDF 本身，原先模式2 上根本没有高亮；
+  现在 Mac 经 `marks`(0x64，`PROTOCOL.md §4.11`) 全量镜像下来，平板用模式1 那份 `TextFill` 画（`PadActivity.onMarks`）。
+  本节下面预留的 `0x52`/`0x53` 已被画板占用，真做划字时另找 opcode。
 - **划字：一处都没有。** `pad/` 目录下 `MODE_TEXT`/`TextSelect`/`textSelection` 零命中，
   文本层也没人注入（`setTextRuns` 只有模式1 的 `LocalCanvasView` 调）。
 - **图钉：样式与尺寸跟着模式1 一起对齐了 macOS**（那半在 `shared/PadOverlays` +
