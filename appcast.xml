@@ -9,6 +9,52 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.29</title>
+      <pubDate>Sun, 15 Nov 2026 13:04:50 +0000</pubDate>
+      <sparkle:version>71</sparkle:version>
+      <sparkle:shortVersionString>0.3.29</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>习题</h4>
+<ul>
+<li>可以清除做题记录：练习列表里选几道题右键「清除做题记录…」，或者在侧栏右键一组题（全部 / 错题本 / 收藏 / 某本书 / 某一章）。错题本跟着更新；从书上导入的作答会留着。清掉的记录先放进回收站，可以恢复。</li>
+</ul>
+<h4>平板（连接 Mac）</h4>
+<ul>
+<li>平板上能看到高亮了：铺色、下划线、方框、删除线四种画法，以及批注的底色，和 Mac 上一样。需要平板也更新到新版。</li>
+<li>Mac 正在看 Markdown 笔记时，平板上能直接读到这篇笔记（只读）；平板的标签栏上显示笔记名，不再是「未命名」。</li>
+<li>修正：Mac 停在习题、画板或笔记标签时连上平板，切回 PDF 后平板一直白屏；平板有时停在第一页，要在 Mac 上点一下那个标签才跳过去。</li>
+</ul>
+<h4>其他</h4>
+<ul>
+<li>标签栏：标签平分宽度、放不下时自动变窄；鼠标停在标签上显示完整名字；「+」按钮不再一直带着蓝色焦点框。</li>
+<li>笔记里的分步演示新增两个套件：定点数乘法（原码一位乘、补码一位乘）和定点数除法（恢复余数法、加减交替法），按教材的运算表格一步步画出来。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.29">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Exercises</h4>
+<ul>
+<li>You can now clear practice records: select some questions in the practice list and right-click Clear Practice Record…, or right-click a group in the sidebar (All, Mistakes, Starred, a book or a chapter). The Mistakes list is updated to match; answers imported from the book stay. Cleared records go to Recently Deleted first, so you can put them back.</li>
+</ul>
+<h4>Tablet (connected to the Mac)</h4>
+<ul>
+<li>Highlights now show on the tablet — fill, underline, box and strikethrough — along with the color behind annotations, just as on the Mac. The tablet needs the new version too.</li>
+<li>When the Mac is showing a Markdown note, the tablet can read that note (read-only), and its tab on the tablet shows the note's name instead of "Untitled".</li>
+<li>Fixed: connecting the tablet while the Mac was on an exercise, board or note tab left the tablet blank after switching back to a PDF; the tablet sometimes stayed on the first page until you clicked that tab on the Mac.</li>
+</ul>
+<h4>Also</h4>
+<ul>
+<li>Tab bar: tabs share the width evenly and shrink when space runs out; hovering a tab shows its full name; the + button no longer keeps a blue focus ring.</li>
+<li>Two more kits for step-by-step demos in notes: fixed-point multiplication (sign-magnitude and Booth) and fixed-point division (restoring and non-restoring), drawn step by step like the textbook tables.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.29">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.29/UniReader-0.3.29.zip" length="32489875" type="application/octet-stream" sparkle:edSignature="zV0Bl8Q9Emq00WH6Wde5NsQ1UnWT8TxSRNad11nfBsJ+N83p9mMrzKBXqxHrNgz8/IJSDZULsu0Ka8KpoSyLAg==" />
+    </item>
+    <item>
       <title>v0.3.28</title>
       <pubDate>Sat, 14 Nov 2026 13:11:52 +0000</pubDate>
       <sparkle:version>70</sparkle:version>
