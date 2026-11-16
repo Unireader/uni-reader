@@ -29,6 +29,9 @@ func input(_ stem: String?, _ opts: [(String?, String?)] = [("A", "甲"), ("B", 
                   options: opts.map { (key: $0.0, text: $0.1) }, answer: answer, answerSource: src,
                   explanation: nil, region: region, figure: figure)
 }
+extension Exercise {
+    func withPassage(_ p: ExercisePassage) -> Exercise { var e = self; e.payload.passage = p; return e }
+}
 func ok(_ i: ExerciseInput, seq: Int = 0) -> ExerciseDraft? {
     if case .success(let d) = ExerciseImport.validate(i, seq: seq) { return d }
     return nil
@@ -44,7 +47,7 @@ func row(_ d: ExerciseDraft, doc: String, id: String = UUID().uuidString) -> Lib
 }
 
 print("— 建表")
-check(LibraryStore.schemaVersion == 27, "schema 版本 27（v27 = 题目上的高亮；v26 = 日程；v25 = Agent 记忆与对话记录；v24 = 题目标签；v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记；v23 = Agent 上下文）")
+check(LibraryStore.schemaVersion == 28, "schema 版本 28（v28 = 习题可以不关联 PDF，不改表；v27 = 题目上的高亮；v26 = 日程；v25 = Agent 记忆与对话记录；v24 = 题目标签；v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记；v23 = Agent 上下文）")
 check((try? store.exercises()) != nil, "exercise 表可查")
 
 print("— 校验与规整")
@@ -333,7 +336,7 @@ check(!ExerciseScope.starredChapter(d3.id, []).isMistakes && ExerciseScope.starr
 
 print("— 侧栏 / 平板抽屉的分组（ExerciseGroupNode，安卓模式1 逐条照抄）")
 let gdocs: [(id: String, title: String)] = [("nodoc", "没题的书"), (d3.id, "书三")]
-let groups = ExerciseGroupNode.build(sumS, documents: gdocs, title: { $0.key }, noChapter: "未分章节")
+let groups = ExerciseGroupNode.build(sumS, documents: gdocs, title: { $0.key }, noChapter: "未分章节", noGroup: "未分组")
 check(groups.map(\.scope) == [.all, .wrong, .starred, .document(d3.id)], "全部 / 错题本 / 收藏恒在，之后只列有题的书")
 check(groups.map(\.count) == [4, 2, 2, 4] && groups[0].title == "all" && groups[3].title == "书三", "各行的数与名字")
 check(groups[1].children.map(\.scope) == [.wrongDocument(d3.id)]
@@ -344,7 +347,7 @@ check(groups[2].children.map(\.scope) == [.starredDocument(d3.id)] && groups[2].
       && groups[2].children[0].children.map(\.title) == ["第一章 函数", "第三章"]
       && groups[2].children[0].children[0].children.map(\.scope) == [.starredChapter(d3.id, ["第一章 函数", "1.2 极限"])],
       "收藏底下：有收藏的书 → 收藏章节树，章节是收藏范围")
-check(ExerciseGroupNode.build(sumW, documents: gdocs, title: { $0.key }, noChapter: "x")[2].children.isEmpty,
+check(ExerciseGroupNode.build(sumW, documents: gdocs, title: { $0.key }, noChapter: "x", noGroup: "y")[2].children.isEmpty,
       "没有收藏 → 收藏那一行不展开")
 try store.setExerciseStarred(id: c2.id, false)
 try store.setExerciseStarred(id: c4.id, false)
@@ -355,7 +358,7 @@ let flat = ExerciseGroupNode.flatten(groups)
 func countNodes(_ ns: [ExerciseGroupNode]) -> Int { ns.reduce(0) { $0 + 1 + countNodes($1.children) } }
 check(flat.count == countNodes(groups) && flat[0].depth == 0 && flat[1].scope == .wrong && flat[2].depth == 1
       && flat[2].scope == .wrongDocument(d3.id) && flat[3].depth == 2, "摊平：先父后子、depth 是缩进层级")
-check(ExerciseGroupNode.build(ExerciseSummary(), documents: gdocs, title: { $0.key }, noChapter: "x").isEmpty,
+check(ExerciseGroupNode.build(ExerciseSummary(), documents: gdocs, title: { $0.key }, noChapter: "x", noGroup: "y").isEmpty,
       "没有题 → 整段不出现")
 
 print("— 书上的作答（source = mark）")
@@ -954,7 +957,7 @@ let gs = ExerciseSummary(total: 4, starred: 2, byDocument: [dd.id: 4],
                                             ["第一章", "1.2"]: ExerciseChapterStat(count: 1, firstPage: 2, starred: 1),
                                             ["第二章"]: ExerciseChapterStat(count: 1, firstPage: 5, starred: 1),
                                             []: ExerciseChapterStat(count: 1, firstPage: 9)]])
-let gtree = ExerciseGroupNode.build(gs, documents: [(dd.id, "进度")], title: { $0.key }, noChapter: "未分章节")
+let gtree = ExerciseGroupNode.build(gs, documents: [(dd.id, "进度")], title: { $0.key }, noChapter: "未分章节", noGroup: "未分组")
     .map { $0.withDone(dsum) }
 let book = gtree.first { $0.scope == .document(dd.id) }
 check(book?.done == 2 && book?.count == 4, "书那一行：2/4")
@@ -1130,6 +1133,139 @@ do {
     let after = try store.exercise(id: "mk-1")!
     check(after.marks == "" && after.updatedAt > before, "去掉高亮：清空、改 updated_at")
 } catch { check(false, "高亮抛错：\(error)") }
+
+// MARK: - 2026-11-16：不关联 PDF 的题与分组（`EXERCISE-PLAN.md §33`，安卓 ExerciseTest.loose 同一段）
+
+print("— 不关联 PDF 的题：范围 / 分组 / 解除关联（§33）")
+do {
+    let L = ExerciseScope.looseId
+    check(L == "-" && LibraryStore.looseExerciseOwner == L, "占位的文档 id 是 \"-\"（库里的数和范围键用同一个）")
+    let g = ExerciseScope.chapter(L, ["2024 英语一"])
+    check(g.key == "chap:-:[\"2024 英语一\"]" && ExerciseScope(key: g.key) == g, "分组的范围键回环")
+    check(ExerciseScope(key: "doc:-") == .document(L) && ExerciseScope(key: "wrong:chap:-:[\"A\",\"B\"]") == .wrongChapter(L, ["A", "B"])
+          && ExerciseScope(key: "starred:chap:-:") == .starredChapter(L, []), "全部不关联 PDF 的 / 错题本、收藏底下的分组 也回环")
+    check(g.documentId == nil && g.ownerId == L && g.isLoose && g.loosePath == ["2024 英语一"], "分组不属于哪本书（documentId 为 nil），但认得出是不关联 PDF 的那一支")
+    check(!ExerciseScope.document("D1").isLoose && ExerciseScope.chapter("D1", ["x"]).loosePath == nil && !ExerciseScope.all.isLoose, "书 / 全部 不是那一支")
+    check(g.symbolName == "folder" && ExerciseScope.chapter(L, []).symbolName == "questionmark.folder"
+          && ExerciseScope.chapter(L, ["A", "B"]).symbolName == "list.bullet.indent", "图标：分组 / 没分组 / 分组里的小节")
+
+    // 库：不关联 PDF 的题（document_id 为空）
+    let book = doc("解除关联测试", "hash-loose")
+    func make(_ id: String, doc: String?, chapter: [String], number: String, page: Int? = nil, seq: Int = 0,
+              region: [Double]? = nil, figure: Bool? = nil) throws -> LibExercise {
+        guard let d = ok(input("题 \(id)", answer: "A", src: "book", number: number, page: page ?? 0, region: region, figure: figure)) else {
+            throw CancellationError()
+        }
+        var r = row(d, doc: doc ?? "", id: id)
+        r.documentId = doc
+        r.page = doc == nil ? nil : page
+        r.seq = seq
+        r.chapter = chapter
+        return r
+    }
+    try store.upsertExercises([
+        try make("lo-1", doc: nil, chapter: ["真题"], number: "1", seq: 0),
+        try make("lo-2", doc: nil, chapter: ["真题", "阅读"], number: "2", seq: 1),
+        try make("lo-3", doc: nil, chapter: ["模拟"], number: "1", seq: 2),
+        try make("lo-4", doc: nil, chapter: [], number: "9", seq: 3),
+        try make("bk-1", doc: book.id, chapter: ["第一章"], number: "1", page: 3, region: [0.1, 0.2, 0.5, 0.2], figure: true),
+    ])
+    try store.setExerciseWrong(id: "lo-2", true)
+    try store.setExerciseStarred(id: "lo-3", true)
+    let loose = try store.looseExercises()
+    check(loose.map(\.id) == ["lo-1", "lo-2", "lo-3", "lo-4"], "looseExercises 只取 document_id 为空的，按先后排")
+    check(try store.exercise(id: "lo-1")?.documentId == nil && store.exercise(id: "lo-1")?.page == nil, "读回来 document_id / page 都是空")
+    let all = (try store.exercises()).compactMap(Exercise.init(row:))
+    let e1 = all.first { $0.id == "lo-1" }!, e2 = all.first { $0.id == "lo-2" }!, e4 = all.first { $0.id == "lo-4" }!
+    let b1 = all.first { $0.id == "bk-1" }!
+    check(e1.ownerId == L && e1.group == "真题" && e1.chapterInGroup == [] && e2.chapterInGroup == ["阅读"], "分组 = 章节路径第一级，对外的章节去掉它")
+    check(e4.group == nil && e4.chapterInGroup == [] && b1.group == nil && b1.chapterInGroup == ["第一章"] && b1.ownerId == book.id, "没分组的 / 关联着 PDF 的题没有分组")
+    check(ExerciseScope.chapter(L, ["真题"]).includes(e1) && ExerciseScope.chapter(L, ["真题"]).includes(e2)
+          && !ExerciseScope.chapter(L, ["模拟"]).includes(e1), "分组范围：这个分组和它底下的小节")
+    check(ExerciseScope.chapter(L, []).includes(e4) && !ExerciseScope.chapter(L, []).includes(e1), "空路径 = 只有没分组的")
+    check(ExerciseScope.document(L).includes(e1) && ExerciseScope.document(L).includes(e4) && !ExerciseScope.document(L).includes(b1)
+          && !ExerciseScope.document(book.id).includes(e1) && ExerciseScope.all.includes(e1), "全部不关联 PDF 的 / 某本书 / 全部")
+    check(ExerciseScope.wrongChapter(L, ["真题"]).includes(e2) && !ExerciseScope.wrongChapter(L, ["真题"]).includes(e1), "错题本底下的分组只留错题")
+    check(e1.homeScope == .chapter(L, ["真题"]) && e4.homeScope == .chapter(L, []) && b1.homeScope == .document(book.id), "只给一道题时打开它那个分组 / 那本书")
+
+    // 侧栏的数
+    let c = try store.exerciseCounts()
+    check(c.byDocument[L] == 4 && c.byDocument[book.id] == 1, "exerciseCounts：不关联 PDF 的记在 \"-\" 底下")
+    var chapters: [String: [[String]: ExerciseChapterStat]] = [:]
+    for r in try store.exerciseChapterCounts() {
+        chapters[r.documentId, default: [:]][r.chapter] = ExerciseChapterStat(count: r.count, firstPage: r.firstPage, wrong: r.wrong, starred: r.starred)
+    }
+    check(chapters[L]?[["真题"]]?.count == 1 && chapters[L]?[["真题", "阅读"]]?.wrong == 1 && chapters[L]?[[]]?.count == 1
+          && chapters[L]?[["模拟"]]?.starred == 1, "exerciseChapterCounts：按分组 / 小节分开数")
+    let sum = ExerciseSummary(total: c.total, wrong: c.wrong, starred: c.starred, byDocument: c.byDocument, chapters: chapters)
+    check(sum.count(.chapter(L, ["真题"])) == 2 && sum.count(.chapter(L, [])) == 1 && sum.count(.document(L)) == 4
+          && sum.count(.wrongChapter(L, ["真题"])) == 1 && sum.count(.starredChapter(L, ["模拟"])) == 1, "ExerciseSummary.count 认分组")
+    let rows = ExerciseGroupNode.build(sum, documents: [(id: book.id, title: "解除关联测试")],
+                                       title: { "\($0.key)" }, noChapter: "未分章节", noGroup: "未分组")
+    let mine = rows.filter { $0.scope.isLoose }
+    check(mine.map(\.title) == ["模拟", "真题", "未分组"] && mine.map(\.count) == [1, 2, 1], "侧栏：每个分组一行（按名字排），没分组的在最后")
+    check(mine[1].children.map(\.title) == ["阅读"] && mine[1].children.first?.scope == .chapter(L, ["真题", "阅读"]), "分组底下照旧是章节树")
+    let bookRow = rows.firstIndex { $0.scope == .document(book.id) }!, firstGroup = rows.firstIndex { $0.scope.isLoose }!
+    check(bookRow < firstGroup, "分组排在书后面")
+    check(rows[1].children.contains { $0.scope == .wrongChapter(L, ["真题"]) && $0.count == 1 }
+          && rows[2].children.contains { $0.scope == .starredChapter(L, ["模拟"]) && $0.count == 1 }, "错题本 / 收藏底下也有分组那一行")
+    try store.recordExerciseAttempt(LibExerciseAttempt(id: "lo-a1", exerciseId: "lo-1", answer: "A", correct: true, elapsedMs: 1, createdAt: .now))
+    var done = ExerciseDoneSummary()
+    for r in try store.exerciseDoneCounts() { done.chapters[r.documentId, default: [:]][r.chapter] = ExerciseDoneStat(done: r.done, starred: r.starred) }
+    check(done.done(.chapter(L, ["真题"])) == 1 && done.done(.chapter(L, ["模拟"])) == 0, "「已做 / 共」认分组")
+
+    // 纯函数：路径 / 排序 / 解除关联 / 文章
+    check(Exercise.loosePath(group: "G", sub: ["a"]) == ["G", "a"] && Exercise.loosePath(group: "", sub: ["a"]) == [], "分组路径：没分组时小节挂不住")
+    let order = Exercise.looseOrdered(all.filter { $0.documentId == nil }).map(\.id)
+    check(order == ["lo-3", "lo-1", "lo-2", "lo-4"], "练习顺序：按分组名、分组在它的小节前面、没分组的最后（\(order)）")
+    var marked = b1
+    marked.starred = true; marked.wrong = true; marked.note = "记一笔"; marked.tags = ["真题"]
+    marked.payload.nextRegions = [[0.1, 0.1, 0.5, 0.2]]; marked.payload.skipPages = [1]
+    let d = marked.detached(group: "解除关联测试")
+    check(d.documentId == nil && d.page == nil && d.chapter == ["解除关联测试", "第一章"], "解除关联：进以书名命名的分组，原来的章节接在后面")
+    check(d.payload.region == nil && d.payload.nextRegions == nil && d.payload.skipPages == nil && d.payload.figure == false, "原题框 / 跨页 / 跳过的页 / 带图 都去掉")
+    check(d.starred && d.wrong && d.note == "记一笔" && d.tags == ["真题"] && d.payload.stem == b1.payload.stem
+          && d.payload.answer == b1.payload.answer && d.id == b1.id, "题目内容、收藏、错题、笔记、标签都不动")
+    check(b1.payload.region != nil && b1.payload.figure, "（原来确实有框、带图）")
+    var p1 = e1, p3 = all.first { $0.id == "lo-3" }!, pb = b1
+    let ps = ExercisePassage(id: "p1", type: "reading", title: nil, text: "T")
+    p1.payload.passage = ps; p3.payload.passage = ps; pb.payload.passage = ps
+    check(p1.passageKey != p3.passageKey && p1.passageKey != pb.passageKey && p1.passageKey == e2.withPassage(ps).passageKey,
+          "文章按「分组 + 文章 id」认：两个分组各有一篇 p1 不是同一篇，同一分组的是")
+
+    // 写回库：解除关联的那一行
+    var dr = d.toRow(); dr.updatedAt = .now
+    try store.upsertExercise(dr)
+    let back = try store.exercise(id: "bk-1")!
+    check(back.documentId == nil && back.page == nil && back.chapter == ["解除关联测试", "第一章"], "upsert 把 document_id / page 写成空")
+    check(try store.exerciseCounts().byDocument[book.id] == nil, "那本书底下没有题了")
+    try store.deleteDocument(id: book.id)
+    check(try store.exercise(id: "bk-1") != nil, "🔴 再删那篇文档，题还在（已经不挂在它上面，级联删不到）")
+
+    // 同步合并（`MirrorApply.write`）：一批里「删文档 + 这道题改成不关联」——作答不能被级联删掉
+    let book2 = doc("同步删文档", "hash-loose-sync")
+    try store.upsertExercise(try make("sy-1", doc: book2.id, chapter: ["一"], number: "1", page: 1))
+    try store.upsertExercise(try make("sy-2", doc: book2.id, chapter: [], number: "2", page: 1))
+    try store.recordExerciseAttempt(LibExerciseAttempt(id: "sy-a1", exerciseId: "sy-1", answer: "B", correct: false, elapsedMs: 1, createdAt: .now))
+    try store.recordExerciseAttempt(LibExerciseAttempt(id: "sy-a2", exerciseId: "sy-2", answer: "A", correct: true, elapsedMs: 1, createdAt: .now))
+    var res = MirrorApply.Result()
+    try store.withMirrorDB { db in
+        var r1 = try db.query("SELECT * FROM exercise WHERE id='sy-1'")[0]
+        r1["document_id"] = NSNull(); r1["page"] = NSNull(); r1["chapter"] = "[\"同步删文档\",\"一\"]"
+        let changes = [
+            MirrorDiff.Change(table: "exercise", rowId: "sy-1", op: .upsert, side: .source, reason: .mirrorModified, row: r1),
+            MirrorDiff.Change(table: "document", rowId: book2.id, op: .delete, side: .source, reason: .mirrorDeleted, row: nil),
+        ]
+        try db.transaction { try MirrorApply.write(db, changes, result: &res, side: .source) }
+    }
+    let s1 = try store.exercise(id: "sy-1"), s2 = try store.exercise(id: "sy-2")
+    check(s1 != nil && s1?.documentId == nil && s1?.chapter == ["同步删文档", "一"], "🔴 同步：删文档那一批里改成不关联的题还在，内容是对面那一份")
+    check(try store.exerciseAttempts(exerciseId: "sy-1").map(\.id) == ["sy-a1"], "🔴 它的作答没有被级联删掉")
+    let kept2 = try store.exerciseAttempts(exerciseId: "sy-2").count
+    check(s2 != nil && s2?.documentId == nil && kept2 == 1,
+          "🔴 这一批里没带上的那道题也留下了（先摘下来再删文档），作答也在")
+    check(try store.document(id: book2.id) == nil && res.orphansSkipped == 0, "文档确实删了，没有行被当成孤儿丢掉")
+} catch { check(false, "不关联 PDF 的题抛错：\(error)") }
 
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

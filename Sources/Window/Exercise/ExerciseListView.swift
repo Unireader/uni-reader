@@ -233,6 +233,12 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         // 章节：一次只能改同一本书里的题（下拉框列的是那本书的目录）
         let docs = Set(items.map { $0.documentId ?? "" })
         if docs.count == 1, let d = docs.first, !d.isEmpty { add(menu, L("Set Chapter…"), #selector(menuChapter)) }
+        // 不关联 PDF 的题（`EXERCISE-PLAN.md §33`）：选中的都不关联 PDF → 「移到分组」；有关联着的 → 「解除与 PDF 的关联…」
+        if items.allSatisfy({ $0.documentId == nil }) {
+            menu.addItem(groupMenuItem(items))
+        } else {
+            add(menu, L("Unlink from PDF…"), #selector(menuDetach))
+        }
         add(menu, rows.count == 1 ? L("Edit Tags…") : L("Add Tags…"), #selector(menuTags))
         if rows.count > 1, items.contains(where: { !$0.tags.isEmpty }) { add(menu, L("Remove Tags…"), #selector(menuRemoveTags)) }
         if items.contains(where: \.wrong) { add(menu, L("Remove from Mistakes"), #selector(menuUnmistake)) }
@@ -292,6 +298,74 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
                 case .path(let p): ws.setExerciseChapter(ids: ids, p)
                 }
             }
+        }
+    }
+
+    /// 「移到分组」子菜单：现有的分组（这几道题都已经在里面的那个打勾）/ 新建分组… / 移出分组。
+    /// 分组就是个名字（同书库里给 PDF 分组）：里面没有题了它就不在了。
+    private func groupMenuItem(_ items: [Exercise]) -> NSMenuItem {
+        let sub = NSMenu()
+        let current = Set(items.map { $0.group ?? "" })
+        for g in workspace?.exerciseGroupNames ?? [] {
+            let it = NSMenuItem(title: g, action: #selector(menuMoveToGroup(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = g
+            it.state = current == [g] ? .on : .off
+            sub.addItem(it)
+        }
+        if sub.numberOfItems > 0 { sub.addItem(.separator()) }
+        let new = NSMenuItem(title: L("New Group…"), action: #selector(menuNewGroup), keyEquivalent: "")
+        new.target = self
+        sub.addItem(new)
+        if current != [""] {
+            let out = NSMenuItem(title: L("Remove from Group"), action: #selector(menuMoveToGroup(_:)), keyEquivalent: "")
+            out.target = self
+            out.representedObject = ""
+            sub.addItem(out)
+        }
+        let top = NSMenuItem(title: L("Move to Group"), action: nil, keyEquivalent: "")
+        top.submenu = sub
+        return top
+    }
+
+    @objc private func menuMoveToGroup(_ sender: NSMenuItem) {
+        guard let g = sender.representedObject as? String else { return }
+        let ids = targetRows().compactMap { deck.items.indices.contains($0) ? deck.items[$0].id : nil }
+        workspace?.setExerciseGroup(ids: ids, g)
+    }
+
+    @objc private func menuNewGroup() {
+        let ids = targetRows().compactMap { deck.items.indices.contains($0) ? deck.items[$0].id : nil }
+        guard !ids.isEmpty, let win = window else { return }
+        let a = NSAlert()
+        a.messageText = L("New Group")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = L("Group Name")
+        a.accessoryView = field
+        a.addButton(withTitle: L("OK"))
+        a.addButton(withTitle: L("Cancel"))
+        a.window.initialFirstResponder = field
+        a.beginSheetModal(for: win) { [weak self] resp in
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard resp == .alertFirstButtonReturn, !name.isEmpty else { return }
+            self?.workspace?.setExerciseGroup(ids: ids, name)
+        }
+    }
+
+    /// 「解除与 PDF 的关联…」：先确认（解除了接不回去）。选中里已经不关联 PDF 的跳过。
+    @objc private func menuDetach() {
+        let items = targetRows().compactMap { deck.items.indices.contains($0) ? deck.items[$0] : nil }.filter { $0.documentId != nil }
+        guard !items.isEmpty, let win = window else { return }
+        let ids = items.map(\.id)
+        let a = NSAlert()
+        a.messageText = ids.count == 1 ? L("Unlink this exercise from its PDF?")
+                                       : String(format: L("Unlink %d exercises from their PDF?"), ids.count)
+        a.informativeText = L("The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone.")
+        a.addButton(withTitle: L("Unlink"))
+        a.addButton(withTitle: L("Cancel"))
+        a.beginSheetModal(for: win) { [weak self] resp in
+            guard resp == .alertFirstButtonReturn else { return }
+            self?.workspace?.detachExercises(ids: ids)
         }
     }
 

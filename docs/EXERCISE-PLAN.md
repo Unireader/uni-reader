@@ -21,6 +21,8 @@
 > **同日：侧栏行尾「已做 / 共」+ 改动时侧栏不跳回顶上**（§16）。
 > **2026-11-16：英语阅读理解 / 完形填空 + 题目上的高亮**（schema v27，§32）：一篇文章 + 几道单选题（文章在每道题的 payload 里，完形填空的空写成 `{{21}}`）；
 > 判完后可以在题干 / 文章 / 选项上划高亮（新列 `exercise.marks`），「再做一次」时藏起来。Mac + 安卓模式1。
+> **同日：习题可以不关联 PDF**（schema v28、不改表，§33）：Agent 导入时给分组名、不给文档；已有的题能解除关联；
+> 删 PDF 不删题。不关联 PDF 的题放在**分组**里（分组就是个名字，侧栏里和书并列）。Mac + 安卓。
 
 ## 1. 需求
 
@@ -78,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_exercise_attempt_ex ON exercise_attempt(exercise_
 
 | 列 | 说明 |
 |---|---|
-| `document_id` | 出处那篇 PDF（逻辑文档 UUID）。**可空**：给以后「不来自 PDF 的题」留口子；本轮写入一律有值 |
+| `document_id` | 出处那篇 PDF（逻辑文档 UUID）。**可空** = 不关联 PDF 的题（2026-11-16 起，§33：此时 `page` 也空、`chapter` 第一级是分组名） |
 | `page` | 出处页，**0 起**（对外 1 起，换算只在 `PageNo`）；可空 = 不知道在哪页 |
 | `seq` | 同一页内的先后（Agent 按阅读顺序给的下标）。练习顺序 = 文档 → 页 → `seq` |
 | `kind` | 0 单选 / 1 多选 / 3 填空 / 4 主观题（v21，§11）；2 留给以后的判断题。不认识的值各端整行跳过 |
@@ -1411,3 +1413,98 @@ Agent 面板（Kimi）的上下文串里补一句有这组工具（`AgentChat.sw
 5. 「再做一次」→ 高亮看不见；重新答完 → 原来的高亮回来。翻到同一篇文章的另一道题，显示的是那道题自己的高亮。
 6. 安卓模式1 同样走一遍 1~5（长按选中文字，菜单里有「高亮」）；Mac 上划的高亮同步到平板后位置一致（纯文字处）。
 7. 平板模式2 打开这组题：题干里先是文章、分隔线下面是题目，当前空用荧光底标出。
+
+## 33. 习题可以不关联 PDF + 分组（2026-11-16，schema v28 不改表，Mac + 安卓）
+
+用户原话：「做一下允许习题不和 pdf 关联」。问答定下来的：① 分组——「分组就是直接创建一个分组不可以吗？」→ **分组就是一个名字**
+（同书库里给 PDF 分组：`document.group_name` 也只是个名字），不加表；② 三样都要：**Agent 导入时可以不给 PDF**、
+**已有的题能解除关联**、**删除 PDF 时保留它的题**；③ 这一轮做 **Mac + 安卓**。
+
+### 33.1 数据（不改表）
+
+- 不关联 PDF 的题 = `exercise.document_id IS NULL`（这一列从 v20 起就可空）；`page` 也空；payload 里没有 `region` / `next_regions` /
+  `skip_pages`，`figure` 恒为假（没有 PDF 就没有原题图）。
+- **分组 = 章节路径的第一级**：`chapter = ["2024 英语一", "阅读 Text 1"]` → 分组「2024 英语一」、里面的小节「阅读 Text 1」；
+  `chapter` 空 = 没分组。分组不单独存——里面没有题了它就不在了；改名 = 这一组题的第一级一起换；新名字已有 = 并进那个分组。
+  🔴 没选「新增题集表」：那要 schema 加表、Mac / 安卓 / 离线镜像 / 服务器同步全跟着改，而用户要的只是「一个能放题的名字」。
+- **范围**：不关联 PDF 的那一支在 `ExerciseScope` 里占一个固定的「文档 id」`ExerciseScope.looseId = "-"`（文档 id 都是 UUID，撞不上；
+  不含冒号）。`.chapter("-", ["分组", …])` = 一个分组（或它底下的小节）、`.chapter("-", [])` = 没分组的那些、`.document("-")` = 全部不关联 PDF 的题；
+  错题本 / 收藏底下是 `wrongChapter("-", …)` / `starredChapter("-", …)`。范围键照旧（`chap:-:["分组"]`），所以标签页恢复、平板模式2 的
+  `exGroups` / `exOpen`（范围键原样过线，平板不解析）、侧栏拖动排序都不用改格式。
+  `scope.documentId` 对这一支返回 nil（「这本书还在不在」的那几处检查自然放行），原样的那个 id 用 `scope.ownerId`；题目那边对应 `Exercise.ownerId`。
+  🔴 安卓 `ExScope.LOOSE_ID` 同值。
+- 库里三条计数（`exerciseCounts` / `exerciseChapterCounts` / `exerciseDoneCounts`）把 `document_id` 为空的记在 `"-"` 底下
+  （`COALESCE(document_id, '-')`，原先是滤掉）。
+- **去重**：只在同一个分组里比（分组 + `section` + 题号；没题号比规整后的题干）——别的分组里题号一样的不是同一道。
+- **文章**（§32）按「分组 + 文章 id」认（`passageKey`），`syncPassages` 只换同一个分组里的。
+- **练习顺序**：书在前，不关联 PDF 的题在后；它们自己按章节路径逐级比名字（同侧栏那棵树：没页码可排），没分组的最后（`Exercise.looseOrdered`）。
+
+### 33.2 版本号 v28：只为新旧版本不混着同步
+
+删文档 / 解除关联时题目留下，这在同步上有一个坑：一批改动里同时有「删文档」和「这道题改成不关联」，`MirrorApply.write` 是先删后插——
+一删文档，题和它的作答跟着外键级联删掉；题这一批里会再插回来，**作答不在这一批里、就此丢了**，下一轮还会被当成「这边删了」推给别的设备。
+
+- 改法：`MirrorApply.write` 最前面加一步——这一批里要删的文档，先 `UPDATE exercise SET document_id=NULL WHERE document_id=?` 把题摘下来
+  （Mac 客户端、服务器共用这一份；安卓 `MirrorApply.kt` 照抄）。这一批里没带上的题（对面比较旧）也因此留下，下一轮按 `updated_at` 收敛。
+- 老版本没有这一步，所以 **`schemaVersion` 27 → 28**（不改表）：服务器要求推送方版本号与自己相同，新旧版本混不到一起。
+  🔴 Mac、安卓、服务器要一起升级。
+
+### 33.3 三样功能
+
+- **Agent 导入不给 PDF**：`import_exercises` 加 `group`（分组名，必填非空、≤ 80 字；与 `document_id` 二选一）。每道题不用给 `page`；
+  `region` / `next_regions` / `has_figure` 不收；`chapter` 是分组里面的小节；`chapters` 不用。返回里 `group` 代替 `document_id`。
+- **解除关联**（`WorkspaceManager.detachExercises`，纯函数 `Exercise.detached(group:)`）：进一个**以书名命名的分组**、原来的章节接在分组名后面；
+  页码、原题框去掉；题目、作答、收藏、错题本、笔记、标签、高亮都不动。入口：习题列表右键「解除与 PDF 的关联…」（先确认，接不回去）、
+  MCP `update_exercises` 给关联着 PDF 的题传 `group`（说明里写了只在用户要求时做）。
+- **删 PDF 不删题**（`trashDocument`）：归档 → 解除这本书全部题的关联 → 删文档。归档在前：归档失败时什么都没动。
+  删除确认框不再把习题数进「会删掉的东西」，另起一行说题会留下、去了哪。安卓 `Trash.deleteDocument` 同（`LibraryStore.detachExercises`：
+  只改 `document_id` / `page` / `chapter` / `updated_at`，不重写 payload——留着的原题框没有文档时各处都不用）。
+  ⚠️ 从回收站恢复那篇 PDF：题不会自动接回去（快照里那几道题 id 已存在、`OR IGNORE` 跳过）；用户把这些题删了之后再恢复 PDF，题会随快照回来。
+
+### 33.4 Mac 界面
+
+- 侧栏「习题」：书后面每个分组一行（图标 `folder`，按名字排；能和书一起拖动排序），展开是章节树；没分组的题末尾一行「未分组」。
+  错题本 / 收藏底下同样接在书后面。分组行右键「重命名分组…」（开着这个分组的习题标签跟着换，`TabsModel.exerciseGroupRenamed`）。
+- 习题列表右键：选中的都不关联 PDF → 「移到分组 ›」（现有分组 / 新建分组… / 移出分组）；有关联着的 → 「解除与 PDF 的关联…」。
+  「设置章节…」只给关联着 PDF 的题（下拉框列的是那本书的目录）。
+- 练习页：没有 PDF 的题「原题」「到原页」两个按钮是灰的（原先没页码的题就是这样）。链接 / MCP 只给一道题时打开它那个分组（`Exercise.homeScope`）。
+
+### 33.5 MCP
+
+对外**分组名和章节分开给**（库里分组名是章节第一级，Agent 不用知道）：
+
+- 每道题：不关联 PDF 的多一个 `group`（`""` = 没分组），`chapter` = 分组里面的小节；没有 `document_id` / `page`。
+- `list_exercises`：加 `group`（只列这个分组，`""` = 没分组的；`chapter` 是分组里面的小节）；返回多 `groups`（现有分组名）、`group`。
+  `all_documents` 照旧包含不关联 PDF 的题。
+- `update_exercises`：`group`——不关联 PDF 的题 = 挪到那个分组（`""` = 拿出分组）；关联着 PDF 的题 = 解除关联并放进去（不能是空串）。
+- `open_exercises`：加 `group`；只给一道不关联 PDF 的题 = 开它那个分组。`get_current_view` 的 `scope` 多 `group`。
+- 说明：`MCPServer.instructions`、`AgentChat` 的习题说明、`skills/unireader-exercise-import/SKILL.md`「不来自 PDF 的题」一节各加了一段。
+
+### 33.6 安卓
+
+- 模式1：`ExScope.LOOSE_ID` / `ownerId` / `isLoose` / `loosePath`、`Exercise.ownerId` / `group` / `passageKey`、`ExGroupNode.build` 的分组行
+  （`looseGroups`）、三条计数、`LocalExerciseDeck.read` 的顺序（`ExScope.looseOrdered`）、标题（`ExerciseController.scopeTitle`）——逐条照 Mac。
+  能看、能练；**解除关联 / 移到分组 / 分组改名的入口本轮只在 Mac**。平板 Agent 的 `open_exercises` 只给一道不关联 PDF 的题时开它那个分组。
+- 模式2：分组行由 Mac 下发、范围键原样回传，没改代码。
+- `Schema.VERSION = 28`、`MirrorApply.write` 加摘题那一步、`Trash.deleteDocument` 先解除关联。
+
+### 33.7 验证（2026-11-16）
+
+- Mac：`spike/exercise-test.swift` 新增一节（共 459 项全过，含 `MirrorApply.write`「删文档 + 题改成不关联」作答不丢）；`store-test` 54、
+  `trash-test` 71、`mirror-fp-test` 76、`agent-context` 49、`agent-memory` 54、`schedule` 101 全过；`mirror-apply-test` 55 过、
+  1 项「上次打开取了较晚的那个」失败（同 §32.5：测试里写死了日期，与本次无关）。`server` 的 `swift test` 59 项全过。Debug 编译通过。
+- 安卓：JVM 单测 258 项全过（`ExerciseTest.loose` 新增）；assembleDebug 通过。
+- 🔴 没验证的：执行层（`WorkspaceManager.importExercises` 进分组 / `detachExercises` / `trashDocument`）和 MCP 工具没有自动测试（spike 只到存储层和纯函数）；
+  安卓的 `LibraryStore.detachExercises`、`MirrorApply.write` 新加的那一步、`Trash.deleteDocument` 没跑插桩测试；视图层由用户实测。
+
+### 33.8 实测清单（用户）
+
+1. 让 Agent「出 5 道题存到分组『测试分组』」（不开 PDF 也行）。侧栏「习题」里书后面出现「测试分组」一行，点开能练；「原题」「到原页」是灰的。
+2. 再让 Agent 往同一个分组导同样题号的题 → 是更新不是多出来；往另一个分组导同样题号 → 各是各的。
+3. 分组行右键「重命名分组…」→ 名字换了、开着的标签标题跟着换；改成另一个已有分组的名字 → 两组并在一起。
+4. 习题列表里选几道 PDF 上的题 → 右键「解除与 PDF 的关联…」→ 它们进了以书名命名的分组，原来的章节还在分组底下；做题记录、收藏、错题本、笔记都在。
+5. 列表里选几道不关联 PDF 的题 → 右键「移到分组 ›」→ 换组 / 新建分组 / 移出分组（进「未分组」）。
+6. 删一篇有题的 PDF：确认框里有一行说题会保留；删完题在以书名命名的分组里，做题记录都在。
+7. 错题本 / 收藏底下也能看到分组那一行，数对得上。
+8. 安卓模式1：同步后抽屉「习题」里有这些分组、能练；在平板上删一篇有题的 PDF，题同样留下。模式2：抽屉里有分组行、点开能练。
+9. 两台设备同步：一台删了有题的 PDF，另一台同步后题和做题记录都在（三端都升到 v28 之后）。

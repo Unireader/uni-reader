@@ -74,13 +74,26 @@ extension WorkspaceManager {
         if let id = scope.documentId {   // 一本书 / 书里的一章
             return ((try? store.exercises(documentId: id)) ?? []).compactMap(Exercise.init(row:)).filter(scope.includes)
         }
+        if scope.isLoose {   // 不关联 PDF 的题（§33）：一个分组 / 没分组的 / 全部
+            return Exercise.looseOrdered(((try? store.looseExercises()) ?? []).compactMap(Exercise.init(row:)).filter(scope.includes))
+        }
         let all = ((try? store.exercises()) ?? []).compactMap(Exercise.init(row:)).filter(scope.includes)
         let order = Dictionary(documents.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
-        return all.enumerated().sorted { a, b in
+        let sorted = all.enumerated().sorted { a, b in
             let oa = a.element.documentId.flatMap { order[$0] } ?? Int.max
             let ob = b.element.documentId.flatMap { order[$0] } ?? Int.max
             return oa != ob ? oa < ob : a.offset < b.offset   // 同一篇里保持库里排好的「页 → 先后」
         }.map(\.element)
+        // 不关联 PDF 的题排在各本书后面，自己那一段按分组排
+        let books = sorted.filter { $0.documentId != nil }
+        return books + Exercise.looseOrdered(sorted.filter { $0.documentId == nil })
+    }
+
+    /// 现有的习题分组（不关联 PDF 的题的章节路径第一级，§33），按名字排。从题目派生，不单独存——一个分组里没有题了它就不在了。
+    var exerciseGroupNames: [String] {
+        (exerciseSummary.chapters[ExerciseScope.looseId] ?? [:]).keys.compactMap(\.first)
+            .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
     func exercise(id: String) -> Exercise? {
@@ -97,6 +110,10 @@ extension WorkspaceManager {
         case .all: return L("All Exercises")
         case .wrong: return L("Mistakes")
         case .starred: return L("Starred")
+        case .document(ExerciseScope.looseId): return L("Exercises Without a PDF")
+        case .chapter(ExerciseScope.looseId, let path):   // 分组（§33）：分组名；底下的小节 = 分组名 · 小节名
+            guard let g = path.first else { return L("Ungrouped Exercises") }
+            return path.count == 1 ? g : g + " · " + path[path.count - 1]
         case .document(let id): return document(id: id)?.title ?? L("Exercises")
         case .chapter(let id, let path):
             let book = document(id: id)?.title ?? L("Exercises")
@@ -125,8 +142,19 @@ extension WorkspaceManager {
     ///
     /// 页内先后（`seq`）：命中的题保留原来的位置；新题排在这一页已有的题后面，按这一批里给的顺序。
     /// 所以 Agent 把一页分两次导（先前半页、再后半页）顺序也是对的；`draft.seq` 只是这一批里的下标，不直接用。
-    func importExercises(documentId: String, _ drafts: [ExerciseDraft], source: String) throws -> [ExerciseWrite] {
+    ///
+    /// `documentId` nil = 不关联 PDF 的题，写进分组 `group`（§33）：章节 = 分组名 + 这道题自己的小节；没有页码和原题框；
+    /// 认「同一道」只在这个分组里比（别的分组里题号一样的不是同一道）。
+    func importExercises(documentId: String?, group: String = "", _ drafts: [ExerciseDraft], source: String) throws -> [ExerciseWrite] {
         guard let store else { throw NSError(domain: "UniReader", code: 1, userInfo: [NSLocalizedDescriptionKey: "workspace is closed"]) }
+        var drafts = drafts
+        if documentId == nil {
+            for i in drafts.indices {
+                drafts[i].page = nil
+                drafts[i].autoChapter = []
+                drafts[i].payload = drafts[i].payload.detached()
+            }
+        }
         var byPage: [Int?: [LibExercise]] = [:]
         var nextSeq: [Int?: Int] = [:]
         var rows: [LibExercise] = []
@@ -136,7 +164,8 @@ extension WorkspaceManager {
         let now = Date.now
         for d in drafts.sorted(by: { $0.seq < $1.seq }) {
             if byPage[d.page] == nil {
-                let existing = try store.exercises(documentId: documentId, page: d.page)
+                let existing = try documentId.map { try store.exercises(documentId: $0, page: d.page) }
+                    ?? store.looseExercises().filter { ($0.chapter.first ?? "") == group }
                 byPage[d.page] = existing
                 nextSeq[d.page] = (existing.map(\.seq).max() ?? -1) + 1
             }
@@ -144,7 +173,10 @@ extension WorkspaceManager {
             let seq: Int
             if let hit { seq = hit.seq } else { seq = nextSeq[d.page] ?? 0; nextSeq[d.page] = seq + 1 }
             // 章节：Agent 明确给了就用；没给时已有的题沿用原来的（可能是用户手动设的），新题按目录自动定
-            let chapter = d.chapter ?? ((hit?.chapter.isEmpty == false) ? hit!.chapter : d.autoChapter)
+            var chapter = d.chapter ?? ((hit?.chapter.isEmpty == false) ? hit!.chapter : d.autoChapter)
+            if documentId == nil {   // 分组名是章节路径的第一级；Agent 给的是分组里面的小节，已有的题沿用原来的小节
+                chapter = Exercise.loosePath(group: group, sub: d.chapter ?? Array((hit?.chapter ?? []).dropFirst()))
+            }
             let row = LibExercise(id: hit?.id ?? UUID().uuidString, documentId: documentId, page: d.page, seq: seq,
                                   kind: d.kind.rawValue, number: d.number, section: d.section,
                                   payload: d.payload.data(), starred: hit?.starred ?? false, wrong: hit?.wrong ?? false,
@@ -245,6 +277,57 @@ extension WorkspaceManager {
         setExerciseChapter(ids: ids, [])
     }
 
+    // MARK: - 写：不关联 PDF 的题（`EXERCISE-PLAN.md §33`）
+
+    /// 解除几道题与 PDF 的关联：题目、作答、收藏、错题本、笔记、标签都留着，只是不再属于那本书——
+    /// 进一个以书名命名的分组（原来的章节接在分组名后面）；页码、原题框去掉（没有 PDF 就没有原题图）。
+    /// 已经不关联 PDF 的跳过。返回动了几道。
+    @discardableResult
+    func detachExercises(ids: [String]) -> Int {
+        guard let store else { return 0 }
+        var rows: [LibExercise] = []
+        for id in ids {
+            guard let old = exercise(id: id), let doc = old.documentId else { continue }
+            let book = (document(id: doc)?.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            var e = old.detached(group: book.isEmpty ? L("Exercises") : book)
+            e.updatedAt = .now
+            rows.append(e.toRow())
+        }
+        guard !rows.isEmpty else { return 0 }
+        do { try store.upsertExercises(rows) } catch { lastError = "\(error)"; return 0 }
+        exercisesChanged()
+        return rows.count
+    }
+
+    /// 一本书的题全部解除关联（删这本书之前调：删 PDF 不删题）。
+    @discardableResult
+    func detachExercises(documentId: String) -> Int {
+        detachExercises(ids: exercises(in: .document(documentId)).map(\.id))
+    }
+
+    /// 把几道不关联 PDF 的题放进分组 `group`（空 = 拿出分组）：只换章节路径的第一级，里面的小节照旧。
+    /// 关联着 PDF 的题跳过（先解除关联）。分组不存在 = 新建（分组就是个名字）。
+    func setExerciseGroup(ids: [String], _ group: String) {
+        guard let store else { return }
+        let g = group.trimmingCharacters(in: .whitespacesAndNewlines)
+        var byPath: [[String]: [String]] = [:]
+        for id in ids {
+            guard let e = exercise(id: id), e.documentId == nil else { continue }
+            let path = Exercise.loosePath(group: g, sub: Array(e.chapter.dropFirst()))
+            if path != e.chapter { byPath[path, default: []].append(id) }
+        }
+        guard !byPath.isEmpty else { return }
+        do { for (path, list) in byPath { try store.setExerciseChapter(ids: list, path) } } catch { lastError = "\(error)"; return }
+        exercisesChanged()
+    }
+
+    /// 分组改名（侧栏右键）：这个分组里的题章节路径第一级换成新名字。新名字已有 = 并进那个分组。空名字不改。
+    func renameExerciseGroup(_ old: String, to new: String) {
+        let n = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty, n != old else { return }
+        setExerciseGroup(ids: exercises(in: .chapter(ExerciseScope.looseId, [old])).map(\.id), n)
+    }
+
     // MARK: - 写：练习界面
 
     func setExerciseStarred(id: String, _ on: Bool) {
@@ -262,11 +345,14 @@ extension WorkspaceManager {
     /// （边写边存，停一下就存一次，没改的不该一遍遍刷新开着的标签）。
     /// 一篇文档里同一篇文章（按文章 id 认）的题都换成这一份正文 / 标题 / 题型（`EXERCISE-PLAN.md §32`）：
     /// 每道题各带一份，Agent 改了正文、或重导时只带了其中几道，其余的不能还是旧的。内容一样的不写。
-    func syncPassages(documentId: String, _ passages: [ExercisePassage]) throws {
+    /// `documentId` nil = 不关联 PDF 的题，只换分组 `group` 里的（文章按「分组 + 文章 id」认，§33）。
+    func syncPassages(documentId: String?, group: String = "", _ passages: [ExercisePassage]) throws {
         guard let store, !passages.isEmpty else { return }
         let want = Dictionary(passages.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         var rows: [LibExercise] = []
-        for var e in exercises(in: .document(documentId)) {
+        let pool = documentId.map { exercises(in: .document($0)) }
+            ?? exercises(in: .chapter(ExerciseScope.looseId, group.isEmpty ? [] : [group]))
+        for var e in pool {
             guard let old = e.payload.passage, let p = want[old.id], p != old else { continue }
             e.payload.passage = p
             if p.kind != .cloze { e.payload.blank = nil }

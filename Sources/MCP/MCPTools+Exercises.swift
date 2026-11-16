@@ -13,7 +13,8 @@ extension MCPTools {
     static var exerciseOutputProperties: [String: MCPObject] {
         [
             "id": MCPSchema.string("exercise id"),
-            "document_id": MCPSchema.string("source document"),
+            "document_id": MCPSchema.string("source document (absent for a question that is not tied to a PDF)"),
+            "group": MCPSchema.string("questions not tied to a PDF only: the group they are in (\"\" = none); chapter is then the path inside the group"),
             "page": MCPSchema.integer("source page, 1-based"),
             "last_page": MCPSchema.integer("for a question that runs onto the following pages: the last page it is printed on, 1-based"),
             "link": MCPSchema.string("unireader:// link to the source page in the PDF"),
@@ -73,7 +74,8 @@ extension MCPTools {
             "scope": MCPSchema.object([
                 "list": MCPSchema.enumeration(["all", "mistakes", "starred"], "all questions, the mistakes (错题本) or the starred ones (收藏)"),
                 "document_id": MCPSchema.string("only this book"),
-                "chapter": MCPSchema.array(of: MCPSchema.string("level"), "only this chapter and its sub-sections"),
+                "group": MCPSchema.string("only this group of questions not tied to a PDF (\"\" = the ones in no group)"),
+                "chapter": MCPSchema.array(of: MCPSchema.string("level"), "only this chapter and its sub-sections (inside the book or the group)"),
             ]),
             "view": MCPSchema.enumeration(["practice", "list"], "one question at a time, or the list of them"),
             "filter": MCPSchema.enumeration(["all", "not_done", "last_wrong"], "all questions, only the ones not done yet, or only the ones wrong last time (a redo round)"),
@@ -226,7 +228,7 @@ extension MCPTools {
             "accept": MCPSchema.array(of: MCPSchema.string("form"), "Other forms that also count as right, e.g. [\"0.5\"] for $\\frac{1}{2}$ (optional)"),
         ])
         let item = MCPSchema.object([
-            "page": MCPSchema.integer("Page the question is printed on, 1-based", min: 1),
+            "page": MCPSchema.integer("Page the question is printed on, 1-based. Required when importing from a PDF; leave it out with group.", min: 1),
             "number": MCPSchema.string("Question number exactly as printed (\"5\", \"例 3\"). Strongly recommended: re-importing the same number on the same page updates the question instead of adding a copy."),
             "section": MCPSchema.string("Chapter, exercise set or test name the question belongs to, as printed (optional)."),
             "type": MCPSchema.enumeration(["single", "multiple", "fill", "subjective"], "single / multiple choice; fill = fill in the blank (give blanks); subjective = calculation, proof, short answer or essay (free answer, the user marks it right or wrong against the reference answer). Omit for choice questions to infer from the answer (one letter = single)."),
@@ -245,7 +247,7 @@ extension MCPTools {
             "tags": MCPSchema.array(of: MCPSchema.string("tag"), "Free-form tags for the question, e.g. [\"真题\", \"2023\"] — only when the user asks for tagging or the page itself says so (a section headed 历年真题). Added to the tags the question already has; never removes any."),
             "passage": MCPSchema.string("Reading comprehension / cloze: the id of the passage (in passages) this question belongs to. Its page is where the question itself is printed."),
             "blank": MCPSchema.string("Cloze only: which blank of the passage this question fills, as written in the passage ({{21}} → \"21\"). Defaults to number. A cloze question has options but may have an empty stem."),
-        ], required: ["page"])
+        ])
         return MCPTool(
             name: "import_exercises",
             title: "Import exercises",
@@ -259,15 +261,20 @@ extension MCPTools {
             question again (same page + section + number, or the same text when there is no number) updates it and keeps \
             the user's stars, mistakes and practice history. \
             The first time you import into a book (list_exercises shows it has no questions yet), ask the user whether \
-            to group its questions into chapters and pass the answer as chapters.
+            to group its questions into chapters and pass the answer as chapters. \
+            Questions that do not come from a PDF — ones you wrote, found elsewhere, or the user pasted — go into a named \
+            group instead: pass group (and no document_id); they have no page and no original image.
             """,
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "exercises": MCPSchema.array(of: item, "Questions to save (1–\(maxImportExercises))"),
+                "group": MCPSchema.string("Save the questions without a PDF, into the group with this name (shown in the sidebar next to the books; created if it does not exist — reuse the exact name of an existing group from list_exercises' groups to add to it). document_id is then not used; page, region, next_regions and has_figure are ignored (there is no page to show), chapter is a path inside the group, and chapters is not used. Importing the same question again (same group + section + number, or the same text) updates it. Ask the user for the group name when they did not say."),
                 "passages": MCPSchema.array(of: passageInputSchema("A passage"), "Reading comprehension and cloze: the passages the questions in this call point to (each question gives passage = an id here). Send a passage again with every call that imports questions of it; re-sending one replaces its text in all its questions."),
                 "chapters": MCPSchema.enumeration(["toc", "none"], "How the questions that carry no chapter of their own are grouped in the sidebar. The first time you import into a book (it has no questions yet), ask the user how to group them: \"toc\" = by the PDF's table of contents (UniReader looks up each page); their own way = give each question a chapter and pass \"none\"; not at all = \"none\" (the book stays one flat list). Omit it on later imports of a book grouped by the table of contents or not grouped: the book keeps the way it is (a book the user took the chapters off stays flat). A question's own chapter always wins."),
             ]) { a, _ in a }, required: ["exercises"]),
             outputSchema: MCPSchema.object([
-                "document_id": MCPSchema.string("document"), "title": MCPSchema.string("document title"),
+                "document_id": MCPSchema.string("document (absent when saved into a group)"),
+                "group": MCPSchema.string("the group the questions were saved into (only with group)"),
+                "title": MCPSchema.string("document title, or the group name"),
                 "created": MCPSchema.integer("new questions"), "updated": MCPSchema.integer("questions that already existed and were updated"),
                 "rejected": MCPSchema.integer("questions not saved"),
                 "results": MCPSchema.array(of: MCPSchema.object([
@@ -300,19 +307,32 @@ extension MCPTools {
                     passages[key] = r
                 }
             }
-            let t = try await MainActor.run { try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath) }
+            // 分组：给了 = 不关联 PDF 的题（`EXERCISE-PLAN.md §33`），没有文档、没有页码
+            let group = try args.string("group")?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let group {
+                guard !group.isEmpty else { throw MCPInvalidParams("group cannot be empty; give the group a name, or leave it out to import into a PDF") }
+                guard group.count <= ExerciseImport.maxGroupName else { throw MCPInvalidParams("group name is too long (at most \(ExerciseImport.maxGroupName) characters)") }
+                guard docId?.isEmpty != false else { throw MCPInvalidParams("pass document_id or group, not both") }
+            }
+            var target: MCPFacade.WriteTarget?
+            if group == nil {
+                target = try await MainActor.run { try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath) }
+            }
+            let t = target
             var items: [Result<ExerciseDraft, ExerciseImport.Rejected>] = []
             for (i, raw) in list.enumerated() {
                 let path = "exercises[\(i)]"
                 guard let d = raw as? [String: Any] else { throw MCPInvalidParams("\(path) must be an object") }
-                let page: Int
-                do {
-                    guard let p = try MCPArgs(d).int("page") else {
-                        items.append(.failure("page is required")); continue
+                var page: Int?
+                if let t {
+                    do {
+                        guard let p = try MCPArgs(d).int("page") else {
+                            items.append(.failure("page is required")); continue
+                        }
+                        page = try PageNo.index(p, pageCount: t.pageCount)
+                    } catch let e as MCPToolError {
+                        items.append(.failure(ExerciseImport.Rejected(stringLiteral: e.message))); continue
                     }
-                    page = try PageNo.index(p, pageCount: t.pageCount)
-                } catch let e as MCPToolError {
-                    items.append(.failure(ExerciseImport.Rejected(stringLiteral: e.message))); continue
                 }
                 var passage: ExercisePassage?
                 if let pid = try stringField(d, "passage", at: path)?.trimmingCharacters(in: .whitespacesAndNewlines), !pid.isEmpty {
@@ -340,9 +360,14 @@ extension MCPTools {
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path))
                 input.passage = passage
                 input.blank = try stringField(d, "blank", at: path)
+                if t == nil {   // 不关联 PDF：没有页面可看，框和「带图」都不收（不然没有页码的框过不了校验）
+                    input.region = nil
+                    input.nextRegions = nil
+                    input.figure = false
+                }
                 var r = ExerciseImport.validate(input, seq: i)
                 // 跨页的题后面几页不能越过最后一页（`validate` 不知道页数）
-                if case .success(let d) = r,
+                if case .success(let d) = r, let t, let page,
                    ExerciseRegion.runsPastEnd(page: page, next: d.payload.nextRegions, pageCount: t.pageCount) {
                     r = .failure(ExerciseImport.Rejected(stringLiteral: "next_regions runs past the last page (the document has \(t.pageCount) pages)"))
                 }
@@ -351,7 +376,7 @@ extension MCPTools {
             // 章节没给的按页码从 PDF 自带目录里查（`EXERCISE-PLAN.md §2.3`）；文件不在 / 没目录 → 空。
             // 不分章节的书（用户移除过分级 / 第一次导入时选了不分）保持不分，除非这次明说 `chapters: "toc"`（§14）。
             var keptFlat = false
-            if mode != .flat, let path = t.path,
+            if mode != .flat, let t, let path = t.path,
                items.contains(where: { if case .success(let d) = $0 { d.chapter == nil } else { false } }) {
                 let toc = (try? await MCPDocReader.shared.withDocument(path: path) { ExerciseChapterNode.toc(of: $0) }) ?? []
                 if !toc.isEmpty {
@@ -373,9 +398,11 @@ extension MCPTools {
             let checked = items
             let sent = passages.values.compactMap { if case .success(let p) = $0 { p } else { nil } }
             let r = try await MainActor.run {
-                try MCPFacade.shared.importExercises(t, items: checked, client: client, passages: sent)
+                if let t { return try MCPFacade.shared.importExercises(t, items: checked, client: client, passages: sent) }
+                return try MCPFacade.shared.importExercises(group: group ?? "", workspacePath: wsPath, items: checked,
+                                                            client: client, passages: sent)
             }
-            var lines = ["Saved exercises into “\(r["title"] ?? "")”: \(r["created"] ?? 0) new, \(r["updated"] ?? 0) updated, \(r["rejected"] ?? 0) rejected."]
+            var lines = ["Saved exercises into \(group != nil ? "the group " : "")“\(r["title"] ?? "")”: \(r["created"] ?? 0) new, \(r["updated"] ?? 0) updated, \(r["rejected"] ?? 0) rejected."]
             for o in (r["results"] as? [MCPObject]) ?? [] where o["status"] as? String == "rejected" {
                 lines.append("- #\(o["index"] ?? "") rejected: \(o["reason"] ?? "")")
             }
@@ -390,10 +417,11 @@ extension MCPTools {
         MCPTool(
             name: "list_exercises",
             title: "List exercises",
-            description: "List the exercises saved in UniReader for a document (or the whole workspace with all_documents), in practice order, with ids, question numbers, answers and the user's practice stats. Use it before update_exercises to match questions by number, e.g. when filling in answers from an answer key. With exercise_ids it returns just those questions (e.g. one the user referenced in the chat).",
+            description: "List the exercises saved in UniReader for a document (or the whole workspace with all_documents, or one group of questions not tied to a PDF with group), in practice order, with ids, question numbers, answers and the user's practice stats. Use it before update_exercises to match questions by number, e.g. when filling in answers from an answer key. With exercise_ids it returns just those questions (e.g. one the user referenced in the chat). groups in the result names the groups that exist.",
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "exercise_ids": MCPSchema.array(of: MCPSchema.string("exercise id (full, or its first 8 characters)"), "Only these exercises, in this order; document_id, all_documents, pages, filter, chapter and tag are ignored"),
-                "all_documents": MCPSchema.boolean("List every document in the workspace instead of one", default: false),
+                "all_documents": MCPSchema.boolean("List every document in the workspace instead of one (questions not tied to a PDF included)", default: false),
+                "group": MCPSchema.string("Only the questions not tied to a PDF that are in this group (a name from groups); \"\" = the ones in no group. document_id, all_documents and pages are then not used; chapter is a path inside the group."),
                 "pages": MCPSchema.pageSpec,
                 "filter": MCPSchema.enumeration(["all", "mistakes", "starred"], "Only the user's mistakes or starred ones", default: "all"),
                 "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Only this chapter and its sub-sections (path, top level first); [] = only questions with no chapter"),
@@ -404,11 +432,14 @@ extension MCPTools {
             outputSchema: MCPSchema.object([
                 "workspace": MCPSchema.string("workspace name"),
                 "document_id": MCPSchema.string("document (single-document listing)"),
-                "title": MCPSchema.string("document title (single-document listing)"),
+                "title": MCPSchema.string("document title (single-document listing), or the group's name"),
+                "group": MCPSchema.string("the group listed (only with group)"),
+                "groups": MCPSchema.array(of: MCPSchema.string("group name"), "every group of questions not tied to a PDF in this workspace"),
                 "total": MCPSchema.integer("matching exercises in all"), "offset": MCPSchema.integer("offset used"),
                 "exercises": MCPSchema.array(of: exerciseOutputSchema),
                 "passages": MCPSchema.array(of: MCPSchema.object([
                     "document_id": MCPSchema.string("document"),
+                    "group": MCPSchema.string("the group, for a passage of questions not tied to a PDF"),
                     "id": MCPSchema.string("passage id"),
                     "type": MCPSchema.enumeration(["reading", "cloze"], "reading comprehension or cloze"),
                     "title": MCPSchema.string("passage title (may be absent)"),
@@ -427,10 +458,11 @@ extension MCPTools {
             let chapter = try chapterArg(args.raw["chapter"], at: "arguments")
             let tag = try args.string("tag")
             let ids = try stringsArg(args.raw["exercise_ids"], "exercise_ids", at: "arguments")
+            let group = try args.string("group")
             let r = try await MainActor.run {
                 try MCPFacade.shared.listExercises(documentId: docId, workspacePath: wsPath, allDocuments: all,
                                                    pages: pages, filter: filter, chapter: chapter, tag: tag,
-                                                   exerciseIds: ids, offset: offset, limit: limit)
+                                                   exerciseIds: ids, group: group, offset: offset, limit: limit)
             }
             let list = (r["exercises"] as? [MCPObject]) ?? []
             var lines = ["\(r["total"] ?? 0) exercise(s)\(r["title"].map { " in “\($0)”" } ?? ""); showing \(list.count) from \(offset)."]
@@ -470,7 +502,8 @@ extension MCPTools {
             "next_regions": MCPSchema.array(of: MCPSchema.array(of: MCPSchema.number("0…1")), "For a question that runs onto the next page(s): one [x, y, w, h] box per following page, in page order (at most \(ExerciseRegion.maxNextPages)); needs region (the part on the question's own page). Replaces the earlier ones; [] = the question is on one page. Removing region ([]) removes these too."),
             "skip_pages": MCPSchema.array(of: MCPSchema.integer("offset from page", min: 0), "Pages to leave out of Original, as offsets from page: 0 = the question's own page, 1 = the first page in next_regions, and so on — e.g. the question is recorded on page 12 but what the user wants to see is only on page 13: next_regions [[…]] and skip_pages [0]. Cannot leave out every page. Replaces the earlier ones; [] = show every page. Changing next_regions keeps only the entries still in range; removing region removes these too."),
             "has_figure": MCPSchema.boolean("The question depends on a figure or table"),
-            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels (e.g. to regroup questions the way the user asks); [] clears it"),
+            "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Chapter path, top level first, any number of levels (e.g. to regroup questions the way the user asks); [] clears it. For a question not tied to a PDF it is the path inside its group."),
+            "group": MCPSchema.string("Group of questions not tied to a PDF. On such a question: moves it to this group (created if new); \"\" takes it out of its group. On a question that belongs to a PDF: unlinks it from the PDF and puts it in this group — its page, region and original image are dropped and this cannot be undone, so do it only when the user asks."),
             "user_answer": MCPSchema.string("What the user wrote in the document: option letters (\"B\") for choice, transcribed text for subjective; replaces the earlier one; empty string removes it"),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "Fill questions: what the user wrote in the document, one string per blank; replaces the earlier one; all empty removes it"),
             "note": MCPSchema.string("The user's own note on this question, shown under the explanation once they have answered it. Replaces the whole note; empty string removes it. Write it only when the user asks you to. \(mathWriting)"),
@@ -516,7 +549,8 @@ extension MCPTools {
                     nextRegions: try nextRegionsArg(d["next_regions"], at: path),
                     skipPages: try skipPagesArg(d["skip_pages"], at: path),
                     passage: try updatePassageArg(d["passage"], at: "\(path).passage"),
-                    blank: try stringField(d, "blank", at: path))
+                    blank: try stringField(d, "blank", at: path),
+                    group: try stringField(d, "group", at: path))
             }
             let wsPath = try args.string("workspace")
             let r = try await MainActor.run { try MCPFacade.shared.updateExercises(patches, workspacePath: wsPath) }
@@ -640,7 +674,8 @@ extension MCPTools {
                 "workspace": MCPSchema.string("Workspace .unrd path, only when it could be ambiguous."),
                 "exercise_id": MCPSchema.string("Stop on this question (full id or its first 8 characters); it must be in the group you open."),
                 "document_id": MCPSchema.string("Only this book. Default: the book of exercise_id (for list all); none for mistakes / starred = every book."),
-                "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Only this chapter and its sub-sections (path, top level first, as in list_exercises); needs a book."),
+                "group": MCPSchema.string("Only this group of questions not tied to a PDF (a name from list_exercises' groups; \"\" = the ones in no group) instead of a book. Default: the group of exercise_id when that question is not tied to a PDF."),
+                "chapter": MCPSchema.array(of: MCPSchema.string("level"), "Only this chapter and its sub-sections (path, top level first, as in list_exercises); needs a book or a group."),
                 "list": MCPSchema.enumeration(["all", "mistakes", "starred"], "All questions, the mistakes or the starred ones", default: "all"),
                 "filter": MCPSchema.enumeration(["all", "not_done", "last_wrong"], "Only the questions not done yet, or a redo round of the ones wrong last time (not_done is not offered for mistakes). Omit to keep the tab's current filter."),
                 "tag": MCPSchema.string("Only questions with this tag; \"\" = no tag filter. Omit to keep the tab's current one."),
@@ -658,6 +693,7 @@ extension MCPTools {
             let list = try args.string("list") ?? "all"
             guard ["all", "mistakes", "starred"].contains(list) else { throw MCPInvalidParams("list must be all, mistakes or starred") }
             let filter = try args.string("filter"), tag = try args.string("tag")
+            let group = try args.string("group")
             let view = try args.string("view")
             if let view, !["practice", "list"].contains(view) { throw MCPInvalidParams("view must be practice or list") }
             let activate = try args.bool("activate", default: true)
@@ -666,7 +702,7 @@ extension MCPTools {
             }
             let r = try await MainActor.run {
                 try MCPFacade.shared.openExercises(exerciseId: id, documentId: docId, chapter: chapter, list: list, view: view,
-                                                   filter: filter, tag: tag, workspacePath: wsPath, activate: activate)
+                                                   filter: filter, tag: tag, group: group, workspacePath: wsPath, activate: activate)
             }
             return MCPToolResult(text: "Opened " + exerciseTabSummary(r), structured: r)
         }

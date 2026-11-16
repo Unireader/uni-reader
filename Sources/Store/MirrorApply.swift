@@ -141,6 +141,15 @@ enum MirrorApply {
         let liveExercises = livingExercises(db, changes: changes, liveDocs: live)
         let order = MirrorFp.specs.map(\.table)
 
+        // ⓪ 要删的文档先把它的习题摘下来（v28，`EXERCISE-PLAN.md §33`）：删文档不删题，题目变成不关联 PDF 的题。
+        //    不摘的话 ① 一删文档，题和作答跟着外键级联删掉——题这一批里会再插回来，作答不在这一批里、就此丢了，
+        //    下一轮还会被当成「这边删了」推给别的设备。页码留着不动（没有文档时各处都不用它），
+        //    这一行别的内容由这一批里那道题自己的 upsert 写（没有的话下一轮按 `updated_at` 收敛）。
+        if !columns(db, "exercise").isEmpty {
+            for c in changes where c.table == "document" && c.op == .delete {
+                try db.run("UPDATE exercise SET document_id=NULL WHERE document_id=?", [.text(c.rowId)])
+            }
+        }
         // ① 先删，后插。反过来会撞 `variant.content_hash` 的 UNIQUE：
         //    「删掉旧版本、换一份同内容的进来」在同一批里就是先插会重、先删才对。
         for table in order.reversed() {

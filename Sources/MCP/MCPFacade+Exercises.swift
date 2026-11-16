@@ -42,6 +42,9 @@ extension MCPFacade {
         var passage: ExercisePassage?? = nil
         /// 完形填空：填哪一空。
         var blank: String? = nil
+        /// 分组（`EXERCISE-PLAN.md §33`）。不关联 PDF 的题 = 挪到这个分组（"" = 拿出分组）；
+        /// 关联着 PDF 的题 = 解除关联、放进这个分组（不能是空串）。nil = 不动。
+        var group: String? = nil
     }
 
     /// `grade_exercise_attempts` 的一条。
@@ -56,12 +59,31 @@ extension MCPFacade {
     /// 一批题写进一篇文档。`items[i]` 是第 i 道题：已校验好的 draft（页码已换成 0 起），或退回的原因。
     func importExercises(_ t: WriteTarget, items: [Result<ExerciseDraft, ExerciseImport.Rejected>],
                          client: String, passages: [ExercisePassage] = []) throws -> MCPObject {
+        var o = try importExercises(ws: t.ws, documentId: t.id, group: "", items: items, client: client, passages: passages)
+        o["document_id"] = t.id
+        o["title"] = t.title
+        return o
+    }
+
+    /// 一批不关联 PDF 的题写进分组 `group`（`EXERCISE-PLAN.md §33`）。
+    func importExercises(group: String, workspacePath: String?, items: [Result<ExerciseDraft, ExerciseImport.Rejected>],
+                         client: String, passages: [ExercisePassage] = []) throws -> MCPObject {
+        let ws = try manager(workspacePath: workspacePath)
+        var o = try importExercises(ws: ws, documentId: nil, group: group, items: items, client: client, passages: passages)
+        o["group"] = group
+        o["title"] = group
+        return o
+    }
+
+    private func importExercises(ws: WorkspaceManager, documentId: String?, group: String,
+                                 items: [Result<ExerciseDraft, ExerciseImport.Rejected>],
+                                 client: String, passages: [ExercisePassage]) throws -> MCPObject {
         var drafts: [ExerciseDraft] = []
         var owner: [Int] = []          // drafts[k] 来自第几道输入
         for (i, r) in items.enumerated() { if case .success(let d) = r { drafts.append(d); owner.append(i) } }
-        let writes = drafts.isEmpty ? [] : try t.ws.importExercises(documentId: t.id, drafts, source: client)
-        // 再发一次的文章 = 换正文：这篇文档里同一篇文章的其它题跟着换（这一批没带上的那几道）
-        if !passages.isEmpty { try t.ws.syncPassages(documentId: t.id, passages) }
+        let writes = drafts.isEmpty ? [] : try ws.importExercises(documentId: documentId, group: group, drafts, source: client)
+        // 再发一次的文章 = 换正文：这篇文档（这个分组）里同一篇文章的其它题跟着换（这一批没带上的那几道）
+        if !passages.isEmpty { try ws.syncPassages(documentId: documentId, group: group, passages) }
         var results: [MCPObject] = items.enumerated().map { i, r in
             var o: MCPObject = ["index": i]
             if case .failure(let why) = r { o["status"] = "rejected"; o["reason"] = why.reason }
@@ -74,17 +96,17 @@ extension MCPFacade {
             if !d.number.isEmpty { results[owner[k]]["number"] = d.number }
             if let p = d.page { results[owner[k]]["page"] = PageNo.external(p) }
         }
-        return ["document_id": t.id, "title": t.title,
-                "created": writes.filter(\.created).count, "updated": writes.filter { !$0.created }.count,
+        return ["created": writes.filter(\.created).count, "updated": writes.filter { !$0.created }.count,
                 "rejected": items.count - drafts.count, "results": results]
     }
 
     // MARK: - 列出
 
     /// 列出习题。`allDocuments` = 整个工作区（此时 `documentId` 只用来找工作区）。`pages` 只在单篇时有意义。
+    /// `group` 给了 = 只列这个分组里不关联 PDF 的题（"" = 没分组的那些；`chapter` 是分组里面的小节，§33）。
     func listExercises(documentId: String?, workspacePath: String?, allDocuments: Bool, pages: String?,
                        filter: String, chapter: [String]? = nil, tag: String? = nil, exerciseIds: [String]? = nil,
-                       offset: Int, limit: Int) throws -> MCPObject {
+                       group: String? = nil, offset: Int, limit: Int) throws -> MCPObject {
         // 按 id 取那几道（Agent 面板里引用了某一道题，`ACP-AGENT-PLAN.md §15`）：别的筛选一概不看
         if let ids = exerciseIds, !ids.isEmpty {
             let (w, found) = try resolveExercises(ids, workspacePath: workspacePath)
@@ -97,7 +119,15 @@ extension MCPFacade {
         let ws: WorkspaceManager
         var scope: ExerciseScope
         var title = ""
-        if allDocuments {
+        var chapter = chapter
+        if let group {
+            ws = try manager(workspacePath: workspacePath)
+            let g = group.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 分组名是章节路径的第一级；`chapter` 接在后面。没分组的那些（""）没有小节可言
+            scope = .chapter(ExerciseScope.looseId, g.isEmpty ? [] : [g] + ExerciseChapter.clean(chapter ?? []))
+            chapter = nil
+            title = ws.exerciseScopeTitle(scope)
+        } else if allDocuments {
             ws = try manager(workspacePath: workspacePath)
             scope = .all
         } else {
@@ -131,6 +161,8 @@ extension MCPFacade {
                             "exercises": slice.map { exerciseDTO(ws, $0, stats: stats[$0.id]) },
                             "passages": Self.passagesDTO(Array(slice))]
         if case .document(let id) = scope { o["document_id"] = id; o["title"] = title }
+        if let group { o["group"] = group.trimmingCharacters(in: .whitespacesAndNewlines); o["title"] = title }
+        o["groups"] = ws.exerciseGroupNames
         return o
     }
 
@@ -144,8 +176,9 @@ extension MCPFacade {
             "has_figure": e.payload.figure,
             "starred": e.starred, "in_mistakes": e.wrong,
             "attempts": stats?.attempts ?? 0, "correct": stats?.correct ?? 0, "ungraded": stats?.ungraded ?? 0,
-            "chapter": e.chapter,
+            "chapter": e.chapterInGroup,
         ]
+        if e.documentId == nil { o["group"] = e.group ?? "" }   // 不关联 PDF 的题（§33）：分组名另给，`chapter` 是分组里面的小节
         if e.kind == .fill {
             o["blanks"] = ExerciseImport.blankInputs(of: e).map { ["answer": $0.answer ?? "", "accept": $0.accept] as MCPObject }
         }
@@ -187,7 +220,7 @@ extension MCPFacade {
         for e in list {
             guard let p = e.payload.passage, let key = e.passageKey, seen.insert(key).inserted else { continue }
             var o: MCPObject = ["id": p.id, "type": p.kind.rawValue, "text": p.text]
-            if let d = e.documentId { o["document_id"] = d }
+            if let d = e.documentId { o["document_id"] = d } else { o["group"] = e.group ?? "" }
             if let t = p.title { o["title"] = t }
             out.append(o)
         }
@@ -261,6 +294,11 @@ extension MCPFacade {
         case .starred, .starredDocument, .starredChapter: o["list"] = "starred"
         }
         if let d = scope.documentId { o["document_id"] = d }
+        if let p = scope.loosePath {   // 不关联 PDF 的那一支（§33）：分组名 + 分组里面的小节
+            o["group"] = p.first ?? ""
+            if p.count > 1 { o["chapter"] = Array(p.dropFirst()) }
+            return o
+        }
         switch scope {
         case .chapter(_, let p), .wrongChapter(_, let p), .starredChapter(_, let p): o["chapter"] = p
         default: break
@@ -270,8 +308,10 @@ extension MCPFacade {
 
     /// `open_exercises`：哪一组（书 / 章 / 错题本 / 收藏，`list` + `documentId` + `chapter`）、停在哪一道、练习还是列表、筛选。
     /// 只给 `exerciseId` = 那道题所在的那本书。给的题不在那一组里 → 报错，不悄悄换一组。
+    /// `group` 给了 = 不关联 PDF 的题的那个分组（"" = 没分组的那些；`chapter` 是分组里面的小节，§33）。
     func openExercises(exerciseId: String?, documentId: String?, chapter: [String]?, list: String,
-                       view: String?, filter: String?, tag: String?, workspacePath: String?, activate: Bool) throws -> MCPObject {
+                       view: String?, filter: String?, tag: String?, group: String? = nil,
+                       workspacePath: String?, activate: Bool) throws -> MCPObject {
         var ws: WorkspaceManager
         var target: Exercise?
         if let id = exerciseId, !id.isEmpty {
@@ -285,12 +325,22 @@ extension MCPFacade {
         }
         // 书：给了用给的；没给时，按书分的组（全部 / 某一章）跟着那道题走，错题本 / 收藏整本不限
         var doc = documentId.flatMap { $0.isEmpty ? nil : $0 }
+        // 分组：给了用给的；没给时，只给了一道不关联 PDF 的题 → 它那个分组（同书：全部 / 某一节跟着那道题走）
+        var loose: [String]?
+        if let group {
+            guard doc == nil else { throw MCPInvalidParams("pass document_id or group, not both") }
+            let g = group.trimmingCharacters(in: .whitespacesAndNewlines)
+            loose = g.isEmpty ? [] : [g] + ExerciseChapter.clean(chapter ?? [])
+        } else if doc == nil, let e = target, e.documentId == nil, list == "all" || chapter != nil {
+            loose = (e.group.map { [$0] } ?? []) + (e.group == nil ? [] : ExerciseChapter.clean(chapter ?? []))
+        }
+        if loose != nil { doc = ExerciseScope.looseId }
         if doc == nil, list == "all" || chapter != nil { doc = target?.documentId }
-        if let d = doc, ws.document(id: d) == nil {
+        if let d = doc, loose == nil, ws.document(id: d) == nil {
             throw MCPToolError("document '\(d)' is not in workspace \(ws.name); call list_documents")
         }
-        if chapter != nil, doc == nil { throw MCPInvalidParams("chapter needs document_id (or exercise_id of a question in that book)") }
-        let path = chapter.map(ExerciseChapter.clean)
+        if chapter != nil, doc == nil { throw MCPInvalidParams("chapter needs document_id or group (or exercise_id of a question in that book / group)") }
+        let path = loose ?? chapter.map(ExerciseChapter.clean)
         let scope: ExerciseScope
         switch (list, doc, path) {
         case ("mistakes", nil, _): scope = .wrong
@@ -442,6 +492,21 @@ extension MCPFacade {
                 var n = e
                 n.kind = d.kind; n.number = d.number; n.section = d.section; n.payload = d.payload
                 n.chapter = d.chapter ?? e.chapter
+                // 分组（§33）：对外 `chapter` 是分组里面的小节，分组名另给；库里分组名是章节路径的第一级
+                let sub = p.chapter.map(ExerciseChapter.clean)
+                let g = p.group?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if e.documentId == nil {
+                    let name = g ?? e.group ?? ""
+                    n.chapter = Exercise.loosePath(group: name, sub: sub ?? e.chapterInGroup)
+                } else if let g {
+                    // 关联着 PDF 的题给了分组 = 解除关联：页码、原题框去掉，原来的章节接在分组名后面
+                    guard !g.isEmpty else {
+                        throw MCPInvalidParams("exercise \(e.id.prefix(8)): group cannot be empty for a question that belongs to a PDF; nothing was changed")
+                    }
+                    var moved = n
+                    moved.chapter = sub ?? e.chapter
+                    n = moved.detached(group: g)
+                }
                 if let v = p.note { n.note = v.trimmingCharacters(in: .whitespacesAndNewlines) }
                 if let v = p.starred { n.starred = v }
                 if let v = p.tags { n.tags = ExerciseTag.clean(v) }
@@ -452,9 +517,14 @@ extension MCPFacade {
         // 改了文章正文 / 标题：同一篇文档里同一篇文章的题跟着改
         var changedPassages: [String: [ExercisePassage]] = [:]
         for (p, (e, _)) in zip(patches, next) {
-            if case .some(.some(let ps)) = p.passage, let doc = e.documentId { changedPassages[doc, default: []].append(ps) }
+            guard case .some(.some(let ps)) = p.passage else { continue }
+            // 不关联 PDF 的题按分组认文章（键前面加一个文档 id 里不会有的字符，和文档 id 分开）
+            changedPassages[e.documentId ?? "\u{1}" + (e.group ?? ""), default: []].append(ps)
         }
-        for (doc, list) in changedPassages { try ws.syncPassages(documentId: doc, list) }
+        for (key, list) in changedPassages {
+            if key.hasPrefix("\u{1}") { try ws.syncPassages(documentId: nil, group: String(key.dropFirst()), list) }
+            else { try ws.syncPassages(documentId: key, list) }
+        }
         let stats = ws.exerciseAttemptStats()
         return ["count": next.count, "exercises": next.map { exerciseDTO(ws, $0.exercise, stats: stats[$0.exercise.id]) }]
     }

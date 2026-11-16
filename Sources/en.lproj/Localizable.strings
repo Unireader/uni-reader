@@ -1523,3 +1523,15 @@
 "Cloze" = "Cloze";
 "Remove Highlight" = "Remove Highlight";
 "Reading" = "Reading";
+
+/* 习题：不关联 PDF 的题与分组（EXERCISE-PLAN.md §33） */
+"Exercises Without a PDF" = "Exercises Without a PDF";
+"Ungrouped Exercises" = "Ungrouped Exercises";
+"Rename Group" = "Rename Group";
+"Remove from Group" = "Remove from Group";
+"Unlink from PDF…" = "Unlink from PDF…";
+"Unlink" = "Unlink";
+"Unlink this exercise from its PDF?" = "Unlink this exercise from its PDF?";
+"Unlink %d exercises from their PDF?" = "Unlink %d exercises from their PDF?";
+"The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone." = "The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone.";
+"The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF." = "The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF.";

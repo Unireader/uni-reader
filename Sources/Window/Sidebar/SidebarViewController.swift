@@ -798,6 +798,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 })
                 // 「全部」底下的一本书：移除 / 恢复章节分级（§14）。错题本、收藏底下的那几行只是筛出来的视图，不放
                 if case .document(let docId) = scope { buildExerciseBookMenu(menu, documentId: docId, hasChapters: !n.children.isEmpty) }
+                // 不关联 PDF 的题的一个分组（§33）：改名。错题本、收藏底下的那几行只是筛出来的视图，不放
+                if case .chapter(ExerciseScope.looseId, let path) = scope, path.count == 1 {
+                    menu.addItem(.separator())
+                    menu.addItem(item(L("Rename Group…"), "pencil") { [weak self] in self?.promptExerciseGroup(rename: path[0]) })
+                }
             }
             // 清除这一组的做题记录（§31）：哪一级都有（全部 / 错题本 / 收藏 / 书 / 章），这一组一道都没做过就不放
             let ids = workspace.exercises(in: scope).map(\.id)
@@ -914,6 +919,20 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             m.addItem(item(L("Group by Table of Contents"), "list.bullet.indent") { [weak self] in
                 self?.groupExercisesByTOC(documentId)
             })
+        }
+    }
+
+    /// 习题分组改名（`EXERCISE-PLAN.md §33`）：分组就是这些题章节路径的第一级，改名 = 这一组题都换成新名字；
+    /// 新名字已经有了 = 并进那个分组。各窗口里开着这个分组的习题标签跟着换。
+    private func promptExerciseGroup(rename old: String) {
+        textPrompt(title: L("Rename Group"), placeholder: L("Group Name"), initial: old) { [weak self] raw in
+            guard let self else { return }
+            let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name != old else { return }
+            self.workspace.renameExerciseGroup(old, to: name)
+            for c in AppDelegate.shared?.readerWindowControllers ?? [] where c.workspace === self.workspace {
+                c.tabs.exerciseGroupRenamed(from: old, to: name)
+            }
         }
     }
 
@@ -1303,6 +1322,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             : String(format: L("Delete %d documents?"), ids.count)
         var lines = ids.compactMap { workspace.deletionSummary(documentId: $0) }.filter { !$0.isEmpty }
         lines.append(L("They go to Recently Deleted and can be put back from File ▸ Recently Deleted."))
+        // 删 PDF 不删题（`EXERCISE-PLAN.md §33`）：有题的话说清楚题会留下、去哪了
+        let kept = ids.reduce(0) { $0 + (workspace.exerciseSummary.byDocument[$1] ?? 0) }
+        if kept > 0 {
+            lines.append(String(format: L("The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF."), kept))
+        }
         a.informativeText = lines.joined(separator: "\n")
         let del = a.addButton(withTitle: L("Delete"))
         del.hasDestructiveAction = true

@@ -261,6 +261,26 @@ final class TabsModel: ObservableObject {
         if changed { persist() }
     }
 
+    /// 习题分组刚改了名（`EXERCISE-PLAN.md §33`）：开着这个分组（或它底下某一节）的习题标签跟着换成新名字，
+    /// 不然留着一个空的旧分组。单独开的标签仍是单独的。
+    func exerciseGroupRenamed(from old: String, to new: String) {
+        let loose = ExerciseScope.looseId
+        func moved(_ p: [String]) -> [String]? { p.first == old ? [new] + p.dropFirst() : nil }
+        var changed = false
+        for t in tabs {
+            let to: ExerciseScope
+            switch t.exerciseScope {
+            case .chapter(loose, let p)?: guard let q = moved(p) else { continue }; to = .chapter(loose, q)
+            case .wrongChapter(loose, let p)?: guard let q = moved(p) else { continue }; to = .wrongChapter(loose, q)
+            case .starredChapter(loose, let p)?: guard let q = moved(p) else { continue }; to = .starredChapter(loose, q)
+            default: continue
+            }
+            t.openExercises(to, separate: t.exerciseSeparate)
+            changed = true
+        }
+        if changed { persist() }
+    }
+
     /// 新建一篇画板笔记并打开（侧栏「＋」/ 菜单 / 平板 `boardAdd`）。
     @discardableResult
     func newBoard(spec: WorkspaceManager.BoardSpec = .infinite) -> DocTabModel? {

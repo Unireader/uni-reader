@@ -225,6 +225,11 @@ final class MCPServer: ObservableObject {
     To see a question as printed (figures, parts on the next page) use render_exercise; to take the user to a question \
     or a group of them (a book, a chapter, the mistakes or starred ones, a tag, a redo round) use open_exercises; \
     get_current_view on the practice tab gives the current question and the answer showing for it. \
+    Questions that do not come from a PDF (ones you wrote, found elsewhere, or the user gave you) are saved with \
+    import_exercises group "<name>" instead of a document: they live in named groups next to the books (groups in \
+    list_exercises; list / open one with group), with no page and no original image; update_exercises group moves a \
+    question between groups, or — only when the user asks — unlinks a PDF question from its PDF. Deleting a PDF keeps \
+    its questions: they move to a group named after the book. \
     Questions can carry free-form tags (tags in list_exercises, e.g. 真题 or 模拟): import_exercises tags adds tags \
     (only when the user asks or the page itself says so), update_exercises tags replaces the whole set, \
     list_exercises tag lists one tag's questions.

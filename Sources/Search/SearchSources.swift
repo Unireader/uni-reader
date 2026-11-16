@@ -194,11 +194,11 @@ enum SearchSources {
             if let x = e.payload.explanation, !x.isEmpty { parts.append(x) }
             if !e.note.isEmpty { parts.append(e.note) }
             if !e.tags.isEmpty { parts.append(e.tags.map { "#\($0)" }.joined(separator: " ")) }
-            let docTitle = e.documentId.flatMap { docTitles[$0] } ?? ""
+            let docTitle = e.documentId.flatMap { docTitles[$0] } ?? e.group ?? ""   // 不关联 PDF 的题写分组名
             let number = e.number.isEmpty ? "" : "\(e.number) "
             return .init(kind: "exercise", owner: e.id, sub: e.documentId.map { "doc:\($0)" } ?? "", page: e.page,
                          title: docTitle.isEmpty ? number.trimmingCharacters(in: .whitespaces) : "\(docTitle) · \(number)".trimmingCharacters(in: .whitespaces),
-                         heading: (e.chapter + [e.section]).filter { !$0.isEmpty }.joined(separator: " › "),
+                         heading: (e.chapterInGroup + [e.section]).filter { !$0.isEmpty }.joined(separator: " › "),
                          body: parts.filter { !$0.isEmpty }.joined(separator: "\n"))
         }
     }

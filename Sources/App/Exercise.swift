@@ -535,7 +535,52 @@ struct Exercise: Identifiable, Equatable {
     }
 
     /// 同一篇文章（阅读理解 / 完形填空）的认法：文档 + 文章 id。不属于文章 → nil。
-    var passageKey: String? { payload.passage.map { (documentId ?? "") + "|" + $0.id } }
+    /// 不关联 PDF 的题按「分组 + 文章 id」认（§33）：两个分组里各有一篇 `p1` 不是同一篇。
+    var passageKey: String? {
+        payload.passage.map { (documentId ?? ExerciseScope.looseId + (group ?? "")) + "|" + $0.id }
+    }
+
+    /// 这道题归在哪一行底下：那篇 PDF 的 id；不关联 PDF 的题 = `ExerciseScope.looseId`（§33）。
+    var ownerId: String { documentId ?? ExerciseScope.looseId }
+
+    /// 不关联 PDF 的题所在的分组（= 章节路径第一级，§33）；关联着 PDF 的题 / 没分组 → nil。
+    var group: String? { documentId == nil ? chapter.first : nil }
+
+    /// 对外（MCP）的章节路径：不关联 PDF 的题去掉第一级（那是分组名，另给）。
+    var chapterInGroup: [String] { documentId == nil ? Array(chapter.dropFirst()) : chapter }
+
+    /// 不关联 PDF 的题的章节路径：分组名 + 分组里面的小节。没分组（空名字）= 空路径——小节挂不住，一并去掉。
+    static func loosePath(group: String, sub: [String]) -> [String] { group.isEmpty ? [] : [group] + sub }
+
+    /// 解除与 PDF 的关联之后的样子（§33）：进分组 `group`（一般是书名），原来的章节接在分组名后面；
+    /// 页码、原题框去掉。题目内容、收藏、错题、笔记、标签、高亮都不动。
+    func detached(group: String) -> Exercise {
+        var e = self
+        e.chapter = Self.loosePath(group: group, sub: chapter)
+        e.documentId = nil
+        e.page = nil
+        e.payload = payload.detached()
+        return e
+    }
+
+    /// 不关联 PDF 的题的练习顺序（§33）：按章节路径逐级比名字（同侧栏那棵树的顺序：没页码可排，按名字），
+    /// 没分组的排最后；同一节里保持传进来的先后（库里按 `seq` → 建的时间）。
+    static func looseOrdered(_ list: [Exercise]) -> [Exercise] {
+        func before(_ a: [String], _ b: [String]) -> Bool? {
+            if a == b { return nil }
+            if a.isEmpty != b.isEmpty { return b.isEmpty }
+            for (x, y) in zip(a, b) where x != y { return x.localizedStandardCompare(y) == .orderedAscending }
+            return a.count < b.count
+        }
+        return list.enumerated().sorted { a, b in
+            before(a.element.chapter, b.element.chapter) ?? (a.offset < b.offset)
+        }.map(\.element)
+    }
+
+    /// 只给一道题时打开哪一组（链接 / MCP `open_exercises`）：它那本书；不关联 PDF 的题 = 它那个分组（没分组的那一行）。
+    var homeScope: ExerciseScope {
+        documentId.map { .document($0) } ?? .chapter(ExerciseScope.looseId, group.map { [$0] } ?? [])
+    }
 
     static func collapse(_ s: String) -> String {
         s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
@@ -649,6 +694,19 @@ struct ExerciseInk: Codable, Equatable {
     }
 }
 
+extension ExercisePayload {
+    /// 一道题不关联 PDF 时的 payload（`EXERCISE-PLAN.md §33`）：原题框、跨页的框、跳过的页都去掉，
+    /// 「默认显示原题图」也关掉——没有 PDF 就没有原题图。别的内容不动。
+    func detached() -> ExercisePayload {
+        var p = self
+        p.region = nil
+        p.nextRegions = nil
+        p.skipPages = nil
+        p.figure = false
+        return p
+    }
+}
+
 // MARK: - 导入（MCP `import_exercises` / `update_exercises`）
 
 /// 一道待写入的题（已校验、已规整）。`page` 0 起。
@@ -710,6 +768,8 @@ struct ExerciseInput {
 enum ExerciseImport {
     /// 选项键允许的范围（A~H，最多 8 个选项）。
     static let maxOptions = 8
+    /// 习题分组名最长多少个字（`EXERCISE-PLAN.md §33`；侧栏一行放得下的量级）。
+    static let maxGroupName = 80
     static let keyLetters = Array("ABCDEFGH").map(String.init)
 
     /// 把「A」「A.」「(A)」「a」这类写法规整成大写单字母；认不出 → nil。
@@ -1324,11 +1384,12 @@ struct ExerciseGroupNode: Equatable {
     }
 
     /// 建整段。`documents` = 书库顺序的（id, 书名）；`title` 给全部 / 错题本 / 收藏三行起名；
-    /// `noChapter` = 「未分章节」那一行的名字。没有题 → 空（这一段不出现）。
+    /// `noChapter` = 「未分章节」那一行的名字；`noGroup` = 不关联 PDF、又没分组的题那一行的名字（§33）。
+    /// 没有题 → 空（这一段不出现）。
     /// 全部 / 错题本 / 收藏三行恒在；错题本、收藏底下各是有错题 / 有收藏的书 → 章节树（数的是错题 / 收藏）；
     /// 之后每本有题的书一行，底下章节树。
     static func build(_ s: ExerciseSummary, documents: [(id: String, title: String)],
-                      title: (ExerciseScope) -> String, noChapter: String) -> [ExerciseGroupNode] {
+                      title: (ExerciseScope) -> String, noChapter: String, noGroup: String) -> [ExerciseGroupNode] {
         guard s.total > 0 else { return [] }
         var rows = [ExerciseScope.all, .wrong, .starred].map { ExerciseGroupNode(scope: $0, title: title($0), count: s.count($0)) }
         rows[1].children = documents.filter { s.count(.wrongDocument($0.id)) > 0 }.map { d in
@@ -1344,7 +1405,27 @@ struct ExerciseGroupNode: Equatable {
             ExerciseGroupNode(scope: .document(d.id), title: d.title, count: s.byDocument[d.id] ?? 0,
                               children: chapters(stats: s.chapters[d.id] ?? [:], noChapter: noChapter) { .chapter(d.id, $0) })
         }
+        // 不关联 PDF 的题（§33）：每个分组一行、和书并列，排在书后面；错题本 / 收藏底下同样接在书后面
+        let loose = ExerciseScope.looseId
+        rows[1].children += looseGroups(stats: s.mistakeChapters(loose), noGroup: noGroup) { .wrongChapter(loose, $0) }
+        rows[2].children += looseGroups(stats: s.starredChapters(loose), noGroup: noGroup) { .starredChapter(loose, $0) }
+        rows += looseGroups(stats: s.chapters[loose] ?? [:], noGroup: noGroup) { .chapter(loose, $0) }
         return rows
+    }
+
+    /// 不关联 PDF 的题的那几行（§33）：章节路径第一级 = 分组名，每个分组一行（按名字排），底下照旧是章节树；
+    /// 没分组的（空路径）末尾一行「未分组」。和 `chapters` 的区别：一个分组也没有时「未分组」那行照样要有
+    /// （书那边有书那一行兜着，这里没有上一级）。
+    static func looseGroups(stats: [[String]: ExerciseChapterStat], noGroup: String,
+                            scope: ([String]) -> ExerciseScope) -> [ExerciseGroupNode] {
+        func make(_ t: ExerciseChapterTree) -> ExerciseGroupNode {
+            ExerciseGroupNode(scope: scope(t.path), title: t.label, count: t.count, children: t.children.map(make))
+        }
+        var out = ExerciseChapterTree.build(stats).map(make)
+        if let none = stats[[]], none.count > 0 {
+            out.append(ExerciseGroupNode(scope: scope([]), title: noGroup, count: none.count))
+        }
+        return out
     }
 
     /// 一本书底下的章节树：一道题都没设章节 → 不展开（书那一行就够了）；有设有没设 → 末尾多一行「未分章节」。
@@ -1418,6 +1499,14 @@ enum ExerciseScope: Hashable {
     /// 侧栏 / 标签页选中键的前缀（同 `BoardNote.rowPrefix` 的口径）。
     static let rowPrefix = "ex:"
 
+    /// 不关联 PDF 的题（`document_id` 为空，§33）在范围里占的「文档 id」：`.chapter(looseId, ["分组名", …])`
+    /// = 一个分组（章节路径第一级就是分组名）、`.chapter(looseId, [])` = 没分组的那些、`.document(looseId)` = 全部不关联 PDF 的题。
+    /// 文档 id 都是 UUID，撞不上；不含冒号（范围键靠冒号分段）。🔴 安卓 `ExScope.LOOSE_ID` 同值（平板模式2 的范围键原样过线）。
+    static let looseId = "-"
+
+    /// 这个范围是不是不关联 PDF 的那一支。
+    var isLoose: Bool { ownerId == Self.looseId }
+
     /// 这一组在侧栏 / ⌘P 快速打开里的图标（SF Symbols 名）。
     var symbolName: String {
         switch self {
@@ -1425,7 +1514,8 @@ enum ExerciseScope: Hashable {
         case .wrong: return "xmark.circle"
         case .starred: return "star"
         case .document, .wrongDocument, .starredDocument: return "doc.questionmark"
-        case .chapter(_, let path), .wrongChapter(_, let path), .starredChapter(_, let path):
+        case .chapter(let id, let path), .wrongChapter(let id, let path), .starredChapter(let id, let path):
+            if id == Self.looseId, path.count == 1 { return "folder" }   // 分组那一行
             return path.isEmpty ? "questionmark.folder" : "list.bullet.indent"
         }
     }
@@ -1479,12 +1569,23 @@ enum ExerciseScope: Hashable {
         self.init(key: String(rowID.dropFirst(Self.rowPrefix.count)))
     }
 
-    /// 这个范围属于哪本书（全部 / 错题本 / 收藏不属于某一本）。
-    var documentId: String? {
+    /// 这个范围属于哪本书（全部 / 错题本 / 收藏不属于某一本；不关联 PDF 的那一支也不属于哪本书）。
+    var documentId: String? { ownerId.flatMap { $0 == Self.looseId ? nil : $0 } }
+
+    /// 范围里写的那个「文档 id」原样：一本书的 id，或 `looseId`。
+    var ownerId: String? {
         switch self {
         case .document(let id), .chapter(let id, _), .wrongDocument(let id), .wrongChapter(let id, _),
              .starredDocument(let id), .starredChapter(let id, _):
             return id
+        default: return nil
+        }
+    }
+
+    /// 不关联 PDF 的那一支里的章节路径（第一级 = 分组名）；别的范围 → nil。
+    var loosePath: [String]? {
+        switch self {
+        case .chapter(Self.looseId, let p), .wrongChapter(Self.looseId, let p), .starredChapter(Self.looseId, let p): return p
         default: return nil
         }
     }
@@ -1502,12 +1603,12 @@ enum ExerciseScope: Hashable {
         case .all: return true
         case .wrong: return e.wrong
         case .starred: return e.starred
-        case .document(let id): return e.documentId == id
-        case .chapter(let id, let path): return e.documentId == id && Self.chapterContains(path, e.chapter)
-        case .wrongDocument(let id): return e.wrong && e.documentId == id
-        case .wrongChapter(let id, let path): return e.wrong && e.documentId == id && Self.chapterContains(path, e.chapter)
-        case .starredDocument(let id): return e.starred && e.documentId == id
-        case .starredChapter(let id, let path): return e.starred && e.documentId == id && Self.chapterContains(path, e.chapter)
+        case .document(let id): return e.ownerId == id
+        case .chapter(let id, let path): return e.ownerId == id && Self.chapterContains(path, e.chapter)
+        case .wrongDocument(let id): return e.wrong && e.ownerId == id
+        case .wrongChapter(let id, let path): return e.wrong && e.ownerId == id && Self.chapterContains(path, e.chapter)
+        case .starredDocument(let id): return e.starred && e.ownerId == id
+        case .starredChapter(let id, let path): return e.starred && e.ownerId == id && Self.chapterContains(path, e.chapter)
         }
     }
 

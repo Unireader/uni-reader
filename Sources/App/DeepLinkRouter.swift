@@ -72,8 +72,7 @@ enum DeepLinkRouter {
         // 3b：习题（2026-11-12，`EXERCISE-PLAN.md §27`）：题目所在那本书的练习页、停在这道题上（同 MCP `open_exercises`）
         if let exID = link.exerciseId {
             guard let e = ws.exercise(id: exID) else { throw RouteError.exerciseNotFound(exID) }
-            let scope: ExerciseScope = e.documentId.map { .document($0) } ?? .all
-            _ = try delegate.showExercises(scope, at: e.id, mode: .practice, in: ws, window: c0, activate: true)
+            _ = try delegate.showExercises(e.homeScope, at: e.id, mode: .practice, in: ws, window: c0, activate: true)
             wsLog("链接到位：\(ws.name) ex=\(exID)")
             return
         }

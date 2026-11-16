@@ -1525,3 +1525,15 @@
 "Cloze" = "完形填空";
 "Remove Highlight" = "去掉高亮";
 "Reading" = "阅读";
+
+/* 习题：不关联 PDF 的题与分组（EXERCISE-PLAN.md §33） */
+"Exercises Without a PDF" = "不关联 PDF 的习题";
+"Ungrouped Exercises" = "未分组的习题";
+"Rename Group" = "重命名分组";
+"Remove from Group" = "移出分组";
+"Unlink from PDF…" = "解除与 PDF 的关联…";
+"Unlink" = "解除关联";
+"Unlink this exercise from its PDF?" = "解除这道题与 PDF 的关联？";
+"Unlink %d exercises from their PDF?" = "解除这 %d 道题与 PDF 的关联？";
+"The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone." = "题目、作答、错题本、收藏、笔记和标签都保留。这些题会移到一个以书名命名的分组里；页码和原题区域会去掉，之后不能再看原题图。此操作不能撤销。";
+"The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF." = "其中的 %d 道习题会保留：移到以书名命名的分组里，不再关联这篇 PDF。";

@@ -715,6 +715,8 @@ Mac 判定 + 落库后以 `scratchpads` 全量回推为权威，客户端不自�
 范围键 = Mac `ExerciseScope.key`：`all` / `wrong` / `starred` / `doc:<文档 id>` / `chap:<文档 id>:<章节路径 JSON>` /
 `wrong:doc:<文档 id>` / `wrong:chap:<文档 id>:<章节路径 JSON>` / `starred:doc:<文档 id>` / `starred:chap:<文档 id>:<章节路径 JSON>`
 （最后两种 2026-10-11 第三次调整加的：收藏也按书 → 章展开）。客户端把它当不透明的串，原样存、原样发回。
+不关联 PDF 的题（2026-11-16，`EXERCISE-PLAN.md §33`）在范围键里「文档 id」的位置写 `-`：`chap:-:["分组名"]` = 一个分组、
+`chap:-:` = 没分组的那些、`doc:-` = 全部不关联 PDF 的题（错题本 / 收藏底下同样加前缀）。线格式没变；平板不解析范围键，原样回传。
 
 | opcode | payload | 对象形状 |
 |---|---|---|

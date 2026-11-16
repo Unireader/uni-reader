@@ -308,9 +308,7 @@ extension WorkspaceManager {
         add(5, "%d bookmark(s)")
         add(6, "%d image note(s)")
         add(4, "%d scratch stroke(s)")
-        if let n = exerciseSummary.byDocument[documentId], n > 0 {
-            parts.append(String(format: L("%d exercise(s)"), n))
-        }
+        // 习题不在这一句里：删 PDF 不删题（`EXERCISE-PLAN.md §33`），确认框另有一行说明
         guard !parts.isEmpty else { return "" }
         let title = document(id: documentId)?.title ?? ""
         return title.isEmpty ? parts.joined(separator: "、")
@@ -328,6 +326,9 @@ extension WorkspaceManager {
             lastError = String(format: L("Could not archive “%@”, so nothing was deleted."), title)
             return false
         }
+        // 删 PDF 不删题（`EXERCISE-PLAN.md §33`）：它的题先解除关联（进一个以书名命名的分组），再删文档——
+        // 不然外键把题和作答一起级联删掉。放在归档之后：归档失败时什么都没动。
+        detachExercises(documentId: id)
         delete(documentId: id)
         return true
     }

@@ -8,7 +8,7 @@ import CoreGraphics    // Linux 上 CGRect 等由 Foundation 提供（服务器�
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 27
+    static let schemaVersion = 28
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -545,6 +545,9 @@ final class LibraryStore {
         // v25 → v26 只新增 schedule_plan、schedule_item 两张表（同上，无需 ALTER）。
         // v26 → v27：题目上的高亮（`EXERCISE-PLAN.md §32`）。🔴 顺序与安卓 `Schema.ADD_COLUMNS` 一致（也是 `MirrorFp.specs` 的列序）。
         try addColumnIfMissing("exercise", "marks", "TEXT NOT NULL DEFAULT ''")
+        // v27 → v28：不改表。习题可以不关联 PDF（`exercise.document_id` 为空，`EXERCISE-PLAN.md §33`），
+        // 删文档 / 解除关联时题目留下——合并写入要先把题从要删的文档上摘下来（`MirrorApply.write`），
+        // 老版本没有这一步、会连题带作答级联删掉。升版本号只为让新旧版本不混着同步（服务器要求两边版本号相同）。
         if fresh { try setMeta("created_at", ISO.string(.now)) }
         try setMeta("schema_version", String(Self.schemaVersion))
     }
@@ -1405,6 +1408,12 @@ final class LibraryStore {
         return try db.query("SELECT * FROM exercise WHERE document_id=? AND page IS NULL",
                             [.text(documentId)]).map(Self.exercise)
     }
+    /// 不关联 PDF 的题（`document_id` 为空，`EXERCISE-PLAN.md §33`），按页内先后排。
+    func looseExercises() throws -> [LibExercise] {
+        try db.query("SELECT * FROM exercise WHERE document_id IS NULL ORDER BY seq, created_at").map(Self.exercise)
+    }
+    /// 不关联 PDF 的题在侧栏的数里记在这个「文档 id」底下（= App 层 `ExerciseScope.looseId`，§33）。
+    static let looseExerciseOwner = "-"
     /// 写一道题的**内容**。已存在（同 id）时只覆盖内容列，`starred` / `wrong` / `note` / `marks` / `created_at` 一个不动——
     /// 那是用户状态，Agent 重导题目不能把收藏、错题本和笔记冲掉（笔记另走 `setExerciseNote`）。
     /// 章节也在这里写（它是题的归属，不是用户状态；要不要沿用旧值由上层定，见 `WorkspaceManager.importExercises`）。
@@ -1444,13 +1453,14 @@ final class LibraryStore {
         }
     }
 
+    /// 不关联 PDF 的题记在 `looseExerciseOwner` 底下（§33）。
     /// 每篇文档每个章节几道题、最早在第几页、几道在错题本里、几道收藏了（侧栏的章节树用：数 + 排序；一条 GROUP BY，不读 payload）。
     /// 没页码的题不参与「最早」（全没页码 → `Int.max`）。
     func exerciseChapterCounts() throws -> [(documentId: String, chapter: [String], count: Int, firstPage: Int, wrong: Int,
                                              starred: Int)] {
         try db.query("""
-        SELECT document_id, chapter, COUNT(*), MIN(page), SUM(wrong), SUM(starred) FROM exercise WHERE document_id IS NOT NULL
-        GROUP BY document_id, chapter
+        SELECT COALESCE(document_id, '\(Self.looseExerciseOwner)'), chapter, COUNT(*), MIN(page), SUM(wrong), SUM(starred)
+        FROM exercise GROUP BY document_id, chapter
         """, row: { r in (r.text(0), Self.chapterPath(r.text(1)), Int(r.int64(2)), r.isNull(3) ? Int.max : Int(r.int64(3)),
                           Int(r.int64(4)), Int(r.int64(5))) })
     }
@@ -1458,8 +1468,8 @@ final class LibraryStore {
     /// 「做过」= 至少一次作答（含书上的作答），同「只看没做过」的标准。一条 GROUP BY，不读 payload。
     func exerciseDoneCounts() throws -> [(documentId: String, chapter: [String], done: Int, starred: Int)] {
         try db.query("""
-        SELECT document_id, chapter, COUNT(*), SUM(starred) FROM exercise e
-        WHERE document_id IS NOT NULL AND EXISTS (SELECT 1 FROM exercise_attempt a WHERE a.exercise_id = e.id)
+        SELECT COALESCE(document_id, '\(Self.looseExerciseOwner)'), chapter, COUNT(*), SUM(starred) FROM exercise e
+        WHERE EXISTS (SELECT 1 FROM exercise_attempt a WHERE a.exercise_id = e.id)
         GROUP BY document_id, chapter
         """, row: { r in (r.text(0), Self.chapterPath(r.text(1)), Int(r.int64(2)), Int(r.int64(3))) })
     }
@@ -1467,15 +1477,16 @@ final class LibraryStore {
     func upsertExercises(_ rows: [LibExercise]) throws {
         try db.transaction { for e in rows { try upsertExercise(e) } }
     }
-    /// 侧栏要的几个数：总数 / 错题本 / 收藏 / 每篇文档几道（一条 GROUP BY）。
+    /// 侧栏要的几个数：总数 / 错题本 / 收藏 / 每篇文档几道（一条 GROUP BY；不关联 PDF 的题记在 `looseExerciseOwner` 底下）。
     func exerciseCounts() throws -> (total: Int, wrong: Int, starred: Int, byDocument: [String: Int]) {
         var total = 0, wrong = 0, starred = 0
         var byDoc: [String: Int] = [:]
         for (doc, n, w, s) in try db.query("""
-        SELECT COALESCE(document_id, ''), COUNT(*), SUM(wrong), SUM(starred) FROM exercise GROUP BY document_id
+        SELECT COALESCE(document_id, '\(Self.looseExerciseOwner)'), COUNT(*), SUM(wrong), SUM(starred)
+        FROM exercise GROUP BY document_id
         """, row: { r in (r.text(0), Int(r.int64(1)), Int(r.int64(2)), Int(r.int64(3))) }) {
             total += n; wrong += w; starred += s
-            if !doc.isEmpty { byDoc[doc] = n }
+            byDoc[doc] = n
         }
         return (total, wrong, starred, byDoc)
     }

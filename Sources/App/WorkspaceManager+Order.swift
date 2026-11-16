@@ -52,7 +52,7 @@ extension WorkspaceManager {
     /// 侧栏「习题」那一段（平板抽屉 `exGroups`、⌘P 用同一份）：`ExerciseGroupNode.build` 建好，顶层各行按手动顺序排。
     func exerciseGroups() -> [ExerciseGroupNode] {
         let rows = ExerciseGroupNode.build(exerciseSummary, documents: exerciseBooks, title: exerciseScopeTitle,
-                                           noChapter: L("No Chapter"))
+                                           noChapter: L("No Chapter"), noGroup: L("Ungrouped"))
         return SidebarOrder.apply(rows, order: exerciseOrder, id: \.scope.key)
     }
 

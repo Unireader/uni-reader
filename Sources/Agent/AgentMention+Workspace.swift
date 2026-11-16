@@ -120,6 +120,26 @@ extension AgentMention {
             return "list_exercises (" + a.joined(separator: ", ") + ")"
         }
         let what: String, how: String
+        // 不关联 PDF 的那一支（`EXERCISE-PLAN.md §33`）：按分组列（分组名 + 分组里面的小节），不按书
+        if let p = scope.loosePath {
+            var filter: String?
+            if scope.isMistakes { filter = "mistakes" } else if case .starredChapter = scope { filter = "starred" }
+            let which = filter == "mistakes" ? "the mistakes (错题本)" : filter == "starred" ? "the starred exercises (收藏)" : "the exercises"
+            let g = p.first ?? ""
+            let sub = Array(p.dropFirst())
+            var a = ["group \"\(g)\""]
+            if !sub.isEmpty {
+                let json = (try? JSONSerialization.data(withJSONObject: sub)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+                a.append("chapter \(json)")
+            }
+            if let filter { a.append("filter \(filter)") }
+            let place = g.isEmpty ? "that are not tied to a PDF and are in no group" : "of the group \"\(g)\" (questions not tied to a PDF)"
+                + (sub.isEmpty ? "" : " in \(chapter(sub))")
+            let n = count.map { ", \($0) question(s)" } ?? ""
+            return AgentMention(
+                kind: .exercises, id: scope.rowID, name: title, detail: "", uri: workspaceLink(ws).absoluteString,
+                info: "A set of exercises (习题) in UniReader: \(which) \(place)\(n). List them with list_exercises (\(a.joined(separator: ", "))).")
+        }
         switch scope {
         case .all: what = "all exercises in the workspace"; how = args(nil, nil, nil)
         case .wrong: what = "the user's mistake list (错题本)"; how = args(nil, nil, "mistakes")
@@ -142,7 +162,7 @@ extension AgentMention {
     /// 🔴 同 §8 不给内容：题干 / 选项 / 答案 / 作答都让 Agent 按 exercise_id 自己读。
     static func exercise(_ e: Exercise, in ws: WorkspaceManager) -> AgentMention {
         let doc = e.documentId.flatMap { ws.document(id: $0) }
-        var parts: [String] = [doc?.title ?? L("Exercises")]
+        var parts: [String] = [doc?.title ?? e.group ?? L("Exercises")]   // 不关联 PDF 的题写分组名（§33）
         // 跨页的题印到哪一页（`EXERCISE-PLAN.md §26`）；不跨页 = nil
         let last: Int? = { guard let p = e.firstPage, let q = e.lastPage, q > p else { return nil }; return q }()
         if let p = e.firstPage {
