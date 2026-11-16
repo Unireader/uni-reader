@@ -977,3 +977,28 @@ Mac `Sources/ServerSync/ServerDiscovery.swift`（`NWBrowser`）、安卓 `local/
 - 推送侧：本机改动**停手 2 秒后推**（至少隔 5 秒；每分钟兜底一次），不必等定时器。Mac：`SQLiteDB.totalChanges`；安卓：`total_changes()`。
 - Mac 实现 `ServerSyncCoordinator.watchLoop` / `pullWhileOpen`；安卓 `ServerSync.watch` / `pullWhileOpen`。
 
+
+### 9.7 块向量同步（2026-11-16，`SEMANTIC-SYNC-PLAN.md`）
+
+Mac 把搜索索引里本机模型算的块向量传到服务器，安卓搜索时只算查询向量、块向量从服务器拉。**按内容寻址**：
+键 = (模型标识, `SHA-256(块正文的 UTF-8 字节)`，32 字节)，值 = Int8 × 维数（单位向量 ×127 取整，与 Mac 索引 `vec.v` 同一份字节）。
+块正文 = 切块结果 `chunk.body` 原文（截 1500 字之前）；🔴 两端切块（`SearchText`）必须逐字一致，否则查不到（不会挂错）。
+
+实现：Swift `Sources/Sync/SyncVecWire.swift`（App 与服务器共用）、Kotlin `android/…/local/server/SyncWire.kt`；跨端向量 `vec_*` 五条在 `spike/sync-wire-vectors.txt`。
+
+```
+VecHashes   u8 版本 · str 模型 · u32 条数 · 每条 32 字节哈希
+VecMissing  u8 版本 · u32 服务器上这个模型的总条数 · u32 条数 · 每条 32 字节哈希
+VecPut      u8 版本 · str 模型 · u16 维数 · u32 条数 · 每条（32 字节哈希 + 维数字节 Int8）
+VecPage     u8 版本 · str epoch · u64 下一页的 since · u8 还有没有 · u16 维数 · u32 条数 · 每条（32 字节哈希 + 维数字节 Int8）
+```
+
+| 接口 | 请求体 → 响应体 |
+|---|---|
+| `POST /v1/workspaces/{ws}/vectors/missing` | `VecHashes` → `VecMissing`（服务器没有的那些 + 这个模型的总条数） |
+| `POST /v1/workspaces/{ws}/vectors` | `VecPut`（每次最多 2000 条）→ JSON `{"added":n,"head":h}`；已有的键跳过，维数与已有的不同 → 400 |
+| `GET /v1/workspaces/{ws}/vectors?model=&since=&epoch=&limit=` | → `VecPage`：`rev > since` 按 rev 排，`limit` 默认 / 上限 2000；传来的 `epoch` 与服务器的不同 → 从头给（since 当 0），客户端见到新 epoch 先清空本地再收 |
+| `POST /v1/workspaces/{ws}/vectors/prune` | `VecHashes`（这个模型**仍在用**的全部）→ JSON `{"removed":n,"epoch":"…"}`；删掉其余并换新 epoch |
+
+- 服务器存 `<数据目录>/vectors/<workspace_id>.sqlite`，不进工作区包、备份、快照；工作区删除时一起删。
+- 一个服务器工作区里还没有任何向量时 `GET` 照常回空页（`epoch` 也照常给）。**老服务器没有这些接口**：404 → 客户端当它不支持，只用关键词。

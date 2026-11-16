@@ -578,6 +578,63 @@ final class HTTPTests: XCTestCase {
         }
     }
 
+    func testVectors() async throws {
+        let up = try host.newUploadFolder()
+        let lib = try LibraryStore(workspaceFolder: up)
+        try lib.setWorkspaceName("向量")
+        let id = try lib.ensureWorkspaceId()
+        lib.checkpointTruncate()
+        lib.close()
+        _ = try host.install(uploaded: up)
+        let model = "local|Qwen3-Embedding-0.6B@97b0c614"
+        let q = model.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        func h(_ n: UInt8) -> Data { Data(repeating: n, count: 32) }
+        struct Put: Decodable { let added: Int; let head: UInt64 }
+        struct Prune: Decodable { let removed: Int; let epoch: String }
+
+        try await app().test(.router) { client in
+            try await client.execute(uri: "/v1/workspaces/\(id)/vectors?model=\(q)", method: .get) {
+                XCTAssertEqual($0.status, .unauthorized, "向量也要令牌")
+            }
+            let token = try await self.pair(client)
+            let hashes = SyncWire.encode(SyncWire.VecHashes(model: model, hashes: [h(1), h(2)]))
+            try await client.execute(uri: "/v1/workspaces/\(id)/vectors/missing", method: .post, headers: self.auth(token),
+                                     body: ByteBuffer(bytes: hashes)) { r in
+                let m = try SyncWire.decodeVecMissing(Data(r.body.readableBytesView))
+                XCTAssertEqual(m.hashes, [h(1), h(2)]); XCTAssertEqual(m.total, 0)
+            }
+            let put = SyncWire.encode(SyncWire.VecPut(model: model, dim: 2, entries: [
+                .init(hash: h(1), v: Data([0x7f, 0x81])), .init(hash: h(2), v: Data([0, 1]))]))
+            try await client.execute(uri: "/v1/workspaces/\(id)/vectors", method: .post, headers: self.auth(token),
+                                     body: ByteBuffer(bytes: put)) { r in
+                let d = try self.decode(Put.self, r)
+                XCTAssertEqual(d.added, 2); XCTAssertEqual(d.head, 2)
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)/vectors", method: .post, headers: self.auth(token),
+                                     body: ByteBuffer(bytes: [1, 2, 3])) { XCTAssertEqual($0.status, .badRequest, "解不开 → 400") }
+            var epoch = ""
+            try await client.execute(uri: "/v1/workspaces/\(id)/vectors?model=\(q)&since=0&limit=1", method: .get,
+                                     headers: self.auth(token)) { r in
+                let p = try SyncWire.decodeVecPage(Data(r.body.readableBytesView))
+                XCTAssertEqual(p.entries.map(\.hash), [h(1)]); XCTAssertTrue(p.more); XCTAssertEqual(p.next, 1)
+                XCTAssertEqual(p.entries.first?.v, Data([0x7f, 0x81]))
+                epoch = p.epoch
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)/vectors/prune", method: .post, headers: self.auth(token),
+                                     body: ByteBuffer(bytes: SyncWire.encode(SyncWire.VecHashes(model: model, hashes: [h(2)])))) { r in
+                let d = try self.decode(Prune.self, r)
+                XCTAssertEqual(d.removed, 1); XCTAssertNotEqual(d.epoch, epoch)
+            }
+            try await client.execute(uri: "/v1/workspaces/\(id)/vectors?model=\(q)&since=1&epoch=\(epoch)", method: .get,
+                                     headers: self.auth(token)) { r in
+                let p = try SyncWire.decodeVecPage(Data(r.body.readableBytesView))
+                XCTAssertEqual(p.entries.map(\.hash), [h(2)], "epoch 变了：从头给")
+            }
+            try await client.execute(uri: "/v1/workspaces/\(UUID().uuidString)/vectors?model=\(q)", method: .get,
+                                     headers: self.auth(token)) { XCTAssertEqual($0.status, .notFound) }
+        }
+    }
+
     func testAccessLogShortensIds() {
         let req = Request(head: .init(method: .get, scheme: "http", authority: "x",
                                       path: "/v1/workspaces/8f2c1d3e-0000-4000-8000-000000000000/pdf/\(String(repeating: "ab", count: 32))",

@@ -236,6 +236,8 @@ enum SyncWire {
         private(set) var data = Data()
 
         mutating func u8(_ v: UInt8) { data.append(v) }
+        /// 原样字节（向量同步的定长哈希 / 向量，`SyncVecWire.swift`）。
+        mutating func raw(_ d: Data) { data.append(d) }
         mutating func u16(_ v: UInt16) { le(UInt64(v), 2) }
         mutating func u32(_ v: UInt32) { le(UInt64(v), 4) }
         mutating func u64(_ v: UInt64) { le(v, 8) }
@@ -308,6 +310,8 @@ enum SyncWire {
         }
 
         mutating func bytes32() throws -> Data { Data(try take(Int(try u32()))) }
+        /// 定长 n 字节（向量同步的哈希 / 向量，`SyncVecWire.swift`）。
+        mutating func fixed(_ n: Int) throws -> Data { Data(try take(n)) }
 
         mutating func value() throws -> MirrorFp.Value {
             let tag = try u8()

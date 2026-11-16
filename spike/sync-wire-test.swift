@@ -1,6 +1,6 @@
 // 连接服务器的同步线格式（`SyncWire`，`PROTOCOL.md §9`）跨端向量。运行（仓库根目录）：
 //   cp spike/sync-wire-test.swift /tmp/main.swift && swiftc Sources/Store/MirrorFingerprint.swift \
-//     Sources/Sync/SyncWire.swift /tmp/main.swift -o /tmp/swt && /tmp/swt [--write]
+//     Sources/Sync/SyncWire.swift Sources/Sync/SyncVecWire.swift /tmp/main.swift -o /tmp/swt && /tmp/swt [--write]
 // （须命名为 main.swift）
 //
 // 不带参数：编出下面的 canonical 消息，与 spike/sync-wire-vectors.txt 逐字节比对，再把文件里的字节解回来、重编一遍比对。
@@ -36,6 +36,9 @@ let noteRow: Row = [
     "title": .text("中文 · note"),
     "updated_at": .null,
 ]
+/// 向量同步用的固定哈希：字节 start, start+1, …（32 个）。
+func vh(_ start: UInt8) -> Data { Data((0..<32).map { start &+ UInt8($0) }) }
+let vecModel = "local|Qwen3-Embedding-0.6B@97b0c614"
 let metaRow: Row = ["key": .text("workspace_name"), "value": .text("101学习区")]
 
 let canonical: [(String, Data)] = [
@@ -73,6 +76,16 @@ let canonical: [(String, Data)] = [
         .init(table: "note", rowId: "A1B2C3D4-0000-0000-0000-000000000001", rev: 2, deleted: false, row: noteRow),
         .init(table: "bookmark", rowId: "B1", rev: 0x1_0000_0000, deleted: true, row: nil),
     ]))),
+    // 2026-11-16 块向量同步（`SyncVecWire.swift`，`PROTOCOL.md §9.7`）。维数取 4 便于看；Int8 带上 ±127 与 0。
+    ("vec_hashes", SyncWire.encode(SyncWire.VecHashes(model: vecModel, hashes: [vh(0), vh(32)]))),
+    ("vec_missing", SyncWire.encode(SyncWire.VecMissing(total: 7194, hashes: [vh(32)]))),
+    ("vec_put", SyncWire.encode(SyncWire.VecPut(model: vecModel, dim: 4, entries: [
+        .init(hash: vh(0), v: Data([0x7f, 0x81, 0x00, 0x05])), .init(hash: vh(32), v: Data([0xff, 0x01, 0x40, 0xc0])),
+    ]))),
+    ("vec_page_empty", SyncWire.encode(SyncWire.VecPage(epoch: "e1", next: 0, more: false, dim: 0, entries: []))),
+    ("vec_page", SyncWire.encode(SyncWire.VecPage(epoch: "9f2c", next: 0x1_0000_0002, more: true, dim: 4, entries: [
+        .init(hash: vh(32), v: Data([0xff, 0x01, 0x40, 0xc0])),
+    ]))),
 ]
 
 let path = "spike/sync-wire-vectors.txt"
@@ -107,6 +120,10 @@ for (name, _) in canonical {
     switch name {
     case let n where n.hasPrefix("push_resp"): again = (try? SyncWire.decodePushResponse(d)).map { SyncWire.encode($0) }
     case let n where n.hasPrefix("push"): again = (try? SyncWire.decodePushRequest(d)).map { SyncWire.encode($0) }
+    case "vec_hashes": again = (try? SyncWire.decodeVecHashes(d)).map { SyncWire.encode($0) }
+    case "vec_missing": again = (try? SyncWire.decodeVecMissing(d)).map { SyncWire.encode($0) }
+    case "vec_put": again = (try? SyncWire.decodeVecPut(d)).map { SyncWire.encode($0) }
+    case let n where n.hasPrefix("vec_page"): again = (try? SyncWire.decodeVecPage(d)).map { SyncWire.encode($0) }
     default: again = (try? SyncWire.decodePullResponse(d)).map { SyncWire.encode($0) }
     }
     check(again == d, name)
@@ -118,6 +135,9 @@ check((try? SyncWire.decodePullResponse(good.dropLast())) == nil, "截断")
 check((try? SyncWire.decodePullResponse(good + Data([0]))) == nil, "尾部多字节")
 var badVer = good; badVer[0] = 2
 check((try? SyncWire.decodePullResponse(badVer)) == nil, "版本不对")
+let vp = vectors["vec_put"]!
+check((try? SyncWire.decodeVecPut(vp.dropLast())) == nil, "向量截断")
+check((try? SyncWire.decodeVecHashes(vectors["vec_hashes"]!.dropLast(1))) == nil, "哈希截断")
 
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

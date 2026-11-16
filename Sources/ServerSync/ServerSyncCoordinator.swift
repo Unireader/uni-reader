@@ -234,6 +234,12 @@ final class ServerSyncCoordinator: ObservableObject {
         var dirtyAt: Date?
         var lastPush = Date.distantPast
         var noteSaved: NSObjectProtocol?
+        /// 块向量上传（`ServerVectorSync`）：上次检查的时刻、上次传成功时索引的向量指纹、正在传的任务。
+        var vectorCheckedAt = Date.distantPast
+        var vectorSig: String?
+        var vectors: Task<Void, Never>?
+        /// 服务器程序太旧、没有向量接口：到这个时刻之前不再试（服务器可能中途升级，不能整个会话都不试）。
+        var vectorsRetryAt = Date.distantPast
     }
 
     /// 停手多久再推（用户定：「在线时改完停 2 秒推送」，方案 §4.3）与两次推送之间至少隔多久（全量比对要读全库，别太勤）。
@@ -278,6 +284,7 @@ final class ServerSyncCoordinator: ObservableObject {
         s.timer?.invalidate()
         s.prefetch?.cancel()
         s.watch?.cancel()
+        s.vectors?.cancel()
         if let o = s.noteSaved { NotificationCenter.default.removeObserver(o) }
     }
 
@@ -285,12 +292,48 @@ final class ServerSyncCoordinator: ObservableObject {
     private func tick(_ m: WorkspaceManager, _ s: Session) async {
         guard let store = m.store, !s.pushing, !s.pulling else { return }
         let now = Date()
+        if now.timeIntervalSince(s.vectorCheckedAt) >= Self.vectorCheckInterval, s.vectors == nil, now >= s.vectorsRetryAt {
+            s.vectorCheckedAt = now
+            s.vectors = Task { [weak self, weak m, weak s] in
+                if let self, let m, let s { await self.uploadVectors(m, s) }
+                s?.vectors = nil
+            }
+        }
         let changes = store.withMirrorDB { $0.totalChanges }
         if changes != s.seenChanges { s.seenChanges = changes; s.dirtyAt = now }
         let quiet = s.dirtyAt.map { now.timeIntervalSince($0) >= Self.quietBeforePush } ?? false
         let sinceLast = now.timeIntervalSince(s.lastPush)
         if (quiet && sinceLast >= Self.minPushInterval) || sinceLast >= Self.heartbeat {
             await push(m)
+        }
+    }
+
+    // MARK: 块向量 → 服务器（`SEMANTIC-SYNC-PLAN.md §3`）
+
+    /// 多久看一次索引的向量变没变（只查一条 COUNT，便宜）；变了才对账上传。
+    private static let vectorCheckInterval: TimeInterval = 60
+    /// 服务器太旧时隔多久再试（2026-11-16：App 先开、服务器后升级，原先整个会话都不再试，得重开工作区）。
+    private static let vectorRetryUnsupported: TimeInterval = 600
+
+    /// 索引里本机模型的向量和上次传成功时不一样 → 问服务器缺哪些、只传缺的。安卓搜索时用（它只算查询向量）。
+    private func uploadVectors(_ m: WorkspaceManager, _ s: Session) async {
+        guard let folder = m.folder, let id = SearchSources.indexID(m),
+              let index = try? SearchIndex.shared(workspaceID: id),
+              let sig = await index.vectorSignature(), sig != s.vectorSig,
+              let ep = endpoint(for: folder), let export = await index.vectorExport() else { return }
+        do {
+            let r = try await ServerVectorSync.upload(ep.client, workspace: ep.wid, export: .init(
+                model: export.model, dim: export.dim, entries: export.entries, complete: export.complete))
+            s.vectorSig = sig
+            if r.uploaded > 0 || r.pruned {
+                wsLog("[SYNC-VEC] \(folder.lastPathComponent): 本机 \(r.local) 条，上传 \(r.uploaded)，服务器 \(r.serverTotal)\(r.pruned ? "，已清理孤儿" : "")")
+            }
+        } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
+            s.vectorsRetryAt = Date().addingTimeInterval(Self.vectorRetryUnsupported)
+            wsLog("[SYNC-VEC] \(folder.lastPathComponent): 服务器没有向量接口（程序太旧），\(Int(Self.vectorRetryUnsupported / 60)) 分钟后再试")
+        } catch is CancellationError {
+        } catch {
+            wsLog("[SYNC-VEC] \(folder.lastPathComponent): 上传失败 \(error.localizedDescription)")
         }
     }
 

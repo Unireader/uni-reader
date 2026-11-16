@@ -5,6 +5,7 @@
 // ① 配对 ② 上传本地工作区（工作区外的 PDF 被收进去、图片、Notes/）③ 另一台设备建缓存、按需下载 PDF
 // ④ 两边各改一处后各跑一轮完整同步（含 20MB 的 PDF 分块上传）⑤ 上传中断后续传 ⑥ 变回本地工作区
 // ⑦ 服务器上改名、别的设备拉到 ⑧ 启动页「下载到本机」：建缓存的进度、按大小挑 PDF、只写文件 ⑨ 从服务器删除。
+// ⑪ 块向量（SEMANTIC-SYNC-PLAN.md）：只传缺的、分页拉、清理孤儿换 epoch。
 import Foundation
 
 func L(_ s: String) -> String { s }   // App 的 `L()` 走 Bundle 本地化，spike 里原样返回
@@ -444,6 +445,34 @@ check(try await ServerSyncIO.pendingPDFs(folder: c, client: client, wid: wid, ma
       "上限放到 100MB：只剩大书 D2")
 check(!ServerSyncIO.isSafeRelative("../x.pdf") && !ServerSyncIO.isSafeRelative("/etc/x") && !ServerSyncIO.isSafeRelative("PDFs/../../x"),
       "服务器给的路径不许跳出工作区")
+
+// ============================================================
+print("⑪ 块向量：只传服务器缺的、增量拉、epoch、清理孤儿（SEMANTIC-SYNC-PLAN.md）")
+do {
+    let model = "local|Qwen3-Embedding-0.6B@97b0c614"
+    func vh(_ n: Int) -> Data { var d = Data(count: 32); d[0] = UInt8(n & 0xff); d[1] = UInt8(n >> 8); d[31] = 0xab; return d }
+    func entries(_ r: Range<Int>) -> [SyncWire.VecEntry] { r.map { .init(hash: vh($0), v: Data(repeating: UInt8(truncatingIfNeeded: $0), count: 1024)) } }
+    // 2500 条：跨过 2000 一批的上传上限
+    var r = try await ServerVectorSync.upload(client, workspace: wid, export: .init(model: model, dim: 1024, entries: entries(0..<2500), complete: true))
+    check(r.uploaded == 2500 && r.serverTotal == 2500 && !r.pruned, "首次全传：\(r)")
+    r = try await ServerVectorSync.upload(client, workspace: wid, export: .init(model: model, dim: 1024, entries: entries(0..<2600), complete: false))
+    check(r.uploaded == 100 && r.serverTotal == 2600, "再传只传缺的 100 条：\(r)")
+    var page = try await client.vectorPage(wid, model: model, since: 0, epoch: nil)
+    var got = page.entries.count, since = page.next
+    let epoch = page.epoch
+    while page.more { page = try await client.vectorPage(wid, model: model, since: since, epoch: epoch); got += page.entries.count; since = page.next }
+    check(got == 2600 && page.dim == 1024, "分页拉全：\(got) 条")
+    page = try await client.vectorPage(wid, model: model, since: since, epoch: epoch)
+    check(page.entries.isEmpty, "没有新的：空页")
+    // 本机正文改了一大半：只剩 1000 条在用、而且算齐了 → 服务器 2600 > 1000×1.3 → 清理
+    r = try await ServerVectorSync.upload(client, workspace: wid, export: .init(model: model, dim: 1024, entries: entries(0..<1000), complete: true))
+    check(r.uploaded == 0 && r.pruned, "算齐后清理孤儿：\(r)")
+    page = try await client.vectorPage(wid, model: model, since: since, epoch: epoch)
+    check(page.epoch != epoch, "清理换了 epoch")
+    got = page.entries.count
+    while page.more { page = try await client.vectorPage(wid, model: model, since: page.next, epoch: page.epoch); got += page.entries.count }
+    check(got == 1000, "拿旧 epoch 来拉：从头给，只剩 1000 条（\(got)）")
+}
 
 // ============================================================
 print("⑨ 从服务器删除")

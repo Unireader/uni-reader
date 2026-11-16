@@ -35,6 +35,7 @@
 
 - 🔴 不进 `library.sqlite`：那个库每次备份 / 建离线镜像都整库 `VACUUM INTO`，同步按表白名单走；`Sources/Store/` 还经符号链接编进服务器。
   索引是**派生数据**，随时能重建——不该跟着备份、同步，也不该成为三端的表结构契约。删掉这个文件只是下次搜索重建。
+  例外（2026-11-16）：服务器工作区里本机模型算的**块向量**按正文哈希另传服务器给安卓用（`SEMANTIC-SYNC-PLAN.md`），索引库本身仍不同步。
 - 表：`source(key, stamp, title)`、`chunk(id AUTOINCREMENT, source, kind, owner, sub, page, line, title, heading, body, norm, title_norm)`、
   `chunk_fts`（FTS5 外部内容表，`tokenize='trigram'`，两个触发器同步）、`vec(chunk_id, model, v)`、`meta(schema)`。
   `chunk.id` 用 AUTOINCREMENT：向量按 id 挂，id 被复用就会挂到别的块上。

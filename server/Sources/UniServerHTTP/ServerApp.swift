@@ -30,6 +30,10 @@ import UniServerCore
 /// | `GET workspaces/:ws/documents/:doc/view?hash=` | 打开一本书（网页）：笔迹图层、笔记类型、扫描页对齐参数（`hash` = 打开的那份 PDF） |
 /// | `GET workspaces/:ws/documents/:doc/marks?from=&to=` | 一段页（从 0 起，含两端）上的文字笔记 / 笔迹 / 高亮（网页）；笔迹点集一律二进制、base64 |
 /// | `GET workspaces/:ws/documents/:doc/notes` | 整本书的文字笔记（网页阅读页的「笔记」列表；格式同 `marks`） |
+/// | `POST workspaces/:ws/vectors/missing` | 块向量：一组哈希 → 服务器没有的那些 + 总条数（`SyncWire` 二进制，`PROTOCOL.md §9.7`） |
+/// | `POST workspaces/:ws/vectors` | 块向量：上传一批（`VecPut`，最多 2000 条）→ `{"added":n,"head":h}` |
+/// | `GET workspaces/:ws/vectors?model=&since=&epoch=&limit=` | 块向量：增量拉（`VecPage`）；epoch 不同就从头给 |
+/// | `POST workspaces/:ws/vectors/prune` | 块向量：只留仍在用的哈希、换新 epoch → `{"removed":n,"epoch":"…"}` |
 /// | `GET workspaces/:ws/head` | 当前修订号（网页轮询，变了再重拉标记） |
 /// | `POST workspaces/:ws/documents/:doc/edits` | 网页写文字笔记 / 笔迹（JSON：`upserts` / `deletes`）：当成一次「基线 = 服务器现状」的推送；带了 `baseUpdatedAt` 而服务器上已经变了的行不写（`stale`） |
 ///
@@ -160,6 +164,46 @@ public enum UniServerApp {
             let since = request.uri.queryParameters.get("since").flatMap { UInt64($0) } ?? 0
             let limit = min(max(request.uri.queryParameters.get("limit").flatMap { Int($0) } ?? 5000, 1), 20000)
             return binary(try await Blocking.run { try w.pull(since: since, limit: limit) })
+        }
+
+        // MARK: 块向量（`SEMANTIC-SYNC-PLAN.md`，线格式 `PROTOCOL.md §9.7`）
+        @Sendable func vectors(_ context: ServerRequestContext) throws -> WorkspaceVectors {
+            try host.vectors(try context.parameters.require("ws"))
+        }
+        @Sendable func rawBody(_ request: Request, _ context: ServerRequestContext) async throws -> Data {
+            var request = request
+            return Data(try await request.collectBody(upTo: context.maxUploadSize).readableBytesView)
+        }
+
+        api.post("workspaces/:ws/vectors/missing") { request, context -> Response in
+            let v = try vectors(context)
+            let body = try await rawBody(request, context)
+            return binary(try await Blocking.run { try v.missing(body: body) })
+        }
+
+        api.post("workspaces/:ws/vectors") { request, context -> VecPutDTO in
+            let v = try vectors(context)
+            let body = try await rawBody(request, context)
+            let r = try await Blocking.run { try v.put(body: body) }
+            return VecPutDTO(added: r.added, head: r.head)
+        }
+
+        api.get("workspaces/:ws/vectors") { request, context -> Response in
+            let v = try vectors(context)
+            guard let model = request.uri.queryParameters.get("model").map { String($0) }, !model.isEmpty else {
+                throw HTTPError(.badRequest, message: "缺 model")
+            }
+            let since = request.uri.queryParameters.get("since").flatMap { UInt64($0) } ?? 0
+            let epoch = request.uri.queryParameters.get("epoch").map { String($0) }
+            let limit = request.uri.queryParameters.get("limit").flatMap { Int($0) } ?? WorkspaceVectors.maxBatch
+            return binary(try await Blocking.run { try v.pageBody(model: model, since: since, epoch: epoch, limit: limit) })
+        }
+
+        api.post("workspaces/:ws/vectors/prune") { request, context -> VecPruneDTO in
+            let v = try vectors(context)
+            let body = try await rawBody(request, context)
+            let r = try await Blocking.run { try v.prune(body: body) }
+            return VecPruneDTO(removed: r.removed, epoch: r.epoch)
         }
 
         // MARK: PDF
@@ -642,4 +686,6 @@ struct WebEditResponse: ResponseEncodable {
 }
 struct PageMarkList: ResponseEncodable { let marks: [PageMarkDTO] }
 struct HeadDTO: ResponseEncodable { let head: UInt64 }
+struct VecPutDTO: ResponseEncodable { let added: Int; let head: UInt64 }
+struct VecPruneDTO: ResponseEncodable { let removed: Int; let epoch: String }
 struct WaitDTO: ResponseEncodable { let rows: UInt64; let notes: UInt64; let changed: Bool }

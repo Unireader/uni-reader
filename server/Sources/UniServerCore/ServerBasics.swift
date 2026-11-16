@@ -14,6 +14,7 @@ import Crypto
 ///   uploads/                         正在上传、还没登记的工作区与文件
 ///   trash/<workspace_id>/            删除先归档（按天一个小库）
 ///   backups/<workspace_id>/          分级定时备份
+///   vectors/<workspace_id>.sqlite    块向量（派生数据，`WorkspaceVectors`）
 /// ```
 public struct ServerPaths: Sendable {
     public let root: URL
@@ -28,6 +29,8 @@ public struct ServerPaths: Sendable {
     func trashFolder(_ id: String) -> URL { root.appendingPathComponent("trash/\(id)", isDirectory: true) }
     func backupFolder(_ id: String) -> URL { root.appendingPathComponent("backups/\(id)", isDirectory: true) }
     func snapshotFolder(_ id: String) -> URL { root.appendingPathComponent("snapshots/\(id)", isDirectory: true) }
+    /// 块向量（派生数据，不在工作区包里，`WorkspaceVectors`）。
+    func vectorsDB(_ id: String) -> URL { root.appendingPathComponent("vectors/\(id).sqlite") }
     /// 断点续传中的半截文件（PDF / 图片本体）。
     var partials: URL { uploads.appendingPathComponent("partials", isDirectory: true) }
     /// 服务器出图的缓存（`PageImages`）。

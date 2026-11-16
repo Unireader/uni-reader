@@ -77,6 +77,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   Inspector「今天」页、MCP 批 8 让 Agent 排计划 / 挪日子 / 打勾；统计工具 `workspace_stats` 在 `MCP-PLAN.md §38`
 - **`docs/SEARCH-PLAN.md`** — 全工作区搜索（MCP `search`：PDF 文字 / 笔记 / 批注 / 习题 / 上下文）+ 语义搜索（本机模型或 OpenAI 兼容接口）；
   索引是**派生数据**，单独放 `~/Library/Application Support/UniReader/SearchIndex/`，🔴 不进 `library.sqlite`、不同步（`Sources/Search/`）
+- **`docs/SEMANTIC-SYNC-PLAN.md`** — 块向量经服务器同步 + 安卓语义搜索（2026-11-16）：🔴 **按块正文 SHA-256 内容寻址**（不按块 id），
+  Mac 算好传服务器（`vectors/<id>.sqlite`，派生数据），安卓只用 llama.cpp 算查询向量；线格式 `PROTOCOL.md §9.7`；**改 `SearchText` 切块要两端一起改**，否则向量全部查不到
 - **`docs/KNOWLEDGE-LINKS-PLAN.md`** — 知识关联（笔记 · 书页 · 批注互相引用）：🔴 **关系只从正文里的链接认、不另存关系表**；`[[书名#page=12]]` 写法、
   输入 `[[` 的选择框（书 / 书页 / 批注 / 笔记段落）、Inspector「关联」页、MCP `links`；链接原样记在搜索索引的 `edge` 表、读时解析
 - **`docs/ANIM-BLOCK-PLAN.md`** — 笔记里的分步演示（```anim 块，自绘画布 + 语义 DSL：时序图 / 滑动窗口 / 数据结构逐步播放；照 ```grapher 块的围栏块 + 覆盖层做法，覆盖层两者共用 `FencedBlocks.swift`）；A1 已实测，A2（链表 / 树 / 图 / 指针 / 二维表）、A3（一行套件：协议 / 排序 / CRC / 遍历 / BFS·DFS / Dijkstra，`AnimKits.swift`）已写、待实测，测试 `spike/anim-test.swift`

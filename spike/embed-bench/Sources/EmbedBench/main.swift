@@ -218,6 +218,64 @@ func run(_ name: String, _ set: [(String, [String])]) async {
                  hit, set.count, top1, set.count, rr / Double(set.count), qTime / Double(set.count) * 1000))
 }
 
+// MARK: 外部查询向量对比（安卓用 llama.cpp 只算查询向量，块向量照用 App 存的）
+// --export-queries <文件>：把全部查询（带任务说明）用 <#sep#> 连起来写出，给 llama-embedding -f … --embd-separator '<#sep#>'
+// --compare <llama-embedding 的 json>（可给多个）：用外部查询向量排序，与 MLX 查询向量的结果并排比较
+
+func argValues(_ name: String) -> [String] {
+    args.indices.filter { args[$0] == name && $0 + 1 < args.count }.map { args[$0 + 1] }
+}
+let allCases = paraphrased + literal
+if let p = argValues("--export-queries").first {
+    try allCases.map { queryText($0.0) }.joined(separator: "<#sep#>").write(toFile: p, atomically: true, encoding: .utf8)
+    print("查询已写出：\(p)（\(allCases.count) 条）")
+    exit(0)
+}
+let comparePaths = argValues("--compare")
+if !comparePaths.isEmpty {
+    func loadExternal(_ path: String) -> [[Float]] {
+        let obj = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as! [String: Any]
+        let data = (obj["data"] as! [[String: Any]]).sorted { ($0["index"] as! Int) < ($1["index"] as! Int) }
+        return data.map { ($0["embedding"] as! [NSNumber]).map(\.floatValue) }
+    }
+    let quant = { (v: [Float]) in stored ? v.map { max(-127, min(127, ($0 * 127).rounded())) / 127 } : v }
+    func top10(_ qv: [Float]) -> [Int] {
+        docVecs.indices.map { i -> (Int, Float) in
+            var s: Float = 0; let v = docVecs[i]
+            for d in 0..<dim { s += v[d] * qv[d] }
+            return (i, s)
+        }.sorted { $0.1 > $1.1 }.prefix(10).map(\.0)
+    }
+    var mlx: [[Float]] = []
+    for (q, _) in allCases { mlx.append((await embed([queryText(q)]))[0]) }
+    let variants: [(String, [[Float]])] = [("MLX bf16", mlx)] + comparePaths.map { (URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent, loadExternal($0)) }
+    for (name, vs) in variants where vs.count != allCases.count { fatalError("\(name)：\(vs.count) 条向量，应为 \(allCases.count)") }
+    let mlxTops = mlx.map { top10(quant($0)) }
+    for (name, vs) in variants {
+        var hit = [0, 0], top1 = [0, 0], rr = [0.0, 0.0], cosSum = 0.0, cosMin = 1.0, overlap = 0, sameTop1 = 0
+        for (k, (q, terms)) in allCases.enumerated() {
+            let g = k < paraphrased.count ? 0 : 1
+            let rel = Set(chunks.indices.filter { i in terms.contains { chunks[i].norm.contains($0) } })
+            let v = vs[k]
+            // MLX 在 bf16 里归一化，长度本身差零点几个百分点，余弦按长度再除一次
+            let dot = { (a: [Float], b: [Float]) in Double(zip(a, b).reduce(Float(0)) { $0 + $1.0 * $1.1 }) }
+            let c = dot(v, mlx[k]) / (dot(v, v) * dot(mlx[k], mlx[k])).squareRoot()
+            cosSum += c; cosMin = min(cosMin, c)
+            let top = top10(quant(v))
+            overlap += Set(top).intersection(mlxTops[k]).count
+            if top.first == mlxTops[k].first { sameTop1 += 1 }
+            let r = top.firstIndex { rel.contains($0) }
+            if r != nil { hit[g] += 1 }; if r == 0 { top1[g] += 1 }
+            rr[g] += r.map { 1.0 / Double($0 + 1) } ?? 0
+            if show && name != "MLX bf16" { print(String(format: "  %@ 余弦 %.5f  前10与MLX重合 %d  %@", name, c, Set(top).intersection(mlxTops[k]).count, q)) }
+        }
+        let n = Double(allCases.count), np = paraphrased.count, nl = literal.count
+        print(String(format: "\n%@：换说法 命中 %d/%d 首位 %d MRR %.2f ｜ 字面 命中 %d/%d 首位 %d ｜ 与MLX余弦 平均 %.5f 最低 %.5f ｜ 前10平均重合 %.1f/10，首位相同 %d/%d",
+                     name, hit[0], np, top1[0], rr[0] / Double(np), hit[1], nl, top1[1], cosSum / n, cosMin, Double(overlap) / n, sameTop1, allCases.count))
+    }
+    exit(0)
+}
+
 await run("换说法", paraphrased)
 await run("字面相同", literal)
 notePeak()

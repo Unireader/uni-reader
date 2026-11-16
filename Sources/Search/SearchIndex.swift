@@ -348,6 +348,48 @@ actor SearchIndex {
         }
     }
 
+    // MARK: - 导出给服务器（`SEMANTIC-SYNC-PLAN.md §3`：按正文内容寻址）
+
+    /// 本机模型算的全部块向量，键 = SHA-256(块正文 UTF-8)，同一段正文只留一份。
+    /// `complete` = 索引建完、没有排队的来源、每块都有向量、上次没出错——只有这时才许让服务器清理孤儿。
+    struct VectorExport: Sendable {
+        let model: String
+        let dim: Int
+        let entries: [SyncWire.VecEntry]
+        let complete: Bool
+    }
+
+    private var vectorsComplete: Bool {
+        guard running == nil, pendingSources == nil, !progress.building, embedding == nil,
+              embedProgress.lastError == nil else { return false }
+        let missing = (try? db.query("SELECT COUNT(*) AS n FROM chunk WHERE id NOT IN (SELECT chunk_id FROM vec)"))?.first?["n"] as? Int64
+        return missing == 0
+    }
+
+    /// 便宜的指纹（每分钟问一次）：变了才值得对账上传。只看本机模型（`local|…`）的向量；没有 = nil。
+    func vectorSignature() -> String? {
+        guard let r = (try? db.query("""
+            SELECT model, COUNT(*) AS n, MAX(chunk_id) AS m FROM vec WHERE model LIKE 'local|%' GROUP BY model
+            """))?.first, let model = r["model"] as? String else { return nil }
+        return "\(model)|\(r["n"] as? Int64 ?? 0)|\(r["m"] as? Int64 ?? 0)|\(vectorsComplete)"
+    }
+
+    func vectorExport() -> VectorExport? {
+        let rows = (try? db.query("""
+            SELECT c.body AS body, v.model AS model, v.v AS v FROM chunk c JOIN vec v ON v.chunk_id = c.id
+            WHERE v.model LIKE 'local|%'
+            """)) ?? []
+        guard let model = rows.first?["model"] as? String, let dim = (rows.first?["v"] as? Data)?.count, dim > 0 else { return nil }
+        var seen = Set<Data>(), entries: [SyncWire.VecEntry] = []
+        entries.reserveCapacity(rows.count)
+        for r in rows {
+            guard r["model"] as? String == model, let v = r["v"] as? Data, v.count == dim else { continue }
+            let h = Data(SHA256.hash(data: Data((r["body"] as? String ?? "").utf8)))
+            if seen.insert(h).inserted { entries.append(.init(hash: h, v: v)) }
+        }
+        return VectorExport(model: model, dim: dim, entries: entries, complete: vectorsComplete)
+    }
+
     /// 向量用的模型（库里存的那个；没有 = nil）。
     var vectorModel: String? { (try? db.query("SELECT model FROM vec LIMIT 1"))?.first?["model"] as? String }
 

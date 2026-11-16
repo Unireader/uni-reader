@@ -102,6 +102,38 @@ struct ServerClient: Sendable {
         return try await send(req).0
     }
 
+    // MARK: 块向量（`SEMANTIC-SYNC-PLAN.md §3`，线格式 `PROTOCOL.md §9.7`）
+
+    func vectorsMissing(_ ws: String, _ m: SyncWire.VecHashes) async throws -> SyncWire.VecMissing {
+        var req = try request("v1/workspaces/\(ws)/vectors/missing", method: "POST")
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 120
+        return try SyncWire.decodeVecMissing(try await send(req, body: SyncWire.encode(m)).0)
+    }
+
+    func putVectors(_ ws: String, _ m: SyncWire.VecPut) async throws {
+        var req = try request("v1/workspaces/\(ws)/vectors", method: "POST")
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 120
+        _ = try await send(req, body: SyncWire.encode(m))
+    }
+
+    func pruneVectors(_ ws: String, _ m: SyncWire.VecHashes) async throws {
+        var req = try request("v1/workspaces/\(ws)/vectors/prune", method: "POST")
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 120
+        _ = try await send(req, body: SyncWire.encode(m))
+    }
+
+    /// Mac 不拉向量（自己算）；这个只给端到端测试用。
+    func vectorPage(_ ws: String, model: String, since: UInt64, epoch: String?) async throws -> SyncWire.VecPage {
+        var q = [URLQueryItem(name: "model", value: model), URLQueryItem(name: "since", value: String(since))]
+        if let epoch { q.append(URLQueryItem(name: "epoch", value: epoch)) }
+        var req = try request("v1/workspaces/\(ws)/vectors", query: q)
+        req.timeoutInterval = 120
+        return try SyncWire.decodeVecPage(try await send(req).0)
+    }
+
     /// 下载快照到 [dst]（不能已存在），返回快照对应的修订号。[progress] 收到（已下载，总字节数；不知道总数时为 -1）。
     func downloadSnapshot(_ ws: String, to dst: URL,
                           progress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws -> UInt64 {

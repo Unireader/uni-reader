@@ -14,6 +14,7 @@ public final class WorkspaceHost: @unchecked Sendable {
 
     public let paths: ServerPaths
     private var opened: [String: HostedWorkspace] = [:]
+    private var openedVectors: [String: WorkspaceVectors] = [:]
     private let lock = NSLock()
 
     public init(paths: ServerPaths) throws {
@@ -48,6 +49,16 @@ public final class WorkspaceHost: @unchecked Sendable {
         return w
     }
 
+    /// 某个工作区的块向量库（工作区必须存在；`SEMANTIC-SYNC-PLAN.md §2`）。
+    public func vectors(_ id: String) throws -> WorkspaceVectors {
+        _ = try workspace(id)
+        lock.lock(); defer { lock.unlock() }
+        if let v = openedVectors[id] { return v }
+        let v = try WorkspaceVectors(url: paths.vectorsDB(id))
+        openedVectors[id] = v
+        return v
+    }
+
     /// 新建一个上传用的临时文件夹（`uploads/<随机>/`）。
     public func newUploadFolder() throws -> URL {
         let dir = paths.uploads.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -69,6 +80,8 @@ public final class WorkspaceHost: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         for w in opened.values { w.close() }
         opened.removeAll()
+        for v in openedVectors.values { v.close() }
+        openedVectors.removeAll()
     }
 
     // MARK: - 删除整个工作区（先归档再删，红线⑪）
@@ -104,6 +117,9 @@ public final class WorkspaceHost: @unchecked Sendable {
         // 等它手上的读写做完再关（close 拿的是工作区自己那把锁）
         if let w = opened.removeValue(forKey: id) { w.close() }
         lastBackupHead[id] = nil
+        // 块向量是派生数据：直接删掉（不进回收站；找回工作区后 Mac 会重传）
+        openedVectors.removeValue(forKey: id)?.close()
+        for suffix in ["", "-wal", "-shm"] { try? fm.removeItem(atPath: paths.vectorsDB(id).path + suffix) }
 
         let stamp = ISO.string(now)
         var dir = paths.trashFolder(id).appendingPathComponent(Self.deletedPrefix + Self.fileStamp(stamp), isDirectory: true)
