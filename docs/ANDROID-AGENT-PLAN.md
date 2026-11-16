@@ -88,10 +88,75 @@
 - 同 Mac §22：面板一轮**正常答完**记一行 `agent_turn`（用户那句话 + 回复正文；上下文块、工具输出、思考过程不记；停止 / 出错的不记）。
   `conversation_id` 新对话 / 换设置 / 换工作区各换一个；`agent` 列 = `unireader-android`。只追加、随同步（`MirrorFp` 早已含这张表）。
 - 工具 `list_conversations` / `read_conversation`（按轮分页），文案照 Mac。系统提示里提了一句，模型想回顾以前聊过什么会用它们。
-- 没做：全工作区 `search`（Mac 那套搜索索引本端没有），所以按内容找以前的对话只能先列再读。
+- 按内容找以前的对话：`search` 的 `conversation` 一类（§5.6）。
+
+### 5.5 Agent 上下文（2026-11-16）
+
+同 Mac §12（换个 Agent 接着做的交接摘要，`agent_context` v23，本端早已建表、随同步）：
+- 工具 `list_agent_contexts` / `read_agent_context` / `save_agent_context`（带 `id` = 改那份，没变不写），文案照 Mac MCP；系统提示里加了 Mac 面板上下文块那句。
+- 面板标题行 ⋯ 改成系统菜单：**保存这段对话为上下文**（说过话、空闲时可点）/ **随下一句话带上 ›**（已存的，最多 30 份，打勾 = 挂着）/ 设置…。
+  - 保存 = 发一句可见的请求 + 隐藏的写法要求（`AgentContextText.SAVE_INSTRUCTION`），这一轮正常答完按第一个标题行切成标题与正文存下，
+    对话里提示「已保存为上下文「…」」；停止 / 出错 / 没写出正文 = 不存并提示。这一轮不记进对话记录（同 Mac）。
+  - 挂着的显示在输入框上方（「随下一句话带上的上下文」+ 移除），随下一句放进上下文块（`AgentContextText.handoff`），对话里提示「已带上上下文「…」」，带完摘下。
+- 文字规则 `AgentContextText` 逐条照 Mac（JVM 单测 `AgentContextTextTest` ↔ `spike/agent-context-test.swift` 前三段）；交接块里「unireader MCP tools」改成「the tools」。
+- 没做：管理窗口（改标题 / 摘要、删除进回收站）——要改要删先在 Mac 上做，或让 Agent 用 `save_agent_context` 带 `id` 改。
+
+### 5.6 全工作区搜索（2026-11-16，关键词版）
+
+`search` 工具：参数（`query` / `kinds` / `document_ids` / `note_folder` / `limit`）、匹配、打分、去重、输出格式照 Mac `MCPTools+Search.swift` 的关键词那一路；
+范围同 Mac：PDF 每页文字、Markdown 笔记（按标题分段、给行号）、批注、习题、上下文、记忆、对话记录。
+- 纯函数 `local/search/SearchText`（归一化：全角→半角、小写、去掉全部空白；切词 / 切块 / 摘要 / 打分）**逐条照抄 Mac `Sources/Search/SearchText.swift`**，
+  JVM 单测 `SearchTextTest` ↔ `spike/search-test.swift` 1)~4)。🔴 同一算法两份实现，改一边要同步另一边。
+- 与 Mac 的差别：**不建持久索引**（Mac 是 SQLite 索引 + 可选语义搜索），每次现场取：库里的行在库队列上读，`Notes/` 读文件。
+  PDF 用库里 `ocr_page` 的 OCR 文字（滤过水印），按「文档 id + 标题 + 内容 hash」缓存**切好、归一化好的块**（OCR 行数 / 最新时间变了才重读，最多 12 本）。
+  2000 页 × 约 800 字实测（`AgentToolsTest.searchTiming`，小米 Pad 6）：首次 2.2 秒（解析 OCR），之后 0.07~0.3 秒。
+  没 OCR 的页：书开在标签里就用 PDF 自带文字层补；整本没 OCR 又没开的书搜不到正文，结果末尾列出书名、建议用 `open_document` / `search_text`。
+- 没做：语义搜索；Mac 引用的外部笔记目录（本端只有内建 `Notes/`，没有 `note_source` 参数）；习题标签（本端习题模型没有这一列）。
+
+### 5.7 改批注（2026-11-16）
+
+`update_annotations`：照 Mac `MCPFacade+Annotations.updateAnnotations`——批注改正文 / 颜色（`none` = 回到类型色）/ 画法 / 类型 / 展开方式，高亮改颜色 / 画法，
+书签改名，图片笔记改说明 / 展开方式；有一条不合规（id 不对、字段不属于那一种、类型不存在…）就一条都不改。只动 payload 里要改的键，其余原样。
+写入走 `AgentHost.writeNotes`（开着的那篇进撤销栈、马上显示），写完 `annotationsChanged` 重读图片笔记、刷书签。
 
 - 读文字要那本书**在标签里装载着**（本机只有标签里的 Pdfium 实例）；没开就替用户开、等它装好（最多 10 秒）。
 - 返回给模型的是纯文字（Mac MCP 的 `text` 部分），不带结构化 JSON。
+
+### 5.8 习题（2026-11-16）
+
+| 工具 | 说明 |
+|---|---|
+| `list_exercises` | 一本书（或 `all_documents`）的题，按练习顺序；`exercise_ids` / `filter`（mistakes / starred）/ 分页。只回文字，所以每道题把题干、选项、参考答案、章节、错题 / 收藏、练习统计都写出来（Mac 的文字只给一行、细节在结构化结果里） |
+| `list_exercise_attempts` | 作答，最新的在前：题干、参考答案（同 Mac `referenceAnswerText`）、用户的作答（填空逐空 + 每空对不对得上）、判定（谁判的）、评语；`ungraded_only` = 还没判的填空 / 主观题。SQL 照 Mac `exerciseAttemptPage` |
+| `grade_exercise_attempts` | 批改填空 / 主观题：`judged_by = 'agent'` + 评语，判错进错题本；选择题不能批；整批先校验，有一条不对就一条都不写（同 Mac） |
+| `open_exercises` | 在公用习题标签里开一组（全部 / 错题本 / 收藏，可限一本书），`exercise_id` = 停在那道题（`ExerciseController.focus`） |
+
+- 批改后宿主 `AgentHost.exercisesChanged` → 开着的练习页就地刷新，练习页本来就显示「Agent 评语」。
+- 没做：Mac 的 `pages` / `chapter` / `tag` 筛选、看原题图与手写作答（`render_exercise*`，要图片输入）、导入 / 改题 / 删题。
+
+### 5.9 日程（2026-11-16）
+
+`list_schedule` / `add_schedule_items` / `update_schedule_items` / `delete_schedule`，参数、校验、文字输出照 Mac `MCPTools+Schedule.swift`（批 8）。
+本端**没有日程界面**：Agent 在平板上排的计划随同步到 Mac，在 Mac 的日程页 / Inspector「今天」看；`open_schedule` 不做。
+- 纯规则 `local/schedule/Schedule.kt`（`ScheduleDay` / `ScheduleTime` / `ScheduleText.agentLine`，JVM 单测 `ScheduleTest` ↔ `spike/schedule-test.swift`）。
+- 库层 SQL 照抄 Mac（排序 `day, start_min, seq, created_at, id`；按 id 前缀找 `scheduleItemsByPrefix`）；写入语义照 Mac `WorkspaceManager+Schedule`：
+  同一天新加的排在最后、一批 `created_at` 依次加 1 毫秒保住先后；改的时候跟库里一样的不写、挪到别的日子的排到那天最后；整批先校验。
+- 删除先归档（`Trash.deleteSchedule`，回收站「日程」条目，同 Mac 的格式）。
+- 新对话第一句带上 Mac 那一行日程摘要（今天几件、过期几件、几份计划）。
+
+### 5.10 Markdown 笔记：打开 / 改名挪目录 / 删除（2026-11-16）
+
+- `open_markdown`：在标签里打开一篇。
+- `rename_markdown`：改名（`title`）和 / 或挪到 `Notes/` 里另一个目录（`folder`，没有就建）；撞名不改。开着的标签跟着换身份、没存的输入先存。
+  🔴 红线 9：不改别人的正文；改名前后各认一遍别的笔记里的 `[[…]]`（`MdNotes.backlinks` + `Index.note`），断了的列给模型（同 Mac）。挪目录名字不变，`[[名字]]` 照样认得。
+- `delete_markdown`：挪进 `Notes/.trash/`（同界面删除，Obsidian 的回收站目录），开着的标签关掉；指向它的链接列出来。
+- 抽屉菜单里的「改名 / 删除」与 Agent 共用 `ReaderActivity.renameMarkdown` / `deleteMarkdown`（原先写在菜单回调里）。
+- 没做：Mac 的引用外部目录（note source）之间搬、`move_markdown_folder`（整个目录改名）、`update_markdown`（整篇覆盖，有 `edit_markdown`）。
+
+### 5.11 书：目录 / 改名改分组（2026-11-16）
+
+- `get_document`：页数、分组、读到哪、几页有 OCR，加 PDF 目录（1 起的页码，缩进表示层级）；目录从标签里的 Pdfium 读（没开就替用户开），`AgentHost.documentToc`。
+- `update_document`：改书名（只改库里的名字）/ 改分组（`""` = 不分组），`document_ids` 一次挪几本；写完 `AgentHost.libraryChanged` 刷抽屉和标签上的名字。
 
 ## 6. 界面（`local/agent/AgentPanel.kt`）
 
@@ -104,8 +169,10 @@
 
 ## 7. 没做 / 下一批
 
-- Agent 上下文 `agent_context`（Mac §12）。
-- 全工作区搜索 `search`（要搜索索引）。
+- Agent 上下文的管理窗口（改 / 删，§5.5）。
+- `workspace_stats`（Mac `StatsStore` 557 行 SQL；按标签统计用了 JSON1 的 `json_each`，本端约定不用 SQL 的 `json_*`，要改写法）。
+- 画板（`list_boards` / `render_board`）、知识关联（`links` / `markdown_links`）、`render_page`（要模型支持图片）。
+- 语义搜索（§5.6）。
 - `render_page`（多模态看图）：要模型支持图片输入，设置里加开关。
 - 模式2（连 Mac）不做：那边直接用 Mac 的 Agent 面板。
 
@@ -115,7 +182,9 @@
   验路径拼接、鉴权头、分段参数拼接、工具结果带 `tool_call_id` 回传、`reasoning_content`、空参数工具调用、多轮历史。不要 API Key、不碰界面。
 - `AgentToolsTest`（插桩）：cacheDir 里新建真工作区 + 手写两页 PDF + 不经界面的假宿主，十几个工具逐个跑、回库 / 文件核对
   （高亮的行框位置、批注的锚点与 `source`、书签、Markdown 新建 / 编辑 / 报错、记忆改写；删除：有一个 id 对不上一条不删、
-  回收站条目种类 / 计数 / 名字、从回收站放回去；对话：列表先后、分页、同 id 不覆盖）。`MdEditTest`（JVM）6 条。
+  回收站条目种类 / 计数 / 名字、从回收站放回去；对话：列表先后、分页、同 id 不覆盖；上下文：标题规整、带 id 改且没变不写）。
+  搜索：OCR 跨行命中、没 OCR 的页用自带文字层补、各类都搜得到、按类筛、退回「任一词」；`searchTiming` 只打日志量速度。
+  `MdEditTest`（JVM）6 条、`AgentContextTextTest`（JVM）3 条、`SearchTextTest`（JVM）4 条。
 - **真机冒烟（2026-11-15，用户授权我自己测）**：Mac 上起假的 OpenAI 兼容服务（只读剧本：`get_state` → `read_pages` → 正文），
   `adb reverse` 接到平板，在 408学习区 里经界面配设置、发一句话：三次请求都带鉴权与 16 个工具，工具结果是真实状态，
   界面依次显示思考 / `✓ get_state` / `✓ read_pages` / Markdown 正文，输入框随键盘顶起，无崩溃。测完删了设置、结束了进程。
@@ -134,3 +203,12 @@
 - [ ] 「把刚才那条高亮删掉」→ 页面上马上没了；⋯「回收站…」里有一条「批注」，恢复后又出现
 - [ ] 「把关于第三章的那条记忆删了」→ 回收站里有「Agent 记忆」条目；Mac 上打开同一工作区的回收站也认得
 - [ ] 聊两轮后点 ＋ 开新对话，问「上次我们聊了什么」→ 它调 `list_conversations` / `read_conversation` 答得出
+- [ ] ⋯ 弹出菜单（一句没说时「保存这段对话为上下文」是灰的）；聊几句后点它 → 对话里多一句请求、答完提示「已保存为上下文「…」」
+- [ ] 点 ＋ 开新对话 → ⋯「随下一句话带上」里有刚才那份 → 点它：输入框上方出现那一块；说「接着做」→ 提示「已带上上下文「…」」，它知道之前做到哪
+- [ ] Mac 打开同一工作区：「管理上下文…」里看得到平板存的那份（Agent 列 `unireader-android`）
+- [ ] 「在整个工作区里找一下讲进程调度的地方」→ 它调 `search`，列出几本书的页 / 笔记段落，再 `read_pages` 读
+- [ ] 「把那条高亮改成绿色 / 把书签改个名」→ `update_annotations`，页面上马上变，撤销键能撤回
+- [ ] 在平板上做几道填空 / 主观题（打字作答、先别自己判）→ 「帮我批改刚才做的题」→ 练习页出现「Agent 评语」，判错的进错题本
+- [ ] 「打开错题本」/「打开刚才那道题」→ 练习标签切过去、停在那道题
+- [ ] 抽屉里长按一篇笔记「改名 / 删除」照旧好用（代码挪成了与 Agent 共用的函数）；让 Agent「把这篇笔记改名为…/挪到某目录」→ 标签跟着变，它报出断了的链接
+- [ ] 「帮我排两周的第三章复习计划」→ `add_schedule_items` 建一份计划；Mac 同步后日程页里看得到；「把昨天没做完的挪到明天」→ `update_schedule_items`
