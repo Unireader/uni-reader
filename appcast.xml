@@ -9,6 +9,46 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.32</title>
+      <pubDate>Mon, 16 Nov 2026 15:23:19 +0000</pubDate>
+      <sparkle:version>74</sparkle:version>
+      <sparkle:shortVersionString>0.3.32</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>习题</h4>
+<ul>
+<li>习题可以不关联 PDF：让 Agent 把它自己出的题、别处找来的题或你给它的题存进一个分组，不用先有一篇 PDF。分组在侧栏「习题」里和书并列，每个分组一行；错题本和收藏底下也能按分组看。这种题没有页码和原题图。</li>
+<li>分组可以改名：在侧栏的分组上右键「重命名分组…」；改成另一个已有分组的名字，两组就合在一起。</li>
+<li>在习题列表里选中不关联 PDF 的题，右键「移动到分组」可以换分组、新建分组或移出分组。</li>
+<li>已有的题可以和 PDF 分开：在习题列表里右键「解除与 PDF 的关联…」。题目、做题记录、错题本、收藏、笔记和标签都保留，题会移到一个以书名命名的分组里；页码和原题区域会去掉。</li>
+<li>删除一篇 PDF 时，它的习题不再跟着删除：会移到以书名命名的分组里，做题记录都在。</li>
+</ul>
+<h4>升级须知</h4>
+<ul>
+<li>这一版的数据版本升到 28。连接服务器的工作区，服务器和各个设备要一起升级：服务器 0.7.0、安卓版 0.3.23。只升了一边时，没升的那一边只能下载、不能上传。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.32">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Exercises</h4>
+<ul>
+<li>Exercises no longer have to belong to a PDF: ask the Agent to save questions it wrote, found elsewhere or got from you into a group, with no PDF needed. Groups appear in the Exercises part of the sidebar next to the books, one row each; Mistakes and Starred can be browsed by group too. These questions have no page number and no original image.</li>
+<li>Groups can be renamed: right-click a group in the sidebar and choose Rename Group…. Giving it the name of another group merges the two.</li>
+<li>In the exercise list, select questions that aren't linked to a PDF and right-click Move to Group to move them to another group, a new group, or out of their group.</li>
+<li>Existing questions can be unlinked from their PDF: right-click them in the exercise list and choose Unlink from PDF…. The questions, your answers, mistakes, stars, notes and tags stay, and the questions move to a group named after the book; the page number and the question area are dropped.</li>
+<li>Deleting a PDF no longer deletes its exercises: they move to a group named after the book, with your practice history intact.</li>
+</ul>
+<h4>Before you update</h4>
+<ul>
+<li>The data version is now 28. For workspaces on a server, update the server and all your devices together: server 0.7.0 and the Android app 0.3.23. If only one side is updated, the side that wasn't can download but can't upload.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.32">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.32/UniReader-0.3.32.zip" length="32675078" type="application/octet-stream" sparkle:edSignature="Xnf7sLFeqaj589mXdXRgHC48WO5g+fmz+aWqcA6S1XbDma4vc21QxmBJBi3Gm7L0xYyDs1mBmiLnoJnSiDrKDQ==" />
+    </item>
+    <item>
       <title>v0.3.31</title>
       <pubDate>Mon, 16 Nov 2026 08:35:14 +0000</pubDate>
       <sparkle:version>73</sparkle:version>
