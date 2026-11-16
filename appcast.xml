@@ -9,6 +9,44 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.31</title>
+      <pubDate>Mon, 16 Nov 2026 08:35:14 +0000</pubDate>
+      <sparkle:version>73</sparkle:version>
+      <sparkle:shortVersionString>0.3.31</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>Markdown 笔记</h4>
+<ul>
+<li>指向书中某一页的链接（<code>[[书名#page=152]]</code>）现在只显示页码，比如「p.152」，鼠标停在上面能看到书名和页码。文件里写的内容不变，光标移进链接时照样显示原文。</li>
+</ul>
+<h4>修正</h4>
+<ul>
+<li>列表和引用里较高的公式（比如分式）不再压到上下两行。</li>
+<li>表格单元格里的公式含有竖线时（比如 $|A|$），不再被当成分隔符拆成两格。</li>
+<li>竖线前带系数的公式（比如 $k|A|$、$2|x|$）能正确显示，不再显示成原文。</li>
+<li>Agent 在表格里写公式时，改用不会和表格冲突的写法。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.31">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Markdown notes</h4>
+<ul>
+<li>Links to a page in a book (<code>[[Book title#page=152]]</code>) now show just the page number, such as "p.152"; hover over one to see the book title and page. What's written in the file doesn't change, and the original text still shows when the cursor moves into the link.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Tall formulas (such as fractions) in lists and quotes no longer overlap the lines above and below.</li>
+<li>A formula with vertical bars inside a table cell (such as $|A|$) is no longer split into two cells.</li>
+<li>Formulas with a coefficient before the bars (such as $k|A|$ and $2|x|$) now display correctly instead of showing their source.</li>
+<li>When the Agent writes formulas in tables, it now uses a form that doesn't conflict with the table.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.31">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.31/UniReader-0.3.31.zip" length="32620905" type="application/octet-stream" sparkle:edSignature="vv3opdWe59GZklD2ElIw4lDbIfVPCnbhNuPzVT1akfQGG+4HLrdeMfpeS93kb1opr+7PHtZIDPXhb5WApOJSCg==" />
+    </item>
+    <item>
       <title>v0.3.30</title>
       <pubDate>Mon, 16 Nov 2026 05:18:02 +0000</pubDate>
       <sparkle:version>72</sparkle:version>
