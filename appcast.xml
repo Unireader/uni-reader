@@ -9,6 +9,60 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.30</title>
+      <pubDate>Mon, 16 Nov 2026 05:18:02 +0000</pubDate>
+      <sparkle:version>72</sparkle:version>
+      <sparkle:shortVersionString>0.3.30</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>习题</h4>
+<ul>
+<li>支持英语阅读理解和完形填空：一篇文章带几道选择题，由 Agent 从书上导入。练习时文章单独一栏（窗口宽时在左边，窄时在上面），翻题时文章不动；完形填空的空号可以点，点了跳到那一空的题，当前这一空标出底色，做过的空后面接上选的词。连着的平板上也能看到文章和题目。</li>
+<li>题目上可以做高亮：判完之后，在题干、文章或选项里选中一段文字，右键「高亮」；右键点在高亮上可以「去掉高亮」。点「再做一次」时高亮先藏起来，判完再显示。</li>
+</ul>
+<h4>连接服务器</h4>
+<ul>
+<li>开着语义搜索时，Mac 会把算好的搜索索引传到服务器，安卓版连同一个服务器工作区时就能用语义搜索。需要服务器也更新到 0.6.0。</li>
+</ul>
+<h4>修正</h4>
+<ul>
+<li>笔记和习题里的行内公式能正确显示绝对值、行列式和范数，比如 $|A|$、$||v||$。</li>
+<li>同时开着几个工作区用本机模型做语义搜索时，App 可能闪退。</li>
+<li>设置原题区域时偶尔闪退。</li>
+</ul>
+<h4>升级须知</h4>
+<ul>
+<li>这一版的数据版本升到 27。连接服务器的工作区，服务器和各个设备要一起升级：服务器 0.6.0、安卓版 0.3.22。只升了一边时，没升的那一边只能下载、不能上传。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.30">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Exercises</h4>
+<ul>
+<li>English reading comprehension and cloze tests: one passage with several multiple-choice questions, imported from the book by the Agent. While practicing, the passage gets its own column (on the left in a wide window, on top in a narrow one) and stays put as you move between its questions. In a cloze test the blank numbers are clickable and take you to that blank's question; the current blank is shaded, and blanks you've answered show the word you picked. A connected tablet shows the passage and the questions too.</li>
+<li>Highlights on questions: after a question is graded, select some text in the question, the passage or an option and right-click Highlight; right-click a highlight to remove it. When you choose to do a question again, its highlights are hidden until it's graded.</li>
+</ul>
+<h4>Server</h4>
+<ul>
+<li>With semantic search turned on, the Mac now uploads the search index it builds to the server, so the Android app can use semantic search on the same server workspace. The server needs to be updated to 0.6.0.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Inline formulas in notes and exercises now show absolute values, determinants and norms correctly, such as $|A|$ and $||v||$.</li>
+<li>The app could quit unexpectedly when several workspaces used the local model for semantic search at the same time.</li>
+<li>The app occasionally quit while setting a question's original area.</li>
+</ul>
+<h4>Before you update</h4>
+<ul>
+<li>This version moves to data version 27. For workspaces on a server, update the server and every device together: server 0.6.0 and Android 0.3.22. If only one side is updated, the side that wasn't can download but can't upload.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.30">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.30/UniReader-0.3.30.zip" length="32611755" type="application/octet-stream" sparkle:edSignature="ikCxU2hUx7YyVmXfQ7GSe5JzdJNABDlYyBBmSClOyETpSG6shApF8vYvAxpPn5Dkj/HtMN0Xjn36oLLRzdxZDg==" />
+    </item>
+    <item>
       <title>v0.3.29</title>
       <pubDate>Sun, 15 Nov 2026 13:04:50 +0000</pubDate>
       <sparkle:version>71</sparkle:version>
