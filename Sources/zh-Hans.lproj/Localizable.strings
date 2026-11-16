@@ -1518,3 +1518,10 @@
 "Could not clear the practice records." = "没能清除做题记录。";
 "Practice Record · Exercise %@" = "做题记录 · 习题 %@";
 "Practice Records · %d exercises" = "做题记录 · %d 道题";
+
+/* 阅读理解 / 完形填空 + 题目上的高亮（EXERCISE-PLAN.md §32） */
+"Blank %@" = "第 %@ 空";
+"Reading Comprehension" = "阅读理解";
+"Cloze" = "完形填空";
+"Remove Highlight" = "去掉高亮";
+"Reading" = "阅读";

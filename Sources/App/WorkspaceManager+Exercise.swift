@@ -150,7 +150,8 @@ extension WorkspaceManager {
                                   payload: d.payload.data(), starred: hit?.starred ?? false, wrong: hit?.wrong ?? false,
                                   source: source, createdAt: hit?.createdAt ?? now, updatedAt: now, chapter: chapter,
                                   note: hit?.note ?? "",
-                                  tags: d.tags.map { ExerciseTag.merged(hit?.tags ?? [], $0) } ?? hit?.tags ?? [])
+                                  tags: d.tags.map { ExerciseTag.merged(hit?.tags ?? [], $0) } ?? hit?.tags ?? [],
+                                  marks: hit?.marks ?? "")
             if let hit, let old = try? JSONDecoder().decode(ExercisePayload.self, from: hit.payload),
                old.answer != d.payload.answer || old.accept != d.payload.accept || hit.kind != d.kind.rawValue {
                 rejudge.insert(hit.id)
@@ -259,6 +260,32 @@ extension WorkspaceManager {
 
     /// 题目笔记（练习页「笔记」那一块，`EXERCISE-PLAN.md §12.1`）：去掉首尾空白，空 = 删掉。和库里一样就不写
     /// （边写边存，停一下就存一次，没改的不该一遍遍刷新开着的标签）。
+    /// 一篇文档里同一篇文章（按文章 id 认）的题都换成这一份正文 / 标题 / 题型（`EXERCISE-PLAN.md §32`）：
+    /// 每道题各带一份，Agent 改了正文、或重导时只带了其中几道，其余的不能还是旧的。内容一样的不写。
+    func syncPassages(documentId: String, _ passages: [ExercisePassage]) throws {
+        guard let store, !passages.isEmpty else { return }
+        let want = Dictionary(passages.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        var rows: [LibExercise] = []
+        for var e in exercises(in: .document(documentId)) {
+            guard let old = e.payload.passage, let p = want[old.id], p != old else { continue }
+            e.payload.passage = p
+            if p.kind != .cloze { e.payload.blank = nil }
+            e.updatedAt = .now
+            rows.append(e.toRow())
+        }
+        guard !rows.isEmpty else { return }
+        try store.upsertExercises(rows)
+        exercisesChanged()
+    }
+
+    /// 题目上的高亮（练习页判完后划的，`EXERCISE-PLAN.md §32`）：整组替换，空 = 全部去掉。
+    func setExerciseMarks(id: String, _ marks: [ExerciseMark]) {
+        let list = ExerciseMark.clean(marks)
+        guard let e = exercise(id: id), e.marks != list else { return }
+        do { try store?.setExerciseMarks(id: id, ExerciseMark.encode(list)) } catch { lastError = "\(error)"; return }
+        exercisesChanged()
+    }
+
     func setExerciseNote(id: String, _ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let e = exercise(id: id), e.note != t else { return }

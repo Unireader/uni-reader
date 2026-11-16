@@ -319,6 +319,8 @@ final class ExerciseDeck {
     func setWrong(_ e: Exercise, _ on: Bool) { workspace?.setExerciseWrong(id: e.id, on) }
     /// 题目笔记（练习页「笔记」那一块）：空 = 删掉。
     func setNote(id: String, _ text: String) { workspace?.setExerciseNote(id: id, text) }
+    /// 题目上的高亮（`EXERCISE-PLAN.md §32`）：整组替换。
+    func setMarks(id: String, _ marks: [ExerciseMark]) { workspace?.setExerciseMarks(id: id, marks) }
     /// 原题区域（`ExerciseRegionPicker`）：nil = 整页；`next` = 跨页的题后面几页的框；`skip` = 不显示的页（偏移）。
     func setRegion(id: String, _ region: [Double]?, next: [[Double]]?, skip: [Int]?) {
         workspace?.setExerciseRegion(id: id, region, next: next, skip: skip)

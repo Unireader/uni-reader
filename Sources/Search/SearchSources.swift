@@ -182,9 +182,13 @@ enum SearchSources {
     }
 
     nonisolated static func exerciseChunks(store: LibraryStore, docTitles: [String: String]) -> [SearchIndex.Chunk] {
-        ((try? store.exercises()) ?? []).compactMap { row -> SearchIndex.Chunk? in
+        var passages = Set<String>()   // 同一篇文章只随第一道题进索引一次（每道题各带一份，`EXERCISE-PLAN.md §32`）
+        return ((try? store.exercises()) ?? []).compactMap { row -> SearchIndex.Chunk? in
             guard let e = Exercise(row: row) else { return nil }
             var parts = [e.payload.stem]
+            if let p = e.payload.passage, let k = e.passageKey, passages.insert(k).inserted {
+                parts.insert(([p.title ?? ""] + [p.text]).filter { !$0.isEmpty }.joined(separator: "\n"), at: 0)
+            }
             parts += e.payload.options.map { "\($0.key). \($0.text)" }
             if !e.payload.answer.isEmpty { parts.append("答案 Answer: " + e.payload.answer.joined(separator: ", ")) }
             if let x = e.payload.explanation, !x.isEmpty { parts.append(x) }

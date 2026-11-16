@@ -70,7 +70,8 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   §11 填空 / 主观题（v21：手写小画板、自己判、Agent 经 MCP 读作答并批改；本轮平板只显示题干）；
   §12 题目笔记（v22 `exercise.note`，判完才显示）+ 顶栏「重做上次做错的」（只练上一次结果是错的题；本轮只做 Mac）；
   §17 答对自动下一题（练习页底部开关，Mac + 安卓）；
-  §19 题目标签（v24 `exercise.tags`，自由添加，练习页 / 列表 / 顶栏筛选 + MCP `tags`）
+  §19 题目标签（v24 `exercise.tags`，自由添加，练习页 / 列表 / 顶栏筛选 + MCP `tags`）；
+  §32 英语阅读理解 / 完形填空（文章放每道题的 payload，空写成 `{{21}}`，练习页文章一栏）+ 题目上的高亮（v27 `exercise.marks`，判完才能划）
 - **`docs/ANDROID-AGENT-PLAN.md`** — 安卓 Agent（模式1，2026-11-15）：平板直连 OpenAI 兼容接口（JetBrains Koog 1.3.0 的客户端），工具在本机用 Kotlin 实现、名字参数照 Mac MCP；阅读界面右侧一栏
 - **`docs/SCHEDULE-PLAN.md`** — 日程（日历 + 待办，v26 `schedule_plan` / `schedule_item`，随同步）：侧栏「日程」标签页（月历 + 那天的待办 + 详情）、
   Inspector「今天」页、MCP 批 8 让 Agent 排计划 / 挪日子 / 打勾；统计工具 `workspace_stats` 在 `MCP-PLAN.md §38`

@@ -213,7 +213,8 @@ final class MCPServer: ObservableObject {
     into a book — list_exercises shows none yet — ask the user how to group its questions into chapters: by the PDF's \
     table of contents (chapters "toc"), their own way — printed headings, question groups, any number of levels; give \
     each question its chapter path and pass chapters "none" — or not at all (chapters "none"); later imports follow \
-    the same grouping); answers the user already \
+    the same grouping); English reading comprehension and cloze are a passage (import_exercises passages, cloze \
+    blanks written {{21}}) plus single-choice questions that point to it with passage; answers the user already \
     wrote on the page (a highlighted option from list_annotations, or handwriting seen with render_page include_marks) \
     go in user_answer / user_blanks; fill in answers later from an answer key with list_exercises + update_exercises. \
     To grade the user's fill-in or subjective answers, read them with list_exercise_attempts (render_exercise_answer \

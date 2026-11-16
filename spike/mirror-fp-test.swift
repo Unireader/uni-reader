@@ -125,8 +125,8 @@ check(MirrorFp.spec("agent_context")?.columns.map(\.name) ==
       "agent_context 列表（v23）+ 按 updated_at 取新")
 check(MirrorFp.spec("exercise")?.columns.map(\.name) ==
       ["id", "document_id", "page", "seq", "kind", "number", "section", "payload", "starred", "wrong", "source",
-       "created_at", "updated_at", "chapter", "note", "tags"] && MirrorFp.spec("exercise")?.lww == "updated_at",
-      "exercise 列表（v20 章节、v22 笔记、v24 标签在表尾）+ 按 updated_at 取新")
+       "created_at", "updated_at", "chapter", "note", "tags", "marks"] && MirrorFp.spec("exercise")?.lww == "updated_at",
+      "exercise 列表（v20 章节、v22 笔记、v24 标签、v27 高亮在表尾）+ 按 updated_at 取新")
 check(MirrorFp.spec("exercise_attempt")?.columns.map(\.name) ==
       ["id", "exercise_id", "answer", "correct", "elapsed_ms", "created_at", "source", "ink", "judged_by", "feedback"]
       && MirrorFp.spec("exercise_attempt")?.lww == nil,
@@ -208,7 +208,7 @@ let tableCases: [(String, [String: Any])] = [
         "created_at": "2026-09-26T09:00:00Z", "updated_at": "2026-09-26T09:05:00Z",
     ] as [String: Any]),
     // v20 习题（2026-10-11）：page 有值 / correct 为 NULL（没答案时的作答）各覆盖一次
-    // 🔴 v22 起这一行按 15 列、v24 起按 16 列编码（笔记 / 标签缺 = NULL），#30 的编码 / fp 因列规格变了而变（2026-10-27 / 11-02）
+    // 🔴 v22 起这一行按 15 列、v24 起按 16 列、v27 起按 17 列编码（笔记 / 标签 / 高亮缺 = NULL），#30 的编码 / fp 因列规格变了而变（2026-10-27 / 11-02 / 11-16）
     ("exercise", [
         "id": "99999999-9999-4999-8999-999999999999",
         "document_id": "11111111-1111-4111-8111-111111111111",
@@ -294,6 +294,17 @@ let tableCases: [(String, [String: Any])] = [
         "done_at": "2026-11-14T03:20:00.000Z", "result": "GBN 和 SR 的窗口大小还要再看",
         "seq": Int64(1), "agent": "Kimi",
         "created_at": "2026-11-13T10:00:00.000Z", "updated_at": "2026-11-14T03:20:00.000Z",
+    ] as [String: Any]),
+    // v27 题目上的高亮（2026-11-16，`EXERCISE-PLAN.md §32`）：完形填空的一空，payload 带文章，marks 含中英文
+    ("exercise", [
+        "id": "56565656-5656-4565-8565-565656565656",
+        "document_id": "11111111-1111-4111-8111-111111111111",
+        "page": Int64(3), "seq": Int64(0), "kind": Int64(0), "number": "21", "section": "Section I",
+        "payload": Data("{\"answer\":[\"B\"],\"blank\":\"21\",\"options\":[{\"key\":\"A\",\"text\":\"ability\"},{\"key\":\"B\",\"text\":\"capacity\"}],\"passage\":{\"id\":\"2019-cloze\",\"text\":\"Humans have a {{21}} to adapt.\",\"type\":\"cloze\"},\"stem\":\"\"}".utf8),
+        "starred": Int64(0), "wrong": Int64(1), "source": "kimi",
+        "created_at": "2026-11-16T08:00:00.000Z", "updated_at": "2026-11-16T08:05:00.000Z",
+        "chapter": "", "note": "", "tags": "",
+        "marks": "[{\"field\":\"passage\",\"nth\":0,\"text\":\"adapt\"},{\"field\":\"option:B\",\"nth\":0,\"text\":\"容量 capacity\"}]",
     ] as [String: Any]),
 ]
 for (t, row) in tableCases {

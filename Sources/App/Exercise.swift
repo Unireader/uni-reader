@@ -70,6 +70,11 @@ struct ExercisePayload: Codable, Equatable {
     var blanks: Int?
     /// 填空题每空**另外**认可的写法（与 `answer` 等长；没有就不写这个键）。判题时参考答案和这些都算对。
     var accept: [[String]]?
+    /// 阅读理解 / 完形填空：这道题属于哪篇文章（同一篇的几道题各带一份相同的，`EXERCISE-PLAN.md §32`）。
+    /// 老版本不认这个键 → 当普通题显示（看不到文章）。
+    var passage: ExercisePassage?
+    /// 完形填空：这道题填文章里的哪一空（文章里写成 `{{21}}` 的那个 `21`）。只有完形填空有。
+    var blank: String?
 
     init(stem: String, options: [ExerciseOption], answer: [String] = [], answerSource: String? = nil,
          explanation: String? = nil, region: [Double]? = nil, figure: Bool = false,
@@ -85,6 +90,7 @@ struct ExercisePayload: Codable, Equatable {
         case answerSource = "answer_source"
         case nextRegions = "next_regions"
         case skipPages = "skip_pages"
+        case passage, blank
     }
 
     init(from decoder: Decoder) throws {
@@ -103,6 +109,9 @@ struct ExercisePayload: Codable, Equatable {
         figure = try c.decodeIfPresent(Bool.self, forKey: .figure) ?? false
         blanks = try c.decodeIfPresent(Int.self, forKey: .blanks)
         accept = try c.decodeIfPresent([[String]].self, forKey: .accept)
+        // 文章坏了就当没有（不连累整道题读不出来）
+        passage = (try? c.decodeIfPresent(ExercisePassage.self, forKey: .passage)) ?? nil
+        blank = passage?.kind == .cloze ? (try? c.decodeIfPresent(String.self, forKey: .blank)) ?? nil : nil
     }
 
     func encode(to encoder: Encoder) throws {
@@ -118,12 +127,170 @@ struct ExercisePayload: Codable, Equatable {
         if figure { try c.encode(true, forKey: .figure) }
         try c.encodeIfPresent(blanks, forKey: .blanks)
         if let accept, accept.contains(where: { !$0.isEmpty }) { try c.encode(accept, forKey: .accept) }
+        try c.encodeIfPresent(passage, forKey: .passage)
+        if passage?.kind == .cloze { try c.encodeIfPresent(blank, forKey: .blank) }
     }
 
     func data() -> Data {
         let e = JSONEncoder()
         e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return (try? e.encode(self)) ?? Data("{}".utf8)
+    }
+}
+
+/// 阅读理解 / 完形填空的文章（`EXERCISE-PLAN.md §32`）。同一篇的几道题各带一份相同的（`payload.passage`），
+/// 按 `(document_id, id)` 认是不是同一篇；练习时文章在左、题目在右，同一篇的题之间翻页文章不动。
+/// 完形填空的空在正文里写成 `{{21}}`（花括号里是书上印的空号），每空一道单选题（`payload.blank` 指向它）。
+struct ExercisePassage: Codable, Equatable {
+    enum Kind: String { case reading, cloze }
+    /// Agent 给的名字（同一篇文档里认同一篇文章用），如 `"2019-text1"`。
+    var id: String
+    /// `reading` / `cloze`（不认识的按 `reading`）。
+    var type: String
+    var title: String?
+    /// 正文（Markdown；完形填空的空写成 `{{21}}`）。
+    var text: String
+
+    var kind: Kind { Kind(rawValue: type) ?? .reading }
+
+    /// 正文里的空：`{{21}}`、`{{ 21 }}`（花括号里 1~8 个非空白字符）。
+    static let blankPattern = try! NSRegularExpression(pattern: #"\{\{\s*([^{}\s]{1,8})\s*\}\}"#)
+
+    /// 正文里出现的空号，按出现的先后（不去重）。
+    var blankKeys: [String] {
+        let ns = text as NSString
+        return Self.blankPattern.matches(in: text, range: NSRange(location: 0, length: ns.length))
+            .map { ns.substring(with: $0.range(at: 1)) }
+    }
+
+    /// 显示用：空号的样子 `(21)`（括号里用窄的不换行空格，正文里不会撞上同样的字，高亮当前那一空靠它找）。
+    static func blankLabel(_ key: String) -> String { "(\u{202F}\(key)\u{202F})" }
+    /// 点了空号的链接（`exblank:21`）。
+    static let blankScheme = "exblank"
+
+    /// 显示用的正文：每个 `{{21}}` 换成可点的空号；`filled` 里有的空号后面接上填的词（完形填空做过的空）。
+    func displayText(filled: [String: String] = [:]) -> String {
+        guard kind == .cloze else { return text }
+        let ns = text as NSString
+        var out = ""
+        var last = 0
+        for m in Self.blankPattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            let key = ns.substring(with: m.range(at: 1))
+            var label = Self.blankLabel(key)
+            if let w = filled[key], !w.isEmpty {
+                label += " " + w.replacingOccurrences(of: "[", with: "(").replacingOccurrences(of: "]", with: ")")
+                    .replacingOccurrences(of: "\n", with: " ")
+            }
+            let target = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key
+            out += "[**\(label)**](\(Self.blankScheme):\(target))"
+            last = NSMaxRange(m.range)
+        }
+        out += ns.substring(from: last)
+        return out
+    }
+
+    /// 平板模式2 用（线格式只有题干一栏，`EXERCISE-PLAN.md §32.5`）：文章 + 分隔线 + 题干拼成一段，
+    /// 完形填空的空号写成粗体 `(21)`，当前这一空再用 `==…==` 标出来。
+    func inlined(into stem: String, current blank: String?) -> String {
+        var body = text
+        if kind == .cloze {
+            let ns = text as NSString
+            var out = ""
+            var last = 0
+            for m in Self.blankPattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+                let key = ns.substring(with: m.range(at: 1))
+                out += key == blank ? "==**(\(key))**==" : "**(\(key))**"
+                last = NSMaxRange(m.range)
+            }
+            body = out + ns.substring(from: last)
+        }
+        let head = title.map { "**\($0)**\n\n" } ?? ""
+        let tail = stem.trimmingCharacters(in: .whitespacesAndNewlines)
+        return head + body + (tail.isEmpty ? "" : "\n\n---\n\n" + tail)
+    }
+
+    /// 点了的链接是不是空号，是哪一空。
+    static func blankKey(fromLink link: Any) -> String? {
+        let s = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
+        let prefix = blankScheme + ":"
+        guard s.hasPrefix(prefix) else { return nil }
+        return String(s.dropFirst(prefix.count)).removingPercentEncoding
+    }
+}
+
+/// 用户在题目上划的一处高亮（v27 `exercise.marks`，`EXERCISE-PLAN.md §32`）。判完才能划、才显示；
+/// 「再做一次」时藏起来，这一次判完照旧显示。按**显示出来的文字**记：哪一块（`field`）、哪几个字（`text`）、
+/// 是这一块里第几处同样的字（`nth`，0 起）——不记字符位置，题目重导后只要那几个字还在就还能找到。
+struct ExerciseMark: Codable, Equatable, Hashable {
+    /// `stem` 题干 / `passage` 文章 / `option:A` 某个选项。
+    var field: String
+    var text: String
+    var nth: Int
+
+    static let stem = "stem"
+    static let passage = "passage"
+    static func option(_ key: String) -> String { "option:" + key }
+
+    /// 至多存这么多处、每处这么长（再多就是误操作了）。
+    static let maxCount = 200
+    static let maxLength = 2000
+
+    static func decode(_ s: String) -> [ExerciseMark] {
+        guard !s.isEmpty, let list = try? JSONDecoder().decode([ExerciseMark].self, from: Data(s.utf8)) else { return [] }
+        return clean(list)
+    }
+
+    static func encode(_ marks: [ExerciseMark]) -> String {
+        let list = clean(marks)
+        guard !list.isEmpty else { return "" }
+        let e = JSONEncoder()
+        e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return (try? e.encode(list)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+
+    /// 去掉空的 / 太长的 / 重复的，留先写的；超过上限的丢掉后面的。
+    static func clean(_ marks: [ExerciseMark]) -> [ExerciseMark] {
+        var seen = Set<ExerciseMark>()
+        var out: [ExerciseMark] = []
+        for m in marks where !m.field.isEmpty && !m.text.isEmpty && m.text.count <= maxLength && m.nth >= 0 {
+            if seen.insert(m).inserted { out.append(m) }
+            if out.count >= maxCount { break }
+        }
+        return out
+    }
+
+    /// `text` 在 `plain` 里第 `nth` 处的位置（UTF-16）；找不到 → nil。
+    static func locate(_ text: String, nth: Int, in plain: String) -> NSRange? {
+        let ns = plain as NSString
+        var from = 0
+        var k = 0
+        while from < ns.length {
+            let r = ns.range(of: text, range: NSRange(location: from, length: ns.length - from))
+            guard r.location != NSNotFound else { return nil }
+            if k == nth { return r }
+            k += 1
+            from = r.location + 1
+        }
+        return nil
+    }
+
+    /// 在 `plain` 里 `range` 那一段记成一处高亮：数一数它前面有几处同样的字。
+    static func make(field: String, range: NSRange, in plain: String) -> ExerciseMark? {
+        let ns = plain as NSString
+        guard range.length > 0, NSMaxRange(range) <= ns.length else { return nil }
+        let text = ns.substring(with: range)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        var nth = 0
+        var from = 0
+        while true {
+            let r = ns.range(of: text, range: NSRange(location: from, length: ns.length - from))
+            guard r.location != NSNotFound, r.location < range.location else { break }
+            nth += 1
+            from = r.location + 1
+        }
+        return ExerciseMark(field: field, text: text, nth: nth)
     }
 }
 
@@ -186,6 +353,8 @@ struct Exercise: Identifiable, Equatable {
     var note: String
     /// 题目标签（v24，自由添加：真题 / 模拟 …）；已规整（`ExerciseTag.clean`），空 = 没有。
     var tags: [String]
+    /// 用户划的高亮（v27，`EXERCISE-PLAN.md §32`）。
+    var marks: [ExerciseMark] = []
 
     /// 库行解码。payload 坏了 / 题型不认识（以后的新题型）→ nil，调用方跳过这一行。
     init?(row: LibExercise) {
@@ -196,13 +365,14 @@ struct Exercise: Identifiable, Equatable {
         starred = row.starred; wrong = row.wrong; source = row.source
         createdAt = row.createdAt; updatedAt = row.updatedAt
         chapter = row.chapter; note = row.note; tags = row.tags
+        marks = ExerciseMark.decode(row.marks)
     }
 
     func toRow() -> LibExercise {
         LibExercise(id: id, documentId: documentId, page: page, seq: seq, kind: kind.rawValue,
                     number: number, section: section, payload: payload.data(),
                     starred: starred, wrong: wrong, source: source, createdAt: createdAt, updatedAt: updatedAt,
-                    chapter: chapter, note: note, tags: tags)
+                    chapter: chapter, note: note, tags: tags, marks: ExerciseMark.encode(marks))
     }
 
     /// 看原题要渲的几段（`EXERCISE-PLAN.md §26`）：起始页那一块，跨页的题再接后面几页各一块，从上到下拼成一张图。
@@ -356,7 +526,16 @@ struct Exercise: Identifiable, Equatable {
     }
 
     /// 列表里一行显示的题干：去掉换行、并掉连续空白（公式源码原样留着）。
-    var plainStem: String { Self.collapse(payload.stem) }
+    /// 完形填空的题通常没有题干：写成「(21) 选项 A / 选项 B …」。
+    var plainStem: String {
+        let s = Self.collapse(payload.stem)
+        guard s.isEmpty, let b = payload.blank else { return s }
+        let opts = payload.options.map { Self.collapse($0.text) }.joined(separator: " / ")
+        return "(\(b)) " + opts
+    }
+
+    /// 同一篇文章（阅读理解 / 完形填空）的认法：文档 + 文章 id。不属于文章 → nil。
+    var passageKey: String? { payload.passage.map { (documentId ?? "") + "|" + $0.id } }
 
     static func collapse(_ s: String) -> String {
         s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
@@ -522,6 +701,10 @@ struct ExerciseInput {
     var blanks: [(answer: String?, accept: [String])]? = nil
     /// 填空题书上的作答（每空一格）。nil = 没给；全空 = 撤掉。
     var userBlanks: [String]? = nil
+    /// 阅读理解 / 完形填空的文章（MCP 层按 `passage` 指的 id 从这一批的 `passages` 里取，已校验）。
+    var passage: ExercisePassage? = nil
+    /// 完形填空：填哪一空（没给 = 用题号）。
+    var blank: String? = nil
 }
 
 enum ExerciseImport {
@@ -556,10 +739,62 @@ enum ExerciseImport {
     /// 填空题最多几个空。
     static let maxBlanks = 20
 
-    /// 校验并规整一道题。
+    /// 文章最长多少字、id 多长。
+    static let maxPassageLength = 30_000
+    static let maxPassageId = 64
+
+    /// 校验一篇文章（`import_exercises` 的 `passages`、`update_exercises` 的 `passage`）。
+    static func validatePassage(id: String?, type: String?, title: String?, text: String?) -> Result<ExercisePassage, Rejected> {
+        let pid = (id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pid.isEmpty else { return .failure("passage id is empty") }
+        guard pid.count <= maxPassageId else { return .failure("passage id is longer than \(maxPassageId) characters") }
+        let t = (type ?? "reading").trimmingCharacters(in: .whitespaces).lowercased()
+        guard let kind = ExercisePassage.Kind(rawValue: t) else {
+            return .failure("passage \(pid): type must be \"reading\" or \"cloze\"")
+        }
+        let body = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return .failure("passage \(pid) has no text") }
+        guard body.count <= maxPassageLength else { return .failure("passage \(pid) is longer than \(maxPassageLength) characters") }
+        let p = ExercisePassage(id: pid, type: kind.rawValue,
+                                title: title.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 },
+                                text: body)
+        if kind == .cloze, p.blankKeys.isEmpty {
+            return .failure("cloze passage \(pid) has no blanks; write each blank as {{21}} with its printed number")
+        }
+        return .success(p)
+    }
+
+    /// 校验并规整一道题。阅读理解 / 完形填空的题先核对文章与空号，题目本身照普通题校验（完形填空可以没有题干）。
     static func validate(_ i: ExerciseInput, seq: Int) -> Result<ExerciseDraft, Rejected> {
+        func trim(_ s: String?) -> String { (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        var blank: String?
+        if let p = i.passage, p.kind == .cloze {
+            let b = trim(i.blank).isEmpty ? trim(i.number) : trim(i.blank)
+            guard !b.isEmpty else { return .failure("a cloze question needs its blank number (number or blank)") }
+            guard p.blankKeys.contains(b) else {
+                return .failure("blank \(b) is not in passage \(p.id); write it in the passage as {{\(b)}}")
+            }
+            blank = b
+            if i.blanks != nil || ExerciseKind(wire: trim(i.type)).map({ !$0.isChoice }) == true {
+                return .failure("a cloze question is a choice question; give its options")
+            }
+        } else if !trim(i.blank).isEmpty {
+            return .failure("blank is only for questions of a cloze passage")
+        }
+        switch validateBody(i, seq: seq, allowEmptyStem: blank != nil) {
+        case .failure(let why): return .failure(why)
+        case .success(var d):
+            if blank != nil, !d.kind.isChoice { return .failure("a cloze question is a choice question; give its options") }
+            d.payload.passage = i.passage
+            d.payload.blank = blank
+            if d.number.isEmpty, let blank { d.number = blank }
+            return .success(d)
+        }
+    }
+
+    private static func validateBody(_ i: ExerciseInput, seq: Int, allowEmptyStem: Bool) -> Result<ExerciseDraft, Rejected> {
         let stem = (i.stem ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !stem.isEmpty else { return .failure("stem is empty") }
+        guard !stem.isEmpty || allowEmptyStem else { return .failure("stem is empty") }
         let figure = i.figure ?? false
         // 题型：写了按写的；没写时给了空 → 填空，否则按选择题（由答案几个字母推单选 / 多选）
         var declared: ExerciseKind?
@@ -794,6 +1029,8 @@ enum ExerciseImport {
         i.nextRegions = e.payload.nextRegions
         i.skipPages = e.payload.skipPages
         if e.kind == .fill { i.blanks = blankInputs(of: e) }
+        i.passage = e.payload.passage
+        i.blank = e.payload.blank
         return i
     }
 

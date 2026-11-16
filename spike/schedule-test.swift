@@ -103,8 +103,8 @@ func item(_ id: String, _ title: String, day: String, start: Int = -1, seq: Int 
 
 print("— 计划与事项的读写")
 var store: LibraryStore! = try LibraryStore(workspaceFolder: tmp)
-eq(LibraryStore.schemaVersion, 26, "schema 版本 26")
-eq(store.meta("schema_version"), "26", "新库记下 26")
+eq(LibraryStore.schemaVersion, 27, "schema 版本 27")
+eq(store.meta("schema_version"), "27", "新库记下 27")
 eq(try store.schedulePlans().count, 0, "新库没有计划")
 let plan = LibSchedulePlan(id: "PPPPPPPP-0000-4000-8000-000000000001", title: "第三章复习", goal: "两周过完", agent: "Kimi",
                            createdAt: t0, updatedAt: t0)
@@ -249,7 +249,7 @@ do {
     s2.close()
     s2 = nil
     let s3 = try LibraryStore(workspaceFolder: dir2)
-    eq(s3.meta("schema_version"), "26", "v25 库打开后升到 26")
+    eq(s3.meta("schema_version"), "27", "v25 库打开后升到 27")
     eq(try s3.schedulePlans().count, 0, "补建了 schedule_plan 表")
     eq(try s3.undatedScheduleItems().count, 0, "补建了 schedule_item 表")
     s3.close()

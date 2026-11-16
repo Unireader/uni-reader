@@ -131,6 +131,10 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             if let p = e.firstPage, let q = e.lastPage, q > p { cell.textField?.stringValue = "\(p + 1)–\(q + 1)" }
             else { cell.textField?.stringValue = e.firstPage.map { String($0 + 1) } ?? "" }
         case .type:
+            if let k = e.payload.passage?.kind {   // 阅读理解 / 完形填空按文章叫（`EXERCISE-PLAN.md §32`）
+                cell.textField?.stringValue = k == .cloze ? L("Cloze") : L("Reading")
+                break
+            }
             switch e.kind {
             case .single: cell.textField?.stringValue = L("Single")
             case .multiple: cell.textField?.stringValue = L("Multiple")

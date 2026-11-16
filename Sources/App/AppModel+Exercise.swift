@@ -182,7 +182,8 @@ extension AppModel {
             list.append([
                 "id": e.id, "number": e.number, "page": e.page.map { $0 + 1 } ?? 0, "kind": e.kind.rawValue,
                 "flags": flags, "chapter": ExerciseChapter.display(e.chapter), "section": e.section,
-                "stem": e.payload.stem,
+                // 阅读理解 / 完形填空：线格式没有文章一栏，拼进题干（`EXERCISE-PLAN.md §32.5`）
+                "stem": e.payload.passage.map { $0.inlined(into: e.payload.stem, current: e.payload.blank) } ?? e.payload.stem,
                 "options": e.payload.options.map { ["key": $0.key, "text": $0.text] },
                 "answer": choice ? e.payload.answer.joined() : "", "explanation": choice ? e.payload.explanation ?? "" : "",
                 "shown": shown, "chosen": a.map { Exercise.answerString($0.chosen) } ?? "", "correct": code(a?.correct),

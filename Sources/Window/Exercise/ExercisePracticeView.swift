@@ -17,6 +17,10 @@ import AppKit
 /// 开着时这一轮刚交的作答判为对（程序判对，或自己点「答对了」）→ 停一下让人看到绿勾 → 翻到下一题；判错停在这一题看解析。
 ///
 /// 键盘：A~H 选、Return 提交 / 下一题、← → 上一题 / 下一题；填空 / 主观题 ⌘Return 提交。
+///
+/// 阅读理解 / 完形填空（`EXERCISE-PLAN.md §32`）：题目带文章时文章单独一栏（宽时在左、窄时在上），自己滚动；
+/// 同一篇的几道题之间翻页文章不动。完形填空的空号可点（跳到那一空的题），当前这一空底色标出来，做过的空后面接上选的词。
+/// 高亮：判完之后在题干 / 文章 / 选项上选中一段文字，右键「高亮」；「再做一次」时藏起来，这一次判完照旧显示。
 @MainActor
 final class ExercisePracticeView: NSView {
     private let deck: ExerciseDeck
@@ -76,6 +80,15 @@ final class ExercisePracticeView: NSView {
     private var shownFeedback = ""
     /// 题目笔记（判完才显示，在解析下面，`EXERCISE-PLAN.md §12.1`）。
     private let noteView = ExerciseNoteView()
+    /// 阅读理解 / 完形填空的文章那一栏（`EXERCISE-PLAN.md §32`）。
+    private let passageScroll = NSScrollView()
+    private let passageDoc = FlippedDocView()
+    private let passageTitle = NSTextField(wrappingLabelWithString: "")
+    private let passageView = AgentMarkdownView(text: "", fontSize: 16, documentId: "exercise-passage")
+    /// 文章那一栏与题目之间的分隔线。
+    private let passageLine = NSBox()
+    /// 文章那一栏眼下显示的是哪一篇（换了一篇才滚回顶上）。
+    private var shownPassage: String?
 
     /// 当前这道题正选着的（还没交）。
     private var picked: Set<String> = []
@@ -159,6 +172,24 @@ final class ExercisePracticeView: NSView {
         navLine.boxType = .separator
         for v in [navLine, prevButton, nextButton, autoNextBox] as [NSView] { addSubview(v) }
         for v in [stemView, explanationView, feedbackView] { v.onHeightChange = { [weak self] in self?.needsLayout = true } }
+        passageScroll.hasVerticalScroller = true
+        passageScroll.autohidesScrollers = true
+        passageScroll.drawsBackground = false
+        passageScroll.automaticallyAdjustsContentInsets = false
+        passageScroll.documentView = passageDoc
+        passageTitle.font = .systemFont(ofSize: 17, weight: .semibold)
+        passageTitle.textColor = .labelColor
+        passageView.onHeightChange = { [weak self] in self?.needsLayout = true }
+        passageView.openLink = { [weak self] link in
+            guard let key = ExercisePassage.blankKey(fromLink: link) else { return false }
+            self?.goBlank(key)
+            return true
+        }
+        for v in [passageTitle, passageView] as [NSView] { passageDoc.addSubview(v) }
+        passageLine.boxType = .separator
+        for v in [passageScroll, passageLine] as [NSView] { v.isHidden = true; addSubview(v) }
+        stemView.selectionMenu = { [weak self] r, at in self?.markMenu(field: ExerciseMark.stem, view: self?.stemView, r, at) ?? [] }
+        passageView.selectionMenu = { [weak self] r, at in self?.markMenu(field: ExerciseMark.passage, view: self?.passageView, r, at) ?? [] }
         show()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
@@ -193,7 +224,8 @@ final class ExercisePracticeView: NSView {
             shownId = ""; shownContent = nil; shownKind = nil
             noteView.commit()
             for v in doc.subviews { v.isHidden = v !== emptyLabel }
-            for v in [navLine, prevButton, nextButton, autoNextBox] as [NSView] { v.isHidden = true }
+            for v in [navLine, prevButton, nextButton, autoNextBox, passageScroll, passageLine] as [NSView] { v.isHidden = true }
+            shownPassage = nil
             switch deck.filter {
             case .unanswered: emptyLabel.stringValue = L("You’ve done every question here.")
             case .lastWrong: emptyLabel.stringValue = L("No question here was wrong last time.")
@@ -230,6 +262,10 @@ final class ExercisePracticeView: NSView {
             let r = ExerciseOptionRow(key: o.key, text: o.text, multiple: e.kind == .multiple)
             r.onToggle = { [weak self] in self?.toggle(o.key) }
             r.onHeightChange = { [weak self] in self?.needsLayout = true }
+            let field = ExerciseMark.option(o.key)
+            r.body.selectionMenu = { [weak self, weak r] range, at in
+                self?.markMenu(field: field, view: r?.body, range, at) ?? []
+            }
             doc.addSubview(r)
             return r
         }
@@ -240,14 +276,16 @@ final class ExercisePracticeView: NSView {
         guard let e = deck.current else { return }
         let answer = deck.answer(for: e)
         let judged = answer != nil
+        stemView.isHidden = e.payload.stem.isEmpty   // 完形填空的题一般没有题干
         var meta = [String(format: L("Question %d of %d"), deck.index + 1, deck.items.count)]
-        if !e.number.isEmpty { meta.append(String(format: L("No. %@"), e.number)) }
+        if let b = e.payload.blank { meta.append(String(format: L("Blank %@"), b)) }
+        else if !e.number.isEmpty { meta.append(String(format: L("No. %@"), e.number)) }
         // 跳过了起始页（§30）就从原题图真正开始的那页写起
         if let p = e.firstPage {
             if let q = e.lastPage, q > p { meta.append(String(format: L("Pages %d–%d"), p + 1, q + 1)) }
             else { meta.append(String(format: L("Page %d"), p + 1)) }
         }
-        meta.append(Self.kindName(e.kind))
+        meta.append(Self.kindName(e.kind, passage: e.payload.passage?.kind))
         if !e.section.isEmpty { meta.append(e.section) }
         if let c = e.chapter.last, c != e.section { meta.append(c) }
         metaLabel.stringValue = meta.joined(separator: " · ")
@@ -350,8 +388,94 @@ final class ExercisePracticeView: NSView {
         mistakeButton.isHidden = !e.wrong
         prevButton.isEnabled = deck.index > 0
         nextButton.isEnabled = deck.index < deck.items.count - 1
+        refreshPassage(e)
+        refreshHighlights(e, judged: judged)
         needsLayout = true
         onChange()
+    }
+
+    // MARK: - 文章 / 高亮（`EXERCISE-PLAN.md §32`）
+
+    /// 高亮的底色（用户划的）与完形填空当前那一空的底色。
+    private static let markColor = NSColor.systemYellow.withAlphaComponent(0.4)
+    private static let blankColor = NSColor.controlAccentColor.withAlphaComponent(0.28)
+
+    /// 文章那一栏：这道题带文章就显示，完形填空做过的空接上选的词。
+    private func refreshPassage(_ e: Exercise) {
+        guard let p = e.payload.passage, let key = e.passageKey else {
+            passageScroll.isHidden = true
+            passageLine.isHidden = true
+            shownPassage = nil
+            return
+        }
+        passageScroll.isHidden = false
+        passageLine.isHidden = false
+        var filled: [String: String] = [:]
+        if p.kind == .cloze {
+            for x in deck.items where x.passageKey == key {
+                guard let b = x.payload.blank, let a = deck.answer(for: x) else { continue }
+                let words = x.payload.options.filter { a.chosen.contains($0.key) }.map { Exercise.collapse($0.text) }
+                if !words.isEmpty { filled[b] = words.joined(separator: " / ") }
+            }
+        }
+        passageTitle.stringValue = p.title ?? ""
+        passageTitle.isHidden = (p.title ?? "").isEmpty
+        passageView.update(text: p.displayText(filled: filled))
+        if shownPassage != key {
+            shownPassage = key
+            passageScroll.contentView.scroll(to: .zero)
+            passageScroll.reflectScrolledClipView(passageScroll.contentView)
+        }
+    }
+
+    /// 高亮：判完才显示这道题自己的那些；完形填空的当前那一空一直标着。
+    private func refreshHighlights(_ e: Exercise, judged: Bool) {
+        func marks(_ field: String) -> [AgentMarkdownView.Highlight] {
+            guard judged else { return [] }
+            return e.marks.filter { $0.field == field }.map { .init(text: $0.text, nth: $0.nth, color: Self.markColor) }
+        }
+        stemView.highlights = marks(ExerciseMark.stem)
+        var ph = marks(ExerciseMark.passage)
+        if let b = e.payload.blank { ph.append(.init(text: ExercisePassage.blankLabel(b), nth: 0, color: Self.blankColor)) }
+        passageView.highlights = ph
+        for r in optionRows { r.body.highlights = marks(ExerciseMark.option(r.key)) }
+    }
+
+    /// 右键一段文字的菜单：判完的题才能高亮 / 去掉高亮。
+    private func markMenu(field: String, view: AgentMarkdownView?, _ range: NSRange, _ at: Int?) -> [NSMenuItem] {
+        guard let view, let e = deck.current, deck.answer(for: e) != nil else { return [] }
+        let plain = view.plainText
+        var items: [NSMenuItem] = []
+        let mine = e.marks.filter { $0.field == field }
+        // 点在已有的高亮上（或选中的范围和它重叠）→ 可以去掉
+        let hits = mine.filter { m in
+            guard let r = ExerciseMark.locate(m.text, nth: m.nth, in: plain) else { return false }
+            if let at, NSLocationInRange(at, r) { return true }
+            return range.location != NSNotFound && NSIntersectionRange(r, range).length > 0
+        }
+        if range.location != NSNotFound, let m = ExerciseMark.make(field: field, range: range, in: plain),
+           !mine.contains(m) {
+            items.append(ClosureMenuItem(L("Highlight")) { [weak self] in self?.setMarks(e.id, e.marks + [m]) })
+        }
+        if !hits.isEmpty {
+            items.append(ClosureMenuItem(L("Remove Highlight")) { [weak self] in
+                self?.setMarks(e.id, e.marks.filter { !hits.contains($0) })
+            })
+        }
+        return items
+    }
+
+    private func setMarks(_ id: String, _ marks: [ExerciseMark]) {
+        deck.setMarks(id: id, marks)   // 库变了 → 标签视图 reload → show() → 高亮跟着换
+        takeFocus()
+    }
+
+    /// 点了文章里的空号：跳到填那一空的题（同一篇文章里）。
+    private func goBlank(_ key: String) {
+        guard let e = deck.current, let pk = e.passageKey,
+              let i = deck.items.firstIndex(where: { $0.passageKey == pk && $0.payload.blank == key }) else { return }
+        go(i)
+        takeFocus()
     }
 
     /// 结果那行：这一轮刚答的 / 上次作答 / 书上的作答，各说各的。
@@ -367,6 +491,15 @@ final class ExercisePracticeView: NSView {
         case (.book?, true?): return String(format: L("In the book you chose %@. Correct."), mine)
         case (.book?, false?): return String(format: L("In the book you chose %@. Wrong. The answer is %@."), mine, truth)
         case (.book?, nil): return String(format: L("In the book you chose %@. This question has no answer yet."), mine)
+        }
+    }
+
+    /// 题型的叫法；阅读理解 / 完形填空的题按文章叫。
+    static func kindName(_ k: ExerciseKind, passage: ExercisePassage.Kind?) -> String {
+        switch passage {
+        case .reading?: return L("Reading Comprehension")
+        case .cloze?: return L("Cloze")
+        case nil: return kindName(k)
         }
     }
 
@@ -668,11 +801,46 @@ final class ExercisePracticeView: NSView {
     /// 底下浮着的标签栏占的高度（窗格经 `ExerciseTabView` 给）：底部那条摆在它上面，那一截留给标签栏。
     var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { needsLayout = true } } }
 
+    /// 带文章的题：总宽不小于这个时文章在左、题目在右，否则文章在上。
+    private static let splitMinWidth: CGFloat = 820
+
+    /// 文章那一栏里摆标题和正文。
+    private func layoutPassage() {
+        let w = passageScroll.contentSize.width
+        let colW = max(240, min(720, w - 48))
+        let x0 = max(24, (w - colW) / 2)
+        var y: CGFloat = 20
+        if !passageTitle.isHidden {
+            let h = passageTitle.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: colW, height: 10_000)).height ?? 22
+            passageTitle.frame = NSRect(x: x0, y: y, width: colW, height: h)
+            y = passageTitle.frame.maxY + 10
+        }
+        passageView.frame = NSRect(x: x0, y: y, width: colW, height: passageView.intrinsicContentSize.height)
+        y = passageView.frame.maxY + 30
+        passageDoc.frame = NSRect(x: 0, y: 0, width: w, height: max(passageScroll.contentSize.height, y))
+    }
+
     override func layout() {
         super.layout()
         let navShown = deck.current != nil
         let navH = navShown ? Self.navHeight : 0
-        scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - bottomInset - navH))
+        // 题目那一块：带文章时让出左边（或上边）给文章
+        var area = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - bottomInset))
+        if !passageScroll.isHidden {
+            if bounds.width >= Self.splitMinWidth {
+                let pw = (bounds.width * 0.5).rounded()
+                passageScroll.frame = NSRect(x: 0, y: 0, width: pw, height: area.height)
+                passageLine.frame = NSRect(x: pw, y: 0, width: 1, height: area.height)
+                area = NSRect(x: pw + 1, y: 0, width: bounds.width - pw - 1, height: area.height)
+            } else {
+                let ph = (area.height * 0.42).rounded()
+                passageScroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: ph)
+                passageLine.frame = NSRect(x: 0, y: ph, width: bounds.width, height: 1)
+                area = NSRect(x: 0, y: ph + 1, width: bounds.width, height: max(0, area.height - ph - 1))
+            }
+            layoutPassage()
+        }
+        scroll.frame = NSRect(x: area.minX, y: area.minY, width: area.width, height: max(0, area.height - navH))
         let w = scroll.contentSize.width
         let colW = max(280, min(760, w - 48))
         let x0 = max(24, (w - colW) / 2)
@@ -708,8 +876,10 @@ final class ExercisePracticeView: NSView {
         metaLabel.frame = NSRect(x: x0, y: y + 3, width: max(0, bx - x0 - 8), height: 18)
         y += 38
 
-        stemView.frame = NSRect(x: x0, y: y, width: colW, height: stemView.intrinsicContentSize.height)
-        y = stemView.frame.maxY + 16
+        if !stemView.isHidden {
+            stemView.frame = NSRect(x: x0, y: y, width: colW, height: stemView.intrinsicContentSize.height)
+            y = stemView.frame.maxY + 16
+        }
 
         if !originalImage.isHidden {
             let size = originalImage.image?.size ?? NSSize(width: colW, height: 60)
@@ -797,18 +967,19 @@ final class ExercisePracticeView: NSView {
         doc.frame = NSRect(x: 0, y: 0, width: w, height: max(scroll.contentSize.height, y))
 
         // 底部那条：位置只跟视图大小走，与这一题有多高无关；左右与题目那一栏对齐
-        let barY = bounds.height - bottomInset - navH
-        navLine.frame = NSRect(x: 0, y: barY, width: bounds.width, height: 1)
+        let barY = area.maxY - navH
+        let bx0 = area.minX + x0
+        navLine.frame = NSRect(x: area.minX, y: barY, width: area.width, height: 1)
         prevButton.sizeToFit(); nextButton.sizeToFit()
         let ph = prevButton.frame.height, nh = nextButton.frame.height
-        prevButton.frame = NSRect(x: x0, y: barY + (navH - ph) / 2, width: max(100, prevButton.frame.width), height: ph)
+        prevButton.frame = NSRect(x: bx0, y: barY + (navH - ph) / 2, width: max(100, prevButton.frame.width), height: ph)
         let nw = max(100, nextButton.frame.width)
-        nextButton.frame = NSRect(x: x0 + colW - nw, y: barY + (navH - nh) / 2, width: nw, height: nh)
+        nextButton.frame = NSRect(x: bx0 + colW - nw, y: barY + (navH - nh) / 2, width: nw, height: nh)
         // 正中：答对自动下一题（太窄放不下就藏起来，不压按钮）
         autoNextBox.sizeToFit()
         let cw = autoNextBox.frame.width, ch = autoNextBox.frame.height
         let room = nextButton.frame.minX - prevButton.frame.maxX - 16
-        autoNextBox.frame = NSRect(x: x0 + (colW - cw) / 2, y: barY + (navH - ch) / 2, width: cw, height: ch)
+        autoNextBox.frame = NSRect(x: bx0 + (colW - cw) / 2, y: barY + (navH - ch) / 2, width: cw, height: ch)
         if navShown { autoNextBox.isHidden = room < cw }
     }
 }
@@ -819,14 +990,15 @@ final class FlippedDocView: NSView {
 }
 
 /// 一个选项：单选钮 / 复选框（标题就是 A、B…）+ 选项正文（引擎渲染）+ 判完的对错标记。
-/// 点整行都算点选（正文区域吞掉点击，不做划选）。
+/// 点整行都算点选（正文区域吞掉点击，不做划选）；判完之后正文可以划选、高亮。
 @MainActor
 final class ExerciseOptionRow: NSView {
     enum Mark { case none, correct, wrong }
 
     let key: String
     private let button: NSButton
-    private let body: AgentMarkdownView
+    /// 选项正文（练习页给它挂高亮与右键菜单）。
+    let body: AgentMarkdownView
     private let markView = NSImageView()
     var onToggle: () -> Void = {}
     var onHeightChange: () -> Void = {}
@@ -885,6 +1057,8 @@ final class ExerciseOptionRow: NSView {
         let p = convert(point, from: superview)
         guard bounds.contains(p) else { return nil }
         if button.frame.contains(p) { return button }
+        // 判完了（锁住）：正文可以划选、右键高亮（`EXERCISE-PLAN.md §32`）；没判时整行都是点选
+        if isLocked, body.frame.contains(p) { return super.hitTest(point) ?? self }
         return self
     }
 

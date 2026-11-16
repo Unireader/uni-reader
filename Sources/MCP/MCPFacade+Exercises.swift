@@ -38,6 +38,10 @@ extension MCPFacade {
         var nextRegions: [[Double]]? = nil
         /// 不进原题图的页（偏移，整组替换，`[]` = 每页都显示；§30）。nil = 不动（改了 `next_regions` 时只留还在范围里的）。
         var skipPages: [Int]? = nil
+        /// 文章（`.some(nil)` = 拿出文章；nil = 不动；`EXERCISE-PLAN.md §32`）。改了正文 / 标题，同一篇文档里同一篇文章的题跟着改。
+        var passage: ExercisePassage?? = nil
+        /// 完形填空：填哪一空。
+        var blank: String? = nil
     }
 
     /// `grade_exercise_attempts` 的一条。
@@ -51,11 +55,13 @@ extension MCPFacade {
 
     /// 一批题写进一篇文档。`items[i]` 是第 i 道题：已校验好的 draft（页码已换成 0 起），或退回的原因。
     func importExercises(_ t: WriteTarget, items: [Result<ExerciseDraft, ExerciseImport.Rejected>],
-                         client: String) throws -> MCPObject {
+                         client: String, passages: [ExercisePassage] = []) throws -> MCPObject {
         var drafts: [ExerciseDraft] = []
         var owner: [Int] = []          // drafts[k] 来自第几道输入
         for (i, r) in items.enumerated() { if case .success(let d) = r { drafts.append(d); owner.append(i) } }
         let writes = drafts.isEmpty ? [] : try t.ws.importExercises(documentId: t.id, drafts, source: client)
+        // 再发一次的文章 = 换正文：这篇文档里同一篇文章的其它题跟着换（这一批没带上的那几道）
+        if !passages.isEmpty { try t.ws.syncPassages(documentId: t.id, passages) }
         var results: [MCPObject] = items.enumerated().map { i, r in
             var o: MCPObject = ["index": i]
             if case .failure(let why) = r { o["status"] = "rejected"; o["reason"] = why.reason }
@@ -85,7 +91,8 @@ extension MCPFacade {
             let stats = w.exerciseAttemptStats()
             let slice = found.dropFirst(offset).prefix(limit)
             return ["workspace": w.name, "total": found.count, "offset": offset,
-                    "exercises": slice.map { exerciseDTO(w, $0, stats: stats[$0.id]) }]
+                    "exercises": slice.map { exerciseDTO(w, $0, stats: stats[$0.id]) },
+                    "passages": Self.passagesDTO(Array(slice))]
         }
         let ws: WorkspaceManager
         var scope: ExerciseScope
@@ -121,12 +128,14 @@ extension MCPFacade {
         let total = list.count
         let slice = list.dropFirst(offset).prefix(limit)
         var o: MCPObject = ["workspace": ws.name, "total": total, "offset": offset,
-                            "exercises": slice.map { exerciseDTO(ws, $0, stats: stats[$0.id]) }]
+                            "exercises": slice.map { exerciseDTO(ws, $0, stats: stats[$0.id]) },
+                            "passages": Self.passagesDTO(Array(slice))]
         if case .document(let id) = scope { o["document_id"] = id; o["title"] = title }
         return o
     }
 
-    func exerciseDTO(_ ws: WorkspaceManager, _ e: Exercise, stats: ExerciseAttemptStats?) -> MCPObject {
+    func exerciseDTO(_ ws: WorkspaceManager, _ e: Exercise, stats: ExerciseAttemptStats?,
+                     withPassageText: Bool = false) -> MCPObject {
         var o: MCPObject = [
             "id": e.id, "type": e.kind.wireName, "number": e.number, "section": e.section,
             "stem": e.payload.stem,
@@ -160,7 +169,29 @@ extension MCPFacade {
         }
         if !e.note.isEmpty { o["note"] = e.note }
         o["tags"] = e.tags
+        if let p = e.payload.passage {
+            var po: MCPObject = ["id": p.id, "type": p.kind.rawValue]
+            if let t = p.title { po["title"] = t }
+            if withPassageText { po["text"] = p.text }
+            o["passage"] = po
+            if let b = e.payload.blank { o["blank"] = b }
+        }
+        if !e.marks.isEmpty { o["marks"] = e.marks.map { ["field": $0.field, "text": $0.text] as MCPObject } }
         return o
+    }
+
+    /// 列出来的题所属的文章，各给一次全文（每道题里只给 id，免得同一篇正文重复几十遍）。
+    static func passagesDTO(_ list: [Exercise]) -> [MCPObject] {
+        var seen = Set<String>()
+        var out: [MCPObject] = []
+        for e in list {
+            guard let p = e.payload.passage, let key = e.passageKey, seen.insert(key).inserted else { continue }
+            var o: MCPObject = ["id": p.id, "type": p.kind.rawValue, "text": p.text]
+            if let d = e.documentId { o["document_id"] = d }
+            if let t = p.title { o["title"] = t }
+            out.append(o)
+        }
+        return out
     }
 
     // MARK: - 用户在练习页上看到的（`get_current_view` / `open_exercises`，`EXERCISE-PLAN.md §27`）
@@ -178,7 +209,7 @@ extension MCPFacade {
         ]
         if let t = d.tagFilter { o["tag"] = t }
         if let e = d.current {
-            var c = exerciseDTO(ws, e, stats: d.stats[e.id])
+            var c = exerciseDTO(ws, e, stats: d.stats[e.id], withPassageText: true)
             c["on_screen"] = Self.onScreen(d, e)
             o["current"] = c
         }
@@ -386,6 +417,8 @@ extension MCPFacade {
             }
             if let v = p.figure { i.figure = v }
             if let v = p.explanation { i.explanation = v }
+            if let v = p.passage { i.passage = v; if v == nil { i.blank = nil } }
+            if let v = p.blank { i.blank = v }
             if let b = p.blanks {
                 i.blanks = b
                 // 同 answer：换了空的答案就得重新说清来源
@@ -416,6 +449,12 @@ extension MCPFacade {
             }
         }
         for (e, u) in next { try ws.saveExercise(e, userMark: u) }
+        // 改了文章正文 / 标题：同一篇文档里同一篇文章的题跟着改
+        var changedPassages: [String: [ExercisePassage]] = [:]
+        for (p, (e, _)) in zip(patches, next) {
+            if case .some(.some(let ps)) = p.passage, let doc = e.documentId { changedPassages[doc, default: []].append(ps) }
+        }
+        for (doc, list) in changedPassages { try ws.syncPassages(documentId: doc, list) }
         let stats = ws.exerciseAttemptStats()
         return ["count": next.count, "exercises": next.map { exerciseDTO(ws, $0.exercise, stats: stats[$0.exercise.id]) }]
     }

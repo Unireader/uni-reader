@@ -1516,3 +1516,10 @@
 "Could not clear the practice records." = "Could not clear the practice records.";
 "Practice Record · Exercise %@" = "Practice Record · Exercise %@";
 "Practice Records · %d exercises" = "Practice Records · %d exercises";
+
+/* Reading comprehension / cloze + highlights on exercises (EXERCISE-PLAN.md §32) */
+"Blank %@" = "Blank %@";
+"Reading Comprehension" = "Reading Comprehension";
+"Cloze" = "Cloze";
+"Remove Highlight" = "Remove Highlight";
+"Reading" = "Reading";

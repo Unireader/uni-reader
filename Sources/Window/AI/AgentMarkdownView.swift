@@ -190,6 +190,59 @@ final class AgentMarkdownView: NSView {
         set { context.openLink = newValue }
     }
 
+    /// 要加背景色的几处字（习题的高亮 / 完形填空当前那一空，`EXERCISE-PLAN.md §32`）：在 `plainText` 里第 `nth` 处 `text`。
+    struct Highlight: Equatable {
+        var text: String
+        var nth: Int
+        var color: NSColor
+    }
+    var highlights: [Highlight] = [] { didSet { if highlights != oldValue { applyHighlights() } } }
+    /// 右键一段文字时多给的菜单项：选中的范围、点在第几个字上（都是 `plainText` 里的位置）。nil = 不加。
+    var selectionMenu: ((NSRange, Int?) -> [NSMenuItem])? {
+        didSet {
+            context.markMenu = selectionMenu == nil ? nil : { [weak self] block, sel, at in
+                guard let self, let menu = self.selectionMenu, let start = self.offset(of: block) else { return [] }
+                let r = sel.length > 0 ? NSRange(location: start + sel.location, length: sel.length)
+                                       : NSRange(location: NSNotFound, length: 0)
+                return menu(r, at.map { start + $0 })
+            }
+        }
+    }
+
+    /// 显示出来的文字：各文字段按先后用换行接起来（代码 / 公式块 / 表格不算）。高亮的位置都按它数。
+    var plainText: String {
+        textBlocks.map(\.base.string).joined(separator: "\n")
+    }
+    private var textBlocks: [AgentTextBlockView] { blocks.compactMap { $0 as? AgentTextBlockView } }
+
+    /// 这一段在 `plainText` 里从第几个字起。
+    private func offset(of block: AgentTextBlockView) -> Int? {
+        var n = 0
+        for b in textBlocks {
+            if b === block { return n }
+            n += b.base.length + 1
+        }
+        return nil
+    }
+
+    private func applyHighlights() {
+        guard built else { return }
+        let texts = textBlocks
+        let plain = texts.map(\.base.string).joined(separator: "\n")
+        var per: [[(NSRange, NSColor)]] = Array(repeating: [], count: texts.count)
+        for h in highlights {
+            guard let r = ExerciseMark.locate(h.text, nth: h.nth, in: plain) else { continue }
+            var start = 0
+            for (k, b) in texts.enumerated() {
+                let len = b.base.length
+                let lo = max(r.location, start), hi = min(NSMaxRange(r), start + len)
+                if hi > lo { per[k].append((NSRange(location: lo - start, length: hi - lo), h.color)) }
+                start += len + 1
+            }
+        }
+        for (k, b) in texts.enumerated() { b.setBackgrounds(per[k]) }
+    }
+
     /// 还没显示的新文本（攒着，到点 / 露出来再一起排）。
     private var pendingText: String?
     private var lastApply = Date.distantPast
@@ -341,6 +394,7 @@ final class AgentMarkdownView: NSView {
         blocks = next
         laidOutWidth = -1
         needsLayout = true
+        applyHighlights()
     }
 
     private static func key(_ seg: MarkdownDisplaySegment, _ ns: NSString) -> String {

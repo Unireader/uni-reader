@@ -40,6 +40,12 @@ extension MCPTools {
             "starred": MCPSchema.boolean("starred by the user"),
             "in_mistakes": MCPSchema.boolean("in the user's mistake list"),
             "tags": MCPSchema.array(of: MCPSchema.string("tag"), "free-form tags on the question (e.g. 真题, 模拟)"),
+            "passage": passageOutputSchema,
+            "blank": MCPSchema.string("cloze questions: the blank in the passage this question fills ({{blank}} in the passage text)"),
+            "marks": MCPSchema.array(of: MCPSchema.object([
+                "field": MCPSchema.string("where: stem, passage, or option:A (an option)"),
+                "text": MCPSchema.string("the highlighted words"),
+            ]), "what the user highlighted on this question after answering it (absent when nothing)"),
             "note": MCPSchema.string("the user's own note on this question (Markdown + $math$); absent when there is none"),
             "attempts": MCPSchema.integer("times practiced"),
             "correct": MCPSchema.integer("times answered correctly"),
@@ -79,6 +85,33 @@ extension MCPTools {
             "current": MCPSchema.object(current, description: "the current question, plus the answer showing for it (on_screen)"),
             "selected_ids": MCPSchema.array(of: MCPSchema.string("exercise id"), "list view: the questions the user selected"),
         ]
+    }
+
+    /// 一道题所属的文章（`list_exercises` 里只给 id / 题型 / 标题，正文在顶层 `passages`；当前这道题给全文）。
+    static var passageOutputSchema: MCPObject {
+        MCPSchema.object([
+            "id": MCPSchema.string("passage id"),
+            "type": MCPSchema.enumeration(["reading", "cloze"], "reading comprehension or cloze"),
+            "title": MCPSchema.string("passage title (may be absent)"),
+            "text": MCPSchema.string("passage text (cloze blanks written as {{21}}); in list_exercises the text is in passages instead"),
+        ], description: "reading comprehension / cloze questions: the passage the question belongs to")
+    }
+
+    /// 阅读理解 / 完形填空的文章：`import_exercises` 的 `passages[]`、`update_exercises` 的 `passage`。
+    static func passageInputSchema(_ description: String) -> MCPObject {
+        MCPSchema.object([
+            "id": MCPSchema.string("Your name for the passage, unique within the document (e.g. \"2019-text1\"); questions point to it with passage."),
+            "type": MCPSchema.enumeration(["reading", "cloze"], "reading = reading comprehension (questions about the passage); cloze = the passage has numbered blanks and each blank is one choice question."),
+            "title": MCPSchema.string("Title or heading as printed (e.g. \"Text 1\", \"Section A\"), optional."),
+            "text": MCPSchema.string("The whole passage, transcribed exactly (Markdown; keep paragraphs as blank-line separated). Cloze: write each blank as {{n}} with the number printed in it, e.g. \"... a {{21}} of ...\"."),
+        ], required: ["id", "text"], description: description)
+    }
+
+    private static func passageArg(_ v: Any?, at path: String) throws -> Result<ExercisePassage, ExerciseImport.Rejected>? {
+        guard let v, !(v is NSNull) else { return nil }
+        guard let d = v as? [String: Any] else { throw MCPInvalidParams("\(path) must be an object {id, type, title, text}") }
+        return ExerciseImport.validatePassage(id: try stringField(d, "id", at: path), type: try stringField(d, "type", at: path),
+                                              title: try stringField(d, "title", at: path), text: try stringField(d, "text", at: path))
     }
 
     static var blankOutputSchema: MCPObject {
@@ -210,7 +243,9 @@ extension MCPTools {
             "user_answer": MCPSchema.string("What the user already wrote for this question in the document. Choice: the option(s) marked — a highlight on an option (list_annotations) or a circled / written letter (render_page with include_marks) — e.g. \"B\". Subjective: their handwritten answer, transcribed. Saved as the user's earlier attempt; a choice answer is judged right away (a wrong one goes into the mistake list), a subjective one waits to be graded (grade_exercise_attempts). Omit when the user has not answered it."),
             "user_blanks": MCPSchema.array(of: MCPSchema.string("one blank"), "Fill questions only: what the user already wrote in the document, one string per blank (\"\" for a blank left empty)."),
             "tags": MCPSchema.array(of: MCPSchema.string("tag"), "Free-form tags for the question, e.g. [\"真题\", \"2023\"] — only when the user asks for tagging or the page itself says so (a section headed 历年真题). Added to the tags the question already has; never removes any."),
-        ], required: ["page", "stem"])
+            "passage": MCPSchema.string("Reading comprehension / cloze: the id of the passage (in passages) this question belongs to. Its page is where the question itself is printed."),
+            "blank": MCPSchema.string("Cloze only: which blank of the passage this question fills, as written in the passage ({{21}} → \"21\"). Defaults to number. A cloze question has options but may have an empty stem."),
+        ], required: ["page"])
         return MCPTool(
             name: "import_exercises",
             title: "Import exercises",
@@ -228,6 +263,7 @@ extension MCPTools {
             """,
             inputSchema: MCPSchema.object(writeTargetProperties.merging([
                 "exercises": MCPSchema.array(of: item, "Questions to save (1–\(maxImportExercises))"),
+                "passages": MCPSchema.array(of: passageInputSchema("A passage"), "Reading comprehension and cloze: the passages the questions in this call point to (each question gives passage = an id here). Send a passage again with every call that imports questions of it; re-sending one replaces its text in all its questions."),
                 "chapters": MCPSchema.enumeration(["toc", "none"], "How the questions that carry no chapter of their own are grouped in the sidebar. The first time you import into a book (it has no questions yet), ask the user how to group them: \"toc\" = by the PDF's table of contents (UniReader looks up each page); their own way = give each question a chapter and pass \"none\"; not at all = \"none\" (the book stays one flat list). Omit it on later imports of a book grouped by the table of contents or not grouped: the book keeps the way it is (a book the user took the chapters off stays flat). A question's own chapter always wins."),
             ]) { a, _ in a }, required: ["exercises"]),
             outputSchema: MCPSchema.object([
@@ -253,6 +289,17 @@ extension MCPTools {
             }
             let docId = try args.string("document_id"), wsPath = try args.string("workspace")
             let mode = try chapterModeArg(args.raw["chapters"])
+            // 文章（阅读理解 / 完形填空）：先逐篇校验，坏的那篇让指向它的题退回
+            var passages: [String: Result<ExercisePassage, ExerciseImport.Rejected>] = [:]
+            if let raw = args.raw["passages"], !(raw is NSNull) {
+                guard let arr = raw as? [Any] else { throw MCPInvalidParams("passages must be an array of {id, type, title, text}") }
+                for (k, o) in arr.enumerated() {
+                    guard let r = try passageArg(o, at: "passages[\(k)]") else { continue }
+                    let key = ((o as? [String: Any])?["id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard passages[key] == nil else { throw MCPInvalidParams("passages[\(k)]: passage id \(key) appears twice") }
+                    passages[key] = r
+                }
+            }
             let t = try await MainActor.run { try MCPFacade.shared.writeTarget(documentId: docId, workspacePath: wsPath) }
             var items: [Result<ExerciseDraft, ExerciseImport.Rejected>] = []
             for (i, raw) in list.enumerated() {
@@ -267,7 +314,15 @@ extension MCPTools {
                 } catch let e as MCPToolError {
                     items.append(.failure(ExerciseImport.Rejected(stringLiteral: e.message))); continue
                 }
-                let input = ExerciseInput(
+                var passage: ExercisePassage?
+                if let pid = try stringField(d, "passage", at: path)?.trimmingCharacters(in: .whitespacesAndNewlines), !pid.isEmpty {
+                    switch passages[pid] {
+                    case nil: items.append(.failure("passage \(pid) is not in passages")); continue
+                    case .failure(let why)?: items.append(.failure(why)); continue
+                    case .success(let p)?: passage = p
+                    }
+                }
+                var input = ExerciseInput(
                     page: page, type: try stringField(d, "type", at: path),
                     number: try stringField(d, "number", at: path), section: try stringField(d, "section", at: path),
                     stem: try stringField(d, "stem", at: path),
@@ -283,6 +338,8 @@ extension MCPTools {
                     userAnswer: try stringField(d, "user_answer", at: path),
                     blanks: try blanksArg(d["blanks"], at: path),
                     userBlanks: try stringsArg(d["user_blanks"], "user_blanks", at: path))
+                input.passage = passage
+                input.blank = try stringField(d, "blank", at: path)
                 var r = ExerciseImport.validate(input, seq: i)
                 // 跨页的题后面几页不能越过最后一页（`validate` 不知道页数）
                 if case .success(let d) = r,
@@ -314,7 +371,10 @@ extension MCPTools {
             }
             let client = ctx.clientName
             let checked = items
-            let r = try await MainActor.run { try MCPFacade.shared.importExercises(t, items: checked, client: client) }
+            let sent = passages.values.compactMap { if case .success(let p) = $0 { p } else { nil } }
+            let r = try await MainActor.run {
+                try MCPFacade.shared.importExercises(t, items: checked, client: client, passages: sent)
+            }
             var lines = ["Saved exercises into “\(r["title"] ?? "")”: \(r["created"] ?? 0) new, \(r["updated"] ?? 0) updated, \(r["rejected"] ?? 0) rejected."]
             for o in (r["results"] as? [MCPObject]) ?? [] where o["status"] as? String == "rejected" {
                 lines.append("- #\(o["index"] ?? "") rejected: \(o["reason"] ?? "")")
@@ -347,6 +407,13 @@ extension MCPTools {
                 "title": MCPSchema.string("document title (single-document listing)"),
                 "total": MCPSchema.integer("matching exercises in all"), "offset": MCPSchema.integer("offset used"),
                 "exercises": MCPSchema.array(of: exerciseOutputSchema),
+                "passages": MCPSchema.array(of: MCPSchema.object([
+                    "document_id": MCPSchema.string("document"),
+                    "id": MCPSchema.string("passage id"),
+                    "type": MCPSchema.enumeration(["reading", "cloze"], "reading comprehension or cloze"),
+                    "title": MCPSchema.string("passage title (may be absent)"),
+                    "text": MCPSchema.string("passage text (cloze blanks written as {{21}})"),
+                ]), "full text of the passages the listed reading / cloze questions belong to"),
             ]),
             tier: .read
         ) { _, args in
@@ -409,6 +476,8 @@ extension MCPTools {
             "note": MCPSchema.string("The user's own note on this question, shown under the explanation once they have answered it. Replaces the whole note; empty string removes it. Write it only when the user asks you to. \(mathWriting)"),
             "tags": MCPSchema.array(of: MCPSchema.string("tag"), "Free-form tags (e.g. 真题, 模拟). Replaces the whole set; [] removes them all. To add one, send the existing tags from list_exercises plus the new one."),
             "starred": MCPSchema.boolean("Star (收藏) the question (true) or take the star off (false); starred questions are listed under 收藏 in the app. Change it only when the user asks you to."),
+            "passage": passageInputSchema("Reading comprehension / cloze: the passage this question belongs to (whole passage). Changing the text or title of a passage changes it in every question of that passage in the document. {} takes the question out of its passage."),
+            "blank": MCPSchema.string("Cloze: which blank ({{n}} in the passage) this question fills"),
         ], required: ["id"])
         return MCPTool(
             name: "update_exercises",
@@ -445,11 +514,24 @@ extension MCPTools {
                     note: try stringField(d, "note", at: path), starred: try boolField(d, "starred", at: path),
                     tags: try stringsArg(d["tags"], "tags", at: path),
                     nextRegions: try nextRegionsArg(d["next_regions"], at: path),
-                    skipPages: try skipPagesArg(d["skip_pages"], at: path))
+                    skipPages: try skipPagesArg(d["skip_pages"], at: path),
+                    passage: try updatePassageArg(d["passage"], at: "\(path).passage"),
+                    blank: try stringField(d, "blank", at: path))
             }
             let wsPath = try args.string("workspace")
             let r = try await MainActor.run { try MCPFacade.shared.updateExercises(patches, workspacePath: wsPath) }
             return MCPToolResult(text: "Updated \(r["count"] ?? 0) exercise(s).", structured: r)
+        }
+    }
+
+    /// `update_exercises` 的 `passage`：没给 = nil；`{}` = 拿出文章（`.some(nil)`）；坏的整次退回。
+    private static func updatePassageArg(_ v: Any?, at path: String) throws -> ExercisePassage?? {
+        guard let v, !(v is NSNull) else { return nil }
+        if let d = v as? [String: Any], d.isEmpty { return .some(nil) }
+        switch try passageArg(v, at: path) {
+        case .success(let p)?: return .some(p)
+        case .failure(let why)?: throw MCPInvalidParams("\(path): \(why.reason); nothing was changed")
+        case nil: return nil
         }
     }
 

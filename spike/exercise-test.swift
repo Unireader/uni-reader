@@ -44,7 +44,7 @@ func row(_ d: ExerciseDraft, doc: String, id: String = UUID().uuidString) -> Lib
 }
 
 print("— 建表")
-check(LibraryStore.schemaVersion == 26, "schema 版本 26（v26 = 日程；v25 = Agent 记忆与对话记录；v24 = 题目标签；v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记；v23 = Agent 上下文）")
+check(LibraryStore.schemaVersion == 27, "schema 版本 27（v27 = 题目上的高亮；v26 = 日程；v25 = Agent 记忆与对话记录；v24 = 题目标签；v21 = 填空 / 主观题，作答多三列；v22 = 题目笔记；v23 = Agent 上下文）")
 check((try? store.exercises()) != nil, "exercise 表可查")
 
 print("— 校验与规整")
@@ -1017,6 +1017,119 @@ do {
     check(try store.exerciseAttempts(exerciseId: "clr-1").count == 2 && store.exerciseAttempts(exerciseId: "clr-2").count == 2,
           "从回收站恢复：作答放回去")
 } catch { check(false, "清除做题记录抛错：\(error)") }
+
+print("— 阅读理解 / 完形填空（EXERCISE-PLAN.md §32，安卓 ExerciseTest.passage 同一段）")
+do {
+    func passage(_ type: String?, _ text: String?, id: String? = "p1", title: String? = nil) -> Result<ExercisePassage, ExerciseImport.Rejected> {
+        ExerciseImport.validatePassage(id: id, type: type, title: title, text: text)
+    }
+    guard case .success(let cloze) = passage("cloze", "  We {{21}} the  {{ 22 }} here.\n\nAnd {{23}}.  ", title: " Section I ") else {
+        check(false, "完形填空文章合格"); throw CancellationError()
+    }
+    check(cloze.text == "We {{21}} the  {{ 22 }} here.\n\nAnd {{23}}." && cloze.title == "Section I", "文章去首尾空白、标题规整")
+    check(cloze.blankKeys == ["21", "22", "23"], "空号按出现先后（花括号里的空白不算）")
+    if case .failure(let r) = passage("cloze", "no blanks here") { check(r.reason.contains("{{21}}"), "完形填空没有空 → 退回并教写法") }
+    else { check(false, "完形填空没有空 → 退回") }
+    if case .failure = passage("essay", "x") { check(true, "题型只认 reading / cloze") } else { check(false, "题型只认 reading / cloze") }
+    if case .failure = passage(nil, "   ") { check(true, "正文空 → 退回") } else { check(false, "正文空 → 退回") }
+    if case .failure = passage(nil, "x", id: " ") { check(true, "id 空 → 退回") } else { check(false, "id 空 → 退回") }
+    if case .success(let r) = passage(nil, "Text") { check(r.kind == .reading && r.title == nil, "不写题型 = 阅读理解") }
+    else { check(false, "不写题型 = 阅读理解") }
+
+    // 完形填空的一空：没有题干、空号默认用题号
+    var i = input(nil, [("A", "ability"), ("B", "capacity")], answer: "B", src: "book", number: "22")
+    i.passage = cloze
+    let d = ok(i)
+    check(d?.payload.blank == "22" && d?.number == "22" && d?.payload.stem == "" && d?.kind == .single,
+          "完形填空：题干可空，空号 = 题号")
+    var i2 = input("", [("A", "x"), ("B", "y")], answer: "A", src: "book")
+    i2.passage = cloze; i2.blank = "23"
+    check(ok(i2)?.number == "23", "没题号时题号 = 空号（去重靠它）")
+    var i3 = i; i3.number = "30"
+    check(reason(i3)?.contains("{{30}}") == true, "空号不在文章里 → 退回")
+    var i4 = i; i4.number = nil
+    check(reason(i4)?.contains("blank") == true, "完形填空没有空号也没有题号 → 退回")
+    var i5 = input("Fill it", [], type: "fill", number: "21"); i5.passage = cloze; i5.blanks = [(answer: "a", accept: [])]
+    check(reason(i5)?.contains("choice") == true, "完形填空只能是选择题")
+    var i6 = input("Q", answer: "A", src: "book", number: "1"); i6.blank = "1"
+    check(reason(i6)?.contains("cloze") == true, "不是完形填空不能给 blank")
+    // 阅读理解：题干照样要有
+    guard case .success(let reading) = passage("reading", "Long text.", id: "text1") else { throw CancellationError() }
+    var r1 = input(nil, answer: "A", src: "book", number: "26"); r1.passage = reading
+    check(reason(r1) == "stem is empty", "阅读理解的题题干不能空")
+    var r2 = input("What is the main idea?", answer: "A", src: "book", number: "26"); r2.passage = reading
+    let rd = ok(r2)
+    check(rd?.payload.passage == reading && rd?.payload.blank == nil, "阅读理解的题带文章、没有空号")
+
+    // payload 编解码：老版本没有这两个键；坏的文章当没有
+    let enc = d!.payload.data()
+    let back = try JSONDecoder().decode(ExercisePayload.self, from: enc)
+    check(back == d!.payload, "payload 带文章 / 空号来回不变")
+    let str = String(data: enc, encoding: .utf8) ?? ""
+    check(str.contains("\"passage\":{") && str.contains("\"blank\":\"22\""), "键名 passage / blank")
+    let plain = try JSONDecoder().decode(ExercisePayload.self, from: Data("{\"stem\":\"x\",\"options\":[],\"answer\":[]}".utf8))
+    check(plain.passage == nil && plain.blank == nil && !String(data: plain.data(), encoding: .utf8)!.contains("passage"),
+          "老题不带这两个键，写回也不带")
+    let broken = try JSONDecoder().decode(ExercisePayload.self, from: Data("{\"stem\":\"x\",\"passage\":\"oops\",\"blank\":\"3\"}".utf8))
+    check(broken.passage == nil && broken.blank == nil, "文章坏了当没有（题目照样读得出）")
+    let readingBlank = try JSONDecoder().decode(ExercisePayload.self, from: Data("{\"stem\":\"x\",\"passage\":{\"id\":\"a\",\"type\":\"reading\",\"text\":\"t\"},\"blank\":\"3\"}".utf8))
+    check(readingBlank.passage != nil && readingBlank.blank == nil, "阅读理解的题不认 blank")
+
+    // 显示用的正文：空号变成可点的链接，做过的空接上选的词
+    let shown = cloze.displayText(filled: ["22": "capacity [x]"])
+    check(shown.contains("[**(\u{202F}21\u{202F})**](exblank:21)"), "空号显示成 (21) 链接")
+    check(shown.contains("[**(\u{202F}22\u{202F}) capacity (x)**](exblank:22)"), "做过的空接上选的词（方括号换成圆括号）")
+    check(!shown.contains("{{"), "花括号都换掉了")
+    check(reading.displayText(filled: ["1": "x"]) == reading.text, "阅读理解的正文原样显示")
+    check(ExercisePassage.blankKey(fromLink: URL(string: "exblank:21")!) == "21"
+          && ExercisePassage.blankKey(fromLink: "https://x.com") == nil, "认得空号链接")
+
+    // 列表里一行
+    let row1 = Exercise(row: row(d!, doc: "docP"))!
+    check(row1.plainStem == "(22) ability / capacity", "完形填空没有题干：列表写空号 + 选项")
+    check(row1.passageKey == "docP|p1", "同一篇文章按 文档 + 文章 id 认")
+    let inl = cloze.inlined(into: "", current: "22")
+    check(inl.hasPrefix("**Section I**\n\nWe **(21)** the  ==**(22)**== here.") && !inl.contains("---"),
+          "平板模式2：文章拼进题干，当前空用 == 标出，没有题干就不加分隔线")
+    check(reading.inlined(into: "Q?", current: nil) == "Long text.\n\n---\n\nQ?", "阅读理解：文章 + 分隔线 + 题干")
+    let back2 = ExerciseImport.input(from: row1)
+    check(back2.passage == cloze && back2.blank == "22", "update 的起点带着文章和空号")
+} catch { check(false, "阅读理解 / 完形填空抛错：\(error)") }
+
+print("— 题目上的高亮（v27 marks，EXERCISE-PLAN.md §32）")
+do {
+    let plain = "the cat and the cat and the dog"
+    let m2 = ExerciseMark.make(field: ExerciseMark.passage, range: NSRange(location: 16, length: 3), in: plain)
+    check(m2 == ExerciseMark(field: "passage", text: "cat", nth: 1), "第二处 cat 记成 nth 1")
+    check(ExerciseMark.locate("cat", nth: 1, in: plain) == NSRange(location: 16, length: 3), "按 nth 找回原处")
+    check(ExerciseMark.locate("cat", nth: 2, in: plain) == nil, "没有第三处 → 找不到")
+    check(ExerciseMark.make(field: "stem", range: NSRange(location: 3, length: 1), in: plain) == nil, "只选了空白 → 不记")
+    check(ExerciseMark.make(field: "stem", range: NSRange(location: 30, length: 5), in: plain) == nil, "越界 → 不记")
+    let aa = "aaaa"
+    check(ExerciseMark.make(field: "stem", range: NSRange(location: 1, length: 2), in: aa)?.nth == 1
+          && ExerciseMark.locate("aa", nth: 1, in: aa) == NSRange(location: 1, length: 2), "重叠的同样文字也数得对")
+    let list = [ExerciseMark(field: "stem", text: "x", nth: 0), ExerciseMark(field: "stem", text: "x", nth: 0),
+                ExerciseMark(field: "", text: "y", nth: 0), ExerciseMark(field: "option:A", text: "", nth: 0)]
+    check(ExerciseMark.clean(list) == [ExerciseMark(field: "stem", text: "x", nth: 0)], "去重、去空")
+    check(ExerciseMark.encode([]) == "" && ExerciseMark.decode("").isEmpty && ExerciseMark.decode("garbage").isEmpty, "空 / 坏的 ↔ 空串")
+    let enc = ExerciseMark.encode([ExerciseMark(field: "option:B", text: "容量", nth: 0)])
+    check(enc == "[{\"field\":\"option:B\",\"nth\":0,\"text\":\"容量\"}]", "JSON 键排好序（三端一致）")
+
+    // 库：新建带着、重导不冲掉、单独改打 updated_at
+    let dm = doc("高亮测试", "hash-marks")
+    guard let d = ok(input("Q?", answer: "A", src: "book", number: "1")) else { throw CancellationError() }
+    var r = row(d, doc: dm.id, id: "mk-1")
+    r.marks = enc
+    try store.upsertExercise(r)
+    check(Exercise(row: try store.exercise(id: "mk-1")!)?.marks.first?.text == "容量", "新建时写进 marks")
+    var r2 = r; r2.marks = ""; r2.number = "1"
+    try store.upsertExercise(r2)
+    check(try store.exercise(id: "mk-1")?.marks == enc, "重导题目（upsert）不动高亮")
+    let before = try store.exercise(id: "mk-1")!.updatedAt
+    try store.setExerciseMarks(id: "mk-1", "", at: before.addingTimeInterval(5))
+    let after = try store.exercise(id: "mk-1")!
+    check(after.marks == "" && after.updatedAt > before, "去掉高亮：清空、改 updated_at")
+} catch { check(false, "高亮抛错：\(error)") }
 
 print("\n\(pass) 通过，\(fail) 失败")
 exit(fail == 0 ? 0 : 1)

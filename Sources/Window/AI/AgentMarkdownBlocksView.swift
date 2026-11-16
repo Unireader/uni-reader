@@ -31,6 +31,8 @@ final class AgentBlockContext {
     /// 点了正文里的链接：返回 true = 外面接手了（日程说明里的 `[[…]]`，`SCHEDULE-PLAN.md §4.3`）；
     /// 没设或返回 false 走默认（网址 / unireader:// 交给系统，`[[…]]` 不跳）。
     var openLink: ((Any) -> Bool)?
+    /// 右键一段文字时多给的菜单项（习题的高亮，`EXERCISE-PLAN.md §32`）：哪一段、选中的范围、点在第几个字上（都是这一段里的位置）。
+    var markMenu: ((AgentTextBlockView, NSRange, Int?) -> [NSMenuItem])?
 
     init(fontSize: CGFloat) {
         self.fontSize = fontSize
@@ -53,8 +55,21 @@ final class AgentBlockContext {
 @MainActor
 final class AgentSelectableTextView: NSTextView {
     var extraMenuItems: () -> [NSMenuItem] = { [] }
+    /// 上一次右键点在第几个字上（nil = 没点在字上）。
+    private(set) var menuCharIndex: Int?
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        let p = convert(event.locationInWindow, from: nil)
+        if let lm = layoutManager, let tc = textContainer, let ts = textStorage, ts.length > 0 {
+            var frac: CGFloat = 0
+            let local = NSPoint(x: p.x - textContainerOrigin.x, y: p.y - textContainerOrigin.y)
+            let i = lm.characterIndex(for: local, in: tc, fractionOfDistanceBetweenInsertionPoints: &frac)
+            let glyphs = lm.glyphRange(forCharacterRange: NSRange(location: i, length: 1), actualCharacterRange: nil)
+            let rect = lm.boundingRect(forGlyphRange: glyphs, in: tc)
+            menuCharIndex = rect.contains(local) ? i : nil
+        } else {
+            menuCharIndex = nil
+        }
         let menu = super.menu(for: event) ?? NSMenu()
         let items = extraMenuItems()
         if !items.isEmpty {
@@ -95,6 +110,10 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
     private let layoutManager = NSLayoutManager()
     private let container = NSTextContainer(size: NSSize(width: 100, height: CGFloat.greatestFiniteMagnitude))
     let textView: AgentSelectableTextView
+    /// 排出来的原样（加背景色前的）。
+    private(set) var base = NSAttributedString()
+    /// 眼下加着的背景色（这一段里的位置）。
+    private var backgrounds: [(NSRange, NSColor)] = []
     private var measured: (width: CGFloat, height: CGFloat)?
     private weak var context: AgentBlockContext?
     /// 引用：左边一道竖条，正文右移。
@@ -119,10 +138,15 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
         textView.isVerticallyResizable = false
         textView.linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
         textView.delegate = self
-        textView.extraMenuItems = { [weak context] in context.map { [$0.copyAllItem()] } ?? [] }
         self.context = context
+        base = text
         storage.setAttributedString(text)
         addSubview(textView)
+        textView.extraMenuItems = { [weak self, weak context] in
+            guard let self, let context else { return [] }
+            let extra = context.markMenu?(self, self.textView.selectedRange(), self.textView.menuCharIndex) ?? []
+            return extra + (extra.isEmpty ? [] : [.separator()]) + [context.copyAllItem()]
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
@@ -137,8 +161,21 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
     /// 流式：最后一段文字长了，换内容不换视图（选区会丢，接受——还在出字的段一般不会去选）。
     func update(text: NSAttributedString, key: String) {
         self.key = key
+        base = text
+        backgrounds = []
         storage.setAttributedString(text)
         measured = nil
+    }
+
+    /// 换几处背景色（高亮）：不改字、不改排版，只重上一遍样式。和眼下一样就不动（免得把选区冲掉）。
+    func setBackgrounds(_ list: [(NSRange, NSColor)]) {
+        let valid = list.filter { $0.0.length > 0 && NSMaxRange($0.0) <= base.length }
+        guard valid.count != backgrounds.count
+                || zip(valid, backgrounds).contains(where: { $0.0 != $1.0 || $0.1 != $1.1 }) else { return }
+        backgrounds = valid
+        let m = NSMutableAttributedString(attributedString: base)
+        for (r, c) in valid { m.addAttribute(.backgroundColor, value: c, range: r) }
+        storage.setAttributedString(m)
     }
 
     func height(forWidth w: CGFloat) -> CGFloat {
