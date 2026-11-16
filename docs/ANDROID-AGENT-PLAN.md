@@ -26,6 +26,9 @@
   「调工具 → 结果放回历史 → 再请求」的循环在 `AgentEngine.send`，几十行；取消协程 = 停止。
 - 第三方模型 Koog 不认识：`LLModel(OpenAILLMProvider, <模型名>, [Completions, Tools, ToolChoice, Temperature])` 自己声明，
   声明了 `Completions` 它就走 Chat Completions（不走 Responses API）。
+- 正文并成一段（`toAssistant`）：Kimi 在思考那几块里带着 `"content": ""`，Koog 每切换一次就收尾一段文字，
+  一条回复切成几段、其中有空串，回传历史时发成 content 数组 → Kimi 回 400「text content is empty」（2026-11-16 真机第二轮踩到；
+  `AgentEngineTest` 的假服务照 Kimi 发、对空文字回 400）。
 - 一处绕开：Koog 的 `toMessageResponse` 对空串参数 `Json.parseToJsonElement("")` 会抛异常（有的服务调无参数工具时就给空串），
   `AgentEngine.toAssistant` 自己转、空串按 `{}`。
 - 工具参数不用 Koog 的 `@Serializable` 参数类（要 serialization 编译插件，本工程不装）：`AgentTool.run(JSONObject)` 收原始 JSON。
@@ -102,8 +105,8 @@
 
 ### 8.1 真机待测
 
-- [ ] 设置里填 DeepSeek（或别的）地址 / Key / 模型，问「这页讲了什么」→ 先 `get_state` 再 `read_pages`
-- [ ] 「跳到第 N 页」→ 阅读区跟着跳，能用后退键退回来
+- [x] 设置里填地址 / Key / 模型，问「这页讲了什么」→ `read_pages` 后作答（2026-11-16 Kimi `kimi-for-coding` 实测；它直接用上下文块里的页码，没先调 `get_state`）
+- [ ] 「跳到第 N 页」→ 阅读区跟着跳（2026-11-16 实测跳到了、后退键亮了），能用后退键退回来（没按过）
 - [ ] 「记住我在复习第 3 章」→ `save_memory`；新对话里它知道
 - [ ] 回答中途点「停止」；面板开着时在左边继续写字
 - [x] 键盘弹出时输入框不被挡住（冒烟测试里看到输入框随键盘顶起）
