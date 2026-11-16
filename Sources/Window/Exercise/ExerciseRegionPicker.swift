@@ -442,15 +442,22 @@ final class ExerciseRegionCanvas: NSView {
 
     override func resetCursorRects() {
         guard !excluded else { return }
-        addCursorRect(bounds, cursor: .crosshair)
+        // 🔴 交给 addCursorRect 的矩形必须是有限且非空的：选框窄于两倍抓手时 `insetBy` 得 `CGRect.null`（原点无穷大），
+        // 视图还没尺寸时换算出 NaN，AppKit 直接抛异常、整个 App 退出（2026-11-14 崩溃报告）。
+        func add(_ rect: CGRect, _ cursor: NSCursor) {
+            guard !rect.isNull, !rect.isInfinite, rect.width > 0, rect.height > 0,
+                  rect.origin.x.isFinite, rect.origin.y.isFinite, rect.width.isFinite, rect.height.isFinite else { return }
+            addCursorRect(rect, cursor: cursor)
+        }
+        add(bounds, .crosshair)
         guard let region else { return }
         let r = toView(region)
         let g = grab
-        addCursorRect(r.insetBy(dx: g, dy: g), cursor: .openHand)
-        addCursorRect(CGRect(x: r.minX - g, y: r.minY + g, width: 2 * g, height: max(0, r.height - 2 * g)), cursor: .resizeLeftRight)
-        addCursorRect(CGRect(x: r.maxX - g, y: r.minY + g, width: 2 * g, height: max(0, r.height - 2 * g)), cursor: .resizeLeftRight)
-        addCursorRect(CGRect(x: r.minX + g, y: r.minY - g, width: max(0, r.width - 2 * g), height: 2 * g), cursor: .resizeUpDown)
-        addCursorRect(CGRect(x: r.minX + g, y: r.maxY - g, width: max(0, r.width - 2 * g), height: 2 * g), cursor: .resizeUpDown)
+        add(r.insetBy(dx: g, dy: g), .openHand)
+        add(CGRect(x: r.minX - g, y: r.minY + g, width: 2 * g, height: max(0, r.height - 2 * g)), .resizeLeftRight)
+        add(CGRect(x: r.maxX - g, y: r.minY + g, width: 2 * g, height: max(0, r.height - 2 * g)), .resizeLeftRight)
+        add(CGRect(x: r.minX + g, y: r.minY - g, width: max(0, r.width - 2 * g), height: 2 * g), .resizeUpDown)
+        add(CGRect(x: r.minX + g, y: r.maxY - g, width: max(0, r.width - 2 * g), height: 2 * g), .resizeUpDown)
     }
 
     override func mouseDown(with event: NSEvent) {

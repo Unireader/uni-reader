@@ -274,16 +274,26 @@ actor LocalEmbedding: EmbeddingProvider {
     private static let queryPrefix = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
 
     private var container: EmbedderModelContainer?
+    /// 正在加载的那一次：actor 在 `await` 处可重入，几个工作区的索引同时开算时都会走到 `model()`，
+    /// 不共用这一次就各自加载出一份模型，两份各自的串行锁互不相干 → 两条线程同时往 MLX 唯一那条 GPU 流里编码
+    /// → 编码器状态被踩坏崩溃（2026-11-14 / 11-16 三次崩溃里两次是它，栈在 `CommandEncoder`）。
+    private var loading: Task<EmbedderModelContainer, Error>?
     private var idleUnload: Task<Void, Never>?
 
     private func model() async throws -> EmbedderModelContainer {
         if let container { return container }
+        if let loading { return try await loading.value }
         guard LocalEmbeddingModel.isInstalled else {
             throw EmbeddingError.unavailable("the search model has not been downloaded (UniReader Settings › Agent › Search)")
         }
         // 🔴 MLX 默认把用过的显存全留着复用：不设上限，算一遍书库能涨到 27 GB（§5.3）
         Memory.cacheLimit = 512 << 20
-        let c = try await EmbedderModelFactory.shared.loadContainer(from: LocalEmbeddingModel.directory, using: TokenizerLoaderBridge())
+        let t = Task {
+            try await EmbedderModelFactory.shared.loadContainer(from: LocalEmbeddingModel.directory, using: TokenizerLoaderBridge())
+        }
+        loading = t
+        defer { loading = nil }
+        let c = try await t.value
         container = c
         return c
     }
@@ -293,9 +303,15 @@ actor LocalEmbedding: EmbeddingProvider {
 
     var isLoaded: Bool { container != nil }
 
+    /// 有调用正在算时先不卸：记下来，最后一个算完（`end()`）再卸。算到一半丢模型、清 MLX 缓存，
+    /// 等于在别的线程上动正在用的 GPU 资源（设置页关语义搜索 / 换接口 / 删模型都会调这里）。
+    private var unloadWhenIdle = false
+
     func unload() {
         idleUnload?.cancel()
         idleUnload = nil
+        guard busy == 0, loading == nil else { unloadWhenIdle = true; return }
+        unloadWhenIdle = false
         container = nil
         Memory.clearCache()
     }
@@ -331,6 +347,7 @@ actor LocalEmbedding: EmbeddingProvider {
 
     private func end() {
         busy -= 1
+        if busy == 0, unloadWhenIdle { unload(); return }
         touch()
     }
 
