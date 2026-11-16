@@ -12,7 +12,7 @@
 | D2 | 位置 = **阅读界面右侧一栏**，只在模式1 | 用户选「阅读界面右侧抽屉」；对应 Mac Inspector 的「Agent」页 |
 | D3 | 第一批工具 = 只读为主 + 记忆 + 跳页 | 用户选「只读为主 + 记忆」；写笔记（`add_note` / `edit_markdown`）下一批，要接撤销栈 |
 | D4 | 接口配置**存本机、Key 加密**，不进工作区、不随同步 | 用户选；Key 用 Android Keystore 的 AES-GCM 密钥加密后存 SharedPreferences |
-| D5 | 对话不落库（本轮） | 同 Mac D4 的起点；Mac 的 `agent_turn` 对话记录（§22）安卓下一批再接 |
+| D5 | 对话不落库（本轮） | 同 Mac D4 的起点；2026-11-16 接上 Mac 的 `agent_turn` 对话记录（§5.4） |
 
 ## 2. Koog 怎么用（只用一半）
 
@@ -54,9 +54,9 @@
 | `read_pages` | 页面文字：有 OCR 用 OCR，否则 PDF 自带文字层；一次最多 20 页 |
 | `search_text` | 一本书里找字（`shared/TextSearch`，同搜索面板），最多 100 处 |
 | `goto` / `open_document` | 让用户看到某页 / 某本 |
-| `list_annotations` | 批注 / 高亮 / 书签 |
+| `list_annotations` | 批注 / 高亮 / 书签 / 图片笔记（带 id，删除用） |
 | `list_markdown_notes` / `read_markdown` | 内建 `Notes/` 里的笔记（带行号、按行段读） |
-| `list_memories` / `save_memory` | 工作区记忆（`agent_memory`，SQL 照抄 Mac）；删除没做（要先归档进回收站） |
+| `list_memories` / `save_memory` | 工作区记忆（`agent_memory`，SQL 照抄 Mac）；删除见 §5.3 |
 
 ### 5.2 第二批：写入（2026-11-15）
 
@@ -70,7 +70,25 @@
 
 - 找原文（`AgentToolset.locate`）同 Mac `MCPDocReader.locate`：那页有 OCR 在 OCR 行里找（与手划高亮同一套框），否则 PDF 自带文字层 + `PdfSource.charRects`；忽略大小写、空白与换行。要那本书在标签里装载着（没开就替用户开）。
 - 批注 / 高亮写进**开着的**那篇时走画布 `LocalCanvasView.writeNotesExternally`：先 `pushNoteUndo()`（用户能撤销）、写库、回推显示，同界面新建；没开着的直接写库。宿主口 `AgentHost.writeNotes`。
-- 没做：`delete_annotations` / `delete_memory`（先归档进回收站，红线 11；本端回收站还不会建这两种条目）、`update_markdown`（整篇覆盖，有 `edit_markdown` 够用）、改名 / 挪目录。
+- 没做：`update_markdown`（整篇覆盖，有 `edit_markdown` 够用）、改名 / 挪目录。
+
+### 5.3 第三批：删除（2026-11-16）
+
+| 工具 | 说明 |
+|---|---|
+| `delete_annotations` | 按 id（完整或前 8 位）删一篇里的高亮 / 批注 / 书签 / 图片笔记；有一个对不上就一条都不删。一次调用 = 回收站里一条「批注」条目（名字「“引文前 24 字”及另外 N 条」，同 Mac） |
+| `delete_memory` | 按 id 删记忆，进回收站「Agent 记忆」条目（一条时名字 = 第一行前 40 字） |
+
+- 🔴 红线 11：`Trash.deleteAnnotations` / `deleteAgentMemories` 先归档（`TrashStore.archiveNotes` / `archiveAgentMemories`，同 Mac 只搬 `note` / `agent_memory` 一张表），
+  归档到的条数对得上才删行。manifest 与 Mac 同格式，两端回收站互相认得、能恢复。
+- 删批注**不进撤销栈**（同 Mac 经 MCP 删的：找回靠回收站）；删完宿主 `AgentHost.annotationsDeleted` 让开着的标签从库里重读批注 / 图片笔记、刷书签。
+
+### 5.4 对话记录（2026-11-16）
+
+- 同 Mac §22：面板一轮**正常答完**记一行 `agent_turn`（用户那句话 + 回复正文；上下文块、工具输出、思考过程不记；停止 / 出错的不记）。
+  `conversation_id` 新对话 / 换设置 / 换工作区各换一个；`agent` 列 = `unireader-android`。只追加、随同步（`MirrorFp` 早已含这张表）。
+- 工具 `list_conversations` / `read_conversation`（按轮分页），文案照 Mac。系统提示里提了一句，模型想回顾以前聊过什么会用它们。
+- 没做：全工作区 `search`（Mac 那套搜索索引本端没有），所以按内容找以前的对话只能先列再读。
 
 - 读文字要那本书**在标签里装载着**（本机只有标签里的 Pdfium 实例）；没开就替用户开、等它装好（最多 10 秒）。
 - 返回给模型的是纯文字（Mac MCP 的 `text` 部分），不带结构化 JSON。
@@ -86,8 +104,8 @@
 
 ## 7. 没做 / 下一批
 
-- 删除类：`delete_annotations`、`delete_memory`（先归档进回收站，红线 11）。
-- 对话记录 `agent_turn`（Mac §22）、Agent 上下文 `agent_context`（Mac §12）。
+- Agent 上下文 `agent_context`（Mac §12）。
+- 全工作区搜索 `search`（要搜索索引）。
 - `render_page`（多模态看图）：要模型支持图片输入，设置里加开关。
 - 模式2（连 Mac）不做：那边直接用 Mac 的 Agent 面板。
 
@@ -96,7 +114,8 @@
 - `AgentEngineTest`（插桩，`androidTest/…/local/agent/`）：测试进程里起一个 127.0.0.1 的假 OpenAI 兼容 SSE 服务，
   验路径拼接、鉴权头、分段参数拼接、工具结果带 `tool_call_id` 回传、`reasoning_content`、空参数工具调用、多轮历史。不要 API Key、不碰界面。
 - `AgentToolsTest`（插桩）：cacheDir 里新建真工作区 + 手写两页 PDF + 不经界面的假宿主，十几个工具逐个跑、回库 / 文件核对
-  （高亮的行框位置、批注的锚点与 `source`、书签、Markdown 新建 / 编辑 / 报错、记忆改写）。`MdEditTest`（JVM）6 条。
+  （高亮的行框位置、批注的锚点与 `source`、书签、Markdown 新建 / 编辑 / 报错、记忆改写；删除：有一个 id 对不上一条不删、
+  回收站条目种类 / 计数 / 名字、从回收站放回去；对话：列表先后、分页、同 id 不覆盖）。`MdEditTest`（JVM）6 条。
 - **真机冒烟（2026-11-15，用户授权我自己测）**：Mac 上起假的 OpenAI 兼容服务（只读剧本：`get_state` → `read_pages` → 正文），
   `adb reverse` 接到平板，在 408学习区 里经界面配设置、发一句话：三次请求都带鉴权与 16 个工具，工具结果是真实状态，
   界面依次显示思考 / `✓ get_state` / `✓ read_pages` / Markdown 正文，输入框随键盘顶起，无崩溃。测完删了设置、结束了进程。
@@ -112,3 +131,6 @@
 - [x] 键盘弹出时输入框不被挡住（冒烟测试里看到输入框随键盘顶起）
 - [ ] 「在这段话上加个批注 / 把这句标黄」→ 页面上马上出现，撤销键能撤掉
 - [ ] 开着一篇 Markdown 笔记边打字边让 Agent 改它 → 没存的输入还在
+- [ ] 「把刚才那条高亮删掉」→ 页面上马上没了；⋯「回收站…」里有一条「批注」，恢复后又出现
+- [ ] 「把关于第三章的那条记忆删了」→ 回收站里有「Agent 记忆」条目；Mac 上打开同一工作区的回收站也认得
+- [ ] 聊两轮后点 ＋ 开新对话，问「上次我们聊了什么」→ 它调 `list_conversations` / `read_conversation` 答得出
