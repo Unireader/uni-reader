@@ -136,6 +136,48 @@
   查询前面加模型自带的任务说明（`Instruct: …\nQuery:`），正文不加。
 - 设置里「模型」只剩两种：本机（下载的模型）/ OpenAI 兼容接口；老设置存的 `"system"` 当本机。
 
+### 5.5 安卓语义搜索：只算查询向量（2026-11-16 定方向 + Mac 上实测一致性）
+
+**分工（用户定）**：安卓**不计算、不更新**工作区的块向量，只在搜索时把查询变成向量；块向量由 Mac 算好，
+**补上服务器同步**送到安卓（现在 §3 的索引不进 `library.sqlite`、不同步，这一条要为向量改；同步怎么做待写方案，见 `SERVER-MODE-PLAN.md`）。
+
+**设备**：小米 Pad 6（骁龙 870：1×A77 3.19G + 3×A77 2.42G + 4×A55；16 GB；Adreno 650；Android 14）。
+CPU 有 int8 点积指令、没有 bf16 / i8mm → 用 GGUF 的 Q8_0 或 f16，不能直接用 bf16；
+NPU（Hexagon 698）不在高通 QNN 跑 Transformer 的支持范围（V68 起），GPU（Adreno 650）llama.cpp 支持差 → **只用 CPU**。
+查询只有几十个 token，真机 0.1 秒左右（下面实测）；整库在平板上算要 1.5~2.5 小时，所以不做。
+
+**推理库**：llama.cpp + 官方 GGUF（`Qwen/Qwen3-Embedding-0.6B-GGUF`，Q8_0 639 MB / f16 1.2 GB），NDK + JNI 接入。
+llama.cpp 用 `--pooling last` + `--embd-normalize 2`；它**自动在末尾补 `<|endoftext|>`**（id 151643），与 App 的写法一致；
+任务说明 `Instruct: …\nQuery:` 一字不差照抄 `LocalEmbedding.queryPrefix`。
+🔴 `llama-embedding` 命令行默认按换行把输入切成多条，会把任务说明切断——测试时用 `--embd-separator '<#sep#>'`，库里调用时一条查询就是一段。
+
+**一致性实测**（`build/dev/embed-bench/qvec-compare.sh`：块向量用 App 存的 Int8 向量，只换查询向量的来源；
+EmbedBench 新增 `--export-queries` / `--compare`；llama.cpp build 12359 `b1b770d90`；GGUF 两行是 Mac 上用 Metal 跑的，平板 CPU 那一行是真机算的）：
+
+| 查询向量 | 换说法 33 问（前10命中 / 首位 / MRR） | 字面 6 问 | 与 MLX 查询向量的余弦（平均 / 最低） | 前 10 与 MLX 的重合（三个工作区） |
+|---|---|---|---|---|
+| MLX bf16（App 现状） | 30 / 20 / 0.71 | 6/6 | — | — |
+| GGUF f16 | 30 / 20 / 0.71 | 6/6 | 0.99987 / 0.99984 | 9.6~9.7 / 10 |
+| GGUF Q8_0 | 30 / 20 / 0.72 | 6/6 | 0.99956 / 0.99942 | 9.6~9.7 / 10 |
+| GGUF Q8_0，**平板 CPU 算** | 30 / 19 / 0.70 | 6/6 | 0.99922 / 0.99901 | 9.5~9.6 / 10 |
+
+（命中数只看 7194 块的那个工作区，评测题是操作系统 / 网络 / 数据结构 / 组成原理；另外两个工作区科目不同，只看余弦和重合。）
+结论：**Q8_0 与 bf16 查询向量搜出来的效果一样**，前 10 里平均只有半条不同（都在排名接近、分数几乎相等的尾部）。安卓用 Q8_0（小一半）。
+- 模型标识：安卓只认 `vec.model = local|Qwen3-Embedding-0.6B@97b0c614` 的向量；Mac 换了模型（标识变了）而安卓的模型没跟上 → 不做语义、退回关键词并说明原因。
+**真机速度（2026-11-16，Pad 6，接着电源，Q8_0）**：llama.cpp 同一提交用 NDK 30 交叉编译（`-march=armv8.2-a+dotprod+fp16`，静态、无 OpenMP），
+程序与源码在 `build/dev/llama-android/`，平板测试目录 `/data/local/tmp/embed/`，脚本 `build/dev/embed-bench/qvec/pad-latency.sh`。
+
+| 项 | 实测 |
+|---|---|
+| 纯计算（`llama-bench -embd 1`，32~128 token） | 1 线程 ~108、2 线程 ~160、**4 线程 300~320**、8 线程 ~240 token/秒（小核拖后腿）→ 用 4 线程 |
+| 一条查询（任务说明 17 token + 问题，共 24~37 token） | **85~128 ms**（39 条全在这个范围） |
+| 加载模型 | 文件已在系统缓存 0.71 秒；清掉缓存后冷启动 1.1 秒 |
+| 进程内存峰值 | 1.3 GB（内存映射的权重 604 MB + 按 CPU 重排的一份 446 MB + 输出缓冲 149 MB：命令行默认最多 256 段，App 里只要 1 段，会小很多） |
+| 关掉重排（`--no-repack`） | 内存峰值 858 MB、加载 0.3 秒，但查询变 143~221 ms |
+
+结论：**平板上算查询向量完全够用**——搜索时第一次加载约 1 秒，之后每次 0.1 秒左右；模型用到时才加载、闲置卸载（照 Mac）。默认开着重排（快 70%），16 GB 的平板不缺这 0.4 GB。
+- 待做：向量同步方案；安卓端接入（JNI 封装、模型下载 / 放文件、`vec.model` 校验、关键词 + 语义合并照 Mac）。
+
 ## 6. MCP 工具 `search`（`Sources/MCP/MCPTools+Search.swift`，`.read`）
 
 - 入参：`query`（必填）、`kinds`（pdf / markdown / annotation / exercise / context）、`document_ids`、`note_source`、`note_folder`、
