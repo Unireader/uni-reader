@@ -82,7 +82,14 @@ extension WorkspaceWikiIndex: WikiLinkResolver {
         // 笔记之外也认书与书页（`[[书名#page=12]]`）：画成可点的链接；点了由各处的 `linkTarget` 认
         switch target(for: displayName) {
         case .note(let ref)?: return WikiLinkResolution(id: ref.key, exists: true)
-        case .document(let d, let p)?: return WikiLinkResolution(id: "pdf:\(d)#\(p ?? -1)", exists: true)
+        case .document(let d, let p?)?:
+            // 书页链接只显示页码（2026-11-16 用户定：`[[书名#page=152]]` 显示成 `p.152`，悬停看书名）；
+            // 只改显示，正文原样，光标进链接照样露出原文（红线 9）。
+            let book = displayName.components(separatedBy: "#").first ?? displayName
+            return WikiLinkResolution(id: "pdf:\(d)#\(p)", exists: true,
+                                      displayText: "p.\(p + 1)",
+                                      toolTip: book + " · " + String(format: L("Page %d"), p + 1))
+        case .document(let d, nil)?: return WikiLinkResolution(id: "pdf:\(d)#-1", exists: true)
         case .annotation(let d, let a, _)?: return WikiLinkResolution(id: "pdf:\(d)@\(a)", exists: true)
         case nil: return nil
         }

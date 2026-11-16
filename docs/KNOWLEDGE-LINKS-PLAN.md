@@ -104,3 +104,12 @@
 - 整体关系图（点线图）：等关联面板用顺了再做。
 - 习题（笔记 / 解析里的链接）、画板进关联。
 - 「链到笔记里某个标题」的反向链接目前按整篇算（`[[笔记#标题]]` 算链到这篇）。
+
+## 书页链接只显示页码（2026-11-16）
+
+用户嫌 `[[27张宇基础30讲线代#page=152]]` 显示太长，定为**只显示 `p.152`**，悬停提示「书名 · 第 152 页」。
+只改显示、不改正文（红线 9），光标移进链接照样露出原文；断链（找不到这本书）仍显示原文，方便看出哪里断了。
+做法：引擎 fork 的 `WikiLinkResolution` 加 `displayText` / `toolTip`，`WorkspaceWikiIndex.resolve` 解析到「书的某一页」时给出；
+引擎把名字按隐藏标记的办法缩到看不见、整段宽度挂在第一个字上（中文书名可能在任意两个字之间折行），由排版片段在原位置画 `p.152`
+（`MarkdownTextLayoutFragment.drawWikiLinkDisplays`，同有序列表编号的画法）。测试 `WikiLinkDisplayTextTests`（含样张，`WIKI_SAMPLE=路径`）。
+范围只是 Markdown 笔记编辑区；Agent 回复 / 习题 / 日程走只读按段接口（`MarkdownDisplayRenderer`），本次没动。
