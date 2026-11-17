@@ -169,7 +169,9 @@ final class MCPServer: ObservableObject {
     create_markdown makes a new note (in the built-in Notes folder or a referenced folder such as an Obsidian vault) — \
     use it instead of writing .md files yourself; rename_markdown renames a note or moves it to another folder or \
     note source, move_markdown_folder renames or moves a whole folder, delete_markdown moves a note to the system \
-    Trash — these report [[wiki links]] that broke and never rewrite them; change those only if the user asks. \
+    Trash. Renaming or moving rewrites the [[wiki links]] in other notes that pointed at the old name or path \
+    automatically and lists them (relinked) — do not edit those links again; links that still broke (and links \
+    to a deleted note) are only reported: change those only if the user asks. \
     markdown_links shows a note's links and backlinks (or every broken link); open_markdown shows a note to the user; \
     add_markdown_image puts a PDF page or a region of it into a note as an image. \
     Never edit files inside a .unrd package directly. \

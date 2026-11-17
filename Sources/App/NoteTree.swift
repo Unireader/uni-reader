@@ -394,7 +394,7 @@ extension NoteIndex {
     /// 笔记改名 / 挪目录 / 删除之后，这段正文里**因此断掉**的 `[[…]]` 名字（MCP `rename_markdown` / `move_markdown_folder` /
     /// `delete_markdown`，`MARKDOWN-NOTES-PLAN.md §15–16`）。`moved`：旧位置 → 新位置（nil = 删掉了）。
     /// 改之前（`before`）指向某篇被动过的笔记、改之后（`after`）不再指向它的新位置（删掉的：改之后什么也指不到）的那些。
-    /// 只报告、不改正文（红线 9）。按名字认的那套照旧：只挪目录时 `[[名字]]` 还按名字连得上，不算断。图片嵌入不算。
+    /// 改名 / 挪目录时先联动改链接（`relinked`），这里认的是改完仍然断的；删除只报告。按名字认的那套照旧：只挪目录时 `[[名字]]` 还按名字连得上，不算断。图片嵌入不算。
     static func linksBroken(in text: String, before: NoteIndex, after: NoteIndex, moved: [NoteRef: NoteRef?]) -> [String] {
         MarkdownLink.wikiReferences(text).filter { name in
             guard let old = before.note(for: name), let entry = moved[old] else { return false }
@@ -407,5 +407,60 @@ extension NoteIndex {
     /// 只动了一篇的写法。
     static func linksBroken(in text: String, before: NoteIndex, after: NoteIndex, from: NoteRef, to: NoteRef?) -> [String] {
         linksBroken(in: text, before: before, after: after, moved: [from: to])
+    }
+
+    /// 改名 / 挪目录之后的**联动改链接**（用户 2026-11-17 推翻原红线 9 的「改名不改正文」）：这段正文里改之前指向某篇被挪动的笔记、
+    /// 改之后不再指向它新位置的 `[[…]]`，把**目标名那一段**换成新名字；锚点（`#小节`）、别名（`|别名`，含表格里的 `\|`）、
+    /// 嵌入的 `!` 原样留着。只改链接本身，正文别的字一个不动；保护区（代码块 / 行内代码 / frontmatter）里的不碰，图片嵌入不算。
+    ///
+    /// 新名字的写法：原来写的是名字就写新名字，原来带路径（`[[数学/极限]]`）就写新的源内路径；原来带 `.md` 的照样带。
+    /// 新名字和别处一篇同名、按名字指不到它时改用路径写法；还是指不到（不该发生）就不改、算进 `unresolved`。
+    /// 删除（`moved` 里没有新位置）不在这里：没有新名字可写，照旧只报告断链。
+    /// 返回 nil = 这段正文没有要改的。
+    struct Relinked { var text: String; var changes: [(from: String, to: String)]; var unresolved: [String] }
+
+    static func relinked(_ text: String, before: NoteIndex, after: NoteIndex, moved: [NoteRef: NoteRef]) -> Relinked? {
+        guard text.contains("[[") else { return nil }
+        let ns = text as NSString
+        let guarded = MarkdownLink.protectedRanges(text)
+        var edits: [(NSRange, String)] = []
+        var changes: [(from: String, to: String)] = []
+        var unresolved: [String] = []
+        for m in MarkdownLink.wikiRegex.matches(in: text, range: ns.fullRange)
+        where !guarded.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
+            let raw = ns.substring(with: m.range)
+            let inner = ns.substring(with: m.range(at: 1))
+            let parts = MarkdownLink.WikiParts(inner)
+            if raw.hasPrefix("!"), let ext = parts.target.pathExtension, MarkdownLink.imageExts.contains(ext.lowercased()) { continue }
+            guard let old = before.note(for: inner), let new = moved[old], after.note(for: inner) != new else { continue }
+            // 拆成 名字段 + 尾巴（`#锚点`、`\|` / `|别名`）。名字里本来就带 `#` 的（`C#入门`）整段当名字
+            var head = inner, tail = ""
+            if let bar = inner.firstIndex(of: "|") {
+                head = String(inner[..<bar]); tail = String(inner[bar...])
+                while head.hasSuffix("\\") { head.removeLast(); tail = "\\" + tail }
+            }
+            let afterTitle = old.title.contains("#") ? head.range(of: old.title)?.upperBound : nil
+            if let hash = head[(afterTitle ?? head.startIndex)...].firstIndex(of: "#") {
+                tail = String(head[hash...]) + tail
+                head = String(head[..<hash])
+            }
+            let name = head.trimmingCharacters(in: .whitespaces)
+            let withExt = name.lowercased().hasSuffix(".md")
+            let path = MarkdownImport.dropExt(new.relPath)
+            var candidates = [name.contains("/") ? path : new.title]
+            if !candidates.contains(path) { candidates.append(path) }
+            guard let pick = candidates.map({ withExt ? $0 + ".md" : $0 }).first(where: { after.note(for: $0) == new }) else {
+                unresolved.append(parts.target)
+                continue
+            }
+            let rebuilt = (raw.hasPrefix("!") ? "!" : "") + "[[" + pick + tail + "]]"
+            guard rebuilt != raw else { continue }
+            edits.append((m.range, rebuilt))
+            changes.append((raw, rebuilt))
+        }
+        guard !edits.isEmpty || !unresolved.isEmpty else { return nil }
+        let out = NSMutableString(string: text)
+        for (r, s) in edits.reversed() { out.replaceCharacters(in: r, with: s) }
+        return Relinked(text: out as String, changes: changes, unresolved: unresolved)
     }
 }

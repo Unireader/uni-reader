@@ -105,7 +105,9 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
    笔迹点集 v18 起另存二进制列 `points`，读写规则见 `docs/BINARY-INK-PLAN.md`）。
 7. 滚动跟随**只跟随不预测**：纯临界阻尼低通，禁速度外推（WiFi 成批投递导致过冲闪回）。
 8. 重建 PDF 显示前**必须先与用户确认方案**，不要自行动手。
-9. Markdown 笔记**自动维护不许改正文**（用户原话「不要改 `[[]]` 现有的哪怕不兼容也不要改」）：导入/改名/挪目录/扫描都不动正文；`[[…]]` 按名字解析，断链是明确接受的代价、不自动修。只有用户显式编辑或明确要求走 MCP `edit_markdown`/`update_markdown` 才写。
+9. Markdown 笔记**自动维护不许改正文**（用户原话「不要改 `[[]]` 现有的哪怕不兼容也不要改」）：导入/扫描都不动正文；`[[…]]` 按名字解析。
+   **唯一例外：改名 / 挪目录时联动改指向它的链接**（2026-11-17 用户定，`NoteRelink` / `NoteIndex.relinked`）：只换 `[[…]]` 的目标名那一段，锚点、别名、正文别的字不动；
+   界面改名与 MCP `rename_markdown` / `move_markdown_folder` 都走它，结果里列给 Agent（`relinked`，别再改一遍）。删除仍只报断链。其余只有用户显式编辑或明确要求走 MCP `edit_markdown`/`update_markdown` 才写。
 10. ~~`InkEdit.splitStroke` 与 web 端 JS 版同算法两份实现~~——2026-10-30 网页采集页删除，此条作废（编号保留：别处按编号引用红线）。
 11. 删除类操作**先归档再删除，顺序不许反**（回收站；先删再存 = 中途失败就没了）。
 

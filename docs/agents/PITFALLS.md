@@ -118,7 +118,10 @@
   `\boldsymbol`、`\mathscr`、`\varnothing`、`\tag`；测试 `spike/latex-compat-test.swift`）。只能近似的
   （`cases` / `array` / `align` / `gather` / `split` 环境、`\boxed`、`\overset`、`\underset`、`\stackrel`、`\xrightarrow`、
   `\overbrace`、`\underbrace`、`\mathop`、`\limits`、`\because`、`\therefore`）用户定**不做**，改为写进给 Agent 的
-  规则（`MCPTools.mathWriting`）让它别用；分段函数让它写 `\left\{\begin{aligned}…\end{aligned}\right.`（实测能渲染）。
+  规则（`MCPTools.mathWriting`）让它别用；2026-11-17 起 MCP 写入类工具成功后再实测一遍（`LatexCheck`，`MCPCatalog.afterWrite`）：
+  这次传进来的文字里排不出来的公式列在结果后面（结构化结果的 `message` 里也有），让 Agent 当场改；只提示不拦。
+  🔴 试排走 `NoteLatexRenderer.shared`，别另开 `SwiftMathBridge` 再 `clearCache()`——几个桥共用一个磁盘缓存目录，一清全没。
+  以后要支持哪个命令：能一一对应的进 `LatexCompat`，同时从 `mathWriting` 和 `LatexCheck.unsupportedCommands` 里删掉；测试 `spike/latex-check-test.swift`；分段函数让它写 `\left\{\begin{aligned}…\end{aligned}\right.`（实测能渲染）。
   🔴 **SwiftMath 的 `aligned` 只认两列**（2026-10-27 用户报习题题干）：Agent 照上面那句写分段函数，又按 LaTeX 惯用法用 `&&`
   把条件对成第二列（`&0, && n=0`，一行四格），整条失败。SwiftMath **认两列的 `cases`**（2026-09-16 的「`cases` 不认」用的是
   一列样例，报的是「只能两列」），所以 `LatexCompat.piecewise` 把「`\left\{` + 多于两列的 `aligned` + `\right.`」每两格并一格、

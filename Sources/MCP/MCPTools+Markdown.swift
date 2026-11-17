@@ -7,14 +7,16 @@ import Foundation
 /// - `edit_markdown`：code agent 式局部修改（原文精确匹配替换、按行号插入），不用重吐整篇；
 /// - `update_markdown`：整篇替换（带 revision 乐观锁），只留给「真要重写全文」的场合；
 /// - `create_markdown`：新建一篇（2026-11-12，`MARKDOWN-NOTES-PLAN.md §14`；此前 Agent 只能绕过 App 直接写文件）；
-/// - `rename_markdown`：改名 / 挪目录（2026-11-12，`§15`）：只动这一个文件，断掉的 `[[…]]` 列出来、不改。
+/// - `rename_markdown`：改名 / 挪目录（2026-11-12，`§15`）：别的笔记里指向它的 `[[…]]` 联动改成新名字（2026-11-17，`NoteRelink`），
+///   结果里列出改了哪些（Agent 别再自己去改一遍），仍然断的另列。
 /// 纯逻辑在 `MCPMarkdownText`，碰 App 状态的在 `MCPFacade`（写入同一条路：原子写文件 + 推回所有编辑器）。
 extension MCPTools {
     /// 笔记里公式怎么写（英文，给模型看）。MCP `instructions`、写笔记工具的正文字段、Agent 面板上下文共用这一段。
     /// 别把公式包进加粗 / 斜体：用户 2026-10-07「不要出现加粗和公式一起用」。
     /// 后半句列的是 SwiftMath 不认、`LatexCompat` 也没换的写法（用户同日定：近似显示不做，让 Agent 别用）；
-    /// 名单来自 `spike/latex-look.swift` 普查，`LatexCompat` 新增替换时从这里删掉对应的。
-    static let mathWriting = "Math in notes: $…$ inline, all on one line; $$…$$ on lines of their own for a block; \\(…\\) and \\[…\\] are NOT rendered. Never put a formula inside bold or italic (no **…$x$…**): emphasize the words around it and leave the formula outside the ** or *. The renderer cannot draw \\boxed, \\overset, \\underset, \\stackrel, \\xrightarrow, \\overbrace, \\underbrace, \\mathop, \\limits, \\because, \\therefore, or the cases, array, align, gather and split environments — a formula using any of them shows as raw source. For a piecewise definition write \\left\\{\\begin{aligned} … \\end{aligned}\\right. and for multi-line equations use aligned. Tables are GFM: a row is split on every | before formulas are read, so inside a table cell never write a bare | in a formula — write absolute values and determinants as \\lvert A \\rvert and norms as \\lVert v \\rVert (not $|A|$ or $||v||$), and write any other literal | in a cell as \\|. Each table row stays on one line; use <br> for a line break inside a cell."
+    /// 名单来自 `spike/latex-look.swift` 普查，`LatexCompat` 新增替换时从这里删掉对应的（`LatexCheck.unsupportedCommands` 同步删）。
+    /// 2026-11-17 起写入后还有一道实测（`LatexCheck`）：排不出来的公式列给 Agent 当场改；以后要支持哪个命令按需再加。
+    static let mathWriting = "Math in notes: $…$ inline, all on one line; $$…$$ on lines of their own for a block; \\(…\\) and \\[…\\] are NOT rendered. Never put a formula inside bold or italic (no **…$x$…**): emphasize the words around it and leave the formula outside the ** or *. The renderer supports only part of LaTeX: it cannot draw \\boxed, \\overset, \\underset, \\stackrel, \\xrightarrow, \\xleftarrow, \\overbrace, \\underbrace, \\mathop, \\limits, \\because, \\therefore, or the cases, array, align, gather and split environments — one unsupported command makes the whole formula show as raw source, so stick to common commands. For an arrow with a label write the label as text outside the formula (e.g. $[A \\mid E] \\longrightarrow [E \\mid A^{-1}]$ (初等行变换)). After every write UniReader test-renders each formula and lists any it cannot draw; rewrite those right away. For a piecewise definition write \\left\\{\\begin{aligned} … \\end{aligned}\\right. and for multi-line equations use aligned. Tables are GFM: a row is split on every | before formulas are read, so inside a table cell never write a bare | in a formula — write absolute values and determinants as \\lvert A \\rvert and norms as \\lVert v \\rVert (not $|A|$ or $||v||$), and write any other literal | in a cell as \\|. Each table row stays on one line; use <br> for a line break inside a cell."
 
     /// 笔记里怎么放函数图形（英文，给模型看）。格式本身由 Grapher NG 的 MCP 说明（`get_text_reference` / `render_text`），
     /// 这里只讲放在哪、怎么写进去。方案见 `GRAPHER-BLOCK-PLAN.md`；MCP `instructions` 与 Agent 面板上下文共用。
@@ -244,6 +246,49 @@ extension MCPTools {
          ]), "notes whose links broke (at most \(brokenListMax))")]
     }
 
+    /// 联动改链接的 schema（改名 / 挪目录共用）。
+    static var relinkSchema: [String: MCPObject] {
+        ["relinked_notes": MCPSchema.integer("notes whose [[…]] links UniReader already rewrote to the new name or path"),
+         "relinked_links": MCPSchema.integer("links rewritten in total"),
+         "relinked": MCPSchema.array(of: MCPSchema.object([
+            "ref": MCPSchema.string("note_ref of the note whose links were rewritten"),
+            "title": MCPSchema.string("its title"),
+            "changes": MCPSchema.array(of: MCPSchema.object([
+                "from": MCPSchema.string("the link as it was written"), "to": MCPSchema.string("the link as it is now"),
+            ])),
+         ]), "notes whose links were rewritten (at most \(brokenListMax)) — already done, do not edit them again"),
+         "relink_failed": MCPSchema.array(of: MCPSchema.object([
+            "ref": MCPSchema.string("note_ref"), "title": MCPSchema.string("title"), "reason": MCPSchema.string("why its links were not rewritten"),
+         ]), "notes whose links could not be rewritten; they are also in broken_links")]
+    }
+
+    /// 改名 / 挪目录之后联动改链接，结果写进结构化结果，返回接在文字输出后面的几行（没改任何东西返回 nil）。
+    static func relink(_ scan: MCPFacade.NoteScanInput, into o: inout MCPObject) async -> String? {
+        let r = await NoteRelink.run(scan.workspace, before: scan.before, moved: scan.moved.compactMapValues { $0 })
+        o["relinked_notes"] = r.notes.count
+        o["relinked_links"] = r.linkCount
+        o["relinked"] = r.notes.prefix(brokenListMax).map { n in
+            ["ref": n.ref.key, "title": n.ref.title,
+             "changes": n.changes.map { ["from": $0.from, "to": $0.to] as MCPObject }] as MCPObject
+        }
+        if !r.failed.isEmpty {
+            o["relink_failed"] = r.failed.map { ["ref": $0.ref.key, "title": $0.ref.title, "reason": $0.reason] as MCPObject }
+        }
+        guard !r.notes.isEmpty || !r.failed.isEmpty else { return nil }
+        var text = ""
+        if !r.notes.isEmpty {
+            text = "UniReader already rewrote \(r.linkCount) [[…]] link(s) in \(r.notes.count) note(s) to the new name — do not edit them again:"
+            for n in r.notes.prefix(brokenListMax) {
+                text += "\n- “\(n.ref.title)” (note_ref \(n.ref.key)): " + n.changes.map { "\($0.from) → \($0.to)" }.joined(separator: ", ")
+            }
+            if r.notes.count > brokenListMax { text += "\n… and \(r.notes.count - brokenListMax) more" }
+        }
+        for f in r.failed {
+            text += (text.isEmpty ? "" : "\n") + "Could not rewrite the links in “\(f.ref.title)” (note_ref \(f.ref.key)): \(f.reason)"
+        }
+        return text
+    }
+
     /// 认完断链：写进结构化结果，返回给文字输出接的那几行。断链多时整段文字超过 `messageLimit` 不会抄进结构化结果
     /// （Claude Code 只看结构化），所以那句建议另放进 `message`。
     static func reportBroken(_ broken: [(ref: NoteRef, names: [String])], head: String, into o: inout MCPObject) -> String {
@@ -251,8 +296,8 @@ extension MCPTools {
         o["broken_link_notes"] = broken.count
         o["broken_links"] = listed.map { ["ref": $0.ref.key, "title": $0.ref.title, "names": $0.names] as MCPObject }
         guard !broken.isEmpty else { return head + "\nNo [[…]] links broke." }
-        let advice = "\(broken.count) note(s) link to it by a name that no longer resolves; those links were left as they are "
-            + "(UniReader never rewrites note text by itself). Tell the user; fix them with edit_markdown only if the user asks"
+        let advice = "\(broken.count) note(s) still link to it by a name that no longer resolves; those links were left as they are. "
+            + "Tell the user; fix them with edit_markdown only if the user asks"
         o[MCPToolResult.messageKey] = head + "\n" + advice + " (see broken_links)."
         var text = head + "\n" + advice + ":"
         for b in listed {
@@ -269,7 +314,7 @@ extension MCPTools {
         MCPTool(
             name: "rename_markdown",
             title: "Rename or move a Markdown note",
-            description: "Rename a Markdown note, move it to another folder, move it to another note source (e.g. from the workspace's Notes folder into the user's Obsidian vault), or a mix. The title is the file name, so this renames the .md file; the text is not changed. Tabs and mini-windows showing the note follow it, and unsaved typing is saved first. [[wiki links]] in other notes that use the old name break: UniReader never rewrites note text by itself, so the result lists the notes whose links broke — tell the user, and fix those links with edit_markdown only if the user asks. Moving to another folder or source keeps the name, so [[name]] links keep working. Moving to another source copies the file there and then moves the original to the system Trash; attachments stay where they are. If a note with the new name already exists there, nothing is changed. Rename or move notes only when the user asks.",
+            description: "Rename a Markdown note, move it to another folder, move it to another note source (e.g. from the workspace's Notes folder into the user's Obsidian vault), or a mix. The title is the file name, so this renames the .md file; its own text is not changed. Tabs and mini-windows showing the note follow it, and unsaved typing is saved first. [[wiki links]] in other notes that pointed at it are rewritten automatically to the new name (or path), keeping their #anchor and |alias; the result lists every rewritten link under relinked — that is already done, so do not edit those links yourself. Links that still could not be fixed are listed under broken_links; tell the user, and fix them with edit_markdown only if the user asks. Moving to another folder or source keeps the name, so [[name]] links keep working (a link that spelled out the old folder path is rewritten only if it would no longer resolve). Moving to another source copies the file there and then moves the original to the system Trash; attachments stay where they are. If a note with the new name already exists there, nothing is changed. Rename or move notes only when the user asks.",
             inputSchema: MCPSchema.object(markdownTargetProperties.merging([
                 "title": MCPSchema.string("New title = new file name, without .md (characters / \\ : * ? \" < > | # ^ [ ] become -). Omit to keep the name."),
                 "folder": MCPSchema.string("Move to this folder, relative to the source root, e.g. \"101思想政治理论/思修\" (created if missing); \"/\" = the source root. Omit to stay in the same folder."),
@@ -289,7 +334,7 @@ extension MCPTools {
                 "old_source": MCPSchema.string("source name before the rename"),
                 "old_relative_path": MCPSchema.string("path before the rename"),
                 "changed": MCPSchema.boolean("false when the note already had this name, folder and source"),
-            ].merging(brokenLinkSchema) { a, _ in a }),
+            ].merging(brokenLinkSchema) { a, _ in a }.merging(relinkSchema) { a, _ in a }),
             tier: .write
         ) { _, args in
             let noteRef = try args.string("note_ref"), windowId = try args.string("window_id"), ws = try args.string("workspace")
@@ -310,7 +355,8 @@ extension MCPTools {
             }
             let from = scan.moved.keys.first!, to = (scan.moved[from] ?? nil) ?? from
             let verb = from.title == to.title ? "Moved" : (from.folder == to.folder && from.sourceID == to.sourceID ? "Renamed" : "Renamed and moved")
-            let head = "\(verb) “\(from.title)” → \(place) · note_ref \(to.key) (the old note_ref no longer works)"
+            var head = "\(verb) “\(from.title)” → \(place) · note_ref \(to.key) (the old note_ref no longer works)"
+            if let r = await relink(scan, into: &o) { head += "\n" + r }
             let text = reportBroken(await MCPNoteScan.brokenLinks(scan), head: head, into: &o)
             return MCPToolResult(text: text, structured: o)
         }
@@ -320,7 +366,7 @@ extension MCPTools {
         MCPTool(
             name: "move_markdown_folder",
             title: "Rename or move a folder of Markdown notes",
-            description: "Rename a folder of Markdown notes, or move it under another folder of the same note source. Everything inside (notes, attachments, subfolders) moves along unchanged. Tabs showing notes inside follow them. [[name]] links keep working because they resolve by name; links that spelled out the old folder path may break — the result lists them, and they are left unchanged (tell the user; fix with edit_markdown only if asked). Do this only when the user asks.",
+            description: "Rename a folder of Markdown notes, or move it under another folder of the same note source. Everything inside (notes, attachments, subfolders) moves along unchanged. Tabs showing notes inside follow them. [[name]] links keep working because they resolve by name; links that spelled out the old folder path and would no longer resolve are rewritten automatically to the new path — the result lists them under relinked (already done, do not edit them again). Anything still broken is listed under broken_links (tell the user; fix with edit_markdown only if asked). Do this only when the user asks.",
             inputSchema: MCPSchema.object([
                 "folder": MCPSchema.string("The folder to move, relative to the source root, e.g. \"101思想政治理论/思修\"."),
                 "name": MCPSchema.string("New folder name. Omit to keep the name."),
@@ -337,7 +383,7 @@ extension MCPTools {
                 "notes": MCPSchema.array(of: MCPSchema.object([
                     "old_ref": MCPSchema.string("note_ref before"), "ref": MCPSchema.string("note_ref after"), "title": MCPSchema.string("title"),
                 ]), "moved notes (at most 200)"),
-            ].merging(brokenLinkSchema) { a, _ in a }),
+            ].merging(brokenLinkSchema) { a, _ in a }.merging(relinkSchema) { a, _ in a }),
             tier: .write
         ) { _, args in
             let folder = try args.requiredString("folder")
@@ -353,7 +399,8 @@ extension MCPTools {
                 let what = (o["changed"] as? Bool) == true ? "Moved the empty folder" : "Nothing changed for folder"
                 return MCPToolResult(text: "\(what) \(o["source"] ?? "")/\(o["old_folder"] ?? "") → \(o["folder"] ?? "")", structured: o)
             }
-            let head = "Moved folder \(o["source"] ?? "")/\(o["old_folder"] ?? "") → \(o["folder"] ?? "") · \(o["notes_moved"] ?? 0) note(s) inside, all with new note_refs"
+            var head = "Moved folder \(o["source"] ?? "")/\(o["old_folder"] ?? "") → \(o["folder"] ?? "") · \(o["notes_moved"] ?? 0) note(s) inside, all with new note_refs"
+            if let r = await relink(scan, into: &o) { head += "\n" + r }
             let text = reportBroken(await MCPNoteScan.brokenLinks(scan), head: head, into: &o)
             return MCPToolResult(text: text, structured: o)
         }

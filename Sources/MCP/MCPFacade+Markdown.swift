@@ -4,7 +4,8 @@ import AppKit
 /// 正文读写（read / edit / update / create）还在 `MCPFacade.swift`。
 ///
 /// 动了笔记位置的三件事都在这里按同一个顺序做：开着的编辑器先存盘 → 留一份改之前的 `[[…]]` 索引 → 动文件、重扫 →
-/// 开着的标签 / 小窗 / 编辑器跟过去（`ReaderWindowController.noteMoved`）。哪些链接因此断了，交给 `MCPNoteScan` 在主线程外读正文认。
+/// 开着的标签 / 小窗 / 编辑器跟过去（`ReaderWindowController.noteMoved`）。改名 / 挪目录之后先联动改别的笔记里的链接
+/// （`NoteRelink`，工具那一层调），剩下仍然断的交给 `MCPNoteScan` 在主线程外读正文认（删除只认断链）。
 extension MCPFacade {
 
     /// 认断链要用的东西：改之前 / 之后两份索引、动了哪些笔记、全部笔记文件。读正文放到主线程外（红线：主线程只拼 DTO）。
@@ -13,6 +14,8 @@ extension MCPFacade {
         let after: NoteIndex
         let moved: [NoteRef: NoteRef?]
         let files: [(ref: NoteRef, url: URL)]
+        /// 联动改链接（`NoteRelink`）要用；只在主线程上碰。
+        let workspace: WorkspaceManager
     }
 
     /// 源的 id 或名字（不分大小写）→ 源。
@@ -59,7 +62,7 @@ extension MCPFacade {
         o["old_source"] = ws.noteSource(id: ref.sourceID)?.name ?? ref.sourceID
         o["old_relative_path"] = ref.relPath
         o["changed"] = changed
-        let scan = changed ? NoteScanInput(before: before, after: ws.wiki.snapshot(), moved: [ref: new], files: allNoteFiles(ws)) : nil
+        let scan = changed ? NoteScanInput(before: before, after: ws.wiki.snapshot(), moved: [ref: new], files: allNoteFiles(ws), workspace: ws) : nil
         return (o, scan)
     }
 
@@ -88,7 +91,7 @@ extension MCPFacade {
         guard !r.moves.isEmpty else { return (o, nil) }
         var moved: [NoteRef: NoteRef?] = [:]
         for m in r.moves { moved[m.from] = m.to }
-        return (o, NoteScanInput(before: before, after: ws.wiki.snapshot(), moved: moved, files: allNoteFiles(ws)))
+        return (o, NoteScanInput(before: before, after: ws.wiki.snapshot(), moved: moved, files: allNoteFiles(ws), workspace: ws))
     }
 
     // MARK: - delete_markdown
@@ -106,7 +109,7 @@ extension MCPFacade {
         let o: MCPObject = ["ref": ref.key, "title": ref.title, "source": source?.name ?? ref.sourceID,
                             "source_kind": source?.kind.rawValue ?? "unknown",
                             "relative_path": ref.relPath, "trash_path": trashed?.path ?? NSNull()]
-        return (o, NoteScanInput(before: before, after: ws.wiki.snapshot(), moved: [ref: nil], files: allNoteFiles(ws)))
+        return (o, NoteScanInput(before: before, after: ws.wiki.snapshot(), moved: [ref: nil], files: allNoteFiles(ws), workspace: ws))
     }
 
     // MARK: - open_markdown

@@ -360,5 +360,24 @@ let movedMap: [NoteRef: NoteRef?] = [oldR: moved, other: NoteRef(sourceID: "ws",
 var mi2 = NoteIndex(); mi2.add(note: NoteItem(ref: moved)); mi2.add(note: NoteItem(ref: NoteRef(sourceID: "ws", relPath: "x/导数.md")))
 check(NoteIndex.linksBroken(in: "[[极限]] [[导数]] [[数学/导数]]", before: bi, after: mi2, moved: movedMap).isEmpty, "整个目录挪走：按名字 / 末段都连得上")
 
+print("— 改名联动改链接（NoteIndex.relinked，2026-11-17）")
+func rl(_ text: String, _ a: NoteIndex, _ m: [NoteRef: NoteRef]) -> String? { NoteIndex.relinked(text, before: bi, after: a, moved: m)?.text }
+check(rl(body, ai, [oldR: newR]) == "见 [[函数极限]]、[[函数极限#左极限|左极限]]、[[数学/函数极限]]、[[导数]]、[[还没写的]]，`[[极限]]` 在代码里不算",
+      "改名：名字 / 锚点+别名 / 路径写法都改，别的链接与代码里的不动（得到 \(rl(body, ai, [oldR: newR]) ?? "nil")）")
+check(rl("[[函数极限]] 与 [[导数]]", ai, [oldR: newR]) == nil, "已经是新名字：不改（返回 nil）")
+check(rl("表格 | [[极限\\|别名]] | ![[极限]] | [[极限.md]]", ai, [oldR: newR]) == "表格 | [[函数极限\\|别名]] | ![[函数极限]] | [[函数极限.md]]",
+      "表格里的 \\|、嵌入 !、带 .md 都原样保留")
+check(rl("[[极限]] [[数学/极限]]", mi, [oldR: moved]) == nil, "只挪目录：按名字 / 末段照样连得上，都不改")
+let cs = NoteRef(sourceID: "ws", relPath: "C#入门.md"), cs2 = NoteRef(sourceID: "ws", relPath: "C语言入门.md")
+var csB = NoteIndex(); csB.add(note: NoteItem(ref: cs)); var csA = NoteIndex(); csA.add(note: NoteItem(ref: cs2))
+check(NoteIndex.relinked("[[C#入门]] 与 `[[C#入门]]`", before: csB, after: csA, moved: [cs: cs2])?.text == "[[C语言入门]] 与 `[[C#入门]]`",
+      "名字里带 # 的笔记：名字整段换掉（带别名 / 锚点的这种本来就解析不到，不在此列）")
+var sameName = NoteIndex(); sameName.add(note: NoteItem(ref: newR)); sameName.add(note: NoteItem(ref: other)); sameName.add(note: NoteItem(ref: NoteRef(sourceID: "ws", relPath: "aaa/函数极限.md")))
+let dupOut = rl("[[极限]]", sameName, [oldR: newR])
+check(dupOut == "[[极限]]" || dupOut == "[[数学/函数极限]]", "新名字与别处同名时：要么用路径写法指到它，要么不改（得到 \(dupOut ?? "nil")）")
+check(NoteIndex.relinked("[[极限]]", before: bi, after: sameName, moved: [oldR: newR]).map { sameName.note(for: MarkdownLink.wikiReferences($0.text)[0]) == newR || !$0.unresolved.isEmpty } == true,
+      "同名时改完一定指到新位置，否则记进 unresolved")
+check(NoteIndex.linksBroken(in: rl(body, ai, [oldR: newR])!, before: bi, after: ai, from: oldR, to: newR).isEmpty, "改完之后一条都不算断")
+
 print("\n\(fail == 0 ? "✅ 全部通过" : "❌ 有失败")：\(pass) 过 / \(fail) 败")
 exit(fail == 0 ? 0 : 1)

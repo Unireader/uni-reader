@@ -474,8 +474,7 @@ extension WorkspaceManager {
 
     /// 改名 = **改文件名**（标题就是文件名，Obsidian 的惯例）。
     ///
-    /// 🔴 指向它的 `[[旧名字]]` 会**断链**——我们不改别人的正文（红线），这是用户 2026-09-20
-    /// 明确接受的代价（「哪怕不兼容也不要改」）。
+    /// 指向它的 `[[旧名字]]` 由调用方改完之后联动改成新名字（`NoteRelink`，用户 2026-11-17 定；此前是断链不修）。
     /// 调用方：改之前 `MarkdownDocView.flushEditors`、改完 `ReaderWindowController.noteMoved`（见 `moveNote` 的注释）。
     @discardableResult
     func renameNote(_ ref: NoteRef, to title: String) -> NoteRef? {
@@ -518,7 +517,7 @@ extension WorkspaceManager {
 
     /// Agent 改名 / 挪目录 / 挪去别的源（MCP `rename_markdown`，`MARKDOWN-NOTES-PLAN.md §15`，用户 2026-11-12）。
     /// `title` / `folder` / `toSource` 为 nil = 不变（目录规则同 `create_markdown`，不在就建；换源时 `folder` 不给 = 新源里同样的相对目录）。
-    /// 与上面那个（界面上的「重命名…」）同一个口径——只动这一个文件，指向它的 `[[旧名字]]` 断就断（红线 9，不改别人的正文）；
+    /// 与上面那个（界面上的「重命名…」）同一个口径——只动这一个文件（指向它的 `[[旧名字]]` 由调用方联动改，`NoteRelink`）；
     /// 区别是错误带英文原因（原样回给 Agent）、能挪目录 / 换源、目标已有时报出那篇的 note_ref。返回新位置；都没变 = 原样返回 `ref`。
     ///
     /// **换源**（内建 `Notes/` ↔ 引用目录，跨文件系统）：先复制到新位置、确认写好了，再把原件**移到废纸篓**（红线 11：先留底再删）；

@@ -980,13 +980,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 guard let self else { return }
                 // 开着它的编辑器先存盘（挪走之后旧路径上没文件，自动保存就不存了）
                 MarkdownDocView.flushEditors(showing: note.ref, in: self.workspace)
+                let before = self.workspace.wiki.snapshot()
                 guard let newRef = self.workspace.renameNote(note.ref, to: name) else {
                     if let e = self.workspace.lastError { self.presentNoteError(e) }
                     return
                 }
-                // 🔴 改名 = 改文件名，指向它的 `[[旧名字]]` 会断链（我们不改别人的正文，红线）。
                 // 所有窗口里开着它的标签 / 小窗都跟过去（原先只换了本窗口的标签，别的窗口那份和小窗会被关掉）
                 ReaderWindowController.noteMoved(from: note.ref, to: newRef, in: self.workspace)
+                // 别的笔记里指向旧名字的 `[[…]]` 联动改成新名字（用户 2026-11-17 定，`NoteRelink`）
+                let ws = self.workspace
+                Task { @MainActor in _ = await NoteRelink.run(ws, before: before, moved: [note.ref: newRef]) }
             }
         }
         rename.isEnabled = !readOnly

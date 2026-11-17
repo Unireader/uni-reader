@@ -68,6 +68,17 @@ struct MCPToolResult {
         MCPToolResult(text: message, isError: true)
     }
 
+    /// 结果后面再接一段提示（写入后的公式检查等）。结构化结果里同时进 `message`——Claude Code 只看结构化（见类型注释），
+    /// 不放进去模型就看不到；原先的短文字照样抄在前面。
+    mutating func append(notice: String) {
+        let before = text
+        text = before.isEmpty ? notice : before + "\n\n" + notice
+        guard var s = structured else { return }
+        let head = (s[Self.messageKey] as? String) ?? (before.count <= Self.messageLimit ? before : "")
+        s[Self.messageKey] = head.isEmpty ? notice : head + "\n\n" + notice
+        structured = s
+    }
+
     /// `tools/call` 的 `result` 对象。
     func json() -> MCPObject {
         var content: [MCPObject] = []
@@ -153,6 +164,9 @@ final class MCPCatalog {
     private var byName: [String: MCPTool] = [:]
     /// 批 2 装上；nil = `initialize` 不声明 resources 能力，`resources/*` 应答空列表。
     var resources: MCPResourceProvider?
+    /// 写入类工具（`.write`）成功之后的检查：拿这次的入参，返回要接在结果后面的提示（nil = 没问题）。
+    /// App 里装的是公式检查（`LatexCheck`：写进去的公式排不出来就提示 Agent 改，2026-11-17）；spike 不装。
+    var afterWrite: ((MCPObject) async -> String?)?
 
     func register(_ tool: MCPTool) {
         precondition(byName[tool.name] == nil, "MCP 工具重名：\(tool.name)")
@@ -176,13 +190,28 @@ final class MCPCatalog {
             return MCPToolResult.failure("writes are disabled in UniReader › Settings › Agent; ask the user to enable them").json()
         }
         do {
-            return try await tool.handler(context, MCPArgs(arguments)).json()
+            var result = try await tool.handler(context, MCPArgs(arguments))
+            if tool.tier == .write, !result.isError, let check = afterWrite, let notice = await check(arguments) {
+                result.append(notice: notice)
+            }
+            return result.json()
         } catch let e as MCPInvalidParams {
             throw e
         } catch let e as MCPToolError {
             return MCPToolResult.failure(e.message).json()
         } catch {
             return MCPToolResult.failure("\(tool.name) failed: \(error.localizedDescription)").json()
+        }
+    }
+
+    /// 入参里的全部字符串（逐层展开对象 / 数组）。给 `afterWrite` 用：各工具的正文字段名不一样（`text` / `new_text` /
+    /// `edits[].new_text` / 习题的 `stem`、`options` …），一律扫一遍——不含 `$` 的字段查起来零成本。
+    static func strings(in value: Any) -> [String] {
+        switch value {
+        case let s as String: return [s]
+        case let o as MCPObject: return o.keys.sorted().flatMap { strings(in: o[$0]!) }
+        case let a as [Any]: return a.flatMap { strings(in: $0) }
+        default: return []
         }
     }
 
