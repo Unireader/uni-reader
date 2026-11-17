@@ -9,6 +9,58 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.33</title>
+      <pubDate>Tue, 17 Nov 2026 13:23:54 +0000</pubDate>
+      <sparkle:version>75</sparkle:version>
+      <sparkle:shortVersionString>0.3.33</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>笔记里的分步演示</h4>
+<ul>
+<li>新增首部格式图：按 32 位一行画出 IPv4、IPv6、TCP、UDP 首部的各个字段；给一段十六进制，就逐个字段解析出它的值（端口、标志位、校验和等）。</li>
+<li>新增分组图：一步步演示数据从应用层往下逐层加首部（封装），再在接收方逐层去掉（拆封）。</li>
+<li>新增 IP 分片演示：按 MTU 把一个大数据报切成几片，算出每片的长度、片偏移和 MF / DF 标志。</li>
+<li>新增 IP 地址演示：A～E 五类地址的格式；给一个地址和掩码，逐位算出网络地址、广播地址和可用主机数；路由聚合（超网）、划分子网、最长前缀匹配。</li>
+<li>树可以朝四个方向画（向下、向上、向左、向右）；图可以手动分层并指定方向，适合画 SDN 这类分层的网络结构。</li>
+<li>平板上要等安卓版更新后才能显示这些新写法。</li>
+</ul>
+<h4>Markdown 笔记</h4>
+<ul>
+<li>给笔记改名或把它挪到别的文件夹时，其他笔记里指向它的 <code>[[…]]</code> 链接会跟着改，不会再断；只改链接里的笔记名，其余文字不动。</li>
+<li>Agent 写进笔记的公式如果排不出来，会当场提示它改。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>修复在日程页的详情里改日期后，App 有时卡住并退出的问题。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.33">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Step-by-step diagrams in notes</h4>
+<ul>
+<li>New header diagrams: draw the fields of IPv4, IPv6, TCP and UDP headers, 32 bits per row; give a hex dump and each field's value is decoded (ports, flags, checksum and so on).</li>
+<li>New packet diagrams: show step by step how each layer adds its header on the way down (encapsulation) and removes it at the receiver (decapsulation).</li>
+<li>New IP fragmentation demo: split a large datagram by MTU and work out each fragment's length, offset and MF / DF flags.</li>
+<li>New IP address demos: the formats of class A–E addresses; from an address and mask, work out the network address, broadcast address and number of usable hosts bit by bit; route aggregation (supernetting), subnetting, and longest prefix match.</li>
+<li>Trees can be drawn in four directions (down, up, left, right), and graphs can be split into layers by hand with a chosen direction, which suits layered networks such as SDN.</li>
+<li>The tablet shows these new diagrams once the Android app is updated.</li>
+</ul>
+<h4>Markdown notes</h4>
+<ul>
+<li>Renaming a note or moving it to another folder now updates the <code>[[…]]</code> links to it in other notes, so they don't break; only the note name inside the link changes, nothing else.</li>
+<li>When the Agent writes a formula into a note that can't be typeset, it is told right away so it can fix it.</li>
+</ul>
+<h4>Fixes</h4>
+<ul>
+<li>Fixed the app sometimes freezing and quitting after changing a date in the details on the Schedule page.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.33">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.33/UniReader-0.3.33.zip" length="32986516" type="application/octet-stream" sparkle:edSignature="cfM5pZZ5Q1HFJwv0NhKqPVip3qZ99j6FtUIfx9Pae5voIURXEZ3eRJjygtwzoS5G4Sq7sAMr6TpOeb61FSXADQ==" />
+    </item>
+    <item>
       <title>v0.3.32</title>
       <pubDate>Mon, 16 Nov 2026 15:23:19 +0000</pubDate>
       <sparkle:version>74</sparkle:version>
