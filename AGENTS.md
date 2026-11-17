@@ -83,7 +83,9 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   Mac 算好传服务器（`vectors/<id>.sqlite`，派生数据），安卓只用 llama.cpp 算查询向量；线格式 `PROTOCOL.md §9.7`；**改 `SearchText` 切块要两端一起改**，否则向量全部查不到
 - **`docs/KNOWLEDGE-LINKS-PLAN.md`** — 知识关联（笔记 · 书页 · 批注互相引用）：🔴 **关系只从正文里的链接认、不另存关系表**；`[[书名#page=12]]` 写法、
   输入 `[[` 的选择框（书 / 书页 / 批注 / 笔记段落）、Inspector「关联」页、MCP `links`；链接原样记在搜索索引的 `edge` 表、读时解析
-- **`docs/ANIM-BLOCK-PLAN.md`** — 笔记里的分步演示（```anim 块，自绘画布 + 语义 DSL：时序图 / 滑动窗口 / 数据结构逐步播放；照 ```grapher 块的围栏块 + 覆盖层做法，覆盖层两者共用 `FencedBlocks.swift`）；A1 已实测，A2（链表 / 树 / 图 / 指针 / 二维表）、A3（一行套件：协议 / 排序 / CRC / 遍历 / BFS·DFS / Dijkstra，`AnimKits.swift`）已写、待实测，测试 `spike/anim-test.swift`
+- **`docs/ANIM-BLOCK-PLAN.md`** — 笔记里的分步演示（```anim 块，自绘画布 + 语义 DSL：时序图 / 滑动窗口 / 数据结构逐步播放；照 ```grapher 块的围栏块 + 覆盖层做法，覆盖层两者共用 `FencedBlocks.swift`）；A1 已实测，A2（链表 / 树 / 图 / 指针 / 二维表）、A3（一行套件：协议 / 排序 / CRC / 遍历 / BFS·DFS / Dijkstra，`AnimKits.swift`）已写、待实测；
+  §14 首部格式图 `bits` / 分组图 `packet` + 套件 `header` / `encap` / `frag`（`AnimKits4.swift`）+ 树 / 分层图 `dir=`、`layers=` 手动分层（2026-11-17，待实测）；§15 IP 地址分类与 CIDR 套件 `ipclass` / `ipaddr` / `supernet` / `subnet` / `lpm`（`AnimKits5.swift`），测试 `spike/anim-test.swift`；
+  🔴 解析 / 套件 / 执行改了要重生成 `spike/anim-vectors.txt` 并让安卓 `AnimVectorsTest` 过
 - `docs/SIDEBAR-DRAG-PLAN.md` — 侧栏拖拽排序（系统 `NSOutlineView` 拖放、同一组里换位置；书库 / 笔记 / 画板 / 练习库；顺序存哪）
 - `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行）
 - `docs/REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动

@@ -79,6 +79,8 @@ struct AnimSceneState: Equatable {
     var graphs: [String: AnimGraphState] = [:]
     var grids: [String: AnimGridState] = [:]
     var sheets: [String: AnimSheetState] = [:]
+    var bits: [String: AnimBitsState] = [:]
+    var packets: [String: AnimPacketState] = [:]
     /// 指针 → 指着什么（nil = 不指向任何东西）。
     var pointers: [String: AnimPointerTarget?] = [:]
     var messages: [AnimMessage] = []
@@ -157,7 +159,7 @@ enum AnimEngine {
                 initial.vars[element.name] = AnimVar(value: v, tone: .normal)
             case .text, .pointer:
                 break
-            case .list, .tree, .graph, .grid, .sheet:
+            case .list, .tree, .graph, .grid, .sheet, .bits, .packet:
                 initialStructure(element, into: &initial, newID: newID)
             }
         }
@@ -167,7 +169,7 @@ enum AnimEngine {
         for (line, action) in scene.setup.first?.actions ?? [] {
             let handled = applyStructure(action, &initial, kinds: kinds, newID: newID) { errors.append(AnimDiagnostic(line: line, message: $0)) }
             if !handled {
-                errors.append(AnimDiagnostic(line: line, message: "before the first step only sheet / list / tree / graph / grid actions are allowed; put this inside a step"))
+                errors.append(AnimDiagnostic(line: line, message: "before the first step only sheet / list / tree / graph / grid / bits / packet actions are allowed; put this inside a step"))
             }
         }
 
@@ -326,6 +328,8 @@ enum AnimEngine {
                     fail(kinds[t.name] == nil ? "no element “\(t.name)”" : "link is for lists")
                 case .write(let t, _), .rule(let t, _), .arrow(let t), .label(let t, _):
                     fail(kinds[t.name] == nil ? "no element “\(t.name)”" : "\(t.name) is not a sheet")
+                case .group(let t, _):
+                    fail(kinds[t.name] == nil ? "no element “\(t.name)”" : "\(t.name) is not a packet")
                 }
             }
             // 新进栈 / 队的格子只在进来那一步是 new 色，下一步回到原色（除非显式 mark）
@@ -341,6 +345,9 @@ enum AnimEngine {
             }
             for (name, t) in state.trees {
                 for (id, n) in t.nodes where n.tone == .new { state.trees[name]!.nodes[id]!.tone = .normal }
+            }
+            for (name, p) in state.packets {
+                state.packets[name]!.segments = p.segments.map { var g = $0; if g.tone == .new { g.tone = .normal }; return g }
             }
         }
         // 最后一步里还挂着的 arrive=next：没有下一步了，就地到达

@@ -95,7 +95,7 @@ enum AnimKits {
         }
         skipSpace()
         let name = word().lowercased()
-        guard !name.isEmpty else { throw AnimParseError("usage: kit NAME options… (\((names + names2 + names3).joined(separator: ", ")))") }
+        guard !name.isEmpty else { throw AnimParseError("usage: kit NAME options… (\((names + names2 + names3 + names4 + names5).joined(separator: ", ")))") }
         var args = Args()
         while true {
             skipSpace()
@@ -148,7 +148,9 @@ enum AnimKits {
         default:
             if let kit = try generate2(name, &args, L) { return kit }
             if let kit = try generate3(name, &args, L) { return kit }
-            throw AnimParseError("unknown kit “\(name)” (\((names + names2 + names3).joined(separator: ", ")))")
+            if let kit = try generate4(name, &args, L) { return kit }
+            if let kit = try generate5(name, &args, L) { return kit }
+            throw AnimParseError("unknown kit “\(name)” (\((names + names2 + names3 + names4 + names5).joined(separator: ", ")))")
         }
     }
 

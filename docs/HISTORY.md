@@ -3,6 +3,21 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 笔记演示块：IP 地址分类与 CIDR（2026-11-17，Mac + 安卓模式1）
+
+- 起因（用户）：「IP 地址分类的可视化支持 ABCDE 和 CIDR」。新套件 `ipclass`（五类格式）、`ipaddr`（按位与求网络 / 广播地址、主机数）、`supernet`（路由聚合）、
+  `subnet`（划分子网）、`lpm`（最长前缀匹配），细节与核对数据见 `ANIM-BLOCK-PLAN.md §15`。
+- 验证：`spike/anim-test.swift` 428 项、跨端向量 194 组（安卓全一致）、安卓 `AnimLayoutTest`、Mac / 安卓 Debug 包编译通过、出图目检。真机播放待用户看。
+
+## ✅ 笔记演示块：网络首部 / 分组可视化 + 树与分层图的方向（2026-11-17，Mac + 安卓模式1）
+
+- 起因（用户）：「可视化帮我做一下 IP TCP UDP IPV6 的头和包的可视化支持方便学习」「树状接口支持控制方向吗，比如 SDN 网络结构」。
+- ```anim 块新增两个通用元素 `bits`（首部 / 指令格式图）、`packet`（分组封装图，`group` 括号）；`tree` / 分层 `graph` 加 `dir=`，`graph` 加手动分层 `layers=[[…]]`，
+  长名字节点画成长条；三个套件 `header`（IPv4 / IPv6 / TCP / UDP，可带 hex 逐字段解析 + IPv4 检验和验算）、`encap`（逐层封装 / 拆封）、`frag`（IP 分片）。
+  细节与核对数据见 `ANIM-BLOCK-PLAN.md §14`。
+- 验证：`spike/anim-test.swift` 372 项、跨端向量 159 组（安卓 `AnimVectorsTest` 全一致）、安卓新加 `AnimLayoutTest`、Mac Debug 编译通过、出图目检。
+  真机播放待用户看（Mac Debug 包 + 安卓模式1）。
+
 ## ✅ 模式2 平板显示高亮 / 下划线 + 清除做题记录（2026-11-15，Mac + 安卓）
 
 - 起因（用户待办清单）：「模式2 pad 不显示下划线」「支持清理掉做题记录」。

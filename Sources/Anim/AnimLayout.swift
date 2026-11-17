@@ -197,7 +197,7 @@ struct AnimLayout {
         case .queue:
             let count = max(states.map { $0.cells[e.name]?.count ?? 0 }.max() ?? 0, 1)
             return nameH + Self.cellSize(width: w, count: count, max: 36) + 4 + band
-        case .list, .tree, .graph, .grid, .sheet:
+        case .list, .tree, .graph, .grid, .sheet, .bits, .packet:
             return structureHeight(e, width: w, states: states, nameH: nameH, pointed: pointed)
         case .pointer:
             return 0
@@ -304,13 +304,17 @@ struct AnimLayout {
             case .list:
                 items += listItems(id, name: element.name, rect: body, state: state, tone: elementTone, anchors: &anchors)
             case .tree:
-                items += treeItems(id, name: element.name, rect: body, state: state, tone: elementTone, anchors: &anchors)
+                items += treeItems(id, element: element, rect: body, state: state, tone: elementTone, anchors: &anchors)
             case .graph:
                 items += graphItems(id, element: element, rect: body, state: state, tone: elementTone, anchors: &anchors)
             case .grid:
                 items += gridItems(id, name: element.name, rect: body, state: state, tone: elementTone, anchors: &anchors)
             case .sheet:
                 items += sheetItems(id, name: element.name, rect: body, state: state, tone: elementTone)
+            case .bits:
+                items += bitsItems(id, element: element, rect: body, state: state, tone: elementTone)
+            case .packet:
+                items += packetItems(id, element: element, rect: body, state: state, tone: elementTone)
             case .pointer:
                 break
             case .variable:

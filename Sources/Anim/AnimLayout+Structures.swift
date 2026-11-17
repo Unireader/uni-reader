@@ -48,7 +48,11 @@ extension AnimLayout {
         switch e.kind {
         case .list:
             return nameH + Self.listArc + Self.listNodeHeight + Self.listArc + band
-        case .tree:
+        case .tree(_, let dir):
+            if dir.horizontal {
+                let slots = max(states.compactMap { $0.trees[e.name] }.map { Self.treeSlots($0).count }.max() ?? 1, 1)
+                return nameH + (pointed ? 14 : 0) + slots * Self.treeSlotH(pointed: pointed) + 4
+            }
             let depth = max(states.map { $0.trees[e.name]?.depth ?? 0 }.max() ?? 0, 1)
             return nameH + CGFloat(depth - 1) * Self.treeLevel + Self.graphNode + 10
         case .graph:
@@ -56,6 +60,12 @@ extension AnimLayout {
         case .sheet:
             let rows = max(states.map { $0.sheets[e.name]?.rowCount ?? 0 }.max() ?? 0, 1)
             return nameH + CGFloat(rows) * Self.sheetRow + 4
+        case .bits:
+            let g = bitsGeometry(e, width: w)
+            return nameH + Self.bitsRuler + CGFloat(g.rows) * Self.bitsRow + 4
+        case .packet:
+            let levels = states.compactMap { $0.packets[e.name] }.map { Self.packetGroupLevels($0).values.max() ?? 0 }.max() ?? 0
+            return nameH + Self.packetBar + Self.packetLen + CGFloat(levels) * Self.packetGroup + 4
         case .grid(let values, let rows, let cols):
             let g = gridGeometry(width: w, cols: values.first?.count ?? 0, rowLabels: rows, colLabels: !cols.isEmpty)
             return nameH + g.colLabelH + CGFloat(values.count) * g.cell + 4 + band
@@ -137,42 +147,78 @@ extension AnimLayout {
 
     // MARK: - 树
 
-    func treeItems(_ id: String, name: String, rect: CGRect, state: AnimSceneState, tone: AnimTone, anchors: inout [AnimPointerTarget: AnimAnchor]) -> [AnimItem] {
-        guard let tree = state.trees[name] else { return [] }
-        var items: [AnimItem] = []
-        // 横向位置：二叉按中序排（左子树、自己、右子树），多叉的放在孩子中间
-        var slot: [Int: CGFloat] = [:], level: [Int: Int] = [:]
+    struct TreeSlots {
+        var slot: [Int: CGFloat] = [:]
+        var level: [Int: Int] = [:]
+        var count: CGFloat = 0
+    }
+
+    /// 每个节点排在第几格（沿「兄弟」方向）、第几层：二叉按中序排（左子树、自己、右子树），多叉的放在孩子中间。
+    static func treeSlots(_ tree: AnimTreeState) -> TreeSlots {
+        var out = TreeSlots()
         var counter: CGFloat = 0
         func place(_ nid: Int, _ depth: Int) {
             guard let n = tree.nodes[nid] else { return }
-            level[nid] = depth
+            out.level[nid] = depth
             if n.children.count <= 2 {
                 if let l = n.children.first ?? nil { place(l, depth + 1) } else if n.children.count == 2 { counter += 0.5 }
-                slot[nid] = counter
+                out.slot[nid] = counter
                 counter += 1
                 if n.children.count == 2 { if let r = n.children[1] { place(r, depth + 1) } else { counter += 0.5 } }
             } else {
                 var xs: [CGFloat] = []
                 for c in n.children {
-                    if let c { place(c, depth + 1); xs.append(slot[c]!) } else { counter += 1 }
+                    if let c { place(c, depth + 1); xs.append(out.slot[c]!) } else { counter += 1 }
                 }
-                slot[nid] = xs.isEmpty ? counter : (xs.min()! + xs.max()!) / 2
+                out.slot[nid] = xs.isEmpty ? counter : (xs.min()! + xs.max()!) / 2
                 if xs.isEmpty { counter += 1 }
             }
         }
         if let root = tree.root { place(root, 0) }
-        let slots = max(counter, 1)
+        out.count = max(counter, 1)
+        return out
+    }
+
+    /// 横着长的树：兄弟方向每格多高（被指针指过的留出节点上方的标签位置）。
+    static func treeSlotH(pointed: Bool) -> CGFloat { pointed ? 50 : 40 }
+
+    func treeItems(_ id: String, element e: AnimElement, rect: CGRect, state: AnimSceneState, tone: AnimTone, anchors: inout [AnimPointerTarget: AnimAnchor]) -> [AnimItem] {
+        let name = e.name
+        guard let tree = state.trees[name] else { return [] }
+        let dir: AnimDirection = { if case .tree(_, let d) = e.kind { return d }; return .down }()
+        var items: [AnimItem] = []
+        let ts = Self.treeSlots(tree)
+        let slots = ts.count
+        let all = run.states.flatMap { $0 }.compactMap { $0.trees[name] }
+        let depthMax = max(all.map(\.depth).max() ?? 1, 1)
+        let pointed = Self.pointedElements(run.states.flatMap { $0 }).contains(name)
         // 左右各留 26 点：指针标签画在节点左边，最左的节点也放得下
         let area = rect.insetBy(dx: 26, dy: 0)
-        let slotW = min(52, area.width / slots)
-        let d = min(Self.graphNode, slotW - 4)
-        let left = area.minX + (area.width - slots * slotW) / 2
-        func center(_ nid: Int) -> CGPoint {
-            CGPoint(x: left + (slot[nid]! + 0.5) * slotW, y: rect.minY + d / 2 + 2 + CGFloat(level[nid]!) * Self.treeLevel)
+        let d: CGFloat
+        let center: (Int) -> CGPoint
+        if dir.horizontal {
+            let slotH = Self.treeSlotH(pointed: pointed)
+            let slotsMax = max(all.map { Self.treeSlots($0).count }.max() ?? 1, 1)
+            d = min(Self.graphNode, slotH - 6)
+            let levelW = depthMax > 1 ? min(110, (area.width - d) / CGFloat(depthMax - 1)) : 0
+            let top = rect.minY + (pointed ? 14 : 0) + (slotsMax - slots) * slotH / 2
+            center = { nid in
+                let l = CGFloat(ts.level[nid]!)
+                let x = dir == .right ? area.minX + d / 2 + l * levelW : area.maxX - d / 2 - l * levelW
+                return CGPoint(x: x, y: top + (ts.slot[nid]! + 0.5) * slotH)
+            }
+        } else {
+            let slotW = min(52, area.width / slots)
+            d = min(Self.graphNode, slotW - 4)
+            let left = area.minX + (area.width - slots * slotW) / 2
+            center = { nid in
+                let l = dir == .down ? ts.level[nid]! : depthMax - 1 - ts.level[nid]!
+                return CGPoint(x: left + (ts.slot[nid]! + 0.5) * slotW, y: rect.minY + d / 2 + 2 + CGFloat(l) * Self.treeLevel)
+            }
         }
         // 边先画（在节点底下）
-        for (nid, n) in tree.nodes where slot[nid] != nil {
-            for c in n.children.compactMap({ $0 }) where slot[c] != nil {
+        for (nid, n) in tree.nodes where ts.slot[nid] != nil {
+            for c in n.children.compactMap({ $0 }) where ts.slot[c] != nil {
                 let a = center(nid), b = center(c)
                 let len = max(hypot(b.x - a.x, b.y - a.y), 1)
                 let ux = (b.x - a.x) / len, uy = (b.y - a.y) / len
@@ -183,7 +229,7 @@ extension AnimLayout {
                                       link: AnimLink(from: "\(id).n\(nid)", to: "\(id).n\(c)")))
             }
         }
-        for nid in tree.nodes.keys.sorted() where slot[nid] != nil {
+        for nid in tree.nodes.keys.sorted() where ts.slot[nid] != nil {
             let n = tree.nodes[nid]!
             let c = center(nid)
             let r = CGRect(x: c.x - d / 2, y: c.y - d / 2, width: d, height: d)
@@ -191,7 +237,12 @@ extension AnimLayout {
             items.append(AnimItem(id: "\(id).n\(nid)", shape: .box(r, radius: d / 2, fill: .fill(t), stroke: .stroke(t), lineWidth: 1.2, dashed: false)))
             items.append(AnimItem(id: "\(id).v\(n.valueID)", shape: .text(n.value, frame: r.insetBy(dx: -6, dy: 0), size: d < 26 ? AnimMetrics.small : AnimMetrics.body,
                                                                            bold: false, role: .text(t), align: .center, backdrop: false)))
-            anchors[.node(element: name, id: nid)] = AnimAnchor(point: CGPoint(x: r.minX - 1, y: c.y), label: CGPoint(x: r.minX - 18, y: c.y), spread: .vertical)
+            if dir.horizontal {
+                // 横着长时左右两边都有边：指针标签放在节点上方
+                anchors[.node(element: name, id: nid)] = AnimAnchor(point: CGPoint(x: c.x, y: r.minY - 1), label: CGPoint(x: c.x, y: r.minY - 14), spread: .horizontal)
+            } else {
+                anchors[.node(element: name, id: nid)] = AnimAnchor(point: CGPoint(x: r.minX - 1, y: c.y), label: CGPoint(x: r.minX - 18, y: c.y), spread: .vertical)
+            }
         }
         if tree.root == nil {
             let r = CGRect(x: rect.midX - d / 2, y: rect.minY + 2, width: d, height: d)
@@ -202,21 +253,53 @@ extension AnimLayout {
 
     // MARK: - 图
 
+    static let graphLayerGap: CGFloat = 72
+
     func graphCanvasHeight(_ e: AnimElement, width w: CGFloat) -> CGFloat {
-        guard case .graph(let nodes, _, let layout) = e.kind else { return 0 }
+        guard case .graph(let nodes, _, let layout, let dir, _) = e.kind else { return 0 }
         switch layout {
         case .circle:
             return nodes.count <= 2 ? 90 : min(max(w * 0.5, 180), 280)
         case .layers:
-            let levels = Self.graphLevels(e)
-            let widest = levels.values.reduce(into: [Int: Int]()) { $0[$1, default: 0] += 1 }.values.max() ?? 1
-            return CGFloat(widest) * 64 + 30
+            let layers = Self.graphLayers(e)
+            if dir.horizontal {
+                return CGFloat(layers.map(\.count).max() ?? 1) * 64 + 30
+            }
+            return CGFloat(max(layers.count - 1, 0)) * Self.graphLayerGap + 70
         }
+    }
+
+    /// 分层排法的每一层（层里按顺序）：写了 `layers=` 就照它，否则从第一个节点广度优先、层里按声明顺序。
+    static func graphLayers(_ e: AnimElement) -> [[String]] {
+        guard case .graph(let nodes, _, _, _, let ranks) = e.kind else { return [] }
+        if !ranks.isEmpty { return ranks }
+        let level = graphLevels(e)
+        var byLevel: [[String]] = Array(repeating: [], count: (level.values.max() ?? 0) + 1)
+        for n in nodes { byLevel[level[n] ?? 0].append(n) }
+        return byLevel.filter { !$0.isEmpty }
+    }
+
+    /// 节点框的半宽：名字放得进圆就是圆（半径 = graphNode / 2），放不下就拉成两头圆的长条（「控制器」「交换机 S1」）。
+    static func graphHalfWidth(_ name: String) -> CGFloat {
+        let r = graphNode / 2
+        let w = AnimMetrics.measure(name, size: AnimMetrics.body, bold: true).width
+        return w <= graphNode - 4 ? r : ceil(w / 2) + 7
+    }
+
+    /// 从框中心沿单位方向 (ux, uy) 走多远到框边：长条 = 中间一段直边 + 两头半圆；圆是它的特例。
+    static func nodeExit(_ ux: CGFloat, _ uy: CGFloat, hw: CGFloat, hh: CGFloat) -> CGFloat {
+        let a = max(hw - hh, 0)
+        let ax = abs(ux), ay = abs(uy)
+        if ay > 1e-6 {
+            let t = hh / ay
+            if t * ax <= a { return t }
+        }
+        return a * ax + sqrt(max(a * a * ax * ax - a * a + hh * hh, 0))
     }
 
     /// 按层排：从第一个节点出发广度优先（边当无向），够不着的接在后面。
     static func graphLevels(_ e: AnimElement) -> [String: Int] {
-        guard case .graph(let nodes, let edges, _) = e.kind, let first = nodes.first else { return [:] }
+        guard case .graph(let nodes, let edges, _, _, _) = e.kind, let first = nodes.first else { return [:] }
         var level: [String: Int] = [first: 0]
         var queue = [first]
         var maxLevel = 0
@@ -300,12 +383,12 @@ extension AnimLayout {
     private static let circleLock = NSLock()
 
     func graphPositions(_ e: AnimElement, rect: CGRect) -> [String: CGPoint] {
-        guard case .graph(let declared, let edges, let layout) = e.kind else { return [:] }
-        let nodes = layout == .circle ? Self.circleOrder(declared, edges) : declared
+        guard case .graph(let declared, let edges, let layout, let dir, _) = e.kind else { return [:] }
         let r = Self.graphNode / 2
         var out: [String: CGPoint] = [:]
         switch layout {
         case .circle:
+            let nodes = Self.circleOrder(declared, edges)
             let cx = rect.midX, cy = rect.midY + 4
             if nodes.count == 1 { return [nodes[0]: CGPoint(x: cx, y: cy)] }
             if nodes.count == 2 {
@@ -317,16 +400,28 @@ extension AnimLayout {
                 out[n] = CGPoint(x: (cx + rx * cos(a)).rounded(), y: (cy + ry * sin(a)).rounded())
             }
         case .layers:
-            let level = Self.graphLevels(e)
-            let levels = (level.values.max() ?? 0) + 1
-            var byLevel: [Int: [String]] = [:]
-            for n in nodes { byLevel[level[n] ?? 0, default: []].append(n) }
-            let colW = (rect.width - 2 * (r + 30)) / CGFloat(max(levels - 1, 1))
-            for (l, members) in byLevel {
-                for (i, n) in members.enumerated() {
-                    let x = levels == 1 ? rect.midX : rect.minX + r + 30 + CGFloat(l) * colW
-                    let y = rect.minY + 24 + (rect.height - 30) * (CGFloat(i) + 0.5) / CGFloat(members.count)
-                    out[n] = CGPoint(x: x.rounded(), y: y.rounded())
+            let layers = Self.graphLayers(e)
+            let levels = layers.count
+            if dir.horizontal {
+                // 每层一列：right = 第一层在最左
+                let side = (layers.flatMap { $0 }.map(Self.graphHalfWidth).max() ?? r) + 30
+                let colW = (rect.width - 2 * side) / CGFloat(max(levels - 1, 1))
+                for (l, members) in layers.enumerated() {
+                    for (i, n) in members.enumerated() {
+                        let lx = levels == 1 ? rect.midX : rect.minX + side + CGFloat(l) * colW
+                        let x = dir == .right ? lx : rect.maxX - (lx - rect.minX)
+                        let y = rect.minY + 24 + (rect.height - 30) * (CGFloat(i) + 0.5) / CGFloat(members.count)
+                        out[n] = CGPoint(x: x.rounded(), y: y.rounded())
+                    }
+                }
+            } else {
+                // 每层一行：down = 第一层在最上
+                for (l, members) in layers.enumerated() {
+                    let row = dir == .down ? l : levels - 1 - l
+                    for (i, n) in members.enumerated() {
+                        let x = rect.minX + rect.width * (CGFloat(i) + 0.5) / CGFloat(members.count)
+                        out[n] = CGPoint(x: x.rounded(), y: (rect.minY + 26 + CGFloat(row) * Self.graphLayerGap).rounded())
+                    }
                 }
             }
         }
@@ -337,6 +432,13 @@ extension AnimLayout {
         guard let g = state.graphs[e.name] else { return [] }
         let pos = graphPositions(e, rect: rect)
         let r = Self.graphNode / 2
+        var half: [String: CGFloat] = [:]
+        for n in g.order { half[n] = Self.graphHalfWidth(n) }
+        // 分层排法里同一层、中间隔着别的节点的边：往外弯，别从中间那些节点身上穿过去
+        var layerOf: [String: (layer: Int, index: Int)] = [:]
+        if case .graph(_, _, .layers, _, _) = e.kind {
+            for (l, members) in Self.graphLayers(e).enumerated() { for (i, n) in members.enumerated() { layerOf[n] = (l, i) } }
+        }
         var items: [AnimItem] = []
         for (k, edge) in g.edges.enumerated() {
             guard let a = pos[edge.a], let b = pos[edge.b] else { continue }
@@ -346,9 +448,26 @@ extension AnimLayout {
             let ux = (b.x - a.x) / len, uy = (b.y - a.y) / len
             let bend: CGFloat = paired ? 10 : 0
             let nx = -uy * bend, ny = ux * bend
-            let p0 = CGPoint(x: a.x + ux * r + nx * 0.5, y: a.y + uy * r + ny * 0.5)
-            let p1 = CGPoint(x: b.x - ux * (r + 1) + nx * 0.5, y: b.y - uy * (r + 1) + ny * 0.5)
-            let mid = CGPoint(x: (p0.x + p1.x) / 2 + nx, y: (p0.y + p1.y) / 2 + ny)
+            let ra = Self.nodeExit(ux, uy, hw: half[edge.a] ?? r, hh: r), rb = Self.nodeExit(ux, uy, hw: half[edge.b] ?? r, hh: r)
+            var p0 = CGPoint(x: a.x + ux * ra + nx * 0.5, y: a.y + uy * ra + ny * 0.5)
+            var p1 = CGPoint(x: b.x - ux * (rb + 1) + nx * 0.5, y: b.y - uy * (rb + 1) + ny * 0.5)
+            var mid = CGPoint(x: (p0.x + p1.x) / 2 + nx, y: (p0.y + p1.y) / 2 + ny)
+            var apex: CGPoint?
+            if let la = layerOf[edge.a], let lb = layerOf[edge.b], la.layer == lb.layer, abs(la.index - lb.index) >= 2 {
+                // 曲线顶点离连线 = 控制点偏移的一半：要越过中间节点（半径 + 留白）
+                let lift = (la.index < lb.index ? -1 : 1) * 2 * (r + 12 + 6 * CGFloat(abs(la.index - lb.index) - 2))
+                let c = CGPoint(x: (a.x + b.x) / 2 - uy * lift, y: (a.y + b.y) / 2 + ux * lift)
+                func toward(_ from: CGPoint, _ hw: CGFloat, _ extra: CGFloat) -> CGPoint {
+                    let l = max(hypot(c.x - from.x, c.y - from.y), 1)
+                    let vx = (c.x - from.x) / l, vy = (c.y - from.y) / l
+                    let d = Self.nodeExit(vx, vy, hw: hw, hh: r) + extra
+                    return CGPoint(x: from.x + vx * d, y: from.y + vy * d)
+                }
+                p0 = toward(a, half[edge.a] ?? r, 0)
+                p1 = toward(b, half[edge.b] ?? r, 1)
+                mid = c
+                apex = CGPoint(x: 0.25 * p0.x + 0.5 * c.x + 0.25 * p1.x, y: 0.25 * p0.y + 0.5 * c.y + 0.25 * p1.y)
+            }
             let pts = (0..<8).map { i -> CGPoint in
                 let t = CGFloat(i) / 7
                 return CGPoint(x: (1 - t) * (1 - t) * p0.x + 2 * (1 - t) * t * mid.x + t * t * p1.x,
@@ -359,14 +478,15 @@ extension AnimLayout {
                                                                    dashed: t == .muted, arrow: edge.directed, progress: 1)))
             if let w = edge.weight, !w.isEmpty {
                 let size = AnimMetrics.measure(w, size: AnimMetrics.small)
-                let c = CGPoint(x: (a.x + b.x) / 2 + nx * 1.6, y: (a.y + b.y) / 2 + ny * 1.6)
+                let c = apex ?? CGPoint(x: (a.x + b.x) / 2 + nx * 1.6, y: (a.y + b.y) / 2 + ny * 1.6)
                 items.append(AnimItem(id: "\(id).w\(k)", shape: .text(w, frame: CGRect(x: c.x - size.width / 2 - 3, y: c.y - size.height / 2 - 1, width: size.width + 6, height: size.height + 2),
                                                                        size: AnimMetrics.small, bold: false, role: t == .normal ? .secondary : .text(t), align: .center, backdrop: true)))
             }
         }
         for n in g.order {
             guard let c = pos[n], let node = g.nodes[n] else { continue }
-            let box = CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)
+            let hw = half[n] ?? r
+            let box = CGRect(x: c.x - hw, y: c.y - r, width: 2 * hw, height: 2 * r)
             let t = node.tone == .normal ? tone : node.tone
             items.append(AnimItem(id: "\(id).n\(n)", shape: .box(box, radius: r, fill: .fill(t), stroke: .stroke(t), lineWidth: 1.2, dashed: false)))
             items.append(AnimItem(id: "\(id).t\(n)", shape: .text(n, frame: box.insetBy(dx: -4, dy: 0), size: AnimMetrics.body, bold: true, role: .text(t), align: .center, backdrop: false)))
@@ -435,8 +555,9 @@ extension AnimLayout {
         let all = run.states.flatMap { $0 }.compactMap { $0.sheets[name] }
         let cols = max(all.map(\.colCount).max() ?? 1, 1)
         let labelW = all.flatMap { $0.labels.values }.map { AnimMetrics.measure($0, size: AnimMetrics.small).width }.max().map { $0 + 12 } ?? 0
-        let cell = min(16, max(9, floor((w - labelW) / CGFloat(cols))))
-        return (cell, cell >= 14 ? AnimMetrics.body + 1 : AnimMetrics.small)
+        // 窄的时候格子可以缩到 6（IP 地址的二进制一行 35 列，300 点宽也要放得下），字号跟着变小
+        let cell = min(16, max(6, floor((w - labelW) / CGFloat(cols))))
+        return (cell, cell >= 14 ? AnimMetrics.body + 1 : cell >= 9 ? AnimMetrics.small : AnimMetrics.small - 2)
     }
 
     func sheetItems(_ id: String, name: String, rect: CGRect, state: AnimSceneState, tone: AnimTone) -> [AnimItem] {
@@ -474,6 +595,227 @@ extension AnimLayout {
         for (r, text) in sheet.labels {
             items.append(AnimItem(id: "\(id).l\(r)", shape: .text(text, frame: CGRect(x: right, y: y0 + CGFloat(r) * rh, width: max(rect.maxX - right, 10), height: rh),
                                                                      size: AnimMetrics.small, bold: false, role: .secondary, align: .left, backdrop: false)))
+        }
+        return items
+    }
+
+    // MARK: - 首部格式图
+
+    static let bitsRow: CGFloat = 34
+    static let bitsRuler: CGFloat = 14
+
+    struct BitsGeometry {
+        let bw: CGFloat        // 每一位多宽
+        let leftW: CGFloat     // 左边的字节偏移
+        let rows: Int
+        let width: Int
+    }
+
+    func bitsGeometry(_ e: AnimElement, width w: CGFloat) -> BitsGeometry {
+        guard case .bits(let fields, let width) = e.kind else { return BitsGeometry(bw: 10, leftW: 0, rows: 1, width: 32) }
+        let total = fields.map(\.bits).reduce(0, +)
+        let rows = max((total + width - 1) / width, 1)
+        let leftW: CGFloat = width % 8 == 0 ? 24 : 0
+        let labels = run.states.flatMap { $0 }.compactMap { $0.bits[e.name] }.flatMap { $0.labels.values }
+        let labelW = labels.map { AnimMetrics.measure($0, size: AnimMetrics.small).width + 10 }.max().map { min($0, w * 0.4) } ?? 0
+        let bw = min(24, max(5, floor((w - leftW - labelW) / CGFloat(width))))
+        return BitsGeometry(bw: bw, leftW: leftW, rows: rows, width: width)
+    }
+
+    /// 放得下的最大字号（都放不下就用最小的，折行）。
+    static func fitSize(_ s: String, width: CGFloat, sizes: [CGFloat], bold: Bool = false) -> CGFloat {
+        for size in sizes where AnimMetrics.measure(s, size: size, bold: bold).width <= width { return size }
+        return sizes.last ?? AnimMetrics.small
+    }
+
+    /// 字段名：放得下就横排；1 位宽的控制位（URG、ACK……）放不下时像教材那样一个字母一行竖排。
+    static func fieldName(_ name: String, width: CGFloat, height: CGFloat, sizes: [CGFloat]) -> (String, CGFloat) {
+        let size = fitSize(name, width: width, sizes: sizes)
+        if AnimMetrics.measure(name, size: size).width <= width { return (name, size) }
+        let chars = name.map(String.init)
+        if chars.count >= 2, chars.count <= 4, CGFloat(chars.count) * 10 <= height { return (chars.joined(separator: "\n"), 8) }
+        return (name, size)
+    }
+
+    /// 一个字段占的框：跨整行的连成一个高框（128 位地址 = 4 行一个框），其余按行切段。
+    static func bitFieldBoxes(offset: Int, bits: Int, width: Int) -> [(row: Int, col: Int, cols: Int, rows: Int)] {
+        var out: [(Int, Int, Int, Int)] = []
+        var o = offset, n = bits
+        while n > 0 {
+            let row = o / width, col = o % width
+            if col == 0 && n >= width {
+                let k = n / width
+                out.append((row, 0, width, k))
+                o += k * width; n -= k * width
+                continue
+            }
+            let take = min(n, width - col)
+            out.append((row, col, take, 1))
+            o += take; n -= take
+        }
+        return out
+    }
+
+    func bitsItems(_ id: String, element e: AnimElement, rect: CGRect, state: AnimSceneState, tone: AnimTone) -> [AnimItem] {
+        guard case .bits(let fields, let width) = e.kind, let b = state.bits[e.name] else { return [] }
+        let g = bitsGeometry(e, width: rect.width)
+        let bw = g.bw, rh = Self.bitsRow
+        let x0 = rect.minX + g.leftW, y0 = rect.minY + Self.bitsRuler
+        var items: [AnimItem] = []
+        // 位号：0、末位、每 8 位（宽的时候每 4 位、每位）
+        for k in 0..<width {
+            let show = k == 0 || k == width - 1 || bw >= 20 || (bw >= 12 && k % 4 == 0) || (bw * 8 >= 30 ? k % 8 == 0 : k % 16 == 0)
+            guard show, k == width - 1 || k == 0 || CGFloat(width - 1 - k) * bw >= 16 else { continue }
+            items.append(AnimItem(id: "\(id).bit\(k)", shape: .text("\(k)", frame: CGRect(x: x0 + CGFloat(k) * bw - 8, y: rect.minY, width: bw + 16, height: 12),
+                                                                     size: AnimMetrics.small - 1, bold: false, role: .secondary, align: .center, backdrop: false)))
+        }
+        if g.leftW > 0 {
+            for row in 0..<g.rows {
+                items.append(AnimItem(id: "\(id).off\(row)", shape: .text("\(row * width / 8)", frame: CGRect(x: rect.minX, y: y0 + CGFloat(row) * rh, width: g.leftW - 5, height: rh),
+                                                                           size: AnimMetrics.small - 1, bold: false, role: .secondary, align: .right, backdrop: false)))
+            }
+        }
+        var valued = Set<Int>()
+        for st in run.states.flatMap({ $0 }) {
+            if let v = st.bits[e.name]?.values { for (i, x) in v.enumerated() where !x.isEmpty { valued.insert(i) } }
+        }
+        var offset = 0
+        for (i, f) in fields.enumerated() {
+            let boxes = Self.bitFieldBoxes(offset: offset, bits: f.bits, width: width)
+            offset += f.bits
+            let t = b.tones[i] == .normal ? tone : b.tones[i]
+            var main = CGRect.zero
+            for (k, box) in boxes.enumerated() {
+                let r = CGRect(x: x0 + CGFloat(box.col) * bw, y: y0 + CGFloat(box.row) * rh, width: CGFloat(box.cols) * bw, height: CGFloat(box.rows) * rh)
+                if r.width * r.height > main.width * main.height { main = r }
+                items.append(AnimItem(id: "\(id).f\(i).\(k)", shape: .box(r, radius: 0, fill: .fill(t), stroke: t == .normal ? .grid : .stroke(t),
+                                                                          lineWidth: t == .normal ? 1 : 1.5, dashed: f.variable)))
+            }
+            let inner = main.width - 4
+            let value = b.values[i]
+            // 哪一步有值，就从第 0 步起按「名字在上、值在下」排：名字不跟着跳（否则补间时名字会闪一下）
+            // 太窄（名字用最小字号也放不下）：有值时只显示值，没值时照旧竖排名字
+            let narrow = AnimMetrics.measure(f.name, size: 8).width > inner
+            let twoLine = valued.contains(i) && !narrow
+            if narrow && !value.isEmpty {
+                let size = Self.fitSize(value, width: inner, sizes: [AnimMetrics.body, AnimMetrics.small, 9, 8], bold: true)
+                items.append(AnimItem(id: "\(id).fv\(i)", shape: .text(value, frame: main.insetBy(dx: 2, dy: 0), size: size, bold: true,
+                                                                      role: .text(t), align: .center, backdrop: false)))
+            } else if !twoLine {
+                let (text, size) = Self.fieldName(f.name, width: inner, height: main.height, sizes: [AnimMetrics.body, AnimMetrics.small, 9, 8])
+                items.append(AnimItem(id: "\(id).fn\(i)", shape: .text(text, frame: main.insetBy(dx: 2, dy: 0), size: size, bold: false,
+                                                                      role: .text(t), align: .center, backdrop: false)))
+            } else if value.isEmpty {
+                let nameSize = Self.fitSize(f.name, width: inner, sizes: [AnimMetrics.small, 9, 8])
+                items.append(AnimItem(id: "\(id).fn\(i)", shape: .text(f.name, frame: CGRect(x: main.minX + 2, y: main.midY - 15, width: inner, height: 14),
+                                                                      size: nameSize, bold: false, role: .text(t), align: .center, backdrop: false)))
+            } else {
+                let nameSize = Self.fitSize(f.name, width: inner, sizes: [AnimMetrics.small, 9, 8])
+                let valueSize = Self.fitSize(value, width: inner, sizes: [AnimMetrics.body, AnimMetrics.small, 9, 8], bold: true)
+                items.append(AnimItem(id: "\(id).fn\(i)", shape: .text(f.name, frame: CGRect(x: main.minX + 2, y: main.midY - 15, width: inner, height: 14),
+                                                                      size: nameSize, bold: false, role: .text(t), align: .center, backdrop: false)))
+                items.append(AnimItem(id: "\(id).fv\(i)", shape: .text(value, frame: CGRect(x: main.minX + 2, y: main.midY - 1, width: inner, height: 15),
+                                                                      size: valueSize, bold: true, role: .text(t), align: .center, backdrop: false)))
+            }
+        }
+        let right = x0 + CGFloat(width) * bw + 8
+        for (row, text) in b.labels where row < g.rows {
+            items.append(AnimItem(id: "\(id).l\(row)", shape: .text(text, frame: CGRect(x: right, y: y0 + CGFloat(row) * rh, width: max(rect.maxX - right, 10), height: rh),
+                                                                     size: AnimMetrics.small, bold: false, role: .secondary, align: .left, backdrop: false)))
+        }
+        return items
+    }
+
+    // MARK: - 分组（封装）图
+
+    static let packetBar: CGFloat = 30
+    static let packetLen: CGFloat = 14
+    static let packetGroup: CGFloat = 22
+
+    /// 括号排第几层（1 起，贴着长度那一行的是 1）：从短的排起，与已排的有重叠就往下一层。
+    static func packetGroupLevels(_ p: AnimPacketState) -> [Int: Int] {
+        var spans: [(id: Int, lo: Int, hi: Int)] = []
+        for g in p.groups {
+            guard let a = p.index(of: g.from), let b = p.index(of: g.to) else { continue }
+            spans.append((g.id, min(a, b), max(a, b)))
+        }
+        spans.sort { ($0.hi - $0.lo, $0.id) < ($1.hi - $1.lo, $1.id) }
+        var level: [Int: Int] = [:]
+        for (k, s) in spans.enumerated() {
+            var l = 1
+            for o in spans[..<k] where o.lo <= s.hi && o.hi >= s.lo { l = max(l, level[o.id]! + 1) }
+            level[s.id] = l
+        }
+        return level
+    }
+
+    /// 长度开头的数字（`1480`、`20 B` → 20）；没有数字 = 0。
+    static func leadingNumber(_ s: String) -> Double {
+        Double(String(s.trimmingCharacters(in: .whitespaces).prefix { $0.isNumber || $0 == "." })) ?? 0
+    }
+
+    /// 各段的宽：每段先给够名字的宽，余下的按长度的平方根分（20 字节的首部和 1000 字节的数据都看得见）。
+    /// 比例尺按这个元素所有步里最长的那一帧定：封装时一条越加越长，而不是同一条宽度里越挤越窄。
+    func packetWidths(_ name: String, segments: [AnimSegment], width w: CGFloat) -> [CGFloat] {
+        func mins(_ segs: [AnimSegment]) -> [CGFloat] { segs.map { max(AnimMetrics.measure($0.name, size: AnimMetrics.small).width + 10, 28) } }
+        func weight(_ seg: AnimSegment) -> CGFloat { CGFloat(Self.leadingNumber(seg.length).squareRoot()) }
+        let all = run.states.flatMap { $0 }.compactMap { $0.packets[name]?.segments }
+        var scale = CGFloat.greatestFiniteMagnitude
+        for segs in all where !segs.isEmpty {
+            let free = w - mins(segs).reduce(0, +)
+            let total = segs.map(weight).reduce(0, +)
+            if total > 0 { scale = min(scale, max(free, 0) / total) }
+        }
+        let m = mins(segments)
+        let sumMin = m.reduce(0, +)
+        if sumMin >= w { return m.map { $0 * w / sumMin } }
+        if scale == .greatestFiniteMagnitude {
+            // 都没写长度：平分
+            let extra = (w - sumMin) / CGFloat(max(segments.count, 1))
+            return m.map { $0 + extra }
+        }
+        return zip(m, segments).map { $0 + scale * weight($1) }
+    }
+
+    func packetItems(_ id: String, element e: AnimElement, rect: CGRect, state: AnimSceneState, tone: AnimTone) -> [AnimItem] {
+        guard case .packet(_, let unit) = e.kind, let p = state.packets[e.name] else { return [] }
+        var items: [AnimItem] = []
+        let widths = packetWidths(e.name, segments: p.segments, width: rect.width)
+        var frames: [Int: CGRect] = [:]
+        var x = rect.minX
+        let barTop = rect.minY
+        for (k, seg) in p.segments.enumerated() {
+            let r = CGRect(x: x, y: barTop, width: widths[k], height: Self.packetBar)
+            frames[seg.id] = r
+            x += widths[k]
+            let t = seg.tone == .normal ? tone : seg.tone
+            items.append(AnimItem(id: "\(id).s\(seg.id)", shape: .box(r, radius: 2, fill: .fill(t), stroke: t == .normal ? .grid : .stroke(t), lineWidth: t == .normal ? 1 : 1.5, dashed: false)))
+            let size = Self.fitSize(seg.name, width: r.width - 4, sizes: [AnimMetrics.body, AnimMetrics.small, 9, 8])
+            items.append(AnimItem(id: "\(id).sn\(seg.id)", shape: .text(seg.name, frame: r.insetBy(dx: 2, dy: 0), size: size, bold: false,
+                                                                         role: .text(t), align: .center, backdrop: false)))
+            if !seg.length.isEmpty {
+                let text = unit.isEmpty ? seg.length : seg.length + " " + unit
+                items.append(AnimItem(id: "\(id).sl\(seg.id)", shape: .text(text, frame: CGRect(x: r.minX - 6, y: r.maxY + 1, width: r.width + 12, height: Self.packetLen - 1),
+                                                                             size: AnimMetrics.small - 1, bold: false, role: .secondary, align: .center, backdrop: false)))
+            }
+        }
+        if p.segments.isEmpty {
+            items.append(AnimItem(id: "\(id).empty", shape: .box(CGRect(x: rect.minX, y: barTop, width: 60, height: Self.packetBar), radius: 2,
+                                                                 fill: nil, stroke: .grid, lineWidth: 1, dashed: true)))
+        }
+        let levels = Self.packetGroupLevels(p)
+        for g in p.groups {
+            guard let level = levels[g.id], let a = frames[g.from], let b = frames[g.to] else { continue }
+            let x0 = min(a.minX, b.minX) + 2, x1 = max(a.maxX, b.maxX) - 2
+            let y = barTop + Self.packetBar + Self.packetLen + CGFloat(level - 1) * Self.packetGroup + 2
+            items.append(AnimItem(id: "\(id).g\(g.id)", shape: .line([CGPoint(x: x0, y: y), CGPoint(x: x0, y: y + 5), CGPoint(x: x1, y: y + 5), CGPoint(x: x1, y: y)],
+                                                                      role: .secondary, width: 1, dashed: false, arrow: false, progress: 1)))
+            let size = AnimMetrics.measure(g.label, size: AnimMetrics.small)
+            let lw = min(size.width + 8, rect.width)
+            // 标签可以比括号宽，但不出元素的左右边
+            let lx = min(max((x0 + x1) / 2 - lw / 2, rect.minX), rect.maxX - lw)
+            items.append(AnimItem(id: "\(id).gl\(g.id)", shape: .text(g.label, frame: CGRect(x: lx, y: y + 5, width: lw, height: 14),
+                                                                       size: AnimMetrics.small, bold: false, role: .ink, align: .center, backdrop: true)))
         }
         return items
     }

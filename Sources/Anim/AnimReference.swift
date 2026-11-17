@@ -179,6 +179,26 @@ extension AnimText {
           set D[2,2] = 1
           mark D[2,2] done
         """,
+        """
+        title SDN: the controller programs the switches
+        graph Net layout=layers dir=down layers=[[Controller], [S1, S2, S3], [H1, H2, H3]] = Controller-S1, Controller-S2, Controller-S3, S1-S2, S2-S3, S1-S3, S1-H1, S2-H2, S3-H3
+        bits Rule width=16 = Match:8, Action:8
+        step Southbound: the controller installs a flow rule in every switch
+          mark Net[Controller] active
+          mark Net[Controller-S1] active
+          mark Net[Controller-S2] active
+          mark Net[Controller-S3] active
+          set Rule[Match] = "dst=H3"
+          set Rule[Action] = "out→S3"
+        step H1 sends to H3: S1 matches the rule and forwards straight to S3
+          unmark Net[Controller-S1]
+          unmark Net[Controller-S2]
+          unmark Net[Controller-S3]
+          mark Net[S1-H1] done
+          mark Net[S1-S3] done
+          mark Net[S3-H3] done
+          mark Rule done
+        """,
     ]
 
     static let reference: String = """
@@ -213,10 +233,12 @@ extension AnimText {
     | `var NAME = VALUE` | a small "name = value" box |
     | `text "…"` | a line of explanatory text |
     | `list NAME = a -> b -> c` | linked list; arrows follow each node's next (a null next shows ∅) |
-    | `tree NAME = (8 (3 1 6) (10 _ 14))` | tree in bracket form: `(value child child …)`; `_` is an empty child, so `(10 _ 14)` has only a right child. Binary trees: first child = left, second = right. |
-    | `graph NAME [layout=circle\\|layers] = A-B:4, B-C, A->C` | graph: `-` undirected, `->` directed, `:w` weight, a lone `D` adds a node. `layers` puts nodes in breadth-first columns from the first node. |
+    | `tree NAME [dir=down\\|up\\|right\\|left] = (8 (3 1 6) (10 _ 14))` | tree in bracket form: `(value child child …)`; `_` is an empty child, so `(10 _ 14)` has only a right child. Binary trees: first child = left, second = right. `dir=` is where it grows: `down` (root on top, default), `up` (root at the bottom), `right` (root on the left), `left`. |
+    | `graph NAME [layout=circle\\|layers] [dir=right\\|left\\|down\\|up] [layers=[[A], [B, C], [D]]] = A-B:4, B-C, A->C` | graph: `-` undirected, `->` directed, `:w` weight, a lone `D` adds a node. `layers` puts nodes in breadth-first layers from the first node; `dir=` says where the layers go (`right` = first layer leftmost, the default; `down` = first layer on top, for network structures like SDN: controller / switches / hosts). `layers=[[…], […]]` places every node yourself, one list per layer in order (implies `layout=layers`; nodes listed there but in no edge are added). Edges between non-neighbours of one layer arc around the nodes between them. Long names make pill-shaped nodes. |
     | `grid NAME [rows=[…]] [cols=[…]] = 3x4` or `= [[1, 2], [3, 4]]` | 2-D table (DP tables), optional row / column headers; empty cells allowed (`[1, , 3]`) |
     | `sheet NAME` | a worksheet for hand calculations written row by row (long division, base conversion, binary arithmetic): one character per cell in aligned columns, plus rules, bring-down arrows and row notes (see the sheet actions). Lines `write` / `rule` / `arrow` / `label` / `mark` placed before the first `step` are the starting picture. |
+    | `bits NAME [width=32] = 版本:4, 首部长度:4, 总长度:16, 选项:*` | header / format diagram: rows of `width` bits (bit numbers on top, byte offsets on the left), each field a box as wide as its bits; a field spanning whole rows is one tall box (128-bit addresses). `name:N=value` gives a starting value; `name:*` is variable length (dashed) filling the rest of the row, `name:*24` variable but drawn 24 bits wide. Names may contain spaces. Packet headers, instruction formats, page table entries. |
+    | `packet NAME [unit=B] = 首部:20, 数据:100` / `packet NAME` | a packet as one horizontal bar of parts (`name:length`; width grows with the length, the length is shown under the part with the unit). `insert` / `remove` animate encapsulation, `group` draws a labeled bracket under parts (TCP segment ⊂ IP datagram ⊂ frame). |
     | `pointer NAME -> TARGET` / `pointer NAME` | a labeled arrow to an array index (may be one past the end), a list node, a tree node, a graph node or a grid cell |
     | `row X Y …` | put already declared elements side by side on one row |
     Elements are stacked top to bottom in declaration order.
@@ -225,7 +247,8 @@ extension AnimText {
     Targets: `A` (whole element), `A[2]` (one cell), `A[1..3]` (a range), a var name, or a message's `as=` name. \
     For a `seq`, indexes are the sequence numbers themselves (`SW[2..5]`). Lists use positions (`L[0]`); trees use node \
     VALUES (`T[8]`, first match); graphs use node names and edges (`G[A]`, `G[A-B]`, `G[A->B]`); grids and sheets use \
-    `D[row,col]` and ranges like `D[0..2,1]` (0-based).
+    `D[row,col]` and ranges like `D[0..2,1]` (0-based). `bits` fields go by name (`H[总长度]`; a name with spaces only by number) or by number (`H[3]`, `H[6..11]`, 0-based); \
+    `packet` parts by position (`P[0]`, `P[1..3]`).
     | action | effect |
     |---|---|
     | `mark TARGET STATE` | color state, kept until changed: `normal`, `active` (blue, "looking at this"), `done` (green), `wrong` (red), `muted` (gray), `new` (orange) |
@@ -246,7 +269,10 @@ extension AnimText {
     | `write S[2,5] "1101"` | sheet: write characters from row 2, column 5 rightwards (0-based; a space leaves that cell alone) |
     | `rule S[2,5..8]` / `rule S[1,5..13] above` | sheet: a line under (or above) those columns of a row — the subtraction line, or the division bar |
     | `arrow S[1..3,9]` | sheet: a dashed arrow down column 9 from row 1 to row 3 (bringing a digit down) |
-    | `label S[0] "← quotient"` | sheet: a note after the end of a row |
+    | `label S[0] "← quotient"` | sheet: a note after the end of a row; bits: a note after row 0 (the raw bytes, say `"45 00 00 3C"`) |
+    | `set H[总长度] = 60` / `mark H[6..11] active` | bits: show a value in a field (name above, value below) / color fields |
+    | `insert P 0 "TCP首部:20"` / `remove P 0` / `set P[1] = "数据:1480"` | packet: add a part at a position / take one out / change one (a bracket whose end part is removed disappears) |
+    | `group P[1..3] "IP 数据报 140 B"` | packet: a labeled bracket under parts 1–3 (nested brackets stack downward) |
     | `move p -> A[3]` / `move p -> null` | move a pointer (it slides); `mark p wrong` recolors it |
     | `send A -> B "label" [as=NAME] [lost] [state=STATE] [arrive=next]` | a message from lane A to B. Several sends in one step leave one after another (pipelining). `lost` = crosses out half way. `arrive=next` = still in flight at the end of this step, arrives in the next. |
     | `slide SEQ to=N` / `slide SEQ by=N` | move the window |
@@ -292,6 +318,14 @@ extension AnimText {
     | `heap` | `A=[53, 17, 78, 9]` (distinct, ≤ 15) `type=max\\|min` `sort=no\\|yes` | building a heap by sifting down (tree and array together), optionally heap sort |
     | `bsearch` | `A=[7, 10, 13]` (sorted) `key=13` | binary search with low / high / mid pointers |
     | `tcp` | `ssthresh=16` `rounds=20` `timeout=12` `dup=17` | TCP congestion control: cwnd per round (slow start / congestion avoidance colors), timeout and 3-duplicate-ACK reactions |
+    | `header` | `proto=ipv4\\|ipv6\\|tcp\\|udp` `hex="45 00 00 3c …"` (optional) | header format field by field (a `bits` diagram) with what each field means; with `hex=` every field is decoded from the bytes (lengths × 4, flags DF / MF, offset × 8, protocol / port names, dotted and compressed IPv6 addresses) and the IPv4 header checksum is verified |
+    | `encap` | `data=100` `transport=tcp\\|udp` `net=ipv4\\|ipv6` `mode=both\\|encap` | layer-by-layer encapsulation (a `packet`): data → segment → IP datagram → Ethernet frame (padding to 64 bytes when short) → preamble, with brackets for each layer's unit; then decapsulation at the receiver |
+    | `ipclass` | — | IPv4 address classes A–E as format diagrams, one class per step (leading bits, first-byte range, default mask, number of networks and hosts), then special and private addresses |
+    | `ipaddr` | `ip=172.16.37.200/20` (or `ip=… mask=255.255.240.0`, or a plain `ip=` to go by its class) | one address worked as the textbook does: bytes to binary, the class from the leading bits, the mask, AND → network address, host bits all 1 → broadcast, usable hosts 2ʰ − 2 and their range |
+    | `supernet` | `nets=172.18.129.0/24,172.18.130.0/24,…` (2–8) | route aggregation: the networks in binary, the common prefix bit by bit, the aggregate /n and how many extra addresses it covers |
+    | `subnet` | `net=192.168.1.0/24` and `n=4` (subnets) or `hosts=50` (per subnet) | subnetting: how many bits to borrow, the new prefix and mask, every subnet's network, host range and broadcast (≤ 16 subnets) |
+    | `lpm` | `dst=192.168.1.37` `routes="192.168.1.0/24 R1, 192.168.1.32/27 R2, 0.0.0.0/0 R3"` (≤ 8) | longest prefix match: each route's prefix against the destination bit by bit, the longest match and its next hop (or drop) |
+    | `frag` | `total=4000` (or `data=3980`) `mtu=1500` `header=20` `df=0\\|1` `id=…` | IP fragmentation: data per fragment (multiple of 8), each fragment's total length / MF / offset in a table, the datagram split into fragments with their own headers; `df=1` shows the drop + ICMP |
     ```
     title Frame 2 lost: three protocols
     scene Stop-and-wait

@@ -57,6 +57,27 @@ enum AnimGraphLayout: String {
     case circle, layers
 }
 
+/// 树 / 分层图往哪边长：`down` 根（第一层）在上，`up` 在下，`right` 在左、往右长，`left` 反过来。
+enum AnimDirection: String {
+    case down, up, right, left
+
+    var horizontal: Bool { self == .right || self == .left }
+}
+
+/// 首部格式图（`bits`）的一个字段：占几位；`variable` = 长度可变（虚线框，`*` 写法）。
+struct AnimBitField: Equatable {
+    let name: String
+    let bits: Int
+    let variable: Bool
+    let value: String
+}
+
+/// 分组图（`packet`）的一段：名字 + 长度（原样显示；宽度按开头的数字算）。
+struct AnimSegmentDecl: Equatable {
+    let name: String
+    let length: String
+}
+
 enum AnimElementKind: Equatable {
     case lanes([String])
     case seq(lower: Int, upper: Int, window: Int, modulo: Int?, lane: String?)
@@ -66,12 +87,17 @@ enum AnimElementKind: Equatable {
     case variable(String)
     case text(String)
     case list([String])
-    case tree(AnimTreeDecl?)
-    case graph(nodes: [String], edges: [AnimGraphEdgeDecl], layout: AnimGraphLayout)
+    case tree(AnimTreeDecl?, dir: AnimDirection)
+    /// `ranks` 非空 = 手动分层（`layers=[[…],[…]]`），每层里按写的顺序排。
+    case graph(nodes: [String], edges: [AnimGraphEdgeDecl], layout: AnimGraphLayout, dir: AnimDirection, ranks: [[String]])
     case pointer(AnimTarget?)
     case grid(values: [[String]], rowLabels: [String], colLabels: [String])
     /// 竖式（草算纸）：按列对齐的字符，逐步往下写（`write` / `rule` / `arrow` / `label`）。
     case sheet
+    /// 首部格式图：每行 `width` 位，字段按位数占格（IP / TCP / UDP 首部、指令格式）。
+    case bits(fields: [AnimBitField], width: Int)
+    /// 分组（封装）图：横向一条，按段排；`group` 在下方画括号（「IP 数据报」「以太网帧」）。
+    case packet([AnimSegmentDecl], unit: String)
 }
 
 struct AnimElement: Equatable {
@@ -121,6 +147,8 @@ enum AnimAction: Equatable {
     case rule(AnimTarget, above: Bool)
     case arrow(AnimTarget)
     case label(AnimTarget, String)
+    /// 分组图：在 `P[i..j]` 这几段下方画括号并标名字。
+    case group(AnimTarget, String)
 }
 
 struct AnimStepDecl: Equatable {
@@ -221,7 +249,7 @@ enum AnimText {
             if scene!.steps.isEmpty {
                 // 声明区
                 do {
-                    if ["write", "rule", "arrow", "label", "mark", "unmark"].contains(keyword) {
+                    if ["write", "rule", "arrow", "label", "mark", "unmark", "group"].contains(keyword) {
                         let action = try parseAction(keyword: keyword, rest: rest)
                         if scene!.setup.isEmpty { scene!.setup.append(AnimStepDecl(caption: "", actions: [], line: lineNo)) }
                         scene!.setup[0].actions.append((lineNo, action))
@@ -338,26 +366,91 @@ enum AnimText {
             guard values.count <= 16 else { throw AnimParseError("list: at most 16 nodes") }
             return AnimElement(name: name, kind: .list(values), line: line)
         case "tree":
-            guard rest.count >= 1 else { throw AnimParseError("usage: tree NAME = (root (left …) (right …))") }
+            let usage = "usage: tree NAME [dir=down|up|right|left] = (root (left …) (right …))"
+            guard rest.count >= 1 else { throw AnimParseError(usage) }
             let name = try checkedName(rest[0])
+            let eq = rest.firstIndex(of: "=") ?? rest.count
+            let opts = try options(Array(rest[1..<eq]), allowed: ["dir"])
+            let dir = try direction(opts["dir"], default: .down)
             var tree: AnimTreeDecl?
-            if rest.count > 1 {
-                guard rest[1] == "=" else { throw AnimParseError("usage: tree NAME = (root (left …) (right …))") }
-                tree = try parseTree(rest.dropFirst(2).joined(separator: " "))
+            if eq < rest.count {
+                tree = try parseTree(rest[(eq + 1)...].joined(separator: " "))
             }
-            return AnimElement(name: name, kind: .tree(tree), line: line)
+            return AnimElement(name: name, kind: .tree(tree, dir: dir), line: line)
         case "graph":
-            guard rest.count >= 3, let eq = rest.firstIndex(of: "=") else { throw AnimParseError("usage: graph NAME [layout=circle|layers] = A-B:4, B-C, A->C") }
+            let usage = "usage: graph NAME [layout=circle|layers] [dir=right|left|down|up] [layers=[[A], [B, C]]] = A-B:4, B-C, A->C"
+            guard rest.count >= 3, let eq = rest.firstIndex(of: "=") else { throw AnimParseError(usage) }
             let name = try checkedName(rest[0])
-            let opts = try options(Array(rest[1..<eq]), allowed: ["layout"])
-            var layout = AnimGraphLayout.circle
+            // layers=[[…], […]] 里可以有空格：先整段取出来，剩下的照常按 key=value 解析
+            var head = rest[1..<eq].joined(separator: " ")
+            var ranks: [[String]] = []
+            if let r = head.range(of: "layers=[") {
+                var depth = 0
+                var end = head.endIndex
+                var i = head.index(before: r.upperBound)
+                while i < head.endIndex {
+                    if head[i] == "[" { depth += 1 }
+                    if head[i] == "]" { depth -= 1; if depth == 0 { end = head.index(after: i); break } }
+                    i = head.index(after: i)
+                }
+                guard depth == 0 else { throw AnimParseError("layers= looks like [[A], [B, C], [D]]") }
+                ranks = try parseNestedList(String(head[head.index(r.lowerBound, offsetBy: 7)..<end]))
+                head.removeSubrange(r.lowerBound..<end)
+            }
+            let words = head.split(whereSeparator: { $0 == " " }).map(String.init)
+            let opts = try options(words, allowed: ["layout", "dir"])
+            var layout = ranks.isEmpty ? AnimGraphLayout.circle : .layers
             if let l = opts["layout"] {
                 guard let v = AnimGraphLayout(rawValue: l.lowercased()) else { throw AnimParseError("layout= takes circle or layers") }
+                guard ranks.isEmpty || v == .layers else { throw AnimParseError("layers=[…] needs layout=layers") }
                 layout = v
             }
-            let (nodes, edges) = try parseGraph(rest[(eq + 1)...].joined(separator: " "))
+            let dir = try direction(opts["dir"], default: .right)
+            if opts["dir"] != nil, layout != .layers { throw AnimParseError("dir= only works with layout=layers") }
+            var (nodes, edges) = try parseGraph(rest[(eq + 1)...].joined(separator: " "))
+            if !ranks.isEmpty {
+                var seen = Set<String>()
+                for rank in ranks {
+                    guard !rank.isEmpty else { throw AnimParseError("layers=: a layer is empty") }
+                    for n in rank {
+                        guard !n.isEmpty, !n.contains(where: { "[]=\"#|:-> ".contains($0) }) else { throw AnimParseError("layers=: bad node name “\(n)”") }
+                        guard seen.insert(n).inserted else { throw AnimParseError("layers=: \(n) is listed twice") }
+                        if !nodes.contains(n) { nodes.append(n) }
+                    }
+                }
+                if let missing = nodes.first(where: { !seen.contains($0) }) { throw AnimParseError("layers=: \(missing) is not in any layer") }
+            }
             guard nodes.count <= 16 else { throw AnimParseError("graph: at most 16 nodes") }
-            return AnimElement(name: name, kind: .graph(nodes: nodes, edges: edges, layout: layout), line: line)
+            return AnimElement(name: name, kind: .graph(nodes: nodes, edges: edges, layout: layout, dir: dir, ranks: ranks), line: line)
+        case "bits":
+            let usage = "usage: bits NAME [width=32] = 版本:4, 首部长度:4, 总长度:16, 选项:*"
+            guard rest.count >= 3, let eq = rest.firstIndex(of: "=") else { throw AnimParseError(usage) }
+            let name = try checkedName(rest[0])
+            let opts = try options(Array(rest[1..<eq]), allowed: ["width"])
+            var width = 32
+            if let v = opts["width"] {
+                guard let n = Int(v), (4...64).contains(n) else { throw AnimParseError("width= takes 4…64 (bits per row)") }
+                width = n
+            }
+            let fields = try parseBitFields(rest[(eq + 1)...].joined(separator: " "), width: width)
+            return AnimElement(name: name, kind: .bits(fields: fields, width: width), line: line)
+        case "packet":
+            let usage = "usage: packet NAME [unit=B] = 首部:20, 数据:100   (or just: packet NAME)"
+            guard rest.count >= 1 else { throw AnimParseError(usage) }
+            let name = try checkedName(rest[0])
+            let eq = rest.firstIndex(of: "=") ?? rest.count
+            let opts = try options(Array(rest[1..<eq]), allowed: ["unit"])
+            var segments: [AnimSegmentDecl] = []
+            if eq < rest.count {
+                let body = rest[(eq + 1)...].joined(separator: " ")
+                for part in body.components(separatedBy: ",") {
+                    let t = part.trimmingCharacters(in: .whitespaces)
+                    if t.isEmpty { continue }
+                    segments.append(try parseSegment(t))
+                }
+            }
+            guard segments.count <= 16 else { throw AnimParseError("packet: at most 16 parts") }
+            return AnimElement(name: name, kind: .packet(segments, unit: opts["unit"] ?? ""), line: line)
         case "sheet":
             guard rest.count == 1 else { throw AnimParseError("usage: sheet NAME  (then write / rule / arrow / label)") }
             return AnimElement(name: try checkedName(rest[0]), kind: .sheet, line: line)
@@ -388,7 +481,7 @@ enum AnimText {
             if !labels.cols.isEmpty, labels.cols.count != cols { throw AnimParseError("cols=[…] has \(labels.cols.count) labels for \(cols) columns") }
             return AnimElement(name: name, kind: .grid(values: values, rowLabels: labels.rows, colLabels: labels.cols), line: line)
         default:
-            throw AnimParseError("unknown element “\(keyword)” (lanes, seq, array, stack, queue, var, text, list, tree, graph, pointer, grid, sheet, row; actions go after a `step` line)")
+            throw AnimParseError("unknown element “\(keyword)” (lanes, seq, array, stack, queue, var, text, list, tree, graph, pointer, grid, sheet, bits, packet, row; actions go after a `step` line)")
         }
     }
 
@@ -451,6 +544,11 @@ enum AnimText {
         case "arrow":
             guard rest.count == 1 else { throw AnimParseError("usage: arrow S[row1..row2,col]") }
             return .arrow(try parseTarget(rest[0]))
+        case "group":
+            guard rest.count == 2 else { throw AnimParseError("usage: group P[1..3] \"IP datagram\"") }
+            let t = try parseTarget(rest[0])
+            guard t.key != nil else { throw AnimParseError("group takes a range of parts, like \(t.name)[1..3]") }
+            return .group(t, rest[1])
         case "push", "enqueue":
             guard rest.count >= 2 else { throw AnimParseError("usage: \(keyword) NAME VALUE") }
             let value = rest.dropFirst().joined(separator: " ")
@@ -504,7 +602,7 @@ enum AnimText {
             }
             return .laneEvent(lane: rest[0], label: rest[1], kind: AnimLaneEventKind(rawValue: keyword)!, tone: tone)
         default:
-            throw AnimParseError("unknown action “\(keyword)” (mark, unmark, set, swap, push, pop, enqueue, dequeue, insert, remove, link, rotate, move, write, rule, arrow, label, say, send, slide, timer, deliver, discard, buffer, note)")
+            throw AnimParseError("unknown action “\(keyword)” (mark, unmark, set, swap, push, pop, enqueue, dequeue, insert, remove, link, rotate, move, write, rule, arrow, label, group, say, send, slide, timer, deliver, discard, buffer, note)")
         }
     }
 
@@ -719,6 +817,56 @@ enum AnimText {
         return inner.components(separatedBy: ",").map {
             $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
         }
+    }
+
+    private static func direction(_ s: String?, default d: AnimDirection) throws -> AnimDirection {
+        guard let s else { return d }
+        guard let v = AnimDirection(rawValue: s.lowercased()) else { throw AnimParseError("dir= takes down, up, right or left") }
+        return v
+    }
+
+    /// 首部字段：`名字:位数`、`名字:位数=值`、`名字:*`（长度可变，占到这一行末尾）、`名字:*24`（长度可变，画 24 位宽）。逗号分隔。
+    static func parseBitFields(_ s: String, width: Int) throws -> [AnimBitField] {
+        var fields: [AnimBitField] = []
+        var offset = 0
+        for raw in s.components(separatedBy: ",") {
+            let item = raw.trimmingCharacters(in: .whitespaces)
+            if item.isEmpty { continue }
+            guard let colon = item.lastIndex(of: ":"), colon != item.startIndex else { throw AnimParseError("bits: a field looks like 名字:4 (got “\(item)”)") }
+            let name = String(item[..<colon]).trimmingCharacters(in: .whitespaces)
+            var spec = String(item[item.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            var value = ""
+            if let eq = spec.firstIndex(of: "=") {
+                value = String(spec[spec.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+                spec = String(spec[..<eq]).trimmingCharacters(in: .whitespaces)
+            }
+            let variable = spec.hasPrefix("*")
+            if variable { spec.removeFirst() }
+            let n: Int
+            if variable && spec.isEmpty {
+                n = width - offset % width
+            } else {
+                guard let v = Int(spec), v >= 1 else { throw AnimParseError("bits: “\(item)”: the size is a number of bits (or * for variable length)") }
+                n = v
+            }
+            fields.append(AnimBitField(name: name, bits: n, variable: variable, value: value))
+            offset += n
+        }
+        guard !fields.isEmpty else { throw AnimParseError("bits has no fields") }
+        guard fields.count <= 40 else { throw AnimParseError("bits: at most 40 fields") }
+        guard (offset + width - 1) / width <= 20 else { throw AnimParseError("bits: at most 20 rows of \(width) bits") }
+        return fields
+    }
+
+    /// 分组图的一段：`名字:长度`（长度原样显示）或只有名字。
+    static func parseSegment(_ s: String) throws -> AnimSegmentDecl {
+        let t = s.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        guard !t.isEmpty else { throw AnimParseError("packet: empty part") }
+        if let colon = t.lastIndex(of: ":"), colon != t.startIndex {
+            return AnimSegmentDecl(name: String(t[..<colon]).trimmingCharacters(in: .whitespaces),
+                                   length: String(t[t.index(after: colon)...]).trimmingCharacters(in: .whitespaces))
+        }
+        return AnimSegmentDecl(name: t, length: "")
     }
 
     private static func checkedName(_ s: String) throws -> String {

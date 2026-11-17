@@ -20,13 +20,17 @@ description: 在 UniReader（macOS PDF / Markdown 笔记阅读器）的 Markdown
 2. **每次写之前**先调 `get_anim_reference`，照它的写法和示例写，不要凭印象（不支持的写法整行会被跳过）。
 3. **先看有没有套件**：协议（`stopwait` / `gbn` / `sr`）、`tcp` 拥塞控制、排序（`bubble` / `selection` / `insertion` / `quick`）、`crc`、
    树的遍历（`preorder` / `inorder` / `postorder` / `levelorder`）、`bfs` / `dfs`、`dijkstra`、`kmp`、`hash`、`heap`、`bsearch`、
-   操作系统的 `page`（页面置换）/ `disk`（磁盘调度）、组成原理的 `cache`（映射与替换）/ `base`（进制转换） / `mul`（定点乘法：原码一位乘、Booth）/ `div`（定点除法：恢复余数、加减交替、补码除法）——用户问的正好是这些，就写一行 `kit …`，
+   操作系统的 `page`（页面置换）/ `disk`（磁盘调度）、组成原理的 `cache`（映射与替换）/ `base`（进制转换） / `mul`（定点乘法：原码一位乘、Booth）/ `div`（定点除法：恢复余数、加减交替、补码除法）、
+   计算机网络的 `header`（IPv4 / IPv6 / TCP / UDP 首部格式，给 `hex=` 就逐字段解析并验算 IPv4 检验和）/ `encap`（逐层封装与拆封）/ `frag`（IP 分片）/ `ipclass`（A~E 五类地址）/ `ipaddr`（求网络地址、广播地址、主机数）/
+   `supernet`（路由聚合）/ `subnet`（划分子网）/ `lpm`（最长前缀匹配）——用户问的正好是这些，就写一行 `kit …`，
    步骤由引擎推演，保证对（写法见 `get_anim_reference` 的 Kits 一节；对比几种协议就每个 `scene` 放一个 kit）。
    套件不够用时，`render_anim` 返回的 `expanded` 是展开后的文字，拿它改。
    没有合适的套件才手写。手写原则：
    - 一步只讲一件事，每步的 `step` 行写一句完整的说明（用户的语言，通常是中文）；全程 3～12 步。
    - 协议题用 `lanes` 时序图 + `seq … at=发送方` 序号条；同一步里按真实先后写动作（发送、到达后的交付 / 丢弃、确认）。
    - 要对比几种方案就用 `scene`，**让每个场景的第 N 步讲同一时刻**（例如都在「帧 2 丢失被发现」那一步）。
+   - 首部 / 指令格式用 `bits`（按位数占格，`H[字段名]` 或 `H[3]` 标色、填值）；分组的封装用 `packet` + `insert` / `remove` / `group`。
+   - 树和分层图可以定方向：`tree T dir=right = …`；网络结构（如 SDN 控制器 / 交换机 / 主机）用 `graph G layout=layers dir=down layers=[[控制器], [S1, S2], [H1, H2]] = …` 手动分层。
    - 数据结构用对应元素：`list`、`tree`（括号写法）、`graph`、`grid`；遍历 / 双指针用 `pointer` + `move`，比反复 `mark` 清楚。
    - 竖式计算（长除法、进制转换的短除、二进制加减）用 `sheet`：一步写一两行、画横线、用 `arrow` 把数字落下来，像教材那样一层一层写，
      别在一排格子里原地改数字（看不出每个数是怎么来的）。

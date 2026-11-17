@@ -152,6 +152,35 @@ struct AnimSheetState: Equatable {
     }
 }
 
+/// 首部格式图：字段本身来自声明（不变），这里只记每个字段的值、颜色与行尾注释。
+struct AnimBitsState: Equatable {
+    var values: [String]
+    var tones: [AnimTone]
+    var labels: [Int: String] = [:]
+}
+
+struct AnimSegment: Equatable {
+    let id: Int
+    var name: String
+    var length: String
+    var tone: AnimTone
+}
+
+/// 分组图下方的括号：按两端那一段的 id 记（前后插入新段时括号跟着段走；端点那段被删了，括号也就没了）。
+struct AnimSegmentGroup: Equatable {
+    let id: Int
+    let from: Int
+    let to: Int
+    let label: String
+}
+
+struct AnimPacketState: Equatable {
+    var segments: [AnimSegment]
+    var groups: [AnimSegmentGroup] = []
+
+    func index(of id: Int) -> Int? { segments.firstIndex { $0.id == id } }
+}
+
 /// 指针指着什么。
 enum AnimPointerTarget: Equatable {
     case index(element: String, Int)          // 数组 / 栈 / 队列的下标
@@ -174,7 +203,7 @@ extension AnimEngine {
             var nodes = values.map { AnimListNode(id: newID(), value: $0, tone: .normal, next: nil) }
             for i in nodes.indices.dropLast() { nodes[i].next = nodes[i + 1].id }
             state.lists[element.name] = AnimListState(nodes: nodes)
-        case .tree(let decl):
+        case .tree(let decl, _):
             var tree = AnimTreeState()
             func build(_ d: AnimTreeDecl?) -> Int? {
                 guard case .node(let value, let children)? = d else { return nil }
@@ -185,13 +214,17 @@ extension AnimEngine {
             }
             tree.root = build(decl)
             state.trees[element.name] = tree
-        case .graph(let nodes, let edges, _):
+        case .graph(let nodes, let edges, _, _, _):
             state.graphs[element.name] = AnimGraphState(order: nodes, nodes: Dictionary(uniqueKeysWithValues: nodes.map { ($0, AnimGraphNode()) }),
                                                         edges: edges.map { AnimGraphEdge(a: $0.a, b: $0.b, directed: $0.directed, weight: $0.weight) })
         case .grid(let values, let rows, let cols):
             state.grids[element.name] = AnimGridState(values: values, tones: values.map { $0.map { _ in .normal } }, rowLabels: rows, colLabels: cols)
         case .sheet:
             state.sheets[element.name] = AnimSheetState()
+        case .bits(let fields, _):
+            state.bits[element.name] = AnimBitsState(values: fields.map(\.value), tones: fields.map { _ in .normal })
+        case .packet(let segments, _):
+            state.packets[element.name] = AnimPacketState(segments: segments.map { AnimSegment(id: newID(), name: $0.name, length: $0.length, tone: .normal) })
         default:
             break
         }
@@ -243,7 +276,7 @@ extension AnimEngine {
         func kind(_ name: String) -> AnimElementKind? { kinds[name] }
         func isStructure(_ name: String) -> Bool {
             switch kinds[name] {
-            case .list?, .tree?, .graph?, .grid?, .pointer?, .sheet?: return true
+            case .list?, .tree?, .graph?, .grid?, .pointer?, .sheet?, .bits?, .packet?: return true
             default: return false
             }
         }
@@ -261,6 +294,13 @@ extension AnimEngine {
             case .swap(let a, let b):
                 guard isStructure(a.name) else { return false }
                 try swapValues(a, b, &state, kinds: kinds)
+            case .insertAt(let name, let index, let value) where { if case .packet? = kind(name) { return true }; return false }():
+                guard var p = state.packets[name] else { return true }
+                guard index >= 0, index <= p.segments.count else { throw AnimParseError("\(name) has \(p.segments.count) part(s): insert index \(index) is out of range (0…\(p.segments.count))") }
+                guard p.segments.count < 16 else { throw AnimParseError("packet: at most 16 parts") }
+                let seg = try AnimText.parseSegment(value)
+                p.segments.insert(AnimSegment(id: newID(), name: seg.name, length: seg.length, tone: .new), at: index)
+                state.packets[name] = p
             case .insertAt(let name, let index, let value):
                 guard case .list? = kind(name), var list = state.lists[name] else { throw AnimParseError("insert NAME INDEX VALUE is for lists; “\(name)” is not a list") }
                 guard index >= 0, index <= list.nodes.count else { throw AnimParseError("\(name) has \(list.nodes.count) node(s): insert index \(index) is out of range (0…\(list.nodes.count))") }
@@ -311,6 +351,12 @@ extension AnimEngine {
                     for g in gone { tree.nodes[g] = nil }
                     state.trees[name] = tree
                     dropPointers(to: gone, in: name, &state)
+                case .packet?:
+                    guard var p = state.packets[name], let i = Int(key) else { throw AnimParseError("remove PACKET INDEX: the index is a number") }
+                    guard i >= 0, i < p.segments.count else { throw AnimParseError("\(name) has \(p.segments.count) part(s): \(i) is out of range") }
+                    let gone = p.segments.remove(at: i)
+                    p.groups.removeAll { $0.from == gone.id || $0.to == gone.id }
+                    state.packets[name] = p
                 default:
                     return false
                 }
@@ -358,6 +404,21 @@ extension AnimEngine {
                 guard let r = t.gridRange, r.cols.count == 1, r.rows.count >= 2, r.rows.lowerBound >= 0 else { throw AnimParseError("arrow takes a row range and one column, like \(t.name)[1..3,9]") }
                 sheet.arrows.append(AnimSheetArrow(col: r.cols.lowerBound, fromRow: r.rows.lowerBound, toRow: r.rows.upperBound))
                 state.sheets[t.name] = sheet
+            case .label(let t, let text) where { if case .bits? = kinds[t.name] { return true }; return false }():
+                guard var b = state.bits[t.name], case .bits(let fields, let width)? = kinds[t.name] else { return true }
+                let rows = (fields.map(\.bits).reduce(0, +) + width - 1) / width
+                guard let row = t.lower, t.lower == t.upper, row >= 0, row < rows else { throw AnimParseError("label takes one row of \(t.name), 0…\(rows - 1)") }
+                b.labels[row] = text
+                state.bits[t.name] = b
+            case .group(let t, let text):
+                guard case .packet? = kinds[t.name], var p = state.packets[t.name] else { throw AnimParseError("“\(t.name)” is not a packet (declare: packet \(t.name) = …)") }
+                guard let lo = t.lower, let hi = t.upper, lo >= 0, hi < p.segments.count else {
+                    throw AnimParseError("\(t.name) has \(p.segments.count) part(s): \(t.text) is out of range")
+                }
+                let (a, b) = (p.segments[lo].id, p.segments[hi].id)
+                p.groups.removeAll { $0.from == a && $0.to == b }
+                p.groups.append(AnimSegmentGroup(id: newID(), from: a, to: b, label: text))
+                state.packets[t.name] = p
             case .label(let t, let text):
                 var sheet = try sheetOf(t, state, kinds)
                 guard let row = t.lower, t.lower == t.upper, row >= 0, row < 40 else { throw AnimParseError("label takes one row, like \(t.name)[3]") }
@@ -412,6 +473,15 @@ extension AnimEngine {
             guard var sh = state.sheets[t.name], let r = t.gridRange else { throw AnimParseError("sheet cells look like \(t.name)[1,2] or \(t.name)[3,5..8]") }
             for i in r.rows { for j in r.cols where sh.cells[i]?[j] != nil { sh.cells[i]![j]!.tone = tone(sh.cells[i]![j]!.tone) } }
             state.sheets[t.name] = sh
+        case .bits(let fields, _)?:
+            guard var b = state.bits[t.name] else { return }
+            for i in try bitFields(t, fields) { b.tones[i] = tone(b.tones[i]) }
+            state.bits[t.name] = b
+        case .packet?:
+            guard var p = state.packets[t.name], let lo = t.lower, let hi = t.upper else { throw AnimParseError("\(t.text): packet parts are numbered, like \(t.name)[0] or \(t.name)[1..2]") }
+            guard lo >= 0, hi < p.segments.count else { throw AnimParseError("\(t.name) has \(p.segments.count) part(s): \(t.text) is out of range") }
+            for i in lo...hi { p.segments[i].tone = tone(p.segments[i].tone) }
+            state.packets[t.name] = p
         case .grid?:
             guard var g = state.grids[t.name], let r = t.gridRange else { throw AnimParseError("grid cells look like \(t.name)[1,2] or \(t.name)[0..2,1]") }
             guard r.rows.lowerBound >= 0, r.rows.upperBound < g.rows, r.cols.lowerBound >= 0, r.cols.upperBound < g.cols else {
@@ -458,9 +528,27 @@ extension AnimEngine {
                 sh.cells[r.rows.lowerBound, default: [:]][r.cols.lowerBound + k] = AnimSheetCell(char: String(ch))
             }
             state.sheets[t.name] = sh
+        case .bits(let fields, _)?:
+            guard var b = state.bits[t.name] else { return }
+            for i in try bitFields(t, fields) { b.values[i] = value }
+            state.bits[t.name] = b
+        case .packet?:
+            guard var p = state.packets[t.name], let lo = t.lower, let hi = t.upper, lo >= 0, hi < p.segments.count else { throw AnimParseError("\(t.text) is not a part of \(t.name)") }
+            let seg = try AnimText.parseSegment(value)
+            for i in lo...hi { p.segments[i].name = seg.name; p.segments[i].length = seg.length }
+            state.packets[t.name] = p
         default:
             throw AnimParseError("set: \(t.name) has no values")
         }
+    }
+
+    /// 首部字段的目标：`H[总长度]`（字段名）、`H[3]` / `H[0..2]`（第几个字段，0 起）。名字优先。
+    static func bitFields(_ t: AnimTarget, _ fields: [AnimBitField]) throws -> ClosedRange<Int> {
+        guard let key = t.key else { return 0...(fields.count - 1) }
+        if let i = fields.firstIndex(where: { $0.name == key }) { return i...i }
+        guard let lo = t.lower, let hi = t.upper else { throw AnimParseError("\(t.name) has no field “\(key)”") }
+        guard lo >= 0, hi < fields.count else { throw AnimParseError("\(t.name) has \(fields.count) field(s): \(t.text) is out of range") }
+        return lo...hi
     }
 
     private static func swapValues(_ a: AnimTarget, _ b: AnimTarget, _ state: inout AnimSceneState, kinds: [String: AnimElementKind]) throws {

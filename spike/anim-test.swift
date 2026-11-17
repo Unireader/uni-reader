@@ -1,5 +1,5 @@
 // ```anim 分步演示块：解析 / 状态 / 布局测试（`ANIM-BLOCK-PLAN.md`）。运行：
-//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimKits3.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
+//   mkdir -p build/spike && cp spike/anim-test.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimKits3.swift Sources/Anim/AnimKits4.swift Sources/Anim/AnimKits5.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift Sources/Anim/AnimLayout.swift Sources/Anim/AnimLayout+Structures.swift build/spike/main.swift -o build/spike/anim-test && build/spike/anim-test
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift）
 // 覆盖：词法（引号、注释、A->B）、元素与动作解析、按行报错、状态（交换跟着身份走、窗口滑动、栈 / 队列、标记）、
 //       时序图时间（流水线错开、到达后才交付、丢失、计时器、arrive=next）、多场景步数、布局高度各步一致 / 物件不越界、`reference` 里的示例无错。
@@ -160,7 +160,20 @@ for (name, r) in [("GBN", run), ("排序", sorting), ("对比", compare)] + Anim
        "kit heap A=[53, 17, 78, 9, 45, 65, 87, 32] sort=yes", "kit bsearch A=[7, 10, 13, 16, 19, 29, 32, 33, 37, 41, 43] key=11",
        "kit tcp ssthresh=16 rounds=20 timeout=12 dup=17",
        "kit mul method=booth x=-0.11010101 y=0.10110011", "kit mul x=0.1101 y=-0.1011", "kit div method=restore x=0.101101 y=0.110111",
-       "kit div method=nonrestore x=0.1011011 y=-0.1101111", "kit div method=comp x=-0.0101 y=0.1101"].map({ ($0, AnimEngine.run($0)) }) {
+       "kit div method=nonrestore x=0.1011011 y=-0.1101111", "kit div method=comp x=-0.0101 y=0.1101",
+       "kit header proto=ipv4", "kit header proto=tcp", "kit header proto=udp", "kit header proto=ipv6",
+       "kit header proto=ipv4 hex=\"46 00 00 20 00 01 20 00 3f 11 00 00 0a 00 00 01 0a 00 00 02 01 01 00 00\"",
+       "kit header proto=tcp hex=\"04 89 00 50 0d d6 01 f4 00 00 00 00 70 12 40 00 c0 29 00 00 02 04 05 b4 01 01 04 02\"",
+       "kit header proto=ipv6 hex=\"60 00 00 00 00 20 06 40 20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00 01 fe 80 00 00 00 00 00 00 02 1a 2b ff fe 3c 4d 5e\"",
+       "kit encap data=1 transport=udp", "kit encap data=2000 net=ipv6", "kit frag total=4000 mtu=576", "kit frag data=3980 mtu=1500 df=1",
+       "tree R dir=right = (A (B D E) (C _ F))\npointer p -> R[B]\nstep x\n  insert R G under C left\n  move p -> R[G]",
+       "tree U dir=up = (1 (2 4 5) (3 6 7))\ntree L dir=left = (1 2 3 4)\nstep x\n  remove U 3",
+       "graph SDN layout=layers dir=down layers=[[控制器], [交换机S1, 交换机S2, 交换机S3], [H1, H2, H3, H4]] = 控制器-交换机S1, 控制器-交换机S2, 控制器-交换机S3, 交换机S1-交换机S3, 交换机S1-H1, 交换机S2-H2, 交换机S3-H3, 交换机S3-H4\npointer p -> SDN[H1]\nstep x\n  mark SDN[交换机S1-交换机S3] done",
+       "graph G layout=layers dir=up = A-B, A-C, B-D, C-D:5\ngraph K layout=layers dir=left = A->B, B->C",
+       "kit ipclass", "kit ipaddr ip=172.16.37.200/20", "kit ipaddr ip=10.1.2.3", "kit ipaddr ip=224.0.0.5", "kit ipaddr ip=192.168.1.1 mask=255.255.255.252",
+       "kit supernet nets=172.18.129.0/24,172.18.130.0/24,172.18.132.0/24,172.18.133.0/24", "kit subnet net=192.168.1.0/24 hosts=50",
+       "kit subnet net=10.0.0.0/8 n=16", "kit lpm dst=192.168.1.37 routes=\"192.168.1.0/24 R1, 192.168.1.32/27 R2, 192.168.1.64/26 R4, 0.0.0.0/0 R3\"",
+      ].map({ ($0, AnimEngine.run($0)) }) {
     for width in [320.0, 560.0, 720.0] {
         let layout = AnimLayout(run: r, width: CGFloat(width))
         var inside = true
@@ -413,6 +426,172 @@ for n in 1...3 {
 }
 check(mulBad.isEmpty, "原码 / Booth 乘法 1～3 位全部组合结果正确（小数与整数） \(mulBad.prefix(5))")
 check(divBad.isEmpty, "恢复余数 / 加减交替商与余数精确、补码除法误差 ≤ 2⁻ⁿ（1～3 位全部组合）\(divBad.prefix(5))")
+
+print("方向与分层、首部格式图、分组图（第四批）")
+do {
+    let t = AnimText.parse("tree T dir=right = (1 2 3)\ntree U = (1)\ngraph G layout=layers dir=down layers=[[A], [B, C], [D]] = A-B, A-C, B-D")
+    check(t.errors.isEmpty, "tree dir= / graph layers= 解析无错 \(t.errors)")
+    if case .tree(_, let d) = t.scenes[0].elements[0].kind { check(d == .right, "tree dir=right") }
+    if case .tree(_, let d) = t.scenes[0].elements[1].kind { check(d == .down, "tree 默认 dir=down") }
+    if case .graph(let n, _, let l, let d, let ranks) = t.scenes[0].elements[2].kind {
+        check(l == .layers && d == .down && ranks == [["A"], ["B", "C"], ["D"]] && n == ["A", "B", "C", "D"], "graph 手动分层 + dir=down")
+    }
+    let lone = AnimText.parse("graph G layers=[[A, Z], [B]] = A-B")
+    if case .graph(let n, _, let l, let d, _) = lone.scenes[0].elements[0].kind { check(n == ["A", "B", "Z"] && l == .layers && d == .right, "layers= 里多出的节点补上、隐含 layout=layers、默认 dir=right") }
+    let bad: [(String, String)] = [
+        ("graph G layers=[[A], [B]] = A-B, B-C", "C is not in any layer"),
+        ("graph G layers=[[A], [A, B]] = A-B", "A is listed twice"),
+        ("graph G layout=circle dir=down = A-B", "dir= only works with layout=layers"),
+        ("graph G layout=circle layers=[[A], [B]] = A-B", "layers=[…] needs layout=layers"),
+        ("tree T dir=north = (1)", "dir= takes down, up, right or left"),
+        ("bits H = A:4, B:x", "the size is a number of bits"),
+        ("bits H width=8 = A:200", "at most 20 rows"),
+        ("packet P = a:1\nstep x\n  group P[0..3] \"y\"", "P has 1 part(s): P[0..3] is out of range"),
+        ("array A = [1]\nstep x\n  group A[0] \"y\"", "is not a packet"),
+    ]
+    for (src, msg) in bad {
+        let r = AnimEngine.run(src)
+        check(r.errors.contains { $0.message.contains(msg) }, "报错：\(msg) \(r.errors.map(\.message))")
+    }
+    // bits：字段偏移、* 补满一行、按名字 / 下标找、label
+    let b = AnimEngine.run("bits H width=16 = A:4, B:4=7, 名 字:8, 可变:*\nlabel H[1] \"FF FF\"\nstep x\n  set H[2] = 9\n  mark H[0..1] active\n  set H[可变] = \"v\"")
+    check(b.errors.isEmpty, "bits 解析执行无错 \(b.errors)")
+    if case .bits(let fs, let w) = b.script.scenes[0].elements[0].kind {
+        check(w == 16 && fs.map(\.bits) == [4, 4, 8, 16] && fs[3].variable && fs[1].value == "7", "字段位数、* 补满下一整行、初值")
+    }
+    let b0 = b.state(scene: 0, step: 0).bits["H"]!, b1 = b.state(scene: 0, step: 1).bits["H"]!
+    check(b0.values == ["", "7", "", ""] && b0.labels[1] == "FF FF", "第 0 步：初值 + 行尾注释")
+    check(b1.values == ["", "7", "9", "v"] && b1.tones == [.active, .active, .normal, .normal], "按下标 / 名字 set、范围 mark")
+    let boxes = AnimLayout.bitFieldBoxes(offset: 64, bits: 128, width: 32)
+    check(boxes.count == 1 && boxes[0].rows == 4, "128 位地址 = 一个 4 行高的框")
+    let split = AnimLayout.bitFieldBoxes(offset: 24, bits: 16, width: 32)
+    check(split.count == 2 && split[0].cols == 8 && split[1].cols == 8 && split[1].row == 1, "跨行的字段切成两段")
+    // packet：插入、括号随两端段走、端点段删了括号消失、括号分层
+    let pk = AnimEngine.run("packet P unit=B = 数据:100\nstep a\n  insert P 0 \"TCP首部:20\"\n  group P[0..1] \"段\"\nstep b\n  insert P 0 \"IP首部:20\"\n  group P[0..2] \"数据报\"\nstep c\n  remove P 0\nstep d\n  set P[1] = \"数据:50\"\n  mark P[1] done")
+    check(pk.errors.isEmpty, "packet 执行无错 \(pk.errors)")
+    let p2 = pk.state(scene: 0, step: 2).packets["P"]!, p3 = pk.state(scene: 0, step: 3).packets["P"]!, p4 = pk.state(scene: 0, step: 4).packets["P"]!
+    check(p2.segments.map(\.name) == ["IP首部", "TCP首部", "数据"] && p2.groups.count == 2, "两次封装：三段、两个括号")
+    check(AnimLayout.packetGroupLevels(p2).values.sorted() == [1, 2], "嵌套括号分两层")
+    check(p3.groups.map(\.label) == ["段"], "去掉 IP 首部：「数据报」括号随之消失")
+    check(p4.segments[1].length == "50" && p4.segments[1].tone == .done, "set 改段、mark 标色")
+    check(pk.state(scene: 0, step: 2).packets["P"]!.segments[0].tone == .new && pk.state(scene: 0, step: 3).packets["P"]!.segments[0].tone == .normal, "新插入的段只在当步是 new 色")
+    check(AnimLayout.leadingNumber("1480") == 1480 && AnimLayout.leadingNumber("20 B") == 20 && AnimLayout.leadingNumber("x") == 0, "长度开头的数字")
+    // 节点框：长名字拉成长条，边从框边出发
+    check(AnimLayout.graphHalfWidth("A") == AnimLayout.graphNode / 2 && AnimLayout.graphHalfWidth("交换机S1") > AnimLayout.graphNode / 2, "短名字是圆、长名字是长条")
+    check(abs(AnimLayout.nodeExit(1, 0, hw: 40, hh: 15) - 40) < 0.01 && abs(AnimLayout.nodeExit(0, 1, hw: 40, hh: 15) - 15) < 0.01
+          && abs(AnimLayout.nodeExit(0.6, 0.8, hw: 15, hh: 15) - 15) < 0.01, "从中心到框边：长条的横 / 竖方向、圆的斜方向")
+}
+do {
+    // IPv6 地址的标准写法
+    func v6(_ hex: String) -> String { AnimKits.ipv6Text(try! AnimKits.parseHex(hex), 0) }
+    check(v6("00000000000000000000000000000000") == "::", "全 0 → ::")
+    check(v6("00000000000000000000000000000001") == "::1", "::1")
+    check(v6("20010db8000000000000000000000001") == "2001:db8::1", "2001:db8::1")
+    check(v6("20010db8000000010001000100010001") == "2001:db8:0:1:1:1:1:1", "单独一组 0 不压缩")
+    check(v6("20010000000000010000000000000001") == "2001:0:0:1::1", "一样长的全 0 段取前面那段……")
+    check(v6("20010db800000000000100000000000a") == "2001:db8::1:0:0:a", "……长度相同取最前面")
+    check(AnimKits.onesSum(try! AnimKits.parseHex("45 00 00 3c 1c 46 40 00 40 06 b1 e6 ac 10 0a 63 ac 10 0a 0c"), 20) == 0xFFFF, "首部检验和验算：正确的首部和为 0xFFFF")
+    check(AnimKits.bitValue([0x40, 0x00], 1, 2) == 2 && AnimKits.bitValue([0x0F, 0xF0], 4, 8) == 0xFF, "按位取值（跨字节）")
+
+    let ok = AnimEngine.run("kit header proto=ipv4 hex=\"45 00 00 3c 1c 46 40 00 40 06 b1 e6 ac 10 0a 63 ac 10 0a 0c\" lang=zh")
+    check(ok.errors.isEmpty, "IPv4 解析无错")
+    let okLast = lastState(ok).bits.values.first!
+    check(okLast.values[3] == "60" && okLast.values[5] == "010" && okLast.values[8] == "6 TCP" && okLast.values[10] == "172.16.10.99" && okLast.tones[9] == .done,
+          "IPv4：总长度 60、标志 010、协议 6 TCP、源地址、检验和正确标绿")
+    check(ok.states[0].contains { $0.caption.contains("DF = 1（不许分片），MF = 0") }, "IPv4：DF / MF 讲清楚")
+    let broken = AnimEngine.run("kit header proto=ipv4 hex=\"45 00 00 3c 1c 46 40 00 40 06 b1 e7 ac 10 0a 63 ac 10 0a 0c\" lang=zh")
+    check(lastState(broken).bits.values.first!.tones[9] == .wrong && broken.states[0].contains { $0.caption.contains("首部有差错") }, "检验和错一位：标红并说明")
+    let opt = AnimEngine.run("kit header proto=ipv4 hex=\"46 00 00 20 00 01 20 00 3f 11 00 00 0a 00 00 01 0a 00 00 02 01 01 00 00 ff\" lang=zh")
+    if case .bits(let fs, _)? = opt.script.scenes.first?.elements.first?.kind {
+        check(fs.count == 13 && fs[12].bits == 32, "首部长度 6：多一行 4 字节的可选字段")
+    }
+    check(opt.states[0].contains { $0.caption.contains("MF = 1（后面还有分片）") } && opt.states[0].contains { $0.caption.contains("后面 1 字节是数据部分") }, "MF = 1；多出来的字节算数据")
+    let syn = AnimEngine.run("kit header proto=tcp hex=\"04 89 00 50 0d d6 01 f4 00 00 00 00 50 02 40 00 c0 29 00 00\" lang=zh")
+    check(syn.errors.isEmpty && syn.states[0].contains { $0.caption.contains("SYN = 1：连接请求（第一次握手）") }, "TCP：SYN 报文段认出第一次握手")
+    check(syn.states[0].contains { $0.caption.contains("80（HTTP）") } && lastState(syn).bits.values.first!.values[2] == "232129012", "TCP：端口名、序号十进制")
+    let synack = AnimEngine.run("kit header proto=tcp hex=\"00 50 04 89 00 00 00 01 0d d6 01 f5 50 12 40 00 00 00 00 00\" lang=en")
+    check(synack.states[0].contains { $0.caption.contains("connection accepted (second handshake)") }, "TCP：SYN + ACK = 第二次握手")
+    let udp = AnimEngine.run("kit header proto=udp hex=\"c3 50 00 35 00 26 00 00\" lang=zh")
+    check(udp.states[0].contains { $0.caption.contains("53（DNS）") } && udp.states[0].contains { $0.caption.contains("数据 38 − 8 = 30 字节") } && udp.states[0].contains { $0.caption.contains("没有使用检验和") },
+          "UDP：DNS 端口、数据长度、检验和为 0")
+    let v6run = AnimEngine.run("kit header proto=ipv6 hex=\"60 00 00 00 00 20 06 40 20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00 01 fe 80 00 00 00 00 00 00 02 1a 2b ff fe 3c 4d 5e\" lang=zh")
+    let v6last = lastState(v6run).bits.values.first!
+    check(v6run.errors.isEmpty && v6last.values[6] == "2001:db8::1" && v6last.values[7] == "fe80::21a:2bff:fe3c:4d5e" && v6last.values[4] == "6 TCP", "IPv6：地址压缩写法、下一个首部")
+    for (src, msg) in [("kit header proto=ipv4 hex=\"45 00\"", "needs at least 20"), ("kit header proto=ipv4 hex=\"4g\"", "hexadecimal"),
+                       ("kit header proto=ipv6 hex=\"45 00 00 3c 1c 46 40 00 40 06 b1 e6 ac 10 0a 63 ac 10 0a 0c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\"", "not an IPv6 header"),
+                       ("kit header proto=ipv4 hex=\"47 00 00 3c 1c 46 40 00 40 06 b1 e6 ac 10 0a 63 ac 10 0a 0c\"", "says 28 bytes"),
+                       ("kit header proto=icmp", "proto= takes")] {
+        let r = AnimEngine.run(src)
+        check(r.errors.contains { $0.message.contains(msg) }, "header 报错：\(msg) \(r.errors.map(\.message))")
+    }
+    let fmt = AnimEngine.run("kit header proto=tcp lang=zh")
+    check(fmt.errors.isEmpty && fmt.stepCount == 13, "TCP 格式：13 步（控制位、选项各合一步）")
+
+    // 封装
+    let en = AnimEngine.run("kit encap data=1 transport=udp lang=zh")
+    let frameStep = en.states[0].first { $0.packets.values.first!.segments.contains { $0.name == "FCS" } }!.packets.values.first!
+    check(frameStep.segments.map(\.name) == ["以太网首部", "IPv4首部", "UDP首部", "应用数据", "填充", "FCS"] && frameStep.segments[4].length == "17",
+          "封装：1 字节数据 + UDP 8 + IP 20 = 29，补 17 字节填充")
+    check(frameStep.groups.map(\.label).contains("以太网帧 64 B"), "最短帧 64 字节")
+    let enLast = lastState(en).packets.values.first!
+    check(enLast.segments.map(\.name) == ["应用数据"] && enLast.groups.isEmpty, "拆封后只剩数据、括号都没了")
+    let big = AnimEngine.run("kit encap data=2000 lang=zh")
+    check(big.states[0].contains { $0.caption.contains("超过以太网 MTU 1500") }, "超过 MTU 时提示要分片")
+    check(AnimEngine.run("kit encap data=10 mode=encap").stepCount == 6, "mode=encap 只有封装")
+
+    // 分片
+    let fr = AnimEngine.run("kit frag total=4000 mtu=1500 lang=zh")
+    let grid = lastState(fr).grids.values.first!
+    check(fr.errors.isEmpty && grid.values == [["1500", "1480", "1", "0", "0"], ["1500", "1480", "1", "0", "185"], ["1040", "1020", "0", "0", "370"]], "4000 / 1500：三片，片偏移 0、185、370")
+    check(lastState(fr).packets.values.first!.segments.map(\.length) == ["20", "1480", "20", "1480", "20", "1020"], "分组图：每片自带首部")
+    let fr2 = AnimEngine.run("kit frag data=3980 mtu=576 lang=zh")
+    let g2 = lastState(fr2).grids.values.first!
+    check(g2.rows == 8 && g2.values[0][1] == "552" && g2.values[7][1] == "116" && g2.values[7][4] == "483" && g2.values[6][2] == "1" && g2.values[7][2] == "0",
+          "MTU 576：每片 552 字节（8 的倍数），共 8 片，末片 116 字节、偏移 483")
+    let drop = AnimEngine.run("kit frag total=4000 mtu=1500 df=1 lang=zh")
+    check(lastState(drop).elementTones.values.first == .wrong && drop.states[0].contains { $0.caption.contains("ICMP") }, "DF = 1：丢弃并发 ICMP")
+    check(AnimEngine.run("kit frag total=1000 mtu=1500").stepCount == 2, "不超过 MTU：不分片")
+    check(AnimEngine.run("kit frag total=4000 mtu=100").errors.contains { $0.message.contains("at most 8") }, "片太多报错")
+}
+
+print("IP 地址分类与 CIDR（第五批）")
+do {
+    check(try! AnimKits.parseIPv4("192.168.1.10") == 0xC0A8010A && AnimKits.ipText(0xC0A8010A) == "192.168.1.10", "点分十进制 ↔ 整数")
+    check(AnimKits.ipBinary(0xC0A8010A) == "11000000.10101000.00000001.00001010" && AnimKits.ipBinary(0xC0A80100, upTo: 24) == "11000000.10101000.00000001"
+          && AnimKits.ipBinary(0xC0A80120, upTo: 27) == "11000000.10101000.00000001.001", "二进制写法（只写前缀时末尾不留点）")
+    check(AnimKits.ipColRanges(20, 32) == ["22..25", "27..34"] && AnimKits.ipColRanges(0, 3) == ["0..2"], "位 → 列范围按字节切开")
+    check((try? AnimKits.maskLength(0xFFFFF000)) == 20 && (try? AnimKits.maskLength(0xFF00FF00)) == nil, "掩码长度、不连续的掩码报错")
+    for bad in ["256.1.1.1", "1.2.3", "1.2.3.4/33", "a.b.c.d"] { check((try? AnimKits.parseCIDR(bad)) == nil, "非法地址报错：\(bad)") }
+    let one = lastState(AnimEngine.run("kit ipaddr ip=172.16.37.200/20 lang=zh"))
+    check(one.vars["网络地址"]?.value == "172.16.32.0/20" && one.vars["广播地址"]?.value == "172.16.47.255" && one.vars["可用主机"]?.value == "4094",
+          "172.16.37.200/20：网络 172.16.32.0、广播 172.16.47.255、4094 台")
+    let cls = AnimEngine.run("kit ipaddr ip=10.1.2.3 lang=zh")
+    check(lastState(cls).vars["网络地址"]?.value == "10.0.0.0/8" && cls.states[0].contains { $0.caption.contains("A 类") } && cls.states[0].contains { $0.caption.contains("私有地址") },
+          "不给掩码按类别：10.1.2.3 → A 类 /8，私有地址")
+    let mc = AnimEngine.run("kit ipaddr ip=224.0.0.5 lang=zh")
+    check(mc.errors.isEmpty && mc.stepCount == 3 && lastState(mc).caption.contains("多播"), "D 类：只讲类别")
+    let p2p = lastState(AnimEngine.run("kit ipaddr ip=192.168.1.1 mask=255.255.255.252 lang=zh"))
+    check(p2p.vars["网络地址"]?.value == "192.168.1.0/30" && p2p.vars["可用主机"]?.value == "2", "mask= 写法：/30 两台")
+    check(lastState(AnimEngine.run("kit ipaddr ip=192.168.1.0/24 lang=zh")).caption.contains("本身就是网络地址"), "地址恰好是网络地址时提醒")
+    let sup = AnimEngine.run("kit supernet nets=172.18.129.0/24,172.18.130.0/24,172.18.132.0/24,172.18.133.0/24 lang=zh")
+    check(lastState(sup).caption.contains("172.18.128.0/21") && lastState(sup).caption.contains("多包含了 1024 个"), "聚合：172.18.128.0/21，多包含 1024 个地址（王道例题）")
+    check(lastState(AnimEngine.run("kit supernet nets=192.168.0.0/24,192.168.1.0/24 lang=zh")).caption.contains("192.168.0.0/23") , "两个相邻 /24 → /23，正好覆盖")
+    check(lastState(AnimEngine.run("kit supernet nets=192.168.0.0/24,192.168.1.0/24 lang=zh")).caption.contains("正好覆盖"), "正好覆盖时这样说")
+    let sub = AnimEngine.run("kit subnet net=192.168.1.0/24 hosts=50 lang=zh")
+    check(sub.stepCount == 7 && sub.states[0].contains { $0.caption.contains("192.168.1.192/26") && $0.caption.contains("广播 192.168.1.255") }, "按主机数分：/26 四个子网")
+    let sub2 = AnimEngine.run("kit subnet net=172.16.0.0/16 n=5 lang=zh")
+    check(sub2.states[0].contains { $0.caption.contains("2³ = 8 ≥ 5") } && sub2.states[0].contains { $0.caption.contains("172.16.224.0/19") }, "按个数分：5 个 → 借 3 位，/19")
+    let lpm = AnimEngine.run("kit lpm dst=192.168.1.37 routes=\"192.168.1.0/24 R1, 192.168.1.32/27 R2, 192.168.1.64/26 R4, 0.0.0.0/0 R3\" lang=zh")
+    check(lastState(lpm).caption.contains("192.168.1.32/27 → 下一跳 R2") && lpm.states[0].contains { $0.caption.contains("第 26 位不同") }, "最长前缀匹配取 /27")
+    check(lastState(AnimEngine.run("kit lpm dst=10.0.0.1 routes=\"192.168.1.0/24 R1\" lang=zh")).caption.contains("丢弃"), "都不匹配：丢弃")
+    for (src, msg) in [("kit subnet net=192.168.1.5/24 n=4", "not a network address"), ("kit subnet net=10.0.0.0/8 hosts=1000", "at most 16"), ("kit subnet net=192.168.1.0/24 n=64", "2…16"),
+                       ("kit subnet net=192.168.1.0/30 n=2", "not enough"), ("kit subnet net=192.168.1.0/24 n=2 hosts=3", "not both"),
+                       ("kit supernet nets=10.0.0.0/8", "takes 2…8"), ("kit ipaddr ip=1.2.3.4/8 mask=255.0.0.0", "not both"),
+                       ("kit ipaddr ip=1.2.3.4 mask=255.0.255.0", "not a valid mask"), ("kit lpm dst=1.2.3.4", "usage")] {
+        let r = AnimEngine.run(src)
+        check(r.errors.contains { $0.message.contains(msg) }, "报错：\(msg) \(r.errors.map(\.message))")
+    }
+}
 
 print("写法说明里的示例")
 for (i, example) in AnimText.examples.enumerated() {

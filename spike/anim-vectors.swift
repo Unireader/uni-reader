@@ -2,7 +2,7 @@
 // 安卓 `shared/anim/` 的 `AnimVectorsTest` 读同一份逐条比对（展开后的文字、报错、每个场景每一步的状态摘要、时序图长度）。
 // 比的是「画面上该有什么」，不比坐标（两端字体不同，文字宽度对不上）。改了 Swift 的解析 / 套件 / 执行，重跑本脚本、安卓测试跟着过。
 // 运行：
-//   mkdir -p build/spike && cp spike/anim-vectors.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimKits3.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift build/spike/main.swift -o build/spike/anim-vectors && build/spike/anim-vectors > spike/anim-vectors.txt
+//   mkdir -p build/spike && cp spike/anim-vectors.swift build/spike/main.swift && swiftc Sources/Anim/AnimText.swift Sources/Anim/AnimKits.swift Sources/Anim/AnimKits2.swift Sources/Anim/AnimKits3.swift Sources/Anim/AnimKits4.swift Sources/Anim/AnimKits5.swift Sources/Anim/AnimReference.swift Sources/Anim/AnimState.swift Sources/Anim/AnimStructures.swift build/spike/main.swift -o build/spike/anim-vectors && build/spike/anim-vectors > spike/anim-vectors.txt
 import Foundation
 
 func esc(_ s: String) -> String {
@@ -10,6 +10,20 @@ func esc(_ s: String) -> String {
 }
 
 func f3(_ x: Double) -> String { String(format: "%.3f", x) }
+
+/// 新几种声明的解析结果（方向 / 分层 / 首部字段 / 分组段）：只为这几种写，老的组不多出行（安卓 `AnimVectorsTest.decl` 同一份）。
+func decl(_ e: AnimElement) -> String? {
+    switch e.kind {
+    case .tree(_, let dir) where dir != .down: return "tree dir=\(dir.rawValue)"
+    case .graph(_, _, .layers, let dir, let ranks):
+        return "graph layers dir=\(dir.rawValue) ranks=" + ranks.map { $0.joined(separator: ",") }.joined(separator: "|")
+    case .bits(let fields, let width):
+        return "bits w=\(width) f=" + fields.map { "\($0.variable ? "*" : "")\($0.name):\($0.bits)=\($0.value)" }.joined(separator: ",")
+    case .packet(let segs, let unit):
+        return "packet unit=\(unit) segs=" + segs.map { "\($0.name):\($0.length)" }.joined(separator: ",")
+    default: return nil
+    }
+}
 
 /// 一个场景某一步的状态摘要（安卓 `AnimDigest.state` 逐字同一份）。
 func digest(_ s: AnimSceneState) -> String {
@@ -55,6 +69,16 @@ func digest(_ s: AnimSceneState) -> String {
         let arrows = sh.arrows.map { "\($0.col):\($0.fromRow):\($0.toRow)" }.joined(separator: ";")
         let labels = sh.labels.keys.sorted().map { "\($0)=\(sh.labels[$0]!)" }.joined(separator: ";")
         parts.append("sheet:\(name)=" + cells.joined(separator: ";") + "/" + rules + "/" + arrows + "/" + labels)
+    }
+    for name in s.bits.keys.sorted() {
+        let b = s.bits[name]!
+        parts.append("bits:\(name)=" + zip(b.values, b.tones).map { "\($0):\($1.rawValue)" }.joined(separator: ";")
+                     + "/" + b.labels.keys.sorted().map { "\($0)=\(b.labels[$0]!)" }.joined(separator: ";"))
+    }
+    for name in s.packets.keys.sorted() {
+        let p = s.packets[name]!
+        let groups = p.groups.map { "\(p.index(of: $0.from).map(String.init) ?? "?")..\(p.index(of: $0.to).map(String.init) ?? "?"):\($0.label)" }
+        parts.append("packet:\(name)=" + p.segments.map { "\($0.name):\($0.length):\($0.tone.rawValue)" }.joined(separator: ";") + "/" + groups.joined(separator: ";"))
     }
     for name in s.pointers.keys.sorted() {
         let desc: String
@@ -148,6 +172,41 @@ for lang in ["zh", "en"] {
         ("div-nonrestore-fix-\(lang)", "kit div method=nonrestore x=0.0110 y=0.1110 lang=\(lang)"),
         ("div-comp-\(lang)", "kit div method=comp x=0.1000 y=-0.1011 lang=\(lang)"),
         ("div-comp-neg-\(lang)", "kit div method=comp x=-0.0101 y=0.1101 lang=\(lang)"),
+        ("hdr-ipv4-\(lang)", "kit header proto=ipv4 lang=\(lang)"),
+        ("hdr-ipv6-\(lang)", "kit header proto=ipv6 lang=\(lang)"),
+        ("hdr-tcp-\(lang)", "kit header proto=tcp lang=\(lang)"),
+        ("hdr-udp-\(lang)", "kit header proto=udp lang=\(lang)"),
+        ("hdr-ipv4-hex-\(lang)", "kit header proto=ipv4 hex=\"45 00 00 3c 1c 46 40 00 40 06 b1 e6 ac 10 0a 63 ac 10 0a 0c\" lang=\(lang)"),
+        ("hdr-ipv4-opt-\(lang)", "kit header proto=ipv4 hex=\"46 00 00 20 00 01 20 00 3f 11 00 00 0a 00 00 01 0a 00 00 02 01 01 00 00 ff\" lang=\(lang)"),
+        ("hdr-tcp-hex-\(lang)", "kit header proto=tcp hex=\"04 89 00 50 0d d6 01 f4 00 00 00 00 70 12 40 00 c0 29 00 00 02 04 05 b4 01 01 04 02 aa\" lang=\(lang)"),
+        ("hdr-tcp-fin-\(lang)", "kit header proto=tcp hex=\"00 50 04 89 00 00 00 01 0d d6 01 f5 50 31 40 00 00 00 00 07\" lang=\(lang)"),
+        ("hdr-udp-hex-\(lang)", "kit header proto=udp hex=\"0x00 0x44 0x00 0x43 0x01 0x34 0xab 0xcd 0x01\" lang=\(lang)"),
+        ("hdr-ipv6-hex-\(lang)", "kit header proto=ipv6 hex=\"6e 12 34 56 00 20 3a 01 20 01 00 00 00 00 00 01 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01\" lang=\(lang)"),
+        ("encap-\(lang)", "kit encap data=100 lang=\(lang)"),
+        ("encap-pad-\(lang)", "kit encap data=1 transport=udp net=ipv6 lang=\(lang)"),
+        ("encap-small-\(lang)", "kit encap data=5 transport=udp mode=encap lang=\(lang)"),
+        ("encap-big-\(lang)", "kit encap data=3000 lang=\(lang)"),
+        ("frag-\(lang)", "kit frag total=4000 mtu=1500 id=777 lang=\(lang)"),
+        ("frag-576-\(lang)", "kit frag data=3980 mtu=576 header=24 lang=\(lang)"),
+        ("frag-df-\(lang)", "kit frag total=4000 mtu=1500 df=1 lang=\(lang)"),
+        ("frag-none-\(lang)", "kit frag total=1000 lang=\(lang)"),
+        ("ipclass-\(lang)", "kit ipclass lang=\(lang)"),
+        ("ipaddr-\(lang)", "kit ipaddr ip=172.16.37.200/20 lang=\(lang)"),
+        ("ipaddr-a-\(lang)", "kit ipaddr ip=10.1.2.3 lang=\(lang)"),
+        ("ipaddr-b-\(lang)", "kit ipaddr ip=128.0.0.0 lang=\(lang)"),
+        ("ipaddr-c-\(lang)", "kit ipaddr ip=192.168.1.255 lang=\(lang)"),
+        ("ipaddr-d-\(lang)", "kit ipaddr ip=224.0.0.5 lang=\(lang)"),
+        ("ipaddr-e-\(lang)", "kit ipaddr ip=250.1.1.1 lang=\(lang)"),
+        ("ipaddr-mask-\(lang)", "kit ipaddr ip=192.168.1.1 mask=255.255.255.252 lang=\(lang)"),
+        ("ipaddr-31-\(lang)", "kit ipaddr ip=10.0.0.1/31 lang=\(lang)"),
+        ("ipaddr-32-\(lang)", "kit ipaddr ip=127.0.0.1/32 lang=\(lang)"),
+        ("ipaddr-0-\(lang)", "kit ipaddr ip=0.0.0.0/0 lang=\(lang)"),
+        ("supernet-\(lang)", "kit supernet nets=172.18.129.0/24,172.18.130.0/24,172.18.132.0/24,172.18.133.0/24 lang=\(lang)"),
+        ("supernet-exact-\(lang)", "kit supernet nets=[192.168.0.0/24, 192.168.1.0/24, 192.168.0.0/25] lang=\(lang)"),
+        ("subnet-hosts-\(lang)", "kit subnet net=192.168.1.0/24 hosts=50 lang=\(lang)"),
+        ("subnet-n-\(lang)", "kit subnet net=172.16.0.0/16 n=5 lang=\(lang)"),
+        ("lpm-\(lang)", "kit lpm dst=192.168.1.37 routes=\"192.168.1.0/24 R1, 192.168.1.32/27 R2, 192.168.1.64/26 R4, 0.0.0.0/0 R3\" lang=\(lang)"),
+        ("lpm-none-\(lang)", "kit lpm dst=10.0.0.1 routes=\"192.168.1.0/24, 172.16.0.0/12 路由器B\" lang=\(lang)"),
     ]
 }
 cases += [
@@ -159,6 +218,10 @@ cases += [
     ("sheet", "sheet S\nwrite S[1,0] \"12 4\"\nrule S[1,0..3] above\nlabel S[0] \"商\"\nstep 写\n  write S[2,1] \"x\"\n  arrow S[1..2,3]\n  mark S[1,0..3] active\n  set S[3,0] = \"7\""),
     ("errors", "array A = [1, 2]\nlanes X\nstep s\n  mark A[0] shiny\n  frobnicate\n  swap A[0] A[0..1]\n  mark A[5] active\n  send X -> Y \"m\"\n  timer A \"T\" expire\nkit frobnicate x=1\nkit bubble A=[2, 1] colour=red\nkit sr window=5 mod=8\nkit dijkstra G=\"A-B\"\nkit page alg=lru refs=1,2 frames=9\nkit cache map=set lines=5 ways=2 blocks=1\nkit tcp rounds=5 timeout=3 dup=3\nkit heap A=[1, 1]\nkit div x=0.11 y=0.1\nkit mul x=1.1 y=0.1\nkit div method=restore x=0.1 y=0.1111111\nkit mul x=1101 y=0.1\nkit div x=101 y=1101"),
     ("empty", ""),
+    ("dir-layers", "tree R dir=right = (A (B D E) (C _ F))\ntree U dir=up = (1 2 3)\ntree L dir=left\ngraph SDN layout=layers dir=down layers=[[控制器], [S1, S2, S3], [H1, H2]] = 控制器-S1, 控制器-S2, 控制器-S3, S1-S3, S1-H1, S3-H2\ngraph G layout=layers = A-B, B-C\ngraph K layers=[[A, Z], [B]] = A->B:3\npointer p -> SDN[S1]\nstep x\n  insert L 1\n  insert R G under C left\n  mark SDN[S1-S3] done\n  move p -> SDN[H1]"),
+    ("bits-packet", "bits H width=16 = A:4, B:4=7, 名 字:8, 可变:*\nlabel H[1] \"FF FF\"\npacket P unit=B = 数据:100\ngroup P[0..0] \"数据\"\nstep a\n  set H[2] = 9\n  mark H[0..1] active\n  set H[可变] = \"v\"\n  insert P 0 \"TCP首部:20\"\n  group P[0..1] \"段\"\nstep b\n  insert P 0 \"IP首部:20\"\n  group P[0..2] \"数据报\"\n  label H[0] \"x\"\n  mark H done\nstep c\n  remove P 0\n  set P[1] = \"数据:50\"\n  mark P[1] done\n  unmark H[0]"),
+    ("bits-packet-errors", "bits H = A:4, B:x\nbits J width=8 = A:200\nbits K width=100 = A:1\ngraph G layers=[[A], [B]] = A-B, B-C\ngraph G2 layers=[[A], [A, B]] = A-B\ngraph G3 layout=circle dir=down = A-B\ngraph G4 layout=circle layers=[[A], [B]] = A-B\ntree T dir=north = (1)\npacket P = a:1\narray A = [1]\nstep x\n  group P[0..3] \"y\"\n  group A[0] \"y\"\n  remove P 5\n  insert P 9 \"z\"\n  set P[3] = \"q\"\n  mark P[0..4] done\n  label P[0] \"n\"\nkit header proto=icmp\nkit header hex=\"45 00\"\nkit header proto=ipv4 hex=\"4g\"\nkit header proto=ipv4 hex=\"47 00 00 3c 1c 46 40 00 40 06 b1 e6 ac 10 0a 63 ac 10 0a 0c\"\nkit header proto=ipv6 hex=\"45 00 00 3c 1c 46 40 00 40 06 b1 e6 ac 10 0a 63 ac 10 0a 0c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\"\nkit header proto=tcp hex=\"04 89 00 50 0d d6 01 f4 00 00 00 00 30 02 40 00 c0 29 00 00\"\nkit encap data=0\nkit frag mtu=1500\nkit frag total=4000 data=3980\nkit frag total=4000 mtu=100\nkit frag total=4000 header=22\nkit frag total=100 mtu=30"),
+    ("ip-errors", "kit ipaddr ip=256.1.1.1\nkit ipaddr ip=1.2.3.4/33\nkit ipaddr ip=1.2.3.4/8 mask=255.0.0.0\nkit ipaddr ip=1.2.3.4 mask=255.0.255.0\nkit ipaddr\nkit supernet nets=10.0.0.0/8\nkit supernet nets=10.0.0.1/8,10.1.0.0/16\nkit supernet nets=10.0.0.0,10.1.0.0/16\nkit subnet net=192.168.1.5/24 n=4\nkit subnet net=10.0.0.0/8 hosts=1000\nkit subnet net=192.168.1.0/30 n=2\nkit subnet net=192.168.1.0/24 n=2 hosts=3\nkit subnet net=192.168.1.0/24\nkit subnet net=192.168.1.0 n=2\nkit lpm dst=1.2.3.4\nkit lpm dst=1.2.3.4 routes=\"1.2.3.0 R\"\nkit lpm dst=1.2.3.4 routes=\"1.2.3.5/24 R\"\nkit ipclass x=1"),
     ("scene-bad", "array A = [1]\nscene 乙\n  array B = [2]\n  step x\n    mark B[0] done"),
 ]
 
@@ -170,6 +233,9 @@ for (name, src) in cases {
     print("exp \(esc(AnimKits.expand(src).text))")
     print("title \(esc(run.script.title ?? "-"))")
     print("steps \(run.stepCount) scenes \(run.script.scenes.count)")
+    for (i, scene) in run.script.scenes.enumerated() {
+        for e in scene.elements { if let d = decl(e) { print("el \(i) \(e.name) \(esc(d))") } }
+    }
     for e in run.errors { print("err \(e.line) \(esc(e.message))") }
     for (i, len) in run.timelineLength.enumerated() { print("tl \(i) \(f3(len))") }
     for i in run.states.indices {
