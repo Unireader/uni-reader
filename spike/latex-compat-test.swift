@@ -30,6 +30,8 @@ let cases: [(String, String)] = [
     (#"\ldots\cdots\vdots"#, #"\ldots\cdots\vdots"#),                  // 别的 dots 不动
     (#"a \\dots"#, #"a \\dots"#),                                      // `\\` 换行后面的文字不当命令
     (#"a\leqslant b\geqslant c"#, #"a\leq b\geq c"#),
+    (#"\frac{\tan x}{x} \lt \frac{4}{\pi}, x \in (0, \frac{\pi}{4})"#, #"\frac{\tan x}{x} < \frac{4}{\pi}, x \in (0, \frac{\pi}{4})"#),
+    (#"a\gt b"#, #"a> b"#),
     (#"\lvert x\rvert + \lVert v\rVert"#, #"| x| + \| v\|"#),
     (#"\left( a \middle| b \right)"#, #"\left( a | b \right)"#),
     (#"\operatorname{sgn} x + \operatorname*{arg\,max}"#, #"\mathrm{sgn} x + \mathrm{arg\,max}"#),
@@ -69,7 +71,7 @@ let samples = [
     #"\displaystyle y''+2y'+5y = e^{-x}\big[(-3\cos 2x+4\sin 2x) - 2(\cos 2x+2\sin 2x) + 5\cos 2x\big]"#,
     #"\Bigl( a \Bigr)"#, #"\biggl[ a \biggr]"#, #"a \bigm| b"#,
     #"\dfrac{a}{b}"#, #"\tfrac{a}{b}"#, #"\cfrac{a}{b}"#, #"\dbinom{n}{k}"#,
-    #"a\dots b"#, #"a\leqslant b"#, #"\lvert x\rvert"#, #"\left( a \middle| b \right)"#,
+    #"a\dots b"#, #"a\leqslant b"#, #"\frac{\tan x}{x} \lt \frac{4}{\pi}, x \in (0, \frac{\pi}{4})"#, #"a\gt b"#, #"\lvert x\rvert"#, #"\left( a \middle| b \right)"#,
     #"\operatorname{sgn} x"#, #"\iint_D f"#, #"a \pmod{p}"#, #"a\bmod b"#,
     #"a\not= b"#, #"x\not\in A"#, #"a\implies b"#, #"\boldsymbol{\alpha}"#, #"\mathscr{F}"#,
     #"\varnothing"#, #"x \tag{1}"#,

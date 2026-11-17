@@ -754,6 +754,9 @@
 "Choose a notes folder to edit in place. UniReader does not copy or move it." = "Choose a notes folder to edit in place. UniReader does not copy or move it.";
 "Copied into Notes/%@ — %d files in all, nothing was changed." = "Copied into Notes/%@ — %d files in all, nothing was changed.";
 "%d [[links]] point at notes that are not here: %@" = "%d [[links]] point at notes that are not here: %@";
+"Merged into the existing folder Notes/%@: %d files were already the same, %d were replaced (the old copies are in the Trash)." = "Merged into the existing folder Notes/%@: %d files were already the same, %d were replaced (the old copies are in the Trash).";
+"%d images from elsewhere in the vault were copied along, keeping their paths." = "%d images from elsewhere in the vault were copied along, keeping their paths.";
+"%d images could not be found: %@" = "%d images could not be found: %@";
 "The note file is missing." = "The note file is missing.";
 "Referenced folder · %d notes" = "Referenced folder · %d notes";
 "%@ ↗ (not on this Mac)" = "%@ ↗ (not on this Mac)";
@@ -1535,3 +1538,4 @@
 "Unlink %d exercises from their PDF?" = "Unlink %d exercises from their PDF?";
 "The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone." = "The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone.";
 "The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF." = "The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF.";
+"Quick Look" = "Quick Look";

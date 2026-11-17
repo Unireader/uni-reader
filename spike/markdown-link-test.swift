@@ -254,6 +254,45 @@ check(fm.fileExists(atPath: notesRoot.appendingPathComponent("attachments/图.pn
 check(MarkdownImport.readText(vault.appendingPathComponent("数学/微积分/极限.md")) == source,
       "🔴 原目录没被动过")
 
+print("\n— 11b) 只导 vault 里的子目录：目录外的图片按 vault 内相对路径一起搬进来 —")
+do {
+    let v = tmp.appendingPathComponent("vault2")
+    for d in [".obsidian", "attachments", "课/第一章", "img"] {
+        try! fm.createDirectory(at: v.appendingPathComponent(d), withIntermediateDirectories: true)
+    }
+    try! Data([1, 2, 3]).write(to: v.appendingPathComponent("attachments/外图.png"))
+    try! Data([4, 5]).write(to: v.appendingPathComponent("img/相对.jpg"))
+    try! Data([6]).write(to: v.appendingPathComponent("课/第一章/内图.png"))
+    let body = "![[外图.png]] ![](../../img/相对.jpg) ![[内图.png]] ![[不存在.png]] `![[代码里.png]]`"
+    try! body.write(to: v.appendingPathComponent("课/第一章/笔记.md"), atomically: true, encoding: .utf8)
+    let sub = v.appendingPathComponent("课")
+    check(MarkdownImport.vaultRoot(containing: sub)?.standardizedFileURL.path == v.standardizedFileURL.path, "往上找到 vault 根")
+    check(MarkdownImport.vaultRoot(containing: tmp) == nil, "不在 vault 里 → nil")
+    let imgs = MarkdownImport.externalImages(in: sub, vault: v)
+    let rels = imgs.extra.map { $0.1 }.sorted()
+    check(rels == ["attachments/外图.png", "img/相对.jpg"], "目录外两张（得到 \(rels)）；目录里那张不重复算")
+    check(imgs.missing == ["不存在.png"], "找不到的照报（得到 \(imgs.missing)）；代码里的不算")
+    let dst = tmp.appendingPathComponent("ws2/Notes/课")
+    let r1 = try! MarkdownImport.copyTree(from: sub, to: dst, extra: imgs.extra)
+    check(r1.files == 4 && r1.notes == 1 && r1.failed.isEmpty, "复制 1 篇 + 3 张图（得到 \(r1.files)）")
+    check(fm.fileExists(atPath: dst.appendingPathComponent("attachments/外图.png").path), "外图落在 attachments/外图.png")
+    eq(MarkdownImport.readText(dst.appendingPathComponent("第一章/笔记.md")) ?? "", body, "🔴 正文一字不改")
+
+    print("\n— 11c) 同名目录合并：一样的跳过，不一样的旧文件先进废纸篓再覆盖 —")
+    try! (body + "\n改了").write(to: v.appendingPathComponent("课/第一章/笔记.md"), atomically: true, encoding: .utf8)
+    try! "新增".write(to: v.appendingPathComponent("课/第一章/新篇.md"), atomically: true, encoding: .utf8)
+    var trashed: [String] = []
+    let r2 = try! MarkdownImport.copyTree(from: sub, to: dst, extra: imgs.extra,
+                                          trash: { trashed.append($0.lastPathComponent); try fm.removeItem(at: $0) })
+    check(r2.unchanged == 3, "3 张图内容相同没动（得到 \(r2.unchanged)）")
+    check(r2.replaced == ["第一章/笔记.md"] && trashed == ["笔记.md"], "改过的那篇：旧的先进废纸篓再覆盖（得到 \(r2.replaced)）")
+    check(r2.files == 2 && r2.notes == 2, "写了 2 篇：覆盖 1 + 新增 1（得到 \(r2.files)）")
+    check(MarkdownImport.readText(dst.appendingPathComponent("第一章/笔记.md"))?.hasSuffix("改了") == true, "覆盖成新内容")
+    let r3 = try! MarkdownImport.copyTree(from: sub, to: dst, extra: imgs.extra,
+                                          trash: { _ in throw NSError(domain: "t", code: 1) })
+    check(r3.files == 0 && r3.replaced.isEmpty && r3.failed.isEmpty, "全一样时什么都不动")
+}
+
 print("\n— 12) 扫描 → 建树 → 解析，整条串起来 —")
 var idx2 = NoteIndex()
 var scanned: [NoteItem] = []

@@ -103,28 +103,122 @@ enum MarkdownImport {
         }
     }
 
+    /// 复制结果。`replaced`：目标里原来就有、内容不同、旧的已先进废纸篓再覆盖的那些（相对目标目录）；
+    /// `unchanged`：目标里原来就有、内容一样、没动的个数（同名目录合并时才会有）。
+    struct CopyResult {
+        var files = 0
+        var notes = 0
+        var unchanged = 0
+        var replaced: [String] = []
+        var failed: [(String, String)] = []
+    }
+
     /// 递归复制一个笔记目录（md + 附件 + 子目录，原样搬）。跳过的目录同 `walk`。
     /// **逐文件复制**而不是 `copyItem` 整个目录：那样会把 `.obsidian` 这类也带进来。
-    /// 返回（复制了几个文件, 其中几篇是 md, 失败的那些）。
+    /// `extra`：另外要搬进来的文件（源文件, 落在 dst 下的相对路径）——vault 里目录外的图片（`externalImages`）。
+    /// 目标已存在同名文件（导入时同名目录合并，2026-11-17 用户定）：内容一样跳过；不一样 → **旧的先进废纸篓再覆盖**（红线 11），
+    /// 进废纸篓失败就不覆盖、记进 failed。
     @discardableResult
-    static func copyTree(from src: URL, to dst: URL) throws -> (files: Int, notes: Int, failed: [(String, String)]) {
+    static func copyTree(from src: URL, to dst: URL, extra: [(URL, String)] = [],
+                         trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws -> CopyResult {
         let fm = FileManager.default
-        var files = 0, notes = 0
-        var failed: [(String, String)] = []
-        for url in walk(src) {
-            let rel = relativePath(of: url, under: src)
+        var r = CopyResult()
+        let own = walk(src).map { ($0, relativePath(of: $0, under: src)) }
+        let ownRels = Set(own.map { $0.1.lowercased() })
+        // 目录里自己的文件优先：目录外的图片落点撞上目录里已有的同一路径，就用目录里那份
+        let items = own + extra.filter { !ownRels.contains($0.1.lowercased()) }
+        for (url, rel) in items {
             let target = dst.appendingPathComponent(rel)
             do {
                 try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+                if fm.fileExists(atPath: target.path) {
+                    if fm.contentsEqual(atPath: url.path, andPath: target.path) { r.unchanged += 1; continue }
+                    try trash(target)
+                    r.replaced.append(rel)
+                }
                 try fm.copyItem(at: url, to: target)
-                files += 1
-                if isMarkdown(url) { notes += 1 }
+                r.files += 1
+                if isMarkdown(url) { r.notes += 1 }
             } catch {
-                failed.append((rel, "\(error)"))
+                r.failed.append((rel, "\(error)"))
             }
         }
-        return (files, notes, failed)
+        return r
+    }
+
+    // MARK: - Obsidian：目录外的图片
+
+    /// 往上找 Obsidian vault 的根（含 `.obsidian/` 的那一级，`dir` 自己也算）。找不到 → nil。
+    static func vaultRoot(containing dir: URL) -> URL? {
+        let fm = FileManager.default
+        var cur = dir.standardizedFileURL
+        while true {
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: cur.appendingPathComponent(".obsidian").path, isDirectory: &isDir), isDir.boolValue {
+                return cur
+            }
+            let up = cur.deletingLastPathComponent()
+            if up.path == cur.path || cur.path == "/" { return nil }
+            cur = up
+        }
+    }
+
+    /// 选中目录里的笔记引用到、但文件在目录**外面**（vault 里别处，如根目录的 `attachments/`）的图片。
+    /// 找法照 Obsidian：`![](相对路径)` 先按笔记所在目录算，再按 vault 根算；都不中就按文件名在整个 vault 里找。
+    /// 返回 `extra`（源文件, 落点 = 它在 vault 里的相对路径）和一张图都没找到的那些引用名。
+    /// 落点保持 vault 内相对路径、正文不改：显示时 `NoteIndex.file(for:)` 会按文件名全库找到它。
+    static func externalImages(in src: URL, vault: URL?) -> (extra: [(URL, String)], missing: [String]) {
+        let fm = FileManager.default
+        let srcPath = src.standardizedFileURL.path
+        func inside(_ u: URL, _ base: String) -> Bool {
+            let p = u.standardizedFileURL.path
+            return p == base || p.hasPrefix(base + "/")
+        }
+        func isFile(_ u: URL) -> Bool {
+            var d: ObjCBool = false
+            return fm.fileExists(atPath: u.path, isDirectory: &d) && !d.boolValue
+        }
+        var srcByName: [String: URL] = [:]
+        for u in walk(src) where !isMarkdown(u) {
+            srcByName[u.lastPathComponent.lowercased()] = srcByName[u.lastPathComponent.lowercased()] ?? u
+        }
+        var vaultByName: [String: URL]?   // 按需才扫整个 vault
+        var seen = Set<String>()
+        var extra: [(URL, String)] = []
+        var missing: [String] = []
+        for note in walk(src) where isMarkdown(note) {
+            guard let text = readText(note) else { continue }
+            for ref in MarkdownLink.imageReferences(text) {
+                let clean = ref.hasPrefix("/") ? String(ref.dropFirst()) : ref
+                var candidates = [note.deletingLastPathComponent().appendingPathComponent(clean),
+                                  src.appendingPathComponent(clean)]
+                if let vault { candidates.append(vault.appendingPathComponent(clean)) }
+                var hit = candidates.first(where: isFile)
+                let name = (clean as NSString).lastPathComponent.lowercased()
+                if hit == nil { hit = srcByName[name] }
+                if hit == nil, let vault {
+                    if vaultByName == nil {
+                        var m: [String: URL] = [:]
+                        for u in walk(vault) where !isMarkdown(u) {
+                            let k = u.lastPathComponent.lowercased()
+                            if m[k] == nil { m[k] = u }
+                        }
+                        vaultByName = m
+                    }
+                    hit = vaultByName?[name]
+                }
+                guard let hit else {
+                    if seen.insert("?" + ref).inserted { missing.append(ref) }
+                    continue
+                }
+                guard !inside(hit, srcPath), let vault, inside(hit, vault.standardizedFileURL.path) else { continue }
+                let rel = relativePath(of: hit, under: vault)
+                // 隐藏目录 / trash 里的不搬（扫描时也看不见）
+                guard !rel.split(separator: "/").dropLast().contains(where: { $0.hasPrefix(".") || $0.lowercased() == "trash" }) else { continue }
+                if seen.insert(rel.lowercased()).inserted { extra.append((hit, rel)) }
+            }
+        }
+        return (extra, missing)
     }
 
     static func isMarkdown(_ url: URL) -> Bool {

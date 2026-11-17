@@ -147,6 +147,7 @@ extension WorkspaceManager {
         let scan = scanNoteSources()
         for s in scan {
             var items: [NoteItem] = []
+            var images: [NoteRef] = []
             for (url, rel) in s.files {
                 if MarkdownImport.isMarkdown(url) {
                     let item = NoteItem(ref: NoteRef(sourceID: s.source.id, relPath: rel))
@@ -154,12 +155,14 @@ extension WorkspaceManager {
                     index.add(note: item)
                 } else {
                     index.addFile(relPath: rel, url: url)     // 附件：`![[attachments/图.png]]` 按它找
+                    let ref = NoteRef(sourceID: s.source.id, relPath: rel)
+                    if ref.isImage { images.append(ref) }      // 侧栏也列出来（点了快速查看）
                 }
             }
             if s.source.kind == .workspace { wsItems = items }
             // 空目录也要进树（用户要往里加笔记），所以除了笔记还要把子目录清单一起给它
             trees.append(NoteTreeSection(source: s.source,
-                                         root: NoteFolder.build(items, dirs: s.dirs, rootName: s.source.name)))
+                                         root: NoteFolder.build(items, images: images, dirs: s.dirs, rootName: s.source.name)))
         }
         noteSignature = Self.noteSignature(of: scan)
         updateNoteWatcher(roots: scan.map(\.root))
@@ -670,11 +673,23 @@ extension WorkspaceManager {
         /// 正文里 `[[…]]` 指到的名字里，导完之后仍然解析不到的那些。
         var unresolved: [String] = []
         var failed: [(path: String, reason: String)] = []
-        var isEmpty: Bool { notes == 0 && failed.isEmpty }
+        /// `Notes/` 下已有同名目录、合并进去了。
+        var merged = false
+        /// 合并时内容没变、没动的文件数。
+        var unchanged = 0
+        /// 合并时内容不同、旧的先进废纸篓再覆盖的文件（相对导入目录）。
+        var replaced: [String] = []
+        /// 目录外（vault 别处）一起搬进来的图片数。
+        var externalImages = 0
+        /// 正文里引用了、哪儿都找不到的图片。
+        var missingImages: [String] = []
+        var isEmpty: Bool { notes == 0 && unchanged == 0 && failed.isEmpty }
     }
 
     /// 把一个目录**整个复制**进 `Notes/<目录名>/`，一个字节都不改（红线：`[[…]]` 不许动）。
     /// 附件跟着原相对路径一起进来，所以 `![[attachments/图.png]]` 照样能显示。
+    /// 选的是 vault 里的子目录时，笔记引用到的 vault 别处的图片按 vault 内相对路径一起搬进来；
+    /// `Notes/` 下已有同名目录就合并进去（内容不同的旧文件先进废纸篓再覆盖）。2026-11-17 用户定。
     @discardableResult
     func importMarkdown(from sourceDir: URL) throws -> MarkdownImportReport {
         guard let folder else { throw MarkdownError.noWorkspace }
@@ -684,20 +699,40 @@ extension WorkspaceManager {
             throw MarkdownError.sourceInsideWorkspace
         }
         let notesRoot = folder.appendingPathComponent(NoteRoot.workspaceDir, isDirectory: true)
-        var used = Set(((try? FileManager.default.contentsOfDirectory(atPath: notesRoot.path)) ?? [])
-            .map { $0.lowercased() })
-        let name = MarkdownImport.availablePath(MarkdownImport.safeFileName(src.lastPathComponent),
-                                                used: &used)
+        let fm = FileManager.default
+        let existing = (try? fm.contentsOfDirectory(atPath: notesRoot.path)) ?? []
+        let want = MarkdownImport.safeFileName(src.lastPathComponent)
+        // 已有同名**目录**（不分大小写，沿用它原来的写法）→ 合并；同名的是文件 → 照旧避让成 `-2`
+        let sameDir = existing.first { e in
+            var d: ObjCBool = false
+            return e.lowercased() == want.lowercased()
+                && fm.fileExists(atPath: notesRoot.appendingPathComponent(e).path, isDirectory: &d) && d.boolValue
+        }
+        let name: String
+        if let sameDir {
+            name = sameDir
+        } else {
+            var used = Set(existing.map { $0.lowercased() })
+            name = MarkdownImport.availablePath(want, used: &used)
+        }
 
         var report = MarkdownImportReport(folderName: name)
-        let out = try MarkdownImport.copyTree(from: src, to: notesRoot.appendingPathComponent(name))
+        report.merged = sameDir != nil
+        let images = MarkdownImport.externalImages(in: src, vault: MarkdownImport.vaultRoot(containing: src))
+        let out = try MarkdownImport.copyTree(from: src, to: notesRoot.appendingPathComponent(name), extra: images.extra)
         report.files = out.files
         report.notes = out.notes
+        report.unchanged = out.unchanged
+        report.replaced = out.replaced
         report.failed = out.failed.map { (path: $0.0, reason: $0.1) }
+        report.externalImages = images.extra.count
+        report.missingImages = images.missing
 
         refreshNotes()
         report.unresolved = unresolvedLinks(underPrefix: name)
-        wsLog("[MD] 导入「\(name)」：\(report.notes) 篇、\(report.files) 个文件、\(report.unresolved.count) 个链接没解析到")
+        wsLog("[MD] 导入「\(name)」\(report.merged ? "（合并）" : "")：\(report.notes) 篇、\(report.files) 个文件、"
+              + "未变 \(report.unchanged)、覆盖 \(report.replaced.count)、目录外图片 \(report.externalImages)、"
+              + "缺图 \(report.missingImages.count)、\(report.unresolved.count) 个链接没解析到")
         return report
     }
 

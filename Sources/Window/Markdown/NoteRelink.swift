@@ -10,6 +10,22 @@ import AppKit
 /// 跳过写不了的源：服务器镜像（只读）、不在这台电脑上的引用目录。
 @MainActor
 enum NoteRelink {
+    /// 界面上改一篇笔记的名字（侧栏右键「重命名…」与编辑区顶上的标题共用这一份）：
+    /// 开着它的编辑器先存盘 → 改文件名 → 各窗口里开着它的标签 / 小窗跟过去 → 别的笔记里指向旧名字的 `[[…]]` 联动改。
+    /// 失败返回 nil，原因在 `workspace.lastError`。
+    @discardableResult
+    static func renameFromUI(_ ref: NoteRef, to name: String, in ws: WorkspaceManager) -> NoteRef? {
+        // 开着它的编辑器先存盘（挪走之后旧路径上没文件，自动保存就不存了）
+        MarkdownDocView.flushEditors(showing: ref, in: ws)
+        let before = ws.wiki.snapshot()
+        guard let newRef = ws.renameNote(ref, to: name) else { return nil }
+        guard newRef != ref else { return newRef }
+        // 所有窗口里开着它的标签 / 小窗都跟过去（原先只换了本窗口的标签，别的窗口那份和小窗会被关掉）
+        ReaderWindowController.noteMoved(from: ref, to: newRef, in: ws)
+        Task { @MainActor in _ = await run(ws, before: before, moved: [ref: newRef]) }
+        return newRef
+    }
+
     struct Report {
         /// 改了的笔记与每处改动（原样写法 → 新写法）。
         var notes: [(ref: NoteRef, changes: [(from: String, to: String)])] = []

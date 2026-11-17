@@ -127,7 +127,11 @@ struct NoteRef: Hashable, Codable {
     }
 
     /// 笔记标题 = 文件名去扩展名（Obsidian 的惯例）。
-    var title: String { MarkdownImport.dropExt(relPath.split(separator: "/").last.map(String.init) ?? relPath) }
+    var title: String { MarkdownImport.dropExt(fileName) }
+    /// 文件名（带扩展名）。
+    var fileName: String { relPath.split(separator: "/").last.map(String.init) ?? relPath }
+    /// 是不是图片（按扩展名，同 `MarkdownLink.imageExts`）。
+    var isImage: Bool { MarkdownLink.imageExts.contains((relPath as NSString).pathExtension.lowercased()) }
     /// 所在目录（源内相对，顶层为空串）。
     var folder: String {
         let parts = relPath.split(separator: "/").dropLast()
@@ -163,13 +167,15 @@ final class NoteFolder {
     let path: String
     private(set) var folders: [NoteFolder] = []
     private(set) var notes: [NoteItem] = []
+    /// 这一层的图片文件（侧栏列出来、点了快速查看，用户 2026-11-17 要求）。不算笔记：不进 `notes` / `noteCount`、不参与拖拽排序。
+    private(set) var images: [NoteRef] = []
 
     init(name: String, path: String) {
         self.name = name
         self.path = path
     }
 
-    var isEmpty: Bool { folders.isEmpty && notes.isEmpty }
+    var isEmpty: Bool { folders.isEmpty && notes.isEmpty && images.isEmpty }
     /// 连子目录一起看有没有笔记（段头用：一篇笔记都没有的源仍然要列出来，好让用户往里加）。
     var hasAnything: Bool { !isEmpty }
     /// 连子目录一起数。
@@ -179,7 +185,7 @@ final class NoteFolder {
     ///
     /// `dirs` = 源里**全部**子目录（相对源根）。传它进来是为了让**空目录也出现**——
     /// 只按笔记路径建树的话，还没放笔记的目录在侧栏上看不见，用户没地方往里加笔记。
-    static func build(_ items: [NoteItem], dirs: [String] = [], rootName: String) -> NoteFolder {
+    static func build(_ items: [NoteItem], images: [NoteRef] = [], dirs: [String] = [], rootName: String) -> NoteFolder {
         let root = NoteFolder(name: rootName, path: "")
         var byPath: [String: NoteFolder] = ["": root]
 
@@ -197,6 +203,7 @@ final class NoteFolder {
 
         for d in dirs { _ = folder(d) }          // 先把空目录也建出来
         for item in items { folder(item.ref.folder).notes.append(item) }
+        for img in images { folder(img.folder).images.append(img) }
         sort(root)
         return root
     }
@@ -216,6 +223,7 @@ final class NoteFolder {
     private static func sort(_ node: NoteFolder) {
         node.folders.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         node.notes.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        node.images.sort { $0.fileName.localizedStandardCompare($1.fileName) == .orderedAscending }
         for f in node.folders { sort(f) }
     }
 }

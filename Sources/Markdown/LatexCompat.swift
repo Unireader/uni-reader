@@ -58,6 +58,9 @@ enum LatexCompat {
             case "dots": emit("\\ldots")
             case "leqslant": emit("\\leq")
             case "geqslant": emit("\\geq")
+            // `\lt` / `\gt`（MathJax / KaTeX 认，SwiftMath 不认；用户 2026-11-17 `\frac{\tan x}{x} \lt \frac{4}{\pi}` 整条显示源码）
+            case "lt": emit("<")
+            case "gt": emit(">")
             case "lvert", "rvert": emit("|")
             case "lVert", "rVert": emit("\\|")
             case "middle": break   // `\middle|` → `|`

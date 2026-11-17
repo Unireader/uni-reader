@@ -117,6 +117,13 @@ final class MarkdownDocView: NSView {
         header.blendingMode = .withinWindow
         titleLabel.font = .preferredFont(forTextStyle: .headline)
         titleLabel.lineBreakMode = .byTruncatingTail
+        // 标题点一下就能改名（用户 2026-11-17：新建笔记后不用再去侧栏右键）：回车 / 点别处 = 改，Esc = 不改
+        titleLabel.isEditable = !workspace.isMirrorSource(ref.sourceID)
+        titleLabel.isSelectable = titleLabel.isEditable
+        titleLabel.usesSingleLineMode = true
+        titleLabel.cell?.isScrollable = true
+        titleLabel.delegate = self
+        titleLabel.toolTip = titleLabel.isEditable ? L("Click to rename") : nil
         pathLabel.font = .preferredFont(forTextStyle: .caption1)
         pathLabel.textColor = .secondaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingMiddle
@@ -349,7 +356,8 @@ final class MarkdownDocView: NSView {
         let sourceName = workspace.noteSource(id: ref.sourceID)?.name ?? ""
         var path = sourceName.isEmpty ? ref.relPath : "\(sourceName)/\(ref.relPath)"
         if workspace.isMirrorSource(ref.sourceID) { path += " · " + L("Server mirror · read-only") }
-        if titleLabel.stringValue != title { titleLabel.stringValue = title }
+        // 正在改名时别把输入框里打了一半的字换掉
+        if titleLabel.currentEditor() == nil, titleLabel.stringValue != title { titleLabel.stringValue = title }
         if pathLabel.stringValue != path { pathLabel.stringValue = path }
         needsLayout = true
     }
@@ -394,4 +402,40 @@ final class MarkdownDocView: NSView {
     }
 
     override var isFlipped: Bool { true }
+}
+
+// MARK: - 标题处改名
+
+extension MarkdownDocView: NSTextFieldDelegate {
+    /// Esc：放弃，换回原名。
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard control === titleLabel, selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        titleLabel.stringValue = ref.title
+        window?.makeFirstResponder(nil)
+        return true
+    }
+
+    /// 回车 / 点到别处：名字变了就改名（走与侧栏「重命名…」同一条路）。
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === titleLabel else { return }
+        let name = titleLabel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != ref.title else {
+            titleLabel.stringValue = ref.title
+            return
+        }
+        // 结束编辑的回调里改名会换掉标签 / 重建视图，推到下一拍再做
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if NoteRelink.renameFromUI(self.ref, to: name, in: self.workspace) == nil {
+                self.titleLabel.stringValue = self.ref.title
+                let a = NSAlert()
+                a.messageText = L("Could not complete that")
+                a.informativeText = self.workspace.lastError ?? L("A note with that name already exists in this folder.")
+                a.addButton(withTitle: L("OK"))
+                if let win = self.window { a.beginSheetModal(for: win) } else { a.runModal() }
+            } else {
+                self.syncHeader()   // 名字里的非法字符会被换成 `-`：显示实际的文件名
+            }
+        }
+    }
 }

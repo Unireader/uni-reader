@@ -756,6 +756,9 @@
 "Choose a notes folder to edit in place. UniReader does not copy or move it." = "选一个笔记目录，直接在原处编辑。UniReader 不会复制也不会移动它。";
 "Copied into Notes/%@ — %d files in all, nothing was changed." = "已复制到 Notes/%@，共 %d 个文件；内容一个字都没改。";
 "%d [[links]] point at notes that are not here: %@" = "有 %d 个 [[链接]] 指向不在这里的笔记：%@";
+"Merged into the existing folder Notes/%@: %d files were already the same, %d were replaced (the old copies are in the Trash)." = "已合并进原有的 Notes/%@：%d 个文件内容相同没动，%d 个被覆盖（旧文件已移到废纸篓）。";
+"%d images from elsewhere in the vault were copied along, keeping their paths." = "另外从 vault 其他位置复制了 %d 张图片，保留原来的相对路径。";
+"%d images could not be found: %@" = "有 %d 张图片找不到：%@";
 "The note file is missing." = "这篇笔记的文件不见了。";
 "Referenced folder · %d notes" = "引用的目录 · %d 篇笔记";
 "%@ ↗ (not on this Mac)" = "%@ ↗（不在这台电脑上）";
@@ -1537,3 +1540,4 @@
 "Unlink %d exercises from their PDF?" = "解除这 %d 道题与 PDF 的关联？";
 "The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone." = "题目、作答、错题本、收藏、笔记和标签都保留。这些题会移到一个以书名命名的分组里；页码和原题区域会去掉，之后不能再看原题图。此操作不能撤销。";
 "The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF." = "其中的 %d 道习题会保留：移到以书名命名的分组里，不再关联这篇 PDF。";
+"Quick Look" = "快速查看";

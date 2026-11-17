@@ -681,6 +681,19 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             a.messageText = String(format: L("Imported %d notes"), r.notes)
             var lines = [String(format: L("Copied into Notes/%@ — %d files in all, nothing was changed."),
                                 r.folderName, r.files)]
+            if r.merged {
+                lines.append(String(format: L("Merged into the existing folder Notes/%@: %d files were already the same, %d were replaced (the old copies are in the Trash)."),
+                                    r.folderName, r.unchanged, r.replaced.count))
+                if !r.replaced.isEmpty { lines.append(r.replaced.prefix(8).joined(separator: "、")) }
+            }
+            if r.externalImages > 0 {
+                lines.append(String(format: L("%d images from elsewhere in the vault were copied along, keeping their paths."),
+                                    r.externalImages))
+            }
+            if !r.missingImages.isEmpty {
+                lines.append(String(format: L("%d images could not be found: %@"),
+                                    r.missingImages.count, r.missingImages.prefix(8).joined(separator: "、")))
+            }
             if !r.unresolved.isEmpty {
                 lines.append(String(format: L("%d [[links]] point at notes that are not here: %@"),
                                     r.unresolved.count, r.unresolved.prefix(8).joined(separator: "、")))

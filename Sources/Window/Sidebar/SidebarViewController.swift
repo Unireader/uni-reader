@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Quartz
 
 /// 侧栏（AppKit 版，替代 SwiftUI `SidebarView`，行为逐条同原版）：
 ///  · 当前工作区的文档列表，`NSOutlineView` 源列表样式；有分组时按分组分段（未分组在前）；
@@ -82,6 +83,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.draggingDestinationFeedbackStyle = .sourceList
         // 只有能拖的行拖得起来；按住不能拖的行（段头 / 目录 / 章节）往下拉 = 照常的拖选，不会把别的选中行带着拖走
         outline.canDrag = { [weak self] rows, point in self?.canDragRows(rows, at: point) ?? false }
+        outline.onSpace = { [weak self] in self?.toggleQuickLook() ?? false }
         scroll.documentView = outline
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -315,6 +317,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             out.append(node)
         }
         out += folder.notes.map { SidebarNode(kind: .md($0)) }
+        out += folder.images.map { SidebarNode(kind: .image($0)) }   // 图片排在笔记后面
         return out
     }
 
@@ -439,6 +442,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                             tip: here ? note.ref.relPath : L("The note file is missing."))
         case .noteFolder(_, let folder):
             return iconCell(symbol: "folder", title: folder.name, subtitle: nil, dim: false, tip: folder.path)
+        case .image(let ref):
+            return iconCell(symbol: "photo", title: ref.fileName, subtitle: nil, dim: false, tip: ref.relPath)
         case .board(let b):
             return iconCell(symbol: "scribble.variable", title: b.displayName, subtitle: nil, dim: false, tip: nil)
         case .exercise(let scope, let title, let count, let done):
@@ -603,7 +608,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     /// 选中的恰好一行、又不是当前标签开着的 → 打开它（同侧栏单击）。
-    private func openSelected() {
+    private func openSelected(byClick: Bool = false) {
+        // 图片：单击才弹快速查看（键盘上下移过去不弹，同访达）；面板开着时跟着换图
+        let images = selectedImageURLs()
+        if !images.isEmpty {
+            if byClick { showQuickLook() } else { refreshQuickLook() }
+            return
+        }
         // 多选期间不动当前打开的文档；恰选一篇才联动
         let ids = selectedRowIDs()
         guard ids.count == 1, let id = ids.first, id != tabs.active.rowID else { return }
@@ -625,7 +636,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     @objc private func rowClicked() {
         guard let n = outline.item(atRow: outline.clickedRow) as? SidebarNode, case .notice(let notice) = n.kind else {
             // 单击一行松手才打开（见 `outlineViewSelectionDidChange`）；拖起来排序时不会走到这里
-            if outline.clickedRow >= 0, !syncingSelection { openSelected() }
+            if outline.clickedRow >= 0, !syncingSelection { openSelected(byClick: true) }
             return
         }
         switch notice {
@@ -783,6 +794,19 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             buildDocMenu(menu, doc: doc)
         case .md(let note):
             buildNoteMenu(menu, note: note)
+        case .image(let ref):
+            menu.addItem(ClosureMenuItem(L("Quick Look")) { [weak self] in
+                guard let self else { return }
+                let row = self.outline.row(forItem: n)
+                if row >= 0, !self.outline.selectedRowIndexes.contains(row) {
+                    self.outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                }
+                self.showQuickLook()
+            })
+            menu.addItem(ClosureMenuItem(L("Show in Finder")) { [weak self] in
+                guard let url = self?.imageURL(ref) else { return }
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            })
         case .noteSection(let source, _):
             buildNoteSectionMenu(menu, source: source)
         case .boardSection:
@@ -869,6 +893,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .section(_, let title): return title
         case .doc(let d): return d.title
         case .md(let note): return note.title
+        case .image(let ref): return ref.fileName
         case .noteFolder(_, let folder): return folder.name
         case .noteSection(let source, _): return source.name
         case .board(let b): return b.displayName
@@ -892,6 +917,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
         case .doc(let d): return .pdf(d, in: workspace)
         case .md(let note): return .note(note, in: workspace)
+        case .image: return nil
         case .noteFolder(let source, let folder): return .folder(source: source, path: folder.path, in: workspace)
         case .noteSection(let source, _): return .folder(source: source, path: "", in: workspace)
         case .board(let b): return .board(b, in: workspace)
@@ -978,18 +1004,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let rename = ClosureMenuItem(L("Rename…")) { [weak self] in
             self?.textPrompt(title: L("Rename Note"), placeholder: L("Note name"), initial: note.title) { name in
                 guard let self else { return }
-                // 开着它的编辑器先存盘（挪走之后旧路径上没文件，自动保存就不存了）
-                MarkdownDocView.flushEditors(showing: note.ref, in: self.workspace)
-                let before = self.workspace.wiki.snapshot()
-                guard let newRef = self.workspace.renameNote(note.ref, to: name) else {
-                    if let e = self.workspace.lastError { self.presentNoteError(e) }
-                    return
-                }
-                // 所有窗口里开着它的标签 / 小窗都跟过去（原先只换了本窗口的标签，别的窗口那份和小窗会被关掉）
-                ReaderWindowController.noteMoved(from: note.ref, to: newRef, in: self.workspace)
-                // 别的笔记里指向旧名字的 `[[…]]` 联动改成新名字（用户 2026-11-17 定，`NoteRelink`）
-                let ws = self.workspace
-                Task { @MainActor in _ = await NoteRelink.run(ws, before: before, moved: [note.ref: newRef]) }
+                // 存盘 → 改名 → 标签跟过去 → 联动改 `[[…]]`（与编辑区顶上的标题共用，`NoteRelink.renameFromUI`）
+                if NoteRelink.renameFromUI(note.ref, to: name, in: self.workspace) == nil,
+                   let e = self.workspace.lastError { self.presentNoteError(e) }
             }
         }
         rename.isEnabled = !readOnly
@@ -1596,6 +1613,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 /// 侧栏的大纲视图：多一道「这几行能不能拖起来」（`SIDEBAR-DRAG-PLAN.md`）。
 final class SidebarOutlineView: NSOutlineView {
     var canDrag: (IndexSet, NSPoint) -> Bool = { _, _ in true }
+    /// 空格：选中的是图片就开 / 关快速查看（同访达）。返回 false = 不归它管，照常处理。
+    var onSpace: () -> Bool = { false }
+    override func keyDown(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == " ", event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+           onSpace() { return }
+        super.keyDown(with: event)
+    }
     override func canDragRows(with rowIndexes: IndexSet, at mouseDownPoint: NSPoint) -> Bool {
         canDrag(rowIndexes, mouseDownPoint) && super.canDragRows(with: rowIndexes, at: mouseDownPoint)
     }
@@ -1613,6 +1637,8 @@ final class SidebarNode: NSObject {
         case md(NoteItem)
         /// 笔记的**子目录**（多级，2026-09-20 用户要求）。不可选中，只能展开。
         case noteFolder(source: NoteRoot, folder: NoteFolder)
+        /// 笔记目录里的图片（用户 2026-11-17）：点了用系统快速查看打开，不开标签。
+        case image(NoteRef)
         /// 一个笔记源的段头（内建 `Notes/` 或引用进来的外部目录）。
         case noteSection(source: NoteRoot, folder: NoteFolder)
         /// 画板笔记（v16，`BOARD-NOTE-PLAN.md`）与它们的段头。
@@ -1650,6 +1676,7 @@ final class SidebarNode: NSObject {
     /// 选中键（三类条目在同一张表里，得能区分）。与 `DocTabModel.rowID` 同口径。
     var rowID: String? {
         if let n = note { return "md:" + n.ref.key }
+        if case .image(let r) = kind { return "img:" + r.key }
         if let b = board { return BoardNote.rowPrefix + b.id.uuidString }
         if case .exercise(let scope, _, _, _) = kind { return scope.rowID }
         if case .schedule = kind { return ScheduleFocus.rowID }
@@ -1718,5 +1745,73 @@ private final class DocRowCell: NSTableCellView {
         guard let fraction else { return }
         ring.doubleValue = fraction
         percent.stringValue = String(format: "%d%%", Int(fraction * 100))
+    }
+}
+
+// MARK: - 图片：系统快速查看（用户 2026-11-17：侧栏展示笔记目录里的图片）
+
+extension SidebarViewController: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    func imageURL(_ ref: NoteRef) -> URL? {
+        workspace.noteSource(id: ref.sourceID).flatMap { workspace.noteRootURL($0) }?.appendingPathComponent(ref.relPath)
+    }
+
+    /// 选中的图片（按行序）。
+    func selectedImageURLs() -> [URL] {
+        outline.selectedRowIndexes.compactMap { row -> URL? in
+            guard let n = outline.item(atRow: row) as? SidebarNode, case .image(let ref) = n.kind else { return nil }
+            return imageURL(ref)
+        }
+    }
+
+    func showQuickLook() {
+        guard !selectedImageURLs().isEmpty, let panel = QLPreviewPanel.shared() else { return }
+        view.window?.makeFirstResponder(outline)   // 面板沿响应链找数据源，起点是侧栏
+        if panel.isVisible { panel.reloadData() } else { panel.makeKeyAndOrderFront(nil) }
+    }
+
+    /// 面板开着时选中变了：换成新选中的图；选中里没有图了就关掉。
+    func refreshQuickLook() {
+        guard QLPreviewPanel.sharedPreviewPanelExists(), let panel = QLPreviewPanel.shared(), panel.isVisible,
+              panel.dataSource === self else { return }
+        if selectedImageURLs().isEmpty { panel.orderOut(nil) } else { panel.reloadData() }
+    }
+
+    /// 空格：开着就关、没开就开（只在选中有图片时接管）。
+    func toggleQuickLook() -> Bool {
+        guard !selectedImageURLs().isEmpty else { return false }
+        if QLPreviewPanel.sharedPreviewPanelExists(), let panel = QLPreviewPanel.shared(), panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            showQuickLook()
+        }
+        return true
+    }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { !selectedImageURLs().isEmpty }
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+    }
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+    }
+
+    nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        MainActor.assumeIsolated { selectedImageURLs().count }
+    }
+    nonisolated func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
+        MainActor.assumeIsolated {
+            let urls = selectedImageURLs()
+            return urls.indices.contains(index) ? urls[index] as NSURL : nil
+        }
+    }
+    /// 面板是 key 时按上下键：交给侧栏换选中（同访达），面板跟着换图。
+    nonisolated func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
+        MainActor.assumeIsolated {
+            guard event.type == .keyDown, [125, 126].contains(event.keyCode) else { return false }
+            outline.keyDown(with: event)
+            return true
+        }
     }
 }

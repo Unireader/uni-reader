@@ -26,6 +26,10 @@ final class TabBarNSView: NSView {
     let plus = NSButton()
     /// 标签之间的间距（浮动胶囊 2、贴底 1）。
     private var spacing: CGFloat = 2
+    /// 点了关闭之后先**不重新平分**宽度，等鼠标离开标签栏再放开（同 Firefox，用户 2026-11-17）：
+    /// 右边那个标签挪进来、它的关闭键正好落在鼠标底下，可以一直点下去关。
+    private var frozenWidth: CGFloat?
+    private var barTracking: NSTrackingArea?
 
     override var isFlipped: Bool { true }
 
@@ -63,6 +67,8 @@ final class TabBarNSView: NSView {
     static var height: CGFloat { TabBarMetrics.rowHeight + TabBarMetrics.pad * 2 }
 
     func update(items: [TabBarItem], activeID: UUID, style: TabBarStyle) {
+        // 标签变多了（新开）就不再保持关闭时的宽度
+        if items.count > chips.count || style != self.style { frozenWidth = nil }
         self.style = style
         while chips.count < items.count {
             let c = TabChipView()
@@ -106,7 +112,9 @@ final class TabBarNSView: NSView {
     private func layoutChips(avail: CGFloat) {
         let n = CGFloat(max(1, chips.count))
         let room = avail - TabBarMetrics.rowHeight - spacing * CGFloat(chips.count)
-        let w = max(TabChipView.minWidth, (room / n).rounded(.down))
+        var w = max(TabChipView.minWidth, (room / n).rounded(.down))
+        // 关掉一个之后平分宽度会变大；保持关闭前的宽度（窗口变窄等放不下时仍按平分的）
+        if let f = frozenWidth, f < w { w = f }
         var x: CGFloat = 0
         for c in chips {
             c.frame = NSRect(x: x, y: 0, width: w, height: TabBarMetrics.rowHeight)
@@ -120,6 +128,35 @@ final class TabBarNSView: NSView {
             scroll.contentView.scroll(to: .zero)
             scroll.reflectScrolledClipView(scroll.contentView)
         }
+        // 标签挪动了而鼠标没动：进出事件不会来，按鼠标此刻的位置重算一遍悬停（关闭键要立刻露出来才能接着点）
+        DispatchQueue.main.async { [weak self] in self?.syncHover() }
+    }
+
+    /// 关闭键被点：记下当前宽度，鼠标离开标签栏之前一直按这个宽度排。
+    func closeTapped(_ id: UUID, chipWidth: CGFloat) {
+        frozenWidth = chipWidth
+        onClose(id)
+    }
+
+    private func syncHover() {
+        guard let win = window else { return }
+        let p = win.mouseLocationOutsideOfEventStream
+        for c in chips { c.setHovering(c.window != nil && c.visibleRect.contains(c.convert(p, from: nil))) }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let barTracking { removeTrackingArea(barTracking) }
+        let t = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                               owner: self, userInfo: nil)
+        addTrackingArea(t)
+        barTracking = t
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard frozenWidth != nil else { return }
+        frozenWidth = nil
+        needsLayout = true
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -149,6 +186,8 @@ final class HorizontalWheelScrollView: NSScrollView {
 }
 
 /// 一个标签：关闭按钮（左）+ 标题 + 平板跟随标记。点击选中，右键「关闭 / 关闭其他 / 在新窗口打开」。
+/// 标题放不下时尾部省略；悬停一会儿在胶囊上方弹出完整名字（系统 `NSPopover`），用户 2026-11-17 定。
+/// （同日试过放不下时来回自动滚动，用户实测滚到一半整段空白、说「滚动拿走吧，tip 就够了」，已删。）
 final class TabChipView: NSView {
     weak var owner: TabBarNSView?
     private let close = NSButton()
@@ -157,8 +196,10 @@ final class TabChipView: NSView {
     private var item = TabBarItem(id: UUID(), title: "", padFollowing: false, hasDocument: false)
     private var active = false
     private var capsule = true
-    private var hovering = false { didSet { if oldValue != hovering { refresh() } } }
+    private var hovering = false { didSet { if oldValue != hovering { refresh(); hoverChanged() } } }
     private var tracking: NSTrackingArea?
+    private var tipTimer: Timer?
+    private var tip: NSPopover?
 
     override var isFlipped: Bool { true }
 
@@ -185,16 +226,17 @@ final class TabChipView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
+    deinit { tipTimer?.invalidate() }
+
     func configure(item: TabBarItem, active: Bool, capsule: Bool) {
+        let titleChanged = item.title != self.item.title
         self.item = item
         self.active = active
         self.capsule = capsule
         label.stringValue = item.title
-        // 标签窄了标题会被截断：悬停显示完整名字。标题文字盖在标签上，自己也要设一份，
-        // 否则鼠标停在字上时找到的是没有提示的文字视图，提示不出来
-        toolTip = item.title
-        label.toolTip = item.title
+        label.setAccessibilityLabel(item.title)
         pad.isHidden = !item.padFollowing
+        if titleChanged { hideTip() }
         refresh()
     }
 
@@ -217,6 +259,11 @@ final class TabChipView: NSView {
         needsLayout = true
     }
 
+    /// 标签栏挪动了标签之后按鼠标位置补的悬停（`TabBarNSView.syncHover`）。
+    func setHovering(_ on: Bool) { hovering = on }
+
+    private var isTruncated: Bool { label.intrinsicContentSize.width > label.bounds.width + 0.5 }
+
     override func layout() {
         super.layout()
         let h = bounds.height
@@ -231,7 +278,56 @@ final class TabChipView: NSView {
         pad.frame = NSRect(x: bounds.width - 8 - padW, y: (h - 12) / 2, width: padW, height: 12)
     }
 
-    @objc private func closeTapped() { owner?.onClose(item.id) }
+    // MARK: - 悬停显示完整名字
+
+    private func hoverChanged() {
+        tipTimer?.invalidate()
+        tipTimer = nil
+        guard hovering else { hideTip(); return }
+        guard isTruncated else { return }
+        tipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showTip() }
+        }
+    }
+
+    private func showTip() {
+        guard hovering, window != nil, tip == nil, isTruncated else { return }
+        let text = NSTextField(wrappingLabelWithString: item.title)
+        text.font = .preferredFont(forTextStyle: .callout)
+        text.textColor = .labelColor
+        text.preferredMaxLayoutWidth = 360
+        let fit = text.fittingSize
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: fit.width + 20, height: fit.height + 12))
+        text.frame = NSRect(x: 10, y: 6, width: fit.width, height: fit.height)
+        box.addSubview(text)
+        let vc = NSViewController()
+        vc.view = box
+        let p = NSPopover()
+        p.contentViewController = vc
+        p.behavior = .applicationDefined   // 不抢点击：鼠标挪开 / 点了标签由我们收
+        p.animates = false
+        p.show(relativeTo: bounds, of: self, preferredEdge: .minY)   // 翻转坐标：minY = 上方
+        tip = p
+    }
+
+    private func hideTip() {
+        tipTimer?.invalidate()
+        tipTimer = nil
+        tip?.close()
+        tip = nil
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { hideTip() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    @objc private func closeTapped() {
+        hideTip()
+        owner?.closeTapped(item.id, chipWidth: bounds.width)
+    }
+
+    override func mouseDown(with event: NSEvent) { hideTip() }
 
     override func mouseUp(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
@@ -240,6 +336,7 @@ final class TabChipView: NSView {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        hideTip()
         let m = NSMenu()
         let id = item.id
         m.addItem(ClosureMenuItem(L("Close Tab")) { [weak self] in self?.owner?.onClose(id) })
