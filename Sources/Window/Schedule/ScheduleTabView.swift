@@ -412,12 +412,18 @@ final class ScheduleTabView: NSView, NSTextFieldDelegate {
         let listTop = addField.frame.maxY + 8
         let avail = max(0, bottom - listTop)
         // 详情尽量给够它要的高度，列表至少留 140；再矮就让详情滚动
-        let editorH: CGFloat = editorScroll.isHidden ? 64 : min(editor.height(forWidth: panelW), max(min(avail, 180), avail - 140))
+        // 详情一律按「留出竖滚动条」的宽度排：滚动条出现 / 隐藏不再改变内容宽度。
+        // 否则标题恰在折行临界时会来回翻（出滚动条 → 变窄折行 → 变高 / 收滚动条 → 变宽 → …），
+        // 2026-11-17 改日期后排版停不下来、AppKit 抛异常崩溃就是这个。
+        let docW = NSScrollView.contentSize(forFrameSize: NSSize(width: panelW, height: 100),
+                                            horizontalScrollerClass: nil, verticalScrollerClass: NSScroller.self,
+                                            borderType: editorScroll.borderType, controlSize: .regular,
+                                            scrollerStyle: editorScroll.scrollerStyle).width
+        let editorH: CGFloat = editorScroll.isHidden ? 64 : min(editor.height(forWidth: docW), max(min(avail, 180), avail - 140))
         let listH = max(0, avail - editorH - 1)
         list.frame = NSRect(x: px, y: listTop, width: panelW, height: listH)
         editorLine.frame = NSRect(x: px, y: list.frame.maxY, width: panelW, height: 1)
         editorScroll.frame = NSRect(x: px, y: editorLine.frame.maxY, width: panelW, height: max(0, bottom - editorLine.frame.maxY))
-        let docW = editorScroll.contentSize.width
         editor.frame = NSRect(x: 0, y: 0, width: docW, height: max(editorScroll.contentSize.height, editor.height(forWidth: docW)))
         editorHint.frame = NSRect(x: px + 20, y: editorLine.frame.maxY + 16, width: panelW - 40, height: 40)
     }
