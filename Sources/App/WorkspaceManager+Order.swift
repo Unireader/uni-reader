@@ -99,6 +99,23 @@ extension WorkspaceManager {
     }
 }
 
+extension WorkspaceManager {
+    /// 引用目录转为导入（`convertReferenceToImported`）：它的手动顺序整个搬到内建源的 `folder/…` 下面
+    /// （合并进已有同名目录时，那边原有的顺序在前、搬来的接在后面）。不重扫，调用方自己 `refreshNotes()`。
+    func moveNoteOrderIntoNotes(source: String, folder: String) {
+        var all = noteOrder
+        guard let mine = all.removeValue(forKey: source) else { return }
+        func moved(_ p: String) -> String { p.isEmpty ? folder : folder + "/" + p }
+        var ws = all[NoteRoot.workspaceID] ?? [:]
+        for (f, paths) in mine {
+            let old = ws[moved(f)] ?? []
+            ws[moved(f)] = old + paths.map(moved).filter { !old.contains($0) }
+        }
+        all[NoteRoot.workspaceID] = ws
+        setMetaJSON(Self.noteOrderKey, all)
+    }
+}
+
 extension NoteFolder {
     /// 按侧栏拖出来的顺序排笔记（`order` = 目录相对路径 → 笔记相对路径）。存过的按存的，没存过的在最前、仍按名字；
     /// 子目录不动（照旧按名字、在笔记前面）。

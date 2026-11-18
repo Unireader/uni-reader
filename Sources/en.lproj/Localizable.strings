@@ -1539,3 +1539,13 @@
 "The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone." = "The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone.";
 "The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF." = "The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF.";
 "Quick Look" = "Quick Look";
+
+/* 引用目录转为导入（MARKDOWN-NOTES-PLAN.md §4.3） */
+"Convert to Imported…" = "Convert to Imported…";
+"Convert" = "Convert";
+"Convert “%@” to imported notes?" = "Convert “%@” to imported notes?";
+"The whole folder is copied into Notes/%@ in this workspace and the reference is removed. The original folder is not touched; later changes on either side no longer affect the other. Other devices follow after the next sync." = "The whole folder is copied into Notes/%@ in this workspace and the reference is removed. The original folder is not touched; later changes on either side no longer affect the other. Other devices follow after the next sync.";
+"The reference was removed; the original folder was not touched." = "The reference was removed; the original folder was not touched.";
+"Some files could not be copied, so the folder is still referenced. Fix the problem and try again." = "Some files could not be copied, so the folder is still referenced. Fix the problem and try again.";
+"That folder is no longer referenced." = "That folder is no longer referenced.";
+"This folder is not on this Mac and has no copy from the server." = "This folder is not on this Mac and has no copy from the server.";

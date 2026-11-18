@@ -1110,6 +1110,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 self?.workspace.renameReferencedNotesFolder(id: source.id, name: name)
             }
         })
+        // 转为导入：整个复制进 `Notes/`、取消引用；本机没有、也没有服务器镜像时没得复制
+        let convert = ClosureMenuItem(L("Convert to Imported…")) { [weak self] in self?.convertToImported(source) }
+        convert.isEnabled = here || readOnly
+        m.addItem(convert)
         m.addItem(ClosureMenuItem(L("Remove Reference")) { [weak self] in
             guard let self else { return }
             let a = NSAlert()
@@ -1122,6 +1126,35 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             self.workspace.removeReferencedNotesFolder(id: source.id)
             for t in self.tabs.tabs { t.closeMarkdownIfGone() }
         })
+    }
+
+    /// 「转为导入…」（2026-11-18）：引用目录整个复制进工作区 `Notes/<显示名>/`，复制全部成功才取消引用；原目录不动。
+    /// 开着的笔记标签 / 小窗跟到新位置（先存盘，再搬，再同步换位置——同改名那套）。
+    private func convertToImported(_ source: NoteRoot) {
+        let a = NSAlert()
+        a.messageText = String(format: L("Convert “%@” to imported notes?"), source.name)
+        a.informativeText = String(format: L("The whole folder is copied into Notes/%@ in this workspace and the reference is removed. The original folder is not touched; later changes on either side no longer affect the other. Other devices follow after the next sync."),
+                                   MarkdownImport.safeFileName(source.name))
+        a.addButton(withTitle: L("Convert"))
+        a.addButton(withTitle: L("Cancel"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        MarkdownDocView.flushEditors(inSource: source.id, in: workspace)
+        do {
+            let r = try workspace.convertReferenceToImported(id: source.id)
+            if r.converted {
+                // 侧栏展开记忆：引用源里开着的目录，在 `Notes/<目录名>/` 下照样开着
+                let prefix = source.id + ":"
+                for k in expandedFolders where k.hasPrefix(prefix) {
+                    expandedFolders.insert("\(NoteRoot.workspaceID):\(r.report.folderName)/\(k.dropFirst(prefix.count))")
+                }
+                expandedFolders = expandedFolders.filter { !$0.hasPrefix(prefix) }
+                expand(NoteRoot.workspaceRoot(name: ""), r.report.folderName)
+                for m in r.moves { ReaderWindowController.noteMoved(from: m.from, to: m.to, in: workspace) }
+            }
+            ReaderWindowController.presentImportReport(r.report, converted: r.converted)
+        } catch {
+            presentNoteError(error.localizedDescription)
+        }
     }
 
     /// 「新建文件夹…」（段头 = 源根，子目录行 = 它底下）：问名字 → 建空目录 → 上级展开，新目录就在眼前。

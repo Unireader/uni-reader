@@ -690,8 +690,9 @@ extension WorkspaceManager {
     /// 附件跟着原相对路径一起进来，所以 `![[attachments/图.png]]` 照样能显示。
     /// 选的是 vault 里的子目录时，笔记引用到的 vault 别处的图片按 vault 内相对路径一起搬进来；
     /// `Notes/` 下已有同名目录就合并进去（内容不同的旧文件先进废纸篓再覆盖）。2026-11-17 用户定。
+    /// `folderName`：放进 `Notes/` 用的目录名，nil = 选中目录自己的名字（「转为导入」传引用源的显示名）。
     @discardableResult
-    func importMarkdown(from sourceDir: URL) throws -> MarkdownImportReport {
+    func importMarkdown(from sourceDir: URL, folderName: String? = nil) throws -> MarkdownImportReport {
         guard let folder else { throw MarkdownError.noWorkspace }
         let src = sourceDir.standardizedFileURL
         if src.path == folder.standardizedFileURL.path
@@ -701,7 +702,7 @@ extension WorkspaceManager {
         let notesRoot = folder.appendingPathComponent(NoteRoot.workspaceDir, isDirectory: true)
         let fm = FileManager.default
         let existing = (try? fm.contentsOfDirectory(atPath: notesRoot.path)) ?? []
-        let want = MarkdownImport.safeFileName(src.lastPathComponent)
+        let want = MarkdownImport.safeFileName(folderName?.trimmed.nonEmpty ?? src.lastPathComponent)
         // 已有同名**目录**（不分大小写，沿用它原来的写法）→ 合并；同名的是文件 → 照旧避让成 `-2`
         let sameDir = existing.first { e in
             var d: ObjCBool = false
@@ -736,6 +737,37 @@ extension WorkspaceManager {
         return report
     }
 
+    // MARK: - 引用转为导入
+
+    /// 把一个引用目录**转为导入**（2026-11-18 用户要的）：整个目录复制进 `Notes/<显示名>/`（同「导入笔记目录…」，
+    /// 同名目录合并、目录外图片一起搬、一个字节不改），**全部复制成功**才取消引用；有失败的就留着引用，原样报告。
+    ///
+    /// - 外部原目录一个字节都不动（不删、不进废纸篓）——它是用户自己的，转完之后两边各是各的。
+    /// - 本机没有这个目录、只有服务器镜像时，从镜像复制（那就是服务器上最新的一份）。
+    /// - 侧栏手动顺序跟过去；返回每篇笔记的新旧位置，调用方据此让开着的标签 / 小窗跟过去
+    ///   （🔴 同 `moveNote` 的两件事：调之前先存盘 `MarkdownDocView.flushEditors(inSource:)`，调完同步调 `noteMoved`）。
+    /// - 引用源列表跟着工作区同步（§10），别的电脑同步之后也不再引用、改看导进来的这份。
+    func convertReferenceToImported(id: String) throws
+        -> (report: MarkdownImportReport, converted: Bool, moves: [(from: NoteRef, to: NoteRef)]) {
+        lastError = nil
+        guard let store else { throw MarkdownError.noWorkspace }
+        guard let source = referencedNoteSources.first(where: { $0.id == id }) else { throw MarkdownError.notReferenced }
+        guard let root = noteRootURL(source), NoteRoot.directoryExists(root.path) else { throw MarkdownError.referenceNotHere }
+        let before = allNotes.filter { $0.ref.sourceID == id }.map(\.ref)
+        let report = try importMarkdown(from: root, folderName: source.name)
+        guard report.failed.isEmpty else {
+            wsLog("[MD] 引用转导入「\(source.name)」：\(report.failed.count) 个文件没复制成功，保留引用")
+            return (report, false, [])
+        }
+        let name = report.folderName
+        moveNoteOrderIntoNotes(source: id, folder: name)
+        saveReferencedSources(referencedNoteSources.filter { $0.id != id }, store: store)
+        refreshNotes()
+        wsLog("[MD] 引用转导入「\(source.name)」→ Notes/\(name)：\(report.notes) 篇，已取消引用")
+        let moves = before.map { ($0, NoteRef(sourceID: NoteRoot.workspaceID, relPath: name + "/" + $0.relPath)) }
+        return (report, true, moves)
+    }
+
     /// 刚导进来那批笔记里，指不到任何一篇的 `[[名字]]`（导入报告用；**不改正文**，只是告诉用户）。
     private func unresolvedLinks(underPrefix prefix: String) -> [String] {
         var seen = Set<String>()
@@ -754,11 +786,15 @@ extension WorkspaceManager {
     enum MarkdownError: LocalizedError {
         case noWorkspace
         case sourceInsideWorkspace
+        case notReferenced
+        case referenceNotHere
 
         var errorDescription: String? {
             switch self {
             case .noWorkspace: return L("No workspace is open.")
             case .sourceInsideWorkspace: return L("That folder is already inside this workspace.")
+            case .notReferenced: return L("That folder is no longer referenced.")
+            case .referenceNotHere: return L("This folder is not on this Mac and has no copy from the server.")
             }
         }
     }

@@ -220,6 +220,11 @@ final class MarkdownDocView: NSView {
         for e in all.allObjects where e.ref == ref && e.workspace === workspace { e.flush() }
     }
 
+    /// 整个源要搬走之前（引用目录转为导入）：这个源里所有开着的编辑器先存盘。
+    static func flushEditors(inSource sourceID: String, in workspace: WorkspaceManager) {
+        for e in all.allObjects where e.ref.sourceID == sourceID && e.workspace === workspace { e.flush() }
+    }
+
     /// 这篇改名 / 挪了目录（`ReaderWindowController.noteMoved`）：开着它的编辑器**原地**换到新位置，不重建——
     /// 光标、滚动位置、撤销都留着。引擎那边的文档身份（`documentId`）不动，它只是个不透明的标识。
     static func noteMoved(from old: NoteRef, to new: NoteRef, in workspace: WorkspaceManager) {

@@ -666,15 +666,16 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         guard panel.runModal() == .OK, let dir = panel.url else { return }
         do {
             let report = try workspace.importMarkdown(from: dir)
-            presentImportReport(report)
+            Self.presentImportReport(report)
         } catch {
             presentError(error.localizedDescription)
         }
     }
 
-    private func presentImportReport(_ r: WorkspaceManager.MarkdownImportReport) {
+    /// 导入报告（「导入笔记目录…」与侧栏「转为导入」共用）。`converted`：引用转导入时，引用取消了没有（nil = 普通导入）。
+    static func presentImportReport(_ r: WorkspaceManager.MarkdownImportReport, converted: Bool? = nil) {
         let a = NSAlert()
-        if r.isEmpty {
+        if r.isEmpty && converted != true {
             a.messageText = L("No notes found")
             a.informativeText = L("That folder has no Markdown files in it.")
         } else {
@@ -699,6 +700,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                                     r.unresolved.count, r.unresolved.prefix(8).joined(separator: "、")))
             }
             for f in r.failed.prefix(8) { lines.append("⚠︎ \(f.path) — \(f.reason)") }
+            if converted == true {
+                lines.append(L("The reference was removed; the original folder was not touched."))
+            } else if converted == false {
+                lines.append(L("Some files could not be copied, so the folder is still referenced. Fix the problem and try again."))
+            }
             a.informativeText = lines.joined(separator: "\n")
         }
         a.addButton(withTitle: L("OK"))

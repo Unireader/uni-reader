@@ -1541,3 +1541,13 @@
 "The questions, your answers, mistakes, stars, notes and tags stay. They move to a group named after the book; the page number and the question area on the page are dropped, so the original question image is no longer available. This can’t be undone." = "题目、作答、错题本、收藏、笔记和标签都保留。这些题会移到一个以书名命名的分组里；页码和原题区域会去掉，之后不能再看原题图。此操作不能撤销。";
 "The %d exercise(s) are kept: they move to a group named after the book, without the link to the PDF." = "其中的 %d 道习题会保留：移到以书名命名的分组里，不再关联这篇 PDF。";
 "Quick Look" = "快速查看";
+
+/* 引用目录转为导入（MARKDOWN-NOTES-PLAN.md §4.3） */
+"Convert to Imported…" = "转为导入…";
+"Convert" = "转换";
+"Convert “%@” to imported notes?" = "把「%@」转为导入的笔记吗？";
+"The whole folder is copied into Notes/%@ in this workspace and the reference is removed. The original folder is not touched; later changes on either side no longer affect the other. Other devices follow after the next sync." = "整个目录会复制到本工作区的 Notes/%@，然后取消引用。原目录不会被改动；之后两边各改各的，互不影响。其他设备同步后也会跟着变。";
+"The reference was removed; the original folder was not touched." = "已取消引用，原目录没有改动。";
+"Some files could not be copied, so the folder is still referenced. Fix the problem and try again." = "有文件没能复制，所以仍保留引用。处理好之后再试一次。";
+"That folder is no longer referenced." = "这个目录已经不在引用列表里了。";
+"This folder is not on this Mac and has no copy from the server." = "这台电脑上没有这个目录，也没有服务器上的副本。";
