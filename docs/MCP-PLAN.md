@@ -1075,6 +1075,6 @@ Inspector 有条目；③ 「在这句话上加个笔记：……」→ 图钉�
 - 验证：`spike/workspace-stats-test.swift`（115 项：空库、各表计数、只数一篇、本地日边界与夏令时、几种时间戳写法、同一刻两次作答、入参校验、
   结构化结果逐键对 `outputSchema` 校验、两万条作答按一年分天的耗时）。
 
-## 39. 2026-11-19 网页（批 9）：`list_web_pages` / `read_web_page` / `update_web_page` / `create_web_page` / `open_web_page` / `read_web_page_data` / `write_web_page_data`
+## 39. 2026-11-19 网页（批 9）：`list_web_pages` / `read_web_page` / `update_web_page` / `create_web_page` / `open_web_page` / `read_web_page_data` / `write_web_page_data` / `delete_web_page`
 
 静态 HTML 课件的读、改、新建、打开与页面存的数据。细则在 `WEB-DOC-PLAN.md §7.1`，实现 `Sources/MCP/MCPTools+Web.swift`（工具 + 门面在同一个文件）。

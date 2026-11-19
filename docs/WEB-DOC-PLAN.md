@@ -5,7 +5,7 @@
 > 这样网页就可以同步进度，做一个 JSON 或者 KV 保存」。
 >
 > 用户同日选定：① 拷进工作区、按内容寻址；② Mac 内嵌标签页 + 可在浏览器打开；③ 移动端 = 安卓 App 内 WebView；
-> ④ 分批：**第一批 Mac + 数据同步（已写，待实测）**，用户实测后第二批做安卓。
+> ④ 分批：第一批 Mac + 数据同步、第二批安卓模式1 都已写，**待实测**（§8.1、§9）。
 
 ## 1. 是什么
 
@@ -94,6 +94,7 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 | `update_web_page` | write | 一次改：`edits`（精确替换，`old_text` 必须恰好出现一次）/ `files`（整份写，`content` 或 `source_path` 拷本机文件）/ `delete` / `title` / `start_page` |
 | `create_web_page` | write | 新建：给 `files`，或 `folder` = 本机文件夹整个导入；`open` 顺便打开 |
 | `open_web_page` | navigate | 在标签里打开，可指定某一页（标签已开着就跳过去，`.webDocNavigate`） |
+| `delete_web_page` | delete | 删几份网页（连同存的数据）：先全部认出来，再逐个归档进回收站再删（红线⑪） |
 | `read_web_page_data` / `write_web_page_data` | read / write | 读写 `window.unireader` 存的键值；写完开着的页面收到 `unireader:change` |
 
 - 改文件 = 新内容落进 `Web/<新哈希>`、换清单、改 `updated_at`（`WorkspaceManager.changeWebDoc`）：开着的标签自己重新载入，随同步到别的设备；
@@ -116,10 +117,20 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 6. 服务器工作区：另一台设备同步后文件下来、显示正常（服务器程序要换成这一版）。
 7. Agent：让它列出网页、读某个 html、改一段文字（开着的标签自动刷新）、新写一份课件并打开、读 / 改页面存的数据。
 
-## 9. 第二批（安卓，待做）
+## 9. 第二批：安卓模式1（2026-11-19 已写，待实测）
 
-- `Schema.kt` 建逐字相同的两张表；`MirrorFp.kt` 加两张表规格（列序同 Mac，向量 `spike/mirror-fp-vectors.txt`）；回收站认 `webDoc`。
-- 服务器同步：推前传文件、拉后补文件（`web/:sha` 三个接口）。
-- 模式1 侧栏 / 抽屉列网页，WebView 用 `shouldInterceptRequest` 从本机 `Web/` 读（同样的路径规则、Range），注入同一份 `window.unireader`
-  （`addJavascriptInterface` 或 `WebViewCompat.addWebMessageListener`）。
+- 表：`Schema.kt` 两张表逐字同 Mac；`MirrorFp.kt` 两张表规格（向量 #41 / #42，`spike/mirror-fp-vectors.txt` 末尾追加）、`needsMigrate` 认 `web_` 前缀。
+- 文件层 `local/web/WebAssets.kt`（逐条照 Mac：清单编码、路径规则、入口、Range、导入、清理）；`LibraryStore` 网页一节（SQL 照抄）。
+- 回收站：`Trash.deleteWebDoc`（`KIND_WEB_DOC = "webDoc"`，manifest `webFiles`）、恢复认 `web_doc` / `web_kv`；开工作区时清理 `Web/`（同图片那一步）。
+- 离线镜像：建镜像拷 `Web/`、合并后双向补文件（`MirrorApply.fillWebFiles`）。
+- 服务器：推 `web_doc` 前传文件、拉到后在**网络线程**补文件（课件里可能有视频，别占库队列）、建缓存 / 上传工作区带 `Web/`。
+- 界面：标签 `web:<id>`（`TabSet.WEB_PREFIX`）；整页 `local/web/WebPageController`（顶上一条 后退 / 前进 · 标题 · 重新载入 + `WebView`）。
+  文件经 `shouldInterceptRequest` 读，地址 `https://<id>.unireader-web.invalid/<路径>`（每份网页一个源）；`window.unireader` 注入 html
+  （`WebBridge`），经 `addJavascriptInterface` 同步调库队列（`WebKV`，规则照 Mac）。🔴 JS 接口对所有框架可见：每次装载一个随机口令写进注入脚本，
+  不带口令的调用一律拒。返回键网页里能退先退。抽屉书库页「网页」一组（点开 / 更多：改名、首页、从文件夹重新导入、删除）+「导入网页文件夹…」
+  （目录浏览器 FOLDER 模式）；书库页（`LibraryActivity`）有网页时列一组、点开进阅读界面。
+- Agent（`local/agent/AgentTools.kt`）：同 Mac 八个工具（含 `delete_web_page`）；`write_web_page_data` 的 `set` 在安卓是 `[{key, value}]`（值是 JSON 文本），
+  Mac 是对象（Koog 的参数类型没有自由键对象）。
+- 模式2（连 Mac 当输入板）：Mac 当前标签是网页时平板上不显示它（线格式没有这一种），没做。
+- 测试：JVM 单测 260 项全过（含 `MirrorFpTest` 新向量）；插桩测试 / 平板端到端还没跑（这次平板没接着）。
 - 服务器自带的网页阅读器要不要也能看网页：未定。

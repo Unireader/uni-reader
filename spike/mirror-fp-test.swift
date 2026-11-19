@@ -305,6 +305,21 @@ let tableCases: [(String, [String: Any])] = [
         "created_at": "2026-11-16T08:00:00.000Z", "updated_at": "2026-11-16T08:05:00.000Z",
         "chapter": "", "note": "", "tags": "",
         "marks": "[{\"field\":\"passage\",\"nth\":0,\"text\":\"adapt\"},{\"field\":\"option:B\",\"nth\":0,\"text\":\"容量 capacity\"}]",
+    ] as [String: Any]),    // 网页（2026-11-19，`WEB-DOC-PLAN.md`）：清单是 JSON 文本，last_opened_at 不进指纹
+    ("web_doc", [
+        "id": "78787878-7878-4787-8787-787878787878",
+        "title": "TCP 三次握手动画", "entry": "index.html",
+        "manifest": "[{\"h\":\"\(String(repeating: "a", count: 64))\",\"n\":1200,\"p\":\"index.html\"},{\"h\":\"\(String(repeating: "b", count: 64))\",\"n\":34000,\"p\":\"img/图1.png\"}]",
+        "bytes": Int64(35200), "group_name": "",
+        "created_at": "2026-11-19T02:00:00.000Z", "updated_at": "2026-11-19T02:10:00.000Z",
+        "last_opened_at": "2026-11-19T03:00:00.000Z",
+    ] as [String: Any]),
+    // 网页存的数据：id = web_id + 0x1F + key
+    ("web_kv", [
+        "id": "78787878-7878-4787-8787-787878787878\u{1F}progress",
+        "web_id": "78787878-7878-4787-8787-787878787878", "key": "progress",
+        "value": "{\"chapter\":3,\"done\":[1,2]}",
+        "updated_at": "2026-11-19T02:20:00.000Z",
     ] as [String: Any]),
 ]
 for (t, row) in tableCases {

@@ -19,6 +19,30 @@ extension MCPTools {
         c.register(openWebPageTool())
         c.register(readWebPageDataTool())
         c.register(writeWebPageDataTool())
+        c.register(deleteWebPageTool())
+    }
+
+    static func deleteWebPageTool() -> MCPTool {
+        MCPTool(
+            name: "delete_web_page",
+            title: "Delete web pages",
+            description: "Delete web pages from the workspace, together with what they stored with window.unireader. They go to UniReader's Recently Deleted (File ▸ Recently Deleted) and can be put back there. Only when the user asks.",
+            inputSchema: MCPSchema.object([
+                "workspace": wsArg,
+                "web_ids": MCPSchema.array(of: webIdArg, "web pages to delete"),
+            ], required: ["web_ids"]),
+            outputSchema: MCPSchema.object([
+                "deleted": MCPSchema.array(of: MCPSchema.string("title"), "moved to Recently Deleted"),
+            ]),
+            tier: .delete
+        ) { _, args in
+            guard let list = args.raw["web_ids"] as? [Any], !list.isEmpty else { throw MCPInvalidParams("web_ids is required") }
+            let ids = list.compactMap { $0 as? String }
+            let wsPath = try args.string("workspace")
+            let r = try await MainActor.run { try MCPFacade.shared.deleteWebPages(ids, workspacePath: wsPath) }
+            let names = r["deleted"] as? [String] ?? []
+            return MCPToolResult(text: "Moved \(names.count) web page(s) to Recently Deleted: \(names.joined(separator: "、"))", structured: r)
+        }
     }
 
     private static let wsArg = MCPSchema.string("Workspace .unrd path; default = the workspace of the key reader window.")
@@ -447,6 +471,20 @@ extension MCPFacade {
             NotificationCenter.default.post(name: .webDocNavigate, object: ws, userInfo: ["id": w.id, "path": path])
         }
         return ["id": w.id, "title": w.title]
+    }
+
+    /** 先全部认出来（有一个认不出就一个都不删），再逐个「归档 → 删除」（红线⑪），开着它们的标签退回空态。 */
+    func deleteWebPages(_ raws: [String], workspacePath: String?) throws -> MCPObject {
+        let ws = try manager(workspacePath: workspacePath)
+        let docs = try raws.map { try resolveWebPage($0, in: ws) }
+        var done: [String] = []
+        for w in Dictionary(grouping: docs, by: \.id).compactMap({ $0.value.first }) {
+            guard ws.trashWebDoc(id: w.id) else {
+                throw MCPToolError((ws.lastError ?? "could not delete \(w.title)") + (done.isEmpty ? "" : " (already deleted: \(done.joined(separator: ", ")))"))
+            }
+            done.append(w.title)
+        }
+        return ["deleted": done]
     }
 
     func readWebPageData(_ raw: String, keys: [String]?, workspacePath: String?) throws -> MCPObject {

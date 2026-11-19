@@ -88,7 +88,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   🔴 解析 / 套件 / 执行改了要重生成 `spike/anim-vectors.txt` 并让安卓 `AnimVectorsTest` 过
 - **`docs/WEB-DOC-PLAN.md`** — 网页（静态 HTML 课件，2026-11-19）：导入文件夹进 `Web/<sha256>`（按内容寻址）+ `web_doc` 清单，
   第六种标签内容（`WKWebView` + `unireader-web://` 协议，不开端口）/「在浏览器中打开」（只听 127.0.0.1 的本机服务）；
-  页面里的 `window.unireader` 键值存 `web_kv`、随同步走；第一批 Mac + 同步已写待实测，安卓第二批（§9）
+  页面里的 `window.unireader` 键值存 `web_kv`、随同步走；Mac + 同步 + 安卓模式1 + 两端 Agent 工具已写、待实测（安卓 §9）
 - `docs/SIDEBAR-DRAG-PLAN.md` — 侧栏拖拽排序（系统 `NSOutlineView` 拖放、同一组里换位置；书库 / 笔记 / 画板 / 练习库；顺序存哪）
 - `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行）
 - `docs/REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
