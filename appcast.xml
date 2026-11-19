@@ -9,6 +9,46 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.35</title>
+      <pubDate>Thu, 19 Nov 2026 03:21:11 +0000</pubDate>
+      <sparkle:version>77</sparkle:version>
+      <sparkle:shortVersionString>0.3.35</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>网页（静态 HTML 课件）</h4>
+<ul>
+<li>可以把一个网页文件夹（HTML、图片、样式、脚本、视频）导入工作区：「文件 › 导入网页文件夹…」，或在侧栏「网页」一段上右键。也可以只选其中一个 HTML 文件，它就是首页。</li>
+<li>网页在标签页里打开，顶上有后退、前进、重新载入；也可以点「在浏览器中打开」，用默认浏览器查看（只在这台 Mac 上能访问）。</li>
+<li>侧栏右键可以重命名、换首页、从文件夹重新导入新版本、删除（删除的可以在「文件 › 回收站…」里找回）。</li>
+<li>课件里的脚本可以用 <code>window.unireader</code> 保存学习进度、做题记录等数据，这些数据存在工作区里，在浏览器里打开时读写的也是同一份。</li>
+<li>网页和保存的数据会随离线副本、服务器同步到其他设备。经服务器同步课件文件需要服务器 0.8.0 或更新。</li>
+</ul>
+<h4>Agent</h4>
+<ul>
+<li>Agent 可以列出网页、读和修改其中的文件、新写一份课件或导入一个文件夹、打开给你看、读写课件保存的数据，以及删除网页。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.35">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Web pages (static HTML lessons)</h4>
+<ul>
+<li>Import a web page folder (HTML, images, styles, scripts, videos) into the workspace with File ▸ Import Web Page Folder…, or by right-clicking the Web Pages section in the sidebar. You can also pick a single HTML file in the folder; it becomes the start page.</li>
+<li>Web pages open in a tab with Back, Forward and Reload at the top. Open in Browser shows the page in your default browser (reachable from this Mac only).</li>
+<li>Right-click in the sidebar to rename, change the start page, re-import a newer version from a folder, or delete (deleted pages can be put back from File ▸ Recently Deleted…).</li>
+<li>Scripts in a lesson can use <code>window.unireader</code> to save progress, answers and other data in the workspace; the page reads and writes the same data when opened in the browser.</li>
+<li>Web pages and their saved data sync to your other devices through offline copies and the server. Syncing lesson files through a server needs server 0.8.0 or later.</li>
+</ul>
+<h4>Agent</h4>
+<ul>
+<li>Agents can list web pages, read and change their files, write a new lesson or import a folder, show one to you, read and write the data a lesson saved, and delete web pages.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.35">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.35/UniReader-0.3.35.zip" length="33376046" type="application/octet-stream" sparkle:edSignature="QqY2Ung/qKjfmCJ0Ik71PH/hOURI8d8Y6umv9M1OQgxitcBuKJuAjvAKrA4ofqxkcgi0ymLMM4rZkiiYQfnxAw==" />
+    </item>
+    <item>
       <title>v0.3.34</title>
       <pubDate>Wed, 18 Nov 2026 05:07:08 +0000</pubDate>
       <sparkle:version>76</sparkle:version>
