@@ -119,6 +119,7 @@ enum MainMenu {
         m.addItem(post(L("New Board…"), .newBoardRequested, key: "n", mods: [.command, .control]))
         m.addItem(post(L("Import Notes Folder…"), .importMarkdownRequested))
         m.addItem(post(L("Reference Notes Folder…"), .referenceMarkdownRequested))
+        m.addItem(post(L("Import Web Page Folder…"), .importWebFolderRequested))
         m.addItem(.separator())
         // 最近打开：内容随 registry 变，交给 delegate 在展开前重建（见 `RecentMenuDelegate`）。
         let recent = NSMenuItem(title: L("Open Recent"), action: nil, keyEquivalent: "")

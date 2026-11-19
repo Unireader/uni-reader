@@ -27,6 +27,8 @@ final class WorkspaceManager: ObservableObject {
     @Published var noteTrees: [NoteTreeSection] = []
     /// 画板笔记列表（v16，按最近打开排序）。🔴 只许 `refreshBoards()` 写（放开是为了同模块扩展能写）。
     @Published var boards: [BoardNote] = []
+    /// 网页（静态 HTML 课件，`WEB-DOC-PLAN.md`），按最近打开排。
+    @Published var webDocs: [LibWebDoc] = []
     /// 习题的几个数（v20，`EXERCISE-PLAN.md §4.1`，侧栏用）。🔴 只许 `refreshExercises()` 写。
     @Published var exerciseSummary = ExerciseSummary()
     /// 习题**内容**变了就加一（导入 / 改 / 删 / 收藏 / 进出错题本；记作答不算）：开着的习题标签据此重读。
@@ -401,6 +403,7 @@ final class WorkspaceManager: ObservableObject {
         wiki.updateDocuments(documents.map { ($0.id, $0.title) })   // `[[书名]]` 跟着书库（`KNOWLEDGE-LINKS-PLAN.md`）
         refreshNotes()          // 笔记：重扫目录 + 与库对账 + 重建 `[[…]]` 索引
         refreshBoards()
+        refreshWebDocs()
         refreshExercises()
         refreshLocalFileFlags()
     }
@@ -1022,6 +1025,7 @@ final class WorkspaceManager: ObservableObject {
         imageInfoCache = [:]
         try? store.reconcileImageOrphans()
         purgeImages(before: Date().addingTimeInterval(-LibraryStore.imagePurgeAfter))
+        purgeWebFiles()   // 网页文件：没有网页、也没有回收站条目用着的删掉（`WEB-DOC-PLAN.md §6`）
     }
 
     /// 设置页「立即清理」：待删除的全部现在就删，不等 30 天。返回删了几张。

@@ -21,6 +21,7 @@ import UniServerCore
 /// | `GET workspaces/:ws/pdf/:hash/info` | 服务器出图：各页尺寸 + 扫描图宽度 + 目录（JSON，`PageImages.info`）；没装 MuPDF → 501 |
 /// | `GET workspaces/:ws/pdf/:hash/page/:n?w=` | 服务器出图：第 n 页（从 0 起）约 w 像素宽的 JPEG（扫描页最多按扫描图本身的宽度，超过 4000 的最多一半）；正在看的先画，后两页空闲时在后台画 |
 /// | `HEAD/GET/PUT workspaces/:ws/image/:sha.:ext` | 图片本体，同上 |
+/// | `HEAD/GET/PUT workspaces/:ws/web/:sha` | 网页文件（`Web/<sha256>`，`WEB-DOC-PLAN.md §4`），同上 |
 /// | `GET workspaces/:ws/notes` | 笔记文件清单（`Notes/` 与 `NotesMirror/<源>/` 下全部文件，含已删除的墓碑；JSON：`head` + `files[{path,rev,sha256,size,deleted}]`） |
 /// | `GET workspaces/:ws/note?path=` | 下载一个笔记文件（响应头 `X-UniReader-Rev`）；没有 / 已删除 → 404 |
 /// | `PUT workspaces/:ws/note?path=&base=` | 整份上传一个笔记文件（请求体 = 文件字节）。`base` = 设备上次同步时看到的修订号（新文件传 0）：服务器上没有 / 已删除 / 内容相同 / 修订号 == base → 200（收下或不用动）；服务器上又变过 → **409**（不收）。响应头 `X-UniReader-Rev` = 这个文件现在的修订号。旧版本先进回收站 |
@@ -364,6 +365,37 @@ public enum UniServerApp {
             let (n, total) = try await Resumable.append(request, to: part)
             guard n == total else { return Resumable.progress(n) }
             try await Blocking.run { try w.storeImage(sha256: sha, ext: ext, from: part) }
+            return Response(status: .created)
+        }
+
+        // MARK: 网页文件（`WEB-DOC-PLAN.md §4`）
+        @Sendable func webName(_ context: ServerRequestContext) throws -> String {
+            let sha = try context.parameters.require("sha")
+            guard ServerInfo.isContentHash(sha) else { throw HTTPError(.badRequest, message: "网页文件名应为 <sha256>") }
+            return sha
+        }
+
+        api.head("workspaces/:ws/web/:sha") { _, context -> Response in
+            let w = try workspace(context), sha = try webName(context)
+            if let url = w.webFile(sha256: sha) {
+                return Response(status: .ok, headers: [.contentLength: String(Resumable.size(url))])
+            }
+            return Resumable.missing(Resumable.size(host.partialFile(workspace: w.id, name: "web-\(sha)")))
+        }
+
+        api.get("workspaces/:ws/web/:sha") { request, context -> Response in
+            let w = try workspace(context), sha = try webName(context)
+            guard let url = w.webFile(sha256: sha) else { throw HTTPError(.notFound, message: "服务器上没有这个网页文件") }
+            return try await fileResponse(request, context, url, type: "application/octet-stream", immutable: sha)
+        }
+
+        api.put("workspaces/:ws/web/:sha") { request, context -> Response in
+            let w = try workspace(context), sha = try webName(context)
+            if w.webFile(sha256: sha) != nil { return Response(status: .ok) }
+            let part = host.partialFile(workspace: w.id, name: "web-\(sha)")
+            let (n, total) = try await Resumable.append(request, to: part)
+            guard n == total else { return Resumable.progress(n) }
+            try await Blocking.run { try w.storeWebFile(sha256: sha, from: part) }
             return Response(status: .created)
         }
 

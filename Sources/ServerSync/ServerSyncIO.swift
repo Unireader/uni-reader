@@ -53,6 +53,7 @@ enum ServerSyncIO {
             pull: { since in try SyncWire.decodePullResponse(try await client.pull(wid, since: since)) })
         onRound(round)
         try await downloadMissingImages(db: db, folder: folder, client: client, wid: wid)
+        try await downloadMissingWebFiles(db: db, folder: folder, client: client, wid: wid)
         return try await syncNotes(db: db, folder: folder, client: client, wid: wid, mode: .full)
     }
 
@@ -88,6 +89,16 @@ enum ServerSyncIO {
             case SyncRows.imageTable:
                 guard let ext = c.row?["ext"].flatMap(text), ImageAssets.exists(in: folder, sha256: c.rowId, ext: ext) else { continue }
                 try await client.uploadImage(wid, sha: c.rowId, ext: ext, file: ImageAssets.url(in: folder, sha256: c.rowId, ext: ext))
+            case "web_doc":
+                // 网页清单里的文件先传（服务器已有的只问一下就跳过）；服务器太旧没有这个接口就不传，行照常推
+                guard let manifest = c.row?["manifest"].flatMap(text) else { continue }
+                do {
+                    for sha in WebAssets.hashes(manifest).sorted() where WebAssets.exists(in: folder, sha256: sha) {
+                        try await client.uploadWebFile(wid, sha: sha, file: WebAssets.url(in: folder, sha256: sha))
+                    }
+                } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
+                    continue
+                }
             default:
                 continue
             }
@@ -130,6 +141,33 @@ enum ServerSyncIO {
         }
     }
 
+    /// 网页清单里要、本机没有的文件：从服务器补下来（取不到的跳过；服务器太旧没有接口就整个跳过）。
+    static func downloadMissingWebFiles(db: SQLiteDB, folder: URL, client: ServerClient, wid: String) async throws {
+        var want = Set<String>()
+        for m in (try? db.query("SELECT manifest FROM web_doc", row: { $0.text(0) })) ?? [] { want.formUnion(WebAssets.hashes(m)) }
+        for sha in want.sorted() where !WebAssets.exists(in: folder, sha256: sha) {
+            try Task.checkCancellation()
+            do {
+                try FileManager.default.createDirectory(at: WebAssets.folder(in: folder), withIntermediateDirectories: true)
+                let tmp = WebAssets.folder(in: folder).appendingPathComponent(".\(sha).dl.part")
+                try? FileManager.default.removeItem(at: tmp)
+                try await client.downloadWebFile(wid, sha: sha, to: tmp)
+                // 下完核一下哈希再改名（文件名就是哈希，错的不能顶着这个名字）
+                if (try? WebAssets.sha256Hex(fileAt: tmp)) == sha {
+                    try? FileManager.default.moveItem(at: tmp, to: WebAssets.url(in: folder, sha256: sha))
+                } else {
+                    try? FileManager.default.removeItem(at: tmp)
+                }
+            } catch let e as URLError where e.code == .cancelled {
+                throw CancellationError()
+            } catch let e as ServerClient.Failure where e.isUnsupportedRoute {
+                return
+            } catch {
+                continue
+            }
+        }
+    }
+
     // MARK: - 建本机缓存
 
     /// 下载快照建一份本机缓存，放在 [dir] 下（名字不撞）。返回缓存文件夹。
@@ -164,6 +202,7 @@ enum ServerSyncIO {
                 fraction?(n > 0 ? Double(i) / Double(n) : nil)
             }
             try? SyncClient.recordDownloadedImages(db, folder: dst)   // 补下来的图片进基线，免得第一次同步又推一遍
+            try? await downloadMissingWebFiles(db: db, folder: dst, client: client, wid: wid)
             // 笔记文件也一起拉下来（本机缓存默认缓存全部，方案 §0）；失败不影响建缓存，打开前那一轮会补
             _ = try? await syncNotes(db: db, folder: dst, client: client, wid: wid, mode: .full)
             db.close()
@@ -337,6 +376,12 @@ enum ServerSyncIO {
                   ImageAssets.exists(in: folder, sha256: sha, ext: ext) else { continue }
             let src = ImageAssets.url(in: folder, sha256: sha, ext: ext)
             files.append(UploadFile(rel: "\(ImageAssets.folderName)/\(sha).\(ext)", src: src, size: size(src)))
+        }
+        var webFiles = Set<String>()
+        for m in try db.query("SELECT manifest FROM web_doc", row: { $0.text(0) }) { webFiles.formUnion(WebAssets.hashes(m)) }
+        for sha in webFiles.sorted() where WebAssets.exists(in: folder, sha256: sha) {
+            let src = WebAssets.url(in: folder, sha256: sha)
+            files.append(UploadFile(rel: "\(WebAssets.folderName)/\(sha)", src: src, size: size(src)))
         }
         let notes = folder.appendingPathComponent("Notes", isDirectory: true).standardizedFileURL
         if let walker = fm.enumerator(at: notes, includingPropertiesForKeys: [.isRegularFileKey],

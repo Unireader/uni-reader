@@ -168,6 +168,15 @@ struct ServerClient: Sendable {
         try await resumableUpload(path: "v1/workspaces/\(ws)/image/\(sha).\(ext)", query: [], file: file, progress: nil)
     }
 
+    /// 网页文件（`Web/<sha256>`，`WEB-DOC-PLAN.md §4`）。服务器程序太旧没有这个接口 → `Failure.isUnsupportedRoute`。
+    func downloadWebFile(_ ws: String, sha: String, to dst: URL) async throws {
+        _ = try await download(request("v1/workspaces/\(ws)/web/\(sha)"), to: dst)
+    }
+
+    func uploadWebFile(_ ws: String, sha: String, file: URL) async throws {
+        try await resumableUpload(path: "v1/workspaces/\(ws)/web/\(sha)", query: [], file: file, progress: nil)
+    }
+
     // MARK: 变更通知（S4，长轮询）
 
     struct Change: Decodable, Equatable {

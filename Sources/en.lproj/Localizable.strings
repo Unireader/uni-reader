@@ -1549,3 +1549,25 @@
 "Some files could not be copied, so the folder is still referenced. Fix the problem and try again." = "Some files could not be copied, so the folder is still referenced. Fix the problem and try again.";
 "That folder is no longer referenced." = "That folder is no longer referenced.";
 "This folder is not on this Mac and has no copy from the server." = "This folder is not on this Mac and has no copy from the server.";
+
+/* 网页（WEB-DOC-PLAN.md） */
+"%d file(s) of this web page are not on this device yet. They are downloaded when the workspace syncs." = "%d file(s) of this web page are not on this device yet. They are downloaded when the workspace syncs.";
+"Choose a folder." = "Choose a folder.";
+"Choose the folder of a web page (its HTML files, images, styles and scripts), or the HTML file to open first." = "Choose the folder of a web page (its HTML files, images, styles and scripts), or the HTML file to open first.";
+"Choose the new version of this web page’s folder. What the page has stored is kept." = "Choose the new version of this web page’s folder. What the page has stored is kept.";
+"Copying the web page into the workspace…" = "Copying the web page into the workspace…";
+"Copying the web page into the workspace… %d / %d files" = "Copying the web page into the workspace… %d / %d files";
+"Could not open the web page in the browser." = "Could not open the web page in the browser.";
+"Import Web Page Folder…" = "Import Web Page Folder…";
+"Open this web page in your default browser (served from this Mac only)" = "Open this web page in your default browser (served from this Mac only)";
+"Re-import from Folder…" = "Re-import from Folder…";
+"Rename Web Page" = "Rename Web Page";
+"Right-click to import a web page folder" = "Right-click to import a web page folder";
+"Start Page" = "Start Page";
+"The folder has more than %d files. Choose the folder of one web page." = "The folder has more than %d files. Choose the folder of one web page.";
+"The folder is empty." = "The folder is empty.";
+"The folder is larger than 4 GB. Choose the folder of one web page." = "The folder is larger than 4 GB. Choose the folder of one web page.";
+"There is no HTML file in this folder." = "There is no HTML file in this folder.";
+"This web page is no longer in the workspace." = "This web page is no longer in the workspace.";
+"Web Page" = "Web Page";
+"Web Pages" = "Web Pages";

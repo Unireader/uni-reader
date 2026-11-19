@@ -25,6 +25,9 @@ extension WorkspaceManager {
         // Agent 记忆 / 日程：开着的管理窗口、日程页、Inspector「今天」跟着重读
         if tables.contains("agent_memory") { agentMemoriesChanged() }
         if !tables.isDisjoint(with: ["schedule_plan", "schedule_item"]) { scheduleChanged() }
+        // 网页：列表重读；页面存的数据变了 → 开着的网页收到 `unireader:change` 事件（`WEB-DOC-PLAN.md §5`）
+        if tables.contains("web_doc") { refreshWebDocs() }
+        if tables.contains("web_kv") { webKVChangedRemotely() }
         let boardTouched = !tables.isDisjoint(with: ["board_note", "board_page", "board_item"])
         for tab in openTabs {
             tab.applyRemote(rows)

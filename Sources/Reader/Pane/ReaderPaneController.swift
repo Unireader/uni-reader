@@ -26,6 +26,7 @@ final class ReaderPaneController: NSViewController {
     private var exView: ExerciseTabView?
     /// 日程标签（v26，`SCHEDULE-PLAN.md §4`）：整个窗格是它。
     private var schedView: ScheduleTabView?
+    private var webView: WebDocView?
     private let placeholder = PlaceholderView()
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
@@ -137,6 +138,15 @@ final class ReaderPaneController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.tabs.tabs.forEach { $0.closeMarkdownIfGone() }
+                self?.queueRefresh()
+            }
+            .store(in: &bag)
+        // 网页改名 / 重新导入 / 被删 / 同步来了新版 → 标签与网页视图跟着变
+        workspace.$webDocs
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.tabs.tabs.forEach { $0.closeWebDocIfGone() }
                 self?.queueRefresh()
             }
             .store(in: &bag)
@@ -307,6 +317,21 @@ final class ReaderPaneController: NSViewController {
             schedView?.removeFromSuperview()
             schedView = nil
         }
+        // 网页标签（`WEB-DOC-PLAN.md §3`）：换一份就重建；同一份时跟上改名 / 重新导入 / 文件下完
+        if let wid = tab.webDocID {
+            if webView?.webId != wid {
+                webView?.removeFromSuperview()
+                let v = WebDocView(webId: wid, workspace: workspace)
+                view.addSubview(v, positioned: .below, relativeTo: placeholder)
+                webView = v
+                view.needsLayout = true
+            } else {
+                webView?.refreshFromWorkspace()
+            }
+        } else if webView != nil {
+            webView?.removeFromSuperview()
+            webView = nil
+        }
         // Markdown 笔记标签（v15）：换一篇就重建（旧那份离开窗口时自己补存）。
         // 🔴 **不能在这里早退**——后面还有查找条 / 角标 / **标签栏**要刷，早退一次就是一个
         // 「开了笔记之后标签栏不更新」的 bug。
@@ -334,7 +359,7 @@ final class ReaderPaneController: NSViewController {
                 mdView?.removeFromSuperview()
                 mdView = nil
             }
-            if s.isBoard || tab.boardID != nil || tab.exerciseScope != nil || tab.showsSchedule {
+            if s.isBoard || tab.boardID != nil || tab.exerciseScope != nil || tab.showsSchedule || tab.webDocID != nil {
                 // 画板笔记（v16）：整个窗格就是那张纸（`syncScratchPad` 装）；习题（v20）：整个窗格是 `exView`。
                 // 都没有阅读区，也不要占位提示
                 readerView?.removeFromSuperview(); readerView = nil
@@ -586,6 +611,11 @@ final class ReaderPaneController: NSViewController {
             sv.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
             sv.topInset = si.top
             sv.bottomInset = tabBarInset + scrollerLift
+        }
+        if let wv = webView {
+            wv.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
+            wv.topInset = si.top
+            wv.bottomInset = tabBarInset + scrollerLift
         }
         if let pad = scratchPad {
             pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧 Inspector 让位

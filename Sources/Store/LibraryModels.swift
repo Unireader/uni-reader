@@ -121,6 +121,24 @@ struct LibScratchPad: Identifiable, Equatable {
 
 /// 一篇画板笔记（`board_note` 表，v16，`BOARD-NOTE-PLAN.md §2`）。独立于 PDF，挂在工作区。
 /// 纸样 `bg` / `pattern` 与 `LibScratchPad` 同语义。`lastOpenedAt` 只给侧栏排序（打开不改 `updatedAt`）。
+/// 一份网页（静态 HTML 课件，`web_doc` 表，`WEB-DOC-PLAN.md §2`）。文件在 `Web/`，`manifest` 是清单 JSON（`WebAssets`）。
+struct LibWebDoc: Identifiable, Equatable {
+    var id: String              // UUID
+    var title: String
+    var entry: String           // 入口页相对路径
+    var manifest: String        // JSON 清单
+    var bytes: Int64
+    var groupName: String = ""
+    var createdAt: Date
+    var updatedAt: Date
+    var lastOpenedAt: Date?
+
+    var entries: [WebAssets.Entry] { WebAssets.decode(manifest) }
+
+    /// 侧栏 / 标签的选中键前缀（同 `BoardNote.rowPrefix`）。
+    static let rowPrefix = "web:"
+}
+
 struct LibBoard: Identifiable, Equatable {
     var id: String              // UUID
     var title: String

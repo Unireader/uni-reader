@@ -71,6 +71,31 @@ extension Trash {
         }
     }
 
+    /// 把一份网页归档（那一行 + 页面存的数据）。**调用方随后才可以删库行。**
+    @discardableResult
+    static func archiveWebDoc(store: LibraryStore, webId: String, title: String) -> URL? {
+        let workspace = store.workspaceFolder
+        guard let dir = makeDir(in: workspace, title: title) else { return nil }
+        do {
+            let a = try store.archiveWebDoc(id: webId, to: dir.appendingPathComponent(snapshotName).path)
+            guard a.counts.webDoc == 1 else {
+                throw NSError(domain: "UniReader", code: 1, userInfo: [NSLocalizedDescriptionKey: "web page row not found"])
+            }
+            var m = Manifest()
+            m.kind = .webDoc
+            m.title = title
+            m.counts = a.counts
+            m.webFiles = a.webFiles
+            try encode(m).write(to: dir.appendingPathComponent(manifestName))
+            wsLog("[TRASH] 网页已移入回收站：\(title)")
+            return dir
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            wsLog("[TRASH] ⚠️ 网页归档失败，删除已放弃：\(title) — \(error)")
+            return nil
+        }
+    }
+
     /// 把一篇画板笔记归档（那一行 + 上面的笔迹与图）。**调用方随后才可以删库行。**
     @discardableResult
     static func archiveBoard(store: LibraryStore, boardId: UUID, title: String) -> URL? {
@@ -294,6 +319,11 @@ extension WorkspaceManager {
         Set(trashEntries.flatMap(\.manifest.images))
     }
 
+    /// 回收站里的网页还用着的文件（清理 `Web/` 时护住，同 `trashHeldImages`）。
+    var trashHeldWebFiles: Set<String> {
+        Set(trashEntries.flatMap { $0.manifest.webFiles ?? [] })
+    }
+
     /// 删除确认框里那句「2616 笔笔迹、12 条笔记、30 处高亮」。一条 GROUP BY，不读 payload。
     /// 一条都没有 → 空串（调用方不显示这一行）。
     func deletionSummary(documentId: String) -> String {
@@ -382,6 +412,7 @@ extension WorkspaceManager {
         if entry.manifest.kind == .agentContexts { agentContextsChanged() }
         if entry.manifest.kind == .agentMemories { agentMemoriesChanged() }
         if entry.manifest.kind == .schedule { scheduleChanged() }
+        if entry.manifest.kind == .webDoc { refreshWebDocs() }
         if entry.manifest.kind == .annotations {
             NotificationCenter.default.post(name: Trash.annotationsRestored, object: self,
                                             userInfo: ["documentId": entry.manifest.documentId])

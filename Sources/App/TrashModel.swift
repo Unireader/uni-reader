@@ -31,6 +31,7 @@ enum Trash {
         case agentContexts // 几份 Agent 上下文（v23，`ACP-AGENT-PLAN.md §12`）
         case agentMemories // 几条 Agent 记忆（v25，`ACP-AGENT-PLAN.md §21`）
         case schedule      // 几份日程计划（连同名下的事项）/ 几件日程事项（v26，`SCHEDULE-PLAN.md §5`）
+        case webDoc        // 一份网页连同它存的数据（`WEB-DOC-PLAN.md §6`）
     }
 
     /// `manifest.json` 的内容。**新增字段一律给默认值**：老条目的 manifest 少字段也要读得出来，
@@ -51,6 +52,9 @@ enum Trash {
         var images: [String] = []
         /// 各版本的 PDF 内容 hash —— 恢复时认「这份 PDF 是不是又被导入过」（方案 §2.5）。
         var contentHashes: [String] = []
+        /// 网页清单里的文件（`Web/<sha256>`）——清理 `Web/` 时要护住它们。
+        /// 🔴 可选：合成的解码要求非可选键必须在，老条目的 manifest 没有这个键。
+        var webFiles: [String]?
     }
 
     /// 扫描出来的一条（manifest + 落盘信息）。

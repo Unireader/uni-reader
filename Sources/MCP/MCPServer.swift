@@ -197,6 +197,10 @@ final class MCPServer: ObservableObject {
     as one plan (one concrete task per item, on a day, with [[book title#page=N]] links in detail); reschedule, tick off \
     or rewrite items with update_schedule_items; delete_schedule removes items or whole plans (to the Trash); \
     open_schedule shows a day or an item to the user. \
+    Web pages (网页) are static HTML lessons (HTML, images, CSS, JS) stored in the workspace: list_web_pages, \
+    read_web_page (file list, or one text file), update_web_page (exact-text edits / whole files / delete), \
+    create_web_page (write a new lesson, or import a local folder), open_web_page shows one to the user; \
+    pages can store progress with window.unireader, read or change it with read_web_page_data / write_web_page_data. \
     To count things — documents, pages read, annotations, notes, exercises (done, right, wrong, mistakes, starred, \
     tags), practice per day, schedule progress, memories, conversations — call workspace_stats instead of reading \
     whole lists. \

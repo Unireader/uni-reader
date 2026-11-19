@@ -70,6 +70,11 @@ enum MirrorBuilder {
             files += 1
             bytes += Int64(im.bytes)
         }
+        // 网页文件同图片：全部带上（`WEB-DOC-PLAN.md §4`）
+        for sha in webFilesToCopy(store: store, folder: source) {
+            files += 1
+            bytes += fileSize(fm, WebAssets.url(in: source, sha256: sha).path)
+        }
         for docId in plan.documentsWithPDF.sorted() {
             guard let (path, _) = pickSource(store: store, documentId: docId, resolve: resolve) else {
                 unresolved.append(docId)
@@ -167,6 +172,13 @@ enum MirrorBuilder {
                 copiedBytes += Int64(im.bytes)
             }
 
+            // ③.6 网页文件（`Web/`）：按库里各份网页的清单拷，同图片
+            for sha in webFilesToCopy(store: store, folder: source) {
+                let src = WebAssets.url(in: source, sha256: sha)
+                try WebAssets.copy(from: src, to: destination, sha256: sha)
+                copiedBytes += fileSize(FileManager.default, src.path)
+            }
+
             // ④ 血缘 meta。**镜像必须换一个自己的 workspace_id**：VACUUM 出来的副本原样带着源库的 id，
             // 不换的话「扫一圈盘按 workspace_id 找源」会把镜像自己也认成源。
             progress?("正在写入基线…", 0.92)
@@ -212,6 +224,11 @@ enum MirrorBuilder {
     // MARK: - 内部
 
     /// 要带进镜像的图片：表里有行、文件在、且不是已到期的待删除。
+    /// 要带去镜像的网页文件：各份网页清单里用到、本机又有的。
+    static func webFilesToCopy(store: LibraryStore, folder: URL) -> [String] {
+        ((try? store.webFileHashes()) ?? []).filter { WebAssets.exists(in: folder, sha256: $0) }.sorted()
+    }
+
     static func imagesToCopy(store: LibraryStore, folder: URL, now: Date = .now) -> [LibImage] {
         let cutoff = now.addingTimeInterval(-LibraryStore.imagePurgeAfter)
         return ((try? store.images()) ?? []).filter { im in

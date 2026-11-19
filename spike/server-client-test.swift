@@ -146,6 +146,37 @@ check(try noteCount(b, id: "N2") == 1, "B 拉到了 A 新加的笔记")
 check(try noteCount(a, id: "N3") == 1, "A 拉到了 B 新加的笔记")
 check(try specState(a) == specState(b), "两台设备的行一致")
 
+// 网页（`WEB-DOC-PLAN.md §4`）：A 导入一份课件（行 + `Web/` 文件 + 页面存的数据）→ B 同步后文件齐了；B 改数据 → A 拿到
+let course = root.appendingPathComponent("course")
+try FileManager.default.createDirectory(at: course.appendingPathComponent("img"), withIntermediateDirectories: true)
+try Data("<html><body>课件</body></html>".utf8).write(to: course.appendingPathComponent("index.html"))
+try randomData(300_000).write(to: course.appendingPathComponent("img/pic.png"))
+let webEntries = try WebAssets.importFolder(course, into: a)
+let webStoreA = try LibraryStore(workspaceFolder: a)
+let webId = UUID().uuidString
+try webStoreA.upsertWebDoc(LibWebDoc(id: webId, title: "课件", entry: "index.html", manifest: WebAssets.encode(webEntries),
+                                     bytes: webEntries.reduce(0) { $0 + $1.n }, createdAt: .now, updatedAt: .now, lastOpenedAt: nil))
+try webStoreA.setWebKV(webId: webId, key: "progress", value: "{\"ch\":1}")
+webStoreA.close()
+try await ServerSyncIO.closedRound(folder: a, client: client, wid: wid)
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+check(webEntries.allSatisfy { WebAssets.exists(in: b, sha256: $0.h) }, "网页：B 同步后课件的文件都下来了")
+check(webEntries.allSatisfy { (try? WebAssets.sha256Hex(fileAt: WebAssets.url(in: b, sha256: $0.h))) == $0.h }, "网页：下来的文件哈希对得上")
+do {
+    let sb = try LibraryStore(workspaceFolder: b)
+    check((try sb.webKVValue(webId: webId, key: "progress")) == "{\"ch\":1}", "网页：页面存的数据跟过来了")
+    try sb.setWebKV(webId: webId, key: "progress", value: "{\"ch\":2}", at: Date().addingTimeInterval(5))
+    sb.close()
+}
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+try await ServerSyncIO.closedRound(folder: a, client: client, wid: wid)
+do {
+    let sa = try LibraryStore(workspaceFolder: a)
+    check((try sa.webKVValue(webId: webId, key: "progress")) == "{\"ch\":2}", "网页：B 改的数据回到了 A")
+    sa.close()
+}
+check(try specState(a) == specState(b), "网页同步后两台设备的行一致")
+
 // ============================================================
 print("⑤ 上传中断后续传")
 let part = randomData(12 * 1024 * 1024)

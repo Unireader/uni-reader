@@ -182,6 +182,17 @@ enum MirrorFp {
             Column("result", .text), Column("seq", .int), Column("agent", .text),
             Column("created_at", .text), Column("updated_at", .text),
         ], lww: "updated_at"),
+        // 网页（`WEB-DOC-PLAN.md §4`）：清单随行走（文件按哈希另补，同图片）；重新导入 = 换清单、改 `updated_at`。
+        // `last_opened_at` 同 `document` / `board_note`：刻意不进指纹。
+        TableSpec(table: "web_doc", key: "id", columns: [
+            Column("id", .text), Column("title", .text), Column("entry", .text), Column("manifest", .text),
+            Column("bytes", .int), Column("group_name", .text), Column("created_at", .text), Column("updated_at", .text),
+        ], lww: "updated_at"),
+        // 网页存的数据（`WEB-DOC-PLAN.md §5`）：一个键一行，两边都改了按 `updated_at` 取新。
+        TableSpec(table: "web_kv", key: "id", columns: [
+            Column("id", .text), Column("web_id", .text), Column("key", .text), Column("value", .text),
+            Column("updated_at", .text),
+        ], lww: "updated_at"),
         TableSpec(table: "meta", key: "key", columns: [
             Column("key", .text), Column("value", .text),
         ]),

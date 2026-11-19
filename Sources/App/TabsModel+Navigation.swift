@@ -8,6 +8,7 @@ struct NavPlace {
         case board(UUID)
         case exercises(ExerciseScope)
         case schedule
+        case web(String)
     }
     let target: Target
     /// 当时在哪个标签里：还开着就切回它，关了就按 `target` 重新打开。
@@ -38,6 +39,7 @@ extension TabsModel {
         if let id = tab.boardID { return NavPlace(target: .board(id), tabID: tab.id) }
         if let scope = tab.exerciseScope { return NavPlace(target: .exercises(scope), tabID: tab.id) }
         if tab.showsSchedule { return NavPlace(target: .schedule, tabID: tab.id) }
+        if let id = tab.webDocID { return NavPlace(target: .web(id), tabID: tab.id) }
         return nil
     }
 
@@ -90,6 +92,7 @@ extension TabsModel {
             case .exercises(let scope):
                 if let id = scope.documentId { return workspace.document(id: id) == nil }
                 return false
+            case .web(let id): return workspace.webDoc(id: id) == nil
             case .markdown, .board, .schedule:
                 return false
             }
@@ -111,6 +114,7 @@ extension TabsModel {
             case .board(let id): tab = openBoard(id)
             case .exercises(let scope): tab = openExercises(scope)
             case .schedule: tab = openSchedule()
+            case .web(let id): tab = openWebDoc(id)
             }
         }
         if let mark = place.mark, tab.docID != nil { tab.session.revisit(mark) }

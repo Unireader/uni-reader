@@ -1551,3 +1551,25 @@
 "Some files could not be copied, so the folder is still referenced. Fix the problem and try again." = "有文件没能复制，所以仍保留引用。处理好之后再试一次。";
 "That folder is no longer referenced." = "这个目录已经不在引用列表里了。";
 "This folder is not on this Mac and has no copy from the server." = "这台电脑上没有这个目录，也没有服务器上的副本。";
+
+/* 网页（WEB-DOC-PLAN.md） */
+"%d file(s) of this web page are not on this device yet. They are downloaded when the workspace syncs." = "这份网页有 %d 个文件还不在这台设备上，同步工作区时会下载。";
+"Choose a folder." = "请选择一个文件夹。";
+"Choose the folder of a web page (its HTML files, images, styles and scripts), or the HTML file to open first." = "选择网页所在的文件夹（含 HTML、图片、样式和脚本），或者选择要最先打开的那个 HTML 文件。";
+"Choose the new version of this web page’s folder. What the page has stored is kept." = "选择这份网页新版本的文件夹。网页里已保存的数据会保留。";
+"Copying the web page into the workspace…" = "正在把网页复制进工作区…";
+"Copying the web page into the workspace… %d / %d files" = "正在把网页复制进工作区… %d / %d 个文件";
+"Could not open the web page in the browser." = "无法在浏览器中打开这份网页。";
+"Import Web Page Folder…" = "导入网页文件夹…";
+"Open this web page in your default browser (served from this Mac only)" = "在默认浏览器中打开这份网页（只在本机提供访问）";
+"Re-import from Folder…" = "从文件夹重新导入…";
+"Rename Web Page" = "重命名网页";
+"Right-click to import a web page folder" = "右键导入网页文件夹";
+"Start Page" = "首页";
+"The folder has more than %d files. Choose the folder of one web page." = "文件夹里超过 %d 个文件。请选择单份网页所在的文件夹。";
+"The folder is empty." = "文件夹是空的。";
+"The folder is larger than 4 GB. Choose the folder of one web page." = "文件夹超过 4 GB。请选择单份网页所在的文件夹。";
+"There is no HTML file in this folder." = "这个文件夹里没有 HTML 文件。";
+"This web page is no longer in the workspace." = "这份网页已经不在工作区里了。";
+"Web Page" = "网页";
+"Web Pages" = "网页";

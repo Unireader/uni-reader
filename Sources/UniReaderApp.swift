@@ -527,6 +527,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try showInWorkspace(ws, activate: activate, showing: { $0.boardID == id }) { $0.openBoard(id) }
     }
 
+    func showWebDoc(_ id: String, in ws: WorkspaceManager) throws -> (ReaderWindowController, DocTabModel) {
+        try showInWorkspace(ws, activate: true, showing: { $0.webDocID == id }) { $0.openWebDoc(id) }
+    }
+
     private func showInWorkspace(_ ws: WorkspaceManager, activate: Bool, showing: (DocTabModel) -> Bool,
                                  open: (TabsModel) -> DocTabModel) throws -> (ReaderWindowController, DocTabModel) {
         let mine = readerWindows.filter { $0.workspace === ws }
@@ -744,6 +748,8 @@ extension Notification.Name {
     static let newNoteFolderRequested = Notification.Name("com.xvan.UniReader.newNoteFolderRequested")
     /// 新建一篇画板笔记（v16，`BOARD-NOTE-PLAN.md`）。
     static let newBoardRequested = Notification.Name("com.xvan.UniReader.newBoardRequested")
+    /// 导入一个静态 HTML 课件文件夹为网页（`WEB-DOC-PLAN.md`）。`object` 可以是要重新导入的那份网页的 id（String）。
+    static let importWebFolderRequested = Notification.Name("com.xvan.UniReader.importWebFolderRequested")
     /// 把一个现有笔记目录（Obsidian vault 或它的子目录）**复制**进工作区。
     static let importMarkdownRequested = Notification.Name("com.xvan.UniReader.importMarkdownRequested")
     /// **引用**一个外部笔记目录（不复制，直接在那儿编辑）。

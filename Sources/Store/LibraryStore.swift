@@ -482,6 +482,34 @@ final class LibraryStore {
         );
         CREATE INDEX IF NOT EXISTS idx_schedule_item_day ON schedule_item(day);
         CREATE INDEX IF NOT EXISTS idx_schedule_item_plan ON schedule_item(plan_id);
+        -- v28（随 v28 一起发布，`WEB-DOC-PLAN.md §2`）：网页 = 静态 HTML 课件（一个文件夹：html + 图片 / css / js）。
+        -- 文件本体在 `<工作区>/Web/<sha256>`（按内容寻址，同 `Images/`）；这里一行一份，manifest = 清单
+        -- JSON 数组 `[{"p":相对路径,"h":sha256,"n":字节数}]`（按路径排序，`WebAssets.encode`）；entry = 入口页的相对路径；
+        -- bytes = 全部文件的字节数之和（显示用）。内容只读：改了课件就重新导入（换清单、改 updated_at）。
+        -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
+        CREATE TABLE IF NOT EXISTS web_doc (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL DEFAULT '',
+          entry TEXT NOT NULL DEFAULT 'index.html',
+          manifest TEXT NOT NULL DEFAULT '[]',
+          bytes INTEGER NOT NULL DEFAULT 0,
+          group_name TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_opened_at TEXT
+        );
+        -- 网页自己存的数据（`WEB-DOC-PLAN.md §5`）：页面里的 `window.unireader.set(key, value)` 写到这里，
+        -- 学到哪了、做题记录之类，随同步到别的设备。一个键一行；id = web_id + 0x1F + key（同步按单列主键认行）；
+        -- value = JSON 文本。删网页时连它们一起删（进回收站）。
+        -- 🔴 安卓 `Schema.kt` 逐字相同，改这里必须同步。
+        CREATE TABLE IF NOT EXISTS web_kv (
+          id TEXT PRIMARY KEY,
+          web_id TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL DEFAULT 'null',
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_web_kv_web ON web_kv(web_id);
         """)
         // 已有库补列（幂等：列已存在则跳过）。v1 → v2 加入 阅读进度 + in_workspace。
         // v2 → v3 只新增 ocr_page 表（上面 CREATE TABLE IF NOT EXISTS 已覆盖，无需 ALTER）。
@@ -1155,6 +1183,79 @@ final class LibraryStore {
     /// 对账机制按 id 删除（与擦除同一条路径）。这里多删一次只会和对账重复。
     func deleteScratchPad(id: String) throws {
         try db.run("DELETE FROM scratch_pad WHERE id=?", [.text(storedID(id))])
+    }
+
+    // MARK: - 网页（web_doc / web_kv，`WEB-DOC-PLAN.md §2`）
+
+    func webDocs() throws -> [LibWebDoc] {
+        try db.query("SELECT * FROM web_doc ORDER BY COALESCE(last_opened_at, created_at) DESC").map(Self.webDoc)
+    }
+    func webDoc(id: String) throws -> LibWebDoc? {
+        try db.query("SELECT * FROM web_doc WHERE id=?", [.text(id)]).map(Self.webDoc).first
+    }
+    func upsertWebDoc(_ w: LibWebDoc) throws {
+        try db.run("""
+        INSERT INTO web_doc(id,title,entry,manifest,bytes,group_name,created_at,updated_at,last_opened_at)
+        VALUES(?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, entry=excluded.entry, manifest=excluded.manifest,
+          bytes=excluded.bytes, group_name=excluded.group_name, updated_at=excluded.updated_at,
+          last_opened_at=excluded.last_opened_at
+        """, [.text(w.id), .text(w.title), .text(w.entry), .text(w.manifest), .int(w.bytes), .text(w.groupName),
+              .text(ISO.string(w.createdAt)), .text(ISO.string(w.updatedAt)),
+              w.lastOpenedAt.map { .text(ISO.string($0)) } ?? .null])
+    }
+    /// 只记「最近打开」（不动 `updated_at`，同画板：打开不算改动）。
+    func touchWebDocOpened(id: String, at: Date = .now) throws {
+        try db.run("UPDATE web_doc SET last_opened_at=? WHERE id=?", [.text(ISO.string(at)), .text(id)])
+    }
+    /// 删一份网页连同它存的数据（一个事务）。归档进回收站由上层先做。
+    func deleteWebDoc(id: String) throws {
+        try db.transaction {
+            try db.run("DELETE FROM web_kv WHERE web_id=?", [.text(id)])
+            try db.run("DELETE FROM web_doc WHERE id=?", [.text(id)])
+        }
+    }
+    /// 全部网页清单里用到的文件哈希（清理 `Web/`、同步补文件用）。
+    func webFileHashes() throws -> Set<String> {
+        var out = Set<String>()
+        for m in try db.query("SELECT manifest FROM web_doc", row: { $0.text(0) }) { out.formUnion(WebAssets.hashes(m)) }
+        return out
+    }
+
+    static func webKVId(webId: String, key: String) -> String { webId + "\u{1F}" + key }
+
+    func webKV(webId: String) throws -> [(key: String, value: String)] {
+        try db.query("SELECT key, value FROM web_kv WHERE web_id=? ORDER BY key", [.text(webId)],
+                     row: { ($0.text(0), $0.text(1)) })
+    }
+    func webKVValue(webId: String, key: String) throws -> String? {
+        try db.query("SELECT value FROM web_kv WHERE id=?", [.text(Self.webKVId(webId: webId, key: key))],
+                     row: { $0.text(0) }).first
+    }
+    /// 写一个键（值是 JSON 文本）。值没变就不写（不改 `updated_at`，免得同步当成改动）。
+    func setWebKV(webId: String, key: String, value: String, at: Date = .now) throws {
+        let id = Self.webKVId(webId: webId, key: key)
+        try db.run("""
+        INSERT INTO web_kv(id,web_id,key,value,updated_at) VALUES(?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        WHERE web_kv.value <> excluded.value
+        """, [.text(id), .text(webId), .text(key), .text(value), .text(ISO.string(at))])
+    }
+    func removeWebKV(webId: String, key: String) throws {
+        try db.run("DELETE FROM web_kv WHERE id=?", [.text(Self.webKVId(webId: webId, key: key))])
+    }
+    func clearWebKV(webId: String) throws {
+        try db.run("DELETE FROM web_kv WHERE web_id=?", [.text(webId)])
+    }
+    /// 一份网页存了几个键、共多少字节（上限检查用）。
+    func webKVUsage(webId: String) throws -> (count: Int, bytes: Int) {
+        try db.query("SELECT COUNT(*), COALESCE(SUM(LENGTH(CAST(value AS BLOB)) + LENGTH(CAST(key AS BLOB))),0) FROM web_kv WHERE web_id=?",
+                     [.text(webId)], row: { (Int($0.int64(0)), Int($0.int64(1))) }).first ?? (0, 0)
+    }
+
+    /// 把一份网页（那一行 + 它存的数据）归档。
+    func archiveWebDoc(id: String, to path: String) throws -> TrashStore.Archived {
+        try TrashStore.archiveWebDoc(db, webId: id, to: path)
     }
 
     // MARK: - 画板笔记（board_note / board_item，v16；`BOARD-NOTE-PLAN.md §2`）
@@ -2179,6 +2280,14 @@ final class LibraryStore {
                            ink: (r["ink"] as? Data).flatMap { $0.isEmpty ? nil : $0 },
                            judgedBy: r["judged_by"] as? String ?? "",
                            feedback: r["feedback"] as? String ?? "")
+    }
+    private static func webDoc(_ r: [String: Any]) -> LibWebDoc {
+        LibWebDoc(id: r["id"] as? String ?? "", title: r["title"] as? String ?? "",
+                  entry: r["entry"] as? String ?? "index.html", manifest: r["manifest"] as? String ?? "[]",
+                  bytes: r["bytes"] as? Int64 ?? 0, groupName: r["group_name"] as? String ?? "",
+                  createdAt: ISO.date(r["created_at"] as? String) ?? .now,
+                  updatedAt: ISO.date(r["updated_at"] as? String) ?? .now,
+                  lastOpenedAt: ISO.date(r["last_opened_at"] as? String))
     }
     private static func image(_ r: [String: Any]) -> LibImage {
         LibImage(sha256: r["sha256"] as? String ?? "", ext: r["ext"] as? String ?? "png",

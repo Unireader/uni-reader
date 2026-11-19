@@ -351,6 +351,11 @@ final class MCPFacade {
             o["content_type"] = "schedule"
             o["document_id"] = NSNull()
             o["title"] = tab.tabTitle
+        } else if let wid = tab.webDocID {
+            o["content_type"] = "web"
+            o["document_id"] = NSNull()
+            o["title"] = tab.tabTitle
+            o["web_id"] = wid
         } else {
             o["content_type"] = "empty"
             o["document_id"] = NSNull()
@@ -650,6 +655,14 @@ final class MCPFacade {
             o["title"] = tab.tabTitle
             o["schedule"] = ["day": tab.scheduleShownDay.isEmpty ? ScheduleDay.today() : tab.scheduleShownDay,
                              "item_id": tab.scheduleSelectedItem ?? NSNull()] as MCPObject
+            return o
+        }
+        // 网页标签（`WEB-DOC-PLAN.md`）：只报是哪一份
+        if let wid = tab.webDocID {
+            o["content_type"] = "web"
+            o["document_id"] = NSNull()
+            o["title"] = tab.tabTitle
+            o["web_id"] = wid
             return o
         }
         guard let docId = tab.docID else {

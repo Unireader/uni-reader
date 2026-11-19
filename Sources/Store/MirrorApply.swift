@@ -35,6 +35,8 @@ enum MirrorApply {
         /// 双向补齐的图片本体张数（行 + 文件，见 `fillImages`）。
         var imagesFilledToSource = 0
         var imagesFilledToMirror = 0
+        /// 双向补齐的网页文件个数。
+        var webFilesFilled = 0
         /// 双向覆盖的扫描页对齐参数行数（见 `fillAlign`）。
         var alignToSource = 0
         var alignToMirror = 0
@@ -299,6 +301,17 @@ enum MirrorApply {
     /// 重置的话「一侧先删、另一侧补回来、再重置……」永远删不完。
     /// 对面已有行（只是文件丢了）时 `INSERT OR IGNORE` 不动那一行——它自己的 `orphaned_at` 更可信。
     @discardableResult
+    /// [to] 这边网页清单里要、本机没有、[fromFolder] 有的文件拷过来（幂等）。单个文件拷失败跳过（下次再补）。
+    static func fillWebFiles(fromFolder: URL, to: LibraryStore, toFolder: URL) -> Int {
+        var n = 0
+        for sha in (try? to.webFileHashes()) ?? [] where !WebAssets.exists(in: toFolder, sha256: sha) {
+            let src = WebAssets.url(in: fromFolder, sha256: sha)
+            guard FileManager.default.fileExists(atPath: src.path) else { continue }
+            if (try? WebAssets.copy(from: src, to: toFolder, sha256: sha)) != nil { n += 1 }
+        }
+        return n
+    }
+
     static func fillImages(from: LibraryStore, fromFolder: URL, to: LibraryStore, toFolder: URL,
                            keys: [String]) throws -> Int {
         var n = 0
@@ -384,6 +397,10 @@ enum MirrorApply {
                                                 to: mirrorStore, toFolder: mirrorFolder, keys: plan.imagesToMirror)
         try sourceStore.reconcileImageOrphans()
         try mirrorStore.reconcileImageOrphans()
+
+        // ④.65 网页文件（`WEB-DOC-PLAN.md §4`）：行刚合并完，各边按自己的清单向另一边要缺的文件
+        r.webFilesFilled = fillWebFiles(fromFolder: mirrorFolder, to: sourceStore, toFolder: sourceFolder)
+            + fillWebFiles(fromFolder: sourceFolder, to: mirrorStore, toFolder: mirrorFolder)
 
         // ④.7 扫描页对齐参数（整行按 updated_at 取新，同样事务外、幂等）
         r.alignToSource = try fillAlign(from: mirrorStore, to: sourceStore, keys: plan.alignToSource)

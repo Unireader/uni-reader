@@ -212,7 +212,7 @@ public final class WorkspaceHost: @unchecked Sendable {
         return dir
     }
 
-    /// 上传会话里某个文件的落点。只许 `UniReader/library.sqlite` 与 `PDFs/`、`Images/`、`Notes/` 下的普通文件
+    /// 上传会话里某个文件的落点。只许 `UniReader/library.sqlite` 与 `PDFs/`、`Images/`、`Notes/`、`Web/` 下的普通文件
     /// （不许 `..`、隐藏文件、`.part` 结尾——`.part` 是传输中的半截文件自己用的名字）。
     public func uploadFileURL(upload id: String, path: String) throws -> URL {
         let dir = try uploadFolder(id)
@@ -225,7 +225,7 @@ public final class WorkspaceHost: @unchecked Sendable {
     static func isAcceptableUploadPath(_ p: String) -> Bool {
         if p == "UniReader/library.sqlite" { return true }
         let comps = p.split(separator: "/", omittingEmptySubsequences: false)
-        guard comps.count >= 2, ["PDFs", "Images", "Notes"].contains(String(comps[0])),
+        guard comps.count >= 2, ["PDFs", "Images", "Notes", "Web"].contains(String(comps[0])),
               !p.hasSuffix(".part"), !p.contains("\0") else { return false }
         return comps.allSatisfy { !$0.isEmpty && !$0.hasPrefix(".") }
     }

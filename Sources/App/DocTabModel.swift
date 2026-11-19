@@ -72,6 +72,9 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 本标签显示的是**日程**（v26，`SCHEDULE-PLAN.md §4`）：与 `docID` / `noteRef` / `boardID` / `exerciseScope`
     /// 五者互斥，同习题的做法（开之前 `select(nil)`）。一扇窗口至多一个日程标签（`TabsModel.openSchedule`）。
     @Published private(set) var showsSchedule = false
+    /// 本标签显示的**网页**（静态 HTML 课件，`WEB-DOC-PLAN.md §3`）：`web_doc.id`。与上面几种互斥，同日程的做法
+    /// （开之前 `select(nil)`），会话里 `pdf == nil`、所有按 PDF 记账的地方看到的是空标签。
+    @Published private(set) var webDocID: String?
     /// 待日程页处理的「去某一天 / 选中某一件」（打开日程时带的）；日程页 `takeScheduleFocus()` 取走。
     private(set) var scheduleFocus: ScheduleFocus?
     /// 日程页此刻看的是哪一天、选中了哪一件（日程页写，MCP `get_current_view` / Agent 上下文读）。
@@ -101,6 +104,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     var tabTitle: String {
         if let ref = noteRef { return ref.title }
         if showsSchedule { return L("Schedule") }
+        if let wid = webDocID { return workspace.webDocs.first { $0.id == wid }?.title ?? L("Web Page") }
         if let sc = exerciseScope { return workspace.exerciseScopeTitle(sc) }
         if let b = session.board { return b.displayName }
         if let bid = boardID { return workspace.boards.first { $0.id == bid }?.displayName ?? L("Untitled Board") }
@@ -111,7 +115,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     }
 
     /// 什么都没装的空标签（PDF / Markdown / 画板 / 习题都没有）：打开新内容时就地复用它。
-    var isEmptyTab: Bool { docID == nil && noteRef == nil && boardID == nil && exerciseScope == nil && !showsSchedule }
+    var isEmptyTab: Bool { docID == nil && noteRef == nil && boardID == nil && exerciseScope == nil && !showsSchedule && webDocID == nil }
 
     /// **公用的**习题标签（用户 2026-10-11 定）：侧栏点哪组题都在它里面换，不另开标签。右键单独开的不算。
     /// 公用的有两个、各管一支：错题本那一支（错题本和它按书 / 按章展开的几级）一个，其余一个（`ExerciseScope.isMistakes`）。
@@ -126,6 +130,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         if let bid = boardID { return BoardNote.rowPrefix + bid.uuidString }
         if let sc = exerciseScope { return sc.rowID }
         if showsSchedule { return ScheduleFocus.rowID }
+        if let wid = webDocID { return LibWebDoc.rowPrefix + wid }
         return docID
     }
 
@@ -401,11 +406,12 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 切到另一篇文档（原 `ContentView.onChange(of: selectedDocID)` 那一整块）。
     func select(_ id: String?) {
-        guard id != docID || noteRef != nil || boardID != nil || exerciseScope != nil || showsSchedule else { return }
+        guard id != docID || noteRef != nil || boardID != nil || exerciseScope != nil || showsSchedule || webDocID != nil else { return }
         noteRef = nil       // PDF 与 md 笔记互斥
         exerciseScope = nil // 与习题也互斥（习题标签没有要结清的东西：作答当场就落库了）
         showsSchedule = false   // 与日程也互斥（日程同样当场落库）
         scheduleFocus = nil
+        webDocID = nil          // 与网页也互斥（网页存的数据当场落库）
         leaveBoard()        // 与画板也互斥（先结清画板的落库再清状态）
         // 打开耗时账本从这一刻起算（用户点下去 = 这里）。上一本还没齐的按中断结账。
         session.openTrace?.finish("中断：换文档")
@@ -480,7 +486,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// （平板广播等仍只认 PDF）；Markdown 标签由 `TabsModel` 的混合标签组单独持久化。
     func openMarkdown(_ ref: NoteRef) {
         guard noteRef != ref else { return }
-        if docID != nil || boardID != nil || exerciseScope != nil || showsSchedule { select(nil) }
+        if docID != nil || boardID != nil || exerciseScope != nil || showsSchedule || webDocID != nil { select(nil) }
         noteRef = ref
         staged = false
         workspace.noteWasOpened(ref)
@@ -492,7 +498,7 @@ final class DocTabModel: ObservableObject, Identifiable {
     func openExercises(_ scope: ExerciseScope, separate: Bool = false) {
         if exerciseSeparate != separate { exerciseSeparate = separate }
         guard exerciseScope != scope else { return }
-        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil || showsSchedule { select(nil) }
+        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil || showsSchedule || webDocID != nil { select(nil) }
         exerciseScope = scope
         staged = false
         session.title = workspace.exerciseScopeTitle(scope)   // 窗口标题读它（同画板）
@@ -507,11 +513,31 @@ final class DocTabModel: ObservableObject, Identifiable {
             if focus != nil { objectWillChange.send() }   // 已经开着：让窗格刷一下，日程页取走新的去处
             return
         }
-        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil { select(nil) }
+        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil || webDocID != nil { select(nil) }
         if let focus { scheduleFocus = focus }   // `select(nil)` 清掉了，重新放上
         showsSchedule = true
         staged = false
         session.title = L("Schedule")   // 窗口标题读它（同习题）
+        app.sessionDocumentChanged(session)
+    }
+
+    /// 打开一份网页（`WEB-DOC-PLAN.md §3`）：规矩同 `openSchedule`，先把别的内容收干净。冷启动恢复也走这里
+    /// （`recordOpen = false`：只恢复身份，不改「最近打开」）。
+    func openWebDoc(_ id: String, recordOpen: Bool = true) {
+        guard webDocID != id else { return }
+        if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil || showsSchedule || webDocID != nil { select(nil) }
+        webDocID = id
+        staged = false
+        session.title = workspace.webDocs.first { $0.id == id }?.title ?? L("Web Page")   // 窗口标题读它（同习题）
+        if recordOpen { workspace.webDocWasOpened(id: id) }
+        app.sessionDocumentChanged(session)
+    }
+
+    /// 这份网页被删了 → 标签退回空态。
+    func closeWebDocIfGone() {
+        guard let id = webDocID, workspace.webDoc(id: id) == nil else { return }
+        webDocID = nil
+        session.title = ""
         app.sessionDocumentChanged(session)
     }
 

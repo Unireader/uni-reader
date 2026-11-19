@@ -30,6 +30,8 @@ enum TrashStore {
     static let agentMemoryTables = ["agent_memory"]
     /// 日程条目（v26，`SCHEDULE-PLAN.md`）：几份计划连同它们的事项，或单独几件事项。计划在前（恢复时先有计划）。
     static let scheduleTables = ["schedule_plan", "schedule_item"]
+    /// 网页条目（`WEB-DOC-PLAN.md §6`）：那一行 + 页面存的数据。文件本体留在 `Web/`，清理时护住（`Archived.webFiles`）。
+    static let webDocTables = ["web_doc", "web_kv"]
 
     /// 页内笔迹的 note.kind（与 `InkStroke.noteKind` 同值，这里不引 App 层的类型）。
     private static let inkKind = 2
@@ -58,11 +60,13 @@ enum TrashStore {
         /// 日程（v26）：计划、事项。
         var schedulePlan = 0
         var scheduleItem = 0
+        /// 网页（`WEB-DOC-PLAN.md`）。
+        var webDoc = 0
 
         /// 「一共多少条会跟着一起没」——确认框里那个数。
         var total: Int {
             ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage + exercise
-                + agentContext + agentMemory + schedulePlan + scheduleItem
+                + agentContext + agentMemory + schedulePlan + scheduleItem + webDoc
         }
 
         init() {}
@@ -78,6 +82,7 @@ enum TrashStore {
             agentContext = v(.agentContext)
             agentMemory = v(.agentMemory)
             schedulePlan = v(.schedulePlan); scheduleItem = v(.scheduleItem)
+            webDoc = v(.webDoc)
         }
     }
 
@@ -89,6 +94,8 @@ enum TrashStore {
         /// 这篇文档各版本的内容 hash —— 恢复时靠它认出「这份 PDF 是不是又被导入过」（方案 §2.5）。
         var contentHashes: [String] = []
         var pageCount = 0
+        /// 网页清单里的文件（`Web/<sha256>`）。清理 `Web/` 时要护住它们。
+        var webFiles: [String] = []
     }
 
     // MARK: - 归档
@@ -218,6 +225,15 @@ enum TrashStore {
         }
     }
 
+    /// 把一份网页（那一行 + 页面存的数据）搬进快照库。
+    static func archiveWebDoc(_ db: SQLiteDB, webId: String, to path: String) throws -> Archived {
+        try withAttached(db, path: path) { t in
+            try db.run("CREATE TABLE \(t).web_doc AS SELECT * FROM main.web_doc WHERE id=?", [.text(webId)])
+            try db.run("CREATE TABLE \(t).web_kv AS SELECT * FROM main.web_kv WHERE web_id=?", [.text(webId)])
+            return try summarize(db, schema: t)
+        }
+    }
+
     /// 把一篇画板笔记（那一行 + 上面的全部条目）搬进快照库。
     static func archiveBoard(_ db: SQLiteDB, boardId: String, to path: String) throws -> Archived {
         try withAttached(db, path: path) { t in
@@ -268,7 +284,7 @@ enum TrashStore {
             let present = try tableNames(db, schema: t)
             var written = 0
             try db.transaction {
-                for table in documentTables + boardTables + agentContextTables + agentMemoryTables + scheduleTables
+                for table in documentTables + boardTables + agentContextTables + agentMemoryTables + scheduleTables + webDocTables
                     where present.contains(table) {
                     if remapDocumentId != nil, ["document", "variant", "location"].contains(table) { continue }
                     let cols = try columnNames(db, schema: t, table: table)
@@ -382,6 +398,12 @@ enum TrashStore {
         }
         if present.contains("schedule_item") {
             out.counts.scheduleItem = try count(db, schema: t, table: "schedule_item")
+        }
+        if present.contains("web_doc") {
+            out.counts.webDoc = try count(db, schema: t, table: "web_doc")
+            var files = Set<String>()
+            for m in try db.query("SELECT manifest FROM \(t).web_doc", row: { $0.text(0) }) { files.formUnion(WebAssets.hashes(m)) }
+            out.webFiles = files.sorted()
         }
         if present.contains("ink_layer") { out.counts.inkLayer = try count(db, schema: t, table: "ink_layer") }
         if present.contains("scratch_pad") { out.counts.scratchPad = try count(db, schema: t, table: "scratch_pad") }

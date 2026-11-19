@@ -391,7 +391,7 @@ final class ServerSyncCoordinator: ObservableObject {
             try SyncWire.decodePullResponse(try await ep.client.pull(ep.wid, since: rev))
         }
         guard m.store != nil, sessions[k] === s else { return }
-        var newImages = false, newBooks = false
+        var newImages = false, newBooks = false, newWeb = false
         if !fetched.rows.isEmpty || fetched.head != since {
             let before = db.totalChanges
             let rep = try SyncClient.applyPulled(db, folder: folder, rows: fetched.rows)
@@ -401,6 +401,7 @@ final class ServerSyncCoordinator: ObservableObject {
             record(k, rep.conflictNotes)
             newImages = fetched.rows.contains { $0.table == SyncRows.imageTable && !$0.deleted }
             newBooks = fetched.rows.contains { $0.table == "variant" && !$0.deleted }
+            newWeb = fetched.rows.contains { $0.table == "web_doc" && !$0.deleted }
             if !fetched.rows.isEmpty {
                 wsLog("[SYNC-LIVE] 拉到 \(fetched.rows.count) 行（冲突 \(rep.conflicts) 跳过 \(rep.skipped)）"
                       + " \(Set(fetched.rows.map(\.table)).sorted().joined(separator: ","))")
@@ -408,6 +409,10 @@ final class ServerSyncCoordinator: ObservableObject {
         }
         // ② 新图片
         if newImages { try? await ServerSyncIO.downloadMissingImages(db: db, folder: folder, client: ep.client, wid: ep.wid) }
+        if newWeb {
+            try? await ServerSyncIO.downloadMissingWebFiles(db: db, folder: folder, client: ep.client, wid: ep.wid)
+            m.refreshWebDocs()
+        }
         // ③ 笔记文件
         let notes = try await ServerSyncIO.syncNotes(db: db, folder: folder, client: ep.client, wid: ep.wid,
                                                      mode: .full, skip: m.openNoteSyncSkip())

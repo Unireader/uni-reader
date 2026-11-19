@@ -271,6 +271,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let boardSec = SidebarNode(kind: .boardSection)
         boardSec.children = workspace.boards.map { SidebarNode(kind: .board($0)) }
         r.append(boardSec)
+        // 网页（静态 HTML 课件，`WEB-DOC-PLAN.md`）：一段，按最近打开排；空的时候也列出段头（导入入口在段头右键上）
+        let webSec = SidebarNode(kind: .webSection)
+        webSec.children = workspace.webDocs.map { SidebarNode(kind: .web($0)) }
+        r.append(webSec)
         // 习题（v20）：**有题才出现**（题是 Agent 导进来的，侧栏上没有新建入口，空段没意义）。
         // 全部 / 错题本 / 收藏三行恒在，后面每篇有题的文档一行，顺序同书库。
         // 错题本、收藏也按书 → 章展开（用户 2026-10-11 要的），数的是错题 / 收藏；错题本点哪一级都在那一个错题标签里换。
@@ -462,6 +466,24 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 t.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             ])
             return cell
+        case .web(let w):
+            return iconCell(symbol: "globe", title: w.title.isEmpty ? L("Web Page") : w.title, subtitle: nil, dim: false,
+                            tip: ByteCountFormatter.string(fromByteCount: w.bytes, countStyle: .file))
+        case .webSection:
+            let cell = NSTableCellView()
+            let t = NSTextField(labelWithString: L("Web Pages"))
+            t.font = .preferredFont(forTextStyle: .subheadline)
+            t.textColor = .secondaryLabelColor
+            t.toolTip = L("Right-click to import a web page folder")
+            t.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(t)
+            cell.textField = t
+            NSLayoutConstraint.activate([
+                t.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                t.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+                t.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
         case .boardSection:
             let cell = NSTableCellView()
             let t = NSTextField(labelWithString: L("Boards"))
@@ -627,6 +649,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             tabs.openMarkdown(ref)
         } else if id.hasPrefix(BoardNote.rowPrefix) {
             if let bid = UUID(uuidString: String(id.dropFirst(BoardNote.rowPrefix.count))) { tabs.openBoard(bid) }
+        } else if id.hasPrefix(LibWebDoc.rowPrefix) {
+            tabs.openWebDoc(String(id.dropFirst(LibWebDoc.rowPrefix.count)))
         } else if !id.hasPrefix("md:") {
             _ = tabs.open(id)
         }
@@ -813,6 +837,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(ClosureMenuItem(L("New Board…")) { NotificationCenter.default.post(name: .newBoardRequested, object: nil) })
         case .board(let b):
             buildBoardMenu(menu, board: b)
+        case .webSection:
+            menu.addItem(ClosureMenuItem(L("Import Web Page Folder…")) {
+                NotificationCenter.default.post(name: .importWebFolderRequested, object: nil)
+            })
+        case .web(let w):
+            buildWebMenu(menu, web: w)
         case .exercise(let scope, _, _, _):
             if scope != .wrong {
                 // 习题默认都在公用标签里换（`TabsModel.openExercises`）；想并排留着就单独开。
@@ -898,6 +928,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .noteSection(let source, _): return source.name
         case .board(let b): return b.displayName
         case .boardSection: return L("Boards")
+        case .web(let w): return w.title
+        case .webSection: return L("Web Pages")
         case .exercise(_, let title, _, _): return title
         case .exerciseSection: return L("Exercises")
         }
@@ -906,7 +938,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 这一行在 Agent 那边是什么（`AgentMention+Workspace`）。
     private func mention(_ n: SidebarNode) -> AgentMention? {
         switch n.kind {
-        case .notice, .schedule: return nil
+        case .notice, .schedule, .web, .webSection: return nil
         case .section(let group, let title):
             let docs = n.children.compactMap { if case .doc(let d) = $0.kind { d } else { nil } }
             switch group {
@@ -1057,6 +1089,58 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 // 开着它的标签先把没落库的结清，再归档 → 删除（顺序见 `trashBoard`）
                 for t in self.tabs.tabs where t.boardID == b.id { t.flushPersist() }
                 self.workspace.trashBoard(id: b.id)
+            }
+            if let win = self.view.window { a.beginSheetModal(for: win, completionHandler: finish) } else { finish(a.runModal()) }
+        })
+    }
+
+    /// 网页的右键菜单：在浏览器中打开 / 改名 / 重新导入 / 删除（进回收站）。
+    private func buildWebMenu(_ m: NSMenu, web w: LibWebDoc) {
+        m.addItem(ClosureMenuItem(L("Open in New Tab")) { [weak self] in self?.tabs.openWebDoc(w.id) })
+        m.addItem(ClosureMenuItem(L("Open in Browser")) { [weak self] in
+            guard let self else { return }
+            do { try WebDocLocalServer.shared.open(webId: w.id, workspace: self.workspace, path: nil) } catch {
+                self.presentNoteError(error.localizedDescription)
+            }
+        })
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem(L("Rename…")) { [weak self] in
+            self?.textPrompt(title: L("Rename Web Page"), placeholder: L("Name"), initial: w.title) { name in
+                self?.workspace.renameWebDoc(id: w.id, title: name)
+            }
+        })
+        // 入口页：课件里有几个 html 时可以换一个当首页
+        let htmls = w.entries.map(\.p).filter(WebAssets.isHTML).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        if htmls.count > 1 {
+            let sub = NSMenu()
+            for p in htmls.prefix(60) {
+                let it = ClosureMenuItem(p) { [weak self] in self?.workspace.setWebDocEntry(id: w.id, entry: p) }
+                it.state = p == w.entry ? .on : .off
+                sub.addItem(it)
+            }
+            let entry = NSMenuItem(title: L("Start Page"), action: nil, keyEquivalent: "")
+            entry.submenu = sub
+            m.addItem(entry)
+        }
+        m.addItem(ClosureMenuItem(L("Re-import from Folder…")) {
+            NotificationCenter.default.post(name: .importWebFolderRequested, object: w.id)
+        })
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem(L("Import Web Page Folder…")) {
+            NotificationCenter.default.post(name: .importWebFolderRequested, object: nil)
+        })
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem(L("Delete…")) { [weak self] in
+            guard let self else { return }
+            let a = NSAlert()
+            a.messageText = String(format: L("Delete “%@”?"), w.title)
+            a.informativeText = L("They go to Recently Deleted and can be put back from File ▸ Recently Deleted.")
+            let del = a.addButton(withTitle: L("Delete"))
+            del.hasDestructiveAction = true
+            a.addButton(withTitle: L("Cancel"))
+            let finish: (NSApplication.ModalResponse) -> Void = { [weak self] resp in
+                guard let self, resp == .alertFirstButtonReturn else { return }
+                if !self.workspace.trashWebDoc(id: w.id), let e = self.workspace.lastError { self.presentNoteError(e) }
             }
             if let win = self.view.window { a.beginSheetModal(for: win, completionHandler: finish) } else { finish(a.runModal()) }
         })
@@ -1677,6 +1761,9 @@ final class SidebarNode: NSObject {
         /// 画板笔记（v16，`BOARD-NOTE-PLAN.md`）与它们的段头。
         case board(BoardNote)
         case boardSection
+        /// 网页（静态 HTML 课件，`WEB-DOC-PLAN.md`）与它们的段头。
+        case web(LibWebDoc)
+        case webSection
         /// 习题（v20，`EXERCISE-PLAN.md §4.1`）：一个范围一行（全部 / 错题本 / 收藏 / 每篇有题的文档），
         /// 行尾是「已做 / 共」（§16；`done` 为 nil 的错题本那一支只显示题数）。
         case exercise(ExerciseScope, title: String, count: Int, done: Int?)
@@ -1691,14 +1778,14 @@ final class SidebarNode: NSObject {
 
     var isSection: Bool {
         switch kind {
-        case .section, .noteSection, .boardSection, .exerciseSection: return true
+        case .section, .noteSection, .boardSection, .exerciseSection, .webSection: return true
         default: return false
         }
     }
     /// 展开后默认摊开的层（段头与子目录）。
     var isExpandable: Bool {
         switch kind {
-        case .section, .noteSection, .noteFolder, .boardSection, .exerciseSection: return true
+        case .section, .noteSection, .noteFolder, .boardSection, .exerciseSection, .webSection: return true
         case .exercise: return !children.isEmpty
         default: return false
         }
@@ -1713,6 +1800,7 @@ final class SidebarNode: NSObject {
         if let b = board { return BoardNote.rowPrefix + b.id.uuidString }
         if case .exercise(let scope, _, _, _) = kind { return scope.rowID }
         if case .schedule = kind { return ScheduleFocus.rowID }
+        if case .web(let w) = kind { return LibWebDoc.rowPrefix + w.id }
         return docID
     }
 }

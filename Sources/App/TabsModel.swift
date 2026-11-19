@@ -227,6 +227,30 @@ final class TabsModel: ObservableObject {
         return t
     }
 
+    /// 打开一份网页（`WEB-DOC-PLAN.md §3`）：已经有标签开着它就切过去，当前标签空着就就地开，否则新开一个（同画板）。
+    @discardableResult
+    func openWebDoc(_ id: String) -> DocTabModel {
+        if let hit = tabs.first(where: { $0.webDocID == id }) {
+            activate(hit.id)
+            persist()
+            return hit
+        }
+        if active.isEmptyTab {
+            active.openWebDoc(id)
+            noteArrival()
+            persist()
+            return active
+        }
+        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
+        tabs.append(t)
+        adoptForNavigation(t)
+        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
+        t.openWebDoc(id)
+        activate(t.id)
+        persist()
+        return t
+    }
+
     /// 某篇文档（或它某一章）的习题标签：文档被删了 → 退回空态（只剩一个标签时不关，同 `pruneMissingBoards`）。
     func pruneMissingExerciseScopes() {
         for t in tabs {
@@ -451,6 +475,8 @@ final class TabsModel: ObservableObject {
         case exercises(ExerciseScope, separate: Bool)
         /// 日程（v26），一扇窗口至多一个。
         case schedule
+        /// 网页（`WEB-DOC-PLAN.md`）。
+        case web(String)
 
         static let separateExercisePrefix = "exs:"
 
@@ -461,12 +487,17 @@ final class TabsModel: ObservableObject {
             case .board(let id): return BoardNote.rowPrefix + id.uuidString
             case .exercises(let scope, let separate): return separate ? Self.separateExercisePrefix + scope.key : scope.rowID
             case .schedule: return ScheduleFocus.rowID
+            case .web(let id): return LibWebDoc.rowPrefix + id
             }
         }
 
         init?(key: String) {
             if key == ScheduleFocus.rowID {
                 self = .schedule
+            } else if key.hasPrefix(LibWebDoc.rowPrefix) {
+                let id = String(key.dropFirst(LibWebDoc.rowPrefix.count))
+                guard !id.isEmpty else { return nil }
+                self = .web(id)
             } else if let scope = ExerciseScope(rowID: key) {
                 self = .exercises(scope, separate: false)
             } else if key.hasPrefix(Self.separateExercisePrefix),
@@ -493,6 +524,7 @@ final class TabsModel: ObservableObject {
         if let id = tab.boardID { return .board(id) }
         if let scope = tab.exerciseScope { return .exercises(scope, separate: tab.exerciseSeparate) }
         if tab.showsSchedule { return .schedule }
+        if let id = tab.webDocID { return .web(id) }
         if let id = tab.docID { return .pdf(id) }
         return nil
     }
@@ -504,6 +536,7 @@ final class TabsModel: ObservableObject {
         case .board(let id): return workspace.boards.contains { $0.id == id }
         case .exercises(let scope, _): return scope.documentId.map { workspace.document(id: $0) != nil } ?? true
         case .schedule: return true
+        case .web(let id): return workspace.webDoc(id: id) != nil
         }
     }
 
@@ -577,6 +610,8 @@ final class TabsModel: ObservableObject {
                 target.openExercises(scope, separate: sep)
             case .schedule:
                 target.openSchedule()   // 存下的组里至多一个（`openSchedule` 保证）
+            case .web(let id):
+                target.openWebDoc(id, recordOpen: false)
             }
         }
         if let wantActive, restoring.contains(wantActive),

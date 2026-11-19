@@ -1,0 +1,125 @@
+# 网页（静态 HTML 课件）方案 — WEB-DOC-PLAN
+
+> 2026-11-19 用户提：「对于一些静态 HTML 教学，我希望放到 UniReader，用户可以打开浏览器查看（或者内嵌 WebKit），
+> 需要支持文件夹（包含图片等资源），手机端也需要支持」；同日补充：「内嵌 WebKit 做一个注入，网页往 UniReader 读取 / 写入，
+> 这样网页就可以同步进度，做一个 JSON 或者 KV 保存」。
+>
+> 用户同日选定：① 拷进工作区、按内容寻址；② Mac 内嵌标签页 + 可在浏览器打开；③ 移动端 = 安卓 App 内 WebView；
+> ④ 分批：**第一批 Mac + 数据同步（已写，待实测）**，用户实测后第二批做安卓。
+
+## 1. 是什么
+
+工作区里多一类内容「网页」：导入一个文件夹（html + 图片 / css / js / 字体 / 视频），侧栏「网页」一段里一行，
+点开是一个标签页（`WKWebView`），也可以在默认浏览器里打开。内容只读：课件改了就「从文件夹重新导入」。
+页面里有 `window.unireader`，课件可以把学到哪了 / 做题记录存进工作区，随同步到别的设备。
+
+## 2. 数据（加在已发布的 v28 上，不升版本号）
+
+v28 已于 2026-11-16 发布（服务器 v0.7.0 / Mac v0.3.32 / 安卓 0.3.23）。两张新表**不升版本号**：同步两端都跳过不认识的表
+（服务器 `pushLocked` / 客户端 `applyPulled` 都先问 `SyncRows.isSynced`），旧版服务器、旧版 Mac、安卓只是看不到网页，不会出错，
+也不用强制所有设备一起升级。服务器换了这一版，网页的行与文件才在 Mac 之间同步；安卓第二批再建逐字相同的两张表（§9）。
+
+```sql
+CREATE TABLE web_doc (id, title, entry, manifest, bytes, group_name, created_at, updated_at, last_opened_at);
+CREATE TABLE web_kv  (id, web_id, key, value, updated_at);   -- id = web_id + 0x1F + key
+```
+
+- **文件本体**：`<工作区>/Web/<sha256>`，一个文件一份、不带扩展名（类型按清单里的路径定）。同一份 js 库 / 图片在几份网页里只存一份；
+  重新导入改过的课件只多存改了的那几个文件。写入一律 `.part` → 原子改名（`Sources/Store/WebAssets.swift`）。
+- **清单** `manifest`：JSON 数组 `[{"h":sha256,"n":字节数,"p":相对路径}]`，按路径排序、键序固定（进行指纹，抖一下就算「改过」）。
+  路径规则：`/` 分隔、不以 `/` 开头、没有空段 / `.` / `..` / 反斜杠 / 控制字符（`WebAssets.isSafeRelative`，解码时不合规的条目直接丢）。
+- `entry` = 入口页：根目录的 `index.html` / `index.htm`，没有就挑最浅的 html；选单个 html 导入时就是它；侧栏右键「首页」可以换。
+- 导入：跳过隐藏文件 / `.git` / `__MACOSX` / 符号链接；上限 2 万个文件、4 GB（防误选整个下载目录）。标题取入口页的 `<title>`，没有用文件夹名。
+- `web_kv.value` = JSON 文本。每份网页至多 2000 个键、单个值 1 MB、合计 8 MB；值没变不改 `updated_at`。
+
+## 3. Mac 显示
+
+### 3.1 内嵌标签页（`Sources/Window/Web/WebDocView.swift`）
+
+- 第六种标签内容：`DocTabModel.webDocID`（与 `docID` / `noteRef` / `boardID` / `exerciseScope` / 日程互斥，开之前 `select(nil)`），
+  选中键 `web:<id>`（`LibWebDoc.rowPrefix`），标签组持久化 / 冷启动恢复 / 返回前进都认它。
+- 文件经自定义协议 `unireader-web://<网页 id 小写>/<路径>` 读（`WebDocSchemeHandler`，**不开端口**）；每份网页的 id 当主机名 →
+  各份网页是不同的源，`localStorage` 互不串。支持 `Range`（视频）；读文件在后台队列。
+- 顶上一条：后退 / 前进、重新载入、标题、「在浏览器中打开」。主框架点到外面网站 → 交给默认浏览器；`alert` / `confirm` / `prompt` /
+  文件选择框都接了（不接会被 WebKit 悄悄吞掉）；`isInspectable = true`（课件作者可以用 Safari「开发」菜单调试）。
+- 本机记住每份网页上次看到哪一页（`UserDefaults` `web.lastPath.<id>`，不同步）。
+- 文件还没同步下来：顶上一条提示「有 N 个文件还不在这台设备上」，下完自动重新载入。
+
+### 3.2 在浏览器中打开（`Sources/App/WebDocLocalServer.swift`）
+
+- 第一次用到才起：`NWListener` **只听 127.0.0.1**、端口系统给；地址 `http://127.0.0.1:<端口>/<口令>/<id>/<路径>`，口令每次启动随机。
+- 同一套 `WebDocFiles`（`Sources/App/WebDocFiles.swift`）按路径回文件，类型 / Range / 404 与内嵌一致；大文件 1 MB 一块地发。
+- html 响应里在 `<head>` 开头塞进 `window.unireader`（经 `fetch` 到 `…/__unireader__/api`），与内嵌读写同一份数据。
+  API 只认同源请求（`Origin` 不对 → 403；跨源 JSON POST 要先预检，这里不答）。
+
+## 4. 同步
+
+- 两张表都在 `MirrorFp.specs`（`web_doc` / `web_kv` 都按 `updated_at` 取新；`last_opened_at` 不进指纹）。
+- 离线镜像：建镜像时按库里全部清单拷文件（`MirrorBuilder.webFilesToCopy`）；合并后两边各按自己的清单向另一边要缺的文件（`MirrorApply.fillWebFiles`）。
+- 服务器：线格式见 `PROTOCOL.md §9.8`。推 `web_doc` 行前先传文件、拉到后按清单补；上传整个工作区时 `Web/` 一起传。
+  服务器只存文件，不清理（同 `Images/`）。端到端测试 `spike/server-client-test.sh`（网页那 5 项）。
+
+## 5. `window.unireader`（`Sources/App/WebBridgeScript.swift`）
+
+```js
+await unireader.set('progress', { chapter: 3, done: [1, 2] })      // 任何能 JSON.stringify 的值
+const p = await unireader.get('progress', { chapter: 1, done: [] }) // 第二个参数 = 没存过时的默认值
+await unireader.remove('progress'); await unireader.keys(); await unireader.getAll(); await unireader.clear()
+unireader.page            // { id, title }
+window.addEventListener('unireader:ready', …)   // 脚本在页面最前面执行，一般用不着等
+window.addEventListener('unireader:change', …)  // 内嵌显示时：服务器同步拉到别处改的数据（浏览器那条路不推）
+```
+
+- 只给这份网页自己的页面用：内嵌时核对消息来源的源（`unireader-web://<自己的 id>`），页面里嵌的外部 iframe 调不了。
+- 课件里判断 `if (window.unireader)` 再用，放到别的地方（普通网页服务器）照样能跑。
+
+## 6. 删除与清理
+
+- 侧栏右键「删除…」：**先归档进回收站再删**（红线⑪，`Trash.Kind.webDoc`，快照里是那一行 + 存的数据）；文件留在 `Web/`，
+  回收站条目的 manifest `webFiles` 护住它们。🔴 `webFiles` 是可选键：老条目的 manifest 没有它，合成解码要求非可选键必须在。
+- 清理（打开工作区 / 回收站变动时，`WorkspaceManager.purgeWebFiles`）：库里的网页与回收站都不用、且修改时间早于一天前的删掉。
+  拷进来的文件修改时间一律记成「现在」（`WebAssets.copy`），否则导入到一半碰上清理会删掉刚拷的文件。
+
+## 7. 入口
+
+文件菜单「导入网页文件夹…」、侧栏「网页」段头右键；网页右键：在新标签页中打开 / 在浏览器中打开 / 重命名 / 首页 / 从文件夹重新导入 / 删除。
+MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web_id`。
+
+### 7.1 MCP 工具（批 9，2026-11-19 用户要「Agent 可以访问、更新这些 HTML」，`Sources/MCP/MCPTools+Web.swift`）
+
+| 工具 | 级别 | 做什么 |
+|---|---|---|
+| `list_web_pages` | read | 列出网页（id / 标题 / 首页 / 文件数 / 还没下载的文件数） |
+| `read_web_page` | read | 不给 `path` = 文件清单；给 `path` = 那个文本文件的原文（非 UTF-8 / 超 2 MB 拒绝） |
+| `update_web_page` | write | 一次改：`edits`（精确替换，`old_text` 必须恰好出现一次）/ `files`（整份写，`content` 或 `source_path` 拷本机文件）/ `delete` / `title` / `start_page` |
+| `create_web_page` | write | 新建：给 `files`，或 `folder` = 本机文件夹整个导入；`open` 顺便打开 |
+| `open_web_page` | navigate | 在标签里打开，可指定某一页（标签已开着就跳过去，`.webDocNavigate`） |
+| `read_web_page_data` / `write_web_page_data` | read / write | 读写 `window.unireader` 存的键值；写完开着的页面收到 `unireader:change` |
+
+- 改文件 = 新内容落进 `Web/<新哈希>`、换清单、改 `updated_at`（`WorkspaceManager.changeWebDoc`）：开着的标签自己重新载入，随同步到别的设备；
+  旧内容没人用了一天后被清理。网页存的数据不动。
+- 网页可以被 id 全串、前 8 位或准确的标题指到（`MCPFacade.resolveWebPage`）。
+
+## 8. 测试
+
+- `spike/web-doc-test.swift`（67 项）：路径规则、清单编解码、按路径找文件、Range、导入、库读写、回收站回环、清理、脚本注入。
+- `spike/server-client-test.sh`：网页文件经服务器同步 + 存的数据双向同步。`server/` `swift test` 59 项、Linux 交叉编译通过。
+- 视图层（标签页 / 侧栏 / 浏览器服务）**没有自动测试**，等用户实测。
+
+### 8.1 实测清单（第一批）
+
+1. 导入一个带图片 / css / js 的课件文件夹，侧栏出现、标签页里显示正常；选单个 html 导入，入口是它。
+2. 课件里有视频：内嵌与浏览器里都能拖进度条（Range）。
+3. 「在浏览器中打开」：默认浏览器打开、子页面链接与相对路径正常。
+4. 课件里调 `unireader.set` / `get`：关掉再开还在；内嵌与浏览器读到同一份；另一台 Mac 经服务器同步后读到。
+5. 重命名、换首页、从文件夹重新导入（存的数据保留）、删除后从「最近删除」恢复。
+6. 服务器工作区：另一台设备同步后文件下来、显示正常（服务器程序要换成这一版）。
+7. Agent：让它列出网页、读某个 html、改一段文字（开着的标签自动刷新）、新写一份课件并打开、读 / 改页面存的数据。
+
+## 9. 第二批（安卓，待做）
+
+- `Schema.kt` 建逐字相同的两张表；`MirrorFp.kt` 加两张表规格（列序同 Mac，向量 `spike/mirror-fp-vectors.txt`）；回收站认 `webDoc`。
+- 服务器同步：推前传文件、拉后补文件（`web/:sha` 三个接口）。
+- 模式1 侧栏 / 抽屉列网页，WebView 用 `shouldInterceptRequest` 从本机 `Web/` 读（同样的路径规则、Range），注入同一份 `window.unireader`
+  （`addJavascriptInterface` 或 `WebViewCompat.addWebMessageListener`）。
+- 服务器自带的网页阅读器要不要也能看网页：未定。

@@ -383,6 +383,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         on(.newNoteFolderRequested) { $0.newNoteFolder() }
         on(.newBoardRequested) { $0.presentNewBoard() }
         on(.importMarkdownRequested) { $0.importMarkdownFolder() }
+        on(.importWebFolderRequested) { c, n in c.importWebFolder(replacing: n.object as? String) }
         on(.openMarkdownNote) { c, note in
             // 批注气泡里点的 `[[…]]`：笔记在本窗口开；书 / 书页 / 批注走 `DeepLinkRouter.open`（`KNOWLEDGE-LINKS-PLAN.md`）
             guard let key = note.userInfo?["id"] as? String, let t = c.workspace.linkTarget(key) else { return }
@@ -711,7 +712,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         a.runModal()
     }
 
-    private func presentError(_ text: String) {
+    func presentError(_ text: String) {
         let a = NSAlert()
         a.messageText = L("Could not complete that")
         a.informativeText = text

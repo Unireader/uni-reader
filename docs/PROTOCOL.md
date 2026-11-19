@@ -1004,3 +1004,19 @@ VecPage     u8 版本 · str epoch · u64 下一页的 since · u8 还有没有 
 
 - 服务器存 `<数据目录>/vectors/<workspace_id>.sqlite`，不进工作区包、备份、快照；工作区删除时一起删。
 - 一个服务器工作区里还没有任何向量时 `GET` 照常回空页（`epoch` 也照常给）。**老服务器没有这些接口**：404 → 客户端当它不支持，只用关键词。
+
+### 9.8 网页文件（2026-11-19，`WEB-DOC-PLAN.md §4`）
+
+网页（静态 HTML 课件）= `web_doc` 一行（清单 `manifest` 随行同步）+ `Web/<sha256>` 下的文件本体，**按内容寻址**。
+页面存的数据 `web_kv`（一个键一行，行 id = `web_id␟key`，`␟` = 0x1F）也是普通的三方判定表。两张表都在 `MirrorFp.specs` 里，线格式不变。
+
+| 接口 | 说明 |
+|---|---|
+| `HEAD /v1/workspaces/{ws}/web/{sha256}` | 有没有（续传时回已收到多少，同 `image`） |
+| `GET /v1/workspaces/{ws}/web/{sha256}` | 下载（支持 `Range`） |
+| `PUT /v1/workspaces/{ws}/web/{sha256}` | 上传（可续传；收齐后核对 SHA-256，对不上 → 400） |
+
+- 推送 `web_doc` 行**之前**先把清单里服务器没有的文件传上去（客户端 `ServerSyncIO.uploadFiles`）；服务器收行**不要求**文件已在。
+- 拉到 `web_doc` 行之后按清单补本机没有的文件，下完核对哈希再改名（`ServerSyncIO.downloadMissingWebFiles`）。
+- 上传整个工作区时 `Web/` 也在允许的目录里（`uploads/:u/file?path=Web/<sha256>`）。
+- **老服务器没有这些接口**：404 → 客户端不传 / 不下文件，行照常同步（别的设备上那份网页显示「有 N 个文件还没下载」）。

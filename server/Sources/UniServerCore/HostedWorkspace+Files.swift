@@ -95,6 +95,30 @@ extension HostedWorkspace {
         try fm.moveItem(at: tmp, to: dst)
     }
 
+    // MARK: - 网页文件（`WEB-DOC-PLAN.md §4`）
+
+    /// 网页文件（`Web/<sha256>`）；没有 = nil。
+    public func webFile(sha256: String) -> URL? {
+        guard ServerCrypto.isSHA256Hex(sha256) else { return nil }
+        return WebAssets.exists(in: folder, sha256: sha256) ? WebAssets.url(in: folder, sha256: sha256) : nil
+    }
+
+    /// 收下一个上传的网页文件（核对哈希）。`web_doc` 行随后经推送进来；行不要求文件已在（清单里文件多，传一半断了行照样收）。
+    public func storeWebFile(sha256: String, from tmp: URL) throws {
+        guard ServerCrypto.isSHA256Hex(sha256) else { throw ServerError.badRequest("网页文件名不对") }
+        guard try ServerCrypto.sha256Hex(fileAt: tmp) == sha256 else {
+            try? FileManager.default.removeItem(at: tmp)
+            throw ServerError.badContentHash
+        }
+        lock.lock(); defer { lock.unlock() }
+        try checkOpen()
+        let fm = FileManager.default
+        let dst = WebAssets.url(in: folder, sha256: sha256)
+        if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: tmp); return }
+        try fm.createDirectory(at: WebAssets.folder(in: folder), withIntermediateDirectories: true)
+        try fm.moveItem(at: tmp, to: dst)
+    }
+
     static func isSafeExt(_ ext: String) -> Bool {
         (1...8).contains(ext.count) && ext.utf8.allSatisfy { (0x30...0x39).contains($0) || (0x61...0x7A).contains($0) }
     }

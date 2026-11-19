@@ -102,8 +102,8 @@ check(MirrorFp.spec("note")?.columns.map(\.name) ==
 check(MirrorFp.specs.map(\.table) == ["document", "variant", "note", "ink_layer", "scratch_pad", "md_doc",
                                      "board_note", "board_page", "board_item", "exercise", "exercise_attempt",
                                      "agent_context", "agent_memory", "agent_turn", "schedule_plan", "schedule_item",
-                                     "meta"],
-      "参与同步的表恰好 17 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张、v23 Agent 上下文、v25 Agent 记忆与对话记录、v26 日程两张）")
+                                     "web_doc", "web_kv", "meta"],
+      "参与同步的表恰好 19 张（location 不在其中 —— 它是设备本地事实；v16 加了画板两张、v17 加了页、v20 习题两张、v23 Agent 上下文、v25 Agent 记忆与对话记录、v26 日程两张、v28 网页两张）")
 check(MirrorFp.spec("schedule_plan")?.columns.map(\.name) == ["id", "title", "goal", "agent", "created_at", "updated_at"]
       && MirrorFp.spec("schedule_plan")?.lww == "updated_at",
       "schedule_plan 列表（v26）+ 按 updated_at 取新")
