@@ -1,7 +1,7 @@
 import AppKit
 import WebKit
 
-/// 网页标签在阅读窗格里的样子（`docs/WEB-DOC-PLAN.md §3`）：顶上一条（后退 / 前进 · 重新载入 · 标题 · 在浏览器中打开），
+/// 网页标签在阅读窗格里的样子（`docs/WEB-DOC-PLAN.md §3`）：顶上一条（后退 / 前进 · 回到首页 · 重新载入 · 标题 · 在浏览器中打开），
 /// 下面整块是 `WKWebView`。文件经自定义协议 `unireader-web://<网页 id>/<路径>` 从工作区的 `Web/` 里读，**不开端口**；
 /// 每份网页的 id 当主机名，所以各份网页是不同的源（`localStorage` 互不串）。
 ///
@@ -19,6 +19,7 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     private let header = NSVisualEffectView()
     private let headerLine = NSBox()
     private let navControl = NSSegmentedControl()
+    private let homeButton = NSButton()
     private let reloadButton = NSButton()
     private let titleLabel = NSTextField(labelWithString: "")
     private let browserButton = NSButton()
@@ -63,6 +64,12 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         navControl.setToolTip(L("Forward"), forSegment: 1)
         navControl.target = self
         navControl.action = #selector(navigate)
+        homeButton.bezelStyle = .push
+        homeButton.image = NSImage(systemSymbolName: "house", accessibilityDescription: L("Go to Start Page"))
+        homeButton.contentTintColor = .labelColor
+        homeButton.toolTip = L("Go to Start Page")
+        homeButton.target = self
+        homeButton.action = #selector(goHome)
         reloadButton.bezelStyle = .push
         reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: L("Reload"))
         reloadButton.contentTintColor = .labelColor
@@ -84,11 +91,12 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         notice.font = .preferredFont(forTextStyle: .callout)
         notice.alignment = .center
         notice.isHidden = true
-        for v in [web, notice, header, headerLine, navControl, reloadButton, titleLabel, browserButton] as [NSView] { addSubview(v) }
+        for v in [web, notice, header, headerLine, navControl, homeButton, reloadButton, titleLabel, browserButton] as [NSView] { addSubview(v) }
 
         observations = [
             web.observe(\.canGoBack) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateNav() } },
             web.observe(\.canGoForward) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateNav() } },
+            web.observe(\.url) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateNav() } },
             web.observe(\.title) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateTitle() } },
         ]
         observers.append(NotificationCenter.default.addObserver(forName: .webKVDidChangeRemotely, object: workspace, queue: .main) { [weak self] _ in
@@ -118,6 +126,7 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     func refreshFromWorkspace() {
         guard let w = workspace.webDocs.first(where: { $0.id == webId }) else { return }
         updateTitle()
+        updateNav()   // 首页可能换了（侧栏右键「首页」/ MCP `start_page`）
         if w.manifest != loadedManifest { load(); return }
         guard !notice.isHidden else { return }
         let missing = workspace.webDocFilesMissing(w)
@@ -166,6 +175,15 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     private func updateNav() {
         navControl.setEnabled(web.canGoBack, forSegment: 0)
         navControl.setEnabled(web.canGoForward, forSegment: 1)
+        homeButton.isEnabled = !isOnStartPage
+    }
+
+    /// 眼下是不是就在首页（同一个文件；页内 `#锚点` 不算离开；`/`、`chapter/` 这种目录地址按它的 index 认）。
+    /// 还没载入 / 载入的不是本网页 = 不是。导航时会调几次：只看内存里的列表，不查库、不解清单。
+    private var isOnStartPage: Bool {
+        guard let u = web.url, u.scheme == Self.scheme,
+              let entry = workspace.webDocs.first(where: { $0.id == webId })?.entry else { return false }
+        return WebAssets.resolve(u.path, in: [entry: WebAssets.Entry(p: entry, h: "", n: 0)]) != nil
     }
 
     private func updateTitle() {
@@ -179,6 +197,13 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     }
 
     @objc private func reloadPage() { web.reload() }
+
+    /// 回到首页：课件的子页面不一定有回首页的链接，重新打开时又停在上次那一页（后退历史是空的），没有这个键就回不去。
+    /// 走普通导航（进后退历史），点后退还能回到刚才那页。
+    @objc private func goHome() {
+        guard let w = workspace.webDoc(id: webId), let url = Self.url(webId: webId, path: w.entry) else { return }
+        web.load(URLRequest(url: url))
+    }
 
     @objc private func openInBrowser() {
         // 浏览器里也打开眼下这一页（不是入口）
@@ -201,8 +226,10 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         let pad: CGFloat = 12, midY = topInset + headerH / 2
         navControl.sizeToFit()
         navControl.frame.origin = NSPoint(x: pad, y: midY - navControl.frame.height / 2)
+        homeButton.sizeToFit()
+        homeButton.frame.origin = NSPoint(x: navControl.frame.maxX + 8, y: midY - homeButton.frame.height / 2)
         reloadButton.sizeToFit()
-        reloadButton.frame.origin = NSPoint(x: navControl.frame.maxX + 8, y: midY - reloadButton.frame.height / 2)
+        reloadButton.frame.origin = NSPoint(x: homeButton.frame.maxX + 4, y: midY - reloadButton.frame.height / 2)
         browserButton.sizeToFit()
         browserButton.frame.origin = NSPoint(x: b.width - pad - browserButton.frame.width, y: midY - browserButton.frame.height / 2)
         let th = titleLabel.intrinsicContentSize.height

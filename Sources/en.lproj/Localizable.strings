@@ -1564,6 +1564,7 @@
 "Rename Web Page" = "Rename Web Page";
 "Right-click to import a web page folder" = "Right-click to import a web page folder";
 "Start Page" = "Start Page";
+"Go to Start Page" = "Go to Start Page";
 "The folder has more than %d files. Choose the folder of one web page." = "The folder has more than %d files. Choose the folder of one web page.";
 "The folder is empty." = "The folder is empty.";
 "The folder is larger than 4 GB. Choose the folder of one web page." = "The folder is larger than 4 GB. Choose the folder of one web page.";

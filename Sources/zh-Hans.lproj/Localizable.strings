@@ -1566,6 +1566,7 @@
 "Rename Web Page" = "重命名网页";
 "Right-click to import a web page folder" = "右键导入网页文件夹";
 "Start Page" = "首页";
+"Go to Start Page" = "回到首页";
 "The folder has more than %d files. Choose the folder of one web page." = "文件夹里超过 %d 个文件。请选择单份网页所在的文件夹。";
 "The folder is empty." = "文件夹是空的。";
 "The folder is larger than 4 GB. Choose the folder of one web page." = "文件夹超过 4 GB。请选择单份网页所在的文件夹。";

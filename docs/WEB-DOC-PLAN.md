@@ -40,7 +40,9 @@ CREATE TABLE web_kv  (id, web_id, key, value, updated_at);   -- id = web_id + 0x
   选中键 `web:<id>`（`LibWebDoc.rowPrefix`），标签组持久化 / 冷启动恢复 / 返回前进都认它。
 - 文件经自定义协议 `unireader-web://<网页 id 小写>/<路径>` 读（`WebDocSchemeHandler`，**不开端口**）；每份网页的 id 当主机名 →
   各份网页是不同的源，`localStorage` 互不串。支持 `Range`（视频）；读文件在后台队列。
-- 顶上一条：后退 / 前进、重新载入、标题、「在浏览器中打开」。主框架点到外面网站 → 交给默认浏览器；`alert` / `confirm` / `prompt` /
+- 顶上一条：后退 / 前进、回到首页、重新载入、标题、「在浏览器中打开」。「回到首页」（2026-11-20 补，用户报手机和 Mac 都回不到首页）：
+  课件的子页面不一定有回首页的链接，重新打开又停在上次那一页、后退历史是空的，就没有路回去；点它载入 `entry`（进后退历史），已在首页时灰着
+  （目录地址 `/`、`chapter/` 按它的 index 认，页内 `#锚点` 不算离开）。安卓同（`WebPageController.goHome`，图标 `ic_home`）。主框架点到外面网站 → 交给默认浏览器；`alert` / `confirm` / `prompt` /
   文件选择框都接了（不接会被 WebKit 悄悄吞掉）；`isInspectable = true`（课件作者可以用 Safari「开发」菜单调试）。
 - 本机记住每份网页上次看到哪一页（`UserDefaults` `web.lastPath.<id>`，不同步）。
 - 文件还没同步下来：顶上一条提示「有 N 个文件还不在这台设备上」，下完自动重新载入。
@@ -116,6 +118,7 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 5. 重命名、换首页、从文件夹重新导入（存的数据保留）、删除后从「最近删除」恢复。
 6. 服务器工作区：另一台设备同步后文件下来、显示正常（服务器程序要换成这一版）。
 7. Agent：让它列出网页、读某个 html、改一段文字（开着的标签自动刷新）、新写一份课件并打开、读 / 改页面存的数据。
+8. 回到首页（Mac + 安卓）：点进子页面 → 关掉标签再开（停在子页面、后退是灰的）→ 点房子图标回到首页、再点后退回到子页面；在首页时房子是灰的。
 
 ## 9. 第二批：安卓模式1（2026-11-19 已写，待实测）
 
@@ -124,7 +127,7 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 - 回收站：`Trash.deleteWebDoc`（`KIND_WEB_DOC = "webDoc"`，manifest `webFiles`）、恢复认 `web_doc` / `web_kv`；开工作区时清理 `Web/`（同图片那一步）。
 - 离线镜像：建镜像拷 `Web/`、合并后双向补文件（`MirrorApply.fillWebFiles`）。
 - 服务器：推 `web_doc` 前传文件、拉到后在**网络线程**补文件（课件里可能有视频，别占库队列）、建缓存 / 上传工作区带 `Web/`。
-- 界面：标签 `web:<id>`（`TabSet.WEB_PREFIX`）；整页 `local/web/WebPageController`（顶上一条 后退 / 前进 · 标题 · 重新载入 + `WebView`）。
+- 界面：标签 `web:<id>`（`TabSet.WEB_PREFIX`）；整页 `local/web/WebPageController`（顶上一条 后退 / 前进 · 回到首页 · 标题 · 重新载入 + `WebView`）。
   文件经 `shouldInterceptRequest` 读，地址 `https://<id>.unireader-web.invalid/<路径>`（每份网页一个源）；`window.unireader` 注入 html
   （`WebBridge`），经 `addJavascriptInterface` 同步调库队列（`WebKV`，规则照 Mac）。🔴 JS 接口对所有框架可见：每次装载一个随机口令写进注入脚本，
   不带口令的调用一律拒。返回键网页里能退先退。抽屉书库页「网页」一组（点开 / 更多：改名、首页、从文件夹重新导入、删除）+「导入网页文件夹…」
