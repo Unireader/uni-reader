@@ -126,6 +126,16 @@
   把条件对成第二列（`&0, && n=0`，一行四格），整条失败。SwiftMath **认两列的 `cases`**（2026-09-16 的「`cases` 不认」用的是
   一列样例，报的是「只能两列」），所以 `LatexCompat.piecewise` 把「`\left\{` + 多于两列的 `aligned` + `\right.`」每两格并一格、
   换成两列 `cases`，显示与 LaTeX 一致。查列数问题：`MTMathListBuilder.build(fromString:error:)` 的错误信息直接写着「can only have N columns」。
+  2026-11-20 起（引擎 `0.15.0-xvan.9`）桥接层自己排 `aligned`：**任意列数**（右 / 左成对、对与对之间 1em，同 amsmath）+ **`\\[6pt]` 行距**
+  （用户报：四列的级数表整条显示源码、`[6pt]` 被当文字印在下一行开头）。做法在引擎 `LatexTables.swift`：SwiftMath 认不了的表格环境
+  从公式里剪出来，按它自己的 `\\` / `&` 拆行拆格、每格照常解析，用 SwiftMath 的公开工厂（或照 amsmath 排）建表，再放回占位字母处；
+  其余环境照旧交给 SwiftMath。SwiftMath 一张表只有一个行距，几行写得不一样时平均分到每个换行（总高度与原意一致）。
+  `\\ [0,1]` 这种换行后接区间的，只有方括号里是合法长度才当行距。`LatexCompat.piecewise` 仍在（换成 `cases` 显示一样），不必删。
+- **`aligned` 里 `=` 左边紧贴、矩阵单元格按块样式排（分式偏大）**（2026-11-20 查出，引擎 `.5` 起就有）：桥接层给标签赋
+  `mathList` 时，SwiftMath 的 setter 会调 `MTMathListBuilder.mathListToString`，而这个函数**边输出边改公式**——删掉 `aligned`
+  第二列开头的 `{}`、删掉矩阵每格开头的文本样式。`.5` 之前用 `latex =` 赋值不经过它，所以没这个问题。修法：交给标签前把这几种表的
+  `environment` 清空（`keepTablesIntactInLabel`，只有这个函数读环境名，排版不读）。🔴 以后桥接层再往标签上放自己解析的公式，
+  这一步不能省；查「排出来和单独排不一样」时先怀疑 setter 改了列表。
 - **Debug 包渲染公式时崩在 SwiftMath `MTTypesetter.getInterElementSpace` 的 `assert`**（2026-10-07，引擎 fork `.5` 修掉）：
   空白命令夹在关系符 / 括号 / 标点 / 运算符与加减号之间（`x = \; -1`、`(\,-1)`、`f(x)=x^2, \quad -1\le x`），
   SwiftMath 只看紧挨着的前一个元素来决定加减号算不算二元运算符，看到空白就判错，排版时遇到无效组合触发断言。

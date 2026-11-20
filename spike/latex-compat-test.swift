@@ -75,7 +75,6 @@ let samples = [
     #"\operatorname{sgn} x"#, #"\iint_D f"#, #"a \pmod{p}"#, #"a\bmod b"#,
     #"a\not= b"#, #"x\not\in A"#, #"a\implies b"#, #"\boldsymbol{\alpha}"#, #"\mathscr{F}"#,
     #"\varnothing"#, #"x \tag{1}"#,
-    #"F(n)=\left\{\begin{aligned} &0, && n=0 \\ &1, && n=1 \\ &F(n-1)+F(n-2), && n>1 \end{aligned}\right."#,
     #"\displaystyle f(x)=\left\lbrace \begin{aligned} &\dfrac{1}{x}, &&x\neq 0 \\[4pt] &0, &&x=0 \\ \end{aligned} \right."#,
 ]
 for f in samples {
@@ -85,5 +84,17 @@ for f in samples {
           "before=\(before == nil ? "nil" : "ok") after=\(after == nil ? "nil" : "ok")")
 }
 
-print(failures == 0 ? "\n全部通过（\(cases.count + samples.count) 项）" : "\n❌ \(failures) 项失败")
+// ③ 换之前也能渲染的：引擎 0.15.0-xvan.9 起桥接层自己排多列 `aligned`（SwiftMath 只认两列），分段函数不换成 `cases` 也画得出来；
+// 换成 `cases` 照旧（显示一样：值一列、条件一列）
+let alreadyFine = [
+    #"F(n)=\left\{\begin{aligned} &0, && n=0 \\ &1, && n=1 \\ &F(n-1)+F(n-2), && n>1 \end{aligned}\right."#,
+]
+for f in alreadyFine {
+    let before = bridge.render(latex: f, fontSize: 18, theme: theme)
+    let after = bridge.render(latex: LatexCompat.rewrite(f), fontSize: 18, theme: theme)
+    check("renders before and after rewrite: \(f)", before != nil && after != nil,
+          "before=\(before == nil ? "nil" : "ok") after=\(after == nil ? "nil" : "ok")")
+}
+
+print(failures == 0 ? "\n全部通过（\(cases.count + samples.count + alreadyFine.count) 项）" : "\n❌ \(failures) 项失败")
 exit(failures == 0 ? 0 : 1)

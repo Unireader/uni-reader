@@ -3,6 +3,18 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 公式里的表格：多列 `aligned` + `\\[6pt]` 行距（2026-11-20，Mac，引擎 fork `0.15.0-xvan.9`）
+
+- 起因（用户）：两条 `$$\begin{aligned}…$$`——四列的级数表（右边带收敛域）「md 渲染不了」，泰勒展开那条「`[6pt]` 处理不了」。
+  根因：SwiftMath 的 `aligned` 只认两列（四列整条解析失败、显示源码）；`\\` 后面的 `[6pt]` 它不认，当文字印在下一行开头。
+- 改在引擎桥接层（新文件 `LatexTables.swift`）：SwiftMath 处理不了的表格环境剪出来自己拆行拆格、逐格照常解析，用 SwiftMath 的公开工厂
+  （或照 amsmath 排 `aligned`：右 / 左成对、对与对之间 1em）建表，再放回占位字母处；其余环境照旧交给 SwiftMath。行距按长度单位换算成 em，
+  一张表只能统一行距，几行写得不一样时取平均。`\\ [0,1]` 这种方括号里不是合法长度的照旧当内容。
+- 顺带修了 `.5` 起的老问题：给标签赋 `mathList` 时 SwiftMath 调 `mathListToString` 改了公式——`aligned` 里 `=` 左边没空隙、矩阵单元格按块样式排；
+  交给标签前清空这几种表的环境名（`keepTablesIntactInLabel`）。磁盘缓存键换版 v4。详见 `docs/agents/PITFALLS.md`。
+- 验证：引擎测试 `SwiftMathTableTests` 24 项 + 引擎全套（仅 1 项原有的 HTML 自动链接失败）；App `spike/latex-compat-test.swift` 61 项（四列分段函数那条改为「改写前后都能画」）、
+  `spike/latex-check-test.swift` 过；`spike/latex-look.swift` 样张逐张看过（两条原公式、分段函数、矩阵 + `cases`）。安卓（JLaTeXMath）没动、没查。
+
 ## ✅ 画板列表打开不挪位置（2026-11-20，Mac + 安卓）
 
 - 起因（用户）：「所有端，草稿纸 boards 使用不自动移动顺序」。原先两端 `boards()` 都按 `COALESCE(last_opened_at, created_at) DESC` 排，打开一次就跳到最前。
