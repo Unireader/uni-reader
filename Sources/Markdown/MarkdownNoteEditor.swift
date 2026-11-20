@@ -14,6 +14,8 @@ import SwiftUI
 ///  · 查到是块 → 前面加 `\displaystyle` 再交给 bridge（样张实测对 `aligned` / `pmatrix` 等环境也有效，重复加也无害）。
 ///  · 比对时去掉全部空白（引擎传进来的块内容剪过首尾空白，与源码里的原样不完全一致）。
 ///  · 代价：某条行内公式若与某个块公式**内容完全相同**，它也会按块样式排——只有含分式 / 求和 / 积分这类才看得出差别，接受。
+///  · 2026-11-20 起引擎排版走 `render(latex:mode:…)`（引擎按定界符传模式），**不再查这张表**；表只留给不传模式的调用方
+///    （Agent 面板的公式段、`LatexCheck`）。引用块里的 `> $$…$$` 传来的内容已去掉 `>`，本来也对不上这张表。
 ///
 /// **② 缓存封顶**。bridge 的缓存按（公式, 字号, 外观, 颜色）存图、**从不淘汰**。气泡开了「跟页缩放」时字号随缩放连续变
 /// （`MarkdownNoteReader` 按 0.5pt 取整），缩放一个来回每条公式就多出几十张不同字号的图，一直攒着不放。
@@ -58,6 +60,17 @@ final class NoteLatexRenderer: LatexRenderer, @unchecked Sendable {
             registerBlocks(in: tv.string)   // 编辑器里刚敲 / 粘贴的块（见类注释①）
             isBlock = isKnownBlock(body)
         }
+        return render(latex: latex, block: isBlock, fontSize: fontSize, theme: theme)
+    }
+
+    /// 引擎排版时走这一个：它按定界符给了模式（`$$` = `.display`，`$` 与表格里的 = `.inline`），直接照办，不查登记表。
+    /// 引用块里的公式（`> $$` ⏎ `> …` ⏎ `> $$`）引擎传来的内容已去掉 `>`，与源码扫出来的登记表对不上，只能靠模式（2026-11-20）。
+    /// 登记表只剩给不传模式的调用方（Agent 面板的公式段、`LatexCheck`）用。
+    func render(latex: String, mode: LatexRenderMode, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult? {
+        render(latex: latex, block: mode == .display, fontSize: fontSize, theme: theme)
+    }
+
+    private func render(latex: String, block isBlock: Bool, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult? {
         let compatible = LatexCompat.rewrite(latex)   // SwiftMath 不认的写法换成同义写法（`\big[` → `[` 等）
         let source = isBlock ? "\\displaystyle " + compatible : compatible
 
@@ -114,7 +127,15 @@ struct FittedLatexRenderer: LatexRenderer {
     let maxWidth: CGFloat   // ≤ 0 = 还不知道宽度，不缩
 
     func render(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult? {
-        guard let r = NoteLatexRenderer.shared.render(latex: latex, fontSize: fontSize, theme: theme) else { return nil }
+        fit(NoteLatexRenderer.shared.render(latex: latex, fontSize: fontSize, theme: theme))
+    }
+
+    func render(latex: String, mode: LatexRenderMode, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult? {
+        fit(NoteLatexRenderer.shared.render(latex: latex, mode: mode, fontSize: fontSize, theme: theme))
+    }
+
+    private func fit(_ result: LatexRenderResult?) -> LatexRenderResult? {
+        guard let r = result else { return nil }
         guard maxWidth > 0, r.size.width > maxWidth else { return r }
         let k = maxWidth / r.size.width
         return LatexRenderResult(image: r.image,
