@@ -45,6 +45,17 @@ CREATE TABLE web_kv  (id, web_id, key, value, updated_at);   -- id = web_id + 0x
   （目录地址 `/`、`chapter/` 按它的 index 认，页内 `#锚点` 不算离开）。安卓同（`WebPageController.goHome`，图标 `ic_home`）。主框架点到外面网站 → 交给默认浏览器；`alert` / `confirm` / `prompt` /
   文件选择框都接了（不接会被 WebKit 悄悄吞掉）；`isInspectable = true`（课件作者可以用 Safari「开发」菜单调试）。
 - 本机记住每份网页上次看到哪一页（`UserDefaults` `web.lastPath.<id>`，不同步）。
+- 连同那一页滚到哪（2026-11-20 补，用户报每次打开都从头开始；`UserDefaults` `web.scroll.<id>`，不同步）：只在主框架跑的一小段脚本
+  （`WebBridgeScript.scrollSource`，放在隔离的脚本环境 `.defaultClient`，页面看不到也改不了），停手 0.3 秒报一次
+  `{ p: location.pathname, x, y }`；有的课件整页不动、内容在铺满的 `overflow: auto` 容器里滚，这种容器（高 ≥ 视口一半，
+  挡掉代码块 / 表格这类小滚动框）另记选择器 `s` + `sx` / `sy`。打开这份网页（`load()`）和**重新载入**时（`decidePolicyFor` 认
+  `navigationType == .reload`：顶上的按钮、右键菜单、页面自己调都算）置上 `restorePending`，页面加载好后来问时交出记下的位置一次
+  （到这时才读记忆：刚滚完就刷新，旧页面卸下时 `pagehide` 补报的那一下排在新页面的询问之前），`p` 对得上才滚回去；
+  图片、公式晚到会撑高内容，所以反复滚到位，到位且页面加载完稳定 0.5 秒、或 6 秒、或用户自己动了（滚轮 / 触摸 / 点按 / 按键）就停，
+  滚回去之前不记。页内点链接去别的页照常从顶上开始；后退 / 前进由 WebKit 自己恢复。Mac 切走标签会把网页视图拆掉，切回来也走这条。
+  「在浏览器中打开」不管。
+  - 重新载入不能交给 WebKit（2026-11-20 用户报「不断点击刷新页面就会往上跑」，离屏实测加不加脚本都一样）：它在内容还没撑高时恢复，
+    位置被截到当时的最大值（内容晚到的页 3000 → 300），滚动容器里的位置干脆回到 0；截短后的位置还会被脚本当成新位置记下。
 - 文件还没同步下来：顶上一条提示「有 N 个文件还不在这台设备上」，下完自动重新载入。
 
 ### 3.2 在浏览器中打开（`Sources/App/WebDocLocalServer.swift`）
@@ -106,6 +117,8 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 ## 8. 测试
 
 - `spike/web-doc-test.swift`（67 项）：路径规则、清单编解码、按路径找文件、Range、导入、库读写、回收站回环、清理、脚本注入。
+- `spike/web-scroll-test.swift`（23 项）：记住滚动位置那段脚本，真 WKWebView 离屏跑（记位置、内容晚到撑高也能滚到位、
+  别的页不滚、用户动了不再拽回、铺满的滚动容器、连着刷新三次不往上跑且记忆不被截短、刚滚完马上刷新、清洗）。离屏页面算隐藏页面，WebKit 约 1 秒后给定时器降频，测试里等得久些。
 - `spike/server-client-test.sh`：网页文件经服务器同步 + 存的数据双向同步。`server/` `swift test` 59 项、Linux 交叉编译通过。
 - 视图层（标签页 / 侧栏 / 浏览器服务）**没有自动测试**，等用户实测。
 
@@ -119,6 +132,9 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 6. 服务器工作区：另一台设备同步后文件下来、显示正常（服务器程序要换成这一版）。
 7. Agent：让它列出网页、读某个 html、改一段文字（开着的标签自动刷新）、新写一份课件并打开、读 / 改页面存的数据。
 8. 回到首页（Mac + 安卓）：点进子页面 → 关掉标签再开（停在子页面、后退是灰的）→ 点房子图标回到首页、再点后退回到子页面；在首页时房子是灰的。
+9. 记住滚动位置（Mac + 安卓）：一个长页滚到中间 → 切到别的标签再切回来 / 关掉标签再开 / 退出 App 再开，都停在刚才的位置；
+   内容在侧栏布局的滚动区里的课件同样；滚回去的过程中自己滚一下，不会再被拽回去；点链接去别的页从顶上开始；
+   带图片的长页滚到中间后连着点「重新载入」，位置不变。
 
 ## 9. 第二批：安卓模式1（2026-11-19 已写，待实测）
 
@@ -130,7 +146,9 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 - 界面：标签 `web:<id>`（`TabSet.WEB_PREFIX`）；整页 `local/web/WebPageController`（顶上一条 后退 / 前进 · 回到首页 · 标题 · 重新载入 + `WebView`）。
   文件经 `shouldInterceptRequest` 读，地址 `https://<id>.unireader-web.invalid/<路径>`（每份网页一个源）；`window.unireader` 注入 html
   （`WebBridge`），经 `addJavascriptInterface` 同步调库队列（`WebKV`，规则照 Mac）。🔴 JS 接口对所有框架可见：每次装载一个随机口令写进注入脚本，
-  不带口令的调用一律拒。返回键网页里能退先退。抽屉书库页「网页」一组（点开 / 更多：改名、首页、从文件夹重新导入、删除）+「导入网页文件夹…」
+  不带口令的调用一律拒。滚动位置（2026-11-20，同 §3.1）：`WebBridge.scrollSource` 与 Mac 那段 JS 逐字相同、只差传输
+  （`__unireaderNative.scrollSave` / `scrollTarget`，同样带口令），记在 prefs `webPages` 的 `scroll.<id>`；口令和网页 id 一起换（`ScrollSlot`），
+  旧页面晚到的报告记不到新那份上。重新载入（按钮 / 文件下完自动重载）走 `reload()`：先 `ScrollSlot.arm()` 再 `web.reload()`，同 Mac 由脚本滚回去。返回键网页里能退先退。抽屉书库页「网页」一组（点开 / 更多：改名、首页、从文件夹重新导入、删除）+「导入网页文件夹…」
   （目录浏览器 FOLDER 模式）；书库页（`LibraryActivity`）有网页时列一组、点开进阅读界面。
 - Agent（`local/agent/AgentTools.kt`）：同 Mac 八个工具（含 `delete_web_page`）；`write_web_page_data` 的 `set` 在安卓是 `[{key, value}]`（值是 JSON 文本），
   Mac 是对象（Koog 的参数类型没有自由键对象）。

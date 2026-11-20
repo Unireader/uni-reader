@@ -30,6 +30,9 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     private var observers: [NSObjectProtocol] = []
     /// 清单变了（重新导入 / 同步拉到新版）时整页重新载入；记下上次装的那份。
     private var loadedManifest = ""
+    /// 下一次页面来问时要不要把记下的位置交出去滚回去（打开 / 重新载入时置上，交一次就落下）。
+    /// 到页面来问时才读记忆：重新载入前最后那一下滚动在旧页面卸下时（`pagehide`）才报上来，排在新页面的询问之前。
+    fileprivate var restorePending = false
 
     init(webId: String, workspace: WorkspaceManager) {
         self.webId = webId
@@ -43,10 +46,17 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         let script = WKUserScript(source: WebBridgeScript.source(webId: webId, title: title, transport: .webkit),
                                   injectionTime: .atDocumentStart, forMainFrameOnly: false)
         cfg.userContentController.addUserScript(script)
+        // 记住滚动位置：放在隔离的脚本环境（`.defaultClient`）里，页面自己的脚本看不到、也改不了它
+        let scroll = WKUserScript(source: WebBridgeScript.scrollSource(
+            post: "function (o) { o.op = 'save'; window.webkit.messageHandlers.\(Self.scrollHandler).postMessage(o); }",
+            ask: "function () { return window.webkit.messageHandlers.\(Self.scrollHandler).postMessage({ op: 'target' }); }"),
+            injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient)
+        cfg.userContentController.addUserScript(scroll)
         web = WKWebView(frame: .zero, configuration: cfg)
         super.init(frame: .zero)
         // 消息处理挂一个弱引用的中转：`WKUserContentController` 强持有处理者，直接挂 self 会循环引用
         cfg.userContentController.addScriptMessageHandler(WeakScriptHandler(self), contentWorld: .page, name: "unireader")
+        cfg.userContentController.addScriptMessageHandler(WeakScriptHandler(self), contentWorld: .defaultClient, name: Self.scrollHandler)
         web.navigationDelegate = self
         web.uiDelegate = self
         web.allowsBackForwardNavigationGestures = true
@@ -147,6 +157,8 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         let last = UserDefaults.standard.string(forKey: Self.lastPathKey(webId))
         let path = last.flatMap { p in w.entries.contains { $0.p == p } ? p : nil } ?? w.entry
         guard let url = Self.url(webId: webId, path: path) else { return }
+        // 连同那一页里滚到的位置（页面加载好后来问；记的不是这一页时页面自己会认出来不滚）
+        restorePending = true
         web.load(URLRequest(url: url))
     }
 
@@ -166,6 +178,9 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     }
 
     private static func lastPathKey(_ id: String) -> String { "web.lastPath." + id.uppercased() }
+    /// 上次滚到哪（本机记忆，不同步）：`{ p: 页面的 location.pathname, x, y, s?, sx?, sy? }`，见 `WebBridgeScript.scrollSource`。
+    fileprivate static func scrollKey(_ id: String) -> String { "web.scroll." + id.uppercased() }
+    private static let scrollHandler = "unireaderScroll"
 
     /// 记下「下次打开这份网页时停在哪一页」（MCP `open_web_page` 在标签还没开时用）。
     static func rememberPath(webId: String, path: String) {
@@ -249,6 +264,9 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        // 重新载入（顶上的按钮 / 右键菜单 / 页面自己调）也由脚本滚回去：WebKit 自己恢复时内容还没撑高（图片、公式晚到），
+        // 位置被截短，连着刷新就一路往上跑；铺满的滚动容器里的位置它干脆不恢复
+        if navigationAction.navigationType == .reload, navigationAction.targetFrame?.isMainFrame ?? false { restorePending = true }
         guard let url = navigationAction.request.url, let scheme = url.scheme?.lowercased() else { decisionHandler(.allow); return }
         if scheme == Self.scheme || scheme == "about" || scheme == "data" || scheme == "blob" {
             decisionHandler(.allow)
@@ -334,6 +352,10 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
             replyHandler(nil, "unireader is only available to the web page itself")
             return
         }
+        if message.name == Self.scrollHandler {
+            replyHandler(scrollMessage(message), nil)
+            return
+        }
         guard let body = message.body as? [String: Any], let op = body["op"] as? String else {
             replyHandler(nil, "bad request")
             return
@@ -342,6 +364,24 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
             replyHandler(try workspace.webKV(webId: webId, op: op, key: body["key"] as? String, value: body["value"] as? String), nil)
         } catch {
             replyHandler(nil, error.localizedDescription)
+        }
+    }
+}
+
+extension WebDocView {
+    /// 滚动位置脚本的两种消息：`save` = 存下（只认主框架）；`target` = 这次要不要滚回去（只给一次）。
+    fileprivate func scrollMessage(_ message: WKScriptMessage) -> Any? {
+        guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any] else { return nil }
+        switch body["op"] as? String {
+        case "save":
+            if let pos = WebBridgeScript.sanitizeScroll(body) { UserDefaults.standard.set(pos, forKey: Self.scrollKey(webId)) }
+            return nil
+        case "target":
+            guard restorePending else { return nil }
+            restorePending = false
+            return UserDefaults.standard.dictionary(forKey: Self.scrollKey(webId)).flatMap(WebBridgeScript.sanitizeScroll)
+        default:
+            return nil
         }
     }
 }
