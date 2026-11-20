@@ -41,6 +41,8 @@ enum ServerSyncIO {
         let store = try LibraryStore(workspaceFolder: folder)
         defer { store.close() }
         let db = store.withMirrorDB { $0 }
+        // 旧版时跳过的新表（网页）补一次：清基线 + 补拉，**在推之前**（本机有、旧服务器忽略了的行这一轮重新推上去，`SyncClient.catchUp`）
+        try await SyncClient.catchUp(db, folder: folder) { since in try SyncWire.decodePullResponse(try await client.pull(wid, since: since)) }
         let round = try await SyncClient.roundAsync(
             db, folder: folder,
             beforePush: { changes in
@@ -190,7 +192,11 @@ enum ServerSyncIO {
             defer { store.close() }
             try store.setMeta(SyncClient.metaServerURL, serverURL)
             if let serverId { try store.setMeta(SyncClient.metaServerID, serverId) }
-            try store.withMirrorDB { try SyncClient.resetBase($0, folder: tmp, pulledRev: rev) }
+            try store.withMirrorDB { db in
+                try SyncClient.resetBase(db, folder: tmp, pulledRev: rev)
+                // 快照里本来就有的新表不用再补拉（服务器太旧、快照里没这张表的，留给之后补）
+                try SyncClient.markCaughtUp(db, SyncClient.catchUpTables.filter { (try? SyncRows.hasTable(db, $0)) == true })
+            }
             store.checkpointTruncate()
         }
         try Task.checkCancellation()   // 停了（启动页「停止下载」/ 删除）就别把它挪成缓存，临时文件夹随 defer 删掉

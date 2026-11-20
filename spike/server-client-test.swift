@@ -176,6 +176,51 @@ do {
     sa.close()
 }
 check(try specState(a) == specState(b), "网页同步后两台设备的行一致")
+// 旧版客户端拉取时跳过了网页两张表、修订号却记到了后面（2026-11-19 平板上踩到）：升级后的第一轮要补拉回来
+do {
+    let sb = try LibraryStore(workspaceFolder: b)
+    try sb.withMirrorDB { db in
+        try db.run("DELETE FROM web_kv"); try db.run("DELETE FROM web_doc")
+        try db.run("DELETE FROM sync_base WHERE tbl IN ('web_doc','web_kv')")
+        try db.run("DELETE FROM meta WHERE key=?", [.text(SyncClient.metaCatchUp)])
+    }
+    sb.close()
+}
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+do {
+    let sb = try LibraryStore(workspaceFolder: b)
+    check((try sb.webDoc(id: webId)) != nil, "补拉：旧版跳过的网页这一轮拉回来了")
+    check((try sb.webKVValue(webId: webId, key: "progress")) == "{\"ch\":2}", "补拉：页面存的数据也回来了")
+    check(sb.withMirrorDB { SyncClient.pendingCatchUp($0) }.isEmpty, "补拉：记下已补过，下一轮不再从头拉")
+    sb.close()
+}
+check(try specState(a) == specState(b), "补拉后两台设备的行一致")
+// 旧版服务器不认识网页表：A 推上去被忽略、A 却记成「已推」（2026-11-19 Mac 上 10:34 导入、服务器 11:12 才升级）——补一次时要重新推上去
+let lateId = UUID().uuidString
+do {
+    let late = root.appendingPathComponent("late")
+    try FileManager.default.createDirectory(at: late, withIntermediateDirectories: true)
+    try Data("<html><body>旧服务器时导入的</body></html>".utf8).write(to: late.appendingPathComponent("index.html"))
+    let es = try WebAssets.importFolder(late, into: a)
+    let sa = try LibraryStore(workspaceFolder: a)
+    try sa.upsertWebDoc(LibWebDoc(id: lateId, title: "旧服务器时导入", entry: "index.html", manifest: WebAssets.encode(es),
+                                  bytes: es.reduce(0) { $0 + $1.n }, createdAt: .now, updatedAt: .now, lastOpenedAt: nil))
+    try sa.withMirrorDB { db in
+        try MirrorStore.rebuildSyncBase(db)   // 像推过了一样记进基线（服务器其实没有）
+        try db.run("DELETE FROM meta WHERE key=?", [.text(SyncClient.metaCatchUp)])
+    }
+    sa.close()
+}
+try await ServerSyncIO.closedRound(folder: a, client: client, wid: wid)
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+do {
+    let sb = try LibraryStore(workspaceFolder: b)
+    let w = try sb.webDoc(id: lateId)
+    check(w != nil, "补推：旧服务器忽略过的网页重新推上去了，B 拿到了")
+    check(w.map { $0.entries.allSatisfy { WebAssets.exists(in: b, sha256: $0.h) } } ?? false, "补推：文件也传上去、B 也下来了")
+    sb.close()
+}
+check(try specState(a) == specState(b), "补推后两台设备的行一致")
 
 // ============================================================
 print("⑤ 上传中断后续传")

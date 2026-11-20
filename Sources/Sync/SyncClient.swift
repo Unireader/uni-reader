@@ -71,6 +71,53 @@ enum SyncClient {
                    [.text(metaPulledRev), .text(String(v))])
     }
 
+    // MARK: - 补拉新认识的表（`WEB-DOC-PLAN.md §4.1`）
+
+    /// 客户端私有：已经补拉过的表（逗号分隔），不同步。
+    static let metaCatchUp = "srv_catchup"
+    /// 这一版起才认识的表。🔴 旧版客户端拉取时**跳过**不认识的表、修订号却照样往前记——升级之后只拉新改动，
+    /// 那些行永远拉不到（2026-11-19：Mac 推上去的网页，平板升级后看不到）。新加同步的表就往这里追加，安卓 `SyncClient.CATCH_UP_TABLES` 同步改。
+    static let catchUpTables = ["web_doc", "web_kv"]
+
+    /// 还没补拉过的那几张。
+    static func pendingCatchUp(_ db: SQLiteDB) -> [String] {
+        let done = Set((((try? db.query("SELECT value FROM meta WHERE key=?", [.text(metaCatchUp)]))?.first?["value"] as? String) ?? "")
+            .split(separator: ",").map(String.init))
+        return catchUpTables.filter { !done.contains($0) }
+    }
+
+    /// 记下这几张已经补过（建缓存时快照里本来就有，直接记上）。
+    static func markCaughtUp(_ db: SQLiteDB, _ tables: [String]) throws {
+        let done = Set(catchUpTables).subtracting(pendingCatchUp(db)).union(tables)
+        try db.run("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                   [.text(metaCatchUp), .text(catchUpTables.filter(done.contains).joined(separator: ","))])
+    }
+
+    /// 从修订号 0 起再拉一遍，只留没补过的那几张表的行（逐页过滤，不攒整份历史），应用，记上。返回拉到的行。
+    /// 🔴 先清掉这几张表的基线：旧版服务器不认识它们、推上去被忽略了，客户端却记成了「已推」（2026-11-19：Mac 上 10:34 导入的网页，
+    /// 服务器 11:12 才升级，那份永远推不上去）。清了基线，本机有、服务器没有的行在**同一轮**的推送里重新推（所以要在推之前调）；
+    /// 两边都有的按三方判定对上（一样 = 没变，不一样按 updated_at 取新）。只做一次。
+    @discardableResult
+    static func catchUp(_ db: SQLiteDB, folder: URL,
+                        pull: (UInt64) async throws -> SyncWire.PullResponse) async throws -> [SyncWire.PulledRow] {
+        let want = Set(pendingCatchUp(db))
+        guard !want.isEmpty else { return [] }
+        if MirrorStore.hasSyncBase(db) {
+            let marks = want.map { _ in "?" }.joined(separator: ",")
+            try db.run("DELETE FROM sync_base WHERE tbl IN (\(marks))", want.sorted().map { .text($0) })
+        }
+        var since: UInt64 = 0
+        var rows: [SyncWire.PulledRow] = []
+        while true {
+            let page = try await pull(since)
+            rows += page.rows.filter { want.contains($0.table) }
+            if page.more, let last = page.rows.last { since = last.rev } else { break }
+        }
+        try applyPulled(db, folder: folder, rows: rows)
+        try markCaughtUp(db, Array(want))
+        return rows
+    }
+
     /// 「变回本地工作区」：去掉服务器地址 / 身份 / 拉到的修订号，删掉基线表——之后它就是普通的本地工作区，
     /// 不再推也不再拉。服务器上那份不动。一个事务。
     static func detach(_ db: SQLiteDB) throws {
