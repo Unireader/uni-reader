@@ -39,6 +39,16 @@ final class AgentBlockContext {
         style = MarkdownDisplayStyle(configuration: AgentMarkdown.configuration, font: .systemFont(ofSize: fontSize))
     }
 
+    /// 点了正文里的链接（文字段与表格图里的链接共用）：外面接手的先给外面（`openLink`）；
+    /// 普通网址 / unireader:// 交给系统打开；`[[…]]` 没有工作区上下文可解析，不跳。
+    static func follow(_ link: Any, in context: AgentBlockContext?) {
+        if let open = context?.openLink, open(link) { return }
+        if MarkdownDisplayRenderer.wikiLinkTarget(link) != nil { return }
+        if let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:)), url.scheme != nil {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// 每段右键菜单底下都有的那一项。
     func copyAllItem() -> NSMenuItem {
         ClosureMenuItem(L("Copy All (Markdown)")) { [weak self] in
@@ -214,15 +224,9 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
         NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 3, height: bounds.height), xRadius: 1.5, yRadius: 1.5).fill()
     }
 
-    // 链接：外面接手的先给外面（`AgentBlockContext.openLink`）；普通网址 / unireader:// 交给系统打开；
-    // `[[…]]` 没有工作区上下文可解析，不跳
+    // 链接：见 `AgentBlockContext.follow`
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-        if let open = context?.openLink, open(link) { return true }
-        if MarkdownDisplayRenderer.wikiLinkTarget(link) != nil { return true }
-        if let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:)), url.scheme != nil {
-            NSWorkspace.shared.open(url)
-            return true
-        }
+        AgentBlockContext.follow(link, in: context)
         return true
     }
 }
@@ -273,12 +277,66 @@ final class AgentHScrollView: NSScrollView {
 }
 
 /// 画一张图（表格 / 公式 / grapher），按自己的 bounds 画满。
+/// 表格图里的链接（设了 `openLink` 时，2026-11-20）：链接上是手形指针，点了交给 `openLink`——
+/// 位置由引擎记在表格图上（`MarkdownDisplayRenderer.tableLinks` / `tableLink(in:at:)`），同笔记里的表格。
 @MainActor
 final class AgentPictureView: NSView {
-    var image: NSImage? { didSet { needsDisplay = true } }
+    var image: NSImage? {
+        didSet {
+            needsDisplay = true
+            if openLink != nil { window?.invalidateCursorRects(for: self) }
+        }
+    }
+    /// 设了 = 这张是表格图，里面的链接能点（网址原样，`[[…]]` 是 `MarkdownDisplayRenderer.wikiLinkScheme` 网址）。
+    var openLink: ((URL) -> Void)?
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         image?.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+
+    /// 视图里图片画在多大比例上（表格图按原尺寸画，一般是 1）。
+    private var scale: CGSize? {
+        guard let image, image.size.width > 0, image.size.height > 0 else { return nil }
+        return CGSize(width: bounds.width / image.size.width, height: bounds.height / image.size.height)
+    }
+
+    override func resetCursorRects() {
+        guard openLink != nil, let image, let k = scale else { return }
+        for link in MarkdownDisplayRenderer.tableLinks(in: image) {
+            let r = link.rect
+            addCursorRect(NSRect(x: r.minX * k.width, y: r.minY * k.height,
+                                 width: r.width * k.width, height: r.height * k.height), cursor: .pointingHand)
+        }
+    }
+
+    /// 点在链接的字上：松开时还在同一个链接上才打开（拖走不算，同按钮）。别处照旧往上传。
+    override func mouseDown(with event: NSEvent) {
+        guard openLink != nil, event.clickCount == 1, let window,
+              let url = link(atWindowPoint: event.locationInWindow) else {
+            super.mouseDown(with: event)
+            return
+        }
+        var release: NSPoint?
+        while let e = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged], until: .distantFuture,
+                                       inMode: .eventTracking, dequeue: true) {
+            if e.type == .leftMouseUp { release = e.locationInWindow; break }
+        }
+        finishPress(on: url, releasedAt: release ?? window.mouseLocationOutsideOfEventStream)
+    }
+
+    /// 一次从链接上按下的点击松开了：还在同一个链接上就打开。返回打开了没有。
+    @discardableResult
+    func finishPress(on url: URL, releasedAt windowPoint: NSPoint) -> Bool {
+        guard let open = openLink, link(atWindowPoint: windowPoint) == url else { return false }
+        open(url)
+        return true
+    }
+
+    /// 窗口坐标上的那一点是不是落在表格图的某个链接上（离屏测试也用）。
+    func link(atWindowPoint windowPoint: NSPoint) -> URL? {
+        guard let image, let k = scale, k.width > 0, k.height > 0 else { return nil }
+        let p = convert(windowPoint, from: nil)
+        return MarkdownDisplayRenderer.tableLink(in: image, at: CGPoint(x: p.x / k.width, y: p.y / k.height))
     }
 }
 
@@ -380,8 +438,9 @@ final class AgentImageBlockView: NSView, AgentBlockView {
     private var scroll: AgentHScrollView?
     private var current: (width: CGFloat, image: NSImage?)?
 
+    /// `openLink`：表格图里的链接点了交给它（只有表格给）。
     init(key: String, centered: Bool, scrolls: Bool, clipRadius: CGFloat = 0, menuItems: @escaping () -> [NSMenuItem],
-         render: @escaping (CGFloat) -> NSImage?) {
+         openLink: ((URL) -> Void)? = nil, render: @escaping (CGFloat) -> NSImage?) {
         self.key = key
         self.clipRadius = clipRadius
         self.render = render
@@ -389,6 +448,7 @@ final class AgentImageBlockView: NSView, AgentBlockView {
         self.scrolls = scrolls
         self.menuItems = menuItems
         super.init(frame: .zero)
+        picture.openLink = openLink
         addSubview(picture)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }

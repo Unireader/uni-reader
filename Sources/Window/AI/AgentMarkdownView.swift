@@ -456,7 +456,8 @@ final class AgentMarkdownView: NSView {
                                        menuItems: { [weak ctx] in
                                            [ClosureMenuItem(L("Copy Table")) { AgentMarkdown.copyTable(source) }]
                                                + (ctx.map { [NSMenuItem.separator(), $0.copyAllItem()] } ?? [])
-                                       }) { [weak self] w in
+                                       },
+                                       openLink: { [weak ctx] url in AgentBlockContext.follow(url, in: ctx) }) { [weak self] w in
                 guard let self else { return nil }
                 return MarkdownDisplayRenderer.tableImage(source: source, style: ctx.style, availableWidth: w,
                                                           appearance: self.effectiveAppearance)
