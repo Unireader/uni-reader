@@ -64,7 +64,7 @@ Swift 侧集成见 `Sources/App/UpdaterService.swift`）。流程：
   `git stash -u` 会把 `.swiftpm/` 的镜像配置一起收走，想在原版代码上对比测试，用另一个停在原版提交的 worktree；
   开发期让 App 用本地引擎：`project.yml` 临时写 `path:` 指向 worktree，**发布前必须推送、打 tag、换回 `url` + `exactVersion`**；
   2026-11-13 发了 `0.15.0-xvan.3`（`xvan` 快进到 `perf/live-resize` 的 `0a6e1e9`，tag 与两个分支已推送），`project.yml` 已换回 `url` + `exactVersion`；
-  2026-11-20 打了 `0.15.0-xvan.9`（`xvan` 本地快进到 `fix/latex-tables` 的 `26bff24`，worktree `latex-tables`；🔴 分支 / tag / `xvan` 待推送，推送前 App 解析不到这个版本）；
+  2026-11-20 发了 `0.15.0-xvan.9`（`xvan` 快进到 `fix/latex-tables` 的 `26bff24`，worktree `latex-tables`，tag 与两个分支已推送）；
   2026-11-20 发了 `0.15.0-xvan.8`（`xvan` 快进到 `feat/callout-display` 的 `8f4c460`，worktree `callouts`，tag 与分支已推送）；
   2026-11-20 发了 `0.15.0-xvan.7`（`xvan` 快进到 `feat/callouts` 的 `848a7f8`，worktree `callouts`，tag 与两个分支已推送）；
   2026-11-16 发了 `0.15.0-xvan.6`（`xvan` 快进到 `fix/latex-abs-value` 的 `b42cfff`，worktree `abs-value`）；
