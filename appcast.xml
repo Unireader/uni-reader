@@ -9,6 +9,72 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.36</title>
+      <pubDate>Fri, 20 Nov 2026 08:13:17 +0000</pubDate>
+      <sparkle:version>78</sparkle:version>
+      <sparkle:shortVersionString>0.3.36</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>Markdown 笔记</h4>
+<ul>
+<li>支持 Obsidian 的 callout 写法：<code>&gt; [!note] 标题</code> 显示成带类型颜色、图标和粗体标题的提示框，没写标题时显示类型名，可以嵌套。</li>
+<li>callout 可以折叠：<code>[!note]-</code> 默认收起，<code>[!note]+</code> 默认展开；点图标或前面的箭头切换，只改变显示，不改笔记内容。</li>
+<li>引用块里的块公式（<code>&gt; $$…$$</code>，单行或多行）按块公式居中显示，引用的竖条不再断开。</li>
+<li>Agent 面板的回复和习题正文里，callout 和引用里的块公式也能正常显示；从笔记复制后粘贴到支持富文本的应用，callout 和引用里的公式会保留。</li>
+</ul>
+<h4>公式</h4>
+<ul>
+<li><code>aligned</code> 环境支持两列以上，例如右边再加一组收敛域的级数表，原先整条公式显示成源码。</li>
+<li>支持 <code>\\[6pt]</code> 这类换行后的行距写法，原先 <code>[6pt]</code> 会当成文字显示在下一行开头。</li>
+<li><code>aligned</code> 里 <code>=</code> 左边的空隙恢复正常；矩阵单元格恢复为标准的文本字号（矩阵里的分式会比之前小一些，与 LaTeX 一致）。</li>
+</ul>
+<h4>网页</h4>
+<ul>
+<li>网页标签顶栏新增「回到首页」按钮：课件的子页面没有返回首页的链接时，可以一键回到首页。</li>
+</ul>
+<h4>画板笔记</h4>
+<ul>
+<li>画板笔记列表按新建时间排列、新的在前，打开某一项不再让它跳到最前面。</li>
+</ul>
+<h4>同步</h4>
+<ul>
+<li>修复：用旧版同步过的设备升级后，网页和课件保存的数据可能一直同步不过来；升级后第一次同步会自动补齐。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.36">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Markdown notes</h4>
+<ul>
+<li>Obsidian callouts: <code>&gt; [!note] Title</code> shows as a box with the type's color, an icon and a bold title (the type name when no title is given). Callouts can be nested.</li>
+<li>Callouts can fold: <code>[!note]-</code> starts collapsed and <code>[!note]+</code> starts expanded. Click the icon or the arrow before it to switch; this only changes the display, not the note.</li>
+<li>Display math inside a block quote (<code>&gt; $$…$$</code>, on one line or several) is centered like other display math, and the quote bar no longer breaks around it.</li>
+<li>Callouts and display math in quotes also show correctly in Agent replies and exercise text, and are kept when you copy from a note and paste into an app that accepts rich text.</li>
+</ul>
+<h4>Math</h4>
+<ul>
+<li>The <code>aligned</code> environment takes more than two columns, such as a table of series with their intervals of convergence on the right. Such formulas used to show as source.</li>
+<li>Row spacing after a line break, such as <code>\\[6pt]</code>, now works. Before, <code>[6pt]</code> was printed as text at the start of the next row.</li>
+<li><code>=</code> inside <code>aligned</code> has its normal space on the left again, and matrix cells are set at the standard text size again (fractions inside a matrix are a little smaller than before, as in LaTeX).</li>
+</ul>
+<h4>Web pages</h4>
+<ul>
+<li>A new Go to Start Page button in the web page tab's top bar takes you back to the start page when a lesson's inner pages have no link back.</li>
+</ul>
+<h4>Boards</h4>
+<ul>
+<li>The board list is ordered by creation time, newest first. Opening a board no longer moves it to the top.</li>
+</ul>
+<h4>Sync</h4>
+<ul>
+<li>Fixed: on a device that had synced with an older version, web pages and the data lessons save could fail to sync after upgrading. The first sync after upgrading now catches up.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.36">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.36/UniReader-0.3.36.zip" length="33514745" type="application/octet-stream" sparkle:edSignature="+3KL6wieLUYG2nONsKtZGkdHQd2hJd1/FQdWmuEitv4uLTx6dfpbovhExuZ5lDX8CshGFcu68asuC4yuJJG8Dw==" />
+    </item>
+    <item>
       <title>v0.3.35</title>
       <pubDate>Thu, 19 Nov 2026 03:21:11 +0000</pubDate>
       <sparkle:version>77</sparkle:version>
