@@ -96,7 +96,8 @@ CREATE INDEX IF NOT EXISTS idx_board_item_board ON board_item(board_id);
 
 - `DocTabModel` 加 `boardID: String?`，与 `docID` / `noteRef` **三者互斥**（开画板前先 `select(nil)`，同 Markdown 笔记）。
 - `TabsModel.StoredTab` 加 `.board(id)`，键前缀 `board:`；跨启动恢复同 Markdown。
-- 侧栏加一组「画板笔记」（`SidebarNode.Kind.board` + 分组标题），按最近打开排序；选中键 `"board:"+id`。
+- 侧栏加一组「画板笔记」（`SidebarNode.Kind.board` + 分组标题），按新建时间排序、新的在前（2026-11-20 起；原先按最近打开，
+  用户要求打开不挪位置，Mac / 安卓同改；侧栏拖过的按手动顺序，见 `SIDEBAR-DRAG-PLAN.md`）；选中键 `"board:"+id`。
   右键：打开 / 改名 / 删除（进回收站）。分组标题上的「＋」与菜单「文件 › 新建画板笔记」新建。
 
 ### 3.2 运行时
@@ -148,7 +149,7 @@ CREATE INDEX IF NOT EXISTS idx_board_item_board ON board_item(board_id);
 | `0x55` | `boardImages` | S→C | `u16 n` · `n ×( str id, str sha, f32 x, f32 y, f32 w, f32 h )` |
 
 - `boards`：**全量镜像**。`kind` = 被跟随会话是什么：`0 = PDF`、`1 = Markdown 笔记`、`2 = 画板笔记`；
-  `current` = `kind=2` 时是哪一篇的 id，否则空串；`list` = 当前工作区全部画板笔记（按最近打开排序）。
+  `current` = `kind=2` 时是哪一篇的 id，否则空串；`list` = 当前工作区全部画板笔记（同 Mac 侧栏的顺序，见 §3.1）。
   发送时机：客户端接入、跟随的会话变化、画板笔记增删改名。
 - `boardOpen`：请求 Mac 在被跟随的窗口里打开这篇（已开就切过去）。
 - `boardAdd`：请求 Mac 新建一篇并打开。

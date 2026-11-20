@@ -6,7 +6,7 @@
 // （须命名为 main.swift：swiftc 多文件时顶层代码只允许在 main.swift）
 //
 // 覆盖：
-//  ① board_note CRUD 与 BoardNote ↔ LibBoard 映射、打开不改 updated_at、按最近打开排序；
+//  ① board_note CRUD 与 BoardNote ↔ LibBoard 映射、打开不改 updated_at、按新建时间排序（打开不挪位置）；
 //  ② 笔迹 board_item kind=1：画布坐标（负数 / 大数）无损、payload 与草稿纸 kind=4 同形但**不写 padId**；
 //  ③ 图片 board_item kind=2：矩形 / sha / 说明 round-trip；**图片引用计数把画板上的图一起数**；
 //  ④ 删画板 = 条目跟着外键级联删掉；
@@ -37,13 +37,13 @@ try store.upsertBoard(a.row)
 try store.upsertBoard(b.row)
 var list = try store.boards().map(BoardNote.init(row:))
 check(list.count == 2, "两篇都落库（读回 \(list.count)）")
-check(list.first?.id == b.id, "按最近打开排序：后打开的在前")
+check(list.first?.id == b.id, "按新建时间排序：后建的在前")
 check(list.contains { $0.id == a.id && $0.title == "极限" && $0.pattern == .grid && $0.bg == a.bg },
       "标题 / 纸样 round-trip")
 check(list.first { $0.id == b.id }?.displayName == "Untitled Board", "空标题显示兜底名")
 try store.touchBoardOpened(id: a.id.uuidString, at: t0.addingTimeInterval(100))
 list = try store.boards().map(BoardNote.init(row:))
-check(list.first?.id == a.id, "记一次打开后排到最前")
+check(list.first?.id == b.id && list.last?.id == a.id, "记一次打开不挪位置（2026-11-20 起不按最近打开排）")
 check(list.first { $0.id == a.id }?.updatedAt == t0, "🔴 打开不改 updated_at（否则镜像把没改过的画板当成改过）")
 a.title = "极限 2"; a.updatedAt = t0.addingTimeInterval(200)
 try store.upsertBoard(a.row)

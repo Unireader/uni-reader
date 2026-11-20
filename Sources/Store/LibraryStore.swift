@@ -1267,9 +1267,9 @@ final class LibraryStore {
     /// `group_name` 记这个值——不是画板笔记，列表 / 统计里都不算。
     static let exerciseScratchGroup = "exercise"
 
-    /// 画板笔记列表（不含题目草稿纸）。
+    /// 画板笔记列表（不含题目草稿纸）。按新建时间排、新的在前：打开 / 编辑都不挪位置（用户 2026-11-20 定，所有端一致）。
     func boards() throws -> [LibBoard] {
-        try db.query("SELECT * FROM board_note WHERE group_name <> ? ORDER BY COALESCE(last_opened_at, created_at) DESC",
+        try db.query("SELECT * FROM board_note WHERE group_name <> ? ORDER BY created_at DESC, id",
                      [.text(Self.exerciseScratchGroup)]).map(Self.board)
     }
     func board(id: String) throws -> LibBoard? {

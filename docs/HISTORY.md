@@ -3,6 +3,13 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ 画板列表打开不挪位置（2026-11-20，Mac + 安卓）
+
+- 起因（用户）：「所有端，草稿纸 boards 使用不自动移动顺序」。原先两端 `boards()` 都按 `COALESCE(last_opened_at, created_at) DESC` 排，打开一次就跳到最前。
+- 改成按新建时间排、新的在前（`ORDER BY created_at DESC, id`）：Mac `Sources/Store/LibraryStore.swift`、安卓 `LibraryStore.kt` 同改；
+  Mac 侧栏拖过的手动顺序（`meta.board_order`）照旧优先，平板模式2 收到的列表跟着 Mac 侧栏。`last_opened_at` 照记，只剩 ⌘P「最近打开在前」用它。
+- 验证：`spike/board-store-test.swift` 64 项过（排序两条改成新口径）；Mac Debug、安卓 `assembleDebug`、服务器 `swift build` + Linux 交叉编译通过。
+
 ## ✅ callout 第二轮：折叠 / Agent 面板与习题正文 / 复制成 HTML / 安卓（2026-11-20，引擎 fork `0.15.0-xvan.8`）
 
 - 起因（用户）：第一轮落地后「继续做」——把上一轮没做的四处补上。细节见 `MARKDOWN-NOTES-PLAN.md §23` 第二轮几条。
