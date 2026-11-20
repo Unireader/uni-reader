@@ -3,6 +3,14 @@
 > 已完成事项归档。**规则（2026-07-25 用户定）**：`TODO.md` 里完成的条目做完即迁移到这里，
 > TODO.md 只留进行中/待办/交接状态。本文件按时间倒序 + 主题专节组织。
 
+## ✅ callout 第二轮：折叠 / Agent 面板与习题正文 / 复制成 HTML / 安卓（2026-11-20，引擎 fork `0.15.0-xvan.8`）
+
+- 起因（用户）：第一轮落地后「继续做」——把上一轮没做的四处补上。细节见 `MARKDOWN-NOTES-PLAN.md §23` 第二轮几条。
+- 折叠：`[!type]-` / `+`，图标前展开箭头、点图标切换，光标进藏起来的行临时展开，只是显示状态（`CalloutFolds`），不改正文。
+- Agent 面板 / 习题正文：引擎 `.callout` 段 + App `AgentTextBlockView` 画框；引用里的块公式居中。复制成 HTML 认 callout 与引用里的公式。
+- 安卓（两模式笔记阅读态 + 气泡 / 习题）：`MdDisplay.Segment.Callout` + `MdRender` 画框、点标题折叠；`MathText.normalize` 改写引用里的块公式与标题行；测试 `MdCalloutTest`。
+- 验证：引擎全套（仅 1 项原有失败）、离屏出图（折叠两态 + 模拟点击）、排版耗时对比；安卓 JVM 单测 267 项过；用户确认提交。安卓观感未真机验（`ANDROID-STANDALONE-PLAN.md §11.1` #62）。
+
 ## ✅ Markdown：引用块里的块公式 + Obsidian callout（2026-11-20，Mac，引擎 fork `0.15.0-xvan.7`）
 
 - 起因（用户）：「md 做一下引用的 latex 支持 + obsidian 的各种 `> [!example]` 的格式」——截图里 `> $$…$$` 显示源码、`[!example]` 被涂成链接色。

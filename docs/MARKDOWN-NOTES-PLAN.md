@@ -619,7 +619,16 @@ Agent 绕过 App 直接写文件，能用但不稳：不知道源根在哪、可
   在 callout 里任何一处编辑都重排整个引用（颜色、末行留白都由标题行决定）；普通引用仍只重排改动附近。
 - App：`NoteLatexRenderer` / `FittedLatexRenderer` 实现 `render(latex:mode:…)`，按引擎传的模式排块公式（引用块公式传来的内容已去掉 `>`，原来的「块公式登记表」对不上）；
   登记表只留给不传模式的调用方（Agent 面板公式段、`LatexCheck`）。
-- 只在引擎的编辑视图里（笔记编辑区、批注气泡）。**没做**：折叠；Agent 面板 / 习题正文（`MarkdownDisplayRenderer`）与复制成 HTML 里的引用照旧；安卓端。
+- 第一轮只在引擎的编辑视图里（笔记编辑区、批注气泡）；第二轮（同日，引擎分支 `feat/callout-display`）补齐下面四处。
+- **折叠**：`[!type]-` 一开始收起、`[!type]+` 展开、不带的不能折叠。图标前面一个展开 / 收起箭头（macOS 惯用的放在左边），点图标切换；
+  收起时只剩标题行，光标挪到藏起来的行上会临时展开（不会往看不见的地方打字）。折叠状态只在这个编辑器里记（`CalloutFolds`，按标题行原文 + 第几个同样的认），
+  🔴 **不改正文**（不会把 `-` 改成 `+`，同 Obsidian 阅读视图）。实现是样式最后一遍（`MarkdownStyler+CalloutFolds.swift`），压过公式 / 图片 / 高亮的绘制。
+- **Agent 面板 / 习题正文**（`MarkdownDisplayRenderer`）：callout 是单独一种段 `.callout`（正文开头是图标 + 粗体标题一行，App 的 `AgentTextBlockView` 画类型色淡底 + 竖条）；
+  引用里的 `$$…$$` 是居中的块公式（附件，复制时还原成源码）。不能折叠（只读正文都是展开的）。
+- **复制成 HTML**（富文本粘贴）：引用里的公式写成 `<pre>$$…$$</pre>`（同顶层块公式），callout 写成 `<blockquote data-callout="类型">` + 类型色粗体标题。
+- **安卓**：笔记阅读态（两模式共用 `shared/MdRender`）里 callout 单独一段（`MdDisplay.Segment.Callout`）：类型色淡底 + 竖条 + 粗体类型色标题，能折叠的点标题切换（▸ / ▾）；
+  颜色是资源 `R.color.callout_*`（深色下蓝 / 紫亮一档）；没有图标（安卓没有对应的系统图标）。引用里的块公式与 callout 标题行在 `MathText.normalize` 里改写，
+  气泡 / 习题也认（那两处 callout 只显示成一行粗体标题，不画框）。测试 `MdCalloutTest`。
 - 验证：引擎新加 `QuoteCalloutTests` 10 项，全套 897 项只有 1 项失败（HTML 里 `www.example.com` 自动链接，原版引擎上同样失败，与本次无关）；
   离屏出图目检（亮 / 暗、编辑中预览、嵌套）；`spike/markdown-relayout-cost.swift` 对比见 `project.yml` 注释。用户已实测确认效果。
 

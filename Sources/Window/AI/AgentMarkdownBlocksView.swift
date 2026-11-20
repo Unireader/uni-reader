@@ -116,12 +116,18 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
     private var backgrounds: [(NSRange, NSColor)] = []
     private var measured: (width: CGFloat, height: CGFloat)?
     private weak var context: AgentBlockContext?
+    /// Obsidian callout（`> [!type] 标题`）：竖条用类型色，整块铺一层类型色淡底，四周留白。
+    private let callout: MarkdownDisplayCallout?
     /// 引用：左边一道竖条，正文右移。
     private var leftInset: CGFloat { isQuote ? 12 : 0 }
+    /// callout 框里正文上下、右边的留白（普通引用为 0）。
+    private var boxPad: CGFloat { callout != nil ? 6 : 0 }
 
-    init(key: String, text: NSAttributedString, quote: Bool, context: AgentBlockContext) {
+    init(key: String, text: NSAttributedString, quote: Bool, callout: MarkdownDisplayCallout? = nil,
+         context: AgentBlockContext) {
         self.key = key
         isQuote = quote
+        self.callout = callout
         storage.addLayoutManager(layoutManager)
         container.lineFragmentPadding = 0
         container.widthTracksTextView = false
@@ -179,23 +185,31 @@ final class AgentTextBlockView: NSView, AgentBlockView, NSTextViewDelegate {
     }
 
     func height(forWidth w: CGFloat) -> CGFloat {
-        let tw = max(1, w - leftInset)
-        if let m = measured, abs(m.width - tw) < 0.25 { return m.height }
+        let tw = max(1, w - leftInset - boxPad)
+        if let m = measured, abs(m.width - tw) < 0.25 { return m.height + boxPad * 2 }
         container.size = NSSize(width: tw, height: CGFloat.greatestFiniteMagnitude)
         layoutManager.ensureLayout(for: container)
         let h = ceil(layoutManager.usedRect(for: container).height)
         measured = (tw, h)
-        return h
+        return h + boxPad * 2
     }
 
     override func layout() {
         super.layout()
         _ = height(forWidth: bounds.width)   // 容器宽跟上视图宽（一般 `AgentMarkdownView` 已经量过，这里命中缓存）
-        textView.frame = NSRect(x: leftInset, y: 0, width: max(1, bounds.width - leftInset), height: bounds.height)
+        textView.frame = NSRect(x: leftInset, y: boxPad, width: max(1, bounds.width - leftInset - boxPad),
+                                height: max(1, bounds.height - boxPad * 2))
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard isQuote else { return }
+        if let callout {
+            callout.color.withAlphaComponent(callout.tintAlpha).setFill()
+            bounds.fill()
+            callout.color.setFill()
+            NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
+            return
+        }
         NSColor.labelColor.withAlphaComponent(0.22).setFill()
         NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 3, height: bounds.height), xRadius: 1.5, yRadius: 1.5).fill()
     }

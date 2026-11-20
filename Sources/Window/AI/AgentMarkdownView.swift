@@ -403,6 +403,7 @@ final class AgentMarkdownView: NSView {
         switch seg {
         case .text: return "t|" + src
         case .quote: return "q|" + src
+        case .callout: return "k|" + src
         case .code: return "c|" + src
         case .math: return "m|" + src
         case .table: return "b|" + src
@@ -418,6 +419,9 @@ final class AgentMarkdownView: NSView {
             return AgentTextBlockView(key: key, text: s, quote: false, context: ctx)
         case .quote(let s, _):
             return AgentTextBlockView(key: key, text: s, quote: true, context: ctx)
+        case .callout(let callout, let s, _):
+            // Obsidian 的 `> [!type] 标题`：类型色淡底 + 竖条，标题行引擎已排进正文
+            return AgentTextBlockView(key: key, text: s, quote: true, callout: callout, context: ctx)
         case .code(let language, let code, _):
             if language?.lowercased() == GrapherFencedRenderer.language {
                 return AgentImageBlockView(key: key, centered: true, scrolls: false,
