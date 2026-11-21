@@ -71,6 +71,13 @@ CREATE TABLE web_kv  (id, web_id, key, value, updated_at);   -- id = web_id + 0x
 - 离线镜像：建镜像时按库里全部清单拷文件（`MirrorBuilder.webFilesToCopy`）；合并后两边各按自己的清单向另一边要缺的文件（`MirrorApply.fillWebFiles`）。
 - 服务器：线格式见 `PROTOCOL.md §9.8`。推 `web_doc` 行前先传文件、拉到后按清单补；上传整个工作区时 `Web/` 一起传。
   服务器只存文件，不清理（同 `Images/`）。端到端测试 `spike/server-client-test.sh`（网页那 5 项）。
+- **补拉旧版跳过的这两张表**（`SyncClient.catchUp`，`meta.srv_catchup` 记补过哪几张）：旧版客户端拉取时跳过不认识的表、修订号却照样往前记，
+  升级后只拉新改动就永远拉不到那些行，所以升级后要从修订号 0 补拉一次、只留这两张表的行（先清这两张表的基线，旧服务器忽略过的本机行重新推）。
+  🔴 **补拉要把整个工作区从头过一遍**：只放在「打开前那一轮」（限时 2.5～3 秒、超时取消）里，大工作区每次都超时，关掉后那一轮又常被再次打开取消——
+  2026-11-20 用户报 mac-mini 上 301 工作区（3.2 万个修订号、库 83MB）升级到 0.3.37 后网页一直是空的，库里 `srv_catchup` 一直没写上。
+  修法同安卓 0.3.25 的 `ServerSync.catchUpWhileOpen`：Mac 开着工作区时再补一次（`ServerSyncCoordinator.catchUpWhileOpen`，
+  拉取与解码在后台、`ServerSyncIO.fetchCatchUp` 逐页过滤；攒齐后等推送空下来，主线程用窗口那条连接 `ServerSyncIO.applyCatchUp` 清基线 + 应用 + 记上，
+  再刷新列表、补网页文件）。补上之后打开前那一轮恢复原样。端到端测试多了「开着时补拉 / 补推」10 项。
 
 ## 5. `window.unireader`（`Sources/App/WebBridgeScript.swift`）
 

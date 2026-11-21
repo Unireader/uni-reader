@@ -226,6 +226,8 @@ final class ServerSyncCoordinator: ObservableObject {
         var prefetch: Task<Void, Never>?
         /// 挂着等服务器通知的那个任务（`watchLoop`）。
         var watch: Task<Void, Never>?
+        /// 开着时补拉旧版跳过的新表（`catchUpWhileOpen`），开工作区时跑一次。
+        var catchUp: Task<Void, Never>?
         /// 上次处理完时服务器的笔记文件修订号（0 = 还没处理过，开头会过一遍）。
         var noteHead: UInt64 = 0
         /// 这条库连接累计改过的行数（`SQLiteDB.totalChanges`）：变了 = 本机改了东西。
@@ -270,6 +272,9 @@ final class ServerSyncCoordinator: ObservableObject {
         s.watch = Task { [weak self, weak m, weak s] in
             if let self, let m, let s { await self.watchLoop(m, s) }
         }
+        s.catchUp = Task { [weak self, weak m, weak s] in
+            if let self, let m, let s { await self.catchUpWhileOpen(m, s) }
+        }
         if !observing {
             observing = true
             NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil,
@@ -284,6 +289,7 @@ final class ServerSyncCoordinator: ObservableObject {
         s.timer?.invalidate()
         s.prefetch?.cancel()
         s.watch?.cancel()
+        s.catchUp?.cancel()
         s.vectors?.cancel()
         if let o = s.noteSaved { NotificationCenter.default.removeObserver(o) }
     }
@@ -369,6 +375,50 @@ final class ServerSyncCoordinator: ObservableObject {
 
     private nonisolated static func pause(_ seconds: Double) async {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    /// 开着时补拉一次旧版跳过的新表（网页，`SyncClient.catchUp`；同安卓 `ServerSync.catchUpWhileOpen`）。
+    /// 🔴 补拉要从修订号 0 把整个工作区拉一遍：打开前那一轮最多等 2.5～3 秒，大工作区每次都超时被取消；关掉后那一轮又常被
+    /// 再次打开取消——于是永远补不上（2026-11-20：mac-mini 上 301 工作区 3.2 万个修订号，升级后网页一直是空的）。
+    /// 拉取在后台、不占推送 / 拉取的互斥；攒齐后等推送空下来，在主线程用窗口那条连接清基线 + 应用 + 记上（中间没有 await，
+    /// 推送插不进来），再让界面跟上、补网页文件。失败不要紧，下次打开再来。
+    private func catchUpWhileOpen(_ m: WorkspaceManager, _ s: Session) async {
+        guard let folder = m.folder, let store = m.store else { return }
+        let k = WorkspaceRegistry.key(folder)
+        let db = store.withMirrorDB { $0 }
+        let want = Set(SyncClient.pendingCatchUp(db))
+        guard !want.isEmpty, let ep = endpoint(for: folder) else { return }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        do {
+            let rows = try await ServerSyncIO.fetchCatchUp(client: ep.client, wid: ep.wid, want: want)
+            while s.pushing || s.pulling {
+                await Self.pause(0.3)
+                try Task.checkCancellation()
+            }
+            try Task.checkCancellation()
+            guard m.store != nil, sessions[k] === s else { return }
+            s.pulling = true
+            let before = db.totalChanges
+            let rep: SyncClient.PullReport
+            do {
+                defer { s.pulling = false }
+                rep = try ServerSyncIO.applyCatchUp(db, folder: folder, want: want, rows: rows)
+                s.seenChanges += db.totalChanges - before      // 同步自己写的不算「本机改动」
+            }
+            let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            wsLog("[SYNC-LIVE] \(folder.lastPathComponent): 补拉了 \(rows.count) 行（\(want.sorted().joined(separator: ","))），\(ms)ms")
+            guard !rows.isEmpty else { return }
+            m.applyRemoteRows(rows)
+            record(k, rep.conflictNotes)
+            if rows.contains(where: { $0.table == "web_doc" && !$0.deleted }) {
+                try? await ServerSyncIO.downloadMissingWebFiles(db: db, folder: folder, client: ep.client, wid: ep.wid)
+                if m.store != nil { m.refreshWebDocs() }
+            }
+        } catch is CancellationError {
+        } catch let e as URLError where e.code == .cancelled {
+        } catch {
+            wsLog("[SYNC-LIVE] \(folder.lastPathComponent): 补拉新表没做完（下次打开再来）：\(error.localizedDescription)")
+        }
     }
 
     /// 开着工作区时拉别的设备的改动：行写进库（用窗口那条连接，主线程）→ 界面与开着的文档跟上 →

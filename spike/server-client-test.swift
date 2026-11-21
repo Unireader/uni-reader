@@ -221,6 +221,58 @@ do {
     sb.close()
 }
 check(try specState(a) == specState(b), "补推后两台设备的行一致")
+// 开着时补拉（`ServerSyncCoordinator.catchUpWhileOpen` 的两步 `ServerSyncIO.fetchCatchUp` / `applyCatchUp`）：大工作区打开前那一轮
+// 补拉总是超时被取消（2026-11-20 mac-mini 上 301 工作区升级后网页一直是空的），改成开着时再补一次
+do {
+    // B：像旧版那样跳过了网页两张表
+    let sb = try LibraryStore(workspaceFolder: b)
+    try sb.withMirrorDB { db in
+        try db.run("DELETE FROM web_kv"); try db.run("DELETE FROM web_doc")
+        try db.run("DELETE FROM sync_base WHERE tbl IN ('web_doc','web_kv')")
+        try db.run("DELETE FROM meta WHERE key=?", [.text(SyncClient.metaCatchUp)])
+    }
+    let want = Set(sb.withMirrorDB { SyncClient.pendingCatchUp($0) })
+    check(want == ["web_doc", "web_kv"], "开着时补拉：B 还没补过网页两张表")
+    let rows = try await ServerSyncIO.fetchCatchUp(client: client, wid: wid, want: want)
+    check(!rows.isEmpty && rows.allSatisfy { want.contains($0.table) }, "开着时补拉：只拉回网页两张表的行（\(rows.count) 行）")
+    _ = try sb.withMirrorDB { db in try ServerSyncIO.applyCatchUp(db, folder: b, want: want, rows: rows) }
+    let backA = try sb.webDoc(id: webId), backB = try sb.webDoc(id: lateId)
+    check(backA != nil && backB != nil, "开着时补拉：两份网页都回来了")
+    check((try sb.webKVValue(webId: webId, key: "progress")) == "{\"ch\":2}", "开着时补拉：页面存的数据也回来了")
+    check(sb.withMirrorDB { SyncClient.pendingCatchUp($0) }.isEmpty, "开着时补拉：记下已补过")
+    sb.close()
+}
+check(try specState(a) == specState(b), "开着时补拉后两台设备的行一致")
+// A：旧服务器忽略过、却记成已推的网页——开着时补拉清了基线，下一次推送把它推上去
+let openLateId = UUID().uuidString
+do {
+    let late = root.appendingPathComponent("late-open")
+    try FileManager.default.createDirectory(at: late, withIntermediateDirectories: true)
+    try Data("<html><body>开着时补推的</body></html>".utf8).write(to: late.appendingPathComponent("index.html"))
+    let es = try WebAssets.importFolder(late, into: a)
+    let sa = try LibraryStore(workspaceFolder: a)
+    try sa.upsertWebDoc(LibWebDoc(id: openLateId, title: "开着时补推", entry: "index.html", manifest: WebAssets.encode(es),
+                                  bytes: es.reduce(0) { $0 + $1.n }, createdAt: .now, updatedAt: .now, lastOpenedAt: nil))
+    try sa.withMirrorDB { db in
+        try MirrorStore.rebuildSyncBase(db)
+        try db.run("DELETE FROM meta WHERE key=?", [.text(SyncClient.metaCatchUp)])
+    }
+    let want = Set(sa.withMirrorDB { SyncClient.pendingCatchUp($0) })
+    let rows = try await ServerSyncIO.fetchCatchUp(client: client, wid: wid, want: want)
+    _ = try sa.withMirrorDB { db in try ServerSyncIO.applyCatchUp(db, folder: a, want: want, rows: rows) }
+    check((try sa.webDoc(id: openLateId)) != nil, "开着时补推：A 本机那份没被补拉冲掉")
+    sa.close()
+}
+try await ServerSyncIO.closedRound(folder: a, client: client, wid: wid)   // 代替开着时的下一次推送
+try await ServerSyncIO.closedRound(folder: b, client: client, wid: wid)
+do {
+    let sb = try LibraryStore(workspaceFolder: b)
+    let w = try sb.webDoc(id: openLateId)
+    check(w != nil, "开着时补推：旧服务器忽略过的网页推上去了，B 拿到了")
+    check(w.map { $0.entries.allSatisfy { WebAssets.exists(in: b, sha256: $0.h) } } ?? false, "开着时补推：文件也下来了")
+    sb.close()
+}
+check(try specState(a) == specState(b), "开着时补推后两台设备的行一致")
 
 // ============================================================
 print("⑤ 上传中断后续传")

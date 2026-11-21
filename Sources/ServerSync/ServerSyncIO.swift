@@ -76,6 +76,35 @@ enum ServerSyncIO {
         }
     }
 
+    // MARK: - 开着时补拉旧版跳过的新表（`ServerSyncCoordinator.catchUpWhileOpen`）
+
+    /// 第一步：从修订号 0 起拉全部页，**逐页**只留 [want] 那几张表的行（不攒整份历史）。只走网络、不碰库；
+    /// 这个类型不属于主线程，主线程上 `await` 它时解码也在后台做（大工作区一页几 MB）。
+    static func fetchCatchUp(client: ServerClient, wid: String, want: Set<String>) async throws -> [SyncWire.PulledRow] {
+        var since: UInt64 = 0
+        var rows: [SyncWire.PulledRow] = []
+        while true {
+            let page = try SyncWire.decodePullResponse(try await client.pull(wid, since: since))
+            rows += page.rows.filter { want.contains($0.table) }
+            if page.more, let last = page.rows.last { since = last.rev } else { break }
+        }
+        return rows
+    }
+
+    /// 第二步：清掉这几张表的基线（旧服务器忽略过的本机行，下一次推送重新推上去）→ 应用拉到的行 → 记上已补过。
+    /// 与 `SyncClient.catchUp` 的后半段同一套规则（那份在 `Sources/Sync/`、服务器也编，这里不去改它）。
+    @discardableResult
+    static func applyCatchUp(_ db: SQLiteDB, folder: URL, want: Set<String>,
+                             rows: [SyncWire.PulledRow]) throws -> SyncClient.PullReport {
+        if MirrorStore.hasSyncBase(db), !want.isEmpty {
+            let marks = want.map { _ in "?" }.joined(separator: ",")
+            try db.run("DELETE FROM sync_base WHERE tbl IN (\(marks))", want.sorted().map { .text($0) })
+        }
+        let report = try SyncClient.applyPulled(db, folder: folder, rows: rows)
+        try SyncClient.markCaughtUp(db, Array(want))
+        return report
+    }
+
     // MARK: - 文件
 
     /// 推送前先把新加的 PDF / 图片传上去：服务器收图片行要求文件已在（`missingFile`）；
