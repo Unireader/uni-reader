@@ -33,6 +33,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// （2026-09-20 用户提：「展开不要默认，可以记忆之前的打开状态」）。
     /// 存 UserDefaults 按工作区分键——这是本机界面状态，不进库、不跟着离线镜像走。
     private var expandedFolders: Set<String> = []
+    /// 收起的 PDF 分组（组名；"" = 未分组）。分组默认展开，所以记「收起了谁」。
+    private var collapsedGroups: Set<String> = []
     /// 正在按记忆恢复展开状态：这期间 AppKit 发回来的展开/收起通知不算数，别把记忆覆盖了。
     private var restoringExpansion = false
     /// 正在拖侧栏自己的行（拖拽排序）：这期间工作区变了不重建，拖完补一次。
@@ -139,6 +141,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             })
         }
         // 菜单（工具栏里的工作区菜单）发来的：只认本窗口（key 窗口）
+        on(.revealInSidebar) { c, _ in if c.isKeyWindow { DispatchQueue.main.async { c.revealActiveRow() } } }
         on(.workspaceRenameRequested) { c, _ in if c.isKeyWindow { c.renameWorkspace() } }
         on(.workspaceMakeMirrorRequested) { c, _ in if c.isKeyWindow { c.presentMakeMirror() } }
         on(.workspaceDropMirrorRequested) { c, _ in if c.isKeyWindow { c.confirmDropMirror() } }
@@ -171,10 +174,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func loadExpanded() {
         guard let k = expandedKey else { return }
         expandedFolders = Set(UserDefaults.standard.stringArray(forKey: k) ?? [])
+        collapsedGroups = Set(UserDefaults.standard.stringArray(forKey: "docGroupsCollapsed:" + k) ?? [])
     }
     private func saveExpanded() {
         guard let k = expandedKey else { return }
         UserDefaults.standard.set(Array(expandedFolders).sorted(), forKey: k)
+        UserDefaults.standard.set(Array(collapsedGroups).sorted(), forKey: "docGroupsCollapsed:" + k)
     }
     private static func folderKey(_ source: NoteRoot, _ folder: NoteFolder) -> String {
         "\(source.id):\(folder.path)"
@@ -201,6 +206,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
+        if !restoringExpansion, let node = notification.userInfo?["NSObject"] as? SidebarNode,
+           case .section(let g?, _) = node.kind {
+            collapsedGroups.remove(g)
+            saveExpanded()
+            return
+        }
         guard !restoringExpansion,
               let node = notification.userInfo?["NSObject"] as? SidebarNode,
               let k = Self.expansionKey(node) else { return }
@@ -209,6 +220,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
+        if !restoringExpansion, let node = notification.userInfo?["NSObject"] as? SidebarNode,
+           case .section(let g?, _) = node.kind {
+            collapsedGroups.insert(g)
+            saveExpanded()
+            return
+        }
         guard !restoringExpansion,
               let node = notification.userInfo?["NSObject"] as? SidebarNode,
               let k = Self.expansionKey(node) else { return }
@@ -295,7 +312,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         syncingSelection = true
         outline.reloadData()
         restoringExpansion = true
-        for n in roots where n.isSection { outline.expandItem(n) }   // 段头恒展开（同书库那边的老规矩）
+        // 段头默认展开；PDF 分组按记忆收起（2026-11-21 用户要的），其余段头恒展开
+        for n in roots where n.isSection {
+            if case .section(let g?, _) = n.kind, collapsedGroups.contains(g) { continue }
+            outline.expandItem(n)
+        }
         restoreExpansion(roots)                                      // 子目录按上次的状态，默认收起
         restoringExpansion = false
         select(ids: keep.isEmpty ? Set([tabs.active.rowID].compactMap { $0 }) : keep)
@@ -352,6 +373,27 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         syncingSelection = false
     }
 
+    /// 在侧栏里定位当前标签：展开它所在的分组 / 目录（顺带更新记忆）、选中、滚到可见。
+    func revealActiveRow() {
+        guard let want = tabs.active.rowID else { return }
+        func path(to nodes: [SidebarNode], _ trail: [SidebarNode]) -> [SidebarNode]? {
+            for n in nodes {
+                if n.rowID == want { return trail + [n] }
+                if let p = path(to: n.children, trail + [n]) { return p }
+            }
+            return nil
+        }
+        guard let chain = path(to: roots, []), let node = chain.last else { return }
+        for anc in chain.dropLast() { outline.expandItem(anc) }
+        let row = outline.row(forItem: node)
+        guard row >= 0 else { return }
+        syncingSelection = true
+        outline.selectRowIndexes([row], byExtendingSelection: false)
+        syncingSelection = false
+        outline.scrollRowToVisible(row)
+        view.window?.makeFirstResponder(outline)
+    }
+
     /// 下载进度变了：可见的书那几行就地更新（行是按需建的，屏幕外的那几行建出来时自己读当前进度）。
     private func showDownloads(_ all: [String: [String: Double]]) {
         guard let folder = workspace.folder else { return }
@@ -391,6 +433,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
         guard let node = item as? SidebarNode else { return false }
         if case .noteFolder = node.kind { return true }
+        if case .section(let g?, _) = node.kind { return !g.isEmpty || workspace.groups.count > 0 }   // PDF 分组可收起
         if case .exercise = node.kind { return !node.children.isEmpty }   // 有章节的书 / 有小节的章
         return false
     }

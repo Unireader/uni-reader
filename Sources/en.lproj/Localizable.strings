@@ -1572,3 +1572,11 @@
 "This web page is no longer in the workspace." = "This web page is no longer in the workspace.";
 "Web Page" = "Web Page";
 "Web Pages" = "Web Pages";
+"No headings in this note" = "No headings in this note";
+"Reveal Current Tab in Sidebar" = "Reveal Current Tab in Sidebar";
+"Reveal in Sidebar" = "Reveal in Sidebar";
+"Properties" = "Properties";
+"Add Property" = "Add Property";
+"Remove Property" = "Remove Property";
+"Value" = "Value";
+"Lists and multi-line values are read-only here" = "Lists and multi-line values are read-only here";

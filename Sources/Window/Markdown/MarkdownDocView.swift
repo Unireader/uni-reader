@@ -23,6 +23,8 @@ final class MarkdownDocView: NSView {
     private let pathLabel = NSTextField(labelWithString: "")
     private let header = NSVisualEffectView()
     private let separator = NSBox()
+    /// 顶上的「属性」栏（frontmatter）。笔记小窗不要。
+    private let props = NotePropertiesView()
     private var bag = Set<AnyCancellable>()
     private var observers: [NSObjectProtocol] = []
     /// 正文里 ```grapher 图形块、```anim 分步演示块的实时视图（`GRAPHER-BLOCK-PLAN.md`、`ANIM-BLOCK-PLAN.md`）。
@@ -128,10 +130,19 @@ final class MarkdownDocView: NSView {
         pathLabel.textColor = .secondaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingMiddle
         separator.boxType = .separator
-        for v in [header, titleLabel, pathLabel, separator, host] as [NSView] { addSubview(v) }
+        for v in [header, titleLabel, pathLabel, separator, props, host] as [NSView] { addSubview(v) }
+        props.isHidden = !showsHeader
+        props.onHeightChange = { [weak self] in self?.needsLayout = true }
+        props.onSet = { [weak self] k, v in self?.applyProperty { MarkdownProperties.setting(k, to: v, in: $0) } }
+        props.onRemove = { [weak self] k in self?.applyProperty { MarkdownProperties.removing(k, from: $0) } }
+        refreshProperties()
         for v in [header, titleLabel, pathLabel, separator] as [NSView] { v.isHidden = !showsHeader }
         syncHeader()
 
+        box.$text
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshProperties() }
+            .store(in: &bag)
         box.$text
             .dropFirst()
             .debounce(for: .milliseconds(800), scheduler: DispatchQueue.main)
@@ -330,6 +341,46 @@ final class MarkdownDocView: NSView {
         editor.showFindIndicator(for: range)
     }
 
+    // MARK: - 属性（frontmatter）
+
+    private func refreshProperties() {
+        guard showsHeader else { return }
+        props.update(entries: MarkdownProperties.entries(in: box.text), editable: !workspace.isMirrorSource(ref.sourceID))
+    }
+
+    /// 属性栏里的改动：只改 frontmatter 对应的那一行，写回正文（自动保存照常 0.8 秒后落盘）。
+    private func applyProperty(_ change: (String) -> String) {
+        let new = change(box.text)
+        guard new != box.text else { return }
+        box.text = new
+        refreshProperties()
+    }
+
+    // MARK: - 目录跳转
+
+    /// 滚到正文里第 `ordinal` 个 `#` 标题（序号同 `MarkdownOutline.headings`）。
+    /// 按编辑区屏幕上的文字重新扫一遍：`[[…]]` 在屏幕上会换成显示名，字符位置与文件里的不同，
+    /// 所以不拿文件里的偏移，只认「第几个标题」。
+    func revealHeading(ordinal: Int) {
+        guard let editor = descendantTextView(in: host) else { return }
+        let source = editor.string as NSString
+        let hs = MarkdownOutline.headings(in: editor.string)
+        guard hs.indices.contains(ordinal) else { return }
+        // 第 n 行的起点
+        var loc = 0, line = 0
+        while line < hs[ordinal].line, loc < source.length {
+            loc = NSMaxRange(source.lineRange(for: NSRange(location: loc, length: 0)))
+            line += 1
+        }
+        guard loc < source.length else { return }
+        let range = source.lineRange(for: NSRange(location: loc, length: 0))
+        let target = NSRange(location: range.location, length: max(0, range.length - (source.substring(with: range).hasSuffix("\n") ? 1 : 0)))
+        editor.setSelectedRange(NSRange(location: target.location, length: 0))
+        editor.scrollRangeToVisible(target)
+        editor.showFindIndicator(for: target)
+        window?.makeFirstResponder(editor)
+    }
+
     private func descendantTextView(in view: NSView) -> NSTextView? {
         if let textView = view as? NSTextView { return textView }
         for child in view.subviews {
@@ -402,8 +453,10 @@ final class MarkdownDocView: NSView {
         titleLabel.frame = NSRect(x: pad, y: titleY, width: max(0, b.width - pad * 2), height: 19)
         pathLabel.frame = NSRect(x: pad, y: titleY + 19, width: max(0, b.width - pad * 2), height: 14)
         separator.frame = NSRect(x: 0, y: header.frame.maxY, width: b.width, height: 1)
-        host.frame = NSRect(x: 0, y: separator.frame.maxY,
-                            width: b.width, height: max(0, b.height - separator.frame.maxY))
+        let propsY = separator.frame.maxY
+        props.frame = NSRect(x: 0, y: propsY, width: b.width, height: props.height)
+        let hostY = propsY + props.height
+        host.frame = NSRect(x: 0, y: hostY, width: b.width, height: max(0, b.height - hostY))
     }
 
     override var isFlipped: Bool { true }

@@ -184,16 +184,13 @@ final class RefCard: NSObject {
     /// 换一本书看：列的是当前工作区的全部文档（不只已打开的那几篇）。
     private func showDocMenu() {
         guard let b = pickerButton else { return }
-        let m = NSMenu()
-        for d in workspace.documents {
-            let it = ClosureMenuItem(d.title, action: { [weak self] in
-                guard let self else { return }
-                self.model.load(documentId: d.id, workspace: self.workspace)
-            })
-            it.state = d.id == model.docID ? .on : .off
-            m.addItem(it)
+        if let p = popover, p.isShown { p.performClose(nil); return }
+        let p = DocPickerController.popover(workspace: workspace, current: model.docID) { [weak self] id in
+            guard let self else { return }
+            self.model.load(documentId: id, workspace: self.workspace)
         }
-        m.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height + 4), in: b)
+        popover = p
+        p.show(relativeTo: b.bounds, of: b, preferredEdge: .maxY)
     }
 
     private func toggleTOC() {

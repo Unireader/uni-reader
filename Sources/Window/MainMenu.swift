@@ -169,6 +169,7 @@ enum MainMenu {
         let (item0, m) = container(L("View"))
         // 这一整个菜单的快捷键都可改（默认值见 `ShortcutAction.defaultCombo`，设置 › 快捷键）。
         m.addItem(post(L("Toggle Sidebar"), .toggleSidebar, shortcut: .toggleSidebar))
+        m.addItem(post(L("Reveal Current Tab in Sidebar"), .revealInSidebar, shortcut: .revealInSidebar))
         m.addItem(post(L("Toggle Inspector"), .toggleInspector, shortcut: .toggleInspector))
         // 参考窗开关：与工具栏那枚同一条路（key 窗口认领；独立窗口形态下它自己是 key 时由它关自己）。
         m.addItem(post(L("Reference Window"), .toggleRefWindow, shortcut: .refWindow))
@@ -375,6 +376,9 @@ extension MenuActions: NSMenuItemValidation {
             let s = activeSession
             menuItem.state = ScanEnhance.isOn(s?.contentHash ?? "") ? .on : .off
             return s?.pdf != nil && !(s?.contentHash.isEmpty ?? true)
+        case #selector(postNotification(_:))
+            where menuItem.representedObject as? String == Notification.Name.toggleCanvasMode.rawValue:
+            return activeSession?.pdf != nil   // 画板模式只对 PDF 有意义
         case #selector(postNotification(_:))
             where menuItem.representedObject as? String == Notification.Name.gotoPageRequested.rawValue:
             return activeSession?.pdf != nil   // 空标签 / Markdown 笔记没有「第几页」可言

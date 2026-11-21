@@ -1574,3 +1574,11 @@
 "This web page is no longer in the workspace." = "这份网页已经不在工作区里了。";
 "Web Page" = "网页";
 "Web Pages" = "网页";
+"No headings in this note" = "这篇笔记里没有标题";
+"Reveal Current Tab in Sidebar" = "在侧栏中定位当前标签";
+"Reveal in Sidebar" = "在侧栏中显示";
+"Properties" = "属性";
+"Add Property" = "添加属性";
+"Remove Property" = "删除属性";
+"Value" = "值";
+"Lists and multi-line values are read-only here" = "列表和多行的值在这里只读，请在正文里改";

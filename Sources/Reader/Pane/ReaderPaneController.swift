@@ -99,6 +99,10 @@ final class ReaderPaneController: NSViewController {
         tabBar.onSelect = { [weak self] in self?.tabs.activate($0) }
         tabBar.onClose = { [weak self] in self?.tabs.close($0) }
         tabBar.onCloseOthers = { [weak self] in self?.tabs.closeOthers(than: $0) }
+        tabBar.onRevealInSidebar = { [weak self] id in
+            self?.tabs.activate(id)   // 侧栏定位的是活动标签：先切过去
+            NotificationCenter.default.post(name: .revealInSidebar, object: nil)
+        }
         tabBar.onOpenInNewWindow = { [weak self] id in
             guard let self, let d = self.tabs.tabs.first(where: { $0.id == id })?.docID else { return }
             AppDelegate.shared?.openReaderWindow(workspacePath: self.workspace.folder?.standardizedFileURL.path, docId: d)

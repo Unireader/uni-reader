@@ -15,6 +15,10 @@ final class DocPickerController: NSViewController, NSTableViewDataSource, NSTabl
     private let scroll = NSScrollView()
     private let empty = NSTextField(labelWithString: "")
     private var filtered: [LibDocument] = []
+    /// 按分组分段显示（参考窗选书用）：每组一个小标题，组内最近打开的在前；没分组的归「未分组」放最后。
+    private let grouped: Bool
+    private enum Row { case header(String), doc(LibDocument) }
+    private var rows: [Row] = []
 
     private static let width: CGFloat = 420
     private static let rowHeight: CGFloat = 44
@@ -28,7 +32,22 @@ final class DocPickerController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    init(documents: [LibDocument], openIDs: Set<String>, onPick: @escaping (String) -> Void) {
+    /// 参考窗（独立窗口 / 覆盖层）换书用：同一个搜索选书面板放进 popover，选中后自动收起。
+    /// 当前这本在副标题里标「已打开」。
+    static func popover(workspace: WorkspaceManager, current: String?,
+                        onPick: @escaping (String) -> Void) -> NSPopover {
+        let p = NSPopover()
+        p.behavior = .transient
+        let vc = DocPickerController(documents: workspace.documents, openIDs: current.map { [$0] } ?? [], grouped: true) { [weak p] id in
+            p?.performClose(nil)
+            onPick(id)
+        }
+        p.contentViewController = vc
+        return p
+    }
+
+    init(documents: [LibDocument], openIDs: Set<String>, grouped: Bool = false, onPick: @escaping (String) -> Void) {
+        self.grouped = grouped
         self.documents = documents
         self.openIDs = openIDs
         self.onPick = onPick
@@ -84,8 +103,23 @@ final class DocPickerController: NSViewController, NSTableViewDataSource, NSTabl
         let sorted = documents.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
         filtered = q.isEmpty ? sorted
             : sorted.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.group.localizedCaseInsensitiveContains(q) }
+        rows = filtered.map { .doc($0) }
+        if grouped {
+            var order: [String] = [], byGroup: [String: [LibDocument]] = [:]
+            for d in filtered {   // filtered 已按最近打开排好：组按首次出现的顺序，组内保持
+                if byGroup[d.group] == nil { order.append(d.group) }
+                byGroup[d.group, default: []].append(d)
+            }
+            order.sort { a, b in
+                if a.isEmpty != b.isEmpty { return b.isEmpty }          // 未分组放最后
+                return a.localizedStandardCompare(b) == .orderedAscending
+            }
+            rows = order.flatMap { g in [Row.header(g.isEmpty ? L("Ungrouped") : g)] + byGroup[g]!.map { .doc($0) } }
+        }
         table.reloadData()
-        if !filtered.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
+        if let first = rows.firstIndex(where: { if case .doc = $0 { true } else { false } }) {
+            table.selectRowIndexes([first], byExtendingSelection: false)
+        }
         // 高度随条数走：两三篇时不留一大截空白，多了封顶滚动
         let listH: CGFloat
         if filtered.isEmpty {
@@ -97,7 +131,9 @@ final class DocPickerController: NSViewController, NSTableViewDataSource, NSTabl
         } else {
             empty.isHidden = true
             scroll.isHidden = false
-            listH = CGFloat(min(filtered.count, Self.maxVisibleRows)) * Self.rowHeight + 16
+            let headers = rows.count - filtered.count
+            listH = CGFloat(min(rows.count, Self.maxVisibleRows)) * Self.rowHeight + 16
+            _ = headers
             scroll.frame = NSRect(x: 0, y: Self.headerH, width: Self.width, height: listH)
         }
         let size = NSSize(width: Self.width, height: Self.headerH + listH)
@@ -107,18 +143,19 @@ final class DocPickerController: NSViewController, NSTableViewDataSource, NSTabl
 
     private func pickSelection() {
         let r = table.selectedRow
-        if filtered.indices.contains(r) { onPick(filtered[r].id) } else if let f = filtered.first { onPick(f.id) }
+        if rows.indices.contains(r), case .doc(let d) = rows[r] { onPick(d.id) } else if let f = filtered.first { onPick(f.id) }
     }
 
     @objc private func clicked() {
         let r = table.clickedRow
-        if filtered.indices.contains(r) { onPick(filtered[r].id) }
+        if rows.indices.contains(r), case .doc(let d) = rows[r] { onPick(d.id) }
     }
 
     private func move(_ step: Int) {
-        guard !filtered.isEmpty else { return }
-        let cur = table.selectedRow >= 0 ? table.selectedRow : -step
-        let i = min(max(cur + step, 0), filtered.count - 1)
+        guard !rows.isEmpty else { return }
+        var i = table.selectedRow >= 0 ? table.selectedRow : (step > 0 ? -1 : rows.count)
+        repeat { i += step } while rows.indices.contains(i) && { if case .header = rows[i] { true } else { false } }()
+        guard rows.indices.contains(i) else { return }
         table.selectRowIndexes([i], byExtendingSelection: false)
         table.scrollRowToVisible(i)
     }
@@ -138,16 +175,41 @@ final class DocPickerController: NSViewController, NSTableViewDataSource, NSTabl
 
     // 列表
 
-    func numberOfRows(in tableView: NSTableView) -> Int { filtered.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        if case .doc = rows[row] { return true } else { return false }
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = rows[row] { return 26 } else { return Self.rowHeight }
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard case .doc(let d) = rows[row] else {
+            if case .header(let g) = rows[row] {
+                let l = NSTextField(labelWithString: g)
+                l.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+                l.textColor = .labelColor   // 红线：材质底上别用次要色
+                l.lineBreakMode = .byTruncatingTail
+                let v = NSTableCellView()
+                l.translatesAutoresizingMaskIntoConstraints = false
+                v.addSubview(l)
+                NSLayoutConstraint.activate([
+                    l.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 8),
+                    l.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -8),
+                    l.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -3),
+                ])
+                return v
+            }
+            return nil
+        }
         let id = NSUserInterfaceItemIdentifier("docRow")
         let v = (tableView.makeView(withIdentifier: id, owner: nil) as? DocPickerRow) ?? {
             let r = DocPickerRow()
             r.identifier = id
             return r
         }()
-        let d = filtered[row]
         // 第二行固定有内容（页数总在），行高才一致：分组 · 页数 · 已打开
         var parts: [String] = []
         if !d.group.isEmpty { parts.append(d.group) }

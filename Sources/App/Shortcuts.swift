@@ -133,7 +133,7 @@ struct KeyCombo: Hashable {
 enum ShortcutAction: String, CaseIterable, Identifiable {
     // 视图
     case quickOpen
-    case toggleSidebar, toggleInspector, zoomIn, zoomOut, zoomFit
+    case toggleSidebar, revealInSidebar, toggleInspector, zoomIn, zoomOut, zoomFit
     case addBookmark, jumpBack, jumpForward, jumpHistory, gotoPage
     case nightMode, canvasMode, refWindow
     // 笔与模式（菜单，带 ⌥）
@@ -175,7 +175,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var section: Section {
         switch self {
-        case .quickOpen, .toggleSidebar, .toggleInspector, .zoomIn, .zoomOut, .zoomFit, .addBookmark,
+        case .quickOpen, .toggleSidebar, .revealInSidebar, .toggleInspector, .zoomIn, .zoomOut, .zoomFit, .addBookmark,
              .jumpBack, .jumpForward, .jumpHistory, .gotoPage, .nightMode, .canvasMode, .refWindow:
             return .view
         case .penSlot1, .penSlot2, .penSlot3, .penSlot4, .eraser, .pageTurn, .write, .writingLock:
@@ -202,6 +202,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .gotoPage: return L("Go to Page…")
         case .nightMode: return L("Night Mode")
         case .canvasMode: return L("Canvas Mode")
+        case .revealInSidebar: return L("Reveal Current Tab in Sidebar")
         case .refWindow: return L("Reference Window")
         case .penSlot1: return String(format: L("Pen Slot %d"), 1)
         case .penSlot2: return String(format: L("Pen Slot %d"), 2)
@@ -243,6 +244,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .gotoPage: return KeyCombo("g", .control)   // ⌃G（用户 2026-09-21 指定）
         case .nightMode: return KeyCombo("n", [.command, .option])
         case .canvasMode: return KeyCombo("c", [.command, .option])
+        case .revealInSidebar: return KeyCombo("j", [.command, .shift])
         case .refWindow: return KeyCombo("r", [.command, .option])
         case .penSlot1: return KeyCombo("1", .option)
         case .penSlot2: return KeyCombo("2", .option)

@@ -22,6 +22,7 @@ final class InspectorViewController: NSViewController {
     private let listStack = FlippedStackView()
     private let thumbs = ThumbnailListNSView()
     private let toc = TOCOutlineView()
+    private let noteToc = NoteOutlineView()
     private let tocAddBookmark = NSButton()
     private let tocPage = NSView()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
@@ -119,6 +120,12 @@ final class InspectorViewController: NSViewController {
         tocAddBookmark.action = #selector(addBookmark)
         tocPage.addSubview(tocAddBookmark)
         tocPage.addSubview(toc)
+        tocPage.addSubview(noteToc)
+        noteToc.isHidden = true
+        noteToc.onSelect = { [weak self] ordinal in
+            guard let self, let ref = self.tabs.active.noteRef else { return }
+            MarkdownDocView.editors(showing: ref, in: self.workspace).first?.revealHeading(ordinal: ordinal)
+        }
         toc.onSelect = { [weak self] e in
             guard let self, let page = e.pageIndex else { return }
             self.session.jump(page: page, frac: e.frac, kind: .toc, label: e.label)
@@ -153,6 +160,7 @@ final class InspectorViewController: NSViewController {
         for v in agentPage.subviews { v.frame = agentPage.bounds }
         let bs = tocAddBookmark.fittingSize
         tocAddBookmark.frame = NSRect(x: tocPage.bounds.width - 12 - bs.width, y: 0, width: bs.width, height: bs.height)
+        noteToc.frame = tocPage.bounds
         toc.frame = NSRect(x: 0, y: bs.height + 6, width: tocPage.bounds.width, height: max(0, tocPage.bounds.height - bs.height - 6))
         emptyLabel.frame = NSRect(x: 20, y: b.height / 2 - 30, width: b.width - 40, height: 60)
         // 窗口变高 / 列表刚建完第一批：可视区还空着就接着建（滚动那一路走 `boundsDidChange`）
@@ -185,7 +193,10 @@ final class InspectorViewController: NSViewController {
         // 笔记存了（本窗口打字的自动保存，或别处 / Agent 改的）：关联页的链出 / 反向链接可能变了
         NotificationCenter.default.publisher(for: .markdownNoteSavedInApp, object: workspace)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.linksMayHaveChanged() }
+            .sink { [weak self] _ in
+                self?.linksMayHaveChanged()
+                if self?.tab == .contents { self?.queueRefresh() }   // 笔记目录跟着正文走
+            }
             .store(in: &bag)
         // 日程变了（打勾 / 加 / Agent 排计划 / 同步拉来）：「今天」页重读（内容没变不重建）
         NotificationCenter.default.publisher(for: .scheduleDidChange, object: workspace)
@@ -323,6 +334,14 @@ final class InspectorViewController: NSViewController {
         case .thumbnails:
             thumbs.update(pdf: s.pdf, docKey: s.displayKey, align: s.scanAlign, currentPage: s.currentPageIndex)
         case .contents:
+            if let ref = tabs.active.noteRef {
+                // Markdown 笔记：目录 = 正文里的 `#` 标题（编辑区的实时正文，没开着就读文件）
+                toc.isHidden = true; tocAddBookmark.isHidden = true; noteToc.isHidden = false
+                noteToc.update(text: MarkdownDocView.editors(showing: ref, in: workspace).first?.currentText
+                               ?? workspace.noteBody(ref) ?? "")
+                return
+            }
+            toc.isHidden = false; tocAddBookmark.isHidden = false; noteToc.isHidden = true
             tocAddBookmark.isEnabled = s.documentId != nil
             toc.update(entries: s.toc, bookmarks: s.bookmarks, currentPage: s.currentPageIndex)
         case .info:

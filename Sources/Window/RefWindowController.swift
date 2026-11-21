@@ -210,12 +210,10 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch id {
         case ID.pick:
-            let it = NSMenuToolbarItem(itemIdentifier: id)
-            it.label = L("Reference")
-            it.paletteLabel = L("Reference")
+            // 文档多了菜单没法找：弹搜索选书面板（与标签栏「+」同一个 `DocPickerController`）
+            let it = popoverButton(id, L("Reference"), "book", #selector(showPicker(_:)))
             it.toolTip = L("Pick a document to reference")
-            it.image = Self.icon("book", L("Reference"))
-            it.menu = pickMenu()
+            (it.view as? NSButton)?.isEnabled = true
             return it
         case ID.contents:
             return popoverButton(id, L("Contents"), "list.bullet", #selector(showContents(_:)))
@@ -267,7 +265,7 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         it.label = label
         it.paletteLabel = label
         it.toolTip = label
-        contentsButton = btn
+        if id == ID.contents { contentsButton = btn }
         return it
     }
 
@@ -279,14 +277,6 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         }
     }
 
-    /// 选书菜单按需重建（`NSMenuDelegate`）：工作区文档表会变。
-    private func pickMenu() -> NSMenu {
-        let m = NSMenu()
-        m.delegate = self
-        menuNeedsUpdate(m)   // 先填一次：空菜单点开什么都没有，看起来就是「按了没反应」
-        return m
-    }
-
     // MARK: 动作
 
     @objc private func rewind() { model.rewindToProgress(workspace: workspace) }
@@ -294,9 +284,14 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
     /// 改回覆盖层：只改 model 的形态，本窗口由 `ReaderWindowController` 按它关掉。
     @objc private func showInside() { model.setMode(.overlay) }
 
-    @objc private func pickDocument(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        model.load(documentId: id, workspace: workspace)
+    @objc private func showPicker(_ sender: NSButton) {
+        if let p = popover, p.isShown { p.performClose(nil); popover = nil; return }
+        let p = DocPickerController.popover(workspace: workspace, current: model.docID) { [weak self] id in
+            guard let self else { return }
+            self.model.load(documentId: id, workspace: self.workspace)
+        }
+        popover = p
+        p.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
     }
 
     /// 目录弹窗：内容与覆盖层那份**同一个视图**（`RefTOCPopoverContent`）。
@@ -311,19 +306,5 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         let p = RefTOCPopover.make(model: model) { [weak self] in self?.popover?.performClose(nil) }
         popover = p
         p.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
-    }
-}
-
-extension RefWindowController: NSMenuDelegate {
-    /// 列的是**当前工作区的全部文档**（不只已打开的那几篇），与覆盖层的选书菜单一致。
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        for d in workspace.documents {
-            let it = NSMenuItem(title: d.title, action: #selector(pickDocument(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = d.id
-            it.state = (d.id == model.docID) ? .on : .off
-            menu.addItem(it)
-        }
     }
 }

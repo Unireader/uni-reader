@@ -775,6 +775,8 @@ extension Notification.Name {
     /// 搜索结果浮窗开关（⌥⌘F，key 窗口的阅读窗格认领）
     static let toggleSearchResults = Notification.Name("com.xvan.UniReader.toggleSearchResults")
     static let toggleNightMode = Notification.Name("com.xvan.UniReader.toggleNightMode")
+    /// 在侧栏里定位当前标签（展开所在分组 / 目录、选中并滚到可见）。
+    static let revealInSidebar = Notification.Name("com.xvan.UniReader.revealInSidebar")
     static let toggleCanvasMode = Notification.Name("com.xvan.UniReader.toggleCanvasMode")
     /// 书写锁定（设备级全局，直接改 `AppModel.writingLocked`，观察者装在 `AppModel.init` 里——
     /// 不像 nightMode/canvasMode 是按文档记的，不需要 key 窗口认领）。

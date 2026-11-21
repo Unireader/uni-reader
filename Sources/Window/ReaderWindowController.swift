@@ -394,6 +394,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         on(.closeWindowRequested) { $0.window?.performClose(nil) }
         on(.nextTabRequested) { $0.tabs.activate(offset: 1) }
         on(.prevTabRequested) { $0.tabs.activate(offset: -1) }
+        on(.revealInSidebar) { $0.sidebarItem.isCollapsed = false }   // 侧栏收着就先展开；定位由侧栏自己做
         on(.toggleSidebar) { $0.sidebarItem.animator().isCollapsed.toggle() }
         on(.toggleInspector) { $0.toggleInspector() }
         on(.toggleRefWindow) { $0.toggleReference() }
@@ -1044,7 +1045,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         for it in items {
             guard let btn = it.view as? NSButton else { continue }
             switch it.itemIdentifier {
-            case ToolID.canvas: setState(btn, session.canvasMode)
+            case ToolID.canvas:
+                setState(btn, session.canvasMode)
+                // 画板模式是 PDF 页边的功能：笔记 / 画板 / 习题等没有 PDF 的标签上灰掉
+                let on = session.pdf != nil
+                if btn.isEnabled != on { btn.isEnabled = on }
             case ToolID.night:
                 setState(btn, night)
                 let symbol = night ? "sun.max.fill" : "moon.fill"
@@ -1053,6 +1058,13 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
                     nightSymbol = symbol
                     btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
                 }
+            case ToolID.ocr:
+                // 带 view 的按钮不走 `validateToolbarItem`，状态自己推：没有 PDF 的标签上灰掉
+                let on = session.pdf != nil
+                if btn.isEnabled != on { btn.isEnabled = on }
+            case ToolID.contents:
+                let on = session.pdf != nil || tabs.active.noteRef != nil
+                if btn.isEnabled != on { btn.isEnabled = on }
             case ToolID.reference: setState(btn, refWindow.isOpen)
             case ToolID.jumpHistory: setState(btn, jumpPanel.isOpen)
             case ToolID.agent:
@@ -1435,6 +1447,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: 弹出面板
 
     @objc private func showContents(_ sender: NSButton) {
+        if tabs.active.noteRef != nil {
+            let vc = NoteTOCPanelController(tabs: tabs, workspace: workspace)
+            vc.onPicked = { [weak self] in self?.popover?.performClose(nil) }
+            present(vc, from: sender)
+            return
+        }
         let vc = TOCPanelController(tabs: tabs)
         vc.onPicked = { [weak self] in self?.popover?.performClose(nil) }
         present(vc, from: sender)
@@ -1483,7 +1501,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         let s = session
         switch item.itemIdentifier {
-        case ToolID.zoom, ToolID.contents, ToolID.ocr:
+        case ToolID.contents:
+            return s.pdf != nil || tabs.active.noteRef != nil   // 笔记标签：目录 = `#` 标题
+        case ToolID.zoom, ToolID.ocr:
             return s.pdf != nil
         case ToolID.jumpBack:
             return tabs.canGoBack   // 跨标签的窗口历史（笔记 / 画板 / 习题页上也能回去）

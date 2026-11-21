@@ -12,6 +12,7 @@ final class TabBarNSView: NSView {
     var onSelect: (UUID) -> Void = { _ in }
     var onClose: (UUID) -> Void = { _ in }
     var onCloseOthers: (UUID) -> Void = { _ in }
+    var onRevealInSidebar: (UUID) -> Void = { _ in }
     var onOpenInNewWindow: (UUID) -> Void = { _ in }
     var onNewTab: () -> Void = {}
     var onToggleStyle: () -> Void = {}
@@ -30,6 +31,10 @@ final class TabBarNSView: NSView {
     /// 右边那个标签挪进来、它的关闭键正好落在鼠标底下，可以一直点下去关。
     private var frozenWidth: CGFloat?
     private var barTracking: NSTrackingArea?
+    /// 下一次摆位要带动画（标签数变了 / 关闭后放开冻结宽度）。窗口缩放、拖动时不带：要跟手。
+    private var animateNextLayout = false
+    /// 刚新建、还没摆过的标签：从零宽淡入长出来。
+    private var freshChips = Set<ObjectIdentifier>()
 
     override var isFlipped: Bool { true }
 
@@ -69,12 +74,14 @@ final class TabBarNSView: NSView {
     func update(items: [TabBarItem], activeID: UUID, style: TabBarStyle) {
         // 标签变多了（新开）就不再保持关闭时的宽度
         if items.count > chips.count || style != self.style { frozenWidth = nil }
+        if items.count != chips.count, style == self.style, window != nil { animateNextLayout = true }
         self.style = style
         while chips.count < items.count {
             let c = TabChipView()
             c.owner = self
             row.addSubview(c)
             chips.append(c)
+            if animateNextLayout { freshChips.insert(ObjectIdentifier(c)) }
         }
         while chips.count > items.count { chips.removeLast().removeFromSuperview() }
         spacing = style == .floating ? 2 : 1
@@ -116,11 +123,37 @@ final class TabBarNSView: NSView {
         // 关掉一个之后平分宽度会变大；保持关闭前的宽度（窗口变窄等放不下时仍按平分的）
         if let f = frozenWidth, f < w { w = f }
         var x: CGFloat = 0
+        let animate = animateNextLayout && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        animateNextLayout = false
+        var targets: [(NSView, NSRect)] = []
         for c in chips {
-            c.frame = NSRect(x: x, y: 0, width: w, height: TabBarMetrics.rowHeight)
+            let target = NSRect(x: x, y: 0, width: w, height: TabBarMetrics.rowHeight)
+            if freshChips.remove(ObjectIdentifier(c)) != nil, animate {
+                c.frame = NSRect(x: x, y: 0, width: 0, height: TabBarMetrics.rowHeight)   // 从零宽长出来
+                c.alphaValue = 0
+                targets.append((c, target))
+            } else if animate, c.frame != target, c.frame.width > 0 {
+                targets.append((c, target))
+            } else {
+                c.frame = target
+                c.alphaValue = 1
+            }
             x += w + spacing
         }
-        plus.frame = NSRect(x: x, y: 0, width: TabBarMetrics.rowHeight, height: TabBarMetrics.rowHeight)
+        freshChips.removeAll()
+        let plusTarget = NSRect(x: x, y: 0, width: TabBarMetrics.rowHeight, height: TabBarMetrics.rowHeight)
+        if animate {
+            // 其余标签平滑挪到新位置 / 新宽度（关闭后放开冻结宽度时就是「展开」），「+」同步滑过去
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.22
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                ctx.allowsImplicitAnimation = true
+                for (v, f) in targets { v.animator().frame = f; v.animator().alphaValue = 1 }
+                plus.animator().frame = plusTarget
+            }
+        } else {
+            plus.frame = plusTarget
+        }
         let total = x + TabBarMetrics.rowHeight
         row.frame = NSRect(x: 0, y: 0, width: max(avail, total), height: TabBarMetrics.rowHeight)
         // 塞得下就不该留着之前滚过的偏移（否则左边一截一直看不见）
@@ -156,6 +189,7 @@ final class TabBarNSView: NSView {
     override func mouseExited(with event: NSEvent) {
         guard frozenWidth != nil else { return }
         frozenWidth = nil
+        animateNextLayout = true   // 关完一串之后放开冻结的宽度：剩下的标签平滑展开
         needsLayout = true
     }
 
@@ -341,8 +375,9 @@ final class TabChipView: NSView {
         let id = item.id
         m.addItem(ClosureMenuItem(L("Close Tab")) { [weak self] in self?.owner?.onClose(id) })
         m.addItem(ClosureMenuItem(L("Close Other Tabs")) { [weak self] in self?.owner?.onCloseOthers(id) })
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem(L("Reveal in Sidebar")) { [weak self] in self?.owner?.onRevealInSidebar(id) })
         if item.hasDocument {
-            m.addItem(.separator())
             m.addItem(ClosureMenuItem(L("Open in New Window")) { [weak self] in self?.owner?.onOpenInNewWindow(id) })
         }
         return m

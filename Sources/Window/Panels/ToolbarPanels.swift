@@ -129,6 +129,43 @@ final class TOCPanelController: NSViewController {
     }
 }
 
+// MARK: - Markdown 笔记目录（笔记标签上工具栏「目录」按钮弹这个；点标题滚到位并关闭）
+
+final class NoteTOCPanelController: NSViewController {
+    let tabs: TabsModel
+    let workspace: WorkspaceManager
+    var onPicked: () -> Void = {}
+    private let outline = NoteOutlineView(frame: NSRect(x: 0, y: 40, width: 320, height: 420))
+
+    init(tabs: TabsModel, workspace: WorkspaceManager) {
+        self.tabs = tabs
+        self.workspace = workspace
+        super.init(nibName: nil, bundle: nil)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    override func loadView() {
+        let root = FlippedView(frame: NSRect(x: 0, y: 0, width: 320, height: 460))
+        let title = NSTextField(labelWithString: L("Contents"))
+        title.font = .preferredFont(forTextStyle: .headline)
+        title.frame = NSRect(x: 12, y: 10, width: 296, height: 20)
+        outline.autoresizingMask = [.width, .height]
+        if let ref = tabs.active.noteRef {
+            outline.update(text: MarkdownDocView.editors(showing: ref, in: workspace).first?.currentText
+                           ?? workspace.noteBody(ref) ?? "")
+            outline.onSelect = { [weak self] ordinal in
+                guard let self else { return }
+                self.onPicked()
+                MarkdownDocView.editors(showing: ref, in: self.workspace).first?.revealHeading(ordinal: ordinal)
+            }
+        }
+        root.addSubview(title)
+        root.addSubview(outline)
+        view = root
+        preferredContentSize = root.frame.size
+    }
+}
+
 // MARK: - 文字识别（OCR）
 
 /// 开关「用 OCR 文本」+ 进度 + 手动「识别全部页」+ 水印块 / 调试上色；未配置 OCR 时引导去设置。
