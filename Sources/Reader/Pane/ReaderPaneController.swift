@@ -492,7 +492,8 @@ final class ReaderPaneController: NSViewController {
         }
 
         // 标签栏（≥2 个标签才显示；草稿纸开着时不显示——它自带工具条。画板笔记本身就是一个标签，照常显示）
-        let showTabs = tabs.tabs.count > 1 && (s.openPadID == nil || s.isBoard)
+        // 一个标签也显示（2026-11-21 用户定）；唯一的标签还是空的（没开任何内容）时不显示，免得空窗口底下孤零零一枚空胶囊
+        let showTabs = !(tabs.tabs.count == 1 && tabs.active.isEmptyTab) && (s.openPadID == nil || s.isBoard)
         tabBar.isHidden = !showTabs
         if showTabs {
             tabBar.update(items: tabs.tabs.map {

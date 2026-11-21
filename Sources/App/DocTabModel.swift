@@ -66,9 +66,10 @@ final class DocTabModel: ObservableObject, Identifiable {
             app.broadcastBoards()   // 平板据 `boards.kind = 3` 跟随显示这一组（`EXERCISE-PLAN.md §10.4`）
         }
     }
-    /// 习题标签是**单独开的**（侧栏右键「在新标签页中打开」）：侧栏点别的范围不会换掉它。
-    /// 只在 `exerciseScope != nil` 时有意义（每次 `openExercises` 都重设，不会带着旧值）。
-    @Published private(set) var exerciseSeparate = false
+    /// 「同目录 / 分组共用一个标签」：这个标签是哪一类、哪个目录的**共用标签**（侧栏单击在它里面换内容）。
+    /// nil = 独立标签（⌘ 单击 / 右键「在新标签页中打开」开的、或冷启动恢复出来的）。只在运行期记，不落盘。
+    /// 见 `TabsModel.openShared`、设置「同一目录下共用一个标签」。
+    var shareKey: String?
     /// 本标签显示的是**日程**（v26，`SCHEDULE-PLAN.md §4`）：与 `docID` / `noteRef` / `boardID` / `exerciseScope`
     /// 五者互斥，同习题的做法（开之前 `select(nil)`）。一扇窗口至多一个日程标签（`TabsModel.openSchedule`）。
     @Published private(set) var showsSchedule = false
@@ -116,13 +117,6 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 什么都没装的空标签（PDF / Markdown / 画板 / 习题都没有）：打开新内容时就地复用它。
     var isEmptyTab: Bool { docID == nil && noteRef == nil && boardID == nil && exerciseScope == nil && !showsSchedule && webDocID == nil }
-
-    /// **公用的**习题标签（用户 2026-10-11 定）：侧栏点哪组题都在它里面换，不另开标签。右键单独开的不算。
-    /// 公用的有两个、各管一支：错题本那一支（错题本和它按书 / 按章展开的几级）一个，其余一个（`ExerciseScope.isMistakes`）。
-    func isSharedExerciseTab(for scope: ExerciseScope) -> Bool {
-        guard let sc = exerciseScope, !exerciseSeparate else { return false }
-        return sc.isMistakes == scope.isMistakes
-    }
 
     /// 侧栏 / 标签栏用的选中键（PDF 与 md 笔记在同一张表里列，得能区分）。
     var rowID: String? {
@@ -494,9 +488,7 @@ final class DocTabModel: ObservableObject, Identifiable {
 
     /// 开一组习题（v20，`EXERCISE-PLAN.md §4.1`）。规矩同 `openMarkdown`：先把 PDF / md / 画板收干净。
     /// 冷启动恢复也走这里——习题标签没有要懒装的东西（题目由练习视图现读）。
-    /// `separate` = 单独开的（见 `exerciseSeparate`）。
-    func openExercises(_ scope: ExerciseScope, separate: Bool = false) {
-        if exerciseSeparate != separate { exerciseSeparate = separate }
+    func openExercises(_ scope: ExerciseScope) {
         guard exerciseScope != scope else { return }
         if docID != nil || noteRef != nil || boardID != nil || exerciseScope != nil || showsSchedule || webDocID != nil { select(nil) }
         exerciseScope = scope

@@ -1580,3 +1580,6 @@
 "Remove Property" = "Remove Property";
 "Value" = "Value";
 "Lists and multi-line values are read-only here" = "Lists and multi-line values are read-only here";
+"PDF" = "PDF";
+"Share One Tab Within a Folder" = "Share One Tab Within a Folder";
+"When on, items opened by a plain click in the same sidebar group or folder replace each other in one tab. ⌘-click or right-click › Open in New Tab opens an independent tab." = "When on, items opened by a plain click in the same sidebar group or folder replace each other in one tab. ⌘-click or right-click › Open in New Tab opens an independent tab.";

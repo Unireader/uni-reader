@@ -1582,3 +1582,6 @@
 "Remove Property" = "删除属性";
 "Value" = "值";
 "Lists and multi-line values are read-only here" = "列表和多行的值在这里只读，请在正文里改";
+"PDF" = "PDF";
+"Share One Tab Within a Folder" = "同一目录下共用一个标签";
+"When on, items opened by a plain click in the same sidebar group or folder replace each other in one tab. ⌘-click or right-click › Open in New Tab opens an independent tab." = "打开后，侧栏同一分组 / 目录里单击打开的内容会在同一个标签里互相替换。⌘ 单击，或右键「在新标签页中打开」，会开成独立标签。";

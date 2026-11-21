@@ -673,7 +673,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     /// 选中的恰好一行、又不是当前标签开着的 → 打开它（同侧栏单击）。
-    private func openSelected(byClick: Bool = false) {
+    private func openSelected(byClick: Bool = false, independent: Bool = false) {
         // 图片：单击才弹快速查看（键盘上下移过去不弹，同访达）；面板开着时跟着换图
         let images = selectedImageURLs()
         if !images.isEmpty {
@@ -682,20 +682,24 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         // 多选期间不动当前打开的文档；恰选一篇才联动
         let ids = selectedRowIDs()
-        guard ids.count == 1, let id = ids.first, id != tabs.active.rowID else { return }
+        guard ids.count == 1, let id = ids.first else { return }
+        guard id != tabs.active.rowID else {
+            if independent { tabs.active.shareKey = nil }   // ⌘ 单击正开着的那个共用标签：转成独立的，不再被换掉
+            return
+        }
         syncingSelection = true
         if id == ScheduleFocus.rowID {
             tabs.openSchedule()
         } else if let scope = ExerciseScope(rowID: id) {
-            tabs.openExercises(scope)
+            tabs.openExercises(scope, newTab: independent)
         } else if id.hasPrefix("md:"), let ref = NoteRef(key: String(id.dropFirst(3))) {
-            tabs.openMarkdown(ref)
+            tabs.openMarkdownShared(ref, independent: independent)
         } else if id.hasPrefix(BoardNote.rowPrefix) {
             if let bid = UUID(uuidString: String(id.dropFirst(BoardNote.rowPrefix.count))) { tabs.openBoard(bid) }
         } else if id.hasPrefix(LibWebDoc.rowPrefix) {
             tabs.openWebDoc(String(id.dropFirst(LibWebDoc.rowPrefix.count)))
         } else if !id.hasPrefix("md:") {
-            _ = tabs.open(id)
+            _ = tabs.openDocShared(id, independent: independent)
         }
         syncingSelection = false
     }
@@ -703,7 +707,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     @objc private func rowClicked() {
         guard let n = outline.item(atRow: outline.clickedRow) as? SidebarNode, case .notice(let notice) = n.kind else {
             // 单击一行松手才打开（见 `outlineViewSelectionDidChange`）；拖起来排序时不会走到这里
-            if outline.clickedRow >= 0, !syncingSelection { openSelected(byClick: true) }
+            guard outline.clickedRow >= 0, !syncingSelection else { return }
+            // ⌘ 单击 = 开成独立标签（系统在 ⌘ 单击时会把这行加进多选，这里改成只选它）
+            let independent = NSApp.currentEvent?.modifierFlags.contains(.command) == true
+            if independent { outline.selectRowIndexes(IndexSet(integer: outline.clickedRow), byExtendingSelection: false) }
+            openSelected(byClick: true, independent: independent)
             return
         }
         switch notice {
@@ -887,9 +895,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .web(let w):
             buildWebMenu(menu, web: w)
         case .exercise(let scope, _, _, _):
-            if scope != .wrong {
-                // 习题默认都在公用标签里换（`TabsModel.openExercises`）；想并排留着就单独开。
-                // 错题本那一行本身没有这一项（它就是错题标签的入口）；它底下按书 / 按章的几级有
+            do {
+                // 习题默认都在公用标签里换（`TabsModel.openExercises`）；想并排留着就单独开
                 menu.addItem(item(L("Open in New Tab"), "plus.square.on.square") { [weak self] in
                     self?.tabs.openExercises(scope, newTab: true)
                 })
@@ -1074,6 +1081,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let external = workspace.noteSource(id: note.ref.sourceID)?.kind == .reference
         let readOnly = workspace.isMirrorSource(note.ref.sourceID)      // 服务器镜像：不能改名 / 删
         m.autoenablesItems = false
+        m.addItem(ClosureMenuItem(L("Open in New Tab")) { [weak self] in self?.tabs.openMarkdownShared(note.ref, independent: true) })
         m.addItem(ClosureMenuItem(L("Open in Small Window")) { [weak self] in self?.onOpenNoteWindow(note.ref) })
         m.addItem(.separator())
         let rename = ClosureMenuItem(L("Rename…")) { [weak self] in
@@ -1380,6 +1388,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func buildDocMenu(_ m: NSMenu, doc: LibDocument) {
         let targets = targets(for: doc.id)
         m.autoenablesItems = false
+        m.addItem(ClosureMenuItem(L("Open in New Tab")) { [weak self] in self?.tabs.openDocShared(doc.id, independent: true) })
+        m.addItem(.separator())
         // 服务器工作区里还没下载的（多选时只算其中没下载的）；都在下了就灰掉
         if workspace.isServerWorkspace {
             let missing = workspace.documents.map(\.id).filter { targets.contains($0) && !workspace.hasLocalFileCached($0) }

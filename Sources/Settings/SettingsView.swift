@@ -46,6 +46,9 @@ struct SettingsView: View {
     @ObservedObject private var consultPanel = AIPanelModel.shared
 
     @AppStorage("autoNightMode") private var autoNightMode = false
+    @AppStorage("shareTab.pdf") private var shareTabPDF = true
+    @AppStorage("shareTab.exercise") private var shareTabExercise = true
+    @AppStorage("shareTab.markdown") private var shareTabMarkdown = true
     @AppStorage("scrollInterp") private var scrollInterp = true      // true=时间戳插值 / false=纯低通
     @AppStorage("autoStartServer") private var autoStartServer = false
     @AppStorage("ocrEngine") private var ocrEngine = OCRBackend.off   // 取值见 `OCRBackend`；键与 `PaddleOCR.engineKey` 一致
@@ -175,6 +178,16 @@ struct SettingsView: View {
                 Text(L("Appearance"))
             } footer: {
                 Text(L("When on, Night Mode follows the system appearance automatically."))
+            }
+
+            Section {
+                Toggle(L("PDF"), isOn: $shareTabPDF)
+                Toggle(L("Exercises"), isOn: $shareTabExercise)
+                Toggle(L("Markdown Notes"), isOn: $shareTabMarkdown)
+            } header: {
+                Text(L("Share One Tab Within a Folder"))
+            } footer: {
+                Text(L("When on, items opened by a plain click in the same sidebar group or folder replace each other in one tab. ⌘-click or right-click › Open in New Tab opens an independent tab."))
             }
 
             updatesSection
