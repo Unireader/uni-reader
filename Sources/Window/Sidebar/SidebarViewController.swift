@@ -801,6 +801,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
             return .copy
         }
+        // 笔记拖到某个目录（或源根）上：挪进去
+        if let item = item as? SidebarNode, let target = noteDropFolder(item), !noteMoves(ids, into: target).isEmpty {
+            outlineView.setDropItem(item, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            return .move
+        }
         // 排序：只在同一组里换位置，不跨组
         guard let g = reorderGroup(ids) else { return [] }
         var at = index
@@ -820,6 +825,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
         if let ids = draggedRowIDs(info) {
+            if let item = item as? SidebarNode, let target = noteDropFolder(item) {
+                let moves = noteMoves(ids, into: target)
+                if !moves.isEmpty { return moveNotes(moves, into: target) }
+            }
             guard let g = reorderGroup(ids), (item as? SidebarNode) === g.parent else { return false }
             let order = SidebarOrder.move(g.siblings, dragged: Set(ids), to: index - g.lead)
             guard order != g.siblings else { return false }
@@ -830,6 +839,48 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                                                        options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
         guard !urls.isEmpty else { return false }
         onDropFiles(urls)
+        return true
+    }
+
+    /// 悬在这一行上时，它代表的笔记目录（目录行 / 源根行）。
+    private func noteDropFolder(_ n: SidebarNode) -> (source: NoteRoot, folder: NoteFolder)? {
+        switch n.kind {
+        case .noteFolder(let s, let f), .noteSection(let s, let f): return (s, f)
+        default: return nil
+        }
+    }
+
+    /// 拖的是笔记、且要挪进的目录与它们现在的目录不同（同源）→ 要挪的笔记；否则空（走排序）。
+    private func noteMoves(_ ids: [String], into target: (source: NoteRoot, folder: NoteFolder)) -> [NoteRef] {
+        var refs: [NoteRef] = []
+        for id in ids {
+            guard id.hasPrefix("md:"), let r = NoteRef(key: String(id.dropFirst(3))) else { return [] }
+            guard r.sourceID == target.source.id else { return [] }
+            refs.append(r)
+        }
+        return refs.filter { $0.folder != target.folder.path }
+    }
+
+    private func moveNotes(_ refs: [NoteRef], into target: (source: NoteRoot, folder: NoteFolder)) -> Bool {
+        var moved: [NoteRef: NoteRef] = [:]
+        let before = workspace.wiki.snapshot()
+        for ref in refs {
+            // 存盘 → 挪文件 → 标签 / 小窗跟过去（同 `NoteRelink.renameFromUI`）
+            MarkdownDocView.flushEditors(showing: ref, in: workspace)
+            do {
+                let new = try workspace.moveNote(ref, title: nil, folder: target.folder.path)
+                if new != ref {
+                    ReaderWindowController.noteMoved(from: ref, to: new, in: workspace)
+                    moved[ref] = new
+                }
+            } catch let e as WorkspaceManager.NoteAgentError {
+                workspace.lastError = e.message
+            } catch {
+                workspace.lastError = "\(error)"
+            }
+        }
+        guard !moved.isEmpty else { return false }
+        Task { @MainActor [workspace] in _ = await NoteRelink.run(workspace, before: before, moved: moved) }
         return true
     }
 
