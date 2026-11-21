@@ -565,6 +565,16 @@ final class TabsModel: ObservableObject {
         return nil
     }
 
+    /// 这一项算哪一类、哪个目录的共用标签（与 `openDocShared` / `openMarkdownShared` / `openExercises` 同一口径）。
+    private func shareSlot(_ item: StoredTab) -> (ShareKind, String)? {
+        switch item {
+        case .pdf(let id): return (.pdf, workspace.document(id: id)?.group ?? "")
+        case .markdown(let ref): return (.markdown, "\(ref.sourceID):\((ref.relPath as NSString).deletingLastPathComponent)")
+        case .exercises: return (.exercise, "")
+        default: return nil
+        }
+    }
+
     private func isRestorable(_ item: StoredTab) -> Bool {
         switch item {
         case .pdf(let id): return workspace.document(id: id) != nil
@@ -592,6 +602,8 @@ final class TabsModel: ObservableObject {
             // 留着旧字段，降级到旧版本时至少还能恢复 PDF 标签。
             "docs": tabs.compactMap(\.docID),
             "active": storedTab(active)?.key ?? "",
+            // 哪些标签是「同目录共用」的（`DocTabModel.shareKey`）：重启后还要是共用的，单击才继续在里面换
+            "shared": tabs.filter { $0.shareKey != nil }.compactMap(storedTab).map(\.key),
         ], forKey: k)
     }
 
@@ -601,6 +613,9 @@ final class TabsModel: ObservableObject {
     /// 上限 `max`：从前是「本窗口开第一篇 + 最多再开 4 扇窗口」，现在全在一扇窗口里，
     /// 同样要有个数，否则「最近打开」很长时冷启动要一口气装载十几篇 PDF。
     func restoreTabs(max: Int = 8) {
+        // 存档里记的共用标签；老存档没有这个字段 → 退回按目录推（每个目录第一个标签算共用）
+        let sharedKeys: Set<String>? = storeKey
+            .flatMap { UserDefaults.standard.dictionary(forKey: $0)?["shared"] as? [String] }.map(Set.init)
         var savedTabs: [StoredTab]
         var wantActive: StoredTab?
         if let k = storeKey,
@@ -646,6 +661,12 @@ final class TabsModel: ObservableObject {
                 target.openSchedule()   // 存下的组里至多一个（`openSchedule` 保证）
             case .web(let id):
                 target.openWebDoc(id, recordOpen: false)
+            }
+            // 还原共用标记（设置里对应的开关关着就不标）
+            if let (kind, group) = shareSlot(item), kind.isOn {
+                let key = "\(kind.rawValue)|\(group)"
+                let wanted = sharedKeys.map { $0.contains(item.key) } ?? !tabs.contains { $0 !== target && $0.shareKey == key }
+                if wanted { target.shareKey = key }
             }
         }
         if let wantActive, restoring.contains(wantActive),
