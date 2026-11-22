@@ -68,6 +68,13 @@ enum WebBridgeScript {
             getAll: function () { return req('getAll'); },
             clear: function () { return req('clear').then(function () {}); },
             // 只读查询（工作区的习题库 / 做题状态，`docs/WEB-DOC-PLAN.md §5.1`）
+            // 习题 / 作答有变时调 fn（停手 [ms] 毫秒才调一次，默认 300）；返回取消函数。内嵌显示与安卓会推；本机浏览器那条路不推
+            watch: function (fn, ms) {
+              var t = 0, wait = ms === undefined ? 300 : ms;
+              function h() { clearTimeout(t); t = setTimeout(function () { try { fn(); } catch (e) { console.error(e); } }, wait); }
+              window.addEventListener('unireader:exercises', h);
+              return function () { clearTimeout(t); window.removeEventListener('unireader:exercises', h); };
+            },
             query: function (name, args) { return req('query', name, args === undefined ? '{}' : JSON.stringify(args)); },
             documents: function () { return api.query('documents'); },
             exercises: function (opts) { return api.query('exercises', opts || {}); },
@@ -83,6 +90,9 @@ enum WebBridgeScript {
     }
 
     /// 别处改了数据之后在页面里执行的一句。
+    /// 习题 / 作答有变之后在页面里执行的一句（页面用 `unireader.watch(fn)` 接）。
+    static let exercisesEvent = "try { window.dispatchEvent(new CustomEvent('unireader:exercises')); } catch (e) {}"
+
     static let changeEvent = "try { window.dispatchEvent(new CustomEvent('unireader:change')); } catch (e) {}"
 
     // MARK: - 记住滚动位置

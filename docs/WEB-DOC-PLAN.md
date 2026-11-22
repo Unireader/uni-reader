@@ -104,12 +104,18 @@ await unireader.exercises({ document, group, filter, tag, chapter, status, ids, 
    // status = any | new | practiced | last_correct | last_wrong；limit 默认 50、最多 200
    // → { total, offset, groups, exercises: [{ id, type, number, section, stem, options, answer, chapter, tags, starred, in_mistakes,
    //      attempts, correct, wrong, ungraded, last_correct, document_id | group, page(1 起), explanation?, note?, passage? }] }
+await unireader.exerciseStatus({ document, group, chapter, filter, tag, status, ids })  // 轻量：每道题只有 id / number / chapter / attempts / correct / wrong / ungraded / last_correct / in_mistakes / starred / link，不带题干，不分页；watch 里重查用它
 await unireader.exercise(id)                      // 单题（带文章全文）；没有 = null
 await unireader.exerciseStats({ document?, group? })  // { total, practiced, unpracticed, mistakes, starred, attempts, correct, wrong, ungraded }
 await unireader.attempts({ exerciseId?, exerciseIds?, document?, ungraded?, offset, limit })  // 作答记录，新的在前
 await unireader.query(name, args)                 // 上面几个的底层
 ```
 
+- 每道题都带 `link`：Mac 是 `unireader://open?ws=…&ex=<id>`（点了 `NSWorkspace` 打开 App 自己），安卓只有 `?ex=<id>`；
+  安卓 `WebPageController` 拦下 `unireader://` 的点击，认 `ex` 参数：开那道题所在的一组、停在它上面（`ReaderActivity.openExerciseById`，找不到提示一句）；别的参数本端不处理。
+- **监听**（同日）：`const stop = unireader.watch(() => 重查)`，习题 / 作答有变就调（自己答题 / 判定 / 清除 / 导入删除 / 同步拉到别处的改动；停手 300ms 才调一次，第二个参数改毫秒数）；
+  底层是页面事件 `unireader:exercises`。内嵌（Mac）和安卓会推；**本机浏览器那条路不推**（同 `unireader:change`），要刷新就自己定时 `exerciseStats()`。
+  Mac 在 `WebDocView` 接 `exercisesDidChange` / `exerciseDoneDidChange` / `exerciseAttemptDidRecord`；安卓在 `ExerciseController.onDataChanged` → `WebPageController.exercisesChanged`。
 - 传输没改：`query` 是 `webKV` 的一个 op（`key` = 查询名，`value` = 参数 JSON）。Mac `WorkspaceManager+WebQuery.swift`，安卓 `local/web/WebQuery.kt`，
   🔴 名字 / 参数 / 字段两边逐项一致，改一边改两边。安卓补了读 `exercise.tags` 与 `exerciseUngradedCounts`。
 - 还没有自动测试，等用户实测（内嵌 / 浏览器 / 安卓三条路各查一次）。

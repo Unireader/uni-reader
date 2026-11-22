@@ -112,6 +112,12 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         observers.append(NotificationCenter.default.addObserver(forName: .webKVDidChangeRemotely, object: workspace, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.web.evaluateJavaScript(WebBridgeScript.changeEvent) }
         })
+        // 习题 / 作答有变 → 页面收到 unireader:exercises（页面自己重查；脚本那头停手才调、这里不必合并）
+        for name in [Notification.Name.exercisesDidChange, .exerciseDoneDidChange, .exerciseAttemptDidRecord] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: workspace, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.web.evaluateJavaScript(WebBridgeScript.exercisesEvent) }
+            })
+        }
         observers.append(NotificationCenter.default.addObserver(forName: .webDocNavigate, object: workspace, queue: .main) { [weak self] n in
             MainActor.assumeIsolated {
                 guard let self, (n.userInfo?["id"] as? String) == self.webId, let p = n.userInfo?["path"] as? String,

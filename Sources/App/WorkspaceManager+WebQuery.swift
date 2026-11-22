@@ -22,6 +22,7 @@ extension WorkspaceManager {
         case "documents": out = webQueryDocuments()
         case "exercises": out = try webQueryExercises(args)
         case "exercise": out = try webQueryExercise(args)
+        case "exerciseStatus": out = try webQueryStatus(args)
         case "exerciseStats": out = try webQueryStats(args)
         case "attempts": out = try webQueryAttempts(args)
         default: throw WebKVError("Unknown query: \(name)")
@@ -55,6 +56,15 @@ extension WorkspaceManager {
                 "ungrouped_exercise_count": loose, "groups": exerciseGroupNames]
     }
 
+    /// `unireader://open?ws=…&ex=<id>`（同 MCP 的 `exercise_link`）。安卓只带 `ex`（它不知道工作区路径、点了按本机当前工作区开）。
+    private func webExerciseLink(_ e: Exercise) -> String {
+        var l = DeepLink()
+        l.workspacePath = folder?.path
+        l.workspaceId = store?.workspaceId
+        l.exerciseId = e.id
+        return l.absoluteString
+    }
+
     /// 一道题的样子（`full` = 单题查询：带文章全文）。
     private func webExerciseJSON(_ e: Exercise, stats: ExerciseAttemptStats?, full: Bool) -> [String: Any] {
         var o: [String: Any] = [
@@ -62,7 +72,7 @@ extension WorkspaceManager {
             "stem": e.payload.stem,
             "options": e.payload.options.map { ["key": $0.key, "text": $0.text] },
             "answer": e.kind.isChoice ? e.payload.answer.joined() : (e.referenceText ?? ""),
-            "chapter": e.chapterInGroup, "tags": e.tags,
+            "chapter": e.chapterInGroup, "tags": e.tags, "link": webExerciseLink(e),
             "starred": e.starred, "in_mistakes": e.wrong,
             "attempts": stats?.attempts ?? 0, "correct": stats?.correct ?? 0, "wrong": stats?.wrong ?? 0,
             "ungraded": stats?.ungraded ?? 0,
@@ -83,14 +93,12 @@ extension WorkspaceManager {
         return o
     }
 
-    private func webQueryExercises(_ a: [String: Any]) throws -> [String: Any] {
-        var scope = ExerciseScope.all
+    /// `exercises` / `exerciseStatus` 共用：按参数筛出题（不分页）。
+    private func webQuerySelect(_ a: [String: Any], stats: [String: ExerciseAttemptStats]) throws -> [Exercise] {
         if let ids = a["ids"] as? [String], !ids.isEmpty {
-            let stats = exerciseAttemptStats()
-            let found = ids.prefix(Self.webQueryMaxLimit).compactMap { exercise(id: $0) }
-            return ["total": found.count, "offset": 0, "groups": exerciseGroupNames,
-                    "exercises": found.map { webExerciseJSON($0, stats: stats[$0.id], full: false) }]
+            return ids.prefix(Self.webQueryMaxLimit).compactMap { exercise(id: $0) }
         }
+        var scope = ExerciseScope.all
         var chapter = (a["chapter"] as? [String]).map(ExerciseChapter.clean)
         if let g = a["group"] as? String {
             let g = g.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -110,7 +118,6 @@ extension WorkspaceManager {
         if let t = (a["tag"] as? String)?.trimmingCharacters(in: .whitespaces), !t.isEmpty {
             list = list.filter { ExerciseTag.has($0, t) }
         }
-        let stats = exerciseAttemptStats()
         switch a["status"] as? String ?? "any" {   // 做题状态：没做过 / 做过 / 最近一次答对 / 最近一次答错
         case "any": break
         case "new": list = list.filter { (stats[$0.id]?.attempts ?? 0) == 0 }
@@ -119,10 +126,31 @@ extension WorkspaceManager {
         case "last_wrong": list = list.filter { stats[$0.id]?.lastCorrect == false }
         default: throw WebKVError("status must be any, new, practiced, last_correct or last_wrong.")
         }
-        let offset = webQueryInt(a, "offset", 0, min: 0, max: Int.max)
+        return list
+    }
+
+    private func webQueryExercises(_ a: [String: Any]) throws -> [String: Any] {
+        let stats = exerciseAttemptStats()
+        let list = try webQuerySelect(a, stats: stats)
+        let byIds = !((a["ids"] as? [String]) ?? []).isEmpty
+        let offset = byIds ? 0 : webQueryInt(a, "offset", 0, min: 0, max: Int.max)
         let limit = webQueryInt(a, "limit", Self.webQueryDefaultLimit, min: 1, max: Self.webQueryMaxLimit)
+        let page = byIds ? list : Array(list.dropFirst(offset).prefix(limit))
         return ["total": list.count, "offset": offset, "groups": exerciseGroupNames,
-                "exercises": list.dropFirst(offset).prefix(limit).map { webExerciseJSON($0, stats: stats[$0.id], full: false) }]
+                "exercises": page.map { webExerciseJSON($0, stats: stats[$0.id], full: false) }]
+    }
+
+    /// 轻量状态：每道题只带 id / 题号 / 章节 / 作答统计 / 错题本 / 收藏 / 链接，不带题干选项答案。不分页。
+    private func webQueryStatus(_ a: [String: Any]) throws -> [String: Any] {
+        let stats = exerciseAttemptStats()
+        let list = try webQuerySelect(a, stats: stats)
+        return ["total": list.count, "exercises": list.map { e -> [String: Any] in
+            let s = stats[e.id]
+            return ["id": e.id, "number": e.number, "chapter": e.chapterInGroup,
+                    "attempts": s?.attempts ?? 0, "correct": s?.correct ?? 0, "wrong": s?.wrong ?? 0,
+                    "ungraded": s?.ungraded ?? 0, "last_correct": s?.lastCorrect.map { $0 as Any } ?? NSNull(),
+                    "in_mistakes": e.wrong, "starred": e.starred, "link": webExerciseLink(e)]
+        }]
     }
 
     private func webQueryExercise(_ a: [String: Any]) throws -> Any {

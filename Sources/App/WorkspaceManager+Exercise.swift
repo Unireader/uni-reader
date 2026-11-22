@@ -17,6 +17,8 @@ extension Notification.Name {
     static let exercisesDidChange = Notification.Name("UniReader.exercisesDidChange")
     /// 某个工作区的「每组做过几道」变了（`WorkspaceManager.exerciseDone`，记作答时；object = 那个工作区）。
     static let exerciseDoneDidChange = Notification.Name("UniReader.exerciseDoneDidChange")
+    /// 记了一次作答（含重复答已做过的题：别的通知都不发，但页面查到的「作答次数」变了；object = 那个工作区）。
+    static let exerciseAttemptDidRecord = Notification.Name("UniReader.exerciseAttemptDidRecord")
 }
 
 /// 习题的执行层（`EXERCISE-PLAN.md`）：`exercise` / `exercise_attempt` 两张表的读写 + 侧栏的数。
@@ -438,6 +440,7 @@ extension WorkspaceManager {
                                    correct: correct, elapsedMs: max(0, elapsedMs), createdAt: .now, ink: ink)
         do { try store?.recordExerciseAttempt(a) } catch { lastError = "\(error)"; return nil }
         if correct == false { exercisesChanged() } else { refreshExerciseDone() }
+        NotificationCenter.default.post(name: .exerciseAttemptDidRecord, object: self)
         return a.id
     }
 
