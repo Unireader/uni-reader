@@ -224,7 +224,7 @@ extension WorkspaceManager {
     static let webKVMaxTotalBytes = 8 << 20
     static let webKVMaxKeyBytes = 512
 
-    /// 页面发来的一次读写。`op`：get / set / remove / keys / getAll / clear。
+    /// 页面发来的一次读写。`op`：get / set / remove / keys / getAll / clear / query。
     /// 返回给页面的 JSON 文本；出错抛 `WebKVError`（文字给页面看，用英文）。
     func webKV(webId: String, op: String, key: String?, value: String?) throws -> String {
         guard let store, webDoc(id: webId) != nil else { throw WebKVError("This web page is not in the workspace.") }
@@ -266,6 +266,9 @@ extension WorkspaceManager {
         case "clear":
             try store.clearWebKV(webId: webId)
             return "true"
+        case "query":   // 只读查询（习题库 / 做题状态），见 `WorkspaceManager+WebQuery.swift`
+            guard let name = key, !name.isEmpty else { throw WebKVError("A query name is required.") }
+            return try webQuery(name: name, argsJSON: value)
         default:
             throw WebKVError("Unknown operation: \(op)")
         }

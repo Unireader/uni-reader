@@ -93,6 +93,27 @@ window.addEventListener('unireader:change', …)  // 内嵌显示时：服务器
 - 只给这份网页自己的页面用：内嵌时核对消息来源的源（`unireader-web://<自己的 id>`），页面里嵌的外部 iframe 调不了。
 - 课件里判断 `if (window.unireader)` 再用，放到别的地方（普通网页服务器）照样能跑。
 
+### 5.1 只读查询（2026-11-22，`unireader.version = 2`）
+
+课件里可以查工作区的习题库和做题状态（只读，不能改题、不能写作答）：
+
+```js
+await unireader.documents()                       // { documents: [{ id, title, page_count, exercise_count }], ungrouped_exercise_count, groups }
+await unireader.exercises({ document, group, filter, tag, chapter, status, ids, offset, limit })
+   // document = 文档 id / 前 8 位 / 准确标题；group = 不关联 PDF 的题的分组名（"" = 没分组）；filter = all | mistakes | starred；
+   // status = any | new | practiced | last_correct | last_wrong；limit 默认 50、最多 200
+   // → { total, offset, groups, exercises: [{ id, type, number, section, stem, options, answer, chapter, tags, starred, in_mistakes,
+   //      attempts, correct, wrong, ungraded, last_correct, document_id | group, page(1 起), explanation?, note?, passage? }] }
+await unireader.exercise(id)                      // 单题（带文章全文）；没有 = null
+await unireader.exerciseStats({ document?, group? })  // { total, practiced, unpracticed, mistakes, starred, attempts, correct, wrong, ungraded }
+await unireader.attempts({ exerciseId?, exerciseIds?, document?, ungraded?, offset, limit })  // 作答记录，新的在前
+await unireader.query(name, args)                 // 上面几个的底层
+```
+
+- 传输没改：`query` 是 `webKV` 的一个 op（`key` = 查询名，`value` = 参数 JSON）。Mac `WorkspaceManager+WebQuery.swift`，安卓 `local/web/WebQuery.kt`，
+  🔴 名字 / 参数 / 字段两边逐项一致，改一边改两边。安卓补了读 `exercise.tags` 与 `exerciseUngradedCounts`。
+- 还没有自动测试，等用户实测（内嵌 / 浏览器 / 安卓三条路各查一次）。
+
 ## 6. 删除与清理
 
 - 侧栏右键「删除…」：**先归档进回收站再删**（红线⑪，`Trash.Kind.webDoc`，快照里是那一行 + 存的数据）；文件留在 `Web/`，
