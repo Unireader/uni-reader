@@ -74,7 +74,7 @@ extension WorkspaceManager {
     func exercises(in scope: ExerciseScope) -> [Exercise] {
         guard let store else { return [] }
         if let id = scope.documentId {   // 一本书 / 书里的一章
-            return ((try? store.exercises(documentId: id)) ?? []).compactMap(Exercise.init(row:)).filter(scope.includes)
+            return documentExercises(id, store: store).filter(scope.includes)
         }
         if scope.isLoose {   // 不关联 PDF 的题（§33）：一个分组 / 没分组的 / 全部
             return Exercise.looseOrdered(((try? store.looseExercises()) ?? []).compactMap(Exercise.init(row:)).filter(scope.includes))
@@ -102,8 +102,40 @@ extension WorkspaceManager {
         ((try? store?.exercise(id: id)) ?? nil).flatMap(Exercise.init(row:))
     }
 
+    /// 每道做过的题的作答统计。整张作答表跑 4 条汇总，网页一打开就连着查很多次（408 复习页），
+    /// 所以库没被写过就直接用上次的结果（见 `storeChangeKey`）。
     func exerciseAttemptStats() -> [String: ExerciseAttemptStats] {
-        (try? store?.exerciseAttemptStats()) ?? [:]
+        guard let store else { return [:] }
+        let key = storeChangeKey(store)
+        if let key, let c = attemptStatsCache, c.key == key { return c.stats }
+        guard let stats = try? store.exerciseAttemptStats() else { return [:] }   // 出错不缓存
+        if let key { attemptStatsCache = (key, stats) }
+        return stats
+    }
+
+    /// 一本书（或一份真题卷）的全部题。逐道解析题目内容很慢（网页每开一页要整本查十几份，采样里占主线程大头），
+    /// 所以库没被写过就复用上次解析好的；库一被写就整个作废、按需重读。
+    private func documentExercises(_ id: String, store: LibraryStore) -> [Exercise] {
+        let key = storeChangeKey(store)
+        if let key, let c = documentExercisesCache, c.key == key, let list = c.byDocument[id] { return list }
+        guard let rows = try? store.exercises(documentId: id) else { return [] }   // 出错不缓存
+        let list = rows.compactMap(Exercise.init(row:))
+        if let key {
+            var byDocument = documentExercisesCache?.key == key ? documentExercisesCache!.byDocument : [:]
+            byDocument[id] = list
+            documentExercisesCache = (key, byDocument)
+        }
+        return list
+    }
+
+    /// 判「库从上次到现在写没写过」：不靠通知（题目 / 作答有本机练习 / 同步 / MCP / 书上识别好几个入口，漏一个就是旧数），
+    /// 用 SQLite 自己的两个数——这条连接累计改过的行数 + `PRAGMA data_version`（别的连接提交过就变）。
+    /// 有写入就变（不管写的是哪张表），宁可多算、不会算旧。读不到 data_version 时返回 nil = 不缓存。
+    private func storeChangeKey(_ store: LibraryStore) -> StoreChangeKey? {
+        store.withMirrorDB { db in
+            guard let v = (try? db.query("PRAGMA data_version", row: { $0.int64(0) }))?.first else { return nil }
+            return StoreChangeKey(store: ObjectIdentifier(store), changes: db.totalChanges, dataVersion: v)
+        }
     }
 
     /// 侧栏 / 标签栏上这个范围叫什么。
@@ -517,4 +549,11 @@ extension WorkspaceManager {
         exercisesChanged()
         return true
     }
+}
+
+/// `WorkspaceManager` 习题缓存的键：哪个库连接 + 它累计改过的行数 + `PRAGMA data_version`。
+struct StoreChangeKey: Equatable {
+    let store: ObjectIdentifier
+    let changes: Int
+    let dataVersion: Int64
 }

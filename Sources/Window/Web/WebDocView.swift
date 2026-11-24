@@ -33,6 +33,25 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     /// 下一次页面来问时要不要把记下的位置交出去滚回去（打开 / 重新载入时置上，交一次就落下）。
     /// 到页面来问时才读记忆：重新载入前最后那一下滚动在旧页面卸下时（`pagehide`）才报上来，排在新页面的询问之前。
     fileprivate var restorePending = false
+    /// 标签切走时窗格把它藏起来留着（`ReaderPaneController.parkedWebViews`）。藏着时不往页面推变动通知：
+    /// 页面收到「习题有变」会把做题记录整个重查一遍，在习题页每答一题后台就卡一下。攒着，显示出来时各推一次。
+    var isParked = false {
+        didSet {
+            guard !isParked, oldValue else { return }
+            for js in pendingEvents { web.evaluateJavaScript(js) }
+            pendingEvents.removeAll()
+        }
+    }
+    private var pendingEvents: [String] = []
+
+    /// 往页面推一条变动通知；藏着时先攒下（同一条只留一次）。
+    private func dispatchEvent(_ js: String) {
+        if isParked {
+            if !pendingEvents.contains(js) { pendingEvents.append(js) }
+        } else {
+            web.evaluateJavaScript(js)
+        }
+    }
 
     init(webId: String, workspace: WorkspaceManager) {
         self.webId = webId
@@ -110,12 +129,12 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
             web.observe(\.title) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateTitle() } },
         ]
         observers.append(NotificationCenter.default.addObserver(forName: .webKVDidChangeRemotely, object: workspace, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.web.evaluateJavaScript(WebBridgeScript.changeEvent) }
+            MainActor.assumeIsolated { self?.dispatchEvent(WebBridgeScript.changeEvent) }
         })
         // 习题 / 作答有变 → 页面收到 unireader:exercises（页面自己重查；脚本那头停手才调、这里不必合并）
         for name in [Notification.Name.exercisesDidChange, .exerciseDoneDidChange, .exerciseAttemptDidRecord] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: workspace, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.web.evaluateJavaScript(WebBridgeScript.exercisesEvent) }
+                MainActor.assumeIsolated { self?.dispatchEvent(WebBridgeScript.exercisesEvent) }
             })
         }
         observers.append(NotificationCenter.default.addObserver(forName: .webDocNavigate, object: workspace, queue: .main) { [weak self] n in

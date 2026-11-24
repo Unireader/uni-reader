@@ -64,6 +64,10 @@ final class WorkspaceManager: ObservableObject {
     let wiki = WorkspaceWikiIndex()
     /// `imageInfo(sha256:)` 的缓存（sha → 路径+尺寸；值为 nil = 查过、没有）。见那个方法的注释。
     private var imageInfoCache: [String: (url: URL, size: CGSize)?] = [:]
+    /// `exerciseAttemptStats()` 与 `exercises(in:)`（一本书的题）的缓存：库没被写过就复用（扩展里放不了存储属性，故放这里）。
+    /// 🔴 只许 `WorkspaceManager+Exercise` 的这两个方法读写；键见 `StoreChangeKey`。
+    var attemptStatsCache: (key: StoreChangeKey, stats: [String: ExerciseAttemptStats])?
+    var documentExercisesCache: (key: StoreChangeKey, byDocument: [String: [Exercise]])?
 
     /// 打开一个工作区；文件夹是空的就在里面建库（首次启动引导、`createWorkspace` 都依赖这点）。
     /// ⚠️ 因此**不要拿用户随手选的路径直接调它**——那会把一个无关空文件夹静默变成新工作区，

@@ -27,6 +27,11 @@ final class ReaderPaneController: NSViewController {
     /// 日程标签（v26，`SCHEDULE-PLAN.md §4`）：整个窗格是它。
     private var schedView: ScheduleTabView?
     private var webView: WebDocView?
+    /// `webView` 属于哪个标签（`DocTabModel.id`）。
+    private var webViewTab: UUID?
+    /// 切走的网页标签：`WKWebView` 藏起来留着（按标签 id），切回来直接显示，不重新载入、不重跑页面脚本
+    /// （重新载入要等页面重查数据、再滚回原位，切一次抖一下，2026-11-24 用户要求保留）。标签关了 / 换了别的内容才拆。
+    private var parkedWebViews: [UUID: WebDocView] = [:]
     private let placeholder = PlaceholderView()
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
@@ -321,21 +326,30 @@ final class ReaderPaneController: NSViewController {
             schedView?.removeFromSuperview()
             schedView = nil
         }
-        // 网页标签（`WEB-DOC-PLAN.md §3`）：换一份就重建；同一份时跟上改名 / 重新导入 / 文件下完
+        // 网页标签（`WEB-DOC-PLAN.md §3`）：每个标签一份 `WebDocView`，切走藏起来留着（`parkedWebViews`）；
+        // 同一份时跟上改名 / 重新导入 / 文件下完
         if let wid = tab.webDocID {
-            if webView?.webId != wid {
-                webView?.removeFromSuperview()
-                let v = WebDocView(webId: wid, workspace: workspace)
-                view.addSubview(v, positioned: .below, relativeTo: placeholder)
-                webView = v
+            if webView?.webId != wid || webViewTab != tab.id {
+                parkWebView()
+                if let v = parkedWebViews.removeValue(forKey: tab.id), v.webId == wid {
+                    v.isHidden = false
+                    v.isParked = false
+                    v.refreshFromWorkspace()   // 藏着时可能重新导入过 / 同步来了新版
+                    webView = v
+                } else {
+                    let v = WebDocView(webId: wid, workspace: workspace)
+                    view.addSubview(v, positioned: .below, relativeTo: placeholder)
+                    webView = v
+                }
+                webViewTab = tab.id
                 view.needsLayout = true
             } else {
                 webView?.refreshFromWorkspace()
             }
         } else if webView != nil {
-            webView?.removeFromSuperview()
-            webView = nil
+            parkWebView()
         }
+        pruneParkedWebViews()
         // Markdown 笔记标签（v15）：换一篇就重建（旧那份离开窗口时自己补存）。
         // 🔴 **不能在这里早退**——后面还有查找条 / 角标 / **标签栏**要刷，早退一次就是一个
         // 「开了笔记之后标签栏不更新」的 bug。
@@ -374,6 +388,33 @@ final class ReaderPaneController: NSViewController {
         }
         syncScratchPad()
         finishRefresh(s)
+    }
+
+    /// 当前的网页视图离场：它的标签还开着同一份网页就藏起来留着，否则拆掉。
+    private func parkWebView() {
+        guard let v = webView else { return }
+        webView = nil
+        let owner = webViewTab
+        webViewTab = nil
+        // 藏起来的网页别还拿着键盘焦点（按键会进看不见的页面）
+        if let win = view.window, let r = win.firstResponder as? NSView, r.isDescendant(of: v) { win.makeFirstResponder(nil) }
+        if let owner, tabs.tabs.contains(where: { $0.id == owner && $0.webDocID == v.webId }) {
+            parkedWebViews[owner]?.removeFromSuperview()
+            v.isHidden = true
+            v.isParked = true
+            parkedWebViews[owner] = v
+        } else {
+            v.removeFromSuperview()
+        }
+    }
+
+    /// 标签关了、或那个标签换成了别的内容：留着的网页视图拆掉（每份 `WKWebView` 有自己的网页进程，别攒着）。
+    private func pruneParkedWebViews() {
+        guard !parkedWebViews.isEmpty else { return }
+        for (id, v) in parkedWebViews where !tabs.tabs.contains(where: { $0.id == id && $0.webDocID == v.webId }) {
+            v.removeFromSuperview()
+            parkedWebViews[id] = nil
+        }
     }
 
     /// 习题的「到 PDF 原页」（与平板那条共用 `AppDelegate.showExerciseSource`）。
