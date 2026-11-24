@@ -236,6 +236,13 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         if navControl.selectedSegment == 0 { web.goBack() } else { web.goForward() }
     }
 
+    /// 鼠标侧键（`ReaderPaneController` 接）：网页自己还能后退 / 前进就走一步，返回 true；走不了返回 false，由窗口的历史接着走。
+    func navigateHistory(back: Bool) -> Bool {
+        if back, web.canGoBack { web.goBack(); return true }
+        if !back, web.canGoForward { web.goForward(); return true }
+        return false
+    }
+
     @objc private func reloadPage() { web.reload() }
 
     /// 回到首页：课件的子页面不一定有回首页的链接，重新打开时又停在上次那一页（后退历史是空的），没有这个键就回不去。

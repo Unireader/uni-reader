@@ -32,6 +32,8 @@ final class ReaderPaneController: NSViewController {
     /// 切走的网页标签：`WKWebView` 藏起来留着（按标签 id），切回来直接显示，不重新载入、不重跑页面脚本
     /// （重新载入要等页面重查数据、再滚回原位，切一次抖一下，2026-11-24 用户要求保留）。标签关了 / 换了别的内容才拆。
     private var parkedWebViews: [UUID: WebDocView] = [:]
+    /// 鼠标侧键（后退 / 前进键）的事件监听，见 `installMouseNavigation`。
+    private var mouseNavMonitor: Any?
     private let placeholder = PlaceholderView()
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
@@ -224,6 +226,21 @@ final class ReaderPaneController: NSViewController {
             MainActor.assumeIsolated { self?.syncAutoNight() }
         })
         syncAutoNight()
+        installMouseNavigation()
+    }
+
+    /// 鼠标侧键当导航（2026-11-24 用户要求）：后退键（按键编号 3）/ 前进键（4）= 菜单「返回上一位置 / 前往下一位置」（⌘[ ⌘]）。
+    /// 网页标签里先走网页自己的历史，走到头再走窗口的历史（同浏览器的习惯）。
+    /// 一个窗口一个窗格：只接落在本窗口里的（侧栏、Inspector 上按也算），开着表单 / 弹窗时不接。
+    private func installMouseNavigation() {
+        mouseNavMonitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { [weak self] event in
+            guard event.buttonNumber == 3 || event.buttonNumber == 4 else { return event }
+            guard let self, let win = self.view.window, event.window === win, win.attachedSheet == nil else { return event }
+            let back = event.buttonNumber == 3
+            if let wv = self.webView, wv.navigateHistory(back: back) { return nil }
+            if back { self.tabs.goBack() } else { self.tabs.goForward() }
+            return nil
+        }
     }
 
     /// 当前标签的会话换了：重接会话上的订阅。
@@ -832,6 +849,7 @@ final class ReaderPaneController: NSViewController {
             NotificationCenter.default.removeObserver(o)
             DistributedNotificationCenter.default().removeObserver(o)
         }
+        if let m = mouseNavMonitor { NSEvent.removeMonitor(m) }
     }
 }
 
