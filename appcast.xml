@@ -9,6 +9,74 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.38</title>
+      <pubDate>Tue, 24 Nov 2026 10:34:20 +0000</pubDate>
+      <sparkle:version>80</sparkle:version>
+      <sparkle:shortVersionString>0.3.38</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<p>&gt; ⚠️ 这一版的数据版本升到 29。连接服务器的工作区需要服务器 0.9.0 或更新才能同步；安卓版也要换成支持 29 的新版。版本对不上时先不同步，本机的改动会留着，都换好之后再推上去。</p>
+<h4>Markdown 笔记</h4>
+<ul>
+<li>修复：编辑较宽、需要横向滚动的表格时，在单元格里输入内容会让 App 崩溃。</li>
+<li>笔记目录：检查器的「目录」页和工具栏的目录按钮会列出笔记里的标题，点一下滚到那里。</li>
+<li>属性栏：笔记开头的属性（frontmatter）可以直接查看、修改、添加和删除；列表和多行的值只能在正文里改。</li>
+<li>侧栏里可以把笔记拖进别的目录，打开着的标签会跟着走，指向它的链接也会一起改好。</li>
+</ul>
+<h4>侧栏与标签</h4>
+<ul>
+<li>新设置「同一目录下共用一个标签」（设置 › 通用，PDF、习题、笔记各一个开关，默认打开）：在侧栏同一分组或目录里单击打开的内容，会在同一个标签里互相替换；⌘ 单击或右键「在新标签页中打开」会开成独立标签。</li>
+<li>侧栏的 PDF 分组可以收起，下次打开还记得。</li>
+<li>新增「在侧栏中定位当前标签」（⌘⇧J），标签的右键菜单里也有「在侧栏中显示」。</li>
+<li>只开着一个标签时也会显示标签栏；增删标签时有过渡动画。</li>
+<li>参考窗选书改成带搜索、按分组列出的面板。</li>
+</ul>
+<h4>同步</h4>
+<ul>
+<li>修复：每本书的默认笔迹图层现在各自独立。以前所有书共用一条记录，打开一本书会把另一本书默认图层的名字、颜色、显示状态改回去。</li>
+<li>同步时要从服务器删除很多内容、需要你确认时，会直接弹出确认框，不用再去菜单里找。</li>
+<li>修复：较大的工作区升级后，网页一直同步不过来的问题。</li>
+</ul>
+<h4>网页</h4>
+<ul>
+<li>课件页面里的 <code>window.unireader</code> 可以查询习题库和做题情况，也可以监听这些变化。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.38">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<p>&gt; ⚠️ This version moves the data version to 29. Workspaces on a server need server 0.9.0 or later to sync, and the Android app needs a version that supports 29 as well. While the versions don't match, syncing holds off; changes stay on this Mac and are uploaded once everything is updated.</p>
+<h4>Markdown notes</h4>
+<ul>
+<li>Fixed: typing in a cell of a wide table (one that scrolls sideways) could crash the app.</li>
+<li>Note outline: the Contents page in the inspector and the toolbar's contents button list the note's headings; click one to scroll there.</li>
+<li>Properties bar: the properties at the top of a note (frontmatter) can be viewed, changed, added and removed directly; lists and multi-line values can only be changed in the text.</li>
+<li>Drag a note into another folder in the sidebar. Open tabs follow it, and links pointing to it are updated.</li>
+</ul>
+<h4>Sidebar and tabs</h4>
+<ul>
+<li>New setting "Share One Tab Within a Folder" (Settings › General, with separate switches for PDFs, exercises and notes, on by default): items opened with a plain click in the same sidebar group or folder replace each other in one tab. ⌘-click or right-click › Open in New Tab opens an independent tab.</li>
+<li>PDF groups in the sidebar can be collapsed, and stay that way next time.</li>
+<li>New "Reveal Current Tab in Sidebar" (⌘⇧J), and "Reveal in Sidebar" in a tab's context menu.</li>
+<li>The tab bar now shows even when only one tab is open, and adding or removing tabs is animated.</li>
+<li>Choosing a book for the reference window now uses a panel with search, grouped like the sidebar.</li>
+</ul>
+<h4>Sync</h4>
+<ul>
+<li>Fixed: each book now has its own default ink layer. Before, all books shared one record, and opening one book reset the name, colour and visibility of another book's default layer.</li>
+<li>When a sync would delete a lot from the server and needs your confirmation, a confirmation dialog now appears right away instead of only in the menu.</li>
+<li>Fixed: web pages never finished syncing after a large workspace was upgraded.</li>
+</ul>
+<h4>Web pages</h4>
+<ul>
+<li><code>window.unireader</code> in lesson pages can now look up the exercise library and exercise progress, and watch for changes.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.38">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.38/UniReader-0.3.38.zip" length="33706475" type="application/octet-stream" sparkle:edSignature="w9SNt0IqsEuN6Dezd4WK8HLP3CbN4UjTmclJQBdQYeJpsQcO1TpXRS+9YrFcD39CImvUoFc8pEalo8ntzFJ6Aw==" />
+    </item>
+    <item>
       <title>v0.3.37</title>
       <pubDate>Fri, 20 Nov 2026 14:33:32 +0000</pubDate>
       <sparkle:version>79</sparkle:version>
