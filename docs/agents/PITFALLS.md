@@ -4,6 +4,12 @@
 
 ## Markdown 笔记 / 引擎
 
+- 🔴 **宽表格覆盖层先设 frame 后登记 → 编辑单元格时无限递归**（2026-11-24 崩溃，引擎 `0.15.0-xvan.12` 修）：有阅读宽度（`readingWidth`，表格走 breakout）时，
+  单元格写回让表格源码变了，`cellFrame` 找不到新源码的覆盖层就同步重排；重排给**新**覆盖层设 frame 时它还没进 `wideTableOverlays`，
+  设 frame 让它的滚动视图重排、发 bounds 变化通知 → `contentDidScroll` → `layoutTableCellEditor` → `cellFrame` 又找不到 → 再重排……直到栈溢出。
+  修法：先登记 / 换图、最后设 frame + 防重入（重排期间推迟编辑框定位、`layoutTableCellEditor` 不嵌套）。
+  🔴 引擎测试里**不开阅读宽度复现不出来**（不走 breakout 就没有那次通知），回归测试 `growingAWideTableRowWhileEditingDoesNotRecurse` 两种都跑。
+  教训：凡是「改 frame 会触发通知、通知回调又读自己这份状态」的地方，状态先写完再改 frame。
 - 🔴 **正文视图（TextKit 2）一被问 `layoutManager` 就整体降级成 TextKit 1**，之后引擎自己画的东西全没了：公式图、列表圆点、表格（只剩空位），滚动也坏。
   2026-11-14 用户报「来回点表格单元格后 LaTeX、表格、动画都不见、页面不能滚动」，就是 TODO 第 0 条「编辑单元格时整张表不画出来」的真身。
   根因：引擎单元格编辑框打开时用 `editor.characterIndexForInsertion(at:)` 算光标，AppKit 按窗口坐标解析、落到下面的正文视图上去取它
