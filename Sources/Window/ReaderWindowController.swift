@@ -107,6 +107,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
         bindTitle()
         observeToolbarStates()
+        observeDeletePrompt()
         observeMenuCommands()
         observeAgentPreload()
         decideInitialContent(launchDocId: launchDocId)
@@ -1350,9 +1351,26 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         Task { await ServerSyncCoordinator.shared.push(ws) }
     }
 
+    /// 同步卡在「删得太多要确认」时直接弹确认框（原先只在工作区菜单里多一项「检查删除…」，用户发现不了，
+    /// 同步一直卡着）。`pendingDeletes` 在 `status` 之前写好，`receive(on:)` 异步一拍后读得到。
+    private func observeDeletePrompt() {
+        ServerSyncCoordinator.shared.$status
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, let win = self.window, win.isVisible, win.attachedSheet == nil,
+                      let x = ServerSyncCoordinator.shared.claimDeletePrompt(of: self.workspace.folder) else { return }
+                self.presentDeleteReview(x, in: win)
+            }
+            .store(in: &bag)
+    }
+
     /// 「删得太多先问」：说清这次要从服务器删掉多少、各是什么，确认了才推。
     @objc private func menuReviewDeletes() {
         guard let win = window, let x = ServerSyncCoordinator.shared.pendingDeletes(of: workspace.folder) else { return }
+        presentDeleteReview(x, in: win)
+    }
+
+    private func presentDeleteReview(_ x: SyncDeleteGuard.Excess, in win: NSWindow) {
         let a = NSAlert()
         a.alertStyle = .warning
         a.messageText = String(format: L("Delete %d items from the server?"), x.total)

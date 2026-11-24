@@ -38,6 +38,17 @@ final class ServerSyncCoordinator: ObservableObject {
         folder.flatMap { pendingDeletes[WorkspaceRegistry.key($0)] }
     }
 
+    /// 已经主动弹过确认框的那一批（按工作区，存删除行的键）：同一批只弹一次（同一工作区开着几扇窗也只弹一扇），
+    /// 点了「以后再说」不追着弹；又多删了别的 = 新的一批，再弹。2026-11-24 用户嫌只在菜单里一行不明显。
+    func claimDeletePrompt(of folder: URL?) -> SyncDeleteGuard.Excess? {
+        guard let folder, let x = pendingDeletes(of: folder) else { return nil }
+        let k = WorkspaceRegistry.key(folder)
+        guard promptedDeletes[k] != x.keys else { return nil }
+        promptedDeletes[k] = x.keys
+        return x
+    }
+    private var promptedDeletes: [String: Set<String>] = [:]
+
     /// 用户确认了：放行这一批删除，马上推。
     func confirmDeletes(_ m: WorkspaceManager) {
         guard let folder = m.folder else { return }
