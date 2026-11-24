@@ -1185,7 +1185,7 @@ final class DocTabModel: ObservableObject, Identifiable {
             workspace.saveInkLayer(documentId: id, l)
         }
         for goneID in session.persistedInkLayers.keys where !currentIDs.contains(goneID) {
-            workspace.deleteInkLayer(id: goneID)
+            workspace.deleteInkLayer(id: goneID, documentId: id)
         }
         session.persistedInkLayers = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
     }
@@ -1484,7 +1484,9 @@ extension DocTabModel {
                 }
             case "ink_layer":
                 if r.deleted {
-                    if UUID(uuidString: r.rowId).map({ session.persistedInkLayers[$0] != nil }) == true { kinds.insert(.layers) }
+                    // 默认图层的行 id 是文档 id（v29，`LibraryStore.inkLayerRowID`）
+                    let mid = LibraryStore.inkLayerModelID(rowId: r.rowId, documentId: docId)
+                    if UUID(uuidString: mid).map({ session.persistedInkLayers[$0] != nil }) == true { kinds.insert(.layers) }
                 } else if let row = r.row.map(SyncWire.sqliteRow), row["document_id"] as? String == docId {
                     kinds.insert(.layers)
                 }

@@ -8,7 +8,7 @@ import CoreGraphics    // Linux 上 CGRect 等由 Foundation 提供（服务器�
 final class LibraryStore {
     private let db: SQLiteDB
     let fileURL: URL
-    static let schemaVersion = 28
+    static let schemaVersion = 29
 
     /// 打开/创建工作区库（文件夹须已存在）。会建表并跑迁移。
     init(workspaceFolder: URL) throws {
@@ -113,6 +113,7 @@ final class LibraryStore {
     func archiveInkLayer(documentId: String, layerId: String, isDefaultLayer: Bool,
                          to path: String) throws -> TrashStore.Archived {
         try TrashStore.archiveInkLayer(db, documentId: documentId, layerId: layerId,
+                                       rowId: storedID(Self.inkLayerRowID(layerId, documentId: documentId)),
                                        isDefaultLayer: isDefaultLayer, to: path)
     }
 
@@ -964,6 +965,12 @@ final class LibraryStore {
         try db.transaction {
             try db.run("UPDATE variant SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("UPDATE note SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
+            // 源文档的默认图层行（行 id = 源文档 id，v29）：目标已有默认层就删掉它，否则改成目标的 id
+            if try db.query("SELECT 1 FROM ink_layer WHERE id=? COLLATE NOCASE", [.text(targetId)]).isEmpty {
+                try db.run("UPDATE ink_layer SET id=? WHERE id=? COLLATE NOCASE", [.text(targetId), .text(sourceId)])
+            } else {
+                try db.run("DELETE FROM ink_layer WHERE id=? COLLATE NOCASE", [.text(sourceId)])
+            }
             try db.run("UPDATE ink_layer SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("UPDATE scratch_pad SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
             try db.run("UPDATE exercise SET document_id=? WHERE document_id=?", [.text(targetId), .text(sourceId)])
@@ -1145,9 +1152,29 @@ final class LibraryStore {
 
     // MARK: - 笔迹图层（ink_layer，v7）
 
+    /// 默认图层的 id（模型里的 `InkLayer.defaultID`；老笔迹 payload 没有 `layerId` 键时也归它）。
+    static let defaultInkLayerID = "00000000-0000-0000-0000-000000000001"
+
+    /// 🔴 **默认图层在库里的行 id = 所属文档的 id**（v29，2026-11-24，`REQUIREMENTS.md §8`）。
+    /// `ink_layer.id` 是全库主键，而默认图层在每篇文档里都叫 `00…01`：v28 及以前只能有一篇占着这一行，
+    /// 别的文档「补建默认层」其实是改掉那篇的名字 / 颜色 / 可见性，自己仍然没有图层行，每次打开都再补一次。
+    /// 模型与笔迹里照旧用 `00…01`（笔迹一个不改），换算只在这一层：读 = 行 id 等于文档 id → `00…01`，写 / 删反过来。
+    /// 安卓 `LibraryStore.inkLayerRowId` 与服务器网页阅读器（`HostedWorkspace+Web`）是同一条规则。
+    static func inkLayerRowID(_ layerId: String, documentId: String) -> String {
+        layerId.caseInsensitiveCompare(defaultInkLayerID) == .orderedSame ? documentId : layerId
+    }
+    static func inkLayerModelID(rowId: String, documentId: String) -> String {
+        rowId.caseInsensitiveCompare(documentId) == .orderedSame ? defaultInkLayerID : rowId
+    }
+
     func inkLayers(documentId: String) throws -> [LibInkLayer] {
         try db.query("SELECT * FROM ink_layer WHERE document_id=? ORDER BY sort_order ASC", [.text(documentId)]).map(Self.inkLayer)
-            .map { l in remember(l.id); return l }
+            .map { l in
+                remember(l.id)
+                var m = l
+                m.id = Self.inkLayerModelID(rowId: l.id, documentId: l.documentId)
+                return m
+            }
     }
     func upsertInkLayer(_ l: LibInkLayer) throws {
         try db.run("""
@@ -1155,10 +1182,29 @@ final class LibraryStore {
         VALUES(?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET name=excluded.name, color_key=excluded.color_key,
           sort_order=excluded.sort_order, visible=excluded.visible
-        """, [.text(storedID(l.id)), .text(l.documentId), .text(l.name), .text(l.colorKey),
-              .int(Int64(l.sortOrder)), .int(l.visible ? 1 : 0), .text(ISO.string(l.createdAt))])
+        """, [.text(storedID(Self.inkLayerRowID(l.id, documentId: l.documentId))), .text(l.documentId), .text(l.name),
+              .text(l.colorKey), .int(Int64(l.sortOrder)), .int(l.visible ? 1 : 0), .text(ISO.string(l.createdAt))])
     }
-    func deleteInkLayer(id: String) throws { try db.run("DELETE FROM ink_layer WHERE id=?", [.text(storedID(id))]) }
+    func deleteInkLayer(id: String, documentId: String) throws {
+        try db.run("DELETE FROM ink_layer WHERE id=?", [.text(storedID(Self.inkLayerRowID(id, documentId: documentId)))])
+    }
+
+    /// 把 v29 之前的老默认图层行（id 是固定的 `00…01`）改成所属文档的 id。**App 打开工作区时调**（Mac / 安卓各一份），
+    /// 改动照常同步出去；服务器不调（它不在本机改用户数据，改了客户端也看不到）。主键所限这样的行至多一条。
+    /// 返回改了几行（0 / 1）。
+    @discardableResult
+    func normalizeDefaultInkLayers() throws -> Int {
+        guard let doc = try db.query("SELECT document_id FROM ink_layer WHERE id=? COLLATE NOCASE",
+                                     [.text(Self.defaultInkLayerID)]).first?["document_id"] as? String else { return 0 }
+        try db.transaction {
+            if try db.query("SELECT 1 FROM ink_layer WHERE id=? COLLATE NOCASE", [.text(doc)]).isEmpty {
+                try db.run("UPDATE ink_layer SET id=? WHERE id=? COLLATE NOCASE", [.text(doc), .text(Self.defaultInkLayerID)])
+            } else {
+                try db.run("DELETE FROM ink_layer WHERE id=? COLLATE NOCASE", [.text(Self.defaultInkLayerID)])
+            }
+        }
+        return 1
+    }
 
     // MARK: - 草稿纸（scratch_pad，v8）
 

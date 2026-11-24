@@ -107,6 +107,8 @@ final class WebReaderMarksTests: XCTestCase {
         try a.db { db in
             try db.run("INSERT INTO ink_layer(id,document_id,name,color_key,sort_order,visible,created_at) VALUES('L2','D1','二','blue',1,0,'t')")
             try db.run("INSERT INTO ink_layer(id,document_id,name,color_key,sort_order,visible,created_at) VALUES('L1','D1','一','red',0,1,'t')")
+            // 默认图层：行 id = 文档 id（v29），对网页报 00…01
+            try db.run("INSERT INTO ink_layer(id,document_id,name,color_key,sort_order,visible,created_at) VALUES('D1','D1','默认','gray',2,1,'t')")
             try db.run("INSERT OR REPLACE INTO meta(key,value) VALUES('note_types','[{\"id\":\"T\",\"name\":\"疑问\",\"color_key\":\"red\",\"icon_name\":\"flag\"}]')")
             try db.run("INSERT INTO page_align(content_hash,enabled,page_count,payload,created_at,updated_at) VALUES(?,1,1,?,'t','t')",
                        [.text(h1), .blob(Data(align.utf8))])
@@ -116,8 +118,8 @@ final class WebReaderMarksTests: XCTestCase {
         let ws = try f.upload(a)
 
         let v = try ws.documentView(documentId: "D1", contentHash: h1)
-        XCTAssertEqual(v.layers.map(\.id), ["L1", "L2"])
-        XCTAssertEqual(v.layers.map(\.visible), [true, false])
+        XCTAssertEqual(v.layers.map(\.id), ["L1", "L2", "00000000-0000-0000-0000-000000000001"])
+        XCTAssertEqual(v.layers.map(\.visible), [true, false, true])
         XCTAssertEqual(v.layers.first?.colorKey, "red")
         XCTAssertTrue(v.noteTypes?.contains("疑问") == true)
         XCTAssertEqual(v.align, align)

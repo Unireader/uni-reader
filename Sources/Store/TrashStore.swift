@@ -198,13 +198,15 @@ enum TrashStore {
     ///
     /// `isDefaultLayer` 时把 payload 里**没有** `layerId` 键的老行一并算进去 ——
     /// 与 `LibraryStore.deleteInkStrokes` 必须是同一套判定，否则「删掉的」和「存下来的」对不上。
-    static func archiveInkLayer(_ db: SQLiteDB, documentId: String, layerId: String,
+    /// `rowId` = 这个图层在 `ink_layer` 里的行 id（默认图层是文档 id，见 `LibraryStore.inkLayerRowID`）；
+    /// `layerId` = 笔迹 payload 里认的那个（默认图层是 `00…01`）。
+    static func archiveInkLayer(_ db: SQLiteDB, documentId: String, layerId: String, rowId: String,
                                 isDefaultLayer: Bool, to path: String) throws -> Archived {
         let cond = isDefaultLayer
             ? "(json_extract(payload, '$.layerId') = ? COLLATE NOCASE OR json_extract(payload, '$.layerId') IS NULL)"
             : "json_extract(payload, '$.layerId') = ? COLLATE NOCASE"
         return try withAttached(db, path: path) { t in
-            try db.run("CREATE TABLE \(t).ink_layer AS SELECT * FROM main.ink_layer WHERE id=?", [.text(layerId)])
+            try db.run("CREATE TABLE \(t).ink_layer AS SELECT * FROM main.ink_layer WHERE id=?", [.text(rowId)])
             try db.run("""
             CREATE TABLE \(t).note AS SELECT * FROM main.note
             WHERE document_id=? AND kind=? AND \(cond)

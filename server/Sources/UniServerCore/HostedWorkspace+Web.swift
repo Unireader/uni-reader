@@ -83,7 +83,9 @@ extension HostedWorkspace {
             let layers = try db.query("""
             SELECT id, name, color_key, sort_order, visible FROM ink_layer WHERE document_id=? ORDER BY sort_order ASC, created_at ASC
             """, [.text(documentId)]) { r in
-                InkLayerInfo(id: r.text(0), name: r.text(1), colorKey: r.text(2), sortOrder: Int(r.int64(3)), visible: r.int64(4) != 0)
+                // 默认图层的行 id = 文档 id（v29，`LibraryStore.inkLayerRowID`）：对网页报 `00…01`，笔迹的 layerId 认的是它
+                InkLayerInfo(id: LibraryStore.inkLayerModelID(rowId: r.text(0), documentId: documentId), name: r.text(1),
+                             colorKey: r.text(2), sortOrder: Int(r.int64(3)), visible: r.int64(4) != 0)
             }
             let types = try db.query("SELECT value FROM meta WHERE key='note_types'").first?["value"] as? String
             var align: String?

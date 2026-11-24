@@ -57,7 +57,7 @@ try! store.upsertInkLayer(LibInkLayer(id: layer.uppercased(), documentId: doc.id
                                       sortOrder: 0, visible: false, createdAt: .now))
 let layers = try! store.inkLayers(documentId: doc.id)
 check(layers.count == 1 && layers[0].name == "改名" && layers[0].id == layer, "图层按大写改：一行、改到了、id 不变")
-try! store.deleteInkLayer(id: layer.uppercased())
+try! store.deleteInkLayer(id: layer.uppercased(), documentId: doc.id)
 check((try! store.inkLayers(documentId: doc.id)).isEmpty, "图层按大写删得掉")
 
 let pad = UUID().uuidString.lowercased()

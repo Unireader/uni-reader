@@ -210,6 +210,10 @@ final class WorkspaceManager: ObservableObject {
             try? store.setMeta(Self.variantRepairKey, "1")
             if n > 0 { wsLog("[VARIANT] \(folder.lastPathComponent)：删掉 \(n) 个被原地改过内容取代的旧版本") }
         }
+        // 老的默认图层行（v29 前全库共用一个 id，见 `LibraryStore.inkLayerRowID`）改成所属文档的 id，同步带给别的设备
+        if let n = try? store.normalizeDefaultInkLayers(), n > 0 {
+            wsLog("[LAYER] \(folder.lastPathComponent)：老的默认图层行改成按文档区分")
+        }
         refresh()
         lastError = nil
         purgeExpiredTrash()                      // 回收站：清掉过了保留期的条目（`BACKUP-PLAN.md §2.6`）
@@ -869,8 +873,8 @@ final class WorkspaceManager: ObservableObject {
     }
 
     /// 删除一个图层（连同其笔迹一起清除时，调用方需先自行删掉引用它的 strokes）。
-    func deleteInkLayer(id: UUID) {
-        try? store?.deleteInkLayer(id: id.uuidString)
+    func deleteInkLayer(id: UUID, documentId: String) {
+        try? store?.deleteInkLayer(id: id.uuidString, documentId: documentId)
     }
 
     // MARK: - 笔记类型持久化（工作区级，meta key=note_types，JSON 数组；通用不落库）

@@ -10,7 +10,8 @@
 > 本文件从此**不挂验收类条目**——落地即算完，真出了问题按 bug 记进「已知欠账」。
 
 - 构建 / 结构 / 红线 / 文档地图见 `AGENTS.md`。两端（Mac / 安卓两模式）+ 服务器与它自带的网页的跨端契约 = `PROTOCOL.md`
-  + 工作区 SQLite schema（现 v28，`Sources/Store/`；v28 不改表，只为新旧版本不混着同步，见 `EXERCISE-PLAN.md §33.2`）。
+  + 工作区 SQLite schema（现 v29，`Sources/Store/`；v28 / v29 都不改表，只为新旧版本不混着同步，见 `EXERCISE-PLAN.md §33.2`、`REQUIREMENTS.md §8` v29 一段）。
+- **默认图层按文档区分**（schema v29，2026-11-24，`REQUIREMENTS.md §8`）：🔴 Mac、安卓、服务器要一起发布（服务器要求版本号相同，没换服务器之前新版 App 推不上去）。
 - **习题可以不关联 PDF + 分组**（`EXERCISE-PLAN.md §33`，2026-11-16）：已随服务器 v0.7.0 / Mac v0.3.32 / 安卓 0.3.23 发布。🔴 发布时 Mac、安卓、服务器要一起发
   （版本号 v28，服务器要求两边相同）；安卓那几处库操作没跑插桩测试，实测清单在 §33.8。
 - 已落地的大块（细节按日期查 `HISTORY.md`，专题看 `AGENTS.md` 文档地图列的方案文档）：阅读区 v2 纯 SwiftUI 页图流 /
