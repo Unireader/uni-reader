@@ -1585,3 +1585,7 @@
 "PDF" = "PDF";
 "Share One Tab Within a Folder" = "同一目录下共用一个标签";
 "When on, items opened by a plain click in the same sidebar group or folder replace each other in one tab. ⌘-click or right-click › Open in New Tab opens an independent tab." = "打开后，侧栏同一分组 / 目录里单击打开的内容会在同一个标签里互相替换。⌘ 单击，或右键「在新标签页中打开」，会开成独立标签。";
+
+/* 复制习题（ExerciseCopy，EXERCISE-PLAN.md §34） */
+"Copy Question" = "复制题目";
+"Copy %d Questions" = "复制 %d 道题目";

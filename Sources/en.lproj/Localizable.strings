@@ -1583,3 +1583,7 @@
 "PDF" = "PDF";
 "Share One Tab Within a Folder" = "Share One Tab Within a Folder";
 "When on, items opened by a plain click in the same sidebar group or folder replace each other in one tab. ⌘-click or right-click › Open in New Tab opens an independent tab." = "When on, items opened by a plain click in the same sidebar group or folder replace each other in one tab. ⌘-click or right-click › Open in New Tab opens an independent tab.";
+
+/* 复制习题（ExerciseCopy，EXERCISE-PLAN.md §34） */
+"Copy Question" = "Copy Question";
+"Copy %d Questions" = "Copy %d Questions";

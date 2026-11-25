@@ -441,8 +441,13 @@ final class ExercisePracticeView: NSView {
         for r in optionRows { r.body.highlights = marks(ExerciseMark.option(r.key)) }
     }
 
-    /// 右键一段文字的菜单：判完的题才能高亮 / 去掉高亮。
+    /// 右键一段文字的菜单：判完的题才能高亮 / 去掉高亮；「复制题目」一直有（`ExerciseCopy`）。
     private func markMenu(field: String, view: AgentMarkdownView?, _ range: NSRange, _ at: Int?) -> [NSMenuItem] {
+        let highlights = highlightMenu(field: field, view: view, range, at)
+        return highlights.isEmpty ? copyMenuItems() : highlights + [.separator()] + copyMenuItems()
+    }
+
+    private func highlightMenu(field: String, view: AgentMarkdownView?, _ range: NSRange, _ at: Int?) -> [NSMenuItem] {
         guard let view, let e = deck.current, deck.answer(for: e) != nil else { return [] }
         let plain = view.plainText
         var items: [NSMenuItem] = []
@@ -463,6 +468,28 @@ final class ExercisePracticeView: NSView {
             })
         }
         return items
+    }
+
+    // MARK: - 复制（`EXERCISE-PLAN.md §34`）
+
+    private func copyMenuItems() -> [NSMenuItem] {
+        guard let e = deck.current else { return [] }
+        return [ExerciseCopy.menuItem([e])]
+    }
+
+    /// 空白处右键（文字上的右键由各块自己的菜单接，见 `markMenu`）。
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let items = copyMenuItems()
+        guard !items.isEmpty else { return nil }
+        let m = NSMenu()
+        items.forEach(m.addItem)
+        return m
+    }
+
+    /// ⌘C（键盘焦点在练习页本身、没有选中文字时）：复制题目（不带答案）。选中了题干里的字时焦点在那个文本视图上，照旧复制选中的字。
+    @objc func copy(_ sender: Any?) {
+        guard let e = deck.current else { NSSound.beep(); return }
+        ExerciseCopy.copy([e])
     }
 
     private func setMarks(_ id: String, _ marks: [ExerciseMark]) {

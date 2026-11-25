@@ -246,6 +246,9 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
             add(menu, t, #selector(menuClearRecords))
         }
         menu.addItem(.separator())
+        // 复制题目（不带答案，按列表里的先后，`ExerciseCopy`）
+        menu.addItem(ExerciseCopy.menuItem(items))
+        menu.addItem(.separator())
         // 在 Agent 中引用：同侧栏那一项（Agent 关着 / 没工作区时灰掉）
         menu.autoenablesItems = false
         let agent = NSMenuItem(title: L("Reference in Agent"), action: #selector(menuReference), keyEquivalent: "")
