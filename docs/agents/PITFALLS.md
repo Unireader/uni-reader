@@ -72,7 +72,7 @@
   `docs/agents/BUILD-DETAILS.md`「第三方包」。
 - **代码着色绝不能让 highlight.js 猜语言**（2026-10-05 实测）：`hljs.highlightAuto` 把 190 多种语言挨个试，
   60 行要 0.35~0.6 秒、卡主线程；写了语言的约 0.35ms/行。引擎自带的桥接层（`MarkdownEngineCodeBlocks` 的
-  `HighlighterSwiftBridge`）在「没写语言」和「不认识的语言」时都退回去猜，所以不用它，Agent 面板用自己的
+  `HighlighterSwiftBridge`）在「没写语言」和「不认识的语言」时都退回去猜，所以不用它，Agent 面板与 Markdown 笔记共用自己的
   `AgentCodeHighlighter`（直接依赖 HighlighterSwift）。引擎只把**闭合了**的围栏当代码块，流式时还在长的那块
   不会来问着色器，每块只在闭合那一刻着一次。
 - **代码块底色必须不透明**（同日）：引擎在代码块整行画一遍 `backgroundColor()`、TextKit 又在字形底下按

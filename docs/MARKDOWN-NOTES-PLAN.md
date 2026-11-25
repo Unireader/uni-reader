@@ -654,3 +654,17 @@ Agent 绕过 App 直接写文件，能用但不稳：不知道源根在哪、可
 - 验证：引擎新加 `TableCellLinkTests` 13 项，其中一项把表画成位图，核对链接色像素全部落在判断点击用的区域里、每块区域里都有链接（两种表格样式、居中列、链接折成两行）；
   全套 915 项只有 2 项失败：HTML 里 `www.example.com` 自动链接（原版引擎上同样失败）、宽表格滚轮那项（全套一起跑时的时序问题，单独跑 3 次都过）。
   App Debug 按正式依赖编译通过。`.11` 引擎 `TableCellLinkTests` 增到 18 项全过。待用户实测。
+
+## 25. 代码块按语言着色（2026-11-25）
+
+用户：「我发现 md 文档的代码没有高亮」。原因：着色器只接在 Agent 面板（`AgentMarkdownView.configuration`），笔记三处用的是引擎默认的
+`PlainTextSyntaxHighlighter`（不着色、底色全透明）。现在 `MarkdownNoteEditor.applyNoteTypography`（批注编辑框 / 笔记气泡 / Agent 面板共用）
+与整页编辑器 `MarkdownDocEditor.configuration` 都接上 `AgentCodeHighlighter.shared`，一份着色器、一份缓存。
+- 🔴 只着围栏上**写了语言**且 highlight.js 认得的块（```swift、```py …），没写语言的照旧是纯色等宽字——不让它猜（猜一次 60 行 0.35~0.6 秒，`PITFALLS.md`）。
+  ```anim / ```grapher 画成图的块不受影响（highlight.js 不认这两个名字，第一次后直接跳过）。
+- 代码块随之有了不透明的浅灰 / 近黑底（与 Agent 面板一致）；气泡外观钉死浅色，颜色是跟外观变的动态色，气泡里就是浅色那套。
+- 编辑时正在改的那块每敲一字重着一次（约 0.35ms/行），其余块走缓存。
+- 待用户实测：
+  167. 整页 Markdown 笔记里写 ```swift / ```python 代码块：光标移出后有颜色、有灰底；切深色外观颜色跟着变；没写语言的块不着色。
+  168. 批注编辑框与阅读区的笔记气泡里同样着色；气泡在深色外观下仍是浅色那套。
+  169. 在一个较长的代码块里连续打字，不卡。

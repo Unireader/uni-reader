@@ -304,6 +304,9 @@ struct MarkdownNoteEditor: View {
         c.services.latex = NoteLatexRenderer.shared
         c.extensions = [HighlightExtension()]   // `==高亮==`（批注编辑框与气泡都认）
         c.tableAppearance = .rounded   // 表格：圆角底、只有行间细线（参照 Xcode，2026-11-12 用户要；引擎 fork 的开关，Perch 仍是网格）
+        // 代码块按围栏上写的语言着色（2026-11-25 用户报「md 文档的代码没有高亮」：原先只有 Agent 面板接了）。
+        // 只着写了语言的块、绝不猜；底色不透明（见 `AgentCodeHighlighter` 注释与 PITFALLS）。
+        c.services.syntaxHighlighter = AgentCodeHighlighter.shared
     }
 
     var body: some View {

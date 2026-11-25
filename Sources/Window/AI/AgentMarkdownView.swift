@@ -18,7 +18,7 @@ enum AgentMarkdown {
     /// 标题 / 列表缩进的尺度与公式渲染器跟笔记共用一套（`applyNoteTypography`）；
     /// 主题用引擎默认的——`bodyText` 就是 `labelColor`，跟着系统外观走（气泡那套是钉死浅色的，不能拿来用）。
     /// 高亮两种（2026-10-05 用户要的「输出添加高亮支持」，两种都做）：`==文字==` 荧光笔底色（引擎自带扩展，
-    /// 默认不开）+ 代码块按语言着色（`AgentCodeHighlighter`）。只开在 Agent 面板，笔记那边没动。
+    /// 默认不开）+ 代码块按语言着色（`AgentCodeHighlighter`）。2026-11-25 起两样都在 `applyNoteTypography` 里，笔记也有。
     static let configuration: MarkdownEditorConfiguration = {
         var c = MarkdownEditorConfiguration.default
         c.heightBehavior = .fitsContent
@@ -28,8 +28,6 @@ enum AgentMarkdown {
         c.spellChecking = SpellCheckingPolicy(continuousSpellChecking: false, grammarChecking: false,
                                               automaticSpellingCorrection: false)
         MarkdownNoteEditor.applyNoteTypography(&c)
-        c.extensions = [HighlightExtension()]
-        c.services.syntaxHighlighter = AgentCodeHighlighter.shared
         return c
     }()
 
@@ -73,7 +71,8 @@ enum AgentMarkdown {
     }
 }
 
-/// Agent 面板代码块的着色（highlight.js，经 HighlighterSwift 在 JavaScriptCore 里跑）。
+/// 代码块的着色（highlight.js，经 HighlighterSwift 在 JavaScriptCore 里跑）：Agent 面板与 Markdown 笔记
+/// （整页编辑器、批注编辑框、气泡，2026-11-25 起）共用这一份。
 ///
 /// 🔴 **只着围栏上写了、而且 highlight.js 认得的语言，绝不猜**：没写语言 / 不认识的语言让 highlight.js
 /// 把全部语言挨个试一遍（`highlightAuto`），实测 60 行 0.35~0.6 秒、卡主线程——引擎自带的桥接层
