@@ -77,9 +77,23 @@
 4. 回顾点：同一个标签在几处各加一个（带备注）；页边紫钉、气泡里「看完」后期号变化；Inspector 回顾分区按标签 / 期号 / 整个工作区筛选，点别的书的条目能打开并跳到位置。
 5. 开着服务器同步：另一台 Mac 上看到自建目录与回顾点。
 
-## 6. 没做 / 下一轮
+## 6. 安卓模式1（2026-11-26 同日补上）
 
-- 安卓模式1：不显示自建目录与回顾点（数据照常同步、不会被动到）。模式2 平板的目录来自 Mac 广播，所以**已经能看到自建目录**。
+- 库层 `LibraryStore` 自建目录 / 回顾点一节（`customToc` / `replaceCustomToc` / `upsertTocEntry` / `reviews` / `allReviews` / `upsertReviews`），
+  payload 键名同 Mac；回收站计数 `tocEntry` / `review`（manifest 键同 Mac）。
+- 界面逻辑全在 `local/TocReviewController.kt`（`ReaderActivity` 只接线）：
+  - 抽屉目录页最上面一行「自建目录 / PDF 目录 ⌄」：显示哪份、在当前位置添加目录项、复制 PDF 目录来修改、清空自建目录；
+    显示自建目录时长按条目 = 编辑（名字 + 层级）/ 升一级 / 降一级 / 删除。自建目录带页内位置，点了能跳到页中（Pdfium 书签只到页顶）。
+  - 抽屉新页签「回顾」（`ReaderDrawer.buildReviews`，内容由宿主现建）：在当前位置添加回顾点、范围 / 标签 / 期号 / 看完后推几期四个筛选、
+    每行「看完后推」与 ⋯（编辑 / 删除）；点别的书里的回顾点 = 打开那本并跳过去（`openExerciseSource` 那条路）。
+  - 页面左缘淡紫圆点（`PageCanvasView.setReviewMarks` / `onReviewTap`，画法 `PadOverlays.drawReviewDot`），手指点 → 看完后推 / 编辑 / 删除。
+  - 步长、上次的标签 / 期号存本机 prefs `review`。
+- Agent：`set_toc`、`list_reviews`、`add_reviews`、`update_reviews`、`delete_reviews`，`get_document` 多 `toc_source`（名字参数同 Mac）。
+- 验证：编译通过、JVM 单测 267 项全过；数据层插桩测试与真机实测还没做（平板没接着）。
+
+## 7. 没做 / 下一轮
+
+- 安卓模式2：只能看到 Mac 推过来的生效目录（自建优先），回顾点不显示、不能编辑。
 - 服务器网页阅读器：不显示。
 - 全工作区搜索（`search`）还不收录回顾点备注与自建目录名。
 - 回顾没有「当前第几期」的全局概念：期号只是每个点自己的数字，按期号筛选就是看那一期。

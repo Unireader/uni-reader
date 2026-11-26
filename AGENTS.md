@@ -90,7 +90,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
   第六种标签内容（`WKWebView` + `unireader-web://` 协议，不开端口）/「在浏览器中打开」（只听 127.0.0.1 的本机服务）；
   页面里的 `window.unireader` 键值存 `web_kv`、随同步走；Mac + 同步 + 安卓模式1 + 两端 Agent 工具已写、待实测（安卓 §9）
 - **`docs/TOC-REVIEW-PLAN.md`** — 自建目录（note kind=7，不改 PDF；`session.toc` = 生效目录，自建优先、可切回；MCP `set_toc` / `get_document toc_source`）
-  + 回顾点（note kind=8：位置 + 标签 + 备注 + 期号，看完后推 k 期；Inspector 笔记页「回顾」分区、MCP `*_reviews`）；不改表、不升 schema；本轮只做 Mac
+  + 回顾点（note kind=8：位置 + 标签 + 备注 + 期号，看完后推 k 期；Inspector 笔记页「回顾」分区、MCP `*_reviews`）；不改表、不升 schema；Mac + 安卓模式1
 - `docs/SIDEBAR-DRAG-PLAN.md` — 侧栏拖拽排序（系统 `NSOutlineView` 拖放、同一组里换位置；书库 / 笔记 / 画板 / 练习库；顺序存哪）
 - `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行）
 - `docs/REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
