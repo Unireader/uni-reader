@@ -116,7 +116,7 @@ extension ReaderView {
             let remark = NSTextField(wrappingLabelWithString: m.remark)
             remark.textColor = .labelColor
             remark.maximumNumberOfLines = 6
-            remark.preferredMaxLayoutWidth = 240
+            remark.preferredMaxLayoutWidth = 236
             views.append(remark)
         }
         var sub = String(format: L("Page %d"), m.page + 1)
@@ -127,17 +127,34 @@ extension ReaderView {
         views.append(page)
         let pop = NSPopover()
         pop.behavior = .transient
+        // 按钮：主操作「看完」整行（系统默认按钮样式，回车即按）；编辑 / 删除并排、等宽。
+        // 🔴 都不抢焦点：气泡一弹出就让第一枚按钮带蓝色焦点环，看着像被选中了（用户 2026-11-26 截图）。
         let done = NSButton(title: String(format: L("Reviewed — move to period %d"), m.period + ReviewMark.advanceStep), target: nil, action: nil)
+        done.bezelStyle = .push
+        done.keyEquivalent = "\r"
         let edit = NSButton(title: L("Edit…"), target: nil, action: nil)
         let delete = NSButton(title: L("Delete"), target: nil, action: nil)
         delete.hasDestructiveAction = true
-        views += [separator(), done, edit, delete]
+        for b in [done, edit, delete] {
+            b.refusesFirstResponder = true
+            b.controlSize = .large
+        }
+        let pair = NSStackView(views: [edit, delete])
+        pair.orientation = .horizontal
+        pair.distribution = .fillEqually
+        pair.spacing = 8
+        let sep = separator()
+        views += [sep, done, pair]
         let stack = NSStackView(views: views)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        stack.setCustomSpacing(12, after: views[views.count - 3])   // 分隔线上下留白一致
+        stack.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        for v in [sep, done, pair] as [NSView] {
+            v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        }
         vc.view = stack
         pop.contentViewController = vc
         let actions = ButtonActions()
