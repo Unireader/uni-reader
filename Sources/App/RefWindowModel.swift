@@ -155,7 +155,9 @@ final class RefWindowModel: ObservableObject {
         pdf = doc
         layout = al.map { PageLayout(heights: $0.heights(refWidth: Double(PageLayout.refWidth)).map { CGFloat($0) }) }
             ?? PageLayout(doc: doc)
-        toc = TOCEntry.build(from: doc, align: al)
+        // 有自建目录就用它（`TOC-REVIEW-PLAN.md §2`；参考窗只读，不提供切换）
+        let custom = workspace.customTOC(documentId: documentId)
+        toc = custom.isEmpty ? TOCEntry.build(from: doc, align: al) : CustomTOCItem.entries(custom)
         docKey = target.hash.isEmpty ? documentId : ScanAlignTable.displayKey(contentHash: target.hash, table: al)
         title = workspace.document(id: documentId)?.title ?? ""
         let p = workspace.progress(documentId: documentId)

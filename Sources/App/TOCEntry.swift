@@ -7,7 +7,7 @@ import PDFKit
 /// 给 `destination == nil`；也见过 dest 的 page 不属于本文档（`doc.index(for:)` 返回 NSNotFound）。
 /// 这类项一律 nil —— 不显示页码、不可跳转、不参与当前页追踪。
 struct TOCEntry: Identifiable {
-    let id = UUID()
+    var id = UUID()
     let label: String
     let pageIndex: Int?
     let frac: Double

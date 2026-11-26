@@ -62,11 +62,14 @@ enum TrashStore {
         var scheduleItem = 0
         /// 网页（`WEB-DOC-PLAN.md`）。
         var webDoc = 0
+        /// 自建目录项 kind=7 / 回顾点 kind=8（`TOC-REVIEW-PLAN.md`）。
+        var tocEntry = 0
+        var review = 0
 
         /// 「一共多少条会跟着一起没」——确认框里那个数。
         var total: Int {
             ink + text + highlight + bookmark + image + aiThread + scratchInk + boardInk + boardImage + exercise
-                + agentContext + agentMemory + schedulePlan + scheduleItem + webDoc
+                + agentContext + agentMemory + schedulePlan + scheduleItem + webDoc + tocEntry + review
         }
 
         init() {}
@@ -83,6 +86,7 @@ enum TrashStore {
             agentMemory = v(.agentMemory)
             schedulePlan = v(.schedulePlan); scheduleItem = v(.scheduleItem)
             webDoc = v(.webDoc)
+            tocEntry = v(.tocEntry); review = v(.review)
         }
     }
 
@@ -371,6 +375,8 @@ enum TrashStore {
                 case 4: out.counts.scratchInk = n
                 case 5: out.counts.bookmark = n
                 case 6: out.counts.image = n
+                case 7: out.counts.tocEntry = n
+                case 8: out.counts.review = n
                 default: break
                 }
             }

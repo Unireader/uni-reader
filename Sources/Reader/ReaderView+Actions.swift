@@ -412,6 +412,20 @@ extension ReaderView {
         session.beginBookmark(page: n.page, frac: Double(n.ny))
     }
 
+    /// 右键「在此添加回顾点…」（`TOC-REVIEW-PLAN.md §3`）。
+    func addReviewAtCursor() {
+        guard let p = cursorDoc, let n = pageNorm(atDoc: p) else { return }
+        clearSelection()
+        TOCReviewActions.addReview(session, workspace, page: n.page, frac: Double(n.ny), window: window)
+    }
+
+    /// 右键「在此添加目录项…」（自建目录，`TOC-REVIEW-PLAN.md §2`）。
+    func addTOCEntryAtCursor() {
+        guard let p = cursorDoc, let n = pageNorm(atDoc: p) else { return }
+        clearSelection()
+        TOCReviewActions.addTOCEntry(session, workspace, page: n.page, frac: Double(n.ny), window: window)
+    }
+
     func newScratchPadAtCursor() {
         guard let p = cursorDoc, let n = pageNorm(atDoc: p) else { return }
         clearSelection()

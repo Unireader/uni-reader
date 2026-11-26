@@ -165,9 +165,10 @@ extension MCPTools {
         MCPTool(
             name: "get_document",
             title: "Document overview",
-            description: "Page count, table of contents (outline) and whether the PDF has its own text layer or cached OCR text. Works for library documents (document_id) and for any PDF file (path).",
+            description: "Page count, table of contents (outline) and whether the PDF has its own text layer or cached OCR text. Works for library documents (document_id) and for any PDF file (path). A library document can have custom contents stored in the workspace (written by the user or with set_toc, the PDF is not changed); when it does, toc returns those by default and toc_source says which one you got.",
             inputSchema: MCPSchema.object(targetProperties.merging([
                 "include_toc": MCPSchema.boolean("Include the outline tree", default: true),
+                "toc_source": MCPSchema.enumeration(["auto", "custom", "pdf"], "Which contents to return: auto = the custom contents if there are any, otherwise the PDF's own outline", default: "auto"),
             ]) { a, _ in a }),
             outputSchema: MCPSchema.object([
                 "document": documentDTOSchema,
@@ -177,7 +178,13 @@ extension MCPTools {
                 "text": MCPSchema.object(["native_sample_pages": MCPSchema.integer("pages sampled"), "native_pages": MCPSchema.integer("sampled pages that have their own text"),
                                           "ocr_cached_pages": MCPSchema.integer("pages with cached OCR text")]),
                 "toc": MCPSchema.array(of: MCPSchema.object(["title": MCPSchema.string("entry"), "page": MCPSchema.nullable(MCPSchema.integer("1-based, null if the entry has no page")),
+                                                             "id": MCPSchema.string("custom contents only: entry id"),
+                                                             "level": MCPSchema.integer("custom contents only: 1 = top level"),
+                                                             "y": MCPSchema.number("custom contents only: 0 = top … 1 = bottom of the page"),
                                                              "children": MCPSchema.array(of: ["type": "object"])])),
+                "toc_source": MCPSchema.enumeration(["custom", "pdf", "none"], "where toc came from"),
+                "has_custom_toc": MCPSchema.boolean("the document has custom contents"),
+                "has_pdf_toc": MCPSchema.boolean("the PDF has its own outline"),
             ]),
             tier: .read
         ) { _, args in
@@ -186,6 +193,8 @@ extension MCPTools {
                                                    workspacePath: try args.string("workspace"))
             }
             let includeTOC = try args.bool("include_toc", default: true)
+            let tocSource = try args.string("toc_source") ?? "auto"
+            guard ["auto", "custom", "pdf"].contains(tocSource) else { throw MCPInvalidParams("toc_source must be auto, custom or pdf") }
             let reader = MCPDocReader.shared
             let summary = try await reader.summary(path: target.path, includeTOC: includeTOC, align: target.align)
             let sample = try await reader.nativeSample(path: target.path, count: 5)
@@ -195,13 +204,20 @@ extension MCPTools {
             func tocDTO(_ e: TOCEntry) -> MCPObject {
                 ["title": e.label, "page": e.pageIndex.map { PageNo.external($0) } ?? NSNull(), "children": e.children.map(tocDTO)]
             }
-            let toc = summary.toc.map(tocDTO)
+            let custom = await MainActor.run { MCPFacade.shared.customTOC(store: target.store, documentId: target.documentId) }
+            let useCustom = tocSource == "custom" || (tocSource == "auto" && !custom.isEmpty)
+            let toc: [MCPObject]
+            if useCustom { toc = await MainActor.run { MCPFacade.shared.customTOCDTO(custom) } } else { toc = summary.toc.map(tocDTO) }
+            let source = useCustom ? (custom.isEmpty ? "none" : "custom") : (summary.toc.isEmpty ? "none" : "pdf")
             var r: MCPObject = [
                 "title": target.title, "path": target.path,
                 "page_count": summary.pageCount,
                 "first_page_size_pt": [Double(summary.firstPageSize.width), Double(summary.firstPageSize.height)],
                 "text": ["native_sample_pages": sample.sampled, "native_pages": sample.withText, "ocr_cached_pages": ocrCached] as MCPObject,
                 "toc": toc,
+                "toc_source": source,
+                "has_custom_toc": !custom.isEmpty,
+                "has_pdf_toc": !summary.toc.isEmpty,
             ]
             if let id = target.documentId, let d = await MainActor.run(body: { MCPFacade.shared.documentDTO(documentId: id) }) {
                 r["document"] = d
@@ -214,8 +230,14 @@ extension MCPTools {
             else { textKind = "mixed: \(sample.withText)/\(sample.sampled) sampled pages have text; \(ocrCached) OCR pages cached" }
             lines.append("Text: \(textKind)")
             if includeTOC {
-                if toc.isEmpty { lines.append("Outline: none") }
-                else { lines.append("Outline:"); describeTOC(toc, into: &lines) }
+                if toc.isEmpty {
+                    lines.append(tocSource == "custom" ? "Custom contents: none" : "Outline: none")
+                } else {
+                    lines.append(useCustom ? "Custom contents (stored in the workspace, the PDF is unchanged):" : "Outline:")
+                    describeTOC(toc, into: &lines)
+                }
+                if useCustom, !summary.toc.isEmpty { lines.append("(The PDF also has its own outline: pass toc_source \"pdf\".)") }
+                if !useCustom, !custom.isEmpty { lines.append("(This document also has custom contents: pass toc_source \"custom\".)") }
             }
             return MCPToolResult(text: lines.joined(separator: "\n"), structured: r)
         }

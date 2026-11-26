@@ -15,6 +15,7 @@ enum MCPTools {
         registerBatch8(into: server)    // 日程（`MCP-PLAN.md §37`，`SCHEDULE-PLAN.md §6`）
         registerWeb(into: server)       // 网页（`WEB-DOC-PLAN.md §7.1`）
         registerStats(into: server)     // 统计 `workspace_stats`（`MCP-PLAN.md §38`）
+        registerTOCReview(into: server) // 自建目录 `set_toc` + 回顾点（`TOC-REVIEW-PLAN.md §4`）
         // 写进去的公式排不出来就当场提示 Agent 改（`LatexCheck`，用户 2026-11-17）
         server.catalog.afterWrite = { args in
             let texts = MCPCatalog.strings(in: args).filter { $0.contains("$") }

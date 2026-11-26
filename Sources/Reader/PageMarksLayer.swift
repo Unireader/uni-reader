@@ -170,4 +170,6 @@ enum ReaderMarkColors {
     static let imageMarker = NSColor(srgbRed: 0.64, green: 0.88, blue: 0.80, alpha: 1)
     /// 书签缎带红（用户 2026-09-02 实测「橘色没反应过来」后改的通用红）。
     static let bookmarkMarker = NSColor(srgbRed: 0.84, green: 0.23, blue: 0.24, alpha: 1)
+    /// 回顾点（淡紫，与笔记黄 / 草稿纸蓝 / 图片绿 / 书签红分开）。
+    static let reviewMarker = NSColor(srgbRed: 0.78, green: 0.70, blue: 0.98, alpha: 1)
 }

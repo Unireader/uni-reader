@@ -24,6 +24,9 @@ final class InspectorViewController: NSViewController {
     private let toc = TOCOutlineView()
     private let noteToc = NoteOutlineView()
     private let tocAddBookmark = NSButton()
+    /// 目录页左下角的下拉：显示自建 / PDF 目录、加目录项、从 PDF 目录复制、清空（`TOC-REVIEW-PLAN.md §2.3`）。
+    private let tocMenu = NSPopUpButton(frame: .zero, pullsDown: true)
+    private lazy var tocMenuFeeder = MenuFeeder { [weak self] m in self?.fillTOCMenu(m) }
     private let tocPage = NSView()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private let agentPage = NSView()
@@ -54,6 +57,11 @@ final class InspectorViewController: NSViewController {
     private var batchScheduled = false
     /// 一拍建多少条（实测一张卡片 ≈1.4ms 构造 + 布局，12 条一拍 ≈17ms，不掉帧）。
     private static let batchSize = 12
+
+    /// 回顾分区的筛选（全 App 一份，只在内存）。
+    private static var reviewFilter = ReviewFilter()
+    /// 整个工作区的回顾点（只在「整个工作区」范围时读；收到 `reviewMarksDidChange` 作废）。
+    private var allReviewsCache: [ReviewMark]?
 
     private static let sectionKey = "inspectorNotesSection"
     private var notesSection: NotesSection {
@@ -119,6 +127,11 @@ final class InspectorViewController: NSViewController {
         tocAddBookmark.target = self
         tocAddBookmark.action = #selector(addBookmark)
         tocPage.addSubview(tocAddBookmark)
+        tocMenu.isBordered = false
+        tocMenu.contentTintColor = .labelColor
+        tocMenu.menu?.delegate = tocMenuFeeder
+        tocMenu.menu?.autoenablesItems = false
+        tocPage.addSubview(tocMenu)
         tocPage.addSubview(toc)
         tocPage.addSubview(noteToc)
         noteToc.isHidden = true
@@ -133,6 +146,18 @@ final class InspectorViewController: NSViewController {
         toc.onSelectBookmark = { [weak self] b in self?.session.jump(page: b.page, frac: b.frac, kind: .toc, label: b.title) }
         toc.onRenameBookmark = { [weak self] b in self?.session.beginBookmarkRename(b) }
         toc.onDeleteBookmark = { [weak self] b in self?.session.deleteBookmark(id: b.id) }
+        toc.onEditCustom = { [weak self] id in
+            guard let self else { return }
+            TOCReviewActions.editTOCEntry(self.session, self.workspace, id: id, window: self.view.window)
+        }
+        toc.onShiftCustom = { [weak self] id, d in
+            guard let self else { return }
+            TOCReviewActions.shiftTOCEntry(self.session, self.workspace, id: id, delta: d)
+        }
+        toc.onDeleteCustom = { [weak self] id in
+            guard let self else { return }
+            TOCReviewActions.deleteTOCEntry(self.session, self.workspace, id: id)
+        }
         thumbs.onSelect = { [weak self] p in self?.session.jump(page: p, frac: 0, kind: .list) }
 
         emptyLabel.alignment = .center
@@ -160,6 +185,9 @@ final class InspectorViewController: NSViewController {
         for v in agentPage.subviews { v.frame = agentPage.bounds }
         let bs = tocAddBookmark.fittingSize
         tocAddBookmark.frame = NSRect(x: tocPage.bounds.width - 12 - bs.width, y: 0, width: bs.width, height: bs.height)
+        let ms = tocMenu.fittingSize
+        tocMenu.frame = NSRect(x: 8, y: (bs.height - ms.height) / 2, width: min(ms.width, max(0, tocAddBookmark.frame.minX - 16)),
+                               height: ms.height)
         noteToc.frame = tocPage.bounds
         toc.frame = NSRect(x: 0, y: bs.height + 6, width: tocPage.bounds.width, height: max(0, tocPage.bounds.height - bs.height - 6))
         emptyLabel.frame = NSRect(x: 20, y: b.height / 2 - 30, width: b.width - 40, height: 60)
@@ -196,6 +224,15 @@ final class InspectorViewController: NSViewController {
             .sink { [weak self] _ in
                 self?.linksMayHaveChanged()
                 if self?.tab == .contents { self?.queueRefresh() }   // 笔记目录跟着正文走
+            }
+            .store(in: &bag)
+        // 回顾点变了（任何文档）：整个工作区那份作废，回顾分区重读
+        NotificationCenter.default.publisher(for: .reviewMarksDidChange, object: workspace)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.allReviewsCache = nil
+                if self.tab == .notes, self.notesSection == .review { self.queueRefresh() }
             }
             .store(in: &bag)
         // 日程变了（打勾 / 加 / Agent 排计划 / 同步拉来）：「今天」页重读（内容没变不重建）
@@ -302,6 +339,42 @@ final class InspectorViewController: NSViewController {
 
     @objc private func addBookmark() { session.beginBookmarkAtCurrent() }
 
+    /// 目录页下拉的内容（每次打开现建：勾选态、可用态跟着当前文档走）。第一项是下拉按钮自己的标题。
+    private func fillTOCMenu(_ m: NSMenu) {
+        let s = session
+        let head = m.items.first
+        m.removeAllItems()
+        if let head { m.addItem(head) }
+        let showCustom = ClosureMenuItem(L("Show Custom Contents")) { s.tocShowsPDF = false }
+        showCustom.state = s.tocIsCustom ? .on : .off
+        showCustom.isEnabled = !s.customTOC.isEmpty
+        let showPDF = ClosureMenuItem(L("Show PDF Contents")) { s.tocShowsPDF = true }
+        showPDF.state = s.tocIsCustom ? .off : .on
+        showPDF.isEnabled = !s.customTOC.isEmpty
+        m.addItem(showCustom)
+        m.addItem(showPDF)
+        m.addItem(.separator())
+        let add = ClosureMenuItem(L("Add Contents Entry at Current Position…")) { [weak self] in
+            guard let self else { return }
+            let mark = s.currentMark
+            TOCReviewActions.addTOCEntry(s, self.workspace, page: mark.page, frac: mark.frac, window: self.view.window)
+        }
+        add.isEnabled = s.documentId != nil
+        m.addItem(add)
+        let copy = ClosureMenuItem(L("Copy PDF Contents to Edit")) { [weak self] in
+            guard let self else { return }
+            TOCReviewActions.copyPDFTOC(s, self.workspace, window: self.view.window)
+        }
+        copy.isEnabled = !s.pdfTOC.isEmpty
+        m.addItem(copy)
+        let clear = ClosureMenuItem(L("Clear Custom Contents…")) { [weak self] in
+            guard let self else { return }
+            TOCReviewActions.clearCustomTOC(s, self.workspace, window: self.view.window)
+        }
+        clear.isEnabled = !s.customTOC.isEmpty
+        m.addItem(clear)
+    }
+
     private func applyTab() {
         linksShown = 0   // 列表被别的页占过：回到关联页必须重建
         todayShown = ""  // 同上：回到「今天」页必须重建
@@ -336,13 +409,23 @@ final class InspectorViewController: NSViewController {
         case .contents:
             if let ref = tabs.active.noteRef {
                 // Markdown 笔记：目录 = 正文里的 `#` 标题（编辑区的实时正文，没开着就读文件）
-                toc.isHidden = true; tocAddBookmark.isHidden = true; noteToc.isHidden = false
+                toc.isHidden = true; tocAddBookmark.isHidden = true; tocMenu.isHidden = true; noteToc.isHidden = false
                 noteToc.update(text: MarkdownDocView.editors(showing: ref, in: workspace).first?.currentText
                                ?? workspace.noteBody(ref) ?? "")
                 return
             }
-            toc.isHidden = false; tocAddBookmark.isHidden = false; noteToc.isHidden = true
+            toc.isHidden = false; tocAddBookmark.isHidden = false; tocMenu.isHidden = false; noteToc.isHidden = true
             tocAddBookmark.isEnabled = s.documentId != nil
+            tocMenu.isEnabled = s.documentId != nil
+            let menuTitle = s.tocIsCustom ? L("Custom Contents") : L("PDF Contents")
+            if tocMenu.title != menuTitle || tocMenu.numberOfItems == 0 {
+                tocMenu.menu?.removeAllItems()
+                let head = NSMenuItem(title: menuTitle, action: nil, keyEquivalent: "")
+                head.image = NSImage(systemSymbolName: s.tocIsCustom ? "list.bullet.indent" : "doc.text", accessibilityDescription: nil)
+                tocMenu.menu?.addItem(head)
+                view.needsLayout = true
+            }
+            toc.customIDs = s.tocIsCustom ? Set(s.customTOC.map(\.id)) : []
             toc.update(entries: s.toc, bookmarks: s.bookmarks, currentPage: s.currentPageIndex)
         case .info:
             guard let doc else { return }
@@ -822,6 +905,11 @@ final class InspectorViewController: NSViewController {
             for x in s.imageNotes { h.combine(x.id); h.combine(x.updatedAt) }
         case .bookmark:
             for b in s.bookmarks { h.combine(b.id); h.combine(b.title); h.combine(b.page) }
+        case .review:
+            let f = Self.reviewFilter
+            h.combine(f.wholeWorkspace); h.combine(f.tag); h.combine(f.period); h.combine(ReviewMark.advanceStep)
+            if f.wholeWorkspace { h.combine(s.documentId) }   // 「当前文档」那一行的强调跟着换
+            for m in reviewSource() { h.combine(m.id); h.combine(m.updatedAt) }
         case .ink:
             for k in inkSummaries { h.combine(k.page); h.combine(k.count) }
             h.combine(inkExpanded)
@@ -840,6 +928,7 @@ final class InspectorViewController: NSViewController {
         case .highlight: return highlightRows()
         case .image: return imageRows()
         case .bookmark: return bookmarkRows()
+        case .review: return reviewRows()
         case .ink: return inkRows()
         case .scratch: return scratchRows()
         case .ai: return aiRows()
@@ -1088,6 +1177,186 @@ final class InspectorViewController: NSViewController {
                                            }])
         card.onTap = { [weak self] in self?.session.jump(page: b.page, frac: b.frac, kind: .toc, label: b.title) }
         return card
+    }
+
+    // MARK: 回顾（`TOC-REVIEW-PLAN.md §3`）
+
+    /// 筛选前的全部回顾点：当前文档 = 会话里那份；整个工作区 = 读库（有缓存）。
+    private func reviewSource() -> [ReviewMark] {
+        guard Self.reviewFilter.wholeWorkspace else { return session.reviewMarks }
+        if let c = allReviewsCache { return c }
+        let all = workspace.allReviewMarks()
+        allReviewsCache = all
+        return all
+    }
+
+    private func reviewRows() -> InspectorRows {
+        let s = session
+        let f = Self.reviewFilter
+        let source = reviewSource()
+        let titles = Dictionary(workspace.documents.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a })
+        let shown = source.filter(f.matches).sorted { a, b in
+            if a.period != b.period { return a.period < b.period }
+            if a.documentId != b.documentId {
+                return (titles[a.documentId] ?? "").localizedStandardCompare(titles[b.documentId] ?? "") == .orderedAscending
+            }
+            return ReviewMark.before(a, b)
+        }
+        var head: [NSView] = [sectionTitle("\(L("Reviews")) · \(shown.count)")]
+        let add = NSButton(title: L("Add Review Point"), image: NSImage(systemSymbolName: "plus.circle", accessibilityDescription: nil) ?? NSImage(),
+                           target: self, action: #selector(addReviewAtCurrent))
+        add.isBordered = false
+        add.contentTintColor = .labelColor
+        add.imagePosition = .imageLeading
+        add.isEnabled = s.documentId != nil
+        head.append(add)
+        // 面板窄：两个一行
+        head.append(hstack([reviewScopeButton(), reviewTagButton(source)], spacing: 2))
+        head.append(hstack([reviewPeriodButton(source), reviewStepButton()], spacing: 2))
+        guard !shown.isEmpty else {
+            head.append(hint(source.isEmpty ? L("No review points yet. Right-click a page and choose Add Review Point Here.")
+                                            : L("No review points match the filter.")))
+            return InspectorRows(head: head)
+        }
+        return InspectorRows(head: head, items: lazyItems(shown) { me, m in
+            me.reviewCard(m, docTitle: f.wholeWorkspace ? titles[m.documentId] : nil)
+        })
+    }
+
+    private func reviewCard(_ m: ReviewMark, docTitle: String?) -> NSView {
+        let periodLabel = label(String(format: L("Period %d"), m.period), .subheadline)
+        periodLabel.textColor = .labelColor
+        var rows: [NSView] = [hstack([badge(m.tag, .controlAccentColor), periodLabel])]
+        if !m.remark.isEmpty { rows.append(multiline(m.remark, .body, lines: 3)) }
+        var sub = String(format: L("Page %d"), m.page + 1)
+        if let docTitle { sub = "\(docTitle) · \(sub)" }
+        if m.reviews > 0 { sub += " · " + String(format: L("Reviewed %d time(s)"), m.reviews) }
+        let subLabel = label(sub, .caption1)
+        subLabel.textColor = .labelColor
+        subLabel.lineBreakMode = .byTruncatingMiddle
+        rows.append(subLabel)
+        let step = ReviewMark.advanceStep
+        let card = InspectorCard(content: vstack(rows, spacing: 3),
+                                 buttons: [iconButton("checkmark.circle.fill", String(format: L("Reviewed — move to period %d"), m.period + step),
+                                                      tint: .controlAccentColor) { [weak self] in
+                                               guard let self else { return }
+                                               TOCReviewActions.advanceReview(m, self.workspace)
+                                           },
+                                           iconButton("pencil.circle.fill", L("Edit this review point"), tint: .labelColor) { [weak self] in
+                                               guard let self else { return }
+                                               TOCReviewActions.editReview(m, self.workspace, window: self.view.window)
+                                           },
+                                           iconButton("xmark.circle.fill", L("Delete this review point")) { [weak self] in
+                                               guard let self else { return }
+                                               TOCReviewActions.deleteReview(m, self.workspace)
+                                           }])
+        card.onTap = { [weak self] in self?.openReview(m) }
+        return card
+    }
+
+    /// 点一条回顾：本篇就地跳；别的文档先打开（与链接、MCP 共用 `showDocument`）再跳。
+    private func openReview(_ m: ReviewMark) {
+        if m.documentId == session.documentId {
+            session.jump(page: m.page, frac: m.frac, kind: .list, label: m.tag)
+            return
+        }
+        guard let delegate = AppDelegate.shared, workspace.document(id: m.documentId) != nil,
+              let (_, tab) = try? delegate.showDocument(m.documentId, in: workspace, activate: true) else { NSSound.beep(); return }
+        tab.session.jump(page: m.page, frac: m.frac, kind: .list, label: m.tag)
+    }
+
+    @objc private func addReviewAtCurrent() {
+        let s = session
+        let mark = s.currentMark
+        TOCReviewActions.addReview(s, workspace, page: mark.page, frac: mark.frac, window: view.window)
+    }
+
+    private func setReviewFilter(_ change: (inout ReviewFilter) -> Void) {
+        change(&Self.reviewFilter)
+        lastSignature = ""
+        resetPaging()
+        refresh()
+    }
+
+    /// 下拉按钮（Inspector 里筛选器的统一样式：无边框、小字、第一项 = 标题）。
+    private func filterPopup(_ title: String, symbol: String, items: [(String, Bool, () -> Void)]) -> NSPopUpButton {
+        let b = NSPopUpButton(frame: .zero, pullsDown: true)
+        b.isBordered = false
+        b.font = .preferredFont(forTextStyle: .caption1)
+        let menu = NSMenu()
+        let head = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        head.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        menu.addItem(head)
+        for (t, on, act) in items {
+            let i = ClosureMenuItem(t, action: act)
+            i.state = on ? .on : .off
+            menu.addItem(i)
+        }
+        b.menu = menu
+        return b
+    }
+
+    private func reviewScopeButton() -> NSView {
+        let f = Self.reviewFilter
+        return filterPopup(f.wholeWorkspace ? L("Whole Workspace") : L("This Document"), symbol: "scope", items: [
+            (L("This Document"), !f.wholeWorkspace, { [weak self] in self?.setReviewFilter { $0.wholeWorkspace = false } }),
+            (L("Whole Workspace"), f.wholeWorkspace, { [weak self] in self?.setReviewFilter { $0.wholeWorkspace = true } }),
+        ])
+    }
+
+    private func reviewTagButton(_ source: [ReviewMark]) -> NSView {
+        let f = Self.reviewFilter
+        let tags = Array(Set(source.map(\.tag))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        var items: [(String, Bool, () -> Void)] = [(L("All Tags"), f.tag == nil, { [weak self] in self?.setReviewFilter { $0.tag = nil } })]
+        for t in tags { items.append((t, f.tag == t, { [weak self] in self?.setReviewFilter { $0.tag = t } })) }
+        if let t = f.tag, !tags.contains(t) { items.append((t, true, {})) }
+        return filterPopup(f.tag ?? L("All Tags"), symbol: "tag", items: items)
+    }
+
+    private func reviewPeriodButton(_ source: [ReviewMark]) -> NSView {
+        let f = Self.reviewFilter
+        let periods = Array(Set(source.filter { f.tag == nil || $0.tag == f.tag }.map(\.period))).sorted()
+        var items: [(String, Bool, () -> Void)] = [(L("All Periods"), f.period == nil, { [weak self] in self?.setReviewFilter { $0.period = nil } })]
+        for p in periods { items.append((String(format: L("Period %d"), p), f.period == p, { [weak self] in self?.setReviewFilter { $0.period = p } })) }
+        if let p = f.period, !periods.contains(p) { items.append((String(format: L("Period %d"), p), true, {})) }
+        return filterPopup(f.period.map { String(format: L("Period %d"), $0) } ?? L("All Periods"), symbol: "number", items: items)
+    }
+
+    /// 「看完后推几期」：常用几档 + 自己填。
+    private func reviewStepButton() -> NSView {
+        let k = ReviewMark.advanceStep
+        var choices = [1, 2, 3, 5, 7, 10]
+        if !choices.contains(k) { choices.append(k); choices.sort() }
+        var items: [(String, Bool, () -> Void)] = choices.map { n in
+            (String(format: L("Move %d period(s) when reviewed"), n), n == k, { [weak self] in
+                ReviewMark.advanceStep = n
+                self?.setReviewFilter { _ in }
+            })
+        }
+        items.append((L("Custom…"), false, { [weak self] in self?.askReviewStep() }))
+        return filterPopup(String(format: L("Move %d period(s) when reviewed"), k), symbol: "forward", items: items)
+    }
+
+    private func askReviewStep() {
+        let a = NSAlert()
+        a.messageText = L("Periods to Move When Reviewed")
+        a.addButton(withTitle: L("OK"))
+        a.addButton(withTitle: L("Cancel"))
+        let field = NSTextField(string: "\(ReviewMark.advanceStep)")
+        let fmt = NumberFormatter()
+        fmt.allowsFloats = false
+        fmt.minimum = 1
+        fmt.maximum = 999
+        field.formatter = fmt
+        field.frame = NSRect(x: 0, y: 0, width: 120, height: 24)
+        a.accessoryView = field
+        a.window.initialFirstResponder = field
+        let apply: (NSApplication.ModalResponse) -> Void = { [weak self] r in
+            guard r == .alertFirstButtonReturn, let n = Int(field.stringValue), n >= 1 else { return }
+            ReviewMark.advanceStep = n
+            self?.setReviewFilter { _ in }
+        }
+        if let w = view.window { a.beginSheetModal(for: w, completionHandler: apply) } else { apply(a.runModal()) }
     }
 
     private func inkRows() -> InspectorRows {
@@ -1405,4 +1674,11 @@ final class ClosureButton: NSButton {
 /// flipped 的竖排栈（放在滚动视图里从顶上往下排）。
 final class FlippedStackView: NSStackView {
     override var isFlipped: Bool { true }
+}
+
+/// 菜单打开前现填内容（`NSMenuDelegate.menuNeedsUpdate`）。
+final class MenuFeeder: NSObject, NSMenuDelegate {
+    private let fill: (NSMenu) -> Void
+    init(_ fill: @escaping (NSMenu) -> Void) { self.fill = fill }
+    func menuNeedsUpdate(_ menu: NSMenu) { fill(menu) }
 }

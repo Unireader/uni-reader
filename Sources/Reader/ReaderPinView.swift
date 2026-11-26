@@ -12,6 +12,8 @@ final class ReaderPinView: NSView {
         case image
         case scratch
         case bookmark
+        /// 回顾点（`TOC-REVIEW-PLAN.md §3`），贴在页左缘。
+        case review
     }
 
     var kind: Kind = .image { didSet { if oldValue != kind { needsDisplay = true } } }
@@ -32,7 +34,7 @@ final class ReaderPinView: NSView {
     static func size(for kind: Kind) -> CGSize {
         switch kind {
         case .note, .image: return noteSize
-        case .scratch: return scratchSize
+        case .scratch, .review: return scratchSize
         case .bookmark: return ribbonSize
         }
     }
@@ -125,6 +127,8 @@ final class ReaderPinView: NSView {
             drawDisc(in: b, fill: ReaderMarkColors.imageMarker, symbol: "photo", pointSize: 11)
         case .scratch:
             drawDisc(in: b, fill: ReaderMarkColors.scratchMarker, symbol: "square.and.pencil", pointSize: 10)
+        case .review:
+            drawDisc(in: b, fill: ReaderMarkColors.reviewMarker, symbol: "arrow.trianglehead.2.clockwise", pointSize: 9)
         }
     }
 

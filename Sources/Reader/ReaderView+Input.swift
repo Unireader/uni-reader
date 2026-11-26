@@ -92,6 +92,7 @@ extension ReaderView {
             session.$imageNotes.map { _ in () }.eraseToAnyPublisher(),
             session.$scratchPads.map { _ in () }.eraseToAnyPublisher(),
             session.$bookmarks.map { _ in () }.eraseToAnyPublisher(),
+            session.$reviewMarks.map { _ in () }.eraseToAnyPublisher(),
             session.$openPadID.map { _ in () }.eraseToAnyPublisher(),
             app.$pointerTool.map { _ in () }.eraseToAnyPublisher(),
         ]

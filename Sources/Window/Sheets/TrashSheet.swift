@@ -117,6 +117,8 @@ final class TrashSheetController: StackPanelController, NSTableViewDataSource, N
         add(c.bookmark, "%d bookmark(s)")
         add(c.image, "%d image note(s)")
         add(c.scratchInk, "%d scratch stroke(s)")
+        add(c.tocEntry, "%d contents entry(s)")
+        add(c.review, "%d review point(s)")
         var s = parts.isEmpty ? L("Nothing inside.") : parts.joined(separator: "、")
         if let target = workspace.trashMergeTarget(e) {
             s += "\n" + String(format: L("“%@” was imported again — putting this back will merge the notes into that document."), target.title)

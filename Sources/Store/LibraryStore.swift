@@ -1015,6 +1015,18 @@ final class LibraryStore {
         try db.query("SELECT * FROM note WHERE document_id=? AND kind=? ORDER BY page ASC, created_at ASC",
                      [.text(documentId), .int(Int64(kind))]).map(noteRow)
     }
+    /// 整个工作区的某一类（回顾点 kind=8 要跨文档列）。
+    func notes(kind: Int) throws -> [LibNote] {
+        try db.query("SELECT * FROM note WHERE kind=? ORDER BY document_id ASC, page ASC, created_at ASC",
+                     [.int(Int64(kind))]).map(noteRow)
+    }
+    /// 一个事务里删掉 [deleteIds]、写入 [upserts]（自建目录整份替换用：中途失败就全不改）。
+    func replaceNotes(deleteIds: [String], upserts: [LibNote]) throws {
+        try db.transaction {
+            for id in deleteIds { try deleteNote(id: id) }
+            for n in upserts { try upsertNote(n) }
+        }
+    }
     func notes(documentId: String, page: Int) throws -> [LibNote] {
         try db.query("SELECT * FROM note WHERE document_id=? AND page=? ORDER BY created_at ASC",
                      [.text(documentId), .int(Int64(page))]).map(noteRow)

@@ -11,6 +11,11 @@ final class TOCOutlineView: NSView, NSOutlineViewDataSource, NSOutlineViewDelega
     var onSelectBookmark: ((Bookmark) -> Void)?
     var onRenameBookmark: ((Bookmark) -> Void)?
     var onDeleteBookmark: ((Bookmark) -> Void)?
+    /// 自建目录的条目 id（`TOC-REVIEW-PLAN.md §2`）：这些行右键可以改 / 升降级 / 删。没给回调的地方（工具栏弹窗、参考窗）只读。
+    var customIDs: Set<UUID> = []
+    var onEditCustom: ((UUID) -> Void)?
+    var onShiftCustom: ((UUID, Int) -> Void)?
+    var onDeleteCustom: ((UUID) -> Void)?
 
     private let outline = NSOutlineView()
     private let scroll = NSScrollView()
@@ -21,7 +26,7 @@ final class TOCOutlineView: NSView, NSOutlineViewDataSource, NSOutlineViewDelega
     private var bookmarks: [Bookmark] = []
     private var currentPage = -1
     private var currentID: UUID?
-    private var entriesToken: [UUID] = []
+    private var entriesToken = 0
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -68,7 +73,13 @@ final class TOCOutlineView: NSView, NSOutlineViewDataSource, NSOutlineViewDelega
 
     /// 喂数据。目录 / 书签变了重建树（展开态按 id 保留）；只有当前页变了就只做追踪。
     func update(entries: [TOCEntry], bookmarks: [Bookmark], currentPage: Int) {
-        let token = entries.map(\.id)
+        // 指纹带上名字 / 页 / 层次：自建目录改名、升降级时 id 不变，只比 id 会漏掉重建
+        var h = Hasher()
+        func hash(_ list: [TOCEntry], _ d: Int) {
+            for e in list { h.combine(e.id); h.combine(e.label); h.combine(e.pageIndex); h.combine(d); hash(e.children, d + 1) }
+        }
+        hash(entries, 0)
+        let token = h.finalize()
         let rebuild = token != entriesToken || bookmarks.map(\.id) != self.bookmarks.map(\.id)
             || bookmarks != self.bookmarks
         let bookmarksCountChanged = bookmarks.count != self.bookmarks.count
@@ -239,7 +250,21 @@ final class TOCOutlineView: NSView, NSOutlineViewDataSource, NSOutlineViewDelega
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        guard let b = (outline.item(atRow: outline.clickedRow) as? TOCNode)?.bookmark else { return }
+        let node = outline.item(atRow: outline.clickedRow) as? TOCNode
+        if let e = node?.entry, customIDs.contains(e.id) {
+            let id = e.id
+            if let edit = onEditCustom { menu.addItem(ClosureMenuItem(L("Edit…")) { edit(id) }) }
+            if let shift = onShiftCustom {
+                menu.addItem(ClosureMenuItem(L("Promote One Level")) { shift(id, -1) })
+                menu.addItem(ClosureMenuItem(L("Demote One Level")) { shift(id, 1) })
+            }
+            if let del = onDeleteCustom {
+                menu.addItem(.separator())
+                menu.addItem(ClosureMenuItem(L("Delete")) { del(id) })
+            }
+            return
+        }
+        guard let b = node?.bookmark else { return }
         if let rename = onRenameBookmark { menu.addItem(ClosureMenuItem(L("Rename…")) { rename(b) }) }
         if let del = onDeleteBookmark { menu.addItem(ClosureMenuItem(L("Delete")) { del(b) }) }
     }

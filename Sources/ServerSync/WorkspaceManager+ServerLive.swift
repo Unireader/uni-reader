@@ -28,6 +28,10 @@ extension WorkspaceManager {
         // 网页：列表重读；页面存的数据变了 → 开着的网页收到 `unireader:change` 事件（`WEB-DOC-PLAN.md §5`）
         if tables.contains("web_doc") { refreshWebDocs() }
         if tables.contains("web_kv") { webKVChangedRemotely() }
+        // 回顾点（note kind=8）：整个工作区的回顾列表跟着重读。删除行不带 kind，有删除就当可能删了回顾点
+        if rows.contains(where: { r in
+            r.table == "note" && (r.deleted || (r.row.map(SyncWire.sqliteRow)?["kind"] as? Int64) == Int64(ReviewMark.noteKind))
+        }) { postReviewsChanged([]) }
         let boardTouched = !tables.isDisjoint(with: ["board_note", "board_page", "board_item"])
         for tab in openTabs {
             tab.applyRemote(rows)

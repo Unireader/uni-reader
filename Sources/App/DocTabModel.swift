@@ -235,6 +235,29 @@ final class DocTabModel: ObservableObject, Identifiable {
                 }
             }
             .store(in: &bag)
+        // 自建目录 / 回顾点变了（Inspector、阅读区、MCP、回收站放回都只写库再发通知）：本篇的就从库里重读
+        NotificationCenter.default.publisher(for: .customTOCDidChange, object: workspace)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] n in
+                MainActor.assumeIsolated {
+                    guard let self, !self.closed, let id = self.session.documentId,
+                          n.userInfo?["documentId"] as? String == id else { return }
+                    self.loadCustomTOC(documentId: id)
+                }
+            }
+            .store(in: &bag)
+        NotificationCenter.default.publisher(for: .reviewMarksDidChange, object: workspace)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] n in
+                MainActor.assumeIsolated {
+                    guard let self, !self.closed, let id = self.session.documentId else { return }
+                    let ids = n.userInfo?["documentIds"] as? [String] ?? []
+                    guard ids.isEmpty || ids.contains(id) else { return }
+                    self.loadReviewMarks(documentId: id)
+                }
+            }
+            .store(in: &bag)
+        on(session.$tocShowsPDF) { s in s.session.applyTOC(); s.app.broadcastTOC() }
         on(session.$strokes) { s in
             s.persistInk()               // 笔画完成/擦除/框选移动时增量落库（liveStroke 变化不触发）
         }
@@ -357,6 +380,24 @@ final class DocTabModel: ObservableObject, Identifiable {
         loadHighlights(documentId: id)
         loadBookmarks(documentId: id)
         loadImageNotes(documentId: id)
+        loadCustomTOC(documentId: id)
+        loadReviewMarks(documentId: id)
+    }
+
+    /// 从库里重读自建目录（`TOC-REVIEW-PLAN.md §2`），按优先级重算生效目录；变了就补一次平板广播。
+    func loadCustomTOC(documentId id: String) {
+        let items = workspace.customTOC(documentId: id)
+        guard items != session.customTOC else { return }
+        session.customTOC = items
+        if items.isEmpty { session.tocShowsPDF = false }
+        session.applyTOC()
+        app.broadcastTOC()
+    }
+
+    /// 从库里重读本篇的回顾点（页边标记用）。
+    func loadReviewMarks(documentId id: String) {
+        let marks = workspace.reviewMarks(documentId: id)
+        if marks != session.reviewMarks { session.reviewMarks = marks }
     }
 
     /// 把可能还排在异步队列里的落库同步补齐（见 `close()` 的红线）。全部幂等。
@@ -615,7 +656,7 @@ final class DocTabModel: ObservableObject, Identifiable {
         session.scanAlign = nil                         // 扫描页对齐按内容记，下面拿到内容哈希后按库覆盖
         session.canvasMode = false                      // 画板模式逐文档记，同上按库覆盖
         guard let id, let doc = workspace.document(id: id) else {
-            session.pdf = nil; missingDoc = nil; session.toc = []; session.title = ""
+            session.pdf = nil; missingDoc = nil; session.pdfTOC = []; session.customTOC = []; session.tocShowsPDF = false; session.reviewMarks = []; session.toc = []; session.title = ""
             clearInk(); clearInkLayers(); clearTextNotes(); clearHighlights(); clearBookmarks(); clearScratch()
             clearAIThreads(); clearImageNotes()
             session.reloadOCRState(); return
@@ -628,7 +669,7 @@ final class DocTabModel: ObservableObject, Identifiable {
             session.pdf = nil
             session.title = ""
             missingDoc = doc                       // 所有路径失效 → 显示重定位提示
-            session.toc = []
+            session.pdfTOC = []; session.customTOC = []; session.tocShowsPDF = false; session.reviewMarks = []; session.toc = []
             clearInk()
             clearInkLayers()
             clearTextNotes()
@@ -646,7 +687,10 @@ final class DocTabModel: ObservableObject, Identifiable {
         // 扫描页对齐（`SCAN-ALIGN-PLAN.md`）：**必须赶在一切出图 / 布局 / 平板广播之前**——它决定了「页面」长什么样
         session.scanAlign = workspace.scanAlign(contentHash: target.hash, pageCount: pdf.pageCount)
         if let trace { OpenStats.bind(trace, docKey: session.displayKey) }   // 从此视图层/笔迹层按 docKey 找得到账本
-        session.toc = []
+        session.pdfTOC = []; session.customTOC = []; session.tocShowsPDF = false; session.reviewMarks = []; session.toc = []
+
+        trace.phase("自建目录") { loadCustomTOC(documentId: id) }   // 自建目录先到（PDF 目录在后台解析，到了再按优先级合）
+        trace.phase("回顾点") { loadReviewMarks(documentId: id) }
         buildTOC(documentId: id, path: target.path)   // 目录在后台建（账本记里程碑「目录到位」），先空着
         trace.phase("OCR") { session.reloadOCRState() }   // 换文档重置 OCR；该内容已有缓存则自动启用
         resetInk(documentId: id)                   // 笔迹归零；首窗在下面读到进度页之后装（读库+解码全在后台，账本记里程碑「笔迹到位」）
@@ -731,7 +775,8 @@ final class DocTabModel: ObservableObject, Identifiable {
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             await MainActor.run { [weak self] in
                 guard let self, !self.closed, self.session.documentId == id, self.session.contentHash == hash else { return }
-                self.session.toc = toc
+                self.session.pdfTOC = toc
+                self.session.applyTOC()
                 self.app.broadcastTOC()
                 var n = 0
                 func count(_ es: [TOCEntry]) { for e in es { n += 1; count(e.children) } }
@@ -1455,7 +1500,7 @@ extension DocTabModel {
     /// 本机正在改的优先，别的类不受影响。阅读进度、窗口位置一概不碰——**不把正在读的人拽走**。
     func applyRemote(_ rows: [SyncWire.PulledRow]) {
         guard let docId = session.documentId, noteRef == nil else { return }
-        enum Kind { case text, ai, highlight, image, bookmark, layers, noteTypes }
+        enum Kind { case text, ai, highlight, image, bookmark, layers, noteTypes, customTOC, review }
         var kinds = Set<Kind>()
         var inkPages = Set<Int>()
         var inkDeletes = Set<UUID>()
@@ -1471,6 +1516,8 @@ extension DocTabModel {
                     else if session.persistedBookmarks[u] != nil { kinds.insert(.bookmark) }
                     else if session.persistedAIThreads[u] != nil { kinds.insert(.ai) }
                     else if session.persistedStrokes[u] != nil { inkDeletes.insert(u) }
+                    else if session.customTOC.contains(where: { $0.id == u }) { kinds.insert(.customTOC) }
+                    else if session.reviewMarks.contains(where: { $0.id == u }) { kinds.insert(.review) }
                 } else if let row = r.row.map(SyncWire.sqliteRow), row["document_id"] as? String == docId {
                     switch row["kind"] as? Int64 {
                     case Int64(TextNote.noteKind): kinds.insert(.text)
@@ -1479,6 +1526,8 @@ extension DocTabModel {
                     case Int64(ImageNote.noteKind): kinds.insert(.image)
                     case Int64(Bookmark.noteKind): kinds.insert(.bookmark)
                     case Int64(InkStroke.noteKind): if let p = row["page"] as? Int64 { inkPages.insert(Int(p)) }
+                    case Int64(CustomTOCItem.noteKind): kinds.insert(.customTOC)
+                    case Int64(ReviewMark.noteKind): kinds.insert(.review)
                     default: break
                     }
                 }
@@ -1545,6 +1594,8 @@ extension DocTabModel {
             let types = workspace.noteTypes()
             if types != session.noteTypes { session.noteTypes = types }
         }
+        if kinds.contains(.customTOC) { loadCustomTOC(documentId: docId) }
+        if kinds.contains(.review) { loadReviewMarks(documentId: docId) }   // 整个工作区的回顾列表由 `applyRemoteRows` 发通知刷
         if !inkPages.isEmpty || !inkDeletes.isEmpty { applyRemoteInk(documentId: docId, pages: inkPages, deletes: inkDeletes) }
     }
 

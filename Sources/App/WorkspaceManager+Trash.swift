@@ -416,7 +416,9 @@ extension WorkspaceManager {
         if entry.manifest.kind == .annotations {
             NotificationCenter.default.post(name: Trash.annotationsRestored, object: self,
                                             userInfo: ["documentId": entry.manifest.documentId])
+            if entry.manifest.counts.review > 0 { postReviewsChanged([entry.manifest.documentId]) }
         }
+        if entry.manifest.kind == .document { postReviewsChanged([]) }   // 整篇放回：它的回顾点也回来了
         return true
     }
 

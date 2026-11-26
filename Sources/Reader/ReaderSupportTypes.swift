@@ -212,7 +212,7 @@ enum InspectorTab: Hashable { case info, thumbnails, contents, notes, links, tod
 
 /// 「笔记」页的二级分区（文字 / 高亮 / 图片 / 书签 / 笔迹 / 草稿纸 / AI 全堆一页太多，一次只显示一类）。
 enum NotesSection: String, CaseIterable, Identifiable {
-    case text, highlight, image, bookmark, ink, scratch, ai
+    case text, highlight, image, bookmark, review, ink, scratch, ai
 
     var id: String { rawValue }
 
@@ -223,6 +223,7 @@ enum NotesSection: String, CaseIterable, Identifiable {
         case .highlight: return "highlighter"
         case .image: return "photo"
         case .bookmark: return "bookmark"
+        case .review: return "arrow.trianglehead.2.clockwise"
         case .ink: return "scribble"
         case .scratch: return "square.and.pencil"
         case .ai: return "bubble.left.and.bubble.right"
@@ -235,6 +236,7 @@ enum NotesSection: String, CaseIterable, Identifiable {
         case .highlight: return L("Highlights")
         case .image: return L("Image Notes")
         case .bookmark: return L("Bookmarks")
+        case .review: return L("Reviews")
         case .ink: return L("Ink")
         case .scratch: return L("Scratchpads")
         case .ai: return L("AI Chats")

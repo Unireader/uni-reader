@@ -209,6 +209,30 @@ extension ReaderView {
                     return m
                 }
             }
+            // 回顾点：页左缘一枚淡紫小圆钉（`TOC-REVIEW-PLAN.md §3`）；同一处几枚往下错开
+            var reviewSlots: [String: Int] = [:]
+            for m in session.reviewMarks where range.contains(m.page) {
+                let pr = displayPageRect(m.page)
+                let key = "r-\(m.id.uuidString)"
+                wantPins.insert(key)
+                let pin = pinView(key)
+                pin.kind = .review
+                let size = ReaderPinView.scratchSize
+                let slotKey = "\(m.page)|\(Int((m.frac * 200).rounded()))"
+                let slot = reviewSlots[slotKey, default: 0]
+                reviewSlots[slotKey] = slot + 1
+                let y = m.frac * pr.height + CGFloat(slot) * (size.height + 2)
+                let c = CGPoint(x: size.width / 2 + 4, y: min(max(y, size.height / 2 + 2), pr.height - size.height / 2 - 2))
+                place(pin, center: c, in: pr)
+                pin.toolTip = m.remark.isEmpty ? "\(m.tag) · \(String(format: L("Period %d"), m.period))"
+                    : "\(m.tag) · \(String(format: L("Period %d"), m.period))\n\(m.remark)"
+                let id = m.id
+                pin.onClick = { [weak self] in self?.showReviewPopover(id) }
+                pin.onHover = nil
+                pin.clampDrag = nil
+                pin.onDragEnd = nil
+                pin.menuProvider = nil
+            }
         }
         for (k, v) in overlay.pins where !wantPins.contains(k) {
             v.removeFromSuperview()

@@ -126,9 +126,26 @@ final class DocSession: ObservableObject, Identifiable {
     /// 当前会话对应的逻辑文档 id（笔迹持久化用；nil = 未加载文档）。
     var documentId: String?
 
-    /// 当前 PDF 的目录树（`loadSelected` 载入时构建）。侧栏 Inspector 与平板 `toc` 广播共用同一份。
-    /// `@Published` 安全：只在换文档时写一次，不是每帧量（对比 `readZoom` 的性能红线注释）。
+    /// **当前生效的目录树**：有自建目录且没切回 PDF 目录时 = 自建目录，否则 = PDF 自带目录（`TOC-REVIEW-PLAN.md §2`）。
+    /// 侧栏 Inspector、平板 `toc` 广播、「所在章节」提示共用同一份。只经 `applyTOC()` 写。
+    /// `@Published` 安全：只在换文档 / 改目录时写，不是每帧量（对比 `readZoom` 的性能红线注释）。
     @Published var toc: [TOCEntry] = []
+    /// PDF 自带的目录（后台解析，`DocTabModel.buildTOC`）。
+    var pdfTOC: [TOCEntry] = []
+    /// 自建目录（note kind=7，已排好序）。
+    @Published var customTOC: [CustomTOCItem] = []
+    /// 用户把目录页切回了「PDF 自带目录」（只在内存，换文档复位）。
+    @Published var tocShowsPDF = false
+    /// 目录页此刻显示的是自建目录。
+    var tocIsCustom: Bool { !customTOC.isEmpty && !tocShowsPDF }
+
+    /// 按上面三样重算 [toc]。
+    func applyTOC() {
+        toc = tocIsCustom ? CustomTOCItem.entries(customTOC) : pdfTOC
+    }
+
+    /// 这篇文档的回顾点（note kind=8，`ReviewMark.before` 序）。页边标记、Inspector 回顾分区用。
+    @Published var reviewMarks: [ReviewMark] = []
 
     // MARK: 所属工作区的快照（`ContentView.syncWorkspaceSnapshot` 注入，主线程写）
     //
@@ -960,6 +977,9 @@ final class DocSession: ObservableObject, Identifiable {
         contentHash = ""     // 在途 OCR 任务回主线程时按 hash 自弃（既有机制），不会再动已清空的状态
         store = nil
         toc = []
+        pdfTOC = []
+        customTOC = []
+        reviewMarks = []
         weak var probe = pdf
         pdf = nil
         // 诊断：`pdf` 置 nil 后这份文档理应立刻销毁；若 SwiftUI 视图树还吊着它（阅读区/缩略图列表

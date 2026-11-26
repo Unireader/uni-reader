@@ -60,6 +60,12 @@ extension ReaderView {
         m.addItem(importItem)
         m.addItem(.separator())
         m.addItem(ClosureMenuItem(L("Add Bookmark Here")) { [weak self] in self?.addBookmarkAtCursor() })
+        let review = ClosureMenuItem(L("Add Review Point Here…")) { [weak self] in self?.addReviewAtCursor() }
+        review.isEnabled = docOK
+        m.addItem(review)
+        let tocItem = ClosureMenuItem(L("Add Contents Entry Here…")) { [weak self] in self?.addTOCEntryAtCursor() }
+        tocItem.isEnabled = docOK
+        m.addItem(tocItem)
         m.addItem(ClosureMenuItem(L("New Scratchpad Here")) { [weak self] in self?.newScratchPadAtCursor() })
         if AIPanelModel.shared.enabled {
             m.addItem(.separator())
@@ -94,6 +100,52 @@ extension ReaderView {
             highlightPopover = nil
             p.close()
         }
+    }
+
+    // MARK: 回顾点气泡（`TOC-REVIEW-PLAN.md §3`）
+
+    func showReviewPopover(_ id: UUID) {
+        guard let m = session.reviewMarks.first(where: { $0.id == id }), let pin = overlay.pins["r-\(id.uuidString)"] else { return }
+        let ws = workspace
+        let vc = NSViewController()
+        let tag = NSTextField(labelWithString: "\(m.tag) · \(String(format: L("Period %d"), m.period))")
+        tag.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+        tag.textColor = .labelColor   // 气泡是材质底：文字一律主色（红线）
+        var views: [NSView] = [tag]
+        if !m.remark.isEmpty {
+            let remark = NSTextField(wrappingLabelWithString: m.remark)
+            remark.textColor = .labelColor
+            remark.maximumNumberOfLines = 6
+            remark.preferredMaxLayoutWidth = 240
+            views.append(remark)
+        }
+        var sub = String(format: L("Page %d"), m.page + 1)
+        if m.reviews > 0 { sub += " · " + String(format: L("Reviewed %d time(s)"), m.reviews) }
+        let page = NSTextField(labelWithString: sub)
+        page.font = .preferredFont(forTextStyle: .caption1)
+        page.textColor = .labelColor
+        views.append(page)
+        let pop = NSPopover()
+        pop.behavior = .transient
+        let done = NSButton(title: String(format: L("Reviewed — move to period %d"), m.period + ReviewMark.advanceStep), target: nil, action: nil)
+        let edit = NSButton(title: L("Edit…"), target: nil, action: nil)
+        let delete = NSButton(title: L("Delete"), target: nil, action: nil)
+        delete.hasDestructiveAction = true
+        views += [separator(), done, edit, delete]
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        vc.view = stack
+        pop.contentViewController = vc
+        let actions = ButtonActions()
+        actions.bind(done) { [weak pop] in pop?.close(); TOCReviewActions.advanceReview(m, ws) }
+        actions.bind(edit) { [weak self, weak pop] in pop?.close(); TOCReviewActions.editReview(m, ws, window: self?.window) }
+        actions.bind(delete) { [weak pop] in pop?.close(); TOCReviewActions.deleteReview(m, ws) }
+        objc_setAssociatedObject(pop, &ButtonActions.key, actions, .OBJC_ASSOCIATION_RETAIN)
+        pop.show(relativeTo: pin.bounds, of: pin, preferredEdge: .maxX)
     }
 
     // MARK: 书签气泡

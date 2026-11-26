@@ -180,6 +180,10 @@ final class MCPServer: ObservableObject {
     (highlight rectangles inside one PDF), read_markdown or list_annotations. \
     update_annotations changes existing text notes, highlights, bookmarks and image-note captions in place; \
     update_document renames a document in the library or changes its group. \
+    A PDF without a usable outline can get custom contents stored in the workspace (the PDF file is not changed): \
+    get_document returns them as toc (toc_source tells which), set_toc writes the whole list. \
+    Review points (回顾点) mark spots in PDFs for periodic review, each with a tag, a remark and a period number \
+    (no dates): list_reviews / add_reviews / update_reviews (advance = reviewed, move later) / delete_reviews. \
     Boards (画板笔记) are handwritten whiteboards: list_boards lists them, render_board shows one as an image so you \
     can read the handwriting, open_board shows it to the user. \
     One workspace is one subject; its notes, PDF pages and annotations are linked by what is written in notes and \
