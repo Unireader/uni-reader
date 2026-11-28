@@ -30,6 +30,42 @@ final class ReaderScrollView: NSScrollView {
     /// 普通滚轮在交给系统之前先问一句（笔记卡片滚到头要吞掉等，第 2 步）。返回 true = 吞掉。
     var shouldSwallowWheel: ((NSEvent) -> Bool)?
 
+    /// 图钉 / 笔记卡片的宿主（`ReaderOverlayView.floatHost`）：始终排在 clip view **正上方**、系统的工具栏边缘效果
+    /// （`NSScrollPocket`，Tahoe 起是滚动视图的私有子视图）之下，卡片因此和页面一样在玻璃后面透出来、被模糊盖住。
+    /// 不在 clip view 里放，是因为那里会跟着放大倍率一起缩放（卡片要屏幕上固定大小）。
+    /// pocket 是滚动视图第一次布局时才补进来的（换滚动条等时还会再加子视图），而 NSScrollView 每加一个子视图
+    /// 都按自己的规则重排一遍：认识的排好、不认识的（宿主）甩到最上面，压在 pocket 之上。
+    /// 离屏实测 2026-11-28：在 `addSubview` / `didAddSubview` 里**当场**纠正会被它随后的重排盖掉，
+    /// 所以排到主队列下一轮再纠正；纠正之后滚动 / 缩放 / tile / 改窗口大小都不会再动它。
+    var floatHost: NSView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            if let h = floatHost { addSubview(h) }
+        }
+    }
+    private var floatHostCheckQueued = false
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        guard floatHost != nil, !floatHostCheckQueued else { return }
+        floatHostCheckQueued = true
+        DispatchQueue.main.async { [weak self] in
+            self?.floatHostCheckQueued = false
+            self?.keepFloatHostAboveClip()
+        }
+    }
+
+    /// 宿主不在 clip view 正上方时，原地重排子视图数组（给 `subviews` 赋值是纯重排，不会把视图摘下再装回）。
+    private func keepFloatHostAboveClip() {
+        guard let h = floatHost, h.superview === self,
+              let ci = subviews.firstIndex(where: { $0 === contentView }) else { return }
+        if ci + 1 < subviews.count, subviews[ci + 1] === h { return }
+        var list = subviews.filter { $0 !== h }
+        let at = (list.firstIndex(where: { $0 === contentView }) ?? list.count - 1) + 1
+        list.insert(h, at: at)
+        subviews = list
+    }
+
     override func scrollWheel(with event: NSEvent) {
         if event.modifierFlags.contains(.command), event.momentumPhase == [] {
             var delta = event.scrollingDeltaY

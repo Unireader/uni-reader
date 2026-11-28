@@ -207,6 +207,7 @@ final class ReaderView: NSView {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         scrollView.onCommandWheel = { [weak self] factor, p in self?.commandWheel(factor: factor, docPoint: p) ?? false }
+        scrollView.floatHost = overlay.floatHost   // 图钉 / 笔记卡片插在页面与工具栏边缘效果之间
         overlay.translatesAutoresizingMaskIntoConstraints = false
         addSubview(overlay)
         NSLayoutConstraint.activate([
@@ -280,7 +281,6 @@ final class ReaderView: NSView {
 
     func applyInsets() {
         let top = topInset + Self.topGap
-        overlay.topOcclusion = topInset
         let ci = scrollView.contentInsets
         if ci.top != top || ci.right != panelInset || ci.left != 0 || ci.bottom != 0 {
             scrollView.contentInsets = NSEdgeInsets(top: top, left: 0, bottom: 0, right: panelInset)

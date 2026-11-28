@@ -2,27 +2,26 @@ import AppKit
 import QuartzCore
 
 /// 阅读区上方的覆盖层（与滚动视图同大，flipped，**屏幕点**坐标）：放那些「屏幕上固定大小、不随页面缩放」的东西——
-/// 图钉、笔记气泡、框选路径 / 选中框 / 手柄 / 光晕、框选文字的虚线框、橡皮圈、平板笔尖光标、长按进度环、
+/// 图钉、笔记气泡（这两样实际挂在滚动视图里，见下）、框选路径 / 选中框 / 手柄 / 光晕、框选文字的虚线框、橡皮圈、平板笔尖光标、长按进度环、
 /// 环形选笔盘、截图框、提示条。页面滚动 / 缩放时由 `ReaderView.layoutOverlay` 重新摆放。
 ///
 /// 命中：只有图钉 / 气泡（及提示条之外的交互子视图）接鼠标，其余位置返回 nil，事件落到下面的滚动视图。
+///
+/// 🔴 图钉 / 笔记卡片**不在本视图里**：它们住在 `floatHost`，由 `ReaderScrollView` 插在页面（clip view）与系统的
+/// 工具栏边缘效果（`NSScrollPocket`）之间——这样卡片和页面一样从工具栏玻璃后面透出来、被同一层模糊盖住，
+/// 工具栏按钮的深浅也按它们算（2026-11-28 用户报：卡片被裁在工具栏下沿、却仍触发工具栏重判深浅）。
+/// 以前（`c35c5574`）是在这里把它们裁到工具栏下沿，别再改回去。本视图与滚动视图同大，坐标一致。
 final class ReaderOverlayView: NSView {
     override var isFlipped: Bool { true }
-
-    /// 窗口工具栏盖住的顶部高度（屏幕点）。阅读区本身仍铺到工具栏后面，让页面从玻璃后透过去；
-    /// 只有图钉 / 笔记卡片在这里明确裁到工具栏下沿，避免它们作为交互浮层画到工具栏之上。
-    var topOcclusion: CGFloat = 0 {
-        didSet {
-            if abs(oldValue - topOcclusion) > 0.5 { needsLayout = true }
-        }
-    }
 
     // 图钉 / 气泡（键：见 `ReaderView+Overlay`）
     var pins: [String: ReaderPinView] = [:]
     var noteBubbles: [UUID: NoteBubbleNSView] = [:]
     var imageBubbles: [UUID: ImageBubbleNSView] = [:]
 
-    /// 装图钉与气泡的容器（在形状图层之下；气泡盖住图钉，所以气泡后加）。
+    /// 图钉与气泡的宿主：装进滚动视图（见上），frame 跟本视图的 bounds 一致（`layout()` 里同步）。
+    let floatHost = PassThroughView()
+    /// 装图钉与气泡的容器（气泡盖住图钉，所以气泡后加）。
     let pinLayerView = PassThroughView()
     let bubbleLayerView = PassThroughView()
 
@@ -45,11 +44,12 @@ final class ReaderOverlayView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        floatHost.wantsLayer = true
+        floatHost.layer?.masksToBounds = true
         for v in [pinLayerView, bubbleLayerView] {
             v.frame = bounds
             v.wantsLayer = true
-            v.layer?.masksToBounds = true
-            addSubview(v)
+            floatHost.addSubview(v)
         }
         let accent = NSColor.controlAccentColor
         lassoPath.fillColor = accent.withAlphaComponent(0.06).cgColor
@@ -111,19 +111,16 @@ final class ReaderOverlayView: NSView {
 
     override func layout() {
         super.layout()
-        let top = min(max(topOcclusion, 0), bounds.height)
-        let visible = NSRect(x: bounds.minX, y: bounds.minY + top,
-                             width: bounds.width, height: bounds.height - top)
-        for v in [pinLayerView, bubbleLayerView] {
-            // frame 与 bounds 使用同一坐标原点：子视图仍按覆盖层全局坐标摆放，只裁掉顶部。
-            if v.frame != visible { v.frame = visible }
-            if v.bounds != visible { v.bounds = visible }
+        // 宿主在滚动视图里、滚动视图与本视图同大：直接用本视图的 bounds（左上原点、屏幕点）。
+        if floatHost.frame != bounds { floatHost.frame = bounds }
+        for v in [pinLayerView, bubbleLayerView] where v.frame != floatHost.bounds {
+            v.frame = floatHost.bounds
         }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let v = super.hitTest(point)
-        return (v === self || v === pinLayerView || v === bubbleLayerView || v === radial || v === toast
+        return (v === self || v === radial || v === toast
                 || v?.isDescendant(of: toast) == true) ? nil : v
     }
 
