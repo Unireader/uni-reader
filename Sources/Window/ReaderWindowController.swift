@@ -134,7 +134,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // 我们刚恢复的位置（AppKit 文档原话：设了 frame 记忆就该把它关掉）。多开时的错位由
         // `AppDelegate.openReaderWindow` 自己做。
         shouldCascadeWindows = false
-        if initialFrame == nil { restoreFrame(win) }
+        // 开成标签组里的新标签：建界面时装 `contentViewController` 会把窗口按内容压小，这里摆回宿主的外框
+        //（不摆回的话这个压小的尺寸随后被存进窗口记忆，下次开窗就是小的——用户 2026-11-28 报「不会恢复上次的尺寸」）
+        if let f = initialFrame { if win.frame != f { win.setFrame(f, display: false) } } else { restoreFrame(win) }
         frameRestored = true
         // 切到这个标签时（系统先 `makeKey` 再 `order`，离屏实测 2026-11-28）：后台标签先把界面建出来，
         // 再照刚才在最前面的那个标签摆好侧栏 / Inspector（切标签时这些不跳）
@@ -150,6 +152,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     /// 界面建了没有（`realizeChrome`）。
     private var chromeRealized = false
+
 
     /// 侧栏选中当场跟上本标签显示的内容（新开的标签装好内容后调：窗口先露面、内容后装，等订阅下一拍才同步的话，
     /// 那一行先不亮、过一下才亮——用户报「点了会闪烁一下」）。
@@ -230,11 +233,14 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // 后建的：装 `contentViewController` 会把窗口按内容压小，建完照标签组里看得见的那扇（没有就照自己）摆回去
         let keepFrame: NSRect? = frameRestored
             ? (win.tabGroup?.windows.first { $0 !== win && $0.isVisible }?.frame ?? win.frame) : nil
-        buildPanes()
-        win.contentViewController = splitVC
+        // 🔴 **先挂工具栏、再放界面**（2026-11-28 采样）：反过来的话，挂工具栏时窗口要让出工具栏的高度，
+        // 刚放进去的整个界面被完整重排一遍（`setToolbar:` → `_layoutViewTree`，新开一个标签的耗时里占了一大半）。
+        // 空窗口挂工具栏几乎不花钱；工具栏里跟着分栏线走的两个占位项照样对得上（离屏实测两种次序位置一致）。
         win.toolbarStyle = .unified
         win.toolbar = makeToolbar()
         adoptNewToolbarItems()
+        buildPanes()
+        win.contentViewController = splitVC
         observeToolbarStates()
         observeAgentPreload()
         if let keepFrame, win.frame != keepFrame { win.setFrame(keepFrame, display: false) }

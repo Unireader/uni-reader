@@ -438,3 +438,19 @@ CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key
 - `open_board`：`AppDelegate.showBoard`（规则同 `showDocument`），受「跟随 Agent」管。
 - `get_state` 的画板标签报 `content_type: board` + `board_id`。
 - 验证：离屏造一页横线纸画板（L 形、斜线、上红下蓝的图）出图目检：方向、格线、图片上下都对（测试替身只换了编码函数）；Mac Debug 编译通过。🔴 没对着运行中的 App 跑过。
+
+## 打开 / 滚动随页数变慢（2026-11-28，Mac）
+
+用户：「草稿纸页数越多打开越慢」「小草稿纸打开速度很快」。原因都是「对整块笔迹的重复全量处理」（同安卓 `PACKED-POINTS-PLAN.md` 的思路，
+但 Mac 的点集本来就是值类型数组、连续存放，换存储没收益，改的是重复的全量计算）：
+- `DocSession.strokes(pad:)` 每次都把整个画板的笔迹筛一遍、复制一份；草稿纸视图的 `hasContent` / 提示 / 选中检查 / 内容范围都调它，
+  视口每变一次（滚动、缩放的每一帧）就调好几遍。→ 按 `scratchStrokesRevision`（`scratchStrokes` 每改一次加一）缓存。
+- 内容范围 `contentBounds` 每次逐点算外框，视口夹取（`ScratchBounds.clamp`）每帧都要。→ `DocSession.inkBounds(pad:)` 同样按修订号缓存。
+- 小地图：蓝色视口框原来就不跟着动——属性变了经外层 `needsDisplay` 转发给画布，那条转发不生效（打点：视口一直在报、只画过第一次）；
+  改成直接 `canvas.needsDisplay`。框能动之后每帧逐点重画全部笔迹很卡 → 范围在笔迹变了才算；骨架按笔迹范围本身出一张图缓存
+  （与视口无关，视口跑到内容外面也不失效），每帧只按取景缩放贴图 + 画视口框。
+- 读库：画板笔迹逐条顺序解（每条一段 JSON + 点集 + 分页的页原点平移）。→ `InkStroke.decodeBoardItems` 多核并行（同 PDF 的 `decodeAll`）。
+- 同日：草稿纸去掉 0.16 秒淡入淡出（用户要求）。打开耗时打点 `[BOARD]`（`BoardOpenTrace`）留着。
+- **笔迹 / 图改后台装载**（用户：「窗口显示出来后再加载都可以」）：`DocTabModel.loadBoard` 当场只装画板与页，草稿纸带着空白页先出来；
+  `Task.detached` 读 `boardItems` + `WorkspaceManager.decodeBoardContents`（纯计算、多核并行）→ 主线程 `applyLoadedBoard` 一次放进去。
+  对账快照先置空、与内容一起换上；读的过程中新画 / 新贴的合并保留；`boardLoadToken` 防晚到的结果落进换过内容的标签。MCP 读画板直接查库，不受影响。

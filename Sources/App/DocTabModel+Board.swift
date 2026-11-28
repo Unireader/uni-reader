@@ -51,11 +51,14 @@ extension DocTabModel {
         loadBoard(b)
     }
 
+    /// 装一篇画板。🔴 **笔迹 / 图在后台读库、解码**（2026-11-28，用户：「页数多的 board 还是慢…窗口显示出来后再加载都可以」）：
+    /// 这里当场只装画板本身和页（轻），草稿纸马上带着空白的页出来；笔迹和图读完回主线程一次放进去。
+    /// 对账快照先置空、读完与内容一起换上——落库对账不会把「还没读到的」当成删掉；读的过程中新画的笔照样留着（合并进去）。
     private func loadBoard(_ b: BoardNote) {
-        BoardOpenTrace.mark("装载画板：读库开始")
+        BoardOpenTrace.mark("装载画板：读页")
         let pages = workspace.boardPages(id: b.id)
-        let (strokes, images) = workspace.boardContents(id: b.id, pages: pages)
-        BoardOpenTrace.mark("装载画板：读库完（\(pages.count) 页，\(strokes.count) 笔，\(images.count) 图）")
+        let token = UUID()
+        boardLoadToken = token
         session.persistedBoardPages = Dictionary(uniqueKeysWithValues: pages.map { ($0.id, $0) })
         session.boardPages = pages
         session.scratchUndo.reset()
@@ -65,21 +68,46 @@ extension DocTabModel {
         // 刚读出来的东西当成「新增」再写一遍，或把上一篇的东西当成「已删」删库。
         session.persistedBoard = b
         session.persistedScratchPads = [b.id: b.asPad]
-        session.persistedScratchStrokes = Dictionary(uniqueKeysWithValues: strokes.map { ($0.id, $0) })
-        session.persistedBoardImages = Dictionary(uniqueKeysWithValues: images.map { ($0.id, $0) })
+        session.persistedScratchStrokes = [:]
+        session.persistedBoardImages = [:]
         session.boardScrollAnchor = nil   // 上一篇的同步位置别补发给平板（这一篇的等画板视图摆好再报）
         session.board = b
         session.title = b.displayName
         session.scratchLive = nil
         session.scratchPads = [b.asPad]
-        session.scratchStrokes = strokes
-        session.boardImages = images
+        session.scratchStrokes = []
+        session.boardImages = []
         session.openPadID = b.id
         boardID = b.id
         if isActive { app.setActive(session) }
         app.sessionChanged(session)
         app.sessionDocumentChanged(session)   // 标题 / 平板 `boards.kind` 都变了
-        BoardOpenTrace.mark("装载画板：会话赋值完")
+        BoardOpenTrace.mark("装载画板：画板与 \(pages.count) 页就位，后台读笔迹")
+        guard let store = workspace.store else { return }
+        let id = b.id
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let items = (try? store.boardItems(boardId: id.uuidString)) ?? []
+            let (strokes, images) = WorkspaceManager.decodeBoardContents(items: items, pages: pages, boardId: id)
+            await MainActor.run { [weak self] in
+                self?.applyLoadedBoard(id: id, token: token, strokes: strokes, images: images)
+            }
+        }
+    }
+
+    /// 后台读完的笔迹 / 图放进来（口令对不上 = 期间换了别的内容或重装了，丢弃）。
+    private func applyLoadedBoard(id: UUID, token: UUID, strokes: [InkStroke], images: [BoardImage]) {
+        guard !closed, boardLoadToken == token, session.board?.id == id else { return }
+        BoardOpenTrace.mark("装载画板：笔迹读完（\(strokes.count) 笔，\(images.count) 图）")
+        let strokeIDs = Set(strokes.map(\.id)), imageIDs = Set(images.map(\.id))
+        // 读的过程中新画的 / 新贴的（库里还没有，或刚落的库后台没读到）：接在后面，别丢
+        let newStrokes = session.scratchStrokes.filter { !strokeIDs.contains($0.id) }
+        let newImages = session.boardImages.filter { !imageIDs.contains($0.id) }
+        for s in strokes { session.persistedScratchStrokes[s.id] = s }   // 快照先于数组（同上）
+        for im in images { session.persistedBoardImages[im.id] = im }
+        session.scratchStrokes = strokes + newStrokes
+        session.boardImages = images + newImages
+        app.sessionChanged(session)
+        BoardOpenTrace.end("装载画板：笔迹放进会话")
     }
 
     /// 开着服务器工作区时别的设备改了这篇画板（行已经写进库）：整篇重读（`SERVER-MODE-PLAN.md §13.13`）。

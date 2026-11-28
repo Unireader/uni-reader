@@ -547,18 +547,15 @@ final class ReaderPaneController: NSViewController {
         let key = s.board.map { BoardNote.rowPrefix + $0.id.uuidString } ?? readerView?.docKey ?? ""
         // 阅读区重建过（换了显示身份）也要重建：新阅读区是插在最底下那一层之上的，旧纸会被它盖住
         if let cur = scratchPad, cur.padID == want, cur.session === s, cur.docKey == key { return }
+        // 不淡入淡出（用户 2026-11-28：「移除 0.16 秒的淡入」）：旧纸直接摘、新纸直接出现
         if let old = scratchPad {
             scratchPad = nil
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.16
-                old.animator().alphaValue = 0
-            }, completionHandler: { old.removeFromSuperview() })
+            old.removeFromSuperview()
         }
         guard let id = want, readerView != nil || s.isBoard else { return }
         BoardOpenTrace.mark("窗格：建草稿纸视图")
         let v = ScratchPadNSView(app: app, session: s, padID: id, docKey: key)
         v.workspace = workspace
-        v.alphaValue = 0
         if let r = readerView {
             view.addSubview(v, positioned: .above, relativeTo: r)
         } else {
@@ -566,10 +563,6 @@ final class ReaderPaneController: NSViewController {
         }
         scratchPad = v
         layoutChrome()
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.16
-            v.animator().alphaValue = 1
-        }
     }
 
     /// 当前内容的查找状态。PDF 仍由 `DocSession` 管；Markdown 笔记由编辑器按屏幕上的 display text 管。

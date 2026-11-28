@@ -366,7 +366,11 @@ final class DocSession: ObservableObject, Identifiable {
     @Published var openPadID: UUID?
     /// **全部**草稿纸上的已完成笔迹（不分纸；点集是画布坐标）。渲染时按 `padId` 过滤一次即可
     /// ——同时只可能开一张纸，不像页内笔迹要每帧按页分桶，故不做 `visibleStrokesByPage` 那种批量版。
-    @Published var scratchStrokes: [InkStroke] = []
+    @Published var scratchStrokes: [InkStroke] = [] { didSet { scratchStrokesRevision &+= 1 } }
+    /// 每改一次 `scratchStrokes` 加一：按纸过滤的结果、笔迹外框都按它缓存（`strokes(pad:)` / `inkBounds(pad:)`）。
+    private(set) var scratchStrokesRevision = 0
+    private var padStrokesCache: (rev: Int, pad: UUID, list: [InkStroke])?
+    private var padBoundsCache: (rev: Int, pad: UUID, bounds: CGRect?)?
     /// 已落库的草稿纸笔迹快照（id → 值），增量对账用，非 @Published。
     var persistedScratchStrokes: [UUID: InkStroke] = [:]
     /// 草稿纸上正在书写的那一笔（与页内的 `liveStroke` 分开，免得两条链路互相看见对方的半成品）。
@@ -414,7 +418,23 @@ final class DocSession: ObservableObject, Identifiable {
 
     var openPad: ScratchPad? { scratchPads.first { $0.id == openPadID } }
     /// 某张草稿纸上的笔迹（按原顺序）。
-    func strokes(pad: UUID) -> [InkStroke] { scratchStrokes.filter { $0.padId == pad } }
+    /// 一张纸上的笔迹。🔴 **按修订号缓存**（2026-11-28，用户：「草稿纸页数越多打开越慢」）：草稿纸视图里 `hasContent` /
+    /// 内容范围 / 视口夹取每次视口变化（滚动、缩放的每一帧）都要它，原来每次都把整个画板的笔迹筛一遍、复制一份。
+    func strokes(pad: UUID) -> [InkStroke] {
+        if let c = padStrokesCache, c.rev == scratchStrokesRevision, c.pad == pad { return c.list }
+        let list = scratchStrokes.filter { $0.padId == pad }
+        padStrokesCache = (scratchStrokesRevision, pad, list)
+        return list
+    }
+
+    /// 一张纸上笔迹的外框（画布坐标，不含线宽余量；没有笔迹 = nil）。同样按修订号缓存：原来视口每变一次都把每条笔迹的每个点
+    /// 过一遍（`ScratchBounds.contentBounds`），分页画板页数一多，打开和滚动都跟着慢。
+    func inkBounds(pad: UUID) -> CGRect? {
+        if let c = padBoundsCache, c.rev == scratchStrokesRevision, c.pad == pad { return c.bounds }
+        let b = ScratchBounds.contentBounds(strokes(pad: pad))
+        padBoundsCache = (scratchStrokesRevision, pad, b)
+        return b
+    }
 
     // 文字注解（note kind=0）。运行时驻留于此，阅读区(渲染标记)与 Inspector(列表) 共读；
     // 由 ContentView `.onChange` 增量对账落库（新增/编辑 upsert、删除 delete），与手写笔迹同套路。

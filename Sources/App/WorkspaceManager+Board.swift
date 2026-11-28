@@ -83,16 +83,20 @@ extension WorkspaceManager {
     /// 分页画板：页内坐标 → 画布坐标按 `pages` 的布局换算（`BOARD-NOTE-PLAN.md §9.2`）。
     func boardContents(id: UUID, pages: [BoardPage] = []) -> (strokes: [InkStroke], images: [BoardImage]) {
         let items = (try? store?.boardItems(boardId: id.uuidString)) ?? []
+        return Self.decodeBoardContents(items: items, pages: pages, boardId: id)
+    }
+
+    /// 画板条目 → 笔迹 + 图（纯计算，后台线程可调：打开画板时在后台解，`DocTabModel.loadBoard`）。
+    nonisolated static func decodeBoardContents(items: [LibBoardItem], pages: [BoardPage], boardId id: UUID)
+        -> (strokes: [InkStroke], images: [BoardImage]) {
         let layout = BoardLayout(pages: pages)
         var origins: [String: CGPoint] = [:]
         for (i, p) in pages.enumerated() { origins[p.id.uuidString] = layout.origin(i) }
         let origin: (String) -> CGPoint? = { origins[$0] }
-        var strokes: [InkStroke] = [], images: [BoardImage] = []
-        for it in items {
-            if it.kind == InkStroke.boardItemKind {
-                if let s = InkStroke(boardItem: it, padId: id, origin: origin) { strokes.append(s) }
-            } else if let im = BoardImage(item: it, origin: origin) { images.append(im) }
-        }
+        // 笔迹多核并行解（同 PDF 的 `InkStroke.decodeAll`）：每条都要解一段 JSON + 点集、分页的还要按页原点平移，
+        // 原来逐条顺序解，页数越多越慢（2026-11-28，用户：「草稿纸页数越多打开越慢」）
+        let strokes = InkStroke.decodeBoardItems(items.filter { $0.kind == InkStroke.boardItemKind }, padId: id, origin: origin)
+        let images = items.filter { $0.kind != InkStroke.boardItemKind }.compactMap { BoardImage(item: $0, origin: origin) }
         return (strokes, images)
     }
 

@@ -310,12 +310,25 @@ final class ScratchLassoCALayer: QuietLayer {
 
 /// 右下角缩略图：「全部笔迹包围盒 ∪ 当前视口」等比装进小窗，画笔迹骨架 + 当前视口框；点 / 拖即跳（回调画布坐标）。
 final class ScratchMinimapView: NSView {
-    var strokes: [InkStroke] = [] { didSet { needsDisplay = true } }
-    var viewport = ScratchViewport() { didSet { if oldValue != viewport { needsDisplay = true } } }
-    var viewSize: CGSize = .zero { didSet { if oldValue != viewSize { needsDisplay = true } } }
-    var pageRect: CGRect? { didSet { if oldValue != pageRect { needsDisplay = true } } }
+    // 🔴 变了直接让画布重画（`redraw`），别经本视图的 `needsDisplay` 转一手：本视图自己不画东西，那条转发实测不生效——
+    // 视口一直在报，小地图却只画了第一次，蓝色视口框不跟着动（2026-11-28 打点）。
+    var strokes: [InkStroke] = [] {
+        didSet {
+            inkBounds = ScratchBounds.contentBounds(strokes)   // 笔迹变了才逐点算一次（原来每画一帧都算）
+            strokesVersion &+= 1
+            redraw()
+        }
+    }
+    private var inkBounds: CGRect?
+    fileprivate var inkBoundsForMinimap: CGRect? { inkBounds }
+    /// 笔迹换过几次（骨架位图缓存的键）。
+    fileprivate private(set) var strokesVersion = 0
+    var viewport = ScratchViewport() { didSet { if oldValue != viewport { redraw() } } }
+    var viewSize: CGSize = .zero { didSet { if oldValue != viewSize { redraw() } } }
+    var pageRect: CGRect? { didSet { if oldValue != pageRect { redraw() } } }
     /// 画板笔记上的图（画布矩形）：画成淡框，也计入装框范围。
-    var imageRects: [CGRect] = [] { didSet { if oldValue != imageRects { needsDisplay = true } } }
+    var imageRects: [CGRect] = [] { didSet { if oldValue != imageRects { redraw() } } }
+    private func redraw() { canvas.needsDisplay = true }
     var onJump: (CGPoint) -> Void = { _ in }
 
     private let shell = NSVisualEffectView()
@@ -371,7 +384,8 @@ final class ScratchMinimapView: NSView {
 
     fileprivate func fit() -> Fit {
         let vis = viewport.visibleRect(viewport: viewSize)
-        var content = ScratchBounds.contentBounds(strokes, page: pageRect)
+        var content = inkBounds
+        if let pageRect { content = content.map { $0.union(pageRect) } ?? pageRect }
         for r in imageRects { content = content.map { $0.union(r) } ?? r }
         var w = content.map { $0.union(vis) } ?? vis
         if w.width < 1 || w.height < 1 { w = CGRect(x: -400, y: -300, width: 800, height: 600) }
@@ -396,6 +410,54 @@ private final class MinimapCanvas: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    /// 笔迹骨架的位图缓存：只按**笔迹范围本身**出一次图（与视口无关），每帧按当前取景把它缩放贴到对应位置。
+    /// 🔴 视口每变一次（滚动 / 缩放的每一帧）都要重画蓝色视口框；原来连同每条笔迹的每个点一起重画，很卡（2026-11-28 用户）。
+    /// 取景 = 内容 ∪ 视口，视口跑到内容外面时取景每帧都在变，所以缓存不能按取景记，按笔迹版本 / 尺寸 / 倍率 / 深浅记。
+    private struct SkeletonKey: Equatable {
+        var version: Int, size: CGSize, scale: CGFloat, dark: Bool
+    }
+    private var skeleton: (key: SkeletonKey, image: CGImage?, world: CGRect)?
+
+    /// 返回骨架图和它覆盖的画布范围。
+    private func skeletonImage(_ o: ScratchMinimapView, ink: NSColor) -> (CGImage, CGRect)? {
+        let scale = window?.backingScaleFactor ?? 2
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let key = SkeletonKey(version: o.strokesVersion, size: bounds.size, scale: scale, dark: dark)
+        if let c = skeleton, c.key == key { return c.image.map { ($0, c.world) } }
+        guard !o.strokes.isEmpty, let ib = o.inkBoundsForMinimap, ib.width > 0 || ib.height > 0 else {
+            skeleton = (key, nil, .zero)
+            return nil
+        }
+        // 画布范围留一点边（线宽），按小地图的像素尺寸出图：缩放贴回去时清晰度够用
+        let world = ib.insetBy(dx: -max(ib.width, 1) * 0.02 - 2, dy: -max(ib.height, 1) * 0.02 - 2)
+        let px = max(bounds.width, bounds.height) * scale * 2
+        let k = px / max(world.width, world.height)
+        let w = max(1, Int((world.width * k).rounded(.up))), h = max(1, Int((world.height * k).rounded(.up)))
+        var img: CGImage?
+        if let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                               space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                               bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
+            ctx.translateBy(x: 0, y: CGFloat(h))   // 按左上原点画（同视图）
+            ctx.scaleBy(x: 1, y: -1)
+            // 骨架线即可（不必还原笔型 / 压感）；线宽折回贴图后约 1pt
+            ctx.setStrokeColor(ink.withAlphaComponent(0.62).cgColor)
+            ctx.setLineWidth(max(1, 2 * scale))
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            func m(_ x: Double, _ y: Double) -> CGPoint {
+                CGPoint(x: (CGFloat(x) - world.minX) * k, y: (CGFloat(y) - world.minY) * k)
+            }
+            for st in o.strokes where st.points.count > 1 {
+                ctx.move(to: m(st.points[0].dx, st.points[0].dy))
+                for p in st.points.dropFirst() { ctx.addLine(to: m(p.dx, p.dy)) }
+            }
+            ctx.strokePath()
+            img = ctx.makeImage()
+        }
+        skeleton = (key, img, world)
+        return img.map { ($0, world) }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let o = owner, let ctx = NSGraphicsContext.current?.cgContext else { return }
         let f = o.fit()
@@ -415,16 +477,17 @@ private final class MinimapCanvas: NSView {
             ctx.setFillColor(ink.withAlphaComponent(0.12).cgColor)
             ctx.fill(box)
         }
-        // 骨架线即可（不必还原笔型 / 压感）
-        ctx.setStrokeColor(ink.withAlphaComponent(0.62).cgColor)
-        ctx.setLineWidth(1)
-        ctx.setLineCap(.round)
-        ctx.setLineJoin(.round)
-        for st in o.strokes where st.points.count > 1 {
-            ctx.move(to: f.map(st.points[0].dx, st.points[0].dy))
-            for p in st.points.dropFirst() { ctx.addLine(to: f.map(p.dx, p.dy)) }
+        if let (img, world) = skeletonImage(o, ink: ink) {
+            // 骨架图覆盖的画布范围按当前取景映到小地图上；位图按左上原点画的，贴进翻转视图时把 y 翻回来
+            let tl = f.map(Double(world.minX), Double(world.minY))
+            let dst = CGRect(x: tl.x, y: tl.y, width: world.width * f.s, height: world.height * f.s)
+            ctx.saveGState()
+            ctx.interpolationQuality = .high
+            ctx.translateBy(x: 0, y: dst.minY + dst.maxY)
+            ctx.scaleBy(x: 1, y: -1)
+            ctx.draw(img, in: dst)
+            ctx.restoreGState()
         }
-        ctx.strokePath()
         // 当前视口框：淡填充 + 细描边
         let vis = o.viewport.visibleRect(viewport: o.viewSize)
         let tl = f.map(Double(vis.minX), Double(vis.minY))

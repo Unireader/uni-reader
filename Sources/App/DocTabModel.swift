@@ -140,6 +140,8 @@ final class DocTabModel: ObservableObject, Identifiable {
     private var lastProgressSave = Date.distantPast
     private var progressSaveTask: Task<Void, Never>?   // 节流窗内被丢变化的尾随补存
     private(set) var closed = false
+    /// 画板后台装载的口令（`DocTabModel+Board.loadBoard`）：换了别的内容 / 重装时作废，晚到的结果不落进来。
+    var boardLoadToken = UUID()
     /// 本次装载完成时 `session.scrollAnchor` 的序号（进度排查用，见 `ProgressLog`）。
     /// 存进度时用的锚点若 **≤ 这个数**，说明它是**上一篇**留下来的——换文档时 `scrollAnchor`
     /// 没人清，而新文档的库里进度若正好是 p1 顶端（`load` 里那条 `page > 0 || frac > 0` 不成立）

@@ -170,7 +170,9 @@ final class ScratchPadNSView: NSView {
     /// 画板上的图（草稿纸上恒为空）。
     private var images: [BoardImage] { standalone ? session.boardImages : [] }
     private var contentBounds: CGRect? {
-        var r = ScratchBounds.contentBounds(strokes, page: showsPage ? pageCanvasRect : nil)
+        // 笔迹外框走会话里按修订号缓存的那份（视口每变一次都来，别每次逐点重算）
+        var r = session.inkBounds(pad: padID)
+        if showsPage { r = r.map { $0.union(pageCanvasRect) } ?? pageCanvasRect }
         for im in images { r = r.map { $0.union(im.rect) } ?? im.rect }
         if paged, let pb = session.boardLayout.bounds { r = r.map { $0.union(pb) } ?? pb }
         return r
@@ -232,7 +234,7 @@ final class ScratchPadNSView: NSView {
             installKeyMonitor()
             if standalone { session.boardView = self }   // 有视图了：平板滚动由这里跟随、写库
         } else {
-            // 换视图时新的先挂上、旧的淡出后才摘，只摘自己挂的那个
+            // 换视图时新的先挂上、旧的随后摘（不再淡出），只摘自己挂的那个
             if session.boardView === self { session.boardView = nil }
             if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
             // 关纸 / 切纸后这张页图不再需要：撤掉本端的 wanted 声明

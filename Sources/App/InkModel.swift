@@ -267,6 +267,25 @@ extension InkStroke {
 }
 
 extension InkStroke {
+    /// 一批画板笔迹条目 → 笔迹，**多核并行**、保持原顺序（顺序 = 落库序 = 叠放序）。同 `decodeAll`；
+    /// `origin` 只读（页 id → 页原点），各线程同时查没问题。条目少就直接顺序解。
+    static func decodeBoardItems(_ items: [LibBoardItem], padId: UUID, origin: @escaping (String) -> CGPoint?) -> [InkStroke] {
+        let n = items.count
+        let cores = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        let chunks = min(cores, max(1, n / 64))
+        guard chunks > 1 else { return items.compactMap { InkStroke(boardItem: $0, padId: padId, origin: origin) } }
+        var parts = [[InkStroke]](repeating: [], count: chunks)
+        let size = (n + chunks - 1) / chunks
+        parts.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: chunks) { k in
+                let lo = k * size, hi = min(n, lo + size)
+                guard lo < hi else { return }
+                buf[k] = items[lo..<hi].compactMap { InkStroke(boardItem: $0, padId: padId, origin: origin) }   // 各写各的槽
+            }
+        }
+        return parts.flatMap { $0 }
+    }
+
     /// 一批笔迹行 → 笔迹，**多核并行**、保持原顺序（顺序 = 落库序 = 绘制叠放序）。
     /// 开文档时在后台线程调（`DocTabModel.loadInk`）；行数少就直接顺序解，不值得起线程。
     static func decodeAll(_ rows: [LibInkRow]) -> [InkStroke] {
