@@ -1,24 +1,5 @@
 import Foundation
 
-/// 画板打开耗时打点（用户 2026-11-28 报「boards 打开新的会出现：延迟很大才显示出来」）：从点下去起，
-/// 每一步记一行「+多少毫秒」进 `wsLog`（`touch ~/Library/Logs/UniReader-ws.log` 开），先量清楚慢在哪一步再改。
-@MainActor
-enum BoardOpenTrace {
-    private static var t0: CFAbsoluteTime?
-    static func start(_ what: String) {
-        t0 = CFAbsoluteTimeGetCurrent()
-        wsLog("[BOARD] 开始：\(what)")
-    }
-    static func mark(_ step: String) {
-        guard let t0 else { return }
-        wsLog(String(format: "[BOARD] +%.0fms %@", (CFAbsoluteTimeGetCurrent() - t0) * 1000, step))
-    }
-    static func end(_ step: String) {
-        mark(step)
-        t0 = nil
-    }
-}
-
 /// 画板笔记标签（`BOARD-NOTE-PLAN.md §3.1~3.2`）：装载 / 离开 / 增量对账落库。
 ///
 /// 会话里的样子：`session.pdf == nil`、`session.board = 这篇`、`scratchPads = [board.asPad]`、
@@ -55,7 +36,6 @@ extension DocTabModel {
     /// 这里当场只装画板本身和页（轻），草稿纸马上带着空白的页出来；笔迹和图读完回主线程一次放进去。
     /// 对账快照先置空、读完与内容一起换上——落库对账不会把「还没读到的」当成删掉；读的过程中新画的笔照样留着（合并进去）。
     private func loadBoard(_ b: BoardNote) {
-        BoardOpenTrace.mark("装载画板：读页")
         let pages = workspace.boardPages(id: b.id)
         let token = UUID()
         boardLoadToken = token
@@ -82,7 +62,6 @@ extension DocTabModel {
         if isActive { app.setActive(session) }
         app.sessionChanged(session)
         app.sessionDocumentChanged(session)   // 标题 / 平板 `boards.kind` 都变了
-        BoardOpenTrace.mark("装载画板：画板与 \(pages.count) 页就位，后台读笔迹")
         guard let store = workspace.store else { return }
         let id = b.id
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -97,7 +76,6 @@ extension DocTabModel {
     /// 后台读完的笔迹 / 图放进来（口令对不上 = 期间换了别的内容或重装了，丢弃）。
     private func applyLoadedBoard(id: UUID, token: UUID, strokes: [InkStroke], images: [BoardImage]) {
         guard !closed, boardLoadToken == token, session.board?.id == id else { return }
-        BoardOpenTrace.mark("装载画板：笔迹读完（\(strokes.count) 笔，\(images.count) 图）")
         let strokeIDs = Set(strokes.map(\.id)), imageIDs = Set(images.map(\.id))
         // 读的过程中新画的 / 新贴的（库里还没有，或刚落的库后台没读到）：接在后面，别丢
         let newStrokes = session.scratchStrokes.filter { !strokeIDs.contains($0.id) }
@@ -107,7 +85,6 @@ extension DocTabModel {
         session.scratchStrokes = strokes + newStrokes
         session.boardImages = images + newImages
         app.sessionChanged(session)
-        BoardOpenTrace.end("装载画板：笔迹放进会话")
     }
 
     /// 开着服务器工作区时别的设备改了这篇画板（行已经写进库）：整篇重读（`SERVER-MODE-PLAN.md §13.13`）。

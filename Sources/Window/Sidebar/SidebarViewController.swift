@@ -380,7 +380,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         restoreExpansion(roots)                                      // 子目录按上次的状态，默认收起
         restoringExpansion = false
         let reselect = keep.isEmpty ? Set([tabs.active.rowID].compactMap { $0 }) : keep
-        if reselect != Set([tabs.active.rowID].compactMap { $0 }) { sidebarLog("重建后保留旧选中 \(reselect.sorted())，当前标签=\(tabs.active.rowID ?? "空")") }
         select(ids: reselect)
         syncingSelection = false
         restoreScroll(to: scrolledTo)
@@ -439,7 +438,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard force || isFrontTab else { return }
         let want = Set([tabs.active.rowID].compactMap { $0 })
         guard selectedRowIDs() != want else { return }
-        sidebarLog("按标签改选中：\(selectedRowIDs().sorted()) → \(want.sorted())")
         syncingSelection = true
         select(ids: want)
         syncingSelection = false
@@ -737,7 +735,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     // MARK: 选中 / 点击
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        sidebarLog("选中变了：\(selectedRowIDs().sorted())（程序改=\(syncingSelection) 事件=\(NSApp.currentEvent.map { "\($0.type.rawValue)" } ?? "无")）")
         guard !syncingSelection else { return }
         // 鼠标按下时选中变了：等松手（单击 → `rowClicked`）再打开——拖起来排序的那一下不该顺手把它打开。
         // 松手那一下也不在这里开：能拖的列表是松手时才确认选中，这里和 `rowClicked` 会各开一遍
@@ -756,7 +753,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         // 多选期间不动当前打开的文档；恰选一篇才联动
         let ids = selectedRowIDs()
-        sidebarLog("打开选中（单击=\(byClick)）：选中=\(ids.sorted()) 当前标签=\(tabs.active.rowID ?? "空")")
         guard ids.count == 1, let id = ids.first else { return }
         guard id != tabs.active.rowID else {
             if independent { tabs.active.shareKey = nil }   // ⌘ 单击正开着的那个共用标签：转成独立的，不再被换掉
@@ -777,17 +773,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             _ = tabs.openDocShared(id, independent: independent)
         }
         syncingSelection = false
-        // 开到了组里别的标签（= 别的窗口，`TabsModel.place`）：本窗口的选中还原成本窗口自己显示的那一项。
-        // 不还原的话，随后那次选中变化又会把它当成「没打开」再开一遍（2026-11-28 打点看到每次打开画板都调了两次）。
-        sidebarLog("打开后：点的=\(id) 当前标签=\(tabs.active.rowID ?? "空")")
         // 开到了组里别的标签（= 别的窗口）时，本窗口的选中留着不动：当场还原会让刚点的那行高亮一闪就没（用户报），
         // 等切回本标签、露面之前再按本标签摆正（`prepareToShow`）
-    }
-
-    /// 侧栏选中 / 打开的打点（用户 2026-11-28 报「web page 的侧边栏和 tab 不同步激活，点击打开会闪一下高亮」）：
-    /// 写 `wsLog`，带上是哪扇窗口（窗口标题），先看清楚是哪一步改了选中再改。
-    private func sidebarLog(_ s: String) {
-        wsLog("[SIDEBAR] [\(view.window?.title ?? "?")] key=\(isKeyWindow) \(s)")
     }
 
     @objc private func rowClicked() {

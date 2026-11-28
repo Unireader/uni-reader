@@ -1751,8 +1751,6 @@ final class ReaderNSWindow: NSWindow {
 
     override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
         if place != .out, !isVisible { willShow?() }
-        let appearing = place != .out && !isVisible
         super.order(place, relativeTo: otherWin)
-        if appearing { BoardOpenTrace.mark("窗口上屏") }
     }
 }

@@ -553,7 +553,6 @@ final class ReaderPaneController: NSViewController {
             old.removeFromSuperview()
         }
         guard let id = want, readerView != nil || s.isBoard else { return }
-        BoardOpenTrace.mark("窗格：建草稿纸视图")
         let v = ScratchPadNSView(app: app, session: s, padID: id, docKey: key)
         v.workspace = workspace
         if let r = readerView {

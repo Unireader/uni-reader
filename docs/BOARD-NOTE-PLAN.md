@@ -450,7 +450,7 @@ CREATE INDEX IF NOT EXISTS idx_board_page_board ON board_page(board_id, sort_key
   改成直接 `canvas.needsDisplay`。框能动之后每帧逐点重画全部笔迹很卡 → 范围在笔迹变了才算；骨架按笔迹范围本身出一张图缓存
   （与视口无关，视口跑到内容外面也不失效），每帧只按取景缩放贴图 + 画视口框。
 - 读库：画板笔迹逐条顺序解（每条一段 JSON + 点集 + 分页的页原点平移）。→ `InkStroke.decodeBoardItems` 多核并行（同 PDF 的 `decodeAll`）。
-- 同日：草稿纸去掉 0.16 秒淡入淡出（用户要求）。打开耗时打点 `[BOARD]`（`BoardOpenTrace`）留着。
+- 同日：草稿纸去掉 0.16 秒淡入淡出（用户要求）。排查用的打开耗时打点 `[BOARD]` 用完已删。
 - **笔迹 / 图改后台装载**（用户：「窗口显示出来后再加载都可以」）：`DocTabModel.loadBoard` 当场只装画板与页，草稿纸带着空白页先出来；
   `Task.detached` 读 `boardItems` + `WorkspaceManager.decodeBoardContents`（纯计算、多核并行）→ 主线程 `applyLoadedBoard` 一次放进去。
   对账快照先置空、与内容一起换上；读的过程中新画 / 新贴的合并保留；`boardLoadToken` 防晚到的结果落进换过内容的标签。MCP 读画板直接查库，不受影响。
