@@ -95,74 +95,26 @@ final class TabsModel: ObservableObject {
     // MARK: - 打开 / 切换 / 关闭
 
     /// 打开一篇文档（侧栏点选、导入完成、平板 `openDoc` 都走这里）。
-    /// 语义（用户 2026-08-29 定「同一个工作区打开都是走新的 tab」）：
-    ///  · 已经有标签开着它 → **切过去**，不重复开；
+    /// 语义（用户 2026-08-29 定「同一个工作区打开都是走新的 tab」；2026-11-28 起标签 = 系统窗口标签，见 `place`）：
+    ///  · 这个工作区已经有标签开着它 → **切过去**，不重复开；
     ///  · 当前标签还空着 → 就装进当前这个（否则浏览书库会永远拖着一个空标签）；
-    ///  · 否则 → **新开一个标签**并切过去。
+    ///  · 否则 → **新开一个标签**（一扇新窗口）并切过去。
     @discardableResult
     func open(_ docID: String?) -> DocTabModel {
         guard let docID else { active.select(nil); persist(); return active }
-        if let hit = tabs.first(where: { $0.docID == docID }) {
-            activate(hit.id)
-            return hit
-        }
-        if active.isEmptyTab {
-            active.select(docID)
-            noteArrival()
-            persist()
-            return active
-        }
-        let t = appendTab(docID: docID)
-        activate(t.id)
-        return t
+        return place(existing: { $0.docID == docID }, load: { $0.select(docID) })
     }
 
-    /// 开一篇 Markdown 笔记（v15）。规矩与 `open(_:)` 一致：已经开着就切过去，
-    /// 当前标签是空的就就地开，否则新开一个标签。
+    /// 开一篇 Markdown 笔记（v15）。规矩与 `open(_:)` 一致。
     @discardableResult
     func openMarkdown(_ ref: NoteRef) -> DocTabModel {
-        if let hit = tabs.first(where: { $0.noteRef == ref }) {
-            activate(hit.id)
-            return hit
-        }
-        if active.isEmptyTab {
-            active.openMarkdown(ref)
-            noteArrival()
-            persist()
-            return active
-        }
-        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
-        tabs.append(t)
-        adoptForNavigation(t)
-        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
-        t.openMarkdown(ref)
-        activate(t.id)
-        persist()
-        return t
+        place(existing: { $0.noteRef == ref }, load: { $0.openMarkdown(ref) })
     }
 
-    /// 开一篇画板笔记（v16，`BOARD-NOTE-PLAN.md §3.1`）。规矩同上：开着就切过去，当前标签空着就就地开，
-    /// 否则新开一个标签。
+    /// 开一篇画板笔记（v16，`BOARD-NOTE-PLAN.md §3.1`）。规矩同上（装载末尾自己会 `setActive`）。
     @discardableResult
     func openBoard(_ id: UUID) -> DocTabModel {
-        if let hit = tabs.first(where: { $0.boardID == id }) {
-            activate(hit.id)
-            return hit
-        }
-        if active.isEmptyTab {
-            active.openBoard(id)   // 装载末尾自己会 `setActive`（活动标签）
-            noteArrival()
-            persist()
-            return active
-        }
-        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
-        tabs.append(t)
-        adoptForNavigation(t)
-        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
-        t.openBoard(id)
-        activate(t.id)
-        persist()
-        return t
+        place(existing: { $0.boardID == id }, load: { $0.openBoard(id) })
     }
 
     /// 开一组习题（v20，`EXERCISE-PLAN.md §4.1`）。走统一的「同目录共用一个标签」（`openShared`）：
@@ -183,19 +135,20 @@ final class TabsModel: ObservableObject {
     func openShared(_ kind: ShareKind, group: String, independent: Bool,
                     existing: (DocTabModel) -> Bool, load: (DocTabModel) -> Void) -> DocTabModel {
         let key = "\(kind.rawValue)|\(group)"
-        if let hit = tabs.first(where: existing) {
-            if independent { hit.shareKey = nil }
-            activate(hit.id)
+        let group = peers
+        if let hit = group.first(where: { existing($0.active) }) {
+            if independent { hit.active.shareKey = nil }
+            hit.focusWindow()
             persist()
-            return hit
+            return hit.active
         }
         let share = !independent && kind.isOn
-        if share, let shared = tabs.first(where: { $0.shareKey == key }) {
-            if shared.id == activeID { noteLeaving(); noteArrival() }   // 就在眼下这个标签里换内容
-            load(shared)
-            activate(shared.id)
+        if share, let shared = group.first(where: { $0.active.shareKey == key }) {
+            if shared === self { noteLeaving(); noteArrival() }   // 就在眼下这个标签里换内容
+            load(shared.active)
+            shared.focusWindow()
             persist()
-            return shared
+            return shared.active
         }
         let t: DocTabModel
         if active.isEmptyTab {
@@ -203,12 +156,7 @@ final class TabsModel: ObservableObject {
             load(t)
             noteArrival()
         } else {
-            t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
-            tabs.append(t)
-            adoptForNavigation(t)
-            WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
-            load(t)
-            activate(t.id)
+            t = spawn(load)
         }
         t.shareKey = share ? key : nil
         persist()
@@ -238,53 +186,79 @@ final class TabsModel: ObservableObject {
         var isOn: Bool { UserDefaults.standard.object(forKey: settingKey) as? Bool ?? true }
     }
 
-    /// 打开日程（v26，`SCHEDULE-PLAN.md §4`）：一扇窗口至多一个日程标签——开着就切过去（带上要去的地方），
+    /// 打开日程（v26，`SCHEDULE-PLAN.md §4`）：一个工作区至多一个日程标签——开着就切过去（带上要去的地方），
     /// 当前标签空着就就地开，否则新开一个。
     @discardableResult
     func openSchedule(focus: ScheduleFocus? = nil) -> DocTabModel {
-        if let hit = tabs.first(where: { $0.showsSchedule }) {
-            hit.openSchedule(focus: focus)
-            activate(hit.id)
+        if let hit = peers.first(where: { $0.active.showsSchedule }) {
+            hit.active.openSchedule(focus: focus)
+            hit.focusWindow()
             persist()
-            return hit
+            return hit.active
         }
-        if active.isEmptyTab {
-            active.openSchedule(focus: focus)
-            noteArrival()
-            persist()
-            return active
-        }
-        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
-        tabs.append(t)
-        adoptForNavigation(t)
-        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
-        t.openSchedule(focus: focus)
-        activate(t.id)
-        persist()
-        return t
+        return place(existing: { _ in false }, load: { $0.openSchedule(focus: focus) })
     }
 
     /// 打开一份网页（`WEB-DOC-PLAN.md §3`）：已经有标签开着它就切过去，当前标签空着就就地开，否则新开一个（同画板）。
     @discardableResult
     func openWebDoc(_ id: String) -> DocTabModel {
-        if let hit = tabs.first(where: { $0.webDocID == id }) {
-            activate(hit.id)
-            persist()
-            return hit
+        place(existing: { $0.webDocID == id }, load: { $0.openWebDoc(id) })
+    }
+
+    // MARK: - 原生窗口标签（`NATIVE-TABS-PLAN.md §2`）
+    //
+    // 一个标签 = 一扇阅读窗口（系统窗口标签，同工作区同一组）；本对象只装一个 `DocTabModel`。
+    // 「已开着就切过去」的查找范围是**这个工作区的全部阅读窗口**（`peers`），新开 = 在本窗口的标签组里加一扇窗口。
+
+    /// 这个工作区全部阅读窗口的标签集合（含自己），按系统标签组的左右顺序（本窗口所在的组在前）。
+    var peers: [TabsModel] { AppDelegate.shared?.tabPeers(of: self) ?? [self] }
+
+    /// 本窗口的 NSWindow（标签组排序 / 选中用）。
+    var nsWindow: NSWindow? { window }
+
+    /// 把本窗口这个标签切到前面：系统标签组里选中它；App 在前台时顺带成为 key（平板跟随随之拉过来）。
+    func focusWindow() {
+        if let w = window {
+            if let g = w.tabGroup, g.selectedWindow !== w { g.selectedWindow = w }
+            // App 不在前台时也要设成 key：否则前台一切过来，系统把原来那扇 key 窗口重新选中，标签又切回去了
+            //（用户 2026-11-28 报：点 `unireader://` 链接能打开但不切到那个标签）。不会抢前台。
+            if !w.isKeyWindow { w.makeKeyAndOrderFront(nil) }
+        }
+        activate(active.id)
+    }
+
+    /// 三段式打开：组里已有标签显示着它 → 切过去；当前标签空着 → 就地装；否则新开一个标签（一扇新窗口）装。
+    @discardableResult
+    private func place(existing: (DocTabModel) -> Bool, load: (DocTabModel) -> Void) -> DocTabModel {
+        if let hit = peers.first(where: { existing($0.active) }) {
+            hit.focusWindow()
+            return hit.active
         }
         if active.isEmptyTab {
-            active.openWebDoc(id)
+            load(active)
             noteArrival()
             persist()
             return active
         }
-        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
-        tabs.append(t)
-        adoptForNavigation(t)
-        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
-        t.openWebDoc(id)
-        activate(t.id)
-        persist()
+        return spawn(load)
+    }
+
+    /// 在本窗口的标签组里新开一扇窗口，把内容装进它的那个标签并切过去。
+    /// 开不出窗口（本窗口还没上屏等，按理不会）就退回在当前标签里换内容。
+    @discardableResult
+    func spawn(_ load: (DocTabModel) -> Void) -> DocTabModel {
+        guard let c = AppDelegate.shared?.spawnTab(after: self, select: true) else {
+            noteLeaving()
+            load(active)
+            noteArrival()
+            persist()
+            return active
+        }
+        let t = c.tabs.active
+        load(t)
+        c.tabs.noteArrival()
+        c.tabs.focusWindow()
+        c.tabs.persist()
         return t
     }
 
@@ -361,21 +335,6 @@ final class TabsModel: ObservableObject {
     /// 标签栏的 `+` / ⌘T 不再开空标签，而是弹本工作区的选文档弹窗（`DocPickerView`，用户 2026-09-17 定），
     /// 选中后走 `open`。弹窗挂在「+」上；标签栏不显示时挂在阅读区底部（见 `ReaderPane.tabBar`）。
     @Published var docPickerPresented = false
-
-    /// 建标签但**不切过去**（冷启动恢复一组标签时用：切来切去会让平板跟随反复易主）。
-    /// `staged` = 只记下要开哪篇、先不装（见 `DocTabModel.staged`），由 `activate` 负责装。
-    @discardableResult
-    private func appendTab(docID: String?, staged: Bool = false) -> DocTabModel {
-        let t = DocTabModel(app: app, workspace: workspace, windowID: windowID)
-        tabs.append(t)
-        adoptForNavigation(t)
-        WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window)
-        if let docID {
-            if staged { t.stage(docID) } else { t.select(docID) }
-        }
-        persist()
-        return t
-    }
 
     func activate(_ id: UUID) {
         guard let next = tabs.first(where: { $0.id == id }) else { return }
@@ -593,17 +552,22 @@ final class TabsModel: ObservableObject {
                                   forKey: "tabs:" + folder.standardizedFileURL.path)
     }
 
-    private func persist() {
-        guard let k = storeKey else { return }
-        let items = tabs.compactMap(storedTab)
+    /// 存这个工作区的打开集：**整个工作区的标签**（全部阅读窗口，按系统标签组顺序），活动项 = 本组选中的那个。
+    /// 退出过程中不写（逐扇结清时列表会越存越短，`NATIVE-TABS-PLAN.md §4`）；退出前由 `AppDelegate` 先存一次。
+    func persist() {
+        guard !AppDelegate.isTerminating, let k = storeKey else { return }
+        let group = peers
+        let selected = window?.tabGroup?.selectedWindow ?? window
+        let current = group.first { $0.window != nil && $0.window === selected } ?? self
+        let items = group.compactMap { storedTab($0.active) }
         UserDefaults.standard.set([
             "version": 2,
             "items": items.map(\.key),
             // 留着旧字段，降级到旧版本时至少还能恢复 PDF 标签。
-            "docs": tabs.compactMap(\.docID),
-            "active": storedTab(active)?.key ?? "",
+            "docs": group.compactMap(\.active.docID),
+            "active": storedTab(current.active)?.key ?? "",
             // 哪些标签是「同目录共用」的（`DocTabModel.shareKey`）：重启后还要是共用的，单击才继续在里面换
-            "shared": tabs.filter { $0.shareKey != nil }.compactMap(storedTab).map(\.key),
+            "shared": group.filter { $0.active.shareKey != nil }.compactMap { storedTab($0.active) }.map(\.key),
         ], forKey: k)
     }
 
@@ -644,38 +608,43 @@ final class TabsModel: ObservableObject {
         // 从前这里是逐个 `select`，等于冷启动就把每一篇的 PDF、目录、笔迹全读一遍——而窗口里
         // 只有一个标签看得见（2026-09-02 剖析：大书一篇 0.33s，冷盘上近 1s）。
         // Markdown 没有 PDF 装载成本，只把 `noteRef` 放进标签；编辑器仍只为活动标签创建。
-        for item in restoring {
-            let target: DocTabModel
-            if active.isEmptyTab && tabs.count == 1 {
-                target = active
-            } else {
-                target = appendTab(docID: nil)
-            }
+        // 第一项装进本窗口；其余每项在本窗口的标签组里各开一扇窗口（下一拍：本窗口此刻还没上屏）。
+        var sharedSeen = Set<String>()
+        func apply(_ item: StoredTab, to target: DocTabModel) {
             switch item {
             case .pdf(let id): target.stage(id)
             case .markdown(let ref): target.stageMarkdown(ref)
             case .board(let id): target.stageBoard(id)
-            case .exercises(let scope):
-                target.openExercises(scope)
-            case .schedule:
-                target.openSchedule()   // 存下的组里至多一个（`openSchedule` 保证）
-            case .web(let id):
-                target.openWebDoc(id, recordOpen: false)
+            case .exercises(let scope): target.openExercises(scope)
+            case .schedule: target.openSchedule()   // 存下的组里至多一个（`openSchedule` 保证）
+            case .web(let id): target.openWebDoc(id, recordOpen: false)
             }
-            // 还原共用标记（设置里对应的开关关着就不标）
+            // 还原共用标记（设置里对应的开关关着就不标）；老存档没有记录 → 每个目录第一个算共用
             if let (kind, group) = shareSlot(item), kind.isOn {
                 let key = "\(kind.rawValue)|\(group)"
-                let wanted = sharedKeys.map { $0.contains(item.key) } ?? !tabs.contains { $0 !== target && $0.shareKey == key }
-                if wanted { target.shareKey = key }
+                let wanted = sharedKeys.map { $0.contains(item.key) } ?? !sharedSeen.contains(key)
+                if wanted { target.shareKey = key; sharedSeen.insert(key) }
             }
         }
-        if let wantActive, restoring.contains(wantActive),
-           let hit = tabs.first(where: { storedTab($0) == wantActive }) {
-            activate(hit.id)
-        } else {
-            activate(tabs[0].id)
+        // 上次停在的那个装进本窗口、马上显示；它左边的各项插在它左边，右边的依次接在右边。
+        // 其余标签只建壳（标题 + 记下要开哪篇），界面第一次被选中时才建（`NATIVE-TABS-PLAN.md §4`）。
+        let ai = wantActive.flatMap { restoring.firstIndex(of: $0) } ?? 0
+        apply(restoring[ai], to: active)
+        activate(active.id)
+        guard restoring.count > 1 else { persist(); return }
+        DispatchQueue.main.async { [weak self] in   // 下一拍：本窗口此刻还没上屏
+            guard let self else { return }
+            for item in restoring[..<ai] {
+                guard let c = AppDelegate.shared?.spawnTab(after: self, select: false, ordered: .below) else { break }
+                apply(item, to: c.tabs.active)
+            }
+            var host = self
+            for item in restoring[(ai + 1)...] {
+                guard let c = AppDelegate.shared?.spawnTab(after: host, select: false) else { break }
+                apply(item, to: c.tabs.active)
+                host = c.tabs
+            }
+            self.persist()
         }
-        // `activate` 命中第一个标签时不会进入切换分支；这里统一把 v1 迁移结果、过滤后的列表与活动项写回 v2。
-        persist()
     }
 }

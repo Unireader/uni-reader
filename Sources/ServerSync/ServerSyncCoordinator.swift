@@ -119,6 +119,12 @@ final class ServerSyncCoordinator: ObservableObject {
     /// 退出前有没有要等的：还开着的服务器工作区（要推一次）、关窗后正在跑的那一轮。
     var hasPendingWork: Bool { !busy.isEmpty || !sessions.isEmpty }
 
+    /// 设置「退出前与服务器同步」（服务器设置页），**默认关**（用户 2026-11-28 定：退出要快）。
+    /// 关着时：退出不等同步、也不起「关闭后那一轮」；没推出去的改动（开着时停手 2 秒就推，通常只差退出前几秒的）
+    /// 下次打开这个工作区前照常同步（`prepareToOpen`）。键与 `ServerSettingsView` 同一把。
+    nonisolated static let syncBeforeQuitKey = "serverSyncBeforeQuit"
+    nonisolated static var syncBeforeQuit: Bool { UserDefaults.standard.bool(forKey: syncBeforeQuitKey) }
+
     /// 退出前把改动送出去，最多等 `timeout` 秒：还开着的服务器工作区各推一次（只推不拉），关窗后正在跑的那一轮等它收尾。
     /// 连不上 / 太慢就不等了——改动没丢，下次打开前照常同步。
     func waitForQuit(timeout: TimeInterval) async {
@@ -189,6 +195,8 @@ final class ServerSyncCoordinator: ObservableObject {
     /// 工作区最后一扇窗关掉、连接关闭之后：停掉会话，完整同步一轮（不等它）。
     func workspaceClosed(_ folder: URL) {
         stopSession(folder)
+        // 退出过程中关掉的、且设置里没开「退出前与服务器同步」：不起这一轮（进程马上就退，起了也只会半途被杀）
+        if AppDelegate.isTerminating, !Self.syncBeforeQuit { return }
         guard let ep = endpoint(for: folder) else { return }
         _ = startClosedRound(folder, ep, after: busy[WorkspaceRegistry.key(folder)]?.task)
     }

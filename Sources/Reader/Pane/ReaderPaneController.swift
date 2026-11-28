@@ -112,7 +112,7 @@ final class ReaderPaneController: NSViewController {
         }
         tabBar.onOpenInNewWindow = { [weak self] id in
             guard let self, let d = self.tabs.tabs.first(where: { $0.id == id })?.docID else { return }
-            AppDelegate.shared?.openReaderWindow(workspacePath: self.workspace.folder?.standardizedFileURL.path, docId: d)
+            self.tabs.spawn { $0.select(d) }   // 底部标签栏第 4 批删除；暂留时也走系统标签
         }
         tabBar.onNewTab = { [weak self] in self?.tabs.docPickerPresented = true }
         tabBar.onToggleStyle = {
@@ -287,7 +287,8 @@ final class ReaderPaneController: NSViewController {
     private var tabBarStyle: TabBarStyle {
         TabBarStyle(rawValue: UserDefaults.standard.string(forKey: TabBarStyle.key) ?? "") ?? .floating
     }
-    private var tabBarInset: CGFloat { TabBarMetrics.inset(style: tabBarStyle, tabCount: tabs.tabs.count) }
+    /// 底部标签栏已停用（`NATIVE-TABS-PLAN.md` 第 4 批删除），不再让出底部距离。
+    private var tabBarInset: CGFloat { 0 }
     private var legacyScroller: Bool { NSScroller.preferredScrollerStyle == .legacy }
     /// 占位式滚动条的槽固定在最底边：那时滚动条不让位，改由标签栏抬高一条槽的高度（2026-09-17 用户报）。
     private var scrollerLift: CGFloat {
@@ -551,7 +552,8 @@ final class ReaderPaneController: NSViewController {
 
         // 标签栏（≥2 个标签才显示；草稿纸开着时不显示——它自带工具条。画板笔记本身就是一个标签，照常显示）
         // 一个标签也显示（2026-11-21 用户定）；唯一的标签还是空的（没开任何内容）时不显示，免得空窗口底下孤零零一枚空胶囊
-        let showTabs = !(tabs.tabs.count == 1 && tabs.active.isEmptyTab) && (s.openPadID == nil || s.isBoard)
+        // 2026-11-28 起标签 = 系统窗口标签（`NATIVE-TABS-PLAN.md`），底部标签栏不再显示（第 4 批连同代码删除）
+        let showTabs = false
         tabBar.isHidden = !showTabs
         if showTabs {
             tabBar.update(items: tabs.tabs.map {
@@ -730,10 +732,11 @@ final class ReaderPaneController: NSViewController {
             if !tabBar.isHidden {
                 pop.show(relativeTo: tabBar.plus.bounds, of: tabBar.plus, preferredEdge: .maxY)
             } else {
-                // 标签栏没显示（只有一个标签 / 草稿纸开着）：挂在阅读区底部正中
-                let b = view.bounds
-                pop.show(relativeTo: NSRect(x: b.midX, y: b.height - TabBarMetrics.floatBottom - 1, width: 1, height: 1),
-                         of: view, preferredEdge: .maxY)
+                // 标签在窗口顶上（系统窗口标签，`NATIVE-TABS-PLAN.md`）：挂在阅读区顶部正中、工具栏下沿往下弹
+                let b = view.bounds, top = view.safeAreaInsets.top
+                let y = view.isFlipped ? top : b.height - top - 1
+                pop.show(relativeTo: NSRect(x: b.midX, y: y, width: 1, height: 1),
+                         of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
             }
         } else if let pop = docPicker {
             docPicker = nil

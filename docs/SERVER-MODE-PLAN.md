@@ -759,6 +759,8 @@ Linux 交叉编译通过；App Debug 编译通过。
   `ServerSyncCoordinator.conflicts`（App 开着期间，最多 200 条，同时写 `[SYNC]` 日志）；工作区菜单「同步冲突（N）…」列出来，可清空。冲突照旧自动处理、不阻塞。
 - **退出时推送**：`applicationShouldTerminate` 结清窗口后，还有服务器工作区在同步（关窗后那一轮 / 还开着的会话）就 `.terminateLater`，
   等它收尾最多 4 秒（`waitForQuit`）；超时不等，改动没丢，下次打开前照常同步。
+  **2026-11-28 改成设置项「退出前与服务器同步」，默认关**（服务器设置页，键 `serverSyncBeforeQuit`；用户嫌退出慢，实测这一轮约 1.9 秒）：
+  关着时退出不等、退出过程中也不起关闭后那一轮（`workspaceClosed` 看 `AppDelegate.isTerminating`）；开着时同上。
 - **开着的画板 / 练习页实时更新**：`applyRemoteRows` 里习题走 `exercisesChangedRemotely()`（开着的练习页就地刷新快照），
   画板走 `DocTabModel.applyRemoteBoard`（先把本机没落库的结清，再整篇重读；正在写的那一笔不打断，撤销栈清空）。
 - **开着的 PDF 被改了内容**：App 回到前台时 `DocTabModel.recheckFileOnActivate`——修改时间变了才算哈希，内容真变了弹同一张「文件已变化」；

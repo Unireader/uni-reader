@@ -14,6 +14,8 @@ struct ServerSettingsView: View {
     @State private var errorText: String?
     /// 键与读取方 `ServerSyncCoordinator.largePDFBytes` 必须同一把，默认值也一致（50）。
     @AppStorage("serverLargePDFMB") private var largePDFMB = 50
+    /// 键与读取方 `ServerSyncCoordinator.syncBeforeQuit` 同一把，默认关。
+    @AppStorage(ServerSyncCoordinator.syncBeforeQuitKey) private var syncBeforeQuit = false
 
     var body: some View {
         Form {
@@ -84,6 +86,14 @@ struct ServerSettingsView: View {
                 Text(L("Downloads"))
             } footer: {
                 Text(L("Larger PDFs are downloaded when you open them."))
+            }
+
+            Section {
+                Toggle(L("Sync with the server before quitting"), isOn: $syncBeforeQuit)
+            } header: {
+                Text(L("Quitting"))
+            } footer: {
+                Text(L("When off, UniReader quits right away. Changes not yet sent (usually only those from the last few seconds) are synced the next time you open the workspace; until then, other devices can't see them."))
             }
         }
         .formStyle(.grouped)

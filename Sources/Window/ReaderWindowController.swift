@@ -55,16 +55,31 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// 工作区菜单项（标题要跟着工作区名走）。
     private var workspaceItem: NSMenuToolbarItem?
     private var zoomItem: NSToolbarItemGroup?
-    private var sidebarItem: NSSplitViewItem!
-    private var inspectorItem: NSSplitViewItem!
+    // 下面几个界面对象由 `realizeChrome` 建；取值时先确保建过（后台标签被哪条路径先碰到就当场建）。
+    private var sidebarItemStore: NSSplitViewItem!
+    private var inspectorItemStore: NSSplitViewItem!
+    private var readerPaneStore: ReaderPaneController?
+    private var sidebarItem: NSSplitViewItem! {
+        get { realizeChrome(); return sidebarItemStore }
+        set { sidebarItemStore = newValue }
+    }
+    private var inspectorItem: NSSplitViewItem! {
+        get { realizeChrome(); return inspectorItemStore }
+        set { inspectorItemStore = newValue }
+    }
     /// 阅读窗格（AppKit）。
-    private var readerPane: ReaderPaneController?
+    private var readerPane: ReaderPaneController? {
+        get { realizeChrome(); return readerPaneStore }
+        set { readerPaneStore = newValue }
+    }
 
     private var session: DocSession { tabs.active.session }
 
     // MARK: - 建窗
 
-    init(app: AppModel, workspace: WorkspaceManager, launchDocId: String?) {
+    /// `lazyChrome`：后台标签（冷启动恢复的那一组里没选中的）只建壳——窗口、标题、标签模型；
+    /// 侧栏 / 阅读窗格 / Inspector / 工具栏等第一次要显示时才建（`realizeChrome`，`NATIVE-TABS-PLAN.md §4`）。
+    init(app: AppModel, workspace: WorkspaceManager, launchDocId: String?, lazyChrome: Bool = false) {
         self.app = app
         self.workspace = workspace
         self.tabs = TabsModel(app: app, workspace: workspace)
@@ -74,11 +89,14 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // 现代侧栏（Finder/Mail 那样一路延伸到顶、标题栏浮在它上面）要三件齐备：这条 styleMask、
         // `NSSplitViewItem(sidebarWithViewController:)`（下面）、以及工具栏里的
         // `.sidebarTrackingSeparator`。内容的安全区由 AppKit 自动下推，SwiftUI 那边照旧遵守。
-        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
+        let win = ReaderNSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
                            styleMask: [.titled, .closable, .miniaturizable, .resizable,
                                        .fullSizeContentView],
                            backing: .buffered, defer: false)
-        win.tabbingMode = .disallowed   // 我们自己有标签栏（`MAC-TABS-PLAN.md`），别再叠一层系统标签
+        // 一个标签 = 一扇阅读窗口（`NATIVE-TABS-PLAN.md`）：同一工作区的阅读窗口归进同一组系统标签，
+        // 不同工作区不混在一组（标签不跨工作区，同 `MAC-TABS-PLAN.md` 的拍板）。
+        win.tabbingMode = .preferred
+        win.tabbingIdentifier = "UniReader.reader." + (workspace.folder?.standardizedFileURL.path ?? "")
         win.minSize = NSSize(width: 720, height: 480)
         // 🔴 **窗口后备存储用 sRGB，与页图（`PageBitmap`：sRGB + BGRX）同一个色彩空间**（2026-09-13 实测定）。
         // 默认值是所在显示器的 ICC（Color LCD / 外接屏各自一套）：一不相等，SwiftUI 显示每张页图都要经
@@ -94,22 +112,16 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         win.isRestorable = false
         super.init(window: win)
 
-        buildPanes()
-        win.contentViewController = splitVC
         win.delegate = self
-        win.toolbarStyle = .unified
-        win.toolbar = makeToolbar()
-        adoptNewToolbarItems()
+        if !lazyChrome { realizeChrome() }
 
         WorkspaceRegistry.shared.noteRootWindow(windowId)
         WorkspaceRegistry.shared.bindRootWindow(windowId, workspace)
         tabs.noteWindowObject(win)
 
         bindTitle()
-        observeToolbarStates()
         observeDeletePrompt()
         observeMenuCommands()
-        observeAgentPreload()
         decideInitialContent(launchDocId: launchDocId)
 
         // ⚠️ `NSWindowController.shouldCascadeWindows` 默认 true，`showWindow` 时会**覆盖**
@@ -118,7 +130,32 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         shouldCascadeWindows = false
         restoreFrame(win)
         frameRestored = true
+        // 后台标签：系统切到它时先 `makeKey` 再 `order`，那时窗口还没露面——就在那一刻把界面建出来（离屏实测 2026-11-28）
+        if lazyChrome { win.beforeShow = { [weak self] in self?.realizeChrome() } }
         logFrame("init 末")
+    }
+
+    /// 界面建了没有（`realizeChrome`）。
+    private var chromeRealized = false
+
+    /// 建窗口的界面：三段分栏、工具栏，以及只对看得见的窗口才有意义的订阅（工具栏状态、Agent 预加载——
+    /// 后台标签各自预加载就是每个标签起一个 Agent 子进程）。幂等。
+    /// 下面几个界面属性的取值处也会调它：哪条路径先碰到还没建的界面，就当场建出来，不会取到空值。
+    private func realizeChrome() {
+        guard !chromeRealized, let win = window else { return }
+        chromeRealized = true
+        // 后建的：装 `contentViewController` 会把窗口按内容压小，建完照标签组里看得见的那扇（没有就照自己）摆回去
+        let keepFrame: NSRect? = frameRestored
+            ? (win.tabGroup?.windows.first { $0 !== win && $0.isVisible }?.frame ?? win.frame) : nil
+        buildPanes()
+        win.contentViewController = splitVC
+        win.toolbarStyle = .unified
+        win.toolbar = makeToolbar()
+        adoptNewToolbarItems()
+        observeToolbarStates()
+        observeAgentPreload()
+        if let keepFrame, win.frame != keepFrame { win.setFrame(keepFrame, display: false) }
+        if frameRestored { wsLog("后台标签建界面：\(tabs.active.tabTitle)") }
     }
 
     /// 两侧栏的最小宽度（pt）。用户 2026-09-03 定：原来的 200/240 太窄，信息页里
@@ -201,8 +238,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         sidebar.onOpenPDF = { [weak self] in self?.openPDF() }
         sidebar.onOpenNoteWindow = { [weak self] ref in self?.openNoteWindow(ref) }
         sidebar.onOpenInNewWindow = { [weak self] docId in
-            guard let self else { return }
-            AppDelegate.shared?.openReaderWindow(workspacePath: self.workspace.folder?.standardizedFileURL.path, docId: docId)
+            self?.openInNativeTab(docId: docId)   // 一律新开一个系统标签（原来是另开一扇窗口）
         }
 
         // 阅读窗格：AppKit（`APPKIT-REWRITE-PLAN.md` 第 3 步，替代 SwiftUI `ReaderPane`）
@@ -272,7 +308,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private static let sidebarCollapsedKey = "readerSidebarCollapsed"
     private static let inspectorCollapsedKey = "readerInspectorCollapsed"
     private var paneObservations: [NSKeyValueObservation] = []
-    private var inspectorVC: InspectorViewController!
+    private var inspectorVCStore: InspectorViewController!
+    private var inspectorVC: InspectorViewController! {
+        get { realizeChrome(); return inspectorVCStore }
+        set { inspectorVCStore = newValue }
+    }
     /// 打开 Inspector 时为它把窗口往右加宽过：(加了多宽, 加宽后的窗口外框)。收起时窗口还是这个外框（用户没动过）才还回去。
     private var widenedForInspector: (by: CGFloat, frame: NSRect)?
 
@@ -375,11 +415,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func observeMenuCommands() {
         on(.openPDFRequested) { $0.openPDF() }
         on(.quickOpenRequested) { QuickOpenController.shared.toggle(for: $0) }   // ⌘P（`QUICK-OPEN-PLAN.md`）
-        on(.newWindowRequested) { c in
-            AppDelegate.shared?.openReaderWindow(
-                workspacePath: c.workspace.folder?.standardizedFileURL.path, docId: nil)
-        }
-        on(.newTabRequested) { $0.tabs.docPickerPresented = true }
+        // ⌘N / ⌘T 与系统标签栏「+」同一个动作（用户 2026-11-28：「这两个作用应该是一样的」），见 `newTab`
+        on(.newWindowRequested) { $0.newTab() }
+        on(.newTabRequested) { $0.newTab() }
         on(.newMarkdownNoteRequested) { $0.newMarkdownNote() }
         on(.newNoteFolderRequested) { $0.newNoteFolder() }
         on(.newBoardRequested) { $0.presentNewBoard() }
@@ -393,8 +431,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         on(.referenceMarkdownRequested) { $0.referenceMarkdownFolder() }
         on(.closeTabRequested) { $0.closeTabOrWindow() }
         on(.closeWindowRequested) { $0.window?.performClose(nil) }
-        on(.nextTabRequested) { $0.tabs.activate(offset: 1) }
-        on(.prevTabRequested) { $0.tabs.activate(offset: -1) }
+        // 标签 = 系统窗口标签：切上一个 / 下一个交给系统标签组（`NATIVE-TABS-PLAN.md §5`）
+        on(.nextTabRequested) { $0.window?.selectNextTab(nil) }
+        on(.prevTabRequested) { $0.window?.selectPreviousTab(nil) }
         on(.revealInSidebar) { $0.sidebarItem.isCollapsed = false }   // 侧栏收着就先展开；定位由侧栏自己做
         on(.toggleSidebar) { $0.sidebarItem.animator().isCollapsed.toggle() }
         on(.toggleInspector) { $0.toggleInspector() }
@@ -539,7 +578,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     func windowDidBecomeKey(_ notification: Notification) {
         chrome.isKeyWindow = true
-        app.setActive(session)
+        // 切到这个标签（= 这扇窗口成为 key）：冷启动恢复时只记下要开哪篇的标签，到这时才真装（`activate` 里 `realize`），
+        // 平板跟随也随之拉过来。
+        tabs.activate(tabs.active.id)
         AIPanelDock.shared.setHost(window)
         if AIPanelModel.shared.mode == .inline {
             AIPanelModel.shared.setActiveHost(.inline(session.windowID))
@@ -595,6 +636,31 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             return
         }
         wsTime("恢复标签(读库+开 PDF)") { tabs.restoreTabs() }
+    }
+
+    // MARK: - 原生窗口标签（`NATIVE-TABS-PLAN.md`）
+
+    /// 在本窗口的系统标签组里新开一个标签装这篇（即使已经有标签开着它）。
+    func openInNativeTab(docId: String) {
+        tabs.spawn { $0.select(docId) }
+    }
+
+    /// 系统标签栏右端的「+」（以及「窗口 › 新建标签页」）。
+    @objc override func newWindowForTab(_ sender: Any?) { newTab() }
+
+    /// 新建标签：⌘N、⌘T、标签栏「+」共用。当前标签空着 → 就在这里弹选文档弹窗（不再多开一个空标签）；
+    /// 否则在本组新开一个空标签，在它里面弹（取消了就留一个空标签，同 Safari）。选中后照 `TabsModel.open` 的规矩开。
+    func newTab() {
+        if tabs.active.isEmptyTab {
+            tabs.docPickerPresented = true
+            return
+        }
+        guard let c = AppDelegate.shared?.spawnTab(after: tabs, select: true) else {
+            tabs.docPickerPresented = true
+            return
+        }
+        c.tabs.focusWindow()
+        c.tabs.docPickerPresented = true
     }
 
     // MARK: - 窗口级动作（原先散在 ContentView 里）
@@ -1549,5 +1615,27 @@ extension ReaderWindowController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu.identifier?.rawValue == "workspace" else { return }
         buildWorkspaceMenu(menu)
+    }
+}
+
+/// 阅读窗口：多一个「马上要露面了」的钩子，给后台标签在显示前一刻把界面建出来（`NATIVE-TABS-PLAN.md §4`）。
+/// 系统切标签的次序是先 `makeKey` 再 `order`，两处都挂（离屏实测 2026-11-28），钩子只跑一次。
+final class ReaderNSWindow: NSWindow {
+    var beforeShow: (() -> Void)?
+
+    private func fireBeforeShow() {
+        guard let f = beforeShow else { return }
+        beforeShow = nil
+        f()
+    }
+
+    override func makeKey() {
+        fireBeforeShow()
+        super.makeKey()
+    }
+
+    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        if place != .out { fireBeforeShow() }
+        super.order(place, relativeTo: otherWin)
     }
 }

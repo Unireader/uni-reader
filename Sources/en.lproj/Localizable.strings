@@ -1102,6 +1102,9 @@
 "Download PDFs up to %d MB automatically" = "Download PDFs up to %d MB automatically";
 "Downloads" = "Downloads";
 "Larger PDFs are downloaded when you open them." = "Larger PDFs are downloaded when you open them.";
+"Sync with the server before quitting" = "Sync with the server before quitting";
+"Quitting" = "Quitting";
+"When off, UniReader quits right away. Changes not yet sent (usually only those from the last few seconds) are synced the next time you open the workspace; until then, other devices can't see them." = "When off, UniReader quits right away. Changes not yet sent (usually only those from the last few seconds) are synced the next time you open the workspace; until then, other devices can't see them.";
 "Mac" = "Mac";
 "Servers" = "Servers";
 "Open from Server" = "Open from Server";

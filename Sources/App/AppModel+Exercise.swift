@@ -353,10 +353,13 @@ extension AppDelegate {
             else { c = try makeReaderWindow(workspacePath: ws.folder?.path, docId: nil, activate: activate) }
         }
         let tab = c.tabs.openExercises(scope)
+        // 标签 = 系统窗口标签：习题可能早开在组里另一扇窗口（`openExercises` 已切过去），后面一律对它操作——
+        // 再对 `c` 调 `makeKeyAndOrderFront` 会把标签切回来（用户 2026-11-28 报：习题链接不切到那个标签）
+        let owner = controller(owning: tab) ?? c
         if activate {
             NSApp.activate(ignoringOtherApps: true)
-            c.window?.makeKeyAndOrderFront(nil)
+            owner.window?.makeKeyAndOrderFront(nil)
         }
-        return (c, tab, deck)
+        return (owner, tab, deck)
     }
 }

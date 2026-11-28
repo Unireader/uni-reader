@@ -10,10 +10,11 @@ extension AppDelegate {
         if let k = mine.first(where: { $0.window?.isKeyWindow == true }) ?? mine.first { c = k }
         else { c = try makeReaderWindow(workspacePath: ws.folder?.path, docId: nil, activate: activate) }
         let tab = c.tabs.openSchedule(focus: focus)
+        let owner = controller(owning: tab) ?? c   // 可能开在 / 早在组里另一扇窗口（同 `showExercises`）
         if activate {
             NSApp.activate(ignoringOtherApps: true)
-            c.window?.makeKeyAndOrderFront(nil)
+            owner.window?.makeKeyAndOrderFront(nil)
         }
-        return (c, tab)
+        return (owner, tab)
     }
 }

@@ -464,7 +464,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 要把错误文本回给 Agent，而不是弹一个没人点的 `NSAlert` 把服务卡住。
     /// `activate = false` 时不抢前台（Agent 只想在后台把窗口准备好）。
     @discardableResult
-    func makeReaderWindow(workspacePath: String?, docId: String?, activate: Bool) throws -> ReaderWindowController {
+    func makeReaderWindow(workspacePath: String?, docId: String?, activate: Bool,
+                          tabbedInto host: NSWindow? = nil, select: Bool = true,
+                          ordered: NSWindow.OrderingMode = .above) throws -> ReaderWindowController {
         let folder: URL
         let strict: Bool
         if let p = workspacePath {
@@ -476,16 +478,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if strict { try WorkspaceManager.validate(folder) }
             let ws = try wsTime("开工作区(SQLite)") { try WorkspaceRegistry.shared.acquire(folder: folder) }
             let c = wsTime("建窗(含恢复标签/开 PDF)") {
-                ReaderWindowController(app: appModel, workspace: ws, launchDocId: docId)
+                ReaderWindowController(app: appModel, workspace: ws, launchDocId: docId,
+                                       lazyChrome: host != nil && !select)
             }
             // 第二扇起往右下错开：所有窗口共用一个 autosave frame，不错开就精确叠在一起、
             // 看着像「只开了一扇」。
-            if let prev = readerWindows.last?.window, let w = c.window {
+            // 指定了宿主窗口 = 开成它标签组里的一个新标签（`NATIVE-TABS-PLAN.md §2`；位置大小由标签组统一，不错开）。
+            // `select = false`（冷启动恢复一组标签）：只加进组里、不切过去，标签栏上有它，第一次被选中时才上屏。
+            if let host, let w = c.window {
+                host.addTabbedWindow(w, ordered: ordered)   // .above = 右边，.below = 左边
+            } else if let prev = readerWindows.last?.window, let w = c.window {
                 w.setFrameTopLeftPoint(NSPoint(x: prev.frame.minX + 26, y: prev.frame.maxY - 26))
             }
             readerWindows.append(c)
             persistOpenWindows()
-            wsTime("上屏(showWindow)") { c.showWindow(nil) }
+            if host == nil || select {
+                wsTime("上屏(showWindow)") { c.showWindow(nil) }
+            }
             if activate { NSApp.activate(ignoringOtherApps: true) }
             wsLog("开窗：\(folder.lastPathComponent) doc=\(docId ?? "nil")")
             return c
@@ -503,12 +512,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 返回窗口与标签；`activate` 只管新开窗口那一路要不要抢前台，已有窗口由调用方自己决定。
     func showDocument(_ documentId: String, in ws: WorkspaceManager, activate: Bool) throws -> (ReaderWindowController, DocTabModel) {
         if let (c, tab) = tabShowing(documentId) {
-            c.tabs.activate(tab.id)
+            c.tabs.focusWindow()
             return (c, tab)
         }
         let mine = readerWindows.filter { $0.workspace === ws }
         if let c = mine.first(where: { $0.window?.isKeyWindow == true }) ?? mine.first {
-            return (c, c.tabs.open(documentId))
+            let t = c.tabs.open(documentId)
+            return (controller(owning: t) ?? c, t)   // 可能开在了组里新开的那扇窗口
         }
         let c = try makeReaderWindow(workspacePath: ws.folder?.path, docId: documentId, activate: activate)
         return (c, c.tabs.active)
@@ -537,12 +547,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let key = mine.first { $0.window?.isKeyWindow == true }
         for c in [key].compactMap({ $0 }) + mine.filter({ $0 !== key }) {
             if let t = c.tabs.tabs.first(where: showing) {
-                c.tabs.activate(t.id)
+                c.tabs.focusWindow()
                 return (c, t)
             }
         }
         let c = try key ?? mine.first ?? makeReaderWindow(workspacePath: ws.folder?.path, docId: nil, activate: activate)
-        return (c, open(c.tabs))
+        let t = open(c.tabs)
+        return (controller(owning: t) ?? c, t)   // 可能开在了组里新开的那扇窗口
+    }
+
+    /// 装着这个标签的那扇窗口。
+    func controller(owning tab: DocTabModel) -> ReaderWindowController? {
+        readerWindows.first { c in c.tabs.tabs.contains { $0 === tab } }
+    }
+
+    // MARK: - 原生窗口标签（`NATIVE-TABS-PLAN.md §2`）
+
+    /// 与 `tabs` 同一工作区的全部阅读窗口的标签集合（含它自己）：它所在的系统标签组按左右顺序排在前，
+    /// 其余（同一工作区被拖成了另一组 / 独立窗口）按开窗先后接在后面。
+    func tabPeers(of tabs: TabsModel) -> [TabsModel] {
+        let mine = readerWindows.filter { $0.workspace === tabs.workspace }.map(\.tabs)
+        guard let order = tabs.nsWindow?.tabGroup?.windows else { return mine.isEmpty ? [tabs] : mine }
+        var result: [TabsModel] = []
+        for w in order { if let t = mine.first(where: { $0.nsWindow === w }) { result.append(t) } }
+        for t in mine where !result.contains(where: { $0 === t }) { result.append(t) }
+        return result.contains(where: { $0 === tabs }) ? result : [tabs] + result
+    }
+
+    /// 在 `host` 那扇窗口的标签组里紧挨着它新开一个空标签（一扇同工作区的阅读窗口）。
+    /// 新窗口不恢复打开集（`claimRestore` 早被第一扇领走），开出来就是空的，由调用方往里装。
+    /// `select = false`：只加进组里不切过去，界面等第一次被选中时才建（冷启动恢复）；`ordered: .below` 加在它左边。
+    func spawnTab(after host: TabsModel, select: Bool, ordered: NSWindow.OrderingMode = .above) -> ReaderWindowController? {
+        guard let win = host.nsWindow, let path = host.workspace.folder?.standardizedFileURL.path else { return nil }
+        return try? makeReaderWindow(workspacePath: path, docId: nil, activate: false, tabbedInto: win,
+                                     select: select, ordered: ordered)
     }
 
     /// 哪扇窗的哪个标签正显示这篇（跨所有窗口；key 窗口优先）。
@@ -569,6 +607,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 窗口关掉了，放掉对 controller 的强引用。
     func forget(_ controller: ReaderWindowController) {
         readerWindows.removeAll { $0 === controller }
+        // 关掉一个标签（= 一扇窗口）：同工作区还开着的窗口替它重存一次打开集（退出过程中 `persist` 自己不写）
+        readerWindows.first { $0.workspace === controller.workspace }?.tabs.persist()
         // 关掉的是这个工作区的最后一扇窗（不是退出）→ 下次打开它不再恢复文档（只做窗口恢复，用户 2026-10-29 定）
         if !Self.isTerminating, let folder = controller.workspace.folder,
            !WorkspaceRegistry.shared.wasEvacuated(folder),
@@ -661,6 +701,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // 每个工作区的打开集（全部标签的顺序 + 选中的那个）在置位之前存一次：置位之后 `persist` 不再写，
+        // 免得下面逐扇结清时越存越短（`NATIVE-TABS-PLAN.md §4`）。
+        var seenWS = Set<ObjectIdentifier>()
+        for c in readerWindows where seenWS.insert(ObjectIdentifier(c.workspace)).inserted { c.tabs.persist() }
         Self.isTerminating = true
         // 🔴 **退出时必须自己把每扇窗结清**：AppKit 的 `terminate:` 不关窗，
         // `windowWillClose` 一扇都不发（详见 `ReaderWindowController.shutdown()` 的红线）。
@@ -668,19 +712,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 在这里而不是 `applicationWillTerminate`：那条通知发出时 runloop 已在收尾，
         // 而结清里有写库，越早越稳；此刻 `isTerminating` 已置位，「打开集」照旧原样保留。
         let windows = readerWindows          // 结清里会 `forget(self)` 改这个数组，先取一份快照
-        for c in windows { c.shutdown() }
+        // 退出耗时打点（`NATIVE-TABS-PLAN.md`：一个标签一扇窗口后用户报退出变慢，先量清楚慢在哪一步）
+        wsLog("退出：\(windows.count) 扇阅读窗口")
+        wsTime("退出·全部窗口结清") {
+            for c in windows { wsTime("退出·结清 \(c.tabs.active.tabTitle)") { c.shutdown() } }
+        }
         // Agent 子进程（`kimi acp` 等）连进程组同步杀掉，别留孤儿进程
-        AgentPanelModel.shared.teardownAll()
+        wsTime("退出·Agent 收尾") { AgentPanelModel.shared.teardownAll() }
         // 进度/打开集这类小写在后台队列里排着（`WorkspaceManager.bookkeeping`），进程退出前同步落地。
-        WorkspaceRegistry.shared.flushAllBookkeeping()
+        wsTime("退出·落地记账") { WorkspaceRegistry.shared.flushAllBookkeeping() }
         // 资料库快照（`BACKUP-PLAN.md §3.2`）。**放在结清之后**：刚才那些写要在快照里。
         // 节流照旧生效（距上次不足 30 分钟就跳过），所以频繁开关 app 不会每次都写一份。
-        BackupService.shared.backupBeforeQuit()
+        wsTime("退出·备份") { BackupService.shared.backupBeforeQuit() }
+        let waitSync = ServerSyncCoordinator.syncBeforeQuit && ServerSyncCoordinator.shared.hasPendingWork
+        wsLog("退出：等服务器同步=\(waitSync)（设置=\(ServerSyncCoordinator.syncBeforeQuit)）")
         // 服务器工作区：窗口结清时各自起了「关闭后那一轮」同步（推 + 拉），进程一退它就断了——等它收尾再退，最多 4 秒
         // （`SERVER-MODE-PLAN.md §13.13`；连不上 / 太慢就不等，改动没丢，下次打开前照常同步）。
-        if ServerSyncCoordinator.shared.hasPendingWork {
+        // 设置「退出前与服务器同步」默认关：不等（没推出去的改动下次打开前再同步）
+        if waitSync {
             Task { @MainActor in
+                let t0 = CFAbsoluteTimeGetCurrent()
                 await ServerSyncCoordinator.shared.waitForQuit(timeout: 4)
+                wsLog(String(format: "耗时 退出·等服务器同步 %.0fms", (CFAbsoluteTimeGetCurrent() - t0) * 1000))
                 NSApp.reply(toApplicationShouldTerminate: true)
             }
             return .terminateLater

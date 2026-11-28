@@ -522,8 +522,10 @@ final class MCPFacade {
         let c: ReaderWindowController
         let tab: DocTabModel
         if let windowId {
-            c = try controller(windowId: windowId)
-            tab = c.tabs.open(documentId)
+            let host = try controller(windowId: windowId)
+            tab = host.tabs.open(documentId)
+            // 标签 = 系统窗口标签：可能切到 / 新开在组里另一扇窗口，回给 Agent 的 window_id 要是装着它的那扇
+            c = AppDelegate.shared?.controller(owning: tab) ?? host
         } else {
             // 「已在显示 → 切过去；该工作区有窗 → 开标签；没窗 → 新开一扇」与 `unireader://` 链接共用
             // `AppDelegate.showDocument`，别在这里另写一份。

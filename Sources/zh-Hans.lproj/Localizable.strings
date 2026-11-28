@@ -1104,6 +1104,9 @@
 "Download PDFs up to %d MB automatically" = "不超过 %d MB 的 PDF 自动下载";
 "Downloads" = "下载";
 "Larger PDFs are downloaded when you open them." = "更大的 PDF 在打开时再下载。";
+"Sync with the server before quitting" = "退出前与服务器同步";
+"Quitting" = "退出";
+"When off, UniReader quits right away. Changes not yet sent (usually only those from the last few seconds) are synced the next time you open the workspace; until then, other devices can't see them." = "关闭时立即退出。还没推送出去的改动（通常只有退出前几秒内的）会在下次打开这个工作区时同步；在此之前，其他设备看不到这些改动。";
 "Mac" = "Mac";
 "Servers" = "服务器";
 "Open from Server" = "从服务器打开";
