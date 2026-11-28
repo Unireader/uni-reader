@@ -402,13 +402,9 @@
 /* 标签页（MAC-TABS-PLAN.md） */
 "New Tab" = "新标签页";
 "Close Tab" = "关闭标签页";
-"Close Other Tabs" = "关闭其他标签页";
 "Close Window" = "关闭窗口";
 "Next Tab" = "下一个标签页";
 "Previous Tab" = "上一个标签页";
-"Pin to Bottom" = "固定到底部";
-"Float" = "浮动显示";
-"The tablet is following this tab" = "平板正跟随这个标签页";
 
 /* 参考窗（只读浮窗） */
 "Reference Window" = "参考窗";
@@ -1579,7 +1575,6 @@
 "Web Pages" = "网页";
 "No headings in this note" = "这篇笔记里没有标题";
 "Reveal Current Tab in Sidebar" = "在侧栏中定位当前标签";
-"Reveal in Sidebar" = "在侧栏中显示";
 "Properties" = "属性";
 "Add Property" = "添加属性";
 "Remove Property" = "删除属性";

@@ -15,7 +15,7 @@ final class ExerciseTabView: NSView {
     var agentWindow: () -> UUID? = { nil }
     /// 顶部让开工具栏的高度（由窗格设）。
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
-    /// 底下浮着的标签栏占的高度（窗格给）：练习页的「上一题 / 下一题」摆在它上面，列表的最后几行能滚到它上面。
+    /// 底部要让出的高度（原先给底下浮着的标签栏；2026-11-28 起恒为 0，窗格不再设）：练习页的「上一题 / 下一题」摆在它上面。
     var bottomInset: CGFloat = 0 {
         didSet {
             guard bottomInset != oldValue else { return }

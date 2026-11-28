@@ -48,7 +48,7 @@ final class ReaderView: NSView {
     var topInset: CGFloat = 0 { didSet { if oldValue != topInset { applyInsets() } } }
     /// 右侧 Inspector 盖住的宽度（视图点）：页面适配到左边剩下的那块，外框不变（方案 §3.3）。
     var panelInset: CGFloat = 0 { didSet { if oldValue != panelInset { applyInsets() } } }
-    /// 滚动条底部让位（底部标签栏）。内容仍垫到底。
+    /// 滚动条底部让位（原先给底部标签栏，2026-11-28 起标签 = 系统窗口标签、恒为 0；留着给将来底部的浮层）。内容仍垫到底。
     var scrollerBottomInset: CGFloat = 0 { didSet { if oldValue != scrollerBottomInset { applyInsets() } } }
     var isActiveWindow = false { didSet { if oldValue != isActiveWindow { activeWindowChanged() } } }
     var interpEnabled = true { didSet { follower.interpEnabled = interpEnabled } }

@@ -80,7 +80,7 @@ final class ExerciseListView: NSView, NSTableViewDataSource, NSTableViewDelegate
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
-    /// 底下浮着的标签栏占的高度：列表照样铺满（行从胶囊后面透过去，同阅读区），最后几行能滚到它上面；滚动条止于它上沿。
+    /// 底部要让出的高度（原先给底下浮着的标签栏，现恒为 0）：列表照样铺满，最后几行能滚到它上面；滚动条止于它上沿。
     var bottomInset: CGFloat = 0 {
         didSet {
             guard bottomInset != oldValue else { return }

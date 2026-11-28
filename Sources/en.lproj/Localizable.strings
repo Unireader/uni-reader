@@ -400,13 +400,9 @@
 /* 标签页（MAC-TABS-PLAN.md） */
 "New Tab" = "New Tab";
 "Close Tab" = "Close Tab";
-"Close Other Tabs" = "Close Other Tabs";
 "Close Window" = "Close Window";
 "Next Tab" = "Next Tab";
 "Previous Tab" = "Previous Tab";
-"Pin to Bottom" = "Pin to Bottom";
-"Float" = "Float";
-"The tablet is following this tab" = "The tablet is following this tab";
 
 /* 参考窗（只读浮窗） */
 "Reference Window" = "Reference Window";
@@ -1577,7 +1573,6 @@
 "Web Pages" = "Web Pages";
 "No headings in this note" = "No headings in this note";
 "Reveal Current Tab in Sidebar" = "Reveal Current Tab in Sidebar";
-"Reveal in Sidebar" = "Reveal in Sidebar";
 "Properties" = "Properties";
 "Add Property" = "Add Property";
 "Remove Property" = "Remove Property";

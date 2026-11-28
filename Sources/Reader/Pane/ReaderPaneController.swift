@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 /// 阅读窗格（分栏的中间那段，AppKit 版，替代 SwiftUI `ReaderPane`）：
-/// 当前标签的阅读区（`ReaderView`）或空白提示 + 查找条 + 角标 + 底部标签栏 + 书签命名框 + 两种确认弹窗，
+/// 当前标签的阅读区（`ReaderView`）或空白提示 + 查找条 + 角标 + 书签命名框 + 两种确认弹窗，
 /// 以及归这一层认领的菜单命令（夜间 / 画板 / 跳转 / 书签 / 扫描页对齐）。
 ///
 /// 阅读区**铺满整个窗格**（伸到侧栏 / Inspector 的玻璃与工具栏底下，Preview 式）；浮在上面的部件
@@ -37,7 +37,6 @@ final class ReaderPaneController: NSViewController {
     private let placeholder = PlaceholderView()
     private let findBanner = FindBannerView()
     private let badge = StatusBadgeView()
-    private let tabBar = TabBarNSView()
     /// 参考窗覆盖层 / 跳转历史：摆在安全区里（让开工具栏与左右两侧栏），身份跟窗口走（切标签不重建）。
     private let floating = FloatingLayerView()
     private var refCard: RefCard!
@@ -81,7 +80,7 @@ final class ReaderPaneController: NSViewController {
         v.onLayout = { [weak self] in self?.layoutChrome() }
         view = v
         placeholder.isHidden = true
-        for sub in [placeholder, badge, findBanner, tabBar, floating] as [NSView] { v.addSubview(sub) }
+        for sub in [placeholder, badge, findBanner, floating] as [NSView] { v.addSubview(sub) }
         refCard = RefCard(model: refWindow, workspace: workspace)
         refCard.currentDocID = { [weak self] in self?.tab.docID }
         refCard.onGotoMain = { [weak self] page in self?.session.jump(page: page, frac: 0, kind: .list) }
@@ -95,33 +94,12 @@ final class ReaderPaneController: NSViewController {
         searchCard.onOpenChange = { [weak self] in self?.queueRefresh() }
         findBanner.isHidden = true
         badge.isHidden = true
-        tabBar.isHidden = true
         findBanner.prev.target = self
         findBanner.prev.action = #selector(prevMatch)
         findBanner.next.target = self
         findBanner.next.action = #selector(nextMatch)
         findBanner.list.target = self
         findBanner.list.action = #selector(toggleSearchResults)
-        tabBar.onSelect = { [weak self] in self?.tabs.activate($0) }
-        tabBar.onClose = { [weak self] in self?.tabs.close($0) }
-        tabBar.onCloseOthers = { [weak self] in self?.tabs.closeOthers(than: $0) }
-        tabBar.onRevealInSidebar = { [weak self] id in
-            self?.tabs.activate(id)   // 侧栏定位的是活动标签：先切过去
-            NotificationCenter.default.post(name: .revealInSidebar, object: nil)
-        }
-        tabBar.onOpenInNewWindow = { [weak self] id in
-            guard let self, let d = self.tabs.tabs.first(where: { $0.id == id })?.docID else { return }
-            self.tabs.spawn { $0.select(d) }   // 底部标签栏第 4 批删除；暂留时也走系统标签
-        }
-        tabBar.onNewTab = { [weak self] in
-            guard let self, let c = AppDelegate.shared?.controller(owning: self.tabs.active) else { return }
-            c.newTab()   // 底部标签栏第 4 批删除；暂留时同 ⌘T
-        }
-        tabBar.onToggleStyle = {
-            let d = UserDefaults.standard
-            let cur = TabBarStyle(rawValue: d.string(forKey: TabBarStyle.key) ?? "") ?? .floating
-            d.set((cur == .floating ? TabBarStyle.docked : .floating).rawValue, forKey: TabBarStyle.key)
-        }
         installObservers()
         refresh()
     }
@@ -143,7 +121,7 @@ final class ReaderPaneController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.queueRefresh() }
             .store(in: &bag)
-        // md 笔记改名 / 被删 / 新导入 → 侧栏与标签栏跟着变
+        // md 笔记改名 / 被删 / 新导入 → 侧栏与窗口标题（= 系统标签上的名字）跟着变
         workspace.$noteTrees
             .map { $0.flatMap { $0.root.allNotes.map(\.id) } }
             .removeDuplicates()
@@ -286,17 +264,6 @@ final class ReaderPaneController: NSViewController {
 
     // MARK: 刷新
 
-    private var tabBarStyle: TabBarStyle {
-        TabBarStyle(rawValue: UserDefaults.standard.string(forKey: TabBarStyle.key) ?? "") ?? .floating
-    }
-    /// 底部标签栏已停用（`NATIVE-TABS-PLAN.md` 第 4 批删除），不再让出底部距离。
-    private var tabBarInset: CGFloat { 0 }
-    private var legacyScroller: Bool { NSScroller.preferredScrollerStyle == .legacy }
-    /// 占位式滚动条的槽固定在最底边：那时滚动条不让位，改由标签栏抬高一条槽的高度（2026-09-17 用户报）。
-    private var scrollerLift: CGFloat {
-        legacyScroller && tabBarInset > 0 ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
-    }
-
     func refresh() {
         bindSession()
         let s = session
@@ -371,8 +338,8 @@ final class ReaderPaneController: NSViewController {
         }
         pruneParkedWebViews()
         // Markdown 笔记标签（v15）：换一篇就重建（旧那份离开窗口时自己补存）。
-        // 🔴 **不能在这里早退**——后面还有查找条 / 角标 / **标签栏**要刷，早退一次就是一个
-        // 「开了笔记之后标签栏不更新」的 bug。
+        // 🔴 **不能在这里早退**——后面还有查找条 / 角标 / 浮层要刷，早退一次就是一个
+        // 「开了笔记之后它们不更新」的 bug（当年是底部标签栏，2026-11-28 已删）。
         if let ref = tab.noteRef {
             readerView?.removeFromSuperview(); readerView = nil
             placeholder.isHidden = true
@@ -500,7 +467,7 @@ final class ReaderPaneController: NSViewController {
         }
     }
 
-    /// 阅读区 / 笔记区之外的那一堆（笔架 / 查找条 / 角标 / 标签栏…），两种内容都要跑。
+    /// 阅读区 / 笔记区之外的那一堆（笔架 / 查找条 / 角标…），两种内容都要跑。
     private func finishRefresh(_ s: DocSession) {
         // 画板上也要笔架（落墨 / 橡皮 / 框选全靠它切）；习题标签开着草稿纸时笔架对着那道题的草稿纸
         let rackSession = exView?.scratchSession ?? ((readerView != nil || s.isBoard) ? s : nil)
@@ -519,9 +486,6 @@ final class ReaderPaneController: NSViewController {
         if let r = readerView {
             r.isActiveWindow = chrome.isKeyWindow
             r.interpEnabled = UserDefaults.standard.object(forKey: "scrollInterp") as? Bool ?? true
-            // 滚动条始终贴窗格底边（用户 2026-09-19：横向滚动条别跑到浮动标签胶囊上面）；
-            // 只有贴底整条的标签栏是实心条、会挡住它，那时才让到标签栏上面
-            r.scrollerBottomInset = (legacyScroller || tabBarStyle == .floating) ? 0 : tabBarInset
         }
 
         // 查找条 / 角标
@@ -552,17 +516,6 @@ final class ReaderPaneController: NSViewController {
             badge.isHidden = true
         }
 
-        // 标签栏（≥2 个标签才显示；草稿纸开着时不显示——它自带工具条。画板笔记本身就是一个标签，照常显示）
-        // 一个标签也显示（2026-11-21 用户定）；唯一的标签还是空的（没开任何内容）时不显示，免得空窗口底下孤零零一枚空胶囊
-        // 2026-11-28 起标签 = 系统窗口标签（`NATIVE-TABS-PLAN.md`），底部标签栏不再显示（第 4 批连同代码删除）
-        let showTabs = false
-        tabBar.isHidden = !showTabs
-        if showTabs {
-            tabBar.update(items: tabs.tabs.map {
-                TabBarItem(id: $0.id, title: $0.tabTitle, padFollowing: $0.id == app.padSession?.id,
-                           hasDocument: $0.docID != nil || $0.boardID != nil)
-            }, activeID: tabs.activeID, style: tabBarStyle)
-        }
         // 参考窗 / 跳转历史：草稿纸开着时隐去（它盖满阅读区）
         jumpCard.bind(s)
         jumpCard.suppressed = s.openPadID != nil
@@ -658,7 +611,7 @@ final class ReaderPaneController: NSViewController {
         // 内容格外框本身就变窄了，所以这里恒为 0；这条路留着，将来再有叠在阅读区上的面板可以直接用。
         let panel = si.right
         readerView?.panelInset = panel
-        ScrollerLog.write("窗格摆位 窗格\(Int(b.width))×\(Int(b.height)) 安全区[上\(Int(si.top)) 左\(Int(si.left)) 右\(Int(si.right))] 工具栏\(Int(top)) 标签栏\(Int(tabBarInset))")
+        ScrollerLog.write("窗格摆位 窗格\(Int(b.width))×\(Int(b.height)) 安全区[上\(Int(si.top)) 左\(Int(si.left)) 右\(Int(si.right))] 工具栏\(Int(top))")
         let safe = NSRect(x: si.left, y: si.top, width: max(0, b.width - si.left - si.right),
                           height: max(0, b.height - si.top - si.bottom))
         placeholder.frame = safe
@@ -670,18 +623,14 @@ final class ReaderPaneController: NSViewController {
         if let ex = exView {
             ex.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
             ex.topInset = si.top
-            // 底下浮着标签栏（胶囊 / 贴底整条）：习题页的「上一题 / 下一题」要摆在它上面，同笔架让位的高度
-            ex.bottomInset = tabBarInset + scrollerLift
         }
         if let sv = schedView {
             sv.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
             sv.topInset = si.top
-            sv.bottomInset = tabBarInset + scrollerLift
         }
         if let wv = webView {
             wv.frame = NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - si.right), height: b.height)
             wv.topInset = si.top
-            wv.bottomInset = tabBarInset + scrollerLift
         }
         if let pad = scratchPad {
             pad.frame = NSRect(x: 0, y: 0, width: max(0, b.width - panel), height: b.height)   // 给右侧 Inspector 让位
@@ -689,10 +638,10 @@ final class ReaderPaneController: NSViewController {
         }
         if let ex = exView, let f = ex.scratchFrame {
             // 习题标签：笔架摆在草稿纸那一块上（它的顶边就是分隔线，不用再让工具栏）
-            penRack?.place(viewport: ex.convert(f, to: view), topInset: 0, bottomInset: tabBarInset + scrollerLift)
+            penRack?.place(viewport: ex.convert(f, to: view), topInset: 0, bottomInset: 0)
         } else {
             penRack?.place(viewport: NSRect(x: si.left, y: 0, width: max(0, b.width - si.left - panel), height: b.height),
-                           topInset: si.top, bottomInset: tabBarInset + scrollerLift)
+                           topInset: si.top, bottomInset: 0)
         }
         if !findBanner.isHidden {
             let s = findBanner.fittingSize
@@ -703,19 +652,7 @@ final class ReaderPaneController: NSViewController {
             let y = safe.minY + 8 + (findBanner.isHidden ? 0 : 38)
             badge.frame = NSRect(x: safe.midX - s.width / 2, y: y, width: s.width, height: s.height)
         }
-        if !tabBar.isHidden {
-            let h = TabBarNSView.height
-            if tabBar.style == .floating {
-                let w = max(60, safe.width - 48)   // 胶囊宽度固定占满（左右各留 24），标签在里面平分（TabBarNSView）
-                tabBar.frame = NSRect(x: safe.midX - w / 2, y: b.height - TabBarMetrics.floatBottom - scrollerLift - h,
-                                      width: w, height: h)
-            } else {
-                tabBar.frame = NSRect(x: safe.minX, y: b.height - scrollerLift - h, width: safe.width, height: h)
-            }
-        }
     }
-
-    // MARK: 选文档弹窗（⌘T / 标签栏「+」）
 
     // MARK: 书签命名框（⌘D / 右键 / Inspector 目录页的 + 三条入口都只写 `session.bookmarkDraft`）
 

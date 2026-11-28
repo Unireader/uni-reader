@@ -10,7 +10,8 @@ import Foundation
 /// 只是条目从「每窗一个」变成「每标签一个」。
 ///
 /// 🔴 **不变式：`tabs` 永远至少有一个**。这样 `active` 是非可选的，`ContentView` 只需把从前的
-/// `tab` 换成 `tabs.active`，其余部分几乎不动。「关掉最后一个标签」不存在——标签栏在只有一个标签时
+/// 2026-11-28 起一个标签 = 一扇窗口（系统窗口标签，`NATIVE-TABS-PLAN.md`），本对象恒为一个标签、`tabs` 只剩一个元素。
+/// 以下是自建底部标签栏时期的说明：`tab` 换成 `tabs.active`，其余部分几乎不动。「关掉最后一个标签」不存在——标签栏在只有一个标签时
 /// 根本不显示（用户 2026-08-29 定），唯一的入口 ⌘W 在只剩一个时关的是窗口（同 Safari）。
 /// 「空窗口」表现为「一个没装文档的标签」，即从前的空态。
 ///
@@ -269,11 +270,11 @@ final class TabsModel: ObservableObject {
         return t
     }
 
-    /// 某篇文档（或它某一章）的习题标签：文档被删了 → 退回空态（只剩一个标签时不关，同 `pruneMissingBoards`）。
+    /// 某篇文档（或它某一章）的习题标签：文档被删了 → 退回空态（标签 = 窗口，不替用户关掉它，同 `pruneMissingBoards`）。
     func pruneMissingExerciseScopes() {
         for t in tabs {
             guard let id = t.exerciseScope?.documentId, workspace.document(id: id) == nil else { continue }
-            if tabs.count > 1 { close(t.id) } else { t.closeExercisesIfGone() }
+            t.closeExercisesIfGone()
         }
         persist()
     }
@@ -330,11 +331,11 @@ final class TabsModel: ObservableObject {
         return openBoard(b.id)
     }
 
-    /// 画板被删掉 / 镜像合并掉 → 开着它的标签退回空态（只剩一个标签时不关，同 `pruneMissing`）。
+    /// 画板被删掉 / 镜像合并掉 → 开着它的标签退回空态（同 `pruneMissing`）。
     func pruneMissingBoards() {
         let live = Set(workspace.boards.map(\.id))
         for t in tabs where t.boardID != nil && !live.contains(t.boardID!) {
-            if tabs.count > 1 { close(t.id) } else { t.closeBoardIfGone() }
+            t.closeBoardIfGone()
         }
         persist()
     }
@@ -368,41 +369,6 @@ final class TabsModel: ObservableObject {
         app.setActive(active.session)
     }
 
-    func activate(offset: Int) {
-        guard tabs.count > 1, let i = tabs.firstIndex(where: { $0.id == activeID }) else { return }
-        let n = tabs.count
-        activate(tabs[((i + offset) % n + n) % n].id)   // 循环，两头都能转回来
-    }
-
-    /// 关一个标签。只剩一个时不关（不变式）——调用方据 `canCloseTab` 决定是不是该关窗口。
-    func close(_ id: UUID) {
-        guard tabs.count > 1, let i = tabs.firstIndex(where: { $0.id == id }) else { return }
-        // 关掉的正好是平板跟随的那个会话时，`AppModel.unregister` 会把跟随随手交给 `sessions.last`
-        // ——那**可能是另一扇窗口的标签**。本窗口还开着，跟随理应留在本窗口，故记一笔、收尾时拉回来。
-        let stealsFollow = (app.activeSessionID == id)
-        let closing = tabs[i]
-        tabs.remove(at: i)
-        closing.close()   // 结清落库 → 退出打开集 → 交还工作区登记 → 注销会话 → 放掉 PDF（次序见那里）
-        if activeID == id {
-            let next = tabs[min(i, tabs.count - 1)]
-            next.prepareForReactivation()
-            activeID = next.id
-            for t in tabs { t.isActive = (t.id == activeID) }
-            bindActive()
-            app.setActive(active.session)
-        } else if stealsFollow {
-            app.setActive(active.session)
-        }
-        persist()
-    }
-
-    /// 还能不能再关标签（false = 只剩一个，⌘W 该关窗口了）。
-    var canCloseTab: Bool { tabs.count > 1 }
-
-    func closeOthers(than id: UUID) {
-        for t in tabs where t.id != id { close(t.id) }
-    }
-
     /// 关窗：每个标签各自结清。**必须逐个调 `close()`**，否则后台标签的进度/打开集/工作区登记
     /// 全部留在原地（库连接就永远关不掉 → 移动硬盘弹不出去）。
     func closeWindow() {
@@ -412,11 +378,6 @@ final class TabsModel: ObservableObject {
         if workspace.tabNav.front === self { workspace.tabNav.front = nil }
         activeBag.removeAll()
         for t in tabs { t.close() }
-    }
-
-    func move(from source: IndexSet, to destination: Int) {
-        tabs.move(fromOffsets: source, toOffset: destination)
-        persist()
     }
 
     // MARK: - 窗口级转发（原先 ContentView 对单个标签做的，现在对每个标签做一遍）
@@ -432,11 +393,11 @@ final class TabsModel: ObservableObject {
         for t in tabs { WorkspaceRegistry.shared.noteWindowObject(t.session.id, window: window) }
     }
 
-    /// 文档被删除/合并掉后从库里消失 → 开着它的标签退回空态（只剩一个标签时不关，同不变式）。
+    /// 文档被删除/合并掉后从库里消失 → 开着它的标签退回空态（标签 = 窗口，不替用户关掉它）。
     func pruneMissing(_ docs: [LibDocument]) {
         let live = Set(docs.map(\.id))
         for t in tabs where t.docID != nil && !live.contains(t.docID!) {
-            if tabs.count > 1 { close(t.id) } else { t.select(nil) }
+            t.select(nil)
         }
         syncTitles(docs)
     }

@@ -7,7 +7,7 @@ import WebKit
 ///
 /// 页面里有 `window.unireader`（`WebBridgeScript`）：存进工作区的数据随同步走；别处改了会收到 `unireader:change`。
 ///
-/// 沉浸（2026-11-28）：网页铺满整块，伸到工具栏、顶上那一条和底下浮着的标签栏后面，靠 `obscuredContentInsets` 让出版面。
+/// 沉浸（2026-11-28）：网页铺满整块，伸到工具栏和顶上那一条后面，靠 `obscuredContentInsets` 让出版面。
 /// macOS 26 的 `WKWebView` 设了顶部内边距会自己挂一层系统边缘效果（`NSScrollPocket`，离屏实测），和 PDF 阅读区同一种模糊；
 /// 所以顶上那一条**不要再垫不透明的底**，按钮直接浮在这层模糊上；模糊层的颜色由 `underPageBackgroundColor` 定（见 init）。
 @MainActor
@@ -16,7 +16,7 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
 
     let webId: String
     private let workspace: WorkspaceManager
-    /// 顶部让开工具栏的高度 / 底下浮着的标签栏占的高度（窗格设）。
+    /// 顶部让开工具栏的高度（窗格设）/ 底部要让出的高度（原先给底部标签栏，现恒为 0）。
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
     var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { needsLayout = true } } }
 

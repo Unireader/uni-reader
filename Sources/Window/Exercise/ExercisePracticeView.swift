@@ -825,7 +825,7 @@ final class ExercisePracticeView: NSView {
 
     /// 底部那条（上一题 / 下一题）的高度。
     private static let navHeight: CGFloat = 52
-    /// 底下浮着的标签栏占的高度（窗格经 `ExerciseTabView` 给）：底部那条摆在它上面，那一截留给标签栏。
+    /// 底部要让出的高度（原先给底下浮着的标签栏；2026-11-28 起标签 = 系统窗口标签，恒为 0）：底部那条摆在它上面。
     var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { needsLayout = true } } }
 
     /// 带文章的题：总宽不小于这个时文章在左、题目在右，否则文章在上。

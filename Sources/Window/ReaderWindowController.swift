@@ -635,12 +635,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         if !inspectorItem.isCollapsed && inspectorVC.currentTab == .agent { setInspector(open: false) } else { showAgentTab() }
     }
 
-    /// ⌘W：**关当前标签**，只剩一个标签时才关窗口（同 Safari / Xcode）。
+    /// ⌘W：关当前标签 = 关这扇窗口（一个标签 = 一扇窗口，`NATIVE-TABS-PLAN.md`）。
     /// 🔴 迁移后这条不再需要 keyDown 监视器去抢——菜单项是我们自己的，AppKit 那个「文件 › 关闭」
     /// 压根不存在了（2026-08-29 那笔账就此了结）。
     func closeTabOrWindow() {
-        if tabs.canCloseTab { tabs.close(tabs.activeID) }
-        else { window?.performClose(nil) }
+        window?.performClose(nil)
     }
 
     // MARK: - 窗口生命周期

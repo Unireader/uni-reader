@@ -141,3 +141,13 @@
 - **「返回」跨标签**：历史挪到 `WorkspaceManager.tabNav`（`TabNavGroup`：历史 + 回放中标记 + 最前面的标签），`TabsModel.navHistory` /
   `isNavigatingHistory` 转发过去；切标签（窗口成 key）时 `cameToFront` 从上一个标签记「离开的那一处」；关掉的标签不记；
   回放时那个标签还开着（同组任一扇）就 `focusWindow` 切过去，否则按内容重开。
+
+### 9.3 第 4 批（2026-11-28）：删底部标签栏
+
+- 删 `Sources/Reader/Pane/TabBarNSView.swift`（含 `TabChipView` / `HorizontalWheelScrollView`）、`TabBarMetrics.swift`（`TabBarStyle` / `TabBarItem`）、
+  离屏样张 `spike/tabbar-look.swift`；`ReaderPaneController` 里的标签栏装配、刷新、摆位、`tabBarInset` / `scrollerLift` 一并删，
+  习题 / 日程 / 网页 / 笔架的底部让位不再设（这些视图的 `bottomInset` 属性留着、恒为 0）。`CapsuleMaterialView` 还有查找条等在用，留着。
+- `TabsModel` 删 `close(_:)` / `closeOthers` / `move` / `activate(offset:)` / `canCloseTab`；文档 / 画板 / 习题被删时只退回空态（不替用户关窗口）；
+  ⌘W = `performClose`。
+- 「在侧栏中显示当前标签」菜单栏早就有（⌘⇧J），不用挪。5 条只给标签栏用的文案从两份 `Localizable.strings` 删掉。
+- 偏好键 `tabBarStyle` 不再读，留在用户的 UserDefaults 里无害。

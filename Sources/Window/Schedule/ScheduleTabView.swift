@@ -16,7 +16,7 @@ final class ScheduleTabView: NSView, NSTextFieldDelegate {
     var onSelectionChange: (_ day: String, _ itemId: String?) -> Void = { _, _ in }
     /// 顶部让开工具栏的高度（由窗格设）。
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
-    /// 底下浮着的标签栏占的高度（窗格给）。
+    /// 底部要让出的高度（原先给底下浮着的标签栏；2026-11-28 起标签 = 系统窗口标签，窗格不再设、恒为 0）。
     var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { needsLayout = true } } }
 
     private let header = NSVisualEffectView()
