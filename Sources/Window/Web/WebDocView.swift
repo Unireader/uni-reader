@@ -6,6 +6,10 @@ import WebKit
 /// 每份网页的 id 当主机名，所以各份网页是不同的源（`localStorage` 互不串）。
 ///
 /// 页面里有 `window.unireader`（`WebBridgeScript`）：存进工作区的数据随同步走；别处改了会收到 `unireader:change`。
+///
+/// 沉浸（2026-11-28）：网页铺满整块，伸到工具栏、顶上那一条和底下浮着的标签栏后面，靠 `obscuredContentInsets` 让出版面。
+/// macOS 26 的 `WKWebView` 设了顶部内边距会自己挂一层系统边缘效果（`NSScrollPocket`，离屏实测），和 PDF 阅读区同一种模糊；
+/// 所以顶上那一条**不要再垫不透明的底**，按钮直接浮在这层模糊上；模糊层的颜色由 `underPageBackgroundColor` 定（见 init）。
 @MainActor
 final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
     static let scheme = "unireader-web"
@@ -16,8 +20,8 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
     var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { needsLayout = true } } }
 
-    private let header = NSVisualEffectView()
-    private let headerLine = NSBox()
+    /// 顶上那一条的底：透明，只负责接住空白处的点击（不漏给后面的网页）、拖动窗口、把滚轮转给网页。
+    private let header = WebHeaderStrip()
     private let navControl = NSSegmentedControl()
     private let homeButton = NSButton()
     private let reloadButton = NSButton()
@@ -81,10 +85,12 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         web.allowsBackForwardNavigationGestures = true
         web.allowsMagnification = true
         web.isInspectable = true   // 课件作者可以在 Safari 的「开发」菜单里调试
+        // 🔴 顶上那层模糊（WebKit 自己的 `NSScrollPocket`）取色就是这个颜色，默认 = 网页底色：白底网页会把模糊层、
+        // 连带工具栏都带成浅色，深色外观下顶上那一条的字就看不见了（2026-11-28 用户报，离屏实测取色跟着它走）。
+        // 钉成窗口底色（随系统深浅外观变），与 PDF 阅读区页外空白同色；网页拉过头回弹时露出的也是它。
+        web.underPageBackgroundColor = .windowBackgroundColor
 
-        header.material = .headerView
-        header.blendingMode = .withinWindow
-        headerLine.boxType = .separator
+        header.web = web
         navControl.segmentCount = 2
         navControl.trackingMode = .momentary
         navControl.setImage(NSImage(systemSymbolName: "chevron.left", accessibilityDescription: L("Back")), forSegment: 0)
@@ -120,7 +126,7 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         notice.font = .preferredFont(forTextStyle: .callout)
         notice.alignment = .center
         notice.isHidden = true
-        for v in [web, notice, header, headerLine, navControl, homeButton, reloadButton, titleLabel, browserButton] as [NSView] { addSubview(v) }
+        for v in [web, header, notice, navControl, homeButton, reloadButton, titleLabel, browserButton] as [NSView] { addSubview(v) }
 
         observations = [
             web.observe(\.canGoBack) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateNav() } },
@@ -155,6 +161,12 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     }
 
     override var isFlipped: Bool { true }
+
+    /// 系统深浅外观切换：动态色 WebKit 可能只在设置时取一次，重设一遍让顶上模糊层跟上。
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        web.underPageBackgroundColor = .windowBackgroundColor
+    }
 
     /// 网页列表变了（改名 / 重新导入 / 同步拉到新版 / 文件下完了）：标题跟上，清单变了就重新载入。
     /// 窗格每次刷新都会调（很频繁）：只比内存里的列表，文件只在提示条开着时才去看。
@@ -269,7 +281,7 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         super.layout()
         let b = bounds
         let headerH: CGFloat = 40
-        header.frame = NSRect(x: 0, y: 0, width: b.width, height: topInset + headerH)
+        header.frame = NSRect(x: 0, y: topInset, width: b.width, height: headerH)
         let pad: CGFloat = 12, midY = topInset + headerH / 2
         navControl.sizeToFit()
         navControl.frame.origin = NSPoint(x: pad, y: midY - navControl.frame.height / 2)
@@ -282,14 +294,19 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         let th = titleLabel.intrinsicContentSize.height
         let tx = reloadButton.frame.maxX + 12
         titleLabel.frame = NSRect(x: tx, y: midY - th / 2, width: max(0, browserButton.frame.minX - 12 - tx), height: th)
-        headerLine.frame = NSRect(x: 0, y: header.frame.maxY, width: b.width, height: 1)
-        var top = headerLine.frame.maxY
+        var top = header.frame.maxY
         if !notice.isHidden {
+            // 提示条也算在让出的版面里（同在边缘效果下面），网页内容从它下面开始
             let h = notice.sizeThatFits(NSSize(width: max(0, b.width - 32), height: .greatestFiniteMagnitude)).height
-            notice.frame = NSRect(x: 16, y: top + 8, width: max(0, b.width - 32), height: h)
+            notice.frame = NSRect(x: 16, y: top + 4, width: max(0, b.width - 32), height: h)
             top = notice.frame.maxY + 8
         }
-        web.frame = NSRect(x: 0, y: top, width: b.width, height: max(0, b.height - bottomInset - top))
+        if web.frame != b { web.frame = b }
+        let insets = NSEdgeInsets(top: top, left: 0, bottom: bottomInset, right: 0)
+        let cur = web.obscuredContentInsets
+        if cur.top != insets.top || cur.bottom != insets.bottom || cur.left != 0 || cur.right != 0 {
+            web.obscuredContentInsets = insets
+        }
     }
 
     // MARK: - 导航
@@ -416,6 +433,18 @@ extension WebDocView {
             return nil
         }
     }
+}
+
+/// 顶上那一条的透明底：空白处的点击不漏给后面的网页（那里被模糊盖着，点到了也看不见点了什么），
+/// 按住可以拖动窗口（和工具栏一样），滚轮转给网页。
+private final class WebHeaderStrip: NSView {
+    weak var web: WKWebView?
+    override var isFlipped: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { window?.performZoom(nil) } else { window?.performDrag(with: event) }
+    }
+    override func scrollWheel(with event: NSEvent) { web?.scrollWheel(with: event) }
 }
 
 /// `WKUserContentController` 强持有消息处理者：中转一层弱引用，视图拆掉时不被它留着。
