@@ -76,7 +76,17 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         let glass = NSGlassEffectView()
         glass.cornerRadius = Self.cornerRadius
         glass.contentView = content
-        panel.contentView = glass
+        // 外面再包一层按同一圆角裁剪的容器：无边框透明窗口的阴影按窗口里画出的形状算，玻璃是系统合成的，
+        // 不裁的话四个角会被当成方的，圆角外露出一圈方角（用户 2026-11-28 截图报「四周有瑕疵」）
+        let clip = NSView()
+        clip.wantsLayer = true
+        clip.layer?.cornerRadius = Self.cornerRadius
+        clip.layer?.cornerCurve = .continuous
+        clip.layer?.masksToBounds = true
+        glass.frame = clip.bounds
+        glass.autoresizingMask = [.width, .height]
+        clip.addSubview(glass)
+        panel.contentView = clip
 
         let sym = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
         icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)?.withSymbolConfiguration(sym)
@@ -129,6 +139,12 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
     /// ⌘P：开着就收起，否则在这扇阅读窗上方居中弹出（每次弹出现取一遍工作区里的东西）。
     func toggle(for c: ReaderWindowController) {
         if panel.isVisible { close(); return }
+        show(for: c)
+    }
+
+    /// 在这扇阅读窗上方弹出（已经开着就换到这扇、清空重来）。新建标签（⌘N / ⌘T / 标签栏「+」）也用它。
+    func show(for c: ReaderWindowController) {
+        if panel.isVisible { close() }
         guard let win = c.window else { return }
         reader = c
         field.stringValue = ""
@@ -148,6 +164,7 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         }
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(field)
+        refreshShadow()
     }
 
     /// 收起，焦点交还给原来那扇阅读窗。
@@ -203,7 +220,14 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         f.size.height = h
         panel.setFrame(f, display: true)
         layoutContent(width: f.width)
+        refreshShadow()
+    }
+
+    /// 阴影按窗口内容的形状算、且不会自己跟着变：改了高度 / 刚弹出都要重算。当场算一次，
+    /// 下一拍玻璃画好了再算一次（当场那次用的可能还是旧画面）。
+    private func refreshShadow() {
         panel.invalidateShadow()
+        DispatchQueue.main.async { [weak self] in self?.panel.invalidateShadow() }
     }
 
     /// 摆各部件（`content` 是翻转坐标，从上往下）。离屏测试直接调它。

@@ -429,7 +429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if opened == 0 { WorkspacesWindowController.show() }
     }
 
-    /// 旧行为：开「上次使用的工作区」（服务器工作区先同步一轮，最多等 2.5 秒）。
+    /// 旧行为：开「上次使用的工作区」（服务器工作区先开窗、后台同步，见 `ServerSyncCoordinator.readyToOpen`）。
     private func openLastWorkspace() {
         let last = WorkspaceRegistry.shared.lastOrDefaultFolder()
         guard ServerSyncCoordinator.serverURL(of: last) != nil else {
@@ -437,7 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         Task { @MainActor in
-            await ServerSyncCoordinator.shared.prepareToOpen(last, timeout: 2.5)
+            await ServerSyncCoordinator.shared.readyToOpen(last)
             self.openReaderWindow(workspacePath: nil, docId: nil)
         }
     }

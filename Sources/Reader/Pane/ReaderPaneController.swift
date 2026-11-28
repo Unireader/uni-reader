@@ -48,7 +48,6 @@ final class ReaderPaneController: NSViewController {
     private var jumpCard: JumpHistoryCard!
     /// 搜索结果浮窗（PDF 搜索命中多、散得开时按页列出来点着跳）。
     private let searchCard = SearchResultsCard()
-    private var docPicker: NSPopover?
     private var bookmarkSheet: NSWindow?
     private var alertShowing = false
     /// 「跳转到指定页」的输入框正开着（⌃G 连按不叠第二张）。与 `alertShowing` 分开：
@@ -114,7 +113,10 @@ final class ReaderPaneController: NSViewController {
             guard let self, let d = self.tabs.tabs.first(where: { $0.id == id })?.docID else { return }
             self.tabs.spawn { $0.select(d) }   // 底部标签栏第 4 批删除；暂留时也走系统标签
         }
-        tabBar.onNewTab = { [weak self] in self?.tabs.docPickerPresented = true }
+        tabBar.onNewTab = { [weak self] in
+            guard let self, let c = AppDelegate.shared?.controller(owning: self.tabs.active) else { return }
+            c.newTab()   // 底部标签栏第 4 批删除；暂留时同 ⌘T
+        }
         tabBar.onToggleStyle = {
             let d = UserDefaults.standard
             let cur = TabBarStyle(rawValue: d.string(forKey: TabBarStyle.key) ?? "") ?? .floating
@@ -566,7 +568,6 @@ final class ReaderPaneController: NSViewController {
         jumpCard.suppressed = s.openPadID != nil
         refCard.suppressed = s.openPadID != nil
         refCard.sync()
-        syncDocPicker()
         syncBookmarkSheet()
         syncAlerts()
         layoutChrome()
@@ -715,34 +716,6 @@ final class ReaderPaneController: NSViewController {
     }
 
     // MARK: 选文档弹窗（⌘T / 标签栏「+」）
-
-    private func syncDocPicker() {
-        if tabs.docPickerPresented {
-            guard docPicker == nil else { return }
-            let pop = NSPopover()
-            pop.behavior = .transient
-            let vc = DocPickerController.forTabs(tabs, workspace: workspace)
-            pop.contentViewController = vc
-            _ = vc.view
-            pop.contentSize = vc.preferredContentSize
-            let closer = PopoverCloseRelay { [weak self] in self?.tabs.docPickerPresented = false }
-            pop.delegate = closer
-            objc_setAssociatedObject(pop, &PopoverCloseRelay.key, closer, .OBJC_ASSOCIATION_RETAIN)
-            docPicker = pop
-            if !tabBar.isHidden {
-                pop.show(relativeTo: tabBar.plus.bounds, of: tabBar.plus, preferredEdge: .maxY)
-            } else {
-                // 标签在窗口顶上（系统窗口标签，`NATIVE-TABS-PLAN.md`）：挂在阅读区顶部正中、工具栏下沿往下弹
-                let b = view.bounds, top = view.safeAreaInsets.top
-                let y = view.isFlipped ? top : b.height - top - 1
-                pop.show(relativeTo: NSRect(x: b.midX, y: y, width: 1, height: 1),
-                         of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
-            }
-        } else if let pop = docPicker {
-            docPicker = nil
-            pop.close()
-        }
-    }
 
     // MARK: 书签命名框（⌘D / 右键 / Inspector 目录页的 + 三条入口都只写 `session.bookmarkDraft`）
 

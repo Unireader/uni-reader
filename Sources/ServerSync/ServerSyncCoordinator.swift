@@ -5,7 +5,8 @@ import AppKit
 ///
 /// | 时机 | 做什么 | 用哪条连接 |
 /// |---|---|---|
-/// | 打开前（`prepareToOpen`） | 完整一轮：推 + 拉 + 补图片，限时，超时就取消、照常开本机缓存 | 临时连接（此刻还没有 `WorkspaceManager`） |
+/// | 打开前（`readyToOpen`，2026-11-28 起） | **不同步**：只停掉启动页的 PDF 下载、取消上一轮，马上开窗；开起来后由开着时那套接手（立刻拉、约 2 秒后推） | — |
+/// | 打开前（`prepareToOpen`，旧，已无调用方） | 完整一轮：推 + 拉 + 补图片，限时，超时就取消、照常开本机缓存 | 临时连接（此刻还没有 `WorkspaceManager`） |
 /// | 开着时（每 60 秒 / App 切到后台 / 手动） | **只推不拉**：不往开着的文档里写（那是 S4 的事）；顺带后台下载小 PDF | 窗口那条连接，基线写在主线程、不开事务 |
 /// | 关掉后（`workspaceClosed`） | 完整一轮 | 临时连接（窗口那条已经关了） |
 ///
@@ -170,7 +171,21 @@ final class ServerSyncCoordinator: ObservableObject {
 
     private var busy: [String: (token: UUID, task: Task<Void, Never>)] = [:]
 
-    /// 打开服务器工作区之前：取消还在跑的上一轮，再同步一轮，最多等 [timeout] 秒。
+    /// 打开服务器工作区之前（2026-11-28 用户定「先打开再异步同步」：原来先同步一轮最多等 3 秒，窗口要等它才出来）：
+    /// 只做开窗前必须做的——停掉启动页「下载到本机」的 PDF 下载、取消还在跑的上一轮（临时连接，与窗口同时写库违反
+    /// 「同一路径同一实例」红线）；同步交给开起来之后的会话：`watchLoop` 的长轮询在修订号不一致时立刻返回 → 马上拉，
+    /// `workspaceOpened` 把会话标脏 → 约 2 秒后推（上次退出没推出去的改动）。
+    func readyToOpen(_ folder: URL) async {
+        let k = WorkspaceRegistry.key(folder)
+        if let wid = LibraryStore.peekIdentity(folder: folder)?.id { await stopWorkspacePDFs(wid) }
+        if let running = busy[k] {
+            running.task.cancel()
+            await running.task.value
+        }
+        if endpoint(for: folder) == nil, ServerSyncIO.serverURL(of: folder) != nil { status[k] = .noAccount }
+    }
+
+    /// 打开服务器工作区之前：取消还在跑的上一轮，再同步一轮，最多等 [timeout] 秒。（旧做法，现由 `readyToOpen` 代替）
     func prepareToOpen(_ folder: URL, timeout: TimeInterval) async {
         let k = WorkspaceRegistry.key(folder)
         // 启动页「下载到本机」还在下 PDF：停掉（开着时由会话自己预取，两边别同时写同一份文件）
@@ -279,6 +294,8 @@ final class ServerSyncCoordinator: ObservableObject {
         let s = Session()
         s.manager = m
         s.seenChanges = m.store?.withMirrorDB { $0.totalChanges } ?? 0
+        // 打开前不再先同步（`readyToOpen`）：标脏，停手 2 秒后就推一次，把上次没推出去的改动送上去（不用等每分钟的兜底）
+        s.dirtyAt = Date()
         s.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self, weak m, weak s] _ in
             Task { @MainActor in if let self, let m, let s { await self.tick(m, s) } }
         }

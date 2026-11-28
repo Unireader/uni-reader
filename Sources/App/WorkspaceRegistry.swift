@@ -311,12 +311,12 @@ final class WorkspaceRegistry: ObservableObject {
             activateWindow(forWorkspace: url)
             return
         }
-        // 服务器工作区：开窗前先同步一轮（最多等几秒，连不上就照常开本机缓存）
+        // 服务器工作区：先开窗、后台同步（`ServerSyncCoordinator.readyToOpen`，2026-11-28 用户定）
         if ServerSyncCoordinator.serverURL(of: url) != nil {
-            wsLog("route：服务器工作区，先同步再开窗 \(url.path)")
+            wsLog("route：服务器工作区，开窗后再同步 \(url.path)")
             let path = url.standardizedFileURL.path
             Task { @MainActor in
-                await ServerSyncCoordinator.shared.prepareToOpen(url, timeout: 3)
+                await ServerSyncCoordinator.shared.readyToOpen(url)
                 if self.hasWindow(forWorkspace: url) { self.activateWindow(forWorkspace: url); return }
                 AppDelegate.shared?.openReaderWindow(workspacePath: path, docId: nil)
             }

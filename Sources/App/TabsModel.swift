@@ -332,9 +332,6 @@ final class TabsModel: ObservableObject {
         persist()
     }
 
-    /// 标签栏的 `+` / ⌘T 不再开空标签，而是弹本工作区的选文档弹窗（`DocPickerView`，用户 2026-09-17 定），
-    /// 选中后走 `open`。弹窗挂在「+」上；标签栏不显示时挂在阅读区底部（见 `ReaderPane.tabBar`）。
-    @Published var docPickerPresented = false
 
     func activate(_ id: UUID) {
         guard let next = tabs.first(where: { $0.id == id }) else { return }

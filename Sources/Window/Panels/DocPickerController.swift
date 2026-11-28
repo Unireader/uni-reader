@@ -1,6 +1,7 @@
 import AppKit
 
-/// 新建标签时的选文档弹窗（AppKit 版，替代 SwiftUI `DocPickerView`；标签栏「+」与 ⌘T 共用）：
+/// 选文档弹窗（AppKit 版，替代 SwiftUI `DocPickerView`）：现在只给参考窗选书用——新建标签（⌘N / ⌘T / 标签栏「+」）
+/// 2026-11-28 起改弹 ⌘P 快速打开（用户：「弹窗选择太少了…换成 cmd p 那个还可以模糊搜索」）。
 /// 搜索框 + 本工作区文档列表（最近打开的在前），回车 / 单击打开，方向键在搜索框里也能挑。
 /// 只列书库里已有的文档，不导入新文件；选中交给 `TabsModel.open`（已开着的就切过去）。
 /// 🔴 弹窗底是系统材质：文字一律主色，次要信息靠字号 + 不透明度区分；列表不画自己的底色。
@@ -25,15 +26,6 @@ final class DocPickerController: NSViewController, NSTableViewDataSource, NSTabl
     private static let maxVisibleRows = 7
     private static let headerH: CGFloat = 46
 
-    static func forTabs(_ tabs: TabsModel, workspace: WorkspaceManager) -> DocPickerController {
-        DocPickerController(documents: workspace.documents, openIDs: Set(tabs.tabs.compactMap(\.docID))) { [weak tabs] id in
-            tabs?.docPickerPresented = false
-            tabs?.open(id)
-        }
-    }
-
-    /// 参考窗（独立窗口 / 覆盖层）换书用：同一个搜索选书面板放进 popover，选中后自动收起。
-    /// 当前这本在副标题里标「已打开」。
     static func popover(workspace: WorkspaceManager, current: String?,
                         onPick: @escaping (String) -> Void) -> NSPopover {
         let p = NSPopover()

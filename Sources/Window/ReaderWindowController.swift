@@ -648,19 +648,21 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// 系统标签栏右端的「+」（以及「窗口 › 新建标签页」）。
     @objc override func newWindowForTab(_ sender: Any?) { newTab() }
 
-    /// 新建标签：⌘N、⌘T、标签栏「+」共用。当前标签空着 → 就在这里弹选文档弹窗（不再多开一个空标签）；
-    /// 否则在本组新开一个空标签，在它里面弹（取消了就留一个空标签，同 Safari）。选中后照 `TabsModel.open` 的规矩开。
+    /// 新建标签：⌘N、⌘T、标签栏「+」共用。当前标签空着 → 就在这里弹 ⌘P 快速打开（不再多开一个空标签）；
+    /// 否则在本组新开一个空标签，在它上面弹（取消了就留一个空标签，同 Safari）。选中的项落进这个空标签（`TabsModel.place`）。
+    /// 原来弹的是只列 PDF 的选文档弹窗，用户 2026-11-28 换成快速打开（模糊搜索、笔记 / 画板 / 习题都能挑）。
     func newTab() {
         if tabs.active.isEmptyTab {
-            tabs.docPickerPresented = true
+            QuickOpenController.shared.show(for: self)
             return
         }
         guard let c = AppDelegate.shared?.spawnTab(after: tabs, select: true) else {
-            tabs.docPickerPresented = true
+            QuickOpenController.shared.show(for: self)
             return
         }
         c.tabs.focusWindow()
-        c.tabs.docPickerPresented = true
+        // 下一拍再弹：新标签切过来的那一下系统还在换 key 窗口，当场弹的面板会被抢走 key、随即收起（失去 key 就收）
+        DispatchQueue.main.async { QuickOpenController.shared.show(for: c) }
     }
 
     // MARK: - 窗口级动作（原先散在 ContentView 里）

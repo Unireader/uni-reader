@@ -796,3 +796,11 @@ Linux 交叉编译通过；App Debug 编译通过。
 - `server/web` 的测试命令改成 `node --test test/*.test.mjs`（Node 24 不认目录参数），`server/scripts/build-linux.sh` 又能从头跑通了。
 - 验证：安卓端到端三条在模拟器上对着临时服务器**全过**（含 Mac ↔ 安卓互通 8 项）；服务器 57 项、`server-client-test.sh` 95 项、Linux 交叉编译、Mac Debug 编译都过。
 
+
+### 13.14 2026-11-28：先开窗、后台同步（用户：「启动到出现窗口有点慢…可以先打开再异步同步」）
+
+- 原来 `WorkspaceRegistry.route` / `AppDelegate.openLastWorkspace` 开服务器工作区前先 `prepareToOpen` 同步一轮（最多等 3 / 2.5 秒），窗口要等它。
+- 现在改调 `ServerSyncCoordinator.readyToOpen`：只停掉启动页的 PDF 下载、取消还在跑的上一轮（红线：临时连接不能和窗口同时写库），马上开窗。
+- 同步交给开着时那套（S4）：`watchLoop` 的长轮询在修订号不一致时立刻返回 → 马上拉、开着的文档跟着更新；
+  `workspaceOpened` 把会话标脏 → 停手 2 秒后推一次（上次退出没推出去的改动，配合 §13.13 的「退出前与服务器同步」默认关）。
+- 代价：窗口先显示本机缓存，服务器上的新改动晚一两秒才出现。`prepareToOpen` 留着、已无调用方。
