@@ -62,6 +62,10 @@ final class WorkspaceManager: ObservableObject {
     /// 笔记引擎的 `[[…]]` 解析与 `![[…]]` 图片服务（`MARKDOWN-NOTES-PLAN.md §3`）。
     /// **一个工作区一个**——名字只在自己工作区里有意义。快照在 `refresh()` 里更新。
     let wiki = WorkspaceWikiIndex()
+    /// Agent 对话按工作区记的键（`AgentPanelModel`，`NATIVE-TABS-PLAN.md §3`）：同一工作区的标签（= 阅读窗口）共用一组对话。
+    let agentChatKey = UUID()
+    /// 工具栏「返回」/ ⌘[ ⌘] 的历史：同一工作区的全部标签共用一份（`TabsModel+Navigation`，`NATIVE-TABS-PLAN.md §3`）。
+    let tabNav = TabNavGroup()
     /// `imageInfo(sha256:)` 的缓存（sha → 路径+尺寸；值为 nil = 查过、没有）。见那个方法的注释。
     private var imageInfoCache: [String: (url: URL, size: CGSize)?] = [:]
     /// `exerciseAttemptStats()` 与 `exercises(in:)`（一本书的题）的缓存：库没被写过就复用（扩展里放不了存储属性，故放这里）。

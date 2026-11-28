@@ -113,6 +113,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         super.init(window: win)
 
         win.delegate = self
+        // 先登记再建界面：建界面时 Inspector 可能就要取 Agent 对话，对话按工作区分组靠这份登记（`AgentPanelModel.groupKey`）
+        AgentPanelModel.shared.registerReader(self)
         if !lazyChrome { realizeChrome() }
 
         WorkspaceRegistry.shared.noteRootWindow(windowId)
@@ -130,13 +132,80 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         shouldCascadeWindows = false
         restoreFrame(win)
         frameRestored = true
-        // 后台标签：系统切到它时先 `makeKey` 再 `order`，那时窗口还没露面——就在那一刻把界面建出来（离屏实测 2026-11-28）
-        if lazyChrome { win.beforeShow = { [weak self] in self?.realizeChrome() } }
+        // 切到这个标签时（系统先 `makeKey` 再 `order`，离屏实测 2026-11-28）：后台标签先把界面建出来，
+        // 再照刚才在最前面的那个标签摆好侧栏 / Inspector（切标签时这些不跳）
+        win.willShow = { [weak self] in
+            self?.realizeChrome()
+            self?.adoptChromeFromFrontTab()
+        }
         logFrame("init 末")
     }
 
     /// 界面建了没有（`realizeChrome`）。
     private var chromeRealized = false
+
+    // MARK: 同组标签之间的窗口状态（`NATIVE-TABS-PLAN.md §3`）
+
+    /// 侧栏 / Inspector 的开合与宽度、Inspector 当前页、侧栏的展开状态与滚动位置（存值不存对象：关掉的标签也要能留一份）。
+    struct ChromeSnapshot {
+        var sidebarCollapsed: Bool
+        var sidebarWidth: CGFloat
+        var inspectorCollapsed: Bool
+        var inspectorWidth: CGFloat
+        var inspectorTab: InspectorTab
+        var sidebarState: SidebarViewController.ViewState?
+    }
+
+    /// 这扇窗口眼下的窗口状态（界面还没建就没有）。
+    func chromeSnapshot() -> ChromeSnapshot? {
+        guard chromeRealized else { return nil }
+        return ChromeSnapshot(sidebarCollapsed: sidebarItem.isCollapsed,
+                              sidebarWidth: sidebarItem.viewController.view.frame.width,
+                              inspectorCollapsed: inspectorItem.isCollapsed,
+                              inspectorWidth: inspectorItem.viewController.view.frame.width,
+                              inspectorTab: inspectorVC.currentTab,
+                              sidebarState: (sidebarItem.viewController as? SidebarViewController)?.viewState)
+    }
+
+    /// 切到这个标签时：照刚才在最前面的那个标签摆好侧栏 / Inspector（一个标签 = 一扇窗口，各扇各有一份；
+    /// 同 Xcode / Safari，切标签时侧栏、Inspector 不跳——用户 2026-11-28「切换窗口 tab 的时候其他元素能保持不动嘛」）。
+    /// 只在切过来的这一下抄，平时各扇互不打扰。
+    ///
+    /// 🔴 来源不能按 `isVisible` 找：标签显示过一次之后切走，它的窗口 `isVisible` 仍是 true（离屏实测），会抄到早切走的旧标签；
+    /// 也不能只在「还没露面」时抄（同理，切回显示过的标签时根本不会进来）。来源用 `TabNavGroup.chromeSource`
+    /// ——上一个成为 key 的标签（`cameToFront` 记；此刻本窗口的 `windowDidBecomeKey` 还没来，它还是上一个），且须在同一个标签组里。
+    private func adoptChromeFromFrontTab() {
+        guard chromeRealized, let win = window else { return }
+        let nav = workspace.tabNav
+        let snap: ChromeSnapshot
+        if let srcTabs = nav.chromeSource, srcTabs !== tabs,
+           let other = AppDelegate.shared?.readerWindowControllers.first(where: { $0.tabs === srcTabs }),
+           let src = other.window, win.tabGroup?.windows.contains(src) == true,
+           let s = other.chromeSnapshot() {
+            snap = s
+        } else if let closed = nav.closedChrome, closed.siblings.contains(ObjectIdentifier(win)) {
+            // 刚关掉的那个标签留下的（关标签后系统选中相邻的这个，那时关掉的窗口已经结清、找不到了）
+            snap = closed.snapshot
+            nav.closedChrome = nil
+        } else {
+            return
+        }
+        if sidebarItem.isCollapsed != snap.sidebarCollapsed { sidebarItem.isCollapsed = snap.sidebarCollapsed }
+        if inspectorItem.isCollapsed != snap.inspectorCollapsed { inspectorItem.isCollapsed = snap.inspectorCollapsed }
+        let split = splitVC.splitView
+        split.layoutSubtreeIfNeeded()
+        // 宽度用绝对值摆：之后窗口外框再变，侧栏 / Inspector 的持守优先级高于内容区，宽度不动
+        if !snap.sidebarCollapsed, abs(sidebarItem.viewController.view.frame.width - snap.sidebarWidth) > 0.5 {
+            split.setPosition(snap.sidebarWidth, ofDividerAt: 0)
+        }
+        if !snap.inspectorCollapsed, abs(inspectorItem.viewController.view.frame.width - snap.inspectorWidth) > 0.5 {
+            split.setPosition(split.bounds.width - snap.inspectorWidth - split.dividerThickness, ofDividerAt: 1)
+        }
+        if inspectorVC.currentTab != snap.inspectorTab { inspectorVC.show(tab: snap.inspectorTab) }
+        if let state = snap.sidebarState, let mine = sidebarItem.viewController as? SidebarViewController {
+            mine.adopt(state)
+        }
+    }
 
     /// 建窗口的界面：三段分栏、工具栏，以及只对看得见的窗口才有意义的订阅（工具栏状态、Agent 预加载——
     /// 后台标签各自预加载就是每个标签起一个 Agent 子进程）。幂等。
@@ -579,7 +648,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     func windowDidBecomeKey(_ notification: Notification) {
         chrome.isKeyWindow = true
         // 切到这个标签（= 这扇窗口成为 key）：冷启动恢复时只记下要开哪篇的标签，到这时才真装（`activate` 里 `realize`），
-        // 平板跟随也随之拉过来。
+        // 平板跟随也随之拉过来；「返回」历史记下离开的上一个标签（`cameToFront`）。
+        tabs.cameToFront()
         tabs.activate(tabs.active.id)
         AIPanelDock.shared.setHost(window)
         if AIPanelModel.shared.mode == .inline {
@@ -609,6 +679,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     func shutdown() {
         guard !didShutdown else { return }
         didShutdown = true
+        // 关的是眼下在最前面的标签：留一份窗口状态给同组接着显示的那个（`adoptChromeFromFrontTab`）
+        if workspace.tabNav.chromeSource === tabs, let snap = chromeSnapshot(), let win = window {
+            let siblings = Set((win.tabGroup?.windows ?? []).filter { $0 !== win }.map(ObjectIdentifier.init))
+            workspace.tabNav.closedChrome = (snap, siblings)
+        }
         logFrame("结清（关窗/退出）")
         saveFrame()          // ⌘Q 不发 `windowWillClose`，最后这一下尺寸靠这里落下来
         refWindow.close()
@@ -1620,24 +1695,20 @@ extension ReaderWindowController: NSMenuDelegate {
     }
 }
 
-/// 阅读窗口：多一个「马上要露面了」的钩子，给后台标签在显示前一刻把界面建出来（`NATIVE-TABS-PLAN.md §4`）。
-/// 系统切标签的次序是先 `makeKey` 再 `order`，两处都挂（离屏实测 2026-11-28），钩子只跑一次。
+/// 阅读窗口：多一个「要切到这扇了」的钩子（`NATIVE-TABS-PLAN.md §3 / §4`）：后台标签在显示前一刻把界面建出来，
+/// 并照刚才在最前面的那个标签摆好侧栏 / Inspector。系统切标签的次序是先 `makeKey` 再 `order`（离屏实测 2026-11-28）。
+/// `makeKey` 每次都调（切回显示过的标签时窗口一直算「可见」，只看可见与否会漏掉）；`order` 只在还没露面时调（兜底建界面）。
+/// 钩子自己判断是不是真换了标签，重复调用只是空操作。
 final class ReaderNSWindow: NSWindow {
-    var beforeShow: (() -> Void)?
-
-    private func fireBeforeShow() {
-        guard let f = beforeShow else { return }
-        beforeShow = nil
-        f()
-    }
+    var willShow: (() -> Void)?
 
     override func makeKey() {
-        fireBeforeShow()
+        willShow?()
         super.makeKey()
     }
 
     override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
-        if place != .out { fireBeforeShow() }
+        if place != .out, !isVisible { willShow?() }
         super.order(place, relativeTo: otherWin)
     }
 }

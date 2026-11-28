@@ -17,9 +17,13 @@ final class AgentPanelModel: ObservableObject {
     @Published private(set) var follow = AgentFollow.enabled
 
     private var connections: [String: AgentConnection] = [:]
-    /// 阅读窗口（`TabsModel.windowID`）→ 它 Inspector 里并行的几段对话（至少一段，先后 = 标签先后）。
+    /// 工作区（`WorkspaceManager.agentChatKey`）→ Inspector 里并行的几段对话（至少一段，先后 = 标签先后）。
+    ///
+    /// 🔴 **按工作区记，不按窗口**（`NATIVE-TABS-PLAN.md §3`，2026-11-28）：一个标签 = 一扇阅读窗口之后，按窗口记就是
+    /// 每开一个标签一个空的 Agent 面板。对外接口仍收窗口 id（`session.windowID` / `tabs.windowID`，调用方不用改），
+    /// 进来先经 `groupKey` 换成所属工作区；上下文（当前文档 / 页）取这个工作区眼下在最前面的那个标签（`frontReader`）。
     private var chats: [UUID: [AgentChat]] = [:]
-    /// 阅读窗口 → 眼前显示的那段对话的 id。
+    /// 工作区 → 眼前显示的那段对话的 id。
     private var activeChatID: [UUID: UUID] = [:]
     /// 一扇窗口里最多并行几段（每段是 Agent 里的一个会话，进程按「工作目录 + 启动配置」共用）。
     static let maxParallel = 6
@@ -30,6 +34,24 @@ final class AgentPanelModel: ObservableObject {
     private weak var lastKeyReader: ReaderWindowController?
 
     private struct WeakReader { weak var controller: ReaderWindowController? }
+
+    /// 阅读窗口建好就登记（对话按工作区分组要靠它把窗口 id 换成工作区）。
+    func registerReader(_ c: ReaderWindowController) {
+        readers[c.tabs.windowID] = WeakReader(controller: c)
+    }
+
+    /// 窗口 id → 它所属工作区的对话键；没登记的窗口退回自己（不会发生，兜底）。
+    private func groupKey(_ window: UUID) -> UUID {
+        readers[window]?.controller?.workspace.agentChatKey ?? window
+    }
+
+    /// 这个工作区眼下在最前面的标签：key 的那扇 → 最近成为 key 的那扇 → 随便一扇还开着的。
+    private func frontReader(in key: UUID) -> ReaderWindowController? {
+        let live = readers.values.compactMap(\.controller).filter { $0.workspace.agentChatKey == key }
+        if let k = live.first(where: { $0.window?.isKeyWindow == true }) { return k }
+        if let last = lastKeyReader, last.workspace.agentChatKey == key { return last }
+        return live.first
+    }
 
     private init() {
         enabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
@@ -96,11 +118,13 @@ final class AgentPanelModel: ObservableObject {
         lastKeyReader = c
     }
 
-    /// 阅读窗口关了：它的对话一并结束。
+    /// 阅读窗口（= 一个标签）关了：这个工作区的最后一个标签也关了，对话才一并结束。
     func readerClosed(_ windowID: UUID) {
+        let key = groupKey(windowID)
         readers.removeValue(forKey: windowID)
-        activeChatID.removeValue(forKey: windowID)
-        for chat in chats.removeValue(forKey: windowID) ?? [] { chat.teardown() }
+        if readers.values.contains(where: { $0.controller?.workspace.agentChatKey == key }) { return }
+        activeChatID.removeValue(forKey: key)
+        for chat in chats.removeValue(forKey: key) ?? [] { chat.teardown() }
         releaseIdleConnections()
     }
 
@@ -166,29 +190,32 @@ final class AgentPanelModel: ObservableObject {
     /// 框选截图、`@` 引用、习题「让 Agent 批改」这些投递都落在它上面。
     func chat(for window: UUID, cwd: URL) -> AgentChat {
         chats(for: window, cwd: cwd)  // 保证至少有一段
-        if let id = activeChatID[window], let c = chats[window]?.first(where: { $0.id == id }) { return c }
-        let c = chats[window]![0]
-        activeChatID[window] = c.id
+        let key = groupKey(window)
+        if let id = activeChatID[key], let c = chats[key]?.first(where: { $0.id == id }) { return c }
+        let c = chats[key]![0]
+        activeChatID[key] = c.id
         return c
     }
 
     /// 这扇窗口的全部并行对话（Inspector 标签条用）。
     @discardableResult
     func chats(for window: UUID, cwd: URL) -> [AgentChat] {
-        if let list = chats[window], let first = list.first, first.cwd == cwd { return list }
-        for c in chats[window] ?? [] { c.teardown() }
-        let c = makeChat(window: window, cwd: cwd, launch: nil)
-        chats[window] = [c]
-        activeChatID[window] = c.id
+        let key = groupKey(window)
+        if let list = chats[key], let first = list.first, first.cwd == cwd { return list }
+        for c in chats[key] ?? [] { c.teardown() }
+        let c = makeChat(group: key, cwd: cwd, launch: nil)
+        chats[key] = [c]
+        activeChatID[key] = c.id
         chatListRevision += 1
         return [c]
     }
 
-    func activeChatID(for window: UUID) -> UUID? { activeChatID[window] }
+    func activeChatID(for window: UUID) -> UUID? { activeChatID[groupKey(window)] }
 
     func selectChat(_ id: UUID, in window: UUID) {
-        guard chats[window]?.contains(where: { $0.id == id }) == true, activeChatID[window] != id else { return }
-        activeChatID[window] = id
+        let key = groupKey(window)
+        guard chats[key]?.contains(where: { $0.id == id }) == true, activeChatID[key] != id else { return }
+        activeChatID[key] = id
         chatListRevision += 1
     }
 
@@ -197,9 +224,10 @@ final class AgentPanelModel: ObservableObject {
     func addChat(in window: UUID, cwd: URL, launch: AgentConfig.Launch) -> AgentChat? {
         let list = chats(for: window, cwd: cwd)
         guard list.count < Self.maxParallel else { return nil }
-        let c = makeChat(window: window, cwd: cwd, launch: launch)
-        chats[window, default: []].append(c)
-        activeChatID[window] = c.id
+        let key = groupKey(window)
+        let c = makeChat(group: key, cwd: cwd, launch: launch)
+        chats[key, default: []].append(c)
+        activeChatID[key] = c.id
         chatListRevision += 1
         c.start()
         return c
@@ -207,22 +235,24 @@ final class AgentPanelModel: ObservableObject {
 
     /// 关掉一段并行对话（正在回答的取消）。最后一段不关；关的是眼前这段时切到相邻的一段。
     func closeChat(_ id: UUID, in window: UUID) {
-        guard var list = chats[window], list.count > 1, let i = list.firstIndex(where: { $0.id == id }) else { return }
+        let key = groupKey(window)
+        guard var list = chats[key], list.count > 1, let i = list.firstIndex(where: { $0.id == id }) else { return }
         let gone = list.remove(at: i)
-        chats[window] = list
-        if activeChatID[window] == id { activeChatID[window] = list[min(i, list.count - 1)].id }
+        chats[key] = list
+        if activeChatID[key] == id { activeChatID[key] = list[min(i, list.count - 1)].id }
         gone.teardown()
         chatListRevision += 1
     }
 
-    private func makeChat(window: UUID, cwd: URL, launch: AgentConfig.Launch?) -> AgentChat {
+    /// 一段对话：上下文 / `@` 候选 / 工作区都取这个工作区眼下在最前面的标签（对话跨标签共用，建它的那扇可能早关了）。
+    private func makeChat(group key: UUID, cwd: URL, launch: AgentConfig.Launch?) -> AgentChat {
         let c = AgentChat(cwd: cwd, launch: launch)
-        c.contextProvider = { [weak self] in self?.context(for: window) }
+        c.contextProvider = { [weak self] in self?.frontReader(in: key).flatMap(Self.context(of:)) }
         c.mentionProvider = { [weak self] in
-            self?.readers[window]?.controller.map { Self.mentions(in: $0.workspace) } ?? []
+            self?.frontReader(in: key).map { Self.mentions(in: $0.workspace) } ?? []
         }
         c.workspaceProvider = { [weak self] in
-            guard let ws = self?.readers[window]?.controller?.workspace, ws.store != nil else { return nil }
+            guard let ws = self?.frontReader(in: key)?.workspace, ws.store != nil else { return nil }
             return ws
         }
         return c
@@ -251,7 +281,8 @@ final class AgentPanelModel: ObservableObject {
 
     /// 这扇窗的 Agent 页在跟谁说话（设置里换了 Agent、还没点「新对话」时仍是旧的那个）。
     func agentName(for window: UUID) -> String {
-        activeChatID[window].flatMap { id in chats[window]?.first { $0.id == id } }?.agentName ?? AgentConfig.displayName
+        let key = groupKey(window)
+        return activeChatID[key].flatMap { id in chats[key]?.first { $0.id == id } }?.agentName ?? AgentConfig.displayName
     }
 
     /// 框选截图投给 Agent（`ReaderView+Snip`）：这扇窗的 Inspector 切到 Agent 页，图片挂到那段对话的输入框上，

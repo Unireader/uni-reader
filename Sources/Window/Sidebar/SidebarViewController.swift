@@ -205,6 +205,27 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
+    /// 侧栏的展开状态与滚动位置（切标签时照上一个标签摆，`ReaderWindowController.adoptChromeFromFrontTab`）。
+    struct ViewState {
+        var expandedFolders: Set<String>
+        var collapsedGroups: Set<String>
+        var scroll: NSPoint
+    }
+
+    var viewState: ViewState {
+        ViewState(expandedFolders: expandedFolders, collapsedGroups: collapsedGroups, scroll: scroll.contentView.bounds.origin)
+    }
+
+    /// 一个标签 = 一扇窗口，各扇的侧栏各一份：展开状态不一样才整棵重建，滚动位置照抄。
+    func adopt(_ state: ViewState) {
+        if expandedFolders != state.expandedFolders || collapsedGroups != state.collapsedGroups {
+            expandedFolders = state.expandedFolders
+            collapsedGroups = state.collapsedGroups
+            reload()
+        }
+        restoreScroll(to: state.scroll)
+    }
+
     func outlineViewItemDidExpand(_ notification: Notification) {
         if !restoringExpansion, let node = notification.userInfo?["NSObject"] as? SidebarNode,
            case .section(let g?, _) = node.kind {

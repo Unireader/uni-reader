@@ -125,3 +125,19 @@
 - **退出耗时**（用户报「退出变慢」，打点实测）：3 扇窗口结清合计 17ms；慢的是服务器工作区「关闭后那一轮」同步约 1.9 秒
   （退出时先结清各窗 → 最后一扇关掉触发完整一轮推 + 拉 → `waitForQuit` 等它），改造前一扇窗口时同样如此，不是本方案引入的。
   用户随即定：加设置「退出前与服务器同步」、默认关（`SERVER-MODE-PLAN.md §13.13`）。
+
+### 9.2 第 3 批（2026-11-28，用户实测通过）
+
+- **切标签时侧栏 / Inspector 不跳**：`ReaderNSWindow.willShow`（`makeKey` 每次都调；`order` 只在还没露面时调）→
+  `realizeChrome` + `adoptChromeFromFrontTab`：照**上一个成为 key 的标签**（`TabNavGroup.chromeSource`，须同一标签组）抄 ① 侧栏 / Inspector 开合
+  ② 宽度（`setPosition` 绝对值）③ Inspector 当前页 ④ 侧栏展开状态（不同才整棵重建）+ 滚动位置（`SidebarViewController.ViewState`）。
+  关掉最前面的标签时 `shutdown` 先留一份（`closedChrome` + 当时同组的其余窗口），给系统接着选中的相邻标签用。
+  🔴 第一版按 `isVisible` 找来源、只在「还没露面」时抄，用户实测侧栏滚动 / Inspector 页 / Agent 都不同步：
+  标签显示过一次之后切走，窗口 `isVisible` 仍是 true（离屏实测），切回它时根本不进来、找来源也会找到旧标签。
+  另：Inspector 页签列表是异步订阅下一拍建的，刚建好的 Inspector 里 `show(tab:)` 会被 `guard tabList.contains` 挡掉——空着时当场建。
+- **Agent 对话按工作区记**：`AgentPanelModel` 对外仍收窗口 id，进来经 `groupKey` 换成 `WorkspaceManager.agentChatKey`；
+  每扇窗口建好就 `registerReader`（**先于建界面**）；上下文 / `@` 候选 / 工作区取这个工作区眼下最前面的标签（`frontReader`）；
+  最后一个标签关掉才结束对话。各窗口的 Inspector 各建一份对话视图（模型共用）——输入框里没发出去的草稿不跨标签。
+- **「返回」跨标签**：历史挪到 `WorkspaceManager.tabNav`（`TabNavGroup`：历史 + 回放中标记 + 最前面的标签），`TabsModel.navHistory` /
+  `isNavigatingHistory` 转发过去；切标签（窗口成 key）时 `cameToFront` 从上一个标签记「离开的那一处」；关掉的标签不记；
+  回放时那个标签还开着（同组任一扇）就 `focusWindow` 切过去，否则按内容重开。

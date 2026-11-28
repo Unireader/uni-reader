@@ -31,9 +31,16 @@ final class TabsModel: ObservableObject {
     private let app: AppModel
     let workspace: WorkspaceManager
     /// 工具栏「返回」/ ⌘[ ⌘] 的跨标签历史（`TabsModel+Navigation.swift`，2026-11-13）。
-    var navHistory = NavHistory<NavPlace>()
-    /// 正在按历史回到某处：这一路上的切标签 / 跳页不再记历史。
-    var isNavigatingHistory = false
+    /// 一个标签 = 一扇窗口之后，历史放在工作区上、同组标签共用（`WorkspaceManager.tabNav`）。
+    var navHistory: NavHistory<NavPlace> {
+        get { workspace.tabNav.history }
+        set { workspace.tabNav.history = newValue }
+    }
+    /// 正在按历史回到某处：这一路上的切标签 / 跳页不再记历史（同组共用）。
+    var isNavigatingHistory: Bool {
+        get { workspace.tabNav.isNavigating }
+        set { workspace.tabNav.isNavigating = newValue }
+    }
     /// 这一轮刚到一处（见 `noteArrival`）。
     var arrivingThisTurn = false
     /// 只订阅**活动标签**的变更并转发（`ContentView` 观察 `tabs` 即等价于观察当前会话）。
@@ -401,6 +408,8 @@ final class TabsModel: ObservableObject {
     func closeWindow() {
         guard !closed else { return }
         closed = true
+        // 关掉的标签不记成「离开的那一处」（同原来关标签不进历史）
+        if workspace.tabNav.front === self { workspace.tabNav.front = nil }
         activeBag.removeAll()
         for t in tabs { t.close() }
     }

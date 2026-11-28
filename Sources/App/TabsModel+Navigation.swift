@@ -26,8 +26,34 @@ struct NavPlace {
     }
 }
 
+/// 同一工作区全部标签（= 阅读窗口）共用的「返回 / 前进」历史（`NATIVE-TABS-PLAN.md §3`，挂在 `WorkspaceManager.tabNav`）。
+@MainActor
+final class TabNavGroup {
+    var history = NavHistory<NavPlace>()
+    /// 正在按历史回到某处（这一路上的切标签 / 跳页不记）。
+    var isNavigating = false
+    /// 眼下在最前面的标签：切到别的标签时，从它这里记下「离开的那一处」（关掉时清空，关掉的不进历史）。
+    weak var front: TabsModel?
+    /// 上一个成为 key 的标签（关掉时**不**清）：切到别的标签时，侧栏 / Inspector 照它摆
+    /// （`ReaderWindowController.adoptChromeFromFrontTab`；关标签后系统选中相邻的那个，也要照刚关掉的这个摆）。
+    weak var chromeSource: TabsModel?
+    /// 刚关掉的最前面那个标签留下的窗口状态 + 当时同组的其余窗口（只给它们用，用一次就清）。
+    var closedChrome: (snapshot: ReaderWindowController.ChromeSnapshot, siblings: Set<ObjectIdentifier>)?
+}
+
 @MainActor
 extension TabsModel {
+
+    /// 这个标签到了最前面（它那扇窗口成了 key，`ReaderWindowController.windowDidBecomeKey`）：
+    /// 一个标签 = 一扇窗口之后，切标签不再经过 `activate` 的切换分支，「离开上一个标签」在这里记。
+    func cameToFront() {
+        let g = workspace.tabNav
+        g.chromeSource = self
+        guard g.front !== self else { return }
+        if let prev = g.front { prev.noteLeaving() }   // 回放历史途中 `noteLeaving` 自己不记
+        noteArrival()
+        g.front = self
+    }
 
     /// 某个标签眼下这一处；空标签没有。
     func place(of tab: DocTabModel) -> NavPlace? {
@@ -104,9 +130,11 @@ extension TabsModel {
         isNavigatingHistory = true
         defer { isNavigatingHistory = false }
         let tab: DocTabModel
-        if let open = tabs.first(where: { $0.id == place.tabID && self.place(of: $0)?.target == place.target }) {
-            activate(open.id)
-            tab = open
+        // 那个标签还开着（同组任一扇窗口、内容没换）→ 切过去
+        if let peer = peers.first(where: { $0.active.id == place.tabID && self.place(of: $0.active)?.target == place.target }) {
+            peer.focusWindow()
+            workspace.tabNav.front = peer   // 回放途中切过去不记「离开」；直接把最前面的标签记成它
+            tab = peer.active
         } else {
             switch place.target {
             case .document(let id): tab = self.open(id)

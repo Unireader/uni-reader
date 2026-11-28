@@ -286,6 +286,8 @@ final class InspectorViewController: NSViewController {
 
     /// 切到某一页（Agent 开关 / 框选截图投给 Agent 从外面调）。
     func show(tab t: InspectorTab) {
+        // 页签列表是异步订阅在下一拍建的：刚建好的 Inspector（后台标签第一次显示、`adoptChromeFromFrontTab` 来调）此刻还空着，当场建
+        if tabList.isEmpty { rebuildTabControl() }
         guard tabList.contains(t) else { return }
         tabControl.selectedSegment = tabList.firstIndex(of: t) ?? 0
         guard t != tab else { return }
