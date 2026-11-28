@@ -315,6 +315,9 @@
   **滚动视图之外的浮层（如阅读区覆盖层）不归它管**，放到工具栏底下就是清清楚楚压在玻璃后面，裁到工具栏下沿又显得被切了一截。
   要和页面一样透过玻璃，就得插进滚动视图、排在 clip view 与 pocket 之间（图钉 / 笔记卡片的 `floatHost`，见 `ReaderScrollView`）；
   NSScrollView 每加一个子视图都会重排、把不认识的视图甩到最上面，当场纠正会被盖掉，要排到主队列下一轮再纠正。
+- `WKWebView`（macOS 26）设了 `obscuredContentInsets` 顶部就自己挂一层 `NSScrollPocket`；它的取色 = `underPageBackgroundColor`，
+  默认等于网页底色——白底网页会把模糊层连工具栏带成浅色，深色外观下顶上的字看不见（Safari 不会这样）。
+  钉成 `.windowBackgroundColor` 并在外观切换时重设（`WebDocView`，2026-11-28 离屏实测取色跟着它走）。
 
 ## 平板上行 / 画板（主线程积压）
 
