@@ -45,7 +45,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var observers: [NSObjectProtocol] = []
 
     // 离线副本提示（逻辑同原版 `refreshNotice`：一次只跑一趟，期间来的请求记一笔跑完补；卷变了按纪元号丢结果）
-    enum Notice { case sourceBack(URL, Int?), unsynced(URL, Int) }
+    enum Notice: Equatable { case sourceBack(URL, Int?), unsynced(URL, Int) }
     private var notice: Notice?
     private var noticeBusy = false
     private var noticePending = false
@@ -262,12 +262,51 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 工作区每个 `@Published` 属性各发一次，一次习题写入就连改 `exerciseSummary` / `exerciseRevision` / `exerciseDone` 三个，
     /// 原来是整棵重载三遍（`reloadData` + 逐个展开 + 恢复滚动位置）。同一拍里来的几次并成一次。
     private func queueReload() {
+        // 不在最前面的标签：只记一笔，切到它时再重建（`flushDeferredReload`）
+        guard isFrontTab else { reloadDeferred = true; return }
         guard !reloadQueued else { return }
         reloadQueued = true
         DispatchQueue.main.async { [weak self] in
             self?.reloadQueued = false
             self?.reload()
         }
+    }
+
+    // MARK: 不在最前面的标签只攒着（`NATIVE-TABS-PLAN.md`）
+    //
+    // 一个标签 = 一扇窗口，每扇都有一份侧栏：工作区一有变化（开个画板记「最近打开」、Agent 改习题…），原来是 N 份侧栏
+    // 一起整棵重建，开着几个标签就卡几倍（2026-11-28 用户报「好卡」，采样：一次 875 个样本耗在后台标签的侧栏重建上）。
+    // 现在只有最前面的标签当场重建，其余记一笔，切过去、窗口露面之前补一次（`ReaderWindowController` 的 `willShow`）。
+
+    /// 有变化没来得及重建（窗口不在最前面时攒下的）。
+    private var reloadDeferred = false
+
+    /// 这扇窗口是不是它那组里正显示着的标签（key 的、或组里选中的）。
+    private var isFrontTab: Bool {
+        guard let w = view.window else { return false }
+        if w.isKeyWindow { return true }
+        if let g = w.tabGroup { return g.selectedWindow === w }
+        return w.isVisible
+    }
+
+    /// 切到这个标签、露面之前：攒下的变化补一次重建；选中摆回本标签显示的那一项（在这扇窗口里点开、却开到了别的标签时留下的）。
+    func prepareToShow() {
+        if reloadDeferred {
+            reloadDeferred = false
+            reload()
+        }
+        syncSelectionFromTabs(force: true)   // 此刻还没成为 key、组里也还没选中它：强制摆正
+    }
+
+    /// 侧栏上书的顺序（`WorkspaceManager.documentsInSidebarOrder`）：拖动排序 / 右键上移下移也按这份算，
+    /// 否则显示的和算的不是同一个顺序，拖完会乱。
+    private var docsInOrder: [LibDocument] { workspace.documentsInSidebarOrder }
+
+    /// 侧栏上网页的顺序：按导入时间、新导入的在前（不按最近打开，同 `docsInOrder` / 画板；网页没有手动排序）。
+    private var webDocsInOrder: [LibWebDoc] {
+        workspace.webDocs.enumerated().sorted { a, b in
+            a.element.createdAt != b.element.createdAt ? a.element.createdAt > b.element.createdAt : a.offset < b.offset
+        }.map(\.element)
     }
 
     private func reload() {
@@ -280,7 +319,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if let notice { r.append(SidebarNode(kind: .notice(notice))) }
         // 日程（v26，`SCHEDULE-PLAN.md §4`）：最上面一行，行尾是今天「做完 / 共几件」
         if workspace.store != nil { r.append(SidebarNode(kind: .schedule)) }
-        let docs = workspace.documents
+        let docs = docsInOrder
         if workspace.groups.isEmpty {
             let sec = SidebarNode(kind: .section(group: nil, title: workspace.name.isEmpty ? L("Library") : workspace.name))
             sec.children = docs.map { SidebarNode(kind: .doc($0)) }
@@ -305,13 +344,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             sec.children = Self.noteChildren(section.source, section.root)
             r.append(sec)
         }
-        // 画板笔记（v16）：一段，按最近打开排序。**空的时候也列出段头**——新建入口就在段头右键上。
+        // 画板笔记（v16）：一段，新建的在前、打开不挪位置（拖过的按手动顺序，`refreshBoards`）。**空的时候也列出段头**——新建入口就在段头右键上。
         let boardSec = SidebarNode(kind: .boardSection)
         boardSec.children = workspace.boards.map { SidebarNode(kind: .board($0)) }
         r.append(boardSec)
-        // 网页（静态 HTML 课件，`WEB-DOC-PLAN.md`）：一段，按最近打开排；空的时候也列出段头（导入入口在段头右键上）
+        // 网页（静态 HTML 课件，`WEB-DOC-PLAN.md`）：一段，新导入的在前（2026-11-28 起不再按最近打开）；空的时候也列出段头（导入入口在段头右键上）
         let webSec = SidebarNode(kind: .webSection)
-        webSec.children = workspace.webDocs.map { SidebarNode(kind: .web($0)) }
+        webSec.children = webDocsInOrder.map { SidebarNode(kind: .web($0)) }
         r.append(webSec)
         // 习题（v20）：**有题才出现**（题是 Agent 导进来的，侧栏上没有新建入口，空段没意义）。
         // 全部 / 错题本 / 收藏三行恒在，后面每篇有题的文档一行，顺序同书库。
@@ -340,7 +379,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         restoreExpansion(roots)                                      // 子目录按上次的状态，默认收起
         restoringExpansion = false
-        select(ids: keep.isEmpty ? Set([tabs.active.rowID].compactMap { $0 }) : keep)
+        let reselect = keep.isEmpty ? Set([tabs.active.rowID].compactMap { $0 }) : keep
+        if reselect != Set([tabs.active.rowID].compactMap { $0 }) { sidebarLog("重建后保留旧选中 \(reselect.sorted())，当前标签=\(tabs.active.rowID ?? "空")") }
+        select(ids: reselect)
         syncingSelection = false
         restoreScroll(to: scrolledTo)
     }
@@ -384,11 +425,21 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.selectRowIndexes(rows, byExtendingSelection: false)
     }
 
+    /// 同 `syncSelectionFromTabs`，给窗口当场调（新开的标签装好内容后，别等订阅下一拍）。
+    func syncSelectionNow() { syncSelectionFromTabs(force: true) }
+
     /// 打开的文档 → 选中（外部改了打开文档：恢复会话 / 新窗口打开 / 删除回落）。
-    private func syncSelectionFromTabs() {
+    ///
+    /// 🔴 **不在最前面的标签不跟**（`force` 除外）：在 A 标签的侧栏点开一项、开到了新标签 B，开的过程中平板跟随 / 当前会话
+    /// 换到 B 会让 A 的标签也发一次变化，A 的侧栏下一拍就把选中改回 A 自己的内容——而 B 要再过几帧才画出来，
+    /// 于是刚点的那行先亮、被改回去、B 出来后（B 的侧栏）又亮（用户 2026-11-28：「点了侧边栏入口高亮，新 tab 还没出来就被刷新回去」）。
+    /// 不在最前面时留到切回来、露面之前再摆正（`prepareToShow`）。
+    private func syncSelectionFromTabs(force: Bool = false) {
         guard !syncingSelection else { return }
+        guard force || isFrontTab else { return }
         let want = Set([tabs.active.rowID].compactMap { $0 })
         guard selectedRowIDs() != want else { return }
+        sidebarLog("按标签改选中：\(selectedRowIDs().sorted()) → \(want.sorted())")
         syncingSelection = true
         select(ids: want)
         syncingSelection = false
@@ -686,10 +737,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     // MARK: 选中 / 点击
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        sidebarLog("选中变了：\(selectedRowIDs().sorted())（程序改=\(syncingSelection) 事件=\(NSApp.currentEvent.map { "\($0.type.rawValue)" } ?? "无")）")
         guard !syncingSelection else { return }
         // 鼠标按下时选中变了：等松手（单击 → `rowClicked`）再打开——拖起来排序的那一下不该顺手把它打开。
-        // 键盘上下移动照旧当场打开。
-        if NSApp.currentEvent?.type == .leftMouseDown { return }
+        // 松手那一下也不在这里开：能拖的列表是松手时才确认选中，这里和 `rowClicked` 会各开一遍
+        // （2026-11-28 采样 + 打点：每次单击都打开两次，第二次在别的标签开过之后又切过去一回）。键盘上下移动照旧当场打开。
+        if let t = NSApp.currentEvent?.type, t == .leftMouseDown || t == .leftMouseUp { return }
         openSelected()
     }
 
@@ -703,6 +756,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         // 多选期间不动当前打开的文档；恰选一篇才联动
         let ids = selectedRowIDs()
+        sidebarLog("打开选中（单击=\(byClick)）：选中=\(ids.sorted()) 当前标签=\(tabs.active.rowID ?? "空")")
         guard ids.count == 1, let id = ids.first else { return }
         guard id != tabs.active.rowID else {
             if independent { tabs.active.shareKey = nil }   // ⌘ 单击正开着的那个共用标签：转成独立的，不再被换掉
@@ -723,6 +777,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             _ = tabs.openDocShared(id, independent: independent)
         }
         syncingSelection = false
+        // 开到了组里别的标签（= 别的窗口，`TabsModel.place`）：本窗口的选中还原成本窗口自己显示的那一项。
+        // 不还原的话，随后那次选中变化又会把它当成「没打开」再开一遍（2026-11-28 打点看到每次打开画板都调了两次）。
+        sidebarLog("打开后：点的=\(id) 当前标签=\(tabs.active.rowID ?? "空")")
+        // 开到了组里别的标签（= 别的窗口）时，本窗口的选中留着不动：当场还原会让刚点的那行高亮一闪就没（用户报），
+        // 等切回本标签、露面之前再按本标签摆正（`prepareToShow`）
+    }
+
+    /// 侧栏选中 / 打开的打点（用户 2026-11-28 报「web page 的侧边栏和 tab 不同步激活，点击打开会闪一下高亮」）：
+    /// 写 `wsLog`，带上是哪扇窗口（窗口标题），先看清楚是哪一步改了选中再改。
+    private func sidebarLog(_ s: String) {
+        wsLog("[SIDEBAR] [\(view.window?.title ?? "?")] key=\(isKeyWindow) \(s)")
     }
 
     @objc private func rowClicked() {
@@ -910,7 +975,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         switch parent.kind {
         case .section:
             // 一个分组是整份书库顺序里的几个位置：按新顺序填回去（同右键「上移 / 下移」）
-            workspace.reorderDocuments(SidebarOrder.fill(workspace.documents.map(\.id), group: rowIDs))
+            workspace.reorderDocuments(SidebarOrder.fill(docsInOrder.map(\.id), group: rowIDs))
         case .noteSection(let source, let folder), .noteFolder(let source, let folder):
             let rels = rowIDs.compactMap { $0.hasPrefix("md:") ? NoteRef(key: String($0.dropFirst(3)))?.relPath : nil }
             workspace.setNoteOrder(source: source.id, folder: folder.path, relPaths: rels)
@@ -1148,6 +1213,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
+    /// 改名一篇笔记：侧栏右键「重命名…」与菜单「文件 › 重命名笔记…」共用（存盘 → 改名 → 标签跟过去 → 联动改 `[[…]]`，
+    /// `NoteRelink.renameFromUI`）。服务器镜像只读，不弹。
+    func promptRenameNote(_ ref: NoteRef) {
+        guard !workspace.isMirrorSource(ref.sourceID) else { NSSound.beep(); return }
+        textPrompt(title: L("Rename Note"), placeholder: L("Note name"), initial: ref.title) { [weak self] name in
+            guard let self else { return }
+            if NoteRelink.renameFromUI(ref, to: name, in: self.workspace) == nil,
+               let e = self.workspace.lastError { self.presentNoteError(e) }
+        }
+    }
+
     /// md 笔记的右键菜单。没有「分组 / 排序 / 关联为同一文档」那一排——那些是 PDF 书库的事。
     private func buildNoteMenu(_ m: NSMenu, note: NoteItem) {
         let external = workspace.noteSource(id: note.ref.sourceID)?.kind == .reference
@@ -1156,14 +1232,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         m.addItem(ClosureMenuItem(L("Open in New Tab")) { [weak self] in self?.tabs.openMarkdownShared(note.ref, independent: true) })
         m.addItem(ClosureMenuItem(L("Open in Small Window")) { [weak self] in self?.onOpenNoteWindow(note.ref) })
         m.addItem(.separator())
-        let rename = ClosureMenuItem(L("Rename…")) { [weak self] in
-            self?.textPrompt(title: L("Rename Note"), placeholder: L("Note name"), initial: note.title) { name in
-                guard let self else { return }
-                // 存盘 → 改名 → 标签跟过去 → 联动改 `[[…]]`（与编辑区顶上的标题共用，`NoteRelink.renameFromUI`）
-                if NoteRelink.renameFromUI(note.ref, to: name, in: self.workspace) == nil,
-                   let e = self.workspace.lastError { self.presentNoteError(e) }
-            }
-        }
+        let rename = ClosureMenuItem(L("Rename…")) { [weak self] in self?.promptRenameNote(note.ref) }
         rename.isEnabled = !readOnly
         m.addItem(rename)
         m.addItem(ClosureMenuItem(L("Show in Finder")) { [weak self] in
@@ -1615,7 +1684,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private func canMove(_ ids: Set<String>, up: Bool) -> Bool {
         guard let g = sameGroup(ids) else { return false }
-        let section = workspace.documents.filter { $0.group == g }
+        let section = docsInOrder.filter { $0.group == g }
         let idxs = section.indices.filter { ids.contains(section[$0].id) }
         guard let first = idxs.first, let last = idxs.last else { return false }
         return up ? first > 0 : last < section.count - 1
@@ -1623,7 +1692,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private func moveSelection(_ ids: Set<String>, up: Bool) {
         guard let g = sameGroup(ids) else { return }
-        var section = workspace.documents.filter { $0.group == g }
+        var section = docsInOrder.filter { $0.group == g }
         let idxs = section.indices.filter { ids.contains(section[$0].id) }
         guard let first = idxs.first, let last = idxs.last else { return }
         if up {
@@ -1635,7 +1704,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let neighbor = section.remove(at: last + 1)
             section.insert(neighbor, at: first)
         }
-        var all = workspace.documents
+        var all = docsInOrder
         var it = section.makeIterator()
         for i in all.indices where all[i].group == g {
             if let d = it.next() { all[i] = d }
@@ -1817,8 +1886,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     private func setNotice(_ n: Notice?) {
+        // 没变就不重建（切到别的 App、插拔盘、加删书都会来一遍；2026-11-28 采样：开着几个标签就整棵重建几遍）
+        guard n != notice else { return }
         notice = n
-        reload()
+        if isFrontTab { reload() } else { reloadDeferred = true }
     }
 
     private func finishNotice() {

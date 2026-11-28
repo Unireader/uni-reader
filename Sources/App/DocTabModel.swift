@@ -76,6 +76,9 @@ final class DocTabModel: ObservableObject, Identifiable {
     /// 本标签显示的**网页**（静态 HTML 课件，`WEB-DOC-PLAN.md §3`）：`web_doc.id`。与上面几种互斥，同日程的做法
     /// （开之前 `select(nil)`），会话里 `pdf == nil`、所有按 PDF 记账的地方看到的是空标签。
     @Published private(set) var webDocID: String?
+    /// 网页标签里正在显示的那一页的 HTML 标题（`WebDocView` 报上来，带上网页 id：换了别的网页就不算数）。
+    /// 工具栏的窗口标题用它（`ReaderWindowController.refreshTitle`，2026-11-28 用户定：网页标题用 HTML 的）。
+    @Published var webPageTitle: (webId: String, title: String)?
     /// 待日程页处理的「去某一天 / 选中某一件」（打开日程时带的）；日程页 `takeScheduleFocus()` 取走。
     private(set) var scheduleFocus: ScheduleFocus?
     /// 日程页此刻看的是哪一天、选中了哪一件（日程页写，MCP `get_current_view` / Agent 上下文读）。

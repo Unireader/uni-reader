@@ -79,7 +79,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     /// `lazyChrome`：后台标签（冷启动恢复的那一组里没选中的）只建壳——窗口、标题、标签模型；
     /// 侧栏 / 阅读窗格 / Inspector / 工具栏等第一次要显示时才建（`realizeChrome`，`NATIVE-TABS-PLAN.md §4`）。
-    init(app: AppModel, workspace: WorkspaceManager, launchDocId: String?, lazyChrome: Bool = false) {
+    /// `initialFrame`：开成某扇窗口标签组里的新标签时传宿主的外框——建界面之前就摆成这个尺寸、不读存档的窗口位置
+    /// （标签组的位置大小本来就统一；原先读存档要 60~70ms，还让刚建好的整个界面按另一个尺寸多排一遍版，2026-11-28 采样）。
+    init(app: AppModel, workspace: WorkspaceManager, launchDocId: String?, lazyChrome: Bool = false,
+         initialFrame: NSRect? = nil) {
         self.app = app
         self.workspace = workspace
         self.tabs = TabsModel(app: app, workspace: workspace)
@@ -113,6 +116,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         super.init(window: win)
 
         win.delegate = self
+        if let f = initialFrame { win.setFrame(f, display: false) }   // 空窗口改尺寸很便宜：先摆好，界面只按它排一次
         // 先登记再建界面：建界面时 Inspector 可能就要取 Agent 对话，对话按工作区分组靠这份登记（`AgentPanelModel.groupKey`）
         AgentPanelModel.shared.registerReader(self)
         if !lazyChrome { realizeChrome() }
@@ -130,19 +134,29 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // 我们刚恢复的位置（AppKit 文档原话：设了 frame 记忆就该把它关掉）。多开时的错位由
         // `AppDelegate.openReaderWindow` 自己做。
         shouldCascadeWindows = false
-        restoreFrame(win)
+        if initialFrame == nil { restoreFrame(win) }
         frameRestored = true
         // 切到这个标签时（系统先 `makeKey` 再 `order`，离屏实测 2026-11-28）：后台标签先把界面建出来，
         // 再照刚才在最前面的那个标签摆好侧栏 / Inspector（切标签时这些不跳）
         win.willShow = { [weak self] in
-            self?.realizeChrome()
-            self?.adoptChromeFromFrontTab()
+            guard let self else { return }
+            self.realizeChrome()
+            // 不在最前面时侧栏攒下的变化先补上、选中摆正（`SidebarViewController.prepareToShow`），再照上一个标签摆
+            (self.sidebarItem.viewController as? SidebarViewController)?.prepareToShow()
+            self.adoptChromeFromFrontTab()
         }
         logFrame("init 末")
     }
 
     /// 界面建了没有（`realizeChrome`）。
     private var chromeRealized = false
+
+    /// 侧栏选中当场跟上本标签显示的内容（新开的标签装好内容后调：窗口先露面、内容后装，等订阅下一拍才同步的话，
+    /// 那一行先不亮、过一下才亮——用户报「点了会闪烁一下」）。
+    func syncSidebarSelectionNow() {
+        guard chromeRealized else { return }
+        (sidebarItem.viewController as? SidebarViewController)?.syncSelectionNow()
+    }
 
     // MARK: 同组标签之间的窗口状态（`NATIVE-TABS-PLAN.md §3`）
 
@@ -431,9 +445,27 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private func refreshTitle() {
         let s = session
+        let tab = tabs.active
+        // 各种标签的名字都只在工具栏上显示一处（2026-11-28 用户：「不同 tab 打开后的统一…全部统一到 toolbar」）：
+        //  · 笔记：标题 = 笔记名，副标题 = 路径（标签里原来那条标题区去掉了）；
+        //  · 网页：标题 = 那一页的 HTML 标题（没有就用网页名），副标题 = 网页名（与标题相同就不重复）；
+        //  · PDF：副标题 = 页码；其余照会话标题。
         // 只在真变了时写（标题 / 副标题在 Tahoe 上画在工具栏里，写一次可能让工具栏重排）；写了记一行 `[TB]`
-        let title = tabs.active.noteRef?.title ?? (s.title.isEmpty ? L("Library") : s.title)
-        let subtitle = s.pdf.map { "\(s.currentPageIndex + 1)/\($0.pageCount)" } ?? ""
+        let title: String
+        let subtitle: String
+        if let ref = tab.noteRef {
+            title = ref.title
+            subtitle = MarkdownDocView.displayPath(ref, in: workspace)
+        } else if let wid = tab.webDocID {
+            let name = workspace.webDocs.first(where: { $0.id == wid })?.title ?? s.title
+            let page = tab.webPageTitle.flatMap { $0.webId == wid ? $0.title : nil }?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            title = page.isEmpty ? name : page
+            subtitle = page.isEmpty || page == name ? "" : name
+        } else {
+            title = s.title.isEmpty ? L("Library") : s.title
+            subtitle = s.pdf.map { "\(s.currentPageIndex + 1)/\($0.pageCount)" } ?? ""
+        }
         if let w = window, w.title != title || w.subtitle != subtitle {
             wsLog("[TB] 窗口标题 → \(title) · \(subtitle)")
             if w.title != title { w.title = title }
@@ -446,12 +478,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     /// 认领条件从 `ContentView` 的 `isKeyWindow` @State 换成直接问窗口——同一个语义，
     /// 但不再依赖视图的异步回填（冷启动时那份 @State 全是假，正是老 bug 的根因之一）。
-    private var isKey: Bool { window?.isKeyWindow == true }
 
     private func on(_ name: Notification.Name, _ action: @escaping (ReaderWindowController) -> Void) {
         NotificationCenter.default.publisher(for: name)
-            .sink { [weak self] _ in
-                guard let self, self.isKey else { return }
+            .sink { [weak self] note in
+                guard let self, note.isMenuCommand(for: self.window) else { return }
                 action(self)
             }
             .store(in: &bag)
@@ -461,7 +492,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func on(_ name: Notification.Name, _ action: @escaping (ReaderWindowController, Notification) -> Void) {
         NotificationCenter.default.publisher(for: name)
             .sink { [weak self] note in
-                guard let self, self.isKey else { return }
+                guard let self, note.isMenuCommand(for: self.window) else { return }
                 action(self, note)
             }
             .store(in: &bag)
@@ -489,6 +520,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         on(.newTabRequested) { $0.newTab() }
         on(.newMarkdownNoteRequested) { $0.newMarkdownNote() }
         on(.newNoteFolderRequested) { $0.newNoteFolder() }
+        on(.renameNoteRequested) { c in
+            guard let ref = c.tabs.active.noteRef,
+                  let sidebar = c.sidebarItem.viewController as? SidebarViewController else { NSSound.beep(); return }
+            sidebar.promptRenameNote(ref)
+        }
         on(.newBoardRequested) { $0.presentNewBoard() }
         on(.importMarkdownRequested) { $0.importMarkdownFolder() }
         on(.importWebFolderRequested) { c, n in c.importWebFolder(replacing: n.object as? String) }
@@ -1273,7 +1309,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         guard names.indices.contains(sender.selectedIndex) else { return }
         NotificationCenter.default.post(name: names[sender.selectedIndex], object: nil)
     }
-    @objc private func jumpBack() { tabs.goBack() }
+    /// 工具栏「返回」：网页标签里先走网页自己的历史（网页顶上那条的后退 / 前进 2026-11-28 去掉了，统一用这里），走到头再走窗口的历史。
+    @objc private func jumpBack() { readerPane?.navigate(back: true) }
     @objc private func toggleJumpHistory() { jumpPanel.toggle() }
     @objc private func toggleCanvas() { tabs.active.toggleCanvasMode() }
     @objc private func inspectorToggled() { toggleInspector() }
@@ -1666,7 +1703,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         case ToolID.zoom, ToolID.ocr:
             return s.pdf != nil
         case ToolID.jumpBack:
-            return tabs.canGoBack   // 跨标签的窗口历史（笔记 / 画板 / 习题页上也能回去）
+            return tabs.canGoBack || readerPane?.webCanGoBack == true   // 跨标签的窗口历史 + 网页标签里网页自己的历史
         case ToolID.jumpHistory:
             return s.pdf != nil
         // 画板 / 夜间 / 参考窗 / 跳转历史这几枚是带 view 的开关，**不走这条校验**，
@@ -1708,6 +1745,8 @@ final class ReaderNSWindow: NSWindow {
 
     override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
         if place != .out, !isVisible { willShow?() }
+        let appearing = place != .out && !isVisible
         super.order(place, relativeTo: otherWin)
+        if appearing { BoardOpenTrace.mark("窗口上屏") }
     }
 }

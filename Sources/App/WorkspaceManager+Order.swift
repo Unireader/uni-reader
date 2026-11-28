@@ -46,7 +46,19 @@ extension WorkspaceManager {
     var exerciseBooks: [(id: String, title: String)] {
         let prefix = ExerciseScope.document("").key   // "doc:"
         let ids = exerciseOrder.compactMap { $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil }
-        return SidebarOrder.apply(documents, order: ids, id: \.id).map { ($0.id, $0.title) }
+        return SidebarOrder.apply(documentsInSidebarOrder, order: ids, id: \.id).map { ($0.id, $0.title) }
+    }
+
+    /// 侧栏上书的顺序（书库各分组、习题段里没手动排过的书都按它）：手动排过的照 `sort_order`；同一位置
+    /// （从没排过的都是 0，排在排过的前面）按添加时间、新加的在前（同画板）。
+    /// 🔴 **不按最近打开排**（用户 2026-11-28：「侧边栏分组移除所有，激活后提高顺序的功能」）——`documents` 本身
+    /// （库里 `allDocuments` 的 `last_opened_at DESC` 兜底）不动：服务器网页书目、⌘P、`@` 候选另有用处，只在侧栏这一层换。
+    var documentsInSidebarOrder: [LibDocument] {
+        documents.enumerated().sorted { a, b in
+            if a.element.sortOrder != b.element.sortOrder { return a.element.sortOrder < b.element.sortOrder }
+            if a.element.addedAt != b.element.addedAt { return a.element.addedAt > b.element.addedAt }
+            return a.offset < b.offset
+        }.map(\.element)
     }
 
     /// 侧栏「习题」那一段（平板抽屉 `exGroups`、⌘P 用同一份）：`ExerciseGroupNode.build` 建好，顶层各行按手动顺序排。

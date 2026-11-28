@@ -87,3 +87,9 @@
   - `SidebarOutlineView.canDragRows` 拦一道：按下的那一行和要拖的每一行都得能拖、且在同一组，否则拖不起来（照常拖选）；
   - 拖动期间工作区变了不重建侧栏，拖完补一次（`draggingRows` / `reloadAfterDrag`）；
   - 用户既然去拖「收藏」，习题顶层的全部 / 错题本 / 收藏也改成能拖（同「各个分组内都能拖」的字面意思）。
+
+## 不再按最近打开排（2026-11-28）
+
+用户：「侧边栏分组移除所有，激活后提高顺序的功能，比如 web pages 的」。侧栏的书（各分组 + 习题段里没手动排过的书）改按
+`WorkspaceManager.documentsInSidebarOrder`：`sort_order`，同值（没排过 = 0，在排过的前面）按添加时间新的在前；网页按导入时间新的在前。
+拖动 / 右键上移下移也按这份算。库里 `allDocuments` 的 `last_opened_at DESC` 兜底不动（服务器网页书目、⌘P、`@` 候选另有用处）。画板本来就不随打开挪。

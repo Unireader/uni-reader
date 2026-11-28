@@ -116,6 +116,8 @@ enum MainMenu {
         m.addItem(.separator())
         m.addItem(post(L("New Markdown Note"), .newMarkdownNoteRequested, key: "n", mods: [.command, .shift]))
         m.addItem(post(L("New Notes Folder…"), .newNoteFolderRequested))
+        // 笔记标签顶上的标题区 2026-11-28 去掉了（名字进工具栏），点标题改名换成这一项（侧栏右键「重命名…」照旧）
+        m.addItem(post(L("Rename Note…"), .renameNoteRequested))
         m.addItem(post(L("New Board…"), .newBoardRequested, key: "n", mods: [.command, .control]))
         m.addItem(post(L("Import Notes Folder…"), .importMarkdownRequested))
         m.addItem(post(L("Reference Notes Folder…"), .referenceMarkdownRequested))
@@ -257,7 +259,9 @@ final class MenuActions: NSObject {
 
     @objc func postNotification(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }
-        NotificationCenter.default.post(name: Notification.Name(raw), object: nil)
+        // 带上按下那一刻的 key 窗口：各窗口按它认领（`Notification.isMenuCommand(for:)`），别在收到时现场问「我是不是 key」
+        NotificationCenter.default.post(name: Notification.Name(raw), object: nil,
+                                        userInfo: NSApp.keyWindow.map { [Notification.menuKeyWindowKey: $0] })
     }
 
     @objc func openSettings(_ sender: Any?) { SettingsWindowController.show() }
@@ -424,5 +428,21 @@ final class RecentMenuDelegate: NSObject, NSMenuDelegate {
         clear.target = MenuActions.shared
         clear.isEnabled = !registry.recents.isEmpty
         menu.addItem(clear)
+    }
+}
+
+extension Notification {
+    /// 菜单命令发出那一刻的 key 窗口（`MenuActions.postNotification` 放进 `userInfo`）。
+    static let menuKeyWindowKey = "menuKeyWindow"
+
+    /// 这条菜单命令该不该由 `window` 认领。
+    ///
+    /// 🔴 **不能在收到时现场问 `isKeyWindow`**（2026-11-28 用户报：开着几个网页标签时 ⌘W 把整组窗口都关了）：
+    /// 同一条通知是挨个分发给各窗口的，第一扇关掉自己的同时系统就把相邻的标签设成 key，排在后面的那扇一问「我是 key」
+    /// 就也关了，一路连锁。笔记小窗 / 参考窗关掉后阅读窗口成 key 也一样。所以按发出那一刻的 key 窗口认；
+    /// 代码自己发的（不带这个键）照旧看 key。
+    func isMenuCommand(for window: NSWindow?) -> Bool {
+        if let w = userInfo?[Self.menuKeyWindowKey] as? NSWindow { return w === window }
+        return window?.isKeyWindow == true
     }
 }

@@ -1,5 +1,24 @@
 import Foundation
 
+/// 画板打开耗时打点（用户 2026-11-28 报「boards 打开新的会出现：延迟很大才显示出来」）：从点下去起，
+/// 每一步记一行「+多少毫秒」进 `wsLog`（`touch ~/Library/Logs/UniReader-ws.log` 开），先量清楚慢在哪一步再改。
+@MainActor
+enum BoardOpenTrace {
+    private static var t0: CFAbsoluteTime?
+    static func start(_ what: String) {
+        t0 = CFAbsoluteTimeGetCurrent()
+        wsLog("[BOARD] 开始：\(what)")
+    }
+    static func mark(_ step: String) {
+        guard let t0 else { return }
+        wsLog(String(format: "[BOARD] +%.0fms %@", (CFAbsoluteTimeGetCurrent() - t0) * 1000, step))
+    }
+    static func end(_ step: String) {
+        mark(step)
+        t0 = nil
+    }
+}
+
 /// 画板笔记标签（`BOARD-NOTE-PLAN.md §3.1~3.2`）：装载 / 离开 / 增量对账落库。
 ///
 /// 会话里的样子：`session.pdf == nil`、`session.board = 这篇`、`scratchPads = [board.asPad]`、
@@ -33,8 +52,10 @@ extension DocTabModel {
     }
 
     private func loadBoard(_ b: BoardNote) {
+        BoardOpenTrace.mark("装载画板：读库开始")
         let pages = workspace.boardPages(id: b.id)
         let (strokes, images) = workspace.boardContents(id: b.id, pages: pages)
+        BoardOpenTrace.mark("装载画板：读库完（\(pages.count) 页，\(strokes.count) 笔，\(images.count) 图）")
         session.persistedBoardPages = Dictionary(uniqueKeysWithValues: pages.map { ($0.id, $0) })
         session.boardPages = pages
         session.scratchUndo.reset()
@@ -58,6 +79,7 @@ extension DocTabModel {
         if isActive { app.setActive(session) }
         app.sessionChanged(session)
         app.sessionDocumentChanged(session)   // 标题 / 平板 `boards.kind` 都变了
+        BoardOpenTrace.mark("装载画板：会话赋值完")
     }
 
     /// 开着服务器工作区时别的设备改了这篇画板（行已经写进库）：整篇重读（`SERVER-MODE-PLAN.md §13.13`）。

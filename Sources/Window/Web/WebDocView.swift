@@ -20,13 +20,10 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
     var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { needsLayout = true } } }
 
-    /// 顶上那一条的底：透明，只负责接住空白处的点击（不漏给后面的网页）、拖动窗口、把滚轮转给网页。
-    private let header = WebHeaderStrip()
-    private let navControl = NSSegmentedControl()
-    private let homeButton = NSButton()
-    private let reloadButton = NSButton()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let browserButton = NSButton()
+    /// 网页独有的悬浮工具条：首页 / 刷新 / 在浏览器中打开（2026-11-28 顶上那一条去掉后挪到这里）。
+    private let tools = WebToolCapsule()
+    /// 页面标题变了（报给标签，工具栏的窗口标题用 HTML 标题，`ReaderWindowController.refreshTitle`）。
+    var onPageTitle: ((String) -> Void)?
     private let notice = NSTextField(wrappingLabelWithString: "")
     private let web: WKWebView
     private let handler: WebDocSchemeHandler
@@ -90,43 +87,18 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         // 钉成窗口底色（随系统深浅外观变），与 PDF 阅读区页外空白同色；网页拉过头回弹时露出的也是它。
         web.underPageBackgroundColor = .windowBackgroundColor
 
-        header.web = web
-        navControl.segmentCount = 2
-        navControl.trackingMode = .momentary
-        navControl.setImage(NSImage(systemSymbolName: "chevron.left", accessibilityDescription: L("Back")), forSegment: 0)
-        navControl.setImage(NSImage(systemSymbolName: "chevron.right", accessibilityDescription: L("Forward")), forSegment: 1)
-        navControl.setToolTip(L("Back"), forSegment: 0)
-        navControl.setToolTip(L("Forward"), forSegment: 1)
-        navControl.target = self
-        navControl.action = #selector(navigate)
-        homeButton.bezelStyle = .push
-        homeButton.image = NSImage(systemSymbolName: "house", accessibilityDescription: L("Go to Start Page"))
-        homeButton.contentTintColor = .labelColor
-        homeButton.toolTip = L("Go to Start Page")
-        homeButton.target = self
-        homeButton.action = #selector(goHome)
-        reloadButton.bezelStyle = .push
-        reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: L("Reload"))
-        reloadButton.contentTintColor = .labelColor
-        reloadButton.toolTip = L("Reload")
-        reloadButton.target = self
-        reloadButton.action = #selector(reloadPage)
-        titleLabel.font = .systemFont(ofSize: NSFont.systemFontSize + 2, weight: .semibold)
-        titleLabel.textColor = .labelColor
-        titleLabel.lineBreakMode = .byTruncatingTail
-        browserButton.bezelStyle = .push
-        browserButton.title = L("Open in Browser")
-        browserButton.image = NSImage(systemSymbolName: "safari", accessibilityDescription: nil)
-        browserButton.imagePosition = .imageLeading
-        browserButton.contentTintColor = .labelColor
-        browserButton.toolTip = L("Open this web page in your default browser (served from this Mac only)")
-        browserButton.target = self
-        browserButton.action = #selector(openInBrowser)
+        tools.home.target = self
+        tools.home.action = #selector(goHome)
+        tools.reload.target = self
+        tools.reload.action = #selector(reloadPage)
+        tools.browser.target = self
+        tools.browser.action = #selector(openInBrowser)
+        tools.web = web
         notice.textColor = .labelColor
         notice.font = .preferredFont(forTextStyle: .callout)
         notice.alignment = .center
         notice.isHidden = true
-        for v in [web, header, notice, navControl, homeButton, reloadButton, titleLabel, browserButton] as [NSView] { addSubview(v) }
+        for v in [web, notice, tools] as [NSView] { addSubview(v) }
 
         observations = [
             web.observe(\.canGoBack) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateNav() } },
@@ -225,10 +197,12 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     }
 
     private func updateNav() {
-        navControl.setEnabled(web.canGoBack, forSegment: 0)
-        navControl.setEnabled(web.canGoForward, forSegment: 1)
-        homeButton.isEnabled = !isOnStartPage
+        let notHome = !isOnStartPage
+        if tools.home.isEnabled != notHome { tools.home.isEnabled = notHome }
     }
+
+    /// 网页自己还能不能后退（工具栏「返回」的启用状态，`ReaderPaneController.webCanGoBack`）。
+    var canGoBack: Bool { web.canGoBack }
 
     /// 眼下是不是就在首页（同一个文件；页内 `#锚点` 不算离开；`/`、`chapter/` 这种目录地址按它的 index 认）。
     /// 还没载入 / 载入的不是本网页 = 不是。导航时会调几次：只看内存里的列表，不查库、不解清单。
@@ -238,17 +212,13 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
         return WebAssets.resolve(u.path, in: [entry: WebAssets.Entry(p: entry, h: "", n: 0)]) != nil
     }
 
+    /// 页面标题报给标签（工具栏上显示；网页名 / 副标题由窗口那边拼）。
     private func updateTitle() {
-        let name = workspace.webDoc(id: webId)?.title ?? ""
-        let page = web.title ?? ""
-        titleLabel.stringValue = page.isEmpty || page == name ? name : "\(name) — \(page)"
+        onPageTitle?(web.title ?? "")
     }
 
-    @objc private func navigate() {
-        if navControl.selectedSegment == 0 { web.goBack() } else { web.goForward() }
-    }
-
-    /// 鼠标侧键（`ReaderPaneController` 接）：网页自己还能后退 / 前进就走一步，返回 true；走不了返回 false，由窗口的历史接着走。
+    /// 返回 / 前进（`ReaderPaneController.navigate`：菜单 ⌘[ ⌘]、工具栏「返回」、鼠标侧键）：网页自己还能后退 / 前进就走一步，
+    /// 返回 true；走不了返回 false，由窗口的历史接着走。网页顶上原来那对后退 / 前进 2026-11-28 去掉了，统一用这里。
     func navigateHistory(back: Bool) -> Bool {
         if back, web.canGoBack { web.goBack(); return true }
         if !back, web.canGoForward { web.goForward(); return true }
@@ -280,21 +250,7 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
     override func layout() {
         super.layout()
         let b = bounds
-        let headerH: CGFloat = 40
-        header.frame = NSRect(x: 0, y: topInset, width: b.width, height: headerH)
-        let pad: CGFloat = 12, midY = topInset + headerH / 2
-        navControl.sizeToFit()
-        navControl.frame.origin = NSPoint(x: pad, y: midY - navControl.frame.height / 2)
-        homeButton.sizeToFit()
-        homeButton.frame.origin = NSPoint(x: navControl.frame.maxX + 8, y: midY - homeButton.frame.height / 2)
-        reloadButton.sizeToFit()
-        reloadButton.frame.origin = NSPoint(x: homeButton.frame.maxX + 4, y: midY - reloadButton.frame.height / 2)
-        browserButton.sizeToFit()
-        browserButton.frame.origin = NSPoint(x: b.width - pad - browserButton.frame.width, y: midY - browserButton.frame.height / 2)
-        let th = titleLabel.intrinsicContentSize.height
-        let tx = reloadButton.frame.maxX + 12
-        titleLabel.frame = NSRect(x: tx, y: midY - th / 2, width: max(0, browserButton.frame.minX - 12 - tx), height: th)
-        var top = header.frame.maxY
+        var top = topInset
         if !notice.isHidden {
             // 提示条也算在让出的版面里（同在边缘效果下面），网页内容从它下面开始
             let h = notice.sizeThatFits(NSSize(width: max(0, b.width - 32), height: .greatestFiniteMagnitude)).height
@@ -302,6 +258,7 @@ final class WebDocView: NSView, WKNavigationDelegate, WKUIDelegate, WKScriptMess
             top = notice.frame.maxY + 8
         }
         if web.frame != b { web.frame = b }
+        tools.place(in: b, top: top, bottom: bottomInset)
         let insets = NSEdgeInsets(top: top, left: 0, bottom: bottomInset, right: 0)
         let cur = web.obscuredContentInsets
         if cur.top != insets.top || cur.bottom != insets.bottom || cur.left != 0 || cur.right != 0 {
@@ -435,15 +392,126 @@ extension WebDocView {
     }
 }
 
-/// 顶上那一条的透明底：空白处的点击不漏给后面的网页（那里被模糊盖着，点到了也看不见点了什么），
-/// 按住可以拖动窗口（和工具栏一样），滚轮转给网页。
-private final class WebHeaderStrip: NSView {
-    weak var web: WKWebView?
+/// 网页独有的悬浮工具条（2026-11-28，用户：「网页的三个按钮，可以做到 toolbar 或者悬浮工具（网页独有，类似笔工具）」）：
+/// 首页 / 刷新 / 在浏览器中打开。后退 / 前进不在这里——用 App 的「返回」与 ⌘[ ⌘]（网页先走自己的历史）。
+/// 不放进工具栏：工具栏随标签换按钮，切标签时整排会挪（同组标签的工具栏要保持不动）。
+/// 系统材质胶囊 + 外层投影（同笔架），按住把手或按钮之间的空白拖动；位置按占网页区域的比例记（全局一份，各网页标签一致），
+/// 没拖过时停在右上角、工具栏下面。
+private final class WebToolCapsule: NSView {
+    let home = NSButton()
+    let reload = NSButton()
+    let browser = NSButton()
+    /// 滚轮转给网页（压在网页上，别把滚动吃掉）。
+    weak var web: NSView?
+
+    private let shell = CapsuleMaterialView()
+    private let grip = NSImageView()
+    /// 能摆的区域（`WebDocView` 坐标，已让开工具栏 / 提示条）。
+    private var area: NSRect = .zero
+    private var drag: (mouse: NSPoint, origin: NSPoint)?
+
+    private enum K { static let fx = "webToolFracX", fy = "webToolFracY", moved = "webToolMoved" }
+    private static let height: CGFloat = 36
+    private static let button: CGFloat = 32
+    private static let gripW: CGFloat = 22
+    private static let margin: CGFloat = 8
+    private static var width: CGFloat { gripW + button * 3 + 6 }
+
     override var isFlipped: Bool { true }
-    override var mouseDownCanMoveWindow: Bool { true }
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 { window?.performZoom(nil) } else { window?.performDrag(with: event) }
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
+        wantsLayer = true
+        shadow = {
+            let s = NSShadow()
+            s.shadowColor = NSColor.black.withAlphaComponent(0.3)
+            s.shadowBlurRadius = 6
+            s.shadowOffset = NSSize(width: 0, height: -2)
+            return s
+        }()
+        addSubview(shell)
+        grip.image = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: nil)
+        grip.symbolConfiguration = .init(pointSize: 10, weight: .regular)
+        grip.contentTintColor = NSColor.labelColor.withAlphaComponent(0.55)
+        shell.addSubview(grip)
+        for (b, symbol, tip) in [(home, "house", L("Go to Start Page")), (reload, "arrow.clockwise", L("Reload")),
+                                 (browser, "safari", L("Open this web page in your default browser (served from this Mac only)"))] {
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            b.symbolConfiguration = .init(pointSize: 14, weight: .regular)
+            b.imagePosition = .imageOnly
+            b.isBordered = false
+            b.contentTintColor = .labelColor   // 材质底上一律主色（红线 4）
+            b.toolTip = tip
+            b.refusesFirstResponder = true      // 不接键盘焦点，免得一直套着焦点框
+            b.focusRingType = .none
+            shell.addSubview(b)
+        }
     }
+    required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
+
+    override func layout() {
+        super.layout()
+        shell.frame = bounds
+        grip.frame = NSRect(x: 4, y: 0, width: Self.gripW - 4, height: Self.height)
+        for (i, b) in [home, reload, browser].enumerated() {
+            b.frame = NSRect(x: Self.gripW + CGFloat(i) * Self.button, y: (Self.height - Self.button) / 2,
+                             width: Self.button, height: Self.button)
+        }
+    }
+
+    /// 摆进 `bounds`（网页区域）里：上沿让开 `top`、下沿让开 `bottom`。
+    func place(in bounds: NSRect, top: CGFloat, bottom: CGFloat) {
+        area = NSRect(x: bounds.minX, y: top, width: bounds.width, height: max(0, bounds.height - top - bottom))
+        let f = NSRect(origin: clamped(stored()), size: NSSize(width: Self.width, height: Self.height))
+        if frame != f { frame = f }
+    }
+
+    /// 记下的位置（没拖过 = 右上角）。
+    private func stored() -> NSPoint {
+        let d = UserDefaults.standard
+        guard d.bool(forKey: K.moved) else {
+            return NSPoint(x: area.maxX - Self.width - Self.margin * 1.5, y: area.minY + Self.margin)
+        }
+        return NSPoint(x: area.minX + (d.object(forKey: K.fx) as? Double ?? 0) * area.width,
+                       y: area.minY + (d.object(forKey: K.fy) as? Double ?? 0) * area.height)
+    }
+
+    private func clamped(_ p: NSPoint) -> NSPoint {
+        let maxX = max(area.minX + Self.margin, area.maxX - Self.width - Self.margin)
+        let maxY = max(area.minY + Self.margin, area.maxY - Self.height - Self.margin)
+        return NSPoint(x: min(max(p.x, area.minX + Self.margin), maxX),
+                       y: min(max(p.y, area.minY + Self.margin), maxY))
+    }
+
+    // MARK: 拖动（按钮自己接点击；把手和按钮之间的空白落到这里）
+
+    override func mouseDown(with event: NSEvent) {
+        drag = (event.locationInWindow, frame.origin)
+        NSCursor.closedHand.push()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let drag else { return }
+        let p = event.locationInWindow
+        // 窗口坐标 y 朝上，本视图的父视图是翻转的（y 朝下）
+        frame.origin = clamped(NSPoint(x: drag.origin.x + p.x - drag.mouse.x, y: drag.origin.y - (p.y - drag.mouse.y)))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard drag != nil else { return }
+        drag = nil
+        NSCursor.pop()
+        guard area.width > 0, area.height > 0 else { return }
+        let d = UserDefaults.standard
+        d.set(Double((frame.minX - area.minX) / area.width), forKey: K.fx)
+        d.set(Double((frame.minY - area.minY) / area.height), forKey: K.fy)
+        d.set(true, forKey: K.moved)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(NSRect(x: 0, y: 0, width: Self.gripW, height: Self.height), cursor: .openHand)
+    }
+
     override func scrollWheel(with event: NSEvent) { web?.scrollWheel(with: event) }
 }
 

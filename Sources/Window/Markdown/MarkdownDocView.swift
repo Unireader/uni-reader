@@ -19,10 +19,6 @@ final class MarkdownDocView: NSView {
     /// 输入 `[[` 时的候选列表（`NoteLinkCompleter`）。
     private let links: NoteLinkCompleter
     private let host: NSHostingView<Root>
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let pathLabel = NSTextField(labelWithString: "")
-    private let header = NSVisualEffectView()
-    private let separator = NSBox()
     /// 顶上的「属性」栏（frontmatter）。笔记小窗不要。
     private let props = NotePropertiesView()
     private var bag = Set<AnyCancellable>()
@@ -115,29 +111,14 @@ final class MarkdownDocView: NSView {
         Self.all.add(self)
         relay.onOpen = { [weak self] id in self?.openNote(id) }
 
-        header.material = .headerView
-        header.blendingMode = .withinWindow
-        titleLabel.font = .preferredFont(forTextStyle: .headline)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        // 标题点一下就能改名（用户 2026-11-17：新建笔记后不用再去侧栏右键）：回车 / 点别处 = 改，Esc = 不改
-        titleLabel.isEditable = !workspace.isMirrorSource(ref.sourceID)
-        titleLabel.isSelectable = titleLabel.isEditable
-        titleLabel.usesSingleLineMode = true
-        titleLabel.cell?.isScrollable = true
-        titleLabel.delegate = self
-        titleLabel.toolTip = titleLabel.isEditable ? L("Click to rename") : nil
-        pathLabel.font = .preferredFont(forTextStyle: .caption1)
-        pathLabel.textColor = .secondaryLabelColor
-        pathLabel.lineBreakMode = .byTruncatingMiddle
-        separator.boxType = .separator
-        for v in [header, titleLabel, pathLabel, separator, props, host] as [NSView] { addSubview(v) }
+        // 2026-11-28 起标签里不再有自己的标题区：笔记名与路径显示在工具栏的窗口标题 / 副标题上（`ReaderWindowController.refreshTitle`，
+        // 用户：「md 会有两个标题，加一个路径子标题…全部统一到 toolbar」）；改名走菜单「文件 › 重命名笔记…」/ 侧栏右键。
+        for v in [props, host] as [NSView] { addSubview(v) }
         props.isHidden = !showsHeader
         props.onHeightChange = { [weak self] in self?.needsLayout = true }
         props.onSet = { [weak self] k, v in self?.applyProperty { MarkdownProperties.setting(k, to: v, in: $0) } }
         props.onRemove = { [weak self] k in self?.applyProperty { MarkdownProperties.removing(k, from: $0) } }
         refreshProperties()
-        for v in [header, titleLabel, pathLabel, separator] as [NSView] { v.isHidden = !showsHeader }
-        syncHeader()
 
         box.$text
             .receive(on: DispatchQueue.main)
@@ -188,11 +169,6 @@ final class MarkdownDocView: NSView {
                       let text = note.userInfo?["text"] as? String else { return }
                 MainActor.assumeIsolated { self?.applySavedElsewhere(key: key, text: text) }
             })
-        // 笔记改名 / 被删 → 顶上那行跟着变
-        workspace.$noteTrees
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.syncHeader() }
-            .store(in: &bag)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) 不支持") }
 
@@ -242,7 +218,6 @@ final class MarkdownDocView: NSView {
         for e in all.allObjects where e.ref == old && e.workspace === workspace {
             e.ref = new
             e.links.ownKey = new.key
-            e.syncHeader()
         }
     }
 
@@ -406,16 +381,13 @@ final class MarkdownDocView: NSView {
         onOpenNote(id)
     }
 
-    private func syncHeader() {
-        let title = ref.title
-        // 引用源在路径前面标上它叫什么，一眼能看出这篇是外部目录里的
+    /// 工具栏副标题上的路径（`ReaderWindowController.refreshTitle`）：引用源在路径前面标上它叫什么，一眼能看出这篇是外部目录里的；
+    /// 服务器镜像再注明只读。
+    static func displayPath(_ ref: NoteRef, in workspace: WorkspaceManager) -> String {
         let sourceName = workspace.noteSource(id: ref.sourceID)?.name ?? ""
         var path = sourceName.isEmpty ? ref.relPath : "\(sourceName)/\(ref.relPath)"
         if workspace.isMirrorSource(ref.sourceID) { path += " · " + L("Server mirror · read-only") }
-        // 正在改名时别把输入框里打了一半的字换掉
-        if titleLabel.currentEditor() == nil, titleLabel.stringValue != title { titleLabel.stringValue = title }
-        if pathLabel.stringValue != path { pathLabel.stringValue = path }
-        needsLayout = true
+        return path
     }
 
     /// 离开窗口前记下滚到哪儿了。引擎的 `dismantleNSView` 也会记，但它要等托管视图真正释放才跑，
@@ -446,54 +418,11 @@ final class MarkdownDocView: NSView {
             host.frame = NSRect(x: 0, y: topInset, width: b.width, height: max(0, b.height - topInset))
             return
         }
-        let headerH: CGFloat = 44
-        header.frame = NSRect(x: 0, y: 0, width: b.width, height: topInset + headerH)
-        let titleY = topInset + 5
-        let pad: CGFloat = 16
-        titleLabel.frame = NSRect(x: pad, y: titleY, width: max(0, b.width - pad * 2), height: 19)
-        pathLabel.frame = NSRect(x: pad, y: titleY + 19, width: max(0, b.width - pad * 2), height: 14)
-        separator.frame = NSRect(x: 0, y: header.frame.maxY, width: b.width, height: 1)
-        let propsY = separator.frame.maxY
+        let propsY = topInset
         props.frame = NSRect(x: 0, y: propsY, width: b.width, height: props.height)
         let hostY = propsY + props.height
         host.frame = NSRect(x: 0, y: hostY, width: b.width, height: max(0, b.height - hostY))
     }
 
     override var isFlipped: Bool { true }
-}
-
-// MARK: - 标题处改名
-
-extension MarkdownDocView: NSTextFieldDelegate {
-    /// Esc：放弃，换回原名。
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        guard control === titleLabel, selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
-        titleLabel.stringValue = ref.title
-        window?.makeFirstResponder(nil)
-        return true
-    }
-
-    /// 回车 / 点到别处：名字变了就改名（走与侧栏「重命名…」同一条路）。
-    func controlTextDidEndEditing(_ obj: Notification) {
-        guard (obj.object as? NSTextField) === titleLabel else { return }
-        let name = titleLabel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != ref.title else {
-            titleLabel.stringValue = ref.title
-            return
-        }
-        // 结束编辑的回调里改名会换掉标签 / 重建视图，推到下一拍再做
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if NoteRelink.renameFromUI(self.ref, to: name, in: self.workspace) == nil {
-                self.titleLabel.stringValue = self.ref.title
-                let a = NSAlert()
-                a.messageText = L("Could not complete that")
-                a.informativeText = self.workspace.lastError ?? L("A note with that name already exists in this folder.")
-                a.addButton(withTitle: L("OK"))
-                if let win = self.window { a.beginSheetModal(for: win) } else { a.runModal() }
-            } else {
-                self.syncHeader()   // 名字里的非法字符会被换成 `-`：显示实际的文件名
-            }
-        }
-    }
 }

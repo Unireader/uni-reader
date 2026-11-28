@@ -222,9 +222,13 @@ final class ScratchPadNSView: NSView {
         })
     }
 
+    /// 打开耗时打点：第一次有尺寸的排版记一笔（`BoardOpenTrace`）。
+    private var tracedFirstLayout = false
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
+            BoardOpenTrace.mark("草稿纸：进窗口")
             installKeyMonitor()
             if standalone { session.boardView = self }   // 有视图了：平板滚动由这里跟随、写库
         } else {
@@ -431,6 +435,11 @@ final class ScratchPadNSView: NSView {
         super.layout()
         let b = bounds
         let old = grid.frame.size
+        if !tracedFirstLayout, window != nil, b.width > 0 {
+            tracedFirstLayout = true
+            BoardOpenTrace.mark("草稿纸：第一次排版 \(Int(b.width))×\(Int(b.height))，窗口可见=\(window?.isVisible == true)")
+            DispatchQueue.main.async { BoardOpenTrace.end("草稿纸：第一次排版后的下一轮（≈ 第一帧）") }
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for l in [grid, pagesLayer, imagesLayer, inkLayer, liveLayer, lassoLayer, eraserRing] as [CALayer] { l.frame = b }

@@ -195,3 +195,8 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 - 网页铺满整块、伸到工具栏和顶上那一条后面：`WKWebView.obscuredContentInsets` 让出版面（macOS 26），
   它设了顶部内边距会自己挂一层系统边缘效果（`NSScrollPocket`，离屏实测），顶上那一条不再垫不透明底、按钮浮在模糊上（`WebHeaderStrip` 接住空白处的点击、可拖窗口）。
 - 🔴 模糊层取色 = `underPageBackgroundColor`，默认等于网页底色：白底网页会把工具栏带成浅色。钉成 `.windowBackgroundColor`、外观切换时重设（`PITFALLS.md`「工具栏」）。
+- **2026-11-28 统一到工具栏**（用户：「网页 标题…和 html 的标题（用这个）显示到 toolbar 的标题…跳转移除用 app 的」）：
+  顶上那一条整个去掉；窗口标题 = 那一页的 HTML `<title>`（`WebDocView.onPageTitle` → `DocTabModel.webPageTitle` → `ReaderWindowController.refreshTitle`），
+  副标题 = 网页名（与标题相同不重复）；后退 / 前进用 App 的「返回」与 ⌘[ ⌘]（`ReaderPaneController.navigate`：网页先走自己的历史）；
+  首页 / 刷新 / 在浏览器中打开挪进网页独有的悬浮工具条 `WebToolCapsule`（系统材质胶囊、可拖、位置全局记 `webToolFrac*`，默认右上角）。
+  不放进工具栏：工具栏随标签换按钮，切标签时整排会挪。

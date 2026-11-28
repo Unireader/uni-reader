@@ -1295,6 +1295,7 @@
 "Untitled Folder" = "未命名文件夹";
 "Folder name" = "文件夹名称";
 "New Notes Folder…" = "新建笔记文件夹…";
+"Rename Note…" = "重命名笔记…";
 "Folder names can’t start with a dot or be “trash”." = "文件夹名称不能以点开头，也不能叫 “trash”。";
 "That folder is not on this Mac." = "这台电脑上没有这个文件夹。";
 "Put this question into the Agent’s message box, so you can ask about it." = "把这道题放进 Agent 的输入框，接着写你要问的。";

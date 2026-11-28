@@ -58,8 +58,8 @@ final class SearchIndexWindowController: NSWindowController, NSWindowDelegate, N
         // ⌘W / ⇧⌘W 是 App 级广播（`MainMenu`），各窗口自己认领：key 窗口是这扇就关它（同设置窗）
         for name in [Notification.Name.closeTabRequested, .closeWindowRequested] {
             NotificationCenter.default.publisher(for: name)
-                .sink { [weak self] _ in
-                    guard let self, self.window?.isKeyWindow == true else { return }
+                .sink { [weak self] note in
+                    guard let self, note.isMenuCommand(for: self.window) else { return }   // 按发出那一刻的 key 窗口认，别连锁关窗
                     self.window?.performClose(nil)
                 }
                 .store(in: &bag)

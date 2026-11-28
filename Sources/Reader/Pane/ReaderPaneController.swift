@@ -180,8 +180,8 @@ final class ReaderPaneController: NSViewController {
             (.toggleCanvasMode, { $0.tab.toggleCanvasMode() }),
             // 2026-11-13 起是窗口级、跨标签的历史（`TabsModel+Navigation`）；PDF 里的跳转也记在里面。
             // 「跳转历史」浮窗自己的前进后退仍只在这本书里走。
-            (.jumpBackRequested, { $0.tabs.goBack() }),
-            (.jumpForwardRequested, { $0.tabs.goForward() }),
+            (.jumpBackRequested, { $0.navigate(back: true) }),
+            (.jumpForwardRequested, { $0.navigate(back: false) }),
             (.toggleJumpHistory, { $0.jumpPanel.toggle() }),
             (.toggleSearchResults, { $0.toggleSearchResults() }),
             (.addBookmarkRequested, { c in if c.session.documentId != nil { c.session.beginBookmarkAtCurrent() } }),
@@ -216,12 +216,19 @@ final class ReaderPaneController: NSViewController {
         mouseNavMonitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { [weak self] event in
             guard event.buttonNumber == 3 || event.buttonNumber == 4 else { return event }
             guard let self, let win = self.view.window, event.window === win, win.attachedSheet == nil else { return event }
-            let back = event.buttonNumber == 3
-            if let wv = self.webView, wv.navigateHistory(back: back) { return nil }
-            if back { self.tabs.goBack() } else { self.tabs.goForward() }
+            self.navigate(back: event.buttonNumber == 3)
             return nil
         }
     }
+
+    /// 返回 / 前进（菜单 ⌘[ ⌘]、工具栏「返回」、鼠标侧键共用）：网页标签里先走网页自己的历史，走到头再走窗口的历史（同浏览器的习惯）。
+    func navigate(back: Bool) {
+        if let wv = webView, !wv.isHidden, wv.navigateHistory(back: back) { return }
+        if back { tabs.goBack() } else { tabs.goForward() }
+    }
+
+    /// 眼下的网页标签里网页自己还能不能后退（工具栏「返回」的启用状态）。
+    var webCanGoBack: Bool { webView.map { !$0.isHidden && $0.canGoBack } ?? false }
 
     /// 当前标签的会话换了：重接会话上的订阅。
     private func bindSession() {
@@ -325,6 +332,12 @@ final class ReaderPaneController: NSViewController {
                     webView = v
                 } else {
                     let v = WebDocView(webId: wid, workspace: workspace)
+                    // 页面标题报给标签（工具栏的窗口标题用它）；藏起来留着的网页视图仍对应建它时的那个标签
+                    let owner = tab
+                    v.onPageTitle = { [weak owner] t in
+                        guard let owner else { return }
+                        if owner.webPageTitle?.webId != wid || owner.webPageTitle?.title != t { owner.webPageTitle = (wid, t) }
+                    }
                     view.addSubview(v, positioned: .below, relativeTo: placeholder)
                     webView = v
                 }
@@ -542,6 +555,7 @@ final class ReaderPaneController: NSViewController {
             }, completionHandler: { old.removeFromSuperview() })
         }
         guard let id = want, readerView != nil || s.isBoard else { return }
+        BoardOpenTrace.mark("窗格：建草稿纸视图")
         let v = ScratchPadNSView(app: app, session: s, padID: id, docKey: key)
         v.workspace = workspace
         v.alphaValue = 0

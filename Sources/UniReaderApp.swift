@@ -479,7 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let ws = try wsTime("开工作区(SQLite)") { try WorkspaceRegistry.shared.acquire(folder: folder) }
             let c = wsTime("建窗(含恢复标签/开 PDF)") {
                 ReaderWindowController(app: appModel, workspace: ws, launchDocId: docId,
-                                       lazyChrome: host != nil && !select)
+                                       lazyChrome: host != nil && !select, initialFrame: host?.frame)
             }
             // 第二扇起往右下错开：所有窗口共用一个 autosave frame，不错开就精确叠在一起、
             // 看着像「只开了一扇」。
@@ -799,6 +799,7 @@ extension Notification.Name {
     static let newMarkdownNoteRequested = Notification.Name("com.xvan.UniReader.newMarkdownNoteRequested")
     /// 在内建 `Notes/` 根目录新建一个文件夹（问名字；子目录里建走侧栏右键）。
     static let newNoteFolderRequested = Notification.Name("com.xvan.UniReader.newNoteFolderRequested")
+    static let renameNoteRequested = Notification.Name("com.xvan.UniReader.renameNoteRequested")
     /// 新建一篇画板笔记（v16，`BOARD-NOTE-PLAN.md`）。
     static let newBoardRequested = Notification.Name("com.xvan.UniReader.newBoardRequested")
     /// 导入一个静态 HTML 课件文件夹为网页（`WEB-DOC-PLAN.md`）。`object` 可以是要重新导入的那份网页的 id（String）。

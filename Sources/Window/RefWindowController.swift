@@ -79,8 +79,8 @@ final class RefWindowController: NSWindowController, NSWindowDelegate, NSToolbar
         // ⌘W / ⇧⌘W 是 App 级菜单命令（阅读窗只在自己是 key 时认领）；这扇窗是 key 时就关它自己。
         for name in [Notification.Name.closeTabRequested, .closeWindowRequested] {
             NotificationCenter.default.publisher(for: name)
-                .sink { [weak self] _ in
-                    guard let self, self.window?.isKeyWindow == true else { return }
+                .sink { [weak self] note in
+                    guard let self, note.isMenuCommand(for: self.window) else { return }   // 按发出那一刻的 key 窗口认，别连锁关窗
                     self.window?.performClose(nil)
                 }
                 .store(in: &bag)

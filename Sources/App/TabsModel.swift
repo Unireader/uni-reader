@@ -122,7 +122,8 @@ final class TabsModel: ObservableObject {
     /// 开一篇画板笔记（v16，`BOARD-NOTE-PLAN.md §3.1`）。规矩同上（装载末尾自己会 `setActive`）。
     @discardableResult
     func openBoard(_ id: UUID) -> DocTabModel {
-        place(existing: { $0.boardID == id }, load: { $0.openBoard(id) })
+        BoardOpenTrace.start(workspace.boards.first { $0.id == id }?.displayName ?? id.uuidString)
+        return place(existing: { $0.boardID == id }, load: { $0.openBoard(id) })
     }
 
     /// 开一组习题（v20，`EXERCISE-PLAN.md §4.1`）。走统一的「同目录共用一个标签」（`openShared`）：
@@ -255,6 +256,7 @@ final class TabsModel: ObservableObject {
     /// 开不出窗口（本窗口还没上屏等，按理不会）就退回在当前标签里换内容。
     @discardableResult
     func spawn(_ load: (DocTabModel) -> Void) -> DocTabModel {
+        BoardOpenTrace.mark("新开标签：建窗口开始")
         guard let c = AppDelegate.shared?.spawnTab(after: self, select: true) else {
             noteLeaving()
             load(active)
@@ -262,8 +264,10 @@ final class TabsModel: ObservableObject {
             persist()
             return active
         }
+        BoardOpenTrace.mark("新开标签：窗口建好")
         let t = c.tabs.active
         load(t)
+        c.syncSidebarSelectionNow()   // 新窗口已经露面：侧栏选中当场跟上，别等下一拍（否则那一行先不亮、再亮，看着像闪）
         c.tabs.noteArrival()
         c.tabs.focusWindow()
         c.tabs.persist()

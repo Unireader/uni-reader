@@ -668,3 +668,9 @@ Agent 绕过 App 直接写文件，能用但不稳：不知道源根在哪、可
   167. 整页 Markdown 笔记里写 ```swift / ```python 代码块：光标移出后有颜色、有灰底；切深色外观颜色跟着变；没写语言的块不着色。
   168. 批注编辑框与阅读区的笔记气泡里同样着色；气泡在深色外观下仍是浅色那套。
   169. 在一个较长的代码块里连续打字，不卡。
+
+## 标签里的标题区去掉（2026-11-28）
+
+用户：「md 会有两个标题，加一个路径子标题，这种全部统一到 toolbar」。`MarkdownDocView` 顶上的标题 / 路径区删掉（小窗本来就没有）：
+笔记名 = 窗口标题、路径（引用源名 / 相对路径 · 服务器镜像只读）= 窗口副标题（`MarkdownDocView.displayPath`，`ReaderWindowController.refreshTitle`）。
+原来「点标题改名」（11-17）换成菜单「文件 › 重命名笔记…」（`.renameNoteRequested` → `SidebarViewController.promptRenameNote`，与侧栏右键「重命名…」同一条路）。
