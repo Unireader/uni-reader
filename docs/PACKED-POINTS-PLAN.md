@@ -25,7 +25,7 @@ Pad 6 上 301 工作区的画板：9400 条笔迹、58 万个点。原先每个�
 | 批 | 内容 | 状态 |
 |---|---|---|
 | 1 | `PackedPts` 本身；`InkPointsBlob.decode` 整块解成它（含分页偏移）、`encode` 直接写；新写的画板笔迹（`BoardController.commitInk`）存成它；包围盒（`ScratchTiles.box`）、内容范围（`ScratchGeom.contentBounds`）直接读数。测试 `PackedPtsTest` | 已实测（2026-11-28） |
-| 2 | 渲染：`InkRenderer` 建几何（轮廓、压感宽度）直接读数；分块位图后台画笔迹那条路 | 待做 |
+| 2 | 渲染：`InkRenderer` 建几何前一次换算成数组（`mapped`：原始 x/y、屏幕 x/y、压感），四种笔型的循环只读数组、不再经装箱的映射函数；分块位图后台画笔迹走同一条路 | 已实测（2026-11-28：观感不变；视口出齐 16~51ms，提升有限——大头是系统的描边转轮廓） |
 | 3 | 命中与编辑：擦除命中（`ScratchCanvas.eraseAt`）、`InkEdit.splitStroke` / 平移 / 缩放直接产出 `PackedPts`；框选多边形命中 | 待做 |
 | 4 | 其余：页内笔迹（`LocalCanvasView` / `PageCanvasView`）、模式2 解码（`WireCodec`）、剪贴板 | 按需 |
 
