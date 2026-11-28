@@ -151,3 +151,8 @@
   ⌘W = `performClose`。
 - 「在侧栏中显示当前标签」菜单栏早就有（⌘⇧J），不用挪。5 条只给标签栏用的文案从两份 `Localizable.strings` 删掉。
 - 偏好键 `tabBarStyle` 不再读，留在用户的 UserDefaults 里无害。
+
+### 9.4 第 5 批（2026-11-28）：文档
+
+`AGENTS.md` 文档地图加本方案；`docs/agents/STRUCTURE.md` 加「标签 = 系统窗口标签」一条、改窗格 / 返回历史两条；
+`MAC-TABS-PLAN.md` 头部标注被取代；`HISTORY.md` 归档。

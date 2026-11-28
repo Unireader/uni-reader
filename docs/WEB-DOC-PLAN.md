@@ -189,3 +189,9 @@ MCP：`get_state` / `get_current_view` 的标签报 `content_type: "web"` + `web
 - 模式2（连 Mac 当输入板）：Mac 当前标签是网页时平板上不显示它（线格式没有这一种），没做。
 - 测试：JVM 单测 260 项全过（含 `MirrorFpTest` 新向量）；插桩测试 / 平板端到端还没跑（这次平板没接着）。
 - 服务器自带的网页阅读器要不要也能看网页：未定。
+
+## 网页标签沉浸（2026-11-28，Mac）
+
+- 网页铺满整块、伸到工具栏和顶上那一条后面：`WKWebView.obscuredContentInsets` 让出版面（macOS 26），
+  它设了顶部内边距会自己挂一层系统边缘效果（`NSScrollPocket`，离屏实测），顶上那一条不再垫不透明底、按钮浮在模糊上（`WebHeaderStrip` 接住空白处的点击、可拖窗口）。
+- 🔴 模糊层取色 = `underPageBackgroundColor`，默认等于网页底色：白底网页会把工具栏带成浅色。钉成 `.windowBackgroundColor`、外观切换时重设（`PITFALLS.md`「工具栏」）。
