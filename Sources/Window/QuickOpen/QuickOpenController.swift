@@ -1,7 +1,7 @@
 import AppKit
 
 /// ⌘P 快速打开（`QUICK-OPEN-PLAN.md`，用户 2026-10-31 要的「像聚焦搜索那样」）：浮在**当前窗口上方居中**的一块玻璃，
-/// 上面一个大号输入框、下面是结果；搜当前窗口工作区里的 PDF / Markdown 笔记 / 画板 / 习题的一组。
+/// 上面一个大号输入框、下面是结果；搜当前窗口工作区里的 PDF / Markdown 笔记 / 画板 / 习题的一组 / 单道题 / 目录项。
 ///
 /// - 外观全用系统件：`NSGlassEffectView`（系统玻璃）+ 无边框输入框 + `.inset` 表格的系统选中样式 + SF Symbols。
 ///   玻璃上的字一律 `labelColor`，层级用字号区分（红线④）。
@@ -28,6 +28,8 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
     private let emptyLabel = NSTextField(labelWithString: L("No Results"))
     private weak var reader: ReaderWindowController?
     private var all: [QuickOpenItem] = []
+    /// 与 `all` 一一对应的已规整可搜内容（弹出 / 目录到位时算一遍，打字时只比字符串）。
+    private var allFields: [QuickOpenMatch.Fields] = []
     private(set) var shown: [QuickOpenItem] = []
 
     /// 能成为 key（要打字）的无边框浮窗。⌘P（或用户改成的那个键）在这里先截下来收起自己——
@@ -87,7 +89,7 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 20)
         field.textColor = .labelColor
-        field.placeholderString = L("Search PDFs, notes, boards and exercises")
+        field.placeholderString = L("Search PDFs, notes, boards, exercises and contents")
         field.cell?.isScrollable = true
         field.cell?.wraps = false
         field.delegate = self
@@ -129,8 +131,8 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         if panel.isVisible { close(); return }
         guard let win = c.window else { return }
         reader = c
-        all = QuickOpenItem.all(in: c.workspace)
         field.stringValue = ""
+        reload(keepSelection: false)
         // 顶边：窗口顶往下约六分之一（至少让开工具栏），左右居中；放不进屏幕就往里挪
         let wf = win.frame
         let w = min(Self.width, max(360, wf.width - 48))
@@ -144,7 +146,6 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
             panel.parent?.removeChildWindow(panel)
             win.addChildWindow(panel, ordered: .above)
         }
-        refilter()
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(field)
     }
@@ -162,12 +163,27 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
 
     // MARK: 过滤 / 排版
 
-    private func refilter() {
-        shown = QuickOpenItem.rank(all, query: field.stringValue)
+    /// 重取工作区里的全部条目（含目录项、单道题）。PDF 自带目录在后台解析，到位后再进来一次（保住当前选中的那条）。
+    private func reload(keepSelection: Bool) {
+        guard let c = reader else { return }
+        let ws = c.workspace
+        let toc = QuickOpenTOCCache.shared.entries(in: ws) { [weak self, weak c] in
+            guard let self, let c, self.panel.isVisible, self.reader === c else { return }
+            self.reload(keepSelection: true)
+        }
+        all = QuickOpenItem.all(in: ws, toc: toc)
+        allFields = all.map(\.fields)
+        refilter(keepSelection: keepSelection)
+    }
+
+    private func refilter(keepSelection: Bool = false) {
+        let prev = keepSelection && shown.indices.contains(table.selectedRow) ? shown[table.selectedRow] : nil
+        shown = QuickOpenItem.rank(all, fields: allFields, query: field.stringValue)
         table.reloadData()
         if !shown.isEmpty {
-            table.selectRowIndexes([0], byExtendingSelection: false)
-            table.scrollRowToVisible(0)
+            let row = prev.flatMap { p in shown.firstIndex(of: p) } ?? 0
+            table.selectRowIndexes([row], byExtendingSelection: false)
+            table.scrollRowToVisible(row)
         }
         resize()
     }
@@ -247,6 +263,10 @@ final class QuickOpenController: NSObject, NSTextFieldDelegate, NSTableViewDataS
         case .markdown(let ref): c.tabs.openMarkdown(ref)
         case .board(let id): c.tabs.openBoard(id)
         case .exercises(let scope): c.tabs.openExercises(scope)
+        case .exercise(let id, let scope):
+            _ = try? AppDelegate.shared?.showExercises(scope, at: id, mode: nil, in: c.workspace, window: c, activate: false)
+        case .toc(let id, let page, let frac, let label):
+            c.tabs.open(id).session.jump(page: page, frac: frac, kind: .toc, label: label)
         }
     }
 

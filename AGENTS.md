@@ -94,7 +94,7 @@ xcodebuild -project UniReader.xcodeproj -scheme UniReader -destination 'platform
 - `docs/PACKED-POINTS-PLAN.md` — 安卓笔迹点集连续存储（`PackedPts`：一条笔迹一个 `FloatArray`，对外仍是 `List<Pt3>`；只改安卓内存表示，跨端格式不动；分 4 批）
 - `docs/PALM-REJECTION-PLAN.md` — 安卓防误触重做（2026-11-28 调研）：Pad 6 芯片 + 小米系统已拦住写字时的手掌，App 只补「先放手掌」那一下；`getSize` 能区分手指 / 手掌，`getTouchMajor`、压力不能用；已实现（§7），提笔后约 460ms 手指没反应是芯片扣的、App 改不了
 - `docs/SIDEBAR-DRAG-PLAN.md` — 侧栏拖拽排序（系统 `NSOutlineView` 拖放、同一组里换位置；书库 / 笔记 / 画板 / 练习库；顺序存哪）
-- `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行）
+- `docs/QUICK-OPEN-PLAN.md` — ⌘P 快速打开（当前窗口上方的玻璃面板，搜 PDF / 笔记 / 画板 / 习题各组，回车 = 侧栏单击那一行；§6 多段模糊 + 拼音 + 单道题 + 目录项，匹配在 `QuickOpenMatch.swift`、测试 `spike/quick-open-match-test.swift`）
 - `docs/REMOTE-ACCESS-PLAN.md` — 远程连接（Tailscale / 公网 IPv6）现状分析：服务按局域网设计，公网下的安全与可靠性问题清单；先 Tailscale 实测，代码未动
 - **`docs/SERVER-MODE-PLAN.md`** — 连接服务器（独立 Swift 服务器程序，2026-10-29 定方案；服务器 S0 + S1 已落地，Mac 客户端 S2 第一轮、安卓 S3 第一轮已落地，Linux 版已在用户 NAS 上跑通）：工作区「从服务器打开 / 上传到服务器」，
   各设备本机缓存全部、大 PDF 按需下载；以服务器为中心的同步沿用离线镜像的指纹与判定；本地工作区规则不变。
