@@ -9,6 +9,96 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.3.40</title>
+      <pubDate>Sat, 28 Nov 2026 14:47:14 +0000</pubDate>
+      <sparkle:version>82</sparkle:version>
+      <sparkle:shortVersionString>0.3.40</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description xml:lang="zh"><![CDATA[
+<h3>中文</h3>
+<h4>标签改用系统标签页</h4>
+<ul>
+<li>标签不再是阅读区底部的胶囊，改成 macOS 系统的窗口标签，显示在工具栏下面（和 Safari、访达一样）。</li>
+<li>可以拖动排序、把标签拖出来变成单独的窗口再拖回去，也可以用「窗口 › 显示所有标签页」总览；⌃Tab / ⌃⇧Tab 切换，⌘W 关闭当前标签。</li>
+<li>切换标签时，侧栏和检查器保持不动：开合、宽度、检查器当前页、侧栏的展开和滚动位置都跟着上一个标签。</li>
+<li>同一个工作区的所有标签共用一组 Agent 对话；在哪个标签里提问，就带上哪个标签的文档和页码。</li>
+<li>工具栏「返回」/ ⌘[ ⌘] 可以跨标签回到上一处。</li>
+<li>⌘N、⌘T 和标签栏的「+」都会新开一个标签并弹出快速打开，可以模糊搜索要打开的内容。</li>
+<li>退出后重新打开，标签会按原来的顺序回来、停在上次的那个；没切到过的标签用到时才加载，启动更快。</li>
+</ul>
+<h4>标题统一显示在工具栏</h4>
+<ul>
+<li>Markdown 笔记：笔记名显示在工具栏标题，路径显示在标题下方，笔记顶部不再重复显示名字。改名用菜单「文件 › 重命名笔记…」，或在侧栏右键「重命名…」。</li>
+<li>网页：工具栏标题显示网页自己的标题，下方显示网页在书库里的名字。网页铺满到工具栏后面，顶部那一条去掉了；后退、前进改用工具栏的「返回」和 ⌘[ ⌘]；首页、重新载入、在浏览器中打开放进一个可以拖动的小工具条。</li>
+</ul>
+<h4>快速打开（⌘P）</h4>
+<ul>
+<li>支持多段模糊匹配和拼音搜索，还能直接搜到单道习题和目录项。</li>
+</ul>
+<h4>画板与草稿纸</h4>
+<ul>
+<li>页数多的画板打开更快：页面先显示出来，笔迹随后补上；在大画板里滚动、缩放也更流畅。</li>
+<li>无限画布右下角小地图里的视口框现在会跟着移动。</li>
+</ul>
+<h4>侧栏</h4>
+<ul>
+<li>打开文档、网页后，它们在侧栏里的位置不再变动（新加的排在前面，手动排过的顺序照旧）。</li>
+</ul>
+<h4>阅读区</h4>
+<ul>
+<li>文字笔记的图钉和卡片滚到工具栏下面时，会和页面一样从工具栏后面透出来，不再被切掉一截。</li>
+</ul>
+<h4>连接服务器的工作区</h4>
+<ul>
+<li>打开工作区时不再先等同步，窗口马上出现，同步在后台进行。</li>
+<li>新增设置「退出前与服务器同步」（设置 › 服务器），默认关闭，退出更快；没来得及推送的改动会在下次打开这个工作区时同步。</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.40">在 GitHub 查看完整更新 →</a></p>
+      ]]></description>
+      <description xml:lang="en"><![CDATA[
+<h3>English</h3>
+<h4>Tabs are now system tabs</h4>
+<ul>
+<li>Tabs are no longer a capsule at the bottom of the reading area. They are now standard macOS window tabs, shown under the toolbar (like Safari and Finder).</li>
+<li>Drag to reorder, drag a tab out into its own window and back, or use Window › Show All Tabs. Switch with ⌃Tab / ⌃⇧Tab; ⌘W closes the current tab.</li>
+<li>The sidebar and inspector stay put when you switch tabs: open or closed, width, the inspector's current page, and the sidebar's expanded folders and scroll position all carry over.</li>
+<li>All tabs of a workspace share one set of agent conversations; a question carries the document and page of the tab you ask it from.</li>
+<li>The toolbar's Back button and ⌘[ ⌘] can return to a place in another tab.</li>
+<li>⌘N, ⌘T and the tab bar's + button open a new tab with Quick Open, so you can fuzzy-search what to open.</li>
+<li>After quitting and reopening, tabs come back in the same order with the last one selected. Tabs you haven't switched to load when you first open them, so launching is faster.</li>
+</ul>
+<h4>Titles shown in the toolbar</h4>
+<ul>
+<li>Markdown notes: the note's name is the toolbar title and its path is shown below it; the note no longer repeats its name at the top. Rename with File › Rename Note… or right-click › Rename… in the sidebar.</li>
+<li>Web pages: the toolbar title is the page's own title, with the web page's name in the library below it. The page now fills the area behind the toolbar and the bar at its top is gone. Back and forward use the toolbar's Back button and ⌘[ ⌘]; Home, Reload and Open in Browser are in a small floating toolbar you can drag.</li>
+</ul>
+<h4>Quick Open (⌘P)</h4>
+<ul>
+<li>Matches several fragments and pinyin, and can find individual questions and contents entries directly.</li>
+</ul>
+<h4>Boards and scratchpads</h4>
+<ul>
+<li>Boards with many pages open faster: the pages appear first and the strokes follow. Scrolling and zooming in large boards are smoother.</li>
+<li>On infinite boards, the viewport frame in the minimap now follows as you move around.</li>
+</ul>
+<h4>Sidebar</h4>
+<ul>
+<li>Documents and web pages no longer move in the sidebar after you open them (new ones go first; your manual order stays).</li>
+</ul>
+<h4>Reading area</h4>
+<ul>
+<li>Text note pins and cards now show through the toolbar like the page does when scrolled under it, instead of being cut off.</li>
+</ul>
+<h4>Server workspaces</h4>
+<ul>
+<li>Opening a workspace no longer waits for a sync first: the window appears right away and syncing continues in the background.</li>
+<li>New setting Sync with the server before quitting (Settings › Server), off by default, so quitting is faster. Changes not yet sent are synced the next time you open the workspace.</li>
+</ul>
+<p><a href="https://github.com/Unireader/uni-reader/releases/tag/v0.3.40">View full release on GitHub →</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/Unireader/uni-reader/releases/download/v0.3.40/UniReader-0.3.40.zip" length="34003336" type="application/octet-stream" sparkle:edSignature="bOYHXnbjBpffu1X4nGwsmezl1Jp3bPMjpZfsrTAz4XVRoEMaRVDBuSqGPSlZPL2MbxayuccVNnARgRcqAihKAQ==" />
+    </item>
+    <item>
       <title>v0.3.39</title>
       <pubDate>Thu, 26 Nov 2026 08:06:45 +0000</pubDate>
       <sparkle:version>81</sparkle:version>
